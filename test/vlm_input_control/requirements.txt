@@ -1,0 +1,21 @@
+# VLM Input Control Test Dependencies
+# ====================================
+
+# Screen Capture
+mss>=9.0.0
+
+# Mouse/Keyboard Control
+pynput>=1.7.6
+
+# Image Processing
+Pillow>=10.0.0
+
+# HTTP Client (for VLM API)
+requests>=2.31.0
+
+# Optional: For advanced image processing
+# opencv-python>=4.8.0
+
+# Development/Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0

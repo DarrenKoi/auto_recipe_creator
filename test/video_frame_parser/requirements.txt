@@ -1,0 +1,23 @@
+# Video Frame Parser Dependencies
+
+# Core
+opencv-python>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
+
+# Deep Learning (CLIP & PyTorch)
+torch>=2.0.0
+torchvision>=0.15.0
+# CLIP: pip install git+https://github.com/openai/CLIP.git
+
+# Database
+pymongo>=4.5.0
+faiss-gpu>=1.7.4  # GPU version for H200
+# faiss-cpu>=1.7.4  # CPU version alternative
+
+# Optional: Distributed Processing
+# torch-distributed
+
+# Development
+pytest>=7.4.0
+pytest-asyncio>=0.21.0

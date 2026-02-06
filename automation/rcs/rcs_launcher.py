@@ -32,7 +32,7 @@ class RCSLauncher:
             config: RCS 설정 (None이면 기본값 사용)
         """
         self.config = config or RCSConfig()
-        self.controller = RCSWindowController(backend=self.config.backend)
+        self.controller = self._create_controller()
 
     def run(self) -> bool:
         """RCS 실행 및 로그인 전체 시퀀스를 실행합니다.
@@ -89,6 +89,16 @@ class RCSLauncher:
         self.controller.print_control_identifiers()
         return True
 
+    def _create_controller(self) -> RCSWindowController:
+        """설정값을 기반으로 RCSWindowController 인스턴스를 생성합니다."""
+        return RCSWindowController(
+            backend=self.config.backend,
+            interaction_mode=self.config.interaction_mode,
+            visual_debug_delay_sec=self.config.visual_debug_delay_sec,
+            highlight_colour=self.config.highlight_colour,
+            highlight_thickness=self.config.highlight_thickness,
+        )
+
     def _attempt_login(self) -> bool:
         """단일 로그인 시도를 수행합니다.
 
@@ -136,4 +146,4 @@ class RCSLauncher:
         except Exception:
             pass
         # 새 컨트롤러 인스턴스 생성
-        self.controller = RCSWindowController(backend=self.config.backend)
+        self.controller = self._create_controller()

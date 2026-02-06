@@ -43,3 +43,15 @@ class RCSConfig:
 
     # 재시도 간 대기 시간 (초)
     retry_delay_sec: float = 2.0
+
+    # 인터랙션 모드: "message" (메시지 기반), "input" (실제 입력), "visual_debug" (입력 + 시각 디버그)
+    interaction_mode: str = "input"
+
+    # 시각 디버그 모드에서 액션 간 대기 시간 (초)
+    visual_debug_delay_sec: float = 1.0
+
+    # 시각 디버그 하이라이트 색상
+    highlight_colour: str = "red"
+
+    # 시각 디버그 하이라이트 테두리 두께
+    highlight_thickness: int = 2

@@ -4,9 +4,15 @@ RCS Window Controller
 pywinauto를 활용하여 RCS(Remote Control System) 윈도우의 UI 컨트롤에
 직접 접근하고 조작합니다. ComboBox, Edit, Button 등의 컨트롤을
 이름/ID 기반으로 제어하여 좌표 기반 자동화보다 안정적입니다.
+
+인터랙션 모드:
+- MESSAGE: 기존 메시지 기반 (set_edit_text, click, select)
+- INPUT: 실제 OS 입력 이벤트 (click_input, type_keys) — 기본값
+- VISUAL_DEBUG: INPUT + 컨트롤 하이라이트 + 좌표 로깅 + 딜레이
 """
 
 import time
+from enum import Enum
 
 try:
     from pywinauto import Application
@@ -18,6 +24,13 @@ except ImportError:
     print("[WARNING] pywinauto 라이브러리가 설치되지 않았습니다. pip install pywinauto")
 
 
+class InteractionMode(Enum):
+    """컨트롤 인터랙션 모드"""
+    MESSAGE = "message"        # 메시지 기반 (set_edit_text, click, select)
+    INPUT = "input"            # 실제 OS 입력 이벤트 (click_input, type_keys)
+    VISUAL_DEBUG = "visual_debug"  # INPUT + 시각 디버그 (하이라이트, 좌표 로깅, 딜레이)
+
+
 class RCSWindowController:
     """RCS 윈도우 제어 클래스
 
@@ -25,10 +38,21 @@ class RCSWindowController:
     제어하기 위한 메서드를 제공합니다.
     """
 
-    def __init__(self, backend: str = "uia"):
+    def __init__(
+        self,
+        backend: str = "uia",
+        interaction_mode: str = "input",
+        visual_debug_delay_sec: float = 1.0,
+        highlight_colour: str = "red",
+        highlight_thickness: int = 2,
+    ):
         """
         Args:
             backend: pywinauto 백엔드 ("uia" 또는 "win32")
+            interaction_mode: 인터랙션 모드 ("message", "input", "visual_debug")
+            visual_debug_delay_sec: 시각 디버그 모드에서 액션 간 대기 시간 (초)
+            highlight_colour: 시각 디버그 하이라이트 색상
+            highlight_thickness: 시각 디버그 하이라이트 테두리 두께
         """
         if not PYWINAUTO_AVAILABLE:
             print("[ERROR] pywinauto 라이브러리를 사용할 수 없습니다.")
@@ -37,8 +61,113 @@ class RCSWindowController:
             return
 
         self.backend = backend
+        self.mode = InteractionMode(interaction_mode)
+        self.visual_debug_delay_sec = visual_debug_delay_sec
+        self.highlight_colour = highlight_colour
+        self.highlight_thickness = highlight_thickness
         self.app = None
         self.main_window = None
+
+        if self._is_visual_debug():
+            print(f"[INFO] 시각 디버그 모드 활성화 (지연: {visual_debug_delay_sec}초, 색상: {highlight_colour})")
+        elif self._use_input_mode():
+            print("[INFO] input 모드 활성화 (실제 OS 입력 이벤트 사용)")
+
+    # ------------------------------------------------------------------
+    # 인터랙션 모드 헬퍼
+    # ------------------------------------------------------------------
+
+    def _use_input_mode(self) -> bool:
+        """INPUT 또는 VISUAL_DEBUG 모드인지 확인합니다."""
+        return self.mode in (InteractionMode.INPUT, InteractionMode.VISUAL_DEBUG)
+
+    def _is_visual_debug(self) -> bool:
+        """VISUAL_DEBUG 모드인지 확인합니다."""
+        return self.mode == InteractionMode.VISUAL_DEBUG
+
+    def _highlight_control(self, control, label: str):
+        """시각 디버그 모드에서 컨트롤을 하이라이트하고 좌표를 로깅합니다.
+
+        Args:
+            control: pywinauto 컨트롤
+            label: 컨트롤 설명 (로그용)
+        """
+        if not self._is_visual_debug():
+            return
+        try:
+            rect = control.rectangle()
+            print(f"[DEBUG] 하이라이트: {label} @ ({rect.left}, {rect.top}, {rect.right}, {rect.bottom})")
+            control.draw_outline(colour=self.highlight_colour, thickness=self.highlight_thickness)
+        except Exception as e:
+            print(f"[DEBUG] 하이라이트 실패 ({label}): {e}")
+
+    def _pause(self, reason: str):
+        """시각 디버그 모드에서 설정된 시간만큼 대기합니다.
+
+        Args:
+            reason: 대기 사유 (로그용)
+        """
+        if not self._is_visual_debug():
+            return
+        print(f"[DEBUG] 대기 중: {reason} ({self.visual_debug_delay_sec}초)")
+        time.sleep(self.visual_debug_delay_sec)
+
+    def _click_control(self, control, label: str):
+        """모드에 따라 컨트롤을 클릭합니다.
+
+        Args:
+            control: pywinauto 컨트롤
+            label: 컨트롤 설명 (로그용)
+        """
+        self._highlight_control(control, label)
+        if self._use_input_mode():
+            rect = control.rectangle()
+            center_x = (rect.left + rect.right) // 2
+            center_y = (rect.top + rect.bottom) // 2
+            print(f"[INFO] click_input: {label} @ ({center_x}, {center_y})")
+            control.click_input()
+        else:
+            control.click()
+            print(f"[INFO] click: {label}")
+        self._pause(f"{label} 클릭 후")
+
+    def _enter_text(self, control, text: str, field_name: str, is_password: bool = False):
+        """모드에 따라 Edit 컨트롤에 텍스트를 입력합니다.
+
+        Args:
+            control: pywinauto Edit 컨트롤
+            text: 입력할 텍스트
+            field_name: 필드 이름 (로그용)
+            is_password: 비밀번호 여부 (로그 마스킹용)
+        """
+        display_text = "****" if is_password else text
+        self._highlight_control(control, field_name)
+
+        if self._use_input_mode():
+            control.click_input()
+            time.sleep(0.1)
+            # 기존 텍스트 전체 선택 후 덮어쓰기
+            control.type_keys("^a", with_spaces=True)
+            time.sleep(0.05)
+            control.type_keys(text, with_spaces=True)
+            print(f"[INFO] 입력 (input 모드): {field_name} = '{display_text}'")
+        else:
+            try:
+                control.set_edit_text(text)
+                print(f"[INFO] 입력 (message 모드): {field_name} = '{display_text}'")
+            except Exception:
+                print(f"[INFO] {field_name} set_edit_text() 실패, type_keys() 폴백 사용")
+                control.click()
+                time.sleep(0.1)
+                control.type_keys("^a", with_spaces=True)
+                time.sleep(0.05)
+                control.type_keys(text, with_spaces=True)
+
+        self._pause(f"{field_name} 입력 후")
+
+    # ------------------------------------------------------------------
+    # 윈도우 연결 / 실행
+    # ------------------------------------------------------------------
 
     def launch(self, exe_path: str, timeout: int = 30) -> bool:
         """RCS 프로그램을 실행하고 윈도우가 나타날 때까지 대기합니다.
@@ -93,10 +222,15 @@ class RCSWindowController:
             print(f"[ERROR] RCS 윈도우 연결 실패: {e}")
             return False
 
+    # ------------------------------------------------------------------
+    # UI 조작
+    # ------------------------------------------------------------------
+
     def select_server(self, server_name: str) -> bool:
         """ComboBox에서 서버를 선택합니다.
 
-        select() 메서드를 우선 시도하고, 실패 시 type_keys() 폴백을 사용합니다.
+        message 모드: select() 우선, 실패 시 click()+type_keys() 폴백
+        input/visual_debug 모드: click_input()+type_keys()
 
         Args:
             server_name: 선택할 서버 이름
@@ -109,20 +243,30 @@ class RCSWindowController:
 
         try:
             combobox = self.main_window.child_window(control_type="ComboBox")
-            # 방법 1: select()로 직접 선택
-            try:
-                combobox.select(server_name)
-                print(f"[INFO] 서버 선택 완료: {server_name}")
-                return True
-            except Exception:
-                pass
+            self._highlight_control(combobox, "서버 ComboBox")
 
-            # 방법 2: click() + type_keys() 폴백 (Win32 ComboBox 호환)
-            print("[INFO] ComboBox select() 실패, type_keys() 폴백 시도 중...")
-            combobox.click()
-            time.sleep(0.3)
-            combobox.type_keys(server_name + "{ENTER}", with_spaces=True)
-            print(f"[INFO] 서버 선택 완료 (폴백): {server_name}")
+            if not self._use_input_mode():
+                # MESSAGE 모드: select() 우선 시도
+                try:
+                    combobox.select(server_name)
+                    print(f"[INFO] 서버 선택 완료: {server_name}")
+                    return True
+                except Exception:
+                    pass
+                # 폴백: click + type_keys
+                print("[INFO] ComboBox select() 실패, type_keys() 폴백 시도 중...")
+                combobox.click()
+                time.sleep(0.3)
+                combobox.type_keys(server_name + "{ENTER}", with_spaces=True)
+            else:
+                # INPUT / VISUAL_DEBUG 모드
+                self._click_control(combobox, "서버 ComboBox")
+                self._pause("ComboBox 드롭다운 열림")
+                time.sleep(0.3)
+                combobox.type_keys(server_name + "{ENTER}", with_spaces=True)
+
+            print(f"[INFO] 서버 선택 완료: {server_name}")
+            self._pause("서버 선택 후")
             return True
         except Exception as e:
             print(f"[ERROR] 서버 선택 실패: {e}")
@@ -132,7 +276,6 @@ class RCSWindowController:
         """ID와 비밀번호를 입력합니다.
 
         Edit 컨트롤을 순서대로 찾아 첫 번째에 ID, 두 번째에 비밀번호를 입력합니다.
-        set_edit_text()를 우선 시도하고, 실패 시 type_keys() 폴백을 사용합니다.
 
         Args:
             username: 사용자 ID
@@ -152,11 +295,11 @@ class RCSWindowController:
 
             # 첫 번째 Edit: 사용자 ID
             id_field = edit_controls[0]
-            self._set_text(id_field, username, "사용자 ID")
+            self._enter_text(id_field, username, "사용자 ID")
 
             # 두 번째 Edit: 비밀번호
             pw_field = edit_controls[1]
-            self._set_text(pw_field, password, "비밀번호")
+            self._enter_text(pw_field, password, "비밀번호", is_password=True)
 
             print("[INFO] 자격증명 입력 완료")
             return True
@@ -198,8 +341,9 @@ class RCSWindowController:
                 print("[ERROR] 로그인 버튼을 찾을 수 없습니다.")
                 return False
 
-            login_button.click()
-            print(f"[INFO] 로그인 버튼 클릭 완료: '{login_button.window_text()}'")
+            btn_text = login_button.window_text()
+            self._click_control(login_button, f"로그인 버튼 '{btn_text}'")
+            print(f"[INFO] 로그인 버튼 클릭 완료: '{btn_text}'")
             return True
         except Exception as e:
             print(f"[ERROR] 로그인 버튼 클릭 실패: {e}")
@@ -280,24 +424,3 @@ class RCSWindowController:
             print("[ERROR] RCS 윈도우에 연결되지 않았습니다. launch() 또는 connect_to_existing()을 먼저 호출하세요.")
             return False
         return True
-
-    def _set_text(self, control, text: str, field_name: str):
-        """Edit 컨트롤에 텍스트를 입력합니다.
-
-        set_edit_text()를 우선 시도하고, 실패 시 type_keys() 폴백을 사용합니다.
-
-        Args:
-            control: pywinauto Edit 컨트롤
-            text: 입력할 텍스트
-            field_name: 필드 이름 (로그용)
-        """
-        try:
-            control.set_edit_text(text)
-        except Exception:
-            print(f"[INFO] {field_name} set_edit_text() 실패, type_keys() 폴백 사용")
-            control.click()
-            time.sleep(0.1)
-            # 기존 텍스트 전체 선택 후 덮어쓰기
-            control.type_keys("^a", with_spaces=True)
-            time.sleep(0.05)
-            control.type_keys(text, with_spaces=True)

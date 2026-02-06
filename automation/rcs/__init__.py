@@ -11,11 +11,12 @@ pywinauto 라이브러리를 활용하여 Windows UI 컨트롤에 직접 접근�
 """
 
 from .rcs_config import RCSConfig
-from .rcs_window_controller import RCSWindowController
+from .rcs_window_controller import InteractionMode, RCSWindowController
 from .rcs_launcher import RCSLauncher
 
 __all__ = [
     'RCSConfig',
+    'InteractionMode',
     'RCSWindowController',
     'RCSLauncher',
 ]

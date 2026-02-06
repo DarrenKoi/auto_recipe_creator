@@ -2,10 +2,13 @@
 RCS 자동 로그인 CLI 엔트리포인트
 
 사용법:
-    python -m automation.rcs.run_login                    # 기본 설정으로 로그인
+    python -m automation.rcs.run_login                    # 기본 설정으로 로그인 (input 모드)
     python -m automation.rcs.run_login --debug             # 컨트롤 트리 출력 (초기 설정용)
     python -m automation.rcs.run_login --server MyServer   # 서버 지정
     python -m automation.rcs.run_login --backend win32     # Win32 백엔드 사용
+    python -m automation.rcs.run_login --visual-debug      # 시각 디버그 모드 (하이라이트+좌표 로깅)
+    python -m automation.rcs.run_login --visual-debug --debug-delay 2.0  # 느린 디버그
+    python -m automation.rcs.run_login --interaction-mode message  # 기존 메시지 기반 모드
 """
 
 import argparse
@@ -25,6 +28,9 @@ def parse_args():
   python -m automation.rcs.run_login --debug
   python -m automation.rcs.run_login --server "MyServer" --username "user1" --password "pass1"
   python -m automation.rcs.run_login --exe-path "D:\\RCS\\RcsMainHD.exe" --backend win32
+  python -m automation.rcs.run_login --visual-debug --server "MyServer"
+  python -m automation.rcs.run_login --visual-debug --debug-delay 2.0
+  python -m automation.rcs.run_login --interaction-mode message
         """,
     )
 
@@ -64,6 +70,24 @@ def parse_args():
         default=None,
         help="pywinauto 백엔드 (기본: uia)",
     )
+    parser.add_argument(
+        "--visual-debug",
+        action="store_true",
+        help="시각 디버그 모드: 컨트롤 하이라이트 + 좌표 로깅 + 딜레이 (--interaction-mode visual_debug 단축)",
+    )
+    parser.add_argument(
+        "--interaction-mode",
+        type=str,
+        choices=["message", "input", "visual_debug"],
+        default=None,
+        help="인터랙션 모드 (기본: input)",
+    )
+    parser.add_argument(
+        "--debug-delay",
+        type=float,
+        default=None,
+        help="시각 디버그 모드에서 액션 간 대기 시간 초 (기본: 1.0)",
+    )
 
     return parser.parse_args()
 
@@ -86,6 +110,12 @@ def main():
         config.exe_path = args.exe_path
     if args.backend:
         config.backend = args.backend
+    if args.visual_debug:
+        config.interaction_mode = "visual_debug"
+    if args.interaction_mode:
+        config.interaction_mode = args.interaction_mode
+    if args.debug_delay is not None:
+        config.visual_debug_delay_sec = args.debug_delay
 
     # 런처 생성 및 실행
     launcher = RCSLauncher(config=config)

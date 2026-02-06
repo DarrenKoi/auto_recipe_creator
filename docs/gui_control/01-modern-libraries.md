@@ -35,3 +35,37 @@ GUI 제어의 핵심은 "현재 화면을 보는 것"입니다.
 - **특징:** "로그인 버튼을 눌러줘"라는 명령을 받으면 모델이 화면에서 버튼의 좌표를 추론합니다.
 - **장점:** UI가 조금 바뀌어도 유연하게 대응할 수 있습니다.
 - **단점:** 추론 속도가 상대적으로 느리고 비용이 발생할 수 있습니다.
+
+## 6. Microsoft 비전 기반 도구 (2025+)
+
+### 6.1 OmniParser
+**Custom Graphics UI 요소 탐지 특화 도구**입니다. DirectX/OpenGL로 렌더링된 산업용 장비 화면도 분석 가능합니다.
+
+- **목적**: Custom Graphics UI 요소 탐지 (DirectX/OpenGL 지원)
+- **접근 방식**: YOLO + Florence-2 기반 비전 파싱
+- **장점**: 구조화된 JSON 출력, 빠른 속도 (0.6초/프레임), 오프라인 동작
+- **단점**: GPU 필요 (최소 8GB VRAM), 초기 셋업 복잡
+- **용도**: CD-SEM/VeritySEM 등 산업용 장비 화면 분석
+- **라이선스**: MIT (caption) + AGPL-3.0 (detection)
+- **상세 문서**: [04-microsoft-vision-tools.md](04-microsoft-vision-tools.md)
+
+### 6.2 WinAppDriver
+**Windows 애플리케이션 자동화 프레임워크**입니다. WebDriver 프로토콜 기반으로 Selenium과 유사한 API를 제공합니다.
+
+- **목적**: Windows 애플리케이션 자동화 (UWP, WinForms, WPF, Win32)
+- **접근 방식**: W3C WebDriver 프로토콜
+- **장점**: Selenium 경험 활용 가능, CI/CD 통합 용이
+- **용도**: PyWinAuto 대안, 테스트 자동화
+- **라이선스**: MIT
+- **상세 문서**: [05-microsoft-automation-ecosystem.md](05-microsoft-automation-ecosystem.md)
+
+### 6.3 도구 선택 가이드
+
+| 상황 | 권장 도구 | 비고 |
+|------|-----------|------|
+| 표준 Windows UI | PyWinAuto | 가장 빠르고 안정적 |
+| Custom DirectX/OpenGL UI | **OmniParser** | Custom Graphics 문제 해결 |
+| 복잡한 의미 판단 필요 | VLM (Qwen/GPT-4V) | 느리지만 유연 |
+| 하이브리드 접근 | PyWinAuto + OmniParser + VLM | 최고 성공률 (95%) |
+
+자세한 통합 패턴은 [06-hybrid-automation-patterns.md](06-hybrid-automation-patterns.md)를 참조하세요.

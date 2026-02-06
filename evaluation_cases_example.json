@@ -1,0 +1,157 @@
+{
+  "description": "RAG 시스템 평가 케이스 예시",
+  "version": "1.0",
+  "created_at": "2026-02-07",
+  "cases": [
+    {
+      "case_id": "rcs_login_001",
+      "screenshot_path": "/path/to/screenshots/rcs_login_01.png",
+      "expected_state": "rcs_login_dialog",
+      "query_text": "RCS 로그인 화면",
+      "description": "RCS 로그인 대화상자 - 서버, 사용자명, 비밀번호 입력 필드"
+    },
+    {
+      "case_id": "rcs_login_002",
+      "screenshot_path": "/path/to/screenshots/rcs_login_02.png",
+      "expected_state": "rcs_connection_error",
+      "query_text": "RCS 연결 오류",
+      "description": "RCS 서버 연결 실패 에러 메시지"
+    },
+    {
+      "case_id": "rcs_main_menu_001",
+      "screenshot_path": "/path/to/screenshots/rcs_main_menu_01.png",
+      "expected_state": "rcs_main_menu",
+      "query_text": "RCS 메인 메뉴",
+      "description": "RCS 메인 화면 - 레시피 관리, 측정 시작 버튼"
+    },
+    {
+      "case_id": "recipe_editor_001",
+      "screenshot_path": "/path/to/screenshots/recipe_editor_01.png",
+      "expected_state": "recipe_editor",
+      "query_text": "레시피 편집기",
+      "description": "레시피 편집 화면 - 측정 파라미터 설정"
+    },
+    {
+      "case_id": "recipe_editor_002",
+      "screenshot_path": "/path/to/screenshots/recipe_editor_02.png",
+      "expected_state": "recipe_save_dialog",
+      "query_text": "레시피 저장",
+      "description": "레시피 저장 대화상자 - 이름 입력 및 확인 버튼"
+    },
+    {
+      "case_id": "measurement_running_001",
+      "screenshot_path": "/path/to/screenshots/measurement_running_01.png",
+      "expected_state": "measurement_in_progress",
+      "query_text": "측정 진행 중",
+      "description": "측정 진행 화면 - 진행률 바 및 실시간 이미지"
+    },
+    {
+      "case_id": "measurement_result_001",
+      "screenshot_path": "/path/to/screenshots/measurement_result_01.png",
+      "expected_state": "measurement_success",
+      "query_text": "측정 완료",
+      "description": "측정 성공 결과 화면 - 측정값 표시"
+    },
+    {
+      "case_id": "measurement_result_002",
+      "screenshot_path": "/path/to/screenshots/measurement_result_02.png",
+      "expected_state": "measurement_failed",
+      "query_text": "측정 실패",
+      "description": "측정 실패 화면 - 에러 메시지 및 재시도 버튼"
+    },
+    {
+      "case_id": "pattern_mismatch_001",
+      "screenshot_path": "/path/to/screenshots/pattern_mismatch_01.png",
+      "expected_state": "pattern_mismatch_error",
+      "query_text": "패턴 불일치 에러",
+      "description": "패턴 인식 실패 에러 - 위치 조정 필요"
+    },
+    {
+      "case_id": "focus_error_001",
+      "screenshot_path": "/path/to/screenshots/focus_error_01.png",
+      "expected_state": "focus_error",
+      "query_text": "초점 에러",
+      "description": "초점 조정 에러 - 자동 초점 재시도"
+    },
+    {
+      "case_id": "settings_dialog_001",
+      "screenshot_path": "/path/to/screenshots/settings_dialog_01.png",
+      "expected_state": "settings_dialog",
+      "query_text": "설정 대화상자",
+      "description": "시스템 설정 화면 - 각종 파라미터 조정"
+    },
+    {
+      "case_id": "help_dialog_001",
+      "screenshot_path": "/path/to/screenshots/help_dialog_01.png",
+      "expected_state": "help_dialog",
+      "query_text": "도움말",
+      "description": "도움말 대화상자 - 사용 방법 안내"
+    },
+    {
+      "case_id": "confirmation_dialog_001",
+      "screenshot_path": "/path/to/screenshots/confirmation_dialog_01.png",
+      "expected_state": "confirmation_dialog",
+      "query_text": "확인 대화상자",
+      "description": "작업 확인 대화상자 - 예/아니오 선택"
+    },
+    {
+      "case_id": "loading_screen_001",
+      "screenshot_path": "/path/to/screenshots/loading_screen_01.png",
+      "expected_state": "loading_screen",
+      "query_text": "로딩 화면",
+      "description": "애플리케이션 로딩 화면 - 스플래시 스크린"
+    },
+    {
+      "case_id": "about_dialog_001",
+      "screenshot_path": "/path/to/screenshots/about_dialog_01.png",
+      "expected_state": "about_dialog",
+      "query_text": "정보 대화상자",
+      "description": "애플리케이션 정보 - 버전, 라이선스 정보"
+    },
+    {
+      "case_id": "unknown_state_001",
+      "screenshot_path": "/path/to/screenshots/unknown_state_01.png",
+      "expected_state": "unknown",
+      "query_text": "알 수 없는 화면",
+      "description": "미등록 상태 - VLM이 새로운 화면을 어떻게 처리하는지 평가"
+    },
+    {
+      "case_id": "partial_overlap_001",
+      "screenshot_path": "/path/to/screenshots/partial_overlap_01.png",
+      "expected_state": "rcs_login_dialog",
+      "query_text": "부분 가려진 RCS 로그인",
+      "description": "다른 창에 부분적으로 가려진 RCS 로그인 화면"
+    },
+    {
+      "case_id": "low_contrast_001",
+      "screenshot_path": "/path/to/screenshots/low_contrast_01.png",
+      "expected_state": "measurement_in_progress",
+      "query_text": "저대비 측정 화면",
+      "description": "화면 밝기가 낮거나 대비가 약한 측정 화면"
+    },
+    {
+      "case_id": "multilingual_001",
+      "screenshot_path": "/path/to/screenshots/multilingual_01.png",
+      "expected_state": "settings_dialog",
+      "query_text": "영어 설정 화면",
+      "description": "영어로 표시된 설정 화면 - 다국어 지원 평가"
+    },
+    {
+      "case_id": "complex_layout_001",
+      "screenshot_path": "/path/to/screenshots/complex_layout_01.png",
+      "expected_state": "recipe_editor",
+      "query_text": "복잡한 레시피 편집기",
+      "description": "많은 UI 요소와 중첩된 레이아웃을 가진 레시피 편집기"
+    }
+  ],
+  "notes": [
+    "실제 사용 시에는 screenshot_path를 실제 스크린샷 파일 경로로 변경하세요",
+    "expected_state는 시스템이 인식해야 할 정확한 상태 ID입니다",
+    "query_text는 RAG 텍스트 검색에 사용되는 쿼리입니다",
+    "평가 케이스는 다양한 시나리오를 포함해야 합니다:",
+    "  - 정상 상태 (로그인, 메인 메뉴, 레시피 편집 등)",
+    "  - 에러 상태 (연결 실패, 측정 실패, 패턴 불일치 등)",
+    "  - 대화상자 (설정, 도움말, 확인 등)",
+    "  - 엣지 케이스 (미등록 상태, 부분 가려짐, 저대비, 다국어 등)"
+  ]
+}

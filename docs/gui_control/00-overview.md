@@ -33,6 +33,7 @@ ARC(Auto Recipe Creator)는 **VLM(Vision Language Model)**을 통해 화면을 "
 - **[01-modern-libraries.md](01-modern-libraries.md)** - 주요 라이브러리 소개 (PyWinAuto, Pynput, VLM 등)
 - **[02-capabilities-and-limitations.md](02-capabilities-and-limitations.md)** - 가능한 것과 한계점
 - **[03-automation-strategies.md](03-automation-strategies.md)** - RCS 자동화 전략
+- **[07-cpu-based-poc.md](07-cpu-based-poc.md)** - CPU 기반 PoC 및 ROI 분석 (Tier 1 전략)
 
 ### Microsoft 도구 (2025+)
 - **[04-microsoft-vision-tools.md](04-microsoft-vision-tools.md)** - OmniParser, Florence-2, Phi-4 Vision
@@ -53,7 +54,8 @@ ARC(Auto Recipe Creator)는 **VLM(Vision Language Model)**을 통해 화면을 "
 **초급 (현재 ARC 프로젝트 수준)**:
 1. [00-overview.md](00-overview.md) - 기본 개념 이해
 2. [01-modern-libraries.md](01-modern-libraries.md) - PyWinAuto, VLM 학습
-3. [03-automation-strategies.md](03-automation-strategies.md) - RCS 적용 방법
+3. [07-cpu-based-poc.md](07-cpu-based-poc.md) - 기술 검증 및 ROI 이해
+4. [03-automation-strategies.md](03-automation-strategies.md) - RCS 적용 방법
 
 **중급 (Custom Graphics 문제 해결)**:
 4. [02-capabilities-and-limitations.md](02-capabilities-and-limitations.md) - Section 2.3 주목

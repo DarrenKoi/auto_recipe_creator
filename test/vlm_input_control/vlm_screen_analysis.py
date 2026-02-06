@@ -37,6 +37,8 @@ class VLMProvider(Enum):
     OPENAI_GPT4V = "openai_gpt4v"
     ANTHROPIC_CLAUDE = "anthropic_claude"
     LOCAL = "local"
+    KIMI_2 = "kimi_2"          # Moonshot AI Kimi 2 (회사 내부 API)
+    QWEN3_VL = "qwen3_vl"      # Qwen3-VL (회사 내부 API)
 
 
 @dataclass
@@ -70,7 +72,10 @@ class VLMScreenAnalyzer:
         provider: VLMProvider = VLMProvider.QWEN_VL,
         api_key: Optional[str] = None,
         api_base_url: Optional[str] = None,
-        model_name: Optional[str] = None
+        model_name: Optional[str] = None,
+        rag_manager: Optional[Any] = None,
+        rag_prompt_builder: Optional[Any] = None,
+        use_rag: bool = False
     ):
         """
         Args:
@@ -78,11 +83,19 @@ class VLMScreenAnalyzer:
             api_key: API 키 (환경변수에서도 읽음)
             api_base_url: API 기본 URL (로컬 서버 등)
             model_name: 사용할 모델 이름
+            rag_manager: RAGContextManager 인스턴스 (옵션)
+            rag_prompt_builder: RAGPromptBuilder 인스턴스 (옵션)
+            use_rag: RAG 사용 여부
         """
         self.provider = provider
         self.api_key = api_key or os.environ.get("VLM_API_KEY")
         self.api_base_url = api_base_url or os.environ.get("VLM_API_BASE_URL")
         self.model_name = model_name
+
+        # RAG 관련
+        self.rag_manager = rag_manager
+        self.rag_prompt_builder = rag_prompt_builder
+        self.use_rag = use_rag and rag_manager is not None
 
         # 기본 모델 설정
         if not self.model_name:
@@ -91,7 +104,8 @@ class VLMScreenAnalyzer:
         # 상태 정의 템플릿 (RAG/규칙 기반 보완용)
         self.state_definitions: Dict[str, Dict] = {}
 
-        print(f"[INFO] VLMScreenAnalyzer 초기화 - Provider: {provider.value}")
+        rag_status = "활성화" if self.use_rag else "비활성화"
+        print(f"[INFO] VLMScreenAnalyzer 초기화 - Provider: {provider.value}, RAG: {rag_status}")
 
     def _set_default_model(self):
         """제공자별 기본 모델 설정"""
@@ -99,7 +113,9 @@ class VLMScreenAnalyzer:
             VLMProvider.QWEN_VL: "qwen-vl-max",
             VLMProvider.OPENAI_GPT4V: "gpt-4-vision-preview",
             VLMProvider.ANTHROPIC_CLAUDE: "claude-3-opus-20240229",
-            VLMProvider.LOCAL: "local-vlm"
+            VLMProvider.LOCAL: "local-vlm",
+            VLMProvider.KIMI_2: "moonshot-v1-vision",
+            VLMProvider.QWEN3_VL: "qwen3-vl-plus"
         }
         self.model_name = default_models.get(self.provider, "default")
 
@@ -117,9 +133,21 @@ class VLMScreenAnalyzer:
         """이미지를 Base64로 인코딩합니다."""
         return base64.b64encode(image_data).decode('utf-8')
 
-    def _build_analysis_prompt(self, task: str = "state_recognition") -> str:
-        """분석 프롬프트를 생성합니다."""
+    def _build_analysis_prompt(
+        self,
+        task: str = "state_recognition",
+        rag_context: Optional[Any] = None
+    ) -> str:
+        """
+        분석 프롬프트를 생성합니다.
 
+        Args:
+            task: 작업 타입
+            rag_context: RAGContext (옵션)
+
+        Returns:
+            프롬프트 문자열
+        """
         state_context = ""
         if self.state_definitions:
             state_list = "\n".join([
@@ -128,7 +156,7 @@ class VLMScreenAnalyzer:
             ])
             state_context = f"\n\n알려진 상태 목록:\n{state_list}"
 
-        prompts = {
+        base_prompts = {
             "state_recognition": f"""당신은 GUI 화면 분석 전문가입니다. 주어진 스크린샷을 분석하여 현재 화면의 상태를 파악해주세요.
 
 다음 정보를 JSON 형식으로 반환해주세요:
@@ -170,22 +198,53 @@ class VLMScreenAnalyzer:
 답변은 명확하고 간결하게 해주세요."""
         }
 
-        return prompts.get(task, prompts["general_query"])
+        base_prompt = base_prompts.get(task, base_prompts["general_query"])
 
-    def analyze_screen(self, image_data: bytes, task: str = "state_recognition") -> Optional[ScreenAnalysisResult]:
+        # RAG 컨텍스트로 프롬프트 증강
+        if rag_context and self.rag_prompt_builder:
+            print("[INFO] RAG 컨텍스트로 프롬프트 증강 중...")
+            return self.rag_prompt_builder.build_rag_augmented_prompt(
+                base_prompt, rag_context
+            )
+
+        return base_prompt
+
+    def analyze_screen(
+        self,
+        image_data: bytes,
+        task: str = "state_recognition",
+        query_text: Optional[str] = None
+    ) -> Optional[ScreenAnalysisResult]:
         """
         화면을 분석하여 상태를 인식합니다.
 
         Args:
             image_data: PNG 이미지 바이트 데이터
             task: 분석 작업 유형 (state_recognition, measurement_judgment)
+            query_text: RAG 텍스트 쿼리 (옵션)
 
         Returns:
             ScreenAnalysisResult 또는 None
         """
         start_time = time.time()
 
-        prompt = self._build_analysis_prompt(task)
+        # RAG 컨텍스트 검색 (활성화된 경우)
+        rag_context = None
+        if self.use_rag and self.rag_manager:
+            print("[INFO] RAG 컨텍스트 검색 중...")
+            try:
+                rag_context = self.rag_manager.retrieve_context(
+                    current_screen=image_data,
+                    query_text=query_text,
+                    top_k=3
+                )
+                print(f"[INFO] RAG 검색 완료: {len(rag_context.similar_frames)}개 프레임, "
+                      f"{len(rag_context.action_sequences)}개 작업 시퀀스")
+            except Exception as e:
+                print(f"[WARNING] RAG 컨텍스트 검색 실패: {e}")
+                rag_context = None
+
+        prompt = self._build_analysis_prompt(task, rag_context)
 
         # API 호출
         response = self._call_vlm_api(image_data, prompt)
@@ -291,6 +350,10 @@ class VLMScreenAnalyzer:
             return self._call_openai_api(image_data, prompt)
         elif self.provider == VLMProvider.QWEN_VL:
             return self._call_qwen_api(image_data, prompt)
+        elif self.provider == VLMProvider.KIMI_2:
+            return self._call_kimi_2_api(image_data, prompt)
+        elif self.provider == VLMProvider.QWEN3_VL:
+            return self._call_qwen3_vl_api(image_data, prompt)
         elif self.provider == VLMProvider.LOCAL:
             return self._call_local_api(image_data, prompt)
         else:
@@ -382,6 +445,135 @@ class VLMScreenAnalyzer:
 
         except Exception as e:
             print(f"[ERROR] Qwen API 호출 실패: {e}")
+            return self._get_mock_response(prompt)
+
+    def _call_kimi_2_api(self, image_data: bytes, prompt: str) -> Optional[str]:
+        """
+        Kimi 2 API 호출 (Moonshot AI)
+
+        회사 내부 API 엔드포인트 사용
+        Rate Limit: 1 request / 3 seconds
+        """
+        if not REQUESTS_AVAILABLE:
+            print("[ERROR] requests 라이브러리를 사용할 수 없습니다.")
+            return None
+
+        if not self.api_base_url:
+            print("[ERROR] Kimi 2 API URL이 설정되지 않음")
+            return self._get_mock_response(prompt)
+
+        # Kimi 2는 OpenAI 호환 형식 사용
+        try:
+            image_base64 = base64.b64encode(image_data).decode('utf-8')
+
+            # 이미지 포맷 감지 (WebP 또는 PNG)
+            image_format = "png"
+            if image_data[:4] == b'RIFF' and image_data[8:12] == b'WEBP':
+                image_format = "webp"
+
+            headers = {
+                "Content-Type": "application/json",
+            }
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+
+            payload = {
+                "model": self.model_name or "moonshot-v1-vision",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/{image_format};base64,{image_base64}"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "temperature": 0.1,
+                "max_tokens": 2000
+            }
+
+            response = requests.post(
+                f"{self.api_base_url}/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=60
+            )
+
+            response.raise_for_status()
+            result = response.json()
+            return result["choices"][0]["message"]["content"]
+
+        except Exception as e:
+            print(f"[ERROR] Kimi 2 API 호출 실패: {e}")
+            return self._get_mock_response(prompt)
+
+    def _call_qwen3_vl_api(self, image_data: bytes, prompt: str) -> Optional[str]:
+        """
+        Qwen3-VL API 호출
+
+        Qwen-VL과 유사하지만 개선된 비전 이해 능력
+        Rate Limit: 1 request / 1 second
+        """
+        if not REQUESTS_AVAILABLE:
+            print("[ERROR] requests 라이브러리를 사용할 수 없습니다.")
+            return None
+
+        if not self.api_base_url:
+            print("[ERROR] Qwen3-VL API URL이 설정되지 않음")
+            return self._get_mock_response(prompt)
+
+        # Qwen3-VL도 OpenAI 호환 형식
+        try:
+            image_base64 = base64.b64encode(image_data).decode('utf-8')
+
+            # 이미지 포맷 감지 (WebP 또는 PNG)
+            image_format = "png"
+            if image_data[:4] == b'RIFF' and image_data[8:12] == b'WEBP':
+                image_format = "webp"
+
+            headers = {
+                "Content-Type": "application/json",
+            }
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+
+            payload = {
+                "model": self.model_name or "qwen3-vl-plus",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/{image_format};base64,{image_base64}"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "temperature": 0.1
+            }
+
+            response = requests.post(
+                f"{self.api_base_url}/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=60
+            )
+
+            response.raise_for_status()
+            result = response.json()
+            return result["choices"][0]["message"]["content"]
+
+        except Exception as e:
+            print(f"[ERROR] Qwen3-VL API 호출 실패: {e}")
             return self._get_mock_response(prompt)
 
     def _call_local_api(self, image_data: bytes, prompt: str) -> Optional[str]:

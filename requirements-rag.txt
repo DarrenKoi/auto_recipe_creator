@@ -1,0 +1,20 @@
+# RAG System Dependencies for CCTV-Based Screen Understanding
+
+# OCR - Text extraction from frames
+easyocr>=1.7.0
+pytesseract>=0.3.10
+
+# Text Embeddings - Semantic search
+sentence-transformers>=2.2.2
+transformers>=4.35.0
+
+# Image Processing - Action extraction and UI detection
+scikit-image>=0.21.0
+opencv-contrib-python>=4.8.0
+
+# Optional: Object Detection (YOLO-based UI element detection)
+ultralytics>=8.0.0
+
+# Utilities
+tqdm>=4.66.0
+python-dateutil>=2.8.2

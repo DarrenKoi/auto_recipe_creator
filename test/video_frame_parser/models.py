@@ -243,3 +243,234 @@ class BatchResult:
         if self.total_time_seconds == 0:
             return 0.0
         return self.processed_frames / self.total_time_seconds
+
+
+@dataclass
+class OCRResult:
+    """OCR 추출 결과"""
+
+    ocr_id: str  # 고유 ID
+    frame_id: str  # 연결된 프레임 ID
+    text: str  # 추출된 텍스트
+    language: str  # 언어 코드 ("en", "ko", "mixed")
+    confidence: float  # 신뢰도 점수 (0.0 ~ 1.0)
+    bbox: List[int]  # 바운딩 박스 [x1, y1, x2, y2]
+
+    # 메타데이터
+    extracted_at: datetime = field(default_factory=datetime.now)
+    ocr_model: str = "easyocr"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """MongoDB 저장용 딕셔너리 변환"""
+        return {
+            "ocr_id": self.ocr_id,
+            "frame_id": self.frame_id,
+            "text": self.text,
+            "language": self.language,
+            "confidence": self.confidence,
+            "bbox": self.bbox,
+            "extracted_at": self.extracted_at.isoformat(),
+            "ocr_model": self.ocr_model,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "OCRResult":
+        """딕셔너리에서 객체 생성"""
+        data = data.copy()
+        if isinstance(data.get("extracted_at"), str):
+            data["extracted_at"] = datetime.fromisoformat(data["extracted_at"])
+        return cls(**data)
+
+
+@dataclass
+class ActionSequence:
+    """작업 시퀀스 (CCTV에서 추출된 전문가 작업)"""
+
+    action_id: str  # 고유 ID
+    video_id: str  # 원본 비디오 ID
+    start_frame_id: str  # 시작 프레임 ID
+    end_frame_id: str  # 종료 프레임 ID
+    start_time: float  # 시작 시간 (초)
+    end_time: float  # 종료 시간 (초)
+    actions: List[Dict[str, Any]]  # 작업 목록 [{type, x, y, text, timestamp}, ...]
+    description: str  # 작업 설명
+    success: bool  # 성공 여부
+
+    # 메타데이터
+    extracted_at: datetime = field(default_factory=datetime.now)
+    extraction_method: str = "manual"  # "manual", "automated", "hybrid"
+    confidence: float = 1.0  # 추출 신뢰도
+
+    # 추가 정보
+    error_type: Optional[str] = None  # 실패 시 에러 타입
+    recovery_action: Optional[str] = None  # 복구 작업
+
+    def to_dict(self) -> Dict[str, Any]:
+        """MongoDB 저장용 딕셔너리 변환"""
+        return {
+            "action_id": self.action_id,
+            "video_id": self.video_id,
+            "start_frame_id": self.start_frame_id,
+            "end_frame_id": self.end_frame_id,
+            "start_time": self.start_time,
+            "end_time": self.end_time,
+            "actions": self.actions,
+            "description": self.description,
+            "success": self.success,
+            "extracted_at": self.extracted_at.isoformat(),
+            "extraction_method": self.extraction_method,
+            "confidence": self.confidence,
+            "error_type": self.error_type,
+            "recovery_action": self.recovery_action,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ActionSequence":
+        """딕셔너리에서 객체 생성"""
+        data = data.copy()
+        if isinstance(data.get("extracted_at"), str):
+            data["extracted_at"] = datetime.fromisoformat(data["extracted_at"])
+        return cls(**data)
+
+
+@dataclass
+class ErrorPattern:
+    """에러 패턴"""
+
+    error_id: str  # 고유 ID
+    frame_id: str  # 연결된 프레임 ID
+    error_type: str  # 에러 타입 ("connection", "authentication", "timeout", "ui_error", etc.)
+    error_message: str  # 에러 메시지
+    severity: str  # 심각도 ("low", "medium", "high", "critical")
+    recovery_action: str  # 복구 작업 설명
+    bbox: List[int]  # 에러 메시지 위치 [x1, y1, x2, y2]
+    detected_method: str  # 감지 방법 ("color", "vlm", "color+vlm")
+
+    # 메타데이터
+    detected_at: datetime = field(default_factory=datetime.now)
+    confidence: float = 1.0  # 감지 신뢰도
+
+    # 추가 정보
+    associated_action_id: Optional[str] = None  # 연결된 작업 시퀀스 ID
+    occurred_count: int = 1  # 발생 횟수
+
+    def to_dict(self) -> Dict[str, Any]:
+        """MongoDB 저장용 딕셔너리 변환"""
+        return {
+            "error_id": self.error_id,
+            "frame_id": self.frame_id,
+            "error_type": self.error_type,
+            "error_message": self.error_message,
+            "severity": self.severity,
+            "recovery_action": self.recovery_action,
+            "bbox": self.bbox,
+            "detected_method": self.detected_method,
+            "detected_at": self.detected_at.isoformat(),
+            "confidence": self.confidence,
+            "associated_action_id": self.associated_action_id,
+            "occurred_count": self.occurred_count,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ErrorPattern":
+        """딕셔너리에서 객체 생성"""
+        data = data.copy()
+        if isinstance(data.get("detected_at"), str):
+            data["detected_at"] = datetime.fromisoformat(data["detected_at"])
+        return cls(**data)
+
+
+@dataclass
+class UIElement:
+    """UI 요소"""
+
+    element_id: str  # 고유 ID
+    frame_id: str  # 연결된 프레임 ID
+    element_type: str  # 요소 타입 ("button", "input", "label", "dropdown", "checkbox", etc.)
+    label: str  # 요소 라벨/텍스트
+    bbox: List[int]  # 바운딩 박스 [x1, y1, x2, y2]
+    confidence: float  # 감지 신뢰도
+    detection_method: str  # 감지 방법 ("vlm", "yolo", "traditional_cv")
+
+    # 메타데이터
+    detected_at: datetime = field(default_factory=datetime.now)
+
+    # 추가 속성
+    is_clickable: bool = True  # 클릭 가능 여부
+    is_visible: bool = True  # 표시 여부
+    state: Optional[str] = None  # 상태 ("enabled", "disabled", "focused", etc.)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """MongoDB 저장용 딕셔너리 변환"""
+        return {
+            "element_id": self.element_id,
+            "frame_id": self.frame_id,
+            "element_type": self.element_type,
+            "label": self.label,
+            "bbox": self.bbox,
+            "confidence": self.confidence,
+            "detection_method": self.detection_method,
+            "detected_at": self.detected_at.isoformat(),
+            "is_clickable": self.is_clickable,
+            "is_visible": self.is_visible,
+            "state": self.state,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "UIElement":
+        """딕셔너리에서 객체 생성"""
+        data = data.copy()
+        if isinstance(data.get("detected_at"), str):
+            data["detected_at"] = datetime.fromisoformat(data["detected_at"])
+        return cls(**data)
+
+
+@dataclass
+class RAGContext:
+    """RAG 검색 컨텍스트"""
+
+    similar_frames: List[FrameData]  # 시각적으로 유사한 프레임 (Top-K)
+    action_sequences: List[ActionSequence]  # 전문가 작업 시퀀스
+    error_patterns: List[ErrorPattern]  # 에러 패턴
+    ui_elements: List[UIElement]  # 감지된 UI 요소
+    temporal_frames: List[FrameData]  # 시간적 전후 컨텍스트
+    retrieval_scores: List[float]  # 검색 신뢰도 점수
+    retrieval_time_ms: float  # 검색 소요 시간 (밀리초)
+
+    # 검색 메타데이터
+    query_frame_id: Optional[str] = None  # 쿼리 프레임 ID
+    query_text: Optional[str] = None  # 쿼리 텍스트
+    retrieval_method: str = "hybrid"  # "visual", "text", "hybrid"
+    top_k: int = 3  # 검색된 프레임 수
+
+    # OCR 결과 (옵션)
+    ocr_results: List[OCRResult] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """MongoDB 저장용 딕셔너리 변환"""
+        return {
+            "similar_frames": [f.to_dict() for f in self.similar_frames],
+            "action_sequences": [a.to_dict() for a in self.action_sequences],
+            "error_patterns": [e.to_dict() for e in self.error_patterns],
+            "ui_elements": [u.to_dict() for u in self.ui_elements],
+            "temporal_frames": [f.to_dict() for f in self.temporal_frames],
+            "retrieval_scores": self.retrieval_scores,
+            "retrieval_time_ms": self.retrieval_time_ms,
+            "query_frame_id": self.query_frame_id,
+            "query_text": self.query_text,
+            "retrieval_method": self.retrieval_method,
+            "top_k": self.top_k,
+            "ocr_results": [o.to_dict() for o in self.ocr_results],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "RAGContext":
+        """딕셔너리에서 객체 생성"""
+        data = data.copy()
+        data["similar_frames"] = [FrameData.from_dict(f) for f in data.get("similar_frames", [])]
+        data["action_sequences"] = [ActionSequence.from_dict(a) for a in data.get("action_sequences", [])]
+        data["error_patterns"] = [ErrorPattern.from_dict(e) for e in data.get("error_patterns", [])]
+        data["ui_elements"] = [UIElement.from_dict(u) for u in data.get("ui_elements", [])]
+        data["temporal_frames"] = [FrameData.from_dict(f) for f in data.get("temporal_frames", [])]
+        data["ocr_results"] = [OCRResult.from_dict(o) for o in data.get("ocr_results", [])]
+        return cls(**data)

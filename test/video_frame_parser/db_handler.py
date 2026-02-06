@@ -24,7 +24,10 @@ except ImportError:
     FAISS_AVAILABLE = False
 
 from .config import DatabaseConfig
-from .models import VideoMetadata, FrameData, AnalysisResult, AnalysisStatus
+from .models import (
+    VideoMetadata, FrameData, AnalysisResult, AnalysisStatus,
+    OCRResult, ActionSequence, ErrorPattern, UIElement
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +48,11 @@ class DatabaseHandler:
         self._embedding_dim = 512  # 기본 CLIP 임베딩 차원
         self._id_mapping: Dict[int, str] = {}  # FAISS ID -> frame_id 매핑
         self._initialized = False
+
+        # RAG 관련 추가 인덱스
+        self._text_faiss_index = None  # 텍스트 임베딩용 FAISS 인덱스
+        self._text_embedding_dim = 1024  # bge-m3 임베딩 차원
+        self._text_id_mapping: Dict[int, str] = {}  # FAISS ID -> text_id 매핑
 
     def initialize(self, embedding_dim: int = 512) -> None:
         """데이터베이스 초기화"""
@@ -106,6 +114,48 @@ class DatabaseHandler:
             IndexModel([("frame_id", ASCENDING)]),
             IndexModel([("video_id", ASCENDING)]),
             IndexModel([("status", ASCENDING)]),
+        ])
+
+        # RAG 관련 컬렉션 인덱스
+        # OCR 결과 인덱스
+        ocr = self._db["ocr_results"]
+        ocr.create_indexes([
+            IndexModel([("ocr_id", ASCENDING)], unique=True),
+            IndexModel([("frame_id", ASCENDING)]),
+            IndexModel([("confidence", DESCENDING)]),
+        ])
+
+        # 작업 시퀀스 인덱스
+        actions = self._db["action_sequences"]
+        actions.create_indexes([
+            IndexModel([("action_id", ASCENDING)], unique=True),
+            IndexModel([("video_id", ASCENDING)]),
+            IndexModel([("start_time", ASCENDING)]),
+            IndexModel([("success", ASCENDING)]),
+        ])
+
+        # 에러 패턴 인덱스
+        errors = self._db["error_patterns"]
+        errors.create_indexes([
+            IndexModel([("error_id", ASCENDING)], unique=True),
+            IndexModel([("frame_id", ASCENDING)]),
+            IndexModel([("error_type", ASCENDING)]),
+            IndexModel([("severity", ASCENDING)]),
+        ])
+
+        # UI 요소 인덱스
+        ui_elements = self._db["ui_elements"]
+        ui_elements.create_indexes([
+            IndexModel([("element_id", ASCENDING)], unique=True),
+            IndexModel([("frame_id", ASCENDING)]),
+            IndexModel([("element_type", ASCENDING)]),
+        ])
+
+        # 텍스트 임베딩 인덱스
+        text_embeddings = self._db["text_embeddings"]
+        text_embeddings.create_indexes([
+            IndexModel([("text_id", ASCENDING)], unique=True),
+            IndexModel([("frame_id", ASCENDING)]),
         ])
 
     def _init_faiss(self) -> None:
@@ -498,6 +548,352 @@ class DatabaseHandler:
                     return self._faiss_index.reconstruct(idx)
         return None
 
+    # ========== RAG-specific Operations ==========
+
+    def save_ocr_results_batch(self, ocr_results: List[OCRResult]) -> int:
+        """OCR 결과 배치 저장"""
+        if not MONGO_AVAILABLE or self._db is None or not ocr_results:
+            return 0
+
+        collection = self._db["ocr_results"]
+        operations = []
+
+        from pymongo import UpdateOne
+        for ocr in ocr_results:
+            operations.append(
+                UpdateOne(
+                    {"ocr_id": ocr.ocr_id},
+                    {"$set": ocr.to_dict()},
+                    upsert=True
+                )
+            )
+
+        result = collection.bulk_write(operations)
+        return result.upserted_count + result.modified_count
+
+    def get_ocr_results_by_frame(self, frame_id: str) -> List[OCRResult]:
+        """프레임의 OCR 결과 조회"""
+        if not MONGO_AVAILABLE or self._db is None:
+            return []
+
+        collection = self._db["ocr_results"]
+        cursor = collection.find({"frame_id": frame_id})
+
+        results = []
+        for doc in cursor:
+            doc.pop("_id", None)
+            results.append(OCRResult.from_dict(doc))
+
+        return results
+
+    def save_action_sequence(self, action: ActionSequence) -> str:
+        """작업 시퀀스 저장"""
+        if not MONGO_AVAILABLE or self._db is None:
+            return action.action_id
+
+        collection = self._db["action_sequences"]
+        doc = action.to_dict()
+
+        collection.update_one(
+            {"action_id": action.action_id},
+            {"$set": doc},
+            upsert=True
+        )
+
+        return action.action_id
+
+    def get_action_sequences_by_video(self, video_id: str) -> List[ActionSequence]:
+        """비디오의 작업 시퀀스 조회"""
+        if not MONGO_AVAILABLE or self._db is None:
+            return []
+
+        collection = self._db["action_sequences"]
+        cursor = collection.find({"video_id": video_id}).sort("start_time", ASCENDING)
+
+        results = []
+        for doc in cursor:
+            doc.pop("_id", None)
+            results.append(ActionSequence.from_dict(doc))
+
+        return results
+
+    def get_action_sequences_by_frame(self, frame_id: str) -> List[ActionSequence]:
+        """특정 프레임과 연관된 작업 시퀀스 조회"""
+        if not MONGO_AVAILABLE or self._db is None:
+            return []
+
+        collection = self._db["action_sequences"]
+        cursor = collection.find({
+            "$or": [
+                {"start_frame_id": frame_id},
+                {"end_frame_id": frame_id}
+            ]
+        })
+
+        results = []
+        for doc in cursor:
+            doc.pop("_id", None)
+            results.append(ActionSequence.from_dict(doc))
+
+        return results
+
+    def save_error_patterns_batch(self, errors: List[ErrorPattern]) -> int:
+        """에러 패턴 배치 저장"""
+        if not MONGO_AVAILABLE or self._db is None or not errors:
+            return 0
+
+        collection = self._db["error_patterns"]
+        operations = []
+
+        from pymongo import UpdateOne
+        for error in errors:
+            operations.append(
+                UpdateOne(
+                    {"error_id": error.error_id},
+                    {"$set": error.to_dict()},
+                    upsert=True
+                )
+            )
+
+        result = collection.bulk_write(operations)
+        return result.upserted_count + result.modified_count
+
+    def get_error_patterns_by_frame(self, frame_id: str) -> List[ErrorPattern]:
+        """프레임의 에러 패턴 조회"""
+        if not MONGO_AVAILABLE or self._db is None:
+            return []
+
+        collection = self._db["error_patterns"]
+        cursor = collection.find({"frame_id": frame_id})
+
+        results = []
+        for doc in cursor:
+            doc.pop("_id", None)
+            results.append(ErrorPattern.from_dict(doc))
+
+        return results
+
+    def save_ui_elements_batch(self, elements: List[UIElement]) -> int:
+        """UI 요소 배치 저장"""
+        if not MONGO_AVAILABLE or self._db is None or not elements:
+            return 0
+
+        collection = self._db["ui_elements"]
+        operations = []
+
+        from pymongo import UpdateOne
+        for element in elements:
+            operations.append(
+                UpdateOne(
+                    {"element_id": element.element_id},
+                    {"$set": element.to_dict()},
+                    upsert=True
+                )
+            )
+
+        result = collection.bulk_write(operations)
+        return result.upserted_count + result.modified_count
+
+    def get_ui_elements_by_frame(self, frame_id: str) -> List[UIElement]:
+        """프레임의 UI 요소 조회"""
+        if not MONGO_AVAILABLE or self._db is None:
+            return []
+
+        collection = self._db["ui_elements"]
+        cursor = collection.find({"frame_id": frame_id})
+
+        results = []
+        for doc in cursor:
+            doc.pop("_id", None)
+            results.append(UIElement.from_dict(doc))
+
+        return results
+
+    # ========== Text Embedding Operations ==========
+
+    def init_text_faiss_index(self, embedding_dim: int = 1024) -> None:
+        """텍스트 임베딩용 FAISS 인덱스 초기화"""
+        if not FAISS_AVAILABLE:
+            logger.warning("FAISS not available")
+            return
+
+        self._text_embedding_dim = embedding_dim
+
+        # IVF 인덱스 사용
+        quantizer = faiss.IndexFlatIP(self._text_embedding_dim)
+        self._text_faiss_index = faiss.IndexIVFFlat(
+            quantizer,
+            self._text_embedding_dim,
+            self.config.faiss_nlist,
+            faiss.METRIC_INNER_PRODUCT
+        )
+
+        logger.info(f"Text FAISS index initialized with dimension {embedding_dim}")
+
+        # 기존 인덱스 로드 시도
+        if self.config.faiss_index_path:
+            self._load_text_faiss_index()
+
+    def _load_text_faiss_index(self) -> bool:
+        """저장된 텍스트 FAISS 인덱스 로드"""
+        if not self.config.faiss_index_path:
+            return False
+
+        index_path = Path(self.config.faiss_index_path)
+        text_index_file = index_path / "text_index.faiss"
+
+        if not text_index_file.exists():
+            return False
+
+        try:
+            self._text_faiss_index = faiss.read_index(str(text_index_file))
+
+            # ID 매핑 로드
+            import pickle
+            mapping_path = index_path / "text_id_mapping.pkl"
+            if mapping_path.exists():
+                with open(mapping_path, "rb") as f:
+                    self._text_id_mapping = pickle.load(f)
+
+            logger.info(f"Loaded text FAISS index with {self._text_faiss_index.ntotal} vectors")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to load text FAISS index: {e}")
+            return False
+
+    def save_text_faiss_index(self) -> None:
+        """텍스트 FAISS 인덱스 저장"""
+        if not FAISS_AVAILABLE or self._text_faiss_index is None:
+            return
+
+        if not self.config.faiss_index_path:
+            return
+
+        index_path = Path(self.config.faiss_index_path)
+        index_path.mkdir(parents=True, exist_ok=True)
+
+        faiss.write_index(self._text_faiss_index, str(index_path / "text_index.faiss"))
+
+        # ID 매핑 저장
+        import pickle
+        with open(index_path / "text_id_mapping.pkl", "wb") as f:
+            pickle.dump(self._text_id_mapping, f)
+
+        logger.info(f"Saved text FAISS index with {self._text_faiss_index.ntotal} vectors")
+
+    def add_text_embeddings_batch(
+        self,
+        texts: List[str],
+        embeddings: np.ndarray,
+        frame_ids: List[str]
+    ) -> int:
+        """텍스트 임베딩 배치 추가
+
+        Args:
+            texts: 텍스트 리스트
+            embeddings: 임베딩 행렬 (N, 1024)
+            frame_ids: 프레임 ID 리스트
+
+        Returns:
+            추가된 임베딩 수
+        """
+        if not FAISS_AVAILABLE or self._text_faiss_index is None:
+            logger.warning("Text FAISS index not initialized")
+            return 0
+
+        if len(texts) != len(frame_ids) or len(texts) != len(embeddings):
+            logger.error("texts, embeddings, and frame_ids must have the same length")
+            return 0
+
+        # 정규화
+        embeddings = embeddings.astype('float32')
+        faiss.normalize_L2(embeddings)
+
+        # 인덱스 학습 (처음만)
+        if not self._text_faiss_index.is_trained:
+            if len(embeddings) < self.config.faiss_nlist:
+                logger.warning(f"Need at least {self.config.faiss_nlist} embeddings to train index")
+                return 0
+            self._text_faiss_index.train(embeddings)
+
+        # 임베딩 추가
+        start_id = self._text_faiss_index.ntotal
+        self._text_faiss_index.add(embeddings)
+
+        # MongoDB에 메타데이터 저장
+        if MONGO_AVAILABLE and self._db is not None:
+            collection = self._db["text_embeddings"]
+            from pymongo import UpdateOne
+            operations = []
+
+            for i, (text, frame_id) in enumerate(zip(texts, frame_ids)):
+                text_id = f"text_{start_id + i}"
+                self._text_id_mapping[start_id + i] = text_id
+
+                operations.append(
+                    UpdateOne(
+                        {"text_id": text_id},
+                        {"$set": {
+                            "text_id": text_id,
+                            "frame_id": frame_id,
+                            "text": text,
+                            "faiss_id": start_id + i
+                        }},
+                        upsert=True
+                    )
+                )
+
+            if operations:
+                collection.bulk_write(operations)
+
+        logger.debug(f"Added {len(embeddings)} text embeddings")
+        return len(embeddings)
+
+    def search_by_text(
+        self,
+        query_embedding: np.ndarray,
+        top_k: int = 3
+    ) -> List[Tuple[str, float]]:
+        """텍스트 임베딩으로 검색
+
+        Args:
+            query_embedding: 쿼리 임베딩 (1024-dim)
+            top_k: 반환할 결과 수
+
+        Returns:
+            (frame_id, similarity_score) 튜플 리스트
+        """
+        if not FAISS_AVAILABLE or self._text_faiss_index is None:
+            return []
+
+        if not self._text_faiss_index.is_trained:
+            logger.warning("Text FAISS index not trained yet")
+            return []
+
+        # 정규화
+        query_embedding = query_embedding.astype('float32').reshape(1, -1)
+        faiss.normalize_L2(query_embedding)
+
+        # 검색
+        self._text_faiss_index.nprobe = self.config.faiss_nprobe
+        distances, indices = self._text_faiss_index.search(query_embedding, top_k)
+
+        # 결과 변환
+        results = []
+        for dist, idx in zip(distances[0], indices[0]):
+            if idx == -1:
+                continue
+
+            text_id = self._text_id_mapping.get(idx)
+            if text_id and MONGO_AVAILABLE and self._db is not None:
+                # MongoDB에서 frame_id 조회
+                collection = self._db["text_embeddings"]
+                doc = collection.find_one({"text_id": text_id})
+                if doc:
+                    results.append((doc["frame_id"], float(dist)))
+
+        return results
+
     # ========== Statistics ==========
 
     def get_stats(self) -> Dict[str, Any]:
@@ -513,9 +909,20 @@ class DatabaseHandler:
             stats["frames_count"] = self._db[self.config.frames_collection].count_documents({})
             stats["results_count"] = self._db[self.config.results_collection].count_documents({})
 
+            # RAG 관련 통계
+            stats["ocr_results_count"] = self._db["ocr_results"].count_documents({})
+            stats["action_sequences_count"] = self._db["action_sequences"].count_documents({})
+            stats["error_patterns_count"] = self._db["error_patterns"].count_documents({})
+            stats["ui_elements_count"] = self._db["ui_elements"].count_documents({})
+            stats["text_embeddings_count"] = self._db["text_embeddings"].count_documents({})
+
         if FAISS_AVAILABLE and self._faiss_index is not None:
             stats["embeddings_count"] = self._faiss_index.ntotal
             stats["faiss_trained"] = self._faiss_index.is_trained
+
+        if FAISS_AVAILABLE and self._text_faiss_index is not None:
+            stats["text_faiss_count"] = self._text_faiss_index.ntotal
+            stats["text_faiss_trained"] = self._text_faiss_index.is_trained
 
         return stats
 
@@ -523,6 +930,7 @@ class DatabaseHandler:
         """연결 종료"""
         # FAISS 인덱스 저장
         self.save_faiss_index()
+        self.save_text_faiss_index()
 
         # MongoDB 연결 종료
         if self._client:

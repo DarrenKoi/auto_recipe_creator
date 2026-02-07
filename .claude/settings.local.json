@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv sync:*)",
+      "WebSearch",
+      "Bash(uv run python:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd home study environment with HuggingFace free API integration\n\n- Add poc/home module for GUI automation learning without company APIs\n- Integrate HuggingFace Inference API for VLM \\(Qwen2-VL, LLaVA\\)\n- Add pyproject.toml for uv package management\n- Update .gitignore with Python/uv project exclusions\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push)"
+    ]
+  }
+}

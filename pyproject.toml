@@ -1,0 +1,28 @@
+[project]
+name = "auto-recipe-creator"
+version = "0.1.0"
+description = "AI-powered automation system for CD-SEM/VeritySEM recipe setup"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "mss>=9.0.0",
+    "pynput>=1.7.6",
+    "Pillow>=10.0.0",
+    "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+]
+home = [
+    "huggingface_hub>=0.25.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["poc", "automation", "test"]

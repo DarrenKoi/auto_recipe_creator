@@ -78,7 +78,7 @@ class VideoFrameParser:
             format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         )
 
-    def initialize(self, use_gpu: bool = True) -> None:
+    def initialize(self, use_gpu: bool = False) -> None:
         """
         파서 컴포넌트 초기화.
 

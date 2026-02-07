@@ -167,7 +167,7 @@ class TextEmbedder:
 
 def create_text_embedder(
     device: Optional[str] = None,
-    use_gpu: bool = True
+    use_gpu: bool = False
 ) -> TextEmbedder:
     """
     TextEmbedder 생성 헬퍼 함수

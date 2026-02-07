@@ -18,7 +18,7 @@ def basic_usage():
 
     # 파서 생성 및 초기화
     parser = VideoFrameParser(config)
-    parser.initialize(use_gpu=True)
+    parser.initialize(use_gpu=False)
 
     # 단일 동영상 처리
     result = parser.process_video(

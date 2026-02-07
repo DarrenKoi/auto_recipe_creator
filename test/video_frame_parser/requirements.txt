@@ -12,8 +12,8 @@ torchvision>=0.15.0
 
 # Database
 pymongo>=4.5.0
-faiss-gpu>=1.7.4  # GPU version for H200
-# faiss-cpu>=1.7.4  # CPU version alternative
+faiss-cpu>=1.7.4  # CPU version (default)
+# faiss-gpu>=1.7.4  # GPU version for H200 (requires CUDA)
 
 # Optional: Distributed Processing
 # torch-distributed

@@ -38,8 +38,8 @@ class AnalyzerConfig:
     # CLIP 모델 이름
     clip_model: str = "ViT-B/32"
 
-    # GPU 디바이스 ID (H200 클러스터용)
-    device: str = "cuda"
+    # 디바이스 ("cpu" 또는 "cuda", H200 클러스터용)
+    device: str = "cpu"
 
     # 배치 크기
     batch_size: int = 32

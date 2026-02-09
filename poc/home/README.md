@@ -1,6 +1,8 @@
 # Home Study Environment
 
-집에서 GPU와 회사 API 없이 GUI 자동화를 학습하기 위한 환경입니다.
+집에서 개인적으로 GUI 자동화 feasibility를 테스트하기 위한 환경입니다.
+회사 업무(RCS/CD-SEM)와는 무관하며, HuggingFace 무료 API만 사용합니다.
+회사 API, VPN, GPU 모두 필요 없습니다.
 
 ## 특징
 
@@ -129,10 +131,12 @@ uv sync --extra home
 
 ## 회사 환경 vs 집 환경
 
-| 항목 | 회사 | 집 |
+| 항목 | 회사 (`poc/`) | 집 (`poc/home/`) |
 |------|------|-----|
-| API | Kimi 2, Qwen3-VL | HuggingFace (무료) |
+| 목적 | RCS/CD-SEM 자동화 POC | 개인 feasibility 테스트 |
+| API | 사내 Qwen3-VL API | HuggingFace 무료 API |
 | GPU | 필요 없음 (API) | 필요 없음 (API) |
 | 속도 | 2-5초/요청 | 3-10초/요청 |
-| Rate Limit | 사내 정책 | ~100-300/hour |
+| Rate Limit | 5 req/5 sec (사내 정책) | ~100-300/hour |
 | 비용 | 회사 부담 | 무료 |
+| 네트워크 | 사내 VPN 필요 | 공개 인터넷 |

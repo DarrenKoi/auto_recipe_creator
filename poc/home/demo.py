@@ -5,17 +5,8 @@ Hugging Face 무료 API를 사용하여 집에서 GUI 자동화를 학습합니�
 GPU 없이 동작하며, 회사 API 없이도 테스트할 수 있습니다.
 
 Usage:
-    # 환경 설정 (최초 1회)
-    export HF_TOKEN="hf_xxxx"
-
-    # 기본 데모 (화면 분석)
+    # poc/home/.env 에 설정 후 실행
     uv run python -m poc.home.demo
-
-    # 특정 모드 실행
-    uv run python -m poc.home.demo --mode screen_analysis
-    uv run python -m poc.home.demo --mode object_detection
-    uv run python -m poc.home.demo --mode ui_elements
-    uv run python -m poc.home.demo --mode interactive
 """
 
 import sys
@@ -288,56 +279,35 @@ class HomeAutomationDemo:
 
 
 def main():
-    import argparse
+    from poc.home.config import HomeConfig
 
-    parser = argparse.ArgumentParser(description="Home GUI Automation Demo")
-    parser.add_argument(
-        "--mode",
-        choices=["all", "screen_analysis", "ui_elements", "object_detection", "interactive"],
-        default="all",
-        help="실행할 데모 모드"
-    )
-    parser.add_argument(
-        "--model",
-        choices=["qwen2_vl_7b", "qwen2_vl_2b", "llava"],
-        default="qwen2_vl_7b",
-        help="사용할 VLM 모델"
-    )
-    parser.add_argument(
-        "--live",
-        action="store_true",
-        help="Live mode (실제 마우스/키보드 제어)"
-    )
-
-    args = parser.parse_args()
-
-    # 모델 매핑
-    model_map = {
-        "qwen2_vl_7b": HFModel.QWEN2_VL_7B,
-        "qwen2_vl_2b": HFModel.QWEN2_VL_2B,
-        "llava": HFModel.LLAVA_1_5_7B,
-    }
+    config = HomeConfig.load()
+    config.print_summary()
 
     demo = HomeAutomationDemo(
-        model=model_map[args.model],
-        safe_mode=not args.live
+        model=config.get_hf_model(),
+        safe_mode=config.safe_mode,
     )
 
     # 모드별 실행
-    if args.mode == "all":
+    mode = config.demo_mode
+    if mode == "all":
         demo.run_all_demos()
-    elif args.mode == "screen_analysis":
+    elif mode == "screen_analysis":
         demo.demo_screen_analysis()
         demo.metrics.print_summary()
-    elif args.mode == "ui_elements":
+    elif mode == "ui_elements":
         demo.demo_ui_elements()
         demo.metrics.print_summary()
-    elif args.mode == "object_detection":
+    elif mode == "object_detection":
         demo.demo_object_detection()
         demo.metrics.print_summary()
-    elif args.mode == "interactive":
+    elif mode == "interactive":
         demo.demo_interactive()
         demo.metrics.print_summary()
+    else:
+        print(f"[ERROR] 알 수 없는 HOME_DEMO_MODE: {mode}")
+        print("[INFO] 사용 가능: all, screen_analysis, ui_elements, object_detection, interactive")
 
 
 if __name__ == "__main__":

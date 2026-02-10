@@ -21,8 +21,10 @@ Usage:
 
 from .hf_vlm import HuggingFaceVLM, HFModel, VLMResponse
 from .demo import HomeAutomationDemo
+from .config import HomeConfig
 
 __all__ = [
+    "HomeConfig",
     "HuggingFaceVLM",
     "HFModel",
     "VLMResponse",

@@ -64,7 +64,7 @@ class HomeConfig:
 
     def get_hf_model(self):
         """HFModel enum 반환"""
-        from poc.home.hf_vlm import HFModel
+        from .hf_vlm import HFModel
 
         model_map = {
             "qwen2_vl_7b": HFModel.QWEN2_VL_7B,

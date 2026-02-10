@@ -1,15 +1,7 @@
 """
 PoC (Proof of Concept) Module
 
-VLM 기반 GUI 자동화 PoC — 자체 완결형 모듈
+하위 패키지:
+  - poc.work: 회사 업무용 VLM GUI 자동화 PoC
+  - poc.home: 개인 학습용 HuggingFace 기반 데모
 """
-
-__all__ = [
-    "config",
-    "screen_capture",
-    "mouse_control",
-    "keyboard_control",
-    "vlm_screen_analysis",
-    "vlm_rcs_agent",
-    "opensearch_handler",
-]

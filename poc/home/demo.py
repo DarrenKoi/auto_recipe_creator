@@ -25,7 +25,7 @@ if sys.platform == "win32":
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from test.vlm_input_control import ScreenCapture, MouseController, KeyboardController
-from poc.home.hf_vlm import HuggingFaceVLM, HFModel, VLMResponse
+from .hf_vlm import HuggingFaceVLM, HFModel, VLMResponse
 
 
 @dataclass
@@ -279,7 +279,7 @@ class HomeAutomationDemo:
 
 
 def main():
-    from poc.home.config import HomeConfig
+    from .config import HomeConfig
 
     config = HomeConfig.load()
     config.print_summary()

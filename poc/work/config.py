@@ -4,7 +4,7 @@ PoC 통합 설정 모듈
 .env 파일에서 환경변수를 로드하여 각 모듈 설정을 제공.
 
 Usage:
-    from poc.config import PocConfig
+    from poc.work.config import PocConfig
     config = PocConfig.load()
     config.print_summary()
 """

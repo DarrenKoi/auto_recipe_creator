@@ -4,8 +4,8 @@ OpenSearch 저장소 핸들러
 레시피 자동화 지식(프레임 임베딩, 워크플로우)을 OpenSearch에 저장하고 검색.
 
 Usage:
-    from poc.config import PocConfig
-    from poc.opensearch_handler import OpenSearchHandler
+    from poc.work.config import PocConfig
+    from poc.work.opensearch_handler import OpenSearchHandler
 
     config = PocConfig.load()
     handler = OpenSearchHandler(config.opensearch)

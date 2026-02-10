@@ -109,11 +109,17 @@ class VLMRCSAgent:
         self.screen_height = 0
         self.scale_factor = 1.0
 
+        # DPI 스케일 (macOS Retina: 2.0, 일반: 1.0)
+        # mss는 물리 픽셀로 캡처하고 pynput은 논리 좌표로 동작하므로 보정 필요
+        from .vlm_click_demo import get_dpi_scale
+        self.dpi_scale = get_dpi_scale()
+
         # 설정 검증
         if not config.api_url:
             print("[WARNING] API URL이 설정되지 않았습니다. AgentConfig.api_url을 설정하세요.")
 
         print(f"[INFO] VLM RCS Agent 초기화 완료")
+        print(f"[INFO] DPI 스케일: {self.dpi_scale:.1f}x")
         print(f"[INFO] 모델: {config.model_name}")
         print(f"[INFO] 모드: {'SAFE (실제 입력 없음)' if config.safe_mode else 'LIVE (실제 입력)'}")
         print(f"[INFO] 이미지: {'WebP' if config.use_webp else 'PNG'}, 최대 {config.max_image_size}px")
@@ -177,8 +183,8 @@ class VLMRCSAgent:
             print(f"  VLM 추론: \"{action.reasoning}\"")
             if action.click_point:
                 # 스케일 복원 좌표
-                scaled_x = int(action.click_point[0] / self.scale_factor)
-                scaled_y = int(action.click_point[1] / self.scale_factor)
+                scaled_x = int(action.click_point[0] / self.scale_factor / self.dpi_scale)
+                scaled_y = int(action.click_point[1] / self.scale_factor / self.dpi_scale)
                 print(f"  다음 액션: {action.action_type} ({scaled_x}, {scaled_y}) -> \"{action.target_name}\"")
             else:
                 print(f"  다음 액션: {action.action_type} -> \"{action.target_name}\"")
@@ -197,8 +203,8 @@ class VLMRCSAgent:
             # 3. 액션 실행
             print(f"[Step {step_num}] 실행: {action.action_type}", end="")
             if action.click_point:
-                scaled_x = int(action.click_point[0] / self.scale_factor)
-                scaled_y = int(action.click_point[1] / self.scale_factor)
+                scaled_x = int(action.click_point[0] / self.scale_factor / self.dpi_scale)
+                scaled_y = int(action.click_point[1] / self.scale_factor / self.dpi_scale)
                 print(f" ({scaled_x}, {scaled_y})", end="")
             print(" ... ", end="")
 
@@ -470,14 +476,21 @@ action_type 설명:
             성공 여부
         """
         try:
-            # 스케일 복원: VLM 좌표 → 실제 화면 좌표
+            # 스케일 복원: VLM 좌표 → 물리 픽셀 → 논리 좌표 (마우스)
             if action.click_point:
-                actual_x = int(action.click_point[0] / self.scale_factor)
-                actual_y = int(action.click_point[1] / self.scale_factor)
+                # VLM 좌표 → 물리 픽셀 (리사이즈 역변환)
+                phys_x = int(action.click_point[0] / self.scale_factor)
+                phys_y = int(action.click_point[1] / self.scale_factor)
 
-                # 화면 경계 클램핑
-                actual_x = max(0, min(actual_x, self.screen_width))
-                actual_y = max(0, min(actual_y, self.screen_height))
+                # 물리 픽셀 → 논리 좌표 (DPI 보정, Retina 대응)
+                actual_x = int(phys_x / self.dpi_scale)
+                actual_y = int(phys_y / self.dpi_scale)
+
+                # 논리 좌표 경계 클램핑
+                logical_w = int(self.screen_width / self.dpi_scale)
+                logical_h = int(self.screen_height / self.dpi_scale)
+                actual_x = max(0, min(actual_x, logical_w))
+                actual_y = max(0, min(actual_y, logical_h))
             else:
                 actual_x, actual_y = 0, 0
 

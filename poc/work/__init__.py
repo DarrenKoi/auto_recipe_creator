@@ -11,5 +11,6 @@ __all__ = [
     "keyboard_control",
     "vlm_screen_analysis",
     "vlm_rcs_agent",
+    "vlm_click_demo",
     "opensearch_handler",
 ]

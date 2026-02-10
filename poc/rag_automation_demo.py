@@ -6,7 +6,6 @@ RAG 기반 자동화 데모 (With RAG vs Without RAG 비교)
 
 import sys
 import time
-import argparse
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -242,99 +241,42 @@ class RAGAutomationDemo:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="RAG Automation Demo")
+    from poc.config import PocConfig
 
-    parser.add_argument(
-        "--provider",
-        type=str,
-        default="qwen3_vl",
-        choices=["qwen3_vl", "kimi_2", "openai_gpt4v"],
-        help="VLM 제공자"
-    )
-
-    parser.add_argument(
-        "--api-url",
-        type=str,
-        required=True,
-        help="VLM API URL"
-    )
-
-    parser.add_argument(
-        "--api-key",
-        type=str,
-        help="API 키"
-    )
-
-    parser.add_argument(
-        "--use-rag",
-        action="store_true",
-        help="RAG 사용"
-    )
-
-    parser.add_argument(
-        "--compare",
-        action="store_true",
-        help="With RAG vs Without RAG 비교 실행"
-    )
-
-    parser.add_argument(
-        "--query",
-        type=str,
-        help="쿼리 텍스트"
-    )
-
-    parser.add_argument(
-        "--region",
-        type=str,
-        help="캡처 영역 (x,y,width,height)"
-    )
-
-    parser.add_argument(
-        "--db-uri",
-        type=str,
-        default="mongodb://localhost:27017/",
-        help="MongoDB URI"
-    )
-
-    args = parser.parse_args()
-
-    # VLM Provider 매핑
-    provider_map = {
-        "qwen3_vl": VLMProvider.QWEN3_VL,
-        "kimi_2": VLMProvider.KIMI_2,
-        "openai_gpt4v": VLMProvider.OPENAI_GPT4V
-    }
+    config = PocConfig.load()
+    config.print_summary()
 
     # Region 파싱
     region = None
-    if args.region:
+    if config.operation.capture_region:
         try:
-            x, y, w, h = map(int, args.region.split(','))
+            x, y, w, h = map(int, config.operation.capture_region.split(','))
             region = (x, y, w, h)
-        except:
-            print(f"[ERROR] 잘못된 region 형식: {args.region}")
+        except ValueError:
+            print(f"[ERROR] 잘못된 CAPTURE_REGION 형식: {config.operation.capture_region}")
             sys.exit(1)
+
+    query_text = config.operation.query_text or None
 
     # DB Config
     db_config = DatabaseConfig()
-    db_config.mongo_uri = args.db_uri
 
     # Demo 실행
     try:
         demo = RAGAutomationDemo(
-            vlm_provider=provider_map[args.provider],
-            api_url=args.api_url,
-            api_key=args.api_key,
+            vlm_provider=config.get_vlm_provider(),
+            api_url=config.vlm.api_url,
+            api_key=config.vlm.api_key,
             db_config=db_config,
-            use_rag=args.use_rag
+            use_rag=config.operation.use_rag,
         )
 
-        if args.compare:
+        if config.operation.compare_mode:
             # 비교 모드
-            demo.run_comparison(query_text=args.query, region=region)
+            demo.run_comparison(query_text=query_text, region=region)
         else:
             # 단일 분석 모드
-            demo.run_screen_analysis(query_text=args.query, region=region)
+            demo.run_screen_analysis(query_text=query_text, region=region)
 
         demo.close()
 

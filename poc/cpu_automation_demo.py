@@ -9,7 +9,8 @@ Rate Limits:
 - Qwen3-VL: 1 request / 1 second
 
 Usage:
-    python -m poc.cpu_automation_demo --provider qwen3_vl --api-url YOUR_API_URL
+    # poc/.env 에 설정 후 실행
+    python -m poc.cpu_automation_demo
 """
 
 import time
@@ -395,58 +396,28 @@ class CPUAutomationDemo:
 
 
 def main():
-    import argparse
+    from poc.config import PocConfig
 
-    parser = argparse.ArgumentParser(description="CPU 기반 자동화 PoC 데모")
-    parser.add_argument("--provider", choices=["kimi_2", "qwen3_vl"], required=True,
-                        help="VLM Provider 선택")
-    parser.add_argument("--api-url", required=True, help="회사 내부 VLM API URL")
-    parser.add_argument("--api-key", help="API 인증 키 (optional)")
-    parser.add_argument("--safe-mode", action="store_true", default=True,
-                        help="Safe mode (실제 입력 안 함)")
-    parser.add_argument("--live", action="store_true",
-                        help="Live mode (실제 입력 수행, safe-mode 비활성화)")
-    parser.add_argument("--demo-type", choices=["rcs_login", "screen_analysis"],
-                        default="screen_analysis",
-                        help="데모 유형 선택")
-    parser.add_argument("--use-webp", action="store_true", default=True,
-                        help="WebP 포맷 사용 (파일 크기 감소)")
-    parser.add_argument("--no-webp", action="store_false", dest="use_webp",
-                        help="PNG 포맷 사용 (무손실)")
-    parser.add_argument("--max-image-size", type=int, default=1920,
-                        help="최대 이미지 크기 (긴 쪽 기준, 픽셀)")
-    parser.add_argument("--server", default="192.168.1.100", help="RCS 서버 주소 (rcs_login용)")
-    parser.add_argument("--username", default="admin", help="사용자 이름 (rcs_login용)")
-    parser.add_argument("--password", default="password", help="비밀번호 (rcs_login용)")
-
-    args = parser.parse_args()
-
-    # Provider 매핑
-    provider_map = {
-        "kimi_2": VLMProvider.KIMI_2,
-        "qwen3_vl": VLMProvider.QWEN3_VL
-    }
-
-    # Safe mode 결정
-    safe_mode = not args.live if args.live else args.safe_mode
+    config = PocConfig.load()
+    config.print_summary()
 
     demo = CPUAutomationDemo(
-        provider=provider_map[args.provider],
-        api_url=args.api_url,
-        api_key=args.api_key,
-        safe_mode=safe_mode,
-        use_webp=args.use_webp,
-        max_image_size=args.max_image_size
+        provider=config.get_vlm_provider(),
+        api_url=config.vlm.api_url,
+        api_key=config.vlm.api_key,
+        safe_mode=config.operation.safe_mode,
+        use_webp=config.operation.use_webp,
+        max_image_size=config.operation.max_image_size,
     )
 
     # 데모 실행
-    if args.demo_type == "rcs_login":
+    if config.operation.demo_type == "rcs_login":
         demo.run_rcs_login_demo(
-            server=args.server,
-            username=args.username,
-            password=args.password
+            server=config.rcs.server,
+            username=config.rcs.username,
+            password=config.rcs.password,
         )
-    elif args.demo_type == "screen_analysis":
+    elif config.operation.demo_type == "screen_analysis":
         demo.run_screen_analysis_demo()
 
     # 최종 리포트

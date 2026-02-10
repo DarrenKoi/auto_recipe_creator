@@ -10,8 +10,6 @@ import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
-import argparse
-
 # 프로젝트 루트를 Python 경로에 추가
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -347,74 +345,32 @@ def print_summary(summary: EvaluationSummary):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="RAG Evaluation Framework")
+    from poc.config import PocConfig
 
-    parser.add_argument(
-        "--cases",
-        type=str,
-        required=True,
-        help="평가 케이스 JSON 파일"
-    )
+    config = PocConfig.load()
+    config.print_summary()
 
-    parser.add_argument(
-        "--output",
-        type=str,
-        default="evaluation_results.json",
-        help="출력 결과 JSON 파일"
-    )
+    cases_file = config.operation.eval_cases_file
+    output_file = config.operation.eval_output_file
 
-    parser.add_argument(
-        "--provider",
-        type=str,
-        default="qwen3_vl",
-        choices=["qwen3_vl", "kimi_2", "openai_gpt4v"],
-        help="VLM 제공자"
-    )
-
-    parser.add_argument(
-        "--api-url",
-        type=str,
-        required=True,
-        help="VLM API URL"
-    )
-
-    parser.add_argument(
-        "--api-key",
-        type=str,
-        help="API 키"
-    )
-
-    parser.add_argument(
-        "--db-uri",
-        type=str,
-        default="mongodb://localhost:27017/",
-        help="MongoDB URI"
-    )
-
-    args = parser.parse_args()
-
-    # VLM Provider 매핑
-    provider_map = {
-        "qwen3_vl": VLMProvider.QWEN3_VL,
-        "kimi_2": VLMProvider.KIMI_2,
-        "openai_gpt4v": VLMProvider.OPENAI_GPT4V
-    }
+    if not cases_file:
+        print("[ERROR] EVAL_CASES_FILE 환경변수를 설정해주세요")
+        sys.exit(1)
 
     # 평가 케이스 로드
-    cases = load_evaluation_cases(args.cases)
+    cases = load_evaluation_cases(cases_file)
     print(f"[INFO] {len(cases)}개 평가 케이스 로드됨")
 
     # DB Config
     db_config = DatabaseConfig()
-    db_config.mongo_uri = args.db_uri
 
     # 평가 실행
     try:
         evaluator = RAGEvaluator(
-            vlm_provider=provider_map[args.provider],
-            api_url=args.api_url,
-            api_key=args.api_key,
-            db_config=db_config
+            vlm_provider=config.get_vlm_provider(),
+            api_url=config.vlm.api_url,
+            api_key=config.vlm.api_key,
+            db_config=db_config,
         )
 
         results, summary = evaluator.evaluate_all(cases)
@@ -428,10 +384,10 @@ def main():
             "results": [asdict(r) for r in results]
         }
 
-        with open(args.output, 'w', encoding='utf-8') as f:
+        with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(output_data, f, indent=2, ensure_ascii=False)
 
-        print(f"\n[INFO] 결과 저장됨: {args.output}")
+        print(f"\n[INFO] 결과 저장됨: {output_file}")
 
         evaluator.close()
 

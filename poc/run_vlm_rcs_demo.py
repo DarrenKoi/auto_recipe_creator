@@ -2,7 +2,7 @@
 VLM RCS 자동화 POC 데모 실행 스크립트
 
 RCS 로그인 → 도구 선택까지 VLM 에이전트가 자동 수행.
-모든 설정은 아래 CONFIG 섹션에서 직접 변경하세요.
+설정은 poc/.env 파일에서 관리합니다.
 
 Usage:
     python -m poc.run_vlm_rcs_demo
@@ -15,39 +15,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from poc.vlm_rcs_agent import VLMRCSAgent, AgentConfig
 
-# ============================================================
-# CONFIG - 여기에서 설정을 변경하세요
-# ============================================================
 
-# VLM API 설정
-API_URL = "http://internal-api:8080"           # VLM API 엔드포인트
-API_KEY = ""                                    # API 인증 키 (없으면 빈 문자열)
-MODEL_NAME = "Qwen3-VL-30B-Instruct"           # 모델 이름
-
-# 실행 모드
-SAFE_MODE = True                               # True: 실제 입력 없음 (분석만), False: 실제 입력
-
-# RCS 로그인 정보
-RCS_SERVER = "SEM_SERVER_01"                    # RCS 서버
-RCS_USERNAME = "admin"                          # 사용자명
-RCS_PASSWORD = "password"                       # 비밀번호
-
-# Phase 2 도구 선택 (로그인 성공 후)
-TOOL_NAME = "CD-SEM Recipe Editor"             # 선택할 도구 이름
-
-# 이미지 설정
-USE_WEBP = True                                # WebP 변환 (False면 PNG)
-MAX_IMAGE_SIZE = 1280                          # 리사이즈 최대 픽셀
-
-# 에이전트 설정
-MAX_STEPS_LOGIN = 15                           # Phase 1 로그인 최대 스텝
-MAX_STEPS_TOOL = 10                            # Phase 2 도구 선택 최대 스텝
-ACTION_DELAY = 0.5                             # 액션 후 대기 시간 (초)
-
-# ============================================================
-
-
-def print_banner(config: AgentConfig):
+def print_banner(config: AgentConfig, rcs_server: str, rcs_username: str):
     """데모 시작 배너 출력"""
     mode = "SAFE (분석만)" if config.safe_mode else "LIVE (실제 입력)"
     print()
@@ -58,8 +27,8 @@ def print_banner(config: AgentConfig):
     print()
     print(f"  API: {config.api_url}")
     print(f"  이미지: {'WebP' if config.use_webp else 'PNG'}, 최대 {config.max_image_size}px")
-    print(f"  서버: {RCS_SERVER}")
-    print(f"  사용자: {RCS_USERNAME}")
+    print(f"  서버: {rcs_server}")
+    print(f"  사용자: {rcs_username}")
     print()
 
 
@@ -99,19 +68,31 @@ def print_final_summary(results: list):
 
 def main():
     """데모 실행"""
-    # 설정 생성
+    from poc.config import PocConfig
+
+    poc_config = PocConfig.load()
+    poc_config.print_summary()
+
+    # AgentConfig 생성
     config = AgentConfig(
-        api_url=API_URL,
-        api_key=API_KEY,
-        model_name=MODEL_NAME,
-        safe_mode=SAFE_MODE,
-        use_webp=USE_WEBP,
-        max_image_size=MAX_IMAGE_SIZE,
-        action_delay=ACTION_DELAY,
+        api_url=poc_config.vlm.api_url,
+        api_key=poc_config.vlm.api_key,
+        model_name=poc_config.vlm.model_name,
+        safe_mode=poc_config.operation.safe_mode,
+        use_webp=poc_config.operation.use_webp,
+        max_image_size=poc_config.operation.max_image_size,
+        action_delay=poc_config.operation.action_delay,
     )
 
+    rcs_server = poc_config.rcs.server
+    rcs_username = poc_config.rcs.username
+    rcs_password = poc_config.rcs.password
+    tool_name = poc_config.operation.rcs_tool_name
+    max_steps_login = poc_config.operation.max_steps_login
+    max_steps_tool = poc_config.operation.max_steps_tool
+
     # 배너 출력
-    print_banner(config)
+    print_banner(config, rcs_server, rcs_username)
 
     # 에이전트 생성
     agent = VLMRCSAgent(config)
@@ -122,12 +103,12 @@ def main():
     print_phase_header(1, "RCS 로그인")
 
     login_task = (
-        f"RCS 로그인 화면에서 서버 '{RCS_SERVER}' 선택, "
-        f"사용자명 '{RCS_USERNAME}' 입력, "
+        f"RCS 로그인 화면에서 서버 '{rcs_server}' 선택, "
+        f"사용자명 '{rcs_username}' 입력, "
         f"비밀번호 입력 후 로그인 버튼 클릭"
     )
 
-    login_result = agent.run(login_task, max_steps=MAX_STEPS_LOGIN)
+    login_result = agent.run(login_task, max_steps=max_steps_login)
     print_result(login_result, "Phase 1 (로그인)")
     results.append(login_result)
 
@@ -135,9 +116,9 @@ def main():
     if login_result["completed"]:
         print_phase_header(2, "도구 선택")
 
-        tool_task = f"메인 화면에서 '{TOOL_NAME}' 도구를 찾아 선택(더블클릭)"
+        tool_task = f"메인 화면에서 '{tool_name}' 도구를 찾아 선택(더블클릭)"
 
-        tool_result = agent.run(tool_task, max_steps=MAX_STEPS_TOOL)
+        tool_result = agent.run(tool_task, max_steps=max_steps_tool)
         print_result(tool_result, "Phase 2 (도구 선택)")
         results.append(tool_result)
     else:

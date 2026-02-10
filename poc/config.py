@@ -182,7 +182,7 @@ class PocConfig:
 
     def get_vlm_provider(self):
         """VLMProvider enum 반환"""
-        from test.vlm_input_control.vlm_screen_analysis import VLMProvider
+        from .vlm_screen_analysis import VLMProvider
 
         provider_map = {
             "qwen3_vl": VLMProvider.QWEN3_VL,

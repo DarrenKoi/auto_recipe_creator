@@ -1,13 +1,15 @@
 """
 PoC (Proof of Concept) Module
 
-CPU 기반 자동화 실현 가능성을 증명하는 데모 모듈
+VLM 기반 GUI 자동화 PoC — 자체 완결형 모듈
 """
 
 __all__ = [
     "config",
-    "opensearch_handler",
-    "cpu_automation_demo",
+    "screen_capture",
+    "mouse_control",
+    "keyboard_control",
+    "vlm_screen_analysis",
     "vlm_rcs_agent",
-    "run_vlm_rcs_demo",
+    "opensearch_handler",
 ]

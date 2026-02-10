@@ -13,14 +13,10 @@ Observe-Think-Act 루프를 통한 에이전틱 VLM 자동화.
 import time
 import json
 import base64
-import sys
 import os
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 from io import BytesIO
-
-# 상위 디렉토리를 path에 추가
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from PIL import Image
@@ -36,7 +32,9 @@ except ImportError:
     REQUESTS_AVAILABLE = False
     print("[WARNING] requests 라이브러리가 설치되지 않았습니다. pip install requests")
 
-from test.vlm_input_control import ScreenCapture, MouseController, KeyboardController
+from .screen_capture import ScreenCapture
+from .mouse_control import MouseController
+from .keyboard_control import KeyboardController
 
 
 @dataclass

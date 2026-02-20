@@ -7,9 +7,29 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from dotenv import load_dotenv
+
+try:
+    import mss
+    import mss.tools
+    MSS_AVAILABLE = True
+except ImportError:
+    MSS_AVAILABLE = False
+
+try:
+    from pynput.mouse import Button as _MouseButton, Controller as _PynputMouse
+    from pynput.keyboard import Controller as _PynputKeyboard, Key as _Key
+    PYNPUT_AVAILABLE = True
+except ImportError:
+    PYNPUT_AVAILABLE = False
+
+try:
+    import requests as _requests
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
 
 DEFAULT_RCS_EXE = r"C:\Users\2067928\Documents\RCS\RcsMainHD.exe"
 DEFAULT_SERVER = "Dropbox"
@@ -177,6 +197,166 @@ def _submit(window):
     window.type_keys("{ENTER}", set_foreground=False)
 
 
+def _window_rect(window) -> dict:
+    """pywinauto 창의 위치·크기를 mss 호환 dict로 반환."""
+    r = window.rectangle()
+    return {
+        "left": r.left,
+        "top": r.top,
+        "width": r.right - r.left,
+        "height": r.bottom - r.top,
+    }
+
+
+def _capture_window_png(rect: dict) -> Optional[bytes]:
+    """mss로 창 영역을 캡처해 PNG bytes를 반환. mss 미설치 시 None."""
+    if not MSS_AVAILABLE:
+        return None
+    with mss.mss() as sct:
+        shot = sct.grab(rect)
+        return mss.tools.to_png(shot.rgb, shot.size)
+
+
+def _vlm_locate_controls(
+    image_data: bytes,
+    api_url: str,
+    api_key: str,
+    model_name: str,
+) -> dict:
+    """스크린샷을 VLM에 보내 UI 컨트롤 좌표(창 내 상대 픽셀)를 파싱해 반환.
+
+    반환 형태::
+        {
+            "username_field": (x, y) | None,
+            "password_field": (x, y) | None,
+            "login_button":   (x, y) | None,
+        }
+    """
+    import base64
+    import json
+
+    prompt = (
+        "이 화면은 소프트웨어 로그인 창입니다.\n"
+        "다음 UI 요소의 중심 픽셀 좌표를 JSON으로 반환해주세요.\n"
+        "보이지 않는 요소는 null로 반환하세요.\n"
+        '{"username_field": [x, y], "password_field": [x, y], "login_button": [x, y]}\n'
+        "반드시 JSON만 반환하세요."
+    )
+
+    b64 = base64.b64encode(image_data).decode()
+    payload = {
+        "model": model_name,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{b64}"},
+                    },
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ],
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+    empty = {"username_field": None, "password_field": None, "login_button": None}
+    try:
+        resp = _requests.post(
+            f"{api_url.rstrip('/')}/chat/completions",
+            json=payload,
+            headers=headers,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        content = resp.json()["choices"][0]["message"]["content"]
+        raw = json.loads(content)
+    except Exception as exc:
+        print(f"[WARN] VLM 응답 파싱 실패: {exc}")
+        return empty
+
+    result = {}
+    for key in ("username_field", "password_field", "login_button"):
+        val = raw.get(key)
+        result[key] = tuple(val) if isinstance(val, (list, tuple)) and len(val) == 2 else None
+    return result
+
+
+def _vlm_login_fallback(login_window, username: str, password: str) -> bool:
+    """UIA 실패 시 VLM 스크린샷 분석으로 자격증명을 입력하고 로그인을 시도.
+
+    성공하면 True, 불가능하면 False를 반환.
+    """
+    api_url = os.environ.get("VLM_API_URL", "")
+    api_key = os.environ.get("VLM_API_KEY", "")
+    model_name = os.environ.get("VLM_MODEL_NAME", "")
+
+    if not (api_url and model_name):
+        print("[WARN] VLM API URL/모델 미설정 → VLM 폴백 불가")
+        return False
+    if not REQUESTS_AVAILABLE:
+        print("[WARN] requests 미설치 → VLM 폴백 불가")
+        return False
+    if not MSS_AVAILABLE:
+        print("[WARN] mss 미설치 → VLM 폴백 불가")
+        return False
+    if not PYNPUT_AVAILABLE:
+        print("[WARN] pynput 미설치 → VLM 폴백 불가")
+        return False
+
+    rect = _window_rect(login_window)
+    image_data = _capture_window_png(rect)
+    if image_data is None:
+        print("[WARN] 창 캡처 실패 → VLM 폴백 불가")
+        return False
+
+    print("[INFO] VLM으로 UI 컨트롤 좌표 탐색 중…")
+    coords = _vlm_locate_controls(image_data, api_url, api_key, model_name)
+    print(f"[INFO] VLM 좌표 결과: {coords}")
+
+    mouse = _PynputMouse()
+    keyboard = _PynputKeyboard()
+    win_left, win_top = rect["left"], rect["top"]
+
+    def _click_and_type(rel_coords, text: str) -> None:
+        if rel_coords is None:
+            return
+        ax, ay = win_left + int(rel_coords[0]), win_top + int(rel_coords[1])
+        mouse.position = (ax, ay)
+        mouse.click(_MouseButton.left)
+        time.sleep(0.1)
+        # 기존 텍스트 전체 선택 후 삭제
+        with keyboard.pressed(_Key.ctrl):
+            keyboard.press("a")
+            keyboard.release("a")
+        keyboard.press(_Key.delete)
+        keyboard.release(_Key.delete)
+        time.sleep(0.05)
+        keyboard.type(text)
+
+    if username:
+        _click_and_type(coords.get("username_field"), username)
+        print("[INFO] VLM: User ID 입력 완료")
+    if password:
+        _click_and_type(coords.get("password_field"), password)
+        print("[INFO] VLM: Password 입력 완료")
+
+    login_btn = coords.get("login_button")
+    if login_btn is not None:
+        ax, ay = win_left + int(login_btn[0]), win_top + int(login_btn[1])
+        mouse.position = (ax, ay)
+        time.sleep(0.05)
+        mouse.click(_MouseButton.left)
+    else:
+        try:
+            login_window.type_keys("{ENTER}", set_foreground=False)
+        except Exception:
+            pass
+
+    return True
+
+
 def main() -> int:
     if os.name != "nt":
         print("[ERROR] This script only supports Windows.")
@@ -212,20 +392,34 @@ def main() -> int:
     except Exception as exc:
         print(f"[WARN] 서버 선택 중 오류: {exc}")
 
+    _uia_login_done = False
     try:
         edits = [e for e in login_window.descendants(control_type="Edit") if _is_visible(e)]
         edits = sorted(edits, key=lambda control: (control.rectangle().top, control.rectangle().left))
-        if args.username and len(edits) > 0:
-            ok = _set_edit_text(edits[0], args.username)
-            print(f"[INFO] User ID 입력: {'OK' if ok else 'FAIL'}")
-        if args.password and len(edits) > 1:
-            ok = _set_edit_text(edits[1], args.password)
-            print(f"[INFO] Password 입력: {'OK' if ok else 'FAIL'}")
+        if len(edits) >= 2:
+            if args.username:
+                ok = _set_edit_text(edits[0], args.username)
+                print(f"[INFO] User ID 입력 (UIA): {'OK' if ok else 'FAIL'}")
+            if args.password:
+                ok = _set_edit_text(edits[1], args.password)
+                print(f"[INFO] Password 입력 (UIA): {'OK' if ok else 'FAIL'}")
+            _submit(login_window)
+            print("[INFO] 로그인 제출 완료 (UIA)")
+            _uia_login_done = True
+        else:
+            print(f"[INFO] UIA Edit {len(edits)}개 발견 (2개 필요) → VLM 폴백 시도")
     except Exception as exc:
-        print(f"[WARN] 입력 처리 중 오류: {exc}")
+        print(f"[WARN] UIA 입력 처리 중 오류: {exc}")
 
-    _submit(login_window)
-    print("[INFO] 로그인 제출 완료")
+    if not _uia_login_done:
+        vlm_ok = _vlm_login_fallback(login_window, args.username, args.password)
+        if not vlm_ok:
+            print("[WARN] VLM 폴백 실패. ENTER 키 전송.")
+            try:
+                login_window.type_keys("{ENTER}", set_foreground=False)
+            except Exception:
+                pass
+        print("[INFO] 로그인 제출 완료 (VLM)")
 
     time.sleep(args.post_login_wait)
     try:

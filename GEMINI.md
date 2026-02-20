@@ -9,15 +9,19 @@ The system utilizes **Vision Language Models (VLM)** (Qwen3-VL, Kimi 2, etc.) to
 *   **VLM-driven UI Analysis:** Uses Vision Language Models to understand screen states and determine actions.
 *   **GUI Automation:** Controls mouse and keyboard inputs via `pynput` and `pywinauto`.
 *   **RCS Integration:** Automates launching, logging in, and navigating the Remote Control System.
+*   **RAG System:** Retrieval-Augmented Generation system using CCTV footage to improve automation reliability (detailed in `RAG_IMPLEMENTATION.md`).
 *   **Video Analysis:** Includes tools for parsing and analyzing video feeds (likely for workflow extraction or training).
 
 ## Architecture & Directory Structure
 *   `automation/`: Core automation logic for the RCS application.
     *   `rcs/`: RCS-specific controllers, launchers, and configuration.
 *   `poc/`: Proof of Concept for CPU-based automation and GPU ROI analysis.
+    *   `home/`: CPU-based VLM demos and testing.
+    *   `work/`: RCS automation proofs (mouse/keyboard control, VLM screen analysis).
 *   `test/`: Prototyping and testing modules.
     *   `vlm_input_control/`: Integration of Screen Capture (`mss`), VLM analysis, and Input Control.
     *   `video_frame_parser/`: Tools for extracting and analyzing video frames (supports H200 cluster optimization).
+    *   `workflow_extractor/`: RAG system components for workflow ingestion and orchestration.
 *   `docs/`: Project documentation (setup guides, requirements).
 *   `requirements-automation.txt`: Python dependencies for the automation components.
 

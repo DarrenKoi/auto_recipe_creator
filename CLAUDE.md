@@ -30,7 +30,7 @@ uv sync --extra dev
 uv sync --extra home
 
 # Per-module pip installs (alternative)
-pip install -r poc/work/requirements.txt           # mss, pynput, Pillow, requests, python-dotenv
+pip install -r poc/work/requirements.txt           # mss, pynput, Pillow, requests, python-dotenv, pywinauto (Windows)
 pip install -r requirements-automation.txt          # pywinauto (Windows only)
 pip install -r test/vlm_input_control/requirements.txt
 pip install -r test/video_frame_parser/requirements.txt  # torch, opencv, pymongo, faiss
@@ -50,6 +50,10 @@ uv run python -m poc.home.demo --mode screen_analysis
 # RCS auto-login (Windows only)
 python -m automation.rcs.run_login --server SERVER --username USER --password PASS
 python -m automation.rcs.run_login --debug           # dump pywinauto UI control tree
+
+# RCS auto-login via poc/work/ (Windows only, reads from .env)
+python -m poc.work.run_rcs                         # env-wrapper → delegates to automate_rcs_login.py
+python poc/work/automate_rcs_login.py --exe PATH --server NAME --username USER --password PASS
 
 # Video frame parser
 python -m test.video_frame_parser.example_usage
@@ -105,7 +109,17 @@ python -m test.vlm_input_control.integration_test --live   # CAUTION: sends real
 ## Architecture Notes
 
 ### poc/work/ (Primary Workstream)
-Self-contained flat module — all files live directly in `poc/work/` with no sub-packages. Config loaded via `PocConfig.load()` which reads `.env` (copy from `.env.example`). The `vlm_click_demo.py` is the primary manager-presentation entry point: it captures a screenshot, sends it to the VLM, then draws bounding boxes at the returned click coordinates. Coordinate chain: VLM output coords (resized image) → screenshot pixels → monitor-local coords → absolute mouse coords (offset for multi-monitor setups via `MONITOR_INDEX`).
+Self-contained flat module — all files live directly in `poc/work/` with no sub-packages. Config loaded via `PocConfig.load()` which reads `.env` (copy from `.env.example`; `.env.example` now includes `RCS_EXE_PATH` for the path to `RcsMainHD.exe`). The `vlm_click_demo.py` is the primary manager-presentation entry point: it captures a screenshot, sends it to the VLM, then draws bounding boxes at the returned click coordinates. Coordinate chain: VLM output coords (resized image) → screenshot pixels → monitor-local coords → absolute mouse coords (offset for multi-monitor setups via `MONITOR_INDEX`).
+
+`opensearch_handler.py` is intentionally kept but inactive — import-guarded and `opensearch-py` is not in `requirements.txt`. Do not delete; kept for re-enablement after company PoC approval.
+
+### poc/work/ RCS automation
+`run_rcs.py` is an env-wrapper that reads `RCS_EXE_PATH`, `RCS_SERVER`, `RCS_USERNAME`, `RCS_PASSWORD`
+from `.env` and delegates to `automate_rcs_login.py` via subprocess. `automate_rcs_login.py` is the
+pywinauto-based login script (Windows only): launch exe → wait for login window (regex match) →
+set ComboBox server → fill Edit fields (sorted top-to-bottom) → click login button or send ENTER.
+Use `automation/rcs/RCSLauncher` for the older class-based approach; use `poc/work/automate_rcs_login.py`
+for the flat-script approach that lives alongside the other poc/work files.
 
 ### poc/work/ vs test/vlm_input_control/
 Both implement screen capture + VLM + input control, but `poc/work/` is self-contained (no shared imports with `test/`) and production-oriented. `test/vlm_input_control/` is an older integration prototype.

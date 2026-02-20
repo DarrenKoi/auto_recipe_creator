@@ -3,6 +3,10 @@ OpenSearch 저장소 핸들러
 
 레시피 자동화 지식(프레임 임베딩, 워크플로우)을 OpenSearch에 저장하고 검색.
 
+NOTE: 현재 PoC 단계에서는 비활성화 상태.
+      회사 승인 후 재활성화 예정 — 파일 삭제 금지.
+      opensearch-py 패키지 미설치 시에도 임포트 가드로 안전하게 로드됨.
+
 Usage:
     from poc.work.config import PocConfig
     from poc.work.opensearch_handler import OpenSearchHandler

@@ -3,4 +3,3 @@ pynput>=1.7.6
 Pillow>=10.0.0
 requests>=2.31.0
 python-dotenv>=1.0.0
-opensearch-py>=2.4.0

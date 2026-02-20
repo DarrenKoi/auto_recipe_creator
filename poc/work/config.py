@@ -68,15 +68,6 @@ class VLMConfig:
 
 
 @dataclass
-class OpenSearchConfig:
-    """OpenSearch 설정"""
-    url: str = "https://localhost:9200"     # OpenSearch URL
-    index: str = "recipe_automation"        # 인덱스 이름
-    username: str = ""                      # 인증 사용자명
-    password: str = ""                      # 인증 비밀번호
-
-
-@dataclass
 class RCSConfig:
     """RCS 접속 정보"""
     server: str = ""               # RCS 서버 주소
@@ -90,27 +81,21 @@ class OperationConfig:
     safe_mode: bool = True         # True: 실제 입력 없음 (분석만)
     use_webp: bool = True          # WebP 변환 사용
     max_image_size: int = 1280     # 리사이즈 최대 픽셀
-    use_rag: bool = False          # RAG 사용 여부
     demo_type: str = "screen_analysis"  # 데모 유형
     action_delay: float = 0.5      # 액션 후 대기 시간 (초)
     # RCS 에이전트 설정
     rcs_tool_name: str = "CD-SEM Recipe Editor"  # 선택할 도구 이름
     max_steps_login: int = 15      # 로그인 최대 스텝
     max_steps_tool: int = 10       # 도구 선택 최대 스텝
-    # RAG 평가 설정
-    eval_cases_file: str = ""      # 평가 케이스 JSON 파일 경로
-    eval_output_file: str = "evaluation_results.json"  # 결과 출력 파일
-    # RAG 데모 설정
+    # 캡처/쿼리 설정
     capture_region: str = ""       # 캡처 영역 (x,y,width,height)
     query_text: str = ""           # 쿼리 텍스트
-    compare_mode: bool = False     # With/Without RAG 비교 모드
 
 
 @dataclass
 class PocConfig:
     """PoC 통합 설정"""
     vlm: VLMConfig
-    opensearch: OpenSearchConfig
     rcs: RCSConfig
     operation: OperationConfig
 
@@ -148,13 +133,6 @@ class PocConfig:
             provider=_str("VLM_PROVIDER", "qwen3_vl"),
         )
 
-        opensearch = OpenSearchConfig(
-            url=_str("OPENSEARCH_URL", "https://localhost:9200"),
-            index=_str("OPENSEARCH_INDEX", "recipe_automation"),
-            username=_str("OPENSEARCH_USERNAME"),
-            password=_str("OPENSEARCH_PASSWORD"),
-        )
-
         rcs = RCSConfig(
             server=_str("RCS_SERVER"),
             username=_str("RCS_USERNAME"),
@@ -165,20 +143,16 @@ class PocConfig:
             safe_mode=_bool("SAFE_MODE", True),
             use_webp=_bool("USE_WEBP", True),
             max_image_size=_int("MAX_IMAGE_SIZE", 1280),
-            use_rag=_bool("USE_RAG", False),
             demo_type=_str("DEMO_TYPE", "screen_analysis"),
             action_delay=_float("ACTION_DELAY", 0.5),
             rcs_tool_name=_str("RCS_TOOL_NAME", "CD-SEM Recipe Editor"),
             max_steps_login=_int("MAX_STEPS_LOGIN", 15),
             max_steps_tool=_int("MAX_STEPS_TOOL", 10),
-            eval_cases_file=_str("EVAL_CASES_FILE"),
-            eval_output_file=_str("EVAL_OUTPUT_FILE", "evaluation_results.json"),
             capture_region=_str("CAPTURE_REGION"),
             query_text=_str("QUERY_TEXT"),
-            compare_mode=_bool("COMPARE_MODE", False),
         )
 
-        return cls(vlm=vlm, opensearch=opensearch, rcs=rcs, operation=operation)
+        return cls(vlm=vlm, rcs=rcs, operation=operation)
 
     def get_vlm_provider(self):
         """VLMProvider enum 반환"""
@@ -210,15 +184,12 @@ class PocConfig:
         print(f"  VLM Provider:   {self.vlm.provider}")
         print(f"  VLM Model:      {self.vlm.model_name}")
         print(f"  VLM API Key:    {'****' if self.vlm.api_key else '(미설정)'}")
-        print(f"  OpenSearch URL: {self.opensearch.url}")
-        print(f"  OpenSearch Idx: {self.opensearch.index}")
         print(f"  RCS Server:     {self.rcs.server or '(미설정)'}")
         print(f"  RCS User:       {self.rcs.username or '(미설정)'}")
         print(f"  RCS Password:   {'****' if self.rcs.password else '(미설정)'}")
         print(f"  Safe Mode:      {self.operation.safe_mode}")
         print(f"  Image Format:   {'WebP' if self.operation.use_webp else 'PNG'}")
         print(f"  Max Image Size: {self.operation.max_image_size}px")
-        print(f"  Use RAG:        {self.operation.use_rag}")
         print(f"  Demo Type:      {self.operation.demo_type}")
         print("=" * 60)
         print()

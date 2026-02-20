@@ -14,7 +14,6 @@ import json
 import time
 from typing import Optional, Dict, List, Any
 from dataclasses import dataclass
-from enum import Enum
 
 try:
     import requests
@@ -22,23 +21,6 @@ try:
 except ImportError:
     REQUESTS_AVAILABLE = False
     print("[WARNING] requests 라이브러리가 설치되지 않았습니다. pip install requests")
-
-try:
-    import openai
-    OPENAI_AVAILABLE = True
-except ImportError:
-    OPENAI_AVAILABLE = False
-    print("[WARNING] openai 라이브러리가 설치되지 않았습니다. pip install openai")
-
-
-class VLMProvider(Enum):
-    """VLM 제공자 열거형"""
-    QWEN_VL = "qwen_vl"
-    OPENAI_GPT4V = "openai_gpt4v"
-    ANTHROPIC_CLAUDE = "anthropic_claude"
-    LOCAL = "local"
-    KIMI_2 = "kimi_2"          # Moonshot AI Kimi 2 (회사 내부 API)
-    QWEN3_VL = "qwen3_vl"      # Qwen3-VL (회사 내부 API)
 
 
 @dataclass
@@ -69,43 +51,24 @@ class VLMScreenAnalyzer:
 
     def __init__(
         self,
-        provider: VLMProvider = VLMProvider.QWEN_VL,
         api_key: Optional[str] = None,
         api_base_url: Optional[str] = None,
         model_name: Optional[str] = None,
     ):
         """
         Args:
-            provider: VLM 제공자
             api_key: API 키 (환경변수에서도 읽음)
-            api_base_url: API 기본 URL (로컬 서버 등)
-            model_name: 사용할 모델 이름
+            api_base_url: OpenAI 호환 API 기본 URL
+            model_name: 사용할 모델 이름 (예: Qwen3-VL-30B-Instruct)
         """
-        self.provider = provider
         self.api_key = api_key or os.environ.get("VLM_API_KEY")
         self.api_base_url = api_base_url or os.environ.get("VLM_API_BASE_URL")
-        self.model_name = model_name
-
-        # 기본 모델 설정
-        if not self.model_name:
-            self._set_default_model()
+        self.model_name = model_name or os.environ.get("VLM_MODEL_NAME", "")
 
         # 상태 정의 템플릿
         self.state_definitions: Dict[str, Dict] = {}
 
-        print(f"[INFO] VLMScreenAnalyzer 초기화 - Provider: {provider.value}")
-
-    def _set_default_model(self):
-        """제공자별 기본 모델 설정"""
-        default_models = {
-            VLMProvider.QWEN_VL: "qwen-vl-max",
-            VLMProvider.OPENAI_GPT4V: "gpt-4-vision-preview",
-            VLMProvider.ANTHROPIC_CLAUDE: "claude-3-opus-20240229",
-            VLMProvider.LOCAL: "local-vlm",
-            VLMProvider.KIMI_2: "moonshot-v1-vision",
-            VLMProvider.QWEN3_VL: "qwen3-vl-plus"
-        }
-        self.model_name = default_models.get(self.provider, "default")
+        print(f"[INFO] VLMScreenAnalyzer 초기화 - Model: {self.model_name}")
 
     def load_state_definitions(self, definitions: Dict[str, Dict]):
         """
@@ -293,7 +256,7 @@ class VLMScreenAnalyzer:
 
     def _call_vlm_api(self, image_data: bytes, prompt: str) -> Optional[str]:
         """
-        VLM API를 호출합니다.
+        VLM API 호출 (OpenAI 호환 형식).
 
         Args:
             image_data: 이미지 데이터
@@ -302,92 +265,45 @@ class VLMScreenAnalyzer:
         Returns:
             API 응답 텍스트 또는 None
         """
-        if self.provider == VLMProvider.OPENAI_GPT4V:
-            return self._call_openai_api(image_data, prompt)
-        elif self.provider == VLMProvider.QWEN_VL:
-            return self._call_qwen_api(image_data, prompt)
-        elif self.provider == VLMProvider.KIMI_2:
-            return self._call_kimi_2_api(image_data, prompt)
-        elif self.provider == VLMProvider.QWEN3_VL:
-            return self._call_qwen3_vl_api(image_data, prompt)
-        elif self.provider == VLMProvider.LOCAL:
-            return self._call_local_api(image_data, prompt)
-        else:
-            print(f"[ERROR] 지원하지 않는 VLM 제공자: {self.provider}")
-            return None
-
-    def _call_openai_api(self, image_data: bytes, prompt: str) -> Optional[str]:
-        """OpenAI GPT-4V API 호출"""
-        if not OPENAI_AVAILABLE:
-            print("[ERROR] openai 라이브러리를 사용할 수 없습니다.")
-            return None
-
-        if not self.api_key:
-            print("[ERROR] API 키가 설정되지 않았습니다.")
-            return self._get_mock_response(prompt)
-
-        try:
-            client = openai.OpenAI(api_key=self.api_key)
-
-            base64_image = self._encode_image_to_base64(image_data)
-
-            response = client.chat.completions.create(
-                model=self.model_name,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{base64_image}"
-                                }
-                            }
-                        ]
-                    }
-                ],
-                max_tokens=1000
-            )
-
-            return response.choices[0].message.content
-
-        except Exception as e:
-            print(f"[ERROR] OpenAI API 호출 실패: {e}")
-            return self._get_mock_response(prompt)
-
-    def _call_qwen_api(self, image_data: bytes, prompt: str) -> Optional[str]:
-        """Qwen-VL API 호출"""
         if not REQUESTS_AVAILABLE:
             print("[ERROR] requests 라이브러리를 사용할 수 없습니다.")
             return None
 
         if not self.api_base_url:
-            print("[INFO] Qwen API URL이 설정되지 않았습니다. Mock 응답을 반환합니다.")
+            print("[INFO] VLM API URL이 설정되지 않았습니다. Mock 응답을 반환합니다.")
             return self._get_mock_response(prompt)
 
+        if not self.model_name:
+            print("[ERROR] VLM_MODEL_NAME이 설정되지 않았습니다.")
+            return None
+
+        image_base64 = base64.b64encode(image_data).decode('utf-8')
+        image_format = "webp" if image_data[:4] == b'RIFF' and image_data[8:12] == b'WEBP' else "png"
+
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        payload = {
+            "model": self.model_name,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/{image_format};base64,{image_base64}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            "temperature": 0.1
+        }
+
         try:
-            base64_image = self._encode_image_to_base64(image_data)
-
-            headers = {
-                "Content-Type": "application/json"
-            }
-            if self.api_key:
-                headers["Authorization"] = f"Bearer {self.api_key}"
-
-            payload = {
-                "model": self.model_name,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {"type": "image", "image": base64_image}
-                        ]
-                    }
-                ]
-            }
-
             response = requests.post(
                 f"{self.api_base_url}/v1/chat/completions",
                 headers=headers,
@@ -395,169 +311,10 @@ class VLMScreenAnalyzer:
                 timeout=60
             )
             response.raise_for_status()
-
-            result = response.json()
-            return result["choices"][0]["message"]["content"]
+            return response.json()["choices"][0]["message"]["content"]
 
         except Exception as e:
-            print(f"[ERROR] Qwen API 호출 실패: {e}")
-            return self._get_mock_response(prompt)
-
-    def _call_kimi_2_api(self, image_data: bytes, prompt: str) -> Optional[str]:
-        """
-        Kimi 2 API 호출 (Moonshot AI)
-
-        회사 내부 API 엔드포인트 사용
-        Rate Limit: 1 request / 3 seconds
-        """
-        if not REQUESTS_AVAILABLE:
-            print("[ERROR] requests 라이브러리를 사용할 수 없습니다.")
-            return None
-
-        if not self.api_base_url:
-            print("[ERROR] Kimi 2 API URL이 설정되지 않음")
-            return self._get_mock_response(prompt)
-
-        # Kimi 2는 OpenAI 호환 형식 사용
-        try:
-            image_base64 = base64.b64encode(image_data).decode('utf-8')
-
-            # 이미지 포맷 감지 (WebP 또는 PNG)
-            image_format = "png"
-            if image_data[:4] == b'RIFF' and image_data[8:12] == b'WEBP':
-                image_format = "webp"
-
-            headers = {
-                "Content-Type": "application/json",
-            }
-            if self.api_key:
-                headers["Authorization"] = f"Bearer {self.api_key}"
-
-            payload = {
-                "model": self.model_name or "moonshot-v1-vision",
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/{image_format};base64,{image_base64}"
-                                }
-                            }
-                        ]
-                    }
-                ],
-                "temperature": 0.1,
-                "max_tokens": 2000
-            }
-
-            response = requests.post(
-                f"{self.api_base_url}/v1/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=60
-            )
-
-            response.raise_for_status()
-            result = response.json()
-            return result["choices"][0]["message"]["content"]
-
-        except Exception as e:
-            print(f"[ERROR] Kimi 2 API 호출 실패: {e}")
-            return self._get_mock_response(prompt)
-
-    def _call_qwen3_vl_api(self, image_data: bytes, prompt: str) -> Optional[str]:
-        """
-        Qwen3-VL API 호출
-
-        Qwen-VL과 유사하지만 개선된 비전 이해 능력
-        Rate Limit: 1 request / 1 second
-        """
-        if not REQUESTS_AVAILABLE:
-            print("[ERROR] requests 라이브러리를 사용할 수 없습니다.")
-            return None
-
-        if not self.api_base_url:
-            print("[ERROR] Qwen3-VL API URL이 설정되지 않음")
-            return self._get_mock_response(prompt)
-
-        # Qwen3-VL도 OpenAI 호환 형식
-        try:
-            image_base64 = base64.b64encode(image_data).decode('utf-8')
-
-            # 이미지 포맷 감지 (WebP 또는 PNG)
-            image_format = "png"
-            if image_data[:4] == b'RIFF' and image_data[8:12] == b'WEBP':
-                image_format = "webp"
-
-            headers = {
-                "Content-Type": "application/json",
-            }
-            if self.api_key:
-                headers["Authorization"] = f"Bearer {self.api_key}"
-
-            payload = {
-                "model": self.model_name or "qwen3-vl-plus",
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/{image_format};base64,{image_base64}"
-                                }
-                            }
-                        ]
-                    }
-                ],
-                "temperature": 0.1
-            }
-
-            response = requests.post(
-                f"{self.api_base_url}/v1/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=60
-            )
-
-            response.raise_for_status()
-            result = response.json()
-            return result["choices"][0]["message"]["content"]
-
-        except Exception as e:
-            print(f"[ERROR] Qwen3-VL API 호출 실패: {e}")
-            return self._get_mock_response(prompt)
-
-    def _call_local_api(self, image_data: bytes, prompt: str) -> Optional[str]:
-        """로컬 VLM 서버 API 호출"""
-        if not self.api_base_url:
-            print("[INFO] 로컬 API URL이 설정되지 않았습니다. Mock 응답을 반환합니다.")
-            return self._get_mock_response(prompt)
-
-        try:
-            base64_image = self._encode_image_to_base64(image_data)
-
-            payload = {
-                "prompt": prompt,
-                "image": base64_image
-            }
-
-            response = requests.post(
-                f"{self.api_base_url}/analyze",
-                json=payload,
-                timeout=120
-            )
-            response.raise_for_status()
-
-            result = response.json()
-            return result.get("response", result.get("text", ""))
-
-        except Exception as e:
-            print(f"[ERROR] 로컬 API 호출 실패: {e}")
+            print(f"[ERROR] VLM API 호출 실패: {e}")
             return self._get_mock_response(prompt)
 
     def _get_mock_response(self, prompt: str) -> str:

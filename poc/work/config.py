@@ -61,10 +61,9 @@ def _str(key: str, default: str = "") -> str:
 @dataclass
 class VLMConfig:
     """VLM API 설정"""
-    api_url: str = ""              # VLM API 엔드포인트
+    api_url: str = ""              # VLM API 엔드포인트 (OpenAI 호환)
     api_key: str = ""              # API 인증 키
-    model_name: str = ""           # 모델 이름
-    provider: str = "qwen3_vl"     # VLM 제공자 (qwen3_vl, kimi_2, openai_gpt4v 등)
+    model_name: str = ""           # 모델 이름 (예: Qwen3-VL-30B-Instruct)
 
 
 @dataclass
@@ -130,7 +129,6 @@ class PocConfig:
             api_url=_str("VLM_API_URL"),
             api_key=_str("VLM_API_KEY"),
             model_name=_str("VLM_MODEL_NAME", "Qwen3-VL-30B-Instruct"),
-            provider=_str("VLM_PROVIDER", "qwen3_vl"),
         )
 
         rcs = RCSConfig(
@@ -154,26 +152,6 @@ class PocConfig:
 
         return cls(vlm=vlm, rcs=rcs, operation=operation)
 
-    def get_vlm_provider(self):
-        """VLMProvider enum 반환"""
-        from .vlm_screen_analysis import VLMProvider
-
-        provider_map = {
-            "qwen3_vl": VLMProvider.QWEN3_VL,
-            "qwen_vl": VLMProvider.QWEN_VL,
-            "kimi_2": VLMProvider.KIMI_2,
-            "openai_gpt4v": VLMProvider.OPENAI_GPT4V,
-            "anthropic_claude": VLMProvider.ANTHROPIC_CLAUDE,
-            "local": VLMProvider.LOCAL,
-        }
-
-        key = self.vlm.provider.lower()
-        if key not in provider_map:
-            print(f"[WARNING] 알 수 없는 VLM_PROVIDER='{self.vlm.provider}', "
-                  f"기본값 QWEN3_VL 사용")
-            return VLMProvider.QWEN3_VL
-        return provider_map[key]
-
     def print_summary(self):
         """설정 요약 출력 (비밀번호 마스킹)"""
         print()
@@ -181,7 +159,6 @@ class PocConfig:
         print("  PoC 설정 요약")
         print("=" * 60)
         print(f"  VLM API URL:    {self.vlm.api_url or '(미설정)'}")
-        print(f"  VLM Provider:   {self.vlm.provider}")
         print(f"  VLM Model:      {self.vlm.model_name}")
         print(f"  VLM API Key:    {'****' if self.vlm.api_key else '(미설정)'}")
         print(f"  RCS Server:     {self.rcs.server or '(미설정)'}")

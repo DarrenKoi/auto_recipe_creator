@@ -10,6 +10,7 @@ Usage:
 """
 
 import os
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
 
@@ -99,7 +100,7 @@ class PocConfig:
     operation: OperationConfig
 
     @classmethod
-    def load(cls, dotenv_path: Optional[str] = None) -> "PocConfig":
+    def load(cls, dotenv_path: Optional[str | Path] = None) -> "PocConfig":
         """
         환경변수에서 설정을 로드
 
@@ -115,9 +116,9 @@ class PocConfig:
                 load_dotenv(dotenv_path)
             else:
                 # poc/.env → 프로젝트 루트/.env 순서로 탐색
-                poc_dir = os.path.dirname(os.path.abspath(__file__))
-                env_file = os.path.join(poc_dir, ".env")
-                if os.path.exists(env_file):
+                poc_dir = Path(__file__).resolve().parent
+                env_file = poc_dir / ".env"
+                if env_file.exists():
                     load_dotenv(env_file)
                 else:
                     load_dotenv()  # 자동 탐색

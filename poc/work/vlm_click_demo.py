@@ -37,6 +37,7 @@ import time
 import json
 import base64
 import platform
+from pathlib import Path
 from datetime import datetime
 from io import BytesIO
 from typing import Optional, Tuple, List
@@ -612,8 +613,8 @@ def main():
 
     # .env 로드
     if DOTENV_AVAILABLE:
-        env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-        if os.path.exists(env_path):
+        env_path = Path(__file__).resolve().parent / ".env"
+        if env_path.exists():
             load_dotenv(env_path)
         else:
             load_dotenv()
@@ -630,8 +631,10 @@ def main():
     )
     output_dir = os.environ.get("OUTPUT_DIR", "./captures")
     monitor_index = int(os.environ.get("MONITOR_INDEX", "1"))
+    output_dir_path = Path(output_dir).expanduser()
+    output_dir_path.mkdir(parents=True, exist_ok=True)
 
-    os.makedirs(output_dir, exist_ok=True)
+    output_dir = output_dir_path
 
     print()
     print("+" + "=" * 58 + "+")
@@ -671,7 +674,7 @@ def main():
 
     # 원본 스크린샷 저장
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    orig_path = os.path.join(output_dir, f"screenshot_{timestamp}.png")
+    orig_path = output_dir / f"screenshot_{timestamp}.png"
     screenshot.save(orig_path, format="PNG")
     print(f"[INFO] 원본 스크린샷 저장: {orig_path}")
 
@@ -761,7 +764,7 @@ def main():
     )
 
     # 결과 저장
-    result_path = os.path.join(output_dir, f"vlm_click_{timestamp}.png")
+    result_path = output_dir / f"vlm_click_{timestamp}.png"
     annotated.save(result_path, format="PNG")
     print(f"[INFO] 결과 이미지 저장: {result_path}")
 
@@ -785,8 +788,8 @@ def main():
         "timestamp": timestamp,
     }
 
-    json_path = os.path.join(output_dir, f"vlm_click_{timestamp}.json")
-    with open(json_path, "w", encoding="utf-8") as f:
+    json_path = output_dir / f"vlm_click_{timestamp}.json"
+    with json_path.open("w", encoding="utf-8") as f:
         json.dump(coord_info, f, ensure_ascii=False, indent=2)
     print(f"[INFO] 좌표 정보 저장: {json_path}")
 

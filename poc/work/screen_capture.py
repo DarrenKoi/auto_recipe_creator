@@ -9,7 +9,7 @@ VM 창이나 전체 화면을 고속으로 캡처할 수 있습니다.
 """
 
 import time
-import os
+from pathlib import Path
 from typing import Optional, Tuple
 from datetime import datetime
 
@@ -38,8 +38,8 @@ class ScreenCapture:
         Args:
             output_dir: 캡처 이미지 저장 디렉토리
         """
-        self.output_dir = output_dir
-        os.makedirs(output_dir, exist_ok=True)
+        self.output_dir = Path(output_dir).expanduser()
+        self.output_dir.mkdir(parents=True, exist_ok=True)
 
         if MSS_AVAILABLE:
             self.sct = mss.mss()
@@ -90,8 +90,8 @@ class ScreenCapture:
 
         if save:
             filename = f"fullscreen_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-            filepath = os.path.join(self.output_dir, filename)
-            with open(filepath, 'wb') as f:
+            filepath = self.output_dir / filename
+            with filepath.open("wb") as f:
                 f.write(png_data)
             print(f"[INFO] 저장됨: {filepath}")
 
@@ -133,8 +133,8 @@ class ScreenCapture:
 
         if save:
             filename = f"region_{x}_{y}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-            filepath = os.path.join(self.output_dir, filename)
-            with open(filepath, 'wb') as f:
+            filepath = self.output_dir / filename
+            with filepath.open("wb") as f:
                 f.write(png_data)
             print(f"[INFO] 저장됨: {filepath}")
 
@@ -171,8 +171,8 @@ class ScreenCapture:
 
         if save:
             filename = f"monitor{monitor_index}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-            filepath = os.path.join(self.output_dir, filename)
-            with open(filepath, 'wb') as f:
+            filepath = self.output_dir / filename
+            with filepath.open("wb") as f:
                 f.write(png_data)
             print(f"[INFO] 저장됨: {filepath}")
 

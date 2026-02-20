@@ -3,6 +3,7 @@
 import argparse
 import os
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -193,7 +194,8 @@ def main() -> int:
         return 1
 
     print(f"[INFO] Starting RCS: {exe_path}")
-    app = Application(backend="uia").start([str(exe_path), *args.extra_args], wait_for_idle=False)
+    cmd_str = subprocess.list2cmdline([str(exe_path), *args.extra_args])
+    app = Application(backend="uia").start(cmd_str, wait_for_idle=False)
 
     try:
         login_window = _wait_for_login_window(app, args.window_title, args.launch_timeout)

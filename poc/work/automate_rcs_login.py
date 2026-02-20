@@ -80,7 +80,7 @@ def _first_visible_windows(windows) -> List:
     return [win for win in windows if _is_visible(win)]
 
 
-def _wait_for_login_window(app: Application, title_regex: str, timeout: float):
+def _wait_for_login_window(app, title_regex: str, timeout: float):
     deadline = time.time() + timeout
     while time.time() < deadline:
         windows = app.windows()

@@ -7,7 +7,7 @@
 1. [사전 요구사항](#사전-요구사항)
 2. [Tailscale VPN 설정](#1-tailscale-vpn-설정)
 3. [SSH 서버 설정](#2-ssh-서버-설정)
-4. [화면 공유 (VNC) 설정](#3-화면-공유-vnc-설정)
+4. [화면 공유 (Moonlight + Sunshine)](#3-화면-공유-moonlight--sunshine)
 5. [Claude Code 설치](#4-claude-code-설치)
 6. [추가 보안 설정](#5-추가-보안-설정)
 7. [자동 시작 설정](#6-자동-시작-설정)
@@ -166,42 +166,107 @@ ssh localhost
 
 ---
 
-## 3. 화면 공유 (VNC) 설정
+## 3. 화면 공유 (Moonlight + Sunshine)
 
-### 3.1 화면 공유 활성화
+### 3.1 Sunshine 설치
 
-**GUI 방법:**
+**권장 설치: Homebrew**
+```bash
+brew install --cask sunshine
+```
+
+**대체 설치: 공식 릴리스**
+- GitHub의 Mac용 Sunshine 설치 패키지 다운로드/실행
+
+### 3.2 Sunshine 초기 설정
+
+1. `open -a Sunshine` 실행
+2. 최초 실행 시 표시되는 웹 UI에서 관리 비밀번호 설정
+3. Pairing PIN을 확인하고 별도 저장
+4. 스트리밍용 앱(터치 입력/해상도, 코덱, 해상도, FPS) 기본값 확인
+
+### 3.3 스트리밍 포트 확인
+
+```bash
+# 기본 확인 포트 (버전/설정에 따라 다를 수 있음)
+lsof -nP -iTCP:47984 -sTCP:LISTEN
+lsof -nP -iTCP:47989 -sTCP:LISTEN
+lsof -nP -iTCP:48010 -sTCP:LISTEN
+lsof -nP -iUDP:47998 -sUDP:*
+```
+
+### 3.4 백업: macOS 기본 화면 공유(VNC) 설정
+
+VNC는 Sunshine이 동작하지 않을 때의 대체 수단입니다.
+
 1. 시스템 설정 → 일반 → 공유
 2. "화면 공유" 활성화
-3. "허용된 사용자" 설정
+3. VNC 비밀번호 설정
 
-**터미널 방법:**
-```bash
-# 화면 공유 활성화
-sudo defaults write /var/db/launchd.db/com.apple.launchd/overrides.plist com.apple.screensharing -dict Disabled -bool false
-sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist
-```
-
-### 3.2 VNC 암호 설정
-
-1. 시스템 설정 → 일반 → 공유
-2. 화면 공유 옆의 (i) 버튼 클릭
-3. "컴퓨터 설정..." 클릭
-4. "VNC 뷰어에서 암호로 화면을 제어할 수 있음" 체크
-5. 강력한 암호 설정
-
-### 3.3 화면 공유 옵션 설정
-
-**권장 설정:**
-- "누군가 화면 제어를 요청하면" → "허용 요청"
-- 또는 특정 사용자만 허용하여 보안 강화
-
-### 3.4 VNC 포트 확인
+### 3.5 VNC 포트 확인
 
 ```bash
-# 기본 포트: 5900
-netstat -an | grep 5900
+# 백업 경로 점검
+lsof -nP -iTCP:5900 -sTCP:LISTEN
 ```
+
+### 3.5-1 VNC 최적 백업 앱/소프트웨어(선택)
+
+**권장(무료)**
+- macOS 기본 `화면 공유`(기본 VNC 서버)
+- Android `VNC Viewer` 또는 `bVNC`
+
+**유료/상용 대안**
+- RealVNC Connect (서버/클라이언트 일괄 관리)
+- Jump Desktop (VNC/RFB + Fluid)
+
+### 3.5-2 VNC 권장 설정 포인트
+
+1. `방화벽`에서 `Screen Sharing` 앱을 허용했는지 확인
+   ```bash
+   # 화면 공유 등록 확인
+   sudo /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate
+   ```
+2. VNC 접속 비밀번호를 macOS 사용자 계정과 분리된 강력 비밀번호로 설정
+3. 네트워크 이슈를 줄이려면 VNC를 직접 인터넷에 노출하지 말고 Tailscale로만 접근
+
+### 3.6 서비스 실행 확인
+
+```bash
+# Sunshine 실행 상태
+ps aux | grep -v grep | grep -i sunshine
+```
+
+### 3.7 Sunshine 화면 크기 최적화(태블릿 대상)
+
+Galaxy Tab 연결 품질을 안정적으로 유지하려면 해상도, FPS, 비트레이트를 한 번에 고정해 두는 편이 좋습니다.
+
+#### 권장 프로필 (Mac Mini 기준)
+
+**안정 네트워크 (Wi-Fi 5GHz):**
+- 해상도: `1920x1200` (16:10) 또는 `1920x1080`
+- FPS: `60`
+- 비트레이트: `25000~30000`
+
+**불안정 네트워크(간헐적 끊김):**
+- 해상도: `1600x900` 또는 `1280x720`
+- FPS: `30`
+- 비트레이트: `12000~15000`
+
+#### 빠른 튜닝 순서
+
+1. 우선 `1920x1200 + 60fps + 25000kbps`로 시작
+2. 끊김/버퍼링이 보이면 `60fps -> 30fps`
+3. 계속 불안하면 `30fps -> 1920x1080 -> 1600x900`
+4. 최종적으로 텍스트 가독성이 나쁘면 해상도보다 `Moonlight 클라이언트 스케일/Android 글자 크기`를 조정
+
+#### 화면비/오버스캔 방지
+- Galaxy Tab은 가로 모드 16:10에 맞추는 것이 기본입니다.
+- `16:9`와 `16:10`을 섞어 쓰면 검은 여백 또는 잘림이 생길 수 있습니다.
+- 기본 해상도와 단일 프로필을 유지하고, 급한 환경에서만 임시로 바꿉니다.
+
+#### 권장 클라이언트 스키마(참고)
+- 120Hz 또는 고주사율 모드는 안정성보다 품질/대역폭 소모를 늘릴 수 있어, 60Hz 고정이 더 안정적입니다.
 
 ---
 
@@ -333,6 +398,10 @@ sudo systemsetup -setrestartpowerfailure on
 1. 시스템 설정 → 일반 → 로그인 항목
 2. "+" 버튼 → Tailscale 앱 추가
 
+**Sunshine 자동 시작:**
+1. 시스템 설정 → 일반 → 로그인 항목
+2. "+" 버튼 → Sunshine 또는 `/Applications/Sunshine.app`
+
 ### 6.3 잠자기 방지 설정
 
 ```bash
@@ -364,8 +433,9 @@ pmset -g
 - [ ] Tailscale IP 확인 (100.x.x.x)
 - [ ] SSH 서버 활성화
 - [ ] SSH 키 인증 설정 (선택)
-- [ ] 화면 공유 활성화
-- [ ] VNC 암호 설정
+- [ ] Sunshine 서비스 실행
+- [ ] Moonlight 클라이언트용 PIN/비밀번호 등록
+- [ ] 화면 공유(백업) VNC 포트 및 암호 설정
 - [ ] Claude Code 설치 및 인증
 - [ ] 방화벽 활성화
 - [ ] 자동 시작 설정

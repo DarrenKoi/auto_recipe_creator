@@ -7,9 +7,10 @@
 1. [연결 테스트 순서](#연결-테스트-순서)
 2. [Tailscale 트러블슈팅](#tailscale-트러블슈팅)
 3. [SSH 트러블슈팅](#ssh-트러블슈팅)
-4. [VNC 트러블슈팅](#vnc-트러블슈팅)
-5. [성능 최적화](#성능-최적화)
-6. [일반적인 문제 해결](#일반적인-문제-해결)
+4. [화면 공유 (Moonlight + Sunshine) 트러블슈팅](#화면-공유-moonlight--sunshine-트러블슈팅)
+5. [Code-Server 실행 점검](#code-server-실행-점검)
+6. [성능 최적화](#성능-최적화)
+7. [일반적인 문제 해결](#일반적인-문제-해결)
 
 ---
 
@@ -69,18 +70,37 @@ whoami
 claude --version
 ```
 
-### Step 4: VNC 연결 테스트
-
-**VNC Viewer에서:**
-1. "Mac Mini" 연결 탭
-2. VNC 암호 입력
-3. macOS 데스크톱 화면 확인
+### Step 4: Moonlight 연결 테스트
 
 **테스트 항목:**
-- [ ] 화면이 정상적으로 표시됨
-- [ ] 마우스 커서 움직임
-- [ ] 키보드 입력 동작
-- [ ] 스크롤 동작
+- [ ] Moonlight 앱에서 기기 목록에 `mac-mini` 또는 Tailscale IP가 표시됨
+- [ ] PIN 입력 후 스트리밍 시작됨
+- [ ] 마우스/터치 입력이 정상 동작
+- [ ] 키보드 입력이 즉시 반응
+- [ ] 가로 모드에서 UI가 찢기지 않고 전체 표시됨
+- [ ] 문서/터미널 폰트가 과도하게 작지 않음
+
+**Mac Mini에서 실행/포트 점검**
+```bash
+# Sunshine 실행 확인
+ps aux | grep -v grep | grep -i sunshine
+
+# 일반적인 Sunshine 포트 확인
+lsof -nP -iTCP:47984 -sTCP:LISTEN
+lsof -nP -iTCP:47989 -sTCP:LISTEN
+lsof -nP -iUDP:47998
+```
+
+**Galaxy Tab에서 확인**
+1. Moonlight 실행
+2. `mac-mini` 장치 탭 선택
+3. 화면/입력 동작 정상인지 확인
+
+**해상도 튜닝 가이드(태블릿 기준)**
+- 1차: `1920x1200` + `60fps`
+- 불안정: `1920x1080` + `60fps`
+- 지속적 지연: `1600x900` + `30fps`
+- 저대역폭: `1280x720` + `30fps` + 품질 `Medium`
 
 ### Step 5: Claude Code 테스트
 
@@ -92,6 +112,35 @@ claude "안녕하세요, 연결 테스트입니다."
 # 프로젝트 디렉토리에서 테스트
 cd ~/projects
 claude "현재 디렉토리 구조를 설명해주세요."
+```
+
+### Step 6: code-server 실행 상태 점검
+
+**Mac Mini에서 code-server 기동/확인**
+```bash
+# code-server 상태 확인
+brew services list | grep code-server
+
+# 프로세스 확인
+ps aux | grep -v grep | grep "code-server"
+
+# 8080 포트 리스너 확인
+lsof -nP -iTCP:8080 -sTCP:LISTEN
+```
+
+**code-server 실행 (미실행 시)**
+```bash
+# 백그라운드 실행
+brew services start code-server
+
+# 수동 실행(포트/인증 지정)
+code-server --bind-addr 0.0.0.0:8080 --auth password
+```
+
+**클라이언트에서 접속 테스트**
+```bash
+# Tailscale IP 기준 예시
+curl -I http://100.64.x.x:8080
 ```
 
 ---
@@ -161,8 +210,15 @@ tailscale netcheck
 
 **원인 1: SSH 서버 비활성화**
 ```bash
-# Mac Mini에서 (로컬 또는 VNC로)
+# Mac Mini에서 (로컬 또는 SSH로)
 sudo systemsetup -getremotelogin
+
+# SSH 데몬 상태 확인
+sudo launchctl list | grep com.openssh.sshd
+
+# 22 포트 리스너 확인
+lsof -nP -iTCP:22 -sTCP:LISTEN
+
 # Off인 경우:
 sudo systemsetup -setremotelogin on
 ```
@@ -227,64 +283,140 @@ brew install mosh
 # Galaxy Tab에서 mosh 지원 앱 사용 (Blink 등)
 ```
 
+### 문제: SSH가 실제로 실행 중인지 확인
+
+```bash
+# 서비스 목록
+sudo launchctl list | grep com.openssh.sshd
+
+# 실행 중 프로세스
+pgrep -af sshd
+
+# 로컬에서 포트 점검
+lsof -nP -iTCP:22 -sTCP:LISTEN
+```
+
 ---
 
-## VNC 트러블슈팅
+## 화면 공유 (Moonlight + Sunshine) 트러블슈팅
 
-### 문제: Unable to connect
+### 문제: Moonlight에서 mac-mini가 보이지 않음
 
-**원인 1: 화면 공유 비활성화**
-```
-Mac Mini: 시스템 설정 → 일반 → 공유 → 화면 공유 확인
-```
+**원인 1: Tailscale 연동 불일치**
+- Galaxy Tab과 Mac mini가 동일 계정/네트워크인지 확인
+- `tailscale status`로 연결 상태 점검
 
-**원인 2: 잘못된 포트**
-```
-VNC Viewer: 주소에 :5900 포트 명시
-예: 100.64.x.x:5900 또는 mac-mini:5900
-```
-
-**원인 3: 방화벽 차단**
+**원인 2: Sunshine 미실행**
 ```bash
-# Mac Mini에서 방화벽 예외 추가
-sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add /System/Library/CoreServices/Screen\ Sharing.app
+# 실행 여부 확인
+ps aux | grep -v grep | grep -i sunshine
 ```
 
-### 문제: Authentication failed
+**원인 3: 서비스 포트 차단**
+- Mac mini 방화벽 또는 네트워크 정책에서 47984/47989/47998 접근 제한
 
-**해결: VNC 암호 재설정**
-```
-Mac Mini: 시스템 설정 → 일반 → 공유
-→ 화면 공유 (i) → 컴퓨터 설정 → 암호 재설정
-```
+### 문제: Pairing PIN 실패
 
-### 문제: 화면이 검게 표시됨
+**해결:**
+- Mac에서 Sunshine PIN 코드를 새로고침
+- Galaxy Tab에서 기존 페어링 삭제 후 재등록
+- 기기명/IP 변경 시 주소 재등록
 
-**원인: macOS 화면 보호기/잠금**
+### 문제: 화면은 열리는데 입력이 지연되거나 끊김
+
+**Mac Mini 최적화**
 ```bash
-# Mac Mini에서 화면 보호기 비활성화
-defaults write com.apple.screensaver idleTime 0
-
-# 또는 VNC 연결 후 암호 입력하여 잠금 해제
-```
-
-### 문제: 화면이 느리거나 깨짐
-
-**해결책 1: 화질 설정 낮춤**
-```
-VNC Viewer → 연결 설정 → Picture quality: Medium 또는 Low
-```
-
-**해결책 2: 해상도 조정**
-```
-Mac Mini: 시스템 설정 → 디스플레이 → 해상도 낮춤
-```
-
-**해결책 3: 애니메이션 비활성화**
-```bash
-# Mac Mini에서
+# 해상도/애니메이션 최적화
+defaults write com.apple.universalaccess reduceTransparency -bool true
 defaults write NSGlobalDomain NSAutomaticWindowAnimationsEnabled -bool false
-defaults write -g QLPanelAnimationDuration -float 0
+```
+
+**Moonlight 최적화**
+- Wi-Fi 환경이면 60fps, 유선이면 90fps 또는 1080p 고정
+- 모바일 데이터면 30fps/중간 화질로 조정
+
+### 문제: 화면이 잘려 보이거나 모서리가 찢어짐
+
+**원인**
+- 해상도/비율이 Moonlight에서 지정한 값과 Galaxy Tab 화면비가 다름
+- 기기 전환/회전 후 세션이 이전 스케일을 유지한 상태
+
+**해결**
+- Moonlight에서 `1920x1200` 또는 `1600x900`로 재설정 후 재접속
+- Sunshine 앱에서 새 스트리밍 프로필을 저장하고 고정
+- Android에서 가로 모드 고정 후 `기기별 DPI/글꼴` 재조정
+
+### 문제: 화면이 아예 안 들어올 때 (fallback)
+
+- VNC는 백업 수단으로 유지합니다.
+- Mac에서 `화면 공유`를 켜고, Galaxy Tab의 VNC Viewer에서 `100.64.x.x:5900`으로 연결 테스트
+
+### 문제: VNC 백업 연결이 안 될 때
+
+**Mac 점검**
+```bash
+# 화면 공유 서비스 확인
+sudo launchctl list | grep screensharing
+
+# 화면 공유 포트 확인
+lsof -nP -iTCP:5900 -sTCP:LISTEN
+
+# 화면 공유 설정 요약(설정 파일이 있으면 표시됨)
+defaults read /Library/Preferences/com.apple.ScreenSharing 2>/dev/null
+```
+
+**Galaxy Tab 점검**
+- VNC 앱이 `VNC` 모드인지 확인(HTML5 모드가 아닌 네이티브 접속)
+- 주소 형식: `100.64.x.x:5900`
+- 앱의 품질 레벨을 `Medium`부터 시작
+
+**권장 순서**
+1. Moonlight 연결을 완전 종료 후 앱 재시작
+2. Mac 화면 공유를 재시작
+3. VNC 앱에서 새 연결 삭제 후 재등록
+4. VNC 비밀번호 재설정 후 재시도
+
+---
+
+## Code-Server 실행 점검
+
+### 문제: code-server 미실행
+
+```bash
+# 설치 확인
+code-server --version
+
+# 서비스 실행 상태
+brew services list | grep code-server
+
+# 실행
+brew services start code-server
+```
+
+### 문제: code-server 시작이 안 됨
+
+```bash
+# 즉시 재시작
+brew services restart code-server
+
+# 로그 확인 (기본 경로)
+tail -n 50 ~/Library/Logs/code-server/*.log
+
+# 설정 파일 점검
+cat ~/.config/code-server/config.yaml
+
+# 포트 바인딩 점검
+lsof -nP -iTCP:8080 -sTCP:LISTEN
+```
+
+### 문제: 외부에서 접속 안 됨
+
+```bash
+# 바인딩 주소/포트 점검
+grep -n "^bind-addr" ~/.config/code-server/config.yaml
+
+# health 체크
+curl -sSf http://127.0.0.1:8080/healthz | cat
 ```
 
 ---
@@ -311,7 +443,7 @@ tmux new -s coding
 tmux attach -t coding
 ```
 
-### VNC 최적화
+### Moonlight 최적화
 
 **macOS 시각 효과 줄이기:**
 ```bash
@@ -366,7 +498,7 @@ tailscale funnel 22
 
 **해결:**
 1. Tailscale: 배터리 최적화 제외
-2. VNC: 사용 안할 때 앱 종료
+2. Moonlight: 사용 안 할 때 스트리밍 종료
 3. 밝기 자동 조절 활성화
 
 ### 문제: 한글 입력이 안됨
@@ -378,7 +510,7 @@ export LANG=ko_KR.UTF-8
 export LC_ALL=ko_KR.UTF-8
 ```
 
-**VNC:**
+**Moonlight/키보드:**
 - Mac Mini에서 한글 입력기 설정 확인
 - 입력 소스 전환: Caps Lock 또는 Control+Space
 
@@ -404,8 +536,8 @@ echo "=== SSH 서비스 ==="
 sudo systemsetup -getremotelogin
 echo ""
 
-echo "=== 화면 공유 ==="
-sudo launchctl list | grep screensharing
+echo "=== 화면 공유 (Moonlight) ==="
+ps aux | grep -v grep | grep -i sunshine
 echo ""
 
 echo "=== 시스템 부하 ==="
@@ -463,7 +595,8 @@ crontab -e
 
 ### 공식 문서
 - Tailscale: https://tailscale.com/kb/
-- RealVNC: https://help.realvnc.com/
+- Sunshine: https://github.com/LizardByte/Sunshine
+- Moonlight Android: https://play.google.com/store/apps/details?id=com.limelight
 - Termius: https://support.termius.com/
 
 ### 커뮤니티

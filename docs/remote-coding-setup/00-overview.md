@@ -20,7 +20,7 @@
         │                           │                           │
         ▼                           ▼                           ▼
 ┌───────────────┐           ┌───────────────┐           ┌───────────────┐
-│   SSH (22)    │           │  VNC (5900)   │           │ VS Code SSH   │
+│   SSH (22)    │           │ Moonlight(47984)│         │ VS Code SSH   │
 │   터미널 접속  │           │   GUI 접속    │           │   원격 개발    │
 └───────────────┘           └───────────────┘           └───────────────┘
         │                           │                           │
@@ -41,7 +41,7 @@
 |----------|----------|------|
 | Claude Code 사용 | Termius / SSH | 터미널 기반, 빠른 응답 |
 | 코드 편집 | VS Code Remote SSH | 완전한 IDE 경험 |
-| 시스템 관리 | VNC Viewer | GUI 필요 작업 |
+| 시스템 관리 | Moonlight + Sunshine | 저지연 GUI 접속 |
 | 파일 전송 | Termius SFTP | 간편한 드래그앤드롭 |
 
 ## 핵심 소프트웨어 스택
@@ -78,14 +78,21 @@
 
 | 소프트웨어 | 설명 | 특징 |
 |-----------|------|------|
-| **VNC Viewer** | RealVNC 클라이언트 | macOS 내장 VNC 호환 |
+| **Moonlight + Sunshine** | 게임 스트리밍 방식 원격 데스크톱 | 저지연 스트리밍, 입력 지연이 적음 |
 | Jump Desktop | 고성능 원격 데스크톱 | Fluid 프로토콜 지원 |
+| RealVNC (Apple Screen Sharing) | macOS 기본 화면 공유 기반 | 설정이 빠르고 호환성 좋음 |
 | Screens 5 | macOS 전용 솔루션 | 고품질 화면 공유 |
+| VNC Viewer (Android) | VNC 전용 클라이언트 | 백업 연결에 안정적 |
 
-**권장: VNC Viewer (RealVNC)**
-- 무료
-- macOS 기본 화면 공유와 호환
-- 안정적인 연결
+**권장: Moonlight + Sunshine**
+- Android에서 Moonlight 앱으로 Mac Mini 스트리밍
+- VNC는 백업 경로로 운영. Android는 RealVNC + bVNC/Jump Desktop으로 실패 시 대응
+
+### VNC 백업 권장 조합
+
+- **Mac 서버:** `시스템 설정 → 공유 → 화면 공유`(기본) + Tailscale 터널링
+- **Android 클라이언트:** `VNC Viewer` (1순위), `bVNC`, `Jump Desktop`
+- **선택:** RealVNC Server 패키지(상용)로 접속 방식 통합 관리
 
 ### 코드 편집 (IDE)
 
@@ -114,9 +121,9 @@
 7. Claude Code 설치 및 테스트
 
 ### Phase 3: GUI 환경 (선택)
-8. Mac Mini 화면 공유 활성화
-9. Galaxy Tab에 VNC Viewer 설치
-10. VNC 연결 테스트
+8. Mac Mini에서 Sunshine 설치 및 실행 설정
+9. Galaxy Tab에 Moonlight 앱 설치
+10. Moonlight 스트리밍 연결 테스트
 
 ### Phase 4: IDE 환경 (선택)
 11. Galaxy Tab에 VS Code 설치 (DeX 모드용)
@@ -128,7 +135,7 @@
 - [ ] Tailscale 2FA 활성화
 - [ ] SSH 키 인증 설정 (패스워드 비활성화)
 - [ ] macOS 방화벽 활성화
-- [ ] 화면 공유 암호 설정
+- [ ] Sunshine 인증 패스워드 설정
 - [ ] Tailscale ACL 설정 (필요시)
 
 ## 문서 구성

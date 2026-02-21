@@ -7,7 +7,7 @@
 1. [사전 요구사항](#사전-요구사항)
 2. [Tailscale VPN 설정](#1-tailscale-vpn-설정)
 3. [Termius (SSH 클라이언트) 설정](#2-termius-ssh-클라이언트-설정)
-4. [VNC Viewer 설정](#3-vnc-viewer-설정)
+4. [Moonlight 설정](#3-moonlight-설정)
 5. [VS Code 설정 (DeX 모드)](#4-vs-code-설정-dex-모드)
 6. [추가 권장 앱](#5-추가-권장-앱)
 7. [키보드 단축키 설정](#6-키보드-단축키-설정)
@@ -143,66 +143,98 @@ https://play.google.com/store/apps/details?id=com.server.auditor.ssh.client
 
 ---
 
-## 3. VNC Viewer 설정
+## 3. Moonlight 설정
 
-### 3.1 VNC Viewer 설치
+### 3.1 Moonlight 설치
 
 **Google Play Store:**
 ```
-Play Store → "VNC Viewer" (RealVNC) 검색 → 설치
+Play Store → "Moonlight" 검색 → 설치
 ```
 
 또는:
 ```
-https://play.google.com/store/apps/details?id=com.realvnc.viewer.android
+https://play.google.com/store/apps/details?id=com.limelight
 ```
 
 ### 3.2 새 연결 추가
 
-1. VNC Viewer 실행
-2. "+" 버튼 탭
-3. 설정 입력:
+1. Moonlight 실행
+2. `+` 버튼 탭
+3. Mac mini Tailscale IP 또는 호스트명(`mac-mini`, `100.64.x.x`) 입력
+4. Mac에서 Sunshine PIN 코드 확인 후 입력
+5. 페어링 완료
 
-| 항목 | 값 |
-|-----|-----|
-| **Address** | mac-mini:5900 또는 100.64.x.x:5900 |
-| **Name** | Mac Mini |
+### 3.3 연결 및 스트리밍
 
-4. "Create" 탭
+1. 기기 선택 후 `Stream` 버튼 탭
+2. 해상도/프레임레이트 설정
+3. 연결 완료 후 마우스/터치 입력 확인
 
-### 3.3 연결 및 인증
+### 3.4 성능/연결 최적화
+**권장 설정:**
+- LAN/안정 네트워크: 60fps + 1080p
+- 데이터 절약 모드: `30fps`, `Medium`
+- 하드웨어 키보드 사용
 
-1. 생성된 연결 탭
-2. 첫 연결시 암호화 경고 → "Continue"
-3. VNC 암호 입력 (Mac Mini에서 설정한 암호)
-4. 연결 완료
+### 3.5 Galaxy Tab 화면 크기 최적화
 
-### 3.4 VNC Viewer 최적화 설정
+### 화면비 우선 설정(권장)
+- **세로(세로 모드)**: 개발 작업 시 비추천
+- **가로(landscape) 고정**: 텍스트 가독성, 터치 정확도 우수
+- 기본적으로 `16:10` 계열 해상도로 고정
 
-**연결 설정 (연결 편집):**
-- **Picture quality:** High (WiFi) / Medium (모바일 데이터)
-- **Scaling:** Fit to screen
+### 기기별 권장 시작 해상도(예시)
 
-**터치 제스처:**
-| 제스처 | 동작 |
-|--------|------|
-| 한 손가락 탭 | 클릭 |
-| 두 손가락 탭 | 우클릭 |
-| 핀치 | 줌 인/아웃 |
-| 두 손가락 드래그 | 스크롤 |
-| 세 손가락 탭 | 키보드 표시 |
+| 태블릿 | 권장 시작 해상도 | 대안(절전) |
+|--------|-----------------|-----------|
+| Galaxy Tab S8/S9 계열 | `1920x1200` | `1600x900`, `1280x720` |
+| Galaxy Tab S7/유사 모델 | `1280x800` | `1600x900`(Wi-Fi), `1280x720` |
 
-### 3.5 대안: Jump Desktop (유료)
+### Moonlight 클라이언트에서 빠른 설정 가이드
 
-더 나은 성능이 필요한 경우:
+1. 연결 가능한 기기 탭에서 `스트리밍 설정` 열기
+2. `해상도`를 먼저 고정값으로 지정
+3. `FPS`를 `60`에서 시작
+4. `대역폭`/품질을 `Medium` 또는 `High` 중 선택
+5. 지연이 보이면 `FPS 30`로 즉시 하향
+
+### 가독성 개선
+- Moonlight 확대/축소는 크게 쓰지 말고, 대신:
+  - Android `설정 > 디스플레이 > 글꼴 크기`를 상향
+  - 터미널/에디터 기본 폰트 크기를 2~4 포인트 올림
+  - 필요 시 Sunshine 해상도를 `1920x1080`로 내려 가독성 우선
+
+### 3.6 대안(백업): VNC Viewer
+
+Moonlight 연결이 안 되면 VNC Viewer로 임시 접속합니다.
 ```
-https://play.google.com/store/apps/details?id=com.p5sys.android.jump.free
+https://play.google.com/store/apps/details?id=com.realvnc.viewer.android
 ```
 
-장점:
-- Fluid 프로토콜 지원 (더 빠름)
-- 60fps 지원
-- 멀티 모니터 지원
+기본 주소: `mac-mini:5900` 또는 `100.64.x.x:5900`
+
+### 3.7 VNC 추천 앱 (백업)
+
+#### 1순위: RealVNC Viewer (무료/유료)
+- 주소: `https://play.google.com/store/apps/details?id=com.realvnc.viewer.android`
+- 장점: 초기 설정이 빠르고 안정적
+
+#### 2순위: bVNC (오픈소스)
+- 주소: `https://play.google.com/store/apps/details?id=net.christianbeier.bVNC`
+- 장점: 경량, 커스텀 옵션 많음
+
+#### 3순위: Jump Desktop
+- 주소: `https://play.google.com/store/apps/details?id=com.p5sys.android.jump.free`
+- 장점: VNC/RDP 모두 다룰 수 있는 통합형 클라이언트
+
+### 3.8 VNC 설정 체크리스트(백업)
+
+1. `서버 주소`: `mac-mini` 또는 `100.64.x.x:5900`
+2. 암호: Mac 화면 공유에서 설정한 VNC 비밀번호 입력
+3. 스케일: 화면이 잘릴 때 100% 또는 맞춤 스케일로 맞춤
+4. 성능: 이미지 품질을 `중간`으로 시작 후 필요 시 상향
+5. 실패 시: Mac의 `화면 공유` 켜짐 + Tailscale 연결 상태 재확인
 
 ---
 
@@ -366,8 +398,10 @@ launchctl load ~/Library/LaunchAgents/com.code-server.plist
 - [ ] Termius 설치
 - [ ] SSH 키 생성 및 Mac Mini에 등록
 - [ ] SSH 연결 성공
-- [ ] VNC Viewer 설치
-- [ ] VNC 연결 성공
+- [ ] Moonlight 설치
+- [ ] Mac mini 페어링(PIN) 완료
+- [ ] Moonlight 스트리밍 성공
+- [ ] (백업) VNC Viewer 설치/연결 테스트
 - [ ] (선택) code-server 접속 테스트
 
 ---

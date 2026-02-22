@@ -4,6 +4,7 @@ Workflow Extractor 데이터 모델
 화면 녹화에서 추출된 워크플로우 단계 및 어노테이션을 위한 데이터 모델 정의.
 """
 
+import dataclasses
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
@@ -42,6 +43,33 @@ class ExtractionMethod(Enum):
     HYBRID = "hybrid"
 
 
+class ReviewStatus(Enum):
+    """리뷰 상태"""
+    PENDING = "pending"
+    AUTO_ACCEPTED = "auto_accepted"
+    HUMAN_APPROVED = "human_approved"
+    HUMAN_CORRECTED = "human_corrected"
+    REJECTED = "rejected"
+    NEEDS_REVIEW = "needs_review"
+
+
+class ConfidenceTier(Enum):
+    """신뢰도 등급"""
+    HIGH = "high"      # >= 0.7
+    MEDIUM = "medium"  # 0.3 ~ 0.7
+    LOW = "low"        # < 0.3
+
+
+def compute_confidence_tier(confidence: float) -> str:
+    """신뢰도 값에서 등급을 계산합니다."""
+    if confidence >= 0.7:
+        return ConfidenceTier.HIGH.value
+    elif confidence >= 0.3:
+        return ConfidenceTier.MEDIUM.value
+    else:
+        return ConfidenceTier.LOW.value
+
+
 @dataclass
 class WorkflowStep:
     """워크플로우 단일 단계"""
@@ -59,6 +87,13 @@ class WorkflowStep:
     confidence: float = 1.0  # 신뢰도 (자동 추출 시)
     duration: Optional[float] = None  # 작업 소요 시간 (초)
 
+    # 리뷰 추적 필드
+    review_status: str = "pending"  # ReviewStatus 값
+    reviewed_by: Optional[str] = None  # 리뷰어 이름
+    reviewed_at: Optional[str] = None  # 리뷰 시간 (ISO 형식)
+    original_vlm_suggestion: Optional[Dict[str, Any]] = None  # VLM 원본 제안 (수정 전 보존)
+    confidence_tier: str = "high"  # ConfidenceTier 값
+
     def to_dict(self) -> Dict[str, Any]:
         """MongoDB 저장용 딕셔너리 변환"""
         return {
@@ -72,6 +107,11 @@ class WorkflowStep:
             "notes": self.notes,
             "confidence": self.confidence,
             "duration": self.duration,
+            "review_status": self.review_status,
+            "reviewed_by": self.reviewed_by,
+            "reviewed_at": self.reviewed_at,
+            "original_vlm_suggestion": self.original_vlm_suggestion,
+            "confidence_tier": self.confidence_tier,
         }
 
     @classmethod
@@ -80,6 +120,8 @@ class WorkflowStep:
         data = data.copy()
         if data.get("coordinates") is not None:
             data["coordinates"] = tuple(data["coordinates"])
+        valid_keys = {f.name for f in dataclasses.fields(cls)}
+        data = {k: v for k, v in data.items() if k in valid_keys}
         return cls(**data)
 
 
@@ -102,6 +144,13 @@ class WorkflowAnnotation:
     video_resolution: Optional[Tuple[int, int]] = None  # 영상 해상도 (width, height)
     tags: List[str] = field(default_factory=list)  # 검색용 태그
 
+    # 리뷰 추적 필드
+    review_status: str = "pending"  # ReviewStatus 값
+    reviewed_by: Optional[str] = None  # 리뷰어 이름
+    reviewed_at: Optional[str] = None  # 리뷰 시간 (ISO 형식)
+    review_stats: Optional[Dict[str, int]] = None  # 리뷰 통계 (상태별 카운트)
+    source_annotation_id: Optional[str] = None  # 원본 자동 추출 어노테이션 ID
+
     def to_dict(self) -> Dict[str, Any]:
         """MongoDB 저장용 딕셔너리 변환"""
         return {
@@ -117,6 +166,11 @@ class WorkflowAnnotation:
             "extraction_method": self.extraction_method,
             "video_resolution": list(self.video_resolution) if self.video_resolution else None,
             "tags": self.tags,
+            "review_status": self.review_status,
+            "reviewed_by": self.reviewed_by,
+            "reviewed_at": self.reviewed_at,
+            "review_stats": self.review_stats,
+            "source_annotation_id": self.source_annotation_id,
         }
 
     @classmethod
@@ -128,6 +182,8 @@ class WorkflowAnnotation:
             data["created_at"] = datetime.fromisoformat(data["created_at"])
         if data.get("video_resolution") is not None:
             data["video_resolution"] = tuple(data["video_resolution"])
+        valid_keys = {f.name for f in dataclasses.fields(cls)}
+        data = {k: v for k, v in data.items() if k in valid_keys}
         return cls(**data)
 
 
@@ -167,6 +223,8 @@ class InferredAction:
         data = data.copy()
         if data.get("coordinates") is not None:
             data["coordinates"] = tuple(data["coordinates"])
+        valid_keys = {f.name for f in dataclasses.fields(cls)}
+        data = {k: v for k, v in data.items() if k in valid_keys}
         return cls(**data)
 
 
@@ -195,4 +253,7 @@ class KeyFrame:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "KeyFrame":
         """딕셔너리에서 객체 생성"""
+        data = data.copy()
+        valid_keys = {f.name for f in dataclasses.fields(cls)}
+        data = {k: v for k, v in data.items() if k in valid_keys}
         return cls(**data)

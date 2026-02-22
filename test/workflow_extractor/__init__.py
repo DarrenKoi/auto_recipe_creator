@@ -9,6 +9,9 @@ from .models import (
     ActionType,
     RecipeType,
     ExtractionMethod,
+    ReviewStatus,
+    ConfidenceTier,
+    compute_confidence_tier,
     WorkflowStep,
     WorkflowAnnotation,
     InferredAction,
@@ -16,6 +19,7 @@ from .models import (
 )
 from .workflow_annotator import WorkflowAnnotator
 from .auto_extractor import AutoExtractor, AutoExtractorConfig
+from .hybrid_annotator import HybridAnnotator, HybridAnnotatorConfig
 from .workflow_ingester import WorkflowIngester
 from .workflow_orchestrator import (
     WorkflowOrchestrator,
@@ -29,6 +33,9 @@ __all__ = [
     "ActionType",
     "RecipeType",
     "ExtractionMethod",
+    "ReviewStatus",
+    "ConfidenceTier",
+    "compute_confidence_tier",
     "WorkflowStep",
     "WorkflowAnnotation",
     "InferredAction",
@@ -38,6 +45,9 @@ __all__ = [
     # 자동 추출
     "AutoExtractor",
     "AutoExtractorConfig",
+    # 하이브리드 어노테이션
+    "HybridAnnotator",
+    "HybridAnnotatorConfig",
     # DB 인제스트
     "WorkflowIngester",
     # 오케스트레이터

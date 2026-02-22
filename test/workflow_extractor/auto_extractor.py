@@ -43,6 +43,7 @@ from .models import (
     ActionType,
     RecipeType,
     ExtractionMethod,
+    compute_confidence_tier,
 )
 
 
@@ -67,6 +68,9 @@ class AutoExtractorConfig:
 
     # 최소 신뢰도 (이 값 미만의 추론 결과는 제외)
     min_confidence: float = 0.3
+
+    # 낮은 신뢰도 결과 제외 여부 (False 시 모든 결과 보존 — HybridAnnotator용)
+    discard_low_confidence: bool = True
 
     # 출력 설정
     save_keyframes: bool = True  # 핵심 프레임 이미지 저장
@@ -302,8 +306,12 @@ JSON만 응답하세요."""
                 timestamp=kf.timestamp,
             )
 
-            if action and action.confidence >= self.config.min_confidence:
-                inferred.append(action)
+            if action:
+                if self.config.discard_low_confidence:
+                    if action.confidence >= self.config.min_confidence:
+                        inferred.append(action)
+                else:
+                    inferred.append(action)
 
             # 핵심 프레임 이미지 저장 (선택)
             if self.config.save_keyframes:
@@ -560,6 +568,7 @@ JSON만 응답하세요."""
                 input_text=action.input_text,
                 notes=action.description,
                 confidence=action.confidence,
+                confidence_tier=compute_confidence_tier(action.confidence),
             )
             steps.append(step)
 

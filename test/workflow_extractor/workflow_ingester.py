@@ -146,16 +146,32 @@ class WorkflowIngester:
         self._initialized = True
         print("[INFO] WorkflowIngester 초기화 완료")
 
-    def ingest_annotation(self, annotation: WorkflowAnnotation) -> Dict[str, Any]:
+    def ingest_annotation(
+        self,
+        annotation: WorkflowAnnotation,
+        require_review: bool = False,
+    ) -> Dict[str, Any]:
         """
         단일 워크플로우 어노테이션을 DB에 저장합니다.
 
         Args:
             annotation: 워크플로우 어노테이션
+            require_review: True 시 리뷰되지 않은 어노테이션은 건너뜁니다
 
         Returns:
             인제스트 결과 요약
         """
+        if require_review:
+            approved_statuses = {"human_approved", "human_corrected", "auto_accepted"}
+            if annotation.review_status not in approved_statuses:
+                print(f"[WARNING] 리뷰되지 않은 어노테이션 건너뜀: "
+                      f"{annotation.workflow_id} (상태: {annotation.review_status})")
+                return {
+                    "workflow_id": annotation.workflow_id,
+                    "skipped": True,
+                    "reason": f"리뷰 필요 (현재: {annotation.review_status})",
+                }
+
         if not self._initialized:
             self.initialize()
 
@@ -422,7 +438,11 @@ class WorkflowIngester:
             description=annotation.description,
             success=annotation.success,
             extraction_method=annotation.extraction_method,
-            confidence=1.0 if annotation.extraction_method == "manual" else 0.8,
+            confidence={
+                "manual": 1.0,
+                "hybrid": 0.95,
+                "automated": 0.8,
+            }.get(annotation.extraction_method, 0.8),
         )
 
         # DB 저장

@@ -96,11 +96,30 @@ def _check_vlm_responsive() -> bool:
     return False
 
 
+def _dump_controls(window) -> None:
+    """창 내부의 모든 UIA 컨트롤을 덤프한다 (디버깅용)."""
+    print("[DEBUG] === 컨트롤 트리 덤프 시작 ===")
+    for ctrl in window.descendants():
+        try:
+            ctype = ctrl.control_type()
+            text = ctrl.window_text() or ""
+            rect = ctrl.rectangle()
+            cls = ctrl.friendly_class_name()
+            print(
+                f"[DEBUG]   {ctype:<20} | class={cls:<20} "
+                f"| text='{text}' | rect=({rect.left}, {rect.top}, {rect.right}, {rect.bottom})"
+            )
+        except Exception as exc:
+            print(f"[DEBUG]   (읽기 실패: {exc})")
+    print("[DEBUG] === 컨트롤 트리 덤프 끝 ===")
+
+
 def _select_server(window) -> None:
     """첫 번째 ComboBox에서 서버를 선택한다."""
     combos = window.descendants(control_type="ComboBox")
     if not combos:
         print("[WARNING] ComboBox를 찾을 수 없습니다")
+        _dump_controls(window)
         return
     combo = combos[0].wrapper_object()
     try:
@@ -157,6 +176,11 @@ def main() -> int:
     except TimeoutError as exc:
         print(f"[ERROR] {exc}")
         return 3
+
+    time.sleep(1.0)  # 컨트롤 렌더링 대기
+
+    if "--debug" in sys.argv:
+        _dump_controls(login_window)
 
     _select_server(login_window)
     _fill_credentials(login_window)

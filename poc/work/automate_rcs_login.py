@@ -96,9 +96,11 @@ def _check_vlm_responsive() -> bool:
     return False
 
 
-def _dump_controls(window) -> None:
-    """창 내부의 모든 Win32 컨트롤을 덤프한다 (디버깅용)."""
-    print("[DEBUG] === 컨트롤 트리 덤프 시작 ===")
+def _dump_controls(window, depth=0, max_depth=3) -> None:
+    """창 내부의 모든 Win32 컨트롤을 재귀적으로 덤프한다 (디버깅용)."""
+    if depth == 0:
+        print("[DEBUG] === 컨트롤 트리 덤프 시작 ===")
+    indent = "  " * (depth + 1)
     for ctrl in window.children():
         try:
             cls = ctrl.friendly_class_name()
@@ -106,17 +108,35 @@ def _dump_controls(window) -> None:
             rect = ctrl.rectangle()
             win_class = ctrl.class_name()
             print(
-                f"[DEBUG]   class={cls:<20} | win_class={win_class:<20} "
+                f"[DEBUG] {indent}class={cls:<20} | win_class={win_class:<20} "
                 f"| text='{text}' | rect=({rect.left}, {rect.top}, {rect.right}, {rect.bottom})"
             )
+            if depth < max_depth:
+                _dump_controls(ctrl, depth + 1, max_depth)
         except Exception as exc:
-            print(f"[DEBUG]   (읽기 실패: {exc})")
-    print("[DEBUG] === 컨트롤 트리 덤프 끝 ===")
+            print(f"[DEBUG] {indent}(읽기 실패: {exc})")
+    if depth == 0:
+        print("[DEBUG] === 컨트롤 트리 덤프 끝 ===")
+
+
+def _find_by_class_pattern(window, pattern, recursive=True):
+    """class_name에 pattern(대소문자 무시)이 포함된 컨트롤을 모두 반환한다."""
+    found = []
+    pat = pattern.lower()
+    for ctrl in window.children():
+        try:
+            if pat in ctrl.class_name().lower():
+                found.append(ctrl)
+            if recursive:
+                found.extend(_find_by_class_pattern(ctrl, pattern, recursive))
+        except Exception:
+            pass
+    return found
 
 
 def _select_server(window) -> None:
     """첫 번째 ComboBox에서 서버를 선택한다."""
-    combos = window.children(class_name="ComboBox")
+    combos = _find_by_class_pattern(window, "combo")
     if not combos:
         print("[WARNING] ComboBox를 찾을 수 없습니다")
         _dump_controls(window)
@@ -132,7 +152,7 @@ def _select_server(window) -> None:
 
 def _fill_credentials(window) -> None:
     """User ID, Password Edit 필드를 채운다 (위→아래 순서)."""
-    edits = window.children(class_name="Edit")
+    edits = _find_by_class_pattern(window, "edit")
     edits = sorted(edits, key=lambda c: (c.rectangle().top, c.rectangle().left))
     if len(edits) < 2:
         print(f"[WARNING] Edit 필드 {len(edits)}개 발견 (2개 필요)")
@@ -148,14 +168,16 @@ def _fill_credentials(window) -> None:
 
 def _click_login(window) -> None:
     """'Log In' 버튼을 클릭한다."""
-    for btn in window.children(class_name="Button"):
+    buttons = _find_by_class_pattern(window, "button")
+    for btn in buttons:
         text = (btn.window_text() or "").strip().lower()
         if "log in" in text or "login" in text:
             btn.click_input()
             print("[INFO] Log In 버튼 클릭 완료")
             return
+    print(f"[WARNING] Log In 버튼 미발견 (Button 계열 {len(buttons)}개 검색됨)")
     window.type_keys("{ENTER}", set_foreground=False)
-    print("[INFO] Log In 버튼 미발견, ENTER 키 전송")
+    print("[INFO] ENTER 키 전송으로 대체")
 
 
 def main() -> int:

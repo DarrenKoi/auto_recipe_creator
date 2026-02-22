@@ -97,16 +97,16 @@ def _check_vlm_responsive() -> bool:
 
 
 def _dump_controls(window) -> None:
-    """창 내부의 모든 UIA 컨트롤을 덤프한다 (디버깅용)."""
+    """창 내부의 모든 Win32 컨트롤을 덤프한다 (디버깅용)."""
     print("[DEBUG] === 컨트롤 트리 덤프 시작 ===")
-    for ctrl in window.descendants():
+    for ctrl in window.children():
         try:
-            ctype = ctrl.control_type()
+            cls = ctrl.friendly_class_name()
             text = ctrl.window_text() or ""
             rect = ctrl.rectangle()
-            cls = ctrl.friendly_class_name()
+            win_class = ctrl.class_name()
             print(
-                f"[DEBUG]   {ctype:<20} | class={cls:<20} "
+                f"[DEBUG]   class={cls:<20} | win_class={win_class:<20} "
                 f"| text='{text}' | rect=({rect.left}, {rect.top}, {rect.right}, {rect.bottom})"
             )
         except Exception as exc:
@@ -116,12 +116,12 @@ def _dump_controls(window) -> None:
 
 def _select_server(window) -> None:
     """첫 번째 ComboBox에서 서버를 선택한다."""
-    combos = window.descendants(control_type="ComboBox")
+    combos = window.children(class_name="ComboBox")
     if not combos:
         print("[WARNING] ComboBox를 찾을 수 없습니다")
         _dump_controls(window)
         return
-    combo = combos[0].wrapper_object()
+    combo = combos[0]
     try:
         combo.select(SERVER)
     except Exception:
@@ -132,26 +132,26 @@ def _select_server(window) -> None:
 
 def _fill_credentials(window) -> None:
     """User ID, Password Edit 필드를 채운다 (위→아래 순서)."""
-    edits = window.descendants(control_type="Edit")
+    edits = window.children(class_name="Edit")
     edits = sorted(edits, key=lambda c: (c.rectangle().top, c.rectangle().left))
     if len(edits) < 2:
         print(f"[WARNING] Edit 필드 {len(edits)}개 발견 (2개 필요)")
         return
 
     if USERNAME:
-        edits[0].wrapper_object().set_edit_text(USERNAME)
+        edits[0].set_edit_text(USERNAME)
         print("[INFO] User ID 입력 완료")
     if PASSWORD:
-        edits[1].wrapper_object().set_edit_text(PASSWORD)
+        edits[1].set_edit_text(PASSWORD)
         print("[INFO] Password 입력 완료")
 
 
 def _click_login(window) -> None:
     """'Log In' 버튼을 클릭한다."""
-    for btn in window.descendants(control_type="Button"):
+    for btn in window.children(class_name="Button"):
         text = (btn.window_text() or "").strip().lower()
         if "log in" in text or "login" in text:
-            btn.wrapper_object().click_input()
+            btn.click_input()
             print("[INFO] Log In 버튼 클릭 완료")
             return
     window.type_keys("{ENTER}", set_foreground=False)
@@ -168,7 +168,7 @@ def main() -> int:
 
     print(f"[INFO] RCS 시작: {RCS_EXE}")
     cmd_str = subprocess.list2cmdline([str(RCS_EXE)])
-    app = Application(backend="uia").start(cmd_str, wait_for_idle=False)
+    app = Application(backend="win32").start(cmd_str, wait_for_idle=False)
 
     try:
         login_window = _wait_for_login_window(app)
@@ -178,9 +178,6 @@ def main() -> int:
         return 3
 
     time.sleep(1.0)  # 컨트롤 렌더링 대기
-
-    if "--debug" in sys.argv:
-        _dump_controls(login_window)
 
     _select_server(login_window)
     _fill_credentials(login_window)

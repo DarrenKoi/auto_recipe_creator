@@ -53,9 +53,8 @@ uv run python -m poc.home.demo --mode screen_analysis
 python -m automation.rcs.run_login --server SERVER --username USER --password PASS
 python -m automation.rcs.run_login --debug           # dump pywinauto UI control tree
 
-# RCS auto-login via poc/work/ (Windows only, reads from .env)
-python -m poc.work.run_rcs                         # env-wrapper → delegates to automate_rcs_login.py
-python poc/work/automate_rcs_login.py --exe PATH --server NAME --username USER --password PASS
+# RCS auto-login via poc/work/ (Windows only, all config from .env)
+python poc/work/automate_rcs_login.py
 
 # Video frame parser
 python -m test.video_frame_parser.example_usage
@@ -116,12 +115,7 @@ Self-contained flat module — all files live directly in `poc/work/` with no su
 `opensearch_handler.py` is intentionally kept but inactive — import-guarded and `opensearch-py` is not in `requirements.txt`. Do not delete; kept for re-enablement after company PoC approval.
 
 ### poc/work/ RCS automation
-`run_rcs.py` is an env-wrapper that reads `RCS_EXE_PATH`, `RCS_SERVER`, `RCS_USERNAME`, `RCS_PASSWORD`
-from `.env` and delegates to `automate_rcs_login.py` via subprocess. `automate_rcs_login.py` is the
-pywinauto-based login script (Windows only): launch exe → wait for login window (regex match) →
-set ComboBox server → fill Edit fields (sorted top-to-bottom) → click login button or send ENTER.
-Use `automation/rcs/RCSLauncher` for the older class-based approach; use `poc/work/automate_rcs_login.py`
-for the flat-script approach that lives alongside the other poc/work files.
+`automate_rcs_login.py` — simple pywinauto script that reads all config from `.env` (`RCS_EXE_PATH`, `RCS_SERVER`, `RCS_USERNAME`, `RCS_PASSWORD`). Launches RCS, finds the "Remote Control System" window, fills Server/User ID/Password, clicks Log In.
 
 ### poc/work/ vs test/vlm_input_control/
 Both implement screen capture + VLM + input control, but `poc/work/` is self-contained (no shared imports with `test/`) and production-oriented. `test/vlm_input_control/` is an older integration prototype.

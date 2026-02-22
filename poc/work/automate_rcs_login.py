@@ -8,6 +8,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from pywinauto.application import Application
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+except Exception:
+    requests = None
+    REQUESTS_AVAILABLE = False
 
 load_dotenv()
 
@@ -15,6 +21,16 @@ RCS_EXE = Path(os.environ.get("RCS_EXE_PATH", r"C:\Users\2067928\Documents\RCS\R
 SERVER = os.environ.get("RCS_SERVER", "Dropbox")
 USERNAME = os.environ.get("RCS_USERNAME", "")
 PASSWORD = os.environ.get("RCS_PASSWORD", "")
+VLM_API_URL = (
+    os.environ.get("VLM_API_URL", "").strip()
+    or os.environ.get("VLM_API_BASE_URL", "").strip()
+)
+VLM_API_KEY = os.environ.get("VLM_API_KEY", "").strip()
+try:
+    VLM_CHECK_TIMEOUT = float(os.environ.get("VLM_CHECK_TIMEOUT", "3.0"))
+except ValueError:
+    print("[WARN] VLM_CHECK_TIMEOUT 값이 유효하지 않아 3.0초로 대체합니다.")
+    VLM_CHECK_TIMEOUT = 3.0
 LAUNCH_TIMEOUT = 30.0
 POST_LOGIN_WAIT = 6.0
 WINDOW_TITLE_PREFIX = "Remote Control System"
@@ -33,6 +49,51 @@ def _wait_for_login_window(app):
                 return win
         time.sleep(0.5)
     raise TimeoutError(f"로그인 창을 {LAUNCH_TIMEOUT:.0f}초 내에 찾지 못했습니다")
+
+
+def _check_vlm_responsive() -> bool:
+    """VLM API 서버가 응답 가능한지 가볍게 점검."""
+    if not VLM_API_URL:
+        print("[INFO] VLM_API_URL이 설정되지 않아 응답성 점검을 생략합니다.")
+        return True
+
+    if not REQUESTS_AVAILABLE:
+        print("[WARNING] requests 패키지가 없어 VLM 응답성 점검을 생략합니다.")
+        return True
+
+    headers = {}
+    if VLM_API_KEY:
+        headers["Authorization"] = f"Bearer {VLM_API_KEY}"
+
+    base = VLM_API_URL.rstrip("/")
+    if base.endswith("/v1"):
+        candidates = [
+            f"{base}/models",
+            f"{base}/health",
+            base,
+        ]
+    else:
+        candidates = [
+            f"{base}/v1/models",
+            f"{base}/models",
+            f"{base}/health",
+            base,
+        ]
+
+    for url in dict.fromkeys(candidates):
+        try:
+            response = requests.get(url, headers=headers, timeout=VLM_CHECK_TIMEOUT)
+            if response.status_code < 500:
+                print(f"[INFO] VLM 응답 확인: {url} -> {response.status_code}")
+                return True
+            print(f"[WARNING] VLM 응답 상태 이상: {url} -> {response.status_code}")
+        except requests.exceptions.Timeout:
+            print(f"[WARNING] VLM 타임아웃: {url} ({VLM_CHECK_TIMEOUT:.1f}s)")
+        except requests.exceptions.RequestException as exc:
+            print(f"[WARNING] VLM 연결 실패: {url} ({exc})")
+
+    print("[ERROR] VLM이 응답하지 않습니다. 환경을 점검한 뒤 다시 실행하세요.")
+    return False
 
 
 def _select_server(window) -> None:
@@ -79,6 +140,9 @@ def _click_login(window) -> None:
 
 
 def main() -> int:
+    if not _check_vlm_responsive():
+        return 4
+
     if not RCS_EXE.exists():
         print(f"[ERROR] 실행 파일을 찾을 수 없습니다: {RCS_EXE}")
         return 1

@@ -29,9 +29,11 @@ uv sync --extra dev
 # Add home-study extras (HuggingFace)
 uv sync --extra home
 
+# All-in-one pip install (core + automation + RAG)
+pip install -r requirements.txt
+
 # Per-module pip installs (alternative)
-pip install -r poc/work/requirements.txt           # mss, pynput, Pillow, requests, python-dotenv, pywinauto (Windows)
-pip install -r requirements-automation.txt          # pywinauto (Windows only)
+pip install -r poc/work/requirements.txt                 # core: mss, pynput, Pillow, requests, python-dotenv
 pip install -r test/vlm_input_control/requirements.txt
 pip install -r test/video_frame_parser/requirements.txt  # torch, opencv, pymongo, faiss
 ```

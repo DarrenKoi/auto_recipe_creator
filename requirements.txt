@@ -1,0 +1,23 @@
+# Core — screen capture, VLM API, input control, config
+# (from poc/work/requirements.txt)
+mss>=9.0.0
+pynput>=1.7.6
+Pillow>=10.0.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+# RCS GUI automation (Windows only)
+# (from requirements-automation.txt)
+pywinauto>=0.6.8
+
+# RAG — CCTV-based screen understanding
+# (from requirements-rag.txt)
+easyocr>=1.7.0
+pytesseract>=0.3.10
+sentence-transformers>=2.2.2
+transformers>=4.35.0
+scikit-image>=0.21.0
+opencv-contrib-python>=4.8.0
+ultralytics>=8.0.0
+tqdm>=4.66.0
+python-dateutil>=2.8.2

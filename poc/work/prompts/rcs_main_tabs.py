@@ -4,8 +4,14 @@ from typing import Iterable
 
 
 RCS_MAIN_TAB_TARGET_SPECS = {
-    "view_tab": "TAB. Find the center of the 'View' tab label at the top-left of the window.",
-    "list_tab": "TAB. Find the center of the 'List' tab label at the top-left of the window.",
+    "view_tab": (
+        "TAB. In the top-left tab strip, find the center of the 'View' tab label. "
+        "Prioritize the first letter 'V' as the anchor and place the point at the tab label center."
+    ),
+    "list_tab": (
+        "TAB. In the top-left tab strip, find the center of the 'List' tab label. "
+        "Prioritize the first letter 'L' as the anchor and place the point at the tab label center."
+    ),
 }
 
 DEFAULT_RCS_MAIN_TAB_TARGET_KEYS = (
@@ -46,7 +52,10 @@ def build_rcs_main_tab_locator_prompt(
     lines = [
         "Locate tab elements in this Remote Control System main window.",
         "",
-        "The window has 'View' and 'List' tabs near the top-left area.",
+        "The window has 'View' and 'List' tabs near the top-left corner.",
+        "They are adjacent in the same tab strip.",
+        "Use the first letter anchors: 'V' for View, 'L' for List.",
+        "Ignore similar words elsewhere in the window.",
         "",
         f"Find the pixel coordinates of these {len(keys)} elements:",
         "",

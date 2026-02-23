@@ -55,6 +55,11 @@ VLM_MODEL = os.environ.get("VLM_MODEL_NAME", "Kimi-K2.5").strip() or "Kimi-K2.5"
 
 TARGET_ELEMENTS = ["view_tab", "list_tab"]
 TARGET_CLICK_KEY = "view_tab"
+TAB_EXTRA_INSTRUCTIONS = (
+    "Focus on the top-left tab strip only.",
+    "Use the first letter of each tab as the primary anchor: 'V' in View, 'L' in List.",
+    "View and List tabs are adjacent near the top-left corner.",
+)
 ELEMENT_COLORS = {
     "view_tab": "orange",
     "list_tab": "cyan",
@@ -315,6 +320,7 @@ def main() -> int:
         width=w,
         height=h,
         target_keys=TARGET_ELEMENTS,
+        extra_instructions=TAB_EXTRA_INSTRUCTIONS,
     )
 
     try:

@@ -37,12 +37,12 @@ VLM_API_URL = (
 VLM_API_KEY = os.environ.get("VLM_API_KEY", "").strip()
 PYWINAUTO_BACKEND = os.environ.get("PYWINAUTO_BACKEND", "").strip().lower() or "win32"
 UPDATE_WINDOW_TITLE_REGEX = (
-    os.environ.get("RCS_UPDATE_WINDOW_REGEX", r"\bupdater\w*\b").strip()
-    or r"\bupdater\w*\b"
+    os.environ.get("RCS_UPDATE_WINDOW_REGEX", r"\brcs\b.*\bupdater\w*\b").strip()
+    or r"\brcs\b.*\bupdater\w*\b"
 )
 MAIN_WINDOW_TITLE_REGEX = (
-    os.environ.get("RCS_MAIN_WINDOW_REGEX", r"\[server:[^\]]+\]").strip()
-    or r"\[server:[^\]]+\]"
+    os.environ.get("RCS_MAIN_WINDOW_REGEX", r"\brcs\b.*\[server\s*:[^\]]+\]").strip()
+    or r"\brcs\b.*\[server\s*:[^\]]+\]"
 )
 
 LAUNCH_TIMEOUT = 30.0
@@ -69,9 +69,9 @@ TARGET_ELEMENTS = [
 ]
 
 try:
-    POST_LOGIN_DELAY_SEC = float(os.getenv("RCS_POST_LOGIN_DELAY_SEC", "4.0"))
+    POST_LOGIN_DELAY_SEC = float(os.getenv("RCS_POST_LOGIN_DELAY_SEC", "1.0"))
 except ValueError:
-    POST_LOGIN_DELAY_SEC = 4.0
+    POST_LOGIN_DELAY_SEC = 1.0
 
 try:
     POST_LOGIN_UPDATE_TIMEOUT_SEC = float(os.getenv("RCS_POST_LOGIN_UPDATE_TIMEOUT_SEC", "90.0"))
@@ -199,14 +199,16 @@ def _is_update_window_title(title: str) -> bool:
     try:
         return re.search(UPDATE_WINDOW_TITLE_REGEX, title, flags=re.IGNORECASE) is not None
     except re.error:
-        return "updater" in title.lower()
+        t = title.lower()
+        return "rcs" in t and "updater" in t
 
 
 def _is_main_window_title(title: str) -> bool:
     try:
         return re.search(MAIN_WINDOW_TITLE_REGEX, title, flags=re.IGNORECASE) is not None
     except re.error:
-        return "[server:" in title.lower()
+        t = title.lower()
+        return "rcs" in t and "[server" in t
 
 
 def _find_window_by_title(app, matcher):

@@ -20,6 +20,7 @@ import mss.tools
 import requests
 from dotenv import load_dotenv
 from PIL import Image, ImageDraw, ImageFont
+from pywinauto.keyboard import send_keys
 from pywinauto import mouse
 from pywinauto.application import Application
 
@@ -57,6 +58,25 @@ TARGET_ELEMENTS = [
     "cancel_button",
     "shortcut_button",
 ]
+
+try:
+    POST_LOGIN_DELAY_SEC = float(os.getenv("RCS_POST_LOGIN_DELAY_SEC", "4.0"))
+except ValueError:
+    POST_LOGIN_DELAY_SEC = 4.0
+
+try:
+    POST_LOGIN_SCROLL_STEPS = int(os.getenv("RCS_POST_LOGIN_SCROLL_STEPS", "0"))
+except ValueError:
+    POST_LOGIN_SCROLL_STEPS = 0
+
+try:
+    POST_LOGIN_SCROLL_INTERVAL = float(os.getenv("RCS_POST_LOGIN_SCROLL_INTERVAL", "0.3"))
+except ValueError:
+    POST_LOGIN_SCROLL_INTERVAL = 0.3
+
+POST_LOGIN_SCROLL_MODE = (
+    os.getenv("RCS_POST_LOGIN_SCROLL_MODE", "wheel").strip().lower() or "wheel"
+)  # wheel | keys | combo
 
 ELEMENT_COLORS = {
     "server_label": "red",
@@ -282,6 +302,46 @@ def _click_at(element_key: str, window, elements: dict) -> bool:
     return True
 
 
+def _scroll_to_reveal_more(window) -> None:
+    """로그인 후 큰 화면에서 더 많은 텍스트 항목을 보도록 스크롤한다."""
+    if POST_LOGIN_SCROLL_STEPS <= 0:
+        return
+
+    mode = POST_LOGIN_SCROLL_MODE
+    if mode not in {"wheel", "keys", "combo"}:
+        mode = "wheel"
+
+    rect = window.rectangle()
+    center_x = (rect.left + rect.right) // 2
+    center_y = (rect.top + rect.bottom) // 2
+    steps = POST_LOGIN_SCROLL_STEPS
+
+    if mode == "combo":
+        # ComboBox 항목이 펼쳐졌을 때 내려가며 항목 노출을 시도
+        print(f"[INFO] Combo mode scroll: 단계 수={steps}")
+        send_keys("{F4}")
+        time.sleep(0.25)
+        for _ in range(steps):
+            send_keys("{DOWN}")
+            time.sleep(POST_LOGIN_SCROLL_INTERVAL)
+        send_keys("{ESC}")
+        return
+
+    if mode == "keys":
+        # 포커스된 스크롤 패널/문서에서 페이지 이동
+        print(f"[INFO] Key mode scroll: 단계 수={steps}, 대상=PageDown")
+        for _ in range(steps):
+            send_keys("{PGDN}")
+            time.sleep(POST_LOGIN_SCROLL_INTERVAL)
+        return
+
+    # wheel mode: 기본값. 창 중앙에서 마우스 휠로 내려감
+    print(f"[INFO] Wheel mode scroll: 단계 수={steps}, 좌표=({center_x}, {center_y})")
+    for _ in range(steps):
+        mouse.scroll(coords=(center_x, center_y), wheel_dist=-1)
+        time.sleep(POST_LOGIN_SCROLL_INTERVAL)
+
+
 # ─────────────────────────── 프롬프트 ───────────────────────────
 
 def _build_prompt(w: int, h: int) -> tuple[str, str]:
@@ -456,6 +516,10 @@ def main() -> int:
 
     if not _click_at(TARGET_CLICK_KEY, login_window, data):
         return 5
+
+    print(f"[INFO] 로그인 후 화면 로딩 대기: {POST_LOGIN_DELAY_SEC:.1f}초")
+    time.sleep(POST_LOGIN_DELAY_SEC)
+    _scroll_to_reveal_more(login_window)
 
     return 0
 

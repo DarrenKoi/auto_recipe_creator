@@ -89,6 +89,16 @@ except ValueError:
     POST_LOGIN_POLL_SEC = 0.5
 
 try:
+    CLICK_RETRY_COUNT = int(os.getenv("RCS_CLICK_RETRY_COUNT", "2"))
+except ValueError:
+    CLICK_RETRY_COUNT = 2
+
+try:
+    CLICK_RETRY_DELAY_SEC = float(os.getenv("RCS_CLICK_RETRY_DELAY_SEC", "0.25"))
+except ValueError:
+    CLICK_RETRY_DELAY_SEC = 0.25
+
+try:
     POST_LOGIN_SCROLL_STEPS = int(os.getenv("RCS_POST_LOGIN_SCROLL_STEPS", "0"))
 except ValueError:
     POST_LOGIN_SCROLL_STEPS = 0
@@ -402,10 +412,39 @@ def _click_at(element_key: str, window, elements: dict) -> bool:
     y = int(pt["y"]) + rect.top
     x = max(rect.left, min(x, rect.right - 1))
     y = max(rect.top, min(y, rect.bottom - 1))
+    rel_x = max(0, min(int(pt["x"]), rect.right - rect.left - 1))
+    rel_y = max(0, min(int(pt["y"]), rect.bottom - rect.top - 1))
 
     print(f"[INFO] '{element_key}' 클릭: screen=({x}, {y})")
-    mouse.click(button="left", coords=(x, y))
-    return True
+    for attempt in range(1, max(1, CLICK_RETRY_COUNT) + 1):
+        try:
+            window.set_focus()
+        except Exception:
+            pass
+
+        try:
+            # 창 핸들 기준 실클릭을 먼저 시도한다.
+            window.click_input(coords=(rel_x, rel_y), button="left")
+            print(f"[INFO] click_input 성공 (attempt={attempt})")
+            return True
+        except Exception as exc:
+            print(f"[WARN] click_input 실패 (attempt={attempt}): {exc}")
+
+        try:
+            # 전역 마우스 이벤트로 down/up을 강제 전송한다.
+            mouse.move(coords=(x, y))
+            time.sleep(0.08)
+            mouse.press(button="left", coords=(x, y))
+            time.sleep(0.05)
+            mouse.release(button="left", coords=(x, y))
+            print(f"[INFO] mouse press/release 실행 (attempt={attempt})")
+            return True
+        except Exception as exc:
+            print(f"[WARN] mouse press/release 실패 (attempt={attempt}): {exc}")
+
+        time.sleep(max(0.0, CLICK_RETRY_DELAY_SEC))
+
+    return False
 
 
 def _scroll_to_reveal_more(window) -> None:

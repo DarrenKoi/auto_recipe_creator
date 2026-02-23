@@ -68,6 +68,16 @@ ELEMENT_COLORS = {
     "shortcut_button": "cyan",
 }
 
+INPUT_X_OFFSET = 12
+INPUT_X_OFFSET_KEYS = {
+    "server_input",
+    "userid_input",
+    "password_input",
+    "login_button",
+    "cancel_button",
+    "shortcut_button",
+}
+
 
 # ─────────────────────────── 창 탐색 ───────────────────────────
 
@@ -231,6 +241,27 @@ def _parse_coords(data: dict, keys: list[str], img_w: int, img_h: int) -> dict:
     return data
 
 
+def _apply_control_bias(data: dict, img_w: int, img_h: int) -> dict:
+    """지정된 사각형 요소 좌표를 오른쪽으로 이동해 클릭 정밀도를 높인다."""
+    for key in INPUT_X_OFFSET_KEYS:
+        pt = data.get(key)
+        if not isinstance(pt, dict):
+            continue
+        if "x" not in pt or "y" not in pt:
+            continue
+        try:
+            x = int(pt["x"]) + INPUT_X_OFFSET
+            y = int(pt["y"])
+        except (TypeError, ValueError):
+            continue
+
+        x = max(0, min(x, img_w - 1))
+        y = max(0, min(y, img_h - 1))
+        data[key] = {"x": x, "y": y}
+        print(f"  [SHIFT] {key:20s} — x +{INPUT_X_OFFSET} applied")
+    return data
+
+
 # ─────────────────────────── 프롬프트 ───────────────────────────
 
 def _build_prompt(w: int, h: int) -> tuple[str, str]:
@@ -239,46 +270,30 @@ def _build_prompt(w: int, h: int) -> tuple[str, str]:
         "You are a precise GUI element locator. "
         f"The image is {w}x{h} pixels. "
         "The origin (0, 0) is the top-left corner of the image. "
-        "Return only points that are clearly inside the target element, not on borders or edges. "
         "Return coordinates as integer pixel values. "
         "Respond ONLY with valid JSON — no explanation, no markdown."
     )
 
     prompt = f"""Locate GUI elements in this Remote Control System login dialog.
 
-The dialog is a Windows form with three labeled rows and three buttons at the bottom.
-
-LAYOUT DESCRIPTION:
-- Row 1: text label "Server" on the left, a COMBOBOX (dropdown) on the right. The combobox has a small dropdown arrow button on its right edge.
-- Row 2: text label "User ID" on the left, a TEXT INPUT FIELD on the right. The input field is a white rectangle with a thin gray border/outline.
-- Row 3: text label "Password" on the left, a TEXT INPUT FIELD on the right. Same style as User ID — white rectangle with thin gray border/outline.
-- Bottom area: three clickable buttons arranged horizontally — "Log In", "Cancel", and a Korean-text button for creating shortcuts.
+The dialog has three labeled rows and three buttons.
 
 Find the pixel coordinates of these 9 elements:
 
-TEXT LABELS — find the first letter of the rendered text and return its center:
+TEXT LABELS — find the first letter of each label and return its center:
 1. "server_label" — the first letter in "Server"
 2. "userid_label" — the first letter in "User ID"
 3. "password_label" — the first letter in "Password"
 
-INPUT FIELDS — predict a control-interior point and bias it to the right side:
-4. "server_input" — the combobox/dropdown to the right of "Server" (has a dropdown arrow on its right side). 
-   - Estimate the rectangular bounds, then choose a point near the center.
-   - Shift this point about 12 pixels to the right (x + 12) so it is not on the left edge.
+INPUT FIELDS — find a point on the left edge center of each white rectangular control:
+4. "server_input" — the combobox/dropdown to the right of "Server" (has a dropdown arrow on its right side).
 5. "userid_input" — the white-background, gray-bordered text input field to the right of "User ID"
-   - Estimate the rectangular bounds, then choose a point near the center.
-   - Shift this point about 12 pixels to the right (x + 12) so it is not on the left edge.
 6. "password_input" — the white-background, gray-bordered text input field to the right of "Password"
-   - Estimate the rectangular bounds, then choose a point near the center.
-   - Shift this point about 12 pixels to the right (x + 12) so it is not on the left edge.
 
-BUTTONS — find the center of each clickable button:
+BUTTONS — find the left edge center of each clickable button:
 7. "login_button" — the button labeled "Log In"
-   - Prefer an interior point, not edge pixels. A slight right bias (+8 to +14 px) is preferred.
 8. "cancel_button" — the button labeled "Cancel"
-   - Prefer an interior point, not edge pixels.
 9. "shortcut_button" — the button with Korean text (for making shortcuts)
-   - Prefer an interior point, not edge pixels.
 
 Image size: {w} x {h} pixels.
 x range: 0 (left edge) to {w} (right edge).
@@ -364,6 +379,7 @@ def _run_benchmark(window) -> None:
             data = _extract_json(raw)
             print(f"[INFO] 파싱된 JSON:\n{json.dumps(data, indent=2)}\n")
             data = _parse_coords(data, TARGET_ELEMENTS, w, h)
+            data = _apply_control_bias(data, w, h)
 
             detected = sum(1 for k in TARGET_ELEMENTS if k in data and isinstance(data[k], dict))
             print(f"[INFO] 검출률: {detected}/{len(TARGET_ELEMENTS)}")

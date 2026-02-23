@@ -1,7 +1,7 @@
 """RCS 로그인 화면에서 VLM 좌표 검출 정확도를 비교하는 벤치마크 스크립트 (Windows 전용).
 
-여러 VLM 모델(Kimi-K2.5, Qwen3-VL-30B, Qwen3-VL-8B)에 동일한 스크린샷을 전송하여
-텍스트 라벨·입력 필드·버튼 좌표를 추출하고, 모델별 디버그 이미지를 저장한다.
+여러 VLM 모델(Kimi-K2.5, Qwen3-VL-30B)에 동일한 스크린샷을 전송하여
+텍스트 라벨·입력 필드(콤보박스/텍스트)·버튼 3개의 좌표를 추출하고, 모델별 디버그 이미지를 저장한다.
 pywinauto는 창 실행·탐색에만 사용한다.
 """
 
@@ -41,7 +41,6 @@ WINDOW_TITLE_PREFIX = "Remote Control System"
 TEST_MODELS = [
     "Kimi-K2.5",
     "Qwen3-VL-30B-Instruct",
-    "Qwen3-VL-8B-Instruct",
 ]
 
 # 검출 대상: 텍스트 라벨 + 입력 필드 + 버튼
@@ -53,6 +52,8 @@ TARGET_ELEMENTS = [
     "password_label",
     "password_input",
     "login_button",
+    "cancel_button",
+    "shortcut_button",
 ]
 
 ELEMENT_COLORS = {
@@ -63,6 +64,8 @@ ELEMENT_COLORS = {
     "password_label": "green",
     "password_input": "limegreen",
     "login_button": "orange",
+    "cancel_button": "magenta",
+    "shortcut_button": "cyan",
 }
 
 
@@ -242,23 +245,30 @@ def _build_prompt(w: int, h: int) -> tuple[str, str]:
 
     prompt = f"""Locate GUI elements in this Remote Control System login dialog.
 
-The dialog has three rows of form fields and a login button at the bottom.
-Each row has a TEXT LABEL on the left side and a WHITE INPUT FIELD (text box or dropdown) on the right side.
+The dialog is a Windows form with three labeled rows and three buttons at the bottom.
 
-Find the pixel coordinates of these 7 elements:
+LAYOUT DESCRIPTION:
+- Row 1: text label "Server" on the left, a COMBOBOX (dropdown) on the right. The combobox has a small dropdown arrow button on its right edge.
+- Row 2: text label "User ID" on the left, a TEXT INPUT FIELD on the right. The input field is a white rectangle with a thin gray border/outline.
+- Row 3: text label "Password" on the left, a TEXT INPUT FIELD on the right. Same style as User ID — white rectangle with thin gray border/outline.
+- Bottom area: three clickable buttons arranged horizontally — "Log In", "Cancel", and a Korean-text button for creating shortcuts.
 
-TEXT LABELS — find the center of the rendered text characters:
-1. "server_label" — the word "Server"
-2. "userid_label" — the words "User ID"
-3. "password_label" — the word "Password"
+Find the pixel coordinates of these 9 elements:
 
-INPUT FIELDS — find the horizontal center and vertical center of each white rectangular input area:
-4. "server_input" — the white dropdown/combo box to the right of "Server"
-5. "userid_input" — the white text field to the right of "User ID"
-6. "password_input" — the white text field to the right of "Password"
+TEXT LABELS — find the center of the rendered text:
+1. "server_label" — the text "Server"
+2. "userid_label" — the text "User ID"
+3. "password_label" — the text "Password"
 
-BUTTON:
-7. "login_button" — the center of the "Log In" button
+INPUT FIELDS — find the center of each interactive control:
+4. "server_input" — the combobox/dropdown to the right of "Server" (has a dropdown arrow on its right side)
+5. "userid_input" — the white-background, gray-bordered text input field to the right of "User ID"
+6. "password_input" — the white-background, gray-bordered text input field to the right of "Password"
+
+BUTTONS — find the center of each clickable button:
+7. "login_button" — the button labeled "Log In"
+8. "cancel_button" — the button labeled "Cancel"
+9. "shortcut_button" — the button with Korean text (for making shortcuts)
 
 Image size: {w} x {h} pixels.
 x range: 0 (left edge) to {w} (right edge).
@@ -272,7 +282,9 @@ Return ONLY this JSON (all values are integers):
     "userid_input": {{"x": ..., "y": ...}},
     "password_label": {{"x": ..., "y": ...}},
     "password_input": {{"x": ..., "y": ...}},
-    "login_button": {{"x": ..., "y": ...}}
+    "login_button": {{"x": ..., "y": ...}},
+    "cancel_button": {{"x": ..., "y": ...}},
+    "shortcut_button": {{"x": ..., "y": ...}}
 }}"""
 
     return system_msg, prompt

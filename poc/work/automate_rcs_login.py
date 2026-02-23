@@ -7,6 +7,7 @@ pywinauto는 창 실행·탐색에만 사용하고, 내부 컨트롤 조작은
 import base64
 import json
 import os
+import platform
 import subprocess
 import sys
 import time
@@ -66,6 +67,36 @@ WINDOW_TITLE_PREFIX = "Remote Control System"
 ACTION_DELAY = 0.4
 # 자격증명이 이미 입력되어 있으면 Log In 버튼만 클릭
 CREDENTIALS_PREFILLED = True
+
+
+# ─────────────────────────── DPI / 모니터 ───────────────────────────
+
+def _ensure_dpi_aware() -> None:
+    """Windows에서 DPI Awareness를 설정하여 mss가 물리 픽셀로 캡처하도록 한다."""
+    if platform.system() != "Windows":
+        return
+    try:
+        import ctypes
+        ctypes.windll.user32.SetProcessDPIAware()
+        print("[INFO] DPI Awareness 설정 완료")
+    except Exception as exc:
+        print(f"[WARNING] DPI Awareness 설정 실패: {exc}")
+
+
+def _log_monitor_info() -> None:
+    """연결된 모니터 목록과 좌표 오프셋을 출력한다 (디버그용)."""
+    if not MSS_AVAILABLE:
+        return
+    with mss.mss() as sct:
+        monitors = sct.monitors
+    print(f"[INFO] 감지된 모니터: {len(monitors) - 1}대")
+    for i, mon in enumerate(monitors):
+        label = "가상 전체" if i == 0 else f"모니터 {i}"
+        print(
+            f"  [{i}] {label}: "
+            f"({mon['left']}, {mon['top']}) "
+            f"{mon['width']}x{mon['height']}"
+        )
 
 
 # ─────────────────────────── 창 탐색 ───────────────────────────
@@ -147,13 +178,27 @@ def _capture_window(window) -> "Image.Image | None":
         "width": rect.right - rect.left,
         "height": rect.bottom - rect.top,
     }
+    print(
+        f"[INFO] 창 영역 (pywinauto): "
+        f"left={rect.left}, top={rect.top}, "
+        f"right={rect.right}, bottom={rect.bottom}, "
+        f"size={region['width']}x{region['height']}"
+    )
 
     with mss.mss() as sct:
         shot = sct.grab(region)
         png_data = mss.tools.to_png(shot.rgb, shot.size)
 
     image = Image.open(BytesIO(png_data))
-    print(f"[INFO] 창 캡처 완료: {image.size[0]}x{image.size[1]} px")
+    cap_w, cap_h = image.size
+    # 캡처된 이미지 크기와 pywinauto 영역 크기가 다르면 DPI 스케일링 의심
+    if cap_w != region["width"] or cap_h != region["height"]:
+        print(
+            f"[WARNING] 캡처 크기 불일치! "
+            f"pywinauto: {region['width']}x{region['height']}, "
+            f"mss 캡처: {cap_w}x{cap_h} — DPI 스케일링 가능성"
+        )
+    print(f"[INFO] 창 캡처 완료: {cap_w}x{cap_h} px")
     return image
 
 
@@ -457,40 +502,96 @@ def _refocus_window(window) -> None:
         print(f"[WARNING] 타이틀바 클릭 실패: {exc}")
 
 
+def _detect_dpi_scale(window) -> float:
+    """mss 캡처 크기와 pywinauto 창 크기를 비교하여 DPI 스케일을 추정한다.
+
+    pywinauto(win32)는 논리 좌표를, mss는 물리 픽셀을 반환하므로
+    두 값이 다르면 DPI 스케일링이 적용된 환경이다.
+    """
+    rect = window.rectangle()
+    logical_w = rect.right - rect.left
+    logical_h = rect.bottom - rect.top
+
+    if not MSS_AVAILABLE or logical_w <= 0:
+        return 1.0
+
+    region = {
+        "left": rect.left, "top": rect.top,
+        "width": logical_w, "height": logical_h,
+    }
+    with mss.mss() as sct:
+        shot = sct.grab(region)
+    physical_w = shot.size.width
+
+    if physical_w == logical_w:
+        return 1.0
+
+    scale = physical_w / logical_w
+    print(
+        f"[INFO] DPI 스케일 감지: {scale:.2f}x "
+        f"(논리 {logical_w}px → 물리 {physical_w}px)"
+    )
+    return scale
+
+
 def _vlm_login(window) -> bool:
     """VLM 좌표 기반으로 로그인 폼을 채우고 Log In 클릭."""
     if not PYNPUT_AVAILABLE:
         print("[ERROR] pynput 라이브러리가 필요합니다")
         return False
 
-    # 1) 창 캡처
+    # 1) DPI 스케일 감지 (mss 물리 픽셀 vs pywinauto 논리 좌표)
+    dpi_scale = _detect_dpi_scale(window)
+
+    # 2) 창 캡처 (mss — 물리 픽셀)
     image = _capture_window(window)
     if image is None:
         return False
 
-    # 2) VLM 질의
+    # 3) VLM 질의
     result = _ask_vlm_login_elements(image)
     if result is None:
         return False
     elements, raw_elements = result
 
-    # 3) 디버그: VLM 원본(raw) + 변환(processed) 좌표를 스크린샷 위에 마킹
+    # 4) 디버그: VLM 원본(raw) + 변환(processed) 좌표를 스크린샷 위에 마킹
     _save_debug_screenshot(image, elements, raw_elements)
 
-    # 4) 좌표 변환: VLM(리사이즈) → 스크린샷 → 절대 스크린 좌표
+    # 5) 좌표 변환 함수
+    #    VLM 좌표는 mss 캡처 이미지(물리 픽셀) 기준이다.
+    #    pynput은 논리 좌표를 사용하므로 DPI 보정이 필요하다.
+    #    체인: VLM 좌표(물리px) ÷ dpi_scale → 논리px + win_offset → 절대 마우스 좌표
     rect = window.rectangle()
-    win_left, win_top = rect.left, rect.top
 
     def to_abs(pt):
-        """VLM 좌표 → 절대 스크린 좌표."""
-        sx = int(pt["x"])  # 스크린샷 좌표
-        sy = int(pt["y"])
-        return sx + win_left, sy + win_top
+        """VLM 좌표(물리 픽셀) → 절대 마우스 좌표(논리 좌표)."""
+        phys_x = int(pt["x"])
+        phys_y = int(pt["y"])
+        # 물리 → 논리 변환
+        local_x = int(phys_x / dpi_scale)
+        local_y = int(phys_y / dpi_scale)
+        # 창 오프셋 (pywinauto rect는 이미 논리 좌표)
+        cur_rect = window.rectangle()
+        abs_x = local_x + cur_rect.left
+        abs_y = local_y + cur_rect.top
+        if dpi_scale != 1.0:
+            print(
+                f"[DEBUG] 좌표 변환: 물리({phys_x},{phys_y}) "
+                f"÷{dpi_scale:.2f} → 논리({local_x},{local_y}) "
+                f"+ offset({cur_rect.left},{cur_rect.top}) "
+                f"= 절대({abs_x},{abs_y})"
+            )
+        return abs_x, abs_y
+
+    print(
+        f"[INFO] 좌표 변환 정보: dpi_scale={dpi_scale:.2f}, "
+        f"창 offset=({rect.left},{rect.top})"
+    )
 
     if CREDENTIALS_PREFILLED:
         print("[INFO] 자격증명이 이미 입력됨 — Log In 버튼만 클릭합니다")
     else:
-        # 5) 서버 선택
+        # 6) 서버 선택
         if "server" in elements and SERVER:
             sx, sy = to_abs(elements["server"])
             print(f"[INFO] 서버 드롭다운 클릭: ({sx}, {sy})")
@@ -506,32 +607,31 @@ def _vlm_login(window) -> bool:
             time.sleep(ACTION_DELAY)
             print(f"[INFO] 서버 선택: {SERVER}")
 
-        # 6) User ID
+        # 7) User ID
         if "user_id" in elements and USERNAME:
             ux, uy = to_abs(elements["user_id"])
             print(f"[INFO] User ID 필드 클릭: ({ux}, {uy})")
             _click_and_type(ux, uy, USERNAME)
             print("[INFO] User ID 입력 완료")
 
-        # 7) Password
+        # 8) Password
         if "password" in elements and PASSWORD:
             px, py = to_abs(elements["password"])
             print(f"[INFO] Password 필드 클릭: ({px}, {py})")
             _click_and_type(px, py, PASSWORD)
             print("[INFO] Password 입력 완료")
 
-    # 8) Log In 버튼 — 클릭 전 창을 타이틀바 클릭으로 재활성화
+    # 9) Log In 버튼 — 클릭 전 창을 타이틀바 클릭으로 재활성화
     if "login_button" in elements:
         print("[INFO] 로그인 클릭 전 창 재활성화 중...")
         _refocus_window(window)
-        # 창이 이동했을 수 있으므로 좌표 재계산
-        rect = window.rectangle()
-        win_left, win_top = rect.left, rect.top
+        # 창이 이동했을 수 있으므로 to_abs가 최신 rect를 참조
         lx, ly = to_abs(elements["login_button"])
+        cur_rect = window.rectangle()
         print(f"[INFO] Log In 버튼 좌표: ({lx}, {ly})")
-        print(f"[INFO] 창 영역: left={rect.left}, top={rect.top}, right={rect.right}, bottom={rect.bottom}")
+        print(f"[INFO] 창 영역: left={cur_rect.left}, top={cur_rect.top}, right={cur_rect.right}, bottom={cur_rect.bottom}")
         # 좌표가 창 영역 밖이면 경고
-        if not (rect.left <= lx <= rect.right and rect.top <= ly <= rect.bottom):
+        if not (cur_rect.left <= lx <= cur_rect.right and cur_rect.top <= ly <= cur_rect.bottom):
             print(f"[WARNING] Log In 좌표가 창 영역 밖입니다!")
         _click(lx, ly)
         print("[INFO] Log In 버튼 클릭 완료")
@@ -548,6 +648,9 @@ def _vlm_login(window) -> bool:
 # ─────────────────────────── 메인 ───────────────────────────
 
 def main() -> int:
+    _ensure_dpi_aware()
+    _log_monitor_info()
+
     if not _check_vlm_responsive():
         return 4
 

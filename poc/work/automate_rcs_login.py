@@ -64,8 +64,8 @@ LAUNCH_TIMEOUT = 30.0
 POST_LOGIN_WAIT = 6.0
 WINDOW_TITLE_PREFIX = "Remote Control System"
 ACTION_DELAY = 0.4
-# 자격증명이 이미 입력되어 있으면 Log In 버튼만 클릭 (true/false)
-CREDENTIALS_PREFILLED = os.environ.get("RCS_CREDENTIALS_PREFILLED", "false").lower() in ("true", "1", "yes")
+# 자격증명이 이미 입력되어 있으면 Log In 버튼만 클릭
+CREDENTIALS_PREFILLED = True
 
 
 # ─────────────────────────── 창 탐색 ───────────────────────────
@@ -464,7 +464,17 @@ def _vlm_login(window) -> bool:
     # 8) Log In 버튼
     if "login_button" in elements:
         lx, ly = to_abs(elements["login_button"])
-        print(f"[INFO] Log In 버튼 클릭: ({lx}, {ly})")
+        print(f"[INFO] Log In 버튼 좌표: ({lx}, {ly})")
+        print(f"[INFO] 창 영역: left={rect.left}, top={rect.top}, right={rect.right}, bottom={rect.bottom}")
+        # 좌표가 창 영역 밖이면 경고
+        if not (rect.left <= lx <= rect.right and rect.top <= ly <= rect.bottom):
+            print(f"[WARNING] Log In 좌표가 창 영역 밖입니다!")
+        # 클릭 전 창을 전면으로 가져오기
+        try:
+            window.set_focus()
+            time.sleep(0.3)
+        except Exception as exc:
+            print(f"[WARNING] 창 포커스 실패: {exc}")
         _click(lx, ly)
         print("[INFO] Log In 버튼 클릭 완료")
     else:

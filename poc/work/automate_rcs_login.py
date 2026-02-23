@@ -91,6 +91,7 @@ ELEMENT_COLORS = {
 }
 
 INPUT_X_OFFSET = 12
+SERVER_INPUT_X_OFFSET = 50
 INPUT_X_OFFSET_KEYS = {
     "server_input",
     "userid_input",
@@ -271,8 +272,12 @@ def _apply_control_bias(data: dict, img_w: int, img_h: int) -> dict:
             continue
         if "x" not in pt or "y" not in pt:
             continue
+        
+        # server_input은 더 큰 오프셋(50px) 적용, 나머지는 기본(12px)
+        offset = SERVER_INPUT_X_OFFSET if key == "server_input" else INPUT_X_OFFSET
+        
         try:
-            x = int(pt["x"]) + INPUT_X_OFFSET
+            x = int(pt["x"]) + offset
             y = int(pt["y"])
         except (TypeError, ValueError):
             continue
@@ -280,7 +285,7 @@ def _apply_control_bias(data: dict, img_w: int, img_h: int) -> dict:
         x = max(0, min(x, img_w - 1))
         y = max(0, min(y, img_h - 1))
         data[key] = {"x": x, "y": y}
-        print(f"  [SHIFT] {key:20s} — x +{INPUT_X_OFFSET} applied")
+        print(f"  [SHIFT] {key:20s} — x +{offset} applied")
     return data
 
 
@@ -360,20 +365,20 @@ The dialog has three labeled rows and three buttons.
 
 Find the pixel coordinates of these 9 elements:
 
-TEXT LABELS — find the first letter of each label and return its center:
-1. "server_label" — the first letter in "Server"
-2. "userid_label" — the first letter in "User ID"
-3. "password_label" — the first letter in "Password"
+TEXT LABELS — find the **first letter** of each label and return its center:
+1. "server_label" — the first letter 'S' in "Server"
+2. "userid_label" — the first letter 'U' in "User ID"
+3. "password_label" — the first letter 'P' in "Password"
 
-INPUT FIELDS & INTERACTIVE CONTROLS — find the **left edge center** of the specific control:
-4. "server_input" — the downward-pointing arrow icon on the far right of the Server combobox. Locate the **left edge center** of this arrow icon.
-5. "userid_input" — the white text input field next to "User ID". Locate the **left edge center** of the white area.
-6. "password_input" — the white text input field next to "Password". Locate the **left edge center** of the white area.
+INPUT FIELDS & INTERACTIVE CONTROLS — find the **first vertical edge (left edge)** or **first line** of the specific control:
+4. "server_input" — the white area of the Server combobox. Locate the **left-most vertical edge** of this box. (Note: A 50px shift will be applied to hit the arrow).
+5. "userid_input" — the white text input field next to "User ID". Locate the **left-most vertical edge** of the white area.
+6. "password_input" — the white text input field next to "Password". Locate the **left-most vertical edge** of the white area.
 
-BUTTONS — find the **left edge center** of each clickable button:
-7. "login_button" — the "Log In" button.
-8. "cancel_button" — the "Cancel" button.
-9. "shortcut_button" — the button with Korean text.
+BUTTONS — find the **left-most edge** of each clickable button:
+7. "login_button" — the "Log In" button's left edge.
+8. "cancel_button" — the "Cancel" button's left edge.
+9. "shortcut_button" — the left edge of the Korean text button.
 
 Image size: {w} x {h} pixels.
 x range: 0 (left edge) to {w} (right edge).

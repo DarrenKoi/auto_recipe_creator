@@ -53,7 +53,7 @@ uv run python -m poc.home.demo --mode screen_analysis
 python -m automation.rcs.run_login --server SERVER --username USER --password PASS
 python -m automation.rcs.run_login --debug           # dump pywinauto UI control tree
 
-# RCS auto-login via poc/work/ (Windows only, all config from .env)
+# RCS auto-login via poc/work/ (Windows only, VLM-based, all config from .env)
 python poc/work/automate_rcs_login.py
 
 # Video frame parser
@@ -115,7 +115,7 @@ Self-contained flat module — all files live directly in `poc/work/` with no su
 `opensearch_handler.py` is intentionally kept but inactive — import-guarded and `opensearch-py` is not in `requirements.txt`. Do not delete; kept for re-enablement after company PoC approval.
 
 ### poc/work/ RCS automation
-`automate_rcs_login.py` — simple pywinauto script that reads all config from `.env` (`RCS_EXE_PATH`, `RCS_SERVER`, `RCS_USERNAME`, `RCS_PASSWORD`). Launches RCS, finds the "Remote Control System" window, fills Server/User ID/Password, clicks Log In.
+`automate_rcs_login.py` — VLM-based RCS login automation. pywinauto is only used to launch the exe and find the window by title ("Remote Control System"); internal control detection via pywinauto failed (legacy app doesn't expose ComboBox/Button to UIA or win32 backends). Instead uses: mss screenshot of window region → VLM coordinate extraction (asks for Server/UserID/Password/LoginButton click points) → pynput mouse clicks and keyboard typing at the returned positions. Config from `.env`: `RCS_EXE_PATH`, `RCS_SERVER`, `RCS_USERNAME`, `RCS_PASSWORD`, `VLM_API_URL`, `VLM_API_KEY`, `VLM_MODEL_NAME`. Coordinate chain: VLM coords (resized image) → ÷ resize_scale → screenshot coords → + window offset → absolute screen coords.
 
 ### poc/work/ vs test/vlm_input_control/
 Both implement screen capture + VLM + input control, but `poc/work/` is self-contained (no shared imports with `test/`) and production-oriented. `test/vlm_input_control/` is an older integration prototype.

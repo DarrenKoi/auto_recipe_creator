@@ -64,6 +64,8 @@ LAUNCH_TIMEOUT = 30.0
 POST_LOGIN_WAIT = 6.0
 WINDOW_TITLE_PREFIX = "Remote Control System"
 ACTION_DELAY = 0.4
+# 자격증명이 이미 입력되어 있으면 Log In 버튼만 클릭 (true/false)
+CREDENTIALS_PREFILLED = os.environ.get("RCS_CREDENTIALS_PREFILLED", "false").lower() in ("true", "1", "yes")
 
 
 # ─────────────────────────── 창 탐색 ───────────────────────────
@@ -180,17 +182,35 @@ def _ask_vlm_login_elements(image: "Image.Image") -> "dict | None":
     img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
     print(f"[INFO] VLM 전송 이미지: {w}x{h}, PNG, {len(buf.getvalue()) / 1024:.1f}KB")
 
-    prompt = f"""당신은 GUI 화면 분석 전문가입니다.
+    if CREDENTIALS_PREFILLED:
+        # 자격증명이 이미 입력됨 — Log In 버튼 좌표만 필요
+        prompt = f"""당신은 GUI 화면 분석 전문가입니다.
+
+이 이미지는 Remote Control System 로그인 화면입니다.
+자격증명(Server, User ID, Password)은 이미 입력되어 있습니다.
+"Log In" 버튼의 정확한 중심점 좌표만 찾아 주세요.
+
+이미지 해상도: {w}x{h} 픽셀
+좌표 범위: x는 0~{w}, y는 0~{h}
+
+반드시 다음 JSON 형식으로만 응답하세요:
+{{
+    "login_button": {{"x": 정수, "y": 정수}}
+}}"""
+    else:
+        prompt = f"""당신은 GUI 화면 분석 전문가입니다.
 
 이 이미지는 Remote Control System 로그인 화면입니다.
 화면 레이아웃: 왼쪽에 "Server", "User ID", "Password" 텍스트 라벨이 있고,
-각 라벨의 오른쪽에 콤보박스/입력 필드가 위치합니다. Log In 버튼도 오른쪽에 있습니다.
+각 라벨의 오른쪽에 흰색 배경의 콤보박스/입력 필드가 위치합니다.
 
-다음 4개 UI 요소의 **입력 가능한 컨트롤** 중심점 좌표를 찾아 주세요 (라벨 텍스트가 아닌, 그 오른쪽의 실제 입력 영역):
+다음 4개 UI 요소의 좌표를 찾아 주세요.
+중요: 라벨 텍스트("Server", "User ID" 등)가 아닌, 라벨 오른쪽에 있는 흰색 입력 영역의 좌측 1/3 지점을 클릭 좌표로 잡아 주세요.
+입력 필드의 세로 중심, 가로는 입력 영역의 왼쪽에서 약 1/3 지점이 이상적입니다.
 
-1. server — "Server" 라벨 오른쪽의 드롭다운 콤보박스 중심
-2. user_id — "User ID" 라벨 오른쪽의 텍스트 입력 필드 중심
-3. password — "Password" 라벨 오른쪽의 텍스트 입력 필드 중심
+1. server — "Server" 오른쪽 드롭다운 콤보박스 (흰색 영역의 왼쪽 1/3, 세로 중심)
+2. user_id — "User ID" 오른쪽 텍스트 입력 필드 (흰색 영역의 왼쪽 1/3, 세로 중심)
+3. password — "Password" 오른쪽 텍스트 입력 필드 (흰색 영역의 왼쪽 1/3, 세로 중심)
 4. login_button — "Log In" 버튼 중심
 
 이미지 해상도: {w}x{h} 픽셀
@@ -408,35 +428,38 @@ def _vlm_login(window) -> bool:
         sy = int(pt["y"])
         return sx + win_left, sy + win_top
 
-    # 5) 서버 선택
-    if "server" in elements and SERVER:
-        sx, sy = to_abs(elements["server"])
-        print(f"[INFO] 서버 드롭다운 클릭: ({sx}, {sy})")
-        _click(sx, sy)
-        time.sleep(0.3)
-        # 드롭다운이 열린 후 서버명 타이핑 + Enter
-        kbd = KbdCtrl()
-        kbd.type(SERVER)
-        time.sleep(0.2)
-        from pynput.keyboard import Key
-        kbd.press(Key.enter)
-        kbd.release(Key.enter)
-        time.sleep(ACTION_DELAY)
-        print(f"[INFO] 서버 선택: {SERVER}")
+    if CREDENTIALS_PREFILLED:
+        print("[INFO] 자격증명이 이미 입력됨 — Log In 버튼만 클릭합니다")
+    else:
+        # 5) 서버 선택
+        if "server" in elements and SERVER:
+            sx, sy = to_abs(elements["server"])
+            print(f"[INFO] 서버 드롭다운 클릭: ({sx}, {sy})")
+            _click(sx, sy)
+            time.sleep(0.3)
+            # 드롭다운이 열린 후 서버명 타이핑 + Enter
+            kbd = KbdCtrl()
+            kbd.type(SERVER)
+            time.sleep(0.2)
+            from pynput.keyboard import Key
+            kbd.press(Key.enter)
+            kbd.release(Key.enter)
+            time.sleep(ACTION_DELAY)
+            print(f"[INFO] 서버 선택: {SERVER}")
 
-    # 6) User ID
-    if "user_id" in elements and USERNAME:
-        ux, uy = to_abs(elements["user_id"])
-        print(f"[INFO] User ID 필드 클릭: ({ux}, {uy})")
-        _click_and_type(ux, uy, USERNAME)
-        print("[INFO] User ID 입력 완료")
+        # 6) User ID
+        if "user_id" in elements and USERNAME:
+            ux, uy = to_abs(elements["user_id"])
+            print(f"[INFO] User ID 필드 클릭: ({ux}, {uy})")
+            _click_and_type(ux, uy, USERNAME)
+            print("[INFO] User ID 입력 완료")
 
-    # 7) Password
-    if "password" in elements and PASSWORD:
-        px, py = to_abs(elements["password"])
-        print(f"[INFO] Password 필드 클릭: ({px}, {py})")
-        _click_and_type(px, py, PASSWORD)
-        print("[INFO] Password 입력 완료")
+        # 7) Password
+        if "password" in elements and PASSWORD:
+            px, py = to_abs(elements["password"])
+            print(f"[INFO] Password 필드 클릭: ({px}, {py})")
+            _click_and_type(px, py, PASSWORD)
+            print("[INFO] Password 입력 완료")
 
     # 8) Log In 버튼
     if "login_button" in elements:

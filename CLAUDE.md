@@ -107,6 +107,10 @@ python -m test.vlm_input_control.integration_test
 | `BatchProcessor` | `test/video_frame_parser/batch_processor.py` | Multi-GPU batch processing |
 | `DatabaseHandler` | `test/video_frame_parser/db_handler.py` | MongoDB + FAISS vector storage |
 
+## Development Workflow
+
+Claude Code runs on macOS (dev machine) and **cannot see or interact with the actual RCS application**. All Windows-only automation (RCS, pywinauto, pynput mouse/keyboard) is tested by the user at the office on a Windows machine. Updated Python files are pushed via git, pulled at the office, and run there. Debugging relies on the user reporting results (console output, debug screenshots like `debug_vlm_login.png`) back to Claude Code.
+
 ## Architecture Notes
 
 ### poc/work/ (Primary Workstream)

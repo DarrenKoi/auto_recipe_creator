@@ -23,6 +23,7 @@ from dotenv import load_dotenv
 from PIL import Image, ImageDraw, ImageFont
 from pywinauto.keyboard import send_keys
 from pywinauto import mouse
+from pywinauto import Desktop
 from pywinauto.application import Application
 
 load_dotenv()
@@ -44,6 +45,15 @@ DEBUG_MAIN_WINDOW_TITLES = (
     os.environ.get("RCS_DEBUG_MAIN_WINDOW_TITLES", "1").strip().lower()
     not in {"0", "false", "no", "off"}
 )
+_desktop_backends_raw = [
+    item.strip().lower()
+    for item in os.environ.get("RCS_DESKTOP_SCAN_BACKENDS", "uia,win32").split(",")
+    if item.strip()
+]
+_desktop_backends = [PYWINAUTO_BACKEND] + _desktop_backends_raw
+DESKTOP_SCAN_BACKENDS = tuple(
+    dict.fromkeys(b for b in _desktop_backends if b in {"uia", "win32"})
+) or ("uia", "win32")
 
 LAUNCH_TIMEOUT = 30.0
 WINDOW_TITLE_PREFIX = "Remote Control System"
@@ -209,20 +219,46 @@ def _find_window_by_title(app, matcher):
     return None, ""
 
 
-def _scan_main_window_candidates(app):
-    """현재 app.windows()의 타이틀과 매칭 결과를 수집한다."""
-    debug_rows = []
-    for idx, win in enumerate(app.windows(), start=1):
+def _scan_window_list(windows, source_name: str, debug_rows: list[str]):
+    for idx, win in enumerate(windows, start=1):
         try:
             title = win.window_text() or ""
         except Exception as exc:
-            debug_rows.append(f"app[{idx}] title-read-error={exc}")
+            debug_rows.append(f"{source_name}[{idx}] title-read-error={exc}")
             continue
 
         matched = _is_main_window_title(title)
-        debug_rows.append(f"app[{idx}] matched={matched} title={title!r}")
+        debug_rows.append(f"{source_name}[{idx}] matched={matched} title={title!r}")
         if matched:
-            return win, title, debug_rows
+            return win, title
+
+    return None, ""
+
+
+def _scan_main_window_candidates(app):
+    """현재 app.windows()의 타이틀과 매칭 결과를 수집한다."""
+    debug_rows = []
+
+    # 1) 시작 프로세스(app)에서 먼저 탐색
+    app_window, app_title = _scan_window_list(app.windows(), "app", debug_rows)
+    if app_window is not None:
+        return app_window, app_title, debug_rows
+
+    # 2) RCS가 재기동되어 프로세스가 바뀌는 경우를 위해 데스크톱 전체 창에서 탐색
+    for backend in DESKTOP_SCAN_BACKENDS:
+        try:
+            desktop_windows = Desktop(backend=backend).windows(
+                top_level_only=True, visible_only=True
+            )
+        except Exception as exc:
+            debug_rows.append(f"desktop[{backend}] windows-error={exc}")
+            continue
+
+        desktop_window, desktop_title = _scan_window_list(
+            desktop_windows, f"desktop[{backend}]", debug_rows
+        )
+        if desktop_window is not None:
+            return desktop_window, desktop_title, debug_rows
 
     return None, "", debug_rows
 

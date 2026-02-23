@@ -8,6 +8,7 @@ pywinauto는 창 실행·탐색에만 사용한다.
 import base64
 import json
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -35,6 +36,14 @@ VLM_API_URL = (
 )
 VLM_API_KEY = os.environ.get("VLM_API_KEY", "").strip()
 PYWINAUTO_BACKEND = os.environ.get("PYWINAUTO_BACKEND", "").strip().lower() or "win32"
+UPDATE_WINDOW_TITLE_REGEX = (
+    os.environ.get("RCS_UPDATE_WINDOW_REGEX", r"\bupdater\w*\b").strip()
+    or r"\bupdater\w*\b"
+)
+MAIN_WINDOW_TITLE_REGEX = (
+    os.environ.get("RCS_MAIN_WINDOW_REGEX", r"\[server:[^\]]+\]").strip()
+    or r"\[server:[^\]]+\]"
+)
 
 LAUNCH_TIMEOUT = 30.0
 WINDOW_TITLE_PREFIX = "Remote Control System"
@@ -44,7 +53,7 @@ KIMI_MODEL = "Kimi-K2.5"
 TEST_MODELS = [
     KIMI_MODEL,
 ]
-TARGET_CLICK_KEY = "server_input"
+TARGET_CLICK_KEY = os.environ.get("RCS_TARGET_CLICK_KEY", "login_button").strip() or "login_button"
 
 # 검출 대상: 텍스트 라벨 + 입력 필드 + 버튼
 TARGET_ELEMENTS = [
@@ -63,6 +72,21 @@ try:
     POST_LOGIN_DELAY_SEC = float(os.getenv("RCS_POST_LOGIN_DELAY_SEC", "4.0"))
 except ValueError:
     POST_LOGIN_DELAY_SEC = 4.0
+
+try:
+    POST_LOGIN_UPDATE_TIMEOUT_SEC = float(os.getenv("RCS_POST_LOGIN_UPDATE_TIMEOUT_SEC", "90.0"))
+except ValueError:
+    POST_LOGIN_UPDATE_TIMEOUT_SEC = 90.0
+
+try:
+    POST_LOGIN_MAIN_TIMEOUT_SEC = float(os.getenv("RCS_POST_LOGIN_MAIN_TIMEOUT_SEC", "180.0"))
+except ValueError:
+    POST_LOGIN_MAIN_TIMEOUT_SEC = 180.0
+
+try:
+    POST_LOGIN_POLL_SEC = float(os.getenv("RCS_POST_LOGIN_POLL_SEC", "0.5"))
+except ValueError:
+    POST_LOGIN_POLL_SEC = 0.5
 
 try:
     POST_LOGIN_SCROLL_STEPS = int(os.getenv("RCS_POST_LOGIN_SCROLL_STEPS", "0"))
@@ -159,6 +183,83 @@ def _wait_for_login_window(app):
                 return win
         time.sleep(0.5)
     raise TimeoutError(f"로그인 창을 {LAUNCH_TIMEOUT:.0f}초 내에 찾지 못했습니다")
+
+
+def _is_update_window_title(title: str) -> bool:
+    try:
+        return re.search(UPDATE_WINDOW_TITLE_REGEX, title, flags=re.IGNORECASE) is not None
+    except re.error:
+        return "updater" in title.lower()
+
+
+def _is_main_window_title(title: str) -> bool:
+    try:
+        return re.search(MAIN_WINDOW_TITLE_REGEX, title, flags=re.IGNORECASE) is not None
+    except re.error:
+        return "[server:" in title.lower()
+
+
+def _find_window_by_title(app, matcher):
+    for win in app.windows():
+        try:
+            title = win.window_text() or ""
+        except Exception:
+            continue
+        if matcher(title):
+            return win, title
+    return None, ""
+
+
+def _wait_for_post_login_windows(app):
+    """로그인 버튼 클릭 후 'RCS update'와 메인 RCS 창이 나타날 때까지 순차 대기한다."""
+    if POST_LOGIN_DELAY_SEC > 0:
+        print(f"[INFO] 로그인 직후 안정화 대기: {POST_LOGIN_DELAY_SEC:.1f}초")
+        time.sleep(POST_LOGIN_DELAY_SEC)
+
+    print(
+        f"[INFO] 'RCS update' 창 대기 시작 (최대 {POST_LOGIN_UPDATE_TIMEOUT_SEC:.0f}초, "
+        f"poll={POST_LOGIN_POLL_SEC:.1f}s)"
+    )
+    update_deadline = time.time() + POST_LOGIN_UPDATE_TIMEOUT_SEC
+    while time.time() < update_deadline:
+        _, update_title = _find_window_by_title(app, _is_update_window_title)
+        if update_title:
+            print(f"[INFO] 업데이트 창 발견: '{update_title}'")
+            break
+        time.sleep(POST_LOGIN_POLL_SEC)
+    else:
+        print(f"[ERROR] 'RCS update' 창을 {POST_LOGIN_UPDATE_TIMEOUT_SEC:.0f}초 내에 찾지 못했습니다.")
+        return None
+
+    print(
+        f"[INFO] 업데이트 창 종료 대기 시작 (최대 {POST_LOGIN_MAIN_TIMEOUT_SEC:.0f}초, "
+        f"poll={POST_LOGIN_POLL_SEC:.1f}s)"
+    )
+    update_close_deadline = time.time() + POST_LOGIN_MAIN_TIMEOUT_SEC
+    while time.time() < update_close_deadline:
+        _, still_update_title = _find_window_by_title(app, _is_update_window_title)
+        if not still_update_title:
+            print("[INFO] 업데이트 창 종료 확인")
+            break
+        time.sleep(POST_LOGIN_POLL_SEC)
+    else:
+        print(f"[ERROR] 업데이트 창이 {POST_LOGIN_MAIN_TIMEOUT_SEC:.0f}초 내에 닫히지 않았습니다.")
+        return None
+
+    print(
+        f"[INFO] 메인 RCS 창 대기 시작 (최대 {POST_LOGIN_MAIN_TIMEOUT_SEC:.0f}초, "
+        f"poll={POST_LOGIN_POLL_SEC:.1f}s)"
+    )
+    main_deadline = time.time() + POST_LOGIN_MAIN_TIMEOUT_SEC
+    while time.time() < main_deadline:
+        main_window, main_title = _find_window_by_title(app, _is_main_window_title)
+        if main_window is not None:
+            print(f"[INFO] 로그인 성공 창 발견: '{main_title}'")
+            return main_window
+        time.sleep(POST_LOGIN_POLL_SEC)
+
+    print(f"[ERROR] 메인 RCS 창을 {POST_LOGIN_MAIN_TIMEOUT_SEC:.0f}초 내에 찾지 못했습니다.")
+    return None
 
 
 # ─────────────────────────── 스크린샷 ───────────────────────────
@@ -522,9 +623,18 @@ def main() -> int:
     if not _click_at(TARGET_CLICK_KEY, login_window, data):
         return 5
 
-    print(f"[INFO] 로그인 후 화면 로딩 대기: {POST_LOGIN_DELAY_SEC:.1f}초")
-    time.sleep(POST_LOGIN_DELAY_SEC)
-    _scroll_to_reveal_more(login_window)
+    if TARGET_CLICK_KEY != "login_button":
+        print(
+            f"[WARN] TARGET_CLICK_KEY='{TARGET_CLICK_KEY}' 이므로 "
+            "로그인 성공 창 검증을 건너뜁니다."
+        )
+        return 0
+
+    main_window = _wait_for_post_login_windows(app)
+    if main_window is None:
+        return 6
+
+    _scroll_to_reveal_more(main_window)
 
     return 0
 

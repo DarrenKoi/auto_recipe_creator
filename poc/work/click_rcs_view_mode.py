@@ -60,6 +60,8 @@ TAB_EXTRA_INSTRUCTIONS = (
     "Use the first letter of each tab as the primary anchor: 'V' in View, 'L' in List.",
     "View and List tabs are adjacent near the top-left corner.",
 )
+LIST_TAB_X_OFFSET_FROM_VIEW = 20  # view_tab.x + this offset → list_tab.x
+
 ELEMENT_COLORS = {
     "view_tab": "orange",
     "list_tab": "cyan",
@@ -349,6 +351,18 @@ def main() -> int:
     except Exception as exc:
         print(f"[ERROR] JSON 파싱 실패: {exc}")
         return 3
+
+    # list_tab 좌표를 view_tab 기준으로 오프셋 보정
+    view_pt = data.get("view_tab")
+    if isinstance(view_pt, dict) and "x" in view_pt and "y" in view_pt:
+        derived_x = view_pt["x"] + LIST_TAB_X_OFFSET_FROM_VIEW
+        derived_y = view_pt["y"]
+        data["list_tab"] = {"x": derived_x, "y": derived_y}
+        print(
+            f"[INFO] list_tab 좌표를 view_tab 기준 오프셋으로 보정: "
+            f"view({view_pt['x']},{view_pt['y']}) + offset({LIST_TAB_X_OFFSET_FROM_VIEW},0) "
+            f"→ list({derived_x},{derived_y})"
+        )
 
     detected = sum(1 for k in TARGET_ELEMENTS if k in data and isinstance(data[k], dict))
     print(f"[INFO] 검출률: {detected}/{len(TARGET_ELEMENTS)}")

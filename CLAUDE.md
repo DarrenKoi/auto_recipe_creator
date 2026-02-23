@@ -51,9 +51,9 @@ uv run python -m poc.home.demo --mode screen_analysis
 
 # RCS auto-login (Windows only)
 python -m automation.rcs.run_login --server SERVER --username USER --password PASS
-python -m automation.rcs.run_login --debug           # dump pywinauto UI control tree
 
 # RCS auto-login via poc/work/ (Windows only, VLM-based, all config from .env)
+# Saves debug_vlm_login.png with VLM-detected coordinates marked
 python poc/work/automate_rcs_login.py
 
 # Video frame parser

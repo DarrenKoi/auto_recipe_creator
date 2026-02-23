@@ -40,6 +40,10 @@ MAIN_WINDOW_TITLE_REGEX = (
     os.environ.get("RCS_MAIN_WINDOW_REGEX", r"\brcs\b.*\[server\s*:[^\]]+\]").strip()
     or r"\brcs\b.*\[server\s*:[^\]]+\]"
 )
+DEBUG_MAIN_WINDOW_TITLES = (
+    os.environ.get("RCS_DEBUG_MAIN_WINDOW_TITLES", "1").strip().lower()
+    not in {"0", "false", "no", "off"}
+)
 
 LAUNCH_TIMEOUT = 30.0
 WINDOW_TITLE_PREFIX = "Remote Control System"
@@ -205,6 +209,24 @@ def _find_window_by_title(app, matcher):
     return None, ""
 
 
+def _scan_main_window_candidates(app):
+    """현재 app.windows()의 타이틀과 매칭 결과를 수집한다."""
+    debug_rows = []
+    for idx, win in enumerate(app.windows(), start=1):
+        try:
+            title = win.window_text() or ""
+        except Exception as exc:
+            debug_rows.append(f"app[{idx}] title-read-error={exc}")
+            continue
+
+        matched = _is_main_window_title(title)
+        debug_rows.append(f"app[{idx}] matched={matched} title={title!r}")
+        if matched:
+            return win, title, debug_rows
+
+    return None, "", debug_rows
+
+
 def _wait_for_post_login_windows(app):
     """로그인 버튼 클릭 후 메인 RCS 창이 나타날 때까지 대기한다."""
     if POST_LOGIN_DELAY_SEC > 0:
@@ -215,9 +237,23 @@ def _wait_for_post_login_windows(app):
         f"[INFO] 메인 RCS 창 대기 시작 (최대 {POST_LOGIN_MAIN_TIMEOUT_SEC:.0f}초, "
         f"poll={POST_LOGIN_POLL_SEC:.1f}s)"
     )
+    if DEBUG_MAIN_WINDOW_TITLES:
+        print(f"[DEBUG] 메인 창 regex: {MAIN_WINDOW_TITLE_REGEX!r}")
+
     main_deadline = time.time() + POST_LOGIN_MAIN_TIMEOUT_SEC
+    attempt = 0
     while time.time() < main_deadline:
-        main_window, main_title = _find_window_by_title(app, _is_main_window_title)
+        attempt += 1
+        main_window, main_title, debug_rows = _scan_main_window_candidates(app)
+        if DEBUG_MAIN_WINDOW_TITLES:
+            elapsed = POST_LOGIN_MAIN_TIMEOUT_SEC - max(0.0, main_deadline - time.time())
+            print(f"[DEBUG] title-scan attempt={attempt}, elapsed={elapsed:.1f}s")
+            if not debug_rows:
+                print("[DEBUG] app.windows() returned no visible top-level windows")
+            else:
+                for row in debug_rows:
+                    print(f"[DEBUG] {row}")
+
         if main_window is not None:
             print(f"[INFO] 로그인 성공 창 발견: '{main_title}'")
             return main_window

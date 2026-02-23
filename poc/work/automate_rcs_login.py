@@ -239,6 +239,7 @@ def _build_prompt(w: int, h: int) -> tuple[str, str]:
         "You are a precise GUI element locator. "
         f"The image is {w}x{h} pixels. "
         "The origin (0, 0) is the top-left corner of the image. "
+        "Return only points that are clearly inside the target element, not on borders or edges. "
         "Return coordinates as integer pixel values. "
         "Respond ONLY with valid JSON — no explanation, no markdown."
     )
@@ -255,20 +256,29 @@ LAYOUT DESCRIPTION:
 
 Find the pixel coordinates of these 9 elements:
 
-TEXT LABELS — find the center of the rendered text:
-1. "server_label" — the text "Server"
-2. "userid_label" — the text "User ID"
-3. "password_label" — the text "Password"
+TEXT LABELS — find the first letter of the rendered text and return its center:
+1. "server_label" — the first letter in "Server"
+2. "userid_label" — the first letter in "User ID"
+3. "password_label" — the first letter in "Password"
 
-INPUT FIELDS — find the center of each interactive control:
-4. "server_input" — the combobox/dropdown to the right of "Server" (has a dropdown arrow on its right side)
+INPUT FIELDS — predict a control-interior point and bias it to the right side:
+4. "server_input" — the combobox/dropdown to the right of "Server" (has a dropdown arrow on its right side). 
+   - Estimate the rectangular bounds, then choose a point near the center.
+   - Shift this point about 12 pixels to the right (x + 12) so it is not on the left edge.
 5. "userid_input" — the white-background, gray-bordered text input field to the right of "User ID"
+   - Estimate the rectangular bounds, then choose a point near the center.
+   - Shift this point about 12 pixels to the right (x + 12) so it is not on the left edge.
 6. "password_input" — the white-background, gray-bordered text input field to the right of "Password"
+   - Estimate the rectangular bounds, then choose a point near the center.
+   - Shift this point about 12 pixels to the right (x + 12) so it is not on the left edge.
 
 BUTTONS — find the center of each clickable button:
 7. "login_button" — the button labeled "Log In"
+   - Prefer an interior point, not edge pixels. A slight right bias (+8 to +14 px) is preferred.
 8. "cancel_button" — the button labeled "Cancel"
+   - Prefer an interior point, not edge pixels.
 9. "shortcut_button" — the button with Korean text (for making shortcuts)
+   - Prefer an interior point, not edge pixels.
 
 Image size: {w} x {h} pixels.
 x range: 0 (left edge) to {w} (right edge).

@@ -47,10 +47,10 @@ python -m poc.work.vlm_rcs_agent           # Observe-Think-Act agent loop for RC
 
 # poc/home — personal study only
 uv run python -m poc.home.test_setup       # Validate HuggingFace env
-uv run python -m poc.home.demo --mode screen_analysis
+uv run python -m poc.home.demo                        # mode configured in .env or hardcoded
 
-# RCS auto-login (Windows only)
-python -m automation.rcs.run_login --server SERVER --username USER --password PASS
+# RCS auto-login (Windows only, config from .env)
+python -m automation.rcs.run_login
 
 # RCS auto-login via poc/work/ (Windows only, VLM-based, all config from .env)
 # Saves debug_vlm_login.png with VLM-detected coordinates marked
@@ -67,9 +67,8 @@ python -m test.video_frame_parser.example_usage
 pytest test/video_frame_parser/tests/
 pytest test/video_frame_parser/tests/test_analyzer.py -v
 
-# Integration test (safe mode by default — no actual inputs sent)
+# Integration test (safe mode by default — no actual inputs sent, toggle via SAFE_MODE in .env)
 python -m test.vlm_input_control.integration_test
-python -m test.vlm_input_control.integration_test --live   # CAUTION: sends real inputs
 ```
 
 ## Code Conventions
@@ -89,6 +88,7 @@ python -m test.vlm_input_control.integration_test --live   # CAUTION: sends real
 - **Enums** for categorical values (`FrameType`, `AnalysisStatus`, `VLMProvider`, `MouseButton`)
 - **`to_dict()` / `from_dict()`** on data models for MongoDB serialization
 - **Safe mode**: Most interactive modules default to `SAFE_MODE=true` to prevent actual mouse/keyboard output
+- **No CLI arguments**: Do not use `argparse` or CLI flags. All configuration comes from `.env` (via `python-dotenv`) or hardcoded defaults in the source files. Scripts should run with just `python <script>.py`
 
 ## Key Classes
 

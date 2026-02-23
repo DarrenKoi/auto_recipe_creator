@@ -1,54 +1,426 @@
-"""RCS List 탭에서 등록된 툴 목록을 조회한다 (Windows 전용).
+"""RCS 메인 화면에서 View -> List 탭 전환 후 툴 목록/상태를 읽는다 (Windows 전용).
 
-UIA 컨트롤 타입 우선순위: List → Tree → DataGrid/Table
-어느 것도 발견되지 않으면 디버그 모드로 컨트롤 트리를 확인해야 한다.
+기본 동작:
+1) VLM으로 top-left의 View/List 탭 좌표를 검출
+2) View 탭 클릭
+3) List 탭 클릭
+4) List 영역의 툴 이름 + 상태등(녹색=on, 검정=off) 추출
 
-환경 변수:
-    RCS_WINDOW_TITLE    연결할 RCS 창 제목 정규식
-    RCS_TIMEOUT         창 탐색 대기 제한 시간(초, 기본: 15)
-    RCS_LIST_NO_SWITCH  1/true/yes/on 이면 List 탭 자동 전환 생략
-    RCS_LIST_DEBUG      1/true/yes/on 이면 컨트롤 트리 덤프
+참고:
+- `get_tool_list()` 함수는 기존 UIA 기반 조회 방식으로 유지되어
+  `select_tool.py`에서 그대로 임포트해 사용할 수 있다.
 """
 
+from __future__ import annotations
+
+import base64
+import json
 import os
+import re
 import sys
+import time
 from dataclasses import dataclass
+from io import BytesIO
+from pathlib import Path
 from typing import List
 
+try:
+    import mss
+    import mss.tools
+
+    MSS_AVAILABLE = True
+except ImportError:
+    mss = None  # type: ignore[assignment]
+    MSS_AVAILABLE = False
+
+try:
+    from PIL import Image, ImageDraw, ImageFont
+
+    PIL_AVAILABLE = True
+except ImportError:
+    Image = ImageDraw = ImageFont = None  # type: ignore[assignment]
+    PIL_AVAILABLE = False
+
+try:
+    from pywinauto import Desktop, mouse
+
+    PYWINAUTO_AVAILABLE = True
+except ImportError:
+    Desktop = mouse = None  # type: ignore[assignment]
+    PYWINAUTO_AVAILABLE = False
+
+from poc.work.prompts import (
+    build_rcs_main_tab_locator_prompt,
+    build_rcs_tool_list_reader_prompt,
+)
 from poc.work.rcs_common import (
     DEFAULT_TIMEOUT,
     DEFAULT_WINDOW_TITLE_REGEX,
-    PYWIN_AVAILABLE,
     TOOL_CONTAINER_ORDER,
     _is_visible,
-    connect_rcs_window,
     env_flag,
     env_float,
     load_env,
-    switch_tab,
+)
+from poc.work.vlm_openai_client import ChatImageRequest, OpenAICompatibleVLMClient
+
+DEFAULT_MAIN_WINDOW_REGEX = r"\brcs\b.*\[server\s*:[^\]]+\]"
+DEFAULT_TAB_SETTLE_SEC = 0.35
+DEFAULT_LIST_SETTLE_SEC = 0.60
+DEFAULT_CLICK_RETRY_COUNT = 2
+DEFAULT_CLICK_RETRY_DELAY_SEC = 0.25
+DEFAULT_VLM_MODEL = "Kimi-K2.5"
+DEFAULT_VLM_TEMPERATURE = 0.0
+TARGET_TAB_KEYS = ["view_tab", "list_tab"]
+TAB_DEBUG_COLORS = {
+    "view_tab": "orange",
+    "list_tab": "cyan",
+}
+TAB_EXTRA_INSTRUCTIONS = (
+    "Focus on the top-left tab strip only.",
+    "Use the first letter anchors: 'V' in View, 'L' in List.",
+    "View and List tabs are adjacent near the top-left corner.",
+)
+TOOL_LIST_EXTRA_INSTRUCTIONS = (
+    "Read only visible rows in the current list panel.",
+    "Tool name is on the left, status light is on the right side of that row.",
+    "Green light means status=on, black light means status=off.",
+    "Do not infer rows that are not visible.",
 )
 
 
 @dataclass(frozen=True)
 class ListToolsSettings:
-    window_title: str
+    window_title_regex: str
     timeout: float
-    no_switch: bool
-    debug: bool
+    debug_main_window_titles: bool
+    debug_tree: bool
+    tab_settle_sec: float
+    list_settle_sec: float
+    click_retry_count: int
+    click_retry_delay_sec: float
+    vlm_api_url: str
+    vlm_api_key: str
+    vlm_model: str
+    vlm_temperature: float
+
+
+def _parse_int_env(name: str, default: int) -> int:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        print(f"[WARNING] 잘못된 {name} 값 '{value}', 기본값 {default} 사용")
+        return default
 
 
 def load_settings() -> ListToolsSettings:
+    """환경 변수 기반 설정을 로드한다."""
     load_env()
+
+    main_regex = (
+        os.environ.get("RCS_MAIN_WINDOW_REGEX", "").strip()
+        or os.environ.get("RCS_WINDOW_TITLE", "").strip()
+        or DEFAULT_MAIN_WINDOW_REGEX
+        or DEFAULT_WINDOW_TITLE_REGEX
+    )
+    vlm_api_url = (
+        os.environ.get("VLM_API_URL", "").strip()
+        or os.environ.get("VLM_API_BASE_URL", "").strip()
+    )
     return ListToolsSettings(
-        window_title=os.environ.get("RCS_WINDOW_TITLE", DEFAULT_WINDOW_TITLE_REGEX),
+        window_title_regex=main_regex,
         timeout=env_float("RCS_TIMEOUT", DEFAULT_TIMEOUT),
-        no_switch=env_flag("RCS_LIST_NO_SWITCH", False),
-        debug=env_flag("RCS_LIST_DEBUG", False),
+        debug_main_window_titles=env_flag("RCS_DEBUG_MAIN_WINDOW_TITLES", False),
+        debug_tree=env_flag("RCS_LIST_DEBUG", False),
+        tab_settle_sec=env_float("RCS_TAB_SETTLE_SEC", DEFAULT_TAB_SETTLE_SEC),
+        list_settle_sec=env_float("RCS_LIST_SETTLE_SEC", DEFAULT_LIST_SETTLE_SEC),
+        click_retry_count=_parse_int_env("RCS_CLICK_RETRY_COUNT", DEFAULT_CLICK_RETRY_COUNT),
+        click_retry_delay_sec=env_float(
+            "RCS_CLICK_RETRY_DELAY_SEC",
+            DEFAULT_CLICK_RETRY_DELAY_SEC,
+        ),
+        vlm_api_url=vlm_api_url,
+        vlm_api_key=os.environ.get("VLM_API_KEY", "").strip(),
+        vlm_model=os.environ.get("VLM_MODEL_NAME", DEFAULT_VLM_MODEL).strip() or DEFAULT_VLM_MODEL,
+        vlm_temperature=env_float("VLM_TEMPERATURE", DEFAULT_VLM_TEMPERATURE),
     )
 
 
+def _desktop_scan_backends() -> tuple[str, ...]:
+    pywinauto_backend = os.environ.get("PYWINAUTO_BACKEND", "").strip().lower() or "win32"
+    raw = [
+        item.strip().lower()
+        for item in os.environ.get("RCS_DESKTOP_SCAN_BACKENDS", "win32,uia").split(",")
+        if item.strip()
+    ]
+    backends = raw + [pywinauto_backend]
+    return tuple(dict.fromkeys(b for b in backends if b in {"uia", "win32"})) or ("uia", "win32")
+
+
+def _is_main_window_title(title: str, regex_text: str) -> bool:
+    try:
+        return re.search(regex_text, title, flags=re.IGNORECASE) is not None
+    except re.error:
+        t = title.lower()
+        return "rcs" in t and "[server" in t
+
+
+def _scan_window_list(windows, source_name: str, regex_text: str, debug_rows: list[str]):
+    for idx, win in enumerate(windows, start=1):
+        try:
+            title = win.window_text() or ""
+        except Exception as exc:
+            debug_rows.append(f"{source_name}[{idx}] title-read-error={exc}")
+            continue
+
+        matched = _is_main_window_title(title, regex_text)
+        debug_rows.append(f"{source_name}[{idx}] matched={matched} title={title!r}")
+        if matched:
+            return win, title
+    return None, ""
+
+
+def _find_existing_main_window(settings: ListToolsSettings):
+    """이미 로그인된 메인 RCS 창을 찾아 반환한다."""
+    deadline = time.time() + max(1.0, settings.timeout)
+    debug_rows: list[str] = []
+    backends = _desktop_scan_backends()
+
+    while time.time() < deadline:
+        for backend in backends:
+            try:
+                windows = Desktop(backend=backend).windows(top_level_only=True, visible_only=True)
+            except Exception as exc:
+                debug_rows.append(f"desktop[{backend}] windows-error={exc}")
+                continue
+
+            main_window, main_title = _scan_window_list(
+                windows, f"desktop[{backend}]", settings.window_title_regex, debug_rows
+            )
+            if main_window is not None:
+                return main_window, main_title, debug_rows
+        time.sleep(0.4)
+
+    return None, "", debug_rows
+
+
+def _capture_window(window) -> Image.Image:
+    """pywinauto 창 영역을 캡처하여 PIL Image로 반환한다."""
+    rect = window.rectangle()
+    region = {
+        "left": rect.left,
+        "top": rect.top,
+        "width": rect.right - rect.left,
+        "height": rect.bottom - rect.top,
+    }
+
+    with mss.mss() as sct:
+        shot = sct.grab(region)
+        png_data = mss.tools.to_png(shot.rgb, shot.size)
+
+    image = Image.open(BytesIO(png_data))
+    print(f"[INFO] 창 캡처 완료: {image.size[0]}x{image.size[1]} px")
+    return image
+
+
+def _encode_image(image: Image.Image) -> tuple[str, int, int]:
+    buf = BytesIO()
+    image.save(buf, format="PNG", optimize=True)
+    payload = buf.getvalue()
+    b64 = base64.b64encode(payload).decode("utf-8")
+    w, h = image.size
+    print(f"[INFO] 이미지 인코딩: {w}x{h}, {len(payload) / 1024:.1f}KB")
+    return b64, w, h
+
+
+def _extract_json(text: str) -> dict:
+    if "```json" in text:
+        s = text.find("```json") + 7
+        e = text.find("```", s)
+        if e != -1:
+            return json.loads(text[s:e].strip())
+    if "{" in text:
+        s = text.find("{")
+        e = text.rfind("}")
+        if e > s:
+            return json.loads(text[s : e + 1])
+    return json.loads(text)
+
+
+def _parse_tab_coords(data: dict, img_w: int, img_h: int) -> dict:
+    for key in TARGET_TAB_KEYS:
+        point = data.get(key)
+        if not isinstance(point, dict):
+            print(f"  [MISS] {key:20s} — VLM 응답에 없음")
+            continue
+        raw_x, raw_y = point.get("x", 0), point.get("y", 0)
+        x, y = int(raw_x), int(raw_y)
+        data[key] = {"x": x, "y": y}
+        out = ""
+        if not (0 <= x <= img_w and 0 <= y <= img_h):
+            out = " ← OUT OF BOUNDS"
+        print(f"  [RAW ] {key:20s} — raw=({raw_x}, {raw_y}) → px=({x}, {y}){out}")
+    return data
+
+
+def _click_at(element_key: str, window, elements: dict, settings: ListToolsSettings) -> bool:
+    point = elements.get(element_key)
+    if not isinstance(point, dict) or "x" not in point or "y" not in point:
+        print(f"[ERROR] 클릭 대상 '{element_key}' 좌표가 없습니다.")
+        return False
+
+    rect = window.rectangle()
+    x = int(point["x"]) + rect.left
+    y = int(point["y"]) + rect.top
+    x = max(rect.left, min(x, rect.right - 1))
+    y = max(rect.top, min(y, rect.bottom - 1))
+    rel_x = max(0, min(int(point["x"]), rect.right - rect.left - 1))
+    rel_y = max(0, min(int(point["y"]), rect.bottom - rect.top - 1))
+
+    print(f"[INFO] '{element_key}' 클릭: screen=({x}, {y})")
+    attempts = max(1, settings.click_retry_count)
+    for attempt in range(1, attempts + 1):
+        try:
+            window.set_focus()
+        except Exception:
+            pass
+
+        try:
+            window.click_input(coords=(rel_x, rel_y), button="left")
+            print(f"[INFO] click_input 성공 (attempt={attempt})")
+            return True
+        except Exception as exc:
+            print(f"[WARNING] click_input 실패 (attempt={attempt}): {exc}")
+
+        try:
+            mouse.move(coords=(x, y))
+            time.sleep(0.08)
+            mouse.press(button="left", coords=(x, y))
+            time.sleep(0.05)
+            mouse.release(button="left", coords=(x, y))
+            print(f"[INFO] mouse press/release 실행 (attempt={attempt})")
+            return True
+        except Exception as exc:
+            print(f"[WARNING] mouse press/release 실패 (attempt={attempt}): {exc}")
+
+        time.sleep(max(0.0, settings.click_retry_delay_sec))
+
+    return False
+
+
+def _save_marked_image(image: Image.Image, elements: dict, filename: str) -> None:
+    """좌표를 스크린샷 위에 마킹해서 저장한다."""
+    debug_img = image.copy()
+    draw = ImageDraw.Draw(debug_img)
+
+    try:
+        font = ImageFont.truetype("arial.ttf", 13)
+    except Exception:
+        font = ImageFont.load_default()
+
+    radius = 12
+    for name, point in elements.items():
+        if not isinstance(point, dict) or "x" not in point or "y" not in point:
+            continue
+        x, y = int(point["x"]), int(point["y"])
+        color = TAB_DEBUG_COLORS.get(name, "white")
+        draw.line([(x - radius, y), (x + radius, y)], fill=color, width=2)
+        draw.line([(x, y - radius), (x, y + radius)], fill=color, width=2)
+        draw.ellipse(
+            [(x - radius, y - radius), (x + radius, y + radius)],
+            outline=color,
+            width=2,
+        )
+        draw.text((x + radius + 3, y - 16), f"{name} ({x},{y})", fill=color, font=font)
+
+    out_path = Path(__file__).parent / filename
+    debug_img.save(out_path)
+    print(f"[INFO] 디버그 이미지 저장: {out_path}")
+
+
+def _save_raw_image(image: Image.Image, filename: str) -> None:
+    out_path = Path(__file__).parent / filename
+    image.save(out_path)
+    print(f"[INFO] 스냅샷 저장: {out_path}")
+
+
+def _normalize_tool_status(status_text: str, indicator_color: str) -> tuple[str, str]:
+    status = (status_text or "").strip().lower()
+    color = (indicator_color or "").strip().lower()
+
+    if "green" in color:
+        return "on", "green"
+    if "black" in color:
+        return "off", "black"
+
+    if any(token in status for token in ("on", "running", "run", "active", "green")):
+        return "on", "green"
+    if any(token in status for token in ("off", "stop", "inactive", "black")):
+        return "off", "black"
+
+    return "off", "black"
+
+
+def _parse_tool_rows(data: dict) -> list[dict]:
+    raw_rows = data.get("tools")
+    if not isinstance(raw_rows, list):
+        for alt_key in ("rows", "tool_list", "items"):
+            alt_rows = data.get(alt_key)
+            if isinstance(alt_rows, list):
+                raw_rows = alt_rows
+                break
+
+    if not isinstance(raw_rows, list):
+        return []
+
+    parsed: list[dict] = []
+    for idx, row in enumerate(raw_rows, start=1):
+        if not isinstance(row, dict):
+            print(f"[WARNING] row#{idx} 형식 오류(dict 아님): {row!r}")
+            continue
+
+        name = str(row.get("name", "")).strip()
+        if not name:
+            print(f"[WARNING] row#{idx} 이름 누락: {row!r}")
+            continue
+
+        status, color = _normalize_tool_status(
+            str(row.get("status", "")),
+            str(row.get("indicator_color", row.get("light", ""))),
+        )
+        parsed.append({"name": name, "status": status, "indicator_color": color})
+
+    return parsed
+
+
+def _request_vlm(
+    client: OpenAICompatibleVLMClient,
+    settings: ListToolsSettings,
+    system_message: str,
+    prompt: str,
+    image_b64: str,
+) -> str:
+    request = ChatImageRequest(
+        model=settings.vlm_model,
+        system_message=system_message,
+        user_text=prompt,
+        image_b64=image_b64,
+        temperature=settings.vlm_temperature,
+    )
+    print(f"[INFO] VLM 호출: model={settings.vlm_model}, endpoint={client.endpoint}")
+    start = time.time()
+    raw = client.chat_with_image(request)
+    elapsed = (time.time() - start) * 1000
+    print(f"[INFO] 응답 수신 ({elapsed:.0f}ms)")
+    print(f"[INFO] 원문 응답:\n{raw}\n")
+    return raw
+
+
 # ---------------------------------------------------------------------------
-# 툴 목록 조회 (공개 함수 — select_tool.py 에서 임포트)
+# 기존 UIA 기반 툴 목록 조회 (공개 함수 — select_tool.py 에서 임포트)
 # ---------------------------------------------------------------------------
 
 def get_tool_list(rcs_window) -> List[str]:
@@ -58,17 +430,11 @@ def get_tool_list(rcs_window) -> List[str]:
         1. ListView (ListItem)
         2. TreeView (TreeItem)
         3. DataGrid / Table (DataItem)
-
-    하나라도 이름이 발견되면 즉시 반환하므로 중복이 없다.
-
-    Returns:
-        툴 이름 문자열 리스트 (빈 리스트면 RCS_LIST_DEBUG=1로 확인 필요)
     """
 
     def _collect(container_type: str, child_type: str) -> List[str]:
         containers = [
-            c for c in rcs_window.descendants(control_type=container_type)
-            if _is_visible(c)
+            c for c in rcs_window.descendants(control_type=container_type) if _is_visible(c)
         ]
         for container in containers:
             names = []
@@ -94,44 +460,113 @@ def get_tool_list(rcs_window) -> List[str]:
     return []
 
 
-# ---------------------------------------------------------------------------
-# 진입점
-# ---------------------------------------------------------------------------
-
 def main() -> int:
     if os.name != "nt":
         print("[ERROR] 이 스크립트는 Windows 전용입니다.")
         return 1
-    if not PYWIN_AVAILABLE:
+    if not PYWINAUTO_AVAILABLE:
         print("[ERROR] pywinauto가 필요합니다: pip install pywinauto")
+        return 2
+    if not MSS_AVAILABLE:
+        print("[ERROR] mss가 필요합니다: pip install mss")
+        return 2
+    if not PIL_AVAILABLE:
+        print("[ERROR] Pillow가 필요합니다: pip install Pillow")
         return 2
 
     settings = load_settings()
-
-    try:
-        rcs_win = connect_rcs_window(settings.window_title, settings.timeout)
-    except TimeoutError as exc:
-        print(f"[ERROR] {exc}")
+    if not settings.vlm_api_url:
+        print("[ERROR] VLM_API_URL 또는 VLM_API_BASE_URL 환경변수가 필요합니다.")
         return 3
 
-    if not settings.no_switch:
-        ok = switch_tab(rcs_win, "List")
-        if not ok:
-            print("[WARNING] List 탭 전환 실패 — 현재 탭에서 계속 진행합니다.")
+    client = OpenAICompatibleVLMClient(
+        base_url=settings.vlm_api_url,
+        api_key=settings.vlm_api_key,
+        timeout_sec=120.0,
+    )
 
-    if settings.debug:
-        print("[DEBUG] 전체 컨트롤 트리 덤프 (depth=5):")
-        rcs_win.print_control_identifiers(depth=5)
+    print("[INFO] RCS 메인 창 탐색 시작")
+    main_window, main_title, debug_rows = _find_existing_main_window(settings)
+    if settings.debug_main_window_titles:
+        print(f"[DEBUG] 메인 창 regex: {settings.window_title_regex!r}")
+        if not debug_rows:
+            print("[DEBUG] no visible top-level windows")
+        else:
+            for row in debug_rows:
+                print(f"[DEBUG] {row}")
 
-    tools = get_tool_list(rcs_win)
-
-    if tools:
-        print(f"\n[INFO] 발견된 툴 목록 ({len(tools)}개):")
-        for i, name in enumerate(tools, 1):
-            print(f"  {i:3}. {name}")
-    else:
-        print("[ERROR] 툴 목록이 비어 있습니다. RCS_LIST_DEBUG=1로 컨트롤 트리를 확인하세요.")
+    if main_window is None:
+        print("[ERROR] 로그인된 RCS 메인 창을 찾을 수 없습니다.")
         return 4
+
+    print(f"[INFO] RCS 메인 창 발견: '{main_title}'")
+    if settings.debug_tree:
+        print("[DEBUG] 전체 컨트롤 트리 덤프 (depth=5):")
+        try:
+            main_window.print_control_identifiers(depth=5)
+        except Exception as exc:
+            print(f"[WARNING] 컨트롤 트리 덤프 실패: {exc}")
+
+    try:
+        # 1) 탭 좌표 검출
+        tab_image = _capture_window(main_window)
+        tab_b64, tab_w, tab_h = _encode_image(tab_image)
+        tab_system, tab_prompt = build_rcs_main_tab_locator_prompt(
+            width=tab_w,
+            height=tab_h,
+            target_keys=TARGET_TAB_KEYS,
+            extra_instructions=TAB_EXTRA_INSTRUCTIONS,
+        )
+        tab_raw = _request_vlm(client, settings, tab_system, tab_prompt, tab_b64)
+        tab_data = _extract_json(tab_raw)
+        print(f"[INFO] 탭 좌표 JSON:\n{json.dumps(tab_data, indent=2)}\n")
+        tab_data = _parse_tab_coords(tab_data, tab_w, tab_h)
+        _save_marked_image(tab_image, tab_data, "debug_list_up_tabs.png")
+    except Exception as exc:
+        print(f"[ERROR] 탭 검출 단계 실패: {exc}")
+        return 5
+
+    # 2) View 클릭
+    if not _click_at("view_tab", main_window, tab_data, settings):
+        print("[ERROR] 'view_tab' 클릭 실패")
+        return 6
+    print("[INFO] 'view_tab' 클릭 완료")
+    time.sleep(max(0.0, settings.tab_settle_sec))
+
+    # 3) List 클릭
+    if not _click_at("list_tab", main_window, tab_data, settings):
+        print("[ERROR] 'list_tab' 클릭 실패")
+        return 7
+    print("[INFO] 'list_tab' 클릭 완료")
+    time.sleep(max(0.0, settings.list_settle_sec))
+
+    try:
+        # 4) List 화면에서 툴 목록/상태 추출
+        list_image = _capture_window(main_window)
+        _save_raw_image(list_image, "debug_list_panel.png")
+        list_b64, list_w, list_h = _encode_image(list_image)
+        list_system, list_prompt = build_rcs_tool_list_reader_prompt(
+            width=list_w,
+            height=list_h,
+            extra_instructions=TOOL_LIST_EXTRA_INSTRUCTIONS,
+        )
+        list_raw = _request_vlm(client, settings, list_system, list_prompt, list_b64)
+        list_data = _extract_json(list_raw)
+        print(f"[INFO] 툴 목록 JSON:\n{json.dumps(list_data, indent=2, ensure_ascii=False)}\n")
+        parsed_tools = _parse_tool_rows(list_data)
+    except Exception as exc:
+        print(f"[ERROR] 툴 목록 추출 단계 실패: {exc}")
+        return 8
+
+    if not parsed_tools:
+        print("[ERROR] VLM에서 유효한 툴 목록을 읽지 못했습니다.")
+        return 9
+
+    print(f"[INFO] 발견된 툴 목록 ({len(parsed_tools)}개):")
+    for idx, tool in enumerate(parsed_tools, start=1):
+        status_label = "ON " if tool["status"] == "on" else "OFF"
+        color = tool["indicator_color"]
+        print(f"  {idx:3}. [{status_label}] {tool['name']} ({color})")
 
     return 0
 

@@ -5,12 +5,12 @@ from typing import Iterable
 
 RCS_MAIN_TAB_TARGET_SPECS = {
     "view_tab": (
-        "TAB. In the top-left tab strip, find the center of the 'View' tab label. "
-        "Prioritize the first letter 'V' as the anchor and place the point at the tab label center."
+        "TAB. In the top-left tab strip, locate the first letter 'V' of the 'View' tab label. "
+        "Use 'V' as the anchor to identify the tab, then return the center point of the full tab label."
     ),
     "list_tab": (
-        "TAB. In the top-left tab strip, find the center of the 'List' tab label. "
-        "Prioritize the first letter 'L' as the anchor and place the point at the tab label center."
+        "TAB. In the top-left tab strip, locate the first letter 'L' of the 'List' tab label. "
+        "Use 'L' as the anchor to identify the tab, then return the center point of the full tab label."
     ),
 }
 
@@ -54,7 +54,13 @@ def build_rcs_main_tab_locator_prompt(
         "",
         "The window has 'View' and 'List' tabs near the top-left corner.",
         "They are adjacent in the same tab strip.",
-        "Use the first letter anchors: 'V' for View, 'L' for List.",
+        "",
+        "IMPORTANT — First-letter anchoring strategy:",
+        "To locate each tab, first find its distinctive first letter in the tab strip:",
+        "  - 'V' → identifies the 'View' tab",
+        "  - 'L' → identifies the 'List' tab",
+        "Once you find the first letter, use it to determine the full tab boundary,",
+        "then return the center point of that tab label.",
         "Ignore similar words elsewhere in the window.",
         "",
         f"Find the pixel coordinates of these {len(keys)} elements:",

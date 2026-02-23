@@ -14,6 +14,7 @@ test/vlm_input_control/  # Screen capture + VLM analysis + mouse/keyboard contro
 test/video_frame_parser/ # CLIP-based video frame extraction & analysis (GPU cluster)
 test/workflow_extractor/ # CCTV-to-knowledge ingestion pipeline
 poc/work/                # Company PoC: VLM screen analysis + RCS automation (Qwen3-VL API)
+poc/work/prompts/        # VLM prompt builders (one module per screen/task, e.g. rcs_login.py)
 poc/home/                # Personal study PoC: HuggingFace free API — NO office relation
 docs/                    # Architecture research notes and setup guides
 ```
@@ -114,7 +115,7 @@ Claude Code runs on macOS (dev machine) and **cannot see or interact with the ac
 ## Architecture Notes
 
 ### poc/work/ (Primary Workstream)
-Self-contained flat module — all files live directly in `poc/work/` with no sub-packages. Config loaded via `PocConfig.load()` which reads `.env` (copy from `.env.example`; `.env.example` now includes `RCS_EXE_PATH` for the path to `RcsMainHD.exe`). The `vlm_click_demo.py` is the primary manager-presentation entry point: it captures a screenshot, sends it to the VLM, then draws bounding boxes at the returned click coordinates. Coordinate chain: VLM output coords (resized image) → screenshot pixels → monitor-local coords → absolute mouse coords (offset for multi-monitor setups via `MONITOR_INDEX`).
+Mostly flat module with one sub-package: `prompts/` for VLM prompt builders (one module per screen/task, e.g. `rcs_login.py`). New prompts go in `prompts/` and are re-exported from `prompts/__init__.py`. Config loaded via `PocConfig.load()` which reads `.env` (copy from `.env.example`; `.env.example` now includes `RCS_EXE_PATH` for the path to `RcsMainHD.exe`). The `vlm_click_demo.py` is the primary manager-presentation entry point: it captures a screenshot, sends it to the VLM, then draws bounding boxes at the returned click coordinates. Coordinate chain: VLM output coords (resized image) → screenshot pixels → monitor-local coords → absolute mouse coords (offset for multi-monitor setups via `MONITOR_INDEX`).
 
 `opensearch_handler.py` is intentionally kept but inactive — import-guarded and `opensearch-py` is not in `requirements.txt`. Do not delete; kept for re-enablement after company PoC approval.
 

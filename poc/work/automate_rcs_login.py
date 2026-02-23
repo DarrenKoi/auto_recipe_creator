@@ -60,7 +60,6 @@ try:
 except ValueError:
     print("[WARN] VLM_CHECK_TIMEOUT 값이 유효하지 않아 3.0초로 대체합니다.")
     VLM_CHECK_TIMEOUT = 3.0
-MAX_IMAGE_SIZE = int(os.environ.get("MAX_IMAGE_SIZE", "1280"))
 LAUNCH_TIMEOUT = 30.0
 POST_LOGIN_WAIT = 6.0
 WINDOW_TITLE_PREFIX = "Remote Control System"
@@ -154,19 +153,6 @@ def _capture_window(window) -> "Image.Image | None":
     image = Image.open(BytesIO(png_data))
     print(f"[INFO] 창 캡처 완료: {image.size[0]}x{image.size[1]} px")
     return image
-
-
-def _resize_for_vlm(image: "Image.Image") -> "tuple[Image.Image, float]":
-    """VLM 입력용 리사이즈. (resized_image, scale) 반환."""
-    w, h = image.size
-    max_dim = max(w, h)
-    if max_dim <= MAX_IMAGE_SIZE:
-        return image.copy(), 1.0
-    scale = MAX_IMAGE_SIZE / max_dim
-    new_w, new_h = int(w * scale), int(h * scale)
-    resized = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
-    print(f"[INFO] VLM용 리사이즈: {w}x{h} → {new_w}x{new_h} (scale={scale:.4f})")
-    return resized, scale
 
 
 # ─────────────────────────── VLM 좌표 추출 ───────────────────────────
@@ -318,7 +304,7 @@ ELEMENT_COLORS = {
 }
 
 
-def _save_debug_screenshot(image: "Image.Image", elements: dict, scale: float) -> None:
+def _save_debug_screenshot(image: "Image.Image", elements: dict) -> None:
     """VLM이 반환한 좌표를 원본 스크린샷 위에 마킹하여 저장한다."""
     debug_img = image.copy()
     draw = ImageDraw.Draw(debug_img)
@@ -336,9 +322,8 @@ def _save_debug_screenshot(image: "Image.Image", elements: dict, scale: float) -
     for name, pt in elements.items():
         if not isinstance(pt, dict) or "x" not in pt or "y" not in pt:
             continue
-        # VLM 좌표(리사이즈) → 원본 스크린샷 좌표
-        sx = int(pt["x"] / scale)
-        sy = int(pt["y"] / scale)
+        sx = int(pt["x"])
+        sy = int(pt["y"])
         color = ELEMENT_COLORS.get(name, "white")
 
         # 십자선
@@ -405,14 +390,13 @@ def _vlm_login(window) -> bool:
     if image is None:
         return False
 
-    # 2) 리사이즈 + VLM 질의
-    resized, scale = _resize_for_vlm(image)
-    elements = _ask_vlm_login_elements(resized)
+    # 2) VLM 질의
+    elements = _ask_vlm_login_elements(image)
     if elements is None:
         return False
 
     # 3) 디버그: VLM 좌표를 원본 스크린샷 위에 마킹하여 저장
-    _save_debug_screenshot(image, elements, scale)
+    _save_debug_screenshot(image, elements)
 
     # 4) 좌표 변환: VLM(리사이즈) → 스크린샷 → 절대 스크린 좌표
     rect = window.rectangle()
@@ -420,8 +404,8 @@ def _vlm_login(window) -> bool:
 
     def to_abs(pt):
         """VLM 좌표 → 절대 스크린 좌표."""
-        sx = int(pt["x"] / scale)  # 스크린샷 좌표
-        sy = int(pt["y"] / scale)
+        sx = int(pt["x"])  # 스크린샷 좌표
+        sy = int(pt["y"])
         return sx + win_left, sy + win_top
 
     # 5) 서버 선택

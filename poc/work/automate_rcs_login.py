@@ -1,7 +1,8 @@
-"""RCS 실행 후 VLM 기반으로 로그인 폼을 자동으로 채워 넣는 스크립트 (Windows 전용).
+"""RCS 로그인 화면에서 VLM 좌표 검출 정확도를 비교하는 벤치마크 스크립트 (Windows 전용).
 
-pywinauto는 창 실행·탐색에만 사용하고, 내부 컨트롤 조작은
-스크린샷 → VLM 좌표 추출 → pynput 클릭/타이핑으로 수행한다.
+여러 VLM 모델(Kimi-K2.5, Qwen3-VL-30B, Qwen3-VL-8B)에 동일한 스크린샷을 전송하여
+텍스트 라벨·입력 필드·버튼 좌표를 추출하고, 모델별 디버그 이미지를 저장한다.
+pywinauto는 창 실행·탐색에만 사용한다.
 """
 
 import base64
@@ -18,8 +19,6 @@ import mss.tools
 import requests
 from dotenv import load_dotenv
 from PIL import Image, ImageDraw, ImageFont
-from pynput.keyboard import Controller as KbdCtrl, Key
-from pynput.mouse import Button as MouseButton, Controller as MouseCtrl
 from pywinauto.application import Application
 
 load_dotenv()
@@ -27,25 +26,42 @@ load_dotenv()
 # ─────────────────────────── 설정 ───────────────────────────
 
 RCS_EXE = Path(os.environ.get("RCS_EXE_PATH", r"C:\Users\2067928\Documents\RCS\RcsMainHD.exe"))
-SERVER = os.environ.get("RCS_SERVER", "Dropbox")
-USERNAME = os.environ.get("RCS_USERNAME", "")
-PASSWORD = os.environ.get("RCS_PASSWORD", "")
 VLM_API_URL = (
     os.environ.get("VLM_API_URL", "").strip()
     or os.environ.get("VLM_API_BASE_URL", "").strip()
 )
 VLM_API_KEY = os.environ.get("VLM_API_KEY", "").strip()
-VLM_MODEL_NAME = os.environ.get("VLM_MODEL_NAME", "Qwen3-VL-30B-Instruct")
 
 LAUNCH_TIMEOUT = 30.0
-POST_LOGIN_WAIT = 6.0
 WINDOW_TITLE_PREFIX = "Remote Control System"
-ACTION_DELAY = 0.4
 
-# 자격증명이 이미 입력되어 있으면 Log In 버튼만 클릭
-CREDENTIALS_PREFILLED = True
-# True이면 VLM 좌표 정확도 테스트만 실행 (클릭/타이핑 없이 디버그 이미지만 저장)
-DEBUG_COORDINATE_TEST = True
+# 테스트할 VLM 모델 목록
+TEST_MODELS = [
+    "Kimi-K2.5",
+    "Qwen3-VL-30B-Instruct",
+    "Qwen3-VL-8B-Instruct",
+]
+
+# 검출 대상: 텍스트 라벨 + 입력 필드 + 버튼
+TARGET_ELEMENTS = [
+    "server_label",
+    "server_input",
+    "userid_label",
+    "userid_input",
+    "password_label",
+    "password_input",
+    "login_button",
+]
+
+ELEMENT_COLORS = {
+    "server_label": "red",
+    "server_input": "salmon",
+    "userid_label": "blue",
+    "userid_input": "deepskyblue",
+    "password_label": "green",
+    "password_input": "limegreen",
+    "login_button": "orange",
+}
 
 
 # ─────────────────────────── 창 탐색 ───────────────────────────
@@ -85,25 +101,23 @@ def _capture_window(window) -> Image.Image:
     return image
 
 
-# ─────────────────────────── VLM 호출 공통 ───────────────────────────
+# ─────────────────────────── VLM 호출 ───────────────────────────
 
 def _vlm_endpoint() -> str:
-    """VLM chat completions 엔드포인트 URL을 반환한다."""
     base = VLM_API_URL.rstrip("/")
     if base.endswith("/v1"):
         return f"{base}/chat/completions"
     return f"{base}/v1/chat/completions"
 
 
-def _call_vlm(system_msg: str, prompt: str, img_b64: str) -> str:
+def _call_vlm(model: str, system_msg: str, prompt: str, img_b64: str) -> str:
     """VLM API를 호출하고 응답 텍스트를 반환한다."""
     headers = {"Content-Type": "application/json"}
     if VLM_API_KEY:
         headers["Authorization"] = f"Bearer {VLM_API_KEY}"
 
-    endpoint = _vlm_endpoint()
     payload = {
-        "model": VLM_MODEL_NAME,
+        "model": model,
         "messages": [
             {"role": "system", "content": system_msg},
             {
@@ -114,25 +128,26 @@ def _call_vlm(system_msg: str, prompt: str, img_b64: str) -> str:
                 ],
             },
         ],
-        "temperature": 0.1,
+        "temperature": 0.0,
     }
 
-    print(f"[INFO] VLM API 호출 중... ({endpoint})")
+    endpoint = _vlm_endpoint()
+    print(f"[INFO] VLM 호출: model={model}, endpoint={endpoint}")
     start = time.time()
-    resp = requests.post(endpoint, headers=headers, json=payload, timeout=60)
+    resp = requests.post(endpoint, headers=headers, json=payload, timeout=120)
     resp.raise_for_status()
     raw = resp.json()["choices"][0]["message"]["content"]
-    print(f"[INFO] VLM 응답 수신 ({(time.time() - start) * 1000:.0f}ms)")
+    elapsed = (time.time() - start) * 1000
+    print(f"[INFO] 응답 수신 ({elapsed:.0f}ms)")
     return raw
 
 
 def _encode_image(image: Image.Image) -> tuple[str, int, int]:
-    """PIL Image를 base64 PNG로 인코딩하고 (b64, w, h)를 반환한다."""
     buf = BytesIO()
     image.save(buf, format="PNG", optimize=True)
     b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
     w, h = image.size
-    print(f"[INFO] VLM 전송 이미지: {w}x{h}, {len(buf.getvalue()) / 1024:.1f}KB")
+    print(f"[INFO] 이미지 인코딩: {w}x{h}, {len(buf.getvalue()) / 1024:.1f}KB")
     return b64, w, h
 
 
@@ -152,11 +167,10 @@ def _extract_json(text: str) -> dict:
 
 
 def _normalize_coords(data: dict, keys: list[str], img_w: int, img_h: int) -> dict:
-    """좌표값을 정규화(0~1) → 픽셀 변환하고 범위를 클램핑한다."""
+    """좌표값이 0~1 범위면 픽셀로 변환하고 범위를 클램핑한다."""
     for key in keys:
         pt = data.get(key)
         if not pt:
-            print(f"[WARNING] VLM 응답에 '{key}' 누락")
             continue
         x, y = pt.get("x", 0), pt.get("y", 0)
         if isinstance(x, float) and 0 <= x <= 1.0 and isinstance(y, float) and 0 <= y <= 1.0:
@@ -165,237 +179,153 @@ def _normalize_coords(data: dict, keys: list[str], img_w: int, img_h: int) -> di
     return data
 
 
-# ─────────────────────── VLM 좌표 정확도 테스트 ───────────────────────
+# ─────────────────────────── 프롬프트 ───────────────────────────
 
-def _run_coordinate_debug(window) -> None:
-    """VLM 좌표 정확도 테스트. 클릭/타이핑 없이 디버그 이미지만 저장."""
-    print("[INFO] ===== VLM 좌표 정확도 테스트 모드 =====")
-    image = _capture_window(window)
-    img_b64, w, h = _encode_image(image)
-
-    rect = window.rectangle()
-    print(f"[INFO] 창 영역: left={rect.left}, top={rect.top}, "
-          f"right={rect.right}, bottom={rect.bottom}, "
-          f"size={rect.right - rect.left}x{rect.bottom - rect.top}")
-
-    prompt = f"""You are a GUI screen analysis expert.
-
-This image shows a Remote Control System login dialog.
-Find the exact center pixel coordinate of each visible text label listed below.
-I need the coordinate of the TEXT ITSELF (the rendered characters), not any input field or button area next to it.
-
-Target texts:
-1. "Server" — the label text
-2. "User ID" — the label text
-3. "Password" — the label text
-4. "Log In" — the button text
-
-Image resolution: {w}x{h} pixels
-Coordinate range: x is 0~{w}, y is 0~{h}
-
-Respond ONLY with this JSON format:
-{{
-    "Server": {{"x": integer, "y": integer}},
-    "User ID": {{"x": integer, "y": integer}},
-    "Password": {{"x": integer, "y": integer}},
-    "Log In": {{"x": integer, "y": integer}}
-}}"""
-
+def _build_prompt(w: int, h: int) -> tuple[str, str]:
+    """벤치마크용 시스템 메시지와 유저 프롬프트를 반환한다."""
     system_msg = (
-        f"You are a GUI coordinate extraction agent. "
-        f"Image resolution is {w}x{h} pixels. "
-        f"Return coordinates as pixel values in range 0~{w}(x), 0~{h}(y). "
-        f"Respond ONLY in JSON format."
+        "You are a precise GUI element locator. "
+        f"The image is {w}x{h} pixels. "
+        "The origin (0, 0) is the top-left corner of the image. "
+        "Return coordinates as integer pixel values. "
+        "Respond ONLY with valid JSON — no explanation, no markdown."
     )
 
-    raw = _call_vlm(system_msg, prompt, img_b64)
-    print(f"[INFO] VLM 원문 응답:\n{raw}")
+    prompt = f"""Locate GUI elements in this Remote Control System login dialog.
 
-    data = _extract_json(raw)
-    labels = ["Server", "User ID", "Password", "Log In"]
-    data = _normalize_coords(data, labels, w, h)
+The dialog has three rows of form fields and a login button at the bottom.
+Each row has a TEXT LABEL on the left side and a WHITE INPUT FIELD (text box or dropdown) on the right side.
 
-    for name in labels:
-        pt = data.get(name)
-        if not pt:
-            continue
-        x, y = pt["x"], pt["y"]
-        in_bounds = 0 <= x <= w and 0 <= y <= h
-        print(f"[INFO] '{name}': ({x}, {y}) — {'OK' if in_bounds else 'OUT OF BOUNDS'}")
+Find the pixel coordinates of these 7 elements:
 
-    # 디버그 이미지 저장
-    colors = {"Server": "red", "User ID": "blue", "Password": "green", "Log In": "orange"}
-    _save_marked_image(image, data, colors, "debug_vlm_coords.png")
-    print("[INFO] ===== 좌표 테스트 완료 — debug_vlm_coords.png 확인 =====")
+TEXT LABELS — find the center of the rendered text characters:
+1. "server_label" — the word "Server"
+2. "userid_label" — the words "User ID"
+3. "password_label" — the word "Password"
+
+INPUT FIELDS — find the horizontal center and vertical center of each white rectangular input area:
+4. "server_input" — the white dropdown/combo box to the right of "Server"
+5. "userid_input" — the white text field to the right of "User ID"
+6. "password_input" — the white text field to the right of "Password"
+
+BUTTON:
+7. "login_button" — the center of the "Log In" button
+
+Image size: {w} x {h} pixels.
+x range: 0 (left edge) to {w} (right edge).
+y range: 0 (top edge) to {h} (bottom edge).
+
+Return ONLY this JSON (all values are integers):
+{{
+    "server_label": {{"x": ..., "y": ...}},
+    "server_input": {{"x": ..., "y": ...}},
+    "userid_label": {{"x": ..., "y": ...}},
+    "userid_input": {{"x": ..., "y": ...}},
+    "password_label": {{"x": ..., "y": ...}},
+    "password_input": {{"x": ..., "y": ...}},
+    "login_button": {{"x": ..., "y": ...}}
+}}"""
+
+    return system_msg, prompt
 
 
 # ─────────────────────────── 디버그 이미지 ───────────────────────────
 
-def _save_marked_image(image: Image.Image, elements: dict, colors: dict, filename: str) -> None:
+def _save_marked_image(
+    image: Image.Image, elements: dict, colors: dict, filename: str
+) -> None:
     """좌표를 원본 스크린샷 위에 십자선+원으로 마킹하여 저장한다."""
     debug_img = image.copy()
     draw = ImageDraw.Draw(debug_img)
 
     try:
-        font = ImageFont.truetype("arial.ttf", 14)
+        font = ImageFont.truetype("arial.ttf", 13)
     except Exception:
         font = ImageFont.load_default()
 
-    r = 15
+    r = 12
     for name, pt in elements.items():
         if not isinstance(pt, dict) or "x" not in pt or "y" not in pt:
             continue
         x, y = int(pt["x"]), int(pt["y"])
         color = colors.get(name, "white")
-        draw.line([(x - r, y), (x + r, y)], fill=color, width=3)
-        draw.line([(x, y - r), (x, y + r)], fill=color, width=3)
-        draw.ellipse([(x - r, y - r), (x + r, y + r)], outline=color, width=3)
-        draw.text((x + r + 4, y - 8), f"{name} ({x},{y})", fill=color, font=font)
+        # 십자선
+        draw.line([(x - r, y), (x + r, y)], fill=color, width=2)
+        draw.line([(x, y - r), (x, y + r)], fill=color, width=2)
+        # 원
+        draw.ellipse([(x - r, y - r), (x + r, y + r)], outline=color, width=2)
+        # 라벨
+        label = f"{name} ({x},{y})"
+        # 라벨이 겹치지 않도록 input은 아래, label은 위에 표시
+        if "input" in name or "button" in name:
+            draw.text((x + r + 3, y + 4), label, fill=color, font=font)
+        else:
+            draw.text((x + r + 3, y - 16), label, fill=color, font=font)
 
     out_path = Path(__file__).parent / filename
     debug_img.save(out_path)
     print(f"[INFO] 디버그 이미지 저장: {out_path}")
 
 
-# ─────────────────────────── 클릭·타이핑 ───────────────────────────
+# ─────────────────────────── 벤치마크 실행 ───────────────────────────
 
-def _click(abs_x: int, abs_y: int) -> None:
-    """절대 좌표 클릭."""
-    mouse = MouseCtrl()
-    mouse.position = (abs_x, abs_y)
-    time.sleep(0.1)
-    mouse.click(MouseButton.left)
-    time.sleep(ACTION_DELAY)
-
-
-def _click_and_type(abs_x: int, abs_y: int, text: str) -> None:
-    """절대 좌표로 클릭한 뒤 기존 내용을 지우고 타이핑한다."""
-    _click(abs_x, abs_y)
-    kbd = KbdCtrl()
-    kbd.press(Key.ctrl)
-    kbd.press("a")
-    kbd.release("a")
-    kbd.release(Key.ctrl)
-    time.sleep(0.05)
-    kbd.type(text)
-    time.sleep(ACTION_DELAY)
-
-
-# ─────────────────────────── VLM 로그인 ───────────────────────────
-
-def _vlm_login(window) -> bool:
-    """VLM 좌표 기반으로 로그인 폼을 채우고 Log In 클릭."""
+def _run_benchmark(window) -> None:
+    """모든 VLM 모델로 좌표 검출을 실행하고 모델별 디버그 이미지를 저장한다."""
     image = _capture_window(window)
     img_b64, w, h = _encode_image(image)
 
-    system_msg = (
-        f"당신은 GUI 자동화 에이전트입니다. "
-        f"이 이미지의 해상도는 {w}x{h} 픽셀입니다. "
-        f"좌표는 반드시 0~{w}(x), 0~{h}(y) 범위의 픽셀 값으로 반환하세요. "
-        f"반드시 JSON 형식으로만 응답하세요."
-    )
-
-    if CREDENTIALS_PREFILLED:
-        prompt = f"""당신은 GUI 화면 분석 전문가입니다.
-
-이 이미지는 Remote Control System 로그인 화면입니다.
-자격증명(Server, User ID, Password)은 이미 입력되어 있습니다.
-"Log In" 버튼의 정확한 중심점 좌표만 찾아 주세요.
-
-이미지 해상도: {w}x{h} 픽셀
-좌표 범위: x는 0~{w}, y는 0~{h}
-
-반드시 다음 JSON 형식으로만 응답하세요:
-{{
-    "login_button": {{"x": 정수, "y": 정수}}
-}}"""
-        keys = ["login_button"]
-    else:
-        prompt = f"""당신은 GUI 화면 분석 전문가입니다.
-
-이 이미지는 Remote Control System 로그인 화면입니다.
-화면 레이아웃: 왼쪽에 "Server", "User ID", "Password" 텍스트 라벨이 있고,
-각 라벨의 오른쪽에 흰색 배경의 콤보박스/입력 필드가 위치합니다.
-
-다음 4개 UI 요소의 좌표를 찾아 주세요.
-중요: 라벨 텍스트가 아닌, 라벨 오른쪽에 있는 흰색 입력 영역의 좌측 1/3 지점을 클릭 좌표로 잡아 주세요.
-
-1. server — "Server" 오른쪽 드롭다운 콤보박스 (흰색 영역의 왼쪽 1/3, 세로 중심)
-2. user_id — "User ID" 오른쪽 텍스트 입력 필드 (흰색 영역의 왼쪽 1/3, 세로 중심)
-3. password — "Password" 오른쪽 텍스트 입력 필드 (흰색 영역의 왼쪽 1/3, 세로 중심)
-4. login_button — "Log In" 버튼 중심
-
-이미지 해상도: {w}x{h} 픽셀
-좌표 범위: x는 0~{w}, y는 0~{h}
-
-반드시 다음 JSON 형식으로만 응답하세요:
-{{
-    "server": {{"x": 정수, "y": 정수}},
-    "user_id": {{"x": 정수, "y": 정수}},
-    "password": {{"x": 정수, "y": 정수}},
-    "login_button": {{"x": 정수, "y": 정수}}
-}}"""
-        keys = ["server", "user_id", "password", "login_button"]
-
-    raw = _call_vlm(system_msg, prompt, img_b64)
-    data = _extract_json(raw)
-    data = _normalize_coords(data, keys, w, h)
-    print(f"[INFO] VLM 좌표: {json.dumps(data, indent=2)}")
-
-    # 디버그 이미지 저장
-    colors = {"server": "red", "user_id": "blue", "password": "green", "login_button": "orange"}
-    _save_marked_image(image, data, colors, "debug_vlm_login.png")
-
-    # 좌표 변환: 스크린샷 좌표 → 절대 스크린 좌표
     rect = window.rectangle()
+    print(f"[INFO] 창 영역: left={rect.left}, top={rect.top}, "
+          f"size={rect.right - rect.left}x{rect.bottom - rect.top}")
 
-    def to_abs(pt):
-        return int(pt["x"]) + rect.left, int(pt["y"]) + rect.top
+    system_msg, prompt = _build_prompt(w, h)
+    results = {}
 
-    if not CREDENTIALS_PREFILLED:
-        if "server" in data and SERVER:
-            sx, sy = to_abs(data["server"])
-            print(f"[INFO] 서버 드롭다운 클릭: ({sx}, {sy})")
-            _click(sx, sy)
-            time.sleep(0.3)
-            kbd = KbdCtrl()
-            kbd.type(SERVER)
-            time.sleep(0.2)
-            kbd.press(Key.enter)
-            kbd.release(Key.enter)
-            time.sleep(ACTION_DELAY)
+    for model in TEST_MODELS:
+        print(f"\n{'=' * 60}")
+        print(f"[INFO] 모델 테스트: {model}")
+        print("=" * 60)
 
-        if "user_id" in data and USERNAME:
-            ux, uy = to_abs(data["user_id"])
-            print(f"[INFO] User ID 필드 클릭: ({ux}, {uy})")
-            _click_and_type(ux, uy, USERNAME)
-
-        if "password" in data and PASSWORD:
-            px, py = to_abs(data["password"])
-            print(f"[INFO] Password 필드 클릭: ({px}, {py})")
-            _click_and_type(px, py, PASSWORD)
-
-    # Log In 버튼
-    if "login_button" in data:
-        lx, ly = to_abs(data["login_button"])
-        print(f"[INFO] Log In 버튼 좌표: ({lx}, {ly})")
-        print(f"[INFO] 창 영역: left={rect.left}, top={rect.top}, right={rect.right}, bottom={rect.bottom}")
-        if not (rect.left <= lx <= rect.right and rect.top <= ly <= rect.bottom):
-            print(f"[WARNING] Log In 좌표가 창 영역 밖입니다!")
         try:
-            window.set_focus()
-            time.sleep(0.3)
-        except Exception as exc:
-            print(f"[WARNING] 창 포커스 실패: {exc}")
-        _click(lx, ly)
-        print("[INFO] Log In 버튼 클릭 완료")
-    else:
-        print("[WARNING] login_button 좌표 없음, ENTER 전송")
-        kbd = KbdCtrl()
-        kbd.press(Key.enter)
-        kbd.release(Key.enter)
+            raw = _call_vlm(model, system_msg, prompt, img_b64)
+            print(f"[INFO] 원문 응답:\n{raw}\n")
 
-    return True
+            data = _extract_json(raw)
+            data = _normalize_coords(data, TARGET_ELEMENTS, w, h)
+
+            # 검출 결과 출력
+            detected = 0
+            for name in TARGET_ELEMENTS:
+                pt = data.get(name)
+                if pt:
+                    detected += 1
+                    print(f"  {name:20s} → ({pt['x']:4d}, {pt['y']:4d})")
+                else:
+                    print(f"  {name:20s} → 미검출")
+
+            print(f"[INFO] 검출률: {detected}/{len(TARGET_ELEMENTS)}")
+
+            # 모델명을 파일명에 안전하게 변환
+            safe_name = model.replace("/", "_").replace(" ", "_")
+            filename = f"debug_{safe_name}.png"
+            _save_marked_image(image, data, ELEMENT_COLORS, filename)
+
+            results[model] = {"detected": detected, "data": data}
+
+        except Exception as exc:
+            print(f"[ERROR] {model} 실패: {exc}")
+            results[model] = {"detected": 0, "error": str(exc)}
+
+    # 요약
+    print(f"\n{'=' * 60}")
+    print("[INFO] ===== 벤치마크 결과 요약 =====")
+    print("=" * 60)
+    for model, res in results.items():
+        det = res["detected"]
+        total = len(TARGET_ELEMENTS)
+        status = f"{det}/{total} 검출" if "error" not in res else f"실패: {res['error']}"
+        print(f"  {model:30s} — {status}")
+    print("=" * 60)
 
 
 # ─────────────────────────── 메인 ───────────────────────────
@@ -417,26 +347,7 @@ def main() -> int:
         return 3
 
     time.sleep(1.0)
-
-    if DEBUG_COORDINATE_TEST:
-        _run_coordinate_debug(login_window)
-        print("[INFO] 디버그 모드 — 로그인 시도 없이 종료합니다")
-        return 0
-
-    if not _vlm_login(login_window):
-        print("[ERROR] VLM 기반 로그인 실패")
-        return 5
-
-    time.sleep(POST_LOGIN_WAIT)
-    try:
-        if not login_window.is_visible():
-            print("[INFO] 로그인 창이 닫혔습니다. 로그인 성공으로 추정합니다.")
-            return 0
-    except Exception:
-        print("[INFO] 로그인 창 상태를 더 이상 확인할 수 없습니다.")
-        return 0
-
-    print("[WARNING] 로그인 창이 아직 표시됩니다. 로그인 실패 또는 추가 인증 필요.")
+    _run_benchmark(login_window)
     return 0
 
 

@@ -16,11 +16,9 @@ from typing import Optional, Dict, List, Any
 from dataclasses import dataclass
 
 try:
-    import requests
-    REQUESTS_AVAILABLE = True
+    from .vlm_openai_client import ChatImageRequest, LangChainOpenAIVLMClient
 except ImportError:
-    REQUESTS_AVAILABLE = False
-    print("[WARNING] requests 라이브러리가 설치되지 않았습니다. pip install requests")
+    from vlm_openai_client import ChatImageRequest, LangChainOpenAIVLMClient
 
 
 @dataclass
@@ -62,8 +60,17 @@ class VLMScreenAnalyzer:
             model_name: 사용할 모델 이름 (예: Qwen3-VL-30B-Instruct)
         """
         self.api_key = api_key or os.environ.get("VLM_API_KEY")
-        self.api_base_url = api_base_url or os.environ.get("VLM_API_BASE_URL")
+        self.api_base_url = (
+            api_base_url
+            or os.environ.get("VLM_API_URL")
+            or os.environ.get("VLM_API_BASE_URL")
+        )
         self.model_name = model_name or os.environ.get("VLM_MODEL_NAME", "")
+        self.vlm_client = LangChainOpenAIVLMClient(
+            base_url=self.api_base_url or "",
+            api_key=self.api_key or "",
+            timeout_sec=60.0,
+        )
 
         # 상태 정의 템플릿
         self.state_definitions: Dict[str, Dict] = {}
@@ -265,10 +272,6 @@ class VLMScreenAnalyzer:
         Returns:
             API 응답 텍스트 또는 None
         """
-        if not REQUESTS_AVAILABLE:
-            print("[ERROR] requests 라이브러리를 사용할 수 없습니다.")
-            return None
-
         if not self.api_base_url:
             print("[INFO] VLM API URL이 설정되지 않았습니다. Mock 응답을 반환합니다.")
             return self._get_mock_response(prompt)
@@ -278,41 +281,28 @@ class VLMScreenAnalyzer:
             return None
 
         image_base64 = base64.b64encode(image_data).decode('utf-8')
-        image_format = "webp" if image_data[:4] == b'RIFF' and image_data[8:12] == b'WEBP' else "png"
-
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-
-        payload = {
-            "model": self.model_name,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/{image_format};base64,{image_base64}"
-                            }
-                        }
-                    ]
-                }
-            ],
-            "temperature": 0.1
-        }
+        image_mime = (
+            "image/webp"
+            if image_data[:4] == b'RIFF' and image_data[8:12] == b'WEBP'
+            else "image/png"
+        )
+        request = ChatImageRequest(
+            model=self.model_name,
+            system_message=(
+                "당신은 GUI 화면 분석 전문가입니다. "
+                "반드시 요청된 출력 형식(JSON 등)을 정확히 지켜 응답하세요."
+            ),
+            user_text=prompt,
+            image_b64=image_base64,
+            image_mime=image_mime,
+            temperature=0.1,
+        )
 
         try:
-            response = requests.post(
-                f"{self.api_base_url}/v1/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=60
-            )
-            response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
-
+            return self.vlm_client.chat_with_image(request)
+        except ImportError as e:
+            print(f"[ERROR] LangChain OpenAI 라이브러리 로딩 실패: {e}")
+            return self._get_mock_response(prompt)
         except Exception as e:
             print(f"[ERROR] VLM API 호출 실패: {e}")
             return self._get_mock_response(prompt)

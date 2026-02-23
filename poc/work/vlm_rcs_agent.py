@@ -26,11 +26,9 @@ except ImportError:
     print("[WARNING] Pillow 라이브러리가 설치되지 않았습니다. pip install Pillow")
 
 try:
-    import requests
-    REQUESTS_AVAILABLE = True
+    from .vlm_openai_client import ChatImageRequest, LangChainOpenAIVLMClient
 except ImportError:
-    REQUESTS_AVAILABLE = False
-    print("[WARNING] requests 라이브러리가 설치되지 않았습니다. pip install requests")
+    from vlm_openai_client import ChatImageRequest, LangChainOpenAIVLMClient
 
 from .screen_capture import ScreenCapture
 from .mouse_control import MouseController
@@ -117,6 +115,12 @@ class VLMRCSAgent:
         # 설정 검증
         if not config.api_url:
             print("[WARNING] API URL이 설정되지 않았습니다. AgentConfig.api_url을 설정하세요.")
+
+        self.vlm_client = LangChainOpenAIVLMClient(
+            base_url=config.api_url,
+            api_key=config.api_key,
+            timeout_sec=60.0,
+        )
 
         print(f"[INFO] VLM RCS Agent 초기화 완료")
         print(f"[INFO] DPI 스케일: {self.dpi_scale:.1f}x")
@@ -296,10 +300,6 @@ class VLMRCSAgent:
         Returns:
             ActionResult 또는 None
         """
-        if not REQUESTS_AVAILABLE:
-            print("[ERROR] requests 라이브러리 필요")
-            return None
-
         if not self.config.api_url:
             print("[ERROR] API URL이 설정되지 않음")
             return None
@@ -315,61 +315,28 @@ class VLMRCSAgent:
         if screenshot_bytes[:4] == b'RIFF' and screenshot_bytes[8:12] == b'WEBP':
             image_format = "webp"
 
-        # API 호출
-        headers = {"Content-Type": "application/json"}
-        if self.config.api_key:
-            headers["Authorization"] = f"Bearer {self.config.api_key}"
-
-        payload = {
-            "model": self.config.model_name,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "당신은 GUI 자동화 에이전트입니다. "
-                        "화면 스크린샷을 분석하여 다음에 수행할 단일 액션을 결정합니다. "
-                        f"이 이미지의 해상도는 {screen_w}x{screen_h} 픽셀입니다. "
-                        f"좌표는 반드시 0~{screen_w}(x), 0~{screen_h}(y) 범위의 픽셀 값으로 반환하세요. "
-                        "반드시 JSON 형식으로만 응답하세요."
-                    )
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/{image_format};base64,{image_base64}"
-                            }
-                        }
-                    ]
-                }
-            ],
-            "temperature": 0.1
-        }
+        request = ChatImageRequest(
+            model=self.config.model_name,
+            system_message=(
+                "당신은 GUI 자동화 에이전트입니다. "
+                "화면 스크린샷을 분석하여 다음에 수행할 단일 액션을 결정합니다. "
+                f"이 이미지의 해상도는 {screen_w}x{screen_h} 픽셀입니다. "
+                f"좌표는 반드시 0~{screen_w}(x), 0~{screen_h}(y) 범위의 픽셀 값으로 반환하세요. "
+                "반드시 JSON 형식으로만 응답하세요."
+            ),
+            user_text=prompt,
+            image_b64=image_base64,
+            image_mime=f"image/{image_format}",
+            temperature=0.1,
+        )
 
         try:
-            response = requests.post(
-                f"{self.config.api_url}/v1/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=60
-            )
-            response.raise_for_status()
-            result = response.json()
-            response_text = result["choices"][0]["message"]["content"]
+            response_text = self.vlm_client.chat_with_image(request)
 
             return self._parse_vlm_response(response_text, screen_w, screen_h)
 
-        except requests.exceptions.ConnectionError:
-            print(f"[ERROR] API 서버 연결 실패: {self.config.api_url}")
-            return None
-        except requests.exceptions.Timeout:
-            print("[ERROR] API 요청 타임아웃 (60초)")
-            return None
-        except requests.exceptions.HTTPError as e:
-            print(f"[ERROR] API HTTP 오류: {e.response.status_code} {e.response.reason}")
+        except ImportError as e:
+            print(f"[ERROR] LangChain OpenAI 라이브러리 로딩 실패: {e}")
             return None
         except (KeyError, IndexError) as e:
             print(f"[ERROR] API 응답 형식 오류: {e}")

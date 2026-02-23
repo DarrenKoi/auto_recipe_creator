@@ -58,11 +58,9 @@ except ImportError:
     print("[WARNING] mss 미설치. pip install mss")
 
 try:
-    import requests
-    REQUESTS_AVAILABLE = True
+    from .vlm_openai_client import ChatImageRequest, LangChainOpenAIVLMClient
 except ImportError:
-    REQUESTS_AVAILABLE = False
-    print("[WARNING] requests 미설치. pip install requests")
+    from vlm_openai_client import ChatImageRequest, LangChainOpenAIVLMClient
 
 try:
     from dotenv import load_dotenv
@@ -253,10 +251,6 @@ def ask_vlm_click_point(
         }
         또는 None
     """
-    if not REQUESTS_AVAILABLE:
-        print("[ERROR] requests 라이브러리 필요")
-        return None
-
     w, h = image.size
 
     # 이미지 → bytes
@@ -290,53 +284,31 @@ def ask_vlm_click_point(
 bbox는 클릭 대상의 바운딩 박스 [x1, y1, x2, y2]를 픽셀 좌표로 반환하세요.
 좌표 범위: x는 0~{w}, y는 0~{h}."""
 
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    payload = {
-        "model": model_name,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "당신은 GUI 자동화 에이전트입니다. "
-                    f"이 이미지의 해상도는 {w}x{h} 픽셀입니다. "
-                    f"좌표는 반드시 0~{w}(x), 0~{h}(y) 범위의 픽셀 값으로 반환하세요. "
-                    "반드시 JSON 형식으로만 응답하세요."
-                ),
-            },
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/{img_format};base64,{img_base64}"
-                        },
-                    },
-                ],
-            },
-        ],
-        "temperature": 0.1,
-    }
+    vlm_client = LangChainOpenAIVLMClient(
+        base_url=api_url,
+        api_key=api_key,
+        timeout_sec=60.0,
+    )
+    request = ChatImageRequest(
+        model=model_name,
+        system_message=(
+            "당신은 GUI 자동화 에이전트입니다. "
+            f"이 이미지의 해상도는 {w}x{h} 픽셀입니다. "
+            f"좌표는 반드시 0~{w}(x), 0~{h}(y) 범위의 픽셀 값으로 반환하세요. "
+            "반드시 JSON 형식으로만 응답하세요."
+        ),
+        user_text=prompt,
+        image_b64=img_base64,
+        image_mime=f"image/{img_format}",
+        temperature=0.1,
+    )
 
     try:
         print(f"[INFO] VLM API 호출 중... ({api_url})")
         start = time.time()
 
-        response = requests.post(
-            f"{api_url}/v1/chat/completions",
-            headers=headers,
-            json=payload,
-            timeout=60,
-        )
-        response.raise_for_status()
-
+        response_text = vlm_client.chat_with_image(request)
         elapsed_ms = (time.time() - start) * 1000
-        result = response.json()
-        response_text = result["choices"][0]["message"]["content"]
 
         print(f"[INFO] VLM 응답 수신 ({elapsed_ms:.0f}ms)")
 
@@ -352,11 +324,8 @@ bbox는 클릭 대상의 바운딩 박스 [x1, y1, x2, y2]를 픽셀 좌표로 �
 
         return None
 
-    except requests.exceptions.ConnectionError:
-        print(f"[ERROR] API 서버 연결 실패: {api_url}")
-        return None
-    except requests.exceptions.Timeout:
-        print("[ERROR] API 요청 타임아웃 (60초)")
+    except ImportError as e:
+        print(f"[ERROR] LangChain OpenAI 라이브러리 로딩 실패: {e}")
         return None
     except Exception as e:
         print(f"[ERROR] VLM API 호출 실패: {e}")

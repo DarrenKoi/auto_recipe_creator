@@ -126,8 +126,10 @@ class PocConfig:
         else:
             print("[WARNING] python-dotenv 미설치 — 시스템 환경변수만 사용")
 
+        vlm_api_url = _str("VLM_API_URL") or _str("VLM_API_BASE_URL")
+
         vlm = VLMConfig(
-            api_url=_str("VLM_API_URL"),
+            api_url=vlm_api_url,
             api_key=_str("VLM_API_KEY"),
             model_name=_str("VLM_MODEL_NAME", "Qwen3-VL-30B-Instruct"),
         )

@@ -20,6 +20,7 @@ import mss.tools
 import requests
 from dotenv import load_dotenv
 from PIL import Image, ImageDraw, ImageFont
+from pywinauto import mouse
 from pywinauto.application import Application
 
 load_dotenv()
@@ -38,10 +39,11 @@ LAUNCH_TIMEOUT = 30.0
 WINDOW_TITLE_PREFIX = "Remote Control System"
 
 # 테스트할 VLM 모델 목록
+KIMI_MODEL = "Kimi-K2.5"
 TEST_MODELS = [
-    "Kimi-K2.5",
-    "Qwen3-VL-30B-Instruct",
+    KIMI_MODEL,
 ]
+TARGET_CLICK_KEY = "login_button"
 
 # 검출 대상: 텍스트 라벨 + 입력 필드 + 버튼
 TARGET_ELEMENTS = [
@@ -262,6 +264,24 @@ def _apply_control_bias(data: dict, img_w: int, img_h: int) -> dict:
     return data
 
 
+def _click_at(element_key: str, window, elements: dict) -> bool:
+    """VLM 좌표를 스크린 좌표로 변환해 요소를 클릭한다."""
+    pt = elements.get(element_key)
+    if not isinstance(pt, dict) or "x" not in pt or "y" not in pt:
+        print(f"[ERROR] 클릭 대상 '{element_key}' 좌표가 없습니다.")
+        return False
+
+    rect = window.rectangle()
+    x = int(pt["x"]) + rect.left
+    y = int(pt["y"]) + rect.top
+    x = max(rect.left, min(x, rect.right - 1))
+    y = max(rect.top, min(y, rect.bottom - 1))
+
+    print(f"[INFO] '{element_key}' 클릭: screen=({x}, {y})")
+    mouse.click(button="left", coords=(x, y))
+    return True
+
+
 # ─────────────────────────── 프롬프트 ───────────────────────────
 
 def _build_prompt(w: int, h: int) -> tuple[str, str]:
@@ -355,7 +375,7 @@ def _save_marked_image(
 
 # ─────────────────────────── 벤치마크 실행 ───────────────────────────
 
-def _run_benchmark(window) -> None:
+def _run_benchmark(window) -> dict | None:
     """모든 VLM 모델로 좌표 검출을 실행하고 모델별 디버그 이미지를 저장한다."""
     image = _capture_window(window)
     img_b64, w, h = _encode_image(image)
@@ -406,6 +426,8 @@ def _run_benchmark(window) -> None:
         print(f"  {model:30s} — {status}")
     print("=" * 60)
 
+    return results.get(KIMI_MODEL, {}).get("data")
+
 
 # ─────────────────────────── 메인 ───────────────────────────
 
@@ -428,7 +450,13 @@ def main() -> int:
         return 3
 
     time.sleep(1.0)
-    _run_benchmark(login_window)
+    data = _run_benchmark(login_window)
+    if not data:
+        return 4
+
+    if not _click_at(TARGET_CLICK_KEY, login_window, data):
+        return 5
+
     return 0
 
 

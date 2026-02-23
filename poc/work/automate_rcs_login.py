@@ -44,7 +44,7 @@ KIMI_MODEL = "Kimi-K2.5"
 TEST_MODELS = [
     KIMI_MODEL,
 ]
-TARGET_CLICK_KEY = "login_button"
+TARGET_CLICK_KEY = "server_input"
 
 # 검출 대상: 텍스트 라벨 + 입력 필드 + 버튼
 TARGET_ELEMENTS = [
@@ -365,15 +365,15 @@ TEXT LABELS — find the first letter of each label and return its center:
 2. "userid_label" — the first letter in "User ID"
 3. "password_label" — the first letter in "Password"
 
-INPUT FIELDS — find a point on the left edge center of each white rectangular control:
-4. "server_input" — the combobox/dropdown to the right of "Server" (has a dropdown arrow on its right side).
-5. "userid_input" — the white-background, gray-bordered text input field to the right of "User ID"
-6. "password_input" — the white-background, gray-bordered text input field to the right of "Password"
+INPUT FIELDS & INTERACTIVE CONTROLS — find the **left edge center** of the specific control:
+4. "server_input" — the downward-pointing arrow icon on the far right of the Server combobox. Locate the **left edge center** of this arrow icon.
+5. "userid_input" — the white text input field next to "User ID". Locate the **left edge center** of the white area.
+6. "password_input" — the white text input field next to "Password". Locate the **left edge center** of the white area.
 
-BUTTONS — find the left edge center of each clickable button:
-7. "login_button" — the button labeled "Log In"
-8. "cancel_button" — the button labeled "Cancel"
-9. "shortcut_button" — the button with Korean text (for making shortcuts)
+BUTTONS — find the **left edge center** of each clickable button:
+7. "login_button" — the "Log In" button.
+8. "cancel_button" — the "Cancel" button.
+9. "shortcut_button" — the button with Korean text.
 
 Image size: {w} x {h} pixels.
 x range: 0 (left edge) to {w} (right edge).

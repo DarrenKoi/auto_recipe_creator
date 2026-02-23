@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 from pywinauto.application import Application
 
 try:
-    from PIL import Image
+    from PIL import Image, ImageDraw, ImageFont
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False
@@ -197,12 +197,15 @@ def _ask_vlm_login_elements(image: "Image.Image") -> "dict | None":
     prompt = f"""당신은 GUI 화면 분석 전문가입니다.
 
 이 이미지는 Remote Control System 로그인 화면입니다.
-다음 4개 UI 요소의 클릭 좌표(중심점)를 찾아 주세요:
+화면 레이아웃: 왼쪽에 "Server", "User ID", "Password" 텍스트 라벨이 있고,
+각 라벨의 오른쪽에 콤보박스/입력 필드가 위치합니다. Log In 버튼도 오른쪽에 있습니다.
 
-1. server — 서버 선택 드롭다운 (콤보박스)
-2. user_id — User ID 입력 필드
-3. password — Password 입력 필드
-4. login_button — Log In 버튼
+다음 4개 UI 요소의 **입력 가능한 컨트롤** 중심점 좌표를 찾아 주세요 (라벨 텍스트가 아닌, 그 오른쪽의 실제 입력 영역):
+
+1. server — "Server" 라벨 오른쪽의 드롭다운 콤보박스 중심
+2. user_id — "User ID" 라벨 오른쪽의 텍스트 입력 필드 중심
+3. password — "Password" 라벨 오른쪽의 텍스트 입력 필드 중심
+4. login_button — "Log In" 버튼 중심
 
 이미지 해상도: {w}x{h} 픽셀
 좌표 범위: x는 0~{w}, y는 0~{h}
@@ -305,6 +308,57 @@ def _parse_elements_json(text: str, img_w: int, img_h: int) -> "dict | None":
         return None
 
 
+# ─────────────────────────── 디버그 스크린샷 ───────────────────────────
+
+ELEMENT_COLORS = {
+    "server": "red",
+    "user_id": "blue",
+    "password": "green",
+    "login_button": "orange",
+}
+
+
+def _save_debug_screenshot(image: "Image.Image", elements: dict, scale: float) -> None:
+    """VLM이 반환한 좌표를 원본 스크린샷 위에 마킹하여 저장한다."""
+    debug_img = image.copy()
+    draw = ImageDraw.Draw(debug_img)
+
+    try:
+        font = ImageFont.truetype("arial.ttf", 14)
+    except Exception:
+        try:
+            font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 14)
+        except Exception:
+            font = ImageFont.load_default()
+
+    marker_r = 12
+
+    for name, pt in elements.items():
+        if not isinstance(pt, dict) or "x" not in pt or "y" not in pt:
+            continue
+        # VLM 좌표(리사이즈) → 원본 스크린샷 좌표
+        sx = int(pt["x"] / scale)
+        sy = int(pt["y"] / scale)
+        color = ELEMENT_COLORS.get(name, "white")
+
+        # 십자선
+        draw.line([(sx - marker_r, sy), (sx + marker_r, sy)], fill=color, width=2)
+        draw.line([(sx, sy - marker_r), (sx, sy + marker_r)], fill=color, width=2)
+        # 원
+        draw.ellipse(
+            [(sx - marker_r, sy - marker_r), (sx + marker_r, sy + marker_r)],
+            outline=color, width=2,
+        )
+        # 라벨
+        label = f"{name} ({sx},{sy})"
+        draw.text((sx + marker_r + 4, sy - 8), label, fill=color, font=font)
+
+    out_dir = Path(__file__).parent
+    out_path = out_dir / "debug_vlm_login.png"
+    debug_img.save(out_path)
+    print(f"[INFO] 디버그 스크린샷 저장: {out_path}")
+
+
 # ─────────────────────────── 클릭·타이핑 ───────────────────────────
 
 def _click_and_type(abs_x: int, abs_y: int, text: str = "") -> None:
@@ -357,7 +411,10 @@ def _vlm_login(window) -> bool:
     if elements is None:
         return False
 
-    # 3) 좌표 변환: VLM(리사이즈) → 스크린샷 → 절대 스크린 좌표
+    # 3) 디버그: VLM 좌표를 원본 스크린샷 위에 마킹하여 저장
+    _save_debug_screenshot(image, elements, scale)
+
+    # 4) 좌표 변환: VLM(리사이즈) → 스크린샷 → 절대 스크린 좌표
     rect = window.rectangle()
     win_left, win_top = rect.left, rect.top
 
@@ -367,7 +424,7 @@ def _vlm_login(window) -> bool:
         sy = int(pt["y"] / scale)
         return sx + win_left, sy + win_top
 
-    # 4) 서버 선택
+    # 5) 서버 선택
     if "server" in elements and SERVER:
         sx, sy = to_abs(elements["server"])
         print(f"[INFO] 서버 드롭다운 클릭: ({sx}, {sy})")
@@ -383,21 +440,21 @@ def _vlm_login(window) -> bool:
         time.sleep(ACTION_DELAY)
         print(f"[INFO] 서버 선택: {SERVER}")
 
-    # 5) User ID
+    # 6) User ID
     if "user_id" in elements and USERNAME:
         ux, uy = to_abs(elements["user_id"])
         print(f"[INFO] User ID 필드 클릭: ({ux}, {uy})")
         _click_and_type(ux, uy, USERNAME)
         print("[INFO] User ID 입력 완료")
 
-    # 6) Password
+    # 7) Password
     if "password" in elements and PASSWORD:
         px, py = to_abs(elements["password"])
         print(f"[INFO] Password 필드 클릭: ({px}, {py})")
         _click_and_type(px, py, PASSWORD)
         print("[INFO] Password 입력 완료")
 
-    # 7) Log In 버튼
+    # 8) Log In 버튼
     if "login_button" in elements:
         lx, ly = to_abs(elements["login_button"])
         print(f"[INFO] Log In 버튼 클릭: ({lx}, {ly})")

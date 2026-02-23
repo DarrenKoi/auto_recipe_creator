@@ -25,7 +25,7 @@ except ImportError:
     PIL_AVAILABLE = False
     print("[WARNING] Pillow 라이브러리가 설치되지 않았습니다. pip install Pillow")
 
-from poc.work.vlm_openai_client import ChatImageRequest, LangChainOpenAIVLMClient
+from poc.work.vlm_openai_client import ChatImageRequest, OpenAICompatibleVLMClient
 from poc.work.screen_capture import ScreenCapture
 from poc.work.mouse_control import MouseController
 from poc.work.keyboard_control import KeyboardController
@@ -112,7 +112,7 @@ class VLMRCSAgent:
         if not config.api_url:
             print("[WARNING] API URL이 설정되지 않았습니다. AgentConfig.api_url을 설정하세요.")
 
-        self.vlm_client = LangChainOpenAIVLMClient(
+        self.vlm_client = OpenAICompatibleVLMClient(
             base_url=config.api_url,
             api_key=config.api_key,
             timeout_sec=60.0,
@@ -331,9 +331,6 @@ class VLMRCSAgent:
 
             return self._parse_vlm_response(response_text, screen_w, screen_h)
 
-        except ImportError as e:
-            print(f"[ERROR] LangChain OpenAI 라이브러리 로딩 실패: {e}")
-            return None
         except (KeyError, IndexError) as e:
             print(f"[ERROR] API 응답 형식 오류: {e}")
             return None

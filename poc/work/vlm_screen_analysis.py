@@ -15,7 +15,7 @@ import time
 from typing import Optional, Dict, List, Any
 from dataclasses import dataclass
 
-from poc.work.vlm_openai_client import ChatImageRequest, LangChainOpenAIVLMClient
+from poc.work.vlm_openai_client import ChatImageRequest, OpenAICompatibleVLMClient
 
 
 @dataclass
@@ -63,7 +63,7 @@ class VLMScreenAnalyzer:
             or os.environ.get("VLM_API_BASE_URL")
         )
         self.model_name = model_name or os.environ.get("VLM_MODEL_NAME", "")
-        self.vlm_client = LangChainOpenAIVLMClient(
+        self.vlm_client = OpenAICompatibleVLMClient(
             base_url=self.api_base_url or "",
             api_key=self.api_key or "",
             timeout_sec=60.0,
@@ -297,9 +297,6 @@ class VLMScreenAnalyzer:
 
         try:
             return self.vlm_client.chat_with_image(request)
-        except ImportError as e:
-            print(f"[ERROR] LangChain OpenAI 라이브러리 로딩 실패: {e}")
-            return self._get_mock_response(prompt)
         except Exception as e:
             print(f"[ERROR] VLM API 호출 실패: {e}")
             return self._get_mock_response(prompt)

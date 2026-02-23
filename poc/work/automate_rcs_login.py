@@ -166,16 +166,21 @@ def _extract_json(text: str) -> dict:
     return json.loads(text)
 
 
-def _normalize_coords(data: dict, keys: list[str], img_w: int, img_h: int) -> dict:
-    """좌표값이 0~1 범위면 픽셀로 변환하고 범위를 클램핑한다."""
+def _parse_coords(data: dict, keys: list[str], img_w: int, img_h: int) -> dict:
+    """VLM 응답 좌표를 정수로 변환하고 로그를 출력한다. 변환 로직 없이 원본 그대로 사용."""
     for key in keys:
         pt = data.get(key)
         if not pt:
+            print(f"  [MISS] {key:20s} — VLM 응답에 없음")
             continue
-        x, y = pt.get("x", 0), pt.get("y", 0)
-        if isinstance(x, float) and 0 <= x <= 1.0 and isinstance(y, float) and 0 <= y <= 1.0:
-            x, y = int(x * img_w), int(y * img_h)
-        data[key] = {"x": max(0, min(int(x), img_w)), "y": max(0, min(int(y), img_h))}
+        raw_x, raw_y = pt.get("x", 0), pt.get("y", 0)
+        x, y = int(raw_x), int(raw_y)
+        data[key] = {"x": x, "y": y}
+        # 범위 체크
+        out = ""
+        if not (0 <= x <= img_w and 0 <= y <= img_h):
+            out = " ← OUT OF BOUNDS"
+        print(f"  [RAW ] {key:20s} — raw=({raw_x}, {raw_y}) → px=({x}, {y}){out}")
     return data
 
 
@@ -291,18 +296,10 @@ def _run_benchmark(window) -> None:
             print(f"[INFO] 원문 응답:\n{raw}\n")
 
             data = _extract_json(raw)
-            data = _normalize_coords(data, TARGET_ELEMENTS, w, h)
+            print(f"[INFO] 파싱된 JSON:\n{json.dumps(data, indent=2)}\n")
+            data = _parse_coords(data, TARGET_ELEMENTS, w, h)
 
-            # 검출 결과 출력
-            detected = 0
-            for name in TARGET_ELEMENTS:
-                pt = data.get(name)
-                if pt:
-                    detected += 1
-                    print(f"  {name:20s} → ({pt['x']:4d}, {pt['y']:4d})")
-                else:
-                    print(f"  {name:20s} → 미검출")
-
+            detected = sum(1 for k in TARGET_ELEMENTS if k in data and isinstance(data[k], dict))
             print(f"[INFO] 검출률: {detected}/{len(TARGET_ELEMENTS)}")
 
             # 모델명을 파일명에 안전하게 변환

@@ -1,108 +1,80 @@
 """RCS List 탭에서 특정 툴을 찾아 선택(클릭)한다 (Windows 전용).
 
 툴 이름은 부분 일치(대소문자 무관)로 검색하므로, 전체 이름을 몰라도 된다.
-더블클릭이 필요한 UI의 경우 --double-click 플래그를 사용한다.
+더블클릭이 필요한 UI의 경우 환경 변수로 동작을 제어한다.
 
-Usage:
-    python select_tool.py --tool-name "CD-SEM"
-    python select_tool.py --tool-name "CD-SEM" --double-click
-    python select_tool.py --tool-name "CD-SEM" --debug  # 구조 파악 후 재시도
+환경 변수:
+    RCS_WINDOW_TITLE        연결할 RCS 창 제목 정규식
+    RCS_TOOL_NAME           선택할 툴 이름 (부분 일치, 필수)
+    RCS_TIMEOUT             창 탐색 대기 제한 시간(초, 기본: 15)
+    RCS_SELECT_NO_SWITCH    1/true/yes/on 이면 List 탭 자동 전환 생략
+    RCS_SELECT_DOUBLE_CLICK 1/true/yes/on 이면 더블클릭
+    RCS_SELECT_LIST_FIRST   1/true/yes/on 이면 선택 전에 전체 목록 출력
+    RCS_SELECT_DEBUG        1/true/yes/on 이면 컨트롤 트리 덤프
 """
 
-import argparse
 import os
 import sys
-import time
-from typing import Optional
-
-from dotenv import load_dotenv
+from dataclasses import dataclass
 
 try:
-    from pywinauto import Desktop
-    PYWIN_AVAILABLE = True
+    from .rcs_common import (
+        DEFAULT_TIMEOUT,
+        DEFAULT_WINDOW_TITLE_REGEX,
+        PYWIN_AVAILABLE,
+        TOOL_CONTAINER_ORDER,
+        _is_visible,
+        connect_rcs_window,
+        env_flag,
+        env_float,
+        load_env,
+        switch_tab,
+    )
 except ImportError:
-    PYWIN_AVAILABLE = False
-
-# switching_tabs / list_up_tools 공개 함수 재사용
-try:
-    from switching_tabs import connect_rcs_window, switch_tab, _is_visible
-    _SWITCHING_IMPORTED = True
-except ImportError:
-    _SWITCHING_IMPORTED = False
-
-    def _is_visible(control) -> bool:
-        try:
-            return control.is_visible() and control.is_enabled()
-        except Exception:
-            return False
-
-    def connect_rcs_window(title_regex: str, timeout: float):
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            try:
-                windows = Desktop(backend="uia").windows(title_re=title_regex)
-                visible = [w for w in windows if _is_visible(w)]
-                if visible:
-                    print(f"[INFO] RCS 창 연결: '{visible[0].window_text()}'")
-                    return visible[0]
-            except Exception as exc:
-                print(f"[WARNING] 창 탐색 중 오류: {exc}")
-            time.sleep(0.5)
-        raise TimeoutError(f"RCS 창을 {timeout:.0f}초 내에 찾지 못했습니다.")
-
-    def switch_tab(rcs_window, tab_name: str) -> bool:
-        print("[WARNING] switching_tabs 임포트 실패 — 탭 전환 불가")
-        return False
+    from rcs_common import (
+        DEFAULT_TIMEOUT,
+        DEFAULT_WINDOW_TITLE_REGEX,
+        PYWIN_AVAILABLE,
+        TOOL_CONTAINER_ORDER,
+        _is_visible,
+        connect_rcs_window,
+        env_flag,
+        env_float,
+        load_env,
+        switch_tab,
+    )
 
 try:
-    from list_up_tools import get_tool_list
-    _LIST_IMPORTED = True
+    from .list_up_tools import get_tool_list
 except ImportError:
-    _LIST_IMPORTED = False
+    try:
+        from list_up_tools import get_tool_list
+    except ImportError:
+        get_tool_list = None  # type: ignore[assignment]
 
-DEFAULT_WINDOW_TITLE_REGEX = r".*RCS.*"
+
+@dataclass(frozen=True)
+class SelectToolSettings:
+    window_title: str
+    tool_name: str
+    timeout: float
+    no_switch: bool
+    double_click: bool
+    show_list_first: bool
+    debug: bool
 
 
-def parse_args() -> argparse.Namespace:
-    load_dotenv()
-    p = argparse.ArgumentParser(description="RCS List 탭에서 툴 선택.")
-    p.add_argument(
-        "--window-title",
-        default=os.environ.get("RCS_WINDOW_TITLE", DEFAULT_WINDOW_TITLE_REGEX),
-        help="연결할 RCS 창 제목 정규식 (기본: .*RCS.*)",
+def load_settings() -> SelectToolSettings:
+    load_env()
+    return SelectToolSettings(
+        window_title=os.environ.get("RCS_WINDOW_TITLE", DEFAULT_WINDOW_TITLE_REGEX),
+        tool_name=os.environ.get("RCS_TOOL_NAME", "").strip(),
+        timeout=env_float("RCS_TIMEOUT", DEFAULT_TIMEOUT),
+        no_switch=env_flag("RCS_SELECT_NO_SWITCH", False),
+        double_click=env_flag("RCS_SELECT_DOUBLE_CLICK", False),
+        show_list_first=env_flag("RCS_SELECT_LIST_FIRST", False),
+        debug=env_flag("RCS_SELECT_DEBUG", False),
     )
-    p.add_argument(
-        "--tool-name",
-        default=os.environ.get("RCS_TOOL_NAME", ""),
-        help="선택할 툴 이름 (부분 일치, 대소문자 무관). 환경변수 RCS_TOOL_NAME 대체 가능.",
-    )
-    p.add_argument(
-        "--timeout",
-        type=float,
-        default=15.0,
-        help="창 탐색 대기 제한 시간(초, 기본: 15)",
-    )
-    p.add_argument(
-        "--no-switch",
-        action="store_true",
-        help="List 탭 자동 전환 건너뜀 (이미 List 탭에 있는 경우)",
-    )
-    p.add_argument(
-        "--double-click",
-        action="store_true",
-        help="단일 클릭 대신 더블클릭으로 툴을 열기",
-    )
-    p.add_argument(
-        "--list",
-        action="store_true",
-        help="선택 전에 전체 툴 목록을 먼저 출력 (확인용)",
-    )
-    p.add_argument(
-        "--debug",
-        action="store_true",
-        help="전체 컨트롤 트리 덤프 (구조 파악용)",
-    )
-    return p.parse_args()
 
 
 # ---------------------------------------------------------------------------
@@ -123,12 +95,7 @@ def _find_tool_control(rcs_window, tool_name: str):
     """
     target = tool_name.strip().lower()
 
-    for container_type, child_type in [
-        ("List",     "ListItem"),
-        ("Tree",     "TreeItem"),
-        ("DataGrid", "DataItem"),
-        ("Table",    "DataItem"),
-    ]:
+    for container_type, child_type in TOOL_CONTAINER_ORDER:
         containers = [
             c for c in rcs_window.descendants(control_type=container_type)
             if _is_visible(c)
@@ -168,7 +135,7 @@ def select_tool(
     ctrl = _find_tool_control(rcs_window, tool_name)
     if ctrl is None:
         print(f"[ERROR] '{tool_name}' 에 해당하는 툴을 찾지 못했습니다.")
-        print("[ERROR] --list 로 전체 목록을 확인하거나 --debug 로 컨트롤 트리를 확인하세요.")
+        print("[ERROR] RCS_SELECT_LIST_FIRST=1로 전체 목록을 확인하거나 RCS_SELECT_DEBUG=1로 컨트롤 트리를 확인하세요.")
         return False
 
     try:
@@ -196,29 +163,29 @@ def main() -> int:
         print("[ERROR] pywinauto가 필요합니다: pip install pywinauto")
         return 2
 
-    args = parse_args()
+    settings = load_settings()
 
-    if not args.tool_name:
-        print("[ERROR] --tool-name 또는 환경변수 RCS_TOOL_NAME 이 필요합니다.")
+    if not settings.tool_name:
+        print("[ERROR] 환경변수 RCS_TOOL_NAME 이 필요합니다.")
         return 1
 
     try:
-        rcs_win = connect_rcs_window(args.window_title, args.timeout)
+        rcs_win = connect_rcs_window(settings.window_title, settings.timeout)
     except TimeoutError as exc:
         print(f"[ERROR] {exc}")
         return 3
 
-    if not args.no_switch:
+    if not settings.no_switch:
         ok = switch_tab(rcs_win, "List")
         if not ok:
             print("[WARNING] List 탭 전환 실패 — 현재 탭에서 계속 진행합니다.")
 
-    if args.debug:
+    if settings.debug:
         print("[DEBUG] 전체 컨트롤 트리 덤프 (depth=5):")
         rcs_win.print_control_identifiers(depth=5)
 
-    if args.list:
-        if _LIST_IMPORTED:
+    if settings.show_list_first:
+        if get_tool_list is not None:
             tools = get_tool_list(rcs_win)
             if tools:
                 print(f"\n[INFO] 전체 툴 목록 ({len(tools)}개):")
@@ -226,9 +193,9 @@ def main() -> int:
                     print(f"  {i:3}. {name}")
             print()
         else:
-            print("[WARNING] list_up_tools 임포트 실패 — --list 옵션을 사용할 수 없습니다.")
+            print("[WARNING] list_up_tools 임포트 실패 — 목록 출력 옵션을 사용할 수 없습니다.")
 
-    ok = select_tool(rcs_win, args.tool_name, double_click=args.double_click)
+    ok = select_tool(rcs_win, settings.tool_name, double_click=settings.double_click)
     return 0 if ok else 4
 
 

@@ -121,6 +121,16 @@ Self-contained flat module — all files live directly in `poc/work/` with no su
 ### poc/work/ RCS automation
 `automate_rcs_login.py` — VLM-based RCS login automation. pywinauto is only used to launch the exe and find the window by title ("Remote Control System"); internal control detection via pywinauto failed (legacy app doesn't expose ComboBox/Button to UIA or win32 backends). Instead uses: mss screenshot of window region → VLM coordinate extraction (asks for Server/UserID/Password/LoginButton click points) → pynput mouse clicks and keyboard typing at the returned positions. Config from `.env`: `RCS_EXE_PATH`, `RCS_SERVER`, `RCS_USERNAME`, `RCS_PASSWORD`, `VLM_API_URL`, `VLM_API_KEY`, `VLM_MODEL_NAME`. Coordinate chain: VLM coords (resized image) → ÷ resize_scale → screenshot coords → + window offset → absolute screen coords.
 
+Current post-login success detection policy (`poc/work/automate_rcs_login.py`):
+- Login success is determined by the final main window only. Updater window checks are intentionally skipped.
+- Final title match uses regex (`RCS_MAIN_WINDOW_REGEX`) requiring both `RCS` and `[Server : ...]` semantics (default: `\brcs\b.*\[server\s*:[^\]]+\]`).
+- Wait behavior defaults: `RCS_POST_LOGIN_DELAY_SEC=4.0`, `RCS_POST_LOGIN_MAIN_TIMEOUT_SEC=240.0`, `RCS_POST_LOGIN_POLL_SEC=0.5`.
+- Window discovery order:
+- 1) `app.windows()` from the launched process
+- 2) desktop-wide fallback (`Desktop(...).windows(top_level_only=True, visible_only=True)`) because RCS may relaunch into another process
+- Desktop backend priority defaults to `win32,uia` (`RCS_DESKTOP_SCAN_BACKENDS`).
+- Debug title scan logs are controlled by `RCS_DEBUG_MAIN_WINDOW_TITLES` and default to off (`0`).
+
 ### poc/work/ vs test/vlm_input_control/
 Both implement screen capture + VLM + input control, but `poc/work/` is self-contained (no shared imports with `test/`) and production-oriented. `test/vlm_input_control/` is an older integration prototype.
 

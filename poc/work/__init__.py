@@ -12,4 +12,5 @@ __all__ = [
     "vlm_screen_analysis",
     "vlm_rcs_agent",
     "vlm_click_demo",
+    "steps",
 ]

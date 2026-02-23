@@ -1,7 +1,5 @@
 """Standalone step: launch RCS and run login automation."""
 
-from __future__ import annotations
-
 import sys
 
 try:

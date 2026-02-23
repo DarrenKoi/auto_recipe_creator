@@ -1,16 +1,15 @@
 """Shared helpers for standalone step runners."""
 
-from __future__ import annotations
-
 import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 WORK_DIR = Path(__file__).resolve().parents[1]
 
 
-def run_script(script_name: str, env_overrides: dict[str, str] | None = None) -> int:
+def run_script(script_name: str, env_overrides: Optional[dict[str, str]] = None) -> int:
     """Run a poc/work script with optional environment overrides."""
     script_path = WORK_DIR / script_name
     command = [sys.executable, str(script_path)]

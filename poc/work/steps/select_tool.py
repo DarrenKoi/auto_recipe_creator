@@ -1,7 +1,5 @@
 """Standalone step: select one tool from RCS List tab."""
 
-from __future__ import annotations
-
 import os
 import sys
 

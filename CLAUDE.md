@@ -76,6 +76,7 @@ python -m test.vlm_input_control.integration_test
 
 - **Korean docstrings** throughout all modules
 - **Print-based logging**: `[INFO]`, `[ERROR]`, `[WARNING]` prefixes (never the `logging` module)
+- **Absolute imports** within `poc/work/`: always use `from poc.work.xxx import ...` (not relative or bare imports). Scripts are run via `uv run python <script>.py` or `python -m poc.work.<module>`.
 - **Import guards** for optional dependencies with `LIBRARY_AVAILABLE` flag:
   ```python
   try:
@@ -115,7 +116,7 @@ Claude Code runs on macOS (dev machine) and **cannot see or interact with the ac
 ## Architecture Notes
 
 ### poc/work/ (Primary Workstream)
-Mostly flat module with one sub-package: `prompts/` for VLM prompt builders (one module per screen/task, e.g. `rcs_login.py`). New prompts go in `prompts/` and are re-exported from `prompts/__init__.py`. Config loaded via `PocConfig.load()` which reads `.env` (copy from `.env.example`; `.env.example` now includes `RCS_EXE_PATH` for the path to `RcsMainHD.exe`). The `vlm_click_demo.py` is the primary manager-presentation entry point: it captures a screenshot, sends it to the VLM, then draws bounding boxes at the returned click coordinates. Coordinate chain: VLM output coords (resized image) → screenshot pixels → monitor-local coords → absolute mouse coords (offset for multi-monitor setups via `MONITOR_INDEX`).
+Mostly flat module with sub-packages: `prompts/` for VLM prompt builders and `steps/` for standalone step runners. New prompts go in `prompts/` and are re-exported from `prompts/__init__.py`. All internal imports use absolute paths (`from poc.work.xxx import ...`); `prompts/__init__.py` and `steps/__init__.py` keep relative imports since sub-packages are never run directly. Config loaded via `PocConfig.load()` which reads `.env` (copy from `.env.example`; `.env.example` now includes `RCS_EXE_PATH` for the path to `RcsMainHD.exe`). The `vlm_click_demo.py` is the primary manager-presentation entry point: it captures a screenshot, sends it to the VLM, then draws bounding boxes at the returned click coordinates. Coordinate chain: VLM output coords (resized image) → screenshot pixels → monitor-local coords → absolute mouse coords (offset for multi-monitor setups via `MONITOR_INDEX`).
 
 `opensearch_handler.py` is intentionally kept but inactive — import-guarded and `opensearch-py` is not in `requirements.txt`. Do not delete; kept for re-enablement after company PoC approval.
 

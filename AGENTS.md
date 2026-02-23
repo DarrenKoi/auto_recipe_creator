@@ -29,6 +29,7 @@ AI-powered automation system for CD-SEM/VeritySEM recipe setup. The project comb
 - Target Python `>=3.10`; use 4-space indentation and PEP 8 naming (`snake_case` functions/files, `PascalCase` classes, `UPPER_SNAKE_CASE` constants).
 - Keep docstrings/comments aligned with surrounding module language conventions (Korean docstrings are common in this repo).
 - Use print-based logging prefixes (`[INFO]`, `[WARNING]`, `[ERROR]`); do not introduce the `logging` module unless a file already depends on it.
+- Use absolute imports within `poc/work/` (`from poc.work.xxx import ...`); do not use `sys.path` hacks or `try/except` relative-vs-bare fallbacks. Sub-package `__init__.py` files may keep relative imports.
 - Use import guards for optional dependencies with `<LIB>_AVAILABLE` flags.
 - Follow existing module patterns: dataclass-based configs, enums for fixed categories, and explicit `__all__` exports in package initializers.
 - Prefer `.env` + `python-dotenv` for runtime config loading.
@@ -44,7 +45,7 @@ AI-powered automation system for CD-SEM/VeritySEM recipe setup. The project comb
 
 ## Platform & Workflow Notes
 - Development assistant environment is macOS; Windows-only RCS/pywinauto/pynput behavior must be validated by running updated code on office Windows machines.
-- Keep `poc/work/` self-contained; avoid introducing cross-import coupling with `test/` prototypes.
+- Keep `poc/work/` self-contained; avoid introducing cross-import coupling with `test/` prototypes. All `poc/work/` modules use absolute imports (`from poc.work.xxx`) — scripts should be run via `uv run python <script>` or `python -m poc.work.<module>`.
 - For imports across `test/` sibling modules, use `from video_frame_parser...` style when operating with `PYTHONPATH=./test`.
 
 ## Commit & Pull Request Guidelines

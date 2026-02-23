@@ -3,10 +3,7 @@
 import os
 import sys
 
-try:
-    from .shared import prepare_list_tab, prepare_login, run_script
-except ImportError:
-    from shared import prepare_list_tab, prepare_login, run_script
+from poc.work.steps.shared import prepare_list_tab, prepare_login, run_script
 
 
 # Edit these constants if needed.

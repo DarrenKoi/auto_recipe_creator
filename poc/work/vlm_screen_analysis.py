@@ -15,10 +15,7 @@ import time
 from typing import Optional, Dict, List, Any
 from dataclasses import dataclass
 
-try:
-    from .vlm_openai_client import ChatImageRequest, LangChainOpenAIVLMClient
-except ImportError:
-    from vlm_openai_client import ChatImageRequest, LangChainOpenAIVLMClient
+from poc.work.vlm_openai_client import ChatImageRequest, LangChainOpenAIVLMClient
 
 
 @dataclass

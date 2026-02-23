@@ -57,10 +57,7 @@ except ImportError:
     MSS_AVAILABLE = False
     print("[WARNING] mss 미설치. pip install mss")
 
-try:
-    from .vlm_openai_client import ChatImageRequest, LangChainOpenAIVLMClient
-except ImportError:
-    from vlm_openai_client import ChatImageRequest, LangChainOpenAIVLMClient
+from poc.work.vlm_openai_client import ChatImageRequest, LangChainOpenAIVLMClient
 
 try:
     from dotenv import load_dotenv

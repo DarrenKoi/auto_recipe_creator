@@ -17,40 +17,19 @@ import os
 import sys
 from dataclasses import dataclass
 
-try:
-    from .rcs_common import (
-        DEFAULT_TIMEOUT,
-        DEFAULT_WINDOW_TITLE_REGEX,
-        PYWIN_AVAILABLE,
-        TOOL_CONTAINER_ORDER,
-        _is_visible,
-        connect_rcs_window,
-        env_flag,
-        env_float,
-        load_env,
-        switch_tab,
-    )
-except ImportError:
-    from rcs_common import (
-        DEFAULT_TIMEOUT,
-        DEFAULT_WINDOW_TITLE_REGEX,
-        PYWIN_AVAILABLE,
-        TOOL_CONTAINER_ORDER,
-        _is_visible,
-        connect_rcs_window,
-        env_flag,
-        env_float,
-        load_env,
-        switch_tab,
-    )
-
-try:
-    from .list_up_tools import get_tool_list
-except ImportError:
-    try:
-        from list_up_tools import get_tool_list
-    except ImportError:
-        get_tool_list = None  # type: ignore[assignment]
+from poc.work.rcs_common import (
+    DEFAULT_TIMEOUT,
+    DEFAULT_WINDOW_TITLE_REGEX,
+    PYWIN_AVAILABLE,
+    TOOL_CONTAINER_ORDER,
+    _is_visible,
+    connect_rcs_window,
+    env_flag,
+    env_float,
+    load_env,
+    switch_tab,
+)
+from poc.work.list_up_tools import get_tool_list
 
 
 @dataclass(frozen=True)

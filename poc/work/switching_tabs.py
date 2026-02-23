@@ -11,32 +11,18 @@ import os
 import sys
 from dataclasses import dataclass
 
-try:
-    from .rcs_common import (
-        DEFAULT_TAB,
-        DEFAULT_TIMEOUT,
-        DEFAULT_WINDOW_TITLE_REGEX,
-        PYWIN_AVAILABLE,
-        connect_rcs_window,
-        env_flag,
-        env_float,
-        load_env,
-        normalize_tab_name,
-        switch_tab,
-    )
-except ImportError:
-    from rcs_common import (
-        DEFAULT_TAB,
-        DEFAULT_TIMEOUT,
-        DEFAULT_WINDOW_TITLE_REGEX,
-        PYWIN_AVAILABLE,
-        connect_rcs_window,
-        env_flag,
-        env_float,
-        load_env,
-        normalize_tab_name,
-        switch_tab,
-    )
+from poc.work.rcs_common import (
+    DEFAULT_TAB,
+    DEFAULT_TIMEOUT,
+    DEFAULT_WINDOW_TITLE_REGEX,
+    PYWIN_AVAILABLE,
+    connect_rcs_window,
+    env_flag,
+    env_float,
+    load_env,
+    normalize_tab_name,
+    switch_tab,
+)
 
 
 @dataclass(frozen=True)

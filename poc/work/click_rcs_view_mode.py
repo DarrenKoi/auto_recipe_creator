@@ -20,9 +20,8 @@ from PIL import Image, ImageDraw, ImageFont
 from pywinauto import mouse
 from pywinauto import Desktop
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from vlm_openai_client import ChatImageRequest, LangChainOpenAIVLMClient  # noqa: E402
-from prompts import build_rcs_main_tab_locator_prompt  # noqa: E402
+from poc.work.vlm_openai_client import ChatImageRequest, LangChainOpenAIVLMClient
+from poc.work.prompts import build_rcs_main_tab_locator_prompt
 
 load_dotenv()
 

@@ -2,10 +2,7 @@
 
 import sys
 
-try:
-    from .shared import run_script
-except ImportError:
-    from shared import run_script
+from poc.work.steps.shared import run_script
 
 
 def main() -> int:

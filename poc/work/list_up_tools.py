@@ -15,32 +15,18 @@ import sys
 from dataclasses import dataclass
 from typing import List
 
-try:
-    from .rcs_common import (
-        DEFAULT_TIMEOUT,
-        DEFAULT_WINDOW_TITLE_REGEX,
-        PYWIN_AVAILABLE,
-        TOOL_CONTAINER_ORDER,
-        _is_visible,
-        connect_rcs_window,
-        env_flag,
-        env_float,
-        load_env,
-        switch_tab,
-    )
-except ImportError:
-    from rcs_common import (
-        DEFAULT_TIMEOUT,
-        DEFAULT_WINDOW_TITLE_REGEX,
-        PYWIN_AVAILABLE,
-        TOOL_CONTAINER_ORDER,
-        _is_visible,
-        connect_rcs_window,
-        env_flag,
-        env_float,
-        load_env,
-        switch_tab,
-    )
+from poc.work.rcs_common import (
+    DEFAULT_TIMEOUT,
+    DEFAULT_WINDOW_TITLE_REGEX,
+    PYWIN_AVAILABLE,
+    TOOL_CONTAINER_ORDER,
+    _is_visible,
+    connect_rcs_window,
+    env_flag,
+    env_float,
+    load_env,
+    switch_tab,
+)
 
 
 @dataclass(frozen=True)

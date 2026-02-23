@@ -25,14 +25,10 @@ except ImportError:
     PIL_AVAILABLE = False
     print("[WARNING] Pillow 라이브러리가 설치되지 않았습니다. pip install Pillow")
 
-try:
-    from .vlm_openai_client import ChatImageRequest, LangChainOpenAIVLMClient
-except ImportError:
-    from vlm_openai_client import ChatImageRequest, LangChainOpenAIVLMClient
-
-from .screen_capture import ScreenCapture
-from .mouse_control import MouseController
-from .keyboard_control import KeyboardController
+from poc.work.vlm_openai_client import ChatImageRequest, LangChainOpenAIVLMClient
+from poc.work.screen_capture import ScreenCapture
+from poc.work.mouse_control import MouseController
+from poc.work.keyboard_control import KeyboardController
 
 
 @dataclass
@@ -109,7 +105,7 @@ class VLMRCSAgent:
 
         # DPI 스케일 (macOS Retina: 2.0, 일반: 1.0)
         # mss는 물리 픽셀로 캡처하고 pynput은 논리 좌표로 동작하므로 보정 필요
-        from .vlm_click_demo import get_dpi_scale
+        from poc.work.vlm_click_demo import get_dpi_scale
         self.dpi_scale = get_dpi_scale()
 
         # 설정 검증

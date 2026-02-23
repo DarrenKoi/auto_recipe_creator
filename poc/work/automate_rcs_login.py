@@ -159,17 +159,13 @@ def _capture_window(window) -> "Image.Image | None":
 
 # ─────────────────────────── VLM 좌표 추출 ───────────────────────────
 
-def _ask_vlm_login_elements(image: "Image.Image") -> "dict | None":
+def _ask_vlm_login_elements(image: "Image.Image") -> "tuple[dict, dict] | None":
     """VLM에 로그인 화면의 UI 요소 좌표를 질의한다.
 
     Returns:
-        {
-            "server": {"x": int, "y": int},
-            "user_id": {"x": int, "y": int},
-            "password": {"x": int, "y": int},
-            "login_button": {"x": int, "y": int}
-        }
-        또는 None (실패 시)
+        (processed, raw) 튜플 또는 None (실패 시).
+        processed: 정규화/클램핑 후 좌표 dict
+        raw: VLM이 반환한 원본 좌표 dict (디버깅용)
     """
     if not REQUESTS_AVAILABLE:
         print("[ERROR] requests 라이브러리가 필요합니다")
@@ -275,8 +271,13 @@ def _ask_vlm_login_elements(image: "Image.Image") -> "dict | None":
     return None
 
 
-def _parse_elements_json(text: str, img_w: int, img_h: int) -> "dict | None":
-    """VLM 응답에서 UI 요소 좌표 JSON을 파싱한다."""
+def _parse_elements_json(text: str, img_w: int, img_h: int) -> "tuple[dict, dict] | None":
+    """VLM 응답에서 UI 요소 좌표 JSON을 파싱한다.
+
+    Returns:
+        (processed, raw) 튜플 — processed는 정규화/클램핑 후 좌표,
+        raw는 VLM이 반환한 원본 좌표. 실패 시 None.
+    """
     try:
         json_str = text
         if "```json" in text:
@@ -291,6 +292,7 @@ def _parse_elements_json(text: str, img_w: int, img_h: int) -> "dict | None":
                 json_str = text[s : e + 1]
 
         data = json.loads(json_str)
+        raw = {}  # VLM 원본 좌표 보존
 
         # 정규화 좌표 감지 (0~1) → 픽셀 변환
         for key in ("server", "user_id", "password", "login_button"):
@@ -299,14 +301,16 @@ def _parse_elements_json(text: str, img_w: int, img_h: int) -> "dict | None":
                 print(f"[WARNING] VLM 응답에 '{key}' 누락")
                 continue
             x, y = pt.get("x", 0), pt.get("y", 0)
+            raw[key] = {"x": x, "y": y}  # 변환 전 원본 저장
             if isinstance(x, float) and 0 <= x <= 1.0 and isinstance(y, float) and 0 <= y <= 1.0:
                 x, y = int(x * img_w), int(y * img_h)
             x = max(0, min(int(x), img_w))
             y = max(0, min(int(y), img_h))
             data[key] = {"x": x, "y": y}
 
-        print(f"[INFO] VLM 좌표 파싱 완료: {json.dumps(data, indent=2)}")
-        return data
+        print(f"[INFO] VLM 원본(raw) 좌표: {json.dumps(raw, indent=2)}")
+        print(f"[INFO] VLM 변환(processed) 좌표: {json.dumps(data, indent=2)}")
+        return data, raw
 
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
         print(f"[ERROR] VLM 응답 파싱 실패: {exc}")
@@ -324,8 +328,13 @@ ELEMENT_COLORS = {
 }
 
 
-def _save_debug_screenshot(image: "Image.Image", elements: dict) -> None:
-    """VLM이 반환한 좌표를 원본 스크린샷 위에 마킹하여 저장한다."""
+def _save_debug_screenshot(
+    image: "Image.Image", elements: dict, raw_elements: "dict | None" = None
+) -> None:
+    """VLM이 반환한 좌표를 원본 스크린샷 위에 마킹하여 저장한다.
+
+    processed 좌표는 십자선+원으로, raw 원본 좌표는 사각형으로 표시한다.
+    """
     debug_img = image.copy()
     draw = ImageDraw.Draw(debug_img)
 
@@ -339,6 +348,31 @@ def _save_debug_screenshot(image: "Image.Image", elements: dict) -> None:
 
     marker_r = 12
 
+    # raw 원본 좌표 먼저 그리기 (사각형, 연한 색)
+    if raw_elements:
+        for name, pt in raw_elements.items():
+            if not isinstance(pt, dict) or "x" not in pt or "y" not in pt:
+                continue
+            rx, ry = pt["x"], pt["y"]
+            # 정규화 좌표(0~1)인 경우 픽셀로 변환하여 표시
+            img_w, img_h = image.size
+            if isinstance(rx, float) and 0 <= rx <= 1.0 and isinstance(ry, float) and 0 <= ry <= 1.0:
+                rx_px, ry_px = int(rx * img_w), int(ry * img_h)
+                raw_label = f"raw:{name} ({pt['x']:.4f},{pt['y']:.4f})→({rx_px},{ry_px})"
+            else:
+                rx_px, ry_px = int(rx), int(ry)
+                raw_label = f"raw:{name} ({rx_px},{ry_px})"
+            color = ELEMENT_COLORS.get(name, "white")
+
+            # 사각형 마커 (raw 좌표 표시용)
+            draw.rectangle(
+                [(rx_px - marker_r, ry_px - marker_r), (rx_px + marker_r, ry_px + marker_r)],
+                outline=color, width=1,
+            )
+            # raw 라벨 (위쪽에 표시)
+            draw.text((rx_px + marker_r + 4, ry_px - 24), raw_label, fill=color, font=font)
+
+    # processed 좌표 (십자선 + 원)
     for name, pt in elements.items():
         if not isinstance(pt, dict) or "x" not in pt or "y" not in pt:
             continue
@@ -399,6 +433,30 @@ def _click(abs_x: int, abs_y: int) -> None:
 
 # ─────────────────────────── VLM 로그인 ───────────────────────────
 
+def _refocus_window(window) -> None:
+    """창 타이틀바를 클릭하여 창을 다시 전면으로 가져온다.
+
+    set_focus()가 레거시 앱에서 불안정할 수 있으므로,
+    타이틀바 영역을 직접 클릭하여 확실하게 포커스를 확보한다.
+    """
+    try:
+        window.set_focus()
+        time.sleep(0.2)
+    except Exception as exc:
+        print(f"[WARNING] set_focus 실패: {exc}")
+
+    try:
+        rect = window.rectangle()
+        # 타이틀바 중심 클릭 (상단에서 약 15px 아래)
+        title_x = (rect.left + rect.right) // 2
+        title_y = rect.top + 15
+        print(f"[INFO] 타이틀바 클릭으로 창 재활성화: ({title_x}, {title_y})")
+        _click(title_x, title_y)
+        time.sleep(0.3)
+    except Exception as exc:
+        print(f"[WARNING] 타이틀바 클릭 실패: {exc}")
+
+
 def _vlm_login(window) -> bool:
     """VLM 좌표 기반으로 로그인 폼을 채우고 Log In 클릭."""
     if not PYNPUT_AVAILABLE:
@@ -411,12 +469,13 @@ def _vlm_login(window) -> bool:
         return False
 
     # 2) VLM 질의
-    elements = _ask_vlm_login_elements(image)
-    if elements is None:
+    result = _ask_vlm_login_elements(image)
+    if result is None:
         return False
+    elements, raw_elements = result
 
-    # 3) 디버그: VLM 좌표를 원본 스크린샷 위에 마킹하여 저장
-    _save_debug_screenshot(image, elements)
+    # 3) 디버그: VLM 원본(raw) + 변환(processed) 좌표를 스크린샷 위에 마킹
+    _save_debug_screenshot(image, elements, raw_elements)
 
     # 4) 좌표 변환: VLM(리사이즈) → 스크린샷 → 절대 스크린 좌표
     rect = window.rectangle()
@@ -461,20 +520,19 @@ def _vlm_login(window) -> bool:
             _click_and_type(px, py, PASSWORD)
             print("[INFO] Password 입력 완료")
 
-    # 8) Log In 버튼
+    # 8) Log In 버튼 — 클릭 전 창을 타이틀바 클릭으로 재활성화
     if "login_button" in elements:
+        print("[INFO] 로그인 클릭 전 창 재활성화 중...")
+        _refocus_window(window)
+        # 창이 이동했을 수 있으므로 좌표 재계산
+        rect = window.rectangle()
+        win_left, win_top = rect.left, rect.top
         lx, ly = to_abs(elements["login_button"])
         print(f"[INFO] Log In 버튼 좌표: ({lx}, {ly})")
         print(f"[INFO] 창 영역: left={rect.left}, top={rect.top}, right={rect.right}, bottom={rect.bottom}")
         # 좌표가 창 영역 밖이면 경고
         if not (rect.left <= lx <= rect.right and rect.top <= ly <= rect.bottom):
             print(f"[WARNING] Log In 좌표가 창 영역 밖입니다!")
-        # 클릭 전 창을 전면으로 가져오기
-        try:
-            window.set_focus()
-            time.sleep(0.3)
-        except Exception as exc:
-            print(f"[WARNING] 창 포커스 실패: {exc}")
         _click(lx, ly)
         print("[INFO] Log In 버튼 클릭 완료")
     else:

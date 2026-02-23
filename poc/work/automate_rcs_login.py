@@ -18,13 +18,19 @@ from pathlib import Path
 
 import mss
 import mss.tools
-import requests
 from dotenv import load_dotenv
 from PIL import Image, ImageDraw, ImageFont
 from pywinauto.keyboard import send_keys
 from pywinauto import mouse
 from pywinauto import Desktop
 from pywinauto.application import Application
+
+try:
+    from .vlm_openai_client import ChatImageRequest, OpenAICompatibleVLMClient
+    from .vlm_prompts import build_rcs_login_locator_prompt
+except ImportError:
+    from vlm_openai_client import ChatImageRequest, OpenAICompatibleVLMClient
+    from vlm_prompts import build_rcs_login_locator_prompt
 
 load_dotenv()
 
@@ -42,15 +48,15 @@ MAIN_WINDOW_TITLE_REGEX = (
     or r"\brcs\b.*\[server\s*:[^\]]+\]"
 )
 DEBUG_MAIN_WINDOW_TITLES = (
-    os.environ.get("RCS_DEBUG_MAIN_WINDOW_TITLES", "1").strip().lower()
+    os.environ.get("RCS_DEBUG_MAIN_WINDOW_TITLES", "0").strip().lower()
     not in {"0", "false", "no", "off"}
 )
 _desktop_backends_raw = [
     item.strip().lower()
-    for item in os.environ.get("RCS_DESKTOP_SCAN_BACKENDS", "uia,win32").split(",")
+    for item in os.environ.get("RCS_DESKTOP_SCAN_BACKENDS", "win32,uia").split(",")
     if item.strip()
 ]
-_desktop_backends = [PYWINAUTO_BACKEND] + _desktop_backends_raw
+_desktop_backends = _desktop_backends_raw + [PYWINAUTO_BACKEND]
 DESKTOP_SCAN_BACKENDS = tuple(
     dict.fromkeys(b for b in _desktop_backends if b in {"uia", "win32"})
 ) or ("uia", "win32")
@@ -78,15 +84,26 @@ TARGET_ELEMENTS = [
     "shortcut_button",
 ]
 
+VLM_CLIENT = OpenAICompatibleVLMClient(
+    base_url=VLM_API_URL,
+    api_key=VLM_API_KEY,
+    timeout_sec=120.0,
+)
+
+try:
+    VLM_TEMPERATURE = float(os.getenv("VLM_TEMPERATURE", "0.0"))
+except ValueError:
+    VLM_TEMPERATURE = 0.0
+
 try:
     POST_LOGIN_DELAY_SEC = float(os.getenv("RCS_POST_LOGIN_DELAY_SEC", "4.0"))
 except ValueError:
     POST_LOGIN_DELAY_SEC = 4.0
 
 try:
-    POST_LOGIN_MAIN_TIMEOUT_SEC = float(os.getenv("RCS_POST_LOGIN_MAIN_TIMEOUT_SEC", "180.0"))
+    POST_LOGIN_MAIN_TIMEOUT_SEC = float(os.getenv("RCS_POST_LOGIN_MAIN_TIMEOUT_SEC", "240.0"))
 except ValueError:
-    POST_LOGIN_MAIN_TIMEOUT_SEC = 180.0
+    POST_LOGIN_MAIN_TIMEOUT_SEC = 240.0
 
 try:
     POST_LOGIN_POLL_SEC = float(os.getenv("RCS_POST_LOGIN_POLL_SEC", "0.5"))
@@ -263,6 +280,27 @@ def _scan_main_window_candidates(app):
     return None, "", debug_rows
 
 
+def _find_existing_main_window():
+    """이미 떠 있는 메인 RCS 창(기 로그인 상태)을 데스크톱 전체에서 탐색한다."""
+    debug_rows = []
+    for backend in DESKTOP_SCAN_BACKENDS:
+        try:
+            desktop_windows = Desktop(backend=backend).windows(
+                top_level_only=True, visible_only=True
+            )
+        except Exception as exc:
+            debug_rows.append(f"desktop[{backend}] windows-error={exc}")
+            continue
+
+        main_window, main_title = _scan_window_list(
+            desktop_windows, f"desktop[{backend}]", debug_rows
+        )
+        if main_window is not None:
+            return main_window, main_title, debug_rows
+
+    return None, "", debug_rows
+
+
 def _wait_for_post_login_windows(app):
     """로그인 버튼 클릭 후 메인 RCS 창이 나타날 때까지 대기한다."""
     if POST_LOGIN_DELAY_SEC > 0:
@@ -320,44 +358,6 @@ def _capture_window(window) -> Image.Image:
 
 
 # ─────────────────────────── VLM 호출 ───────────────────────────
-
-def _vlm_endpoint() -> str:
-    base = VLM_API_URL.rstrip("/")
-    if base.endswith("/v1"):
-        return f"{base}/chat/completions"
-    return f"{base}/v1/chat/completions"
-
-
-def _call_vlm(model: str, system_msg: str, prompt: str, img_b64: str) -> str:
-    """VLM API를 호출하고 응답 텍스트를 반환한다."""
-    headers = {"Content-Type": "application/json"}
-    if VLM_API_KEY:
-        headers["Authorization"] = f"Bearer {VLM_API_KEY}"
-
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_msg},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
-                ],
-            },
-        ],
-        "temperature": 0.0,
-    }
-
-    endpoint = _vlm_endpoint()
-    print(f"[INFO] VLM 호출: model={model}, endpoint={endpoint}")
-    start = time.time()
-    resp = requests.post(endpoint, headers=headers, json=payload, timeout=120)
-    resp.raise_for_status()
-    raw = resp.json()["choices"][0]["message"]["content"]
-    elapsed = (time.time() - start) * 1000
-    print(f"[INFO] 응답 수신 ({elapsed:.0f}ms)")
-    return raw
 
 
 def _encode_image(image: Image.Image) -> tuple[str, int, int]:
@@ -514,59 +514,6 @@ def _scroll_to_reveal_more(window) -> None:
         time.sleep(POST_LOGIN_SCROLL_INTERVAL)
 
 
-# ─────────────────────────── 프롬프트 ───────────────────────────
-
-def _build_prompt(w: int, h: int) -> tuple[str, str]:
-    """벤치마크용 시스템 메시지와 유저 프롬프트를 반환한다."""
-    system_msg = (
-        "You are a precise GUI element locator. "
-        f"The image is {w}x{h} pixels. "
-        "The origin (0, 0) is the top-left corner of the image. "
-        "Return coordinates as integer pixel values. "
-        "Respond ONLY with valid JSON — no explanation, no markdown."
-    )
-
-    prompt = f"""Locate GUI elements in this Remote Control System login dialog.
-
-The dialog has three labeled rows and three buttons.
-
-Find the pixel coordinates of these 9 elements:
-
-TEXT LABELS — find the **first letter** of each label and return its center:
-1. "server_label" — the first letter 'S' in "Server"
-2. "userid_label" — the first letter 'U' in "User ID"
-3. "password_label" — the first letter 'P' in "Password"
-
-INPUT FIELDS & INTERACTIVE CONTROLS — find the **first vertical edge (left edge)** or **first line** of the specific control:
-4. "server_input" — the white area of the Server combobox. Locate the **left-most vertical edge** of this box. (Note: A 50px shift will be applied to hit the arrow).
-5. "userid_input" — the white text input field next to "User ID". Locate the **left-most vertical edge** of the white area.
-6. "password_input" — the white text input field next to "Password". Locate the **left-most vertical edge** of the white area.
-
-BUTTONS — find the **left-most edge** of each clickable button:
-7. "login_button" — the "Log In" button's left edge.
-8. "cancel_button" — the "Cancel" button's left edge.
-9. "shortcut_button" — the left edge of the Korean text button.
-
-Image size: {w} x {h} pixels.
-x range: 0 (left edge) to {w} (right edge).
-y range: 0 (top edge) to {h} (bottom edge).
-
-Return ONLY this JSON (all values are integers):
-{{
-    "server_label": {{"x": ..., "y": ...}},
-    "server_input": {{"x": ..., "y": ...}},
-    "userid_label": {{"x": ..., "y": ...}},
-    "userid_input": {{"x": ..., "y": ...}},
-    "password_label": {{"x": ..., "y": ...}},
-    "password_input": {{"x": ..., "y": ...}},
-    "login_button": {{"x": ..., "y": ...}},
-    "cancel_button": {{"x": ..., "y": ...}},
-    "shortcut_button": {{"x": ..., "y": ...}}
-}}"""
-
-    return system_msg, prompt
-
-
 # ─────────────────────────── 디버그 이미지 ───────────────────────────
 
 def _save_marked_image(
@@ -616,7 +563,11 @@ def _run_benchmark(window) -> dict | None:
     print(f"[INFO] 창 영역: left={rect.left}, top={rect.top}, "
           f"size={rect.right - rect.left}x{rect.bottom - rect.top}")
 
-    system_msg, prompt = _build_prompt(w, h)
+    system_msg, prompt = build_rcs_login_locator_prompt(
+        width=w,
+        height=h,
+        target_keys=TARGET_ELEMENTS,
+    )
     results = {}
 
     for model in TEST_MODELS:
@@ -625,7 +576,18 @@ def _run_benchmark(window) -> dict | None:
         print("=" * 60)
 
         try:
-            raw = _call_vlm(model, system_msg, prompt, img_b64)
+            request = ChatImageRequest(
+                model=model,
+                system_message=system_msg,
+                user_text=prompt,
+                image_b64=img_b64,
+                temperature=VLM_TEMPERATURE,
+            )
+            print(f"[INFO] VLM 호출: model={model}, endpoint={VLM_CLIENT.endpoint}")
+            start = time.time()
+            raw = VLM_CLIENT.chat_with_image(request)
+            elapsed = (time.time() - start) * 1000
+            print(f"[INFO] 응답 수신 ({elapsed:.0f}ms)")
             print(f"[INFO] 원문 응답:\n{raw}\n")
 
             data = _extract_json(raw)
@@ -664,6 +626,19 @@ def _run_benchmark(window) -> dict | None:
 # ─────────────────────────── 메인 ───────────────────────────
 
 def main() -> int:
+    existing_window, existing_title, existing_debug_rows = _find_existing_main_window()
+    if DEBUG_MAIN_WINDOW_TITLES:
+        print(f"[DEBUG] 메인 창 regex: {MAIN_WINDOW_TITLE_REGEX!r}")
+        if not existing_debug_rows:
+            print("[DEBUG] existing-check: no visible top-level windows")
+        else:
+            for row in existing_debug_rows:
+                print(f"[DEBUG] existing-check {row}")
+    if existing_window is not None:
+        print(f"[INFO] 이미 로그인된 RCS 창 감지: '{existing_title}'")
+        print("[INFO] 로그인 절차를 건너뜁니다.")
+        return 0
+
     if not RCS_EXE.exists():
         print(f"[ERROR] 실행 파일을 찾을 수 없습니다: {RCS_EXE}")
         return 1

@@ -13,37 +13,18 @@ import time
 from io import BytesIO
 from pathlib import Path
 
+import mss
+import mss.tools
+import requests
 from dotenv import load_dotenv
+from PIL import Image, ImageDraw, ImageFont
+from pynput.keyboard import Controller as KbdCtrl, Key
+from pynput.mouse import Button as MouseButton, Controller as MouseCtrl
 from pywinauto.application import Application
 
-try:
-    from PIL import Image, ImageDraw, ImageFont
-    PIL_AVAILABLE = True
-except ImportError:
-    PIL_AVAILABLE = False
-
-try:
-    import mss
-    import mss.tools
-    MSS_AVAILABLE = True
-except ImportError:
-    MSS_AVAILABLE = False
-
-try:
-    import requests
-    REQUESTS_AVAILABLE = True
-except Exception:
-    requests = None
-    REQUESTS_AVAILABLE = False
-
-try:
-    from pynput.mouse import Button as MouseButton, Controller as MouseCtrl
-    from pynput.keyboard import Controller as KbdCtrl
-    PYNPUT_AVAILABLE = True
-except ImportError:
-    PYNPUT_AVAILABLE = False
-
 load_dotenv()
+
+# ─────────────────────────── 설정 ───────────────────────────
 
 RCS_EXE = Path(os.environ.get("RCS_EXE_PATH", r"C:\Users\2067928\Documents\RCS\RcsMainHD.exe"))
 SERVER = os.environ.get("RCS_SERVER", "Dropbox")
@@ -55,17 +36,16 @@ VLM_API_URL = (
 )
 VLM_API_KEY = os.environ.get("VLM_API_KEY", "").strip()
 VLM_MODEL_NAME = os.environ.get("VLM_MODEL_NAME", "Qwen3-VL-30B-Instruct")
-try:
-    VLM_CHECK_TIMEOUT = float(os.environ.get("VLM_CHECK_TIMEOUT", "3.0"))
-except ValueError:
-    print("[WARN] VLM_CHECK_TIMEOUT 값이 유효하지 않아 3.0초로 대체합니다.")
-    VLM_CHECK_TIMEOUT = 3.0
+
 LAUNCH_TIMEOUT = 30.0
 POST_LOGIN_WAIT = 6.0
 WINDOW_TITLE_PREFIX = "Remote Control System"
 ACTION_DELAY = 0.4
+
 # 자격증명이 이미 입력되어 있으면 Log In 버튼만 클릭
 CREDENTIALS_PREFILLED = True
+# True이면 VLM 좌표 정확도 테스트만 실행 (클릭/타이핑 없이 디버그 이미지만 저장)
+DEBUG_COORDINATE_TEST = True
 
 
 # ─────────────────────────── 창 탐색 ───────────────────────────
@@ -85,61 +65,10 @@ def _wait_for_login_window(app):
     raise TimeoutError(f"로그인 창을 {LAUNCH_TIMEOUT:.0f}초 내에 찾지 못했습니다")
 
 
-# ─────────────────────────── VLM 헬스체크 ───────────────────────────
-
-def _check_vlm_responsive() -> bool:
-    """VLM API 서버가 응답 가능한지 가볍게 점검."""
-    if not VLM_API_URL:
-        print("[INFO] VLM_API_URL이 설정되지 않아 응답성 점검을 생략합니다.")
-        return True
-
-    if not REQUESTS_AVAILABLE:
-        print("[WARNING] requests 패키지가 없어 VLM 응답성 점검을 생략합니다.")
-        return True
-
-    headers = {}
-    if VLM_API_KEY:
-        headers["Authorization"] = f"Bearer {VLM_API_KEY}"
-
-    base = VLM_API_URL.rstrip("/")
-    if base.endswith("/v1"):
-        candidates = [
-            f"{base}/models",
-            f"{base}/health",
-            base,
-        ]
-    else:
-        candidates = [
-            f"{base}/v1/models",
-            f"{base}/models",
-            f"{base}/health",
-            base,
-        ]
-
-    for url in dict.fromkeys(candidates):
-        try:
-            response = requests.get(url, headers=headers, timeout=VLM_CHECK_TIMEOUT)
-            if response.status_code < 500:
-                print(f"[INFO] VLM 응답 확인: {url} -> {response.status_code}")
-                return True
-            print(f"[WARNING] VLM 응답 상태 이상: {url} -> {response.status_code}")
-        except requests.exceptions.Timeout:
-            print(f"[WARNING] VLM 타임아웃: {url} ({VLM_CHECK_TIMEOUT:.1f}s)")
-        except requests.exceptions.RequestException as exc:
-            print(f"[WARNING] VLM 연결 실패: {url} ({exc})")
-
-    print("[ERROR] VLM이 응답하지 않습니다. 환경을 점검한 뒤 다시 실행하세요.")
-    return False
-
-
 # ─────────────────────────── 스크린샷 ───────────────────────────
 
-def _capture_window(window) -> "Image.Image | None":
+def _capture_window(window) -> Image.Image:
     """pywinauto 창 영역을 mss로 캡처하여 PIL Image로 반환한다."""
-    if not MSS_AVAILABLE or not PIL_AVAILABLE:
-        print("[ERROR] mss 또는 Pillow 라이브러리가 필요합니다")
-        return None
-
     rect = window.rectangle()
     region = {
         "left": rect.left,
@@ -147,7 +76,6 @@ def _capture_window(window) -> "Image.Image | None":
         "width": rect.right - rect.left,
         "height": rect.bottom - rect.top,
     }
-
     with mss.mss() as sct:
         shot = sct.grab(region)
         png_data = mss.tools.to_png(shot.rgb, shot.size)
@@ -157,29 +85,217 @@ def _capture_window(window) -> "Image.Image | None":
     return image
 
 
-# ─────────────────────────── VLM 좌표 추출 ───────────────────────────
+# ─────────────────────────── VLM 호출 공통 ───────────────────────────
 
-def _ask_vlm_login_elements(image: "Image.Image") -> "tuple[dict, dict] | None":
-    """VLM에 로그인 화면의 UI 요소 좌표를 질의한다.
+def _vlm_endpoint() -> str:
+    """VLM chat completions 엔드포인트 URL을 반환한다."""
+    base = VLM_API_URL.rstrip("/")
+    if base.endswith("/v1"):
+        return f"{base}/chat/completions"
+    return f"{base}/v1/chat/completions"
 
-    Returns:
-        (processed, raw) 튜플 또는 None (실패 시).
-        processed: 정규화/클램핑 후 좌표 dict
-        raw: VLM이 반환한 원본 좌표 dict (디버깅용)
-    """
-    if not REQUESTS_AVAILABLE:
-        print("[ERROR] requests 라이브러리가 필요합니다")
-        return None
 
-    w, h = image.size
+def _call_vlm(system_msg: str, prompt: str, img_b64: str) -> str:
+    """VLM API를 호출하고 응답 텍스트를 반환한다."""
+    headers = {"Content-Type": "application/json"}
+    if VLM_API_KEY:
+        headers["Authorization"] = f"Bearer {VLM_API_KEY}"
 
+    endpoint = _vlm_endpoint()
+    payload = {
+        "model": VLM_MODEL_NAME,
+        "messages": [
+            {"role": "system", "content": system_msg},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
+                ],
+            },
+        ],
+        "temperature": 0.1,
+    }
+
+    print(f"[INFO] VLM API 호출 중... ({endpoint})")
+    start = time.time()
+    resp = requests.post(endpoint, headers=headers, json=payload, timeout=60)
+    resp.raise_for_status()
+    raw = resp.json()["choices"][0]["message"]["content"]
+    print(f"[INFO] VLM 응답 수신 ({(time.time() - start) * 1000:.0f}ms)")
+    return raw
+
+
+def _encode_image(image: Image.Image) -> tuple[str, int, int]:
+    """PIL Image를 base64 PNG로 인코딩하고 (b64, w, h)를 반환한다."""
     buf = BytesIO()
     image.save(buf, format="PNG", optimize=True)
-    img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-    print(f"[INFO] VLM 전송 이미지: {w}x{h}, PNG, {len(buf.getvalue()) / 1024:.1f}KB")
+    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    w, h = image.size
+    print(f"[INFO] VLM 전송 이미지: {w}x{h}, {len(buf.getvalue()) / 1024:.1f}KB")
+    return b64, w, h
+
+
+def _extract_json(text: str) -> dict:
+    """VLM 응답 텍스트에서 JSON을 추출한다."""
+    if "```json" in text:
+        s = text.find("```json") + 7
+        e = text.find("```", s)
+        if e != -1:
+            return json.loads(text[s:e].strip())
+    if "{" in text:
+        s = text.find("{")
+        e = text.rfind("}")
+        if e > s:
+            return json.loads(text[s : e + 1])
+    return json.loads(text)
+
+
+def _normalize_coords(data: dict, keys: list[str], img_w: int, img_h: int) -> dict:
+    """좌표값을 정규화(0~1) → 픽셀 변환하고 범위를 클램핑한다."""
+    for key in keys:
+        pt = data.get(key)
+        if not pt:
+            print(f"[WARNING] VLM 응답에 '{key}' 누락")
+            continue
+        x, y = pt.get("x", 0), pt.get("y", 0)
+        if isinstance(x, float) and 0 <= x <= 1.0 and isinstance(y, float) and 0 <= y <= 1.0:
+            x, y = int(x * img_w), int(y * img_h)
+        data[key] = {"x": max(0, min(int(x), img_w)), "y": max(0, min(int(y), img_h))}
+    return data
+
+
+# ─────────────────────── VLM 좌표 정확도 테스트 ───────────────────────
+
+def _run_coordinate_debug(window) -> None:
+    """VLM 좌표 정확도 테스트. 클릭/타이핑 없이 디버그 이미지만 저장."""
+    print("[INFO] ===== VLM 좌표 정확도 테스트 모드 =====")
+    image = _capture_window(window)
+    img_b64, w, h = _encode_image(image)
+
+    rect = window.rectangle()
+    print(f"[INFO] 창 영역: left={rect.left}, top={rect.top}, "
+          f"right={rect.right}, bottom={rect.bottom}, "
+          f"size={rect.right - rect.left}x{rect.bottom - rect.top}")
+
+    prompt = f"""You are a GUI screen analysis expert.
+
+This image shows a Remote Control System login dialog.
+Find the exact center pixel coordinate of each visible text label listed below.
+I need the coordinate of the TEXT ITSELF (the rendered characters), not any input field or button area next to it.
+
+Target texts:
+1. "Server" — the label text
+2. "User ID" — the label text
+3. "Password" — the label text
+4. "Log In" — the button text
+
+Image resolution: {w}x{h} pixels
+Coordinate range: x is 0~{w}, y is 0~{h}
+
+Respond ONLY with this JSON format:
+{{
+    "Server": {{"x": integer, "y": integer}},
+    "User ID": {{"x": integer, "y": integer}},
+    "Password": {{"x": integer, "y": integer}},
+    "Log In": {{"x": integer, "y": integer}}
+}}"""
+
+    system_msg = (
+        f"You are a GUI coordinate extraction agent. "
+        f"Image resolution is {w}x{h} pixels. "
+        f"Return coordinates as pixel values in range 0~{w}(x), 0~{h}(y). "
+        f"Respond ONLY in JSON format."
+    )
+
+    raw = _call_vlm(system_msg, prompt, img_b64)
+    print(f"[INFO] VLM 원문 응답:\n{raw}")
+
+    data = _extract_json(raw)
+    labels = ["Server", "User ID", "Password", "Log In"]
+    data = _normalize_coords(data, labels, w, h)
+
+    for name in labels:
+        pt = data.get(name)
+        if not pt:
+            continue
+        x, y = pt["x"], pt["y"]
+        in_bounds = 0 <= x <= w and 0 <= y <= h
+        print(f"[INFO] '{name}': ({x}, {y}) — {'OK' if in_bounds else 'OUT OF BOUNDS'}")
+
+    # 디버그 이미지 저장
+    colors = {"Server": "red", "User ID": "blue", "Password": "green", "Log In": "orange"}
+    _save_marked_image(image, data, colors, "debug_vlm_coords.png")
+    print("[INFO] ===== 좌표 테스트 완료 — debug_vlm_coords.png 확인 =====")
+
+
+# ─────────────────────────── 디버그 이미지 ───────────────────────────
+
+def _save_marked_image(image: Image.Image, elements: dict, colors: dict, filename: str) -> None:
+    """좌표를 원본 스크린샷 위에 십자선+원으로 마킹하여 저장한다."""
+    debug_img = image.copy()
+    draw = ImageDraw.Draw(debug_img)
+
+    try:
+        font = ImageFont.truetype("arial.ttf", 14)
+    except Exception:
+        font = ImageFont.load_default()
+
+    r = 15
+    for name, pt in elements.items():
+        if not isinstance(pt, dict) or "x" not in pt or "y" not in pt:
+            continue
+        x, y = int(pt["x"]), int(pt["y"])
+        color = colors.get(name, "white")
+        draw.line([(x - r, y), (x + r, y)], fill=color, width=3)
+        draw.line([(x, y - r), (x, y + r)], fill=color, width=3)
+        draw.ellipse([(x - r, y - r), (x + r, y + r)], outline=color, width=3)
+        draw.text((x + r + 4, y - 8), f"{name} ({x},{y})", fill=color, font=font)
+
+    out_path = Path(__file__).parent / filename
+    debug_img.save(out_path)
+    print(f"[INFO] 디버그 이미지 저장: {out_path}")
+
+
+# ─────────────────────────── 클릭·타이핑 ───────────────────────────
+
+def _click(abs_x: int, abs_y: int) -> None:
+    """절대 좌표 클릭."""
+    mouse = MouseCtrl()
+    mouse.position = (abs_x, abs_y)
+    time.sleep(0.1)
+    mouse.click(MouseButton.left)
+    time.sleep(ACTION_DELAY)
+
+
+def _click_and_type(abs_x: int, abs_y: int, text: str) -> None:
+    """절대 좌표로 클릭한 뒤 기존 내용을 지우고 타이핑한다."""
+    _click(abs_x, abs_y)
+    kbd = KbdCtrl()
+    kbd.press(Key.ctrl)
+    kbd.press("a")
+    kbd.release("a")
+    kbd.release(Key.ctrl)
+    time.sleep(0.05)
+    kbd.type(text)
+    time.sleep(ACTION_DELAY)
+
+
+# ─────────────────────────── VLM 로그인 ───────────────────────────
+
+def _vlm_login(window) -> bool:
+    """VLM 좌표 기반으로 로그인 폼을 채우고 Log In 클릭."""
+    image = _capture_window(window)
+    img_b64, w, h = _encode_image(image)
+
+    system_msg = (
+        f"당신은 GUI 자동화 에이전트입니다. "
+        f"이 이미지의 해상도는 {w}x{h} 픽셀입니다. "
+        f"좌표는 반드시 0~{w}(x), 0~{h}(y) 범위의 픽셀 값으로 반환하세요. "
+        f"반드시 JSON 형식으로만 응답하세요."
+    )
 
     if CREDENTIALS_PREFILLED:
-        # 자격증명이 이미 입력됨 — Log In 버튼 좌표만 필요
         prompt = f"""당신은 GUI 화면 분석 전문가입니다.
 
 이 이미지는 Remote Control System 로그인 화면입니다.
@@ -193,6 +309,7 @@ def _ask_vlm_login_elements(image: "Image.Image") -> "tuple[dict, dict] | None":
 {{
     "login_button": {{"x": 정수, "y": 정수}}
 }}"""
+        keys = ["login_button"]
     else:
         prompt = f"""당신은 GUI 화면 분석 전문가입니다.
 
@@ -201,8 +318,7 @@ def _ask_vlm_login_elements(image: "Image.Image") -> "tuple[dict, dict] | None":
 각 라벨의 오른쪽에 흰색 배경의 콤보박스/입력 필드가 위치합니다.
 
 다음 4개 UI 요소의 좌표를 찾아 주세요.
-중요: 라벨 텍스트("Server", "User ID" 등)가 아닌, 라벨 오른쪽에 있는 흰색 입력 영역의 좌측 1/3 지점을 클릭 좌표로 잡아 주세요.
-입력 필드의 세로 중심, 가로는 입력 영역의 왼쪽에서 약 1/3 지점이 이상적입니다.
+중요: 라벨 텍스트가 아닌, 라벨 오른쪽에 있는 흰색 입력 영역의 좌측 1/3 지점을 클릭 좌표로 잡아 주세요.
 
 1. server — "Server" 오른쪽 드롭다운 콤보박스 (흰색 영역의 왼쪽 1/3, 세로 중심)
 2. user_id — "User ID" 오른쪽 텍스트 입력 필드 (흰색 영역의 왼쪽 1/3, 세로 중심)
@@ -219,325 +335,62 @@ def _ask_vlm_login_elements(image: "Image.Image") -> "tuple[dict, dict] | None":
     "password": {{"x": 정수, "y": 정수}},
     "login_button": {{"x": 정수, "y": 정수}}
 }}"""
+        keys = ["server", "user_id", "password", "login_button"]
 
-    headers = {"Content-Type": "application/json"}
-    if VLM_API_KEY:
-        headers["Authorization"] = f"Bearer {VLM_API_KEY}"
+    raw = _call_vlm(system_msg, prompt, img_b64)
+    data = _extract_json(raw)
+    data = _normalize_coords(data, keys, w, h)
+    print(f"[INFO] VLM 좌표: {json.dumps(data, indent=2)}")
 
-    api_base = VLM_API_URL.rstrip("/")
-    endpoint = f"{api_base}/v1/chat/completions" if not api_base.endswith("/v1") else f"{api_base}/chat/completions"
+    # 디버그 이미지 저장
+    colors = {"server": "red", "user_id": "blue", "password": "green", "login_button": "orange"}
+    _save_marked_image(image, data, colors, "debug_vlm_login.png")
 
-    payload = {
-        "model": VLM_MODEL_NAME,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "당신은 GUI 자동화 에이전트입니다. "
-                    f"이 이미지의 해상도는 {w}x{h} 픽셀입니다. "
-                    f"좌표는 반드시 0~{w}(x), 0~{h}(y) 범위의 픽셀 값으로 반환하세요. "
-                    "반드시 JSON 형식으로만 응답하세요."
-                ),
-            },
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{img_b64}"},
-                    },
-                ],
-            },
-        ],
-        "temperature": 0.1,
-    }
-
-    try:
-        print(f"[INFO] VLM API 호출 중... ({endpoint})")
-        start = time.time()
-        resp = requests.post(endpoint, headers=headers, json=payload, timeout=60)
-        resp.raise_for_status()
-        elapsed = (time.time() - start) * 1000
-        raw = resp.json()["choices"][0]["message"]["content"]
-        print(f"[INFO] VLM 응답 수신 ({elapsed:.0f}ms)")
-        return _parse_elements_json(raw, w, h)
-    except requests.exceptions.ConnectionError:
-        print(f"[ERROR] VLM 서버 연결 실패: {endpoint}")
-    except requests.exceptions.Timeout:
-        print("[ERROR] VLM 요청 타임아웃 (60초)")
-    except Exception as exc:
-        print(f"[ERROR] VLM API 호출 실패: {exc}")
-    return None
-
-
-def _parse_elements_json(text: str, img_w: int, img_h: int) -> "tuple[dict, dict] | None":
-    """VLM 응답에서 UI 요소 좌표 JSON을 파싱한다.
-
-    Returns:
-        (processed, raw) 튜플 — processed는 정규화/클램핑 후 좌표,
-        raw는 VLM이 반환한 원본 좌표. 실패 시 None.
-    """
-    try:
-        json_str = text
-        if "```json" in text:
-            s = text.find("```json") + 7
-            e = text.find("```", s)
-            if e != -1:
-                json_str = text[s:e].strip()
-        elif "{" in text:
-            s = text.find("{")
-            e = text.rfind("}")
-            if e > s:
-                json_str = text[s : e + 1]
-
-        data = json.loads(json_str)
-        raw = {}  # VLM 원본 좌표 보존
-
-        # 정규화 좌표 감지 (0~1) → 픽셀 변환
-        for key in ("server", "user_id", "password", "login_button"):
-            pt = data.get(key)
-            if not pt:
-                print(f"[WARNING] VLM 응답에 '{key}' 누락")
-                continue
-            x, y = pt.get("x", 0), pt.get("y", 0)
-            raw[key] = {"x": x, "y": y}  # 변환 전 원본 저장
-            if isinstance(x, float) and 0 <= x <= 1.0 and isinstance(y, float) and 0 <= y <= 1.0:
-                x, y = int(x * img_w), int(y * img_h)
-            x = max(0, min(int(x), img_w))
-            y = max(0, min(int(y), img_h))
-            data[key] = {"x": x, "y": y}
-
-        print(f"[INFO] VLM 원본(raw) 좌표: {json.dumps(raw, indent=2)}")
-        print(f"[INFO] VLM 변환(processed) 좌표: {json.dumps(data, indent=2)}")
-        return data, raw
-
-    except (json.JSONDecodeError, KeyError, TypeError) as exc:
-        print(f"[ERROR] VLM 응답 파싱 실패: {exc}")
-        print(f"[DEBUG] 원문: {text[:500]}")
-        return None
-
-
-# ─────────────────────────── 디버그 스크린샷 ───────────────────────────
-
-ELEMENT_COLORS = {
-    "server": "red",
-    "user_id": "blue",
-    "password": "green",
-    "login_button": "orange",
-}
-
-
-def _save_debug_screenshot(
-    image: "Image.Image", elements: dict, raw_elements: "dict | None" = None
-) -> None:
-    """VLM이 반환한 좌표를 원본 스크린샷 위에 마킹하여 저장한다.
-
-    processed 좌표는 십자선+원으로, raw 원본 좌표는 사각형으로 표시한다.
-    """
-    debug_img = image.copy()
-    draw = ImageDraw.Draw(debug_img)
-
-    try:
-        font = ImageFont.truetype("arial.ttf", 14)
-    except Exception:
-        try:
-            font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 14)
-        except Exception:
-            font = ImageFont.load_default()
-
-    marker_r = 12
-
-    # raw 원본 좌표 먼저 그리기 (사각형, 연한 색)
-    if raw_elements:
-        for name, pt in raw_elements.items():
-            if not isinstance(pt, dict) or "x" not in pt or "y" not in pt:
-                continue
-            rx, ry = pt["x"], pt["y"]
-            # 정규화 좌표(0~1)인 경우 픽셀로 변환하여 표시
-            img_w, img_h = image.size
-            if isinstance(rx, float) and 0 <= rx <= 1.0 and isinstance(ry, float) and 0 <= ry <= 1.0:
-                rx_px, ry_px = int(rx * img_w), int(ry * img_h)
-                raw_label = f"raw:{name} ({pt['x']:.4f},{pt['y']:.4f})→({rx_px},{ry_px})"
-            else:
-                rx_px, ry_px = int(rx), int(ry)
-                raw_label = f"raw:{name} ({rx_px},{ry_px})"
-            color = ELEMENT_COLORS.get(name, "white")
-
-            # 사각형 마커 (raw 좌표 표시용)
-            draw.rectangle(
-                [(rx_px - marker_r, ry_px - marker_r), (rx_px + marker_r, ry_px + marker_r)],
-                outline=color, width=1,
-            )
-            # raw 라벨 (위쪽에 표시)
-            draw.text((rx_px + marker_r + 4, ry_px - 24), raw_label, fill=color, font=font)
-
-    # processed 좌표 (십자선 + 원)
-    for name, pt in elements.items():
-        if not isinstance(pt, dict) or "x" not in pt or "y" not in pt:
-            continue
-        sx = int(pt["x"])
-        sy = int(pt["y"])
-        color = ELEMENT_COLORS.get(name, "white")
-
-        # 십자선
-        draw.line([(sx - marker_r, sy), (sx + marker_r, sy)], fill=color, width=2)
-        draw.line([(sx, sy - marker_r), (sx, sy + marker_r)], fill=color, width=2)
-        # 원
-        draw.ellipse(
-            [(sx - marker_r, sy - marker_r), (sx + marker_r, sy + marker_r)],
-            outline=color, width=2,
-        )
-        # 라벨
-        label = f"{name} ({sx},{sy})"
-        draw.text((sx + marker_r + 4, sy - 8), label, fill=color, font=font)
-
-    out_dir = Path(__file__).parent
-    out_path = out_dir / "debug_vlm_login.png"
-    debug_img.save(out_path)
-    print(f"[INFO] 디버그 스크린샷 저장: {out_path}")
-
-
-# ─────────────────────────── 클릭·타이핑 ───────────────────────────
-
-def _click_and_type(abs_x: int, abs_y: int, text: str = "") -> None:
-    """절대 좌표로 클릭한 뒤, text가 있으면 타이핑한다."""
-    mouse = MouseCtrl()
-    kbd = KbdCtrl()
-
-    mouse.position = (abs_x, abs_y)
-    time.sleep(0.1)
-    mouse.click(MouseButton.left)
-    time.sleep(ACTION_DELAY)
-
-    if text:
-        # 기존 내용 전체 선택 후 덮어쓰기
-        from pynput.keyboard import Key
-        kbd.press(Key.ctrl)
-        kbd.press("a")
-        kbd.release("a")
-        kbd.release(Key.ctrl)
-        time.sleep(0.05)
-        kbd.type(text)
-        time.sleep(ACTION_DELAY)
-
-
-def _click(abs_x: int, abs_y: int) -> None:
-    """절대 좌표 클릭만 수행한다."""
-    mouse = MouseCtrl()
-    mouse.position = (abs_x, abs_y)
-    time.sleep(0.1)
-    mouse.click(MouseButton.left)
-    time.sleep(ACTION_DELAY)
-
-
-# ─────────────────────────── VLM 로그인 ───────────────────────────
-
-def _refocus_window(window) -> None:
-    """창 타이틀바를 클릭하여 창을 다시 전면으로 가져온다.
-
-    set_focus()가 레거시 앱에서 불안정할 수 있으므로,
-    타이틀바 영역을 직접 클릭하여 확실하게 포커스를 확보한다.
-    """
-    try:
-        window.set_focus()
-        time.sleep(0.2)
-    except Exception as exc:
-        print(f"[WARNING] set_focus 실패: {exc}")
-
-    try:
-        rect = window.rectangle()
-        # 타이틀바 중심 클릭 (상단에서 약 15px 아래)
-        title_x = (rect.left + rect.right) // 2
-        title_y = rect.top + 15
-        print(f"[INFO] 타이틀바 클릭으로 창 재활성화: ({title_x}, {title_y})")
-        _click(title_x, title_y)
-        time.sleep(0.3)
-    except Exception as exc:
-        print(f"[WARNING] 타이틀바 클릭 실패: {exc}")
-
-
-def _vlm_login(window) -> bool:
-    """VLM 좌표 기반으로 로그인 폼을 채우고 Log In 클릭."""
-    if not PYNPUT_AVAILABLE:
-        print("[ERROR] pynput 라이브러리가 필요합니다")
-        return False
-
-    # 1) 창 캡처
-    image = _capture_window(window)
-    if image is None:
-        return False
-
-    # 2) VLM 질의
-    result = _ask_vlm_login_elements(image)
-    if result is None:
-        return False
-    elements, raw_elements = result
-
-    # 3) 디버그: VLM 원본(raw) + 변환(processed) 좌표를 스크린샷 위에 마킹
-    _save_debug_screenshot(image, elements, raw_elements)
-
-    # 4) 좌표 변환: VLM(리사이즈) → 스크린샷 → 절대 스크린 좌표
+    # 좌표 변환: 스크린샷 좌표 → 절대 스크린 좌표
     rect = window.rectangle()
-    win_left, win_top = rect.left, rect.top
 
     def to_abs(pt):
-        """VLM 좌표 → 절대 스크린 좌표."""
-        sx = int(pt["x"])  # 스크린샷 좌표
-        sy = int(pt["y"])
-        return sx + win_left, sy + win_top
+        return int(pt["x"]) + rect.left, int(pt["y"]) + rect.top
 
-    if CREDENTIALS_PREFILLED:
-        print("[INFO] 자격증명이 이미 입력됨 — Log In 버튼만 클릭합니다")
-    else:
-        # 5) 서버 선택
-        if "server" in elements and SERVER:
-            sx, sy = to_abs(elements["server"])
+    if not CREDENTIALS_PREFILLED:
+        if "server" in data and SERVER:
+            sx, sy = to_abs(data["server"])
             print(f"[INFO] 서버 드롭다운 클릭: ({sx}, {sy})")
             _click(sx, sy)
             time.sleep(0.3)
-            # 드롭다운이 열린 후 서버명 타이핑 + Enter
             kbd = KbdCtrl()
             kbd.type(SERVER)
             time.sleep(0.2)
-            from pynput.keyboard import Key
             kbd.press(Key.enter)
             kbd.release(Key.enter)
             time.sleep(ACTION_DELAY)
-            print(f"[INFO] 서버 선택: {SERVER}")
 
-        # 6) User ID
-        if "user_id" in elements and USERNAME:
-            ux, uy = to_abs(elements["user_id"])
+        if "user_id" in data and USERNAME:
+            ux, uy = to_abs(data["user_id"])
             print(f"[INFO] User ID 필드 클릭: ({ux}, {uy})")
             _click_and_type(ux, uy, USERNAME)
-            print("[INFO] User ID 입력 완료")
 
-        # 7) Password
-        if "password" in elements and PASSWORD:
-            px, py = to_abs(elements["password"])
+        if "password" in data and PASSWORD:
+            px, py = to_abs(data["password"])
             print(f"[INFO] Password 필드 클릭: ({px}, {py})")
             _click_and_type(px, py, PASSWORD)
-            print("[INFO] Password 입력 완료")
 
-    # 8) Log In 버튼 — 클릭 전 창을 타이틀바 클릭으로 재활성화
-    if "login_button" in elements:
-        print("[INFO] 로그인 클릭 전 창 재활성화 중...")
-        _refocus_window(window)
-        # 창이 이동했을 수 있으므로 좌표 재계산
-        rect = window.rectangle()
-        win_left, win_top = rect.left, rect.top
-        lx, ly = to_abs(elements["login_button"])
+    # Log In 버튼
+    if "login_button" in data:
+        lx, ly = to_abs(data["login_button"])
         print(f"[INFO] Log In 버튼 좌표: ({lx}, {ly})")
         print(f"[INFO] 창 영역: left={rect.left}, top={rect.top}, right={rect.right}, bottom={rect.bottom}")
-        # 좌표가 창 영역 밖이면 경고
         if not (rect.left <= lx <= rect.right and rect.top <= ly <= rect.bottom):
             print(f"[WARNING] Log In 좌표가 창 영역 밖입니다!")
+        try:
+            window.set_focus()
+            time.sleep(0.3)
+        except Exception as exc:
+            print(f"[WARNING] 창 포커스 실패: {exc}")
         _click(lx, ly)
         print("[INFO] Log In 버튼 클릭 완료")
     else:
         print("[WARNING] login_button 좌표 없음, ENTER 전송")
-        from pynput.keyboard import Key
         kbd = KbdCtrl()
         kbd.press(Key.enter)
         kbd.release(Key.enter)
@@ -548,9 +401,6 @@ def _vlm_login(window) -> bool:
 # ─────────────────────────── 메인 ───────────────────────────
 
 def main() -> int:
-    if not _check_vlm_responsive():
-        return 4
-
     if not RCS_EXE.exists():
         print(f"[ERROR] 실행 파일을 찾을 수 없습니다: {RCS_EXE}")
         return 1
@@ -566,7 +416,12 @@ def main() -> int:
         print(f"[ERROR] {exc}")
         return 3
 
-    time.sleep(1.0)  # 컨트롤 렌더링 대기
+    time.sleep(1.0)
+
+    if DEBUG_COORDINATE_TEST:
+        _run_coordinate_debug(login_window)
+        print("[INFO] 디버그 모드 — 로그인 시도 없이 종료합니다")
+        return 0
 
     if not _vlm_login(login_window):
         print("[ERROR] VLM 기반 로그인 실패")

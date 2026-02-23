@@ -8,6 +8,7 @@ pywinauto는 창 실행·탐색에만 사용한다.
 import base64
 import json
 import os
+import struct
 import subprocess
 import sys
 import time
@@ -31,6 +32,7 @@ VLM_API_URL = (
     or os.environ.get("VLM_API_BASE_URL", "").strip()
 )
 VLM_API_KEY = os.environ.get("VLM_API_KEY", "").strip()
+PYWINAUTO_BACKEND = os.environ.get("PYWINAUTO_BACKEND", "").strip().lower() or "win32"
 
 LAUNCH_TIMEOUT = 30.0
 WINDOW_TITLE_PREFIX = "Remote Control System"
@@ -65,6 +67,48 @@ ELEMENT_COLORS = {
 
 
 # ─────────────────────────── 창 탐색 ───────────────────────────
+
+
+def _python_bitness() -> int:
+    """현재 Python 인터프리터의 비트 수를 반환한다."""
+    return 64 if sys.maxsize > 2**32 else 32
+
+
+def _exe_bitness(exe_path: Path) -> int | None:
+    """PE 헤더를 읽어 실행 파일 비트 수를 판별한다."""
+    try:
+        with exe_path.open("rb") as fp:
+            if fp.read(2) != b"MZ":
+                return None
+            fp.seek(0x3C)
+            e_lfanew = struct.unpack("<I", fp.read(4))[0]
+            fp.seek(e_lfanew + 4)
+            machine = struct.unpack("<H", fp.read(2))[0]
+    except OSError:
+        return None
+
+    if machine == 0x8664:  # IMAGE_FILE_MACHINE_AMD64
+        return 64
+    if machine == 0x14C:  # IMAGE_FILE_MACHINE_I386
+        return 32
+    return None
+
+
+def _resolve_backend(exe_path: Path) -> str:
+    """혼합 비트 환경에서 32/64비트 호환성이 높은 백엔드를 선택한다."""
+    backend = PYWINAUTO_BACKEND
+    exe_bits = _exe_bitness(exe_path)
+    py_bits = _python_bitness()
+
+    if exe_bits and exe_bits != py_bits and backend == "win32":
+        print(
+            f"[INFO] 비트 수 불일치 감지 (Python={py_bits}-bit, RCS EXE={exe_bits}-bit). "
+            "win32 백엔드 대신 uia를 사용해 32비트 앱 자동화 이슈를 우회합니다."
+        )
+        return "uia"
+
+    return backend
+
 
 def _wait_for_login_window(app):
     """'Remote Control System' 으로 시작하는 창이 나타날 때까지 대기."""
@@ -333,8 +377,10 @@ def main() -> int:
         return 1
 
     print(f"[INFO] RCS 시작: {RCS_EXE}")
+    backend = _resolve_backend(RCS_EXE)
     cmd_str = subprocess.list2cmdline([str(RCS_EXE)])
-    app = Application(backend="win32").start(cmd_str, wait_for_idle=False)
+    print(f"[INFO] pywinauto 백엔드: {backend}")
+    app = Application(backend=backend).start(cmd_str, wait_for_idle=False)
 
     try:
         login_window = _wait_for_login_window(app)

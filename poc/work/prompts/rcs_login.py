@@ -1,6 +1,4 @@
-"""Prompt builders for VLM-based GUI element localization."""
-
-from __future__ import annotations
+"""RCS 로그인 화면 UI 요소 좌표 추출용 VLM 프롬프트 빌더."""
 
 from typing import Iterable
 
@@ -96,4 +94,3 @@ def build_rcs_login_locator_prompt(
     )
 
     return system_message, "\n".join(lines)
-

@@ -27,10 +27,10 @@ from pywinauto.application import Application
 
 try:
     from .vlm_openai_client import ChatImageRequest, OpenAICompatibleVLMClient
-    from .vlm_prompts import build_rcs_login_locator_prompt
+    from .prompts import build_rcs_login_locator_prompt
 except ImportError:
     from vlm_openai_client import ChatImageRequest, OpenAICompatibleVLMClient
-    from vlm_prompts import build_rcs_login_locator_prompt
+    from prompts import build_rcs_login_locator_prompt
 
 load_dotenv()
 

@@ -365,17 +365,6 @@ def _save_click_preview_image(
     print(f"[INFO] 클릭 좌표 프리뷰 저장(클릭 전): {out_path}")
 
 
-def _save_vlm_target_debug(raw_response: str, extracted_json: dict, parsed_target: dict | None) -> None:
-    out_path = Path(__file__).parent / "debug_select_tool_vlm_target.json"
-    payload = {
-        "raw_response": raw_response,
-        "extracted_json": extracted_json,
-        "parsed_target": parsed_target,
-    }
-    out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"[INFO] VLM 타겟 디버그 저장: {out_path}")
-
-
 def _auto_click_list_tab(
     rcs_window,
     settings: SelectToolSettings,
@@ -633,10 +622,6 @@ def _select_tool_vlm(rcs_window, settings: SelectToolSettings) -> bool:
         return False
 
     target = _parse_vlm_target(data)
-    try:
-        _save_vlm_target_debug(raw_response=raw, extracted_json=data, parsed_target=target)
-    except Exception as exc:
-        print(f"[WARNING] VLM 타겟 디버그 저장 실패: {exc}")
     if target is None:
         return False
 

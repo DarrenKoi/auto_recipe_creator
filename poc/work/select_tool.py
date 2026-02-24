@@ -52,6 +52,7 @@ DEFAULT_VLM_MODEL = "Kimi-K2.5"
 DEFAULT_VLM_TEMPERATURE = 0.0
 DEFAULT_TOOL_NAME = "MCD018"
 DEFAULT_VLM_CLICK_Y_OFFSET = 0
+DEBUG_IMAGE_DIR = Path(__file__).parent / "debug_images"
 COORD_ANCHOR_ALIASES = {
     "name_center": "name_center",
     "tool_name_center": "name_center",
@@ -155,6 +156,11 @@ def _to_int(value) -> int | None:
         return None
 
 
+def _debug_image_path(filename: str) -> Path:
+    DEBUG_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    return DEBUG_IMAGE_DIR / filename
+
+
 def _normalize_coord_anchor(anchor: str) -> str:
     normalized = str(anchor).strip().lower().replace("-", "_").replace(" ", "_")
     return COORD_ANCHOR_ALIASES.get(normalized, "")
@@ -183,7 +189,7 @@ def _capture_window(window) -> tuple["Image.Image", str, int, int]:
 
 
 def _save_snapshot(image: "Image.Image", filename: str) -> None:
-    out_path = Path(__file__).parent / filename
+    out_path = _debug_image_path(filename)
     image.save(out_path)
     print(f"[INFO] 스냅샷 저장: {out_path}")
 
@@ -264,7 +270,7 @@ def _save_click_preview_image(
         font=font,
     )
 
-    out_path = Path(__file__).parent / filename
+    out_path = _debug_image_path(filename)
     debug_img.save(out_path)
     print(f"[INFO] 클릭 좌표 프리뷰 저장(클릭 전): {out_path}")
 

@@ -69,6 +69,7 @@ TAB_DEBUG_COLORS = {
     "view_tab": "orange",
     "list_tab": "cyan",
 }
+DEBUG_IMAGE_DIR = Path(__file__).parent / "debug_images"
 TAB_EXTRA_INSTRUCTIONS = (
     "Focus on the top-left tab strip only.",
     "Use the first letter anchors: 'V' in View, 'L' in List.",
@@ -115,6 +116,11 @@ def _parse_int_env(name: str, default: int) -> int:
     except ValueError:
         print(f"[WARNING] 잘못된 {name} 값 '{value}', 기본값 {default} 사용")
         return default
+
+
+def _debug_image_path(filename: str) -> Path:
+    DEBUG_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    return DEBUG_IMAGE_DIR / filename
 
 
 def load_settings() -> ListToolsSettings:
@@ -337,13 +343,13 @@ def _save_marked_image(image: "Image.Image", elements: dict, filename: str) -> N
         )
         draw.text((x + radius + 3, y - 16), f"{name} ({x},{y})", fill=color, font=font)
 
-    out_path = Path(__file__).parent / filename
+    out_path = _debug_image_path(filename)
     debug_img.save(out_path)
     print(f"[INFO] 디버그 이미지 저장: {out_path}")
 
 
 def _save_raw_image(image: "Image.Image", filename: str) -> None:
-    out_path = Path(__file__).parent / filename
+    out_path = _debug_image_path(filename)
     image.save(out_path)
     print(f"[INFO] 스냅샷 저장: {out_path}")
 
@@ -396,7 +402,7 @@ def _save_tool_rows_marked_image(
         label = f"{idx:02d}:{name} ({x},{y})"
         draw.text((draw_x + radius + 3, draw_y - 16), label, fill=color, font=font)
 
-    out_path = Path(__file__).parent / filename
+    out_path = _debug_image_path(filename)
     debug_img.save(out_path)
     print(f"[INFO] 툴 좌표 디버그 이미지 저장: {out_path}")
 

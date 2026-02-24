@@ -69,6 +69,8 @@ ELEMENT_COLORS = {
     "list_tab": "cyan",
 }
 
+DEBUG_IMAGE_DIR = Path(__file__).parent / "debug_images"
+
 VLM_CLIENT = LangChainOpenAICompatibleVLMClient(
     base_url=VLM_API_URL,
     api_key=VLM_API_KEY,
@@ -287,9 +289,14 @@ def _save_marked_image(
         label = f"{name} ({x},{y})"
         draw.text((x + r + 3, y - 16), label, fill=color, font=font)
 
-    out_path = Path(__file__).parent / filename
+    out_path = _debug_image_path(filename)
     debug_img.save(out_path)
     print(f"[INFO] 디버그 이미지 저장: {out_path}")
+
+
+def _debug_image_path(filename: str) -> Path:
+    DEBUG_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    return DEBUG_IMAGE_DIR / filename
 
 
 # ─────────────────────────── 메인 ───────────────────────────

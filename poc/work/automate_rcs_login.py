@@ -130,6 +130,8 @@ POST_LOGIN_SCROLL_MODE = (
     os.getenv("RCS_POST_LOGIN_SCROLL_MODE", "wheel").strip().lower() or "wheel"
 )  # wheel | keys | combo
 
+DEBUG_IMAGE_DIR = Path(__file__).parent / "debug_images"
+
 ELEMENT_COLORS = {
     "server_label": "red",
     "server_input": "salmon",
@@ -549,9 +551,14 @@ def _save_marked_image(
         else:
             draw.text((x + r + 3, y - 16), label, fill=color, font=font)
 
-    out_path = Path(__file__).parent / filename
+    out_path = _debug_image_path(filename)
     debug_img.save(out_path)
     print(f"[INFO] 디버그 이미지 저장: {out_path}")
+
+
+def _debug_image_path(filename: str) -> Path:
+    DEBUG_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    return DEBUG_IMAGE_DIR / filename
 
 
 # ─────────────────────────── 벤치마크 실행 ───────────────────────────

@@ -5,7 +5,7 @@
 환경 변수:
     RCS_MAIN_WINDOW_REGEX     연결할 RCS 창 제목 정규식 (우선순위 1)
     RCS_WINDOW_TITLE          연결할 RCS 창 제목 정규식 (우선순위 2)
-    RCS_TOOL_NAME             선택할 툴 이름 (미설정/legacy 기본값이면 MCD018 사용)
+    RCS_TOOL_NAME             선택할 툴 이름 (기본: MCD018)
     RCS_TIMEOUT               창 탐색 대기 제한 시간(초, 기본: 15)
     RCS_SELECT_DOUBLE_CLICK   1/true/yes/on 이면 더블클릭
     RCS_SELECT_LIST_FIRST     1/true/yes/on 이면 선택 전에 전체 목록 출력
@@ -28,7 +28,7 @@ from pathlib import Path
 
 import mss
 import mss.tools
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from pywinauto import mouse
 
 from poc.work.list_up_tools import get_tool_list
@@ -51,7 +51,6 @@ DEFAULT_CLICK_RETRY_DELAY_SEC = 0.25
 DEFAULT_VLM_MODEL = "Kimi-K2.5"
 DEFAULT_VLM_TEMPERATURE = 0.0
 DEFAULT_TOOL_NAME = "MCD018"
-LEGACY_NON_LIST_TOOL_NAME = "CD-SEM Recipe Editor"
 DEFAULT_VLM_CLICK_Y_OFFSET = 10
 
 
@@ -95,11 +94,7 @@ def load_settings() -> SelectToolSettings:
         or os.environ.get("RCS_WINDOW_TITLE", "").strip()
         or DEFAULT_WINDOW_TITLE_REGEX
     )
-    raw_tool_name = os.environ.get("RCS_TOOL_NAME", "").strip()
-    if not raw_tool_name or raw_tool_name == LEGACY_NON_LIST_TOOL_NAME:
-        tool_name = DEFAULT_TOOL_NAME
-    else:
-        tool_name = raw_tool_name
+    tool_name = os.environ.get("RCS_TOOL_NAME", "").strip() or DEFAULT_TOOL_NAME
 
     return SelectToolSettings(
         window_title=window_title,
@@ -173,6 +168,72 @@ def _save_snapshot(image: "Image.Image", filename: str) -> None:
     out_path = Path(__file__).parent / filename
     image.save(out_path)
     print(f"[INFO] 스냅샷 저장: {out_path}")
+
+
+def _save_click_preview_image(
+    image: "Image.Image",
+    raw_x: int,
+    raw_y: int,
+    click_x: int,
+    click_y: int,
+    matched_name: str,
+    filename: str,
+) -> None:
+    """클릭 전에 실제 클릭 예정 좌표를 이미지에 마킹해 저장한다."""
+    debug_img = image.copy()
+    draw = ImageDraw.Draw(debug_img)
+    img_w, img_h = debug_img.size
+
+    raw_draw_x = max(0, min(raw_x, img_w - 1))
+    raw_draw_y = max(0, min(raw_y, img_h - 1))
+    click_draw_x = max(0, min(click_x, img_w - 1))
+    click_draw_y = max(0, min(click_y, img_h - 1))
+
+    try:
+        font = ImageFont.truetype("arial.ttf", 13)
+    except Exception:
+        font = ImageFont.load_default()
+
+    radius = 10
+    # VLM raw 좌표(파란색)
+    draw.line([(raw_draw_x - radius, raw_draw_y), (raw_draw_x + radius, raw_draw_y)], fill="cyan", width=2)
+    draw.line([(raw_draw_x, raw_draw_y - radius), (raw_draw_x, raw_draw_y + radius)], fill="cyan", width=2)
+    draw.ellipse(
+        [(raw_draw_x - radius, raw_draw_y - radius), (raw_draw_x + radius, raw_draw_y + radius)],
+        outline="cyan",
+        width=2,
+    )
+    draw.text(
+        (raw_draw_x + radius + 3, raw_draw_y - 16),
+        f"raw ({raw_x},{raw_y})",
+        fill="cyan",
+        font=font,
+    )
+
+    # 실제 클릭 좌표(빨간색)
+    draw.line([(click_draw_x - radius, click_draw_y), (click_draw_x + radius, click_draw_y)], fill="red", width=2)
+    draw.line([(click_draw_x, click_draw_y - radius), (click_draw_x, click_draw_y + radius)], fill="red", width=2)
+    draw.ellipse(
+        [(click_draw_x - radius, click_draw_y - radius), (click_draw_x + radius, click_draw_y + radius)],
+        outline="red",
+        width=2,
+    )
+    draw.text(
+        (click_draw_x + radius + 3, click_draw_y - 16),
+        f"click ({click_x},{click_y})",
+        fill="red",
+        font=font,
+    )
+    draw.text(
+        (12, 12),
+        f"target={matched_name}",
+        fill="white",
+        font=font,
+    )
+
+    out_path = Path(__file__).parent / filename
+    debug_img.save(out_path)
+    print(f"[INFO] 클릭 좌표 프리뷰 저장(클릭 전): {out_path}")
 
 
 def _request_vlm(
@@ -367,10 +428,10 @@ def _select_tool_vlm(rcs_window, settings: SelectToolSettings) -> bool:
         return False
 
     coord_anchor = str(target.get("coord_anchor", "")).lower()
-    if coord_anchor and coord_anchor != "first_letter":
+    if coord_anchor and coord_anchor != "last_letter":
         print(
             f"[ERROR] coord_anchor={coord_anchor!r} 은 허용되지 않습니다. "
-            "first_letter만 사용합니다."
+            "last_letter만 사용합니다."
         )
         return False
 
@@ -391,6 +452,18 @@ def _select_tool_vlm(rcs_window, settings: SelectToolSettings) -> bool:
         f"[INFO] VLM 좌표 보정: raw=({target_x}, {target_y}) -> "
         f"adjusted=({target_x}, {click_y}) (y+{DEFAULT_VLM_CLICK_Y_OFFSET})"
     )
+    try:
+        _save_click_preview_image(
+            list_image,
+            raw_x=target_x,
+            raw_y=target_y,
+            click_x=target_x,
+            click_y=click_y,
+            matched_name=str(matched_name),
+            filename="debug_select_tool_click_preview.png",
+        )
+    except Exception as exc:
+        print(f"[WARNING] 클릭 좌표 프리뷰 저장 실패: {exc}")
 
     ok = _click_tool_at_point(
         rcs_window,

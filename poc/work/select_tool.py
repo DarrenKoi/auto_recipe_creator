@@ -52,6 +52,7 @@ DEFAULT_VLM_MODEL = "Kimi-K2.5"
 DEFAULT_VLM_TEMPERATURE = 0.0
 DEFAULT_TOOL_NAME = "MCD018"
 LEGACY_NON_LIST_TOOL_NAME = "CD-SEM Recipe Editor"
+DEFAULT_VLM_CLICK_Y_OFFSET = 10
 
 
 @dataclass(frozen=True)
@@ -383,10 +384,18 @@ def _select_tool_vlm(rcs_window, settings: SelectToolSettings) -> bool:
         )
         return False
 
+    target_x = int(target["x"])
+    target_y = int(target["y"])
+    click_y = target_y + DEFAULT_VLM_CLICK_Y_OFFSET
+    print(
+        f"[INFO] VLM 좌표 보정: raw=({target_x}, {target_y}) -> "
+        f"adjusted=({target_x}, {click_y}) (y+{DEFAULT_VLM_CLICK_Y_OFFSET})"
+    )
+
     ok = _click_tool_at_point(
         rcs_window,
-        int(target["x"]),
-        int(target["y"]),
+        target_x,
+        click_y,
         double_click=settings.double_click,
         settings=settings,
     )

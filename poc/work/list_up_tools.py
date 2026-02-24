@@ -210,7 +210,13 @@ def _extract_json(text: str) -> dict:
     return json.loads(text)
 
 
-def _click_at(element_key: str, window, elements: dict, settings: ListToolsSettings) -> bool:
+def _click_at(
+    element_key: str,
+    window,
+    elements: dict,
+    settings: ListToolsSettings,
+    double_click: bool = False,
+) -> bool:
     point = elements.get(element_key)
     if not isinstance(point, dict) or "x" not in point or "y" not in point:
         print(f"[ERROR] 클릭 대상 '{element_key}' 좌표가 없습니다.")
@@ -233,19 +239,27 @@ def _click_at(element_key: str, window, elements: dict, settings: ListToolsSetti
             pass
 
         try:
-            window.click_input(coords=(rel_x, rel_y), button="left")
-            print(f"[INFO] click_input 성공 (attempt={attempt})")
+            if double_click:
+                window.double_click_input(coords=(rel_x, rel_y), button="left")
+                print(f"[INFO] double_click_input 성공 (attempt={attempt})")
+            else:
+                window.click_input(coords=(rel_x, rel_y), button="left")
+                print(f"[INFO] click_input 성공 (attempt={attempt})")
             return True
         except Exception as exc:
             print(f"[WARNING] click_input 실패 (attempt={attempt}): {exc}")
 
         try:
-            mouse.move(coords=(x, y))
-            time.sleep(0.08)
-            mouse.press(button="left", coords=(x, y))
-            time.sleep(0.05)
-            mouse.release(button="left", coords=(x, y))
-            print(f"[INFO] mouse press/release 실행 (attempt={attempt})")
+            if double_click:
+                mouse.double_click(button="left", coords=(x, y))
+                print(f"[INFO] mouse double_click 실행 (attempt={attempt})")
+            else:
+                mouse.move(coords=(x, y))
+                time.sleep(0.08)
+                mouse.press(button="left", coords=(x, y))
+                time.sleep(0.05)
+                mouse.release(button="left", coords=(x, y))
+                print(f"[INFO] mouse press/release 실행 (attempt={attempt})")
             return True
         except Exception as exc:
             print(f"[WARNING] mouse press/release 실패 (attempt={attempt}): {exc}")
@@ -514,11 +528,13 @@ def main() -> int:
         main_window,
         {target_tool["name"]: {"x": target_tool["x"], "y": target_tool["y"]}},
         settings,
+        double_click=True,
     ):
         print(f"[ERROR] 대상 툴 '{TARGET_TOOL_NAME}' 클릭 실패")
         return 7
 
     print(f"[INFO] 대상 툴 '{TARGET_TOOL_NAME}' 클릭 완료")
+    print("[INFO] 툴 화면 확인: python -m poc.work.check_tool_screen")
 
     return 0
 

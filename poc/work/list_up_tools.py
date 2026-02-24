@@ -1,17 +1,13 @@
-"""RCS 메인 화면에서 View -> List 탭 전환 후 툴 목록/상태를 읽는다 (Windows 전용).
+"""RCS 메인 화면의 List 탭에서 툴 목록/상태를 읽는다 (Windows 전용).
 
 기본 동작:
-1) VLM으로 top-left의 View/List 탭 좌표를 검출
-2) View 탭 클릭
-3) List 탭 클릭
-4) List 영역의 툴 이름 + 상태등(녹색=on, 검정=off) 추출
+1) 현재 화면이 이미 List 탭이라고 가정
+2) List 영역의 툴 이름 + 상태등(녹색=on, 검정=off) 추출
 
 참고:
 - `get_tool_list()` 함수는 기존 UIA 기반 조회 방식으로 유지되어
   `select_tool.py`에서 그대로 임포트해 사용할 수 있다.
 """
-
-from __future__ import annotations
 
 import base64
 import json
@@ -49,10 +45,7 @@ except ImportError:
     Desktop = mouse = None  # type: ignore[assignment]
     PYWINAUTO_AVAILABLE = False
 
-from poc.work.prompts import (
-    build_rcs_main_tab_locator_prompt,
-    build_rcs_tool_list_reader_prompt,
-)
+from poc.work.prompts import build_rcs_tool_list_reader_prompt
 from poc.work.rcs_common import (
     DEFAULT_TIMEOUT,
     DEFAULT_WINDOW_TITLE_REGEX,
@@ -82,6 +75,8 @@ TAB_EXTRA_INSTRUCTIONS = (
     "View and List tabs are adjacent near the top-left corner.",
 )
 TOOL_LIST_EXTRA_INSTRUCTIONS = (
+    "Assume this screenshot is already on the List tab.",
+    "Do not search for or reason about View/List tab switching.",
     "Read only visible rows in the current list panel.",
     "Tool name is on the left, status light is on the right side of that row.",
     "Green light means status=on, black light means status=off.",
@@ -207,7 +202,7 @@ def _find_existing_main_window(settings: ListToolsSettings):
     return None, "", debug_rows
 
 
-def _capture_window(window) -> Image.Image:
+def _capture_window(window) -> "Image.Image":
     """pywinauto 창 영역을 캡처하여 PIL Image로 반환한다."""
     rect = window.rectangle()
     region = {
@@ -226,7 +221,7 @@ def _capture_window(window) -> Image.Image:
     return image
 
 
-def _encode_image(image: Image.Image) -> tuple[str, int, int]:
+def _encode_image(image: "Image.Image") -> tuple[str, int, int]:
     buf = BytesIO()
     image.save(buf, format="PNG", optimize=True)
     payload = buf.getvalue()
@@ -311,7 +306,7 @@ def _click_at(element_key: str, window, elements: dict, settings: ListToolsSetti
     return False
 
 
-def _save_marked_image(image: Image.Image, elements: dict, filename: str) -> None:
+def _save_marked_image(image: "Image.Image", elements: dict, filename: str) -> None:
     """좌표를 스크린샷 위에 마킹해서 저장한다."""
     debug_img = image.copy()
     draw = ImageDraw.Draw(debug_img)
@@ -341,7 +336,7 @@ def _save_marked_image(image: Image.Image, elements: dict, filename: str) -> Non
     print(f"[INFO] 디버그 이미지 저장: {out_path}")
 
 
-def _save_raw_image(image: Image.Image, filename: str) -> None:
+def _save_raw_image(image: "Image.Image", filename: str) -> None:
     out_path = Path(__file__).parent / filename
     image.save(out_path)
     print(f"[INFO] 스냅샷 저장: {out_path}")
@@ -507,41 +502,11 @@ def main() -> int:
         except Exception as exc:
             print(f"[WARNING] 컨트롤 트리 덤프 실패: {exc}")
 
-    try:
-        # 1) 탭 좌표 검출
-        tab_image = _capture_window(main_window)
-        tab_b64, tab_w, tab_h = _encode_image(tab_image)
-        tab_system, tab_prompt = build_rcs_main_tab_locator_prompt(
-            width=tab_w,
-            height=tab_h,
-            target_keys=TARGET_TAB_KEYS,
-            extra_instructions=TAB_EXTRA_INSTRUCTIONS,
-        )
-        tab_raw = _request_vlm(client, settings, tab_system, tab_prompt, tab_b64)
-        tab_data = _extract_json(tab_raw)
-        print(f"[INFO] 탭 좌표 JSON:\n{json.dumps(tab_data, indent=2)}\n")
-        tab_data = _parse_tab_coords(tab_data, tab_w, tab_h)
-        _save_marked_image(tab_image, tab_data, "debug_list_up_tabs.png")
-    except Exception as exc:
-        print(f"[ERROR] 탭 검출 단계 실패: {exc}")
-        return 5
-
-    # 2) View 클릭
-    if not _click_at("view_tab", main_window, tab_data, settings):
-        print("[ERROR] 'view_tab' 클릭 실패")
-        return 6
-    print("[INFO] 'view_tab' 클릭 완료")
-    time.sleep(max(0.0, settings.tab_settle_sec))
-
-    # 3) List 클릭
-    if not _click_at("list_tab", main_window, tab_data, settings):
-        print("[ERROR] 'list_tab' 클릭 실패")
-        return 7
-    print("[INFO] 'list_tab' 클릭 완료")
+    print("[INFO] 현재 화면이 이미 List 탭이라고 가정하고 툴 목록 추출을 진행합니다.")
     time.sleep(max(0.0, settings.list_settle_sec))
 
     try:
-        # 4) List 화면에서 툴 목록/상태 추출
+        # 1) List 화면에서 툴 목록/상태 추출
         list_image = _capture_window(main_window)
         _save_raw_image(list_image, "debug_list_panel.png")
         list_b64, list_w, list_h = _encode_image(list_image)
@@ -556,11 +521,11 @@ def main() -> int:
         parsed_tools = _parse_tool_rows(list_data)
     except Exception as exc:
         print(f"[ERROR] 툴 목록 추출 단계 실패: {exc}")
-        return 8
+        return 5
 
     if not parsed_tools:
         print("[ERROR] VLM에서 유효한 툴 목록을 읽지 못했습니다.")
-        return 9
+        return 6
 
     print(f"[INFO] 발견된 툴 목록 ({len(parsed_tools)}개):")
     for idx, tool in enumerate(parsed_tools, start=1):

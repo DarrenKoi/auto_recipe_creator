@@ -570,10 +570,6 @@ def print_coordinate_info(
 
 def main():
     """데모 실행"""
-    if not PIL_AVAILABLE or not MSS_AVAILABLE:
-        print("[ERROR] 필수 라이브러리 누락. pip install Pillow mss")
-        sys.exit(1)
-
     # .env 로드
     if DOTENV_AVAILABLE:
         env_path = Path(__file__).resolve().parent / ".env"

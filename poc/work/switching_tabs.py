@@ -15,7 +15,6 @@ from poc.work.rcs_common import (
     DEFAULT_TAB,
     DEFAULT_TIMEOUT,
     DEFAULT_WINDOW_TITLE_REGEX,
-    PYWIN_AVAILABLE,
     connect_rcs_window,
     env_flag,
     env_float,
@@ -58,9 +57,6 @@ def main() -> int:
     if os.name != "nt":
         print("[ERROR] 이 스크립트는 Windows 전용입니다.")
         return 1
-    if not PYWIN_AVAILABLE:
-        print("[ERROR] pywinauto가 필요합니다: pip install pywinauto")
-        return 2
 
     settings = load_settings()
 

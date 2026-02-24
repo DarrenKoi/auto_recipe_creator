@@ -37,6 +37,7 @@ Thumbs.db
 
 # Project specific
 captures/
+poc/work/debug_images/
 *.png
 *.jpg
 *.jpeg

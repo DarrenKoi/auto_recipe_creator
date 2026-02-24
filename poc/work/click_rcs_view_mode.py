@@ -51,7 +51,7 @@ DESKTOP_SCAN_BACKENDS = tuple(
     dict.fromkeys(b for b in _desktop_backends if b in {"uia", "win32"})
 ) or ("uia", "win32")
 
-VLM_MODEL = os.environ.get("VLM_MODEL_NAME", "Kimi-K2.5").strip() or "Kimi-K2.5"
+VLM_MODEL = "Kimi-K2.5"
 
 TARGET_ELEMENTS = ["view_tab", "list_tab"]
 TARGET_CLICK_KEY = "view_tab"

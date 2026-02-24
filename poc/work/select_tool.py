@@ -52,6 +52,7 @@ DEFAULT_VLM_MODEL = "Kimi-K2.5"
 DEFAULT_VLM_TEMPERATURE = 0.0
 DEFAULT_TOOL_NAME = "MCD018"
 DEFAULT_VLM_CLICK_Y_OFFSET = 10
+ALLOWED_CENTER_ANCHORS = {"name_center", "tool_name_center", "text_center"}
 
 
 @dataclass(frozen=True)
@@ -428,10 +429,11 @@ def _select_tool_vlm(rcs_window, settings: SelectToolSettings) -> bool:
         return False
 
     coord_anchor = str(target.get("coord_anchor", "")).lower()
-    if coord_anchor and coord_anchor != "last_letter":
+    if coord_anchor and coord_anchor not in ALLOWED_CENTER_ANCHORS:
+        allowed = ", ".join(sorted(ALLOWED_CENTER_ANCHORS))
         print(
             f"[ERROR] coord_anchor={coord_anchor!r} 은 허용되지 않습니다. "
-            "last_letter만 사용합니다."
+            f"{allowed} 만 사용합니다."
         )
         return False
 

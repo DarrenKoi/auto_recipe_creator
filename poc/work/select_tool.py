@@ -5,7 +5,7 @@
 환경 변수:
     RCS_MAIN_WINDOW_REGEX     연결할 RCS 창 제목 정규식 (우선순위 1)
     RCS_WINDOW_TITLE          연결할 RCS 창 제목 정규식 (우선순위 2)
-    RCS_TOOL_NAME             선택할 툴 이름 (필수)
+    RCS_TOOL_NAME             선택할 툴 이름 (기본: MCD018)
     RCS_TIMEOUT               창 탐색 대기 제한 시간(초, 기본: 15)
     RCS_SELECT_NO_SWITCH      1/true/yes/on 이면 List 탭 자동 전환 생략
     RCS_SELECT_DOUBLE_CLICK   1/true/yes/on 이면 더블클릭
@@ -27,30 +27,10 @@ from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 
-try:
-    import mss
-    import mss.tools
-
-    MSS_AVAILABLE = True
-except ImportError:
-    mss = None  # type: ignore[assignment]
-    MSS_AVAILABLE = False
-
-try:
-    from PIL import Image
-
-    PIL_AVAILABLE = True
-except ImportError:
-    Image = None  # type: ignore[assignment]
-    PIL_AVAILABLE = False
-
-try:
-    from pywinauto import mouse
-
-    PYWINAUTO_MOUSE_AVAILABLE = True
-except ImportError:
-    mouse = None  # type: ignore[assignment]
-    PYWINAUTO_MOUSE_AVAILABLE = False
+import mss
+import mss.tools
+from PIL import Image
+from pywinauto import mouse
 
 from poc.work.list_up_tools import get_tool_list
 from poc.work.prompts import build_rcs_select_tool_prompt
@@ -72,6 +52,7 @@ DEFAULT_CLICK_RETRY_COUNT = 2
 DEFAULT_CLICK_RETRY_DELAY_SEC = 0.25
 DEFAULT_VLM_MODEL = "Kimi-K2.5"
 DEFAULT_VLM_TEMPERATURE = 0.0
+DEFAULT_TOOL_NAME = "MCD018"
 
 
 @dataclass(frozen=True)
@@ -117,7 +98,7 @@ def load_settings() -> SelectToolSettings:
     )
     return SelectToolSettings(
         window_title=window_title,
-        tool_name=os.environ.get("RCS_TOOL_NAME", "").strip(),
+        tool_name=os.environ.get("RCS_TOOL_NAME", DEFAULT_TOOL_NAME).strip() or DEFAULT_TOOL_NAME,
         timeout=env_float("RCS_TIMEOUT", DEFAULT_TIMEOUT),
         no_switch=env_flag("RCS_SELECT_NO_SWITCH", False),
         double_click=env_flag("RCS_SELECT_DOUBLE_CLICK", False),
@@ -163,11 +144,6 @@ def _to_int(value) -> int | None:
 
 
 def _capture_window(window) -> tuple["Image.Image", str, int, int]:
-    if not MSS_AVAILABLE:
-        raise RuntimeError("mss가 설치되어 있지 않습니다. pip install mss")
-    if not PIL_AVAILABLE:
-        raise RuntimeError("Pillow가 설치되어 있지 않습니다. pip install Pillow")
-
     rect = window.rectangle()
     region = {
         "left": rect.left,
@@ -295,16 +271,15 @@ def _click_tool_at_point(
         except Exception as exc:
             print(f"[WARNING] click_input 실패 (attempt={attempt}): {exc}")
 
-        if PYWINAUTO_MOUSE_AVAILABLE:
-            try:
-                if double_click:
-                    mouse.double_click(button="left", coords=(screen_x, screen_y))
-                else:
-                    mouse.click(button="left", coords=(screen_x, screen_y))
-                print(f"[INFO] mouse fallback 성공 (attempt={attempt})")
-                return True
-            except Exception as exc:
-                print(f"[WARNING] mouse fallback 실패 (attempt={attempt}): {exc}")
+        try:
+            if double_click:
+                mouse.double_click(button="left", coords=(screen_x, screen_y))
+            else:
+                mouse.click(button="left", coords=(screen_x, screen_y))
+            print(f"[INFO] mouse fallback 성공 (attempt={attempt})")
+            return True
+        except Exception as exc:
+            print(f"[WARNING] mouse fallback 실패 (attempt={attempt}): {exc}")
 
         time.sleep(max(0.0, settings.click_retry_delay_sec))
 
@@ -436,10 +411,6 @@ def main() -> int:
         return 1
 
     settings = load_settings()
-
-    if not settings.tool_name:
-        print("[ERROR] 환경변수 RCS_TOOL_NAME 이 필요합니다.")
-        return 1
 
     try:
         rcs_win = connect_rcs_window(settings.window_title, settings.timeout)

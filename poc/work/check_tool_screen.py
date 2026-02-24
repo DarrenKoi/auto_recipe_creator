@@ -80,12 +80,26 @@ def _is_target_process(process_name: str, allowed_names: tuple[str, ...]) -> boo
 def _build_tool_window_regex(tool_name: str, custom_pattern: str = "") -> str:
     if custom_pattern.strip():
         return custom_pattern.strip()
-    escaped_tool = re.escape(tool_name.strip() or DEFAULT_TOOL_NAME)
-    return rf"Remote Monitoring System.*\[[^\]]*{escaped_tool}[^\]]*\]"
+    return r"Remote Monitoring System.*\[[^\]]+\]"
 
 
-def _is_match(title: str, pattern: str) -> bool:
-    return re.search(pattern, title or "", flags=re.IGNORECASE) is not None
+def _is_tool_window_title(title: str, regex_text: str, tool_name: str) -> bool:
+    title_text = title or ""
+    try:
+        regex_matched = re.search(regex_text, title_text, flags=re.IGNORECASE) is not None
+    except re.error:
+        t = title_text.lower()
+        regex_matched = "remote monitoring system" in t and "[" in t and "]" in t
+
+    tool_matched = (
+        re.search(
+            re.escape(tool_name.strip() or DEFAULT_TOOL_NAME),
+            title_text,
+            flags=re.IGNORECASE,
+        )
+        is not None
+    )
+    return regex_matched and tool_matched
 
 
 def load_settings() -> ToolScreenSettings:
@@ -148,16 +162,19 @@ def _find_tool_windows(
     pattern: str,
     backends: tuple[str, ...],
     process_names: tuple[str, ...],
-) -> tuple[list[tuple[str, str, int | None, str, object]], str]:
+    tool_name: str,
+) -> tuple[list[tuple[str, str, int | None, str, object]], str, list[str]]:
     title_matches: list[tuple[str, str, int | None, str, object]] = []
     process_matches: list[tuple[str, str, int | None, str, object]] = []
     seen_keys: set[tuple[str, int | None, str]] = set()
     process_cache: dict[int, str] = {}
+    debug_rows: list[str] = []
     for backend in backends:
         try:
             windows = Desktop(backend=backend).windows(top_level_only=True, visible_only=True)
         except Exception as exc:
             print(f"[WARNING] backend={backend} 창 조회 실패: {exc}")
+            debug_rows.append(f"desktop[{backend}] windows-error={exc}")
             continue
 
         for win in windows:
@@ -165,21 +182,29 @@ def _find_tool_windows(
                 title = win.window_text() or ""
             except Exception:
                 title = ""
-            if _is_match(title, pattern):
-                pid = _safe_process_id(win)
-                process_name = _resolve_process_name(pid, process_cache)
-                row = (backend, title, pid, process_name, win)
-                dedupe_key = (_normalize_process_name(process_name), pid, title)
-                if dedupe_key in seen_keys:
-                    continue
-                seen_keys.add(dedupe_key)
-                title_matches.append(row)
-                if _is_target_process(process_name, process_names):
-                    process_matches.append(row)
+            pid = _safe_process_id(win)
+            process_name = _resolve_process_name(pid, process_cache)
+            matched = _is_tool_window_title(title, pattern, tool_name)
+            process_matched = _is_target_process(process_name, process_names)
+            debug_rows.append(
+                f"desktop[{backend}] matched={matched} process_match={process_matched} "
+                f"pid={pid} process={process_name or 'unknown'} title={title!r}"
+            )
+            if not matched:
+                continue
+
+            row = (backend, title, pid, process_name, win)
+            dedupe_key = (_normalize_process_name(process_name), pid, title)
+            if dedupe_key in seen_keys:
+                continue
+            seen_keys.add(dedupe_key)
+            title_matches.append(row)
+            if process_matched:
+                process_matches.append(row)
 
     if process_matches:
-        return process_matches, "process+title"
-    return title_matches, "title"
+        return process_matches, "process+title", debug_rows
+    return title_matches, "title", debug_rows
 
 
 def _activate_window(
@@ -250,10 +275,11 @@ def main() -> int:
     seen = set()
 
     while time.time() < deadline:
-        matches, match_mode = _find_tool_windows(
+        matches, match_mode, debug_rows = _find_tool_windows(
             settings.tool_window_regex,
             settings.backends,
             settings.process_names,
+            settings.tool_name,
         )
         if matches:
             for idx, (backend, title, pid, process_name, _win) in enumerate(matches, start=1):
@@ -273,9 +299,16 @@ def main() -> int:
             return 0
 
         if settings.debug:
-            if "__none__" not in seen:
-                print("[DEBUG] 아직 감지된 창이 없습니다.")
-                seen.add("__none__")
+            if "__scan__" not in seen:
+                print(f"[DEBUG] 툴 화면 regex: {settings.tool_window_regex!r}")
+                print(f"[DEBUG] 툴명 포함 검사: {settings.tool_name!r}")
+                seen.add("__scan__")
+            for row in debug_rows:
+                key = f"row::{row}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                print(f"[DEBUG] {row}")
 
         time.sleep(max(0.1, settings.check_interval))
 

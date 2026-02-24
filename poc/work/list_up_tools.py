@@ -79,6 +79,8 @@ TOOL_LIST_EXTRA_INSTRUCTIONS = (
     "Do not search for or reason about View/List tab switching.",
     "Read only visible rows in the current list panel.",
     "Tool name is on the left, status light is on the right side of that row.",
+    "If a tool name starts with numbers, keep those numbers as part of the name.",
+    "Do not drop leading numeric prefixes even if they look like row indices.",
     "Green light means status=on, black light means status=off.",
     "Do not infer rows that are not visible.",
 )

@@ -28,6 +28,19 @@ def build_rcs_tool_list_reader_prompt(
         "Return rows in top-to-bottom order.",
         "Ignore tabs, buttons, and unrelated text outside the tool list rows.",
         "",
+        "Tool-name transcription rules (critical):",
+        "- Copy each tool name exactly as visible.",
+        "- Preserve leading digits and symbols in the name.",
+        "- Never drop numeric prefixes even if they look like row numbers.",
+        "- Keep punctuation/spaces as-is (for example: '.', '-', '_', '/', '()').",
+        "- If a name starts with a number, that number must remain in `name`.",
+        "",
+        "Examples:",
+        '- visible: "1ETCH_MAIN" -> name: "1ETCH_MAIN"',
+        '- visible: "02-CD_MEASURE" -> name: "02-CD_MEASURE"',
+        '- visible: "3.INSPECT TOOL" -> name: "3.INSPECT TOOL"',
+        '- do not return: "ETCH_MAIN", "CD_MEASURE", "INSPECT TOOL"',
+        "",
     ]
 
     if extra_instructions:

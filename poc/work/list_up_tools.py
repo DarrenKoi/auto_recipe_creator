@@ -2,7 +2,7 @@
 
 기본 동작:
 1) 현재 화면이 이미 List 탭이라고 가정
-2) List 영역의 툴 이름 + 상태등(녹색=on, 검정=off) 추출
+2) List 영역의 툴 이름 + 상태등(녹색=on, 검정=off) + 좌표 추출
 
 참고:
 - `get_tool_list()` 함수는 기존 UIA 기반 조회 방식으로 유지되어
@@ -82,6 +82,10 @@ TOOL_LIST_EXTRA_INSTRUCTIONS = (
     "If a tool name starts with numbers, keep those numbers as part of the name.",
     "Do not drop leading numeric prefixes even if they look like row indices.",
     "Green light means status=on, black light means status=off.",
+    "Return x,y for each tool row in image pixel coordinates.",
+    "Use x,y on the first letter of each tool name.",
+    "Do not use status-light position for x,y.",
+    "Set coord_anchor to first_letter for each row.",
     "Do not infer rows that are not visible.",
 )
 
@@ -100,6 +104,8 @@ class ListToolsSettings:
     vlm_api_key: str
     vlm_model: str
     vlm_temperature: float
+    target_tool_name: str
+    target_tool_double_click: bool
 
 
 def _parse_int_env(name: str, default: int) -> int:
@@ -143,6 +149,8 @@ def load_settings() -> ListToolsSettings:
         vlm_api_key=os.environ.get("VLM_API_KEY", "").strip(),
         vlm_model=os.environ.get("VLM_MODEL_NAME", DEFAULT_VLM_MODEL).strip() or DEFAULT_VLM_MODEL,
         vlm_temperature=env_float("VLM_TEMPERATURE", DEFAULT_VLM_TEMPERATURE),
+        target_tool_name=os.environ.get("RCS_TARGET_TOOL_NAME", "MCD018").strip(),
+        target_tool_double_click=env_flag("RCS_TARGET_TOOL_DOUBLE_CLICK", True),
     )
 
 
@@ -361,6 +369,20 @@ def _normalize_tool_status(status_text: str, indicator_color: str) -> tuple[str,
     return "off", "black"
 
 
+def _to_int(value) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        if isinstance(value, (int, float)):
+            return int(value)
+        text = str(value).strip()
+        if not text:
+            return None
+        return int(float(text))
+    except (TypeError, ValueError):
+        return None
+
+
 def _parse_tool_rows(data: dict) -> list[dict]:
     raw_rows = data.get("tools")
     if not isinstance(raw_rows, list):
@@ -388,9 +410,123 @@ def _parse_tool_rows(data: dict) -> list[dict]:
             str(row.get("status", "")),
             str(row.get("indicator_color", row.get("light", ""))),
         )
-        parsed.append({"name": name, "status": status, "indicator_color": color})
+
+        raw_x = row.get("x")
+        raw_y = row.get("y")
+        if (raw_x is None or raw_y is None) and isinstance(row.get("coord"), dict):
+            raw_x = row["coord"].get("x")
+            raw_y = row["coord"].get("y")
+        x = _to_int(raw_x)
+        y = _to_int(raw_y)
+
+        coord_anchor = str(row.get("coord_anchor", row.get("anchor", ""))).strip().lower()
+        if coord_anchor in {"name", "light"}:
+            print(
+                f"[WARNING] row#{idx} coord_anchor={coord_anchor!r} 은 사용하지 않습니다: "
+                f"name={name!r}"
+            )
+            coord_anchor = "invalid"
+        elif coord_anchor not in {"first_letter", ""}:
+            coord_anchor = ""
+
+        parsed_row = {"name": name, "status": status, "indicator_color": color}
+        if coord_anchor == "invalid":
+            print(f"[WARNING] row#{idx} 좌표 폐기: first_letter 기준 좌표만 허용됩니다.")
+        elif x is not None and y is not None:
+            parsed_row["x"] = x
+            parsed_row["y"] = y
+            if coord_anchor == "first_letter":
+                parsed_row["coord_anchor"] = coord_anchor
+        else:
+            print(
+                f"[WARNING] row#{idx} 좌표 누락/파싱 실패: "
+                f"name={name!r}, raw_x={raw_x!r}, raw_y={raw_y!r}"
+            )
+
+        parsed.append(parsed_row)
 
     return parsed
+
+
+def _find_target_tool(parsed_tools: list[dict], target_name: str) -> dict | None:
+    target_norm = target_name.strip().lower()
+    if not target_norm:
+        return None
+
+    # 1) 완전 일치 우선
+    for tool in parsed_tools:
+        name = str(tool.get("name", "")).strip()
+        if name.lower() == target_norm:
+            return tool
+
+    # 2) 부분 일치 보조
+    for tool in parsed_tools:
+        name = str(tool.get("name", "")).strip()
+        if target_norm in name.lower():
+            print(f"[WARNING] 타겟 툴 부분 일치 사용: target={target_name!r}, matched={name!r}")
+            return tool
+
+    return None
+
+
+def _click_tool_row(window, tool: dict, settings: ListToolsSettings) -> bool:
+    coord_anchor = str(tool.get("coord_anchor", "")).strip().lower()
+    if coord_anchor != "first_letter":
+        print(
+            f"[ERROR] coord_anchor={coord_anchor or '(missing)'} 입니다. "
+            f"first_letter만 허용됩니다: {tool.get('name', '(unknown)')}"
+        )
+        return False
+
+    x = _to_int(tool.get("x"))
+    y = _to_int(tool.get("y"))
+    if x is None or y is None:
+        print(f"[ERROR] 타겟 툴 좌표가 없습니다: {tool.get('name', '(unknown)')}")
+        return False
+
+    rect = window.rectangle()
+    screen_x = max(rect.left, min(rect.left + x, rect.right - 1))
+    screen_y = max(rect.top, min(rect.top + y, rect.bottom - 1))
+    rel_x = max(0, min(x, rect.right - rect.left - 1))
+    rel_y = max(0, min(y, rect.bottom - rect.top - 1))
+
+    action = "double-click" if settings.target_tool_double_click else "single-click"
+    coord_anchor = tool.get("coord_anchor", "?")
+    print(
+        f"[INFO] 타겟 툴 {action}: "
+        f"name={tool.get('name')!r}, anchor={coord_anchor}, screen=({screen_x}, {screen_y})"
+    )
+
+    attempts = max(1, settings.click_retry_count)
+    for attempt in range(1, attempts + 1):
+        try:
+            window.set_focus()
+        except Exception:
+            pass
+
+        try:
+            if settings.target_tool_double_click:
+                window.double_click_input(coords=(rel_x, rel_y), button="left")
+            else:
+                window.click_input(coords=(rel_x, rel_y), button="left")
+            print(f"[INFO] click_input 성공 (attempt={attempt})")
+            return True
+        except Exception as exc:
+            print(f"[WARNING] click_input 실패 (attempt={attempt}): {exc}")
+
+        try:
+            if settings.target_tool_double_click:
+                mouse.double_click(button="left", coords=(screen_x, screen_y))
+            else:
+                mouse.click(button="left", coords=(screen_x, screen_y))
+            print(f"[INFO] mouse fallback 성공 (attempt={attempt})")
+            return True
+        except Exception as exc:
+            print(f"[WARNING] mouse fallback 실패 (attempt={attempt}): {exc}")
+
+        time.sleep(max(0.0, settings.click_retry_delay_sec))
+
+    return False
 
 
 def _request_vlm(
@@ -533,7 +669,26 @@ def main() -> int:
     for idx, tool in enumerate(parsed_tools, start=1):
         status_label = "ON " if tool["status"] == "on" else "OFF"
         color = tool["indicator_color"]
-        print(f"  {idx:3}. [{status_label}] {tool['name']} ({color})")
+        if "x" in tool and "y" in tool:
+            coord_anchor = tool.get("coord_anchor", "?")
+            print(
+                f"  {idx:3}. [{status_label}] {tool['name']} ({color}) "
+                f"@ ({tool['x']}, {tool['y']}) [{coord_anchor}]"
+            )
+        else:
+            print(f"  {idx:3}. [{status_label}] {tool['name']} ({color})")
+
+    if settings.target_tool_name:
+        target_tool = _find_target_tool(parsed_tools, settings.target_tool_name)
+        if target_tool is None:
+            print(f"[ERROR] 타겟 툴을 찾지 못했습니다: {settings.target_tool_name!r}")
+            return 7
+
+        if not _click_tool_row(main_window, target_tool, settings):
+            print(f"[ERROR] 타겟 툴 클릭 실패: {settings.target_tool_name!r}")
+            return 8
+
+        print(f"[INFO] 타겟 툴 클릭 완료: {target_tool.get('name', settings.target_tool_name)!r}")
 
     return 0
 

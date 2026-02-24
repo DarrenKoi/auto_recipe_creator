@@ -1,4 +1,4 @@
-"""RCS List 탭의 툴 이름/상태 추출용 VLM 프롬프트 빌더."""
+"""RCS List 탭의 툴 이름/상태/좌표 추출용 VLM 프롬프트 빌더."""
 
 from typing import Iterable
 
@@ -8,9 +8,9 @@ def build_rcs_tool_list_reader_prompt(
     height: int,
     extra_instructions: Iterable[str] | None = None,
 ) -> tuple[str, str]:
-    """Build system/user prompts for reading tool names and on/off light states."""
+    """Build prompts for reading tool names, statuses, and row coordinates."""
     system_message = (
-        "You are a precise GUI list reader. "
+        "You are a precise GUI list and coordinate reader. "
         f"The image is {width}x{height} pixels. "
         "Read only what is visible in the screenshot. "
         "Do not hallucinate missing rows. "
@@ -41,6 +41,15 @@ def build_rcs_tool_list_reader_prompt(
         '- visible: "3.INSPECT TOOL" -> name: "3.INSPECT TOOL"',
         '- do not return: "ETCH_MAIN", "CD_MEASURE", "INSPECT TOOL"',
         "",
+        "Coordinate rules (critical):",
+        "- Return one click coordinate per tool row in image pixel space.",
+        "- Use a click point on the FIRST LETTER of the tool name (coord_anchor='first_letter').",
+        "- Never use status-light position as the click coordinate.",
+        "- Never use a point from the rest of the tool name text.",
+        "- The first letter means the leftmost visible character of the tool name text.",
+        f"- x range: 0 to {width}. y range: 0 to {height}.",
+        "- x and y must be integers.",
+        "",
     ]
 
     if extra_instructions:
@@ -56,7 +65,7 @@ def build_rcs_tool_list_reader_prompt(
             "Return ONLY this JSON schema:",
             "{",
             '  "tools": [',
-            '    {"name": "<tool name>", "status": "on|off", "indicator_color": "green|black"}',
+            '    {"name": "<tool name>", "status": "on|off", "indicator_color": "green|black", "x": 0, "y": 0, "coord_anchor": "first_letter"}',
             "  ]",
             "}",
         ]

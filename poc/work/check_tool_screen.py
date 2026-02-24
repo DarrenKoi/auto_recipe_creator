@@ -2,7 +2,6 @@
 
 환경 변수:
     RCS_TOOL_NAME                대상 툴명 (기본: MCD018)
-    RCS_TOOL_SCREEN_TITLE_REGEX  감지용 정규식 (기본값은 툴명 자동 조합)
     RCS_TOOL_SCREEN_TIMEOUT      창 탐색 대기 시간(초, 기본: 15)
     RCS_TOOL_SCREEN_SETTLE_SEC   폴링 간격(초, 기본: 0.5)
     RCS_TOOL_SCREEN_BACKENDS     pywinauto 백엔드 리스트 (기본: win32,uia)
@@ -12,7 +11,6 @@
 """
 
 import os
-import re
 import sys
 import time
 from dataclasses import dataclass
@@ -38,7 +36,6 @@ DEFAULT_TOOL_PROCESS_NAMES = ("RcsViewerHD.exe",)
 class ToolScreenSettings:
     tool_name: str
     timeout: float
-    tool_window_regex: str
     debug: bool
     check_interval: float
     backends: tuple[str, ...]
@@ -77,40 +74,20 @@ def _is_target_process(process_name: str, allowed_names: tuple[str, ...]) -> boo
     return current in allowed
 
 
-def _build_tool_window_regex(tool_name: str, custom_pattern: str = "") -> str:
-    if custom_pattern.strip():
-        return custom_pattern.strip()
-    # 툴 뷰어 창 제목에 툴명이 포함되어 있으면 매칭
-    return re.escape(tool_name.strip() or DEFAULT_TOOL_NAME)
-
-
-def _is_tool_window_title(title: str, regex_text: str, tool_name: str) -> bool:
-    title_text = title or ""
-    try:
-        regex_matched = re.search(regex_text, title_text, flags=re.IGNORECASE) is not None
-    except re.error:
-        t = title_text.lower()
-        tool = (tool_name.strip() or DEFAULT_TOOL_NAME).lower()
-        regex_matched = tool in t
-    return regex_matched
+def _is_tool_window_title(title: str, tool_name: str) -> bool:
+    """창 제목에 툴명이 포함되어 있으면 매칭 (대소문자 무시)."""
+    title_lower = (title or "").lower()
+    tool_lower = (tool_name.strip() or DEFAULT_TOOL_NAME).lower()
+    return tool_lower in title_lower
 
 
 def load_settings() -> ToolScreenSettings:
     load_env()
     tool_name = os.environ.get("RCS_TOOL_NAME", "").strip() or DEFAULT_TOOL_NAME
-    user_pattern = os.environ.get("RCS_TOOL_SCREEN_TITLE_REGEX", "").strip()
-    regex = _build_tool_window_regex(tool_name, user_pattern)
-    try:
-        re.compile(regex, flags=re.IGNORECASE)
-    except re.error:
-        print(f"[ERROR] 잘못된 정규식 패턴: {regex!r}")
-        print("[WARNING] 기본 패턴으로 폴백합니다.")
-        regex = _build_tool_window_regex(tool_name, "")
 
     return ToolScreenSettings(
         tool_name=tool_name,
         timeout=env_float("RCS_TOOL_SCREEN_TIMEOUT", DEFAULT_TIMEOUT),
-        tool_window_regex=regex,
         debug=env_flag("RCS_TOOL_SCREEN_DEBUG", False),
         check_interval=env_float("RCS_TOOL_SCREEN_SETTLE_SEC", DEFAULT_TOOL_SCREEN_SETTLE_SEC),
         backends=_parse_backends(),
@@ -173,7 +150,6 @@ def _find_target_processes(process_names: tuple[str, ...]) -> list[tuple[int, st
 def _scan_window_list(
     windows,
     source_name: str,
-    regex_text: str,
     tool_name: str,
     process_cache: dict[int, str],
     debug_rows: list[str],
@@ -192,7 +168,7 @@ def _scan_window_list(
             continue
 
         process_name = _resolve_process_name(pid, process_cache)
-        matched = _is_tool_window_title(title, regex_text, tool_name)
+        matched = _is_tool_window_title(title, tool_name)
         debug_rows.append(
             f"{source_name}[{idx}] matched={matched} pid={pid} "
             f"process={process_name or 'unknown'} title={title!r}"
@@ -203,7 +179,6 @@ def _scan_window_list(
 
 
 def _find_tool_windows(
-    pattern: str,
     backends: tuple[str, ...],
     tool_name: str,
     allowed_pids: set[int] | None = None,
@@ -223,7 +198,6 @@ def _find_tool_windows(
         scanned = _scan_window_list(
             windows=windows,
             source_name=f"desktop[{backend}]",
-            regex_text=pattern,
             tool_name=tool_name,
             process_cache=process_cache,
             debug_rows=debug_rows,
@@ -298,7 +272,6 @@ def main() -> int:
 
     settings = load_settings()
     print(f"[INFO] 감지 대상 툴: {settings.tool_name}")
-    print(f"[INFO] 툴 화면 감지 패턴: {settings.tool_window_regex!r}")
     print(f"[INFO] 탐색 백엔드: {settings.backends}")
     print(f"[INFO] 우선 프로세스명: {settings.process_names}")
     if not PSUTIL_AVAILABLE:
@@ -329,7 +302,6 @@ def main() -> int:
         if pid_set:
             print("[INFO] 프로세스 기반 창 탐색 시작: PID별 툴 화면 제목 확인")
             matches, match_mode, process_rows = _find_tool_windows(
-                settings.tool_window_regex,
                 settings.backends,
                 settings.tool_name,
                 allowed_pids=pid_set,
@@ -346,7 +318,6 @@ def main() -> int:
 
         if not matches:
             all_matches, fallback_mode, fallback_rows = _find_tool_windows(
-                settings.tool_window_regex,
                 settings.backends,
                 settings.tool_name,
             )
@@ -374,7 +345,6 @@ def main() -> int:
 
         if settings.debug:
             if "__scan__" not in seen:
-                print(f"[DEBUG] 툴 화면 regex: {settings.tool_window_regex!r}")
                 print(f"[DEBUG] 감지 대상 툴명: {settings.tool_name!r}")
                 seen.add("__scan__")
             for row in debug_rows:
@@ -387,7 +357,7 @@ def main() -> int:
         time.sleep(max(0.1, settings.check_interval))
 
     print(f"[ERROR] {settings.timeout:.1f}초 내에 툴 화면을 감지하지 못했습니다.")
-    print(f"[INFO] 시도한 패턴: {settings.tool_window_regex!r}")
+    print(f"[INFO] 감지 대상 툴명: {settings.tool_name!r}")
     return 2
 
 

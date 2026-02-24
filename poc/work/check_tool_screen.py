@@ -375,7 +375,7 @@ def main() -> int:
         if settings.debug:
             if "__scan__" not in seen:
                 print(f"[DEBUG] 툴 화면 regex: {settings.tool_window_regex!r}")
-                print(f"[DEBUG] 툴명 대괄호 포함 검사: {settings.tool_name!r}")
+                print(f"[DEBUG] 감지 대상 툴명: {settings.tool_name!r}")
                 seen.add("__scan__")
             for row in debug_rows:
                 key = f"row::{row}"

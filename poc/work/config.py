@@ -84,7 +84,6 @@ class OperationConfig:
     demo_type: str = "screen_analysis"  # 데모 유형
     action_delay: float = 0.5      # 액션 후 대기 시간 (초)
     # RCS 에이전트 설정
-    rcs_tool_name: str = "MCD018"  # 선택할 도구 이름
     max_steps_login: int = 15      # 로그인 최대 스텝
     max_steps_tool: int = 10       # 도구 선택 최대 스텝
     # 캡처/쿼리 설정
@@ -146,7 +145,6 @@ class PocConfig:
             max_image_size=_int("MAX_IMAGE_SIZE", 1280),
             demo_type=_str("DEMO_TYPE", "screen_analysis"),
             action_delay=_float("ACTION_DELAY", 0.5),
-            rcs_tool_name=_str("RCS_TOOL_NAME", "MCD018"),
             max_steps_login=_int("MAX_STEPS_LOGIN", 15),
             max_steps_tool=_int("MAX_STEPS_TOOL", 10),
             capture_region=_str("CAPTURE_REGION"),

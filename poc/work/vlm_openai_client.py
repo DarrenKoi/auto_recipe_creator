@@ -1,5 +1,6 @@
 """OpenAI-compatible VLM client utilities."""
 
+import json as _json
 from dataclasses import dataclass
 
 import requests
@@ -7,11 +8,12 @@ import requests
 
 @dataclass(frozen=True)
 class ChatImageRequest:
+    """VLM 채팅 이미지 요청 데이터."""
     model: str
     system_message: str
     user_text: str
     image_b64: str
-    image_mime: str = "image/png"
+    image_mime: str = "image/webp"
     temperature: float = 0.0
 
 
@@ -50,6 +52,9 @@ class OpenAICompatibleVLMClient:
         return str(content)
 
     def chat_with_image(self, request: ChatImageRequest) -> str:
+        b64_len_kb = len(request.image_b64) * 3 / 4 / 1024
+        print(f"[INFO] VLM 요청: model={request.model}, image={b64_len_kb:.1f}KB ({request.image_mime})")
+
         payload = {
             "model": request.model,
             "messages": [
@@ -74,12 +79,26 @@ class OpenAICompatibleVLMClient:
             json=payload,
             timeout=self.timeout_sec,
         )
+
+        # 응답 상세 로그
+        print(f"[INFO] VLM 응답 status={response.status_code}")
+        print(f"[INFO] VLM 응답 headers: content-type={response.headers.get('content-type', 'N/A')}")
+        try:
+            raw_body = response.json()
+            # choices 내용은 길 수 있으므로 요약 출력
+            log_body = dict(raw_body)
+            if "choices" in log_body:
+                log_body["choices"] = f"[{len(raw_body['choices'])} item(s)]"
+            print(f"[INFO] VLM 응답 body (요약): {_json.dumps(log_body, ensure_ascii=False)}")
+        except Exception:
+            print(f"[INFO] VLM 응답 body (raw): {response.text[:500]}")
+
         response.raise_for_status()
 
         data = response.json()
         choices = data.get("choices") or []
         if not choices:
-            raise ValueError("VLM response has no choices")
+            raise ValueError(f"VLM response has no choices: {_json.dumps(data, ensure_ascii=False)[:300]}")
         message = choices[0].get("message") or {}
         return self._coerce_content(message.get("content", ""))
 

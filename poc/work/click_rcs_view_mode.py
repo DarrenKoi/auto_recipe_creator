@@ -163,13 +163,18 @@ def _capture_window(window) -> Image.Image:
 # ─────────────────────────── VLM 호출 ───────────────────────────
 
 
+WEBP_QUALITY = 90
+
+
 def _encode_image(image: Image.Image) -> tuple[str, int, int]:
-    """PIL Image를 base64 PNG로 인코딩한다."""
-    buf = BytesIO()
-    image.save(buf, format="PNG", optimize=True)
-    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    """PIL Image를 base64 WebP로 인코딩한다 (원본 해상도 유지)."""
     w, h = image.size
-    print(f"[INFO] 이미지 인코딩: {w}x{h}, {len(buf.getvalue()) / 1024:.1f}KB")
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+    buf = BytesIO()
+    image.save(buf, format="WEBP", quality=WEBP_QUALITY)
+    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    print(f"[INFO] 이미지 인코딩: {w}x{h}, WebP q={WEBP_QUALITY}, {len(buf.getvalue()) / 1024:.1f}KB")
     return b64, w, h
 
 

@@ -15,7 +15,7 @@ import time
 from typing import Optional, Dict, List, Any
 from dataclasses import dataclass
 
-from poc.work.vlm_openai_client import ChatImageRequest, OpenAICompatibleVLMClient
+from poc.work.vlm_openai_client import ChatImageRequest, LangChainOpenAICompatibleVLMClient
 
 
 @dataclass
@@ -63,7 +63,7 @@ class VLMScreenAnalyzer:
             or os.environ.get("VLM_API_BASE_URL")
         )
         self.model_name = model_name or os.environ.get("VLM_MODEL_NAME", "")
-        self.vlm_client = OpenAICompatibleVLMClient(
+        self.vlm_client = LangChainOpenAICompatibleVLMClient(
             base_url=self.api_base_url or "",
             api_key=self.api_key or "",
             timeout_sec=60.0,

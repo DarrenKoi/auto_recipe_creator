@@ -57,7 +57,7 @@ except ImportError:
     MSS_AVAILABLE = False
     print("[WARNING] mss 미설치. pip install mss")
 
-from poc.work.vlm_openai_client import ChatImageRequest, OpenAICompatibleVLMClient
+from poc.work.vlm_openai_client import ChatImageRequest, LangChainOpenAICompatibleVLMClient
 
 try:
     from dotenv import load_dotenv
@@ -281,7 +281,7 @@ def ask_vlm_click_point(
 bbox는 클릭 대상의 바운딩 박스 [x1, y1, x2, y2]를 픽셀 좌표로 반환하세요.
 좌표 범위: x는 0~{w}, y는 0~{h}."""
 
-    vlm_client = OpenAICompatibleVLMClient(
+    vlm_client = LangChainOpenAICompatibleVLMClient(
         base_url=api_url,
         api_key=api_key,
         timeout_sec=60.0,

@@ -55,7 +55,7 @@ from poc.work.rcs_common import (
     env_float,
     load_env,
 )
-from poc.work.vlm_openai_client import ChatImageRequest, OpenAICompatibleVLMClient
+from poc.work.vlm_openai_client import ChatImageRequest, LangChainOpenAICompatibleVLMClient
 
 DEFAULT_MAIN_WINDOW_REGEX = r"\brcs\b.*\[server\s*:[^\]]+\]"
 DEFAULT_TAB_SETTLE_SEC = 0.35
@@ -392,7 +392,7 @@ def _parse_tool_rows(data: dict) -> list[dict]:
 
 
 def _request_vlm(
-    client: OpenAICompatibleVLMClient,
+    client: LangChainOpenAICompatibleVLMClient,
     settings: ListToolsSettings,
     system_message: str,
     prompt: str,
@@ -474,7 +474,7 @@ def main() -> int:
         print("[ERROR] VLM_API_URL 또는 VLM_API_BASE_URL 환경변수가 필요합니다.")
         return 3
 
-    client = OpenAICompatibleVLMClient(
+    client = LangChainOpenAICompatibleVLMClient(
         base_url=settings.vlm_api_url,
         api_key=settings.vlm_api_key,
         timeout_sec=120.0,

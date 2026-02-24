@@ -25,7 +25,7 @@ from pywinauto import mouse
 from pywinauto import Desktop
 from pywinauto.application import Application
 
-from poc.work.vlm_openai_client import ChatImageRequest, OpenAICompatibleVLMClient
+from poc.work.vlm_openai_client import ChatImageRequest, LangChainOpenAICompatibleVLMClient
 from poc.work.prompts import build_rcs_login_locator_prompt
 
 load_dotenv()
@@ -80,7 +80,7 @@ TARGET_ELEMENTS = [
     "shortcut_button",
 ]
 
-VLM_CLIENT = OpenAICompatibleVLMClient(
+VLM_CLIENT = LangChainOpenAICompatibleVLMClient(
     base_url=VLM_API_URL,
     api_key=VLM_API_KEY,
     timeout_sec=120.0,

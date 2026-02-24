@@ -21,7 +21,7 @@ from PIL import Image, ImageDraw, ImageFont
 from pywinauto import mouse
 from pywinauto import Desktop
 
-from poc.work.vlm_openai_client import ChatImageRequest, OpenAICompatibleVLMClient
+from poc.work.vlm_openai_client import ChatImageRequest, LangChainOpenAICompatibleVLMClient
 from poc.work.prompts import build_rcs_main_tab_locator_prompt
 
 load_dotenv()
@@ -69,7 +69,7 @@ ELEMENT_COLORS = {
     "list_tab": "cyan",
 }
 
-VLM_CLIENT = OpenAICompatibleVLMClient(
+VLM_CLIENT = LangChainOpenAICompatibleVLMClient(
     base_url=VLM_API_URL,
     api_key=VLM_API_KEY,
     timeout_sec=120.0,

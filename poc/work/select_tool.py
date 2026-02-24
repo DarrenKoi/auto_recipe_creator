@@ -10,6 +10,8 @@
     RCS_SELECT_DOUBLE_CLICK   1/true/yes/on 이면 더블클릭
     RCS_SELECT_LIST_FIRST     1/true/yes/on 이면 선택 전에 전체 목록 출력
     RCS_SELECT_DEBUG          1/true/yes/on 이면 컨트롤 트리 덤프
+    RCS_TAB_SETTLE_SEC        List 탭 클릭 후 대기 시간(초, 기본: 0.35)
+    RCS_SELECT_AUTO_LIST_TAB  1/true/yes/on 이면 선택 전 List 탭 자동 클릭(기본: true)
     RCS_SELECT_LIST_SETTLE_SEC List 탭 대기 시간(초, 기본: 0.6)
     RCS_CLICK_RETRY_COUNT     클릭 재시도 횟수(기본: 2)
     RCS_CLICK_RETRY_DELAY_SEC 클릭 재시도 간격(초, 기본: 0.25)
@@ -32,7 +34,10 @@ from PIL import Image, ImageDraw, ImageFont
 from pywinauto import mouse
 
 from poc.work.list_up_tools import get_tool_list
-from poc.work.prompts import build_rcs_select_tool_prompt
+from poc.work.prompts import (
+    build_rcs_main_tab_locator_prompt,
+    build_rcs_select_tool_prompt,
+)
 from poc.work.rcs_common import (
     DEFAULT_TIMEOUT,
     DEFAULT_WINDOW_TITLE_REGEX,
@@ -51,7 +56,14 @@ DEFAULT_CLICK_RETRY_DELAY_SEC = 0.25
 DEFAULT_VLM_MODEL = "Kimi-K2.5"
 DEFAULT_VLM_TEMPERATURE = 0.0
 DEFAULT_TOOL_NAME = "MCD018"
+DEFAULT_TAB_SETTLE_SEC = 0.35
 DEFAULT_VLM_CLICK_Y_OFFSET = 0
+TARGET_TAB_KEYS = ("view_tab", "list_tab")
+TAB_EXTRA_INSTRUCTIONS = (
+    "Focus on the top-left tab strip only.",
+    "Use the first letter anchors: 'V' in View, 'L' in List.",
+    "View and List tabs are adjacent near the top-left corner.",
+)
 COORD_ANCHOR_ALIASES = {
     "name_center": "name_center",
     "tool_name_center": "name_center",
@@ -75,6 +87,8 @@ class SelectToolSettings:
     double_click: bool
     show_list_first: bool
     debug: bool
+    tab_settle_sec: float
+    auto_select_list_tab: bool
     list_settle_sec: float
     click_retry_count: int
     click_retry_delay_sec: float
@@ -116,6 +130,8 @@ def load_settings() -> SelectToolSettings:
         double_click=env_flag("RCS_SELECT_DOUBLE_CLICK", True),
         show_list_first=env_flag("RCS_SELECT_LIST_FIRST", False),
         debug=env_flag("RCS_SELECT_DEBUG", False),
+        tab_settle_sec=env_float("RCS_TAB_SETTLE_SEC", DEFAULT_TAB_SETTLE_SEC),
+        auto_select_list_tab=env_flag("RCS_SELECT_AUTO_LIST_TAB", True),
         list_settle_sec=env_float("RCS_SELECT_LIST_SETTLE_SEC", DEFAULT_LIST_SETTLE_SEC),
         click_retry_count=_parse_int_env("RCS_CLICK_RETRY_COUNT", DEFAULT_CLICK_RETRY_COUNT),
         click_retry_delay_sec=env_float("RCS_CLICK_RETRY_DELAY_SEC", DEFAULT_CLICK_RETRY_DELAY_SEC),
@@ -186,6 +202,80 @@ def _save_snapshot(image: "Image.Image", filename: str) -> None:
     out_path = Path(__file__).parent / filename
     image.save(out_path)
     print(f"[INFO] 스냅샷 저장: {out_path}")
+
+
+def _focus_main_window(window) -> None:
+    try:
+        if hasattr(window, "is_minimized") and window.is_minimized():
+            window.restore()
+            time.sleep(0.15)
+    except Exception:
+        pass
+
+    try:
+        window.set_focus()
+    except Exception as exc:
+        print(f"[WARNING] 메인 창 포커스 실패: {exc}")
+
+    try:
+        rect = window.rectangle()
+        print(
+            f"[INFO] 캡처 대상 창 영역: left={rect.left}, top={rect.top}, "
+            f"size={rect.right - rect.left}x{rect.bottom - rect.top}"
+        )
+    except Exception as exc:
+        print(f"[WARNING] 창 영역 조회 실패: {exc}")
+
+
+def _save_marked_image(image: "Image.Image", elements: dict, filename: str) -> None:
+    """좌표를 스크린샷 위에 마킹해서 저장한다."""
+    debug_img = image.copy()
+    draw = ImageDraw.Draw(debug_img)
+
+    try:
+        font = ImageFont.truetype("arial.ttf", 13)
+    except Exception:
+        font = ImageFont.load_default()
+
+    radius = 12
+    colors = {"view_tab": "orange", "list_tab": "cyan"}
+    for name, point in elements.items():
+        if not isinstance(point, dict) or "x" not in point or "y" not in point:
+            continue
+        x, y = int(point["x"]), int(point["y"])
+        color = colors.get(name, "white")
+        draw.line([(x - radius, y), (x + radius, y)], fill=color, width=2)
+        draw.line([(x, y - radius), (x, y + radius)], fill=color, width=2)
+        draw.ellipse(
+            [(x - radius, y - radius), (x + radius, y + radius)],
+            outline=color,
+            width=2,
+        )
+        draw.text((x + radius + 3, y - 16), f"{name} ({x},{y})", fill=color, font=font)
+
+    out_path = Path(__file__).parent / filename
+    debug_img.save(out_path)
+    print(f"[INFO] 디버그 이미지 저장: {out_path}")
+
+
+def _parse_tab_coords(data: dict, img_w: int, img_h: int) -> dict:
+    for key in TARGET_TAB_KEYS:
+        point = data.get(key)
+        if not isinstance(point, dict):
+            print(f"  [MISS] {key:20s} — VLM 응답에 없음")
+            continue
+        raw_x, raw_y = point.get("x", 0), point.get("y", 0)
+        x = _to_int(raw_x)
+        y = _to_int(raw_y)
+        if x is None or y is None:
+            print(f"  [MISS] {key:20s} — 좌표 파싱 실패 raw=({raw_x!r}, {raw_y!r})")
+            continue
+        data[key] = {"x": x, "y": y}
+        out = ""
+        if not (0 <= x <= img_w and 0 <= y <= img_h):
+            out = " ← OUT OF BOUNDS"
+        print(f"  [RAW ] {key:20s} — raw=({raw_x}, {raw_y}) → px=({x}, {y}){out}")
+    return data
 
 
 def _save_click_preview_image(
@@ -278,6 +368,60 @@ def _save_vlm_target_debug(raw_response: str, extracted_json: dict, parsed_targe
     }
     out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"[INFO] VLM 타겟 디버그 저장: {out_path}")
+
+
+def _auto_click_list_tab(
+    rcs_window,
+    settings: SelectToolSettings,
+    client: LangChainOpenAICompatibleVLMClient,
+) -> bool:
+    _focus_main_window(rcs_window)
+    tabs_image, tabs_b64, tabs_w, tabs_h = _capture_window(rcs_window)
+    _save_snapshot(tabs_image, "debug_select_tabs_input.png")
+    tabs_system, tabs_prompt = build_rcs_main_tab_locator_prompt(
+        width=tabs_w,
+        height=tabs_h,
+        target_keys=TARGET_TAB_KEYS,
+        extra_instructions=TAB_EXTRA_INSTRUCTIONS,
+    )
+
+    try:
+        tabs_raw = _request_vlm(client, settings, tabs_system, tabs_prompt, tabs_b64)
+        tabs_data = _extract_json(tabs_raw)
+        print(f"[INFO] 탭 좌표 JSON:\n{json.dumps(tabs_data, indent=2, ensure_ascii=False)}\n")
+        tabs_data = _parse_tab_coords(tabs_data, tabs_w, tabs_h)
+        _save_marked_image(tabs_image, tabs_data, "debug_select_tabs_coords.png")
+    except Exception as exc:
+        print(f"[WARNING] List 탭 자동 선택 단계 실패: {exc}")
+        return False
+
+    list_tab = tabs_data.get("list_tab")
+    if not isinstance(list_tab, dict) or "x" not in list_tab or "y" not in list_tab:
+        print("[WARNING] List 탭 좌표가 없어서 자동 선택을 건너뜁니다.")
+        return False
+
+    tab_x = int(list_tab["x"])
+    tab_y = int(list_tab["y"])
+    print(f"[INFO] List 탭 클릭 좌표: ({tab_x}, {tab_y})")
+    if not _click_tool_at_point(
+        rcs_window,
+        tab_x,
+        tab_y,
+        double_click=False,
+        settings=settings,
+    ):
+        print("[WARNING] List 탭 자동 클릭 실패")
+        return False
+
+    print(f"[INFO] List 탭 클릭 후 안정화 대기: {settings.tab_settle_sec:.2f}s")
+    time.sleep(max(0.0, settings.tab_settle_sec))
+    _focus_main_window(rcs_window)
+    try:
+        after_image, _, _, _ = _capture_window(rcs_window)
+        _save_snapshot(after_image, "debug_select_tabs_after_list_click.png")
+    except Exception as exc:
+        print(f"[WARNING] List 탭 클릭 후 스냅샷 저장 실패: {exc}")
+    return True
 
 
 def _request_vlm(
@@ -451,7 +595,22 @@ def _select_tool_vlm(rcs_window, settings: SelectToolSettings) -> bool:
         print("[WARNING] VLM_API_URL/VLM_API_BASE_URL 미설정 — VLM 선택 건너뜀")
         return False
 
+    client = LangChainOpenAICompatibleVLMClient(
+        base_url=settings.vlm_api_url,
+        api_key=settings.vlm_api_key,
+        timeout_sec=120.0,
+    )
+    _focus_main_window(rcs_window)
+    if settings.auto_select_list_tab:
+        print("[INFO] VLM으로 List 탭 자동 선택을 시도합니다.")
+        switched = _auto_click_list_tab(rcs_window, settings, client)
+        if not switched:
+            print("[WARNING] List 탭 자동 선택 실패 — 현재 화면 기준으로 계속 진행합니다.")
+    else:
+        print("[INFO] List 탭 자동 선택 비활성화(RCS_SELECT_AUTO_LIST_TAB=0)")
+
     try:
+        _focus_main_window(rcs_window)
         list_image, image_b64, width, height = _capture_window(rcs_window)
     except Exception as exc:
         print(f"[ERROR] 화면 캡처 실패: {exc}")
@@ -459,12 +618,6 @@ def _select_tool_vlm(rcs_window, settings: SelectToolSettings) -> bool:
 
     _save_snapshot(list_image, "debug_select_tool_input.png")
     system_message, prompt = build_rcs_select_tool_prompt(width, height, settings.tool_name)
-
-    client = LangChainOpenAICompatibleVLMClient(
-        base_url=settings.vlm_api_url,
-        api_key=settings.vlm_api_key,
-        timeout_sec=120.0,
-    )
 
     try:
         raw = _request_vlm(client, settings, system_message, prompt, image_b64)
@@ -576,7 +729,7 @@ def main() -> int:
         print("[ERROR] 로그인된 RCS 메인 창을 찾을 수 없습니다.")
         return 3
 
-    print("[INFO] 현재 화면이 이미 List 탭이라고 가정하고 선택을 진행합니다.")
+    print("[INFO] List 탭 자동 선택(기본 on) 후 툴 선택을 진행합니다.")
 
     if settings.debug:
         print("[DEBUG] 전체 컨트롤 트리 덤프 (depth=5):")

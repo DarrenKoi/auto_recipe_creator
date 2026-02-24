@@ -1,13 +1,9 @@
-"""RCS 메인 화면의 List 탭에서 툴 목록/상태를 읽는다 (Windows 전용).
+"""RCS List 탭에서 특정 툴(MCD018) 좌표를 찾아 클릭한다 (Windows 전용).
 
 기본 동작:
 1) RCS 메인 창을 foreground/focus로 준비
-2) VLM으로 List 탭 자동 선택(기본 on)
-3) List 영역의 툴 이름 + 상태등(녹색=on, 검정=off) + 좌표 추출
-
-참고:
-- 이 스크립트는 목록/상태/좌표 조회만 수행한다.
-- 실제 툴 선택(클릭/더블클릭)은 `select_tool.py`에서 처리한다.
+2) List 화면에서 대상 툴 이름 좌표를 추출
+3) 좌표를 기준으로 클릭하여 툴 화면으로 진입
 """
 
 import base64
@@ -27,8 +23,7 @@ from PIL import Image, ImageDraw, ImageFont
 from pywinauto import Desktop, mouse
 
 from poc.work.prompts import (
-    build_rcs_main_tab_locator_prompt,
-    build_rcs_tool_list_reader_prompt,
+    build_rcs_select_tool_prompt,
 )
 from poc.work.rcs_common import (
     DEFAULT_TIMEOUT,
@@ -42,37 +37,13 @@ from poc.work.rcs_common import (
 from poc.work.vlm_openai_client import ChatImageRequest, LangChainOpenAICompatibleVLMClient
 
 DEFAULT_MAIN_WINDOW_REGEX = r"\brcs\b.*\[server\s*:[^\]]+\]"
-DEFAULT_TAB_SETTLE_SEC = 0.35
 DEFAULT_LIST_SETTLE_SEC = 0.60
 DEFAULT_CLICK_RETRY_COUNT = 2
 DEFAULT_CLICK_RETRY_DELAY_SEC = 0.25
 DEFAULT_VLM_MODEL = "Kimi-K2.5"
 DEFAULT_VLM_TEMPERATURE = 0.0
-TARGET_TAB_KEYS = ["view_tab", "list_tab"]
-TAB_DEBUG_COLORS = {
-    "view_tab": "orange",
-    "list_tab": "cyan",
-}
 DEBUG_IMAGE_DIR = Path(__file__).parent / "debug_images"
-TAB_EXTRA_INSTRUCTIONS = (
-    "Focus on the top-left tab strip only.",
-    "Use the first letter anchors: 'V' in View, 'L' in List.",
-    "View and List tabs are adjacent near the top-left corner.",
-)
-TOOL_LIST_EXTRA_INSTRUCTIONS = (
-    "Assume this screenshot is already on the List tab.",
-    "Do not search for or reason about View/List tab switching.",
-    "Read only visible rows in the current list panel.",
-    "Tool name is on the left, status light is on the right side of that row.",
-    "If a tool name starts with numbers, keep those numbers as part of the name.",
-    "Do not drop leading numeric prefixes even if they look like row indices.",
-    "Green light means status=on, black light means status=off.",
-    "Return x,y for each tool row in image pixel coordinates.",
-    "Use x,y on the first letter of each tool name.",
-    "Do not use status-light position for x,y.",
-    "Set coord_anchor to first_letter for each row.",
-    "Do not infer rows that are not visible.",
-)
+TARGET_TOOL_NAME = "MCD018"
 
 
 @dataclass(frozen=True)
@@ -81,9 +52,7 @@ class ListToolsSettings:
     timeout: float
     debug_main_window_titles: bool
     debug_tree: bool
-    tab_settle_sec: float
     list_settle_sec: float
-    auto_select_list_tab: bool
     click_retry_count: int
     click_retry_delay_sec: float
     vlm_api_url: str
@@ -127,9 +96,7 @@ def load_settings() -> ListToolsSettings:
         timeout=env_float("RCS_TIMEOUT", DEFAULT_TIMEOUT),
         debug_main_window_titles=env_flag("RCS_DEBUG_MAIN_WINDOW_TITLES", False),
         debug_tree=env_flag("RCS_LIST_DEBUG", False),
-        tab_settle_sec=env_float("RCS_TAB_SETTLE_SEC", DEFAULT_TAB_SETTLE_SEC),
         list_settle_sec=env_float("RCS_LIST_SETTLE_SEC", DEFAULT_LIST_SETTLE_SEC),
-        auto_select_list_tab=env_flag("RCS_LIST_AUTO_SELECT_TAB", True),
         click_retry_count=_parse_int_env("RCS_CLICK_RETRY_COUNT", DEFAULT_CLICK_RETRY_COUNT),
         click_retry_delay_sec=env_float(
             "RCS_CLICK_RETRY_DELAY_SEC",
@@ -243,26 +210,6 @@ def _extract_json(text: str) -> dict:
     return json.loads(text)
 
 
-def _parse_tab_coords(data: dict, img_w: int, img_h: int) -> dict:
-    for key in TARGET_TAB_KEYS:
-        point = data.get(key)
-        if not isinstance(point, dict):
-            print(f"  [MISS] {key:20s} — VLM 응답에 없음")
-            continue
-        raw_x, raw_y = point.get("x", 0), point.get("y", 0)
-        x = _to_int(raw_x)
-        y = _to_int(raw_y)
-        if x is None or y is None:
-            print(f"  [MISS] {key:20s} — 좌표 파싱 실패 raw=({raw_x!r}, {raw_y!r})")
-            continue
-        data[key] = {"x": x, "y": y}
-        out = ""
-        if not (0 <= x <= img_w and 0 <= y <= img_h):
-            out = " ← OUT OF BOUNDS"
-        print(f"  [RAW ] {key:20s} — raw=({raw_x}, {raw_y}) → px=({x}, {y}){out}")
-    return data
-
-
 def _click_at(element_key: str, window, elements: dict, settings: ListToolsSettings) -> bool:
     point = elements.get(element_key)
     if not isinstance(point, dict) or "x" not in point or "y" not in point:
@@ -308,8 +255,8 @@ def _click_at(element_key: str, window, elements: dict, settings: ListToolsSetti
     return False
 
 
-def _save_marked_image(image: "Image.Image", elements: dict, filename: str) -> None:
-    """좌표를 스크린샷 위에 마킹해서 저장한다."""
+def _save_target_marked_image(image: "Image.Image", point: dict, filename: str, label: str) -> None:
+    """툴 클릭 좌표를 스크린샷에 마킹해서 저장한다."""
     debug_img = image.copy()
     draw = ImageDraw.Draw(debug_img)
 
@@ -319,23 +266,20 @@ def _save_marked_image(image: "Image.Image", elements: dict, filename: str) -> N
         font = ImageFont.load_default()
 
     radius = 12
-    for name, point in elements.items():
-        if not isinstance(point, dict) or "x" not in point or "y" not in point:
-            continue
-        x, y = int(point["x"]), int(point["y"])
-        color = TAB_DEBUG_COLORS.get(name, "white")
-        draw.line([(x - radius, y), (x + radius, y)], fill=color, width=2)
-        draw.line([(x, y - radius), (x, y + radius)], fill=color, width=2)
-        draw.ellipse(
-            [(x - radius, y - radius), (x + radius, y + radius)],
-            outline=color,
-            width=2,
-        )
-        draw.text((x + radius + 3, y - 16), f"{name} ({x},{y})", fill=color, font=font)
+    if not isinstance(point, dict) or "x" not in point or "y" not in point:
+        return
+
+    x = int(point["x"])
+    y = int(point["y"])
+    color = "lime"
+    draw.line([(x - radius, y), (x + radius, y)], fill=color, width=2)
+    draw.line([(x, y - radius), (x, y + radius)], fill=color, width=2)
+    draw.ellipse([(x - radius, y - radius), (x + radius, y + radius)], outline=color, width=2)
+    draw.text((x + radius + 3, y - 16), f"{label} ({x},{y})", fill=color, font=font)
 
     out_path = _debug_image_path(filename)
     debug_img.save(out_path)
-    print(f"[INFO] 디버그 이미지 저장: {out_path}")
+    print(f"[INFO] 툴 클릭 좌표 디버그 이미지 저장: {out_path}")
 
 
 def _save_raw_image(image: "Image.Image", filename: str) -> None:
@@ -367,116 +311,50 @@ def _focus_main_window(window) -> None:
         print(f"[WARNING] 창 영역 조회 실패: {exc}")
 
 
-def _auto_click_list_tab(
-    main_window,
-    settings: ListToolsSettings,
-    client: LangChainOpenAICompatibleVLMClient,
-) -> bool:
-    """VLM으로 View/List 탭을 찾아 List 탭 클릭을 시도한다."""
-    _focus_main_window(main_window)
-    tabs_image = _capture_window(main_window)
-    _save_raw_image(tabs_image, "debug_tabs_input.png")
-    tabs_b64, tabs_w, tabs_h = _encode_image(tabs_image)
-    tabs_system, tabs_prompt = build_rcs_main_tab_locator_prompt(
-        width=tabs_w,
-        height=tabs_h,
-        target_keys=TARGET_TAB_KEYS,
-        extra_instructions=TAB_EXTRA_INSTRUCTIONS,
-    )
+def _find_target_tool(data: dict, target_tool_name: str) -> dict | None:
+    if not isinstance(data, dict):
+        print("[WARNING] VLM 응답이 JSON 객체가 아닙니다.")
+        return None
 
-    try:
-        tabs_raw = _request_vlm(client, settings, tabs_system, tabs_prompt, tabs_b64)
-        tabs_data = _extract_json(tabs_raw)
-        print(f"[INFO] 탭 좌표 JSON:\n{json.dumps(tabs_data, indent=2, ensure_ascii=False)}\n")
-        tabs_data = _parse_tab_coords(tabs_data, tabs_w, tabs_h)
-        _save_marked_image(tabs_image, tabs_data, "debug_tabs_coords.png")
-    except Exception as exc:
-        print(f"[WARNING] List 탭 자동 선택 단계 실패: {exc}")
-        return False
+    found = data.get("found")
+    if isinstance(found, str):
+        found_flag = found.strip().lower() in {"true", "1", "yes", "on"}
+    else:
+        found_flag = bool(found)
 
-    if not _click_at("list_tab", main_window, tabs_data, settings):
-        print("[WARNING] List 탭 자동 클릭 실패")
-        return False
-
-    print(f"[INFO] List 탭 클릭 후 안정화 대기: {settings.tab_settle_sec:.2f}s")
-    time.sleep(max(0.0, settings.tab_settle_sec))
-    _focus_main_window(main_window)
-    try:
-        after_image = _capture_window(main_window)
-        _save_raw_image(after_image, "debug_tabs_after_list_click.png")
-    except Exception as exc:
-        print(f"[WARNING] List 탭 클릭 후 스냅샷 저장 실패: {exc}")
-    return True
-
-
-def _save_tool_rows_marked_image(
-    image: "Image.Image",
-    parsed_tools: list[dict],
-    filename: str,
-) -> None:
-    """툴 row 좌표를 스크린샷 위에 마킹해서 저장한다."""
-    debug_img = image.copy()
-    draw = ImageDraw.Draw(debug_img)
-    img_w, img_h = debug_img.size
-
-    try:
-        font = ImageFont.truetype("arial.ttf", 13)
-    except Exception:
-        font = ImageFont.load_default()
-
-    radius = 10
-
-    for idx, tool in enumerate(parsed_tools, start=1):
-        x = _to_int(tool.get("x"))
-        y = _to_int(tool.get("y"))
+    if found_flag:
+        name = str(data.get("matched_name", "")).strip() or target_tool_name
+        x = _to_int(data.get("x"))
+        y = _to_int(data.get("y"))
         if x is None or y is None:
+            print("[WARNING] 대상 툴 좌표 파싱 실패")
+            return None
+        return {"name": name, "x": x, "y": y, "anchor": str(data.get("coord_anchor", "name_color_box_center"))}
+
+    rows = data.get("tools")
+    if not isinstance(rows, list):
+        rows = data.get("rows")
+    if not isinstance(rows, list):
+        return None
+
+    target = target_tool_name.strip().lower()
+    for row in rows:
+        if not isinstance(row, dict):
             continue
+        name = str(row.get("name", "")).strip()
+        if not name or name.strip().lower() != target:
+            continue
+        x = _to_int(row.get("x"))
+        y = _to_int(row.get("y"))
+        if (x is None or y is None) and isinstance(row.get("coord"), dict):
+            x = _to_int(row["coord"].get("x"))
+            y = _to_int(row["coord"].get("y"))
+        if x is None or y is None:
+            print(f"[WARNING] 대상 툴 '{name}' 좌표 파싱 실패")
+            return None
+        return {"name": name, "x": x, "y": y, "anchor": str(row.get("coord_anchor", row.get("anchor", "")))}
 
-        draw_x = max(0, min(x, img_w - 1))
-        draw_y = max(0, min(y, img_h - 1))
-        if draw_x != x or draw_y != y:
-            print(
-                f"[WARNING] row#{idx} 좌표가 이미지 범위를 벗어났습니다: "
-                f"raw=({x}, {y}), clamped=({draw_x}, {draw_y})"
-            )
-
-        name = str(tool.get("name", "")).strip() or f"row#{idx}"
-        status = str(tool.get("status", "")).strip().lower()
-        if status == "on":
-            color = "lime"
-        else:
-            color = "red"
-
-        draw.line([(draw_x - radius, draw_y), (draw_x + radius, draw_y)], fill=color, width=2)
-        draw.line([(draw_x, draw_y - radius), (draw_x, draw_y + radius)], fill=color, width=2)
-        draw.ellipse(
-            [(draw_x - radius, draw_y - radius), (draw_x + radius, draw_y + radius)],
-            outline=color,
-            width=2,
-        )
-        label = f"{idx:02d}:{name} ({x},{y})"
-        draw.text((draw_x + radius + 3, draw_y - 16), label, fill=color, font=font)
-
-    out_path = _debug_image_path(filename)
-    debug_img.save(out_path)
-    print(f"[INFO] 툴 좌표 디버그 이미지 저장: {out_path}")
-
-
-def _normalize_tool_status(status_text: str, indicator_color: str) -> tuple[str, str]:
-    status = (status_text or "").strip().lower()
-    color = (indicator_color or "").strip().lower()
-
-    if "green" in color:
-        return "on", "green"
-    if "black" in color:
-        return "off", "black"
-
-    if any(token in status for token in ("on", "running", "run", "active", "green")):
-        return "on", "green"
-    if any(token in status for token in ("off", "stop", "inactive", "black")):
-        return "off", "black"
-
-    return "off", "black"
+    return None
 
 
 def _to_int(value) -> int | None:
@@ -491,71 +369,6 @@ def _to_int(value) -> int | None:
         return int(float(text))
     except (TypeError, ValueError):
         return None
-
-
-def _parse_tool_rows(data: dict) -> list[dict]:
-    raw_rows = data.get("tools")
-    if not isinstance(raw_rows, list):
-        for alt_key in ("rows", "tool_list", "items"):
-            alt_rows = data.get(alt_key)
-            if isinstance(alt_rows, list):
-                raw_rows = alt_rows
-                break
-
-    if not isinstance(raw_rows, list):
-        return []
-
-    parsed: list[dict] = []
-    for idx, row in enumerate(raw_rows, start=1):
-        if not isinstance(row, dict):
-            print(f"[WARNING] row#{idx} 형식 오류(dict 아님): {row!r}")
-            continue
-
-        name = str(row.get("name", "")).strip()
-        if not name:
-            print(f"[WARNING] row#{idx} 이름 누락: {row!r}")
-            continue
-
-        status, color = _normalize_tool_status(
-            str(row.get("status", "")),
-            str(row.get("indicator_color", row.get("light", ""))),
-        )
-
-        raw_x = row.get("x")
-        raw_y = row.get("y")
-        if (raw_x is None or raw_y is None) and isinstance(row.get("coord"), dict):
-            raw_x = row["coord"].get("x")
-            raw_y = row["coord"].get("y")
-        x = _to_int(raw_x)
-        y = _to_int(raw_y)
-
-        coord_anchor = str(row.get("coord_anchor", row.get("anchor", ""))).strip().lower()
-        if coord_anchor in {"name", "light"}:
-            print(
-                f"[WARNING] row#{idx} coord_anchor={coord_anchor!r} 은 사용하지 않습니다: "
-                f"name={name!r}"
-            )
-            coord_anchor = "invalid"
-        elif coord_anchor not in {"first_letter", ""}:
-            coord_anchor = ""
-
-        parsed_row = {"name": name, "status": status, "indicator_color": color}
-        if coord_anchor == "invalid":
-            print(f"[WARNING] row#{idx} 좌표 폐기: first_letter 기준 좌표만 허용됩니다.")
-        elif x is not None and y is not None:
-            parsed_row["x"] = x
-            parsed_row["y"] = y
-            if coord_anchor == "first_letter":
-                parsed_row["coord_anchor"] = coord_anchor
-        else:
-            print(
-                f"[WARNING] row#{idx} 좌표 누락/파싱 실패: "
-                f"name={name!r}, raw_x={raw_x!r}, raw_y={raw_y!r}"
-            )
-
-        parsed.append(parsed_row)
-
-    return parsed
 
 
 def _request_vlm(
@@ -660,58 +473,52 @@ def main() -> int:
         except Exception as exc:
             print(f"[WARNING] 컨트롤 트리 덤프 실패: {exc}")
 
-    _focus_main_window(main_window)
-    if settings.auto_select_list_tab:
-        print("[INFO] VLM으로 List 탭 자동 선택을 시도합니다.")
-        switched = _auto_click_list_tab(main_window, settings, client)
-        if not switched:
-            print("[WARNING] List 탭 자동 선택 실패 — 현재 화면 기준으로 계속 진행합니다.")
-    else:
-        print("[INFO] List 탭 자동 선택 비활성화(RCS_LIST_AUTO_SELECT_TAB=0)")
-
-    print("[INFO] List 탭 화면 기준으로 툴 목록 추출을 진행합니다.")
+    print("[INFO] List 탭 화면 기준으로 대상 툴 좌표 추출을 진행합니다.")
     time.sleep(max(0.0, settings.list_settle_sec))
 
     try:
-        # 1) List 화면에서 툴 목록/상태 추출
+        # 1) List 화면에서 대상 툴 좌표 추출
         _focus_main_window(main_window)
         list_image = _capture_window(main_window)
         _save_raw_image(list_image, "debug_list_panel.png")
         list_b64, list_w, list_h = _encode_image(list_image)
-        list_system, list_prompt = build_rcs_tool_list_reader_prompt(
+        list_system, list_prompt = build_rcs_select_tool_prompt(
             width=list_w,
             height=list_h,
-            extra_instructions=TOOL_LIST_EXTRA_INSTRUCTIONS,
+            target_tool_name=TARGET_TOOL_NAME,
         )
         list_raw = _request_vlm(client, settings, list_system, list_prompt, list_b64)
         list_data = _extract_json(list_raw)
-        print(f"[INFO] 툴 목록 JSON:\n{json.dumps(list_data, indent=2, ensure_ascii=False)}\n")
-        parsed_tools = _parse_tool_rows(list_data)
-        _save_tool_rows_marked_image(
+        print(f"[INFO] VLM 응답 JSON:\n{json.dumps(list_data, indent=2, ensure_ascii=False)}\n")
+        target_tool = _find_target_tool(list_data, TARGET_TOOL_NAME)
+        if not target_tool:
+            print(f"[ERROR] 대상 툴 '{TARGET_TOOL_NAME}'을(를) 찾지 못했습니다.")
+            return 6
+        _save_target_marked_image(
             list_image,
-            parsed_tools,
-            filename="debug_list_tools_coords.png",
+            target_tool,
+            filename="debug_target_tool_coords.png",
+            label=target_tool.get("name", TARGET_TOOL_NAME),
         )
     except Exception as exc:
-        print(f"[ERROR] 툴 목록 추출 단계 실패: {exc}")
+        print(f"[ERROR] 툴 좌표 추출 단계 실패: {exc}")
         return 5
 
-    if not parsed_tools:
-        print("[ERROR] VLM에서 유효한 툴 목록을 읽지 못했습니다.")
-        return 6
+    print(
+        f"[INFO] 대상 툴 좌표: {target_tool['name']} "
+        f"@ ({target_tool['x']}, {target_tool['y']})"
+    )
 
-    print(f"[INFO] 발견된 툴 목록 ({len(parsed_tools)}개):")
-    for idx, tool in enumerate(parsed_tools, start=1):
-        status_label = "ON " if tool["status"] == "on" else "OFF"
-        color = tool["indicator_color"]
-        if "x" in tool and "y" in tool:
-            coord_anchor = tool.get("coord_anchor", "?")
-            print(
-                f"  {idx:3}. [{status_label}] {tool['name']} ({color}) "
-                f"@ ({tool['x']}, {tool['y']}) [{coord_anchor}]"
-            )
-        else:
-            print(f"  {idx:3}. [{status_label}] {tool['name']} ({color})")
+    if not _click_at(
+        target_tool["name"],
+        main_window,
+        {target_tool["name"]: {"x": target_tool["x"], "y": target_tool["y"]}},
+        settings,
+    ):
+        print(f"[ERROR] 대상 툴 '{TARGET_TOOL_NAME}' 클릭 실패")
+        return 7
+
+    print(f"[INFO] 대상 툴 '{TARGET_TOOL_NAME}' 클릭 완료")
 
     return 0
 

@@ -352,6 +352,63 @@ def _save_raw_image(image: "Image.Image", filename: str) -> None:
     print(f"[INFO] 스냅샷 저장: {out_path}")
 
 
+def _save_tool_rows_marked_image(
+    image: "Image.Image",
+    parsed_tools: list[dict],
+    filename: str,
+    target_tool_name: str = "",
+) -> None:
+    """툴 row 좌표를 스크린샷 위에 마킹해서 저장한다."""
+    debug_img = image.copy()
+    draw = ImageDraw.Draw(debug_img)
+    img_w, img_h = debug_img.size
+
+    try:
+        font = ImageFont.truetype("arial.ttf", 13)
+    except Exception:
+        font = ImageFont.load_default()
+
+    target_norm = target_tool_name.strip().lower()
+    radius = 10
+
+    for idx, tool in enumerate(parsed_tools, start=1):
+        x = _to_int(tool.get("x"))
+        y = _to_int(tool.get("y"))
+        if x is None or y is None:
+            continue
+
+        draw_x = max(0, min(x, img_w - 1))
+        draw_y = max(0, min(y, img_h - 1))
+        if draw_x != x or draw_y != y:
+            print(
+                f"[WARNING] row#{idx} 좌표가 이미지 범위를 벗어났습니다: "
+                f"raw=({x}, {y}), clamped=({draw_x}, {draw_y})"
+            )
+
+        name = str(tool.get("name", "")).strip() or f"row#{idx}"
+        status = str(tool.get("status", "")).strip().lower()
+        if target_norm and name.lower() == target_norm:
+            color = "yellow"
+        elif status == "on":
+            color = "lime"
+        else:
+            color = "red"
+
+        draw.line([(draw_x - radius, draw_y), (draw_x + radius, draw_y)], fill=color, width=2)
+        draw.line([(draw_x, draw_y - radius), (draw_x, draw_y + radius)], fill=color, width=2)
+        draw.ellipse(
+            [(draw_x - radius, draw_y - radius), (draw_x + radius, draw_y + radius)],
+            outline=color,
+            width=2,
+        )
+        label = f"{idx:02d}:{name} ({x},{y})"
+        draw.text((draw_x + radius + 3, draw_y - 16), label, fill=color, font=font)
+
+    out_path = Path(__file__).parent / filename
+    debug_img.save(out_path)
+    print(f"[INFO] 툴 좌표 디버그 이미지 저장: {out_path}")
+
+
 def _normalize_tool_status(status_text: str, indicator_color: str) -> tuple[str, str]:
     status = (status_text or "").strip().lower()
     color = (indicator_color or "").strip().lower()
@@ -597,15 +654,6 @@ def main() -> int:
     if os.name != "nt":
         print("[ERROR] 이 스크립트는 Windows 전용입니다.")
         return 1
-    if not PYWINAUTO_AVAILABLE:
-        print("[ERROR] pywinauto가 필요합니다: pip install pywinauto")
-        return 2
-    if not MSS_AVAILABLE:
-        print("[ERROR] mss가 필요합니다: pip install mss")
-        return 2
-    if not PIL_AVAILABLE:
-        print("[ERROR] Pillow가 필요합니다: pip install Pillow")
-        return 2
 
     settings = load_settings()
     if not settings.vlm_api_url:
@@ -657,6 +705,12 @@ def main() -> int:
         list_data = _extract_json(list_raw)
         print(f"[INFO] 툴 목록 JSON:\n{json.dumps(list_data, indent=2, ensure_ascii=False)}\n")
         parsed_tools = _parse_tool_rows(list_data)
+        _save_tool_rows_marked_image(
+            list_image,
+            parsed_tools,
+            filename="debug_list_tools_coords.png",
+            target_tool_name=settings.target_tool_name,
+        )
     except Exception as exc:
         print(f"[ERROR] 툴 목록 추출 단계 실패: {exc}")
         return 5

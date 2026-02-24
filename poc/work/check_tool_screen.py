@@ -80,7 +80,8 @@ def _is_target_process(process_name: str, allowed_names: tuple[str, ...]) -> boo
 def _build_tool_window_regex(tool_name: str, custom_pattern: str = "") -> str:
     if custom_pattern.strip():
         return custom_pattern.strip()
-    return r"Remote Monitoring System.*\[[^\]]+\]"
+    # 툴 뷰어 창 제목에 툴명이 포함되어 있으면 매칭
+    return re.escape(tool_name.strip() or DEFAULT_TOOL_NAME)
 
 
 def _is_tool_window_title(title: str, regex_text: str, tool_name: str) -> bool:
@@ -89,17 +90,9 @@ def _is_tool_window_title(title: str, regex_text: str, tool_name: str) -> bool:
         regex_matched = re.search(regex_text, title_text, flags=re.IGNORECASE) is not None
     except re.error:
         t = title_text.lower()
-        regex_matched = "remote monitoring system" in t and "[" in t and "]" in t
-
-    bracket_tool_matched = (
-        re.search(
-            rf"\[[^\]]*{re.escape(tool_name.strip() or DEFAULT_TOOL_NAME)}[^\]]*\]",
-            title_text,
-            flags=re.IGNORECASE,
-        )
-        is not None
-    )
-    return regex_matched and bracket_tool_matched
+        tool = (tool_name.strip() or DEFAULT_TOOL_NAME).lower()
+        regex_matched = tool in t
+    return regex_matched
 
 
 def load_settings() -> ToolScreenSettings:

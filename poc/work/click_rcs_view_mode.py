@@ -1,7 +1,8 @@
-"""RCS 메인 화면에서 View/List 탭을 VLM으로 검출하고 View 탭을 클릭하는 스크립트 (Windows 전용).
+"""RCS 메인 화면에서 View/List 탭을 VLM으로 검출하고 탭을 순차 클릭하는 스크립트 (Windows 전용).
 
 이미 로그인된 RCS 메인 창을 데스크톱에서 찾아 스크린샷을 캡처한 뒤,
-VLM에 View/List 탭 좌표를 요청하고, 디버그 이미지를 저장한 다음 View 탭을 클릭한다.
+VLM에 View/List 탭 좌표를 요청하고, 디버그 이미지를 저장한 다음
+View 탭과 List 탭을 순서대로 클릭한다.
 """
 
 import base64
@@ -54,13 +55,14 @@ DESKTOP_SCAN_BACKENDS = tuple(
 VLM_MODEL = "Kimi-K2.5"
 
 TARGET_ELEMENTS = ["view_tab", "list_tab"]
-TARGET_CLICK_KEY = "view_tab"
+TAB_CLICK_SEQUENCE = ("view_tab", "list_tab")
+TAB_CLICK_INTERVAL_SEC = 2.0
 TAB_EXTRA_INSTRUCTIONS = (
     "Focus on the top-left tab strip only.",
     "Use the first letter of each tab as the primary anchor: 'V' in View, 'L' in List.",
     "View and List tabs are adjacent near the top-left corner.",
 )
-LIST_TAB_X_OFFSET_FROM_VIEW = 20  # view_tab.x + this offset → list_tab.x
+LIST_TAB_X_OFFSET_FROM_VIEW = 50  # view_tab.x + this offset → list_tab.x
 
 ELEMENT_COLORS = {
     "view_tab": "orange",
@@ -294,7 +296,7 @@ def _save_marked_image(
 
 
 def main() -> int:
-    """메인 RCS 창을 찾아 View 탭을 VLM 좌표로 클릭한다."""
+    """메인 RCS 창을 찾아 View/List 탭을 VLM 좌표로 순차 클릭한다."""
     print("[INFO] RCS 메인 창에서 View/List 탭 검출 시작")
 
     main_window, main_title, debug_rows = _find_existing_main_window()
@@ -375,12 +377,16 @@ def main() -> int:
     # 디버그 이미지 저장
     _save_marked_image(image, data, ELEMENT_COLORS, "debug_view_mode.png")
 
-    # View 탭 클릭
-    if not _click_at(TARGET_CLICK_KEY, main_window, data):
-        print(f"[ERROR] '{TARGET_CLICK_KEY}' 클릭 실패")
-        return 4
+    # View/List 탭 순차 클릭
+    for idx, click_key in enumerate(TAB_CLICK_SEQUENCE, start=1):
+        if not _click_at(click_key, main_window, data):
+            print(f"[ERROR] '{click_key}' 클릭 실패")
+            return 4
+        print(f"[INFO] '{click_key}' 클릭 완료")
+        if idx < len(TAB_CLICK_SEQUENCE):
+            print(f"[INFO] 다음 탭 클릭까지 {TAB_CLICK_INTERVAL_SEC:.1f}초 대기")
+            time.sleep(max(0.0, TAB_CLICK_INTERVAL_SEC))
 
-    print(f"[INFO] '{TARGET_CLICK_KEY}' 클릭 완료")
     return 0
 
 

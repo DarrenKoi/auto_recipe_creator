@@ -51,8 +51,20 @@ DEFAULT_CLICK_RETRY_DELAY_SEC = 0.25
 DEFAULT_VLM_MODEL = "Kimi-K2.5"
 DEFAULT_VLM_TEMPERATURE = 0.0
 DEFAULT_TOOL_NAME = "MCD018"
-DEFAULT_VLM_CLICK_Y_OFFSET = 10
-ALLOWED_TARGET_ANCHORS = {"name_center", "tool_name_center", "text_center", "first_letter"}
+DEFAULT_VLM_CLICK_Y_OFFSET = 0
+COORD_ANCHOR_ALIASES = {
+    "name_center": "name_center",
+    "tool_name_center": "name_center",
+    "text_center": "name_center",
+    "first_letter": "first_letter",
+    "name_color_box_center": "name_color_box_center",
+    "color_box_name_center": "name_color_box_center",
+    "name_with_color_box_center": "name_color_box_center",
+    "color_box_and_name_center": "name_color_box_center",
+    "combined_center": "name_color_box_center",
+    "tool_row_center": "name_color_box_center",
+}
+ALLOWED_TARGET_ANCHORS = set(COORD_ANCHOR_ALIASES.values())
 
 
 @dataclass(frozen=True)
@@ -143,6 +155,11 @@ def _to_int(value) -> int | None:
         return None
 
 
+def _normalize_coord_anchor(anchor: str) -> str:
+    normalized = str(anchor).strip().lower().replace("-", "_").replace(" ", "_")
+    return COORD_ANCHOR_ALIASES.get(normalized, "")
+
+
 def _capture_window(window) -> tuple["Image.Image", str, int, int]:
     rect = window.rectangle()
     region = {
@@ -177,7 +194,10 @@ def _save_click_preview_image(
     raw_y: int,
     click_x: int,
     click_y: int,
+    requested_name: str,
     matched_name: str,
+    match_type: str,
+    coord_anchor: str,
     filename: str,
 ) -> None:
     """클릭 전에 실제 클릭 예정 좌표를 이미지에 마킹해 저장한다."""
@@ -227,7 +247,19 @@ def _save_click_preview_image(
     )
     draw.text(
         (12, 12),
-        f"target={matched_name}",
+        f"requested={requested_name}",
+        fill="white",
+        font=font,
+    )
+    draw.text(
+        (12, 30),
+        f"matched={matched_name} ({match_type})",
+        fill="white",
+        font=font,
+    )
+    draw.text(
+        (12, 48),
+        f"anchor={coord_anchor or 'unknown'}",
         fill="white",
         font=font,
     )
@@ -235,6 +267,17 @@ def _save_click_preview_image(
     out_path = Path(__file__).parent / filename
     debug_img.save(out_path)
     print(f"[INFO] 클릭 좌표 프리뷰 저장(클릭 전): {out_path}")
+
+
+def _save_vlm_target_debug(raw_response: str, extracted_json: dict, parsed_target: dict | None) -> None:
+    out_path = Path(__file__).parent / "debug_select_tool_vlm_target.json"
+    payload = {
+        "raw_response": raw_response,
+        "extracted_json": extracted_json,
+        "parsed_target": parsed_target,
+    }
+    out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"[INFO] VLM 타겟 디버그 저장: {out_path}")
 
 
 def _request_vlm(
@@ -275,9 +318,15 @@ def _parse_vlm_target(data: dict) -> dict | None:
 
     matched_name = str(row.get("matched_name", row.get("name", ""))).strip()
     match_type = str(row.get("match_type", "none")).strip().lower() or "none"
-    coord_anchor = str(row.get("coord_anchor", row.get("anchor", ""))).strip().lower()
-    x = _to_int(row.get("x"))
-    y = _to_int(row.get("y"))
+    raw_coord_anchor = str(row.get("coord_anchor", row.get("anchor", ""))).strip()
+    coord_anchor = _normalize_coord_anchor(raw_coord_anchor)
+    raw_x = row.get("x")
+    raw_y = row.get("y")
+    if (raw_x is None or raw_y is None) and isinstance(row.get("coord"), dict):
+        raw_x = row["coord"].get("x")
+        raw_y = row["coord"].get("y")
+    x = _to_int(raw_x)
+    y = _to_int(raw_y)
 
     if not found:
         return {
@@ -290,6 +339,10 @@ def _parse_vlm_target(data: dict) -> dict | None:
     if x is None or y is None:
         print("[WARNING] VLM 응답에 좌표가 없어서 타겟을 사용할 수 없습니다.")
         return None
+
+    if not coord_anchor:
+        coord_anchor = "name_color_box_center"
+        print("[WARNING] VLM coord_anchor 누락 — 기본값 'name_color_box_center' 적용")
 
     if match_type not in {"exact", "partial"}:
         match_type = "exact" if matched_name else "partial"
@@ -421,6 +474,10 @@ def _select_tool_vlm(rcs_window, settings: SelectToolSettings) -> bool:
         return False
 
     target = _parse_vlm_target(data)
+    try:
+        _save_vlm_target_debug(raw_response=raw, extracted_json=data, parsed_target=target)
+    except Exception as exc:
+        print(f"[WARNING] VLM 타겟 디버그 저장 실패: {exc}")
     if target is None:
         return False
 
@@ -428,8 +485,8 @@ def _select_tool_vlm(rcs_window, settings: SelectToolSettings) -> bool:
         print(f"[ERROR] VLM이 타겟 툴을 찾지 못했습니다: {settings.tool_name!r}")
         return False
 
-    coord_anchor = str(target.get("coord_anchor", "")).lower()
-    if coord_anchor and coord_anchor not in ALLOWED_TARGET_ANCHORS:
+    coord_anchor = str(target.get("coord_anchor", "")).strip().lower()
+    if coord_anchor not in ALLOWED_TARGET_ANCHORS:
         allowed = ", ".join(sorted(ALLOWED_TARGET_ANCHORS))
         print(
             f"[ERROR] coord_anchor={coord_anchor!r} 은 허용되지 않습니다. "
@@ -439,7 +496,30 @@ def _select_tool_vlm(rcs_window, settings: SelectToolSettings) -> bool:
 
     matched_name = str(target.get("matched_name", settings.tool_name)).strip() or settings.tool_name
     match_type = str(target.get("match_type", "unknown")).strip().lower()
-    print(f"[INFO] VLM 타겟 매칭: requested={settings.tool_name!r}, matched={matched_name!r}, type={match_type}")
+    target_x = int(target["x"])
+    target_y = int(target["y"])
+    click_y = target_y + DEFAULT_VLM_CLICK_Y_OFFSET
+    print(
+        "[INFO] VLM 타겟 매칭: "
+        f"requested={settings.tool_name!r}, matched={matched_name!r}, "
+        f"type={match_type}, anchor={coord_anchor}, point=({target_x}, {target_y})"
+    )
+    try:
+        _save_click_preview_image(
+            list_image,
+            raw_x=target_x,
+            raw_y=target_y,
+            click_x=target_x,
+            click_y=click_y,
+            requested_name=settings.tool_name,
+            matched_name=str(matched_name),
+            match_type=match_type,
+            coord_anchor=coord_anchor,
+            filename="debug_select_tool_click_preview.png",
+        )
+    except Exception as exc:
+        print(f"[WARNING] 클릭 좌표 프리뷰 저장 실패: {exc}")
+
     if (
         match_type != "exact"
         or matched_name.lower() != settings.tool_name.strip().lower()
@@ -450,25 +530,7 @@ def _select_tool_vlm(rcs_window, settings: SelectToolSettings) -> bool:
         )
         return False
 
-    target_x = int(target["x"])
-    target_y = int(target["y"])
-    click_y = target_y + DEFAULT_VLM_CLICK_Y_OFFSET
-    print(
-        f"[INFO] VLM 좌표 보정: raw=({target_x}, {target_y}) -> "
-        f"adjusted=({target_x}, {click_y}) (y+{DEFAULT_VLM_CLICK_Y_OFFSET})"
-    )
-    try:
-        _save_click_preview_image(
-            list_image,
-            raw_x=target_x,
-            raw_y=target_y,
-            click_x=target_x,
-            click_y=click_y,
-            matched_name=str(matched_name),
-            filename="debug_select_tool_click_preview.png",
-        )
-    except Exception as exc:
-        print(f"[WARNING] 클릭 좌표 프리뷰 저장 실패: {exc}")
+    print(f"[INFO] VLM 좌표 사용: click=({target_x}, {click_y}) (y+{DEFAULT_VLM_CLICK_Y_OFFSET})")
 
     ok = _click_tool_at_point(
         rcs_window,

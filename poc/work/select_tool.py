@@ -5,9 +5,8 @@
 환경 변수:
     RCS_MAIN_WINDOW_REGEX     연결할 RCS 창 제목 정규식 (우선순위 1)
     RCS_WINDOW_TITLE          연결할 RCS 창 제목 정규식 (우선순위 2)
-    RCS_TOOL_NAME             선택할 툴 이름 (기본: MCD018)
+    RCS_TOOL_NAME             선택할 툴 이름 (미설정/legacy 기본값이면 MCD018 사용)
     RCS_TIMEOUT               창 탐색 대기 제한 시간(초, 기본: 15)
-    RCS_SELECT_NO_SWITCH      1/true/yes/on 이면 List 탭 자동 전환 생략
     RCS_SELECT_DOUBLE_CLICK   1/true/yes/on 이면 더블클릭
     RCS_SELECT_LIST_FIRST     1/true/yes/on 이면 선택 전에 전체 목록 출력
     RCS_SELECT_DEBUG          1/true/yes/on 이면 컨트롤 트리 덤프
@@ -43,7 +42,6 @@ from poc.work.rcs_common import (
     env_flag,
     env_float,
     load_env,
-    switch_tab,
 )
 from poc.work.vlm_openai_client import ChatImageRequest, LangChainOpenAICompatibleVLMClient
 
@@ -53,6 +51,7 @@ DEFAULT_CLICK_RETRY_DELAY_SEC = 0.25
 DEFAULT_VLM_MODEL = "Kimi-K2.5"
 DEFAULT_VLM_TEMPERATURE = 0.0
 DEFAULT_TOOL_NAME = "MCD018"
+LEGACY_NON_LIST_TOOL_NAME = "CD-SEM Recipe Editor"
 
 
 @dataclass(frozen=True)
@@ -60,7 +59,6 @@ class SelectToolSettings:
     window_title: str
     tool_name: str
     timeout: float
-    no_switch: bool
     double_click: bool
     show_list_first: bool
     debug: bool
@@ -96,12 +94,17 @@ def load_settings() -> SelectToolSettings:
         or os.environ.get("RCS_WINDOW_TITLE", "").strip()
         or DEFAULT_WINDOW_TITLE_REGEX
     )
+    raw_tool_name = os.environ.get("RCS_TOOL_NAME", "").strip()
+    if not raw_tool_name or raw_tool_name == LEGACY_NON_LIST_TOOL_NAME:
+        tool_name = DEFAULT_TOOL_NAME
+    else:
+        tool_name = raw_tool_name
+
     return SelectToolSettings(
         window_title=window_title,
-        tool_name=os.environ.get("RCS_TOOL_NAME", DEFAULT_TOOL_NAME).strip() or DEFAULT_TOOL_NAME,
+        tool_name=tool_name,
         timeout=env_float("RCS_TIMEOUT", DEFAULT_TIMEOUT),
-        no_switch=env_flag("RCS_SELECT_NO_SWITCH", False),
-        double_click=env_flag("RCS_SELECT_DOUBLE_CLICK", False),
+        double_click=env_flag("RCS_SELECT_DOUBLE_CLICK", True),
         show_list_first=env_flag("RCS_SELECT_LIST_FIRST", False),
         debug=env_flag("RCS_SELECT_DEBUG", False),
         list_settle_sec=env_float("RCS_SELECT_LIST_SETTLE_SEC", DEFAULT_LIST_SETTLE_SEC),
@@ -373,6 +376,12 @@ def _select_tool_vlm(rcs_window, settings: SelectToolSettings) -> bool:
     matched_name = target.get("matched_name", settings.tool_name)
     match_type = target.get("match_type", "unknown")
     print(f"[INFO] VLM 타겟 매칭: requested={settings.tool_name!r}, matched={matched_name!r}, type={match_type}")
+    if str(match_type).lower() != "exact":
+        print(
+            f"[ERROR] 정확 일치 타겟이 필요합니다: requested={settings.tool_name!r}, "
+            f"matched={matched_name!r}, type={match_type!r}"
+        )
+        return False
 
     ok = _click_tool_at_point(
         rcs_window,
@@ -387,7 +396,7 @@ def _select_tool_vlm(rcs_window, settings: SelectToolSettings) -> bool:
 
 
 def select_tool(rcs_window, settings: SelectToolSettings) -> bool:
-    """List 탭에서 지정한 툴을 선택한다. (VLM 우선, 필요 시 UIA 폴백)"""
+    """현재 List 탭 화면에서 지정한 툴을 선택한다. (VLM 우선, 필요 시 UIA 폴백)"""
     time.sleep(max(0.0, settings.list_settle_sec))
 
     if _select_tool_vlm(rcs_window, settings):
@@ -414,14 +423,11 @@ def main() -> int:
 
     try:
         rcs_win = connect_rcs_window(settings.window_title, settings.timeout)
-    except TimeoutError as exc:
-        print(f"[ERROR] {exc}")
+    except TimeoutError:
+        print("[ERROR] 로그인된 RCS 메인 창을 찾을 수 없습니다.")
         return 3
 
-    if not settings.no_switch:
-        ok = switch_tab(rcs_win, "List")
-        if not ok:
-            print("[WARNING] List 탭 전환 실패 — 현재 탭에서 계속 진행합니다.")
+    print("[INFO] 현재 화면이 이미 List 탭이라고 가정하고 선택을 진행합니다.")
 
     if settings.debug:
         print("[DEBUG] 전체 컨트롤 트리 덤프 (depth=5):")

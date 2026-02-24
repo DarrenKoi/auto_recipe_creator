@@ -52,7 +52,7 @@ DEFAULT_VLM_MODEL = "Kimi-K2.5"
 DEFAULT_VLM_TEMPERATURE = 0.0
 DEFAULT_TOOL_NAME = "MCD018"
 DEFAULT_VLM_CLICK_Y_OFFSET = 10
-ALLOWED_CENTER_ANCHORS = {"name_center", "tool_name_center", "text_center"}
+ALLOWED_TARGET_ANCHORS = {"name_center", "tool_name_center", "text_center", "first_letter"}
 
 
 @dataclass(frozen=True)
@@ -429,21 +429,24 @@ def _select_tool_vlm(rcs_window, settings: SelectToolSettings) -> bool:
         return False
 
     coord_anchor = str(target.get("coord_anchor", "")).lower()
-    if coord_anchor and coord_anchor not in ALLOWED_CENTER_ANCHORS:
-        allowed = ", ".join(sorted(ALLOWED_CENTER_ANCHORS))
+    if coord_anchor and coord_anchor not in ALLOWED_TARGET_ANCHORS:
+        allowed = ", ".join(sorted(ALLOWED_TARGET_ANCHORS))
         print(
             f"[ERROR] coord_anchor={coord_anchor!r} 은 허용되지 않습니다. "
             f"{allowed} 만 사용합니다."
         )
         return False
 
-    matched_name = target.get("matched_name", settings.tool_name)
-    match_type = target.get("match_type", "unknown")
+    matched_name = str(target.get("matched_name", settings.tool_name)).strip() or settings.tool_name
+    match_type = str(target.get("match_type", "unknown")).strip().lower()
     print(f"[INFO] VLM 타겟 매칭: requested={settings.tool_name!r}, matched={matched_name!r}, type={match_type}")
-    if str(match_type).lower() != "exact":
+    if (
+        match_type != "exact"
+        or matched_name.lower() != settings.tool_name.strip().lower()
+    ):
         print(
-            f"[ERROR] 정확 일치 타겟이 필요합니다: requested={settings.tool_name!r}, "
-            f"matched={matched_name!r}, type={match_type!r}"
+            "[ERROR] 단일 툴 정확 매칭이 필요합니다: "
+            f"requested={settings.tool_name!r}, matched={matched_name!r}, type={match_type!r}"
         )
         return False
 

@@ -276,7 +276,7 @@ def _to_int(value) -> int | None:
 def _debug_image_path(prefix: str = "close_point") -> Path:
     DEBUG_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return DEBUG_IMAGE_DIR / f"{prefix}_{ts}.png"
+    return DEBUG_IMAGE_DIR / f"{prefix}_{ts}.jpg"
 
 
 def _save_close_point_debug_image(image_data: bytes, click_info: dict) -> None:
@@ -321,7 +321,7 @@ def _save_close_point_debug_image(image_data: bytes, click_info: dict) -> None:
 
     out_path = _debug_image_path("close_point")
     try:
-        image.save(out_path)
+        image.save(out_path, format="JPEG", quality=85)
         print(f"[INFO] 닫기 클릭포인트 디버그 이미지 저장: {out_path}")
     except Exception as exc:
         print(f"[WARNING] 디버그 이미지 저장 실패: {exc}")

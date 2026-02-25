@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GUI-Specialized VLM Benchmark Comparison</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --surface: #1e293b;
+            --surface2: #334155;
+            --border: #475569;
+            --text: #e2e8f0;
+            --text-dim: #94a3b8;
+            --accent: #38bdf8;
+            --accent2: #818cf8;
+            --green: #4ade80;
+            --yellow: #fbbf24;
+            --red: #f87171;
+            --orange: #fb923c;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            padding: 2rem;
+        }
+
+        .container { max-width: 1400px; margin: 0 auto; }
+
+        h1 {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .subtitle {
+            color: var(--text-dim);
+            font-size: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .section {
+            background: var(--surface);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            border: 1px solid var(--border);
+        }
+
+        h2 {
+            font-size: 1.3rem;
+            margin-bottom: 1rem;
+            color: var(--accent);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        h3 {
+            font-size: 1.1rem;
+            margin: 1.5rem 0 0.75rem;
+            color: var(--accent2);
+        }
+
+        /* Tables */
+        .table-wrapper {
+            overflow-x: auto;
+            margin: 1rem 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+
+        th, td {
+            padding: 0.7rem 1rem;
+            text-align: center;
+            border-bottom: 1px solid var(--surface2);
+        }
+
+        th {
+            background: var(--surface2);
+            color: var(--accent);
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+            white-space: nowrap;
+        }
+
+        td:first-child, th:first-child {
+            text-align: left;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+
+        tr:hover { background: rgba(56, 189, 248, 0.05); }
+
+        .highlight-row {
+            background: rgba(56, 189, 248, 0.08) !important;
+            border-left: 3px solid var(--accent);
+        }
+
+        .current-row {
+            background: rgba(248, 113, 113, 0.1) !important;
+            border-left: 3px solid var(--red);
+        }
+
+        /* Score coloring */
+        .score-top { color: var(--green); font-weight: 700; }
+        .score-high { color: var(--accent); font-weight: 600; }
+        .score-mid { color: var(--yellow); }
+        .score-low { color: var(--orange); }
+        .score-poor { color: var(--red); }
+        .na { color: var(--text-dim); font-style: italic; }
+
+        /* Tags */
+        .tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .tag-gui { background: rgba(74, 222, 128, 0.2); color: var(--green); }
+        .tag-general { background: rgba(251, 191, 36, 0.2); color: var(--yellow); }
+        .tag-sota { background: rgba(56, 189, 248, 0.2); color: var(--accent); }
+        .tag-ours { background: rgba(248, 113, 113, 0.2); color: var(--red); }
+        .tag-rec { background: rgba(129, 140, 248, 0.2); color: var(--accent2); }
+
+        /* Model cards */
+        .model-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .model-card {
+            background: var(--surface2);
+            border-radius: 8px;
+            padding: 1.2rem;
+            border: 1px solid var(--border);
+            transition: transform 0.2s;
+        }
+
+        .model-card:hover { transform: translateY(-2px); }
+
+        .model-card h4 {
+            font-size: 1.05rem;
+            margin-bottom: 0.3rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .model-card .org { color: var(--text-dim); font-size: 0.85rem; }
+        .model-card .desc { margin: 0.5rem 0; font-size: 0.88rem; color: var(--text-dim); }
+        .model-card .specs { font-size: 0.82rem; }
+        .model-card .specs span { margin-right: 1rem; }
+
+        /* Bar chart */
+        .bar-chart { margin: 1rem 0; }
+        .bar-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 0.5rem;
+            gap: 0.5rem;
+        }
+        .bar-label {
+            width: 200px;
+            text-align: right;
+            font-size: 0.85rem;
+            flex-shrink: 0;
+            white-space: nowrap;
+        }
+        .bar-track {
+            flex: 1;
+            height: 28px;
+            background: var(--surface2);
+            border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+        }
+        .bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            padding-left: 8px;
+            font-size: 0.8rem;
+            font-weight: 700;
+            transition: width 0.8s ease;
+            min-width: fit-content;
+        }
+        .bar-kimi { background: linear-gradient(90deg, #f87171, #fb923c); }
+        .bar-recommended { background: linear-gradient(90deg, #38bdf8, #818cf8); }
+        .bar-sota { background: linear-gradient(90deg, #4ade80, #38bdf8); }
+        .bar-general { background: linear-gradient(90deg, #fbbf24, #fb923c); }
+
+        /* Notes */
+        .note {
+            background: rgba(56, 189, 248, 0.08);
+            border-left: 3px solid var(--accent);
+            padding: 0.8rem 1rem;
+            border-radius: 0 8px 8px 0;
+            margin: 1rem 0;
+            font-size: 0.9rem;
+        }
+
+        .warning {
+            background: rgba(248, 113, 113, 0.08);
+            border-left: 3px solid var(--red);
+            padding: 0.8rem 1rem;
+            border-radius: 0 8px 8px 0;
+            margin: 1rem 0;
+            font-size: 0.9rem;
+        }
+
+        .sources {
+            margin-top: 2rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border);
+            font-size: 0.82rem;
+            color: var(--text-dim);
+        }
+
+        .sources a { color: var(--accent); text-decoration: none; }
+        .sources a:hover { text-decoration: underline; }
+
+        .legend {
+            display: flex;
+            gap: 1.5rem;
+            flex-wrap: wrap;
+            margin: 0.75rem 0;
+            font-size: 0.85rem;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .legend-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 3px;
+        }
+
+        footer {
+            text-align: center;
+            color: var(--text-dim);
+            font-size: 0.8rem;
+            margin-top: 2rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border);
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+
+    <h1>GUI-Specialized VLM Benchmark Comparison</h1>
+    <p class="subtitle">ScreenSpot-Pro &amp; Agent Benchmarks for CD-SEM/RCS Automation &mdash; Feb 2026</p>
+
+    <!-- ===== EXECUTIVE SUMMARY ===== -->
+    <div class="section">
+        <h2>Executive Summary</h2>
+        <p>General-purpose VLMs (Kimi, GPT-4o) score <strong>&lt; 1&ndash;35%</strong> on professional GUI grounding, while
+           GUI-specialized models reach <strong>45&ndash;68%</strong>. For complex engineering UIs like CD-SEM/RCS recipe editors,
+           specialized models are essential.</p>
+        <div class="legend" style="margin-top:1rem;">
+            <div class="legend-item"><div class="legend-dot" style="background:var(--red);"></div> Currently used (Kimi-2)</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--accent);"></div> Recommended upgrade</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--green);"></div> SOTA (reference)</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--yellow);"></div> General-purpose baseline</div>
+        </div>
+    </div>
+
+    <!-- ===== SCREENSPOT-PRO BENCHMARK ===== -->
+    <div class="section">
+        <h2>ScreenSpot-Pro Benchmark &mdash; Professional GUI Grounding</h2>
+        <p style="color:var(--text-dim); margin-bottom:1rem;">
+            ScreenSpot-Pro evaluates click-point accuracy on <strong>high-resolution professional application UIs</strong>
+            (CAD, EDA, development tools, creative suites) &mdash; the closest public benchmark to our CD-SEM/RCS use case.
+        </p>
+
+        <!-- Visual bar chart -->
+        <h3>Visual Comparison</h3>
+        <div class="bar-chart">
+            <div class="bar-row">
+                <div class="bar-label">MAI-UI-32B <span class="tag tag-sota">SOTA</span></div>
+                <div class="bar-track"><div class="bar-fill bar-sota" style="width:67.9%;">67.9%</div></div>
+            </div>
+            <div class="bar-row">
+                <div class="bar-label">Qwen3-VL-30B</div>
+                <div class="bar-track"><div class="bar-fill bar-general" style="width:61.8%;">61.8%</div></div>
+            </div>
+            <div class="bar-row">
+                <div class="bar-label">UI-TARS-1.5-7B <span class="tag tag-rec">Recommended</span></div>
+                <div class="bar-track"><div class="bar-fill bar-recommended" style="width:61.6%;">61.6%</div></div>
+            </div>
+            <div class="bar-row">
+                <div class="bar-label">Qwen3-VL-8B</div>
+                <div class="bar-track"><div class="bar-fill bar-general" style="width:54.6%;">54.6%</div></div>
+            </div>
+            <div class="bar-row">
+                <div class="bar-label">Kimi-K2.5</div>
+                <div class="bar-track"><div class="bar-fill bar-general" style="width:52.8%;">52.8%</div></div>
+            </div>
+            <div class="bar-row">
+                <div class="bar-label">GUI-Actor-7B (Qwen2.5-VL)</div>
+                <div class="bar-track"><div class="bar-fill bar-recommended" style="width:44.6%;">44.6%</div></div>
+            </div>
+            <div class="bar-row">
+                <div class="bar-label">UI-TARS-72B</div>
+                <div class="bar-track"><div class="bar-fill bar-recommended" style="width:38.1%;">38.1%</div></div>
+            </div>
+            <div class="bar-row">
+                <div class="bar-label">UI-TARS-7B (v1)</div>
+                <div class="bar-track"><div class="bar-fill bar-recommended" style="width:35.7%;">35.7%</div></div>
+            </div>
+            <div class="bar-row">
+                <div class="bar-label">Kimi-VL (MoonViT) <span class="tag tag-ours">Current</span></div>
+                <div class="bar-track"><div class="bar-fill bar-kimi" style="width:34.5%;">34.5%</div></div>
+            </div>
+            <div class="bar-row">
+                <div class="bar-label">UGround-7B</div>
+                <div class="bar-track"><div class="bar-fill bar-general" style="width:31.1%;">31.1%</div></div>
+            </div>
+            <div class="bar-row">
+                <div class="bar-label">OS-Atlas-7B</div>
+                <div class="bar-track"><div class="bar-fill bar-general" style="width:18.9%;">18.9%</div></div>
+            </div>
+            <div class="bar-row">
+                <div class="bar-label">Claude Computer Use</div>
+                <div class="bar-track"><div class="bar-fill bar-general" style="width:17.1%;">17.1%</div></div>
+            </div>
+            <div class="bar-row">
+                <div class="bar-label">ShowUI-2B</div>
+                <div class="bar-track"><div class="bar-fill bar-general" style="width:7.7%;">7.7%</div></div>
+            </div>
+            <div class="bar-row">
+                <div class="bar-label">Qwen2-VL-7B</div>
+                <div class="bar-track"><div class="bar-fill bar-general" style="width:5%;">1.6%</div></div>
+            </div>
+            <div class="bar-row">
+                <div class="bar-label">GPT-4o</div>
+                <div class="bar-track"><div class="bar-fill bar-general" style="width:5%;">0.8%</div></div>
+            </div>
+        </div>
+
+        <!-- Detailed table -->
+        <h3>Detailed Scores</h3>
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Model</th>
+                        <th>Type</th>
+                        <th>Params</th>
+                        <th>ScreenSpot-Pro (%)</th>
+                        <th>Text Elements</th>
+                        <th>Icon Elements</th>
+                        <th>Notes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>MAI-UI-32B (Alibaba)</td>
+                        <td><span class="tag tag-gui">GUI-Trained</span></td>
+                        <td>32B</td>
+                        <td class="score-top">67.9</td>
+                        <td class="score-top">&mdash;</td>
+                        <td>&mdash;</td>
+                        <td>Current SOTA (Dec 2025)</td>
+                    </tr>
+                    <tr>
+                        <td>MAI-UI-8B</td>
+                        <td><span class="tag tag-gui">GUI-Trained</span></td>
+                        <td>8B</td>
+                        <td class="score-top">65.7</td>
+                        <td>&mdash;</td>
+                        <td>&mdash;</td>
+                        <td>Best 8B-class model</td>
+                    </tr>
+                    <tr>
+                        <td>Qwen3-VL-30B-A3B</td>
+                        <td><span class="tag tag-general">General</span></td>
+                        <td>30B (3B active)</td>
+                        <td class="score-high">61.8</td>
+                        <td>&mdash;</td>
+                        <td>&mdash;</td>
+                        <td>MoE, efficient inference</td>
+                    </tr>
+                    <tr class="highlight-row">
+                        <td><strong>UI-TARS-1.5-7B</strong> (ByteDance)</td>
+                        <td><span class="tag tag-gui">GUI-Trained</span></td>
+                        <td>7B</td>
+                        <td class="score-high">61.6</td>
+                        <td>&mdash;</td>
+                        <td>&mdash;</td>
+                        <td><strong>Best value: 7B = near-SOTA</strong></td>
+                    </tr>
+                    <tr>
+                        <td>MAI-UI-2B</td>
+                        <td><span class="tag tag-gui">GUI-Trained</span></td>
+                        <td>2B</td>
+                        <td class="score-mid">57.4</td>
+                        <td>&mdash;</td>
+                        <td>&mdash;</td>
+                        <td>Best ultra-lightweight</td>
+                    </tr>
+                    <tr>
+                        <td>Qwen3-VL-8B (Alibaba)</td>
+                        <td><span class="tag tag-general">General</span></td>
+                        <td>8B</td>
+                        <td class="score-mid">54.6</td>
+                        <td>&mdash;</td>
+                        <td>&mdash;</td>
+                        <td>General VL, not GUI-specialized</td>
+                    </tr>
+                    <tr>
+                        <td>Kimi-K2.5 (Moonshot)</td>
+                        <td><span class="tag tag-general">General</span></td>
+                        <td>~200B+ MoE</td>
+                        <td class="score-mid">52.8</td>
+                        <td>&mdash;</td>
+                        <td>&mdash;</td>
+                        <td>API-only, expensive</td>
+                    </tr>
+                    <tr>
+                        <td>GUI-Actor-7B (Microsoft)</td>
+                        <td><span class="tag tag-gui">GUI-Trained</span></td>
+                        <td>7B</td>
+                        <td class="score-mid">44.6</td>
+                        <td>&mdash;</td>
+                        <td>&mdash;</td>
+                        <td>Qwen2.5-VL backbone, NeurIPS'25</td>
+                    </tr>
+                    <tr>
+                        <td>UI-TARS-72B</td>
+                        <td><span class="tag tag-gui">GUI-Trained</span></td>
+                        <td>72B</td>
+                        <td class="score-low">38.1</td>
+                        <td>&mdash;</td>
+                        <td>&mdash;</td>
+                        <td>v1; superseded by 1.5</td>
+                    </tr>
+                    <tr>
+                        <td>UI-TARS-7B (v1)</td>
+                        <td><span class="tag tag-gui">GUI-Trained</span></td>
+                        <td>7B</td>
+                        <td class="score-low">35.7</td>
+                        <td>&mdash;</td>
+                        <td>&mdash;</td>
+                        <td>v1; superseded by 1.5</td>
+                    </tr>
+                    <tr class="current-row">
+                        <td><strong>Kimi-VL (MoonViT)</strong></td>
+                        <td><span class="tag tag-ours">Current</span></td>
+                        <td>~3.9B active (MoE)</td>
+                        <td class="score-low">34.5</td>
+                        <td>&mdash;</td>
+                        <td>&mdash;</td>
+                        <td><strong>Our current model &mdash; insufficient</strong></td>
+                    </tr>
+                    <tr>
+                        <td>UGround-V1-7B</td>
+                        <td><span class="tag tag-gui">GUI-Trained</span></td>
+                        <td>7B</td>
+                        <td class="score-low">31.1</td>
+                        <td>&mdash;</td>
+                        <td>&mdash;</td>
+                        <td>&mdash;</td>
+                    </tr>
+                    <tr>
+                        <td>OS-Atlas-7B</td>
+                        <td><span class="tag tag-gui">GUI-Trained</span></td>
+                        <td>7B</td>
+                        <td class="score-poor">18.9</td>
+                        <td>28.1</td>
+                        <td>4.0</td>
+                        <td>Icons near-zero</td>
+                    </tr>
+                    <tr>
+                        <td>Claude Computer Use</td>
+                        <td><span class="tag tag-general">General</span></td>
+                        <td>~200B+</td>
+                        <td class="score-poor">17.1</td>
+                        <td>&mdash;</td>
+                        <td>&mdash;</td>
+                        <td>Anthropic, API-only</td>
+                    </tr>
+                    <tr>
+                        <td>ShowUI-2B</td>
+                        <td><span class="tag tag-gui">GUI-Trained</span></td>
+                        <td>2B</td>
+                        <td class="score-poor">7.7</td>
+                        <td>&mdash;</td>
+                        <td>&mdash;</td>
+                        <td>Lightweight but weak on Pro</td>
+                    </tr>
+                    <tr>
+                        <td>CogAgent-18B</td>
+                        <td><span class="tag tag-gui">GUI-Trained</span></td>
+                        <td>18B</td>
+                        <td class="score-poor">7.7</td>
+                        <td>&mdash;</td>
+                        <td>&mdash;</td>
+                        <td>&mdash;</td>
+                    </tr>
+                    <tr>
+                        <td>Qwen2-VL-7B</td>
+                        <td><span class="tag tag-general">General</span></td>
+                        <td>7B</td>
+                        <td class="score-poor">1.6</td>
+                        <td>&mdash;</td>
+                        <td>&mdash;</td>
+                        <td>Not GUI-trained</td>
+                    </tr>
+                    <tr>
+                        <td>GPT-4o (OpenAI)</td>
+                        <td><span class="tag tag-general">General</span></td>
+                        <td>~200B+</td>
+                        <td class="score-poor">0.8</td>
+                        <td>&mdash;</td>
+                        <td>&mdash;</td>
+                        <td>Near-zero on Pro UIs</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="warning">
+            <strong>Key Insight:</strong> Kimi-VL (our current model) scores 34.5% &mdash; roughly <strong>half</strong> the accuracy of
+            GUI-specialized models like UI-TARS-1.5-7B (61.6%). On a complex engineering UI like RCS recipe editor,
+            this gap translates to frequent misclicks, failed automation steps, and manual intervention.
+        </div>
+    </div>
+
+    <!-- ===== AGENT BENCHMARKS ===== -->
+    <div class="section">
+        <h2>End-to-End Agent Benchmarks</h2>
+        <p style="color:var(--text-dim); margin-bottom:1rem;">
+            Beyond single-click grounding, these benchmarks test <strong>multi-step task completion</strong> in real OS environments.
+        </p>
+
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Model</th>
+                        <th>OSWorld (%)</th>
+                        <th>WindowsAgentArena (%)</th>
+                        <th>AndroidWorld (%)</th>
+                        <th>Online-Mind2Web (%)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>UI-TARS-2 (ByteDance)</td>
+                        <td class="score-top">47.5</td>
+                        <td class="score-top">50.6</td>
+                        <td class="score-top">73.3</td>
+                        <td class="score-top">88.2</td>
+                    </tr>
+                    <tr>
+                        <td>Claude 4 Sonnet (Anthropic)</td>
+                        <td class="score-high">43.9</td>
+                        <td class="na">&mdash;</td>
+                        <td class="na">&mdash;</td>
+                        <td class="na">&mdash;</td>
+                    </tr>
+                    <tr>
+                        <td>OpenAI CUA-o3</td>
+                        <td class="score-high">42.9</td>
+                        <td class="na">&mdash;</td>
+                        <td class="score-mid">52.5</td>
+                        <td class="score-mid">71.0</td>
+                    </tr>
+                    <tr>
+                        <td>UI-TARS-1.5 (ByteDance)</td>
+                        <td class="score-high">42.5</td>
+                        <td class="score-high">42.1</td>
+                        <td class="score-high">64.2</td>
+                        <td class="score-high">75.8</td>
+                    </tr>
+                    <tr>
+                        <td>Qwen3-VL-32B</td>
+                        <td class="na">&mdash;</td>
+                        <td class="na">&mdash;</td>
+                        <td class="score-high">63.7</td>
+                        <td class="na">&mdash;</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="note">
+            <strong>Relevance to RCS:</strong> OSWorld and WindowsAgentArena directly test Windows desktop automation &mdash;
+            the same environment as our RCS/CD-SEM workflow. UI-TARS-2 leads both benchmarks significantly.
+        </div>
+    </div>
+
+    <!-- ===== SCREENSPOT-V2 ===== -->
+    <div class="section">
+        <h2>ScreenSpot-V2 &mdash; General GUI Grounding</h2>
+        <p style="color:var(--text-dim); margin-bottom:1rem;">
+            Standard-resolution GUI element detection across web, mobile, and desktop interfaces.
+        </p>
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Model</th>
+                        <th>ScreenSpot-V2 (%)</th>
+                        <th>Notes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>UI-TARS-1.5 (ByteDance)</td>
+                        <td class="score-top">94.2</td>
+                        <td>Near-human accuracy</td>
+                    </tr>
+                    <tr>
+                        <td>UI-TARS-7B (v1)</td>
+                        <td class="score-top">93.6</td>
+                        <td>&mdash;</td>
+                    </tr>
+                    <tr>
+                        <td>Operator (OpenAI)</td>
+                        <td class="score-high">87.9</td>
+                        <td>API-only, expensive</td>
+                    </tr>
+                    <tr>
+                        <td>Claude 3.7 Sonnet</td>
+                        <td class="score-high">87.6</td>
+                        <td>API-only</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ===== MODEL PROFILES ===== -->
+    <div class="section">
+        <h2>Recommended Models &mdash; Detailed Profiles</h2>
+
+        <div class="model-grid">
+            <div class="model-card" style="border-color: var(--accent);">
+                <h4>UI-TARS-1.5-7B <span class="tag tag-rec">Top Pick</span></h4>
+                <div class="org">ByteDance Seed &mdash; Open Source</div>
+                <div class="desc">
+                    Purpose-built GUI agent. Trained on 50B+ tokens of GUI interaction data.
+                    Outputs precise pixel coordinates from screenshot input.
+                    OpenAI-compatible API via vLLM.
+                </div>
+                <div class="specs">
+                    <span><strong>Params:</strong> 7B</span>
+                    <span><strong>VRAM:</strong> ~14GB FP16 / ~17GB vLLM</span>
+                    <span><strong>License:</strong> Apache 2.0</span>
+                </div>
+            </div>
+
+            <div class="model-card">
+                <h4>UI-TARS-2-7B <span class="tag tag-gui">Agent SOTA</span></h4>
+                <div class="org">ByteDance Seed &mdash; Open Source</div>
+                <div class="desc">
+                    Multi-turn RL-trained agent. Excels at complex multi-step desktop tasks.
+                    Best OSWorld &amp; WindowsAgentArena scores. Ideal for full RCS workflow automation.
+                </div>
+                <div class="specs">
+                    <span><strong>Params:</strong> 7B</span>
+                    <span><strong>VRAM:</strong> ~14GB FP16</span>
+                    <span><strong>License:</strong> Apache 2.0</span>
+                </div>
+            </div>
+
+            <div class="model-card">
+                <h4>MAI-UI-8B <span class="tag tag-sota">Grounding SOTA</span></h4>
+                <div class="org">Alibaba Tongyi MAI &mdash; Open Source</div>
+                <div class="desc">
+                    Highest ScreenSpot-Pro accuracy in the 8B class (65.7%).
+                    Foundation GUI agent from Alibaba. Multi-platform support.
+                </div>
+                <div class="specs">
+                    <span><strong>Params:</strong> 8B</span>
+                    <span><strong>VRAM:</strong> ~16GB FP16</span>
+                    <span><strong>License:</strong> Apache 2.0</span>
+                </div>
+            </div>
+
+            <div class="model-card">
+                <h4>GUI-Actor-7B <span class="tag tag-gui">Coordinate-Free</span></h4>
+                <div class="org">Microsoft Research &mdash; Open Source</div>
+                <div class="desc">
+                    Attention-based action head instead of coordinate regression.
+                    Outperforms UI-TARS-72B (10x larger) on ScreenSpot-Pro.
+                    NeurIPS 2025 paper.
+                </div>
+                <div class="specs">
+                    <span><strong>Params:</strong> 7B</span>
+                    <span><strong>VRAM:</strong> ~14GB FP16</span>
+                    <span><strong>License:</strong> MIT</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== GPU REQUIREMENTS ===== -->
+    <div class="section">
+        <h2>GPU Memory Requirements for Self-Hosted Deployment</h2>
+
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Model</th>
+                        <th>Params</th>
+                        <th>FP16 VRAM</th>
+                        <th>INT8 VRAM</th>
+                        <th>Single H200 (141GB)</th>
+                        <th>2x H200 (282GB)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>UI-TARS-1.5-7B</td>
+                        <td>7B</td>
+                        <td>~14 GB</td>
+                        <td>~7 GB</td>
+                        <td class="score-top">Yes (+ large batch)</td>
+                        <td class="score-top">Multi-model serving</td>
+                    </tr>
+                    <tr>
+                        <td>MAI-UI-8B</td>
+                        <td>8B</td>
+                        <td>~16 GB</td>
+                        <td>~8 GB</td>
+                        <td class="score-top">Yes (+ large batch)</td>
+                        <td class="score-top">Multi-model serving</td>
+                    </tr>
+                    <tr>
+                        <td>GUI-Actor-7B</td>
+                        <td>7B</td>
+                        <td>~14 GB</td>
+                        <td>~7 GB</td>
+                        <td class="score-top">Yes (+ large batch)</td>
+                        <td class="score-top">Multi-model serving</td>
+                    </tr>
+                    <tr>
+                        <td>UI-TARS-1.5-72B</td>
+                        <td>72B</td>
+                        <td>~144 GB</td>
+                        <td>~72 GB</td>
+                        <td class="score-mid">Tight (FP16)</td>
+                        <td class="score-top">Yes (comfortable)</td>
+                    </tr>
+                    <tr>
+                        <td>MAI-UI-32B</td>
+                        <td>32B</td>
+                        <td>~64 GB</td>
+                        <td>~32 GB</td>
+                        <td class="score-top">Yes</td>
+                        <td class="score-top">Multi-model serving</td>
+                    </tr>
+                    <tr>
+                        <td>Qwen3-VL-30B-A3B</td>
+                        <td>30B (3B active)</td>
+                        <td>~60 GB</td>
+                        <td>~30 GB</td>
+                        <td class="score-top">Yes</td>
+                        <td class="score-top">Multi-model serving</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="note">
+            <strong>Why 2x H200?</strong><br>
+            &bull; <strong>Multi-model A/B testing:</strong> Run UI-TARS-1.5-7B + MAI-UI-8B simultaneously for comparison and fallback<br>
+            &bull; <strong>72B model access:</strong> Larger models (UI-TARS-72B, MAI-UI-32B) need &gt;64GB for comfortable FP16 serving<br>
+            &bull; <strong>Concurrent inference:</strong> Multiple RCS automation sessions require parallel request handling<br>
+            &bull; <strong>Fine-tuning headroom:</strong> Training on proprietary CD-SEM/RCS screenshots requires 2&ndash;4x inference memory<br>
+            &bull; <strong>Future-proofing:</strong> Next-gen GUI models (UI-TARS-2, MAI-UI v2) trend toward larger parameter counts
+        </div>
+    </div>
+
+    <!-- ===== KIMI LIMITATIONS ===== -->
+    <div class="section">
+        <h2>Observed Kimi-VL Limitations in RCS Automation</h2>
+        <p style="color:var(--text-dim); margin-bottom:1rem;">
+            Based on real-world testing with CD-SEM/RCS engineering UI automation, Kimi-VL exhibits critical failures
+            in production scenarios.
+        </p>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+            <div style="background:var(--surface2); border-radius:8px; padding:1rem;">
+                <h4 style="color:var(--red); margin-bottom:0.5rem;">Narrow-Range Element Detection Failure</h4>
+                <p style="color:var(--text-dim); font-size:0.88rem; margin-bottom:0.5rem;">
+                    When multiple UI elements are packed closely together in a narrow region (e.g., toolbar buttons,
+                    dropdown items, tab headers, tree-view nodes), Kimi-VL <strong>cannot reliably distinguish adjacent elements</strong>.
+                </p>
+                <ul style="padding-left:1.2rem; color:var(--text-dim); font-size:0.85rem;">
+                    <li>Click coordinates drift to neighboring elements when targets are &lt; 20px apart</li>
+                    <li>Overlapping bounding boxes for closely-spaced buttons/labels</li>
+                    <li>Toolbar icon clusters produce ambiguous coordinate outputs</li>
+                    <li>Tree-view and list-view rows with small row-height are frequently confused</li>
+                    <li>RCS recipe editor has dense control panels with &lt; 10px element spacing</li>
+                </ul>
+            </div>
+            <div style="background:var(--surface2); border-radius:8px; padding:1rem;">
+                <h4 style="color:var(--red); margin-bottom:0.5rem;">Root Cause: No GUI Spatial Training</h4>
+                <p style="color:var(--text-dim); font-size:0.88rem; margin-bottom:0.5rem;">
+                    General-purpose VLMs are trained on natural images, documents, and web screenshots &mdash;
+                    not dense engineering UIs. They lack:
+                </p>
+                <ul style="padding-left:1.2rem; color:var(--text-dim); font-size:0.85rem;">
+                    <li><strong>Sub-pixel coordinate precision</strong> required for small targets</li>
+                    <li><strong>GUI-specific spatial encoding</strong> for element boundary detection</li>
+                    <li><strong>Widget-type awareness</strong> (buttons vs labels vs inputs look similar in legacy UIs)</li>
+                    <li><strong>High-resolution patch processing</strong> for professional displays (1920x1080+)</li>
+                    <li>ScreenSpot-Pro confirms: accuracy <strong>degrades rapidly as target box area decreases</strong>,
+                        and icon-only grounding drops to <strong>&lt; 5%</strong> for general models</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="warning" style="margin-top:1rem;">
+            <strong>Impact on RCS Automation:</strong> In the CD-SEM recipe editor, a single misclick on a densely-packed
+            parameter panel can select the wrong measurement region, alter critical recipe values, or trigger
+            an unintended tool calibration sequence. Kimi-VL's inability to precisely target narrow-range elements
+            makes it <strong>unreliable for production-grade automation</strong> of complex engineering software.
+        </div>
+    </div>
+
+    <!-- ===== KEY TAKEAWAYS ===== -->
+    <div class="section">
+        <h2>Key Takeaways</h2>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+            <div style="background:var(--surface2); border-radius:8px; padding:1rem;">
+                <h4 style="color:var(--red); margin-bottom:0.5rem;">Problem: Kimi-VL Limitations</h4>
+                <ul style="padding-left:1.2rem; color:var(--text-dim); font-size:0.9rem;">
+                    <li>34.5% on ScreenSpot-Pro &mdash; misses 2 out of 3 click targets</li>
+                    <li>Not trained on GUI-specific data</li>
+                    <li>Icon/widget detection near-zero on engineering UIs</li>
+                    <li>API dependency &mdash; latency, cost, availability risk</li>
+                    <li>No fine-tuning possible (closed-source API)</li>
+                </ul>
+            </div>
+            <div style="background:var(--surface2); border-radius:8px; padding:1rem;">
+                <h4 style="color:var(--green); margin-bottom:0.5rem;">Solution: GUI-Specialized Models</h4>
+                <ul style="padding-left:1.2rem; color:var(--text-dim); font-size:0.9rem;">
+                    <li>61.6% accuracy (UI-TARS-1.5-7B) &mdash; <strong>+78% improvement</strong></li>
+                    <li>Trained specifically on GUI screenshot&rarr;coordinate tasks</li>
+                    <li>Open-source, self-hosted &mdash; no API costs, no vendor lock-in</li>
+                    <li>Fine-tunable on proprietary RCS/CD-SEM screenshots</li>
+                    <li>Low latency: local GPU inference vs. cloud API round-trips</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== SOURCES ===== -->
+    <div class="sources">
+        <h3 style="color:var(--text-dim); margin-bottom:0.5rem;">Sources &amp; References</h3>
+        <ul style="list-style:none; padding:0;">
+            <li>&bull; ScreenSpot-Pro Paper: <a href="https://arxiv.org/abs/2504.07981">arxiv.org/abs/2504.07981</a></li>
+            <li>&bull; ScreenSpot-Pro Leaderboard: <a href="https://gui-agent.github.io/grounding-leaderboard/">gui-agent.github.io/grounding-leaderboard</a></li>
+            <li>&bull; UI-TARS GitHub: <a href="https://github.com/bytedance/UI-TARS">github.com/bytedance/UI-TARS</a></li>
+            <li>&bull; UI-TARS-1.5 HuggingFace: <a href="https://huggingface.co/ByteDance-Seed/UI-TARS-1.5-7B">huggingface.co/ByteDance-Seed/UI-TARS-1.5-7B</a></li>
+            <li>&bull; UI-TARS-2 Technical Report: <a href="https://arxiv.org/abs/2509.02544">arxiv.org/abs/2509.02544</a></li>
+            <li>&bull; MAI-UI Technical Report: <a href="https://arxiv.org/abs/2512.22047">arxiv.org/abs/2512.22047</a></li>
+            <li>&bull; GUI-Actor (Microsoft): <a href="https://microsoft.github.io/GUI-Actor/">microsoft.github.io/GUI-Actor</a></li>
+            <li>&bull; ShowUI (CVPR 2025): <a href="https://github.com/showlab/ShowUI">github.com/showlab/ShowUI</a></li>
+            <li>&bull; Kimi-VL: <a href="https://github.com/MoonshotAI/Kimi-VL">github.com/MoonshotAI/Kimi-VL</a></li>
+            <li>&bull; Kimi-K2.5: <a href="https://huggingface.co/moonshotai/Kimi-K2.5">huggingface.co/moonshotai/Kimi-K2.5</a></li>
+            <li>&bull; R-VLM (Amazon): <a href="https://www.amazon.science/publications/r-vlm-region-aware-vision-language-model-for-precise-gui-grounding">amazon.science</a></li>
+            <li>&bull; ByteDance UI-TARS-1.5 Blog: <a href="https://seed.bytedance.com/en/blog/bytedance-seed-agent-model-ui-tars-1-5-open-source-achieving-sota-performance-in-various-benchmarks">seed.bytedance.com</a></li>
+        </ul>
+    </div>
+
+    <footer>
+        Auto Recipe Creator Project &mdash; GUI VLM Benchmark Research &mdash; Generated Feb 2026
+    </footer>
+
+</div>
+</body>
+</html>

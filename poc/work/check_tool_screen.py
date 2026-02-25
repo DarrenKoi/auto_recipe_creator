@@ -1,4 +1,4 @@
-"""RCS에서 툴 화면 창이 열렸는지 확인한다 (Windows 전용).
+"""RCS에서 툴 화면 창이 열렸는지 확인하고 VLM으로 UI 요소를 분석한다 (Windows 전용).
 
 환경 변수:
     RCS_TOOL_NAME                대상 툴명 (기본: MCD018)
@@ -6,6 +6,7 @@
     RCS_TOOL_SCREEN_SETTLE_SEC   폴링 간격(초, 기본: 0.5)
     RCS_TOOL_SCREEN_BACKENDS     pywinauto 백엔드 (기본: uia,win32)
     RCS_TOOL_SCREEN_ACTIVATE     감지 후 창 활성화 시도 여부 (기본: true)
+    RCS_TOOL_SCREEN_VLM_ANALYZE  감지 후 VLM 화면 분석 여부 (기본: true)
     RCS_TOOL_SCREEN_DEBUG        디버그 모드 (기본: false)
 """
 
@@ -17,6 +18,14 @@ from dataclasses import dataclass
 from pywinauto import Desktop
 
 from poc.work.rcs_common import DEFAULT_TIMEOUT, env_float, env_flag, load_env
+
+try:
+    from poc.work.screen_capture import ScreenCapture
+    from poc.work.vlm_screen_analysis import VLMScreenAnalyzer
+    from poc.work.config import PocConfig
+    VLM_ANALYSIS_AVAILABLE = True
+except ImportError:
+    VLM_ANALYSIS_AVAILABLE = False
 
 DEFAULT_TOOL_NAME = "MCD018"
 DEFAULT_TOOL_SCREEN_SETTLE_SEC = 0.5
@@ -30,6 +39,7 @@ class ToolScreenSettings:
     check_interval: float
     backends: tuple[str, ...]
     activate_on_detect: bool
+    vlm_analyze: bool
 
 
 def load_settings() -> ToolScreenSettings:
@@ -49,6 +59,7 @@ def load_settings() -> ToolScreenSettings:
         check_interval=env_float("RCS_TOOL_SCREEN_SETTLE_SEC", DEFAULT_TOOL_SCREEN_SETTLE_SEC),
         backends=backends,
         activate_on_detect=env_flag("RCS_TOOL_SCREEN_ACTIVATE", True),
+        vlm_analyze=env_flag("RCS_TOOL_SCREEN_VLM_ANALYZE", True),
     )
 
 
@@ -112,6 +123,94 @@ def _scan_once(settings: ToolScreenSettings) -> object | None:
     return None
 
 
+def _capture_and_analyze_screen(window, settings: ToolScreenSettings) -> None:
+    """툴 화면을 캡처하고 VLM으로 UI 요소를 분석한다."""
+    if not VLM_ANALYSIS_AVAILABLE:
+        print("[INFO] VLM 분석 모듈 미설치 — 화면 분석 건너뜀")
+        return
+
+    # 창 영역 가져오기
+    try:
+        rect = window.rectangle()
+        left, top = rect.left, rect.top
+        width = rect.right - rect.left
+        height = rect.bottom - rect.top
+        print(f"[INFO] 창 영역: ({left}, {top}) {width}x{height}")
+    except Exception as exc:
+        print(f"[WARNING] 창 영역 가져오기 실패: {exc}")
+        return
+
+    if width <= 0 or height <= 0:
+        print("[WARNING] 창 크기가 유효하지 않음 — 분석 건너뜀")
+        return
+
+    # 화면 캡처
+    try:
+        capture = ScreenCapture(output_dir=".")
+        image_data = capture.capture_region(
+            x=left, y=top, width=width, height=height, save=False,
+        )
+        capture.close()
+    except Exception as exc:
+        print(f"[WARNING] 화면 캡처 실패: {exc}")
+        return
+
+    if not image_data:
+        print("[WARNING] 캡처 데이터 없음 — 분석 건너뜀")
+        return
+
+    # 디버그 이미지 저장
+    debug_path = "debug_tool_screen.png"
+    try:
+        with open(debug_path, "wb") as f:
+            f.write(image_data)
+        print(f"[INFO] 디버그 스크린샷 저장: {debug_path}")
+    except Exception as exc:
+        if settings.debug:
+            print(f"[DEBUG] 디버그 이미지 저장 실패: {exc}")
+
+    # VLM 분석
+    try:
+        config = PocConfig.load()
+        if not config.vlm.api_url:
+            print("[INFO] VLM API URL 미설정 — 화면 분석 건너뜀")
+            return
+
+        analyzer = VLMScreenAnalyzer(
+            api_key=config.vlm.api_key,
+            api_base_url=config.vlm.api_url,
+            model_name=config.vlm.model_name,
+        )
+
+        print(f"[INFO] VLM 화면 분석 시작 (모델: {config.vlm.model_name})")
+        result = analyzer.analyze_screen(image_data, task="state_recognition")
+
+        if result is None:
+            print("[WARNING] VLM 분석 결과 없음")
+            return
+
+        print(f"[INFO] 화면 상태: {result.state_name} (확신도: {result.confidence:.2f})")
+        print(f"[INFO] 설명: {result.description}")
+
+        if result.ui_elements:
+            print(f"[INFO] 감지된 UI 요소 ({len(result.ui_elements)}개):")
+            for elem in result.ui_elements:
+                name = elem.get("name", "?")
+                elem_type = elem.get("type", "?")
+                location = elem.get("location", "?")
+                print(f"  - {name} ({elem_type}) @ {location}")
+        else:
+            print("[INFO] 감지된 UI 요소 없음")
+
+        if result.suggested_actions:
+            print(f"[INFO] 제안 액션: {', '.join(result.suggested_actions)}")
+
+        print(f"[INFO] VLM 분석 소요시간: {result.processing_time_ms:.0f}ms")
+
+    except Exception as exc:
+        print(f"[WARNING] VLM 분석 실패: {exc}")
+
+
 def main() -> int:
     if os.name != "nt":
         print("[ERROR] 이 스크립트는 Windows 전용입니다.")
@@ -140,6 +239,10 @@ def main() -> int:
                 else:
                     print("[WARNING] 툴 화면 활성화 실패")
             print("[INFO] 툴 화면이 열렸습니다.")
+
+            if settings.vlm_analyze:
+                _capture_and_analyze_screen(window, settings)
+
             return 0
 
         time.sleep(max(0.1, settings.check_interval))

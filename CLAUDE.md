@@ -57,6 +57,12 @@ python -m automation.rcs.run_login
 # Saves debug_vlm_login.png with VLM-detected coordinates marked
 python poc/work/automate_rcs_login.py
 
+# RCS post-login workflow (Windows only, each step standalone)
+python -m poc.work.switching_tabs          # Switch to List tab
+python -m poc.work.list_up_tools           # Read tool list via VLM
+python -m poc.work.select_tool             # Select & double-click a tool
+python -m poc.work.check_tool_screen       # Wait for tool viewer + VLM UI analysis
+
 # Video frame parser
 python -m test.video_frame_parser.example_usage
 ```
@@ -98,10 +104,13 @@ python -m test.vlm_input_control.integration_test
 |-------|----------|---------|
 | `PocConfig` | `poc/work/config.py` | Unified `.env` config (VLMConfig, RCSConfig, OperationConfig) |
 | `VLMScreenAnalyzer` | `poc/work/vlm_screen_analysis.py` | Multi-provider VLM API (Qwen3-VL, GPT-4V, Claude, Kimi-2) |
+| `ChatImageRequest` | `poc/work/vlm_openai_client.py` | VLM request dataclass (model, system_message, user_text, image_b64) |
+| `LangChainOpenAICompatibleVLMClient` | `poc/work/vlm_openai_client.py` | LangChain-based VLM client (preferred over `OpenAICompatibleVLMClient`) |
 | `VLMRCSAgent` | `poc/work/vlm_rcs_agent.py` | Observe-Think-Act loop for RCS GUI automation |
+| `ScreenCapture` | `poc/work/screen_capture.py` | Screen/region capture via mss (`capture_full_screen()`, `capture_region()`) |
 | `RCSConfig` | `automation/rcs/rcs_config.py` | RCS connection/login settings |
 | `RCSLauncher` | `automation/rcs/rcs_launcher.py` | Orchestrates full RCS login sequence |
-| `ScreenCapture` | `test/vlm_input_control/screen_capture.py` | Screen/region capture via mss |
+| `ScreenCapture` | `test/vlm_input_control/screen_capture.py` | Older screen capture (use `poc/work/screen_capture.py` for new work) |
 | `MouseController` | `test/vlm_input_control/mouse_control.py` | Mouse input via pynput |
 | `KeyboardController` | `test/vlm_input_control/keyboard_control.py` | Keyboard input via pynput |
 | `VideoFrameParser` | `test/video_frame_parser/parser.py` | Main video processing pipeline |
@@ -132,6 +141,23 @@ Current post-login success detection policy (`poc/work/automate_rcs_login.py`):
 - 2) desktop-wide fallback (`Desktop(...).windows(top_level_only=True, visible_only=True)`) because RCS may relaunch into another process
 - Desktop backend priority defaults to `win32,uia` (`RCS_DESKTOP_SCAN_BACKENDS`).
 - Debug title scan logs are controlled by `RCS_DEBUG_MAIN_WINDOW_TITLES` and default to off (`0`).
+
+### poc/work/ RCS workflow pipeline (post-login)
+After login, the RCS workflow follows a step-by-step pipeline. Each step is a standalone script controlled by env vars:
+
+1. **`switching_tabs.py`** — Switch to a tab (e.g., "List") in the main RCS window. Uses `rcs_common.connect_rcs_window()` + `rcs_common.switch_tab()`. Env: `RCS_TAB_NAME`, `RCS_SWITCH_TAB_DEBUG`.
+2. **`list_up_tools.py`** — Read the tool list from the List tab. Captures screenshot → VLM extracts tool names via `build_rcs_tool_list_reader_prompt()`. Env: `RCS_LIST_DEBUG`, `RCS_LIST_NO_SWITCH`.
+3. **`select_tool.py`** — Select a specific tool from the list. VLM locates the tool row via `build_rcs_select_tool_prompt()` → double-click to open. Env: `RCS_TOOL_NAME`, `RCS_SELECT_DOUBLE_CLICK`, `RCS_SELECT_LIST_FIRST`.
+4. **`check_tool_screen.py`** — Wait for the tool viewer window (`RcsViewerHD.exe`) to appear. Title matching is simple containment (`tool_name.lower() in title.lower()`). After detection, optionally captures screenshot and sends to VLM for UI element analysis. Env: `RCS_TOOL_NAME`, `RCS_TOOL_SCREEN_VLM_ANALYZE`, `RCS_TOOL_SCREEN_TIMEOUT`.
+
+Shared utilities in `rcs_common.py`: `connect_rcs_window()`, `switch_tab()`, `find_tool_container()`, `load_env()`, `env_float()`, `env_flag()`. Default constants: `DEFAULT_WINDOW_TITLE_REGEX=r".*RCS.*"`, `DEFAULT_TIMEOUT=15.0`, `DEFAULT_TAB="List"`.
+
+### poc/work/ VLM prompt builders
+Each prompt builder in `poc/work/prompts/` returns a `(system_message, user_message)` tuple for use with `ChatImageRequest`. They take image `width`/`height` and target-specific params. Current prompts:
+- `build_rcs_login_locator_prompt()` — Server/UserID/Password/LoginButton coordinates
+- `build_rcs_main_tab_locator_prompt()` — Tab center coordinates (View, List, etc.)
+- `build_rcs_select_tool_prompt()` — Single tool row coordinate in list view
+- `build_rcs_tool_list_reader_prompt()` — Extract all tool names and row positions
 
 ### poc/work/ vs test/vlm_input_control/
 Both implement screen capture + VLM + input control, but `poc/work/` is self-contained (no shared imports with `test/`) and production-oriented. `test/vlm_input_control/` is an older integration prototype.

@@ -22,6 +22,8 @@ import os
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 
 from pywinauto import Desktop, mouse
 
@@ -30,6 +32,7 @@ from poc.work.rcs_common import DEFAULT_TIMEOUT, env_float, env_flag, load_env
 DEFAULT_TOOL_NAME = "MCD018"
 DEFAULT_TOOL_SCREEN_SETTLE_SEC = 0.5
 DEFAULT_CLOSE_VERIFY_TIMEOUT = 5.0
+DEBUG_IMAGE_DIR = Path(__file__).parent / "debug_images"
 
 
 @dataclass(frozen=True)
@@ -129,6 +132,74 @@ def _scan_once(settings: ToolCloseSettings, log_on_match: bool = True):
     return None
 
 
+def _save_close_click_debug_image(
+    window,
+    title_click: tuple[int, int],
+    close_click: tuple[int, int],
+) -> None:
+    """닫기 클릭 좌표를 창 스크린샷에 표시해 JPEG로 저장한다."""
+    try:
+        import mss
+        from PIL import Image, ImageDraw, ImageFont
+    except Exception as exc:
+        print(f"[WARNING] 디버그 이미지 의존성 로드 실패: {exc}")
+        return
+
+    try:
+        rect = window.rectangle()
+    except Exception as exc:
+        print(f"[WARNING] 디버그 이미지용 창 영역 조회 실패: {exc}")
+        return
+
+    region_w = rect.right - rect.left
+    region_h = rect.bottom - rect.top
+    if region_w <= 0 or region_h <= 0:
+        print("[WARNING] 디버그 이미지 저장 건너뜀: 창 크기가 유효하지 않음")
+        return
+
+    try:
+        with mss.mss() as sct:
+            shot = sct.grab(
+                {
+                    "left": rect.left,
+                    "top": rect.top,
+                    "width": region_w,
+                    "height": region_h,
+                }
+            )
+            image = Image.frombytes("RGB", shot.size, shot.rgb)
+    except Exception as exc:
+        print(f"[WARNING] 디버그 스크린샷 캡처 실패: {exc}")
+        return
+
+    draw = ImageDraw.Draw(image)
+    try:
+        font = ImageFont.truetype("arial.ttf", 13)
+    except Exception:
+        font = ImageFont.load_default()
+
+    def _mark(point: tuple[int, int], color: str, label: str) -> None:
+        px = max(0, min(point[0] - rect.left, region_w - 1))
+        py = max(0, min(point[1] - rect.top, region_h - 1))
+        radius = 10
+        draw.line([(px - radius, py), (px + radius, py)], fill=color, width=2)
+        draw.line([(px, py - radius), (px, py + radius)], fill=color, width=2)
+        draw.ellipse([(px - radius, py - radius), (px + radius, py + radius)], outline=color, width=2)
+        draw.text((px + radius + 4, py - radius - 2), f"{label} ({px},{py})", fill=color, font=font)
+
+    _mark(title_click, "cyan", "titlebar_right_click")
+    _mark(close_click, "orange", "close_menu_click")
+
+    DEBUG_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_path = DEBUG_IMAGE_DIR / f"tool_close_{ts}_click_points.jpg"
+    try:
+        image.save(out_path, format="JPEG", quality=85)
+        print(f"[INFO] 닫기 클릭 좌표 디버그 이미지 저장: {out_path}")
+    except Exception as exc:
+        print(f"[WARNING] 디버그 이미지 저장 실패: {exc}")
+
+
 def _close_via_context_menu(window, settings: ToolCloseSettings) -> bool:
     """타이틀바 우클릭 → 시스템 컨텍스트 메뉴 → 'X Close' 클릭으로 창을 닫는다."""
     try:
@@ -160,6 +231,11 @@ def _close_via_context_menu(window, settings: ToolCloseSettings) -> bool:
     close_x = title_x + 30
     close_y = title_y + 10
     print(f"[INFO] 'X Close' 메뉴 클릭 좌표: ({close_x}, {close_y})")
+    _save_close_click_debug_image(
+        window,
+        title_click=(title_x, title_y),
+        close_click=(close_x, close_y),
+    )
 
     try:
         mouse.click(coords=(close_x, close_y), button="left")

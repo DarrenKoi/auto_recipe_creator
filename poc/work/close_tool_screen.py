@@ -327,25 +327,45 @@ def _save_close_point_debug_image(image_data: bytes, click_info: dict) -> None:
         print(f"[WARNING] 디버그 이미지 저장 실패: {exc}")
 
 
+MAX_VLM_BYTES = 1_000_000  # 1MB 상한
+
+
 def _encode_vlm_image(image_data: bytes, settings: ToolCloseSettings) -> tuple[str, str]:
-    """VLM 전송용 이미지 인코딩(WebP 우선, 불가 시 PNG)."""
+    """VLM 전송용 이미지 인코딩(WebP 우선, 1MB 상한, 불가 시 PNG)."""
     if settings.use_webp and PIL_AVAILABLE:
         try:
             image = Image.open(BytesIO(image_data))
             if image.mode != "RGB":
                 image = image.convert("RGB")
             quality = max(1, min(100, settings.webp_quality))
-            buf = BytesIO()
-            image.save(buf, format="WEBP", quality=quality, method=4)
-            payload = buf.getvalue()
-            print(f"[INFO] VLM 이미지 포맷: webp (q={quality}), {len(payload) / 1024:.1f}KB")
+            while quality >= 10:
+                buf = BytesIO()
+                image.save(buf, format="WEBP", quality=quality, method=4)
+                payload = buf.getvalue()
+                if len(payload) <= MAX_VLM_BYTES:
+                    break
+                print(f"[INFO] WebP {len(payload):,}B > 1MB, quality {quality} → {quality - 10}")
+                quality -= 10
+            else:
+                payload = buf.getvalue()
+            print(f"[INFO] VLM 이미지 포맷: webp (q={quality}), {len(payload):,}B")
+            if len(payload) > MAX_VLM_BYTES:
+                print(f"[WARNING] WebP가 여전히 {len(payload):,}B > 1MB — 리사이즈 적용")
+                scale = (MAX_VLM_BYTES / len(payload)) ** 0.5
+                new_w = int(image.width * scale)
+                new_h = int(image.height * scale)
+                image = image.resize((new_w, new_h), Image.LANCZOS)
+                buf = BytesIO()
+                image.save(buf, format="WEBP", quality=70, method=4)
+                payload = buf.getvalue()
+                print(f"[INFO] 리사이즈 후 WebP: {len(payload):,}B ({new_w}x{new_h})")
             return base64.b64encode(payload).decode("utf-8"), "image/webp"
         except Exception as exc:
             print(f"[WARNING] WebP 변환 실패, PNG 폴백: {exc}")
     elif settings.use_webp and not PIL_AVAILABLE:
         print("[WARNING] Pillow 미설치로 WebP 변환 불가, PNG 폴백")
 
-    print(f"[INFO] VLM 이미지 포맷: png, {len(image_data) / 1024:.1f}KB")
+    print(f"[INFO] VLM 이미지 포맷: png, {len(image_data):,}B")
     return base64.b64encode(image_data).decode("utf-8"), "image/png"
 
 
@@ -380,8 +400,48 @@ def _ask_close_point(image_data: bytes, width: int, height: int, settings: ToolC
             print(f"[DEBUG] VLM raw:\n{raw}")
         data = _extract_json(raw)
     except Exception as exc:
-        print(f"[ERROR] VLM 호출/파싱 실패: {exc}")
-        return None
+        exc_text = str(exc)
+        if "500" in exc_text or "server" in exc_text.lower():
+            print(f"[WARNING] VLM 500 에러, 축소 이미지로 재시도: {exc}")
+            try:
+                retry_image = Image.open(BytesIO(image_data))
+                if retry_image.mode != "RGB":
+                    retry_image = retry_image.convert("RGB")
+                new_w = retry_image.width // 2
+                new_h = retry_image.height // 2
+                retry_image = retry_image.resize((new_w, new_h), Image.LANCZOS)
+                retry_buf = BytesIO()
+                retry_image.save(retry_buf, format="WEBP", quality=60)
+                retry_payload = retry_buf.getvalue()
+                print(f"[INFO] 재시도 이미지: {len(retry_payload):,}B ({new_w}x{new_h})")
+                retry_b64 = base64.b64encode(retry_payload).decode("utf-8")
+                retry_system, retry_prompt = _build_close_prompt(new_w, new_h)
+                retry_request = ChatImageRequest(
+                    model=settings.vlm_model,
+                    system_message=retry_system,
+                    user_text=retry_prompt,
+                    image_b64=retry_b64,
+                    image_mime="image/webp",
+                    temperature=settings.vlm_temperature,
+                )
+                started = time.time()
+                raw = client.chat_with_image(retry_request)
+                elapsed_ms = (time.time() - started) * 1000
+                print(f"[INFO] 재시도 VLM 응답 수신 ({elapsed_ms:.0f}ms)")
+                data = _extract_json(raw)
+                # 좌표를 원본 크기로 스케일링
+                rx = _to_int(data.get("x"))
+                ry = _to_int(data.get("y"))
+                if rx is not None and ry is not None:
+                    data["x"] = int(rx * (width / new_w))
+                    data["y"] = int(ry * (height / new_h))
+                    print(f"[INFO] 좌표 스케일업: ({rx},{ry}) → ({data['x']},{data['y']})")
+            except Exception as retry_exc:
+                print(f"[ERROR] 재시도도 실패: {retry_exc}")
+                return None
+        else:
+            print(f"[ERROR] VLM 호출/파싱 실패: {exc}")
+            return None
 
     found = data.get("found")
     if isinstance(found, str):

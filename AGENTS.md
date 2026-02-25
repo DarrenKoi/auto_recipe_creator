@@ -55,6 +55,7 @@ AI-powered automation system for CD-SEM/VeritySEM recipe setup. The project comb
 - Follow existing module patterns: dataclass-based configs, enums for fixed categories, and explicit `__all__` exports in package initializers.
 - Prefer `.env` + `python-dotenv` for runtime config loading.
 - For data models used with storage layers (MongoDB/FAISS flows), keep `to_dict()` / `from_dict()` serialization patterns.
+- Save debug screenshots locally as **JPEG** (smaller file size). Convert images to **WebP** (quality=90) before sending to VLM APIs to reduce payload size — WebP does not hurt VLM recognition accuracy.
 - Default to safe/offline behavior in automation flows (`SAFE_MODE=true`) unless explicitly required otherwise.
 - Do not add new CLI-flag driven entrypoints (`argparse`) for operational scripts; prefer `.env` + in-code defaults.
 - No repo-wide formatter/linter config is committed; avoid introducing style drift within edited files.

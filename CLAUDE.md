@@ -95,6 +95,7 @@ python -m test.vlm_input_control.integration_test
 - **`__all__` exports** in every `__init__.py` with relative imports
 - **Enums** for categorical values (`FrameType`, `AnalysisStatus`, `VLMProvider`, `MouseButton`)
 - **`to_dict()` / `from_dict()`** on data models for MongoDB serialization
+- **Image format convention**: Save debug screenshots locally as **JPEG** (smaller file size for storage). When sending images to VLM APIs, convert to **WebP** (quality=90) to reduce API payload size — WebP compression does not hurt VLM coordinate/element recognition accuracy.
 - **Safe mode**: Most interactive modules default to `SAFE_MODE=true` to prevent actual mouse/keyboard output
 - **No CLI arguments**: Do not use `argparse` or CLI flags. All configuration comes from `.env` (via `python-dotenv`) or hardcoded defaults in the source files. Scripts should run with just `python <script>.py`
 

@@ -159,17 +159,30 @@ def _capture_and_analyze_screen(window, settings: ToolScreenSettings) -> None:
         print("[WARNING] 캡처 데이터 없음 — 분석 건너뜀")
         return
 
-    # 디버그 이미지 저장 (WebP — PNG 대비 파일 크기 절감)
-    debug_path = "debug_tool_screen.webp"
+    # 디버그 이미지 저장 (JPEG — PNG 대비 파일 크기 절감)
+    debug_path = "debug_tool_screen.jpg"
     try:
         from PIL import Image
         import io
         img = Image.open(io.BytesIO(image_data))
-        img.save(debug_path, format="WEBP", quality=90)
+        img.save(debug_path, format="JPEG", quality=85)
         print(f"[INFO] 디버그 스크린샷 저장: {debug_path}")
     except Exception as exc:
         if settings.debug:
             print(f"[DEBUG] 디버그 이미지 저장 실패: {exc}")
+
+    # VLM 전송용 WebP 변환
+    vlm_image_data = image_data
+    try:
+        from PIL import Image
+        import io
+        img = Image.open(io.BytesIO(image_data))
+        buf = io.BytesIO()
+        img.save(buf, format="WEBP", quality=90)
+        vlm_image_data = buf.getvalue()
+        print(f"[INFO] VLM 전송 이미지: PNG {len(image_data):,}B → WebP {len(vlm_image_data):,}B")
+    except Exception as exc:
+        print(f"[WARNING] WebP 변환 실패, 원본 PNG로 전송: {exc}")
 
     # VLM 분석
     try:
@@ -185,7 +198,7 @@ def _capture_and_analyze_screen(window, settings: ToolScreenSettings) -> None:
         )
 
         print(f"[INFO] VLM 화면 분석 시작 (모델: {config.vlm.model_name})")
-        result = analyzer.analyze_screen(image_data, task="state_recognition")
+        result = analyzer.analyze_screen(vlm_image_data, task="state_recognition")
 
         if result is None:
             print("[WARNING] VLM 분석 결과 없음")

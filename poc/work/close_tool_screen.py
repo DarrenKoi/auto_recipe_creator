@@ -213,6 +213,17 @@ def _close_via_context_menu(window, settings: ToolCloseSettings) -> bool:
     title_y = rect.top + 15
     print(f"[INFO] 타이틀바 우클릭 좌표: ({title_x}, {title_y})")
 
+    # 컨텍스트 메뉴의 "X Close" 항목 예상 좌표
+    # 우클릭 지점에서 약간 오른쪽 아래로 이동하면 "X Close" 항목 위치
+    close_x = title_x + 30
+    close_y = title_y + 10
+    print(f"[INFO] 'X Close' 메뉴 클릭 좌표: ({close_x}, {close_y})")
+    _save_close_click_debug_image(
+        window,
+        title_click=(title_x, title_y),
+        close_click=(close_x, close_y),
+    )
+
     if settings.safe_mode:
         print("[INFO] SAFE MODE 활성화: 실제 클릭은 수행하지 않음")
         return True
@@ -225,17 +236,6 @@ def _close_via_context_menu(window, settings: ToolCloseSettings) -> bool:
         return False
 
     time.sleep(0.3)
-
-    # 컨텍스트 메뉴의 "X Close" 항목 클릭
-    # 우클릭 지점에서 약간 오른쪽 아래로 이동하면 "X Close" 항목 위치
-    close_x = title_x + 30
-    close_y = title_y + 10
-    print(f"[INFO] 'X Close' 메뉴 클릭 좌표: ({close_x}, {close_y})")
-    _save_close_click_debug_image(
-        window,
-        title_click=(title_x, title_y),
-        close_click=(close_x, close_y),
-    )
 
     try:
         mouse.click(coords=(close_x, close_y), button="left")

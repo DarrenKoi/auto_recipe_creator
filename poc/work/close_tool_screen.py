@@ -27,7 +27,9 @@ import os
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from io import BytesIO
+from pathlib import Path
 
 from pywinauto import Desktop, mouse
 
@@ -37,7 +39,7 @@ from poc.work.screen_capture import ScreenCapture
 from poc.work.vlm_openai_client import ChatImageRequest, LangChainOpenAICompatibleVLMClient
 
 try:
-    from PIL import Image
+    from PIL import Image, ImageDraw, ImageFont
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False
@@ -49,6 +51,7 @@ DEFAULT_VLM_MODEL = "Kimi-K2.5"
 DEFAULT_VLM_TEMPERATURE = 0.0
 DEFAULT_USE_WEBP = True
 DEFAULT_WEBP_QUALITY = 90
+DEBUG_IMAGE_DIR = Path(__file__).parent / "debug_images"
 
 
 @dataclass(frozen=True)
@@ -270,6 +273,60 @@ def _to_int(value) -> int | None:
         return None
 
 
+def _debug_image_path(prefix: str = "close_point") -> Path:
+    DEBUG_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return DEBUG_IMAGE_DIR / f"{prefix}_{ts}.png"
+
+
+def _save_close_point_debug_image(image_data: bytes, click_info: dict) -> None:
+    """VLM 예측 클릭 좌표를 스크린샷에 마킹해 저장한다."""
+    if not PIL_AVAILABLE:
+        print("[WARNING] Pillow 미설치로 디버그 이미지 저장 불가")
+        return
+
+    try:
+        image = Image.open(BytesIO(image_data)).convert("RGB")
+    except Exception as exc:
+        print(f"[WARNING] 디버그 이미지 열기 실패: {exc}")
+        return
+
+    x = int(click_info["x"])
+    y = int(click_info["y"])
+    target_name = str(click_info.get("target_name", "close_x"))
+    confidence = click_info.get("confidence_text", "N/A")
+    width, height = image.size
+
+    # 좌표를 이미지 경계 안으로 보정해 표시한다.
+    x = max(0, min(x, width - 1))
+    y = max(0, min(y, height - 1))
+
+    draw = ImageDraw.Draw(image)
+    try:
+        font = ImageFont.truetype("arial.ttf", 13)
+    except Exception:
+        font = ImageFont.load_default()
+
+    radius = 12
+    color = "red"
+    draw.line([(x - radius, y), (x + radius, y)], fill=color, width=2)
+    draw.line([(x, y - radius), (x, y + radius)], fill=color, width=2)
+    draw.ellipse(
+        [(x - radius, y - radius), (x + radius, y + radius)],
+        outline=color,
+        width=2,
+    )
+    label = f"{target_name} ({x},{y}) conf={confidence}"
+    draw.text((x + radius + 4, max(0, y - 16)), label, fill=color, font=font)
+
+    out_path = _debug_image_path("close_point")
+    try:
+        image.save(out_path)
+        print(f"[INFO] 닫기 클릭포인트 디버그 이미지 저장: {out_path}")
+    except Exception as exc:
+        print(f"[WARNING] 디버그 이미지 저장 실패: {exc}")
+
+
 def _encode_vlm_image(image_data: bytes, settings: ToolCloseSettings) -> tuple[str, str]:
     """VLM 전송용 이미지 인코딩(WebP 우선, 불가 시 PNG)."""
     if settings.use_webp and PIL_AVAILABLE:
@@ -352,7 +409,7 @@ def _ask_close_point(image_data: bytes, width: int, height: int, settings: ToolC
     except Exception:
         confidence_text = "N/A"
     print(f"[INFO] VLM close 좌표: ({x}, {y}), target={target_name}, confidence={confidence_text}")
-    return {"x": x, "y": y, "target_name": target_name}
+    return {"x": x, "y": y, "target_name": target_name, "confidence_text": confidence_text}
 
 
 def _click_close(window, rel_x: int, rel_y: int, settings: ToolCloseSettings) -> bool:
@@ -470,6 +527,8 @@ def main() -> int:
     if not close_point:
         print("[ERROR] VLM이 닫기 좌표를 제공하지 못했습니다.")
         return 4
+
+    _save_close_point_debug_image(image_data, close_point)
 
     clicked = _click_close(window, close_point["x"], close_point["y"], settings)
     if not clicked:

@@ -159,11 +159,13 @@ def _capture_and_analyze_screen(window, settings: ToolScreenSettings) -> None:
         print("[WARNING] 캡처 데이터 없음 — 분석 건너뜀")
         return
 
-    # 디버그 이미지 저장
-    debug_path = "debug_tool_screen.png"
+    # 디버그 이미지 저장 (WebP — PNG 대비 파일 크기 절감)
+    debug_path = "debug_tool_screen.webp"
     try:
-        with open(debug_path, "wb") as f:
-            f.write(image_data)
+        from PIL import Image
+        import io
+        img = Image.open(io.BytesIO(image_data))
+        img.save(debug_path, format="WEBP", quality=90)
         print(f"[INFO] 디버그 스크린샷 저장: {debug_path}")
     except Exception as exc:
         if settings.debug:

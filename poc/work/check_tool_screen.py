@@ -14,6 +14,8 @@ import os
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 
 from pywinauto import Desktop
 
@@ -28,6 +30,7 @@ except ImportError:
     VLM_ANALYSIS_AVAILABLE = False
 
 DEFAULT_TOOL_NAME = "MCD018"
+DEBUG_IMAGE_DIR = Path(__file__).parent / "debug_images"
 DEFAULT_TOOL_SCREEN_SETTLE_SEC = 0.5
 
 
@@ -159,32 +162,56 @@ def _capture_and_analyze_screen(window, settings: ToolScreenSettings) -> None:
         print("[WARNING] 캡처 데이터 없음 — 분석 건너뜀")
         return
 
-    # 디버그 이미지 저장 (JPEG — PNG 대비 파일 크기 절감)
-    debug_path = "debug_tool_screen.jpg"
+    # 디버그 이미지 저장 (JPEG) + VLM 전송용 WebP 변환
+    jpeg_size = 0
+    DEBUG_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    debug_path = DEBUG_IMAGE_DIR / f"tool_screen_{ts}.jpg"
     try:
         from PIL import Image
         import io
         img = Image.open(io.BytesIO(image_data))
-        img.save(debug_path, format="JPEG", quality=85)
-        print(f"[INFO] 디버그 스크린샷 저장: {debug_path}")
+        jpeg_buf = io.BytesIO()
+        img.save(jpeg_buf, format="JPEG", quality=85)
+        jpeg_size = jpeg_buf.tell()
+        with open(debug_path, "wb") as f:
+            f.write(jpeg_buf.getvalue())
+        print(f"[INFO] 디버그 스크린샷 저장: {debug_path} ({jpeg_size:,}B)")
     except Exception as exc:
         if settings.debug:
             print(f"[DEBUG] 디버그 이미지 저장 실패: {exc}")
 
-    # VLM 전송용 WebP 변환
     vlm_image_data = image_data
+    MAX_VLM_BYTES = 1_000_000  # 1MB 상한
     try:
         from PIL import Image
         import io
         img = Image.open(io.BytesIO(image_data))
-        buf = io.BytesIO()
-        img.save(buf, format="WEBP", quality=90)
-        vlm_image_data = buf.getvalue()
-        print(f"[INFO] VLM 전송 이미지: PNG {len(image_data):,}B → WebP {len(vlm_image_data):,}B")
+        quality = 90
+        while quality >= 10:
+            webp_buf = io.BytesIO()
+            img.save(webp_buf, format="WEBP", quality=quality)
+            vlm_image_data = webp_buf.getvalue()
+            webp_size = len(vlm_image_data)
+            if webp_size <= MAX_VLM_BYTES:
+                break
+            print(f"[INFO] WebP {webp_size:,}B > 1MB, quality {quality} → {quality - 10}")
+            quality -= 10
+        print(f"[INFO] VLM 전송 이미지: JPEG {jpeg_size:,}B → WebP {webp_size:,}B (q={quality})")
+        if webp_size > MAX_VLM_BYTES:
+            print(f"[WARNING] WebP가 여전히 {webp_size:,}B > 1MB — 리사이즈 적용")
+            scale = (MAX_VLM_BYTES / webp_size) ** 0.5
+            new_w = int(img.width * scale)
+            new_h = int(img.height * scale)
+            img = img.resize((new_w, new_h), Image.LANCZOS)
+            webp_buf = io.BytesIO()
+            img.save(webp_buf, format="WEBP", quality=70)
+            vlm_image_data = webp_buf.getvalue()
+            print(f"[INFO] 리사이즈 후 WebP: {len(vlm_image_data):,}B ({new_w}x{new_h})")
     except Exception as exc:
         print(f"[WARNING] WebP 변환 실패, 원본 PNG로 전송: {exc}")
 
-    # VLM 분석
+    # VLM 분석 (500 에러 시 축소 이미지로 재시도)
     try:
         config = PocConfig.load()
         if not config.vlm.api_url:
@@ -198,7 +225,29 @@ def _capture_and_analyze_screen(window, settings: ToolScreenSettings) -> None:
         )
 
         print(f"[INFO] VLM 화면 분석 시작 (모델: {config.vlm.model_name})")
-        result = analyzer.analyze_screen(vlm_image_data, task="state_recognition")
+        result = None
+        try:
+            result = analyzer.analyze_screen(vlm_image_data, task="state_recognition")
+        except Exception as api_exc:
+            exc_text = str(api_exc)
+            if "500" in exc_text or "server" in exc_text.lower():
+                print(f"[WARNING] VLM 500 에러, 축소 이미지로 재시도: {api_exc}")
+                try:
+                    from PIL import Image
+                    import io
+                    img = Image.open(io.BytesIO(image_data))
+                    new_w = img.width // 2
+                    new_h = img.height // 2
+                    img = img.resize((new_w, new_h), Image.LANCZOS)
+                    retry_buf = io.BytesIO()
+                    img.save(retry_buf, format="WEBP", quality=60)
+                    retry_data = retry_buf.getvalue()
+                    print(f"[INFO] 재시도 이미지: {len(retry_data):,}B ({new_w}x{new_h})")
+                    result = analyzer.analyze_screen(retry_data, task="state_recognition")
+                except Exception as retry_exc:
+                    print(f"[ERROR] 재시도도 실패: {retry_exc}")
+            else:
+                print(f"[WARNING] VLM 호출 실패: {api_exc}")
 
         if result is None:
             print("[WARNING] VLM 분석 결과 없음")

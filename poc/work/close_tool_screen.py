@@ -15,6 +15,8 @@
     RCS_TOOL_CLOSE_VERIFY_TIMEOUT  클릭 후 닫힘 확인 시간(초, 기본: 5)
     RCS_TOOL_CLOSE_DEBUG           디버그 모드 (기본: false)
     RCS_TOOL_CLOSE_SAFE_MODE       true면 실제 클릭하지 않음
+    RCS_TOOL_CLOSE_USE_WEBP        VLM 전송 이미지를 WebP로 변환 (기본: true)
+    RCS_TOOL_CLOSE_WEBP_QUALITY    WebP 품질 (기본: 90)
     SAFE_MODE                      RCS_TOOL_CLOSE_SAFE_MODE 미지정 시 기본값 소스
     VLM_API_URL/VLM_API_BASE_URL, VLM_API_KEY, VLM_MODEL_NAME, VLM_TEMPERATURE
 """
@@ -25,6 +27,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass
+from io import BytesIO
 
 from pywinauto import Desktop, mouse
 
@@ -33,11 +36,19 @@ from poc.work.rcs_common import DEFAULT_TIMEOUT, env_float, env_flag, load_env
 from poc.work.screen_capture import ScreenCapture
 from poc.work.vlm_openai_client import ChatImageRequest, LangChainOpenAICompatibleVLMClient
 
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+
 DEFAULT_TOOL_NAME = "MCD018"
 DEFAULT_TOOL_SCREEN_SETTLE_SEC = 0.5
 DEFAULT_CLOSE_VERIFY_TIMEOUT = 5.0
-DEFAULT_VLM_MODEL = "Qwen3-VL-30B-Instruct"
+DEFAULT_VLM_MODEL = "Kimi-K2.5"
 DEFAULT_VLM_TEMPERATURE = 0.0
+DEFAULT_USE_WEBP = True
+DEFAULT_WEBP_QUALITY = 90
 
 
 @dataclass(frozen=True)
@@ -54,6 +65,8 @@ class ToolCloseSettings:
     vlm_api_key: str
     vlm_model: str
     vlm_temperature: float
+    use_webp: bool
+    webp_quality: int
 
 
 def _resolve_safe_mode() -> bool:
@@ -61,6 +74,17 @@ def _resolve_safe_mode() -> bool:
     if explicit:
         return explicit.lower() in {"1", "true", "yes", "on", "y"}
     return env_flag("SAFE_MODE", True)
+
+
+def _parse_int_env(name: str, default: int) -> int:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        print(f"[WARNING] 잘못된 {name} 값 '{value}', 기본값 {default} 사용")
+        return default
 
 
 def load_settings() -> ToolCloseSettings:
@@ -80,11 +104,7 @@ def load_settings() -> ToolCloseSettings:
         or (config.vlm.api_url or "").strip()
     )
     vlm_api_key = os.environ.get("VLM_API_KEY", "").strip() or (config.vlm.api_key or "").strip()
-    vlm_model = (
-        os.environ.get("VLM_MODEL_NAME", "").strip()
-        or (config.vlm.model_name or "").strip()
-        or DEFAULT_VLM_MODEL
-    )
+    vlm_model = os.environ.get("VLM_MODEL_NAME", "").strip() or DEFAULT_VLM_MODEL
 
     return ToolCloseSettings(
         tool_name=tool_name,
@@ -99,6 +119,8 @@ def load_settings() -> ToolCloseSettings:
         vlm_api_key=vlm_api_key,
         vlm_model=vlm_model,
         vlm_temperature=env_float("VLM_TEMPERATURE", DEFAULT_VLM_TEMPERATURE),
+        use_webp=env_flag("RCS_TOOL_CLOSE_USE_WEBP", DEFAULT_USE_WEBP),
+        webp_quality=_parse_int_env("RCS_TOOL_CLOSE_WEBP_QUALITY", DEFAULT_WEBP_QUALITY),
     )
 
 
@@ -248,12 +270,34 @@ def _to_int(value) -> int | None:
         return None
 
 
+def _encode_vlm_image(image_data: bytes, settings: ToolCloseSettings) -> tuple[str, str]:
+    """VLM 전송용 이미지 인코딩(WebP 우선, 불가 시 PNG)."""
+    if settings.use_webp and PIL_AVAILABLE:
+        try:
+            image = Image.open(BytesIO(image_data))
+            if image.mode != "RGB":
+                image = image.convert("RGB")
+            quality = max(1, min(100, settings.webp_quality))
+            buf = BytesIO()
+            image.save(buf, format="WEBP", quality=quality, method=4)
+            payload = buf.getvalue()
+            print(f"[INFO] VLM 이미지 포맷: webp (q={quality}), {len(payload) / 1024:.1f}KB")
+            return base64.b64encode(payload).decode("utf-8"), "image/webp"
+        except Exception as exc:
+            print(f"[WARNING] WebP 변환 실패, PNG 폴백: {exc}")
+    elif settings.use_webp and not PIL_AVAILABLE:
+        print("[WARNING] Pillow 미설치로 WebP 변환 불가, PNG 폴백")
+
+    print(f"[INFO] VLM 이미지 포맷: png, {len(image_data) / 1024:.1f}KB")
+    return base64.b64encode(image_data).decode("utf-8"), "image/png"
+
+
 def _ask_close_point(image_data: bytes, width: int, height: int, settings: ToolCloseSettings) -> dict | None:
     if not settings.vlm_api_url:
         print("[ERROR] VLM API URL 미설정: VLM_API_URL 또는 VLM_API_BASE_URL 필요")
         return None
 
-    image_b64 = base64.b64encode(image_data).decode("utf-8")
+    image_b64, image_mime = _encode_vlm_image(image_data, settings)
     system_msg, prompt = _build_close_prompt(width, height)
     client = LangChainOpenAICompatibleVLMClient(
         base_url=settings.vlm_api_url,
@@ -265,7 +309,7 @@ def _ask_close_point(image_data: bytes, width: int, height: int, settings: ToolC
         system_message=system_msg,
         user_text=prompt,
         image_b64=image_b64,
-        image_mime="image/png",
+        image_mime=image_mime,
         temperature=settings.vlm_temperature,
     )
 
@@ -392,6 +436,8 @@ def main() -> int:
     print(f"[INFO] 감지 대상 툴: {settings.tool_name}")
     print(f"[INFO] 탐색 백엔드: {settings.backends}")
     print(f"[INFO] SAFE MODE: {settings.safe_mode}")
+    print(f"[INFO] VLM 모델: {settings.vlm_model}")
+    print(f"[INFO] VLM 이미지 WebP 사용: {settings.use_webp}")
 
     deadline = time.time() + max(0.5, settings.timeout)
     window = None

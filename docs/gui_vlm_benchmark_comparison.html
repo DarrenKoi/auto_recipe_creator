@@ -1,24 +1,24 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GUI-Specialized VLM &amp; UI Parsing Benchmark Comparison</title>
+    <title>GUI 특화 VLM 및 UI Parsing 벤치마크 비교</title>
     <style>
         :root {
-            --bg: #0f172a;
-            --surface: #1e293b;
-            --surface2: #334155;
-            --border: #475569;
-            --text: #e2e8f0;
-            --text-dim: #94a3b8;
-            --accent: #38bdf8;
-            --accent2: #818cf8;
-            --green: #4ade80;
-            --yellow: #fbbf24;
-            --red: #f87171;
-            --orange: #fb923c;
-            --teal: #2dd4bf;
+            --bg: #ffffff;
+            --surface: #ffffff;
+            --surface2: #f3f6fb;
+            --border: #d9e2ef;
+            --text: #0f172a;
+            --text-dim: #475569;
+            --accent: #0ea5e9;
+            --accent2: #4f46e5;
+            --green: #16a34a;
+            --yellow: #ca8a04;
+            --red: #dc2626;
+            --orange: #ea580c;
+            --teal: #0f766e;
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -120,35 +120,36 @@
 <body>
 <div class="container">
 
-    <h1>GUI-Specialized VLM &amp; UI Parsing Benchmark Comparison</h1>
-    <p class="subtitle">ScreenSpot-Pro &amp; Agent Benchmarks for CD-SEM/RCS Automation &mdash; Feb 2026</p>
+    <h1>GUI 특화 VLM 및 UI Parsing 벤치마크 비교</h1>
+    <p class="subtitle">CD-SEM/RCS 자동화를 위한 ScreenSpot-Pro 및 Agent 벤치마크 &mdash; 2026년 2월</p>
 
     <!-- ===== EXECUTIVE SUMMARY ===== -->
     <div class="section">
-        <h2>Executive Summary</h2>
-        <p>Our current model <strong>Kimi-K2.5</strong> (self-hosted internally) scores <strong>52.8%</strong> on ScreenSpot-Pro,
-           while GUI-specialized models reach <strong>62&ndash;70%</strong>. Additionally, <strong>UI parsing tools</strong>
-           (OmniParser, SparkUI-Parser) can be combined with VLMs to further boost grounding accuracy.
-           For complex engineering UIs like CD-SEM/RCS recipe editors, a combined approach is essential.</p>
+        <h2>요약</h2>
+        <p>현재 사용 중인 모델 <strong>Kimi-K2.5</strong>(사내 self-hosted)의 ScreenSpot-Pro 점수는 <strong>52.8%</strong>이며,
+           GUI 특화 모델은 <strong>62&ndash;70%</strong> 수준을 달성합니다. 또한 <strong>UI parsing 도구</strong>
+           (OmniParser, SparkUI-Parser)를 VLM과 결합하면 grounding 정확도를 추가로 높일 수 있습니다.
+           CD-SEM/RCS 레시피 에디터 같은 복잡한 엔지니어링 UI에서는 결합 접근이 필수적입니다.</p>
         <div class="legend" style="margin-top:1rem;">
-            <div class="legend-item"><div class="legend-dot" style="background:var(--red);"></div> Currently used (Kimi-K2.5)</div>
-            <div class="legend-item"><div class="legend-dot" style="background:var(--accent);"></div> Recommended GUI-specialized VLM</div>
-            <div class="legend-item"><div class="legend-dot" style="background:var(--teal);"></div> UI Parsing / Pre-processing</div>
-            <div class="legend-item"><div class="legend-dot" style="background:var(--green);"></div> SOTA (reference)</div>
-            <div class="legend-item"><div class="legend-dot" style="background:var(--yellow);"></div> General-purpose baseline</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--red);"></div> 현재 사용 (Kimi-K2.5)</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--accent);"></div> 권장 GUI 특화 VLM</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--teal);"></div> UI Parsing / 전처리</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--green);"></div> SOTA (참고)</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--yellow);"></div> 범용 baseline</div>
         </div>
     </div>
 
     <!-- ===== SCREENSPOT-PRO BENCHMARK ===== -->
     <div class="section">
-        <h2>ScreenSpot-Pro Benchmark &mdash; Professional GUI Grounding</h2>
+        <h2>ScreenSpot-Pro 벤치마크 &mdash; Professional GUI Grounding</h2>
         <p style="color:var(--text-dim); margin-bottom:1rem;">
-            ScreenSpot-Pro evaluates click-point accuracy on <strong>high-resolution professional application UIs</strong>
-            (CAD, EDA, development tools, creative suites) &mdash; the closest public benchmark to our CD-SEM/RCS use case.
-            1,581 instructions across 23 applications in 5 industries and 3 operating systems.
+            ScreenSpot-Pro는 <strong>고해상도 전문 애플리케이션 UI</strong>
+            (CAD, EDA, 개발 도구, 크리에이티브 툴)의 click-point 정확도를 평가하며,
+            CD-SEM/RCS 사용 사례와 가장 유사한 공개 벤치마크입니다.
+            5개 산업, 3개 OS, 23개 애플리케이션에서 1,581개 지시문으로 구성됩니다.
         </p>
 
-        <h3>Visual Comparison</h3>
+        <h3>시각 비교</h3>
         <div class="bar-chart">
             <div class="bar-row">
                 <div class="bar-label">UI-Venus-1.5-8B <span class="tag tag-sota">SOTA</span></div>
@@ -167,7 +168,7 @@
                 <div class="bar-track"><div class="bar-fill bar-general" style="width:61.8%;">61.8%</div></div>
             </div>
             <div class="bar-row">
-                <div class="bar-label">UI-TARS-1.5-7B <span class="tag tag-rec">Recommended</span></div>
+                <div class="bar-label">UI-TARS-1.5-7B <span class="tag tag-rec">권장</span></div>
                 <div class="bar-track"><div class="bar-fill bar-recommended" style="width:61.6%;">61.6%</div></div>
             </div>
             <div class="bar-row">
@@ -179,7 +180,7 @@
                 <div class="bar-track"><div class="bar-fill bar-general" style="width:54.6%;">54.6%</div></div>
             </div>
             <div class="bar-row">
-                <div class="bar-label">Kimi-K2.5 (Moonshot) <span class="tag tag-ours">Current</span></div>
+                <div class="bar-label">Kimi-K2.5 (Moonshot) <span class="tag tag-ours">현재</span></div>
                 <div class="bar-track"><div class="bar-fill bar-kimi" style="width:52.8%;">52.8%</div></div>
             </div>
             <div class="bar-row">
@@ -212,78 +213,78 @@
             </div>
         </div>
 
-        <h3>Detailed Scores</h3>
+        <h3>상세 점수</h3>
         <div class="table-wrapper">
             <table>
                 <thead>
                     <tr>
-                        <th>Model</th>
-                        <th>Type</th>
+                        <th>모델</th>
+                        <th>유형</th>
                         <th>Params</th>
                         <th>ScreenSpot-Pro (%)</th>
-                        <th>Notes</th>
+                        <th>비고</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr>
                         <td>UI-Venus-1.5-8B (Huawei)</td>
-                        <td><span class="tag tag-gui">GUI-Trained</span></td>
+                        <td><span class="tag tag-gui">GUI 학습</span></td>
                         <td>8B</td>
                         <td class="score-top">69.6</td>
-                        <td>Current SOTA (Feb 2026), also 2B/30B variants</td>
+                        <td>현재 SOTA (2026년 2월), 2B/30B variant도 제공</td>
                     </tr>
                     <tr>
                         <td>MAI-UI-32B (Alibaba)</td>
-                        <td><span class="tag tag-gui">GUI-Trained</span></td>
+                        <td><span class="tag tag-gui">GUI 학습</span></td>
                         <td>32B</td>
                         <td class="score-top">67.9</td>
-                        <td>SOTA Dec 2025</td>
+                        <td>2025년 12월 SOTA</td>
                     </tr>
                     <tr>
                         <td>MAI-UI-8B (Alibaba)</td>
-                        <td><span class="tag tag-gui">GUI-Trained</span></td>
+                        <td><span class="tag tag-gui">GUI 학습</span></td>
                         <td>8B</td>
                         <td class="score-top">65.7</td>
-                        <td>Best 8B-class (Dec 2025)</td>
+                        <td>8B급 최고 성능 (2025년 12월)</td>
                     </tr>
                     <tr>
                         <td>Qwen3-VL-30B-A3B</td>
-                        <td><span class="tag tag-general">General</span></td>
+                        <td><span class="tag tag-general">범용</span></td>
                         <td>30B (3B active)</td>
                         <td class="score-high">61.8</td>
-                        <td>MoE, efficient inference</td>
+                        <td>MoE 기반, 효율적 추론</td>
                     </tr>
                     <tr class="highlight-row">
                         <td><strong>UI-TARS-1.5-7B</strong> (ByteDance)</td>
-                        <td><span class="tag tag-gui">GUI-Trained</span></td>
+                        <td><span class="tag tag-gui">GUI 학습</span></td>
                         <td>7B</td>
                         <td class="score-high">61.6</td>
-                        <td><strong>Best value: 7B = near-SOTA</strong></td>
+                        <td><strong>가성비 최고: 7B로 near-SOTA</strong></td>
                     </tr>
                     <tr>
                         <td>MAI-UI-2B (Alibaba)</td>
-                        <td><span class="tag tag-gui">GUI-Trained</span></td>
+                        <td><span class="tag tag-gui">GUI 학습</span></td>
                         <td>2B</td>
                         <td class="score-mid">57.4</td>
-                        <td>Best ultra-lightweight</td>
+                        <td>초경량 모델 중 최고</td>
                     </tr>
                     <tr>
                         <td>Qwen3-VL-8B</td>
-                        <td><span class="tag tag-general">General</span></td>
+                        <td><span class="tag tag-general">범용</span></td>
                         <td>8B</td>
                         <td class="score-mid">54.6</td>
-                        <td>General VL, not GUI-specialized</td>
+                        <td>범용 VL로 GUI 특화 아님</td>
                     </tr>
                     <tr class="current-row">
                         <td><strong>Kimi-K2.5 (Moonshot)</strong></td>
-                        <td><span class="tag tag-ours">Current</span></td>
+                        <td><span class="tag tag-ours">현재</span></td>
                         <td>~200B+ MoE</td>
                         <td class="score-mid">52.8</td>
-                        <td><strong>Currently self-hosted &mdash; general-purpose limit</strong></td>
+                        <td><strong>현재 self-hosted 운영 중 &mdash; 범용 모델 한계 존재</strong></td>
                     </tr>
                     <tr>
                         <td>GUI-Actor-7B (Microsoft)</td>
-                        <td><span class="tag tag-gui">GUI-Trained</span></td>
+                        <td><span class="tag tag-gui">GUI 학습</span></td>
                         <td>7B</td>
                         <td class="score-low">44.6</td>
                         <td>Qwen2.5-VL backbone, NeurIPS'25</td>
@@ -293,101 +294,101 @@
                         <td><span class="tag tag-parser">Parser+VLM</span></td>
                         <td>YOLOv8 + Florence-2 + GPT-4o</td>
                         <td class="score-low">39.6</td>
-                        <td>GPT-4o boosted from 0.8% to 39.6% via parsing</td>
+                        <td>parsing 적용 시 GPT-4o 0.8%에서 39.6%로 향상</td>
                     </tr>
                     <tr>
                         <td>UI-TARS-72B (v1)</td>
-                        <td><span class="tag tag-gui">GUI-Trained</span></td>
+                        <td><span class="tag tag-gui">GUI 학습</span></td>
                         <td>72B</td>
                         <td class="score-low">38.1</td>
-                        <td>v1; superseded by 1.5</td>
+                        <td>v1, 1.5로 대체됨</td>
                     </tr>
                     <tr>
                         <td>UGround-V1-7B</td>
-                        <td><span class="tag tag-gui">GUI-Trained</span></td>
+                        <td><span class="tag tag-gui">GUI 학습</span></td>
                         <td>7B</td>
                         <td class="score-low">31.1</td>
                         <td>ICLR'25 Oral</td>
                     </tr>
                     <tr>
                         <td>OS-Atlas-7B</td>
-                        <td><span class="tag tag-gui">GUI-Trained</span></td>
+                        <td><span class="tag tag-gui">GUI 학습</span></td>
                         <td>7B</td>
                         <td class="score-poor">18.9</td>
-                        <td>Icons near-zero</td>
+                        <td>아이콘 인식 성능 매우 낮음</td>
                     </tr>
                     <tr>
                         <td>Claude Computer Use</td>
-                        <td><span class="tag tag-general">General</span></td>
+                        <td><span class="tag tag-general">범용</span></td>
                         <td>~200B+</td>
                         <td class="score-poor">17.1</td>
-                        <td>Anthropic, API-only</td>
+                        <td>Anthropic, API 전용</td>
                     </tr>
                     <tr>
                         <td>Qwen2-VL-7B</td>
-                        <td><span class="tag tag-general">General</span></td>
+                        <td><span class="tag tag-general">범용</span></td>
                         <td>7B</td>
                         <td class="score-poor">1.6</td>
-                        <td>Not GUI-trained</td>
+                        <td>GUI 학습 미적용</td>
                     </tr>
                     <tr>
                         <td>GPT-4o (standalone)</td>
-                        <td><span class="tag tag-general">General</span></td>
+                        <td><span class="tag tag-general">범용</span></td>
                         <td>~200B+</td>
                         <td class="score-poor">0.8</td>
-                        <td>Near-zero without parsing (→ 39.6% with OmniParser)</td>
+                        <td>parsing 없으면 거의 0에 수렴 (OmniParser 적용 시 39.6%)</td>
                     </tr>
                 </tbody>
             </table>
         </div>
         <div class="warning">
-            <strong>Key Insight:</strong> Kimi-K2.5 (our current model, 52.8%) is a general-purpose VLM. GUI-specialized models
-            like UI-TARS-1.5-7B (61.6%) achieve <strong>+17% higher accuracy</strong> with just 7B parameters.
-            UI-Venus-1.5-8B pushes this to 69.6% (+32%). On a complex engineering UI like RCS recipe editor,
-            this gap translates to fewer misclicks, fewer failed automation steps, and less manual intervention.
+            <strong>핵심 인사이트:</strong> Kimi-K2.5(현재 모델, 52.8%)는 범용 VLM입니다. UI-TARS-1.5-7B(61.6%) 같은
+            GUI 특화 모델은 7B 파라미터만으로도 <strong>+17% 높은 정확도</strong>를 보입니다.
+            UI-Venus-1.5-8B는 69.6%(+32%)까지 도달합니다. RCS 레시피 에디터 같은 복잡한 엔지니어링 UI에서는
+            이 격차가 오클릭 감소, 자동화 단계 실패 감소, 수동 개입 감소로 직결됩니다.
         </div>
     </div>
 
     <!-- ===== UI PARSING TOOLS ===== -->
     <div class="section">
-        <h2>UI Parsing Tools &mdash; Structured Element Detection</h2>
+        <h2>UI Parsing 도구 &mdash; 구조화된 요소 검출</h2>
         <p style="color:var(--text-dim); margin-bottom:1rem;">
-            UI parsing tools pre-process screenshots to detect interactive elements (buttons, icons, text fields)
-            and provide structured bounding boxes + labels <strong>before</strong> sending to a VLM.
-            This dramatically improves grounding accuracy &mdash; e.g., GPT-4o jumps from 0.8% to 39.6% with OmniParser.
+            UI parsing 도구는 스크린샷을 전처리해 인터랙션 가능한 요소(버튼, 아이콘, 텍스트 필드)를 검출하고,
+            VLM으로 보내기 <strong>전에</strong> 구조화된 bounding box + label을 제공합니다.
+            이 과정은 grounding 정확도를 크게 향상시키며, 예를 들어 GPT-4o는 OmniParser 적용 시 0.8%에서 39.6%로 상승합니다.
         </p>
 
-        <h3>Proposed Pipeline: Parser + GUI-Specialized VLM</h3>
+        <h3>권장 파이프라인: Parser + GUI 특화 VLM</h3>
         <div class="pipeline">
-            <span class="output">Screenshot</span>
+            <span class="output">스크린샷</span>
             <span class="arrow">&nbsp;&rarr;&nbsp;</span>
             <span class="component">[OmniParser V2 / SparkUI-Parser]</span>
             <span class="arrow">&nbsp;&rarr;&nbsp;</span>
-            <span class="output">Structured Elements (bboxes + labels + icons)</span>
+            <span class="output">구조화 요소 (bboxes + labels + icons)</span>
             <span class="arrow">&nbsp;&rarr;&nbsp;</span>
             <span class="component">[GUI-Specialized VLM: UI-TARS / MAI-UI / UI-Venus]</span>
             <span class="arrow">&nbsp;&rarr;&nbsp;</span>
-            <span class="output">Precise Click Coordinates + Action Plan</span>
+            <span class="output">정밀 Click 좌표 + 액션 계획</span>
             <span class="arrow">&nbsp;&rarr;&nbsp;</span>
             <span class="component">[pynput Mouse/Keyboard]</span>
         </div>
         <div class="note">
-            <strong>Why combine?</strong> The parser handles <strong>element detection</strong> (where are the clickable things?)
-            while the GUI-VLM handles <strong>semantic grounding</strong> (which element matches the instruction?).
-            This two-stage approach is especially powerful for dense engineering UIs where elements are tightly packed.
+            <strong>왜 결합하나?</strong> Parser는 <strong>element detection</strong>(클릭 가능한 요소의 위치)을 담당하고,
+            GUI-VLM은 <strong>semantic grounding</strong>(지시문에 맞는 요소 선택)을 담당합니다.
+            요소가 촘촘한 엔지니어링 UI에서는 이 2단계 접근이 특히 효과적입니다.
         </div>
 
-        <h3>UI Parsing Tool Comparison</h3>
+        <h3>UI Parsing 도구 비교</h3>
         <div class="table-wrapper">
             <table>
                 <thead>
                     <tr>
-                        <th>Tool</th>
-                        <th>Organization</th>
+                        <th>도구</th>
+                        <th>기관</th>
                         <th>Architecture</th>
-                        <th>Key Capability</th>
-                        <th>Latency</th>
-                        <th>Open Source</th>
+                        <th>핵심 기능</th>
+                        <th>지연시간</th>
+                        <th>오픈소스</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -395,80 +396,80 @@
                         <td><strong>OmniParser V2</strong></td>
                         <td>Microsoft</td>
                         <td>YOLOv8 (detection) + Florence-2 (caption) + PaddleOCR</td>
-                        <td>Detect interactive elements, generate functional descriptions, overlay structured bounding boxes</td>
+                        <td>인터랙션 요소 검출, 기능 설명 생성, 구조화 bounding box overlay</td>
                         <td>0.6s/frame (A100)</td>
-                        <td class="score-top">Yes</td>
+                        <td class="score-top">예</td>
                     </tr>
                     <tr>
                         <td><strong>SparkUI-Parser</strong></td>
                         <td>Ant Group</td>
                         <td>MLLM + token router + coordinate decoder</td>
-                        <td>End-to-end continuous coordinate modeling, highest precision for small elements</td>
-                        <td>Fastest in class</td>
-                        <td class="score-top">Yes</td>
+                        <td>End-to-end 연속 좌표 모델링, 작은 요소에서 최고 정밀도</td>
+                        <td>동급 최고 속도</td>
+                        <td class="score-top">예</td>
                     </tr>
                     <tr>
                         <td><strong>SeeClick</strong></td>
                         <td>NJU</td>
                         <td>Qwen-VL fine-tuned</td>
-                        <td>First automatic GUI perception from UI screenshots alone</td>
+                        <td>UI 스크린샷만으로 GUI 인지를 자동화한 초기 접근</td>
                         <td>&mdash;</td>
-                        <td class="score-top">Yes</td>
+                        <td class="score-top">예</td>
                     </tr>
                     <tr>
                         <td><strong>Set-of-Mark (SoM)</strong></td>
                         <td>Microsoft</td>
                         <td>Visual prompting overlay</td>
-                        <td>Overlays numbered marks on UI elements for VLM reference</td>
-                        <td>Minimal</td>
-                        <td class="score-top">Yes</td>
+                        <td>UI 요소에 번호 마킹을 overlay해 VLM 참조성 향상</td>
+                        <td>매우 낮음</td>
+                        <td class="score-top">예</td>
                     </tr>
                 </tbody>
             </table>
         </div>
 
-        <h3>OmniParser V2 &mdash; Architecture Detail</h3>
+        <h3>OmniParser V2 &mdash; 아키텍처 상세</h3>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 0.5rem;">
             <div style="background:var(--surface2); border-radius:8px; padding:1rem;">
-                <h4 style="color:var(--teal); margin-bottom:0.5rem;">Stage 1: Detection</h4>
+                <h4 style="color:var(--teal); margin-bottom:0.5rem;">1단계: Detection</h4>
                 <ul style="padding-left:1.2rem; color:var(--text-dim); font-size:0.88rem;">
-                    <li><strong>YOLOv8 Nano</strong> fine-tuned for UI element detection</li>
-                    <li>Identifies buttons, icons, menus, text fields, checkboxes</li>
-                    <li>Outputs bounding boxes for all interactive regions</li>
-                    <li>V2 improves accuracy on small elements (&lt; 20px)</li>
+                    <li><strong>YOLOv8 Nano</strong>를 UI 요소 검출에 맞춰 fine-tuning</li>
+                    <li>버튼, 아이콘, 메뉴, 텍스트 필드, 체크박스 식별</li>
+                    <li>모든 인터랙션 영역의 bounding box 출력</li>
+                    <li>V2는 작은 요소(&lt; 20px) 정확도 개선</li>
                 </ul>
             </div>
             <div style="background:var(--surface2); border-radius:8px; padding:1rem;">
-                <h4 style="color:var(--teal); margin-bottom:0.5rem;">Stage 2: Caption + OCR</h4>
+                <h4 style="color:var(--teal); margin-bottom:0.5rem;">2단계: Caption + OCR</h4>
                 <ul style="padding-left:1.2rem; color:var(--text-dim); font-size:0.88rem;">
-                    <li><strong>Florence-2 Base</strong> fine-tuned for icon captioning</li>
-                    <li>Generates functional descriptions for each element</li>
-                    <li><strong>PaddleOCR</strong> extracts text from labels and buttons</li>
-                    <li>Output: structured JSON with element type, bbox, label, function</li>
+                    <li><strong>Florence-2 Base</strong>를 icon captioning에 맞춰 fine-tuning</li>
+                    <li>각 요소의 기능 설명 생성</li>
+                    <li><strong>PaddleOCR</strong>로 label/버튼 텍스트 추출</li>
+                    <li>출력: element type, bbox, label, function을 담은 구조화 JSON</li>
                 </ul>
             </div>
         </div>
 
         <div class="note" style="margin-top:1rem;">
-            <strong>Integration with OmniTool:</strong> Microsoft's OmniTool provides a dockerized Windows 11 VM
-            that integrates OmniParser V2 with various VLMs (GPT-4o, Claude, Qwen2.5-VL, DeepSeek-R1).
-            It also supports <strong>local trajectory logging</strong> for building training data pipelines &mdash;
-            directly useful for collecting RCS/CD-SEM interaction data for fine-tuning.
+            <strong>OmniTool 연동:</strong> Microsoft의 OmniTool은 dockerized Windows 11 VM 환경에서
+            OmniParser V2와 다양한 VLM(GPT-4o, Claude, Qwen2.5-VL, DeepSeek-R1)을 통합 제공합니다.
+            또한 <strong>local trajectory logging</strong>을 지원하여 학습 데이터 파이프라인 구축이 가능하며,
+            RCS/CD-SEM 상호작용 데이터 수집 및 fine-tuning에 직접 활용할 수 있습니다.
         </div>
     </div>
 
     <!-- ===== AGENT BENCHMARKS ===== -->
     <div class="section">
-        <h2>End-to-End Agent Benchmarks</h2>
+        <h2>End-to-End Agent 벤치마크</h2>
         <p style="color:var(--text-dim); margin-bottom:1rem;">
-            Beyond single-click grounding, these benchmarks test <strong>multi-step task completion</strong> in real OS environments.
+            단일 click grounding을 넘어, 실제 OS 환경에서의 <strong>멀티스텝 작업 완료 성능</strong>을 평가합니다.
         </p>
 
         <div class="table-wrapper">
             <table>
                 <thead>
                     <tr>
-                        <th>Model</th>
+                        <th>모델</th>
                         <th>OSWorld (%)</th>
                         <th>WindowsAgentArena (%)</th>
                         <th>AndroidWorld (%)</th>
@@ -529,86 +530,86 @@
             </table>
         </div>
         <div class="note">
-            <strong>Note:</strong> Kimi-K2.5 scores high on OSWorld (63.3%) as an <strong>end-to-end agent</strong>,
-            but this measures multi-step task planning &mdash; not precise element grounding.
-            The ScreenSpot-Pro gap (52.8% vs 69.6% SOTA) shows that Kimi-K2.5's <strong>click precision on dense
-            professional UIs</strong> remains the bottleneck for RCS automation.
+            <strong>참고:</strong> Kimi-K2.5는 <strong>end-to-end agent</strong> 기준 OSWorld에서 높은 점수(63.3%)를 보이지만,
+            이는 멀티스텝 작업 계획 능력 중심 지표이며 정밀 element grounding 지표와는 다릅니다.
+            ScreenSpot-Pro 격차(52.8% vs 69.6% SOTA)는 Kimi-K2.5의 <strong>밀집 전문 UI에서의 click 정밀도</strong>가
+            RCS 자동화의 병목임을 보여줍니다.
         </div>
     </div>
 
     <!-- ===== KIMI-K2.5 LIMITATIONS ===== -->
     <div class="section">
-        <h2>Observed Kimi-K2.5 Limitations in RCS Automation</h2>
+        <h2>RCS 자동화에서 관찰된 Kimi-K2.5 한계</h2>
         <p style="color:var(--text-dim); margin-bottom:1rem;">
-            Based on real-world testing with CD-SEM/RCS engineering UI automation.
+            CD-SEM/RCS 엔지니어링 UI 자동화 실험에서 확인된 내용입니다.
         </p>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
             <div style="background:var(--surface2); border-radius:8px; padding:1rem;">
-                <h4 style="color:var(--red); margin-bottom:0.5rem;">Narrow-Range Element Detection Failure</h4>
+                <h4 style="color:var(--red); margin-bottom:0.5rem;">좁은 영역(Narrow-Range) 요소 검출 실패</h4>
                 <p style="color:var(--text-dim); font-size:0.88rem; margin-bottom:0.5rem;">
-                    When multiple UI elements are packed closely together in a narrow region, Kimi-K2.5
-                    <strong>cannot reliably distinguish adjacent elements</strong>.
+                    좁은 영역에 UI 요소가 촘촘히 배치되면 Kimi-K2.5는
+                    <strong>인접 요소를 안정적으로 구분하지 못하는</strong> 경향을 보입니다.
                 </p>
                 <ul style="padding-left:1.2rem; color:var(--text-dim); font-size:0.85rem;">
-                    <li>Click coordinates drift to neighboring elements when targets are &lt; 20px apart</li>
-                    <li>Overlapping bounding boxes for closely-spaced buttons/labels</li>
-                    <li>Toolbar icon clusters produce ambiguous coordinate outputs</li>
-                    <li>Tree-view and list-view rows with small row-height are frequently confused</li>
-                    <li>RCS recipe editor has dense control panels with &lt; 10px element spacing</li>
+                    <li>타깃 간격이 &lt; 20px일 때 click 좌표가 인접 요소로 drift</li>
+                    <li>근접 버튼/라벨에서 bounding box가 중첩 출력</li>
+                    <li>Toolbar icon 클러스터에서 좌표 출력이 모호해짐</li>
+                    <li>행 높이가 작은 tree-view/list-view를 자주 혼동</li>
+                    <li>RCS recipe editor는 요소 간격이 &lt; 10px인 밀집 패널이 다수 존재</li>
                 </ul>
             </div>
             <div style="background:var(--surface2); border-radius:8px; padding:1rem;">
-                <h4 style="color:var(--red); margin-bottom:0.5rem;">Root Cause: No GUI Spatial Training</h4>
+                <h4 style="color:var(--red); margin-bottom:0.5rem;">근본 원인: GUI Spatial 학습 부재</h4>
                 <p style="color:var(--text-dim); font-size:0.88rem; margin-bottom:0.5rem;">
-                    General-purpose VLMs like Kimi-K2.5 are trained on natural images, documents, and web screenshots &mdash;
-                    not dense engineering UIs. They lack:
+                    Kimi-K2.5 같은 범용 VLM은 자연 이미지, 문서, 웹 스크린샷 중심으로 학습되어
+                    밀집 엔지니어링 UI에 최적화되어 있지 않습니다. 다음 능력이 부족합니다:
                 </p>
                 <ul style="padding-left:1.2rem; color:var(--text-dim); font-size:0.85rem;">
-                    <li><strong>Sub-pixel coordinate precision</strong> required for small targets</li>
-                    <li><strong>GUI-specific spatial encoding</strong> for element boundary detection</li>
-                    <li><strong>Widget-type awareness</strong> (buttons vs labels vs inputs look similar in legacy UIs)</li>
-                    <li><strong>High-resolution patch processing</strong> for professional displays (1920x1080+)</li>
-                    <li>ScreenSpot-Pro confirms: accuracy <strong>degrades rapidly as target box area decreases</strong>,
-                        and icon-only grounding drops to <strong>&lt; 5%</strong> for general models</li>
+                    <li>작은 타깃에 필요한 <strong>sub-pixel 좌표 정밀도</strong></li>
+                    <li>요소 경계 인식을 위한 <strong>GUI 특화 spatial encoding</strong></li>
+                    <li><strong>widget type 인지</strong> (legacy UI에서는 버튼/라벨/input 외형이 유사)</li>
+                    <li>전문 디스플레이(1920x1080+) 대응 <strong>고해상도 patch 처리</strong></li>
+                    <li>ScreenSpot-Pro에서도 타깃 box 면적이 작아질수록 정확도가 <strong>급격히 하락</strong>,
+                        범용 모델의 icon-only grounding은 <strong>&lt; 5%</strong> 수준</li>
                 </ul>
             </div>
         </div>
 
         <div class="note" style="margin-top:1rem;">
-            <strong>Solution: Parser + GUI-VLM Pipeline.</strong> A UI parser like OmniParser pre-detects all interactive
-            elements with precise bounding boxes, then a GUI-specialized VLM matches the instruction to the correct element.
-            This two-stage approach specifically addresses the narrow-range detection failure by separating
-            <em>where are the elements</em> (parser) from <em>which element to click</em> (VLM).
+            <strong>해결책: Parser + GUI-VLM 파이프라인.</strong> OmniParser 같은 UI parser가 인터랙션 요소를
+            정밀 bounding box로 먼저 검출하고, 이후 GUI 특화 VLM이 지시문과 정답 요소를 매칭합니다.
+            즉 <em>요소가 어디 있는지</em>(parser)와 <em>어떤 요소를 클릭할지</em>(VLM)를 분리해
+            narrow-range 검출 실패를 직접적으로 완화합니다.
         </div>
     </div>
 
     <!-- ===== RECOMMENDED MODELS ===== -->
     <div class="section">
-        <h2>Recommended Models &mdash; Detailed Profiles</h2>
+        <h2>권장 모델 &mdash; 상세 프로필</h2>
 
-        <h3>GUI-Specialized VLMs (Grounding + Agent)</h3>
+        <h3>GUI 특화 VLM (Grounding + Agent)</h3>
         <div class="model-grid">
             <div class="model-card" style="border-color: var(--green);">
                 <h4>UI-Venus-1.5-8B <span class="tag tag-sota">SOTA Grounding</span></h4>
-                <div class="org">Huawei inclusionAI &mdash; Open Source</div>
+                <div class="org">Huawei inclusionAI &mdash; 오픈소스</div>
                 <div class="desc">
-                    Current SOTA on ScreenSpot-Pro (69.6%). End-to-end GUI agent with mid-training on 10B tokens
-                    across 30+ GUI datasets. Also available in 2B and 30B-A3B variants.
+                    ScreenSpot-Pro 현재 SOTA(69.6%). 30개+ GUI 데이터셋, 10B 토큰 mid-training 기반의
+                    end-to-end GUI agent이며 2B/30B-A3B variant도 제공됩니다.
                 </div>
                 <div class="specs">
-                    <span><strong>Params:</strong> 8B (also 2B, 30B)</span>
+                    <span><strong>Params:</strong> 8B (2B, 30B도 제공)</span>
                     <span><strong>VRAM:</strong> ~16GB FP16</span>
                 </div>
             </div>
 
             <div class="model-card" style="border-color: var(--accent);">
-                <h4>UI-TARS-1.5-7B <span class="tag tag-rec">Best Value</span></h4>
-                <div class="org">ByteDance Seed &mdash; Open Source (Apache 2.0)</div>
+                <h4>UI-TARS-1.5-7B <span class="tag tag-rec">가성비 최고</span></h4>
+                <div class="org">ByteDance Seed &mdash; 오픈소스 (Apache 2.0)</div>
                 <div class="desc">
-                    Purpose-built GUI agent. Trained on 50B+ tokens of GUI interaction data.
-                    Outputs precise pixel coordinates. OpenAI-compatible API via vLLM.
-                    61.6% on ScreenSpot-Pro &mdash; near-SOTA with just 7B params.
+                    목적 특화 GUI agent. 50B+ 토큰 규모의 GUI 상호작용 데이터로 학습되었고,
+                    정밀 pixel 좌표를 출력합니다. vLLM 기반 OpenAI-compatible API를 제공하며,
+                    ScreenSpot-Pro 61.6%로 7B급 near-SOTA 성능을 달성합니다.
                 </div>
                 <div class="specs">
                     <span><strong>Params:</strong> 7B</span>
@@ -618,10 +619,10 @@
 
             <div class="model-card">
                 <h4>MAI-UI-8B <span class="tag tag-gui">Grounding</span></h4>
-                <div class="org">Alibaba Tongyi MAI &mdash; Open Source</div>
+                <div class="org">Alibaba Tongyi MAI &mdash; 오픈소스</div>
                 <div class="desc">
-                    65.7% on ScreenSpot-Pro. Foundation GUI agent from Alibaba with multi-platform support.
-                    Also available in 2B and 32B.
+                    ScreenSpot-Pro 65.7%. Alibaba의 foundation GUI agent로 멀티 플랫폼을 지원하며
+                    2B/32B variant도 제공합니다.
                 </div>
                 <div class="specs">
                     <span><strong>Params:</strong> 8B</span>
@@ -631,10 +632,10 @@
 
             <div class="model-card">
                 <h4>UI-TARS-2-7B <span class="tag tag-gui">Agent SOTA</span></h4>
-                <div class="org">ByteDance Seed &mdash; Open Source</div>
+                <div class="org">ByteDance Seed &mdash; 오픈소스</div>
                 <div class="desc">
-                    Multi-turn RL-trained agent. Best OSWorld (47.5%) &amp; WindowsAgentArena (50.6%) scores.
-                    Ideal for full RCS multi-step workflow automation.
+                    Multi-turn RL 학습 agent. OSWorld(47.5%), WindowsAgentArena(50.6%) 최고 수준 점수를 기록하며,
+                    전체 RCS 멀티스텝 워크플로 자동화에 적합합니다.
                 </div>
                 <div class="specs">
                     <span><strong>Params:</strong> 7B</span>
@@ -643,15 +644,16 @@
             </div>
         </div>
 
-        <h3>UI Parsing / Pre-Processing Tools</h3>
+        <h3>UI Parsing / 전처리 도구</h3>
         <div class="model-grid">
             <div class="model-card" style="border-color: var(--teal);">
                 <h4>OmniParser V2 <span class="tag tag-parser">Parser</span></h4>
-                <div class="org">Microsoft Research &mdash; Open Source (MIT)</div>
+                <div class="org">Microsoft Research &mdash; 오픈소스 (MIT)</div>
                 <div class="desc">
-                    YOLOv8 (detection) + Florence-2 (icon caption) + PaddleOCR. Converts any screenshot
-                    into structured elements with bounding boxes. Boosts GPT-4o from 0.8% to 39.6% on ScreenSpot-Pro.
-                    60% faster than V1. OmniTool provides dockerized Windows VM for agent testing.
+                    YOLOv8(detection) + Florence-2(icon caption) + PaddleOCR 구성.
+                    임의 스크린샷을 bounding box 기반 구조화 요소로 변환하며,
+                    ScreenSpot-Pro에서 GPT-4o를 0.8%에서 39.6%로 향상시킵니다.
+                    V1 대비 60% 빠르며 OmniTool이 agent 테스트용 dockerized Windows VM을 제공합니다.
                 </div>
                 <div class="specs">
                     <span><strong>Latency:</strong> 0.6s/frame (A100)</span>
@@ -661,11 +663,11 @@
 
             <div class="model-card" style="border-color: var(--teal);">
                 <h4>SparkUI-Parser <span class="tag tag-parser">Parser</span></h4>
-                <div class="org">Ant Group &mdash; Open Source</div>
+                <div class="org">Ant Group &mdash; 오픈소스</div>
                 <div class="desc">
-                    End-to-end framework with continuous coordinate modeling (not discrete).
-                    MLLM backbone + token router + coordinate decoder. Highest precision for small elements
-                    and fastest inference speed among parsers.
+                    연속 좌표 모델링(비이산)을 사용하는 end-to-end 프레임워크.
+                    MLLM backbone + token router + coordinate decoder 구조이며,
+                    작은 요소 정밀도와 parser 추론 속도 측면에서 강점을 보입니다.
                 </div>
                 <div class="specs">
                     <span><strong>Approach:</strong> Continuous coord regression</span>
@@ -674,15 +676,15 @@
 
             <div class="model-card" style="border-color: var(--teal);">
                 <h4>Set-of-Mark (SoM) <span class="tag tag-parser">Prompting</span></h4>
-                <div class="org">Microsoft Research &mdash; Open Source</div>
+                <div class="org">Microsoft Research &mdash; 오픈소스</div>
                 <div class="desc">
-                    Visual prompting technique that overlays numbered marks on detected UI elements.
-                    VLM then references elements by number instead of raw coordinates.
-                    Can be combined with any detection model.
+                    검출된 UI 요소 위에 번호 마크를 입히는 visual prompting 기법입니다.
+                    VLM이 raw 좌표 대신 번호 기반으로 요소를 참조할 수 있어 안정성이 높아지며,
+                    어떤 detection 모델과도 결합 가능합니다.
                 </div>
                 <div class="specs">
                     <span><strong>Type:</strong> Visual prompt overlay</span>
-                    <span><strong>VRAM:</strong> Negligible (overlay only)</span>
+                    <span><strong>VRAM:</strong> 거의 없음 (overlay만 수행)</span>
                 </div>
             </div>
         </div>
@@ -690,13 +692,13 @@
 
     <!-- ===== GPU REQUIREMENTS ===== -->
     <div class="section">
-        <h2>GPU Memory Requirements for Self-Hosted Deployment</h2>
+        <h2>Self-Hosted 배포를 위한 GPU 메모리 요구사항</h2>
 
         <div class="table-wrapper">
             <table>
                 <thead>
                     <tr>
-                        <th>Model</th>
+                        <th>모델</th>
                         <th>Params</th>
                         <th>FP16 VRAM</th>
                         <th>INT8 VRAM</th>
@@ -710,83 +712,83 @@
                         <td>YOLOv8 + Florence-2</td>
                         <td>~4-8 GB</td>
                         <td>~2-4 GB</td>
-                        <td class="score-top">Yes (co-located with VLM)</td>
-                        <td class="score-top">Yes</td>
+                        <td class="score-top">가능 (VLM과 동시 배치)</td>
+                        <td class="score-top">가능</td>
                     </tr>
                     <tr>
                         <td>UI-Venus-1.5-8B</td>
                         <td>8B</td>
                         <td>~16 GB</td>
                         <td>~8 GB</td>
-                        <td class="score-top">Yes (+ large batch)</td>
-                        <td class="score-top">Multi-model serving</td>
+                        <td class="score-top">가능 (+ 대배치)</td>
+                        <td class="score-top">멀티 모델 서빙</td>
                     </tr>
                     <tr>
                         <td>UI-TARS-1.5-7B</td>
                         <td>7B</td>
                         <td>~14 GB</td>
                         <td>~7 GB</td>
-                        <td class="score-top">Yes (+ large batch)</td>
-                        <td class="score-top">Multi-model serving</td>
+                        <td class="score-top">가능 (+ 대배치)</td>
+                        <td class="score-top">멀티 모델 서빙</td>
                     </tr>
                     <tr>
                         <td>MAI-UI-8B</td>
                         <td>8B</td>
                         <td>~16 GB</td>
                         <td>~8 GB</td>
-                        <td class="score-top">Yes (+ large batch)</td>
-                        <td class="score-top">Multi-model serving</td>
+                        <td class="score-top">가능 (+ 대배치)</td>
+                        <td class="score-top">멀티 모델 서빙</td>
                     </tr>
                     <tr>
                         <td>UI-TARS-1.5-72B</td>
                         <td>72B</td>
                         <td>~144 GB</td>
                         <td>~72 GB</td>
-                        <td class="score-mid">Tight (FP16)</td>
-                        <td class="score-top">Yes (comfortable)</td>
+                        <td class="score-mid">여유 적음 (FP16)</td>
+                        <td class="score-top">가능 (여유 있음)</td>
                     </tr>
                     <tr>
                         <td>MAI-UI-32B</td>
                         <td>32B</td>
                         <td>~64 GB</td>
                         <td>~32 GB</td>
-                        <td class="score-top">Yes</td>
-                        <td class="score-top">Multi-model serving</td>
+                        <td class="score-top">가능</td>
+                        <td class="score-top">멀티 모델 서빙</td>
                     </tr>
                 </tbody>
             </table>
         </div>
 
         <div class="note">
-            <strong>Deployment Strategy with 2x H200:</strong><br>
-            &bull; <strong>GPU 1:</strong> OmniParser V2 (~4GB) + UI-TARS-1.5-7B (~14GB) + UI-Venus-1.5-8B (~16GB) = ~34GB &mdash; plenty of headroom for batch inference<br>
-            &bull; <strong>GPU 2:</strong> MAI-UI-32B (~64GB) or UI-TARS-72B (~144GB INT8) for highest accuracy or fine-tuning workloads<br>
-            &bull; <strong>Fine-tuning:</strong> LoRA on 7-8B models needs ~32GB; full fine-tune needs ~64GB+
+            <strong>2x H200 기준 배포 전략:</strong><br>
+            &bull; <strong>GPU 1:</strong> OmniParser V2 (~4GB) + UI-TARS-1.5-7B (~14GB) + UI-Venus-1.5-8B (~16GB) = ~34GB &mdash; batch 추론 여유 충분<br>
+            &bull; <strong>GPU 2:</strong> MAI-UI-32B (~64GB) 또는 UI-TARS-72B (~144GB INT8)로 최고 정확도/고난도 fine-tuning 처리<br>
+            &bull; <strong>Fine-tuning:</strong> 7-8B 모델 LoRA는 ~32GB, full fine-tuning은 ~64GB+ 필요
         </div>
     </div>
 
     <!-- ===== KEY TAKEAWAYS ===== -->
     <div class="section">
-        <h2>Key Takeaways</h2>
+        <h2>핵심 결론</h2>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
             <div style="background:var(--surface2); border-radius:8px; padding:1rem;">
-                <h4 style="color:var(--red); margin-bottom:0.5rem;">Problem: Kimi-K2.5 Limitations</h4>
+                <h4 style="color:var(--red); margin-bottom:0.5rem;">문제: Kimi-K2.5 한계</h4>
                 <ul style="padding-left:1.2rem; color:var(--text-dim); font-size:0.9rem;">
-                    <li>52.8% on ScreenSpot-Pro &mdash; general-purpose model not optimized for GUI</li>
-                    <li>Cannot reliably distinguish elements in narrow/dense UI regions</li>
-                    <li>Icon/widget detection weak on professional engineering UIs</li>
-                    <li>Not fine-tunable for our specific RCS/CD-SEM interface</li>
-                    <li>No UI parsing pre-processing in current pipeline</li>
+                    <li>ScreenSpot-Pro 52.8% &mdash; GUI 최적화가 아닌 범용 모델</li>
+                    <li>좁고 밀집된 UI 영역에서 요소 구분 안정성이 낮음</li>
+                    <li>전문 엔지니어링 UI에서 icon/widget 검출 성능이 약함</li>
+                    <li>우리 RCS/CD-SEM 인터페이스에 맞춘 fine-tuning이 어려움</li>
+                    <li>현재 파이프라인에 UI parsing 전처리가 없음</li>
                 </ul>
             </div>
             <div style="background:var(--surface2); border-radius:8px; padding:1rem;">
-                <h4 style="color:var(--green); margin-bottom:0.5rem;">Solution: Parser + GUI-Specialized VLM</h4>
+                <h4 style="color:var(--green); margin-bottom:0.5rem;">해결: Parser + GUI 특화 VLM</h4>
                 <ul style="padding-left:1.2rem; color:var(--text-dim); font-size:0.9rem;">
-                    <li>69.6% accuracy (UI-Venus-1.5-8B) &mdash; <strong>+32% improvement</strong> over Kimi-K2.5</li>
-                    <li>OmniParser pre-detects elements with precise bboxes &mdash; solves narrow-range issue</li>
-                    <li>Open-source, self-hosted on dedicated GPU &mdash; no impact on existing Kimi service</li>
-                    <li>Fine-tunable on proprietary RCS/CD-SEM screenshots</li>
-                    <li>OmniTool provides trajectory logging for training data collection</li>
+                    <li>UI-Venus-1.5-8B 기준 69.6% &mdash; Kimi-K2.5 대비 <strong>+32% 향상</strong></li>
+                    <li>OmniParser가 정밀 bbox로 요소를 선검출해 narrow-range 이슈 완화</li>
+                    <li>오픈소스 기반 독립 GPU self-hosted 가능 &mdash; 기존 Kimi 서비스와 분리 운영</li>
+                    <li>사내 RCS/CD-SEM 스크린샷으로 fine-tuning 가능</li>
+                    <li>OmniTool trajectory logging으로 학습 데이터 수집 가능</li>
                 </ul>
             </div>
         </div>
@@ -794,7 +796,7 @@
 
     <!-- ===== SOURCES ===== -->
     <div class="sources">
-        <h3 style="color:var(--text-dim); margin-bottom:0.5rem;">Sources &amp; References</h3>
+        <h3 style="color:var(--text-dim); margin-bottom:0.5rem;">출처 및 참고자료</h3>
         <ul style="list-style:none; padding:0;">
             <li>&bull; ScreenSpot-Pro Paper: <a href="https://arxiv.org/abs/2504.07981">arxiv.org/abs/2504.07981</a></li>
             <li>&bull; ScreenSpot-Pro Leaderboard: <a href="https://gui-agent.github.io/grounding-leaderboard/">gui-agent.github.io/grounding-leaderboard</a></li>
@@ -812,7 +814,7 @@
     </div>
 
     <footer>
-        Auto Recipe Creator Project &mdash; GUI VLM &amp; UI Parsing Benchmark Research &mdash; Generated Feb 2026
+        Auto Recipe Creator Project &mdash; GUI VLM 및 UI Parsing 벤치마크 리서치 &mdash; 2026년 2월 생성
     </footer>
 
 </div>

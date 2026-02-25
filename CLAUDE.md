@@ -22,6 +22,7 @@ docs/                    # Architecture research notes and setup guides
 ## Setup & Dependencies
 
 The project uses `uv` with `pyproject.toml` (Python ≥ 3.10). Each module also has its own `requirements.txt` for standalone installs.
+Use uv-managed workflows by default: `uv sync`, `uv run`, and `uv pip ...`.
 
 ```bash
 # Core project + dev tools
@@ -30,59 +31,59 @@ uv sync --extra dev
 # Add home-study extras (HuggingFace)
 uv sync --extra home
 
-# All-in-one pip install (core + automation + RAG)
-pip install -r requirements.txt
+# All-in-one requirements install via uv-managed pip compatibility
+uv pip install -r requirements.txt
 
-# Per-module pip installs (alternative)
-pip install -r poc/work/requirements.txt                 # core: mss, pynput, Pillow, requests, python-dotenv
-pip install -r test/vlm_input_control/requirements.txt
-pip install -r test/video_frame_parser/requirements.txt  # torch, opencv, pymongo, faiss
+# Per-module installs (alternative)
+uv pip install -r poc/work/requirements.txt                 # core: mss, pynput, Pillow, requests, python-dotenv
+uv pip install -r test/vlm_input_control/requirements.txt
+uv pip install -r test/video_frame_parser/requirements.txt  # torch, opencv, pymongo, faiss
 ```
 
 ## Running Modules
 
 ```bash
 # poc/work — main company demo (requires .env with VLM_API_URL, VLM_API_KEY)
-python -m poc.work.vlm_click_demo          # VLM click-point visualization (manager demo)
-python -m poc.work.vlm_rcs_agent           # Observe-Think-Act agent loop for RCS
+uv run python -m poc.work.vlm_click_demo   # VLM click-point visualization (manager demo)
+uv run python -m poc.work.vlm_rcs_agent    # Observe-Think-Act agent loop for RCS
 
 # poc/home — personal study only
 uv run python -m poc.home.test_setup       # Validate HuggingFace env
-uv run python -m poc.home.demo                        # mode configured in .env or hardcoded
+uv run python -m poc.home.demo             # mode configured in .env or hardcoded
 
 # RCS auto-login (Windows only, config from .env)
-python -m automation.rcs.run_login
+uv run python -m automation.rcs.run_login
 
 # RCS auto-login via poc/work/ (Windows only, VLM-based, all config from .env)
 # Saves debug_vlm_login.png with VLM-detected coordinates marked
-python poc/work/automate_rcs_login.py
+uv run python poc/work/automate_rcs_login.py
 
 # RCS post-login workflow (Windows only, each step standalone)
-python -m poc.work.switching_tabs          # Switch to List tab
-python -m poc.work.list_up_tools           # Read tool list via VLM
-python -m poc.work.select_tool             # Select & double-click a tool
-python -m poc.work.check_tool_screen       # Wait for tool viewer + VLM UI analysis
+uv run python -m poc.work.switching_tabs   # Switch to List tab
+uv run python -m poc.work.list_up_tools    # Read tool list via VLM
+uv run python -m poc.work.select_tool      # Select & double-click a tool
+uv run python -m poc.work.check_tool_screen # Wait for tool viewer + VLM UI analysis
 
 # Video frame parser
-python -m test.video_frame_parser.example_usage
+uv run python -m test.video_frame_parser.example_usage
 ```
 
 ## Testing
 
 ```bash
 # Unit tests
-pytest test/video_frame_parser/tests/
-pytest test/video_frame_parser/tests/test_analyzer.py -v
+uv run pytest test/video_frame_parser/tests/
+uv run pytest test/video_frame_parser/tests/test_analyzer.py -v
 
 # Integration test (safe mode by default — no actual inputs sent, toggle via SAFE_MODE in .env)
-python -m test.vlm_input_control.integration_test
+uv run python -m test.vlm_input_control.integration_test
 ```
 
 ## Code Conventions
 
 - **Korean docstrings** throughout all modules
 - **Print-based logging**: `[INFO]`, `[ERROR]`, `[WARNING]` prefixes (never the `logging` module)
-- **Absolute imports** within `poc/work/`: always use `from poc.work.xxx import ...` (not relative or bare imports). Scripts are run via `uv run python <script>.py` or `python -m poc.work.<module>`.
+- **Absolute imports** within `poc/work/`: always use `from poc.work.xxx import ...` (not relative or bare imports). Scripts are run via `uv run python <script>.py` or `uv run python -m poc.work.<module>`.
 - **Import guards** for optional dependencies with `LIBRARY_AVAILABLE` flag:
   ```python
   try:
@@ -97,7 +98,7 @@ python -m test.vlm_input_control.integration_test
 - **`to_dict()` / `from_dict()`** on data models for MongoDB serialization
 - **Image format convention**: Save debug screenshots locally as **JPEG** (smaller file size for storage). When sending images to VLM APIs, convert to **WebP** (quality=90) to reduce API payload size — WebP compression does not hurt VLM coordinate/element recognition accuracy.
 - **Safe mode**: Most interactive modules default to `SAFE_MODE=true` to prevent actual mouse/keyboard output
-- **No CLI arguments**: Do not use `argparse` or CLI flags. All configuration comes from `.env` (via `python-dotenv`) or hardcoded defaults in the source files. Scripts should run with just `python <script>.py`
+- **No CLI arguments**: Do not use `argparse` or CLI flags. All configuration comes from `.env` (via `python-dotenv`) or hardcoded defaults in the source files. Scripts should run with just `uv run python <script>.py`
 
 ## Key Classes
 

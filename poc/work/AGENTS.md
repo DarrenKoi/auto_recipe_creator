@@ -15,17 +15,19 @@ Environment and dependency files live at `.env.example` and `requirements.txt`.
 There is currently no dedicated assets directory in this workspace.
 
 ## Build, Test, and Development Commands
-- `python -m venv .venv && source .venv/bin/activate`: start a local environment.
-- `pip install -r requirements.txt`: install local runtime dependencies.
+- `uv sync --extra dev`: install project + dev dependencies from root `pyproject.toml`.
+- `uv sync --extra home`: install optional home-study dependencies when needed.
+- `uv pip install -r requirements.txt`: install local runtime requirements with uv-managed pip compatibility.
 - `cp .env.example .env`: create local config before running workflows; fill provider/API keys and paths.
-- `python vlm_click_demo.py`: run the available executable demo.
-- `python -m <module>.py`: pattern for quick smoke checks when adding new runnable modules.
+- `uv run python vlm_click_demo.py`: run the available executable demo.
+- `uv run python -m <module>`: pattern for quick smoke checks when adding new runnable modules.
 
 There is no project-level packaging step in this directory.
 
 ## Coding Style & Naming Conventions
 - Python version target: 3.10+.
 - 4-space indentation and PEP 8 naming (`snake_case`, `PascalCase`, `UPPER_SNAKE_CASE`).
+- Use uv-managed execution only for scripts/tests (`uv run ...`); avoid plain `python` and `pip`.
 - Use focused modules and dataclass-based config objects where configuration grows beyond simple constants.
 - Keep comments concise and close to non-obvious logic.
 - No repo-enforced formatter/linter is pinned here; keep imports organized and type usage readable.
@@ -33,7 +35,7 @@ There is no project-level packaging step in this directory.
 ## Testing Guidelines
 - This workspace currently has no committed automated tests.
 - When adding tests, use `pytest` and name files/functions `test_<behavior>.py` / `test_<function>`.
-- Run tests from repo root with `pytest`, and keep tests close to the code they validate.
+- Run tests from repo root with `uv run pytest`, and keep tests close to the code they validate.
 - For code-touching changes, include at least one deterministic smoke check (e.g., import/CLI execution) in the PR notes.
 
 ## Commit & Pull Request Guidelines

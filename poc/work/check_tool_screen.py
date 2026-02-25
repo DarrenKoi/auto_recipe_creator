@@ -15,6 +15,7 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 
 from pywinauto import Desktop
@@ -126,6 +127,102 @@ def _scan_once(settings: ToolScreenSettings) -> object | None:
     return None
 
 
+def _to_int_coordinate(value, axis_size: int) -> int | None:
+    """숫자/문자/정규화 좌표를 픽셀 정수로 변환한다."""
+    if axis_size <= 0 or value is None or isinstance(value, bool):
+        return None
+
+    numeric: float | None
+    if isinstance(value, (int, float)):
+        numeric = float(value)
+    else:
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            if text.endswith("%"):
+                numeric = (float(text[:-1]) / 100.0) * (axis_size - 1)
+            else:
+                numeric = float(text)
+        except ValueError:
+            return None
+
+    if 0.0 < numeric < 1.0:
+        numeric = numeric * (axis_size - 1)
+
+    coord = int(round(numeric))
+    return max(0, min(coord, axis_size - 1))
+
+
+def _extract_click_point(element: dict, image_w: int, image_h: int) -> tuple[int, int] | None:
+    """UI 요소 JSON에서 클릭 좌표(x,y)를 추출한다."""
+    if not isinstance(element, dict):
+        return None
+
+    x_raw = element.get("x")
+    y_raw = element.get("y")
+    if isinstance(element.get("click_point"), dict):
+        click_point = element["click_point"]
+        x_raw = click_point.get("x", x_raw)
+        y_raw = click_point.get("y", y_raw)
+
+    x = _to_int_coordinate(x_raw, image_w)
+    y = _to_int_coordinate(y_raw, image_h)
+    if x is None or y is None:
+        return None
+    return x, y
+
+
+def _save_click_point_overlay(
+    image_data: bytes,
+    ui_elements: list[dict],
+    image_w: int,
+    image_h: int,
+    out_path: Path,
+) -> int:
+    """VLM이 반환한 좌표를 스크린샷에 오버레이하여 JPEG로 저장한다."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except Exception as exc:
+        print(f"[WARNING] Pillow 로드 실패 — 좌표 오버레이 건너뜀: {exc}")
+        return 0
+
+    image = Image.open(BytesIO(image_data)).convert("RGB")
+    draw = ImageDraw.Draw(image)
+    colors = ("lime", "cyan", "yellow", "orange", "red", "magenta")
+
+    try:
+        font = ImageFont.truetype("arial.ttf", 13)
+    except Exception:
+        font = ImageFont.load_default()
+
+    marked_count = 0
+    radius = 10
+    for idx, elem in enumerate(ui_elements, start=1):
+        if not isinstance(elem, dict):
+            continue
+
+        point = _extract_click_point(elem, image_w, image_h)
+        if point is None:
+            continue
+        x, y = point
+
+        color = colors[(idx - 1) % len(colors)]
+        draw.line([(x - radius, y), (x + radius, y)], fill=color, width=2)
+        draw.line([(x, y - radius), (x, y + radius)], fill=color, width=2)
+        draw.ellipse([(x - radius, y - radius), (x + radius, y + radius)], outline=color, width=2)
+        name = str(elem.get("name", f"elem_{idx}")).strip() or f"elem_{idx}"
+        label = f"{idx}. {name} ({x},{y})"
+        draw.text((x + radius + 4, y - radius - 2), label, fill=color, font=font)
+        marked_count += 1
+
+    if marked_count == 0:
+        return 0
+
+    image.save(out_path, format="JPEG", quality=85)
+    return marked_count
+
+
 def _capture_and_analyze_screen(window, settings: ToolScreenSettings) -> None:
     """툴 화면을 캡처하고 VLM으로 UI 요소를 분석한다."""
     if not VLM_ANALYSIS_AVAILABLE:
@@ -182,17 +279,21 @@ def _capture_and_analyze_screen(window, settings: ToolScreenSettings) -> None:
             print(f"[DEBUG] 디버그 이미지 저장 실패: {exc}")
 
     vlm_image_data = image_data
+    vlm_image_w = width
+    vlm_image_h = height
     MAX_VLM_BYTES = 1_000_000  # 1MB 상한
     try:
         from PIL import Image
         import io
         img = Image.open(io.BytesIO(image_data))
+        vlm_image_w, vlm_image_h = img.size
         quality = 90
         while quality >= 10:
             webp_buf = io.BytesIO()
             img.save(webp_buf, format="WEBP", quality=quality)
             vlm_image_data = webp_buf.getvalue()
             webp_size = len(vlm_image_data)
+            vlm_image_w, vlm_image_h = img.size
             if webp_size <= MAX_VLM_BYTES:
                 break
             print(f"[INFO] WebP {webp_size:,}B > 1MB, quality {quality} → {quality - 10}")
@@ -207,6 +308,7 @@ def _capture_and_analyze_screen(window, settings: ToolScreenSettings) -> None:
             webp_buf = io.BytesIO()
             img.save(webp_buf, format="WEBP", quality=70)
             vlm_image_data = webp_buf.getvalue()
+            vlm_image_w, vlm_image_h = img.size
             print(f"[INFO] 리사이즈 후 WebP: {len(vlm_image_data):,}B ({new_w}x{new_h})")
     except Exception as exc:
         print(f"[WARNING] WebP 변환 실패, 원본 PNG로 전송: {exc}")
@@ -227,7 +329,12 @@ def _capture_and_analyze_screen(window, settings: ToolScreenSettings) -> None:
         print(f"[INFO] VLM 화면 분석 시작 (모델: {config.vlm.model_name})")
         result = None
         try:
-            result = analyzer.analyze_screen(vlm_image_data, task="state_recognition")
+            result = analyzer.analyze_screen(
+                vlm_image_data,
+                task="state_recognition",
+                image_width=vlm_image_w,
+                image_height=vlm_image_h,
+            )
         except Exception as api_exc:
             exc_text = str(api_exc)
             if "500" in exc_text or "server" in exc_text.lower():
@@ -243,7 +350,14 @@ def _capture_and_analyze_screen(window, settings: ToolScreenSettings) -> None:
                     img.save(retry_buf, format="WEBP", quality=60)
                     retry_data = retry_buf.getvalue()
                     print(f"[INFO] 재시도 이미지: {len(retry_data):,}B ({new_w}x{new_h})")
-                    result = analyzer.analyze_screen(retry_data, task="state_recognition")
+                    result = analyzer.analyze_screen(
+                        retry_data,
+                        task="state_recognition",
+                        image_width=new_w,
+                        image_height=new_h,
+                    )
+                    vlm_image_data = retry_data
+                    vlm_image_w, vlm_image_h = new_w, new_h
                 except Exception as retry_exc:
                     print(f"[ERROR] 재시도도 실패: {retry_exc}")
             else:
@@ -262,7 +376,24 @@ def _capture_and_analyze_screen(window, settings: ToolScreenSettings) -> None:
                 name = elem.get("name", "?")
                 elem_type = elem.get("type", "?")
                 location = elem.get("location", "?")
-                print(f"  - {name} ({elem_type}) @ {location}")
+                point = _extract_click_point(elem, vlm_image_w, vlm_image_h)
+                if point is None:
+                    print(f"  - {name} ({elem_type}) @ {location}")
+                else:
+                    print(f"  - {name} ({elem_type}) @ {location} -> click=({point[0]}, {point[1]})")
+
+            overlay_path = DEBUG_IMAGE_DIR / f"tool_screen_{ts}_vlm_points.jpg"
+            marked = _save_click_point_overlay(
+                image_data=vlm_image_data,
+                ui_elements=result.ui_elements,
+                image_w=vlm_image_w,
+                image_h=vlm_image_h,
+                out_path=overlay_path,
+            )
+            if marked > 0:
+                print(f"[INFO] VLM 좌표 오버레이 저장: {overlay_path} ({marked} points)")
+            else:
+                print("[INFO] 좌표(x,y)가 포함된 UI 요소가 없어 오버레이를 건너뜀")
         else:
             print("[INFO] 감지된 UI 요소 없음")
 

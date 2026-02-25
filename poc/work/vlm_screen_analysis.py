@@ -88,7 +88,12 @@ class VLMScreenAnalyzer:
         """이미지를 Base64로 인코딩합니다."""
         return base64.b64encode(image_data).decode('utf-8')
 
-    def _build_analysis_prompt(self, task: str = "state_recognition") -> str:
+    def _build_analysis_prompt(
+        self,
+        task: str = "state_recognition",
+        image_width: Optional[int] = None,
+        image_height: Optional[int] = None,
+    ) -> str:
         """
         분석 프롬프트를 생성합니다.
 
@@ -106,8 +111,16 @@ class VLMScreenAnalyzer:
             ])
             state_context = f"\n\n알려진 상태 목록:\n{state_list}"
 
+        image_size_hint = ""
+        if image_width and image_height and image_width > 0 and image_height > 0:
+            image_size_hint = (
+                f"\n이미지 해상도는 {image_width}x{image_height} 입니다. "
+                "좌표는 반드시 이 픽셀 좌표계를 사용하세요."
+            )
+
         base_prompts = {
             "state_recognition": f"""당신은 GUI 화면 분석 전문가입니다. 주어진 스크린샷을 분석하여 현재 화면의 상태를 파악해주세요.
+{image_size_hint}
 
 다음 정보를 JSON 형식으로 반환해주세요:
 {{
@@ -116,10 +129,23 @@ class VLMScreenAnalyzer:
     "confidence": 0.0-1.0 사이의 확신도,
     "description": "현재 화면에 대한 상세 설명",
     "ui_elements": [
-        {{"name": "요소 이름", "type": "button/input/label/etc", "location": "위치 설명"}}
+        {{
+            "name": "요소 이름",
+            "type": "button/input/label/etc",
+            "location": "위치 설명",
+            "x": 0,
+            "y": 0,
+            "coord_anchor": "요소 중심점 설명"
+        }}
     ],
     "suggested_actions": ["가능한 액션 1", "가능한 액션 2"]
 }}{state_context}
+
+주의사항:
+- ui_elements의 x, y는 클릭 가능한 지점을 의미합니다.
+- x, y는 정수 픽셀 좌표여야 합니다.
+- 좌표 범위는 0 <= x < 이미지 너비, 0 <= y < 이미지 높이 입니다.
+- 좌표를 확신할 수 없는 요소는 ui_elements에서 제외하세요.
 
 분석 결과를 JSON으로만 반환해주세요.""",
 
@@ -154,6 +180,8 @@ class VLMScreenAnalyzer:
         self,
         image_data: bytes,
         task: str = "state_recognition",
+        image_width: Optional[int] = None,
+        image_height: Optional[int] = None,
     ) -> Optional[ScreenAnalysisResult]:
         """
         화면을 분석하여 상태를 인식합니다.
@@ -161,13 +189,19 @@ class VLMScreenAnalyzer:
         Args:
             image_data: PNG 이미지 바이트 데이터
             task: 분석 작업 유형 (state_recognition, measurement_judgment)
+            image_width: 좌표 기준 이미지 너비(px)
+            image_height: 좌표 기준 이미지 높이(px)
 
         Returns:
             ScreenAnalysisResult 또는 None
         """
         start_time = time.time()
 
-        prompt = self._build_analysis_prompt(task)
+        prompt = self._build_analysis_prompt(
+            task=task,
+            image_width=image_width,
+            image_height=image_height,
+        )
 
         # API 호출
         response = self._call_vlm_api(image_data, prompt)
@@ -312,8 +346,22 @@ class VLMScreenAnalyzer:
                 "confidence": 0.85,
                 "description": "이것은 테스트용 Mock 응답입니다. 실제 VLM API가 연결되면 실제 분석 결과가 반환됩니다.",
                 "ui_elements": [
-                    {"name": "샘플 버튼", "type": "button", "location": "화면 중앙"},
-                    {"name": "검색창", "type": "input", "location": "상단"}
+                    {
+                        "name": "샘플 버튼",
+                        "type": "button",
+                        "location": "화면 중앙",
+                        "x": 640,
+                        "y": 360,
+                        "coord_anchor": "element_center",
+                    },
+                    {
+                        "name": "검색창",
+                        "type": "input",
+                        "location": "상단",
+                        "x": 640,
+                        "y": 120,
+                        "coord_anchor": "input_text_area",
+                    }
                 ],
                 "suggested_actions": ["버튼 클릭", "텍스트 입력"]
             }, ensure_ascii=False)

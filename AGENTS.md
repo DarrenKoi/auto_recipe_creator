@@ -33,21 +33,21 @@ AI-powered automation system for CD-SEM/VeritySEM recipe setup. The project comb
 ## Build, Test, and Development Commands
 - `uv sync --extra dev`: Install core project and dev dependencies from `pyproject.toml`.
 - `uv sync --extra home`: Install optional home-study dependencies.
-- `pip install -r requirements.txt`: Install all-in-one pip dependencies.
-- `python -m poc.work.vlm_click_demo`: Run workstream click-point visualization demo.
-- `python -m poc.work.vlm_rcs_agent`: Run Observe-Think-Act RCS agent loop.
-- `python -m poc.work.list_up_tools`: On current List tab, locate and open target tool (double-click).
-- `python -m poc.work.check_tool_screen`: Verify that target tool screen window is opened.
-- `python -m automation.rcs.run_login`: Run RCS automation login flow (Windows).
-- `python poc/work/automate_rcs_login.py`: Run VLM-based RCS login automation (Windows).
+- `uv run python -m poc.work.vlm_click_demo`: Run workstream click-point visualization demo.
+- `uv run python -m poc.work.vlm_rcs_agent`: Run Observe-Think-Act RCS agent loop.
+- `uv run python -m poc.work.list_up_tools`: On current List tab, locate and open target tool (double-click).
+- `uv run python -m poc.work.check_tool_screen`: Verify that target tool screen window is opened.
+- `uv run python -m automation.rcs.run_login`: Run RCS automation login flow (Windows).
+- `uv run python poc/work/automate_rcs_login.py`: Run VLM-based RCS login automation (Windows).
 - `uv run python -m poc.home.test_setup`: Validate local home-study environment.
 - `uv run python -m poc.home.demo`: Run home-study VLM demo flow.
-- `pytest test/video_frame_parser/tests/`: Run unit tests for the video parser module.
-- `python -m test.vlm_input_control.integration_test`: Run input-control integration checks.
-- `python -m test.video_frame_parser.example_usage`: Run parser example pipeline.
+- `uv run pytest test/video_frame_parser/tests/`: Run unit tests for the video parser module.
+- `uv run python -m test.vlm_input_control.integration_test`: Run input-control integration checks.
+- `uv run python -m test.video_frame_parser.example_usage`: Run parser example pipeline.
 
 ## Core Coding Rules (Must Follow)
 - Target Python `>=3.10`; use 4-space indentation and PEP 8 naming (`snake_case` functions/files, `PascalCase` classes, `UPPER_SNAKE_CASE` constants).
+- Use uv-managed execution only: run Python/test commands via `uv run ...` (do not use plain `python` or `pip`).
 - Keep docstrings/comments aligned with surrounding module language conventions (Korean docstrings are common in this repo).
 - Use print-based logging prefixes (`[INFO]`, `[WARNING]`, `[ERROR]`); do not introduce the `logging` module unless a file already depends on it.
 - Use absolute imports within `poc/work/` (`from poc.work.xxx import ...`); do not use `sys.path` hacks or `try/except` relative-vs-bare fallbacks. Sub-package `__init__.py` files may keep relative imports.
@@ -67,7 +67,7 @@ AI-powered automation system for CD-SEM/VeritySEM recipe setup. The project comb
 
 ## Platform & Workflow Notes
 - Development assistant environment is macOS; Windows-only RCS/pywinauto/pynput behavior must be validated by running updated code on office Windows machines.
-- Keep `poc/work/` self-contained; avoid introducing cross-import coupling with `test/` prototypes. All `poc/work/` modules use absolute imports (`from poc.work.xxx`) — scripts should be run via `uv run python <script>` or `python -m poc.work.<module>`.
+- Keep `poc/work/` self-contained; avoid introducing cross-import coupling with `test/` prototypes. All `poc/work/` modules use absolute imports (`from poc.work.xxx`) — scripts should be run via `uv run python <script>` or `uv run python -m poc.work.<module>`.
 - For imports across `test/` sibling modules, use `from video_frame_parser...` style when operating with `PYTHONPATH=./test`.
 
 ## Dynamic Prompt + Step-by-Step Roadmap (`poc/work`)

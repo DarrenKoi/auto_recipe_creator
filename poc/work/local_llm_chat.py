@@ -20,24 +20,31 @@ TIMEOUT_SEC = 120.0
 # ─────────────────────────────────────────────────────────────
 
 
-def send_text(user_text: str) -> str:
+def send_text(user_text: str, system_prompt: str = "") -> str:
     """텍스트를 LLM에 보내고 응답 텍스트를 반환."""
     url = f"{API_URL.rstrip('/')}/chat/completions"
     headers = {"Content-Type": "application/json"}
     if API_KEY:
         headers["Authorization"] = f"Bearer {API_KEY}"
 
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": user_text})
+
     payload = {
         "model": MODEL_NAME,
-        "messages": [{"role": "user", "content": user_text}],
+        "messages": messages,
         "temperature": TEMPERATURE,
         "max_tokens": MAX_TOKENS,
         "stream": False,
     }
 
-    print(f"[INFO] LLM 요청: model={MODEL_NAME}")
+    print(f"[INFO] LLM 요청: model={MODEL_NAME}, url={url}")
     response = requests.post(url, headers=headers, json=payload, timeout=TIMEOUT_SEC)
-    response.raise_for_status()
+    if not response.ok:
+        print(f"[ERROR] status={response.status_code}, body={response.text[:500]}")
+        response.raise_for_status()
 
     data = response.json()
     content = data["choices"][0]["message"]["content"]

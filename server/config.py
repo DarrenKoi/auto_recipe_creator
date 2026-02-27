@@ -43,11 +43,22 @@ class ServerConfig:
 
 
 @dataclass
+class HistoryConfig:
+    """대화 이력 관리 설정."""
+    max_history: int = 20                # 최근 N개 메시지만 LLM에 전달
+    summary_age_days: int = 30           # N일 이상 된 대화 요약 대상
+    summary_chunk_size: int = 50         # 요약 시 한 번에 처리할 메시지 수
+    max_tokens_per_request: int = 4096   # LLM 요청당 최대 토큰 예산
+    profiles_collection: str = "user_profiles"  # 사용자 프로필 컬렉션
+
+
+@dataclass
 class AppConfig:
     """통합 설정."""
     mongo: MongoConfig
     llm: LLMConfig
     server: ServerConfig
+    history: HistoryConfig
 
     @classmethod
     def load(cls) -> "AppConfig":
@@ -56,6 +67,13 @@ class AppConfig:
             load_dotenv(override=True)
 
         return cls(
+            history=HistoryConfig(
+                max_history=int(os.environ.get("HISTORY_MAX_MESSAGES", "20")),
+                summary_age_days=int(os.environ.get("HISTORY_SUMMARY_AGE_DAYS", "30")),
+                summary_chunk_size=int(os.environ.get("HISTORY_SUMMARY_CHUNK_SIZE", "50")),
+                max_tokens_per_request=int(os.environ.get("HISTORY_MAX_TOKENS", "4096")),
+                profiles_collection=os.environ.get("HISTORY_PROFILES_COLLECTION", "user_profiles").strip(),
+            ),
             mongo=MongoConfig(
                 uri=os.environ.get("MONGO_URI", "mongodb://localhost:27017").strip(),
                 database=os.environ.get("MONGO_DATABASE", "chat_server").strip(),

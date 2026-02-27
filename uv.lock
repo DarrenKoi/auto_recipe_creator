@@ -51,8 +51,8 @@ home = [
 [package.metadata]
 requires-dist = [
     { name = "huggingface-hub", marker = "extra == 'home'", specifier = ">=0.25.0" },
-    { name = "langchain-core", specifier = ">=0.3.0" },
-    { name = "langchain-openai", specifier = ">=0.3.0" },
+    { name = "langchain-core", specifier = ">=1.0.0" },
+    { name = "langchain-openai", specifier = ">=1.0.0" },
     { name = "mss", specifier = ">=9.0.0" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "pynput", specifier = ">=1.7.6" },

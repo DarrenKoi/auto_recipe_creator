@@ -2,7 +2,7 @@
 
 > Phase 3 (UI 개발) 착수를 위한 챗봇 아키텍처 및 접근 전략 문서
 >
-> 작성일: 2026-02-20 | 관련: `project_planning_ppt.md` Slide 9 (Supervised Autonomy), Slide 10 (Phase 3 UI)
+> 작성일: 2026-02-20 | 관련: `docs/project_plan/project_planning_ppt.md` Slide 9 (Supervised Autonomy), Slide 10 (Phase 3 UI)
 
 ---
 

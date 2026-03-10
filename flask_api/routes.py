@@ -2,7 +2,7 @@
 
 from flask import Blueprint
 
-from .topics import register_topic_routes
+from .vlm_serve import register_vlm_serve_routes
 
 api_blueprint = Blueprint("api", __name__)
-register_topic_routes(api_blueprint)
+register_vlm_serve_routes(api_blueprint)

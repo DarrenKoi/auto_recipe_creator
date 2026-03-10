@@ -5,6 +5,8 @@
       별도 H200 GPU 2대에서 운영
 """
 
+from pathlib import Path
+
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
@@ -594,10 +596,10 @@ def create_presentation():
                 font_size=16, color=ACCENT, bold=True)
 
     # Save
-    output_path = "/Users/daeyoung/Codes/auto_recipe_creator/docs/gui_vlm_gpu_h200_proposal.pptx"
+    output_path = Path(__file__).with_name("gui_vlm_gpu_h200_proposal.pptx")
     prs.save(output_path)
     print(f"[INFO] PPTX 생성 완료: {output_path}")
-    return output_path
+    return str(output_path)
 
 
 if __name__ == "__main__":

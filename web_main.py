@@ -2,21 +2,16 @@
 
 from flask import Flask
 
-from flask_api import api_blueprint
+from flask_api import register_flask_api
+from gpu_dashboard import gpu_dashboard_dp
 
 
 def create_app() -> Flask:
-    """Blueprint를 등록한 Flask 앱을 생성한다."""
+    """Blueprint들을 등록한 Flask 앱을 생성한다."""
     app = Flask(__name__)
-    app.register_blueprint(api_blueprint)
+    app.register_blueprint(gpu_dashboard_dp, url_prefix="/gpu-dashboard")
+    register_flask_api(app)
     return app
 
 
 app = create_app()
-
-__all__ = ["app", "create_app"]
-
-
-if __name__ == "__main__":
-    print("[INFO] Flask 서버 시작: 0.0.0.0:5000")
-    app.run(host="0.0.0.0", port=5000, debug=False)

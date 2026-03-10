@@ -2,7 +2,7 @@ import hashlib
 from pathlib import Path
 from typing import List
 
-SOURCE_FILE = Path(r"C:\models\my-model\model.safetensors")
+SOURCE_DIR = Path(r"C:\models\my-model")
 OUTPUT_DIR = Path(r"C:\transfer\my-model-upload")
 CHUNK_SIZE = 2_000_000_000  # Keep each part below a typical 2 GB upload cap.
 BUFFER_SIZE = 8 * 1024 * 1024
@@ -21,9 +21,14 @@ def sha256sum(file_path: Path) -> str:
     return digest.hexdigest()
 
 
+def find_safetensors_files(source_dir: Path) -> List[Path]:
+    return sorted(path for path in source_dir.rglob("*.safetensors") if path.is_file())
+
+
 def split_file(file_path: Path, output_dir: Path, chunk_size: int) -> List[Path]:
     parts = []
     part_number = 1
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     with file_path.open("rb") as source_stream:
         while True:
@@ -51,28 +56,42 @@ def split_file(file_path: Path, output_dir: Path, chunk_size: int) -> List[Path]
     return parts
 
 
-def write_checksum(file_path: Path, checksum: str) -> Path:
-    checksum_path = OUTPUT_DIR / ("%s.sha256" % file_path.name)
+def write_checksum(file_path: Path, output_dir: Path, checksum: str) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    checksum_path = output_dir / ("%s.sha256" % file_path.name)
     checksum_path.write_text("%s  %s\n" % (checksum, file_path.name), encoding="utf-8")
     return checksum_path
 
 
 def main() -> None:
-    if not SOURCE_FILE.is_file():
-        raise FileNotFoundError("Source safetensors file does not exist: %s" % SOURCE_FILE)
+    if not SOURCE_DIR.is_dir():
+        raise FileNotFoundError("Source directory does not exist: %s" % SOURCE_DIR)
+
+    source_files = find_safetensors_files(SOURCE_DIR)
+    if not source_files:
+        raise FileNotFoundError(
+            "No .safetensors files found under source directory: %s" % SOURCE_DIR
+        )
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    checksum = sha256sum(SOURCE_FILE)
-    checksum_path = write_checksum(SOURCE_FILE, checksum)
-    part_paths = split_file(SOURCE_FILE, OUTPUT_DIR, CHUNK_SIZE)
-
-    print("Source file: %s" % SOURCE_FILE)
-    print("Created checksum: %s" % checksum_path)
+    print("[INFO] Source directory: %s" % SOURCE_DIR)
+    print("[INFO] Found %d .safetensors file(s)." % len(source_files))
+    print("[INFO] Non-.safetensors files are ignored.")
     print("Upload these files:")
-    for part_path in part_paths:
-        print("  %s" % part_path)
-    print("  %s" % checksum_path)
+
+    for source_file in source_files:
+        relative_path = source_file.relative_to(SOURCE_DIR)
+        parts_output_dir = OUTPUT_DIR / relative_path.parent
+        checksum = sha256sum(source_file)
+        checksum_path = write_checksum(source_file, parts_output_dir, checksum)
+        part_paths = split_file(source_file, parts_output_dir, CHUNK_SIZE)
+
+        print("  [FILE] %s" % relative_path)
+        for part_path in part_paths:
+            print("    %s" % part_path.relative_to(OUTPUT_DIR))
+        print("    %s" % checksum_path.relative_to(OUTPUT_DIR))
+
     print("")
     print("Upload small files like config/tokenizer/index JSON normally.")
     print("Do not modify model.safetensors.index.json for this transfer split.")

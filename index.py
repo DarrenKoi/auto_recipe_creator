@@ -2,4 +2,6 @@
 
 from web_main import app as application
 
-__all__ = ["application"]
+
+if __name__ == "__main__":
+    application.run(debug=True, host="0.0.0.0")

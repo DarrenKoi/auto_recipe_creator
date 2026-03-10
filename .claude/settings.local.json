@@ -9,7 +9,13 @@
       "Bash(git push)",
       "Bash(git commit:*)",
       "Bash(python3:*)",
-      "Bash(git mv:*)"
+      "Bash(git mv:*)",
+      "WebFetch(domain:gui-agent.github.io)",
+      "WebFetch(domain:llm-stats.com)",
+      "WebFetch(domain:arxiv.org)",
+      "WebFetch(domain:microsoft.github.io)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.kimi.com)"
     ]
   }
 }

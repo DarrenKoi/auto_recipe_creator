@@ -1,13 +1,15 @@
 # zip-split-transfer
 
-`.safetensors` 파일을 Windows에서 2 GB 이하 조각으로 분할해서 업로드하고, Linux에서 다시 합치는 예제.
+`.safetensors` 파일들을 Windows에서 2 GB 이하 조각으로 분할해서 업로드하고, Linux에서 다시 합치는 예제.
 
 ## 핵심 정리
 
 - 이 방식은 **전송용 byte split** 이다.
-- `model.safetensors.part001`, `part002` 같은 임시 조각을 만든다.
-- Linux에서 다시 합쳐서 원래의 `model.safetensors` 파일로 복원한 뒤 사용한다.
+- 각 `.safetensors` 파일마다 `model.safetensors.part001`, `part002` 같은 임시 조각을 만든다.
+- Linux에서 다시 합쳐서 원래의 `.safetensors` 파일들로 복원한 뒤 사용한다.
 - 이 경우 `model.safetensors.index.json` 은 **수정하지 않는다**.
+- 여러 `.safetensors` 파일이 있어도 폴더 구조를 유지한 채로 처리한다.
+- `.json`, tokenizer 파일, 문서 파일 등 `.safetensors` 가 아닌 파일은 건드리지 않는다.
 
 ## 언제 index.json 을 수정하나
 
@@ -32,7 +34,7 @@
 py split_safetensors_windows.py
 ```
 
-3. 생성된 `model.safetensors.part001`, `part002`, ... 와 `model.safetensors.sha256` 를 Linux 서버로 업로드한다.
+3. 생성된 각 `.safetensors.part001`, `.part002`, ... 와 `.sha256` 파일들을 Linux 서버로 업로드한다.
 4. `config.json`, tokenizer 파일들, `model.safetensors.index.json` 같은 작은 파일은 그냥 일반 업로드한다.
 5. `join_safetensors_linux.py` 상단의 경로를 실제 Linux 경로로 수정한다.
 6. Linux에서 실행한다.
@@ -41,14 +43,14 @@ py split_safetensors_windows.py
 python join_safetensors_linux.py
 ```
 
-7. 합쳐진 최종 `model.safetensors` 파일을 모델 로딩에 사용한다.
+7. 합쳐진 최종 `.safetensors` 파일들을 모델 로딩에 사용한다.
 
 ## 경로 예시
 
 Windows:
 
 ```python
-SOURCE_FILE = Path(r"C:\models\my-model\model.safetensors")
+SOURCE_DIR = Path(r"C:\models\my-model")
 OUTPUT_DIR = Path(r"C:\transfer\my-model-upload")
 ```
 
@@ -56,12 +58,13 @@ Linux:
 
 ```python
 PARTS_DIR = Path("/home/ubuntu/uploads/my-model-upload")
-OUTPUT_FILE = Path("/home/ubuntu/models/model.safetensors")
+OUTPUT_DIR = Path("/home/ubuntu/models")
 ```
 
 ## 주의할 점
 
 - 분할된 `part001`, `part002` 파일은 직접 로딩하는 용도가 아니다.
-- 반드시 Linux에서 모두 합쳐서 원본 `.safetensors` 로 복원해야 한다.
+- 반드시 Linux에서 모두 합쳐서 원본 `.safetensors` 파일들로 복원해야 한다.
 - 조각 파일 이름이나 순서가 바뀌면 안 된다.
 - SHA-256 검증이 성공한 뒤에만 모델 로딩에 사용하는 게 안전하다.
+- 여러 `.safetensors` 파일이 있으면 transfer 폴더 안에서 상대 경로를 그대로 유지해서 업로드하는 편이 안전하다.

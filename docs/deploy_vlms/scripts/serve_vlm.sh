@@ -38,7 +38,7 @@ fail() {
 
 require_file() {
     local path="$1"
-    [[ -f "$path" ]] || fail "Required file not found: $path"
+    [[ -f "$path" ]] || fail "Required file not found: $path (copy from scripts/*.env.example to config/ if first run)"
 }
 
 require_dir() {

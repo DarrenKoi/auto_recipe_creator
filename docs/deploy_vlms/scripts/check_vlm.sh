@@ -12,7 +12,10 @@ fi
 URL="${BASE_URL%/}/v1/models"
 echo "[INFO] Checking ${URL}"
 
-RAW="$(curl -fsS "${URL}")"
+RAW="$(curl -fsS "${URL}")" || {
+    echo "[ERROR] Failed to reach ${URL}" >&2
+    exit 1
+}
 echo "${RAW}"
 
 if [[ "${RAW}" == *"${EXPECTED_MODEL}"* ]]; then

@@ -6,9 +6,9 @@
 
 ```bash
 cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
-./scripts/start_ui_venus.sh
-./scripts/start_mai_ui.sh
-./scripts/check_vlm.sh http://127.0.0.1:8001 ui-venus-1.5-8b
+python scripts/start_ui_venus.py
+python scripts/start_mai_ui.py
+python scripts/check_vlm.py http://127.0.0.1:8001 ui-venus-1.5-8b
 ss -ltnp | grep 800
 curl http://127.0.0.1:8001/v1/models
 ```

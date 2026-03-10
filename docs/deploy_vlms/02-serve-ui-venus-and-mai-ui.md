@@ -32,12 +32,12 @@ ss -ltn | grep 800
 
 직접 긴 `vllm serve ...` 명령을 치는 대신, 아래 예시 스크립트를 복사해서 쓰는 편이 운영상 더 낫다.
 
-- [serve_vlm.sh](./scripts/serve_vlm.sh)
-- [start_ui_venus.sh](./scripts/start_ui_venus.sh)
-- [start_mai_ui.sh](./scripts/start_mai_ui.sh)
-- [start_ui_tars.sh](./scripts/start_ui_tars.sh)
+- [serve_vlm.py](./scripts/serve_vlm.py)
+- [start_ui_venus.py](./scripts/start_ui_venus.py)
+- [start_mai_ui.py](./scripts/start_mai_ui.py)
+- [start_ui_tars.py](./scripts/start_ui_tars.py)
 
-스크립트는 오프라인/내부망 전용 환경변수를 먼저 세팅한 뒤 `vllm serve`를 실행한다.
+스크립트는 오프라인/내부망 전용 환경변수를 먼저 세팅한 뒤 `python -m vllm.entrypoints.openai.api_server`를 실행한다.
 아래 예시는 클라우드 서버에서 `docs/deploy_vlms`로 이동한 상태를 기준으로 한다.
 
 ```bash
@@ -51,7 +51,7 @@ mkdir -p config/models templates
 cp scripts/common.env.example config/common.env
 cp scripts/models/ui-venus.env.example config/models/ui-venus.env
 
-./scripts/start_ui_venus.sh
+python scripts/start_ui_venus.py
 ```
 
 ### 3.2 MAI-UI
@@ -62,7 +62,7 @@ cp scripts/models/ui-venus.env.example config/models/ui-venus.env
 cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
 cp scripts/models/mai-ui.env.example config/models/mai-ui.env
 
-./scripts/start_mai_ui.sh
+python scripts/start_mai_ui.py
 ```
 
 참고:
@@ -81,8 +81,8 @@ curl http://127.0.0.1:8001/v1/models
 curl http://127.0.0.1:8002/v1/models
 
 # 또는
-./scripts/check_vlm.sh http://127.0.0.1:8001 ui-venus-1.5-8b
-./scripts/check_vlm.sh http://127.0.0.1:8002 mai-ui-8b
+python scripts/check_vlm.py http://127.0.0.1:8001 ui-venus-1.5-8b
+python scripts/check_vlm.py http://127.0.0.1:8002 mai-ui-8b
 ```
 
 정상이면 각 포트에서 `data[0].id` 또는 유사 필드에 아래 alias가 보여야 한다.
@@ -109,7 +109,7 @@ curl http://127.0.0.1:8002/v1/models
 cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
 cp scripts/models/ui-tars.env.example config/models/ui-tars.env
 
-./scripts/start_ui_tars.sh
+python scripts/start_ui_tars.py
 ```
 
 PoC 단계에서는 `UI-Venus`, `MAI-UI`, `UI-TARS`를 각각 독립 포트로 유지하는 편이 결과 비교와 회귀 추적에 좋다.

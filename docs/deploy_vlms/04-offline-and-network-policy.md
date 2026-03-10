@@ -15,7 +15,7 @@
 - `VLLM_NO_USAGE_STATS=1`
 - `HF_TOKEN`, `HUGGING_FACE_HUB_TOKEN` 같은 토큰은 unset
 
-위 값들은 [serve_vlm.sh](./scripts/serve_vlm.sh)에 이미 들어 있다.
+위 값들은 [serve_vlm.py](./scripts/serve_vlm.py)에 이미 들어 있다.
 
 ## 실무 해석
 

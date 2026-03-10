@@ -61,8 +61,8 @@
 
 실행 가능한 예시 스크립트도 같이 추가했다.
 
-- [serve_vlm.sh](./scripts/serve_vlm.sh)
-- [check_vlm.sh](./scripts/check_vlm.sh)
+- [serve_vlm.py](./scripts/serve_vlm.py)
+- [check_vlm.py](./scripts/check_vlm.py)
 - [common.env.example](./scripts/common.env.example)
 - [ui-venus.env.example](./scripts/models/ui-venus.env.example)
 - [mai-ui.env.example](./scripts/models/mai-ui.env.example)
@@ -78,10 +78,10 @@ cp scripts/common.env.example config/common.env
 cp scripts/models/ui-venus.env.example config/models/ui-venus.env
 cp scripts/models/mai-ui.env.example config/models/mai-ui.env
 
-./scripts/start_ui_venus.sh
-./scripts/start_mai_ui.sh
-./scripts/check_vlm.sh http://127.0.0.1:8001 ui-venus-1.5-8b
-./scripts/check_vlm.sh http://127.0.0.1:8002 mai-ui-8b
+python scripts/start_ui_venus.py
+python scripts/start_mai_ui.py
+python scripts/check_vlm.py http://127.0.0.1:8001 ui-venus-1.5-8b
+python scripts/check_vlm.py http://127.0.0.1:8002 mai-ui-8b
 ```
 
 이 스크립트들은 다음을 기본 전제로 둔다.

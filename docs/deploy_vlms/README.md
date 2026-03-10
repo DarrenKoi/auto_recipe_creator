@@ -9,8 +9,8 @@
 
 주의:
 
-- 현재 저장소의 `flask_api` 패키지는 `/api` prefix는 제공하지만, VLM OpenAI proxy route는 아직 없다.
-- 즉, `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api`를 곧바로 VLM endpoint로 쓰려면, Flask 또는 reverse proxy에서 `/api/v1/...` 또는 `/api/<model>/v1/...` 라우팅을 추가해야 한다.
+- 현재 저장소의 `flask_api` 패키지는 `/api/vlm_serve/<service>/v1/...` 형태의 VLM proxy route를 제공한다.
+- 즉, coworkers 용 endpoint는 `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api/vlm_serve/ui-venus` 같은 형태로 잡으면 된다.
 
 ## 권장 시작점
 
@@ -91,7 +91,7 @@
 실제 클라우드 예시:
 
 - direct port: `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com:8001`
-- flask api root: `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api`
+- flask api proxy: `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api/vlm_serve/ui-venus`
 
 ## 빠른 요약
 

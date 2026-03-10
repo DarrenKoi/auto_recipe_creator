@@ -34,8 +34,8 @@ curl http://127.0.0.1:8001/v1/models
 현재 코드 사실:
 
 - `flask_api`의 기본 prefix는 `/api`다.
-- 하지만 현재 저장소에는 `/api/v1/chat/completions`를 처리하는 VLM proxy route는 아직 없다.
-- 따라서 지금 당장 붙는 방식은 `direct port`가 더 단순하다.
+- VLM proxy는 `/api/vlm_serve/<service>/v1/...` 형태로 제공된다.
+- 따라서 coworkers 에게는 direct port 대신 Flask API 주소를 줄 수 있다.
 
 ## 3. URL 패턴 정리
 
@@ -53,26 +53,16 @@ curl http://127.0.0.1:8001/v1/models
 
 ### 3.2 Flask API gateway 방식
 
-외부 노출 주소를 `base_url/api` 아래로 통일하고 싶다면, gateway에서 아래 중 하나로 열어 주는 구성이 좋다.
+coworkers 용 공용 주소는 아래처럼 쓰면 된다.
 
-옵션 A:
+- `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api/vlm_serve/ui-venus`
+- `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api/vlm_serve/mai-ui`
+- `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api/vlm_serve/ui-tars`
 
-- `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api/ui-venus`
-- `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api/mai-ui`
-- `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api/ui-tars`
+실제 OpenAI-compatible 경로는 아래처럼 된다.
 
-그러면 실제 OpenAI-compatible 경로는 아래처럼 된다.
-
-- `/api/ui-venus/v1/models`
-- `/api/ui-venus/v1/chat/completions`
-
-옵션 B:
-
-- `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api`
-
-이 경우 gateway가 request body의 `model` 값을 보고 적절한 backend 포트로 보내 주는 추가 로직이 필요하다.
-
-PoC 초기에는 옵션 A가 훨씬 단순하다.
+- `/api/vlm_serve/ui-venus/v1/models`
+- `/api/vlm_serve/ui-venus/v1/chat/completions`
 
 ## 4. 추천 `.env` 관리 방식
 
@@ -97,7 +87,7 @@ MAX_IMAGE_SIZE=1280
 gateway 기준 예시는 아래처럼 잡을 수 있다.
 
 ```bash
-VLM_API_URL=http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api/ui-venus
+VLM_API_URL=http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api/vlm_serve/ui-venus
 VLM_API_KEY=
 VLM_MODEL_NAME=ui-venus-1.5-8b
 ```

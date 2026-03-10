@@ -8,21 +8,26 @@ Python으로 동일한 기능을 수행한다.
 
 예시:
   python serve_vlm.py ui-venus
-  python serve_vlm.py mai-ui
-  python serve_vlm.py ui-tars
+  python serve_vlm.py ui-venus-30b
+  python serve_vlm.py mai-ui-7b
 
 환경변수 오버라이드:
   DEPLOY_VLMS_ROOT=/project/.../docs/deploy_vlms
   CONFIG_ROOT=${DEPLOY_VLMS_ROOT}/config
   COMMON_ENV=${CONFIG_ROOT}/common.env
   MODEL_ENV=${CONFIG_ROOT}/models/<instance>.env
+
+참고:
+  - common.env를 먼저 읽고 model env를 나중에 읽는다.
+  - 따라서 TENSOR_PARALLEL_SIZE, GPU_MEMORY_UTILIZATION, MAX_NUM_SEQS,
+    EXTRA_VLLM_ARGS 같은 키도 instance별로 override할 수 있다.
 """
 
 import importlib.metadata
 import importlib.util
 import json
 import os
-import subprocess
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -204,6 +209,7 @@ def main() -> None:
     mm_encoder_tp_mode = env("MM_ENCODER_TP_MODE")
     model_impl = env("MODEL_IMPL")
     max_num_batched_tokens = env("MAX_NUM_BATCHED_TOKENS")
+    extra_vllm_args = env("EXTRA_VLLM_ARGS")
 
     # MODEL_ID 검증: 절대경로 + 디렉토리 존재
     if not os.path.isabs(model_id):
@@ -311,6 +317,9 @@ def main() -> None:
     if api_key:
         cmd.extend(["--api-key", api_key])
 
+    if extra_vllm_args:
+        cmd.extend(shlex.split(extra_vllm_args))
+
     # 로그 출력
     log(f"Starting instance={instance}")
     log(f"DEPLOY_VLMS_ROOT={deploy_vlms_root}")
@@ -318,8 +327,17 @@ def main() -> None:
     log(f"MODEL_ID={model_id_real}")
     log(f"SERVED_MODEL_NAME={served_model_name}")
     log(f"HOST={host} PORT={port} GPU_ID={gpu_id}")
+    log(
+        "DTYPE="
+        f"{dtype} GPU_MEMORY_UTILIZATION={gpu_memory_utilization} "
+        f"MAX_MODEL_LEN={max_model_len} MAX_NUM_SEQS={max_num_seqs} "
+        f"TENSOR_PARALLEL_SIZE={tensor_parallel_size} "
+        f"DATA_PARALLEL_SIZE={data_parallel_size or '1'}"
+    )
     if architectures:
         log(f"ARCHITECTURES={architectures}")
+    if extra_vllm_args:
+        log(f"EXTRA_VLLM_ARGS={extra_vllm_args}")
     log(f"STRICT_OFFLINE={strict_offline} DISABLE_OUTBOUND_PROXIES={disable_outbound_proxies}")
     log(f"HF_HUB_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1")
     log(f"VLLM_DO_NOT_TRACK=1 VLLM_NO_USAGE_STATS=1")

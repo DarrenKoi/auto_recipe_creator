@@ -26,6 +26,14 @@
 
 지금은 VRAM을 꽉 채우는 방향보다, `모델 1개 = 포트 1개 = 서비스 1개`로 단순하게 운영하는 편이 PoC 속도와 장애 분석 측면에서 유리하다.
 
+다만 future research로 같은 family를 여러 size로 비교할 계획이면, 이제 `instance=<family>-<size>` 규칙으로 확장하면 된다.
+
+- `ui-venus-2b`
+- `ui-venus-7b`
+- `ui-venus-30b`
+- `mai-ui-2b`
+- `ui-tars-30b`
+
 ## 포트 정책
 
 - `8000`은 비워 둔다.
@@ -57,13 +65,16 @@
 3. [03-operations-and-repo-integration.md](./03-operations-and-repo-integration.md)
 4. [04-offline-and-network-policy.md](./04-offline-and-network-policy.md)
 5. [05-ui-tars-vs-others.md](./05-ui-tars-vs-others.md)
+6. [06-multi-size-research.md](./06-multi-size-research.md)
 
 ## 실행 스크립트
 
 실행 가능한 예시 스크립트도 같이 추가했다.
 
 - [serve_vlm.py](./scripts/serve_vlm.py)
+- [start_model.py](./scripts/start_model.py)
 - [check_vlm.py](./scripts/check_vlm.py)
+- [prepare_research_envs.py](./scripts/prepare_research_envs.py)
 - [common.env.example](./scripts/common.env.example)
 - [ui-venus.env.example](./scripts/models/ui-venus.env.example)
 - [mai-ui.env.example](./scripts/models/mai-ui.env.example)
@@ -83,6 +94,17 @@ python scripts/start_ui_venus.py
 python scripts/start_mai_ui.py
 python scripts/check_vlm.py http://127.0.0.1:8001 ui-venus-1.5-8b
 python scripts/check_vlm.py http://127.0.0.1:8002 mai-ui-8b
+```
+
+size 연구용 env를 미리 만들고 싶으면 아래처럼 준비하면 된다.
+
+```bash
+python scripts/prepare_research_envs.py ui-venus
+python scripts/start_model.py ui-venus 2b
+python scripts/check_vlm.py http://127.0.0.1:8102 ui-venus-2b
+
+python scripts/start_model.py ui-venus 30b
+python scripts/check_vlm.py http://127.0.0.1:8130 ui-venus-30b
 ```
 
 이 스크립트들은 다음을 기본 전제로 둔다.
@@ -117,5 +139,6 @@ python scripts/check_vlm.py http://127.0.0.1:8002 mai-ui-8b
 
 - 먼저 `UI-Venus-1.5-8B -> 8001`, `MAI-UI-8B -> 8002`
 - 공통값은 `common.env`, 모델별 값은 `models/<name>.env`
+- size별 연구는 `models/<family>-<size>.env`로 확장하고, port/KV cache 관련 튜닝도 model env에서 개별 관리
 - 수동 검증 후 같은 시작 스크립트로 재기동/운영
 - PoC 전환은 `poc/work/.env`에서 `VLM_API_URL`과 `VLM_MODEL_NAME`만 바꾸면 된다

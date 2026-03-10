@@ -30,8 +30,17 @@ ${DEPLOY_VLMS_ROOT}/
 │   ├── common.env
 │   └── models/
 │       ├── ui-venus.env
+│       ├── ui-venus-2b.env
+│       ├── ui-venus-7b.env
+│       ├── ui-venus-30b.env
 │       ├── mai-ui.env
-│       └── ui-tars.env
+│       ├── mai-ui-2b.env
+│       ├── mai-ui-7b.env
+│       ├── mai-ui-30b.env
+│       ├── ui-tars.env
+│       ├── ui-tars-2b.env
+│       ├── ui-tars-7b.env
+│       └── ui-tars-30b.env
 └── templates/
     └── README.md
 ```
@@ -41,6 +50,8 @@ ${DEPLOY_VLMS_ROOT}/
 - `/project/.../data/models/`: 실제 모델 파일
 - `${DEPLOY_VLMS_ROOT}/config/common.env`: 공통 옵션
 - `${DEPLOY_VLMS_ROOT}/config/models/*.env`: 모델별 포트, GPU, alias
+
+기본 운영 alias는 `ui-venus.env`, `mai-ui.env`, `ui-tars.env`처럼 짧게 유지하고, size 연구는 `ui-venus-2b.env`, `ui-venus-30b.env`처럼 `family-size` 규칙으로 늘리는 편이 관리하기 쉽다.
 
 현재 클라우드 기준 모델 경로는 `/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/data/models/` 이다. 다른 경로라면 아래 예시의 `MODEL_ID`만 그 경로로 바꾸면 된다. 운영 중에는 가능하면 상대경로보다 절대경로를 쓰는 편이 낫다.
 
@@ -67,6 +78,12 @@ API_KEY=
 - `MAX_NUM_SEQS=8`: 저동시성 PoC 기준 시작점이다.
 - `TENSOR_PARALLEL_SIZE=1`: 7B/8B 모델은 단일 GPU에 올린다.
 - `HF_HOME`은 기본값을 강제하지 않는다. 시스템 기본 Hugging Face cache path를 사용하고, 필요할 때만 별도로 지정한다.
+
+중요:
+
+- `serve_vlm.py`는 `common.env`를 먼저 읽고 `models/<instance>.env`를 나중에 읽는다.
+- 따라서 `GPU_MEMORY_UTILIZATION`, `MAX_MODEL_LEN`, `MAX_NUM_SEQS`, `TENSOR_PARALLEL_SIZE`, `EXTRA_VLLM_ARGS`도 model env에서 size별 override가 가능하다.
+- 같은 family를 서로 다른 port/KV cache 관련 옵션으로 동시에 돌리려면 이 방식이 가장 단순하다.
 
 ## 4. 모델별 설정 파일
 
@@ -119,6 +136,42 @@ LIMIT_MM_PER_PROMPT={"image": 1, "video": 0}
 # DATA_PARALLEL_SIZE=4
 ```
 
+### 4.4 size 비교 연구용 variant 규칙
+
+연구용 instance는 아래 규칙을 권장한다.
+
+- 파일명: `${DEPLOY_VLMS_ROOT}/config/models/<family>-<size>.env`
+- instance: `<family>-<size>`
+- served-model-name: 가능하면 instance와 동일하게 유지
+
+예:
+
+```text
+ui-venus-2b.env
+ui-venus-7b.env
+ui-venus-30b.env
+```
+
+`30B` 예시는 아래처럼 model env 안에서 공통값을 override하면 된다.
+
+```bash
+MODEL_ID=/project/.../data/models/SET_ME_UI_VENUS_30B
+SERVED_MODEL_NAME=ui-venus-30b
+PORT=8130
+GPU_ID=0,1
+TENSOR_PARALLEL_SIZE=2
+TRUST_REMOTE_CODE=1
+LIMIT_MM_PER_PROMPT={"image": 1}
+CHAT_TEMPLATE=
+GPU_MEMORY_UTILIZATION=0.88
+MAX_MODEL_LEN=8192
+MAX_NUM_SEQS=4
+
+# 필요 시 kv cache 관련 추가 flag 전달
+# EXTRA_VLLM_ARGS=--kv-cache-memory-bytes 40G
+EXTRA_VLLM_ARGS=
+```
+
 ## 5. 설정 키 설명
 
 | 키 | 범위 | 의미 | 권장값 |
@@ -126,7 +179,7 @@ LIMIT_MM_PER_PROMPT={"image": 1, "video": 0}
 | `MODEL_ID` | 모델별 | 클라우드 서버의 로컬 모델 절대경로 | `/project/.../data/models/`의 절대경로 |
 | `SERVED_MODEL_NAME` | 모델별 | OpenAI API에서 사용할 모델 alias | 짧고 안정적인 이름 |
 | `PORT` | 모델별 | vLLM OpenAI 서버 포트 | `8001+` |
-| `GPU_ID` | 모델별 | 바인딩할 GPU 번호 | `0`, `1` |
+| `GPU_ID` | 모델별 | 바인딩할 GPU 번호 | `0`, `1`, `0,1` |
 | `CHAT_TEMPLATE` | 모델별 | 별도 Jinja template 경로 | 필요 시만 사용 |
 | `TRUST_REMOTE_CODE` | 모델별 | remote code 허용 여부 | `1` |
 | `LIMIT_MM_PER_PROMPT` | 모델별 | 프롬프트당 이미지 수 제한 | `{"image": 1}` |
@@ -135,7 +188,8 @@ LIMIT_MM_PER_PROMPT={"image": 1, "video": 0}
 | `GPU_MEMORY_UTILIZATION` | 공통 | KV cache 포함 전체 메모리 활용 비율 | `0.80`부터 시작 |
 | `MAX_MODEL_LEN` | 공통 | 최대 컨텍스트 길이 | `8192` |
 | `MAX_NUM_SEQS` | 공통 | 동시 시퀀스 수 | `8` |
-| `TENSOR_PARALLEL_SIZE` | 공통 | 텐서 병렬 크기 | `1` |
+| `TENSOR_PARALLEL_SIZE` | 공통 또는 모델별 override | 텐서 병렬 크기 | `1`, 대형 모델이면 `2` |
+| `EXTRA_VLLM_ARGS` | 모델별 | size/KV cache 실험용 추가 vLLM CLI flags | 필요 시만 사용 |
 | `DATA_PARALLEL_SIZE` | 모델별 | data parallel 크기 | 필요 시만 설정 |
 | `API_KEY` | 공통 | OpenAI 호환 API 인증키 | 내부망이면 비워도 됨 |
 
@@ -145,9 +199,10 @@ LIMIT_MM_PER_PROMPT={"image": 1, "video": 0}
 
 1. 공통 성능 파라미터는 `common.env`만 바꾼다.
 2. 모델 교체는 `models/<name>.env`의 `MODEL_ID`만 먼저 바꾼다.
-3. `PORT`와 `SERVED_MODEL_NAME`은 가급적 바꾸지 않는다.
-4. 큰 변경은 기존 포트를 덮어쓰지 말고 `8004` 같은 canary 포트에서 먼저 검증한다.
-5. 정상 확인 뒤에만 운영 포트로 승격한다.
+3. size 비교 연구는 `models/<family>-<size>.env`를 별도로 만든다.
+4. `PORT`와 `SERVED_MODEL_NAME`은 가급적 바꾸지 않는다.
+5. 큰 변경은 기존 포트를 덮어쓰지 말고 `8004` 같은 canary 포트에서 먼저 검증한다.
+6. 정상 확인 뒤에만 운영 포트로 승격한다.
 
 ## 7. 업그레이드/롤백 팁
 
@@ -170,4 +225,4 @@ GUI 특화 모델은 모델 카드에 따라 별도 chat template를 요구할 �
 - template가 필요한 모델: `${DEPLOY_VLMS_ROOT}/templates/<model>.jinja`에 저장하고 `CHAT_TEMPLATE`에 경로 지정
 - template 추가 검증은 반드시 운영 포트가 아니라 canary 포트에서 먼저 수행
 
-이 규칙을 지키면, 이후 `UI-TARS`, `UI-TARS-2`, `MAI-UI-32B`로 확장할 때도 설정 체계가 무너지지 않는다.
+이 규칙을 지키면, 이후 `UI-TARS`, `UI-TARS-2`, `MAI-UI-32B`, `UI-Venus-30B`처럼 확장할 때도 설정 체계가 무너지지 않는다.

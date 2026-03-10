@@ -4,7 +4,7 @@
 
 ## 최소 기준
 
-- 모델 경로는 로컬 절대경로만 사용: `/data/models/...`
+- 모델 경로는 로컬 절대경로만 사용: `/project/.../data/models/...`
 - Hugging Face repo id를 `MODEL_ID`로 직접 쓰지 않음
 - `HF_HUB_OFFLINE=1`
 - `TRANSFORMERS_OFFLINE=1`

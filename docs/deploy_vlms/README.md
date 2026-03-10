@@ -86,7 +86,7 @@ python scripts/check_vlm.py http://127.0.0.1:8002 mai-ui-8b
 
 이 스크립트들은 다음을 기본 전제로 둔다.
 
-- 모델은 클라우드 서버의 `/data/models/...` 아래 로컬 경로에 있어야 한다.
+- 모델은 클라우드 서버의 `/project/.../data/models/...` 아래 로컬 절대경로에 있어야 한다.
 - 설정 파일은 `docs/deploy_vlms/config/common.env`, `docs/deploy_vlms/config/models/*.env`에 둔다.
 - Hugging Face Hub 직접 접근은 금지한다.
 - telemetry와 usage stats는 비활성화한다.

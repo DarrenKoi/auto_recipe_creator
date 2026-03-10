@@ -112,7 +112,7 @@ def main() -> None:
     limit_mm_per_prompt = env("LIMIT_MM_PER_PROMPT") or "image=1"
     strict_offline = env("STRICT_OFFLINE") or "1"
     disable_outbound_proxies = env("DISABLE_OUTBOUND_PROXIES") or "1"
-    allowed_model_root = env("ALLOWED_MODEL_ROOT") or "/data/models"
+    allowed_model_root = env("ALLOWED_MODEL_ROOT") or "/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/data/models"
     create_vllm_do_not_track_file = env("CREATE_VLLM_DO_NOT_TRACK_FILE") or "1"
     api_key = env("API_KEY")
     chat_template = env("CHAT_TEMPLATE")

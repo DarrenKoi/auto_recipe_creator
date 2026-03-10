@@ -19,7 +19,7 @@
 ```text
 DEPLOY_VLMS_ROOT=/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
 
-/data/models/
+/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/data/models/
 ├── UI-Venus-1.5-8B/
 ├── MAI-UI-8B/
 └── UI-TARS-1.5-7B/
@@ -38,11 +38,11 @@ ${DEPLOY_VLMS_ROOT}/
 
 핵심은 아래 3개를 분리하는 것이다.
 
-- `/data/models/`: 실제 모델 파일
+- `/project/.../data/models/`: 실제 모델 파일
 - `${DEPLOY_VLMS_ROOT}/config/common.env`: 공통 옵션
 - `${DEPLOY_VLMS_ROOT}/config/models/*.env`: 모델별 포트, GPU, alias
 
-실제 마운트 경로가 `/data/models`가 아니라 `~/data/models` 또는 다른 경로라면, 아래 예시의 `MODEL_ID`만 그 경로로 바꾸면 된다. 운영 중에는 가능하면 상대경로보다 절대경로를 쓰는 편이 낫다.
+현재 클라우드 기준 모델 경로는 `/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/data/models/` 이다. 다른 경로라면 아래 예시의 `MODEL_ID`만 그 경로로 바꾸면 된다. 운영 중에는 가능하면 상대경로보다 절대경로를 쓰는 편이 낫다.
 
 ## 3. 공통 설정 파일
 
@@ -75,7 +75,7 @@ API_KEY=
 `${DEPLOY_VLMS_ROOT}/config/models/ui-venus.env`
 
 ```bash
-MODEL_ID=/data/models/UI-Venus-1.5-8B
+MODEL_ID=/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/data/models/UI-Venus-1.5-8B
 SERVED_MODEL_NAME=ui-venus-1.5-8b
 PORT=8001
 GPU_ID=0
@@ -92,7 +92,7 @@ LIMIT_MM_PER_PROMPT=image=1
 `${DEPLOY_VLMS_ROOT}/config/models/mai-ui.env`
 
 ```bash
-MODEL_ID=/data/models/MAI-UI-8B
+MODEL_ID=/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/data/models/MAI-UI-8B
 SERVED_MODEL_NAME=mai-ui-8b
 PORT=8002
 GPU_ID=1
@@ -106,7 +106,7 @@ LIMIT_MM_PER_PROMPT=image=1
 `${DEPLOY_VLMS_ROOT}/config/models/ui-tars.env`
 
 ```bash
-MODEL_ID=/data/models/UI-TARS-1.5-7B
+MODEL_ID=/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/data/models/UI-TARS-1.5-7B
 SERVED_MODEL_NAME=ui-tars-1.5-7b
 PORT=8003
 GPU_ID=0
@@ -119,7 +119,7 @@ LIMIT_MM_PER_PROMPT=image=1
 
 | 키 | 범위 | 의미 | 권장값 |
 |----|------|------|--------|
-| `MODEL_ID` | 모델별 | HF repo id 또는 클라우드 서버의 로컬 모델 경로 | `data/models/`의 절대경로 |
+| `MODEL_ID` | 모델별 | 클라우드 서버의 로컬 모델 절대경로 | `/project/.../data/models/`의 절대경로 |
 | `SERVED_MODEL_NAME` | 모델별 | OpenAI API에서 사용할 모델 alias | 짧고 안정적인 이름 |
 | `PORT` | 모델별 | vLLM OpenAI 서버 포트 | `8001+` |
 | `GPU_ID` | 모델별 | 바인딩할 GPU 번호 | `0`, `1` |
@@ -150,8 +150,8 @@ LIMIT_MM_PER_PROMPT=image=1
 - 예:
 
 ```text
-/data/models/UI-Venus-1.5-8B/2026-03-10/
-/data/models/UI-Venus-1.5-8B/2026-03-24/
+/project/.../data/models/UI-Venus-1.5-8B/2026-03-10/
+/project/.../data/models/UI-Venus-1.5-8B/2026-03-24/
 ```
 
 - 이 경우 `ui-venus.env`의 `MODEL_ID`만 새 버전 경로로 바꾸면 된다.

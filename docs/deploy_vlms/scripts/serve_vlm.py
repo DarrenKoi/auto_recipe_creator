@@ -18,10 +18,14 @@ Python으로 동일한 기능을 수행한다.
   MODEL_ENV=${CONFIG_ROOT}/models/<instance>.env
 """
 
+import importlib.metadata
+import importlib.util
+import json
 import os
-import sys
 import subprocess
+import sys
 from pathlib import Path
+from typing import Any
 
 
 def log(msg: str) -> None:
@@ -65,9 +69,13 @@ def env(key: str, default: str = "") -> str:
     return os.environ.get(key, default)
 
 
+def read_json_file(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 def _normalize_limit_mm(value: str) -> str:
     """old key=val,... 형식을 vLLM 0.8+ JSON 형식으로 변환."""
-    import json
     try:
         json.loads(value)
         return value
@@ -89,6 +97,63 @@ def env_required(key: str) -> str:
     if not value:
         fail(f"{key} is required (set in common.env or model .env)")
     return value
+
+
+def split_cuda_visible_devices(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def require_any_file(paths: list[Path], description: str) -> None:
+    if any(path.is_file() for path in paths):
+        return
+    fail(f"{description} not found. Checked: {', '.join(str(path) for path in paths)}")
+
+
+def detect_model_family(model_dir: Path) -> tuple[list[str], str]:
+    config_path = model_dir / "config.json"
+    require_file(str(config_path))
+    config = read_json_file(config_path)
+    architectures = [str(item) for item in config.get("architectures") or []]
+    model_type = str(config.get("model_type") or "")
+    return architectures, model_type
+
+
+def ensure_qwen25_vl_runtime_ready(model_dir: Path, instance: str) -> str:
+    """Qwen2.5-VL 계열(UI-TARS 포함) 사전 점검."""
+    if importlib.util.find_spec("transformers.models.qwen2_5_vl") is None:
+        try:
+            transformers_version = importlib.metadata.version("transformers")
+        except importlib.metadata.PackageNotFoundError:
+            transformers_version = "not-installed"
+        fail(
+            f"{instance} requires Qwen2.5-VL runtime support, but "
+            f"transformers.models.qwen2_5_vl is unavailable (transformers={transformers_version})."
+        )
+
+    try:
+        vllm_version = importlib.metadata.version("vllm")
+    except importlib.metadata.PackageNotFoundError:
+        vllm_version = "not-installed"
+    log(f"Detected Qwen2.5-VL runtime (vllm={vllm_version})")
+
+    require_file(str(model_dir / "preprocessor_config.json"))
+    require_file(str(model_dir / "tokenizer_config.json"))
+    require_any_file(
+        [model_dir / "tokenizer.json", model_dir / "tokenizer.model"],
+        "Tokenizer file",
+    )
+    require_any_file(
+        [model_dir / "model.safetensors.index.json", *sorted(model_dir.glob("*.safetensors"))],
+        "Model weights",
+    )
+
+    model_chat_template = model_dir / "chat_template.json"
+    if model_chat_template.is_file():
+        log(f"Using model-provided chat template: {model_chat_template}")
+        return str(model_chat_template)
+
+    log("Model chat_template.json not found; continuing without explicit chat template")
+    return ""
 
 
 def main() -> None:
@@ -127,6 +192,7 @@ def main() -> None:
     max_model_len = env("MAX_MODEL_LEN") or "8192"
     max_num_seqs = env("MAX_NUM_SEQS") or "8"
     tensor_parallel_size = env("TENSOR_PARALLEL_SIZE") or "1"
+    data_parallel_size = env("DATA_PARALLEL_SIZE")
     trust_remote_code = env("TRUST_REMOTE_CODE") or "1"
     limit_mm_per_prompt = env("LIMIT_MM_PER_PROMPT") or '{"image": 1}'
     strict_offline = env("STRICT_OFFLINE") or "1"
@@ -135,12 +201,19 @@ def main() -> None:
     create_vllm_do_not_track_file = env("CREATE_VLLM_DO_NOT_TRACK_FILE") or "1"
     api_key = env("API_KEY")
     chat_template = env("CHAT_TEMPLATE")
+    mm_encoder_tp_mode = env("MM_ENCODER_TP_MODE")
+    model_impl = env("MODEL_IMPL")
+    max_num_batched_tokens = env("MAX_NUM_BATCHED_TOKENS")
 
     # MODEL_ID 검증: 절대경로 + 디렉토리 존재
     if not os.path.isabs(model_id):
         fail(f"MODEL_ID must be an absolute local path: {model_id}")
     require_dir(model_id)
     model_id_real = str(Path(model_id).resolve())
+    model_dir = Path(model_id_real)
+
+    architectures, model_type = detect_model_family(model_dir)
+    is_qwen25_vl = model_type == "qwen2_5_vl" or any("Qwen2_5_VL" in item for item in architectures)
 
     # STRICT_OFFLINE: 모델 경로가 허용된 루트 아래인지 검증
     if strict_offline == "1":
@@ -169,6 +242,18 @@ def main() -> None:
     os.environ["VLLM_NO_USAGE_STATS"] = "1"
     os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
 
+    visible_devices = split_cuda_visible_devices(gpu_id)
+    requested_parallelism = max(
+        int(tensor_parallel_size or "1"),
+        int(data_parallel_size or "1"),
+    )
+    if visible_devices and len(visible_devices) < requested_parallelism:
+        fail(
+            "CUDA_VISIBLE_DEVICES count is smaller than requested parallelism: "
+            f"GPU_ID={gpu_id}, tensor_parallel_size={tensor_parallel_size}, "
+            f"data_parallel_size={data_parallel_size or '1'}"
+        )
+
     # HF_HOME 디렉토리 생성
     hf_home = env("HF_HOME")
     if hf_home:
@@ -179,6 +264,12 @@ def main() -> None:
         vllm_config_dir = Path.home() / ".config" / "vllm"
         vllm_config_dir.mkdir(parents=True, exist_ok=True)
         (vllm_config_dir / "do_not_track").touch()
+
+    if is_qwen25_vl:
+        log(f"Detected Qwen2.5-VL architecture: {architectures or [model_type]}")
+        chat_template = chat_template or ensure_qwen25_vl_runtime_ready(model_dir, instance)
+        if not limit_mm_per_prompt:
+            limit_mm_per_prompt = '{"image": 1, "video": 0}'
 
     # vllm serve 명령 구성
     cmd = [
@@ -194,12 +285,24 @@ def main() -> None:
         "--tensor-parallel-size", tensor_parallel_size,
     ]
 
+    if data_parallel_size:
+        cmd.extend(["--data-parallel-size", data_parallel_size])
+
     if trust_remote_code == "1":
         cmd.append("--trust-remote-code")
 
     if limit_mm_per_prompt:
         limit_mm_per_prompt = _normalize_limit_mm(limit_mm_per_prompt)
         cmd.extend(["--limit-mm-per-prompt", limit_mm_per_prompt])
+
+    if mm_encoder_tp_mode:
+        cmd.extend(["--mm-encoder-tp-mode", mm_encoder_tp_mode])
+
+    if model_impl:
+        cmd.extend(["--model-impl", model_impl])
+
+    if max_num_batched_tokens:
+        cmd.extend(["--max-num-batched-tokens", max_num_batched_tokens])
 
     if chat_template:
         require_file(chat_template)
@@ -215,6 +318,8 @@ def main() -> None:
     log(f"MODEL_ID={model_id_real}")
     log(f"SERVED_MODEL_NAME={served_model_name}")
     log(f"HOST={host} PORT={port} GPU_ID={gpu_id}")
+    if architectures:
+        log(f"ARCHITECTURES={architectures}")
     log(f"STRICT_OFFLINE={strict_offline} DISABLE_OUTBOUND_PROXIES={disable_outbound_proxies}")
     log(f"HF_HUB_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1")
     log(f"VLLM_DO_NOT_TRACK=1 VLLM_NO_USAGE_STATS=1")

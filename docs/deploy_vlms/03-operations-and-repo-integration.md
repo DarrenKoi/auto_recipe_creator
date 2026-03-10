@@ -180,6 +180,8 @@ model_name=ui-venus-1.5-8b
 - `--trust-remote-code` 누락 여부 확인
 - 모델 경로가 실제로 존재하는지 확인
 - 현재 실행 중인 터미널 출력이나 별도 로그 파일에서 tokenizer/template 관련 에러 확인
+- `UI-TARS-1.5-7B`는 `Qwen2.5-VL` 계열이므로, 현재 Python 환경에서 `transformers.models.qwen2_5_vl` import가 되는지 확인
+- `UI-TARS-1.5-7B` 모델 디렉터리에 `preprocessor_config.json`, `tokenizer_config.json`, `chat_template.json`, `model.safetensors.index.json` 또는 `*.safetensors`가 실제로 있는지 확인
 
 ### 메모리 부족 또는 startup이 비정상적으로 무거움
 

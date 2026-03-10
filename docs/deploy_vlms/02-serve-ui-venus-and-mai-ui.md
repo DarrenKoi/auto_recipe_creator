@@ -103,6 +103,8 @@ python scripts/check_vlm.py http://127.0.0.1:8002 mai-ui-8b
 
 `UI-TARS-1.5-7B`를 붙일 때는 기존 포트를 건드리지 말고 `8003`으로 먼저 올린다.
 
+`UI-TARS-1.5-7B`는 Hugging Face 쪽에서 `Qwen2.5-VL` 아키텍처로 배포되어 있고, 모델 파일 목록에 `preprocessor_config.json`, `tokenizer_config.json`, `chat_template.json`, `model.safetensors.index.json`이 같이 들어 있다. 지금 `serve_vlm.py`는 이 파일들을 먼저 확인하고, `CHAT_TEMPLATE`를 비워 두면 모델 디렉터리 안의 `chat_template.json`을 자동으로 사용한다.
+
 예:
 
 ```bash
@@ -110,6 +112,13 @@ cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/d
 cp scripts/models/ui-tars.env.example config/models/ui-tars.env
 
 python scripts/start_ui_tars.py
+```
+
+단일 GPU로 먼저 확인할 때는 예시 파일 그대로 두고, 다중 GPU throughput 실험이 필요하면 아래처럼 바꾼다.
+
+```bash
+GPU_ID=0,1,2,3
+DATA_PARALLEL_SIZE=4
 ```
 
 PoC 단계에서는 `UI-Venus`, `MAI-UI`, `UI-TARS`를 각각 독립 포트로 유지하는 편이 결과 비교와 회귀 추적에 좋다.

@@ -56,6 +56,7 @@
 2. [02-serve-ui-venus-and-mai-ui.md](./02-serve-ui-venus-and-mai-ui.md)
 3. [03-operations-and-repo-integration.md](./03-operations-and-repo-integration.md)
 4. [04-offline-and-network-policy.md](./04-offline-and-network-policy.md)
+5. [05-ui-tars-vs-others.md](./05-ui-tars-vs-others.md)
 
 ## 실행 스크립트
 

@@ -112,7 +112,11 @@ PORT=8003
 GPU_ID=0
 CHAT_TEMPLATE=
 TRUST_REMOTE_CODE=1
-LIMIT_MM_PER_PROMPT={"image": 1}
+LIMIT_MM_PER_PROMPT={"image": 1, "video": 0}
+
+# 필요 시 다중 GPU scale-out
+# GPU_ID=0,1,2,3
+# DATA_PARALLEL_SIZE=4
 ```
 
 ## 5. 설정 키 설명
@@ -132,6 +136,7 @@ LIMIT_MM_PER_PROMPT={"image": 1}
 | `MAX_MODEL_LEN` | 공통 | 최대 컨텍스트 길이 | `8192` |
 | `MAX_NUM_SEQS` | 공통 | 동시 시퀀스 수 | `8` |
 | `TENSOR_PARALLEL_SIZE` | 공통 | 텐서 병렬 크기 | `1` |
+| `DATA_PARALLEL_SIZE` | 모델별 | data parallel 크기 | 필요 시만 설정 |
 | `API_KEY` | 공통 | OpenAI 호환 API 인증키 | 내부망이면 비워도 됨 |
 
 ## 6. 설정 변경 규칙

@@ -65,6 +65,25 @@ def env(key: str, default: str = "") -> str:
     return os.environ.get(key, default)
 
 
+def _normalize_limit_mm(value: str) -> str:
+    """old key=val,... 형식을 vLLM 0.8+ JSON 형식으로 변환."""
+    import json
+    try:
+        json.loads(value)
+        return value
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # "image=1,video=2" → {"image": 1, "video": 2}
+    pairs = {}
+    for item in value.split(","):
+        if "=" in item:
+            k, _, v = item.partition("=")
+            pairs[k.strip()] = int(v.strip())
+    if pairs:
+        return json.dumps(pairs)
+    return value
+
+
 def env_required(key: str) -> str:
     value = os.environ.get(key, "")
     if not value:
@@ -109,7 +128,7 @@ def main() -> None:
     max_num_seqs = env("MAX_NUM_SEQS") or "8"
     tensor_parallel_size = env("TENSOR_PARALLEL_SIZE") or "1"
     trust_remote_code = env("TRUST_REMOTE_CODE") or "1"
-    limit_mm_per_prompt = env("LIMIT_MM_PER_PROMPT") or "image=1"
+    limit_mm_per_prompt = env("LIMIT_MM_PER_PROMPT") or '{"image": 1}'
     strict_offline = env("STRICT_OFFLINE") or "1"
     disable_outbound_proxies = env("DISABLE_OUTBOUND_PROXIES") or "1"
     allowed_model_root = env("ALLOWED_MODEL_ROOT") or "/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/data/models"
@@ -179,6 +198,7 @@ def main() -> None:
         cmd.append("--trust-remote-code")
 
     if limit_mm_per_prompt:
+        limit_mm_per_prompt = _normalize_limit_mm(limit_mm_per_prompt)
         cmd.extend(["--limit-mm-per-prompt", limit_mm_per_prompt])
 
     if chat_template:

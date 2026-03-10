@@ -84,7 +84,7 @@ GPU_ID=0
 CHAT_TEMPLATE=
 
 TRUST_REMOTE_CODE=1
-LIMIT_MM_PER_PROMPT=image=1
+LIMIT_MM_PER_PROMPT={"image": 1}
 ```
 
 ### 4.2 MAI-UI
@@ -98,7 +98,7 @@ PORT=8002
 GPU_ID=1
 CHAT_TEMPLATE=
 TRUST_REMOTE_CODE=1
-LIMIT_MM_PER_PROMPT=image=1
+LIMIT_MM_PER_PROMPT={"image": 1}
 ```
 
 ### 4.3 다음 단계용 UI-TARS
@@ -112,7 +112,7 @@ PORT=8003
 GPU_ID=0
 CHAT_TEMPLATE=
 TRUST_REMOTE_CODE=1
-LIMIT_MM_PER_PROMPT=image=1
+LIMIT_MM_PER_PROMPT={"image": 1}
 ```
 
 ## 5. 설정 키 설명
@@ -125,7 +125,7 @@ LIMIT_MM_PER_PROMPT=image=1
 | `GPU_ID` | 모델별 | 바인딩할 GPU 번호 | `0`, `1` |
 | `CHAT_TEMPLATE` | 모델별 | 별도 Jinja template 경로 | 필요 시만 사용 |
 | `TRUST_REMOTE_CODE` | 모델별 | remote code 허용 여부 | `1` |
-| `LIMIT_MM_PER_PROMPT` | 모델별 | 프롬프트당 이미지 수 제한 | `image=1` |
+| `LIMIT_MM_PER_PROMPT` | 모델별 | 프롬프트당 이미지 수 제한 | `{"image": 1}` |
 | `HOST` | 공통 | bind host | `127.0.0.1` |
 | `DTYPE` | 공통 | weight dtype | `bfloat16` |
 | `GPU_MEMORY_UTILIZATION` | 공통 | KV cache 포함 전체 메모리 활용 비율 | `0.80`부터 시작 |

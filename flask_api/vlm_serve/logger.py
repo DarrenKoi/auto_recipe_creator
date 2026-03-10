@@ -27,6 +27,7 @@ LARGE_BODY_KEYS = {
     "file",
     "bytes",
 }
+LARGE_BODY_KEY_LIMIT = 128
 
 
 def _log_level() -> int:
@@ -106,7 +107,10 @@ def _sanitize_json_value(value: Any, parent_key: str | None = None) -> Any:
         if value.startswith("data:"):
             return _summarize_data_url(value)
         if parent_key and parent_key.lower() in LARGE_BODY_KEYS:
-            return _truncate_text(value)
+            if len(value) <= LARGE_BODY_KEY_LIMIT:
+                return value
+            omitted = len(value) - LARGE_BODY_KEY_LIMIT
+            return f"{value[:LARGE_BODY_KEY_LIMIT]}... <truncated {omitted} chars>"
         return _truncate_text(value)
 
     return value

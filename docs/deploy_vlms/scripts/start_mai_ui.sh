@@ -2,4 +2,4 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec bash "${SCRIPT_DIR}/serve_vlm.sh" mai-ui
+exec "${SCRIPT_DIR}/serve_vlm.sh" mai-ui

@@ -5,9 +5,10 @@
 권한 제약이 있으면 자주 쓰는 작업은 수동 실행과 포트 헬스 체크 중심으로 정리하는 편이 낫다.
 
 ```bash
-bash docs/deploy_vlms/scripts/start_ui_venus.sh
-bash docs/deploy_vlms/scripts/start_mai_ui.sh
-bash docs/deploy_vlms/scripts/check_vlm.sh http://127.0.0.1:8001 ui-venus-1.5-8b
+cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
+./scripts/start_ui_venus.sh
+./scripts/start_mai_ui.sh
+./scripts/check_vlm.sh http://127.0.0.1:8001 ui-venus-1.5-8b
 ss -ltnp | grep 800
 curl http://127.0.0.1:8001/v1/models
 ```

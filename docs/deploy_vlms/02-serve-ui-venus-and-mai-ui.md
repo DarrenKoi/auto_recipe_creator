@@ -38,14 +38,20 @@ ss -ltn | grep 800
 - [start_ui_tars.sh](./scripts/start_ui_tars.sh)
 
 스크립트는 오프라인/내부망 전용 환경변수를 먼저 세팅한 뒤 `vllm serve`를 실행한다.
+아래 예시는 클라우드 서버에서 `docs/deploy_vlms`로 이동한 상태를 기준으로 한다.
+
+```bash
+cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
+mkdir -p config/models templates
+```
 
 ### 3.1 UI-Venus
 
 ```bash
-cp docs/deploy_vlms/scripts/common.env.example /srv/arc-vlms/config/common.env
-cp docs/deploy_vlms/scripts/models/ui-venus.env.example /srv/arc-vlms/config/models/ui-venus.env
+cp scripts/common.env.example config/common.env
+cp scripts/models/ui-venus.env.example config/models/ui-venus.env
 
-bash docs/deploy_vlms/scripts/start_ui_venus.sh
+./scripts/start_ui_venus.sh
 ```
 
 ### 3.2 MAI-UI
@@ -53,17 +59,18 @@ bash docs/deploy_vlms/scripts/start_ui_venus.sh
 다른 셸에서 실행:
 
 ```bash
-cp docs/deploy_vlms/scripts/models/mai-ui.env.example /srv/arc-vlms/config/models/mai-ui.env
+cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
+cp scripts/models/mai-ui.env.example config/models/mai-ui.env
 
-bash docs/deploy_vlms/scripts/start_mai_ui.sh
+./scripts/start_mai_ui.sh
 ```
 
 참고:
 
 - 어떤 모델은 별도 template가 필요할 수 있다.
-- 그런 경우 `--chat-template /srv/arc-vlms/templates/<name>.jinja`를 추가한다.
+- 그런 경우 `CHAT_TEMPLATE=/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms/templates/<name>.jinja`를 설정한다.
 - exact flag 이름은 서버의 `vllm 0.17` 빌드 기준으로 `vllm serve --help`에서 최종 확인한다.
-- GPU 서버에 스크립트를 복사한 뒤 `/srv/arc-vlms/config` 아래 env 파일만 수정해서 쓰는 방식을 권장한다.
+- GPU 서버에서는 `docs/deploy_vlms/config` 아래 env 파일만 수정해서 쓰는 방식을 권장한다.
 
 ## 4. 기동 확인
 
@@ -74,8 +81,8 @@ curl http://127.0.0.1:8001/v1/models
 curl http://127.0.0.1:8002/v1/models
 
 # 또는
-bash docs/deploy_vlms/scripts/check_vlm.sh http://127.0.0.1:8001 ui-venus-1.5-8b
-bash docs/deploy_vlms/scripts/check_vlm.sh http://127.0.0.1:8002 mai-ui-8b
+./scripts/check_vlm.sh http://127.0.0.1:8001 ui-venus-1.5-8b
+./scripts/check_vlm.sh http://127.0.0.1:8002 mai-ui-8b
 ```
 
 정상이면 각 포트에서 `data[0].id` 또는 유사 필드에 아래 alias가 보여야 한다.
@@ -99,9 +106,10 @@ bash docs/deploy_vlms/scripts/check_vlm.sh http://127.0.0.1:8002 mai-ui-8b
 예:
 
 ```bash
-cp docs/deploy_vlms/scripts/models/ui-tars.env.example /srv/arc-vlms/config/models/ui-tars.env
+cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
+cp scripts/models/ui-tars.env.example config/models/ui-tars.env
 
-bash docs/deploy_vlms/scripts/start_ui_tars.sh
+./scripts/start_ui_tars.sh
 ```
 
 PoC 단계에서는 `UI-Venus`, `MAI-UI`, `UI-TARS`를 각각 독립 포트로 유지하는 편이 결과 비교와 회귀 추적에 좋다.

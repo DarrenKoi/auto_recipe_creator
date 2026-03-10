@@ -17,12 +17,15 @@
 모델 파일과 운영 설정을 분리하는 것을 권장한다.
 
 ```text
+DEPLOY_VLMS_ROOT=/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
+
 /data/models/
 ├── UI-Venus-1.5-8B/
 ├── MAI-UI-8B/
 └── UI-TARS-1.5-7B/
 
-/srv/arc-vlms/
+${DEPLOY_VLMS_ROOT}/
+├── scripts/
 ├── config/
 │   ├── common.env
 │   └── models/
@@ -36,41 +39,40 @@
 핵심은 아래 3개를 분리하는 것이다.
 
 - `/data/models/`: 실제 모델 파일
-- `config/common.env`: 공통 옵션
-- `config/models/*.env`: 모델별 포트, GPU, alias
+- `${DEPLOY_VLMS_ROOT}/config/common.env`: 공통 옵션
+- `${DEPLOY_VLMS_ROOT}/config/models/*.env`: 모델별 포트, GPU, alias
 
 실제 마운트 경로가 `/data/models`가 아니라 `~/data/models` 또는 다른 경로라면, 아래 예시의 `MODEL_ID`만 그 경로로 바꾸면 된다. 운영 중에는 가능하면 상대경로보다 절대경로를 쓰는 편이 낫다.
 
 ## 3. 공통 설정 파일
 
-`/srv/arc-vlms/config/common.env`
+`${DEPLOY_VLMS_ROOT}/config/common.env`
 
 ```bash
-HOST=0.0.0.0
+HOST=127.0.0.1
 DTYPE=bfloat16
 GPU_MEMORY_UTILIZATION=0.80
 MAX_MODEL_LEN=8192
 MAX_NUM_SEQS=8
 TENSOR_PARALLEL_SIZE=1
 API_KEY=
-
-# 필요하면 Hugging Face 캐시를 고정
-HF_HOME=/srv/arc-vlms/.cache/huggingface
 ```
 
 초기값 의미:
 
+- `HOST=127.0.0.1`: 기본은 서버 로컬 접근만 허용한다. 다른 내부 머신에서 직접 붙어야 하면 내부 IP나 `0.0.0.0`으로 바꾼다.
 - `DTYPE=bfloat16`: H200에서 시작값으로 무난하다.
 - `GPU_MEMORY_UTILIZATION=0.80`: PoC 초기 안정성 우선값이다.
 - `MAX_MODEL_LEN=8192`: 긴 시스템 프롬프트 + 이미지 1장을 넣기 위한 보수적 시작값이다.
 - `MAX_NUM_SEQS=8`: 저동시성 PoC 기준 시작점이다.
 - `TENSOR_PARALLEL_SIZE=1`: 7B/8B 모델은 단일 GPU에 올린다.
+- `HF_HOME`은 기본값을 강제하지 않는다. 시스템 기본 Hugging Face cache path를 사용하고, 필요할 때만 별도로 지정한다.
 
 ## 4. 모델별 설정 파일
 
 ### 4.1 UI-Venus
 
-`/srv/arc-vlms/config/models/ui-venus.env`
+`${DEPLOY_VLMS_ROOT}/config/models/ui-venus.env`
 
 ```bash
 MODEL_ID=/data/models/UI-Venus-1.5-8B
@@ -81,13 +83,13 @@ GPU_ID=0
 # 모델 카드에서 별도 template를 요구하면 여기에 경로 지정
 CHAT_TEMPLATE=
 
-# GUI VLM은 remote code와 image 입력 제한 옵션을 기본 후보로 둔다
-EXTRA_FLAGS=--trust-remote-code --limit-mm-per-prompt image=1
+TRUST_REMOTE_CODE=1
+LIMIT_MM_PER_PROMPT=image=1
 ```
 
 ### 4.2 MAI-UI
 
-`/srv/arc-vlms/config/models/mai-ui.env`
+`${DEPLOY_VLMS_ROOT}/config/models/mai-ui.env`
 
 ```bash
 MODEL_ID=/data/models/MAI-UI-8B
@@ -95,12 +97,13 @@ SERVED_MODEL_NAME=mai-ui-8b
 PORT=8002
 GPU_ID=1
 CHAT_TEMPLATE=
-EXTRA_FLAGS=--trust-remote-code --limit-mm-per-prompt image=1
+TRUST_REMOTE_CODE=1
+LIMIT_MM_PER_PROMPT=image=1
 ```
 
 ### 4.3 다음 단계용 UI-TARS
 
-`/srv/arc-vlms/config/models/ui-tars.env`
+`${DEPLOY_VLMS_ROOT}/config/models/ui-tars.env`
 
 ```bash
 MODEL_ID=/data/models/UI-TARS-1.5-7B
@@ -108,7 +111,8 @@ SERVED_MODEL_NAME=ui-tars-1.5-7b
 PORT=8003
 GPU_ID=0
 CHAT_TEMPLATE=
-EXTRA_FLAGS=--trust-remote-code --limit-mm-per-prompt image=1
+TRUST_REMOTE_CODE=1
+LIMIT_MM_PER_PROMPT=image=1
 ```
 
 ## 5. 설정 키 설명
@@ -120,8 +124,9 @@ EXTRA_FLAGS=--trust-remote-code --limit-mm-per-prompt image=1
 | `PORT` | 모델별 | vLLM OpenAI 서버 포트 | `8001+` |
 | `GPU_ID` | 모델별 | 바인딩할 GPU 번호 | `0`, `1` |
 | `CHAT_TEMPLATE` | 모델별 | 별도 Jinja template 경로 | 필요 시만 사용 |
-| `EXTRA_FLAGS` | 모델별 | 모델별 추가 옵션 | `--trust-remote-code --limit-mm-per-prompt image=1` |
-| `HOST` | 공통 | bind host | `0.0.0.0` |
+| `TRUST_REMOTE_CODE` | 모델별 | remote code 허용 여부 | `1` |
+| `LIMIT_MM_PER_PROMPT` | 모델별 | 프롬프트당 이미지 수 제한 | `image=1` |
+| `HOST` | 공통 | bind host | `127.0.0.1` |
 | `DTYPE` | 공통 | weight dtype | `bfloat16` |
 | `GPU_MEMORY_UTILIZATION` | 공통 | KV cache 포함 전체 메모리 활용 비율 | `0.80`부터 시작 |
 | `MAX_MODEL_LEN` | 공통 | 최대 컨텍스트 길이 | `8192` |
@@ -157,7 +162,7 @@ EXTRA_FLAGS=--trust-remote-code --limit-mm-per-prompt image=1
 GUI 특화 모델은 모델 카드에 따라 별도 chat template를 요구할 수 있다.
 
 - template가 필요 없는 모델: `CHAT_TEMPLATE=` 빈값 유지
-- template가 필요한 모델: `templates/<model>.jinja`에 저장하고 `CHAT_TEMPLATE`에 경로 지정
+- template가 필요한 모델: `${DEPLOY_VLMS_ROOT}/templates/<model>.jinja`에 저장하고 `CHAT_TEMPLATE`에 경로 지정
 - template 추가 검증은 반드시 운영 포트가 아니라 canary 포트에서 먼저 수행
 
 이 규칙을 지키면, 이후 `UI-TARS`, `UI-TARS-2`, `MAI-UI-32B`로 확장할 때도 설정 체계가 무너지지 않는다.

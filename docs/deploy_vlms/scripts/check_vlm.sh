@@ -5,7 +5,7 @@ BASE_URL="${1:-}"
 EXPECTED_MODEL="${2:-}"
 
 if [[ -z "${BASE_URL}" || -z "${EXPECTED_MODEL}" ]]; then
-    echo "Usage: bash check_vlm.sh <base_url> <expected_model_name>" >&2
+    echo "Usage: ./check_vlm.sh <base_url> <expected_model_name>" >&2
     exit 1
 fi
 

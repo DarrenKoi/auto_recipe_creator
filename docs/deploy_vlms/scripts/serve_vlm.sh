@@ -1,23 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONFIG_ROOT="${CONFIG_ROOT:-/srv/arc-vlms/config}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+DEPLOY_VLMS_ROOT="${DEPLOY_VLMS_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd -P)}"
+CONFIG_ROOT="${CONFIG_ROOT:-${DEPLOY_VLMS_ROOT}/config}"
 COMMON_ENV="${COMMON_ENV:-${CONFIG_ROOT}/common.env}"
+
+export DEPLOY_VLMS_ROOT
+export CONFIG_ROOT
 
 usage() {
     cat <<'EOF'
 Usage:
-  bash serve_vlm.sh <instance>
+  ./serve_vlm.sh <instance>
 
 Example:
-  bash serve_vlm.sh ui-venus
-  bash serve_vlm.sh mai-ui
-  bash serve_vlm.sh ui-tars
+  ./serve_vlm.sh ui-venus
+  ./serve_vlm.sh mai-ui
+  ./serve_vlm.sh ui-tars
 
 Environment overrides:
-  CONFIG_ROOT=/srv/arc-vlms/config
-  COMMON_ENV=/srv/arc-vlms/config/common.env
-  MODEL_ENV=/srv/arc-vlms/config/models/ui-venus.env
+  DEPLOY_VLMS_ROOT=/project/.../docs/deploy_vlms
+  CONFIG_ROOT=${DEPLOY_VLMS_ROOT}/config
+  COMMON_ENV=${CONFIG_ROOT}/common.env
+  MODEL_ENV=${CONFIG_ROOT}/models/ui-venus.env
 EOF
 }
 
@@ -144,6 +150,8 @@ if [[ -n "${API_KEY}" ]]; then
 fi
 
 log "Starting instance=${INSTANCE}"
+log "DEPLOY_VLMS_ROOT=${DEPLOY_VLMS_ROOT}"
+log "CONFIG_ROOT=${CONFIG_ROOT}"
 log "MODEL_ID=${MODEL_ID_REAL}"
 log "SERVED_MODEL_NAME=${SERVED_MODEL_NAME}"
 log "HOST=${HOST} PORT=${PORT} GPU_ID=${GPU_ID}"

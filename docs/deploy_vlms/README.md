@@ -6,6 +6,8 @@
 
 - 클라우드 base URL: `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/`
 - Flask API root: `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api`
+- 클라우드 repo root: `/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image`
+- `deploy_vlms` 작업 루트: `/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms`
 
 주의:
 
@@ -66,9 +68,26 @@
 - [mai-ui.env.example](./scripts/models/mai-ui.env.example)
 - [ui-tars.env.example](./scripts/models/ui-tars.env.example)
 
+이제 스크립트는 `docs/deploy_vlms` 기준으로 경로를 자동 해석하므로, 클라우드에서 아래처럼 바로 실행하면 된다.
+
+```bash
+cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
+
+mkdir -p config/models templates
+cp scripts/common.env.example config/common.env
+cp scripts/models/ui-venus.env.example config/models/ui-venus.env
+cp scripts/models/mai-ui.env.example config/models/mai-ui.env
+
+./scripts/start_ui_venus.sh
+./scripts/start_mai_ui.sh
+./scripts/check_vlm.sh http://127.0.0.1:8001 ui-venus-1.5-8b
+./scripts/check_vlm.sh http://127.0.0.1:8002 mai-ui-8b
+```
+
 이 스크립트들은 다음을 기본 전제로 둔다.
 
 - 모델은 클라우드 서버의 `/data/models/...` 아래 로컬 경로에 있어야 한다.
+- 설정 파일은 `docs/deploy_vlms/config/common.env`, `docs/deploy_vlms/config/models/*.env`에 둔다.
 - Hugging Face Hub 직접 접근은 금지한다.
 - telemetry와 usage stats는 비활성화한다.
 - proxy 환경변수는 기본적으로 제거한다.

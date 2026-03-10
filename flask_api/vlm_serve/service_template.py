@@ -1,11 +1,17 @@
 """VLM 서비스 blueprint template."""
 
+import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Iterator
 
 import requests
 from flask import Blueprint, Response, jsonify, request, stream_with_context
+
+from .logger import format_body_for_log, get_vlm_logger, sanitize_headers
+
+logger = get_vlm_logger("proxy")
 
 
 @dataclass(frozen=True)
@@ -110,12 +116,70 @@ def _build_response_headers(upstream_headers: requests.structures.CaseInsensitiv
     ]
 
 
-def _stream_body(upstream_response: requests.Response) -> Iterator[bytes]:
+def _stream_body(
+    upstream_response: requests.Response,
+    *,
+    config: VLMServiceConfig,
+    upstream_url: str,
+    start_time: float,
+    request_headers: dict[str, str],
+    response_headers: list[tuple[str, str]],
+) -> Iterator[bytes]:
     """Streaming body 를 그대로 전달한다."""
+    captured_chunks = bytearray()
+    response_content_type = upstream_response.headers.get("content-type", "")
+    status_code = upstream_response.status_code
+    chunk_count = 0
+    total_bytes = 0
     try:
         for chunk in upstream_response.iter_content(chunk_size=8192):
             if chunk:
+                chunk_count += 1
+                total_bytes += len(chunk)
+                if len(captured_chunks) < 20000:
+                    remaining = 20000 - len(captured_chunks)
+                    captured_chunks.extend(chunk[:remaining])
                 yield chunk
+        level = logging.INFO
+        if status_code >= 500:
+            level = logging.ERROR
+        elif status_code >= 400:
+            level = logging.WARNING
+        logger.log(
+            level,
+            "Upstream streaming response completed service=%s method=%s upstream_url=%s "
+            "status=%s elapsed_ms=%.1f request_headers=%s response_headers=%s chunks=%s bytes=%s body=%s",
+            config.route_slug,
+            request.method,
+            upstream_url,
+            status_code,
+            (time.monotonic() - start_time) * 1000,
+            sanitize_headers(request_headers),
+            sanitize_headers(dict(response_headers)),
+            chunk_count,
+            total_bytes,
+            format_body_for_log(
+                bytes(captured_chunks),
+                content_type=response_content_type,
+            ),
+        )
+    except Exception:
+        logger.exception(
+            "Upstream streaming response failed service=%s method=%s upstream_url=%s "
+            "status=%s elapsed_ms=%.1f request_headers=%s response_headers=%s body_preview=%s",
+            config.route_slug,
+            request.method,
+            upstream_url,
+            status_code,
+            (time.monotonic() - start_time) * 1000,
+            sanitize_headers(request_headers),
+            sanitize_headers(dict(response_headers)),
+            format_body_for_log(
+                bytes(captured_chunks),
+                content_type=response_content_type,
+            ),
+        )
+        raise
     finally:
         upstream_response.close()
 
@@ -123,19 +187,54 @@ def _stream_body(upstream_response: requests.Response) -> Iterator[bytes]:
 def _proxy_request(config: VLMServiceConfig, upstream_path: str):
     """현재 요청을 upstream vLLM 으로 프록시한다."""
     upstream_url = f"{config.upstream_base_url.rstrip('/')}/{upstream_path.lstrip('/')}"
+    start_time = time.monotonic()
+    request_body = request.get_data(cache=True)
+    request_headers = _build_upstream_headers()
+    stream_response = _should_stream_response()
+    logger.info(
+        "Proxy request started service=%s method=%s path=%s upstream_url=%s query=%s "
+        "stream=%s headers=%s body=%s",
+        config.route_slug,
+        request.method,
+        request.path,
+        upstream_url,
+        request.args.to_dict(flat=False),
+        stream_response,
+        sanitize_headers(request_headers),
+        format_body_for_log(
+            request_body,
+            content_type=request.content_type or "",
+            sanitize_json=True,
+        ),
+    )
     try:
         upstream_response = requests.request(
             method=request.method,
             url=upstream_url,
             params=request.args,
-            headers=_build_upstream_headers(),
-            data=request.get_data(),
+            headers=request_headers,
+            data=request_body,
             cookies=request.cookies,
             timeout=_upstream_timeout(),
             stream=True,
         )
     except requests.RequestException as exc:
-        print(f"[ERROR] VLM upstream 요청 실패 ({config.route_slug}): {exc}")
+        logger.exception(
+            "VLM upstream request failed service=%s method=%s path=%s upstream_url=%s "
+            "elapsed_ms=%.1f headers=%s body=%s error=%s",
+            config.route_slug,
+            request.method,
+            request.path,
+            upstream_url,
+            (time.monotonic() - start_time) * 1000,
+            sanitize_headers(request_headers),
+            format_body_for_log(
+                request_body,
+                content_type=request.content_type or "",
+                sanitize_json=True,
+            ),
+            exc,
+        )
         return jsonify(
             {
                 "service": config.route_slug,
@@ -146,14 +245,59 @@ def _proxy_request(config: VLMServiceConfig, upstream_path: str):
         ), 502
 
     response_headers = _build_response_headers(upstream_response.headers)
-    if _should_stream_response() or upstream_response.headers.get("content-type", "").startswith("text/event-stream"):
+    response_content_type = upstream_response.headers.get("content-type", "")
+    if stream_response or response_content_type.startswith("text/event-stream"):
+        level = logging.INFO
+        if upstream_response.status_code >= 500:
+            level = logging.ERROR
+        elif upstream_response.status_code >= 400:
+            level = logging.WARNING
+        logger.log(
+            level,
+            "Upstream streaming response started service=%s method=%s upstream_url=%s "
+            "status=%s elapsed_ms=%.1f request_headers=%s response_headers=%s",
+            config.route_slug,
+            request.method,
+            upstream_url,
+            upstream_response.status_code,
+            (time.monotonic() - start_time) * 1000,
+            sanitize_headers(request_headers),
+            sanitize_headers(dict(response_headers)),
+        )
         return Response(
-            stream_with_context(_stream_body(upstream_response)),
+            stream_with_context(
+                _stream_body(
+                    upstream_response,
+                    config=config,
+                    upstream_url=upstream_url,
+                    start_time=start_time,
+                    request_headers=request_headers,
+                    response_headers=response_headers,
+                )
+            ),
             status=upstream_response.status_code,
             headers=response_headers,
         )
 
     body = upstream_response.content
+    level = logging.INFO
+    if upstream_response.status_code >= 500:
+        level = logging.ERROR
+    elif upstream_response.status_code >= 400:
+        level = logging.WARNING
+    logger.log(
+        level,
+        "Upstream response completed service=%s method=%s upstream_url=%s status=%s "
+        "elapsed_ms=%.1f request_headers=%s response_headers=%s body=%s",
+        config.route_slug,
+        request.method,
+        upstream_url,
+        upstream_response.status_code,
+        (time.monotonic() - start_time) * 1000,
+        sanitize_headers(request_headers),
+        sanitize_headers(dict(response_headers)),
+        format_body_for_log(body, content_type=response_content_type),
+    )
     upstream_response.close()
     return Response(
         body,

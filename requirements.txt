@@ -1,3 +1,5 @@
+Flask>=3.0.0
+
 # Core — screen capture, VLM API, input control, config
 # (from poc/work/requirements.txt)
 mss>=9.0.0

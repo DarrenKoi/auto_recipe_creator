@@ -30,7 +30,7 @@ app.register_blueprint(api_blueprint, url_prefix="/api")
 
 ## flask_api 안에 코드 추가하는 위치
 
-- `flask_api/routes.py`: root blueprint 생성 + `vlm_serve` router 등록
+- `flask_api/router.py`: root blueprint 생성 + 하위 feature router 등록
 - `flask_api/vlm_serve/router.py`: `/api/vlm_serve` 아래 VLM route 등록
 - `flask_api/vlm_serve/<service>.py`: 모델별 service config
 - `flask_api/vlm_serve/service_template.py`: 공통 proxy blueprint template
@@ -41,7 +41,7 @@ app.register_blueprint(api_blueprint, url_prefix="/api")
 ```text
 flask_api/
   __init__.py
-  routes.py
+  router.py
   vlm_serve/
     __init__.py
     router.py

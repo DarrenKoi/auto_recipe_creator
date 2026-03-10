@@ -2,7 +2,7 @@
 
 from flask import Flask
 
-from .routes import api_blueprint
+from .router import api_blueprint
 
 DEFAULT_URL_PREFIX = "/api"
 

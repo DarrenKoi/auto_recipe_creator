@@ -6,6 +6,7 @@ PoC Work2 Module (Flask VLM proxy test)
 """
 
 __all__ = [
+    "connection_check",
     "flask_vlm",
     "pipeline_ocr",
     "prompts",

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 
+import pytest
 from flask import Flask
 from requests import RequestException
 
 from flask_api import register_flask_api
+from flask_api.vlm_serve import logger as vlm_logger_module
 
 
 class DummyResponse:
@@ -43,6 +46,21 @@ def _create_test_app() -> Flask:
     return app
 
 
+def _clear_vlm_file_handlers() -> None:
+    root_logger = logging.getLogger(vlm_logger_module.LOGGER_NAME)
+    for handler in list(root_logger.handlers):
+        if getattr(handler, vlm_logger_module.FILE_HANDLER_MARKER, False):
+            root_logger.removeHandler(handler)
+            handler.close()
+
+
+@pytest.fixture(autouse=True)
+def cleanup_vlm_file_handlers():
+    _clear_vlm_file_handlers()
+    yield
+    _clear_vlm_file_handlers()
+
+
 def test_vlm_serve_root_lists_registered_services():
     app = _create_test_app()
     client = app.test_client()
@@ -57,6 +75,7 @@ def test_vlm_serve_root_lists_registered_services():
         "ui-venus",
         "mai-ui",
         "ui-tars",
+        "paddleocr-vl-1.5",
     }
 
 
@@ -223,3 +242,44 @@ def test_streaming_chat_proxy_logs_stream_summary(monkeypatch, caplog):
     assert "Upstream streaming response started service=ui-tars" in caplog.text
     assert "Upstream streaming response completed service=ui-tars" in caplog.text
     assert "chunks=2" in caplog.text
+
+
+def test_get_vlm_logger_creates_cloud_repo_log_dir(monkeypatch, tmp_path):
+    cloud_repo_root = tmp_path / "cloud_repo"
+    expected_log_path = cloud_repo_root / "logs" / "vlm_service" / "vlm_serve.log"
+
+    monkeypatch.setenv("VLM_SERVE_REPO_ROOT", str(cloud_repo_root))
+    monkeypatch.delenv("VLM_SERVE_LOG_DIR", raising=False)
+
+    logger = vlm_logger_module.get_vlm_logger("proxy")
+    logger.info("cloud repo log smoke test")
+
+    root_logger = logging.getLogger(vlm_logger_module.LOGGER_NAME)
+    file_handlers = [
+        handler
+        for handler in root_logger.handlers
+        if getattr(handler, vlm_logger_module.FILE_HANDLER_MARKER, False)
+    ]
+
+    assert len(file_handlers) == 1
+    assert Path(file_handlers[0].baseFilename) == expected_log_path
+    assert expected_log_path.parent.is_dir()
+
+    file_handlers[0].flush()
+    assert "cloud repo log smoke test" in expected_log_path.read_text(encoding="utf-8")
+
+
+def test_get_vlm_logger_reuses_existing_file_handler(monkeypatch, tmp_path):
+    monkeypatch.setenv("VLM_SERVE_LOG_DIR", str(tmp_path / "logs" / "vlm_service"))
+
+    vlm_logger_module.get_vlm_logger("proxy")
+    vlm_logger_module.get_vlm_logger("proxy")
+
+    root_logger = logging.getLogger(vlm_logger_module.LOGGER_NAME)
+    file_handlers = [
+        handler
+        for handler in root_logger.handlers
+        if getattr(handler, vlm_logger_module.FILE_HANDLER_MARKER, False)
+    ]
+
+    assert len(file_handlers) == 1

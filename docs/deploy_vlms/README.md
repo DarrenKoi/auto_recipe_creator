@@ -109,7 +109,7 @@ GPU_PROCESS_RESERVE_GIB=4
 
 | 모델 | 공식 런타임 성격 | 이 저장소 권장 경로 |
 |------|------------------|---------------------|
-| `PaddleOCR-VL-1.5` | `PaddleOCR/PaddlePaddle` 또는 `vLLM` | 현재 Linux 클라우드 `Python 3.11 + vLLM 0.17.0` 기준으로는 기존 `deploy_vlms` 체계에 편입. 새 model env만 추가해서 GPU 서버에서 `vLLM`으로 운영 |
+| `PaddleOCR-VL-1.5` | `vLLM` | 현재 Linux 클라우드 `Python 3.11 + vLLM 0.17.0` 기준으로는 기존 `deploy_vlms` 체계에 편입. 새 model env만 추가해서 GPU 서버에서 `vLLM`으로 운영 |
 | `GOT-OCR-2.0-hf` | `transformers` 중심 | 현재 클라우드 `Python 3.11 + transformers 4.57.6 + torch 2.10.0`에서 직접 추론 가능. 현 문서 기준 `vLLM` 경로와 분리 |
 
 ## 실행 스크립트
@@ -121,11 +121,13 @@ GPU_PROCESS_RESERVE_GIB=4
 - [check_vlm.py](./scripts/check_vlm.py)
 - [prepare_research_envs.py](./scripts/prepare_research_envs.py)
 - [start_paddleocr_vl.py](./scripts/start_paddleocr_vl.py)
+- [run_got_ocr.py](./scripts/run_got_ocr.py)
 - [common.env](./config/common.env)
 - [ui-venus.env](./config/models/ui-venus.env)
 - [mai-ui.env](./config/models/mai-ui.env)
 - [ui-tars.env](./config/models/ui-tars.env)
 - [paddleocr-vl-1.5.env](./config/models/paddleocr-vl-1.5.env)
+- [got-ocr-2.0-hf.env](./config/models/got-ocr-2.0-hf.env)
 
 이제 기본 env 파일도 `config/` 아래에 같이 두므로, 클라우드에서는 필요한 값만 수정한 뒤 바로 실행하면 된다.
 

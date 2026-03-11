@@ -6,6 +6,7 @@
 
 - 이 모델은 `새 md 파일`로 분리하는 것이 맞다.
 - 현재 확인한 클라우드 런타임 `Python 3.11 + transformers 4.57.6 + torch 2.10.0`이면 별도 대규모 업그레이드 없이 바로 테스트할 수 있다.
+- `config/models/got-ocr-2.0-hf.env`에 `GPU_ID`, `DEVICE=cuda`, `TORCH_DTYPE=bfloat16`를 넣고 GPU 실행 경로를 고정해 둘 수 있다.
 - 다만 `vLLM` supported models에는 이 모델을 찾지 못했으므로, 현재 기준 배포 방식은 `transformers` 직접 추론이다.
 - repo 기본 `.venv`에는 OCR 런타임 의존성을 넣지 않는 쪽이 여전히 낫지만, 클라우드 전용 Python 환경은 이미 준비된 상태로 볼 수 있다.
 
@@ -55,42 +56,24 @@ python -m pip install pillow
 
 이미 들어 있다면 추가 설치는 생략한다.
 
-그 다음 모델 로컬 경로 기준으로 바로 smoke test를 돌린다.
+그 다음 아래 설정 파일을 먼저 확인한다.
+
+- [got-ocr-2.0-hf.env](./config/models/got-ocr-2.0-hf.env)
+- [run_got_ocr.py](./scripts/run_got_ocr.py)
+
+주요 키:
+
+- `MODEL_ID`: 로컬 모델 절대경로
+- `IMAGE_PATH`: OCR 대상 이미지 절대경로
+- `GPU_ID`: 사용할 GPU 번호
+- `DEVICE=cuda`: GPU 실행 강제
+- `TORCH_DTYPE=bfloat16`: GPU 기본 dtype
+
+설정 후에는 아래처럼 바로 GPU smoke test를 돌린다.
 
 ```bash
-python - <<'PY'
-from pathlib import Path
-
-import torch
-from PIL import Image
-from transformers import AutoModelForImageTextToText, AutoProcessor
-
-model_path = Path("/ABS/PATH/TO/GOT-OCR-2.0-hf")
-image_path = Path("/ABS/PATH/TO/sample.png")
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
-dtype = torch.bfloat16 if device == "cuda" else torch.float32
-
-processor = AutoProcessor.from_pretrained(str(model_path), use_fast=True)
-model = AutoModelForImageTextToText.from_pretrained(
-    str(model_path),
-    torch_dtype=dtype,
-    device_map=device,
-)
-
-image = Image.open(image_path).convert("RGB")
-inputs = processor(image, return_tensors="pt").to(device)
-
-generate_ids = model.generate(
-    **inputs,
-    do_sample=False,
-    tokenizer=processor.tokenizer,
-    stop_strings="<|im_end|>",
-    max_new_tokens=4096,
-)
-
-print(processor.decode(generate_ids[0, inputs["input_ids"].shape[1]:], skip_special_tokens=True))
-PY
+cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
+python scripts/run_got_ocr.py
 ```
 
 ## 4. 별도 env가 필요할 때
@@ -113,41 +96,12 @@ uv pip install --python .venvs/got-ocr-2.0-hf/bin/python "transformers[torch]" p
 
 ## 5. 최소 smoke test
 
-아래 예시는 별도 env를 만들었을 때 기준이다.
+아래 예시는 별도 env를 만들었을 때도 같은 config 파일을 재사용하는 방식이다.
 
 ```bash
 uv run --python .venvs/got-ocr-2.0-hf/bin/python - <<'PY'
-from pathlib import Path
-
-import torch
-from PIL import Image
-from transformers import AutoModelForImageTextToText, AutoProcessor
-
-model_path = Path("/ABS/PATH/TO/GOT-OCR-2.0-hf")
-image_path = Path("/ABS/PATH/TO/sample.png")
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
-dtype = torch.bfloat16 if device == "cuda" else torch.float32
-
-processor = AutoProcessor.from_pretrained(str(model_path), use_fast=True)
-model = AutoModelForImageTextToText.from_pretrained(
-    str(model_path),
-    torch_dtype=dtype,
-    device_map=device,
-)
-
-image = Image.open(image_path).convert("RGB")
-inputs = processor(image, return_tensors="pt").to(device)
-
-generate_ids = model.generate(
-    **inputs,
-    do_sample=False,
-    tokenizer=processor.tokenizer,
-    stop_strings="<|im_end|>",
-    max_new_tokens=4096,
-)
-
-print(processor.decode(generate_ids[0, inputs["input_ids"].shape[1]:], skip_special_tokens=True))
+import runpy
+runpy.run_path("scripts/run_got_ocr.py", run_name="__main__")
 PY
 ```
 

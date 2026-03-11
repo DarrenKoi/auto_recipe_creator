@@ -33,6 +33,7 @@ ${DEPLOY_VLMS_ROOT}/
 │       ├── mai-ui.env
 │       ├── ui-tars.env
 │       ├── paddleocr-vl-1.5.env
+│       ├── got-ocr-2.0-hf.env
 │       ├── ui-venus-2b.env
 │       ├── ui-venus-7b.env
 │       ├── ui-venus-30b.env
@@ -50,7 +51,7 @@ ${DEPLOY_VLMS_ROOT}/
 - `${DEPLOY_VLMS_ROOT}/config/common.env`: 공통 옵션
 - `${DEPLOY_VLMS_ROOT}/config/models/*.env`: 모델별 포트, GPU, alias
 
-기본 운영 alias는 `ui-venus.env`, `mai-ui.env`, `ui-tars.env`처럼 짧게 유지하고, OCR canary는 `paddleocr-vl-1.5.env`처럼 별도 파일로 둔다. size 연구는 `ui-venus-2b.env`, `ui-venus-30b.env`처럼 `family-size` 규칙으로 늘리는 편이 관리하기 쉽다.
+기본 운영 alias는 `ui-venus.env`, `mai-ui.env`, `ui-tars.env`처럼 짧게 유지하고, OCR 계열은 `paddleocr-vl-1.5.env`, `got-ocr-2.0-hf.env`처럼 별도 파일로 둔다. size 연구는 `ui-venus-2b.env`, `ui-venus-30b.env`처럼 `family-size` 규칙으로 늘리는 편이 관리하기 쉽다.
 
 현재 클라우드 기준 모델 경로는 `/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/data/models/` 이다. 다른 경로라면 아래 예시의 `MODEL_ID`만 그 경로로 바꾸면 된다. 운영 중에는 가능하면 상대경로보다 절대경로를 쓰는 편이 낫다.
 

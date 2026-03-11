@@ -21,6 +21,7 @@ try:
 except ImportError:
     REQUESTS_AVAILABLE = False
 
+from flask_api.vlm_serve.config import ENABLED_VLM_SERVICES
 from poc.work2.flask_vlm import (
     DEFAULT_OCR_VLM_MODEL_NAME,
     DEFAULT_OCR_VLM_SERVICE,
@@ -30,12 +31,9 @@ from poc.work2.flask_vlm import (
     resolve_work2_flask_api_base_url,
 )
 
-# 점검 대상 VLM 서비스 목록 (route_slug, expected_model_name)
+# 점검 대상: config.py 에서 enabled=True 인 서비스만 점검
 VLM_SERVICES = [
-    ("ui-venus", "ui-venus-1.5-8b"),
-    ("mai-ui", "mai-ui-8b"),
-    ("ui-tars", "ui-tars-1.5-7b"),
-    ("paddleocr-vl-1.5", "paddleocr-vl-1.5"),
+    (s.route_slug, s.model_name) for s in ENABLED_VLM_SERVICES
 ]
 
 TIMEOUT_SEC = 5.0
@@ -67,7 +65,8 @@ def check_flask_health(flask_base_url: str) -> dict | None:
     print(f"\n[INFO] Flask VLM health endpoint 호출: {health_url}")
     result = _probe_url(health_url)
     if not result["ok"]:
-        print(f"[ERROR] Flask health 호출 실패: {result.get('error') or f'HTTP {result.get(\"status_code\")}'}")
+        error_message = result.get("error") or f"HTTP {result.get('status_code')}"
+        print(f"[ERROR] Flask health 호출 실패: {error_message}")
         return None
     print(f"[INFO] Flask health 응답 수신 ({result['latency_ms']}ms)")
     return result.get("body")

@@ -1,6 +1,6 @@
 # VLM 배포 가이드
 
-`H200 GPU 2장` 환경에서 GUI 특화 VLM을 `vLLM 0.17`로 배포하고, 이 저장소의 `poc/work` 코드와 연결하기 위한 운영 문서 모음이다.
+`H200 GPU 2장` 환경에서 GUI 특화 VLM과 일부 OCR VLM을 배포하고, 이 저장소의 `poc/work` 코드와 연결하기 위한 운영 문서 모음이다. 현재 주력 운영 문서는 `vLLM 0.17` 기준이고, OCR 모델은 런타임 성격에 따라 별도 메모를 같이 둔다.
 
 실제 클라우드 기준 주소:
 
@@ -34,6 +34,40 @@
 - `mai-ui-2b`
 - `ui-tars-30b`
 
+## 2~3개 소형 모델을 한 GPU에 같이 올릴 때
+
+`vLLM`의 `GPU_MEMORY_UTILIZATION`은 고정 상수로 잡기보다, GPU 1장당 공유 예산으로 계산하는 편이 안전하다.
+
+- 기본 식: `u_recommended = ((M_gpu - M_shared) / N_models - M_proc) / M_gpu`
+- KV cache 식: `M_kv ~= 2 * L * H_kv * D_head * bytes(dtype) * MAX_MODEL_LEN * MAX_NUM_SEQS / TP`
+- 판정 식: `M_weights/TP + M_kv + M_proc <= (M_gpu - M_shared) / N_models`
+
+여기서:
+
+- `M_gpu`: GPU 총 VRAM GiB
+- `M_shared`: GPU 전체에서 공통으로 남겨 둘 여유분. 기본 `8 GiB`
+- `M_proc`: 프로세스별 CUDA/vLLM/mm encoder 여유분. 기본 `4 GiB`
+- `N_models`: 같은 GPU를 공유하는 모델 개수
+- `TP`: `TENSOR_PARALLEL_SIZE`
+
+H200 `140GB` 기준 시작값은 대략 아래처럼 보면 된다.
+
+- 8B 2개 공유: `GPU_MEMORY_UTILIZATION ~= 0.44`
+- 8B 3개 공유: `GPU_MEMORY_UTILIZATION ~= 0.29`
+
+이 문서의 [serve_vlm.py](./scripts/serve_vlm.py)는 이제 로컬 `config.json`과 weight shard 크기를 읽어서 이 공식을 자동 적용할 수 있다.
+
+```bash
+AUTO_TUNE_GPU_MEMORY_UTILIZATION=1
+COLOCATED_MODELS_PER_GPU=2
+GPU_SHARED_RESERVE_GIB=8
+GPU_PROCESS_RESERVE_GIB=4
+```
+
+`GPU_MEMORY_UTILIZATION=auto`로 써도 같은 경로를 탄다. `nvidia-smi`를 못 읽는 환경이면 `GPU_TOTAL_MEMORY_GIB=140`을 같이 주면 된다.
+
+`3 x 8B`가 실제로 맞는지는 `num_key_value_heads`와 weight shard 크기에 따라 달라진다. 자동 계산이 실패하면 `MAX_NUM_SEQS`를 먼저 줄이고, 그다음 `MAX_MODEL_LEN`을 내리는 편이 가장 단순하다.
+
 ## 포트 정책
 
 - `8000`은 비워 둔다.
@@ -66,6 +100,17 @@
 4. [04-offline-and-network-policy.md](./04-offline-and-network-policy.md)
 5. [05-ui-tars-vs-others.md](./05-ui-tars-vs-others.md)
 6. [06-multi-size-research.md](./06-multi-size-research.md)
+7. [07-paddleocr-vl-1.5.md](./07-paddleocr-vl-1.5.md)
+8. [08-got-ocr-2.0-hf.md](./08-got-ocr-2.0-hf.md)
+
+## OCR VLM 추가 판단
+
+이번에 확인한 2개 OCR 모델은 같은 폴더 아래에서 관리하되, 배포 방식은 분리하는 편이 맞다.
+
+| 모델 | 공식 런타임 성격 | 이 저장소 권장 경로 |
+|------|------------------|---------------------|
+| `PaddleOCR-VL-1.5` | `PaddleOCR/PaddlePaddle` 또는 `vLLM` | 현재 Linux 클라우드 `Python 3.11 + vLLM 0.17.0` 기준으로는 기존 `deploy_vlms` 체계에 편입. 새 model env만 추가해서 GPU 서버에서 `vLLM`으로 운영 |
+| `GOT-OCR-2.0-hf` | `transformers` 중심 | 현재 클라우드 `Python 3.11 + transformers 4.57.6 + torch 2.10.0`에서 직접 추론 가능. 현 문서 기준 `vLLM` 경로와 분리 |
 
 ## 실행 스크립트
 
@@ -75,20 +120,17 @@
 - [start_model.py](./scripts/start_model.py)
 - [check_vlm.py](./scripts/check_vlm.py)
 - [prepare_research_envs.py](./scripts/prepare_research_envs.py)
-- [common.env.example](./scripts/common.env.example)
-- [ui-venus.env.example](./scripts/models/ui-venus.env.example)
-- [mai-ui.env.example](./scripts/models/mai-ui.env.example)
-- [ui-tars.env.example](./scripts/models/ui-tars.env.example)
+- [start_paddleocr_vl.py](./scripts/start_paddleocr_vl.py)
+- [common.env](./config/common.env)
+- [ui-venus.env](./config/models/ui-venus.env)
+- [mai-ui.env](./config/models/mai-ui.env)
+- [ui-tars.env](./config/models/ui-tars.env)
+- [paddleocr-vl-1.5.env](./config/models/paddleocr-vl-1.5.env)
 
-이제 스크립트는 `docs/deploy_vlms` 기준으로 경로를 자동 해석하므로, 클라우드에서 아래처럼 바로 실행하면 된다.
+이제 기본 env 파일도 `config/` 아래에 같이 두므로, 클라우드에서는 필요한 값만 수정한 뒤 바로 실행하면 된다.
 
 ```bash
 cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
-
-mkdir -p config/models templates
-cp scripts/common.env.example config/common.env
-cp scripts/models/ui-venus.env.example config/models/ui-venus.env
-cp scripts/models/mai-ui.env.example config/models/mai-ui.env
 
 python scripts/start_ui_venus.py
 python scripts/start_mai_ui.py

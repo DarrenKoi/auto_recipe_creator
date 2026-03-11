@@ -126,12 +126,48 @@ python scripts/check_vlm.py http://127.0.0.1:8130 ui-venus-30b
 - `30B`: 기본적으로 2GPU 전용 세션
 - 같은 family라도 port, `MAX_NUM_SEQS`, `GPU_MEMORY_UTILIZATION`, `EXTRA_VLLM_ARGS`는 각 env에서 독립 관리
 
+같은 GPU에 소형 모델을 2~3개 같이 올릴 때는 아래 식으로 `GPU_MEMORY_UTILIZATION`을 먼저 계산한다.
+
+- 공유 예산 식: `u_recommended = ((M_gpu - M_shared) / N_models - M_proc) / M_gpu`
+- KV cache 식: `M_kv ~= 2 * L * H_kv * D_head * bytes(dtype) * MAX_MODEL_LEN * MAX_NUM_SEQS / TP`
+- 적합성 식: `M_weights/TP + M_kv + M_proc <= (M_gpu - M_shared) / N_models`
+
+H200 `140GB` 기준 기본 reserve를 `M_shared=8`, `M_proc=4`로 두면:
+
+- 소형 모델 2개 공유: `GPU_MEMORY_UTILIZATION ~= 0.44`
+- 소형 모델 3개 공유: `GPU_MEMORY_UTILIZATION ~= 0.29`
+
+`3 x 8B`가 실제로 들어가는지는 `num_key_value_heads`와 실제 weight shard 크기에 따라 달라진다. 자동 계산이 실패하면:
+
+1. `MAX_NUM_SEQS=4`
+2. 그래도 부족하면 `MAX_MODEL_LEN=4096`
+3. 그래도 부족하면 `COLOCATED_MODELS_PER_GPU=2`로 되돌린다
+
+`serve_vlm.py`는 이제 아래 설정이 있으면 로컬 모델 `config.json`과 weight shard 크기를 읽어서 이 계산을 자동 수행한다.
+
+```bash
+AUTO_TUNE_GPU_MEMORY_UTILIZATION=1
+COLOCATED_MODELS_PER_GPU=2
+GPU_SHARED_RESERVE_GIB=8
+GPU_PROCESS_RESERVE_GIB=4
+```
+
+`GPU_MEMORY_UTILIZATION=auto`도 같은 의미다. `nvidia-smi`를 못 읽는 환경이면 `GPU_TOTAL_MEMORY_GIB=140`을 추가한다.
+
 예:
 
 ```text
 ui-venus-2b  -> port 8102, GPU_ID=0
 ui-venus-7b  -> port 8107, GPU_ID=1
 ui-venus-30b -> port 8130, GPU_ID=0,1
+```
+
+공유 GPU 예:
+
+```text
+ui-venus-8b -> port 8108, GPU_ID=0, COLOCATED_MODELS_PER_GPU=2
+mai-ui-8b   -> port 8208, GPU_ID=0, COLOCATED_MODELS_PER_GPU=2
+ui-tars-7b  -> port 8307, GPU_ID=1
 ```
 
 ## 6. 이 저장소와 연결

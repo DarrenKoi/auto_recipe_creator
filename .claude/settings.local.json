@@ -15,7 +15,8 @@
       "WebFetch(domain:arxiv.org)",
       "WebFetch(domain:microsoft.github.io)",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:www.kimi.com)"
+      "WebFetch(domain:www.kimi.com)",
+      "WebFetch(domain:docs.vllm.ai)"
     ]
   }
 }

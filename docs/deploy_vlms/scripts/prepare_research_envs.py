@@ -6,7 +6,7 @@
   python prepare_research_envs.py ui-venus-30b
 
 기본 동작:
-  - config/common.env가 없으면 common.env.example를 복사한다.
+  - config/common.env가 없으면 기본값으로 생성한다.
   - config/models/<instance>.env를 생성한다.
   - 기존 파일은 기본적으로 덮어쓰지 않는다.
 
@@ -18,13 +18,39 @@
 """
 
 import os
-import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 
 DEFAULT_MODEL_ROOT = "/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/data/models"
+DEFAULT_COMMON_ENV_TEXT = """# Bind to localhost by default.
+# If another internal machine must access this server, change this to the GPU server's company-internal IP
+# and restrict inbound access with firewall/security-group rules.
+HOST=127.0.0.1
+
+DTYPE=bfloat16
+GPU_MEMORY_UTILIZATION=0.80
+MAX_MODEL_LEN=8192
+MAX_NUM_SEQS=8
+TENSOR_PARALLEL_SIZE=1
+
+# For 2-3 small models on one GPU, prefer the share rule below instead of a fixed value.
+# AUTO_TUNE_GPU_MEMORY_UTILIZATION=1
+# COLOCATED_MODELS_PER_GPU=2
+# GPU_TOTAL_MEMORY_GIB=140
+# GPU_SHARED_RESERVE_GIB=8
+# GPU_PROCESS_RESERVE_GIB=4
+
+# Keep empty unless you want internal API auth between company machines.
+API_KEY=
+
+# Security/offline controls
+STRICT_OFFLINE=1
+DISABLE_OUTBOUND_PROXIES=1
+CREATE_VLLM_DO_NOT_TRACK_FILE=1
+ALLOWED_MODEL_ROOT=/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/data/models
+"""
 
 
 @dataclass(frozen=True)
@@ -189,15 +215,14 @@ def selected_variants() -> list[ResearchVariant]:
     sys.exit(1)
 
 
-def ensure_common_env(config_root: Path, script_dir: Path) -> None:
+def ensure_common_env(config_root: Path) -> None:
     common_env = config_root / "common.env"
-    common_example = script_dir / "common.env.example"
     if common_env.is_file():
         return
 
     common_env.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(common_example, common_env)
-    log(f"Created {common_env} from {common_example}")
+    common_env.write_text(DEFAULT_COMMON_ENV_TEXT, encoding="utf-8")
+    log(f"Created default common env: {common_env}")
 
 
 def build_env_text(variant: ResearchVariant, model_root: str) -> str:
@@ -217,6 +242,12 @@ def build_env_text(variant: ResearchVariant, model_root: str) -> str:
         f"GPU_MEMORY_UTILIZATION={variant.gpu_memory_utilization}",
         f"MAX_MODEL_LEN={variant.max_model_len}",
         f"MAX_NUM_SEQS={variant.max_num_seqs}",
+        "# To colocate 2-3 small models on one GPU, switch to the auto share rule below.",
+        "# AUTO_TUNE_GPU_MEMORY_UTILIZATION=1",
+        "# COLOCATED_MODELS_PER_GPU=2",
+        "# GPU_TOTAL_MEMORY_GIB=140",
+        "# GPU_SHARED_RESERVE_GIB=8",
+        "# GPU_PROCESS_RESERVE_GIB=4",
     ]
 
     lines.append(f"# EXTRA_VLLM_ARGS={variant.extra_vllm_args_example}")
@@ -249,7 +280,7 @@ def main() -> None:
     model_root = os.environ.get("MODEL_ROOT", "").strip() or DEFAULT_MODEL_ROOT
     overwrite_existing = os.environ.get("OVERWRITE_EXISTING", "").strip() == "1"
 
-    ensure_common_env(config_root, script_dir)
+    ensure_common_env(config_root)
 
     models_root = config_root / "models"
     variants = selected_variants()

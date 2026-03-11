@@ -163,14 +163,14 @@ MAX_IMAGE_SIZE=1280
 예를 들어 UI-Venus를 붙일 때는:
 
 ```bash
-cp poc/work/.env.ui-venus poc/work/.env
+# Set poc/work/.env to the UI-Venus profile values first.
 uv run python -m poc.work.list_up_tools
 ```
 
 MAI-UI로 바꿀 때는:
 
 ```bash
-cp poc/work/.env.mai-ui poc/work/.env
+# Set poc/work/.env to the MAI-UI profile values first.
 uv run python -m poc.work.list_up_tools
 ```
 

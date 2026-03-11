@@ -30,19 +30,18 @@ ${DEPLOY_VLMS_ROOT}/
 │   ├── common.env
 │   └── models/
 │       ├── ui-venus.env
+│       ├── mai-ui.env
+│       ├── ui-tars.env
+│       ├── paddleocr-vl-1.5.env
 │       ├── ui-venus-2b.env
 │       ├── ui-venus-7b.env
 │       ├── ui-venus-30b.env
-│       ├── mai-ui.env
 │       ├── mai-ui-2b.env
 │       ├── mai-ui-7b.env
 │       ├── mai-ui-30b.env
-│       ├── ui-tars.env
 │       ├── ui-tars-2b.env
 │       ├── ui-tars-7b.env
 │       └── ui-tars-30b.env
-└── templates/
-    └── README.md
 ```
 
 핵심은 아래 3개를 분리하는 것이다.
@@ -51,7 +50,7 @@ ${DEPLOY_VLMS_ROOT}/
 - `${DEPLOY_VLMS_ROOT}/config/common.env`: 공통 옵션
 - `${DEPLOY_VLMS_ROOT}/config/models/*.env`: 모델별 포트, GPU, alias
 
-기본 운영 alias는 `ui-venus.env`, `mai-ui.env`, `ui-tars.env`처럼 짧게 유지하고, size 연구는 `ui-venus-2b.env`, `ui-venus-30b.env`처럼 `family-size` 규칙으로 늘리는 편이 관리하기 쉽다.
+기본 운영 alias는 `ui-venus.env`, `mai-ui.env`, `ui-tars.env`처럼 짧게 유지하고, OCR canary는 `paddleocr-vl-1.5.env`처럼 별도 파일로 둔다. size 연구는 `ui-venus-2b.env`, `ui-venus-30b.env`처럼 `family-size` 규칙으로 늘리는 편이 관리하기 쉽다.
 
 현재 클라우드 기준 모델 경로는 `/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/data/models/` 이다. 다른 경로라면 아래 예시의 `MODEL_ID`만 그 경로로 바꾸면 된다. 운영 중에는 가능하면 상대경로보다 절대경로를 쓰는 편이 낫다.
 
@@ -67,13 +66,20 @@ MAX_MODEL_LEN=8192
 MAX_NUM_SEQS=8
 TENSOR_PARALLEL_SIZE=1
 API_KEY=
+
+# 2~3개 소형 모델을 한 GPU에 같이 올릴 때만 사용
+# AUTO_TUNE_GPU_MEMORY_UTILIZATION=1
+# COLOCATED_MODELS_PER_GPU=2
+# GPU_TOTAL_MEMORY_GIB=140
+# GPU_SHARED_RESERVE_GIB=8
+# GPU_PROCESS_RESERVE_GIB=4
 ```
 
 초기값 의미:
 
 - `HOST=127.0.0.1`: 기본은 서버 로컬 접근만 허용한다. 다른 내부 머신에서 직접 붙어야 하면 내부 IP나 `0.0.0.0`으로 바꾼다.
 - `DTYPE=bfloat16`: H200에서 시작값으로 무난하다.
-- `GPU_MEMORY_UTILIZATION=0.80`: PoC 초기 안정성 우선값이다.
+- `GPU_MEMORY_UTILIZATION=0.80`: 모델 1개를 GPU 1장에 올릴 때의 보수적 시작값이다.
 - `MAX_MODEL_LEN=8192`: 긴 시스템 프롬프트 + 이미지 1장을 넣기 위한 보수적 시작값이다.
 - `MAX_NUM_SEQS=8`: 저동시성 PoC 기준 시작점이다.
 - `TENSOR_PARALLEL_SIZE=1`: 7B/8B 모델은 단일 GPU에 올린다.
@@ -84,6 +90,33 @@ API_KEY=
 - `serve_vlm.py`는 `common.env`를 먼저 읽고 `models/<instance>.env`를 나중에 읽는다.
 - 따라서 `GPU_MEMORY_UTILIZATION`, `MAX_MODEL_LEN`, `MAX_NUM_SEQS`, `TENSOR_PARALLEL_SIZE`, `EXTRA_VLLM_ARGS`도 model env에서 size별 override가 가능하다.
 - 같은 family를 서로 다른 port/KV cache 관련 옵션으로 동시에 돌리려면 이 방식이 가장 단순하다.
+
+### 3.1 다중 소형 모델 공존 공식
+
+한 GPU에 `7B~8B` 모델을 2~3개 같이 올릴 때는 `GPU_MEMORY_UTILIZATION`을 감으로 올리기보다, 아래 식으로 잡는 편이 안전하다.
+
+- 공유 예산 식: `u_recommended = ((M_gpu - M_shared) / N_models - M_proc) / M_gpu`
+- KV cache 식: `M_kv ~= 2 * L * H_kv * D_head * bytes(dtype) * MAX_MODEL_LEN * MAX_NUM_SEQS / TP`
+- 적합성 식: `M_weights/TP + M_kv + M_proc <= (M_gpu - M_shared) / N_models`
+
+기호 뜻:
+
+- `M_gpu`: GPU 총 VRAM GiB
+- `M_shared`: GPU 전체에서 공통으로 남겨 두는 reserve. 기본 `8 GiB`
+- `M_proc`: 프로세스별 reserve. 기본 `4 GiB`
+- `N_models`: 같은 GPU를 공유하는 vLLM 프로세스 수
+- `TP`: `TENSOR_PARALLEL_SIZE`
+
+H200 `140GB` 기준 시작점:
+
+- 8B 2개 공유: `((140 - 8) / 2 - 4) / 140 ~= 0.44`
+- 8B 3개 공유: `((140 - 8) / 3 - 4) / 140 ~= 0.29`
+
+중요:
+
+- `3 x 8B`가 실제로 들어가는지는 `num_key_value_heads`와 실제 weight shard 크기에 따라 달라진다.
+- 자동 계산이 budget 초과로 실패하면 `MAX_NUM_SEQS`를 먼저 줄이고, 그래도 부족하면 `MAX_MODEL_LEN=4096`으로 내리는 편이 낫다.
+- `serve_vlm.py`는 이제 `AUTO_TUNE_GPU_MEMORY_UTILIZATION=1` 또는 `GPU_MEMORY_UTILIZATION=auto`일 때 로컬 모델 `config.json`과 weight shard 크기를 읽어서 위 식을 자동 계산한다.
 
 ## 4. 모델별 설정 파일
 
@@ -97,7 +130,7 @@ SERVED_MODEL_NAME=ui-venus-1.5-8b
 PORT=8001
 GPU_ID=0
 
-# 모델 카드에서 별도 template를 요구하면 여기에 경로 지정
+# 모델 카드에서 별도 Jinja file을 요구하면 여기에 경로 지정
 CHAT_TEMPLATE=
 
 TRUST_REMOTE_CODE=1
@@ -192,6 +225,11 @@ EXTRA_VLLM_ARGS=
 | `EXTRA_VLLM_ARGS` | 모델별 | size/KV cache 실험용 추가 vLLM CLI flags | 필요 시만 사용 |
 | `DATA_PARALLEL_SIZE` | 모델별 | data parallel 크기 | 필요 시만 설정 |
 | `API_KEY` | 공통 | OpenAI 호환 API 인증키 | 내부망이면 비워도 됨 |
+| `AUTO_TUNE_GPU_MEMORY_UTILIZATION` | 공통 또는 모델별 override | share rule 기반으로 `GPU_MEMORY_UTILIZATION` 자동 계산 | `2~3`개 소형 모델 공존 시 `1` |
+| `COLOCATED_MODELS_PER_GPU` | 공통 또는 모델별 override | 같은 GPU를 공유하는 모델 개수 | `1`, 공유 시 `2` 또는 `3` |
+| `GPU_TOTAL_MEMORY_GIB` | 공통 또는 모델별 override | `nvidia-smi`를 못 읽는 환경에서 GPU 총 VRAM 수동 지정 | 보통 비움, 필요 시 `140` |
+| `GPU_SHARED_RESERVE_GIB` | 공통 또는 모델별 override | GPU 전체 공통 reserve | 기본 `8` |
+| `GPU_PROCESS_RESERVE_GIB` | 공통 또는 모델별 override | 프로세스별 reserve | 기본 `4` |
 
 ## 6. 설정 변경 규칙
 
@@ -222,7 +260,7 @@ EXTRA_VLLM_ARGS=
 GUI 특화 모델은 모델 카드에 따라 별도 chat template를 요구할 수 있다.
 
 - template가 필요 없는 모델: `CHAT_TEMPLATE=` 빈값 유지
-- template가 필요한 모델: `${DEPLOY_VLMS_ROOT}/templates/<model>.jinja`에 저장하고 `CHAT_TEMPLATE`에 경로 지정
+- template가 필요한 모델: 별도 Jinja file 경로를 `CHAT_TEMPLATE`에 직접 지정
 - template 추가 검증은 반드시 운영 포트가 아니라 canary 포트에서 먼저 수행
 
 이 규칙을 지키면, 이후 `UI-TARS`, `UI-TARS-2`, `MAI-UI-32B`, `UI-Venus-30B`처럼 확장할 때도 설정 체계가 무너지지 않는다.

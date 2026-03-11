@@ -28,13 +28,22 @@ import importlib.util
 import json
 import os
 import shlex
+import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 
+GIB = 1024 ** 3
+
+
 def log(msg: str) -> None:
     print(f"[INFO] {msg}")
+
+
+def warn(msg: str) -> None:
+    print(f"[WARNING] {msg}")
 
 
 def fail(msg: str) -> None:
@@ -44,7 +53,15 @@ def fail(msg: str) -> None:
 
 def require_file(path: str) -> None:
     if not Path(path).is_file():
-        fail(f"Required file not found: {path} (copy from scripts/*.env.example to config/ if first run)")
+        fail(f"Required file not found: {path}")
+
+
+def require_env_file(path: str) -> None:
+    if not Path(path).is_file():
+        fail(
+            f"Required env file not found: {path} "
+            "(create or restore config/common.env and config/models/<instance>.env)"
+        )
 
 
 def require_dir(path: str) -> None:
@@ -72,6 +89,13 @@ def load_env_file(path: str) -> None:
 
 def env(key: str, default: str = "") -> str:
     return os.environ.get(key, default)
+
+
+def env_flag(key: str, default: bool = False) -> bool:
+    value = os.environ.get(key, "").strip().lower()
+    if not value:
+        return default
+    return value in {"1", "true", "yes", "on"}
 
 
 def read_json_file(path: Path) -> dict[str, Any]:
@@ -108,19 +132,215 @@ def split_cuda_visible_devices(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def bytes_to_gib(value: int | float) -> float:
+    return float(value) / GIB
+
+
 def require_any_file(paths: list[Path], description: str) -> None:
     if any(path.is_file() for path in paths):
         return
     fail(f"{description} not found. Checked: {', '.join(str(path) for path in paths)}")
 
 
-def detect_model_family(model_dir: Path) -> tuple[list[str], str]:
+def read_model_config(model_dir: Path) -> dict[str, Any]:
     config_path = model_dir / "config.json"
     require_file(str(config_path))
-    config = read_json_file(config_path)
+    return read_json_file(config_path)
+
+
+def detect_model_family(config: dict[str, Any]) -> tuple[list[str], str]:
     architectures = [str(item) for item in config.get("architectures") or []]
     model_type = str(config.get("model_type") or "")
     return architectures, model_type
+
+
+def resolve_text_config(config: dict[str, Any]) -> dict[str, Any]:
+    for key in ("text_config", "language_config", "llm_config"):
+        nested = config.get(key)
+        if isinstance(nested, dict) and nested.get("hidden_size"):
+            return nested
+    return config
+
+
+def dtype_nbytes(dtype: str) -> int:
+    normalized = dtype.strip().lower()
+    if normalized in {"half", "float16", "fp16", "bfloat16", "bf16"}:
+        return 2
+    if normalized in {"float", "float32", "fp32"}:
+        return 4
+    if normalized.startswith("fp8") or normalized.startswith("float8"):
+        return 1
+    return 2
+
+
+def estimate_kv_cache_bytes_per_token(config: dict[str, Any], dtype: str) -> int | None:
+    text_config = resolve_text_config(config)
+    num_hidden_layers = int(text_config.get("num_hidden_layers") or text_config.get("n_layer") or 0)
+    hidden_size = int(text_config.get("hidden_size") or text_config.get("n_embd") or 0)
+    num_attention_heads = int(text_config.get("num_attention_heads") or text_config.get("n_head") or 0)
+    num_key_value_heads = int(
+        text_config.get("num_key_value_heads")
+        or text_config.get("multi_query_group_num")
+        or num_attention_heads
+        or 0
+    )
+    head_dim = int(text_config.get("head_dim") or 0)
+
+    if not head_dim and hidden_size and num_attention_heads:
+        head_dim = hidden_size // num_attention_heads
+
+    if not (num_hidden_layers and num_attention_heads and num_key_value_heads and head_dim):
+        return None
+
+    return 2 * num_hidden_layers * num_key_value_heads * head_dim * dtype_nbytes(dtype)
+
+
+def estimate_model_weight_bytes(model_dir: Path) -> int:
+    index_candidates = [
+        model_dir / "model.safetensors.index.json",
+        model_dir / "pytorch_model.bin.index.json",
+    ]
+    for index_path in index_candidates:
+        if not index_path.is_file():
+            continue
+        weight_map = read_json_file(index_path).get("weight_map") or {}
+        if not isinstance(weight_map, dict):
+            continue
+
+        total_bytes = 0
+        seen_files: set[Path] = set()
+        for relative_name in weight_map.values():
+            shard_path = model_dir / str(relative_name)
+            if shard_path in seen_files:
+                continue
+            require_file(str(shard_path))
+            total_bytes += shard_path.stat().st_size
+            seen_files.add(shard_path)
+        if total_bytes:
+            return total_bytes
+
+    weight_files = [*sorted(model_dir.glob("*.safetensors")), *sorted(model_dir.glob("*.bin"))]
+    if not weight_files:
+        fail(f"Could not estimate model weight size under {model_dir}")
+    return sum(path.stat().st_size for path in weight_files)
+
+
+def detect_gpu_total_memory_gib(visible_devices: list[str], override_gib: str) -> float:
+    if override_gib.strip():
+        return float(override_gib)
+
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=index,memory.total",
+                "--format=csv,noheader,nounits",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        warn("Could not query nvidia-smi; falling back to GPU_TOTAL_MEMORY_GIB=140")
+        return 140.0
+
+    totals_by_index: dict[str, float] = {}
+    for raw_line in result.stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        index, _, memory_total_mib = line.partition(",")
+        index = index.strip()
+        memory_total_mib = memory_total_mib.strip()
+        if not index or not memory_total_mib:
+            continue
+        totals_by_index[index] = float(memory_total_mib) / 1024.0
+
+    if not totals_by_index:
+        warn("nvidia-smi returned no GPU memory rows; falling back to GPU_TOTAL_MEMORY_GIB=140")
+        return 140.0
+
+    if visible_devices:
+        selected = [totals_by_index[item] for item in visible_devices if item in totals_by_index]
+        if selected:
+            return min(selected)
+
+    return min(totals_by_index.values())
+
+
+@dataclass(frozen=True)
+class MemorySizing:
+    gpu_total_memory_gib: float
+    colocated_models_per_gpu: int
+    gpu_shared_reserve_gib: float
+    gpu_process_reserve_gib: float
+    weight_per_gpu_gib: float
+    kv_cache_per_gpu_gib: float
+    per_process_share_gib: float
+    vllm_budget_gib: float
+    min_required_total_gib: float
+    min_required_utilization: float
+    recommended_utilization: float
+    suggested_max_num_seqs: int | None
+    kv_cache_estimated: bool
+
+
+def calculate_memory_sizing(
+    *,
+    weight_bytes: int,
+    model_config: dict[str, Any],
+    dtype: str,
+    max_model_len: int,
+    max_num_seqs: int,
+    tensor_parallel_size: int,
+    gpu_total_memory_gib: float,
+    colocated_models_per_gpu: int,
+    gpu_shared_reserve_gib: float,
+    gpu_process_reserve_gib: float,
+) -> MemorySizing:
+    tp_size = max(1, tensor_parallel_size)
+    colocated = max(1, colocated_models_per_gpu)
+    weight_per_gpu_gib = bytes_to_gib(weight_bytes) / tp_size
+    kv_bytes_per_token = estimate_kv_cache_bytes_per_token(model_config, dtype)
+
+    kv_cache_per_gpu_gib = 0.0
+    kv_cache_estimated = kv_bytes_per_token is not None
+    if kv_bytes_per_token is not None and max_model_len > 0 and max_num_seqs > 0:
+        total_tokens = max_model_len * max_num_seqs
+        kv_cache_per_gpu_gib = bytes_to_gib(kv_bytes_per_token * total_tokens) / tp_size
+
+    per_process_share_gib = max((gpu_total_memory_gib - gpu_shared_reserve_gib) / colocated, 0.0)
+    vllm_budget_gib = max(per_process_share_gib - gpu_process_reserve_gib, 0.0)
+    min_required_total_gib = weight_per_gpu_gib + kv_cache_per_gpu_gib + gpu_process_reserve_gib
+    min_required_utilization = 0.0
+    if gpu_total_memory_gib > 0:
+        min_required_utilization = (weight_per_gpu_gib + kv_cache_per_gpu_gib) / gpu_total_memory_gib
+    recommended_utilization = 0.0
+    if gpu_total_memory_gib > 0:
+        recommended_utilization = max(min(vllm_budget_gib / gpu_total_memory_gib, 0.95), 0.10)
+
+    suggested_max_num_seqs = None
+    if kv_cache_per_gpu_gib > 0 and max_num_seqs > 0:
+        kv_per_seq_gib = kv_cache_per_gpu_gib / max_num_seqs
+        allowed_kv_gib = max(vllm_budget_gib - weight_per_gpu_gib, 0.0)
+        if kv_per_seq_gib > 0:
+            suggested_max_num_seqs = max(int(allowed_kv_gib // kv_per_seq_gib), 1)
+
+    return MemorySizing(
+        gpu_total_memory_gib=gpu_total_memory_gib,
+        colocated_models_per_gpu=colocated,
+        gpu_shared_reserve_gib=gpu_shared_reserve_gib,
+        gpu_process_reserve_gib=gpu_process_reserve_gib,
+        weight_per_gpu_gib=weight_per_gpu_gib,
+        kv_cache_per_gpu_gib=kv_cache_per_gpu_gib,
+        per_process_share_gib=per_process_share_gib,
+        vllm_budget_gib=vllm_budget_gib,
+        min_required_total_gib=min_required_total_gib,
+        min_required_utilization=min_required_utilization,
+        recommended_utilization=recommended_utilization,
+        suggested_max_num_seqs=suggested_max_num_seqs,
+        kv_cache_estimated=kv_cache_estimated,
+    )
 
 
 def ensure_qwen25_vl_runtime_ready(model_dir: Path, instance: str) -> str:
@@ -179,8 +399,8 @@ def main() -> None:
     os.environ["CONFIG_ROOT"] = config_root
 
     # env 파일 로드
-    require_file(common_env)
-    require_file(model_env)
+    require_env_file(common_env)
+    require_env_file(model_env)
     load_env_file(common_env)
     load_env_file(model_env)
 
@@ -193,7 +413,12 @@ def main() -> None:
     # 기본값
     host = env("HOST") or "127.0.0.1"
     dtype = env("DTYPE") or "bfloat16"
-    gpu_memory_utilization = env("GPU_MEMORY_UTILIZATION") or "0.80"
+    gpu_memory_utilization_raw = env("GPU_MEMORY_UTILIZATION") or "0.80"
+    auto_tune_gpu_memory_utilization = (
+        gpu_memory_utilization_raw.strip().lower() == "auto"
+        or env_flag("AUTO_TUNE_GPU_MEMORY_UTILIZATION")
+    )
+    gpu_memory_utilization = "0.80" if gpu_memory_utilization_raw.strip().lower() == "auto" else gpu_memory_utilization_raw
     max_model_len = env("MAX_MODEL_LEN") or "8192"
     max_num_seqs = env("MAX_NUM_SEQS") or "8"
     tensor_parallel_size = env("TENSOR_PARALLEL_SIZE") or "1"
@@ -210,6 +435,10 @@ def main() -> None:
     model_impl = env("MODEL_IMPL")
     max_num_batched_tokens = env("MAX_NUM_BATCHED_TOKENS")
     extra_vllm_args = env("EXTRA_VLLM_ARGS")
+    colocated_models_per_gpu = int(env("COLOCATED_MODELS_PER_GPU") or "1")
+    gpu_total_memory_gib_override = env("GPU_TOTAL_MEMORY_GIB")
+    gpu_shared_reserve_gib = float(env("GPU_SHARED_RESERVE_GIB") or "8")
+    gpu_process_reserve_gib = float(env("GPU_PROCESS_RESERVE_GIB") or "4")
 
     # MODEL_ID 검증: 절대경로 + 디렉토리 존재
     if not os.path.isabs(model_id):
@@ -218,7 +447,8 @@ def main() -> None:
     model_id_real = str(Path(model_id).resolve())
     model_dir = Path(model_id_real)
 
-    architectures, model_type = detect_model_family(model_dir)
+    model_config = read_model_config(model_dir)
+    architectures, model_type = detect_model_family(model_config)
     is_qwen25_vl = model_type == "qwen2_5_vl" or any("Qwen2_5_VL" in item for item in architectures)
 
     # STRICT_OFFLINE: 모델 경로가 허용된 루트 아래인지 검증
@@ -259,6 +489,65 @@ def main() -> None:
             f"GPU_ID={gpu_id}, tensor_parallel_size={tensor_parallel_size}, "
             f"data_parallel_size={data_parallel_size or '1'}"
         )
+
+    memory_sizing: MemorySizing | None = None
+    if auto_tune_gpu_memory_utilization or colocated_models_per_gpu > 1:
+        weight_bytes = estimate_model_weight_bytes(model_dir)
+        memory_sizing = calculate_memory_sizing(
+            weight_bytes=weight_bytes,
+            model_config=model_config,
+            dtype=dtype,
+            max_model_len=int(max_model_len),
+            max_num_seqs=int(max_num_seqs),
+            tensor_parallel_size=int(tensor_parallel_size),
+            gpu_total_memory_gib=detect_gpu_total_memory_gib(visible_devices, gpu_total_memory_gib_override),
+            colocated_models_per_gpu=colocated_models_per_gpu,
+            gpu_shared_reserve_gib=gpu_shared_reserve_gib,
+            gpu_process_reserve_gib=gpu_process_reserve_gib,
+        )
+        log(
+            "Memory sizing: "
+            f"GPU_TOTAL_MEMORY_GIB={memory_sizing.gpu_total_memory_gib:.1f} "
+            f"COLOCATED_MODELS_PER_GPU={memory_sizing.colocated_models_per_gpu} "
+            f"PER_PROCESS_SHARE_GIB={memory_sizing.per_process_share_gib:.1f} "
+            f"VLLM_BUDGET_GIB={memory_sizing.vllm_budget_gib:.1f} "
+            f"WEIGHTS_PER_GPU_GIB={memory_sizing.weight_per_gpu_gib:.1f} "
+            f"KV_CACHE_PER_GPU_GIB={memory_sizing.kv_cache_per_gpu_gib:.1f}"
+        )
+        if not memory_sizing.kv_cache_estimated:
+            warn(
+                "Could not estimate KV cache from config.json; recommendation uses the per-GPU share rule "
+                "without a KV feasibility check"
+            )
+
+        if memory_sizing.min_required_total_gib > memory_sizing.per_process_share_gib:
+            parts = [
+                "Estimated memory requirement does not fit the colocated plan: "
+                f"required_per_process={memory_sizing.min_required_total_gib:.1f}GiB "
+                f"> share_per_process={memory_sizing.per_process_share_gib:.1f}GiB.",
+            ]
+            if memory_sizing.suggested_max_num_seqs is not None:
+                parts.append(
+                    f"Try MAX_NUM_SEQS<={memory_sizing.suggested_max_num_seqs} at MAX_MODEL_LEN={max_model_len}, "
+                    f"or reduce COLOCATED_MODELS_PER_GPU from {colocated_models_per_gpu}."
+                )
+            message = " ".join(parts)
+            if auto_tune_gpu_memory_utilization:
+                fail(message)
+            warn(message)
+
+        if auto_tune_gpu_memory_utilization:
+            gpu_memory_utilization = f"{memory_sizing.recommended_utilization:.2f}"
+            log(
+                "Auto-tuned GPU_MEMORY_UTILIZATION="
+                f"{gpu_memory_utilization} from the per-GPU share rule"
+            )
+        elif colocated_models_per_gpu > 1:
+            warn(
+                "When multiple models share one GPU, start near "
+                f"GPU_MEMORY_UTILIZATION={memory_sizing.recommended_utilization:.2f} "
+                f"(current={gpu_memory_utilization})"
+            )
 
     # HF_HOME 디렉토리 생성
     hf_home = env("HF_HOME")
@@ -334,6 +623,14 @@ def main() -> None:
         f"TENSOR_PARALLEL_SIZE={tensor_parallel_size} "
         f"DATA_PARALLEL_SIZE={data_parallel_size or '1'}"
     )
+    if memory_sizing is not None:
+        log(
+            "Memory sizing summary: "
+            f"MIN_REQUIRED_UTILIZATION={memory_sizing.min_required_utilization:.2f} "
+            f"RECOMMENDED_UTILIZATION={memory_sizing.recommended_utilization:.2f} "
+            f"GPU_SHARED_RESERVE_GIB={memory_sizing.gpu_shared_reserve_gib:.1f} "
+            f"GPU_PROCESS_RESERVE_GIB={memory_sizing.gpu_process_reserve_gib:.1f}"
+        )
     if architectures:
         log(f"ARCHITECTURES={architectures}")
     if extra_vllm_args:

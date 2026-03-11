@@ -44,15 +44,11 @@ ss -ltn | grep 800
 
 ```bash
 cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
-mkdir -p config/models templates
 ```
 
 ### 3.1 UI-Venus
 
 ```bash
-cp scripts/common.env.example config/common.env
-cp scripts/models/ui-venus.env.example config/models/ui-venus.env
-
 python scripts/start_ui_venus.py
 ```
 
@@ -62,7 +58,6 @@ python scripts/start_ui_venus.py
 
 ```bash
 cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
-cp scripts/models/mai-ui.env.example config/models/mai-ui.env
 
 python scripts/start_mai_ui.py
 ```
@@ -70,7 +65,7 @@ python scripts/start_mai_ui.py
 참고:
 
 - 어떤 모델은 별도 template가 필요할 수 있다.
-- 그런 경우 `CHAT_TEMPLATE=/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms/templates/<name>.jinja`를 설정한다.
+- 그런 경우 `CHAT_TEMPLATE=/absolute/path/to/<name>.jinja`처럼 실제 파일 경로를 넣는다.
 - exact flag 이름은 서버의 `vllm 0.17` 빌드 기준으로 `vllm serve --help`에서 최종 확인한다.
 - GPU 서버에서는 `docs/deploy_vlms/config` 아래 env 파일만 수정해서 쓰는 방식을 권장한다.
 
@@ -82,6 +77,7 @@ python scripts/start_mai_ui.py
 
 ```bash
 cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
+# 필요하면 config/common.env, config/models/ui-venus.env 값을 먼저 수정한다.
 python scripts/prepare_research_envs.py ui-venus
 python scripts/start_model.py ui-venus 2b
 ```
@@ -144,8 +140,6 @@ python scripts/check_vlm.py http://127.0.0.1:8130 ui-venus-30b
 
 ```bash
 cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
-cp scripts/models/ui-tars.env.example config/models/ui-tars.env
-
 python scripts/start_ui_tars.py
 ```
 

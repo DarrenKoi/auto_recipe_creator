@@ -13,7 +13,7 @@ except ImportError:
     DOTENV_AVAILABLE = False
 
 DEFAULT_CLOUD_FLASK_API_BASE_URL = (
-    "http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api"
+    "http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api"
 )
 DEFAULT_PRIMARY_VLM_SERVICE = "ui-venus"
 DEFAULT_PRIMARY_VLM_MODEL_NAME = "ui-venus-1.5-8b"

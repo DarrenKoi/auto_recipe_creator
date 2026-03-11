@@ -43,6 +43,8 @@ Thumbs.db
 captures/
 logs/
 poc/work/debug_images/
+poc/work2/debug_images/*
+!poc/work2/debug_images/.gitkeep
 *.png
 *.jpg
 *.jpeg

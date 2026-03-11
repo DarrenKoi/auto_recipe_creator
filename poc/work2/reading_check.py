@@ -1,25 +1,31 @@
-"""현재 컴퓨터 스크린샷을 UI-Venus / PaddleOCR-VL 에 보내 읽기 응답을 확인한다.
+"""현재 컴퓨터의 단일 모니터 스크린샷을 UI-Venus / PaddleOCR-VL 에 보내 읽기 응답을 확인한다.
 
 동작:
-  1) 전체 데스크톱을 캡처한다.
+  1) 지정한 모니터 1개만 캡처한다.
   2) 원본 확인용 JPEG와 실제 전송용 WebP를 `poc/work2/debug_images/`에 저장한다.
   3) 동일한 이미지를 UI-Venus 와 PaddleOCR-VL 에 각각 전송한다.
   4) 원문 응답과 파싱 결과를 debug_images 폴더에 저장하고 요약을 출력한다.
 
 사용법:
   uv run python poc/work2/reading_check.py
+
+환경변수:
+  READING_CHECK_MONITOR_INDEX=1  # 기본값: 1 (첫 번째 물리 모니터)
 """
 
 from __future__ import annotations
 
 import base64
 import json
+import os
 import sys
 import time
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Any
+
+import requests
 
 try:
     from PIL import Image
@@ -30,8 +36,8 @@ except ImportError:
 
 from poc.work.screen_capture import ScreenCapture
 from poc.work.vlm_openai_client import ChatImageRequest, OpenAICompatibleVLMClient
+from flask_api.vlm_serve.config import get_service_by_slug
 from poc.work2.flask_vlm import apply_work2_pipeline_env_defaults, load_work2_env
-from poc.work2.prompts import build_ocr_assist_prompt
 from poc.work2.rcs_utils import extract_json
 
 
@@ -40,6 +46,7 @@ SOURCE_JPEG_QUALITY = 85
 WEBP_QUALITY = 90
 MAX_VLM_BYTES = 1_000_000
 REQUEST_TIMEOUT_SEC = 120.0
+DEFAULT_MONITOR_INDEX = 1
 
 
 def build_ui_venus_reading_prompt(width: int, height: int) -> tuple[str, str]:
@@ -73,6 +80,28 @@ def build_ui_venus_reading_prompt(width: int, height: int) -> tuple[str, str]:
     return system_message, user_text
 
 
+def build_paddleocr_reading_prompt(width: int, height: int) -> tuple[str, str]:
+    """PaddleOCR-VL 용 자유 형식 읽기 프롬프트를 구성한다."""
+    system_message = (
+        "You are an OCR-focused reader for software screenshots. "
+        f"The image is {width}x{height} pixels. "
+        "Read only text that is actually visible. "
+        "Exact transcription is more important than formatting. "
+        "If some text is too small or unclear, say that briefly. "
+        "You may answer in the format that feels most natural."
+    )
+
+    user_text = "\n".join(
+        [
+            "Read this computer screenshot.",
+            "List the visible texts and short observations in your own preferred format.",
+            "Prioritize window titles, menus, tabs, labels, buttons, status text, percentages, and list or table text.",
+            "Do not force JSON. Do not invent hidden text.",
+        ]
+    )
+    return system_message, user_text
+
+
 def _slugify(value: str) -> str:
     """파일명용 안전 문자열로 변환한다."""
     allowed = []
@@ -94,13 +123,50 @@ def _ensure_debug_dir() -> None:
     DEBUG_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def _capture_desktop_image() -> Image.Image | None:
-    """전체 데스크톱을 캡처하여 PIL 이미지로 반환한다."""
-    capture = ScreenCapture(output_dir=str(DEBUG_IMAGE_DIR))
+def _resolve_monitor_index() -> int:
+    """reading_check 에서 사용할 물리 모니터 인덱스를 반환한다."""
+    raw = os.environ.get("READING_CHECK_MONITOR_INDEX", str(DEFAULT_MONITOR_INDEX)).strip()
     try:
-        png_data = capture.capture_full_screen(save=False)
+        monitor_index = int(raw)
+    except ValueError:
+        print(
+            f"[WARNING] READING_CHECK_MONITOR_INDEX 값이 잘못되었습니다: {raw!r} "
+            f"-> 기본값 {DEFAULT_MONITOR_INDEX} 사용"
+        )
+        return DEFAULT_MONITOR_INDEX
+
+    if monitor_index < 1:
+        print(
+            f"[WARNING] READING_CHECK_MONITOR_INDEX 는 1 이상이어야 합니다: {monitor_index} "
+            f"-> 기본값 {DEFAULT_MONITOR_INDEX} 사용"
+        )
+        return DEFAULT_MONITOR_INDEX
+
+    return monitor_index
+
+
+def _capture_monitor_image(monitor_index: int) -> Image.Image | None:
+    """단일 물리 모니터를 캡처하여 PIL 이미지로 반환한다."""
+    capture = ScreenCapture(output_dir=str(DEBUG_IMAGE_DIR))
+    monitors = []
+    try:
+        monitors = list(getattr(capture.sct, "monitors", []) or []) if capture.sct else []
+        physical_count = max(0, len(monitors) - 1)
+        if physical_count <= 0:
+            print("[ERROR] 현재 환경에서는 물리 모니터가 감지되지 않았습니다. monitor 0(전체 데스크톱)만 노출됩니다.")
+            return None
+
+        if monitor_index > physical_count:
+            available = ", ".join(str(idx) for idx in range(1, physical_count + 1))
+            print(
+                f"[ERROR] 요청한 monitor index {monitor_index} 는 범위를 벗어났습니다. "
+                f"사용 가능: {available}"
+            )
+            return None
+
+        png_data = capture.capture_monitor(monitor_index=monitor_index, save=False)
     except Exception as exc:
-        print(f"[ERROR] 전체 화면 캡처 실패: {exc}")
+        print(f"[ERROR] 모니터 {monitor_index} 캡처 실패: {exc}")
         return None
     finally:
         try:
@@ -109,7 +175,7 @@ def _capture_desktop_image() -> Image.Image | None:
             pass
 
     if not png_data:
-        print("[ERROR] 캡처 데이터가 비어 있습니다.")
+        print(f"[ERROR] 모니터 {monitor_index} 캡처 데이터가 비어 있습니다.")
         return None
 
     if not PIL_AVAILABLE:
@@ -178,6 +244,93 @@ def _save_json(path: Path, payload: dict[str, Any]) -> None:
     print(f"[INFO] JSON 저장: {path}")
 
 
+def _resolve_request_model_name(service_name: str, configured_model: str) -> str:
+    """서비스 slug 기준의 canonical served model name 을 반환한다."""
+    service_entry = get_service_by_slug(service_name)
+    if service_entry is None:
+        model_name = configured_model.strip()
+        if not model_name:
+            raise ValueError(f"등록되지 않은 서비스이며 model name 도 비어 있습니다: {service_name}")
+        return model_name
+
+    canonical_model = service_entry.model_name.strip()
+    configured = configured_model.strip()
+    if configured and configured != canonical_model:
+        print(
+            f"[WARNING] {service_name} configured model mismatch: "
+            f"{configured} -> {canonical_model} 로 교정합니다."
+        )
+    return canonical_model
+
+
+def _models_endpoint(api_url: str) -> str:
+    """OpenAI-compatible /v1/models endpoint 를 계산한다."""
+    base_url = api_url.strip().rstrip("/")
+    if base_url.endswith("/v1"):
+        return f"{base_url}/models"
+    return f"{base_url}/v1/models"
+
+
+def _fetch_advertised_models(
+    *,
+    api_url: str,
+    api_key: str,
+    timeout_sec: float = 10.0,
+) -> list[str]:
+    """서비스가 실제로 광고하는 model id 목록을 가져온다."""
+    headers = {}
+    if api_key.strip():
+        headers["Authorization"] = f"Bearer {api_key.strip()}"
+
+    url = _models_endpoint(api_url)
+    print(f"[INFO] model probe 호출: {url}")
+    response = requests.get(url, headers=headers, timeout=timeout_sec)
+    response.raise_for_status()
+
+    payload = response.json()
+    data = payload.get("data")
+    if not isinstance(data, list):
+        raise ValueError(f"/v1/models 응답 형식이 올바르지 않습니다: {payload}")
+
+    models: list[str] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        model_id = str(item.get("id", "")).strip()
+        if model_id:
+            models.append(model_id)
+
+    if not models:
+        raise ValueError("/v1/models 응답에 model id 가 없습니다.")
+    return models
+
+
+def _verify_service_model(
+    *,
+    service_name: str,
+    configured_model: str,
+    api_url: str,
+    api_key: str,
+) -> tuple[str, list[str]]:
+    """서비스 endpoint 와 요청 model name 이 일치하는지 검증한다."""
+    request_model = _resolve_request_model_name(service_name, configured_model)
+    advertised_models = _fetch_advertised_models(
+        api_url=api_url,
+        api_key=api_key,
+    )
+    if request_model not in advertised_models:
+        raise ValueError(
+            f"service={service_name} expected model={request_model}, "
+            f"but endpoint advertises {advertised_models}"
+        )
+
+    print(
+        f"[INFO] model probe 확인 완료: service={service_name}, "
+        f"request_model={request_model}, advertised={advertised_models}"
+    )
+    return request_model, advertised_models
+
+
 def _call_model(
     *,
     service_name: str,
@@ -189,6 +342,7 @@ def _call_model(
     image_b64: str,
     image_mime: str = "image/webp",
     temperature: float = 0.0,
+    expect_json: bool = True,
 ) -> dict[str, Any]:
     """한 모델에 reading check 요청을 보낸다."""
     client = OpenAICompatibleVLMClient(
@@ -196,8 +350,36 @@ def _call_model(
         api_key=api_key,
         timeout_sec=REQUEST_TIMEOUT_SEC,
     )
+    request_model = ""
+    try:
+        request_model = _resolve_request_model_name(service_name, model_name)
+    except Exception:
+        request_model = ""
+
+    probe_started = time.time()
+    try:
+        request_model, advertised_models = _verify_service_model(
+            service_name=service_name,
+            configured_model=model_name,
+            api_url=api_url,
+            api_key=api_key,
+        )
+    except Exception as exc:
+        return {
+            "service": service_name,
+            "configured_model": model_name,
+            "model": request_model,
+            "advertised_models": [],
+            "ok": False,
+            "latency_ms": round((time.time() - probe_started) * 1000, 1),
+            "error": f"model validation failed: {exc}",
+            "raw_response": "",
+            "parsed_json": None,
+            "expect_json": expect_json,
+        }
+
     request = ChatImageRequest(
-        model=model_name,
+        model=request_model,
         system_message=system_message,
         user_text=user_text,
         image_b64=image_b64,
@@ -207,7 +389,7 @@ def _call_model(
 
     print(
         f"[INFO] reading check 호출: service={service_name}, "
-        f"model={model_name}, endpoint={client.endpoint}"
+        f"model={request_model}, endpoint={client.endpoint}"
     )
     start = time.time()
     try:
@@ -215,29 +397,36 @@ def _call_model(
     except Exception as exc:
         return {
             "service": service_name,
-            "model": model_name,
+            "configured_model": model_name,
+            "model": request_model,
+            "advertised_models": advertised_models,
             "ok": False,
             "latency_ms": round((time.time() - start) * 1000, 1),
             "error": str(exc),
             "raw_response": "",
             "parsed_json": None,
+            "expect_json": expect_json,
         }
 
     latency_ms = round((time.time() - start) * 1000, 1)
     parsed_json = None
-    try:
-        parsed_json = extract_json(raw_response)
-    except Exception as exc:
-        print(f"[WARNING] {service_name} JSON 파싱 실패: {exc}")
+    if expect_json:
+        try:
+            parsed_json = extract_json(raw_response)
+        except Exception as exc:
+            print(f"[WARNING] {service_name} JSON 파싱 실패: {exc}")
 
     return {
         "service": service_name,
-        "model": model_name,
+        "configured_model": model_name,
+        "model": request_model,
+        "advertised_models": advertised_models,
         "ok": True,
         "latency_ms": latency_ms,
         "error": None,
         "raw_response": raw_response,
         "parsed_json": parsed_json,
+        "expect_json": expect_json,
     }
 
 
@@ -246,12 +435,19 @@ def _print_result_block(result: dict[str, Any]) -> None:
     print("\n" + "=" * 80)
     print(f"[INFO] 결과 - {result['service']} ({result['model']})")
     print("=" * 80)
+    if result.get("configured_model") and result.get("configured_model") != result.get("model"):
+        print(
+            f"[INFO] 요청 model 교정: configured={result['configured_model']} "
+            f"-> request={result['model']}"
+        )
+    if result.get("advertised_models"):
+        print(f"[INFO] endpoint advertised models: {result['advertised_models']}")
     if not result["ok"]:
         print(f"[ERROR] 호출 실패: {result['error']}")
         return
     print(f"[INFO] 응답 시간: {result['latency_ms']}ms")
     print(f"[INFO] 원문 응답:\n{result['raw_response']}\n")
-    if result["parsed_json"] is not None:
+    if result.get("expect_json") and result["parsed_json"] is not None:
         print("[INFO] 파싱된 JSON:")
         print(json.dumps(result["parsed_json"], ensure_ascii=False, indent=2))
 
@@ -261,22 +457,29 @@ def _print_summary(results: list[dict[str, Any]]) -> None:
     print("\n" + "-" * 90)
     print("  reading_check 결과")
     print("-" * 90)
-    print(f"  {'서비스':<22} {'상태':<10} {'JSON':<8} {'응답시간':<12} {'비고'}")
+    print(f"  {'서비스':<22} {'상태':<10} {'형식':<8} {'응답시간':<12} {'비고'}")
     print(f"  {'─' * 22} {'─' * 10} {'─' * 8} {'─' * 12} {'─' * 32}")
 
     for result in results:
         status = "OK" if result["ok"] else "FAIL"
-        json_status = "O" if result["parsed_json"] is not None else "X"
+        response_format = "-"
+        if result["ok"] and result["parsed_json"] is not None:
+            response_format = "json"
+        elif result["ok"] and not result.get("expect_json"):
+            response_format = "free"
+        elif result["ok"]:
+            response_format = "raw"
         latency = f"{result['latency_ms']}ms"
         note = ""
         if result["error"]:
             note = result["error"][:32]
         elif result["service"] == "ui-venus" and isinstance(result["parsed_json"], dict):
             note = str(result["parsed_json"].get("screen_summary", ""))[:32]
-        elif isinstance(result["parsed_json"], dict):
-            texts = result["parsed_json"].get("texts") or []
-            note = f"texts={len(texts)}"
-        print(f"  {result['service']:<22} {status:<10} {json_status:<8} {latency:<12} {note}")
+        elif not result.get("expect_json"):
+            note = " ".join(str(result["raw_response"]).split())[:32]
+        else:
+            note = "non-json response"[:32]
+        print(f"  {result['service']:<22} {status:<10} {response_format:<8} {latency:<12} {note}")
 
     print("-" * 90)
 
@@ -300,10 +503,12 @@ def main() -> int:
     ocr_model = str(pipeline.get("ocr_model_name") or "paddleocr-vl-1.5")
     ocr_api_url = str(pipeline.get("ocr_api_url") or "").strip()
     ocr_api_key = str(pipeline.get("ocr_api_key") or "").strip()
+    monitor_index = _resolve_monitor_index()
 
     print("[INFO] reading_check 시작")
-    print(f"[INFO] primary: {primary_service} ({primary_model})")
-    print(f"[INFO] ocr:     {ocr_service} ({ocr_model})")
+    print(f"[INFO] primary configured: {primary_service} ({primary_model})")
+    print(f"[INFO] ocr configured:     {ocr_service} ({ocr_model})")
+    print(f"[INFO] capture monitor:    {monitor_index}")
     print(f"[INFO] debug dir: {DEBUG_IMAGE_DIR}")
 
     if not primary_api_url:
@@ -313,7 +518,7 @@ def main() -> int:
         print("[ERROR] OCR API URL이 비어 있습니다. WORK2_FLASK_API_BASE_URL 또는 WORK2_OCR_API_URL을 확인하세요.")
         return 3
 
-    image = _capture_desktop_image()
+    image = _capture_monitor_image(monitor_index)
     if image is None:
         return 4
 
@@ -324,13 +529,7 @@ def main() -> int:
     print(f"[INFO] 실제 전송 이미지: {sent_path}")
 
     ui_system_message, ui_user_text = build_ui_venus_reading_prompt(width, height)
-    ocr_system_message, ocr_user_text = build_ocr_assist_prompt(
-        width=width,
-        height=height,
-        context_label="computer screenshot",
-        focus_words=None,
-        max_items=20,
-    )
+    ocr_system_message, ocr_user_text = build_paddleocr_reading_prompt(width, height)
 
     results = [
         _call_model(
@@ -350,11 +549,26 @@ def main() -> int:
             system_message=ocr_system_message,
             user_text=ocr_user_text,
             image_b64=image_b64,
+            expect_json=False,
         ),
     ]
 
     for result in results:
         service_slug = _slugify(str(result["service"]))
+        probe_path = DEBUG_IMAGE_DIR / f"{stem}_{service_slug}_model_probe.json"
+        _save_json(
+            probe_path,
+            {
+                "service": result["service"],
+                "configured_model": result.get("configured_model", ""),
+                "request_model": result.get("model", ""),
+                "advertised_models": result.get("advertised_models", []),
+                "ok": result["ok"],
+                "error": result["error"],
+                "expect_json": result.get("expect_json", True),
+            },
+        )
+
         raw_path = DEBUG_IMAGE_DIR / f"{stem}_{service_slug}_response.txt"
         _save_text(raw_path, str(result["raw_response"] or result["error"] or ""))
 

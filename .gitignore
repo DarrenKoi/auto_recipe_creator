@@ -1,5 +1,6 @@
 # not share
 output/
+**/node_modules/
 
 # Python
 __pycache__/

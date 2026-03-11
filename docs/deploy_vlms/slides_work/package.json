@@ -1,9 +1,0 @@
-{
-  "name": "deploy-vlms-slides-work",
-  "version": "1.0.0",
-  "private": true,
-  "type": "commonjs",
-  "dependencies": {
-    "pptxgenjs": "^3.12.0"
-  }
-}

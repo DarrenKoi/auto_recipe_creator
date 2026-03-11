@@ -1,13 +1,16 @@
-"""VLM 서비스 blueprint template."""
+"""VLM 서비스 blueprint template.
+
+이미지 분석 전용 프록시이므로 스트리밍은 사용하지 않는다.
+클라이언트가 stream=true 를 보내더라도 무시하고 전체 응답을 한 번에 반환한다.
+"""
 
 import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import Iterator
 
 import requests
-from flask import Blueprint, Response, jsonify, request, stream_with_context
+from flask import Blueprint, Response, jsonify, request
 
 from .logger import format_body_for_log, get_vlm_logger, sanitize_headers
 
@@ -71,12 +74,20 @@ def _upstream_timeout() -> tuple[float, float]:
     return connect_timeout, read_timeout
 
 
-def _should_stream_response() -> bool:
-    """스트리밍 응답 여부를 추정한다."""
-    payload = request.get_json(silent=True)
-    if isinstance(payload, dict) and payload.get("stream") is True:
-        return True
-    return False
+def _force_stream_off(raw_body: bytes, content_type: str) -> bytes:
+    """요청 body 에서 stream 필드를 false 로 강제한다."""
+    if not content_type or "json" not in content_type:
+        return raw_body
+    try:
+        import json
+
+        payload = json.loads(raw_body)
+        if isinstance(payload, dict) and "stream" in payload:
+            payload["stream"] = False
+            return json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        pass
+    return raw_body
 
 
 def _build_upstream_headers() -> dict[str, str]:
@@ -116,90 +127,23 @@ def _build_response_headers(upstream_headers: requests.structures.CaseInsensitiv
     ]
 
 
-def _stream_body(
-    upstream_response: requests.Response,
-    *,
-    config: VLMServiceConfig,
-    upstream_url: str,
-    start_time: float,
-    request_headers: dict[str, str],
-    response_headers: list[tuple[str, str]],
-) -> Iterator[bytes]:
-    """Streaming body 를 그대로 전달한다."""
-    captured_chunks = bytearray()
-    response_content_type = upstream_response.headers.get("content-type", "")
-    status_code = upstream_response.status_code
-    chunk_count = 0
-    total_bytes = 0
-    try:
-        for chunk in upstream_response.iter_content(chunk_size=8192):
-            if chunk:
-                chunk_count += 1
-                total_bytes += len(chunk)
-                if len(captured_chunks) < 20000:
-                    remaining = 20000 - len(captured_chunks)
-                    captured_chunks.extend(chunk[:remaining])
-                yield chunk
-        level = logging.INFO
-        if status_code >= 500:
-            level = logging.ERROR
-        elif status_code >= 400:
-            level = logging.WARNING
-        logger.log(
-            level,
-            "Upstream streaming response completed service=%s method=%s upstream_url=%s "
-            "status=%s elapsed_ms=%.1f request_headers=%s response_headers=%s chunks=%s bytes=%s body=%s",
-            config.route_slug,
-            request.method,
-            upstream_url,
-            status_code,
-            (time.monotonic() - start_time) * 1000,
-            sanitize_headers(request_headers),
-            sanitize_headers(dict(response_headers)),
-            chunk_count,
-            total_bytes,
-            format_body_for_log(
-                bytes(captured_chunks),
-                content_type=response_content_type,
-            ),
-        )
-    except Exception:
-        logger.exception(
-            "Upstream streaming response failed service=%s method=%s upstream_url=%s "
-            "status=%s elapsed_ms=%.1f request_headers=%s response_headers=%s body_preview=%s",
-            config.route_slug,
-            request.method,
-            upstream_url,
-            status_code,
-            (time.monotonic() - start_time) * 1000,
-            sanitize_headers(request_headers),
-            sanitize_headers(dict(response_headers)),
-            format_body_for_log(
-                bytes(captured_chunks),
-                content_type=response_content_type,
-            ),
-        )
-        raise
-    finally:
-        upstream_response.close()
-
-
 def _proxy_request(config: VLMServiceConfig, upstream_path: str):
-    """현재 요청을 upstream vLLM 으로 프록시한다."""
+    """현재 요청을 upstream vLLM 으로 프록시한다 (비스트리밍)."""
     upstream_url = f"{config.upstream_base_url.rstrip('/')}/{upstream_path.lstrip('/')}"
     start_time = time.monotonic()
-    request_body = request.get_data(cache=True)
+    request_body = _force_stream_off(
+        request.get_data(cache=True),
+        request.content_type or "",
+    )
     request_headers = _build_upstream_headers()
-    stream_response = _should_stream_response()
     logger.info(
         "Proxy request started service=%s method=%s path=%s upstream_url=%s query=%s "
-        "stream=%s headers=%s body=%s",
+        "headers=%s body=%s",
         config.route_slug,
         request.method,
         request.path,
         upstream_url,
         request.args.to_dict(flat=False),
-        stream_response,
         sanitize_headers(request_headers),
         format_body_for_log(
             request_body,
@@ -216,7 +160,7 @@ def _proxy_request(config: VLMServiceConfig, upstream_path: str):
             data=request_body,
             cookies=request.cookies,
             timeout=_upstream_timeout(),
-            stream=True,
+            stream=False,
         )
     except requests.RequestException as exc:
         logger.exception(
@@ -246,39 +190,6 @@ def _proxy_request(config: VLMServiceConfig, upstream_path: str):
 
     response_headers = _build_response_headers(upstream_response.headers)
     response_content_type = upstream_response.headers.get("content-type", "")
-    if stream_response or response_content_type.startswith("text/event-stream"):
-        level = logging.INFO
-        if upstream_response.status_code >= 500:
-            level = logging.ERROR
-        elif upstream_response.status_code >= 400:
-            level = logging.WARNING
-        logger.log(
-            level,
-            "Upstream streaming response started service=%s method=%s upstream_url=%s "
-            "status=%s elapsed_ms=%.1f request_headers=%s response_headers=%s",
-            config.route_slug,
-            request.method,
-            upstream_url,
-            upstream_response.status_code,
-            (time.monotonic() - start_time) * 1000,
-            sanitize_headers(request_headers),
-            sanitize_headers(dict(response_headers)),
-        )
-        return Response(
-            stream_with_context(
-                _stream_body(
-                    upstream_response,
-                    config=config,
-                    upstream_url=upstream_url,
-                    start_time=start_time,
-                    request_headers=request_headers,
-                    response_headers=response_headers,
-                )
-            ),
-            status=upstream_response.status_code,
-            headers=response_headers,
-        )
-
     body = upstream_response.content
     level = logging.INFO
     if upstream_response.status_code >= 500:

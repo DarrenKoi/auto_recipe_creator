@@ -144,7 +144,7 @@ def main() -> None:
     processor = AutoProcessor.from_pretrained(str(model_path), use_fast=use_fast_processor)
     model = AutoModelForImageTextToText.from_pretrained(
         str(model_path),
-        torch_dtype=torch_dtype,
+        dtype=torch_dtype,
         device_map=device,
     )
 

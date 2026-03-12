@@ -1,14 +1,13 @@
-"""VLM 서버 상태 확인 스크립트 (Python 버전).
+"""VLM 서버 상태 일괄 확인 스크립트.
+
+config/models/*.env 파일에서 PORT와 SERVED_MODEL_NAME을 읽어
+등록된 모든 vLLM 서버의 생존 여부를 한 번에 확인한다.
 
 사용법:
-  python check_vlm.py <base_url> <expected_model_name_or_instance>
-
-예시:
-  python check_vlm.py http://127.0.0.1:8001 ui-venus
-  python check_vlm.py http://127.0.0.1:8130 ui-venus-30b
+  python check_vlm.py            # 모든 모델 확인 (localhost)
+  python check_vlm.py 10.0.0.5   # 특정 호스트의 모든 모델 확인
 """
 
-import os
 import sys
 import urllib.request
 import urllib.error
@@ -16,6 +15,7 @@ from pathlib import Path
 
 
 def read_env_value(path: Path, key: str) -> str:
+    """env 파일에서 key에 해당하는 값을 읽는다."""
     with path.open("r", encoding="utf-8") as f:
         for raw_line in f:
             line = raw_line.strip()
@@ -31,52 +31,66 @@ def read_env_value(path: Path, key: str) -> str:
     return ""
 
 
-def resolve_expected_model(value: str) -> str:
-    env_path = Path(value)
-    if env_path.is_file():
-        served_model_name = read_env_value(env_path, "SERVED_MODEL_NAME")
-        if served_model_name:
-            print(f"[INFO] Resolved env file {env_path} -> served-model-name {served_model_name}")
-            return served_model_name
-        return value
+def discover_models(config_dir: Path) -> list[dict]:
+    """config/models/*.env에서 PORT가 있는 모델 목록을 반환한다."""
+    models = []
+    for env_file in sorted(config_dir.glob("*.env")):
+        port = read_env_value(env_file, "PORT")
+        served_name = read_env_value(env_file, "SERVED_MODEL_NAME")
+        if not port:
+            continue
+        models.append({
+            "instance": env_file.stem,
+            "port": int(port),
+            "served_name": served_name or env_file.stem,
+        })
+    models.sort(key=lambda m: m["port"])
+    return models
 
-    script_dir = Path(__file__).resolve().parent
-    deploy_vlms_root = os.environ.get("DEPLOY_VLMS_ROOT", "").strip() or str(script_dir.parent)
-    config_root = os.environ.get("CONFIG_ROOT", "").strip() or os.path.join(deploy_vlms_root, "config")
-    instance_env = Path(config_root) / "models" / f"{value}.env"
-    if instance_env.is_file():
-        served_model_name = read_env_value(instance_env, "SERVED_MODEL_NAME")
-        if served_model_name:
-            print(f"[INFO] Resolved instance {value} -> served-model-name {served_model_name}")
-            return served_model_name
 
-    return value
+def check_model(host: str, port: int, expected_name: str) -> tuple[bool, str]:
+    """vLLM /v1/models 엔드포인트를 호출해 모델 존재 여부를 확인한다."""
+    url = f"http://{host}:{port}/v1/models"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            raw = resp.read().decode("utf-8")
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
+        return False, str(e)
+
+    if expected_name in raw:
+        return True, ""
+    return False, f"응답에 '{expected_name}' 없음"
 
 
 def main() -> None:
-    if len(sys.argv) < 3:
-        print(__doc__, file=sys.stderr)
+    host = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
+
+    script_dir = Path(__file__).resolve().parent
+    config_dir = script_dir.parent / "config" / "models"
+    if not config_dir.is_dir():
+        print(f"[ERROR] config 디렉토리를 찾을 수 없음: {config_dir}", file=sys.stderr)
         sys.exit(1)
 
-    base_url = sys.argv[1].rstrip("/")
-    expected_model = resolve_expected_model(sys.argv[2])
-    url = f"{base_url}/v1/models"
-
-    print(f"[INFO] Checking {url}")
-
-    try:
-        with urllib.request.urlopen(url, timeout=10) as resp:
-            raw = resp.read().decode("utf-8")
-    except (urllib.error.URLError, urllib.error.HTTPError) as e:
-        print(f"[ERROR] Failed to reach {url}: {e}", file=sys.stderr)
+    models = discover_models(config_dir)
+    if not models:
+        print("[WARNING] PORT가 설정된 모델이 없습니다.", file=sys.stderr)
         sys.exit(1)
 
-    print(raw)
+    print(f"[INFO] 호스트: {host} | 확인 대상: {len(models)}개 모델\n")
 
-    if expected_model in raw:
-        print(f"[INFO] Model alias found: {expected_model}")
-    else:
-        print(f"[ERROR] Expected model alias not found: {expected_model}", file=sys.stderr)
+    alive, dead = 0, 0
+    for m in models:
+        ok, err = check_model(host, m["port"], m["served_name"])
+        port_str = f":{m['port']}"
+        if ok:
+            alive += 1
+            print(f"  [OK]   {port_str:<6} {m['served_name']:<25} ({m['instance']})")
+        else:
+            dead += 1
+            print(f"  [FAIL] {port_str:<6} {m['served_name']:<25} ({m['instance']}) -- {err}")
+
+    print(f"\n[INFO] 결과: {alive} alive / {dead} dead / {alive + dead} total")
+    if dead:
         sys.exit(1)
 
 

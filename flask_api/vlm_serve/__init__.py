@@ -21,6 +21,8 @@ from .config import (
 )
 from .mai_ui import SERVICE_CONFIG as MAI_UI_CONFIG
 from .mai_ui import service_blueprint as mai_ui_blueprint
+from .got_ocr import SERVICE_CONFIG as GOT_OCR_CONFIG
+from .got_ocr import service_blueprint as got_ocr_blueprint
 from .paddleocr_vl import SERVICE_CONFIG as PADDLEOCR_VL_CONFIG
 from .paddleocr_vl import service_blueprint as paddleocr_vl_blueprint
 from .ui_tars import SERVICE_CONFIG as UI_TARS_CONFIG
@@ -35,6 +37,7 @@ _ALL_SERVICE_BLUEPRINTS = [
     (MAI_UI_CONFIG, mai_ui_blueprint),
     (UI_TARS_CONFIG, ui_tars_blueprint),
     (PADDLEOCR_VL_CONFIG, paddleocr_vl_blueprint),
+    (GOT_OCR_CONFIG, got_ocr_blueprint),
 ]
 
 # config.py 의 enabled 플래그에 따라 활성 서비스만 등록

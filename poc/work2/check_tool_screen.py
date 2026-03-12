@@ -26,7 +26,7 @@ from poc.work.config import PocConfig
 from poc.work.rcs_common import DEFAULT_TIMEOUT, env_float, env_flag, load_env
 from poc.work.screen_capture import ScreenCapture
 from poc.work2 import debug_image_path
-from poc.work2.flask_vlm import apply_work2_pipeline_env_defaults, load_work2_env
+from poc.work2.flask_vlm import apply_pipeline_env_defaults
 from poc.work2.vlm_screen_analysis import VLMScreenAnalyzer
 
 DEFAULT_TOOL_NAME = "MCD018"
@@ -46,8 +46,7 @@ class ToolScreenSettings:
 
 
 def load_settings() -> ToolScreenSettings:
-    load_work2_env()
-    apply_work2_pipeline_env_defaults()
+    apply_pipeline_env_defaults()
     load_env()
     tool_name = os.environ.get("RCS_TOOL_NAME", "").strip() or DEFAULT_TOOL_NAME
     raw_backends = [
@@ -250,7 +249,7 @@ def _capture_and_analyze_screen(window, settings: ToolScreenSettings) -> None:
         print("[WARNING] 캡처 데이터 없음 — 분석 건너뜀")
         return
 
-    pipeline_config = apply_work2_pipeline_env_defaults()
+    pipeline_config = apply_pipeline_env_defaults()
     debug_model_name = str(
         pipeline_config.get("primary_model_name")
         or os.environ.get("VLM_MODEL_NAME")
@@ -318,12 +317,12 @@ def _capture_and_analyze_screen(window, settings: ToolScreenSettings) -> None:
             return
 
         print(
-            f"[INFO] work2 pipeline: primary={pipeline_config['primary_service']} "
+            f"[INFO] pipeline: primary={pipeline_config['primary_service']} "
             f"({config.vlm.model_name}) -> ocr={pipeline_config['ocr_service']} "
             f"({pipeline_config['ocr_model_name']})"
         )
         print(
-            f"[INFO] work2 primary endpoint={config.vlm.api_url}, "
+            f"[INFO] primary endpoint={config.vlm.api_url}, "
             f"ocr endpoint={pipeline_config['ocr_api_url']}"
         )
 

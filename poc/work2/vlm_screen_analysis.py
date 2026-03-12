@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
 
 from poc.work.vlm_openai_client import ChatImageRequest, LangChainOpenAICompatibleVLMClient
-from poc.work2.flask_vlm import apply_work2_pipeline_env_defaults
+from poc.work2.flask_vlm import apply_pipeline_env_defaults
 from poc.work2.logger import log_vlm_call
 from poc.work2.pipeline_ocr import build_ocr_extra_instructions, collect_ocr_hint_result
 from poc.work2.prompts import (
@@ -53,7 +53,7 @@ class VLMScreenAnalyzer:
         model_name: Optional[str] = None,
         pipeline_config: Optional[dict[str, object]] = None,
     ):
-        self.pipeline_config = pipeline_config or apply_work2_pipeline_env_defaults()
+        self.pipeline_config = pipeline_config or apply_pipeline_env_defaults()
         self.api_key = api_key or str(self.pipeline_config.get("primary_api_key", "") or "")
         self.api_base_url = (
             api_base_url
@@ -73,7 +73,7 @@ class VLMScreenAnalyzer:
         )
         self.state_definitions: Dict[str, Dict] = {}
 
-        print(f"[INFO] work2 VLMScreenAnalyzer 초기화 - Model: {self.model_name}")
+        print(f"[INFO] VLMScreenAnalyzer 초기화 - Model: {self.model_name}")
 
     def load_state_definitions(self, definitions: Dict[str, Dict]):
         """상태 정의를 로드한다."""

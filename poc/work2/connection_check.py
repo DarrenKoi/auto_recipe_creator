@@ -19,8 +19,7 @@ from poc.work2.flask_vlm import (
     DEFAULT_OCR_VLM_SERVICE,
     DEFAULT_PRIMARY_VLM_MODEL_NAME,
     DEFAULT_PRIMARY_VLM_SERVICE,
-    load_work2_env,
-    resolve_work2_flask_api_base_url,
+    resolve_flask_api_base_url,
 )
 
 # 점검 대상: config.py 에서 enabled=True 인 서비스만 점검
@@ -128,9 +127,9 @@ def print_summary(health_body: dict | None, proxy_results: list[dict], flask_bas
 
         print(f"  {service:<20} {status:<12} {match_str:<10} {latency_str:<10} {note}")
 
-    # work2 pipeline 에서 사용 중인 서비스 표시
-    print(f"\n  work2 primary VLM: {DEFAULT_PRIMARY_VLM_SERVICE} ({DEFAULT_PRIMARY_VLM_MODEL_NAME})")
-    print(f"  work2 OCR VLM:     {DEFAULT_OCR_VLM_SERVICE} ({DEFAULT_OCR_VLM_MODEL_NAME})")
+    # 공유 pipeline 에서 사용 중인 서비스 표시
+    print(f"\n  configured primary VLM: {DEFAULT_PRIMARY_VLM_SERVICE} ({DEFAULT_PRIMARY_VLM_MODEL_NAME})")
+    print(f"  configured OCR VLM:     {DEFAULT_OCR_VLM_SERVICE} ({DEFAULT_OCR_VLM_MODEL_NAME})")
 
     print(f"{SEPARATOR}")
     if all_ok:
@@ -142,8 +141,7 @@ def print_summary(health_body: dict | None, proxy_results: list[dict], flask_bas
 
 def main() -> None:
     """VLM 연결 점검을 수행한다."""
-    load_work2_env()
-    flask_base_url = resolve_work2_flask_api_base_url()
+    flask_base_url = resolve_flask_api_base_url()
 
     print(f"[INFO] VLM 연결 점검 시작 (Flask API: {flask_base_url})")
 

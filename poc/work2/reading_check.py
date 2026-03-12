@@ -30,7 +30,7 @@ from poc.work.screen_capture import ScreenCapture
 from poc.work.vlm_openai_client import ChatImageRequest, OpenAICompatibleVLMClient
 from flask_api.vlm_serve.config import get_service_by_slug
 from poc.work2 import debug_image_dir
-from poc.work2.flask_vlm import apply_work2_pipeline_env_defaults, load_work2_env
+from poc.work2.flask_vlm import apply_pipeline_env_defaults
 from poc.work2.logger import log_vlm_call
 from poc.work2.rcs_utils import extract_json
 
@@ -489,8 +489,7 @@ def _print_summary(results: list[dict[str, Any]]) -> None:
 
 def main() -> int:
     """전체 reading check 흐름을 실행한다."""
-    load_work2_env()
-    pipeline = apply_work2_pipeline_env_defaults()
+    pipeline = apply_pipeline_env_defaults()
 
     primary_service = str(pipeline.get("primary_service") or "ui-venus")
     primary_model = str(pipeline.get("primary_model_name") or "ui-venus-1.5-8b")
@@ -515,10 +514,10 @@ def main() -> int:
     print(f"[INFO] shared debug dir:   {shared_debug_dir}")
 
     if not primary_api_url:
-        print("[ERROR] primary API URL이 비어 있습니다. WORK2_FLASK_API_BASE_URL 또는 WORK2_VLM_API_URL을 확인하세요.")
+        print("[ERROR] primary API URL이 비어 있습니다. poc/work2/flask_vlm.py 의 공유 설정을 확인하세요.")
         return 2
     if not ocr_api_url:
-        print("[ERROR] OCR API URL이 비어 있습니다. WORK2_FLASK_API_BASE_URL 또는 WORK2_OCR_API_URL을 확인하세요.")
+        print("[ERROR] OCR API URL이 비어 있습니다. poc/work2/flask_vlm.py 의 공유 설정을 확인하세요.")
         return 3
 
     image = _capture_monitor_image(monitor_index)

@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from poc.work.vlm_openai_client import ChatImageRequest, LangChainOpenAICompatibleVLMClient
-from poc.work2.flask_vlm import apply_work2_pipeline_env_defaults, load_work2_env
+from poc.work2.flask_vlm import apply_pipeline_env_defaults
 from poc.work2.pipeline_ocr import build_ocr_extra_instructions, collect_ocr_hint_result
 from poc.work2.prompts import build_rcs_main_tab_locator_prompt
 from poc.work2.rcs_utils import (
@@ -27,13 +27,12 @@ from poc.work2.rcs_utils import (
     save_marked_image,
 )
 
-load_work2_env()
-WORK2_PIPELINE = apply_work2_pipeline_env_defaults()
+PIPELINE_CONFIG = apply_pipeline_env_defaults()
 
 # ─────────────────────────── 설정 ───────────────────────────
 
-VLM_API_URL = str(WORK2_PIPELINE["primary_api_url"] or "")
-VLM_API_KEY = str(WORK2_PIPELINE["primary_api_key"] or "")
+VLM_API_URL = str(PIPELINE_CONFIG["primary_api_url"] or "")
+VLM_API_KEY = str(PIPELINE_CONFIG["primary_api_key"] or "")
 PYWINAUTO_BACKEND = os.environ.get("PYWINAUTO_BACKEND", "").strip().lower() or "win32"
 MAIN_WINDOW_TITLE_REGEX = (
     os.environ.get("RCS_MAIN_WINDOW_REGEX", r"\brcs\b.*\[server\s*:[^\]]+\]").strip()
@@ -53,7 +52,7 @@ DESKTOP_SCAN_BACKENDS = tuple(
     dict.fromkeys(b for b in _desktop_backends if b in {"uia", "win32"})
 ) or ("uia", "win32")
 
-VLM_MODEL = str(WORK2_PIPELINE["primary_model_name"] or "ui-venus-1.5-8b")
+VLM_MODEL = str(PIPELINE_CONFIG["primary_model_name"] or "ui-venus-1.5-8b")
 
 TARGET_ELEMENTS = ["view_tab", "list_tab"]
 TAB_CLICK_SEQUENCE = ("view_tab", "list_tab")
@@ -111,16 +110,16 @@ def main() -> int:
     print("[INFO] RCS 메인 창에서 View/List 탭 검출 시작")
     if VLM_API_URL:
         print(
-            f"[INFO] work2 pipeline: primary={WORK2_PIPELINE['primary_service']} "
-            f"({VLM_MODEL}) -> ocr={WORK2_PIPELINE['ocr_service']} "
-            f"({WORK2_PIPELINE['ocr_model_name']})"
+            f"[INFO] pipeline: primary={PIPELINE_CONFIG['primary_service']} "
+            f"({VLM_MODEL}) -> ocr={PIPELINE_CONFIG['ocr_service']} "
+            f"({PIPELINE_CONFIG['ocr_model_name']})"
         )
         print(
-            f"[INFO] work2 primary endpoint={VLM_API_URL}, "
-            f"ocr endpoint={WORK2_PIPELINE['ocr_api_url']}"
+            f"[INFO] primary endpoint={VLM_API_URL}, "
+            f"ocr endpoint={PIPELINE_CONFIG['ocr_api_url']}"
         )
     else:
-        print("[WARNING] work2 VLM API URL이 비어 있습니다. WORK2_FLASK_API_BASE_URL 또는 WORK2_VLM_API_URL을 확인하세요.")
+        print("[WARNING] primary VLM API URL이 비어 있습니다. poc/work2/flask_vlm.py 의 공유 설정을 확인하세요.")
 
     main_window, main_title, debug_rows = find_existing_main_window(
         DESKTOP_SCAN_BACKENDS, _main_title_matcher
@@ -154,7 +153,7 @@ def main() -> int:
         image_width=w,
         image_height=h,
         image_mime="image/webp",
-        pipeline_config=WORK2_PIPELINE,
+        pipeline_config=PIPELINE_CONFIG,
         context_label="RCS main window tab strip",
         focus_words=TAB_OCR_FOCUS_WORDS,
     )

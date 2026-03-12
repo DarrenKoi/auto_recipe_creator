@@ -28,10 +28,12 @@ def _slugify_model_name(model_name: str) -> str:
 
 def resolve_debug_model_name(model_name: str | None = None) -> str:
     """디버그 이미지 저장에 사용할 모델명을 결정한다."""
+    from poc.work2.flask_vlm import DEFAULT_PRIMARY_VLM_MODEL_NAME
+
     resolved = (
         (model_name or "").strip()
-        or os.environ.get("WORK2_VLM_MODEL_NAME", "").strip()
         or os.environ.get("VLM_MODEL_NAME", "").strip()
+        or DEFAULT_PRIMARY_VLM_MODEL_NAME
     )
     return _slugify_model_name(resolved or "default-model")
 

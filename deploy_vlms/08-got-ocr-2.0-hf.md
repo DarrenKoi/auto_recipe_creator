@@ -1,6 +1,6 @@
 # GOT-OCR-2.0-hf 설치 메모
 
-`stepfun-ai/GOT-OCR-2.0-hf`는 현재 `docs/deploy_vlms`의 기존 `vLLM` 배포 흐름과는 다르게 보는 편이 맞다. 공식 Hugging Face 문서는 `transformers` 기반 추론을 안내하고, 2026-03-11 기준으로 확인한 범위에서는 `docs.vllm.ai`에 이 모델의 공식 배포 가이드나 supported-model entry를 찾지 못했다.
+`stepfun-ai/GOT-OCR-2.0-hf`는 현재 `deploy_vlms`의 기존 `vLLM` 배포 흐름과는 다르게 보는 편이 맞다. 공식 Hugging Face 문서는 `transformers` 기반 추론을 안내하고, 2026-03-11 기준으로 확인한 범위에서는 `docs.vllm.ai`에 이 모델의 공식 배포 가이드나 supported-model entry를 찾지 못했다.
 
 핵심 판단:
 
@@ -72,7 +72,7 @@ python -m pip install pillow
 설정 후에는 아래처럼 바로 GPU smoke test를 돌린다.
 
 ```bash
-cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
+cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/deploy_vlms
 python scripts/run_got_ocr.py
 ```
 
@@ -81,7 +81,7 @@ python scripts/run_got_ocr.py
 공용 클라우드 Python을 건드리지 않으려면 아래처럼 분리한다.
 
 ```bash
-cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
+cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/deploy_vlms
 uv venv .venvs/got-ocr-2.0-hf --python python3.11
 uv pip install --python .venvs/got-ocr-2.0-hf/bin/python "transformers[torch]" pillow
 ```

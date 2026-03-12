@@ -64,7 +64,7 @@ def _deploy_model_env_root() -> Path:
     if deploy_vlms_root:
         return Path(deploy_vlms_root).expanduser().resolve() / "config" / "models"
 
-    return Path(__file__).resolve().parents[2] / "docs" / "deploy_vlms" / "config" / "models"
+    return Path(__file__).resolve().parents[2] / "deploy_vlms" / "config" / "models"
 
 
 def _health_timeout_sec() -> float:

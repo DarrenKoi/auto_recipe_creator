@@ -40,10 +40,10 @@ ss -ltn | grep 800
 - [prepare_research_envs.py](./scripts/prepare_research_envs.py)
 
 스크립트는 오프라인/내부망 전용 환경변수를 먼저 세팅한 뒤 `python -m vllm.entrypoints.openai.api_server`를 실행한다.
-아래 예시는 클라우드 서버에서 `docs/deploy_vlms`로 이동한 상태를 기준으로 한다.
+아래 예시는 클라우드 서버에서 `deploy_vlms`로 이동한 상태를 기준으로 한다.
 
 ```bash
-cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
+cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/deploy_vlms
 ```
 
 ### 3.1 UI-Venus
@@ -57,7 +57,7 @@ python scripts/start_ui_venus.py
 다른 셸에서 실행:
 
 ```bash
-cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
+cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/deploy_vlms
 
 python scripts/start_mai_ui.py
 ```
@@ -67,7 +67,7 @@ python scripts/start_mai_ui.py
 - 어떤 모델은 별도 template가 필요할 수 있다.
 - 그런 경우 `CHAT_TEMPLATE=/absolute/path/to/<name>.jinja`처럼 실제 파일 경로를 넣는다.
 - exact flag 이름은 서버의 `vllm 0.17` 빌드 기준으로 `vllm serve --help`에서 최종 확인한다.
-- GPU 서버에서는 `docs/deploy_vlms/config` 아래 env 파일만 수정해서 쓰는 방식을 권장한다.
+- GPU 서버에서는 `deploy_vlms/config` 아래 env 파일만 수정해서 쓰는 방식을 권장한다.
 
 ### 3.3 같은 family를 여러 size로 비교할 때
 
@@ -76,7 +76,7 @@ python scripts/start_mai_ui.py
 예:
 
 ```bash
-cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
+cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/deploy_vlms
 # 필요하면 config/common.env, config/models/ui-venus.env 값을 먼저 수정한다.
 python scripts/prepare_research_envs.py ui-venus
 python scripts/start_model.py ui-venus 2b
@@ -85,14 +85,14 @@ python scripts/start_model.py ui-venus 2b
 다른 셸에서:
 
 ```bash
-cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
+cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/deploy_vlms
 python scripts/start_model.py ui-venus 7b
 ```
 
 `30B`는 기본 research env가 `GPU_ID=0,1`, `TENSOR_PARALLEL_SIZE=2`로 생성되며, 필요하면 `EXTRA_VLLM_ARGS`에 KV cache 관련 flag를 instance별로 따로 넣을 수 있다.
 
 ```bash
-cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
+cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/deploy_vlms
 python scripts/start_model.py ui-venus 30b
 ```
 
@@ -139,7 +139,7 @@ python scripts/check_vlm.py http://127.0.0.1:8130 ui-venus-30b
 예:
 
 ```bash
-cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
+cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/deploy_vlms
 python scripts/start_ui_tars.py
 ```
 

@@ -9,6 +9,7 @@ from flask import Flask
 from requests import RequestException
 
 from flask_api import register_flask_api
+import flask_api.vlm_serve as vlm_serve
 from flask_api.vlm_serve import logger as vlm_logger_module
 
 
@@ -103,6 +104,20 @@ def test_vlm_serve_root_returns_live_health_payload(monkeypatch):
         "ui-venus",
         "paddleocr-vl-1.5",
     }
+
+
+def test_deploy_model_env_root_defaults_to_repo_deploy_vlms(monkeypatch):
+    monkeypatch.delenv("CONFIG_ROOT", raising=False)
+    monkeypatch.delenv("DEPLOY_VLMS_ROOT", raising=False)
+
+    expected = (
+        Path(__file__).resolve().parents[2]
+        / "deploy_vlms"
+        / "config"
+        / "models"
+    )
+
+    assert vlm_serve._deploy_model_env_root() == expected
 
 
 def test_models_proxy_uses_expected_upstream(monkeypatch):

@@ -7,7 +7,7 @@
 - 클라우드 base URL: `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/`
 - Flask API root: `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api`
 - 클라우드 repo root: `/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image`
-- `deploy_vlms` 작업 루트: `/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms`
+- `deploy_vlms` 작업 루트: `/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/deploy_vlms`
 
 주의:
 
@@ -132,7 +132,7 @@ GPU_PROCESS_RESERVE_GIB=4
 이제 기본 env 파일도 `config/` 아래에 같이 두므로, 클라우드에서는 필요한 값만 수정한 뒤 바로 실행하면 된다.
 
 ```bash
-cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
+cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/deploy_vlms
 
 python scripts/start_ui_venus.py
 python scripts/start_mai_ui.py
@@ -154,7 +154,7 @@ python scripts/check_vlm.py http://127.0.0.1:8130 ui-venus-30b
 이 스크립트들은 다음을 기본 전제로 둔다.
 
 - 모델은 클라우드 서버의 `/project/.../data/models/...` 아래 로컬 절대경로에 있어야 한다.
-- 설정 파일은 `docs/deploy_vlms/config/common.env`, `docs/deploy_vlms/config/models/*.env`에 둔다.
+- 설정 파일은 `deploy_vlms/config/common.env`, `deploy_vlms/config/models/*.env`에 둔다.
 - Hugging Face Hub 직접 접근은 금지한다.
 - telemetry와 usage stats는 비활성화한다.
 - proxy 환경변수는 기본적으로 제거한다.

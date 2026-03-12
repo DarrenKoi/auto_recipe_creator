@@ -5,7 +5,7 @@
 권한 제약이 있으면 자주 쓰는 작업은 수동 실행과 포트 헬스 체크 중심으로 정리하는 편이 낫다.
 
 ```bash
-cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
+cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/deploy_vlms
 python scripts/start_ui_venus.py
 python scripts/start_mai_ui.py
 python scripts/check_vlm.py http://127.0.0.1:8001 ui-venus-1.5-8b
@@ -32,7 +32,7 @@ python scripts/check_vlm.py http://127.0.0.1:8130 ui-venus-30b
 - `VLM_API_KEY`
 - `VLM_MODEL_NAME`
 
-관련 코드는 [poc/work/config.py](../../poc/work/config.py), [poc/work/vlm_screen_analysis.py](../../poc/work/vlm_screen_analysis.py), [poc/work/vlm_openai_client.py](../../poc/work/vlm_openai_client.py)에 있다.
+관련 코드는 [poc/work/config.py](../poc/work/config.py), [poc/work/vlm_screen_analysis.py](../poc/work/vlm_screen_analysis.py), [poc/work/vlm_openai_client.py](../poc/work/vlm_openai_client.py)에 있다.
 
 모델이 이미 클라우드 서버의 `data/models/` 아래에 있으므로, 이 저장소 쪽에서는 모델 다운로드를 신경 쓸 필요 없이 endpoint와 alias만 맞추면 된다.
 

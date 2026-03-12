@@ -1,6 +1,6 @@
 # PaddleOCR-VL-1.5 배포 메모
 
-`PaddleOCR-VL-1.5`는 현재 `docs/deploy_vlms`에 있는 `vLLM` 운영 체계로 바로 가져갈 수 있는 OCR VLM이다. 이 문서는 `PaddleOCR/PaddlePaddle` 직접 추론이 아니라 `vLLM` 배포 기준으로만 정리한다.
+`PaddleOCR-VL-1.5`는 현재 `deploy_vlms`에 있는 `vLLM` 운영 체계로 바로 가져갈 수 있는 OCR VLM이다. 이 문서는 `PaddleOCR/PaddlePaddle` 직접 추론이 아니라 `vLLM` 배포 기준으로만 정리한다.
 
 핵심 판단:
 
@@ -16,7 +16,7 @@
 1. `vLLM` supported models에 `PaddleOCRVLForConditionalGeneration`가 올라와 있다.
 2. `PaddleOCR-VL-1.5` model card도 이 family의 `vLLM` usage guide를 연결한다.
 
-따라서 `docs/deploy_vlms`에서는 `vLLM` 경로만 보면 된다. 현재 저장소의 [serve_vlm.py](./scripts/serve_vlm.py)는 특정 GUI 모델 전용이 아니라, `MODEL_ID`, `SERVED_MODEL_NAME`, `PORT`, `GPU_ID`를 읽어 일반 `vLLM` 서버를 띄우는 wrapper라서 `PaddleOCR-VL-1.5`에도 그대로 맞는다. 현재 코드에서 별도 특수 처리가 필요한 쪽은 `Qwen2.5-VL` 계열뿐이다.
+따라서 `deploy_vlms`에서는 `vLLM` 경로만 보면 된다. 현재 저장소의 [serve_vlm.py](./scripts/serve_vlm.py)는 특정 GUI 모델 전용이 아니라, `MODEL_ID`, `SERVED_MODEL_NAME`, `PORT`, `GPU_ID`를 읽어 일반 `vLLM` 서버를 띄우는 wrapper라서 `PaddleOCR-VL-1.5`에도 그대로 맞는다. 현재 코드에서 별도 특수 처리가 필요한 쪽은 `Qwen2.5-VL` 계열뿐이다.
 
 ## 2. 현재 작업 환경에 맞춘 권장 경로
 
@@ -46,7 +46,7 @@
 Linux 클라우드 서버에서:
 
 ```bash
-cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
+cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/deploy_vlms
 ```
 
 그 다음 `config/models/paddleocr-vl-1.5.env`에서 최소 아래만 확인한다.
@@ -63,7 +63,7 @@ cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/d
 ### 3.2 서버 기동
 
 ```bash
-cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
+cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/deploy_vlms
 python scripts/start_paddleocr_vl.py
 ```
 

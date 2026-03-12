@@ -12,7 +12,7 @@ Python으로 동일한 기능을 수행한다.
   python serve_vlm.py mai-ui-7b
 
 환경변수 오버라이드:
-  DEPLOY_VLMS_ROOT=/project/.../docs/deploy_vlms
+  DEPLOY_VLMS_ROOT=/project/.../deploy_vlms
   CONFIG_ROOT=${DEPLOY_VLMS_ROOT}/config
   COMMON_ENV=${CONFIG_ROOT}/common.env
   MODEL_ENV=${CONFIG_ROOT}/models/<instance>.env

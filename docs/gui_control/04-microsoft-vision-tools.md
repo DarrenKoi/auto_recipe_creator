@@ -344,7 +344,7 @@ API 기반 VLM(Qwen, GPT-4V, Claude) 대신 **로컬에서 실행**하여:
 
 ### 8.1 Current Pain Point
 
-`automation/rcs/rcs_launcher.py`에서 현재 사용 중인 PyWinAuto는 다음 시나리오에서 실패합니다:
+`poc/work/automate_rcs_login.py`에서 현재 사용하는 PyWinAuto 경로는 다음 시나리오에서 실패합니다:
 
 - **Custom DirectX 버튼**: 장비 제어 UI의 3D 렌더링 버튼
 - **Embedded OpenGL 뷰어**: SEM 이미지 뷰어 내부 컨트롤
@@ -355,7 +355,7 @@ API 기반 VLM(Qwen, GPT-4V, Claude) 대신 **로컬에서 실행**하여:
 **Step 1: 하이브리드 아키텍처 구축**
 
 ```python
-# automation/rcs/rcs_launcher.py 수정안
+# poc/work/automate_rcs_login.py 확장안
 
 class RCSLauncher:
     def __init__(self, config: RCSConfig, use_omniparser: bool = True):
@@ -395,7 +395,7 @@ class RCSLauncher:
 최초 실행 시 OmniParser로 화면을 분석하고, UI 요소 위치를 캐싱:
 
 ```python
-# automation/rcs/ui_cache.json (자동 생성)
+# poc/work/ui_cache.json (가상 예시)
 {
   "login_screen": {
     "server_input": {"bbox": [300, 200, 600, 240], "last_seen": "2026-02-06T10:30:00"},

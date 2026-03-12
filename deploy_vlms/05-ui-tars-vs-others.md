@@ -1,6 +1,6 @@
 # UI-TARS 와 다른 모델의 차이
 
-이 문서는 현재 `docs/deploy_vlms`에서 같이 다루는 3개 모델:
+이 문서는 현재 `deploy_vlms`에서 같이 다루는 3개 모델:
 
 - `UI-TARS-1.5-7B`
 - `UI-Venus-1.5-8B`
@@ -101,7 +101,7 @@
 이 문단은 위 모델 카드/파일 목록과 현재 저장소 구현을 합쳐서 정리한 추론이다.
 
 - `UI-TARS`는 다른 두 모델보다 runtime 민감도가 높게 느껴질 수 있다.
-- 그래서 `docs/deploy_vlms/scripts/serve_vlm.py`에서는 `UI-TARS` 계열일 때 `Qwen2.5-VL` runtime 가용성, `preprocessor_config.json`, `tokenizer_config.json`, `chat_template.json`, sharded weight 존재 여부를 먼저 확인하도록 바꿨다.
+- 그래서 `deploy_vlms/scripts/serve_vlm.py`에서는 `UI-TARS` 계열일 때 `Qwen2.5-VL` runtime 가용성, `preprocessor_config.json`, `tokenizer_config.json`, `chat_template.json`, sharded weight 존재 여부를 먼저 확인하도록 바꿨다.
 - `CHAT_TEMPLATE`를 비워 두면 모델 디렉터리 안의 `chat_template.json`을 자동 사용하도록 한 이유도 이 차이 때문이다.
 
 ## 출처

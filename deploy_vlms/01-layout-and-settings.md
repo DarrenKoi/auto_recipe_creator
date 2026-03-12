@@ -17,7 +17,7 @@
 모델 파일과 운영 설정을 분리하는 것을 권장한다.
 
 ```text
-DEPLOY_VLMS_ROOT=/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
+DEPLOY_VLMS_ROOT=/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/deploy_vlms
 
 /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/data/models/
 ├── UI-Venus-1.5-8B/

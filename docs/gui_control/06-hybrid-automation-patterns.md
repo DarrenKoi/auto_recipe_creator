@@ -14,7 +14,7 @@
 
 **해결 방안**:
 ```python
-# automation/rcs/hybrid_login.py
+# poc/work/hybrid_login.py (가상 예시)
 
 from dataclasses import dataclass
 from typing import Optional
@@ -194,7 +194,7 @@ from typing import Dict, Optional
 class UICache:
     """UI 요소 위치 캐시"""
 
-    def __init__(self, cache_file: Path = Path("automation/rcs/ui_cache.json")):
+    def __init__(self, cache_file: Path = Path("poc/work/ui_cache.json")):
         self.cache_file = cache_file
         self.cache: Dict = self._load_cache()
 
@@ -646,7 +646,7 @@ elements = retry_with_backoff(
 ### 5.1 전체 플로우 통합
 
 ```python
-# automation/rcs/hybrid_automation.py
+# poc/work/hybrid_automation.py (가상 예시)
 
 """
 RCS 하이브리드 자동화 시스템
@@ -658,7 +658,7 @@ from dataclasses import dataclass
 from typing import Optional, List
 import time
 
-from automation.rcs.rcs_config import RCSConfig
+from poc.work.config import RCSConfig
 from test.vlm_input_control import ScreenCapture, MouseController, KeyboardController
 from test.vlm_input_control.omniparser_integration import OmniParserAnalyzer
 from test.vlm_input_control.vlm_screen_analysis import VLMScreenAnalyzer
@@ -866,4 +866,4 @@ PyWinAuto  OmniParser            VLM      캐시 시스템
 ---
 
 **이전 문서**: [05-microsoft-automation-ecosystem.md](05-microsoft-automation-ecosystem.md)
-**관련 코드**: `automation/rcs/rcs_launcher.py`, `test/vlm_input_control/`
+**관련 코드**: `poc/work/automate_rcs_login.py`, `test/vlm_input_control/`

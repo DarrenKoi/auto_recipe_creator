@@ -11,7 +11,7 @@
   - 기존 파일은 기본적으로 덮어쓰지 않는다.
 
 환경변수:
-  DEPLOY_VLMS_ROOT=/project/.../docs/deploy_vlms
+  DEPLOY_VLMS_ROOT=/project/.../deploy_vlms
   CONFIG_ROOT=${DEPLOY_VLMS_ROOT}/config
   MODEL_ROOT=/project/.../data/models
   OVERWRITE_EXISTING=1

@@ -30,7 +30,7 @@
 클라우드 서버에서 아래를 한 번 실행하면 research env 초안을 만든다.
 
 ```bash
-cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/docs/deploy_vlms
+cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/deploy_vlms
 python scripts/prepare_research_envs.py
 ```
 

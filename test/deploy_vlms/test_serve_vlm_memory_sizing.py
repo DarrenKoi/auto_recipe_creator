@@ -8,7 +8,7 @@ import pytest
 
 
 MODULE_PATH = (
-    Path(__file__).resolve().parents[2] / "docs" / "deploy_vlms" / "scripts" / "serve_vlm.py"
+    Path(__file__).resolve().parents[2] / "deploy_vlms" / "scripts" / "serve_vlm.py"
 )
 SPEC = importlib.util.spec_from_file_location("deploy_vlms_serve_vlm", MODULE_PATH)
 assert SPEC is not None

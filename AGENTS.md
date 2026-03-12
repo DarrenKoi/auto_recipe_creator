@@ -4,41 +4,39 @@
 AI-powered automation system for CD-SEM/VeritySEM recipe setup. The project combines VLM-based screen analysis with GUI automation to reduce manual recipe creation work.
 
 ## Project Structure & Module Organization
-- `automation/rcs/`: Windows-focused RCS GUI automation (`run_login.py`, launcher/config/controller modules).
-- `poc/work/`: Main workstream POC for VLM-driven screen analysis and input control. OpenSearch integration (`opensearch_handler.py`) is kept but inactive — to be re-enabled after company PoC approval.
+- `poc/work2/`: Phase 2 primary workstream. Flask proxy-based VLM/OCR pipeline, shared model routing, and Windows RCS automation experiments live here.
+- `poc/work/`: Phase 1 legacy/reference area. Keep only reusable concepts and temporary shared utilities needed during migration; do not add new feature work here unless it directly unblocks `poc/work2`.
 - `poc/home/`: Personal/home-study variant using Hugging Face APIs (`demo.py`, `test_setup.py`).
 - `test/video_frame_parser/`: Video-frame parsing pipeline plus unit tests in `test/video_frame_parser/tests/`.
 - `test/vlm_input_control/`, `test/workflow_extractor/`: Integration-style and extractor experiments.
 - `docs/`: Architecture notes, GUI automation research, and setup guides.
 
-### `poc/work/` detailed map (current)
-- `poc/work/prompts/`: Screen-specific prompt builders.
-- `poc/work/prompts/rcs_login.py`: Login window element locator prompt.
-- `poc/work/prompts/rcs_main_tabs.py`: Main View/List tab locator prompt.
-- `poc/work/prompts/rcs_select_tool.py`: Single tool-row locator prompt.
-- `poc/work/prompts/rcs_tool_list.py`: Full visible tool-list reader prompt.
-- `poc/work/vlm_openai_client.py`: OpenAI-compatible VLM client wrapper (`ChatImageRequest`, langchain-compatible client).
-- `poc/work/rcs_common.py`: Shared env/window/tab helpers (`load_env`, `env_flag`, `env_float`, `connect_rcs_window`, `switch_tab`).
-- `poc/work/select_tool.py`: Select a tool from List tab (VLM first, optional UIA fallback).
-- `poc/work/list_up_tools.py`: On List tab, locate target tool (`MCD018`) and open with double-click.
-- `poc/work/check_tool_screen.py`: Detect newly opened tool window by title regex (`Remote Monitoring System - ... - [TOOL_NAME] Server[...]`).
-- `poc/work/click_rcs_view_mode.py`: VLM-based View/List tab click experiment.
-- `poc/work/automate_rcs_login.py`: VLM-based login benchmark/automation flow.
-- `poc/work/vlm_rcs_agent.py`: Observe-Think-Act loop with step history and single-action JSON output.
-- `poc/work/vlm_screen_analysis.py`: State recognition / measurement judgment / general QA analysis prompts.
-- `poc/work/screen_capture.py`, `mouse_control.py`, `keyboard_control.py`: Capture/input control primitives.
-- `poc/work/config.py`: Dataclass config loading from `.env`.
-- `poc/work/run_rcs.py`, `switching_tabs.py`: utility launch/tab switch entrypoints.
+### `poc/work2/` detailed map (current)
+- `poc/work2/flask_vlm.py`: Shared Phase 2 pipeline settings and Flask proxy route/model resolution. This is the single source of truth for team-default VLM/OCR endpoints.
+- `poc/work2/connection_check.py`: Flask `/api/vlm_serve/health` and per-service `/v1/models` connection checker.
+- `poc/work2/reading_check.py`: Single-monitor screenshot benchmark that compares multiple UI VLM services and optionally OCR assist output.
+- `poc/work2/pipeline_ocr.py`: OCR assist stage for `ui-venus -> paddleocr-vl` style pipelines.
+- `poc/work2/vlm_screen_analysis.py`: Screen/state analysis built on primary VLM + optional OCR hints.
+- `poc/work2/rcs_utils.py`: Shared capture/click/debug/window-search/JSON parsing helpers for Windows automation flows.
+- `poc/work2/automate_rcs_login.py`: RCS login locator benchmark and login-click automation across multiple serving UI models.
+- `poc/work2/click_rcs_view_mode.py`: View/List tab locator + click flow on the logged-in RCS main window.
+- `poc/work2/check_tool_screen.py`: Tool window detection plus optional VLM UI analysis after a tool screen opens.
+- `poc/work2/prompts/`: Phase 2 prompt builders (`rcs_login`, `rcs_main_tabs`, `screen_analysis`, `ocr_assist`).
+- `poc/work2/logger.py`: File logger for VLM latency / status / token usage under `poc/work2/logs/`.
+
+### Phase 1 retention policy
+- Keep `poc/work/` only as legacy reference and temporary dependency source while `poc/work2` is being stabilized.
+- Reuse only the core concepts from Phase 1: scenario-specific prompts, strict JSON outputs, observe/decide/act/verify loops, safe execution defaults, and screenshot-based debugging.
+- If a `poc/work2` change still depends on `poc/work` utilities such as `vlm_openai_client`, `screen_capture`, `config`, or `rcs_common`, prefer migrating or wrapping that shared logic rather than extending Phase 1 scripts.
 
 ## Build, Test, and Development Commands
 - `uv sync --extra dev`: Install core project and dev dependencies from `pyproject.toml`.
 - `uv sync --extra home`: Install optional home-study dependencies.
-- `uv run python -m poc.work.vlm_click_demo`: Run workstream click-point visualization demo.
-- `uv run python -m poc.work.vlm_rcs_agent`: Run Observe-Think-Act RCS agent loop.
-- `uv run python -m poc.work.list_up_tools`: On current List tab, locate and open target tool (double-click).
-- `uv run python -m poc.work.check_tool_screen`: Verify that target tool screen window is opened.
-- `uv run python -m automation.rcs.run_login`: Run RCS automation login flow (Windows).
-- `uv run python poc/work/automate_rcs_login.py`: Run VLM-based RCS login automation (Windows).
+- `uv run python poc/work2/connection_check.py`: Verify Flask proxy VLM/OCR routing and live `/v1/models` connectivity.
+- `uv run python poc/work2/reading_check.py`: Compare UI VLM services on a captured monitor screenshot.
+- `uv run python poc/work2/automate_rcs_login.py`: Run the Phase 2 RCS login benchmark/automation flow (Windows).
+- `uv run python poc/work2/click_rcs_view_mode.py`: Detect and click View/List tabs on the RCS main window (Windows).
+- `uv run python poc/work2/check_tool_screen.py`: Detect a tool screen and analyze it with the Phase 2 pipeline (Windows).
 - `uv run python -m poc.home.test_setup`: Validate local home-study environment.
 - `uv run python -m poc.home.demo`: Run home-study VLM demo flow.
 - `uv run pytest test/video_frame_parser/tests/`: Run unit tests for the video parser module.
@@ -50,7 +48,7 @@ AI-powered automation system for CD-SEM/VeritySEM recipe setup. The project comb
 - Use uv-managed execution only: run Python/test commands via `uv run ...` (do not use plain `python` or `pip`).
 - Keep docstrings/comments aligned with surrounding module language conventions (Korean docstrings are common in this repo).
 - Use print-based logging prefixes (`[INFO]`, `[WARNING]`, `[ERROR]`); do not introduce the `logging` module unless a file already depends on it.
-- Use absolute imports within `poc/work/` (`from poc.work.xxx import ...`); do not use `sys.path` hacks or `try/except` relative-vs-bare fallbacks. Sub-package `__init__.py` files may keep relative imports.
+- Use absolute imports within `poc/work2/` (`from poc.work2.xxx import ...`) and keep existing absolute imports for legacy `poc/work/` modules. Do not use `sys.path` hacks or `try/except` relative-vs-bare fallbacks. Sub-package `__init__.py` files may keep relative imports.
 - Use import guards for optional dependencies with `<LIB>_AVAILABLE` flags.
 - Follow existing module patterns: dataclass-based configs, enums for fixed categories, and explicit `__all__` exports in package initializers.
 - Prefer `.env` + `python-dotenv` for runtime config loading.
@@ -67,34 +65,35 @@ AI-powered automation system for CD-SEM/VeritySEM recipe setup. The project comb
 
 ## Platform & Workflow Notes
 - Development assistant environment is macOS; Windows-only RCS/pywinauto/pynput behavior must be validated by running updated code on office Windows machines.
-- Keep `poc/work/` self-contained; avoid introducing cross-import coupling with `test/` prototypes. All `poc/work/` modules use absolute imports (`from poc.work.xxx`) — scripts should be run via `uv run python <script>` or `uv run python -m poc.work.<module>`.
+- Treat `poc/work2/` as the primary implementation surface. New automation/pipeline work should land there by default.
+- `poc/work/` is no longer the main workstream. Avoid adding new Phase 1 entrypoints, prompts, or workflow branches unless they are needed as temporary compatibility layers for `poc/work2`.
+- `poc/work2/` currently still imports some legacy helpers from `poc/work/` (`vlm_openai_client`, `screen_capture`, `config`, `rcs_common`). When touching those boundaries, prefer reducing the dependency rather than growing it.
+- Run Phase 2 scripts via `uv run python poc/work2/<script>.py` unless a module explicitly requires another invocation form.
 - For imports across `test/` sibling modules, use `from video_frame_parser...` style when operating with `PYTHONPATH=./test`.
 - Canonical office gateway host is `itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com`; if repo docs mention `webpp`, treat that as stale and keep `webapp`.
 
-## Dynamic Prompt + Step-by-Step Roadmap (`poc/work`)
-- Goal: support dynamic prompts by UI situation and execute deterministic step-by-step automation, then connect VLM decisions to actual control tools.
-- Prompt strategy:
-- Keep prompts scenario-specific and small (`login`, `tab_switch`, `tool_select`, `state_judgment`) instead of one giant universal prompt.
-- Route prompts by current step and screen context (for example: login detected -> use `build_rcs_login_locator_prompt`; list detected -> use `build_rcs_select_tool_prompt`).
-- Enforce strict JSON schema per step and reject/repair invalid fields before action.
-- Step loop strategy (recommended standard):
-- `observe`: capture screenshot + gather minimal window metadata.
-- `decide`: call one prompt for the current step only.
-- `act`: execute exactly one action (`click`, `double_click`, `type`, `scroll`, `hotkey`, `wait`).
-- `verify`: check expected post-condition (title change, target control visible, or window count/title regex match).
-- `advance/retry`: move to next step when verified; otherwise retry with failure history.
-- Existing modules to reuse for this roadmap:
-- Prompt builders: `poc/work/prompts/*.py`
-- Step/action loop base: `poc/work/vlm_rcs_agent.py`
-- Window/visibility checks: `poc/work/rcs_common.py`, `poc/work/check_tool_screen.py`
-- Input execution: `poc/work/mouse_control.py`, `poc/work/keyboard_control.py`
-- Integration direction for later VLM tool-control:
-- Keep control tools as explicit adapters with stable methods (`click_at`, `double_click`, `type_text`, `hotkey`) and call them only after prompt JSON validation.
-- Add step-specific verifier functions before chaining to the next step.
-- Preserve safe execution mode (`SAFE_MODE=true`) for dry-run and debugging.
+## Phase 2 Plan (`poc/work2`)
+- Goal: make `poc/work2` the main experimentation and delivery surface for Flask proxy-based VLM/OCR automation while preserving only the useful design principles from Phase 1.
+- Core concepts to keep from Phase 1:
+- Keep prompts scenario-specific and small (`login`, `main_tabs`, `screen_analysis`, `ocr_assist`) instead of building one universal prompt.
+- Enforce strict JSON outputs and validate/repair fields before using them for clicks, OCR hints, or UI-state decisions.
+- Use stepwise execution: `observe` -> `decide` -> `act` -> `verify`.
+- Keep debug artifacts first-class: local JPEG screenshots, WebP payloads for VLM calls, marked overlays, and call logs.
+- Preserve safe/default-off behavior in Windows automation unless a script explicitly needs to act.
+- Phase 2 focus areas:
+- Centralize team-default pipeline settings in `poc/work2/flask_vlm.py` so coworkers can run scripts without per-user `.env` sprawl.
+- Use `poc/work2/connection_check.py` to validate Flask proxy health and route/model readiness before debugging automation behavior.
+- Use `poc/work2/reading_check.py` and `poc/work2/automate_rcs_login.py` to compare serving UI models on the same screen/task.
+- Keep primary VLM + OCR assist composition in `poc/work2/pipeline_ocr.py` and `poc/work2/vlm_screen_analysis.py`.
+- Consolidate reusable Windows automation helpers in `poc/work2/rcs_utils.py` and reusable prompt builders in `poc/work2/prompts/`.
+- Validate the real RCS workflow on office Windows in this order: connection check -> login -> main tab interaction -> tool screen analysis.
+- Migration direction:
+- Do not expand Phase 1 scripts unless it is the shortest path to unblock Phase 2.
+- When Phase 2 code needs legacy helpers, prefer porting the reusable helper into `poc/work2` or a future shared module instead of adding more Phase 1 business logic.
+- Treat `poc/work/` as historical context plus temporary compatibility, not as the destination for new roadmap items.
 
 ## Commit & Pull Request Guidelines
 - Use short, imperative commit subjects (history pattern: `Add ...`, `Reorganize ...`, `Replace ...`, `Clarify ...`, `Fix ...`).
 - Keep commits scoped to one logical change.
 - PRs should include: purpose, key changes, affected paths, test evidence (commands + results), and screenshots/log snippets for GUI automation changes.
-- Link related issues/docs and note platform constraints (for example, Windows-only behavior in `automation/rcs/`).
+- Link related issues/docs and note platform constraints (for example, Windows-only behavior in `poc/work2/`).

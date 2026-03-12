@@ -10,8 +10,7 @@ langchain-core>=0.3.0
 langchain-openai>=0.3.0
 python-dotenv>=1.0.0
 
-# RCS GUI automation (Windows only)
-# (from requirements-automation.txt)
+# Windows GUI automation used by poc/work
 pywinauto>=0.6.8
 
 # RAG — CCTV-based screen understanding

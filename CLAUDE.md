@@ -9,13 +9,16 @@ AI-powered automation system for CD-SEM/VeritySEM recipe setup. Uses VLM (Vision
 ## Repository Structure
 
 ```
-automation/rcs/          # RCS GUI automation (Windows-only, pywinauto)
+poc/work2/               # Phase 2 primary: Flask proxy VLM routing, multi-model benchmark, OCR pipeline
+poc/work2/prompts/       # VLM prompt builders (one module per screen/task)
+poc/work/                # Phase 1 legacy — shared utilities only (vlm_openai_client, screen_capture, config, rcs_common)
+poc/home/                # Personal study PoC: HuggingFace free API — NO office relation
+flask_api/               # Flask API services (VLM proxy, health endpoints)
+flask_api/vlm_serve/     # VLM service registry, health-driven discovery, per-model proxy blueprints
+deploy_vlms/             # VLM deployment configs, scripts, and operational docs
 test/vlm_input_control/  # Screen capture + VLM analysis + mouse/keyboard control
 test/video_frame_parser/ # CLIP-based video frame extraction & analysis (GPU cluster)
 test/workflow_extractor/ # CCTV-to-knowledge ingestion pipeline
-poc/work/                # Company PoC: VLM screen analysis + RCS automation (Qwen3-VL API)
-poc/work/prompts/        # VLM prompt builders (one module per screen/task, e.g. rcs_login.py)
-poc/home/                # Personal study PoC: HuggingFace free API — NO office relation
 docs/                    # Architecture research notes and setup guides
 ```
 
@@ -35,7 +38,6 @@ uv sync --extra home
 uv pip install -r requirements.txt
 
 # Per-module installs (alternative)
-uv pip install -r poc/work/requirements.txt                 # core: mss, pynput, Pillow, requests, python-dotenv
 uv pip install -r test/vlm_input_control/requirements.txt
 uv pip install -r test/video_frame_parser/requirements.txt  # torch, opencv, pymongo, faiss
 ```
@@ -43,26 +45,16 @@ uv pip install -r test/video_frame_parser/requirements.txt  # torch, opencv, pym
 ## Running Modules
 
 ```bash
-# poc/work — main company demo (requires .env with VLM_API_URL, VLM_API_KEY)
-uv run python -m poc.work.vlm_click_demo   # VLM click-point visualization (manager demo)
-uv run python -m poc.work.vlm_rcs_agent    # Observe-Think-Act agent loop for RCS
+# poc/work2 — Phase 2 company automation (Flask proxy, no per-PC .env needed)
+uv run python poc/work2/connection_check.py    # Verify Flask proxy + VLM service health
+uv run python poc/work2/reading_check.py       # Multi-VLM UI component comparison
+uv run python poc/work2/automate_rcs_login.py  # Multi-model benchmark + RCS login
+uv run python poc/work2/click_rcs_view_mode.py # Tab switching with OCR assist
+uv run python poc/work2/check_tool_screen.py   # Tool viewer detection + VLM analysis
 
 # poc/home — personal study only
 uv run python -m poc.home.test_setup       # Validate HuggingFace env
 uv run python -m poc.home.demo             # mode configured in .env or hardcoded
-
-# RCS auto-login (Windows only, config from .env)
-uv run python -m automation.rcs.run_login
-
-# RCS auto-login via poc/work/ (Windows only, VLM-based, all config from .env)
-# Saves debug_vlm_login.png with VLM-detected coordinates marked
-uv run python poc/work/automate_rcs_login.py
-
-# RCS post-login workflow (Windows only, each step standalone)
-uv run python -m poc.work.switching_tabs   # Switch to List tab
-uv run python -m poc.work.list_up_tools    # Read tool list via VLM
-uv run python -m poc.work.select_tool      # Select & double-click a tool
-uv run python -m poc.work.check_tool_screen # Wait for tool viewer + VLM UI analysis
 
 # Video frame parser
 uv run python -m test.video_frame_parser.example_usage
@@ -82,97 +74,114 @@ uv run python -m test.vlm_input_control.integration_test
 ## Code Conventions
 
 - **Korean docstrings** throughout all modules
-- **Print-based logging**: `[INFO]`, `[ERROR]`, `[WARNING]` prefixes (never the `logging` module)
-- **Absolute imports** within `poc/work/`: always use `from poc.work.xxx import ...` (not relative or bare imports). Scripts are run via `uv run python <script>.py` or `uv run python -m poc.work.<module>`.
-- **Import guards** for optional dependencies with `LIBRARY_AVAILABLE` flag:
-  ```python
-  try:
-      import pywinauto
-      PYWINAUTO_AVAILABLE = True
-  except ImportError:
-      PYWINAUTO_AVAILABLE = False
-  ```
-- **`@dataclass` config classes** with Korean field comments, loaded from `.env` via `python-dotenv`
-- **`__all__` exports** in every `__init__.py` with relative imports
-- **Enums** for categorical values (`FrameType`, `AnalysisStatus`, `VLMProvider`, `MouseButton`)
-- **`to_dict()` / `from_dict()`** on data models for MongoDB serialization
+- **Print-based logging**: `[INFO]`, `[ERROR]`, `[WARNING]` prefixes (never the `logging` module). Exception: `poc/work2/logger.py` uses Python `logging` with `RotatingFileHandler` for VLM call audit trail (`poc/work2/logs/vlm_calls.log`).
+- **Absolute imports** within `poc/work2/`: use `from poc.work2.xxx import ...`. Cross-module imports from `poc.work` shared utilities use `from poc.work.xxx import ...` (e.g., `vlm_openai_client`, `screen_capture`, `config`, `rcs_common`).
 - **Image format convention**: Save debug screenshots locally as **JPEG** (smaller file size for storage). When sending images to VLM APIs, convert to **WebP** (quality=90) to reduce API payload size — WebP compression does not hurt VLM coordinate/element recognition accuracy.
 - **Safe mode**: Most interactive modules default to `SAFE_MODE=true` to prevent actual mouse/keyboard output
-- **No CLI arguments**: Do not use `argparse` or CLI flags. All configuration comes from `.env` (via `python-dotenv`) or hardcoded defaults in the source files. Scripts should run with just `uv run python <script>.py`
+- **No CLI arguments**: Do not use `argparse` or CLI flags. All configuration comes from `flask_vlm.SHARED_PIPELINE_SETTINGS` (team defaults), environment variables (overrides), or hardcoded defaults in the source files. Scripts should run with just `uv run python <script>.py`
 
 ## Key Classes
 
 | Class | Location | Purpose |
 |-------|----------|---------|
-| `PocConfig` | `poc/work/config.py` | Unified `.env` config (VLMConfig, RCSConfig, OperationConfig) |
-| `VLMScreenAnalyzer` | `poc/work/vlm_screen_analysis.py` | Multi-provider VLM API (Qwen3-VL, GPT-4V, Claude, Kimi-2) |
-| `ChatImageRequest` | `poc/work/vlm_openai_client.py` | VLM request dataclass (model, system_message, user_text, image_b64) |
-| `LangChainOpenAICompatibleVLMClient` | `poc/work/vlm_openai_client.py` | LangChain-based VLM client (preferred over `OpenAICompatibleVLMClient`) |
-| `VLMRCSAgent` | `poc/work/vlm_rcs_agent.py` | Observe-Think-Act loop for RCS GUI automation |
-| `ScreenCapture` | `poc/work/screen_capture.py` | Screen/region capture via mss (`capture_full_screen()`, `capture_region()`) |
-| `RCSConfig` | `automation/rcs/rcs_config.py` | RCS connection/login settings |
-| `RCSLauncher` | `automation/rcs/rcs_launcher.py` | Orchestrates full RCS login sequence |
-| `ScreenCapture` | `test/vlm_input_control/screen_capture.py` | Older screen capture (use `poc/work/screen_capture.py` for new work) |
-| `MouseController` | `test/vlm_input_control/mouse_control.py` | Mouse input via pynput |
-| `KeyboardController` | `test/vlm_input_control/keyboard_control.py` | Keyboard input via pynput |
-| `VideoFrameParser` | `test/video_frame_parser/parser.py` | Main video processing pipeline |
-| `FrameAnalyzer` | `test/video_frame_parser/analyzer.py` | CLIP-based frame embeddings |
-| `BatchProcessor` | `test/video_frame_parser/batch_processor.py` | Multi-GPU batch processing |
-| `DatabaseHandler` | `test/video_frame_parser/db_handler.py` | MongoDB + FAISS vector storage |
+| `VLMScreenAnalyzer` | `poc/work2/vlm_screen_analysis.py` | Primary+OCR pipeline screen analysis |
+| `ScreenAnalysisResult` | `poc/work2/vlm_screen_analysis.py` | State recognition result (state_id, confidence, ui_elements, suggested_actions) |
+| `MeasurementJudgment` | `poc/work2/vlm_screen_analysis.py` | Measurement success/failure judgment |
+| `OCRHintResult` | `poc/work2/pipeline_ocr.py` | OCR text extraction result (texts, focus_hits) |
+| `ToolScreenSettings` | `poc/work2/check_tool_screen.py` | Tool viewer detection config (tool_name, timeout, backends, vlm_analyze) |
+| `ChatImageRequest` | `poc/work/vlm_openai_client.py` | VLM API request builder (shared, imported by work2) |
+| `LangChainOpenAICompatibleVLMClient` | `poc/work/vlm_openai_client.py` | OpenAI-compatible VLM client (shared, imported by work2) |
+| `ScreenCapture` | `poc/work/screen_capture.py` | Screenshot utility via mss (shared, imported by work2) |
+| `PocConfig` | `poc/work/config.py` | Legacy .env config loader (shared, imported by work2) |
 
 ## Development Workflow
 
-Claude Code runs on macOS (dev machine) and **cannot see or interact with the actual RCS application**. All Windows-only automation (RCS, pywinauto, pynput mouse/keyboard) is tested by the user at the office on a Windows machine. Updated Python files are pushed via git, pulled at the office, and run there. Debugging relies on the user reporting results (console output, debug screenshots like `debug_vlm_login.png`) back to Claude Code.
+Claude Code runs on macOS (dev machine) and **cannot see or interact with the actual RCS application**. All Windows-only automation paths in `poc/work2/` (RCS, pywinauto, pynput mouse/keyboard) are tested by the user at the office on a Windows machine. Updated Python files are pushed via git, pulled at the office, and run there. Debugging relies on the user reporting results (console output, debug screenshots in `poc/work2/debug_images/`) back to Claude Code.
 
 ## Architecture Notes
 
-### poc/work/ (Primary Workstream)
-Mostly flat module with a `prompts/` sub-package for VLM prompt builders. New prompts go in `prompts/` and are re-exported from `prompts/__init__.py`. All internal imports use absolute paths (`from poc.work.xxx import ...`); `prompts/__init__.py` keeps relative imports since sub-packages are never run directly. Config loaded via `PocConfig.load()` which reads `.env` (copy from `.env.example`; `.env.example` now includes `RCS_EXE_PATH` for the path to `RcsMainHD.exe`). The `vlm_click_demo.py` is the primary manager-presentation entry point: it captures a screenshot, sends it to the VLM, then draws bounding boxes at the returned click coordinates. Coordinate chain: VLM output coords (resized image) → screenshot pixels → monitor-local coords → absolute mouse coords (offset for multi-monitor setups via `MONITOR_INDEX`).
+### poc/work2/ (Primary Workstream)
 
-`opensearch_handler.py` is intentionally kept but inactive — import-guarded and `opensearch-py` is not in `requirements.txt`. Do not delete; kept for re-enablement after company PoC approval.
+Flat module with a `prompts/` sub-package for VLM prompt builders. `flask_vlm.py` is the central config hub — `SHARED_PIPELINE_SETTINGS` dict holds team-wide defaults (Flask base URL, primary VLM service/model, OCR service/model, pipeline flags). No individual `.env` files needed; teammates share hardcoded defaults in `flask_vlm.py`.
 
-### poc/work/ RCS automation
-`automate_rcs_login.py` — VLM-based RCS login automation. pywinauto is only used to launch the exe and find the window by title ("Remote Control System"); internal control detection via pywinauto failed (legacy app doesn't expose ComboBox/Button to UIA or win32 backends). Instead uses: mss screenshot of window region → VLM coordinate extraction (asks for Server/UserID/Password/LoginButton click points) → pynput mouse clicks and keyboard typing at the returned positions. Config from `.env`: `RCS_EXE_PATH`, `RCS_SERVER`, `RCS_USERNAME`, `RCS_PASSWORD`, `VLM_API_URL`, `VLM_API_KEY`, `VLM_MODEL_NAME`. Coordinate chain: VLM coords (resized image) → ÷ resize_scale → screenshot coords → + window offset → absolute screen coords.
+- **Primary VLM**: `ui-venus-1.5-8b` (service slug: `ui-venus`)
+- **OCR assist VLM**: `paddleocr-vl-1.5` (service slug: `paddleocr-vl-1.5`)
+- Cross-module imports from `poc.work` for shared utilities: `vlm_openai_client` (ChatImageRequest, LangChainOpenAICompatibleVLMClient), `screen_capture` (ScreenCapture), `config` (PocConfig), `rcs_common`
+- Per-model debug dirs under `debug_images/<model-slug>/`
+- Rotating file logger at `poc/work2/logs/vlm_calls.log` (10MB max, 5 backups)
 
-Current post-login success detection policy (`poc/work/automate_rcs_login.py`):
-- Login success is determined by the final main window only. Updater window checks are intentionally skipped.
-- Final title match uses regex (`RCS_MAIN_WINDOW_REGEX`) requiring both `RCS` and `[Server : ...]` semantics (default: `\brcs\b.*\[server\s*:[^\]]+\]`).
-- Wait behavior defaults: `RCS_POST_LOGIN_DELAY_SEC=4.0`, `RCS_POST_LOGIN_MAIN_TIMEOUT_SEC=240.0`, `RCS_POST_LOGIN_POLL_SEC=0.5`.
-- Window discovery order:
-- 1) `app.windows()` from the launched process
-- 2) desktop-wide fallback (`Desktop(...).windows(top_level_only=True, visible_only=True)`) because RCS may relaunch into another process
-- Desktop backend priority defaults to `win32,uia` (`RCS_DESKTOP_SCAN_BACKENDS`).
-- Debug title scan logs are controlled by `RCS_DEBUG_MAIN_WINDOW_TITLES` and default to off (`0`).
+Config resolution order: `SHARED_PIPELINE_SETTINGS` → env var overrides → `apply_pipeline_env_defaults()` injects into `os.environ` for backward compatibility with `poc.work` code.
 
-### poc/work/ RCS workflow pipeline (post-login)
-After login, the RCS workflow follows a step-by-step pipeline. Each step is a standalone script controlled by env vars:
+### Flask proxy VLM architecture
 
-1. **`switching_tabs.py`** — Switch to a tab (e.g., "List") in the main RCS window. Uses `rcs_common.connect_rcs_window()` + `rcs_common.switch_tab()`. Env: `RCS_TAB_NAME`, `RCS_SWITCH_TAB_DEBUG`.
-2. **`list_up_tools.py`** — Read the tool list from the List tab. Captures screenshot → VLM extracts tool names via `build_rcs_tool_list_reader_prompt()`. Env: `RCS_LIST_DEBUG`, `RCS_LIST_NO_SWITCH`.
-3. **`select_tool.py`** — Select a specific tool from the list. VLM locates the tool row via `build_rcs_select_tool_prompt()` → double-click to open. Env: `RCS_TOOL_NAME`, `RCS_SELECT_DOUBLE_CLICK`, `RCS_SELECT_LIST_FIRST`.
-4. **`check_tool_screen.py`** — Wait for the tool viewer window (`RcsViewerHD.exe`) to appear. Title matching is simple containment (`tool_name.lower() in title.lower()`). After detection, optionally captures screenshot and sends to VLM for UI element analysis. Env: `RCS_TOOL_NAME`, `RCS_TOOL_SCREEN_VLM_ANALYZE`, `RCS_TOOL_SCREEN_TIMEOUT`.
+Instead of direct VLM API calls, `poc/work2/` routes through a Flask proxy at the company server. The proxy provides unified health discovery and per-service routing.
 
-Shared utilities in `rcs_common.py`: `connect_rcs_window()`, `switch_tab()`, `find_tool_container()`, `load_env()`, `env_float()`, `env_flag()`. Default constants: `DEFAULT_WINDOW_TITLE_REGEX=r".*RCS.*"`, `DEFAULT_TIMEOUT=15.0`, `DEFAULT_TAB="List"`.
+- **Service registry**: `flask_api/vlm_serve/config.py` — `VLMServiceEntry` dataclass per model (route_slug, display_name, model_name, upstream_port, enabled flag)
+- **Registered services**: ui-venus (8001), mai-ui (8002), ui-tars (8003, disabled), paddleocr-vl-1.5 (8004), got-ocr (8005)
+- **Health endpoint**: `GET /api/vlm_serve/health` — returns `vlm_statuses` array with per-service health_status (serving/unreachable/error), proxy_registered flag, detected models
+- **Proxy URL pattern**: `{flask_base}/api/vlm_serve/{service_slug}/v1/chat/completions`
+- `flask_vlm.py` helpers: `resolve_service_proxy_url()`, `fetch_vlm_health()`, `normalize_vlm_health_entries()`
 
-### poc/work/ VLM prompt builders
-Each prompt builder in `poc/work/prompts/` returns a `(system_message, user_message)` tuple for use with `ChatImageRequest`. They take image `width`/`height` and target-specific params. Current prompts:
-- `build_rcs_login_locator_prompt()` — Server/UserID/Password/LoginButton coordinates
-- `build_rcs_main_tab_locator_prompt()` — Tab center coordinates (View, List, etc.)
-- `build_rcs_select_tool_prompt()` — Single tool row coordinate in list view
-- `build_rcs_tool_list_reader_prompt()` — Extract all tool names and row positions
+### Two-stage VLM pipeline
 
-### poc/work/ vs test/vlm_input_control/
-Both implement screen capture + VLM + input control, but `poc/work/` is self-contained (no shared imports with `test/`) and production-oriented. `test/vlm_input_control/` is an older integration prototype.
+Primary VLM + OCR assist (PaddleOCR-VL) for improved accuracy on GUI text elements.
 
-### automation/rcs/
-Windows-only. Uses `uia` or `win32` pywinauto backends. `RCSLauncher.run()` orchestrates: launch exe → wait for window → select server → enter credentials → verify login, with retry logic.
+1. `pipeline_ocr.collect_ocr_hint_result()` sends screenshot to PaddleOCR-VL, extracts visible text lines as `OCRHintResult` (texts + focus_hits matching target words)
+2. `pipeline_ocr.build_ocr_extra_instructions()` converts OCR result to instruction tuples injected into the primary VLM prompt
+3. Primary VLM (ui-venus) receives the image + OCR hints as `extra_instructions` and makes final coordinate/element decisions from pixels
+
+OCR hints are advisory only — the primary VLM always makes final decisions from the actual image.
+
+### RCS automation workflow (poc/work2/)
+
+Each step is a standalone script. All use Flask proxy routing via `flask_vlm.py`:
+
+1. **`connection_check.py`** — Verifies Flask API health + probes each VLM service's `/v1/models` endpoint. Renders status table.
+2. **`automate_rcs_login.py`** — Multi-model VLM benchmark on RCS login screen:
+   - Auto-discovers benchmark targets from Flask health (serving + proxy_registered)
+   - Captures login window → single OCR call (shared) → loops over target services with `build_rcs_login_locator_prompt()`
+   - Compares detection accuracy, saves per-model marked images, prints comparison table
+   - Executes click using best result (default: login_button)
+   - Waits for post-login main window via regex matching
+3. **`click_rcs_view_mode.py`** — Tab switching with OCR assist. Uses first-letter anchoring ('V' for View, 'L' for List). Applies offset correction (list_tab.x = view_tab.x + 50px).
+4. **`check_tool_screen.py`** — Polls for tool viewer window (`RcsViewerHD.exe`), optionally captures + analyzes with VLMScreenAnalyzer (OCR-assisted). Saves source JPEG + marked overlay.
+5. **`reading_check.py`** — Captures monitor screenshot, sends to multiple UI VLMs in parallel, compares component/coordinate responses. Saves per-model overlays + normalized JSON.
+
+### poc/work2/ VLM prompt builders
+
+Each prompt builder in `poc/work2/prompts/` returns a `(system_message, user_message)` tuple for use with `ChatImageRequest`. They take image `width`/`height` and target-specific params. Current prompts:
+- `build_ocr_assist_prompt()` — OCR text extraction task (PaddleOCR-VL format)
+- `build_rcs_login_locator_prompt()` — Server/UserID/Password/LoginButton/CancelButton/ShortcutButton coordinates
+- `build_rcs_main_tab_locator_prompt()` — Tab center coordinates with first-letter anchoring (View, List)
+- `build_state_recognition_prompt()` — General screen state recognition (state_id, confidence, ui_elements, suggested_actions)
+- `build_measurement_judgment_prompt()` — Measurement success/failure judgment with suggested adjustments
+- `build_general_query_prompt()` — Generic screen QA
+
+### Shared utilities (poc/work2/rcs_utils.py)
+
+Key functions for RCS automation scripts:
+- `capture_window()` — mss screenshot of pywinauto window region → PIL Image
+- `encode_image_webp()` — PIL Image → base64 WebP (quality=90)
+- `click_at()` — VLM coords → screen coords → click (with retry, falls back to pywinauto.mouse)
+- `extract_json()` — Extracts JSON from VLM response text (handles markdown fences)
+- `parse_coords()` — Validates/converts VLM coordinate dict to integers, checks bounds
+- `find_existing_main_window()` — Desktop-wide window search across pywinauto backends
+- `save_marked_image()` — Overlays crosshairs + circles + labels at detected coordinates
+- `debug_image_path()` — Returns model-specific debug image path
+
+### poc/work2/ vs poc/work/ (Phase comparison)
+
+| Aspect | Phase 1 (poc/work/) | Phase 2 (poc/work2/) |
+|--------|---------------------|----------------------|
+| VLM routing | Direct API calls (per-PC .env) | Flask proxy (shared team config) |
+| Model selection | Single model (VLM_MODEL_NAME) | Multi-model benchmark + health discovery |
+| OCR assist | None | PaddleOCR-VL two-stage pipeline |
+| Config source | `.env` via `PocConfig.load()` | `flask_vlm.SHARED_PIPELINE_SETTINGS` |
+| Debug images | Flat directory | Per-model subdirectories |
+| VLM logging | Print only | `logger.py` rotating file + print |
+
+`poc/work/` remains in the repo for shared utilities (`vlm_openai_client`, `screen_capture`, `config`, `rcs_common`) that `poc/work2/` imports.
 
 ### test/video_frame_parser/
-Designed for H200 GPU cluster. Pipeline: extract frames (OpenCV) → generate CLIP embeddings (torch) → store in MongoDB + FAISS index. Factory shortcut: `create_h200_optimized_parser(num_gpus=8)`.
 
-### Import Pattern for test/ sibling modules
-When importing across `test/` sub-packages use `from video_frame_parser.xxx import Yyy` (not `from test.video_frame_parser...`). Requires `PYTHONPATH=./test` or running from within `test/`.
-
-## Commit Style
-
-Short imperative subjects following the project history pattern: `Add ...`, `Reorganize ...`, `Replace ...`, `Clarify ...`, `Fix ...`. Keep commits scoped to one logical change.
+CLIP-based video frame extraction and analysis module for GPU cluster environments. Uses MongoDB for metadata, FAISS for similarity search. Import pattern for `test/` siblings: use `from video_frame_parser.xxx import Yyy` (requires `PYTHONPATH=./test`), always wrapped in `try/except ImportError` with `AVAILABLE` flag.

@@ -21,6 +21,7 @@ from pathlib import Path
 from pywinauto import Desktop
 
 from poc.work.rcs_common import DEFAULT_TIMEOUT, env_float, env_flag, load_env
+from poc.work2 import debug_image_path
 from poc.work2.flask_vlm import apply_work2_pipeline_env_defaults, load_work2_env
 
 try:
@@ -262,11 +263,21 @@ def _capture_and_analyze_screen(window, settings: ToolScreenSettings) -> None:
         print("[WARNING] 캡처 데이터 없음 — 분석 건너뜀")
         return
 
+    pipeline_config = apply_work2_pipeline_env_defaults()
+    debug_model_name = str(
+        pipeline_config.get("primary_model_name")
+        or os.environ.get("VLM_MODEL_NAME")
+        or ""
+    ).strip()
+
     # 디버그 이미지 저장 (JPEG) + VLM 전송용 WebP 변환
     jpeg_size = 0
-    DEBUG_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    debug_path = DEBUG_IMAGE_DIR / f"tool_screen_{ts}.jpg"
+    debug_path = debug_image_path(
+        DEBUG_IMAGE_DIR,
+        f"tool_screen_{ts}.jpg",
+        model_name=debug_model_name,
+    )
     try:
         from PIL import Image
         import io
@@ -318,7 +329,6 @@ def _capture_and_analyze_screen(window, settings: ToolScreenSettings) -> None:
 
     # VLM 분석 (500 에러 시 축소 이미지로 재시도)
     try:
-        pipeline_config = apply_work2_pipeline_env_defaults()
         config = PocConfig.load()
         if not config.vlm.api_url:
             print("[INFO] VLM API URL 미설정 — 화면 분석 건너뜀")
@@ -401,7 +411,11 @@ def _capture_and_analyze_screen(window, settings: ToolScreenSettings) -> None:
                 else:
                     print(f"  - {name} ({elem_type}) @ {location} -> click=({point[0]}, {point[1]})")
 
-            overlay_path = DEBUG_IMAGE_DIR / f"tool_screen_{ts}_vlm_points.jpg"
+            overlay_path = debug_image_path(
+                DEBUG_IMAGE_DIR,
+                f"tool_screen_{ts}_vlm_points.jpg",
+                model_name=config.vlm.model_name,
+            )
             marked = _save_click_point_overlay(
                 image_data=vlm_image_data,
                 ui_elements=result.ui_elements,

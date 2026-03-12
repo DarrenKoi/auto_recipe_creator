@@ -210,7 +210,11 @@ def main() -> int:
     print(f"[INFO] 검출률: {detected}/{len(TARGET_ELEMENTS)}")
 
     # 디버그 이미지 저장
-    out_path = debug_image_path(DEBUG_IMAGE_DIR, "debug_view_mode.png")
+    out_path = debug_image_path(
+        DEBUG_IMAGE_DIR,
+        "debug_view_mode.png",
+        model_name=VLM_MODEL,
+    )
     save_marked_image(image, data, ELEMENT_COLORS, out_path)
 
     # View/List 탭 순차 클릭

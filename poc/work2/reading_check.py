@@ -2,9 +2,9 @@
 
 동작:
   1) 지정한 모니터 1개만 캡처한다.
-  2) 원본 확인용 JPEG와 실제 전송용 WebP를 `poc/work2/debug_images/`에 저장한다.
+  2) 원본 확인용 JPEG와 실제 전송용 WebP를 모델 기반 하위 폴더에 저장한다.
   3) 동일한 이미지를 UI-Venus 와 PaddleOCR-VL 에 각각 전송한다.
-  4) 원문 응답과 파싱 결과를 debug_images 폴더에 저장하고 요약을 출력한다.
+  4) 원문 응답과 파싱 결과를 각 모델 폴더에 저장하고 요약을 출력한다.
 
 사용법:
   uv run python poc/work2/reading_check.py
@@ -37,6 +37,7 @@ except ImportError:
 from poc.work.screen_capture import ScreenCapture
 from poc.work.vlm_openai_client import ChatImageRequest, OpenAICompatibleVLMClient
 from flask_api.vlm_serve.config import get_service_by_slug
+from poc.work2 import debug_image_dir
 from poc.work2.flask_vlm import apply_work2_pipeline_env_defaults, load_work2_env
 from poc.work2.rcs_utils import extract_json
 
@@ -81,25 +82,14 @@ def build_ui_venus_reading_prompt(width: int, height: int) -> tuple[str, str]:
 
 
 def build_paddleocr_reading_prompt(width: int, height: int) -> tuple[str, str]:
-    """PaddleOCR-VL 용 자유 형식 읽기 프롬프트를 구성한다."""
-    system_message = (
-        "You are an OCR-focused reader for software screenshots. "
-        f"The image is {width}x{height} pixels. "
-        "Read only text that is actually visible. "
-        "Exact transcription is more important than formatting. "
-        "If some text is too small or unclear, say that briefly. "
-        "You may answer in the format that feels most natural."
-    )
+    """PaddleOCR-VL 용 태스크 키워드 프롬프트를 구성한다.
 
-    user_text = "\n".join(
-        [
-            "Read this computer screenshot.",
-            "List the visible texts and short observations in your own preferred format.",
-            "Prioritize window titles, menus, tabs, labels, buttons, status text, percentages, and list or table text.",
-            "Do not force JSON. Do not invent hidden text.",
-        ]
-    )
-    return system_message, user_text
+    PaddleOCR-VL-1.5 는 0.9B 파라미터 모델로 6가지 태스크 키워드에 대해 학습되었다:
+    OCR:, Table Recognition:, Formula Recognition:,
+    Chart Recognition:, Spotting:, Seal Recognition:
+    시스템 메시지나 복잡한 지시 없이 태스크 키워드만 전송해야 한다.
+    """
+    return "", "OCR:"
 
 
 def _slugify(value: str) -> str:
@@ -118,9 +108,9 @@ def _slugify(value: str) -> str:
     return slug or "model"
 
 
-def _ensure_debug_dir() -> None:
-    """디버그 디렉터리를 보장한다."""
-    DEBUG_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+def _ensure_debug_dir(debug_dir: Path) -> None:
+    """지정한 디버그 디렉터리를 보장한다."""
+    debug_dir.mkdir(parents=True, exist_ok=True)
 
 
 def _resolve_monitor_index() -> int:
@@ -188,15 +178,19 @@ def _capture_monitor_image(monitor_index: int) -> Image.Image | None:
     return image
 
 
-def _save_source_jpeg(image: Image.Image, stem: str) -> Path:
+def _save_source_jpeg(image: Image.Image, stem: str, debug_dir: Path) -> Path:
     """원본 확인용 JPEG를 저장한다."""
-    out_path = DEBUG_IMAGE_DIR / f"{stem}_source.jpg"
+    out_path = debug_dir / f"{stem}_source.jpg"
     image.save(out_path, format="JPEG", quality=SOURCE_JPEG_QUALITY)
     print(f"[INFO] 원본 확인용 JPEG 저장: {out_path}")
     return out_path
 
 
-def _encode_image_for_vlm(image: Image.Image, stem: str) -> tuple[str, int, int, Path]:
+def _encode_image_for_vlm(
+    image: Image.Image,
+    stem: str,
+    debug_dir: Path,
+) -> tuple[str, int, int, Path]:
     """전송용 WebP를 저장하고 base64 문자열을 반환한다."""
     working = image
     quality = WEBP_QUALITY
@@ -221,7 +215,7 @@ def _encode_image_for_vlm(image: Image.Image, stem: str) -> tuple[str, int, int,
         working.save(buffer, format="WEBP", quality=70)
         webp_bytes = buffer.getvalue()
 
-    sent_path = DEBUG_IMAGE_DIR / f"{stem}_sent.webp"
+    sent_path = debug_dir / f"{stem}_sent.webp"
     sent_path.write_bytes(webp_bytes)
     print(
         f"[INFO] 전송용 WebP 저장: {sent_path} "
@@ -473,9 +467,12 @@ def _print_summary(results: list[dict[str, Any]]) -> None:
         note = ""
         if result["error"]:
             note = result["error"][:32]
-        elif result["service"] == "ui-venus" and isinstance(result["parsed_json"], dict):
-            note = str(result["parsed_json"].get("screen_summary", ""))[:32]
-        elif not result.get("expect_json"):
+        elif isinstance(result["parsed_json"], dict):
+            if result["parsed_json"].get("screen_summary"):
+                note = str(result["parsed_json"]["screen_summary"])[:32]
+            else:
+                note = "json ok"
+        elif not result.get("expect_json") and result.get("raw_response"):
             note = " ".join(str(result["raw_response"]).split())[:32]
         else:
             note = "non-json response"[:32]
@@ -486,7 +483,6 @@ def _print_summary(results: list[dict[str, Any]]) -> None:
 
 def main() -> int:
     """전체 reading check 흐름을 실행한다."""
-    _ensure_debug_dir()
     if not PIL_AVAILABLE:
         print("[ERROR] Pillow 패키지가 필요합니다.")
         return 1
@@ -504,12 +500,17 @@ def main() -> int:
     ocr_api_url = str(pipeline.get("ocr_api_url") or "").strip()
     ocr_api_key = str(pipeline.get("ocr_api_key") or "").strip()
     monitor_index = _resolve_monitor_index()
+    shared_debug_dir = debug_image_dir(
+        DEBUG_IMAGE_DIR,
+        f"{primary_model}__{ocr_model}",
+    )
+    _ensure_debug_dir(shared_debug_dir)
 
     print("[INFO] reading_check 시작")
     print(f"[INFO] primary configured: {primary_service} ({primary_model})")
     print(f"[INFO] ocr configured:     {ocr_service} ({ocr_model})")
     print(f"[INFO] capture monitor:    {monitor_index}")
-    print(f"[INFO] debug dir: {DEBUG_IMAGE_DIR}")
+    print(f"[INFO] shared debug dir:   {shared_debug_dir}")
 
     if not primary_api_url:
         print("[ERROR] primary API URL이 비어 있습니다. WORK2_FLASK_API_BASE_URL 또는 WORK2_VLM_API_URL을 확인하세요.")
@@ -524,8 +525,8 @@ def main() -> int:
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     stem = f"reading_check_{timestamp}"
-    _save_source_jpeg(image, stem)
-    image_b64, width, height, sent_path = _encode_image_for_vlm(image, stem)
+    _save_source_jpeg(image, stem, shared_debug_dir)
+    image_b64, width, height, sent_path = _encode_image_for_vlm(image, stem, shared_debug_dir)
     print(f"[INFO] 실제 전송 이미지: {sent_path}")
 
     ui_system_message, ui_user_text = build_ui_venus_reading_prompt(width, height)
@@ -554,8 +555,12 @@ def main() -> int:
     ]
 
     for result in results:
+        result_debug_dir = debug_image_dir(
+            DEBUG_IMAGE_DIR,
+            str(result.get("model") or result.get("configured_model") or result["service"]),
+        )
         service_slug = _slugify(str(result["service"]))
-        probe_path = DEBUG_IMAGE_DIR / f"{stem}_{service_slug}_model_probe.json"
+        probe_path = result_debug_dir / f"{stem}_{service_slug}_model_probe.json"
         _save_json(
             probe_path,
             {
@@ -569,11 +574,11 @@ def main() -> int:
             },
         )
 
-        raw_path = DEBUG_IMAGE_DIR / f"{stem}_{service_slug}_response.txt"
+        raw_path = result_debug_dir / f"{stem}_{service_slug}_response.txt"
         _save_text(raw_path, str(result["raw_response"] or result["error"] or ""))
 
         if isinstance(result["parsed_json"], dict):
-            json_path = DEBUG_IMAGE_DIR / f"{stem}_{service_slug}_response.json"
+            json_path = result_debug_dir / f"{stem}_{service_slug}_response.json"
             _save_json(json_path, result["parsed_json"])
 
         _print_result_block(result)

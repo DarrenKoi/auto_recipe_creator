@@ -64,21 +64,25 @@ class OpenAICompatibleVLMClient:
         b64_len_kb = len(request.image_b64) * 3 / 4 / 1024
         print(f"[INFO] VLM 요청: model={request.model}, image={b64_len_kb:.1f}KB ({request.image_mime})")
 
+        messages = []
+        if request.system_message:
+            messages.append({"role": "system", "content": request.system_message})
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": request.user_text},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{request.image_mime};base64,{request.image_b64}"},
+                    },
+                ],
+            },
+        )
+
         payload = {
             "model": request.model,
-            "messages": [
-                {"role": "system", "content": request.system_message},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": request.user_text},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:{request.image_mime};base64,{request.image_b64}"},
-                        },
-                    ],
-                },
-            ],
+            "messages": messages,
             "temperature": request.temperature,
         }
 
@@ -190,17 +194,18 @@ class LangChainOpenAICompatibleVLMClient:
         )
 
         data_url = f"data:{request.image_mime};base64,{request.image_b64}"
-        response = chat_model.invoke(
-            [
-                SystemMessage(content=request.system_message),
-                HumanMessage(
-                    content=[
-                        {"type": "text", "text": request.user_text},
-                        {"type": "image_url", "image_url": {"url": data_url}},
-                    ]
-                ),
-            ]
+        messages = []
+        if request.system_message:
+            messages.append(SystemMessage(content=request.system_message))
+        messages.append(
+            HumanMessage(
+                content=[
+                    {"type": "text", "text": request.user_text},
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                ]
+            ),
         )
+        response = chat_model.invoke(messages)
 
         content = OpenAICompatibleVLMClient._coerce_content(getattr(response, "content", ""))
         print(f"[INFO] VLM 응답(content) 길이={len(content)}")

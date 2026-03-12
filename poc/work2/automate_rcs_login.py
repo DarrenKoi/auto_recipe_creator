@@ -427,10 +427,11 @@ def _run_benchmark(window) -> dict | None:
             detected = sum(1 for k in TARGET_ELEMENTS if k in data and isinstance(data[k], dict))
             print(f"[INFO] 검출률: {detected}/{len(TARGET_ELEMENTS)}")
 
-            # 모델명을 파일명에 안전하게 변환
-            safe_name = model.replace("/", "_").replace(" ", "_")
-            filename = f"debug_{safe_name}.png"
-            out_path = debug_image_path(DEBUG_IMAGE_DIR, filename)
+            out_path = debug_image_path(
+                DEBUG_IMAGE_DIR,
+                "debug_login.png",
+                model_name=model,
+            )
             save_marked_image(image, data, ELEMENT_COLORS, out_path)
 
             results[model] = {"detected": detected, "data": data}

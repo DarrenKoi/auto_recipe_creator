@@ -7,7 +7,6 @@ from typing import Iterable
 
 from poc.work.vlm_openai_client import ChatImageRequest, LangChainOpenAICompatibleVLMClient
 from poc.work2.prompts import build_ocr_assist_prompt
-from poc.work2.rcs_utils import extract_json
 
 
 @dataclass(frozen=True)
@@ -17,13 +16,12 @@ class OCRHintResult:
     raw_response: str
 
 
-def _normalize_texts(values, max_items: int) -> tuple[str, ...]:
-    if not isinstance(values, list):
-        return ()
+def _parse_ocr_lines(raw: str, max_items: int) -> tuple[str, ...]:
+    """PaddleOCR-VL plain text 응답을 줄 단위로 파싱한다."""
     cleaned: list[str] = []
     seen: set[str] = set()
-    for item in values:
-        text = str(item).strip()
+    for line in raw.splitlines():
+        text = line.strip()
         if not text:
             continue
         normalized = text.lower()
@@ -34,6 +32,26 @@ def _normalize_texts(values, max_items: int) -> tuple[str, ...]:
         if len(cleaned) >= max_items:
             break
     return tuple(cleaned)
+
+
+def _match_focus_words(
+    texts: tuple[str, ...],
+    focus_words: Iterable[str] | None,
+) -> tuple[str, ...]:
+    """추출된 텍스트 중 focus_words 에 매칭되는 항목을 반환한다."""
+    if not focus_words:
+        return ()
+    targets = [w.strip().lower() for w in focus_words if w and w.strip()]
+    if not targets:
+        return ()
+    hits: list[str] = []
+    for text in texts:
+        text_lower = text.lower()
+        for target in targets:
+            if target in text_lower:
+                hits.append(text)
+                break
+    return tuple(hits)
 
 
 def collect_ocr_hint_result(
@@ -96,14 +114,8 @@ def collect_ocr_hint_result(
 
     print(f"[INFO] OCR assist 원문 응답:\n{raw}\n")
 
-    try:
-        payload = extract_json(raw)
-    except Exception as exc:
-        print(f"[WARNING] OCR assist JSON 파싱 실패: {exc}")
-        return OCRHintResult(texts=(), focus_hits=(), raw_response=raw)
-
-    texts = _normalize_texts(payload.get("texts"), max_items=max_items)
-    focus_hits = _normalize_texts(payload.get("focus_hits"), max_items=max_items)
+    texts = _parse_ocr_lines(raw, max_items=max_items)
+    focus_hits = _match_focus_words(texts, focus_words)
     if texts:
         print(f"[INFO] OCR 추출 텍스트: {', '.join(texts)}")
     if focus_hits:

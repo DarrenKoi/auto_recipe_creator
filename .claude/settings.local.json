@@ -15,7 +15,8 @@
       "WebFetch(domain:microsoft.github.io)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:www.kimi.com)",
-      "WebFetch(domain:docs.vllm.ai)"
+      "WebFetch(domain:docs.vllm.ai)",
+      "WebFetch(domain:www.paddleocr.ai)"
     ]
   }
 }

@@ -1,4 +1,12 @@
-"""OCR assist prompt builders for `poc.work2` pipeline."""
+"""OCR assist prompt builders for `poc.work2` pipeline.
+
+PaddleOCR-VL-1.5 는 0.9B 파라미터 모델로 6가지 태스크 키워드에 대해 학습되었다:
+OCR:, Table Recognition:, Formula Recognition:,
+Chart Recognition:, Spotting:, Seal Recognition:
+
+시스템 메시지나 복잡한 지시 없이 태스크 키워드만 전송해야 한다.
+응답은 plain text 로 반환되므로 호출 측에서 후처리한다.
+"""
 
 from typing import Iterable
 
@@ -10,42 +18,11 @@ def build_ocr_assist_prompt(
     focus_words: Iterable[str] | None = None,
     max_items: int = 12,
 ) -> tuple[str, str]:
-    """Build OCR extraction prompt for the PaddleOCR stage."""
-    focus_items = [word.strip() for word in (focus_words or ()) if word and word.strip()]
-    context_text = context_label.strip() or "GUI screenshot"
+    """PaddleOCR-VL 용 OCR 태스크 키워드 프롬프트를 반환한다.
 
-    system_message = (
-        "You are a precise OCR extraction assistant for software screenshots. "
-        f"The image is {width}x{height} pixels. "
-        "Read visible text faithfully. Respond ONLY with valid JSON."
-    )
-
-    lines = [
-        f"Extract the most relevant visible text from this {context_text}.",
-        "Focus on UI labels, tab names, button captions, field labels, window titles, and tool names.",
-        "Do not invent text that is not visible.",
-        "Prefer short, exact strings as they appear on screen.",
-    ]
-
-    if focus_items:
-        lines.extend(
-            [
-                "",
-                "Prioritize these target words if they are visible:",
-                ", ".join(focus_items),
-            ]
-        )
-
-    lines.extend(
-        [
-            "",
-            f"Return at most {max_items} text items.",
-            "Return ONLY this JSON:",
-            "{",
-            '  "texts": ["..."],',
-            '  "focus_hits": ["..."]',
-            "}",
-        ]
-    )
-
-    return system_message, "\n".join(lines)
+    PaddleOCR-VL-1.5 는 ``OCR:`` 키워드에 대해 학습되었으므로
+    시스템 메시지 없이 키워드만 전송한다.
+    ``context_label``, ``focus_words``, ``max_items`` 는
+    호출 측(pipeline_ocr.py)에서 응답 후처리에 사용된다.
+    """
+    return "", "OCR:"

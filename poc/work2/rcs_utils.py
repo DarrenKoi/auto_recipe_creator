@@ -182,10 +182,19 @@ def click_at(
 # ─────────────────────────── 디버그 이미지 ───────────────────────────
 
 
-def debug_image_path(debug_dir: Path, filename: str) -> Path:
-    """디버그 이미지 디렉터리를 생성하고 파일 경로를 반환한다."""
-    debug_dir.mkdir(parents=True, exist_ok=True)
-    return debug_dir / filename
+def debug_image_path(
+    debug_dir: Path,
+    filename: str,
+    model_name: str | None = None,
+) -> Path:
+    """모델명 하위 디렉터리를 포함한 디버그 이미지 경로를 반환한다."""
+    from poc.work2 import debug_image_path as resolve_debug_image_path
+
+    return resolve_debug_image_path(
+        debug_dir,
+        filename,
+        model_name=model_name,
+    )
 
 
 def save_marked_image(

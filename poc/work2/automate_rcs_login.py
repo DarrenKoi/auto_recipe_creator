@@ -1,8 +1,17 @@
-"""RCS 로그인 화면에서 work2 VLM pipeline 좌표 검출을 테스트하는 스크립트 (Windows 전용).
+"""RCS 로그인 화면에서 여러 VLM 모델의 좌표 검출 정확도를 비교하는 스크립트 (Windows 전용).
 
-Primary VLM은 UI-Venus를 사용하고, PaddleOCR-VL을 보조 OCR stage 로 사용한다.
-로그인 화면의 텍스트 라벨·입력 필드·버튼 좌표를 추출하고 디버그 이미지를 저장한다.
-pywinauto는 창 실행·탐색에만 사용한다.
+Flask health 에서 현재 serving 상태인 UI VLM 서비스를 자동 발견하고,
+동일한 로그인 화면 스크린샷으로 각 모델의 UI 요소 좌표 검출 능력을 비교한다.
+OCR assist 파이프라인은 보조 힌트 생성에 선택적으로 사용된다.
+pywinauto 는 창 실행·탐색에만 사용한다.
+
+환경변수:
+  RCS_LOGIN_SERVICES=ui-venus,mai-ui   # 비교 대상 서비스 (미지정 시 health 에서 자동 선택)
+  RCS_LOGIN_INCLUDE_OCR_SERVICE=true   # OCR 계열 서비스도 비교 대상에 포함
+  RCS_TARGET_CLICK_KEY=login_button    # 벤치마크 후 클릭할 요소 키
+
+사용법:
+  uv run python poc/work2/automate_rcs_login.py
 """
 
 import json
@@ -12,14 +21,22 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
-from pywinauto.keyboard import send_keys
-from pywinauto import mouse
-from pywinauto import Desktop
+import requests
+from pywinauto import Desktop, mouse
 from pywinauto.application import Application
+from pywinauto.keyboard import send_keys
 
+from flask_api.vlm_serve.config import get_service_by_slug
 from poc.work.vlm_openai_client import ChatImageRequest, LangChainOpenAICompatibleVLMClient
-from poc.work2.flask_vlm import apply_pipeline_env_defaults
+from poc.work2.flask_vlm import (
+    apply_pipeline_env_defaults,
+    fetch_vlm_health,
+    normalize_vlm_health_entries,
+    resolve_service_proxy_url,
+)
+from poc.work2.logger import log_vlm_call
 from poc.work2.pipeline_ocr import build_ocr_extra_instructions, collect_ocr_hint_result
 from poc.work2.prompts import build_rcs_login_locator_prompt
 from poc.work2.rcs_utils import (
@@ -40,8 +57,6 @@ PIPELINE_CONFIG = apply_pipeline_env_defaults()
 # ─────────────────────────── 설정 ───────────────────────────
 
 RCS_EXE = Path(os.environ.get("RCS_EXE_PATH", r"C:\Users\2067928\Documents\RCS\RcsMainHD.exe"))
-VLM_API_URL = str(PIPELINE_CONFIG["primary_api_url"] or "")
-VLM_API_KEY = str(PIPELINE_CONFIG["primary_api_key"] or "")
 PYWINAUTO_BACKEND = os.environ.get("PYWINAUTO_BACKEND", "").strip().lower() or "win32"
 MAIN_WINDOW_TITLE_REGEX = (
     os.environ.get("RCS_MAIN_WINDOW_REGEX", r"\brcs\b.*\[server\s*:[^\]]+\]").strip()
@@ -64,12 +79,13 @@ DESKTOP_SCAN_BACKENDS = tuple(
 LAUNCH_TIMEOUT = 30.0
 WINDOW_TITLE_PREFIX = "Remote Control System"
 
-# 테스트할 primary VLM 모델 목록
-PRIMARY_VLM_MODEL = str(PIPELINE_CONFIG["primary_model_name"] or "ui-venus-1.5-8b")
-TEST_MODELS = [
-    PRIMARY_VLM_MODEL,
-]
+# 벤치마크 후 클릭할 요소 키
 TARGET_CLICK_KEY = os.environ.get("RCS_TARGET_CLICK_KEY", "login_button").strip() or "login_button"
+
+# health 에서 서비스를 찾지 못할 때 기본 비교 대상
+DEFAULT_TARGET_SERVICE_SLUGS = ("ui-venus", "mai-ui")
+
+# OCR assist 에서 검증할 키워드
 LOGIN_OCR_FOCUS_WORDS = (
     "Server",
     "User ID",
@@ -90,12 +106,6 @@ TARGET_ELEMENTS = [
     "cancel_button",
     "shortcut_button",
 ]
-
-VLM_CLIENT = LangChainOpenAICompatibleVLMClient(
-    base_url=VLM_API_URL,
-    api_key=VLM_API_KEY,
-    timeout_sec=120.0,
-)
 
 try:
     VLM_TEMPERATURE = float(os.getenv("VLM_TEMPERATURE", "0.0"))
@@ -155,16 +165,136 @@ ELEMENT_COLORS = {
     "shortcut_button": "cyan",
 }
 
-INPUT_X_OFFSET = 12
-SERVER_INPUT_X_OFFSET = 50
-INPUT_X_OFFSET_KEYS = {
-    "server_input",
-    "userid_input",
-    "password_input",
-    "login_button",
-    "cancel_button",
-    "shortcut_button",
-}
+
+# ─────────────────────────── 환경변수 헬퍼 ───────────────────────────
+
+
+def _parse_csv_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """콤마/세미콜론 구분 환경변수를 파싱한다."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    values: list[str] = []
+    seen: set[str] = set()
+    for item in raw.replace(";", ",").split(","):
+        value = item.strip()
+        if not value or value in seen:
+            continue
+        values.append(value)
+        seen.add(value)
+    return tuple(values) or default
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    """bool 형 환경변수를 해석한다."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    return raw.lower() in {"1", "true", "yes", "on", "y"}
+
+
+def _looks_like_ocr_service(row: dict[str, Any]) -> bool:
+    """service/model 이름 기반으로 OCR 계열 여부를 추정한다."""
+    haystack = " ".join(
+        [
+            str(row.get("service") or ""),
+            str(row.get("display_name") or ""),
+            str(row.get("expected_model") or ""),
+        ]
+    ).lower()
+    return "ocr" in haystack
+
+
+# ─────────────────────────── VLM 서비스 탐색 ───────────────────────────
+
+
+def _discover_benchmark_targets(
+    pipeline_config: dict[str, object],
+) -> list[dict[str, Any]]:
+    """Flask health 에서 벤치마크 대상 VLM 서비스를 발견한다."""
+    flask_base_url = str(pipeline_config.get("flask_api_base_url") or "").rstrip("/")
+    explicit_services = _parse_csv_env("RCS_LOGIN_SERVICES", ())
+    include_ocr = _env_flag("RCS_LOGIN_INCLUDE_OCR_SERVICE", False)
+
+    # 1) Health 에서 서비스 목록 가져오기
+    health_rows: list[dict[str, Any]] = []
+    if flask_base_url:
+        try:
+            health_body = fetch_vlm_health(flask_base_url=flask_base_url, timeout_sec=10.0)
+            health_rows = normalize_vlm_health_entries(health_body, flask_base_url=flask_base_url)
+        except (requests.RequestException, ValueError) as exc:
+            print(f"[WARNING] health 기반 서비스 탐색 실패: {exc}")
+
+    if health_rows:
+        print("[INFO] health 기반 서비스 상태:")
+        for row in health_rows:
+            print(
+                f"  {row['service']} -> health={row.get('health_status') or '-'}, "
+                f"model={row.get('expected_model') or '-'}, "
+                f"proxy_registered={row.get('proxy_registered')}"
+            )
+
+    # 2) 환경변수로 명시된 서비스가 있으면 사용
+    if explicit_services:
+        health_map = {str(row["service"]): row for row in health_rows}
+        targets: list[dict[str, Any]] = []
+        for slug in explicit_services:
+            if slug in health_map:
+                targets.append(health_map[slug])
+            else:
+                entry = get_service_by_slug(slug)
+                if entry and entry.enabled:
+                    targets.append(
+                        {
+                            "service": slug,
+                            "display_name": entry.display_name,
+                            "expected_model": entry.model_name,
+                            "health_status": "",
+                            "proxy_registered": True,
+                            "api_url": resolve_service_proxy_url(
+                                slug, flask_base_url=flask_base_url
+                            ),
+                        }
+                    )
+                else:
+                    print(f"[WARNING] 알 수 없거나 비활성 서비스: {slug}")
+        return targets
+
+    # 3) Health 에서 serving + proxy_registered 인 서비스 자동 선택
+    if health_rows:
+        serving = [
+            row
+            for row in health_rows
+            if str(row.get("health_status") or "").strip().lower() == "serving"
+            and bool(row.get("proxy_registered"))
+        ]
+        if not include_ocr:
+            ui_rows = [row for row in serving if not _looks_like_ocr_service(row)]
+            if ui_rows:
+                serving = ui_rows
+        if serving:
+            return serving
+
+    # 4) Fallback: 기본 서비스 슬러그 사용
+    fallback_targets: list[dict[str, Any]] = []
+    for slug in DEFAULT_TARGET_SERVICE_SLUGS:
+        entry = get_service_by_slug(slug)
+        api_url = ""
+        if flask_base_url:
+            api_url = resolve_service_proxy_url(slug, flask_base_url=flask_base_url)
+        elif entry and entry.enabled:
+            api_url = resolve_service_proxy_url(slug)
+        fallback_targets.append(
+            {
+                "service": slug,
+                "display_name": entry.display_name if entry else slug,
+                "expected_model": entry.model_name if entry else "",
+                "health_status": "",
+                "proxy_registered": bool(entry and entry.enabled),
+                "api_url": api_url,
+            }
+        )
+    return fallback_targets
 
 
 # ─────────────────────────── 창 탐색 ───────────────────────────
@@ -297,34 +427,6 @@ def _wait_for_post_login_windows(app):
     return None
 
 
-# ─────────────────────────── 좌표 보정 ───────────────────────────
-
-
-def _apply_control_bias(data: dict, img_w: int, img_h: int) -> dict:
-    """지정된 사각형 요소 좌표를 오른쪽으로 이동해 클릭 정밀도를 높인다."""
-    for key in INPUT_X_OFFSET_KEYS:
-        pt = data.get(key)
-        if not isinstance(pt, dict):
-            continue
-        if "x" not in pt or "y" not in pt:
-            continue
-
-        # server_input은 더 큰 오프셋(50px) 적용, 나머지는 기본(12px)
-        offset = SERVER_INPUT_X_OFFSET if key == "server_input" else INPUT_X_OFFSET
-
-        try:
-            x = int(pt["x"]) + offset
-            y = int(pt["y"])
-        except (TypeError, ValueError):
-            continue
-
-        x = max(0, min(x, img_w - 1))
-        y = max(0, min(y, img_h - 1))
-        data[key] = {"x": x, "y": y}
-        print(f"  [SHIFT] {key:20s} — x +{offset} applied")
-    return data
-
-
 # ─────────────────────────── 스크롤 ───────────────────────────
 
 
@@ -343,7 +445,6 @@ def _scroll_to_reveal_more(window) -> None:
     steps = POST_LOGIN_SCROLL_STEPS
 
     if mode == "combo":
-        # ComboBox 항목이 펼쳐졌을 때 내려가며 항목 노출을 시도
         print(f"[INFO] Combo mode scroll: 단계 수={steps}")
         send_keys("{F4}")
         time.sleep(0.25)
@@ -354,14 +455,12 @@ def _scroll_to_reveal_more(window) -> None:
         return
 
     if mode == "keys":
-        # 포커스된 스크롤 패널/문서에서 페이지 이동
         print(f"[INFO] Key mode scroll: 단계 수={steps}, 대상=PageDown")
         for _ in range(steps):
             send_keys("{PGDN}")
             time.sleep(POST_LOGIN_SCROLL_INTERVAL)
         return
 
-    # wheel mode: 기본값. 창 중앙에서 마우스 휠로 내려감
     print(f"[INFO] Wheel mode scroll: 단계 수={steps}, 좌표=({center_x}, {center_y})")
     for _ in range(steps):
         mouse.scroll(coords=(center_x, center_y), wheel_dist=-1)
@@ -370,104 +469,215 @@ def _scroll_to_reveal_more(window) -> None:
 
 # ─────────────────────────── 벤치마크 실행 ───────────────────────────
 
-def _run_benchmark(window) -> dict | None:
-    """Primary VLM + OCR assist pipeline 으로 좌표 검출을 실행한다."""
+
+def _run_benchmark(
+    window,
+    service_targets: list[dict[str, Any]],
+    pipeline_config: dict[str, object],
+) -> dict | None:
+    """여러 VLM 모델에 동일 스크린샷을 보내 좌표 검출 결과를 비교한다."""
     image = capture_window(window)
     img_b64, w, h = encode_image_webp(image)
 
     rect = window.rectangle()
-    print(f"[INFO] 창 영역: left={rect.left}, top={rect.top}, "
-          f"size={rect.right - rect.left}x{rect.bottom - rect.top}")
+    print(
+        f"[INFO] 창 영역: left={rect.left}, top={rect.top}, "
+        f"size={rect.right - rect.left}x{rect.bottom - rect.top}"
+    )
 
+    # OCR assist (한 번만 실행, 모든 모델에 동일 힌트 제공)
     ocr_result = collect_ocr_hint_result(
         image_b64=img_b64,
         image_width=w,
         image_height=h,
         image_mime="image/webp",
-        pipeline_config=PIPELINE_CONFIG,
+        pipeline_config=pipeline_config,
         context_label="RCS login dialog",
         focus_words=LOGIN_OCR_FOCUS_WORDS,
     )
-    prompt_extra_instructions = build_ocr_extra_instructions(ocr_result)
+    ocr_extra = build_ocr_extra_instructions(ocr_result)
 
     system_msg, prompt = build_rcs_login_locator_prompt(
         width=w,
         height=h,
         target_keys=TARGET_ELEMENTS,
-        extra_instructions=prompt_extra_instructions,
+        extra_instructions=ocr_extra,
     )
-    results = {}
 
-    for model in TEST_MODELS:
+    api_key = str(pipeline_config.get("primary_api_key") or "")
+    results: list[dict[str, Any]] = []
+
+    for target in service_targets:
+        service_slug = str(target["service"])
+        model_name = str(target.get("expected_model") or "")
+        target_api_url = str(target.get("api_url") or "").strip()
+
         print(f"\n{'=' * 60}")
-        print(f"[INFO] 모델 테스트: {model}")
+        print(f"[INFO] 모델 테스트: {service_slug} ({model_name})")
         print("=" * 60)
+
+        if not target_api_url or not model_name:
+            reason = "api_url missing" if not target_api_url else "model_name missing"
+            print(f"[ERROR] {service_slug}: {reason} — 건너뜀")
+            results.append(
+                {
+                    "service": service_slug,
+                    "model": model_name,
+                    "ok": False,
+                    "error": reason,
+                    "detected": 0,
+                    "latency_ms": 0,
+                    "data": {},
+                }
+            )
+            continue
+
+        client = LangChainOpenAICompatibleVLMClient(
+            base_url=target_api_url,
+            api_key=api_key,
+            timeout_sec=120.0,
+        )
 
         try:
             request = ChatImageRequest(
-                model=model,
+                model=model_name,
                 system_message=system_msg,
                 user_text=prompt,
                 image_b64=img_b64,
                 temperature=VLM_TEMPERATURE,
             )
-            print(f"[INFO] VLM 호출: model={model}, endpoint={VLM_CLIENT.endpoint}")
+            print(f"[INFO] VLM 호출: model={model_name}, endpoint={client.endpoint}")
             start = time.time()
-            raw = VLM_CLIENT.chat_with_image(request)
+            raw = client.chat_with_image(request)
             elapsed = (time.time() - start) * 1000
+
+            log_vlm_call(
+                service=service_slug,
+                model=model_name,
+                status="ok",
+                latency_ms=elapsed,
+                token_usage=client.last_token_usage,
+                endpoint=client.endpoint,
+            )
+
             print(f"[INFO] 응답 수신 ({elapsed:.0f}ms)")
             print(f"[INFO] 원문 응답:\n{raw}\n")
 
             data = extract_json(raw)
             print(f"[INFO] 파싱된 JSON:\n{json.dumps(data, indent=2)}\n")
             data = parse_coords(data, TARGET_ELEMENTS, w, h)
-            data = _apply_control_bias(data, w, h)
 
-            detected = sum(1 for k in TARGET_ELEMENTS if k in data and isinstance(data[k], dict))
+            detected = sum(
+                1 for k in TARGET_ELEMENTS if k in data and isinstance(data[k], dict)
+            )
             print(f"[INFO] 검출률: {detected}/{len(TARGET_ELEMENTS)}")
 
             out_path = debug_image_path(
                 DEBUG_IMAGE_DIR,
                 "debug_login.png",
-                model_name=model,
+                model_name=model_name,
             )
             save_marked_image(image, data, ELEMENT_COLORS, out_path)
 
-            results[model] = {"detected": detected, "data": data}
+            results.append(
+                {
+                    "service": service_slug,
+                    "model": model_name,
+                    "ok": True,
+                    "error": None,
+                    "detected": detected,
+                    "latency_ms": round(elapsed, 1),
+                    "data": data,
+                }
+            )
 
         except Exception as exc:
-            print(f"[ERROR] {model} 실패: {exc}")
-            results[model] = {"detected": 0, "error": str(exc)}
+            log_vlm_call(
+                service=service_slug,
+                model=model_name,
+                status="error",
+                latency_ms=0,
+                error=str(exc),
+                endpoint=client.endpoint,
+            )
+            print(f"[ERROR] {service_slug} 실패: {exc}")
+            results.append(
+                {
+                    "service": service_slug,
+                    "model": model_name,
+                    "ok": False,
+                    "error": str(exc),
+                    "detected": 0,
+                    "latency_ms": 0,
+                    "data": {},
+                }
+            )
 
-    # 요약
-    print(f"\n{'=' * 60}")
-    print("[INFO] ===== 벤치마크 결과 요약 =====")
-    print("=" * 60)
-    for model, res in results.items():
-        det = res["detected"]
-        total = len(TARGET_ELEMENTS)
-        status = f"{det}/{total} 검출" if "error" not in res else f"실패: {res['error']}"
-        print(f"  {model:30s} — {status}")
-    print("=" * 60)
+    _print_benchmark_summary(results)
 
-    return results.get(PRIMARY_VLM_MODEL, {}).get("data")
+    # 첫 번째 성공 결과의 좌표 데이터를 반환
+    for result in results:
+        if result["ok"] and result["detected"] > 0:
+            return result["data"]
+    return None
+
+
+def _print_benchmark_summary(results: list[dict[str, Any]]) -> None:
+    """벤치마크 결과를 비교 테이블로 출력한다."""
+    total = len(TARGET_ELEMENTS)
+
+    print(f"\n{'=' * 90}")
+    print("  RCS 로그인 VLM 좌표 검출 비교 결과")
+    print("=" * 90)
+    print(
+        f"  {'서비스':<18} {'모델':<24} {'상태':<8} "
+        f"{'검출':<10} {'응답시간':<12} {'비고'}"
+    )
+    print(
+        f"  {'─' * 18} {'─' * 24} {'─' * 8} "
+        f"{'─' * 10} {'─' * 12} {'─' * 24}"
+    )
+
+    for result in results:
+        service = str(result["service"])
+        model = str(result["model"])[:24]
+        status = "OK" if result["ok"] else "FAIL"
+        detected = f"{result['detected']}/{total}"
+        latency = f"{result['latency_ms']}ms" if result["latency_ms"] else "-"
+
+        note = ""
+        if result.get("error"):
+            note = str(result["error"])[:36]
+        elif result["ok"]:
+            data = result.get("data", {})
+            missing = [
+                k
+                for k in TARGET_ELEMENTS
+                if k not in data or not isinstance(data.get(k), dict)
+            ]
+            if missing:
+                note = f"miss: {', '.join(missing[:3])}"
+            else:
+                note = "all elements detected"
+
+        print(
+            f"  {service:<18} {model:<24} {status:<8} "
+            f"{detected:<10} {latency:<12} {note}"
+        )
+
+    print("=" * 90)
 
 
 # ─────────────────────────── 메인 ───────────────────────────
 
+
 def main() -> int:
-    if VLM_API_URL:
-        print(
-            f"[INFO] pipeline: primary={PIPELINE_CONFIG['primary_service']} "
-            f"({PRIMARY_VLM_MODEL}) -> ocr={PIPELINE_CONFIG['ocr_service']} "
-            f"({PIPELINE_CONFIG['ocr_model_name']})"
-        )
-        print(
-            f"[INFO] primary endpoint={VLM_API_URL}, "
-            f"ocr endpoint={PIPELINE_CONFIG['ocr_api_url']}"
-        )
-    else:
-        print("[WARNING] primary VLM API URL이 비어 있습니다. poc/work2/flask_vlm.py 의 공유 설정을 확인하세요.")
+    print(
+        f"[INFO] pipeline: primary={PIPELINE_CONFIG['primary_service']} "
+        f"({PIPELINE_CONFIG['primary_model_name']}), "
+        f"ocr={PIPELINE_CONFIG['ocr_service']} "
+        f"({PIPELINE_CONFIG['ocr_model_name']})"
+    )
 
     existing_window, existing_title, existing_debug_rows = find_existing_main_window(
         DESKTOP_SCAN_BACKENDS, _main_title_matcher
@@ -502,7 +712,19 @@ def main() -> int:
         return 3
 
     time.sleep(1.0)
-    data = _run_benchmark(login_window)
+
+    # VLM 서비스 탐색
+    benchmark_targets = _discover_benchmark_targets(PIPELINE_CONFIG)
+    if not benchmark_targets:
+        print("[ERROR] 벤치마크 대상 VLM 서비스가 없습니다.")
+        return 2
+
+    print(
+        f"[INFO] 벤치마크 대상: "
+        f"{', '.join(str(t['service']) for t in benchmark_targets)}"
+    )
+
+    data = _run_benchmark(login_window, benchmark_targets, PIPELINE_CONFIG)
     if not data:
         return 4
 

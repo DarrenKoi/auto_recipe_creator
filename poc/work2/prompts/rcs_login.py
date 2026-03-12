@@ -1,25 +1,55 @@
-"""RCS 로그인 화면 UI 요소 좌표 추출용 VLM 프롬프트 빌더."""
+"""RCS 로그인 화면 UI 요소 좌표 추출용 VLM 프롬프트 빌더.
+
+UI-specialized VLM (ui-venus, mai-ui 등)에 최적화된 프롬프트를 구성한다.
+각 UI 요소의 시각적 중심(center point)을 정수 좌표로 반환하도록 유도한다.
+"""
 
 from typing import Iterable
 
 
 RCS_LOGIN_TARGET_SPECS = {
-    "server_label": "TEXT LABEL. Find the first letter 'S' in 'Server' and return its center.",
+    "server_label": (
+        "TEXT LABEL — The static text 'Server' displayed on the left side of the first form row. "
+        "Return the center of this label text."
+    ),
     "server_input": (
-        "INPUT FIELD. Find the left-most vertical edge of the white Server combobox area. "
-        "(A +50px x-shift is applied later to hit the arrow reliably.)"
+        "COMBOBOX / DROPDOWN — The server selection control next to the 'Server' label. "
+        "This is a white rectangular area with a small dropdown arrow (▼) on its right edge. "
+        "Return the center of this entire dropdown control."
     ),
-    "userid_label": "TEXT LABEL. Find the first letter 'U' in 'User ID' and return its center.",
+    "userid_label": (
+        "TEXT LABEL — The static text 'User ID' displayed on the left side of the second form row. "
+        "Return the center of this label text."
+    ),
     "userid_input": (
-        "INPUT FIELD. Find the left-most vertical edge of the white field next to 'User ID'."
+        "TEXT INPUT — The editable text field next to the 'User ID' label. "
+        "This is a white rectangular input area with a thin border. "
+        "Return the center of this text field."
     ),
-    "password_label": "TEXT LABEL. Find the first letter 'P' in 'Password' and return its center.",
+    "password_label": (
+        "TEXT LABEL — The static text 'Password' displayed on the left side of the third form row. "
+        "Return the center of this label text."
+    ),
     "password_input": (
-        "INPUT FIELD. Find the left-most vertical edge of the white field next to 'Password'."
+        "TEXT INPUT — The editable text field next to the 'Password' label. "
+        "This is a white rectangular input area with a thin border. "
+        "Return the center of this text field."
     ),
-    "login_button": "BUTTON. Find the left-most edge of the 'Log In' button.",
-    "cancel_button": "BUTTON. Find the left-most edge of the 'Cancel' button.",
-    "shortcut_button": "BUTTON. Find the left-most edge of the Korean text button.",
+    "login_button": (
+        "BUTTON — The button labeled 'Log In' at the bottom of the dialog. "
+        "It has raised 3D borders in Windows classic style. "
+        "Return the center of this button."
+    ),
+    "cancel_button": (
+        "BUTTON — The button labeled 'Cancel' at the bottom of the dialog. "
+        "It has raised 3D borders in Windows classic style. "
+        "Return the center of this button."
+    ),
+    "shortcut_button": (
+        "BUTTON — A button with Korean text (e.g. '바로가기 설정') in the bottom area. "
+        "It may be positioned separately from the Log In and Cancel buttons. "
+        "Return the center of this button."
+    ),
 }
 
 DEFAULT_RCS_LOGIN_TARGET_KEYS = (
@@ -36,6 +66,7 @@ DEFAULT_RCS_LOGIN_TARGET_KEYS = (
 
 
 def _json_stub(target_keys: tuple[str, ...]) -> str:
+    """응답 JSON 형태의 예시 스텁을 생성한다."""
     lines = ["{"]
     for idx, key in enumerate(target_keys):
         comma = "," if idx < len(target_keys) - 1 else ""
@@ -50,26 +81,42 @@ def build_rcs_login_locator_prompt(
     target_keys: Iterable[str] | None = None,
     extra_instructions: Iterable[str] | None = None,
 ) -> tuple[str, str]:
-    """Build system/user prompts for RCS login UI coordinate extraction."""
+    """RCS 로그인 화면 UI 요소 좌표 추출용 system/user 프롬프트를 구성한다.
+
+    UI-specialized VLM 에 최적화: 각 요소의 시각적 중심 좌표를 정수로 반환하도록 유도한다.
+    """
     keys = tuple(target_keys) if target_keys is not None else DEFAULT_RCS_LOGIN_TARGET_KEYS
     missing = [key for key in keys if key not in RCS_LOGIN_TARGET_SPECS]
     if missing:
         raise ValueError(f"Unknown target keys for prompt: {missing}")
 
     system_message = (
-        "You are a precise GUI element locator. "
-        f"The image is {width}x{height} pixels. "
-        "The origin (0, 0) is the top-left corner of the image. "
-        "Return coordinates as integer pixel values. "
-        "Respond ONLY with valid JSON."
+        "You are a precise desktop GUI element locator "
+        "specialized in Windows application interfaces. "
+        f"The screenshot is {width}x{height} pixels. "
+        "Coordinate origin (0, 0) is the top-left corner; "
+        "x increases rightward, y increases downward. "
+        "Return integer pixel coordinates at the visual center of each requested element. "
+        "Respond ONLY with valid JSON — no explanation, no markdown fences."
     )
 
     lines = [
-        "Locate GUI elements in this Remote Control System login dialog.",
+        "This screenshot shows a Windows 'Remote Control System' login dialog.",
         "",
-        "The dialog has three labeled rows and three buttons.",
+        "DIALOG STRUCTURE:",
+        "- Three labeled form rows arranged vertically:",
+        "  Row 1: 'Server' label (left) + combobox/dropdown (right, white area with ▼ arrow)",
+        "  Row 2: 'User ID' label (left) + text input field (right, white editable area)",
+        "  Row 3: 'Password' label (left) + text input field (right, white editable area)",
+        "- Buttons below the form rows (e.g. 'Log In', 'Cancel', Korean text button)",
         "",
-        f"Find the pixel coordinates of these {len(keys)} elements:",
+        "VISUAL CUES:",
+        "- Labels are static text on a gray dialog background.",
+        "- Input fields and the combobox are white rectangular areas with thin borders.",
+        "- The Server combobox has a dropdown arrow (▼) on its right edge.",
+        "- Buttons have raised 3D borders typical of Windows classic style.",
+        "",
+        f"Find the CENTER coordinates of these {len(keys)} UI elements:",
         "",
     ]
     for idx, key in enumerate(keys, start=1):
@@ -77,18 +124,17 @@ def build_rcs_login_locator_prompt(
 
     if extra_instructions:
         lines.append("")
-        lines.append("Additional instructions:")
+        lines.append("ADDITIONAL CONTEXT:")
         for instruction in extra_instructions:
             lines.append(f"- {instruction}")
 
     lines.extend(
         [
             "",
-            f"Image size: {width} x {height} pixels.",
-            f"x range: 0 (left edge) to {width} (right edge).",
-            f"y range: 0 (top edge) to {height} (bottom edge).",
+            f"Image dimensions: {width} x {height} pixels.",
+            f"Valid x range: 0 to {width - 1}. Valid y range: 0 to {height - 1}.",
             "",
-            "Return ONLY this JSON (all values are integers):",
+            "Return ONLY this JSON (all coordinate values must be integers):",
             _json_stub(keys),
         ]
     )

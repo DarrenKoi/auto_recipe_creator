@@ -4,8 +4,6 @@
 현재 활성 포트: 8001 (ui-venus), 8004 (paddleocr-vl-1.5), 8005 (got-ocr)
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 

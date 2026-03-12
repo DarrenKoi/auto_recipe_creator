@@ -9,17 +9,9 @@
   uv run python poc/work2/connection_check.py
 """
 
-from __future__ import annotations
-
-import sys
 import time
 
-try:
-    import requests
-
-    REQUESTS_AVAILABLE = True
-except ImportError:
-    REQUESTS_AVAILABLE = False
+import requests
 
 from flask_api.vlm_serve.config import ENABLED_VLM_SERVICES
 from poc.work2.flask_vlm import (
@@ -150,10 +142,6 @@ def print_summary(health_body: dict | None, proxy_results: list[dict], flask_bas
 
 def main() -> None:
     """VLM 연결 점검을 수행한다."""
-    if not REQUESTS_AVAILABLE:
-        print("[ERROR] requests 패키지가 필요합니다: uv pip install requests")
-        sys.exit(1)
-
     load_work2_env()
     flask_base_url = resolve_work2_flask_api_base_url()
 

@@ -15,22 +15,19 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime
+import io
 from io import BytesIO
 from pathlib import Path
 
+from PIL import Image, ImageDraw, ImageFont
 from pywinauto import Desktop
 
+from poc.work.config import PocConfig
 from poc.work.rcs_common import DEFAULT_TIMEOUT, env_float, env_flag, load_env
+from poc.work.screen_capture import ScreenCapture
 from poc.work2 import debug_image_path
 from poc.work2.flask_vlm import apply_work2_pipeline_env_defaults, load_work2_env
-
-try:
-    from poc.work.screen_capture import ScreenCapture
-    from poc.work.config import PocConfig
-    from poc.work2.vlm_screen_analysis import VLMScreenAnalyzer
-    VLM_ANALYSIS_AVAILABLE = True
-except ImportError:
-    VLM_ANALYSIS_AVAILABLE = False
+from poc.work2.vlm_screen_analysis import VLMScreenAnalyzer
 
 DEFAULT_TOOL_NAME = "MCD018"
 DEBUG_IMAGE_DIR = Path(__file__).parent / "debug_images"
@@ -185,12 +182,6 @@ def _save_click_point_overlay(
     out_path: Path,
 ) -> int:
     """VLM이 반환한 좌표를 스크린샷에 오버레이하여 JPEG로 저장한다."""
-    try:
-        from PIL import Image, ImageDraw, ImageFont
-    except Exception as exc:
-        print(f"[WARNING] Pillow 로드 실패 — 좌표 오버레이 건너뜀: {exc}")
-        return 0
-
     image = Image.open(BytesIO(image_data)).convert("RGB")
     draw = ImageDraw.Draw(image)
     colors = ("lime", "cyan", "yellow", "orange", "red", "magenta")
@@ -229,10 +220,6 @@ def _save_click_point_overlay(
 
 def _capture_and_analyze_screen(window, settings: ToolScreenSettings) -> None:
     """툴 화면을 캡처하고 VLM으로 UI 요소를 분석한다."""
-    if not VLM_ANALYSIS_AVAILABLE:
-        print("[INFO] VLM 분석 모듈 미설치 — 화면 분석 건너뜀")
-        return
-
     # 창 영역 가져오기
     try:
         rect = window.rectangle()
@@ -279,8 +266,6 @@ def _capture_and_analyze_screen(window, settings: ToolScreenSettings) -> None:
         model_name=debug_model_name,
     )
     try:
-        from PIL import Image
-        import io
         img = Image.open(io.BytesIO(image_data))
         jpeg_buf = io.BytesIO()
         img.save(jpeg_buf, format="JPEG", quality=85)
@@ -297,8 +282,6 @@ def _capture_and_analyze_screen(window, settings: ToolScreenSettings) -> None:
     vlm_image_h = height
     MAX_VLM_BYTES = 1_000_000  # 1MB 상한
     try:
-        from PIL import Image
-        import io
         img = Image.open(io.BytesIO(image_data))
         vlm_image_w, vlm_image_h = img.size
         quality = 90
@@ -367,8 +350,6 @@ def _capture_and_analyze_screen(window, settings: ToolScreenSettings) -> None:
             if "500" in exc_text or "server" in exc_text.lower():
                 print(f"[WARNING] VLM 500 에러, 축소 이미지로 재시도: {api_exc}")
                 try:
-                    from PIL import Image
-                    import io
                     img = Image.open(io.BytesIO(image_data))
                     new_w = img.width // 2
                     new_h = img.height // 2

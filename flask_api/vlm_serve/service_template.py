@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import requests
 from flask import Blueprint, Response, jsonify, request
 
-from .logger import format_body_for_log, get_vlm_logger, sanitize_headers
+from .logger import get_vlm_logger
 
 logger = get_vlm_logger("proxy")
 
@@ -137,19 +137,10 @@ def _proxy_request(config: VLMServiceConfig, upstream_path: str):
     )
     request_headers = _build_upstream_headers()
     logger.info(
-        "Proxy request started service=%s method=%s path=%s upstream_url=%s query=%s "
-        "headers=%s body=%s",
+        "request service=%s method=%s upstream_url=%s",
         config.route_slug,
         request.method,
-        request.path,
         upstream_url,
-        request.args.to_dict(flat=False),
-        sanitize_headers(request_headers),
-        format_body_for_log(
-            request_body,
-            content_type=request.content_type or "",
-            sanitize_json=True,
-        ),
     )
     try:
         upstream_response = requests.request(
@@ -164,19 +155,10 @@ def _proxy_request(config: VLMServiceConfig, upstream_path: str):
         )
     except requests.RequestException as exc:
         logger.exception(
-            "VLM upstream request failed service=%s method=%s path=%s upstream_url=%s "
-            "elapsed_ms=%.1f headers=%s body=%s error=%s",
+            "upstream failed service=%s upstream_url=%s elapsed_ms=%.1f error=%s",
             config.route_slug,
-            request.method,
-            request.path,
             upstream_url,
             (time.monotonic() - start_time) * 1000,
-            sanitize_headers(request_headers),
-            format_body_for_log(
-                request_body,
-                content_type=request.content_type or "",
-                sanitize_json=True,
-            ),
             exc,
         )
         return jsonify(
@@ -189,7 +171,6 @@ def _proxy_request(config: VLMServiceConfig, upstream_path: str):
         ), 502
 
     response_headers = _build_response_headers(upstream_response.headers)
-    response_content_type = upstream_response.headers.get("content-type", "")
     body = upstream_response.content
     level = logging.INFO
     if upstream_response.status_code >= 500:
@@ -198,16 +179,11 @@ def _proxy_request(config: VLMServiceConfig, upstream_path: str):
         level = logging.WARNING
     logger.log(
         level,
-        "Upstream response completed service=%s method=%s upstream_url=%s status=%s "
-        "elapsed_ms=%.1f request_headers=%s response_headers=%s body=%s",
+        "response service=%s upstream_url=%s status=%s elapsed_ms=%.1f",
         config.route_slug,
-        request.method,
         upstream_url,
         upstream_response.status_code,
         (time.monotonic() - start_time) * 1000,
-        sanitize_headers(request_headers),
-        sanitize_headers(dict(response_headers)),
-        format_body_for_log(body, content_type=response_content_type),
     )
     upstream_response.close()
     return Response(

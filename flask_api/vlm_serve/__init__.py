@@ -4,8 +4,6 @@ vlm_serve_blueprint 생성, 서비스 blueprint 등록, health payload 구성을
 모두 이 모듈에서 처리한다.
 """
 
-from __future__ import annotations
-
 import os
 from pathlib import Path
 from typing import Any

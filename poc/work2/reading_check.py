@@ -13,8 +13,6 @@
   READING_CHECK_MONITOR_INDEX=1  # 기본값: 1 (첫 번째 물리 모니터)
 """
 
-from __future__ import annotations
-
 import base64
 import json
 import os
@@ -26,19 +24,14 @@ from pathlib import Path
 from typing import Any
 
 import requests
-
-try:
-    from PIL import Image
-
-    PIL_AVAILABLE = True
-except ImportError:
-    PIL_AVAILABLE = False
+from PIL import Image
 
 from poc.work.screen_capture import ScreenCapture
 from poc.work.vlm_openai_client import ChatImageRequest, OpenAICompatibleVLMClient
 from flask_api.vlm_serve.config import get_service_by_slug
 from poc.work2 import debug_image_dir
 from poc.work2.flask_vlm import apply_work2_pipeline_env_defaults, load_work2_env
+from poc.work2.logger import log_vlm_call
 from poc.work2.rcs_utils import extract_json
 
 
@@ -166,10 +159,6 @@ def _capture_monitor_image(monitor_index: int) -> Image.Image | None:
 
     if not png_data:
         print(f"[ERROR] 모니터 {monitor_index} 캡처 데이터가 비어 있습니다.")
-        return None
-
-    if not PIL_AVAILABLE:
-        print("[ERROR] Pillow 패키지가 필요합니다. `uv sync --extra dev` 환경을 확인하세요.")
         return None
 
     image = Image.open(BytesIO(png_data))
@@ -389,13 +378,22 @@ def _call_model(
     try:
         raw_response = client.chat_with_image(request)
     except Exception as exc:
+        latency_ms = round((time.time() - start) * 1000, 1)
+        log_vlm_call(
+            service=service_name,
+            model=request_model,
+            status="error",
+            latency_ms=latency_ms,
+            error=str(exc),
+            endpoint=client.endpoint,
+        )
         return {
             "service": service_name,
             "configured_model": model_name,
             "model": request_model,
             "advertised_models": advertised_models,
             "ok": False,
-            "latency_ms": round((time.time() - start) * 1000, 1),
+            "latency_ms": latency_ms,
             "error": str(exc),
             "raw_response": "",
             "parsed_json": None,
@@ -403,6 +401,14 @@ def _call_model(
         }
 
     latency_ms = round((time.time() - start) * 1000, 1)
+    log_vlm_call(
+        service=service_name,
+        model=request_model,
+        status="ok",
+        latency_ms=latency_ms,
+        token_usage=client.last_token_usage,
+        endpoint=client.endpoint,
+    )
     parsed_json = None
     if expect_json:
         try:
@@ -483,10 +489,6 @@ def _print_summary(results: list[dict[str, Any]]) -> None:
 
 def main() -> int:
     """전체 reading check 흐름을 실행한다."""
-    if not PIL_AVAILABLE:
-        print("[ERROR] Pillow 패키지가 필요합니다.")
-        return 1
-
     load_work2_env()
     pipeline = apply_work2_pipeline_env_defaults()
 

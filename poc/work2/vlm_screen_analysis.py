@@ -1,7 +1,5 @@
 """`poc.work2` screen analysis with optional PaddleOCR assist pipeline."""
 
-from __future__ import annotations
-
 import base64
 import json
 import os
@@ -11,6 +9,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from poc.work.vlm_openai_client import ChatImageRequest, LangChainOpenAICompatibleVLMClient
 from poc.work2.flask_vlm import apply_work2_pipeline_env_defaults
+from poc.work2.logger import log_vlm_call
 from poc.work2.pipeline_ocr import build_ocr_extra_instructions, collect_ocr_hint_result
 from poc.work2.prompts import (
     build_general_query_prompt,
@@ -261,9 +260,27 @@ class VLMScreenAnalyzer:
             temperature=0.1,
         )
 
+        start_ms = time.time()
         try:
-            return self.vlm_client.chat_with_image(request)
+            result = self.vlm_client.chat_with_image(request)
+            log_vlm_call(
+                service="primary",
+                model=self.model_name,
+                status="ok",
+                latency_ms=(time.time() - start_ms) * 1000,
+                token_usage=self.vlm_client.last_token_usage,
+                endpoint=self.vlm_client.endpoint,
+            )
+            return result
         except Exception as exc:
+            log_vlm_call(
+                service="primary",
+                model=self.model_name,
+                status="error",
+                latency_ms=(time.time() - start_ms) * 1000,
+                error=str(exc),
+                endpoint=self.vlm_client.endpoint,
+            )
             print(f"[ERROR] VLM API 호출 실패: {exc}")
             return self._get_mock_response(prompt)
 

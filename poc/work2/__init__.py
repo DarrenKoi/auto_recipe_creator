@@ -5,8 +5,6 @@ PoC Work2 Module (Flask VLM proxy test)
 실험용 entrypoint 들을 모아둔 패키지.
 """
 
-from __future__ import annotations
-
 import os
 from pathlib import Path
 
@@ -58,6 +56,7 @@ __all__ = [
     "debug_image_path",
     "connection_check",
     "flask_vlm",
+    "logger",
     "pipeline_ocr",
     "prompts",
     "rcs_utils",

@@ -1,11 +1,12 @@
 """OCR assist helpers for the `ui-venus -> paddleocr` work2 pipeline."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Iterable
 
+import time
+
 from poc.work.vlm_openai_client import ChatImageRequest, LangChainOpenAICompatibleVLMClient
+from poc.work2.logger import log_vlm_call
 from poc.work2.prompts import build_ocr_assist_prompt
 
 
@@ -106,11 +107,29 @@ def collect_ocr_hint_result(
         f"endpoint={client.endpoint}"
     )
 
+    start_ms = time.time()
     try:
         raw = client.chat_with_image(request)
     except Exception as exc:
+        log_vlm_call(
+            service=service_name,
+            model=model_name,
+            status="error",
+            latency_ms=(time.time() - start_ms) * 1000,
+            error=str(exc),
+            endpoint=client.endpoint,
+        )
         print(f"[WARNING] OCR assist 호출 실패: {exc}")
         return None
+
+    log_vlm_call(
+        service=service_name,
+        model=model_name,
+        status="ok",
+        latency_ms=(time.time() - start_ms) * 1000,
+        token_usage=client.last_token_usage,
+        endpoint=client.endpoint,
+    )
 
     print(f"[INFO] OCR assist 원문 응답:\n{raw}\n")
 

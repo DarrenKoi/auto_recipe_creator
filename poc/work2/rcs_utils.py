@@ -4,8 +4,6 @@ VLM 응답 파싱, 화면 캡처, 마우스 클릭, 디버그 이미지 생성, 
 여러 자동화 스크립트에서 공통으로 사용하는 함수를 모아둔다.
 """
 
-from __future__ import annotations
-
 import base64
 import json
 import re
@@ -14,27 +12,10 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable
 
-try:
-    import mss
-    import mss.tools
-
-    MSS_AVAILABLE = True
-except ImportError:
-    MSS_AVAILABLE = False
-
-try:
-    from PIL import Image, ImageDraw, ImageFont
-
-    PIL_AVAILABLE = True
-except ImportError:
-    PIL_AVAILABLE = False
-
-try:
-    from pywinauto import Desktop, mouse
-
-    PYWINAUTO_AVAILABLE = True
-except ImportError:
-    PYWINAUTO_AVAILABLE = False
+import mss
+import mss.tools
+from PIL import Image, ImageDraw, ImageFont
+from pywinauto import Desktop, mouse
 
 
 __all__ = [

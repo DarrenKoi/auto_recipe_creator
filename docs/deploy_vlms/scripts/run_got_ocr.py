@@ -1,7 +1,5 @@
 """GOT-OCR-2.0-hf GPU 실행 스크립트."""
 
-from __future__ import annotations
-
 import json
 import os
 import sys

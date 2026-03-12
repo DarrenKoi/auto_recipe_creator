@@ -1,16 +1,9 @@
 """Helpers for resolving Flask-proxied VLM settings in `poc.work2`."""
 
-from __future__ import annotations
-
 import os
 from pathlib import Path
 
-try:
-    from dotenv import load_dotenv
-
-    DOTENV_AVAILABLE = True
-except ImportError:
-    DOTENV_AVAILABLE = False
+from dotenv import load_dotenv
 
 DEFAULT_CLOUD_FLASK_API_BASE_URL = (
     "http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api"
@@ -35,9 +28,6 @@ def _flag(name: str, default: bool) -> bool:
 
 def load_work2_env() -> None:
     """`poc/work2/.env`를 우선 로드하고, 기존 `poc/work/.env`도 이어서 로드한다."""
-    if not DOTENV_AVAILABLE:
-        return
-
     work2_dir = Path(__file__).resolve().parent
     env_candidates = [
         work2_dir / ".env",

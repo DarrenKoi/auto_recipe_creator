@@ -11,8 +11,6 @@ transformers 기반 모델을 Flask 서버로 감싸서
   python serve_got_ocr.py          # 기본 포트 8005
 """
 
-from __future__ import annotations
-
 import base64
 import io
 import os

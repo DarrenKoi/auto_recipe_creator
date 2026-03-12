@@ -33,6 +33,7 @@ class OpenAICompatibleVLMClient:
         self.base_url = (base_url or "").strip().rstrip("/")
         self.api_key = (api_key or "").strip()
         self.timeout_sec = timeout_sec
+        self.last_token_usage: dict[str, int] = {}
 
     @property
     def endpoint(self) -> str:
@@ -109,6 +110,7 @@ class OpenAICompatibleVLMClient:
         response.raise_for_status()
 
         data = response.json()
+        self.last_token_usage = data.get("usage") or {}
         choices = data.get("choices") or []
         if not choices:
             raise ValueError(f"VLM response has no choices: {_json.dumps(data, ensure_ascii=False)[:300]}")
@@ -130,6 +132,7 @@ class LangChainOpenAICompatibleVLMClient:
         self.api_key = (api_key or "").strip()
         self.timeout_sec = timeout_sec
         self.max_retries = max_retries
+        self.last_token_usage: dict[str, int] = {}
 
     @property
     def openai_base_url(self) -> str:
@@ -206,6 +209,9 @@ class LangChainOpenAICompatibleVLMClient:
             ),
         )
         response = chat_model.invoke(messages)
+
+        metadata = getattr(response, "response_metadata", {}) or {}
+        self.last_token_usage = metadata.get("token_usage") or {}
 
         content = OpenAICompatibleVLMClient._coerce_content(getattr(response, "content", ""))
         print(f"[INFO] VLM 응답(content) 길이={len(content)}")

@@ -6,6 +6,11 @@ Flask proxy 주소, primary VLM, OCR 보조 모델 설정을 여기서 함께 �
 """
 
 import os
+from typing import Any
+
+import requests
+
+from flask_api.vlm_serve.config import get_service_by_slug
 
 # 팀 공용 pipeline 기본값.
 # 이 블록만 수정하면 `poc/work2` 하위 스크립트 전체에 동일한 설정이 반영된다.
@@ -40,6 +45,7 @@ DEFAULT_PRIMARY_VLM_MODEL_NAME = str(SHARED_PIPELINE_SETTINGS["primary_model_nam
 DEFAULT_OCR_PIPELINE_ENABLED = bool(SHARED_PIPELINE_SETTINGS["ocr_pipeline_enabled"])
 DEFAULT_OCR_VLM_SERVICE = str(SHARED_PIPELINE_SETTINGS["ocr_service"])
 DEFAULT_OCR_VLM_MODEL_NAME = str(SHARED_PIPELINE_SETTINGS["ocr_model_name"])
+DEFAULT_VLM_HEALTH_TIMEOUT_SEC = 5.0
 
 
 def _shared_text(name: str) -> str:
@@ -76,6 +82,92 @@ def _build_proxy_url(flask_base_url: str, service_slug: str) -> str:
 def resolve_flask_api_base_url() -> str:
     """공유 Flask API root 를 반환한다."""
     return (_shared_text("flask_api_base_url") or DEFAULT_FLASK_API_BASE_URL).rstrip("/")
+
+
+def resolve_vlm_health_url(flask_base_url: str | None = None) -> str:
+    """Flask VLM health endpoint URL 을 반환한다."""
+    base_url = (flask_base_url or resolve_flask_api_base_url()).rstrip("/")
+    if base_url.endswith("/vlm_serve"):
+        return f"{base_url}/health"
+    return f"{base_url}/vlm_serve/health"
+
+
+def fetch_vlm_health(
+    *,
+    flask_base_url: str | None = None,
+    timeout_sec: float = DEFAULT_VLM_HEALTH_TIMEOUT_SEC,
+) -> dict[str, Any]:
+    """Flask VLM health payload 를 가져온다."""
+    health_url = resolve_vlm_health_url(flask_base_url=flask_base_url)
+    response = requests.get(health_url, timeout=timeout_sec)
+    response.raise_for_status()
+
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise ValueError(f"VLM health 응답 형식이 올바르지 않습니다: {payload!r}")
+    return payload
+
+
+def normalize_vlm_health_entries(
+    health_body: dict[str, Any],
+    *,
+    flask_base_url: str | None = None,
+) -> list[dict[str, Any]]:
+    """health payload 의 `vlm_statuses` 를 공통 row 형식으로 정규화한다."""
+    statuses = health_body.get("vlm_statuses")
+    if not isinstance(statuses, list):
+        return []
+
+    registered_services = {
+        str(item).strip()
+        for item in health_body.get("registered_vlms", [])
+        if str(item).strip()
+    }
+    base_url = (flask_base_url or resolve_flask_api_base_url()).rstrip("/")
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for item in statuses:
+        if not isinstance(item, dict):
+            continue
+
+        service_slug = str(item.get("service", "") or "").strip()
+        if not service_slug or service_slug in seen:
+            continue
+        seen.add(service_slug)
+
+        service_entry = get_service_by_slug(service_slug)
+        health_status = str(item.get("health_status", "") or "").strip()
+        display_name = str(
+            item.get("display_name")
+            or (service_entry.display_name if service_entry else service_slug)
+            or service_slug
+        ).strip()
+        expected_model = str(
+            item.get("served_model_name")
+            or (service_entry.model_name if service_entry else "")
+            or ""
+        ).strip()
+        proxy_registered = bool(item.get("proxy_registered")) or service_slug in registered_services
+
+        rows.append(
+            {
+                "service": service_slug,
+                "display_name": display_name,
+                "expected_model": expected_model,
+                "health_status": health_status,
+                "proxy_registered": proxy_registered,
+                "config_known": service_entry is not None,
+                "config_enabled": None if service_entry is None else service_entry.enabled,
+                "api_url": _build_proxy_url(base_url, service_slug) if proxy_registered else "",
+                "upstream_base_url": str(item.get("upstream_base_url", "") or "").strip(),
+                "reason": str(item.get("reason", "") or "").strip(),
+                "source_env": str(item.get("source_env", "") or "").strip(),
+                "runtime": str(item.get("runtime", "") or "").strip(),
+            }
+        )
+
+    return rows
 
 
 def resolve_primary_vlm_service(default: str = DEFAULT_PRIMARY_VLM_SERVICE) -> str:
@@ -204,9 +296,12 @@ __all__ = [
     "DEFAULT_OCR_VLM_SERVICE",
     "DEFAULT_PRIMARY_VLM_MODEL_NAME",
     "DEFAULT_PRIMARY_VLM_SERVICE",
+    "DEFAULT_VLM_HEALTH_TIMEOUT_SEC",
     "SHARED_PIPELINE_SETTINGS",
     "apply_pipeline_env_defaults",
     "apply_primary_vlm_env_defaults",
+    "fetch_vlm_health",
+    "normalize_vlm_health_entries",
     "resolve_flask_api_base_url",
     "resolve_ocr_vlm_api_key",
     "resolve_ocr_vlm_api_url",
@@ -217,4 +312,5 @@ __all__ = [
     "resolve_primary_vlm_api_url",
     "resolve_primary_vlm_model_name",
     "resolve_primary_vlm_service",
+    "resolve_vlm_health_url",
 ]

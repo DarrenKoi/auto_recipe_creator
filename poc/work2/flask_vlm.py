@@ -20,7 +20,7 @@ from flask_api.vlm_serve.config import get_service_by_slug
 # 3) 필요 시 direct URL/API key 도 여기서만 관리한다.
 SHARED_PIPELINE_SETTINGS: dict[str, str | bool] = {
     # Flask 앱의 공용 진입점. `/api` 까지 포함된 주소를 권장한다.
-    "flask_api_base_url": "http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api",
+    "flask_api_base_url": "http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api",
     # Primary VLM: 기본 화면 해석 담당 모델
     "primary_service": "ui-venus",
     "primary_model_name": "ui-venus-1.5-8b",

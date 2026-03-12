@@ -32,7 +32,7 @@ class DummyHealthResponse:
 
 
 def _fake_vlm_health_get(url: str, timeout: float):
-    # 활성 포트만 응답: 8001 (ui-venus), 8004 (paddleocr-vl-1.5)
+    # 현재 응답하는 포트만 정상 응답: 8001 (ui-venus), 8004 (paddleocr-vl-1.5)
     if url == "http://127.0.0.1:8001/v1/models":
         return DummyHealthResponse(200, {"data": [{"id": "ui-venus-1.5-8b"}]})
     if url == "http://127.0.0.1:8004/v1/models":
@@ -65,6 +65,7 @@ def test_vlm_serve_root_returns_live_health_payload(client, monkeypatch):
     assert payload["base_path"] == "/api/vlm_serve"
     assert set(payload["registered_vlms"]) == {
         "ui-venus",
+        "mai-ui",
         "paddleocr-vl-1.5",
         "got-ocr",
     }
@@ -97,6 +98,7 @@ def test_vlm_serve_health_lists_serving_models(client, monkeypatch):
     # config.py 에서 enabled=True 인 서비스만 등록됨
     assert set(payload["registered_vlms"]) == {
         "ui-venus",
+        "mai-ui",
         "paddleocr-vl-1.5",
         "got-ocr",
     }
@@ -110,6 +112,7 @@ def test_vlm_serve_health_lists_serving_models(client, monkeypatch):
         for item in payload["vlm_statuses"]
     }
     assert status_map["ui-venus"]["health_status"] == "serving"
+    assert status_map["mai-ui"]["health_status"] == "unreachable"
     assert status_map["paddleocr-vl-1.5"]["health_status"] == "serving"
     assert status_map["got-ocr"]["health_status"] == "unreachable"
 

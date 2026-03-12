@@ -95,6 +95,7 @@ def test_vlm_serve_root_returns_live_health_payload(monkeypatch):
     assert payload["base_path"] == "/api/vlm_serve"
     assert set(payload["registered_vlms"]) == {
         "ui-venus",
+        "mai-ui",
         "paddleocr-vl-1.5",
         "got-ocr",
     }

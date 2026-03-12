@@ -1,7 +1,7 @@
 """VLM 서비스 중앙 설정.
 
 모든 VLM 서비스의 포트, 모델명, 활성 여부를 한 곳에서 관리한다.
-현재 활성 포트: 8001 (ui-venus), 8004 (paddleocr-vl-1.5), 8005 (got-ocr)
+현재 활성 포트: 8001 (ui-venus), 8002 (mai-ui), 8004 (paddleocr-vl-1.5), 8005 (got-ocr)
 """
 
 from dataclasses import dataclass
@@ -22,7 +22,7 @@ class VLMServiceEntry:
 # 포트 및 활성 여부를 변경하려면 이 목록만 수정하면 된다.
 ALL_VLM_SERVICES: list[VLMServiceEntry] = [
     VLMServiceEntry("ui-venus", "UI-Venus-1.5-8B", "ui-venus-1.5-8b", 8001, enabled=True),
-    VLMServiceEntry("mai-ui", "MAI-UI-8B", "mai-ui-8b", 8002, enabled=False),
+    VLMServiceEntry("mai-ui", "MAI-UI-8B", "mai-ui-8b", 8002, enabled=True),
     VLMServiceEntry("ui-tars", "UI-TARS-1.5-7B", "ui-tars-1.5-7b", 8003, enabled=False),
     VLMServiceEntry("paddleocr-vl-1.5", "PaddleOCR-VL-1.5", "paddleocr-vl-1.5", 8004, enabled=True),
     VLMServiceEntry("got-ocr", "GOT-OCR-2.0-hf", "got-ocr-2.0-hf", 8005, enabled=True),

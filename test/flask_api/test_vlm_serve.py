@@ -38,6 +38,17 @@ class DummyResponse:
         return None
 
 
+class DummyHealthResponse:
+    """health probe 용 requests.Response 대체 객체."""
+
+    def __init__(self, status_code: int, payload: dict):
+        self.status_code = status_code
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
 def _create_test_app() -> Flask:
     app = Flask(__name__)
     register_flask_api(app)
@@ -52,6 +63,15 @@ def _clear_vlm_file_handlers() -> None:
             handler.close()
 
 
+def _fake_vlm_health_get(url: str, timeout: float):
+    del timeout
+    if url == "http://127.0.0.1:8001/v1/models":
+        return DummyHealthResponse(200, {"data": [{"id": "ui-venus-1.5-8b"}]})
+    if url == "http://127.0.0.1:8004/v1/models":
+        return DummyHealthResponse(200, {"data": [{"id": "paddleocr-vl-1.5"}]})
+    raise RequestException(f"connection refused: {url}")
+
+
 @pytest.fixture(autouse=True)
 def cleanup_vlm_file_handlers():
     _clear_vlm_file_handlers()
@@ -59,7 +79,9 @@ def cleanup_vlm_file_handlers():
     _clear_vlm_file_handlers()
 
 
-def test_vlm_serve_root_lists_registered_services():
+def test_vlm_serve_root_returns_live_health_payload(monkeypatch):
+    monkeypatch.setattr("flask_api.vlm_serve.requests.get", _fake_vlm_health_get)
+
     app = _create_test_app()
     client = app.test_client()
 
@@ -68,11 +90,16 @@ def test_vlm_serve_root_lists_registered_services():
     assert response.status_code == 200
     payload = response.get_json()
     assert payload["service"] == "vlm_serve"
+    assert payload["status"] == "ok"
+    assert payload["mode"] == "proxy"
     assert payload["base_path"] == "/api/vlm_serve"
-    assert {item["service"] for item in payload["vlm_services"]} == {
+    assert set(payload["registered_vlms"]) == {
         "ui-venus",
-        "mai-ui",
-        "ui-tars",
+        "paddleocr-vl-1.5",
+        "got-ocr",
+    }
+    assert set(payload["serving_routes"]) == {
+        "ui-venus",
         "paddleocr-vl-1.5",
     }
 

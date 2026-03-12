@@ -51,25 +51,34 @@ def test_gpu_dashboard_health_route(client):
     }
 
 
-@pytest.mark.parametrize(
-    "expected_slug",
-    [
-        "ui-venus",
-        "paddleocr-vl-1.5",
-    ],
-)
-def test_vlm_serve_root_lists_registered_services(client, expected_slug):
-    """VLM root 엔드포인트에 활성 서비스 목록이 보여야 한다."""
-    response = client.get("/api/vlm_serve/")
+def test_vlm_serve_root_returns_live_health_payload(client, monkeypatch):
+    """VLM root 엔드포인트가 live health payload 를 그대로 반환해야 한다."""
+    monkeypatch.setattr("flask_api.vlm_serve.requests.get", _fake_vlm_health_get)
+
+    response = client.get("/api/vlm_serve")
 
     assert response.status_code == 200
     payload = response.get_json()
     assert payload["service"] == "vlm_serve"
     assert payload["status"] == "ok"
+    assert payload["mode"] == "proxy"
     assert payload["base_path"] == "/api/vlm_serve"
-    assert expected_slug in {
+    assert set(payload["registered_vlms"]) == {
+        "ui-venus",
+        "paddleocr-vl-1.5",
+        "got-ocr",
+    }
+    assert set(payload["serving_now"]) == {
+        "UI-Venus-1.5-8B",
+        "PaddleOCR-VL-1.5",
+    }
+    assert {
         item["service"]
-        for item in payload["vlm_services"]
+        for item in payload["vlm_statuses"]
+    } >= {
+        "ui-venus",
+        "paddleocr-vl-1.5",
+        "got-ocr",
     }
 
 
@@ -89,6 +98,7 @@ def test_vlm_serve_health_lists_serving_models(client, monkeypatch):
     assert set(payload["registered_vlms"]) == {
         "ui-venus",
         "paddleocr-vl-1.5",
+        "got-ocr",
     }
     assert set(payload["serving_now"]) == {
         "UI-Venus-1.5-8B",
@@ -101,6 +111,7 @@ def test_vlm_serve_health_lists_serving_models(client, monkeypatch):
     }
     assert status_map["ui-venus"]["health_status"] == "serving"
     assert status_map["paddleocr-vl-1.5"]["health_status"] == "serving"
+    assert status_map["got-ocr"]["health_status"] == "unreachable"
 
 
 def test_api_health_wraps_vlm_health_payload(client, monkeypatch):

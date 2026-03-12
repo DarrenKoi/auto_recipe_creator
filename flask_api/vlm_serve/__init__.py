@@ -290,22 +290,10 @@ def register_vlm_serve_routes(api_blueprint: Blueprint) -> None:
 # ── route 정의 ────────────────────────────────────────────────────────
 
 
-@vlm_serve_blueprint.route("/", methods=["GET"])
+@vlm_serve_blueprint.route("/", methods=["GET"], strict_slashes=False)
 def home():
-    """VLM 서비스 안내 엔드포인트."""
-    return jsonify(
-        {
-            "service": "vlm_serve",
-            "status": "ok",
-            "mode": "proxy",
-            "message": "VLM service proxy routes are registered.",
-            "base_path": "/api/vlm_serve",
-            "vlm_services": [
-                service_config.to_dict()
-                for service_config, _ in VLM_SERVICE_BLUEPRINTS
-            ],
-        }
-    )
+    """VLM 상태를 직접 반환하는 기본 엔드포인트."""
+    return jsonify(build_vlm_health_payload())
 
 
 @vlm_serve_blueprint.route("/health", methods=["GET"])

@@ -27,6 +27,8 @@ from poc.work2.flask_vlm import (
     fetch_vlm_health,
     normalize_vlm_health_entries,
     resolve_flask_api_base_url,
+    resolve_service_proxy_url,
+    resolve_vlm_health_url,
 )
 
 TIMEOUT_SEC = 5.0
@@ -48,15 +50,16 @@ def _parse_requested_services() -> tuple[str, ...]:
 def _fallback_target_row(service_slug: str) -> dict[str, object]:
     """health endpoint 를 못 쓸 때 사용할 최소 대상 row 를 구성한다."""
     service_entry = get_service_by_slug(service_slug)
+    proxy_registered = service_entry is not None and service_entry.enabled
     return {
         "service": service_slug,
         "display_name": service_entry.display_name if service_entry else service_slug,
         "expected_model": service_entry.model_name if service_entry else "",
         "health_status": "",
-        "proxy_registered": service_entry is not None and service_entry.enabled,
+        "proxy_registered": proxy_registered,
         "config_known": service_entry is not None,
         "config_enabled": None if service_entry is None else service_entry.enabled,
-        "api_url": "",
+        "api_url": resolve_service_proxy_url(service_slug) if proxy_registered else "",
         "upstream_base_url": "",
         "reason": "",
         "source_env": "",
@@ -113,7 +116,7 @@ def _probe_url(url: str) -> dict:
 
 def check_flask_health(flask_base_url: str) -> dict | None:
     """Flask /api/vlm_serve/health 엔드포인트를 호출한다."""
-    health_url = f"{flask_base_url}/vlm_serve/health"
+    health_url = resolve_vlm_health_url(flask_base_url=flask_base_url)
     print(f"\n[INFO] Flask VLM health endpoint 호출: {health_url}")
     started = time.time()
     try:
@@ -137,7 +140,13 @@ def check_proxy_models(flask_base_url: str, target_services: list[dict[str, obje
     for target in target_services:
         route_slug = str(target["service"])
         expected_model = str(target["expected_model"])
-        proxy_url = f"{flask_base_url}/vlm_serve/{route_slug}/v1/models"
+        proxy_base_url = str(target.get("api_url") or "").strip()
+        if not proxy_base_url:
+            proxy_base_url = resolve_service_proxy_url(
+                route_slug,
+                flask_base_url=flask_base_url,
+            )
+        proxy_url = f"{proxy_base_url.rstrip('/')}/v1/models" if proxy_base_url else ""
         probe = dict(target)
         probe["url"] = proxy_url
 

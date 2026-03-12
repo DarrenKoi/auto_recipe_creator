@@ -69,6 +69,7 @@ AI-powered automation system for CD-SEM/VeritySEM recipe setup. The project comb
 - Development assistant environment is macOS; Windows-only RCS/pywinauto/pynput behavior must be validated by running updated code on office Windows machines.
 - Keep `poc/work/` self-contained; avoid introducing cross-import coupling with `test/` prototypes. All `poc/work/` modules use absolute imports (`from poc.work.xxx`) — scripts should be run via `uv run python <script>` or `uv run python -m poc.work.<module>`.
 - For imports across `test/` sibling modules, use `from video_frame_parser...` style when operating with `PYTHONPATH=./test`.
+- Canonical office gateway host is `itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com`; if repo docs mention `webpp`, treat that as stale and keep `webapp`.
 
 ## Dynamic Prompt + Step-by-Step Roadmap (`poc/work`)
 - Goal: support dynamic prompts by UI situation and execute deterministic step-by-step automation, then connect VLM decisions to actual control tools.

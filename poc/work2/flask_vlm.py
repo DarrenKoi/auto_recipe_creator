@@ -20,7 +20,7 @@ from flask_api.vlm_serve.config import get_service_by_slug
 # 3) 필요 시 direct URL/API key 도 여기서만 관리한다.
 SHARED_PIPELINE_SETTINGS: dict[str, str | bool] = {
     # Flask 앱의 공용 진입점. `/api` 까지 포함된 주소를 권장한다.
-    "flask_api_base_url": "http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api",
+    "flask_api_base_url": "http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api",
     # Primary VLM: 기본 화면 해석 담당 모델
     "primary_service": "ui-venus",
     "primary_model_name": "ui-venus-1.5-8b",
@@ -90,6 +90,16 @@ def resolve_vlm_health_url(flask_base_url: str | None = None) -> str:
     if base_url.endswith("/vlm_serve"):
         return f"{base_url}/health"
     return f"{base_url}/vlm_serve/health"
+
+
+def resolve_service_proxy_url(
+    service_slug: str,
+    *,
+    flask_base_url: str | None = None,
+) -> str:
+    """service slug 기준 Flask proxy base URL 을 반환한다."""
+    base_url = (flask_base_url or resolve_flask_api_base_url()).rstrip("/")
+    return _build_proxy_url(base_url, service_slug)
 
 
 def fetch_vlm_health(
@@ -181,10 +191,9 @@ def resolve_primary_vlm_api_url() -> str:
     if direct_url:
         return direct_url.rstrip("/")
 
-    flask_base_url = resolve_flask_api_base_url()
-    return _build_proxy_url(
-        flask_base_url=flask_base_url,
-        service_slug=resolve_primary_vlm_service(),
+    return resolve_service_proxy_url(
+        resolve_primary_vlm_service(),
+        flask_base_url=resolve_flask_api_base_url(),
     )
 
 
@@ -209,9 +218,9 @@ def resolve_ocr_vlm_api_url() -> str:
     if direct_url:
         return direct_url.rstrip("/")
 
-    return _build_proxy_url(
+    return resolve_service_proxy_url(
+        resolve_ocr_vlm_service(),
         flask_base_url=resolve_flask_api_base_url(),
-        service_slug=resolve_ocr_vlm_service(),
     )
 
 
@@ -312,5 +321,6 @@ __all__ = [
     "resolve_primary_vlm_api_url",
     "resolve_primary_vlm_model_name",
     "resolve_primary_vlm_service",
+    "resolve_service_proxy_url",
     "resolve_vlm_health_url",
 ]

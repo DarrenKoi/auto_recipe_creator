@@ -1,10 +1,10 @@
-# GUI VLM 벤치마크 기반 진행 보고서 (2026-02)
+# GUI VLM 벤치마크 기반 진행 보고서 (2026-03-13)
 
-1. 우리는 `ScreenSpot-Pro` 기준으로 현재 self-hosted 모델 `Kimi-K2.5`와 GUI 특화 VLM/UI Parsing 조합을 비교 분석했다.
-2. 또한 `RCS/CD-SEM` 자동화 실험에서 narrow-range 영역의 click-point 안정성, icon/widget 인식, element grounding 품질을 점검했다.
-3. 분석 결과 현재 운영 중인 `Kimi-K2.5`의 점수는 52.8%로, `UI-Venus-1.5-8B`(69.6%) 등 GUI 특화 모델 대비 격차가 확인되었다.
-4. 특히 밀집 UI(요소 간격 <10~20px)에서 좌표 drift와 인접 요소 혼동이 반복되어 recipe editor 자동화 신뢰도를 떨어뜨리고 있다.
-5. 현 파이프라인은 `UI parsing` 전처리 부재로 인해 복잡한 화면에서 deterministic한 element 분리가 부족한 상태다.
-6. 따라서 `OmniParser V2 + GUI-specialized VLM` 구조로 전환해 parser가 bbox를 먼저 고정하고 VLM이 target selection을 수행하도록 개선이 필요하다.
-7. 이 전환을 위해 self-hosted 환경에서 신규 VLM(예: `UI-TARS-1.5-7B`, `UI-Venus-1.5-8B`)을 설치·서빙하고 성능을 재검증할 계획이다.
-8. 실행을 위해 GPU 리소스 요청(우선 2x H200 기준)을 진행하고, 설치 후 benchmark와 실제 RCS workflow A/B test를 수행해 최종 모델을 선정하겠다.
+1. 현재 비교 세트는 회사 API baseline인 `Kimi-K2.5`와 self-hosted GUI 모델 `UI-Venus-1.5-8B`, `UI-TARS-1.5-7B`로 잡는 것이 맞다.
+2. `deploy_vlms/config/` 기준 self-hosted 활성/준비 상태는 `UI-Venus(8001, GPU 0)`, `MAI-UI(8002, GPU 1)`, `UI-TARS(8003, GPU 0, env 준비)`, `PaddleOCR-VL-1.5(8004, GPU 1)`, `GOT-OCR-2.0-hf(8005, GPU 1)`다.
+3. 다만 Flask proxy 기준 현재 활성 서비스는 `UI-Venus`, `MAI-UI`, `PaddleOCR-VL-1.5`, `GOT-OCR-2.0-hf`이고, `UI-TARS`는 `flask_api/vlm_serve/config.py`에서 아직 `enabled=False`다.
+4. 따라서 1차 full-screen benchmark는 `Kimi-K2.5` vs `UI-Venus` vs `UI-TARS`로 수행하되, `UI-TARS`는 proxy 활성화 또는 direct `8003` 호출이 필요하다.
+5. `MAI-UI-8B`는 primary 비교 대상보다 small target / crowded toolbar / ambiguous crop에 대한 **zoom-in sidecar**로 두는 편이 현재 GPU 배치에 더 잘 맞는다.
+6. OCR 보강은 `PaddleOCR-VL-1.5`를 기본 sidecar로 두고, 아주 작은 숫자/코드/format-sensitive 텍스트는 `GOT-OCR-2.0-hf`로 fallback하는 구조가 적절하다.
+7. 운영 평가 순서는 `Kimi/ Venus/ TARS` 1차 비교 후, self-hosted 승자 모델에 `MAI-UI`, `PaddleOCR-VL`, `GOT-OCR`를 순차적으로 붙여 gain을 측정하는 방식이 가장 해석하기 쉽다.
+8. 측정 항목은 `element hit rate`, `click-point drift(px)`, `retry count`, `step completion rate`, `small-text OCR recall`, `latency`, `sidecar escalation rate`로 통일하는 편이 좋다.

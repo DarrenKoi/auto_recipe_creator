@@ -1,143 +1,150 @@
-# 복잡한 엔지니어링 화면 판독용 VLM 추천 메모 (2026-03-11)
+# 복잡한 엔지니어링 화면 판독용 VLM 운영 메모 (2026-03-13)
 
 ## 목적
 
-이 문서는 `CD-SEM/VeritySEM/RCS`처럼 요소가 촘촘하고 텍스트가 작으며 패널 구조가 복잡한 엔지니어링 툴 화면을 읽기 위한 VLM 후보를 정리한 메모다.
+이 문서는 `deploy_vlms/config/`, `flask_api/vlm_serve/config.py`, 그리고 현재 저장소에서 이미 사용 중인 회사 API 모델(`Kimi-K2.5`)을 함께 기준으로, 지금 바로 비교하거나 조합할 수 있는 모델 구성을 정리한 운영 메모다.
 
-핵심 질문은 아래 2개다.
+지금 기준 핵심 질문은 아래 2개다.
 
-1. `MAI-UI`가 모바일 전용 모델인가?
-2. 현재 공개된 모델 중 복잡한 엔지니어링 화면 판독에 가장 유리한 조합은 무엇인가?
+1. 첫 비교는 어떤 모델끼리 하는 것이 맞는가?
+2. `MAI-UI`를 zoom-in 전용 sidecar로 두고 OCR 모델과 같이 쓰는 구성이 실용적인가?
 
 ## 결론 요약
 
-- `MAI-UI`는 **mobile-first 성향은 강하지만 mobile-only 모델은 아니다**.
-- 복잡한 엔지니어링 화면 평가에는 `ScreenSpot-Pro` 같은 **professional desktop GUI grounding benchmark**가 더 중요하다.
-- 현재 공개 정보 기준으로 최고 정확도는 `Holo2-235B-A22B (agentic localization)` 쪽이 앞선다.
-- 상용/자체 배포 현실성까지 같이 보면 `MAI-UI-32B (+Zoom-In)`와 `UI-Venus-1.5-30B-A3B`가 가장 실무적인 상위 후보다.
-- 실제 운영에서는 **GUI grounding 모델 1개만 쓰지 말고**, `zoom/crop 재탐색 + OCR 전용 보조 모델`을 같이 붙이는 편이 안전하다.
+- 전체 1차 비교 세트는 `Kimi-K2.5` vs `UI-Venus-1.5-8B` vs `UI-TARS-1.5-7B`가 가장 해석하기 좋다.
+- self-hosted 모델끼리의 직접 head-to-head는 `UI-Venus-1.5-8B` vs `UI-TARS-1.5-7B`로 두는 편이 깔끔하다.
+- `MAI-UI-8B`는 full-screen 주력보다는 **작은 타깃 재탐색용 zoom-in sidecar**로 두는 편이 현재 구성에 더 잘 맞는다.
+- OCR sidecar는 `PaddleOCR-VL-1.5`를 기본으로 두고, 아주 작은 글씨나 formatting 민감 케이스만 `GOT-OCR-2.0-hf`로 보강하는 구성이 좋다.
+- `MAI-UI + PaddleOCR-VL + GOT-OCR`를 매 step 항상 다 돌리는 것은 비효율적이다. **조건부 escalation**로 묶어야 한다.
+- 현재 Flask proxy 활성 기준 주력 서비스는 `UI-Venus(8001)`, `MAI-UI(8002)`, `PaddleOCR-VL-1.5(8004)`, `GOT-OCR-2.0-hf(8005)`다. `UI-TARS(8003)`는 model env는 있으나 proxy에서는 아직 비활성이다.
+- `Kimi-K2.5`는 `deploy_vlms/config/`에는 없지만 회사 API 경로로 이미 사용 가능하므로, **외부 API baseline**으로 유지하는 것이 맞다.
 
-## 1. 왜 일반 GUI 벤치마크보다 `ScreenSpot-Pro`가 중요한가
+## 1. 현재 사용 가능한 모델 구성
 
-복잡한 엔지니어링 화면 읽기 문제는 일반 모바일 앱이나 단순 웹보다 훨씬 까다롭다. 작은 버튼, 촘촘한 아이콘, 다중 패널, 고해상도 스크린샷, 전문 도메인 용어가 동시에 섞이기 때문이다.
+`deploy_vlms/config/models/*.env`, `flask_api/vlm_serve/config.py`, 그리고 저장소 내 기존 Kimi 사용 흔적(`poc/work/automate_rcs_login.py`, `poc/work/select_tool.py`, `test/vlm_input_control/vlm_screen_analysis.py`)을 합쳐 보면 현재 비교 구성은 아래와 같다.
 
-`ScreenSpot-Pro`는 이런 조건에 더 가깝다.
+| 구분 | served model | service slug | port | GPU | 현재 상태 | 주 용도 |
+|------|--------------|--------------|------|-----|-----------|---------|
+| 외부 API baseline | `Kimi-K2.5` | 회사 API | - | 외부/사내 제공 | 사용 가능 | self-hosted GUI 모델 대비 정확도/범용성 기준선 |
+| GUI 주력 A | `ui-venus-1.5-8b` | `ui-venus` | `8001` | `0` | 활성 | full-screen GUI grounding 기본 후보 |
+| GUI 주력 B | `ui-tars-1.5-7b` | `ui-tars` | `8003` | `0` | env 존재, proxy 비활성 | `UI-Venus`와 직접 비교할 다음 후보 |
+| Zoom-in sidecar | `mai-ui-8b` | `mai-ui` | `8002` | `1` | 활성 | 작은 요소/모호한 crop 재탐색 |
+| OCR 기본 sidecar | `paddleocr-vl-1.5` | `paddleocr-vl-1.5` | `8004` | `1` | 활성 | 작은 텍스트, 표, dense panel 읽기 |
+| OCR fallback | `got-ocr-2.0-hf` | `got-ocr` | `8005` | `1` | 활성 | hard crop OCR, formatting 민감 케이스 |
 
-- professional high-resolution computer use를 목표로 만든 benchmark다.
-- 23개 professional application, 5개 산업군, 3개 OS를 다룬다.
-- 예시 앱에 `AutoCAD`, `SolidWorks`, `Inventor`, `Vivado`, `MATLAB`, `Origin`, `Quartus` 같은 엔지니어링/분석 툴이 포함된다.
-- 실제 고해상도 스크린샷과 expert annotation을 사용한다.
+공통 설정도 운영 해석에 중요하다.
 
-즉, 우리 용도에서는 `AndroidWorld` 같은 mobile navigation 점수보다 `ScreenSpot-Pro`, `OSWorld-G`, `UI-Vision` 같은 **desktop grounding 계열 지표**를 더 우선해서 봐야 한다.
+- `common.env`는 `HOST=127.0.0.1`, `DTYPE=bfloat16`, `STRICT_OFFLINE=1` 기준이다.
+- GPU 0은 `UI-Venus`와 `UI-TARS` co-location 전제를 두고 있다.
+- GPU 1은 `MAI-UI + PaddleOCR-VL + GOT-OCR` 조합을 전제로 잡혀 있다.
 
-## 2. `MAI-UI`는 모바일 전용인가
+즉, 현재 구성은 **회사 API의 Kimi를 범용 baseline으로 두고**, 로컬 GPU에서는 **GPU 0에서 coarse grounding 비교**, **GPU 1에서 zoom/OCR 보강**이라는 역할 분리가 이미 어느 정도 설계되어 있다.
 
-아니다. 다만 **공식 메시지와 데모가 모바일 쪽을 강하게 강조하는 편**이다.
+## 2. 비교 순서 권장안
 
-`MAI-UI-8B` 공식 모델 카드는 아래를 같이 말한다.
+### 2.1 1차 비교
 
-- 모델 family는 2B, 8B, 32B, 235B-A22B까지 있다.
-- mobile navigation을 강하게 강조한다.
-- 동시에 grounding 결과로 `ScreenSpot-Pro`, `OSWorld-G`, `UI-Vision`을 공식 표에 포함한다.
+첫 실험은 아래처럼 가져가는 편이 맞다.
 
-특히 `MAI-UI-8B` 모델 카드에는 grounding 결과로 아래 수치가 직접 적혀 있다.
+1. `Kimi-K2.5` full-screen pass
+2. `UI-Venus-1.5-8B` full-screen pass
+3. `UI-TARS-1.5-7B` full-screen pass
+4. 같은 스크린샷 세트에서 element hit rate, click drift, retry count 비교
 
-- `ScreenSpot-Pro`: 73.5
-- `OSWorld-G`: 70.9
-- `UI-Vision`: 49.2
+이 비교가 좋은 이유는 아래와 같다.
 
-이 수치는 family 전체 최고치 설명에 가깝고, 세부 variant별 수치는 다른 비교표를 같이 봐야 한다. 그래도 중요한 해석은 분명하다.
+- `Kimi`를 넣으면 "현재 회사 API baseline보다 self-hosted GUI 모델이 실제로 나은가"를 바로 볼 수 있다.
+- `UI-Venus`와 `UI-TARS`는 둘 다 GUI 주력 후보라 역할이 같다.
+- `UI-Venus`와 `UI-TARS`는 둘 다 GPU 0 계열 모델이라 self-hosted끼리 응답 시간 비교가 공정하다.
+- `MAI-UI`처럼 zoom-in 특화 역할을 섞지 않아서 결과 해석이 단순해진다.
 
-- `MAI-UI`는 모바일-only가 아니다.
-- 오히려 **desktop grounding benchmark에서도 경쟁력 있는 GUI agent family**로 보는 것이 맞다.
-- 따라서 `flask_api/vlm_serve/mai_ui.py`라는 파일명이 있다고 해서 모바일 전용 endpoint라고 해석하면 안 된다. 현재 파일은 단순 프록시 설정일 뿐이다.
+### 2.2 2차 비교
 
-## 3. 현재 추천 모델 순위
+1차에서 더 안정적인 self-hosted coarse 모델을 고른 뒤, 그 모델에 아래를 순차적으로 붙인다.
 
-### 3.1 최고 정확도 우선
+1. `MAI-UI-8B` zoom-in sidecar
+2. `PaddleOCR-VL-1.5` OCR sidecar
+3. `GOT-OCR-2.0-hf` fallback OCR
 
-1. `Holo2-235B-A22B (Agentic Localization)`
-2. `MAI-UI-32B (+Zoom-In)`
-3. `UI-Venus-1.5-30B-A3B`
-4. `MAI-UI-8B (+Zoom-In)`
-5. `Holo2-8B (Agentic)` 또는 `UI-Venus-1.5-8B`
+즉, 비교 축을 아래처럼 나누는 것이 좋다.
 
-### 3.2 실무 배포 우선
+- 축 A: `Kimi` vs `UI-Venus` vs `UI-TARS`
+- 축 B: `UI-Venus` vs `UI-TARS` self-hosted 직접 비교
+- 축 C: `MAI-UI`를 붙였을 때 개선되는 failure type
+- 축 D: `PaddleOCR`/`GOT-OCR`를 붙였을 때 텍스트 판독 개선량
 
-1. `MAI-UI-32B (+Zoom-In)`
-2. `UI-Venus-1.5-30B-A3B`
-3. `MAI-UI-8B (+Zoom-In)`
-4. `UI-Venus-1.5-8B`
-5. `PaddleOCR-VL`을 보조 OCR 모델로 결합
+## 3. `MAI-UI`를 zoom-in sidecar로 두는 이유
 
-## 4. 모델별 해석
+이전 메모에서도 정리했듯 `MAI-UI`는 mobile-only 모델로 보기 어렵다. 다만 현재 운영 관점에서는 아래처럼 두는 편이 더 실용적이다.
 
-| 모델 | 장점 | 약점/주의점 | 판단 |
-|------|------|-------------|------|
-| `Holo2-235B-A22B (Agentic)` | 현재 공개 수치상 최고 수준. `ScreenSpot-Pro 78.5%`, `OSWorld-G 79.0%` | `235B`급이라 운영 부담이 매우 크고, `30B/235B`는 `cc-by-nc-4.0` 기반 research-only 제약이 있다 | 정확도 ceiling 확인용 reference model |
-| `MAI-UI-32B (+Zoom-In)` | `ScreenSpot-Pro 73.5%`, `OSWorld-G 70.9%`. zoom-in을 포함한 고해상도 소형 타깃 탐색이 강점 | 32B급 운영 비용 존재. mobile 브랜딩 때문에 오해받기 쉽다 | `Apache-2.0` 계열이라 실무 후보로 가장 균형이 좋다 |
-| `UI-Venus-1.5-30B-A3B` | 공식 카드 기준 `ScreenSpot-Pro 69.6%`, `OSWorld-G 70.6%`, `UI-Vision 54.7%`. grounding/mobile/web을 unified하게 학습 | absolute top score는 Holo2, MAI-UI-32B보다 약간 낮다 | `Apache-2.0` 기반의 매우 강한 A/B baseline |
-| `MAI-UI-8B (+Zoom-In)` | 8B 대비 강한 성능. `ScreenSpot-Pro 70.9%`, `OSWorld-G 64.2%` | 32B 대비 복잡 화면 안정성은 더 약할 가능성 | GPU 제약이 있을 때 현실적인 선택 |
-| `UI-Venus-1.5-8B` | 8B인데도 `ScreenSpot-Pro 68.4%`로 강함 | 작은 텍스트/밀집 아이콘에서 대형 모델 대비 한계 가능 | 가벼운 self-hosted baseline |
-| `PaddleOCR-VL` | 텍스트, 표, 수식, 차트 parsing이 강하다 | 클릭 좌표 grounding 자체는 GUI agent보다 약하다 | OCR sidecar로 거의 필수 |
+- full-screen 모든 step에 항상 태우기보다, 작은 타깃에서만 선택적으로 호출할 때 강점이 잘 살아난다.
+- 현재 config상 `MAI-UI`는 GPU 1에 있고, `UI-Venus`/`UI-TARS`는 GPU 0에 있으므로 coarse-pass와 sidecar-pass를 분리하기 쉽다.
+- OCR 계열과 같은 GPU에 있어도, 순차적 조건부 호출이면 운영 가능하다.
 
-## 5. 왜 단일 VLM보다 `GUI grounding + OCR sidecar` 조합이 낫나
+권장 역할은 아래와 같다.
 
-엔지니어링 툴 화면은 아래 문제가 반복된다.
+1. full-screen 모델이 후보 bbox 또는 영역을 먼저 찾는다.
+2. bbox가 너무 작거나 주변 요소가 과밀하면 crop을 만든다.
+3. `MAI-UI-8B`로 crop/zoom-in 재탐색을 수행한다.
+4. 필요하면 같은 crop에 OCR sidecar를 추가한다.
 
-- 작은 숫자/단위/파라미터명이 많다.
-- grid, table, chart, formula-like text가 섞인다.
-- 패널 이름과 실제 target widget이 멀리 떨어져 있다.
-- 메뉴/탭/toolbar가 과밀해서 click-point drift가 생긴다.
+이 패턴이면 `MAI-UI`의 강점을 살리면서도, primary 비교 실험을 흐리지 않는다.
 
-이 때문에 단일 GUI agent만으로는 아래 상황에서 흔들리기 쉽다.
+## 4. `MAI-UI + OCR sidecar` 조합은 가능한가
 
-- target text는 읽었는데 정확한 클릭 좌표를 못 잡는 경우
-- 좌표는 근처까지 갔는데 인접 아이콘과 혼동하는 경우
-- tiny OCR text를 놓쳐서 잘못된 panel을 읽는 경우
+가능하다. 다만 **항상-on 체인**이 아니라 **조건부 escalation 체인**으로 써야 한다.
 
-따라서 운영 권장 조합은 아래와 같다.
+| 조건 | 우선 호출 | 기대 효과 | 주의점 |
+|------|-----------|-----------|--------|
+| 일반 full-screen 버튼/탭/패널 탐색 | `UI-Venus` 또는 `UI-TARS` | 빠른 coarse grounding | sidecar 불필요 |
+| bbox가 작음, 주변 아이콘이 과밀함 | `MAI-UI-8B` | zoom-in 재탐색 | crop 생성 규칙이 중요 |
+| 텍스트가 많고 판독이 핵심 | `PaddleOCR-VL-1.5` | dense text/OCR 보강 | bbox 자체는 GUI 모델이 더 낫다 |
+| 작은 숫자/코드/포맷 보존이 중요 | `GOT-OCR-2.0-hf` | hard OCR fallback | 항상 호출하면 지연 증가 |
 
-1. 1차: `MAI-UI-32B` 또는 `UI-Venus-1.5-30B-A3B`로 target panel/element 후보를 찾는다.
-2. 2차: 후보 영역을 crop/zoom-in 해서 같은 모델 또는 agentic localization으로 재탐색한다.
-3. 3차: 텍스트 밀집 구역은 `PaddleOCR-VL`로 보강한다.
-4. 4차: 최종 클릭 전에는 bbox 중심점 대신 offset-safe click rule을 둔다.
+운영 규칙은 아래 정도가 적당하다.
 
-## 6. 이 저장소 기준 추천안
+1. 기본은 GUI 모델 1회 호출
+2. low-confidence, small-target, crowded-toolbar면 `MAI-UI` 추가
+3. text-heavy panel이면 `PaddleOCR-VL` 추가
+4. `PaddleOCR-VL` 결과가 부족하거나 format 보존이 필요하면 `GOT-OCR` 추가
 
-현재 저장소 구조를 기준으로 하면 아래가 가장 현실적이다.
+이렇게 하면 `MAI-UI`가 OCR sidecar들과 충돌하는 것이 아니라, **다른 failure mode를 담당하는 보조 단계**가 된다.
 
-### 추천 1안
+## 5. 현재 저장소 기준 권장 파이프라인
 
-- `8001`: `UI-Venus-1.5-8B` 또는 `UI-Venus-1.5-30B-A3B`
-- `8002`: `MAI-UI-8B` 또는 `MAI-UI-32B`
-- `8003`: 비교용 다른 GUI 모델
-- 별도 sidecar: `PaddleOCR-VL`
+### 추천 1안: 비교 실험용
 
-이 구성이 좋은 이유는 아래와 같다.
+1. `Kimi-K2.5`, `UI-Venus-1.5-8B`, `UI-TARS-1.5-7B`를 동일 스크린샷 세트로 비교
+2. self-hosted 후보 중 더 안정적인 coarse 모델을 primary로 채택
+3. ambiguous case에서만 `MAI-UI-8B` zoom-in pass 추가
+4. dense text crop에서는 `PaddleOCR-VL-1.5` 추가
+5. 필요한 경우만 `GOT-OCR-2.0-hf` fallback
 
-- 기존 `flask_api/vlm_serve` 구조가 모델별 proxy route 확장에 맞춰져 있다.
-- `poc/work` 쪽은 이미 screenshot capture와 step-by-step action loop가 있어서 A/B test 연결이 쉽다.
-- `MAI-UI`와 `UI-Venus`를 같은 스크린샷 세트로 비교하기 좋다.
+### 추천 2안: 실제 운영용
 
-### 추천 2안
+1. Primary GUI model: `UI-Venus-1.5-8B` 또는 `UI-TARS-1.5-7B`
+2. Zoom-in sidecar: `MAI-UI-8B`
+3. OCR default sidecar: `PaddleOCR-VL-1.5`
+4. OCR fallback: `GOT-OCR-2.0-hf`
+5. External baseline: `Kimi-K2.5`
 
-최고 정확도 연구용으로는 아래처럼 보는 편이 맞다.
+현재 `poc/work2/flask_vlm.py` 기본값은 `UI-Venus` + `PaddleOCR-VL-1.5`이므로, 여기에서 `UI-TARS` 비교와 `MAI-UI` 조건부 호출만 추가하는 방식이 변경 폭이 가장 작다.
 
-- reference ceiling: `Holo2-235B-A22B (Agentic)`
-- production candidate A: `MAI-UI-32B (+Zoom-In)`
-- production candidate B: `UI-Venus-1.5-30B-A3B`
-- OCR sidecar: `PaddleOCR-VL`
+## 6. 실행 시 주의할 점
 
-즉, `Holo2`는 "얼마나 더 올라갈 수 있는가"를 보는 ceiling reference로 좋고, 실제 사내 배포는 `MAI-UI` 또는 `UI-Venus` 중심으로 가는 편이 현실적이다.
+- `UI-TARS`는 `deploy_vlms/config/models/ui-tars.env`는 준비되어 있지만, `flask_api/vlm_serve/config.py`에서는 `enabled=False`다.
+- 따라서 proxy 기반 A/B를 하려면 route를 활성화하거나, 우선 direct `8003` 호출로 비교해야 한다.
+- `Kimi-K2.5`는 external API이므로 latency, rate limit, cost 조건을 self-hosted와 분리해서 해석해야 한다.
+- `MAI-UI`, `PaddleOCR-VL`, `GOT-OCR`가 모두 GPU 1에 있으므로, sidecar는 병렬 상시 호출보다 순차적 조건부 호출이 안전하다.
+- `PaddleOCR-VL`은 OCR 보강용이지 click grounding 대체용으로 보기 어렵다.
 
-## 7. 바로 실행할 A/B 테스트 제안
+## 7. 바로 실행할 평가 세트
 
-### 공통 평가 세트
+### 공통 시나리오
 
 - `RCS login`
 - `View/List` tab 전환
-- `tool list`에서 target tool row 찾기
+- `tool list`에서 target row 찾기
 - 신규 tool window title 확인
 - parameter panel 내부의 작은 text/button/icon 찾기
 
@@ -149,31 +156,33 @@
 - step completion rate
 - small-text OCR recall
 - 평균 응답 시간
+- sidecar escalation 발생 비율
 
-### 우선 비교 순서
+### 권장 비교 순서
 
-1. `MAI-UI-8B` vs `UI-Venus-1.5-8B`
-2. 더 좋은 family를 골라 `32B/30B`급으로 확장
-3. 그 결과에 `PaddleOCR-VL` sidecar를 붙여 재측정
-4. 필요하면 `Holo2`를 reference로 추가 비교
+1. `Kimi` vs `UI-Venus` vs `UI-TARS`
+2. self-hosted 승자 모델 + `MAI-UI`
+3. self-hosted 승자 모델 + `MAI-UI` + `PaddleOCR-VL`
+4. 필요한 failure case에만 `GOT-OCR` 추가
 
 ## 8. 최종 권고
 
-- **질문 1 답**: `MAI-UI`는 모바일 전용이 아니다. mobile-first이지만 desktop/professional grounding benchmark도 공식적으로 다룬다.
-- **질문 2 답**: 복잡한 엔지니어링 화면을 가장 잘 읽게 하려면, 현재 기준 best stack은 `MAI-UI-32B (+Zoom-In)` 또는 `UI-Venus-1.5-30B-A3B`에 `PaddleOCR-VL`을 조합하는 쪽이다.
-- 순수 최고 성능 reference는 `Holo2-235B-A22B (Agentic)`다.
-- 다만 우리 저장소와 운영 현실을 같이 보면 **`MAI-UI`와 `UI-Venus`를 동일 스크린샷 세트로 A/B 테스트한 뒤, OCR sidecar를 결합하는 방식**이 가장 실무적이다.
+- 첫 비교 세트에는 `Kimi-K2.5`도 같이 넣는 것이 맞다.
+- self-hosted 직접 비교축은 `UI-Venus`와 `UI-TARS`가 맞다.
+- `MAI-UI`는 primary head-to-head 대상보다 **zoom-in 특화 sidecar**로 두는 편이 좋다.
+- `MAI-UI`를 OCR 모델과 함께 쓰는 것은 가능하지만, GPU 1 공유 구조상 **조건부 escalation**로 묶어야 한다.
+- 현재 가장 현실적인 운영 스택은 `Kimi baseline + self-hosted GUI 주력 1개 + MAI-UI zoom-in + PaddleOCR 기본 OCR + GOT-OCR fallback`이다.
 
-## 출처
+## 근거 파일
 
-- MAI-UI-8B model card: https://huggingface.co/Tongyi-MAI/MAI-UI-8B
-- MAI-UI GitHub: https://github.com/Tongyi-MAI/MAI-UI
-- MAI-UI paper: https://arxiv.org/abs/2512.22047
-- UI-Venus-1.5-30B-A3B model card: https://huggingface.co/inclusionAI/UI-Venus-1.5-30B-A3B
-- UI-Venus-1.5 paper: https://arxiv.org/abs/2602.09082
-- Holo2-235B-A22B model card: https://huggingface.co/Hcompany/Holo2-235B-A22B
-- Holo2 blog post: https://huggingface.co/blog/Hcompany/introducing-holo2-235b-a22b
-- ScreenSpot-Pro GitHub: https://github.com/likaixin2000/ScreenSpot-Pro-GUI-Grounding
-- ScreenSpot-Pro OpenReview: https://openreview.net/forum?id=XaKNDIAHas
-- ScreenSpot-Pro dataset README: https://huggingface.co/datasets/likaixin/ScreenSpot-Pro
-- PaddleOCR repository: https://github.com/PaddlePaddle/PaddleOCR
+- `deploy_vlms/config/common.env`
+- `deploy_vlms/config/models/ui-venus.env`
+- `deploy_vlms/config/models/ui-tars.env`
+- `deploy_vlms/config/models/mai-ui.env`
+- `deploy_vlms/config/models/paddleocr-vl-1.5.env`
+- `deploy_vlms/config/models/got-ocr-2.0-hf.env`
+- `flask_api/vlm_serve/config.py`
+- `poc/work2/flask_vlm.py`
+- `poc/work/automate_rcs_login.py`
+- `poc/work/select_tool.py`
+- `test/vlm_input_control/vlm_screen_analysis.py`

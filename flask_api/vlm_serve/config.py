@@ -23,7 +23,7 @@ class VLMServiceEntry:
 ALL_VLM_SERVICES: list[VLMServiceEntry] = [
     VLMServiceEntry("ui-venus", "UI-Venus-1.5-8B", "ui-venus-1.5-8b", 8001, enabled=True),
     VLMServiceEntry("mai-ui", "MAI-UI-8B", "mai-ui-8b", 8002, enabled=True),
-    VLMServiceEntry("ui-tars", "UI-TARS-1.5-7B", "ui-tars-1.5-7b", 8003, enabled=False),
+    VLMServiceEntry("ui-tars", "UI-TARS-1.5-7B", "ui-tars-1.5-7b", 8003, enabled=True),
     VLMServiceEntry("paddleocr-vl-1.5", "PaddleOCR-VL-1.5", "paddleocr-vl-1.5", 8004, enabled=True),
     VLMServiceEntry("got-ocr", "GOT-OCR-2.0-hf", "got-ocr-2.0-hf", 8005, enabled=True),
 ]

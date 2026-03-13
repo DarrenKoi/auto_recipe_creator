@@ -16,7 +16,10 @@
       "WebFetch(domain:github.com)",
       "WebFetch(domain:www.kimi.com)",
       "WebFetch(domain:docs.vllm.ai)",
-      "WebFetch(domain:www.paddleocr.ai)"
+      "WebFetch(domain:www.paddleocr.ai)",
+      "WebFetch(domain:openai.com)",
+      "WebFetch(domain:blog.jetbrains.com)",
+      "WebFetch(domain:dev.to)"
     ]
   }
 }

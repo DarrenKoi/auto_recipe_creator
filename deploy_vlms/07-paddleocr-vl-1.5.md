@@ -77,7 +77,7 @@ python scripts/check_vlm.py http://127.0.0.1:8004 paddleocr-vl-1.5
 `VLM_MODEL_NAME`은 아래처럼 맞추면 된다.
 
 ```bash
-VLM_API_URL=http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com:8004
+VLM_API_URL=http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com:8004
 VLM_MODEL_NAME=paddleocr-vl-1.5
 ```
 

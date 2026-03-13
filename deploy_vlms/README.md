@@ -1,18 +1,18 @@
 # VLM 배포 가이드
 
-`H200 GPU 2장` 환경에서 GUI 특화 VLM과 일부 OCR VLM을 배포하고, 이 저장소의 `poc/work` 코드와 연결하기 위한 운영 문서 모음이다. 현재 주력 운영 문서는 `vLLM 0.17` 기준이고, OCR 모델은 런타임 성격에 따라 별도 메모를 같이 둔다.
+`H200 GPU 2장` 환경에서 GUI 특화 VLM과 일부 OCR VLM을 배포하고, 이 저장소의 테스트 코드와 연결하기 위한 운영 문서 모음이다. 현재 주력 운영 문서는 `vLLM 0.17` 기준이고, OCR 모델은 런타임 성격에 따라 별도 메모를 같이 둔다.
 
 실제 클라우드 기준 주소:
 
-- 클라우드 base URL: `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/`
-- Flask API root: `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api`
+- 클라우드 base URL: `http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/`
+- Flask API root: `http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api`
 - 클라우드 repo root: `/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image`
 - `deploy_vlms` 작업 루트: `/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/deploy_vlms`
 
 주의:
 
 - 현재 저장소의 `flask_api` 패키지는 `/api/vlm_serve/<service>/v1/...` 형태의 VLM proxy route를 제공한다.
-- 즉, coworkers 용 endpoint는 `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api/vlm_serve/ui-venus` 같은 형태로 잡으면 된다.
+- 즉, coworkers 용 endpoint는 `http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/ui-venus` 같은 형태로 잡으면 된다.
 
 ## 권장 시작점
 
@@ -26,7 +26,7 @@
 
 지금은 VRAM을 꽉 채우는 방향보다, `모델 1개 = 포트 1개 = 서비스 1개`로 단순하게 운영하는 편이 PoC 속도와 장애 분석 측면에서 유리하다.
 
-다만 future research로 같은 family를 여러 size로 비교할 계획이면, 이제 `instance=<family>-<size>` 규칙으로 확장하면 된다.
+같은 family를 여러 size로 비교해야 하면 `instance=<family>-<size>` 규칙으로 확장하면 된다.
 
 - `ui-venus-2b`
 - `ui-venus-7b`
@@ -99,7 +99,7 @@ GPU_PROCESS_RESERVE_GIB=4
 3. [03-operations-and-repo-integration.md](./03-operations-and-repo-integration.md)
 4. [04-offline-and-network-policy.md](./04-offline-and-network-policy.md)
 5. [05-ui-tars-vs-others.md](./05-ui-tars-vs-others.md)
-6. [06-multi-size-research.md](./06-multi-size-research.md)
+6. [06-multi-size-variants.md](./06-multi-size-variants.md)
 7. [07-paddleocr-vl-1.5.md](./07-paddleocr-vl-1.5.md)
 8. [08-got-ocr-2.0-hf.md](./08-got-ocr-2.0-hf.md)
 
@@ -119,7 +119,7 @@ GPU_PROCESS_RESERVE_GIB=4
 - [serve_vlm.py](./scripts/serve_vlm.py)
 - [start_model.py](./scripts/start_model.py)
 - [check_vlm.py](./scripts/check_vlm.py)
-- [prepare_research_envs.py](./scripts/prepare_research_envs.py)
+- [prepare_variant_envs.py](./scripts/prepare_variant_envs.py)
 - [start_paddleocr_vl.py](./scripts/start_paddleocr_vl.py)
 - [run_got_ocr.py](./scripts/run_got_ocr.py)
 - [common.env](./config/common.env)
@@ -140,10 +140,10 @@ python scripts/check_vlm.py http://127.0.0.1:8001 ui-venus-1.5-8b
 python scripts/check_vlm.py http://127.0.0.1:8002 mai-ui-8b
 ```
 
-size 연구용 env를 미리 만들고 싶으면 아래처럼 준비하면 된다.
+size variant env를 미리 만들고 싶으면 아래처럼 준비하면 된다.
 
 ```bash
-python scripts/prepare_research_envs.py ui-venus
+python scripts/prepare_variant_envs.py ui-venus
 python scripts/start_model.py ui-venus 2b
 python scripts/check_vlm.py http://127.0.0.1:8102 ui-venus-2b
 
@@ -176,13 +176,13 @@ python scripts/check_vlm.py http://127.0.0.1:8130 ui-venus-30b
 
 실제 클라우드 예시:
 
-- direct port: `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com:8001`
-- flask api proxy: `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api/vlm_serve/ui-venus`
+- direct port: `http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com:8001`
+- flask api proxy: `http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/ui-venus`
 
 ## 빠른 요약
 
 - 먼저 `UI-Venus-1.5-8B -> 8001`, `MAI-UI-8B -> 8002`
 - 공통값은 `common.env`, 모델별 값은 `models/<name>.env`
-- size별 연구는 `models/<family>-<size>.env`로 확장하고, port/KV cache 관련 튜닝도 model env에서 개별 관리
+- size variant는 `models/<family>-<size>.env`로 확장하고, port/KV cache 관련 튜닝도 model env에서 개별 관리
 - 수동 검증 후 같은 시작 스크립트로 재기동/운영
 - PoC 전환은 `poc/work/.env`에서 `VLM_API_URL`과 `VLM_MODEL_NAME`만 바꾸면 된다

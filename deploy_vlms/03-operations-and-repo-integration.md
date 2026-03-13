@@ -15,7 +15,7 @@ curl http://127.0.0.1:8001/v1/models
 
 중단은 해당 셸에서 `Ctrl+C`로 처리하고, 백그라운드로 돌렸다면 포트 기준으로 PID를 찾아 종료하면 된다. `mai-ui`, `ui-tars`도 같은 방식으로 보면 된다.
 
-size variant 연구는 아래처럼 generic start script를 쓰는 편이 더 단순하다.
+size variant는 아래처럼 generic start script를 쓰는 편이 더 단순하다.
 
 ```bash
 python scripts/start_model.py ui-venus 2b
@@ -38,8 +38,8 @@ python scripts/check_vlm.py http://127.0.0.1:8130 ui-venus-30b
 
 실제 클라우드 주소 기준:
 
-- base URL: `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com`
-- Flask API root: `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api`
+- base URL: `http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com`
+- Flask API root: `http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api`
 
 현재 코드 사실:
 
@@ -55,9 +55,9 @@ python scripts/check_vlm.py http://127.0.0.1:8130 ui-venus-30b
 
 | 모델 | 권장 URL |
 |------|----------|
-| UI-Venus | `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com:8001` |
-| MAI-UI | `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com:8002` |
-| UI-TARS | `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com:8003` |
+| UI-Venus | `http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com:8001` |
+| MAI-UI | `http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com:8002` |
+| UI-TARS | `http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com:8003` |
 
 이 저장소 클라이언트는 `/v1`를 자동으로 붙이므로 `VLM_API_URL`에는 위 값만 넣으면 된다.
 
@@ -65,9 +65,9 @@ python scripts/check_vlm.py http://127.0.0.1:8130 ui-venus-30b
 
 coworkers 용 공용 주소는 아래처럼 쓰면 된다.
 
-- `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api/vlm_serve/ui-venus`
-- `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api/vlm_serve/mai-ui`
-- `http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api/vlm_serve/ui-tars`
+- `http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/ui-venus`
+- `http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/mai-ui`
+- `http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/ui-tars`
 
 실제 OpenAI-compatible 경로는 아래처럼 된다.
 
@@ -85,7 +85,7 @@ direct port 기준:
 `poc/work/.env.ui-venus`
 
 ```bash
-VLM_API_URL=http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com:8001
+VLM_API_URL=http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com:8001
 VLM_API_KEY=
 VLM_MODEL_NAME=ui-venus-1.5-8b
 
@@ -97,7 +97,7 @@ MAX_IMAGE_SIZE=1280
 gateway 기준 예시는 아래처럼 잡을 수 있다.
 
 ```bash
-VLM_API_URL=http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com/api/vlm_serve/ui-venus
+VLM_API_URL=http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/ui-venus
 VLM_API_KEY=
 VLM_MODEL_NAME=ui-venus-1.5-8b
 ```
@@ -107,7 +107,7 @@ VLM_MODEL_NAME=ui-venus-1.5-8b
 `poc/work/.env.mai-ui`
 
 ```bash
-VLM_API_URL=http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com:8002
+VLM_API_URL=http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com:8002
 VLM_API_KEY=
 VLM_MODEL_NAME=mai-ui-8b
 
@@ -121,7 +121,7 @@ MAX_IMAGE_SIZE=1280
 `poc/work/.env.ui-tars`
 
 ```bash
-VLM_API_URL=http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com:8003
+VLM_API_URL=http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com:8003
 VLM_API_KEY=
 VLM_MODEL_NAME=ui-tars-1.5-7b
 
@@ -130,14 +130,14 @@ USE_WEBP=true
 MAX_IMAGE_SIZE=1280
 ```
 
-### 4.4 size variant 실험용
+### 4.4 size variant용
 
 예를 들어 같은 family를 `2B`, `7B`, `30B`로 비교한다면 아래처럼 별도 env를 두면 된다.
 
 `poc/work/.env.ui-venus-2b`
 
 ```bash
-VLM_API_URL=http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com:8102
+VLM_API_URL=http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com:8102
 VLM_API_KEY=
 VLM_MODEL_NAME=ui-venus-2b
 
@@ -149,7 +149,7 @@ MAX_IMAGE_SIZE=1280
 `poc/work/.env.ui-venus-30b`
 
 ```bash
-VLM_API_URL=http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com:8130
+VLM_API_URL=http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com:8130
 VLM_API_KEY=
 VLM_MODEL_NAME=ui-venus-30b
 
@@ -182,7 +182,7 @@ uv run python -m poc.work.list_up_tools
 
 - 포트는 모델 식별자처럼 다룬다.
 - `8001=ui-venus`, `8002=mai-ui`는 가능하면 계속 유지한다.
-- size variant 비교는 `8102/8107/8130`처럼 family별 별도 포트대역을 두면 관리하기 쉽다.
+- size variant 비교는 `8102/8107/8130`처럼 family별 별도 포트 대역을 두면 관리하기 쉽다.
 - 모델 revision 교체는 포트 변경이 아니라 `MODEL_ID` 변경으로 처리한다.
 - template 실험이나 옵션 실험은 `8004` 같은 별도 포트로 먼저 검증한다.
 - 로그/결과 비교 시 `served-model-name`과 포트를 같이 기록한다.
@@ -197,7 +197,7 @@ model_name=ui-venus-1.5-8b
 실제 클라우드 예시는 아래처럼 기록하는 편이 좋다.
 
 ```text
-endpoint=http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com:8001
+endpoint=http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com:8001
 model_name=ui-venus-1.5-8b
 ```
 
@@ -210,7 +210,7 @@ model_name=ui-venus-1.5-8b
 3. `poc/work/automate_rcs_login.py` 또는 `poc/work/list_up_tools.py`에서 A/B 실행
 4. 더 좋은 쪽을 기준 포트로 유지
 5. 그 다음 `UI-TARS-1.5-7B`를 `8003`에 추가
-6. 같은 family size 비교가 필요하면 `prepare_research_envs.py`로 `2B/7B/30B` env를 생성
+6. 같은 family size 비교가 필요하면 `prepare_variant_envs.py`로 `2B/7B/30B` env를 생성
 
 ## 8. 트러블슈팅 기준점
 
@@ -249,9 +249,9 @@ model_name=ui-venus-1.5-8b
 
 - `8003`: `UI-TARS-1.5-7B`
 - `8004`: canary
-- `8102/8107/8130`: `UI-Venus` size 연구용
-- `8202/8207/8230`: `MAI-UI` size 연구용
-- `8302/8307/8330`: `UI-TARS` size 연구용
+- `8102/8107/8130`: `UI-Venus` size variant용
+- `8202/8207/8230`: `MAI-UI` size variant용
+- `8302/8307/8330`: `UI-TARS` size variant용
 - `8005+`: 차기 UI-Venus/MAI-UI revision
 - 대형 모델(`MAI-UI-32B`, `UI-TARS-72B`)은 별도 문서로 분리하는 편이 낫다
 

@@ -1,6 +1,6 @@
-# 같은 family의 multi-size 연구 준비
+# 같은 family의 multi-size variant 정리
 
-이 문서는 같은 model family를 `2B`, `7B`, `30B`처럼 여러 size로 비교 실험할 때의 기준을 정리한다.
+이 문서는 같은 model family를 `2B`, `7B`, `30B`처럼 여러 size로 올리고 비교할 때의 기준을 정리한다.
 
 핵심은 아래 3가지다.
 
@@ -25,25 +25,25 @@
 - `SERVED_MODEL_NAME`
 - 벤치마크 결과 표의 모델 키
 
-## 2. 연구용 env 자동 생성
+## 2. size variant env 자동 생성
 
-클라우드 서버에서 아래를 한 번 실행하면 research env 초안을 만든다.
+클라우드 서버에서 아래를 한 번 실행하면 size variant env 초안을 만든다.
 
 ```bash
 cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/deploy_vlms
-python scripts/prepare_research_envs.py
+python scripts/prepare_variant_envs.py
 ```
 
 family 하나만 만들고 싶으면:
 
 ```bash
-python scripts/prepare_research_envs.py ui-venus
+python scripts/prepare_variant_envs.py ui-venus
 ```
 
 특정 instance만 만들고 싶으면:
 
 ```bash
-python scripts/prepare_research_envs.py ui-venus-30b
+python scripts/prepare_variant_envs.py ui-venus-30b
 ```
 
 생성 대상:
@@ -175,7 +175,7 @@ ui-tars-7b  -> port 8307, GPU_ID=1
 예를 들어 `poc/work`에서 `ui-venus-30b`를 붙일 때는 아래처럼 별도 env를 두면 된다.
 
 ```bash
-VLM_API_URL=http://itc-1stop-solution-gpu-image-webpp.aipp02.skhynix.com:8130
+VLM_API_URL=http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com:8130
 VLM_API_KEY=
 VLM_MODEL_NAME=ui-venus-30b
 
@@ -189,7 +189,7 @@ MAX_IMAGE_SIZE=1280
 ## 7. 운영 해석
 
 - 기존 운영 baseline인 `8001/8002/8003`은 유지한다.
-- size variant 연구는 `81xx/82xx/83xx` 대역으로 분리한다.
+- size variant는 `81xx/82xx/83xx` 대역으로 분리한다.
 - `30B`는 기본적으로 2GPU 전용 세션으로 본다.
 - 같은 family를 비교할 때는 프롬프트, 이미지, `SAFE_MODE`, post-processing을 고정한다.
 - 모델 교체와 프롬프트 수정을 한 번에 하지 않는다.

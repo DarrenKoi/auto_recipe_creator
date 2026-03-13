@@ -51,7 +51,7 @@ ${DEPLOY_VLMS_ROOT}/
 - `${DEPLOY_VLMS_ROOT}/config/common.env`: 공통 옵션
 - `${DEPLOY_VLMS_ROOT}/config/models/*.env`: 모델별 포트, GPU, alias
 
-기본 운영 alias는 `ui-venus.env`, `mai-ui.env`, `ui-tars.env`처럼 짧게 유지하고, OCR 계열은 `paddleocr-vl-1.5.env`, `got-ocr-2.0-hf.env`처럼 별도 파일로 둔다. size 연구는 `ui-venus-2b.env`, `ui-venus-30b.env`처럼 `family-size` 규칙으로 늘리는 편이 관리하기 쉽다.
+기본 운영 alias는 `ui-venus.env`, `mai-ui.env`, `ui-tars.env`처럼 짧게 유지하고, OCR 계열은 `paddleocr-vl-1.5.env`, `got-ocr-2.0-hf.env`처럼 별도 파일로 둔다. size variant는 `ui-venus-2b.env`, `ui-venus-30b.env`처럼 `family-size` 규칙으로 늘리는 편이 관리하기 쉽다.
 
 현재 클라우드 기준 모델 경로는 `/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/data/models/` 이다. 다른 경로라면 아래 예시의 `MODEL_ID`만 그 경로로 바꾸면 된다. 운영 중에는 가능하면 상대경로보다 절대경로를 쓰는 편이 낫다.
 
@@ -170,9 +170,9 @@ LIMIT_MM_PER_PROMPT={"image": 1, "video": 0}
 # DATA_PARALLEL_SIZE=4
 ```
 
-### 4.4 size 비교 연구용 variant 규칙
+### 4.4 size variant 규칙
 
-연구용 instance는 아래 규칙을 권장한다.
+size variant instance는 아래 규칙을 권장한다.
 
 - 파일명: `${DEPLOY_VLMS_ROOT}/config/models/<family>-<size>.env`
 - instance: `<family>-<size>`
@@ -223,7 +223,7 @@ EXTRA_VLLM_ARGS=
 | `MAX_MODEL_LEN` | 공통 | 최대 컨텍스트 길이 | `8192` |
 | `MAX_NUM_SEQS` | 공통 | 동시 시퀀스 수 | `8` |
 | `TENSOR_PARALLEL_SIZE` | 공통 또는 모델별 override | 텐서 병렬 크기 | `1`, 대형 모델이면 `2` |
-| `EXTRA_VLLM_ARGS` | 모델별 | size/KV cache 실험용 추가 vLLM CLI flags | 필요 시만 사용 |
+| `EXTRA_VLLM_ARGS` | 모델별 | size/KV cache 조정용 추가 vLLM CLI flags | 필요 시만 사용 |
 | `DATA_PARALLEL_SIZE` | 모델별 | data parallel 크기 | 필요 시만 설정 |
 | `API_KEY` | 공통 | OpenAI 호환 API 인증키 | 내부망이면 비워도 됨 |
 | `AUTO_TUNE_GPU_MEMORY_UTILIZATION` | 공통 또는 모델별 override | share rule 기반으로 `GPU_MEMORY_UTILIZATION` 자동 계산 | `2~3`개 소형 모델 공존 시 `1` |
@@ -238,7 +238,7 @@ EXTRA_VLLM_ARGS=
 
 1. 공통 성능 파라미터는 `common.env`만 바꾼다.
 2. 모델 교체는 `models/<name>.env`의 `MODEL_ID`만 먼저 바꾼다.
-3. size 비교 연구는 `models/<family>-<size>.env`를 별도로 만든다.
+3. size 비교는 `models/<family>-<size>.env`를 별도로 만든다.
 4. `PORT`와 `SERVED_MODEL_NAME`은 가급적 바꾸지 않는다.
 5. 큰 변경은 기존 포트를 덮어쓰지 말고 `8004` 같은 canary 포트에서 먼저 검증한다.
 6. 정상 확인 뒤에만 운영 포트로 승격한다.

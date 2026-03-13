@@ -37,7 +37,7 @@ ss -ltn | grep 800
 - [start_ui_venus.py](./scripts/start_ui_venus.py)
 - [start_mai_ui.py](./scripts/start_mai_ui.py)
 - [start_ui_tars.py](./scripts/start_ui_tars.py)
-- [prepare_research_envs.py](./scripts/prepare_research_envs.py)
+- [prepare_variant_envs.py](./scripts/prepare_variant_envs.py)
 
 스크립트는 오프라인/내부망 전용 환경변수를 먼저 세팅한 뒤 `python -m vllm.entrypoints.openai.api_server`를 실행한다.
 아래 예시는 클라우드 서버에서 `deploy_vlms`로 이동한 상태를 기준으로 한다.
@@ -69,7 +69,7 @@ python scripts/start_mai_ui.py
 - exact flag 이름은 서버의 `vllm 0.17` 빌드 기준으로 `vllm serve --help`에서 최종 확인한다.
 - GPU 서버에서는 `deploy_vlms/config` 아래 env 파일만 수정해서 쓰는 방식을 권장한다.
 
-### 3.3 같은 family를 여러 size로 비교할 때
+### 3.3 같은 family를 여러 size로 운영할 때
 
 고정 wrapper(`start_ui_venus.py`) 대신 generic wrapper를 쓰는 편이 낫다.
 
@@ -78,7 +78,7 @@ python scripts/start_mai_ui.py
 ```bash
 cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/deploy_vlms
 # 필요하면 config/common.env, config/models/ui-venus.env 값을 먼저 수정한다.
-python scripts/prepare_research_envs.py ui-venus
+python scripts/prepare_variant_envs.py ui-venus
 python scripts/start_model.py ui-venus 2b
 ```
 
@@ -89,7 +89,7 @@ cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/deploy
 python scripts/start_model.py ui-venus 7b
 ```
 
-`30B`는 기본 research env가 `GPU_ID=0,1`, `TENSOR_PARALLEL_SIZE=2`로 생성되며, 필요하면 `EXTRA_VLLM_ARGS`에 KV cache 관련 flag를 instance별로 따로 넣을 수 있다.
+`30B`는 기본 variant env가 `GPU_ID=0,1`, `TENSOR_PARALLEL_SIZE=2`로 생성되며, 필요하면 `EXTRA_VLLM_ARGS`에 KV cache 관련 flag를 instance별로 따로 넣을 수 있다.
 
 ```bash
 cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/deploy_vlms
@@ -109,7 +109,7 @@ python scripts/check_vlm.py http://127.0.0.1:8001 ui-venus-1.5-8b
 python scripts/check_vlm.py http://127.0.0.1:8002 mai-ui-8b
 ```
 
-연구용 variant는 `served-model-name` 대신 instance 이름을 넘겨도 된다. `check_vlm.py`가 `config/models/<instance>.env`를 읽어 alias를 자동 해석한다.
+size variant는 `served-model-name` 대신 instance 이름을 넘겨도 된다. `check_vlm.py`가 `config/models/<instance>.env`를 읽어 alias를 자동 해석한다.
 
 ```bash
 python scripts/check_vlm.py http://127.0.0.1:8102 ui-venus-2b

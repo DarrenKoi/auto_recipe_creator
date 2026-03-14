@@ -58,8 +58,8 @@ python -m pip install pillow
 
 그 다음 아래 설정 파일을 먼저 확인한다.
 
-- [got-ocr-2.0-hf.env](./config/models/got-ocr-2.0-hf.env)
-- [run_got_ocr.py](./scripts/run_got_ocr.py)
+- [got-ocr-2.0-hf.env](../../deploy_vlms/config/models/got-ocr-2.0-hf.env)
+- [run_got_ocr.py](../../deploy_vlms/scripts/run_got_ocr.py)
 
 주요 키:
 

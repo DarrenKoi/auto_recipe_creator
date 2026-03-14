@@ -55,7 +55,7 @@ H200 `140GB` 기준 시작값은 대략 아래처럼 보면 된다.
 - 8B 2개 공유: `GPU_MEMORY_UTILIZATION ~= 0.44`
 - 8B 3개 공유: `GPU_MEMORY_UTILIZATION ~= 0.29`
 
-이 문서의 [serve_vlm.py](./scripts/serve_vlm.py)는 이제 로컬 `config.json`과 weight shard 크기를 읽어서 이 공식을 자동 적용할 수 있다.
+이 문서의 [serve_vlm.py](../../deploy_vlms/scripts/serve_vlm.py)는 이제 로컬 `config.json`과 weight shard 크기를 읽어서 이 공식을 자동 적용할 수 있다.
 
 ```bash
 AUTO_TUNE_GPU_MEMORY_UTILIZATION=1
@@ -117,18 +117,18 @@ GPU_PROCESS_RESERVE_GIB=4
 
 실행 가능한 예시 스크립트도 같이 추가했다.
 
-- [serve_vlm.py](./scripts/serve_vlm.py)
-- [start_model.py](./scripts/start_model.py)
-- [check_vlm.py](./scripts/check_vlm.py)
-- [prepare_variant_envs.py](./scripts/prepare_variant_envs.py)
-- [start_paddleocr_vl.py](./scripts/start_paddleocr_vl.py)
-- [run_got_ocr.py](./scripts/run_got_ocr.py)
-- [common.env](./config/common.env)
-- [ui-venus.env](./config/models/ui-venus.env)
-- [mai-ui.env](./config/models/mai-ui.env)
-- [ui-tars.env](./config/models/ui-tars.env)
-- [paddleocr-vl-1.5.env](./config/models/paddleocr-vl-1.5.env)
-- [got-ocr-2.0-hf.env](./config/models/got-ocr-2.0-hf.env)
+- [serve_vlm.py](../../deploy_vlms/scripts/serve_vlm.py)
+- [start_model.py](../../deploy_vlms/scripts/start_model.py)
+- [check_vlm.py](../../deploy_vlms/scripts/check_vlm.py)
+- [prepare_variant_envs.py](../../deploy_vlms/scripts/prepare_variant_envs.py)
+- [start_paddleocr_vl.py](../../deploy_vlms/scripts/start_paddleocr_vl.py)
+- [run_got_ocr.py](../../deploy_vlms/scripts/run_got_ocr.py)
+- [common.env](../../deploy_vlms/config/common.env)
+- [ui-venus.env](../../deploy_vlms/config/models/ui-venus.env)
+- [mai-ui.env](../../deploy_vlms/config/models/mai-ui.env)
+- [ui-tars.env](../../deploy_vlms/config/models/ui-tars.env)
+- [paddleocr-vl-1.5.env](../../deploy_vlms/config/models/paddleocr-vl-1.5.env)
+- [got-ocr-2.0-hf.env](../../deploy_vlms/config/models/got-ocr-2.0-hf.env)
 
 이제 기본 env 파일도 `config/` 아래에 같이 두므로, 클라우드에서는 필요한 값만 수정한 뒤 바로 실행하면 된다.
 

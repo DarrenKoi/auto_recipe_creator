@@ -16,7 +16,7 @@
 1. `vLLM` supported models에 `PaddleOCRVLForConditionalGeneration`가 올라와 있다.
 2. `PaddleOCR-VL-1.5` model card도 이 family의 `vLLM` usage guide를 연결한다.
 
-따라서 `deploy_vlms`에서는 `vLLM` 경로만 보면 된다. 현재 저장소의 [serve_vlm.py](./scripts/serve_vlm.py)는 특정 GUI 모델 전용이 아니라, `MODEL_ID`, `SERVED_MODEL_NAME`, `PORT`, `GPU_ID`를 읽어 일반 `vLLM` 서버를 띄우는 wrapper라서 `PaddleOCR-VL-1.5`에도 그대로 맞는다. 현재 코드에서 별도 특수 처리가 필요한 쪽은 `Qwen2.5-VL` 계열뿐이다.
+따라서 `deploy_vlms`에서는 `vLLM` 경로만 보면 된다. 현재 저장소의 [serve_vlm.py](../../deploy_vlms/scripts/serve_vlm.py)는 특정 GUI 모델 전용이 아니라, `MODEL_ID`, `SERVED_MODEL_NAME`, `PORT`, `GPU_ID`를 읽어 일반 `vLLM` 서버를 띄우는 wrapper라서 `PaddleOCR-VL-1.5`에도 그대로 맞는다. 현재 코드에서 별도 특수 처리가 필요한 쪽은 `Qwen2.5-VL` 계열뿐이다.
 
 ## 2. 현재 작업 환경에 맞춘 권장 경로
 
@@ -40,8 +40,8 @@
 
 이 문서와 함께 아래 기본 model env와 시작 스크립트를 둔다.
 
-- [paddleocr-vl-1.5.env](./config/models/paddleocr-vl-1.5.env)
-- [start_paddleocr_vl.py](./scripts/start_paddleocr_vl.py)
+- [paddleocr-vl-1.5.env](../../deploy_vlms/config/models/paddleocr-vl-1.5.env)
+- [start_paddleocr_vl.py](../../deploy_vlms/scripts/start_paddleocr_vl.py)
 
 Linux 클라우드 서버에서:
 
@@ -57,7 +57,7 @@ cd /project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/deploy
 
 중요:
 
-- [serve_vlm.py](./scripts/serve_vlm.py)는 `STRICT_OFFLINE=1`일 때 `MODEL_ID`가 `ALLOWED_MODEL_ROOT` 아래에 있어야만 실행된다.
+- [serve_vlm.py](../../deploy_vlms/scripts/serve_vlm.py)는 `STRICT_OFFLINE=1`일 때 `MODEL_ID`가 `ALLOWED_MODEL_ROOT` 아래에 있어야만 실행된다.
 - 즉, 모델이 `/project/.../data/models/` 밖에 있다면 `MODEL_ID`만 바꾸는 것으로 끝나지 않고 `ALLOWED_MODEL_ROOT`도 같이 조정하거나, 모델을 기존 루트 아래로 옮겨야 한다.
 
 ### 3.2 서버 기동

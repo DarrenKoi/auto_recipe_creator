@@ -32,7 +32,7 @@ python scripts/check_vlm.py http://127.0.0.1:8130 ui-venus-30b
 - `VLM_API_KEY`
 - `VLM_MODEL_NAME`
 
-관련 코드는 [poc/work/config.py](../poc/work/config.py), [poc/work/vlm_screen_analysis.py](../poc/work/vlm_screen_analysis.py), [poc/work/vlm_openai_client.py](../poc/work/vlm_openai_client.py)에 있다.
+관련 코드는 [poc/work/config.py](../../poc/work/config.py), [poc/work/vlm_screen_analysis.py](../../poc/work/vlm_screen_analysis.py), [poc/work/vlm_openai_client.py](../../poc/work/vlm_openai_client.py)에 있다.
 
 모델이 이미 클라우드 서버의 `data/models/` 아래에 있으므로, 이 저장소 쪽에서는 모델 다운로드를 신경 쓸 필요 없이 endpoint와 alias만 맞추면 된다.
 

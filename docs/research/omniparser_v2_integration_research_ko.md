@@ -60,7 +60,7 @@ OmniParser V2는 단일 모델이 아니라 **3개의 독립 모델을 순차 �
 
 ### 입력
 
-FastAPI 서버 엔드포인트 (`POST /parse/`):
+OmniParser upstream 예시 엔드포인트 (`POST /parse/`):
 
 ```json
 {
@@ -145,11 +145,12 @@ HuggingFace 추론 엔드포인트 변형:
 
 | 방식 | 설명 | 적합성 |
 |------|------|--------|
-| **FastAPI 서버** | `omniparserserver.py` — uvicorn 기반, `POST /parse/`, `GET /probe/` | **권장** — 기존 Flask proxy와 유사한 패턴 |
+| OmniParser upstream FastAPI | `omniparserserver.py` — uvicorn 기반, `POST /parse/`, `GET /probe/` | 내부 구현 참고용 |
 | Gradio 데모 | 웹 UI, 포트 7861, 임계값 조정 가능 | 테스트/데모용 |
 | HuggingFace 추론 | `EndpointHandler` 패턴 | 클라우드 배포 시 |
+| **Flask API 통합** | `flask_api/omniparser/` 아래에서 coworker-facing endpoint 제공 | **권장** — 현재 저장소 운영 방식과 일치 |
 
-**vLLM 불가**: OmniParser는 표준 LLM/VLM이 아닌 복합 파이프라인이므로 vLLM으로 서빙할 수 없음. 자체 FastAPI 서버가 필요.
+**vLLM 불가**: OmniParser는 표준 LLM/VLM이 아닌 복합 파이프라인이므로 vLLM으로 서빙할 수 없다. 현재 저장소 기준 권장 배포 형태는 `flask_api/omniparser` 전용 API다.
 
 **Docker**: OmniParser 자체에는 전용 Dockerfile이 없음. OmniTool (Windows 11 VM 환경)은 Docker 사용하지만 별개.
 
@@ -233,20 +234,33 @@ pipeline_omniparser.py (신규):
 
 ## 6. 통합 설계
 
-### A. Flask proxy 서비스 등록
+### A. Flask API 서비스 등록
 
-`flask_api/vlm_serve/config.py`에 새 서비스 추가:
+OmniParser는 OpenAI-compatible `/v1/*` API가 아니므로, `flask_api/vlm_serve/`에 억지로 넣기보다 `flask_api/omniparser/` 전용 폴더를 두는 편이 구조적으로 맞다.
 
-```python
-VLMServiceEntry("omniparser", "OmniParser-V2", "omniparser-v2", 8006, enabled=True),
+제안 구조:
+
+```text
+flask_api/
+  omniparser/
+    __init__.py
+    routes.py
+    service.py
+    logger.py
 ```
 
-단, OmniParser는 OpenAI-compatible API가 아닌 자체 FastAPI (`POST /parse/`)를 사용하므로, 기존 vLLM proxy 패턴과 다른 전용 프록시 블루프린트가 필요하다.
+제공 엔드포인트 예시:
 
-**선택지 A**: OmniParser FastAPI 서버를 8006 포트로 직접 노출하고, `pipeline_omniparser.py`에서 직접 호출.
-**선택지 B**: Flask proxy에 `/api/vlm_serve/omniparser/parse` 라우트 추가, OmniParser 8006을 업스트림으로 프록시.
+- `GET /api/omniparser/health`
+- `POST /api/omniparser/parse`
+- `POST /api/omniparser/parse/som`
 
-**권장**: 선택지 A — OmniParser는 이미 FastAPI 서버이므로 Flask 프록시를 한 번 더 거칠 이유가 없음. health 체크만 기존 시스템에 통합.
+핵심 판단:
+
+- `ui-venus`, `mai-ui`처럼 OpenAI-compatible 모델은 계속 `flask_api/vlm_serve/`에 둔다.
+- OmniParser는 parser 전용 API이므로 `flask_api/omniparser/` 아래에서 별도 contract를 제공한다.
+- coworkers 는 Flask API만 보면 되므로 사용성이 단순해진다.
+- 같은 Python env에 OmniParser 의존성을 같이 두는 것도 허용 가능하다. 중요한 것은 env 분리 여부가 아니라 Flask 런타임과 dependency 충돌 관리다.
 
 ### B. pipeline_omniparser.py 설계
 
@@ -311,13 +325,13 @@ SHARED_PIPELINE_SETTINGS: dict[str, str | bool] = {
 
     # OmniParser V2 사이드카 (OCR 파이프라인 대체)
     "omniparser_enabled": False,          # True로 변경 시 OCR 대신 OmniParser 사용
-    "omniparser_api_url": "",             # 예: "http://gpu-server:8006"
+    "omniparser_api_url": "",             # 예: "http://gpu-server/api/omniparser"
     "omniparser_bbox_threshold": 0.05,    # YOLO 감지 임계값
     "omniparser_iou_threshold": 0.7,      # NMS IoU 임계값
 }
 ```
 
-**전환 전략**: `omniparser_enabled=True`이면 `pipeline_omniparser.py` 사용, `False`이면 기존 `pipeline_ocr.py` 유지. 점진적 마이그레이션 가능.
+**전환 전략**: `omniparser_enabled=True`이면 `pipeline_omniparser.py` 사용, `False`이면 기존 `pipeline_ocr.py` 유지. 점진적 마이그레이션 가능. 초반에는 `PaddleOCR-VL 제거`보다 `OmniParser + primary VLM 조합` 검증이 우선이다.
 
 ### E. VLMScreenAnalyzer 수정
 
@@ -395,27 +409,30 @@ OmniParser의 YOLO 컴포넌트(YOLOv8 + Ultralytics 런타임)는 **AGPL-3.0** 
 
 ### Phase 1: 평가 (1-2주)
 
-1. GPU 서버에 OmniParser V2 FastAPI 서버 배포 (포트 8006)
+1. GPU 서버의 현재 Python/Flask 운영 환경에 OmniParser 의존성 적합성 확인
+   - 별도 env를 전제로 하지 않는다.
+   - 다만 `torch`, `transformers`, `ultralytics`, OCR 계열 패키지 충돌 여부는 먼저 확인한다.
+
+2. `flask_api/omniparser/` 전용 API surface 설계
+   - `GET /api/omniparser/health`
+   - `POST /api/omniparser/parse`
+   - 필요 시 `POST /api/omniparser/parse/som`
+
+3. OmniParser V2 가중치 준비 및 파서 실행 경로 확보
    ```bash
    # 가중치 다운로드
    huggingface-cli download microsoft/OmniParser-v2.0 --local-dir weights --repo-type model
 
-   # 서버 실행
-   python -m omniparserserver \
-     --som_model_path weights/icon_detect/model.pt \
-     --caption_model_name florence2 \
-     --caption_model_path weights/icon_caption_florence \
-     --device cuda \
-     --BOX_TRESHOLD 0.05 \
-     --port 8006
+   # Flask API 내부 service layer 또는 helper에서 파서 호출
+   # endpoint는 Flask 아래로만 노출
    ```
 
-2. RCS 스크린샷 10-20장으로 감지 품질 평가
+4. RCS 스크린샷 10-20장으로 감지 품질 평가
    - 현재 PaddleOCR-VL 텍스트 추출 vs OmniParser 요소 리스트 비교
    - RCS 레거시 UI 컨트롤에서의 YOLO 감지율 측정
    - Florence-2 아이콘 캡션이 RCS 버튼/아이콘을 올바르게 설명하는지 확인
 
-3. 평가 지표:
+5. 평가 지표:
    - `element_detection_rate`: 실제 인터랙티브 요소 중 YOLO가 감지한 비율
    - `false_positive_rate`: 인터랙티브 아닌 것을 인터랙티브로 감지한 비율
    - `caption_accuracy`: Florence-2 캡션이 실제 기능과 일치하는 비율
@@ -423,10 +440,12 @@ OmniParser의 YOLO 컴포넌트(YOLOv8 + Ultralytics 런타임)는 **AGPL-3.0** 
 
 ### Phase 2: 통합 (1-2주)
 
-1. `poc/work2/pipeline_omniparser.py` 구현
-2. `flask_vlm.py`에 `omniparser_enabled` 설정 추가
-3. `vlm_screen_analysis.py`에서 분기 로직 추가
-4. 기존 `automate_rcs_login.py`, `click_rcs_view_mode.py`에서 A/B 비교
+1. `flask_api/omniparser/` 구현
+2. `poc/work2/pipeline_omniparser.py` 구현
+3. `flask_vlm.py`에 `omniparser_enabled` 설정 추가
+4. `vlm_screen_analysis.py`에서 분기 로직 추가
+5. 기존 `automate_rcs_login.py`, `click_rcs_view_mode.py`에서 A/B 비교
+6. coworkers 가 Flask API를 통해 바로 사용할 수 있도록 route/health 문서화
 
 ### Phase 3: 최적화 (선택)
 
@@ -449,24 +468,25 @@ OmniParser V2는 파서(전처리기)이지 에이전트(의사결정자)가 아
 ### 권장 아키텍처
 
 ```
-                 ┌─────────────────────────────────────────┐
-                 │         Enhanced Pipeline (Phase 2)      │
-                 │                                          │
-스크린샷 ──────→ │  OmniParser V2 (GPU, ~4-6 GB)           │
-                 │    ├─ EasyOCR → 텍스트 + 바운딩 박스     │
-                 │    ├─ YOLOv8n → 인터랙티브 요소 박스     │
-                 │    └─ Florence-2 → 아이콘 기능 캡션      │
-                 │           │                              │
-                 │           ▼                              │
-                 │  build_omniparser_extra_instructions()   │
-                 │    "Element [0] Button (120,45)-(200,65) │
-                 │     label='Login' interactable=true"     │
-                 │           │                              │
-                 │           ▼                              │
-                 │  ui-venus (Primary VLM, 8B)              │
-                 │    → 최종 좌표 결정 + 액션 선택           │
-                 │    (바운딩 박스 힌트 참고, 픽셀 기준)     │
-                 └─────────────────────────────────────────┘
+                 ┌──────────────────────────────────────────────┐
+                 │         Enhanced Pipeline (Phase 2)           │
+                 │                                               │
+스크린샷 ──────→ │  Flask API /api/omniparser/parse             │
+                 │    └─ OmniParser V2 (GPU, ~4-6 GB)           │
+                 │       ├─ EasyOCR → 텍스트 + 바운딩 박스      │
+                 │       ├─ YOLOv8n → 인터랙티브 요소 박스      │
+                 │       └─ Florence-2 → 아이콘 기능 캡션       │
+                 │             │                                 │
+                 │             ▼                                 │
+                 │  build_omniparser_extra_instructions()        │
+                 │    "Element [0] Button (120,45)-(200,65)      │
+                 │     label='Login' interactable=true"          │
+                 │             │                                 │
+                 │             ▼                                 │
+                 │  ui-venus / mai-ui (Primary VLM)              │
+                 │    → 최종 좌표 결정 + 액션 선택                │
+                 │    (바운딩 박스 힌트 참고, 픽셀 기준)          │
+                 └──────────────────────────────────────────────┘
 ```
 
 ### 우선순위 판단
@@ -474,6 +494,7 @@ OmniParser V2는 파서(전처리기)이지 에이전트(의사결정자)가 아
 | 항목 | 우선순위 | 이유 |
 |------|----------|------|
 | OmniParser V2 평가 (Phase 1) | **P1** | RCS UI에서의 실제 감지 품질을 먼저 확인해야 함 |
+| `flask_api/omniparser/` API surface 구현 | **P1** | coworkers 사용 경로를 먼저 고정해야 함 |
 | pipeline_omniparser.py 구현 | P2 | Phase 1 결과가 긍정적일 때만 진행 |
 | SoM 이미지 직접 전송 | P2 | 텍스트 힌트만으로도 충분할 수 있음 |
 | YOLO/Florence-2 RCS fine-tune | P3 | 범용 모델로 충분하면 불필요 |

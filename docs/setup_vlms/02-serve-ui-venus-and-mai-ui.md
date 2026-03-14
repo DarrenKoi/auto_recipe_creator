@@ -32,12 +32,12 @@ ss -ltn | grep 800
 
 직접 긴 `vllm serve ...` 명령을 치는 대신, 아래 예시 스크립트를 복사해서 쓰는 편이 운영상 더 낫다.
 
-- [serve_vlm.py](./scripts/serve_vlm.py)
-- [start_model.py](./scripts/start_model.py)
-- [start_ui_venus.py](./scripts/start_ui_venus.py)
-- [start_mai_ui.py](./scripts/start_mai_ui.py)
-- [start_ui_tars.py](./scripts/start_ui_tars.py)
-- [prepare_variant_envs.py](./scripts/prepare_variant_envs.py)
+- [serve_vlm.py](../../deploy_vlms/scripts/serve_vlm.py)
+- [start_model.py](../../deploy_vlms/scripts/start_model.py)
+- [start_ui_venus.py](../../deploy_vlms/scripts/start_ui_venus.py)
+- [start_mai_ui.py](../../deploy_vlms/scripts/start_mai_ui.py)
+- [start_ui_tars.py](../../deploy_vlms/scripts/start_ui_tars.py)
+- [prepare_variant_envs.py](../../deploy_vlms/scripts/prepare_variant_envs.py)
 
 스크립트는 오프라인/내부망 전용 환경변수를 먼저 세팅한 뒤 `python -m vllm.entrypoints.openai.api_server`를 실행한다.
 아래 예시는 클라우드 서버에서 `deploy_vlms`로 이동한 상태를 기준으로 한다.

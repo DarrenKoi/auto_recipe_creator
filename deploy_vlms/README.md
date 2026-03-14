@@ -102,6 +102,7 @@ GPU_PROCESS_RESERVE_GIB=4
 6. [06-multi-size-variants.md](./06-multi-size-variants.md)
 7. [07-paddleocr-vl-1.5.md](./07-paddleocr-vl-1.5.md)
 8. [08-got-ocr-2.0-hf.md](./08-got-ocr-2.0-hf.md)
+9. [09-omniparser-v2.md](./09-omniparser-v2.md)
 
 ## OCR VLM 추가 판단
 

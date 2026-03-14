@@ -1,174 +1,174 @@
-# Research: VLM-Based GUI Automation for Engineering Workflows
+# 리서치: 엔지니어링 워크플로우를 위한 VLM 기반 GUI 자동화
 
-## Context
+## 배경
 
-Our project automates CD-SEM (VeritySEM/RCS) recipe setup — a Windows desktop application for semiconductor metrology. The current implementation uses screenshot → VLM coordinate extraction → pynput click/type, with a two-stage pipeline (PaddleOCR-VL + ui-venus). This research explores how to evolve toward a robust, multi-step workflow automation system specifically for **engineering/industrial applications**.
-
----
-
-## 1. Controlling Mouse & Keyboard — What to Consider
-
-### Current Approach (our codebase)
-- **pynput** for mouse/keyboard (pywinauto failed on RCS legacy controls)
-- `click_at()`: VLM coords → screen coords → click with 2-retry fallback
-- Smooth mouse movement via linear interpolation (60fps)
-- Hotkey combos, text typing, drag operations supported
-
-### What the field recommends
-
-| Technique | Description | Relevance |
-|-----------|-------------|-----------|
-| **Normalized coordinates (0-1)** | UI-TARS uses `(x/width, y/height)` instead of absolute pixels. Enables cross-resolution transfer | High — RCS may run at different resolutions on different machines |
-| **Coordinate-free grounding** | GUI-Actor (Microsoft) uses attention-based patch alignment instead of generating coordinates as text. Outperforms UI-TARS-72B with 7B model | Future — requires custom model training |
-| **Set-of-Mark (SoM)** | OmniParser overlays numbered bounding boxes on screenshot before sending to VLM. Improved grounding 70.5% → 93.8% | **High priority** — can be added to our pipeline without model changes |
-| **Action space standardization** | UI-TARS defines: Click, Drag, Scroll, Type, Hotkey, Wait, Finished, CallUser | Adopt — standardize our action types |
-| **Pre-execution verification** | VeriSafe Agent: encode safety constraints as DSL, verify action before execution. 94-98% accuracy | **Critical for engineering** — wrong click = wafer damage |
-| **Readback verification** | After typing a value: screenshot → OCR → verify displayed value matches intended | **Must-have for recipe params** |
-
-### Engineering-specific considerations
-- **Dense numerical UIs**: VLMs struggle with small text in dense parameter fields. Our OCR-assist pipeline is well-aligned with research (two-stage > single-stage for complex layouts)
-- **Legacy Win32 controls**: No accessibility tree → pure vision approach is correct. OmniParser V2 (YOLOv8 + Florence-2 + PaddleOCR) can detect interactive elements without accessibility APIs
-- **Precise field targeting**: For small input fields, use **zoomed crop** around target area for higher accuracy (RegionFocus: +28% on ScreenSpot-Pro)
+본 프로젝트는 CD-SEM (VeritySEM/RCS) 레시피 설정을 자동화한다 — 반도체 계측용 Windows 데스크톱 애플리케이션이다. 현재 구현은 스크린샷 → VLM 좌표 추출 → pynput 클릭/타이핑 방식의 2단계 파이프라인(PaddleOCR-VL + ui-venus)을 사용하고 있다. 본 리서치는 **엔지니어링/산업용 애플리케이션**에 특화된 견고한 멀티스텝 워크플로우 자동화 시스템으로의 발전 방향을 탐색한다.
 
 ---
 
-## 2. Decision-Making — How VLM Agents Decide What to Do
+## 1. 마우스 & 키보드 제어 — 고려사항
 
-### Paradigms
+### 현재 접근법 (자체 코드베이스)
+- 마우스/키보드 제어에 **pynput** 사용 (pywinauto는 RCS 레거시 컨트롤에서 실패)
+- `click_at()`: VLM 좌표 → 화면 좌표 → 2회 재시도 fallback 클릭
+- 선형 보간(60fps)을 통한 부드러운 마우스 이동
+- 단축키 조합, 텍스트 타이핑, 드래그 작업 지원
 
-#### a) ReAct (Reason + Act) — Most Common
+### 학계/업계의 권장 기법
+
+| 기법 | 설명 | 관련성 |
+|------|------|--------|
+| **정규화 좌표 (0-1)** | UI-TARS는 절대 픽셀 대신 `(x/width, y/height)`를 사용. 해상도 간 전이 가능 | 높음 — RCS는 장비별로 다른 해상도에서 실행될 수 있음 |
+| **좌표 비의존 그라운딩** | GUI-Actor (Microsoft)는 좌표를 텍스트로 생성하는 대신 attention 기반 patch alignment 사용. 7B 모델로 UI-TARS-72B 능가 | 향후 과제 — 커스텀 모델 학습 필요 |
+| **Set-of-Mark (SoM)** | OmniParser가 스크린샷에 번호가 매겨진 bounding box를 오버레이한 후 VLM에 전송. 그라운딩 정확도 70.5% → 93.8% 향상 | **높은 우선순위** — 모델 변경 없이 파이프라인에 추가 가능 |
+| **Action space 표준화** | UI-TARS 정의: Click, Drag, Scroll, Type, Hotkey, Wait, Finished, CallUser | 도입 권장 — 자체 액션 타입 표준화 필요 |
+| **실행 전 검증** | VeriSafe Agent: 안전 제약을 DSL로 인코딩, 실행 전 액션 검증. 94-98% 정확도 | **엔지니어링에 필수** — 잘못된 클릭 = 웨이퍼 손상 |
+| **Readback 검증** | 값 입력 후: 스크린샷 → OCR → 표시된 값이 의도한 값과 일치하는지 확인 | **레시피 파라미터에 필수** |
+
+### 엔지니어링 특화 고려사항
+- **밀집된 수치 UI**: VLM은 밀집된 파라미터 필드의 작은 텍스트에서 어려움을 겪음. 자체 OCR 보조 파이프라인은 연구 결과와 일치 (복잡한 레이아웃에서 2단계 > 단일 단계)
+- **레거시 Win32 컨트롤**: accessibility tree 없음 → 순수 비전 접근법이 적합. OmniParser V2 (YOLOv8 + Florence-2 + PaddleOCR)는 accessibility API 없이도 인터랙티브 요소 감지 가능
+- **정밀한 필드 타겟팅**: 작은 입력 필드의 경우 대상 영역 주변의 **확대 크롭**을 사용하여 정확도 향상 (RegionFocus: ScreenSpot-Pro에서 +28%)
+
+---
+
+## 2. 의사결정 — VLM 에이전트의 행동 결정 방식
+
+### 패러다임
+
+#### a) ReAct (Reason + Act) — 가장 일반적
 ```
-Loop:
-  1. Observe: screenshot + OCR
-  2. Think: "I see the login screen. I need to click the Server field."
-  3. Act: click(x=150, y=200)
-  4. Observe: new screenshot
-  5. Think: "Server field is now focused. I need to type the server address."
+반복:
+  1. 관찰: 스크린샷 + OCR
+  2. 사고: "로그인 화면이 보인다. Server 필드를 클릭해야 한다."
+  3. 행동: click(x=150, y=200)
+  4. 관찰: 새 스크린샷
+  5. 사고: "Server 필드에 포커스가 맞춰졌다. 서버 주소를 입력해야 한다."
   ...
 ```
-- Used by: UI-TARS, Anthropic Computer Use, most GUI agents
-- Pros: Flexible, handles unexpected states
-- Cons: Each step costs a VLM call, slow for long workflows
+- 사용 사례: UI-TARS, Anthropic Computer Use, 대부분의 GUI 에이전트
+- 장점: 유연함, 예상치 못한 상태 처리 가능
+- 단점: 매 스텝마다 VLM 호출 필요, 긴 워크플로우에서 느림
 
-#### b) Plan-then-Execute — Better for Known Workflows
+#### b) Plan-then-Execute — 알려진 워크플로우에 더 적합
 ```
-1. Plan: "Recipe setup requires: login → navigate to recipe editor → set parameters → save"
-2. Execute each step, verify with VLM only when needed
-3. Re-plan if unexpected state detected
+1. 계획: "레시피 설정 순서: 로그인 → 레시피 편집기 이동 → 파라미터 설정 → 저장"
+2. 각 단계 실행, 필요 시에만 VLM으로 검증
+3. 예상치 못한 상태 감지 시 재계획
 ```
-- Used by: Agent-S (Manager + Worker), UFO2 (HostAgent + AppAgent)
-- Pros: Faster, fewer VLM calls, predictable
-- **Best fit for RCS**: Recipe setup is a known workflow — plan is fixed, only element locations vary
+- 사용 사례: Agent-S (Manager + Worker), UFO2 (HostAgent + AppAgent)
+- 장점: 빠름, VLM 호출 감소, 예측 가능
+- **RCS에 적합**: 레시피 설정은 알려진 워크플로우 — 계획은 고정이고 요소 위치만 변동
 
-#### c) State Machine with Pre-learned Knowledge — Best for Industrial
+#### c) State Machine + 사전 학습된 지식 — 산업용에 최적
 ```
-States: {login_screen, main_menu, recipe_editor, parameter_dialog, ...}
-Transitions: {login_screen --[click login]--> main_menu, ...}
-At each state: execute pre-defined action sequence
+상태: {login_screen, main_menu, recipe_editor, parameter_dialog, ...}
+전이: {login_screen --[login 클릭]--> main_menu, ...}
+각 상태에서: 사전 정의된 액션 시퀀스 실행
 ```
-- Used by: **ActionEngine** (95% success, 11.8x cost reduction vs ReAct), **InfraMind** (83% on industrial GUIs)
-- **Recommended for RCS** — recipe setup has a fixed state graph
+- 사용 사례: **ActionEngine** (95% 성공률, ReAct 대비 11.8배 비용 절감), **InfraMind** (산업용 GUI에서 83%)
+- **RCS에 권장** — 레시피 설정은 고정된 상태 그래프를 가짐
 
-### InfraMind — Most Relevant Framework for Our Use Case
+### InfraMind — 자체 유즈케이스에 가장 관련된 프레임워크
 
-InfraMind (Sept 2025) addresses industrial management GUIs with the same challenges as RCS:
+InfraMind (2025년 9월)은 RCS와 동일한 과제를 가진 산업용 관리 GUI를 다룸:
 
-| InfraMind Challenge | Our RCS Equivalent |
+| InfraMind 과제 | RCS 대응 상황 |
 |---|---|
-| Custom-developed controls, no accessibility | RCS legacy Win32 controls, pywinauto fails |
-| Desktop apps lack URL identifiers | Dozens of RCS dialogs look similar |
-| Air-gapped environments | Semiconductor fab networks are isolated |
-| Safety-critical controls | Wrong recipe params = wafer damage |
-| Precision + efficiency needed | Recipe setup requires exact parameter values |
+| 커스텀 개발 컨트롤, accessibility 없음 | RCS 레거시 Win32 컨트롤, pywinauto 실패 |
+| 데스크톱 앱에 URL 식별자 없음 | 수십 개의 RCS 다이얼로그가 유사하게 보임 |
+| 폐쇄망 환경 | 반도체 팹 네트워크는 격리됨 |
+| 안전 중요 컨트롤 | 잘못된 레시피 파라미터 = 웨이퍼 손상 |
+| 정밀도 + 효율성 요구 | 레시피 설정에 정확한 파라미터 값 필요 |
 
-**InfraMind's approach:**
-1. **Exploration phase**: BFS/DFS through every GUI element (with VM snapshots for safe rollback). Builds a complete element functionality map
-2. **Knowledge distillation**: Large model (GPT-4o) explores → structured knowledge base → small 7B model deploys
-3. **State identification**: CLIP visual embeddings + textual descriptions for dual state representation
-4. **Memory-driven planning**: Stores successful action-flow trees, replays them
-5. **Safety**: CLIP-based blacklist filtering, confirmation dialogs, risk assessment
+**InfraMind의 접근법:**
+1. **탐색 단계**: 모든 GUI 요소를 BFS/DFS로 순회 (VM 스냅샷으로 안전한 롤백). 완전한 요소 기능 맵 구축
+2. **지식 증류**: 대형 모델 (GPT-4o)이 탐색 → 구조화된 지식 베이스 → 소형 7B 모델로 배포
+3. **상태 식별**: CLIP 시각 임베딩 + 텍스트 설명의 이중 상태 표현
+4. **메모리 기반 계획**: 성공한 액션 플로우 트리를 저장, 재사용
+5. **안전**: CLIP 기반 블랙리스트 필터링, 확인 다이얼로그, 리스크 평가
 
-**Result**: 83.3% on OpenDCIM, 76.7% on commercial platform — far ahead of general agents (UI-TARS: 43.3%/20.0%)
+**결과**: OpenDCIM에서 83.3%, 상용 플랫폼에서 76.7% — 범용 에이전트 (UI-TARS: 43.3%/20.0%) 대비 월등히 앞섬
 
-### ActionEngine — State Machine Memory
+### ActionEngine — State Machine 메모리
 
-ActionEngine (Feb 2025) models GUIs as state machines M=(S,O,T):
-- **States**: Structural views (composed of atoms to prevent state explosion)
-- **Operations**: Edges (UI manipulation or data collection)
-- **Transitions**: Validated by actual execution
-- Semi-automated crawler builds graph (typically 20-30 states, 100-150 transitions)
-- Compiles workflows into executable plans in **single inference step**
-- **95% success rate** vs 66% baselines, 11.8x cost reduction
+ActionEngine (2025년 2월)은 GUI를 state machine M=(S,O,T)으로 모델링:
+- **상태(States)**: 구조적 뷰 (상태 폭발 방지를 위해 atom으로 구성)
+- **연산(Operations)**: 엣지 (UI 조작 또는 데이터 수집)
+- **전이(Transitions)**: 실제 실행으로 검증
+- 반자동 크롤러가 그래프 구축 (보통 20-30개 상태, 100-150개 전이)
+- **단일 추론 단계**로 워크플로우를 실행 가능한 계획으로 컴파일
+- **95% 성공률** vs 베이스라인 66%, 11.8배 비용 절감
 
 ---
 
-## 3. Process Extraction — Recording and Replaying Workflows
+## 3. 프로세스 추출 — 워크플로우 기록 및 재생
 
-### The Core Question
-How do we capture a human engineer's recipe setup process and convert it into a replayable automation?
+### 핵심 질문
+엔지니어의 레시피 설정 과정을 어떻게 캡처하여 재현 가능한 자동화로 변환할 것인가?
 
-### Approach A: Record Human Demonstration (ShowUI-Aloha)
+### 접근법 A: 사람의 시연 녹화 (ShowUI-Aloha)
 
-**ShowUI-Aloha** (Dec 2025) provides the most complete open-source system:
+**ShowUI-Aloha** (2025년 12월)는 가장 완전한 오픈소스 시스템을 제공:
 
-1. **Recorder app** (Windows .exe): captures screen video 30fps + mouse/keyboard events with timestamps
-2. **Raw Log Parser**: merges consecutive keystrokes, reconstructs drags, deduplicates clicks
-3. **Screenshot Marker**: generates annotated screenshots per action (red X for clicks, polyline for drags)
-4. **Trace Generator**: VLM produces structured JSON per step:
+1. **레코더 앱** (Windows .exe): 30fps 화면 영상 + 마우스/키보드 이벤트를 타임스탬프와 함께 캡처
+2. **Raw Log Parser**: 연속 키 입력 병합, 드래그 재구성, 중복 클릭 제거
+3. **Screenshot Marker**: 액션별 주석이 달린 스크린샷 생성 (클릭은 빨간 X, 드래그는 폴리라인)
+4. **Trace Generator**: VLM이 스텝별 구조화된 JSON 생성:
    ```json
    {
-     "observation": "Login dialog with Server, UserID, Password fields",
-     "think": "Need to enter server address in the Server field",
+     "observation": "Server, UserID, Password 필드가 있는 로그인 다이얼로그",
+     "think": "Server 필드에 서버 주소를 입력해야 함",
      "action": "click(x=150, y=200) then type('SEM-SERVER-01')",
-     "expectation": "Server field should now show 'SEM-SERVER-01'"
+     "expectation": "Server 필드에 'SEM-SERVER-01'이 표시되어야 함"
    }
    ```
-5. Output designed for **generalization** — single demo works across UI layout variants
+5. **일반화**를 위해 설계된 출력 — 단일 시연으로 UI 레이아웃 변형에 대응 가능
 
-### Approach B: Record-and-Replay with Adaptation (AgentRR)
+### 접근법 B: Record-and-Replay + 적응 (AgentRR)
 
-**AgentRR** (May 2025) — most practical for our case:
+**AgentRR** (2025년 5월) — 자체 케이스에 가장 실용적:
 
-1. **Record phase**: Engineer performs recipe setup once. System captures:
-   - Screenshots at each action
-   - Mouse/keyboard events
-   - VLM-generated reasoning for each step
-2. **Experience abstraction** (3 levels):
-   - **Low**: Exact replay (same coordinates, same values)
-   - **Medium**: Parameterized (same workflow, different values — e.g., different recipe params)
-   - **High**: Conceptual (same goal, adapted to UI changes)
-3. **Replay phase**: Start at low level, escalate to higher levels when environment changes
-4. **141% improvement** over base model using only 312 human trajectories (PC Agent-E)
+1. **녹화 단계**: 엔지니어가 레시피 설정을 한 번 수행. 시스템이 캡처:
+   - 각 액션의 스크린샷
+   - 마우스/키보드 이벤트
+   - VLM이 생성한 각 스텝의 추론
+2. **경험 추상화** (3단계):
+   - **Low**: 정확한 재생 (동일 좌표, 동일 값)
+   - **Medium**: 파라미터화된 재생 (동일 워크플로우, 다른 값 — 예: 다른 레시피 파라미터)
+   - **High**: 개념적 재생 (동일 목표, UI 변경에 적응)
+3. **재생 단계**: Low 레벨에서 시작, 환경 변경 시 상위 레벨로 에스컬레이션
+4. 312개의 사람 궤적만으로 기본 모델 대비 **141% 성능 향상** (PC Agent-E)
 
-### Approach C: Systematic Exploration (InfraMind)
+### 접근법 C: 체계적 탐색 (InfraMind)
 
-Don't record a human — let the VLM explore the application systematically:
+사람을 녹화하지 않고 — VLM이 애플리케이션을 체계적으로 탐색:
 
-1. BFS/DFS through every interactive element
-2. VM snapshot before each action → rollback if unwanted
-3. Compare before/after screenshots to learn element functions
-4. Build complete state graph automatically
-5. **Advantage**: Discovers all paths, not just the one the human demonstrated
+1. 모든 인터랙티브 요소를 BFS/DFS로 순회
+2. 각 액션 전 VM 스냅샷 → 원치 않은 결과 시 롤백
+3. 액션 전후 스크린샷 비교로 요소 기능 학습
+4. 완전한 상태 그래프 자동 구축
+5. **장점**: 사람이 시연한 경로뿐 아니라 모든 경로를 발견
 
-### Recommended Strategy for RCS
+### RCS 권장 전략
 
-**Hybrid: Record + Explore + Parameterize**
+**하이브리드: 탐색 + 녹화 + 파라미터화**
 
 ```
-Phase 1: EXPLORE
-  - Let VLM systematically explore RCS screens
-  - Build state graph: {screen_name → [elements, transitions]}
-  - Identify all interactive elements per screen
+Phase 1: 탐색 (EXPLORE)
+  - VLM이 RCS 화면을 체계적으로 탐색
+  - 상태 그래프 구축: {screen_name → [elements, transitions]}
+  - 화면별 모든 인터랙티브 요소 식별
 
-Phase 2: RECORD
-  - Engineer performs one recipe setup while recording
-  - ShowUI-Aloha style: video + events + screenshots
-  - VLM converts recording to structured trace
+Phase 2: 녹화 (RECORD)
+  - 엔지니어가 녹화하면서 레시피 설정 한 번 수행
+  - ShowUI-Aloha 방식: 영상 + 이벤트 + 스크린샷
+  - VLM이 녹화를 구조화된 trace로 변환
 
-Phase 3: PARAMETERIZE
-  - Extract recipe parameters from trace (server, measurement sites, thresholds)
-  - Create recipe template: fixed workflow + variable parameters
-  - Template format:
+Phase 3: 파라미터화 (PARAMETERIZE)
+  - trace에서 레시피 파라미터 추출 (서버, 측정 사이트, 임계값)
+  - 레시피 템플릿 생성: 고정 워크플로우 + 변수 파라미터
+  - 템플릿 형식:
     {
       "workflow": "rcs_recipe_setup_v1",
       "steps": [
@@ -185,46 +185,46 @@ Phase 3: PARAMETERIZE
       }
     }
 
-Phase 4: REPLAY
-  - Load recipe template + parameter values
-  - Execute steps with VLM verification at each state transition
-  - Readback verification for all typed values
+Phase 4: 재생 (REPLAY)
+  - 레시피 템플릿 + 파라미터 값 로드
+  - 각 상태 전이마다 VLM 검증을 수행하며 스텝 실행
+  - 모든 입력 값에 대해 readback 검증
 ```
 
 ---
 
-## 4. State Tracking — How to Let the VLM Know "Where We Are"
+## 4. 상태 추적 — VLM에게 "현재 위치"를 알려주는 방법
 
-### The Problem
-RCS recipe setup involves dozens of screens/dialogs. The VLM needs to know:
-- Which screen am I looking at?
-- What step in the workflow am I on?
-- What has been completed so far?
-- What should I do next?
+### 문제
+RCS 레시피 설정에는 수십 개의 화면/다이얼로그가 관여한다. VLM은 다음을 알아야 한다:
+- 지금 어떤 화면을 보고 있는가?
+- 워크플로우의 어떤 단계에 있는가?
+- 지금까지 완료된 것은 무엇인가?
+- 다음에 무엇을 해야 하는가?
 
-### Approach A: Screenshot History (UI-TARS Style)
+### 접근법 A: 스크린샷 히스토리 (UI-TARS 방식)
 
 ```
-Context to VLM:
-  - Last 5 screenshots (FIFO sliding window)
-  - Full text history of thoughts + actions
-  - Current step number: "Step 7 of 23"
+VLM에 전달되는 컨텍스트:
+  - 최근 5개 스크린샷 (FIFO 슬라이딩 윈도우)
+  - 전체 사고 + 액션 텍스트 히스토리
+  - 현재 스텝 번호: "23개 중 7번째 스텝"
 ```
 
-**Research findings on history management:**
-- UI-TARS: max 5 screenshots + full text history
-- Agent-S: 8 image turns
-- JetBrains Research (2025): **Observation masking** (keep recent 10 turns, replace older screenshots with text placeholders) often **outperforms** LLM summarization — cuts costs 50%+ with equal or better quality
-- AgentProg: Reframe history as program with variables, prune to active execution path (~9k tokens vs 17k+ baselines)
+**히스토리 관리에 대한 연구 결과:**
+- UI-TARS: 최대 5개 스크린샷 + 전체 텍스트 히스토리
+- Agent-S: 8개 이미지 턴
+- JetBrains Research (2025): **Observation masking** (최근 10턴은 상세 유지, 이전 스크린샷은 텍스트 placeholder로 대체)이 LLM 요약보다 **동등하거나 더 나은 성능** — 비용 50%+ 절감
+- AgentProg: 히스토리를 변수가 있는 프로그램으로 재구성, 활성 실행 경로만 유지 (~9k 토큰 vs 베이스라인 17k+)
 
-### Approach B: State Machine (Recommended for RCS)
+### 접근법 B: State Machine (RCS에 권장)
 
 ```python
-# Define expected states
+# 예상 상태 정의
 STATES = {
     "login_screen": {
         "visual_cues": ["Server", "User ID", "Password", "Log In"],
-        "clip_embedding": "<precomputed>",
+        "clip_embedding": "<사전 계산>",
         "expected_elements": ["server_field", "userid_field", "password_field", "login_button"],
         "transitions": {"login_success": "main_menu", "login_error": "login_screen"}
     },
@@ -237,70 +237,70 @@ STATES = {
     },
 }
 
-# At each step:
-# 1. Capture screenshot
-# 2. Identify current state (CLIP similarity + OCR keyword matching)
-# 3. Look up expected actions for this state
-# 4. Execute actions
-# 5. Verify transition to next expected state
+# 각 스텝에서:
+# 1. 스크린샷 캡처
+# 2. 현재 상태 식별 (CLIP 유사도 + OCR 키워드 매칭)
+# 3. 해당 상태의 예상 액션 조회
+# 4. 액션 실행
+# 5. 다음 예상 상태로의 전이 검증
 ```
 
-**Dual state identification** (InfraMind):
-- **Semantic**: VLM describes what it sees → match to known states
-- **Visual**: CLIP embedding similarity to known state screenshots
-- Combined scoring prevents misidentification of visually similar screens
+**이중 상태 식별** (InfraMind):
+- **시맨틱**: VLM이 보이는 것을 설명 → 알려진 상태와 매칭
+- **시각적**: CLIP 임베딩 유사도로 알려진 상태 스크린샷과 비교
+- 결합 스코어링으로 시각적으로 유사한 화면의 오식별 방지
 
-### Approach C: Progress Tracking Prompt
+### 접근법 C: 진행 상황 추적 프롬프트
 
-Include workflow context in every VLM call:
+모든 VLM 호출에 워크플로우 컨텍스트 포함:
 
 ```
-You are automating CD-SEM recipe setup in RCS software.
+당신은 RCS 소프트웨어에서 CD-SEM 레시피 설정을 자동화하고 있습니다.
 
-WORKFLOW PROGRESS:
-  [x] Step 1: Login to RCS (completed)
-  [x] Step 2: Navigate to Recipe Editor (completed)
-  [ ] Step 3: Create new recipe (CURRENT)
-  [ ] Step 4: Set measurement parameters
-  [ ] Step 5: Define measurement sites
-  [ ] Step 6: Save recipe
+워크플로우 진행 상황:
+  [x] 스텝 1: RCS 로그인 (완료)
+  [x] 스텝 2: 레시피 편집기로 이동 (완료)
+  [ ] 스텝 3: 새 레시피 생성 (현재)
+  [ ] 스텝 4: 측정 파라미터 설정
+  [ ] 스텝 5: 측정 사이트 정의
+  [ ] 스텝 6: 레시피 저장
 
-CURRENT STATE: Recipe Editor - main view
-LAST ACTION: Clicked "Recipe" tab in main menu
-EXPECTED: "New Recipe" button should be visible
+현재 상태: Recipe Editor - 메인 뷰
+마지막 액션: 메인 메뉴에서 "Recipe" 탭 클릭
+예상: "New Recipe" 버튼이 보여야 함
 
-Based on the screenshot, identify the "New Recipe" button and return its coordinates.
+스크린샷을 기반으로 "New Recipe" 버튼을 식별하고 좌표를 반환하세요.
 ```
 
-### Recommended: Combine B + C
+### 권장: B + C 조합
 
-- Use **state machine** for automated state identification (fast, no VLM call needed for known states)
-- Use **progress tracking prompt** when VLM assistance is needed (element location, unexpected states)
-- Fall back to **screenshot history** only when state is unrecognized
+- **state machine**으로 자동 상태 식별 (빠름, 알려진 상태에서 VLM 호출 불필요)
+- VLM 지원이 필요할 때 **진행 상황 추적 프롬프트** 사용 (요소 위치, 예상치 못한 상태)
+- 상태를 인식할 수 없을 때만 **스크린샷 히스토리**로 fallback
 
 ---
 
-## 5. Architecture Recommendations for Our Project
+## 5. 프로젝트 아키텍처 권장사항
 
-### Current vs Proposed Architecture
+### 현재 vs 제안 아키텍처
 
 ```
-CURRENT (per-script, hardcoded sequence):
+현재 (스크립트별, 하드코딩된 시퀀스):
   automate_rcs_login.py → click_rcs_view_mode.py → check_tool_screen.py
-  Each script: screenshot → VLM → parse → click (repeat)
+  각 스크립트: 스크린샷 → VLM → 파싱 → 클릭 (반복)
 
-PROPOSED (workflow engine with state machine):
+제안 (state machine 기반 워크플로우 엔진):
   ┌─────────────────────────────────────────────┐
   │           Recipe Workflow Engine             │
   │                                              │
   │  ┌──────────┐  ┌──────────┐  ┌───────────┐  │
   │  │  State   │  │ Action   │  │ Verifier  │  │
-  │  │ Recognizer│  │ Executor │  │           │  │
+  │  │Recognizer│  │ Executor │  │           │  │
   │  └────┬─────┘  └────┬─────┘  └─────┬─────┘  │
   │       │              │              │         │
   │  ┌────▼──────────────▼──────────────▼─────┐  │
   │  │         State Machine Graph            │  │
-  │  │  (pre-learned from exploration/demo)   │  │
+  │  │  (탐색/시연에서 사전 학습)              │  │
   │  └────────────────────────────────────────┘  │
   │                                              │
   │  ┌────────────┐  ┌───────────────────────┐   │
@@ -311,81 +311,81 @@ PROPOSED (workflow engine with state machine):
   └─────────────────────────────────────────────┘
 ```
 
-### Key Components to Build
+### 구축해야 할 핵심 컴포넌트
 
-1. **State Recognizer**: CLIP embedding + OCR keyword matching → identifies current screen without VLM call
-2. **Action Executor**: Standardized action types (click, type, hotkey, wait, scroll, verify)
-3. **Verifier**: Post-action screenshot → OCR → confirm expected result (readback for typed values)
-4. **State Machine Graph**: Pre-built from exploration or recording, stored as JSON
-5. **Recipe Template**: Parameterized workflow definition (fixed steps + variable values)
-6. **Safety Layer**: Pre-execution constraint checking, blacklist for dangerous elements
+1. **State Recognizer**: CLIP 임베딩 + OCR 키워드 매칭 → VLM 호출 없이 현재 화면 식별
+2. **Action Executor**: 표준화된 액션 타입 (click, type, hotkey, wait, scroll, verify)
+3. **Verifier**: 액션 후 스크린샷 → OCR → 예상 결과 확인 (입력 값 readback)
+4. **State Machine Graph**: 탐색 또는 녹화로 사전 구축, JSON으로 저장
+5. **Recipe Template**: 파라미터화된 워크플로우 정의 (고정 스텝 + 변수 값)
+6. **Safety Layer**: 실행 전 제약 조건 검사, 위험 요소 블랙리스트
 
-### Priority Order
+### 우선순위
 
-| Priority | What | Why |
-|----------|------|-----|
-| **P0** | Set-of-Mark (SoM) overlay for better grounding | +23% accuracy, no model change needed |
-| **P0** | Readback verification after typing | Critical for recipe parameter accuracy |
-| **P1** | State recognizer (CLIP + OCR) | Eliminate redundant VLM calls, enable state machine |
-| **P1** | Standardized action types + workflow JSON | Replace per-script hardcoding |
-| **P2** | Recording system (ShowUI-Aloha style) | Capture engineer demos for new workflows |
-| **P2** | Pre-execution safety constraints | Prevent dangerous actions |
-| **P3** | Exploration crawler | Auto-discover all RCS screens and elements |
-| **P3** | Knowledge distillation to smaller model | Production deployment in fab |
+| 우선순위 | 항목 | 이유 |
+|----------|------|------|
+| **P0** | 더 나은 그라운딩을 위한 Set-of-Mark (SoM) 오버레이 | +23% 정확도, 모델 변경 불필요 |
+| **P0** | 타이핑 후 readback 검증 | 레시피 파라미터 정확도에 필수 |
+| **P1** | State recognizer (CLIP + OCR) | 중복 VLM 호출 제거, state machine 구현 기반 |
+| **P1** | 표준화된 액션 타입 + 워크플로우 JSON | 스크립트별 하드코딩 대체 |
+| **P2** | 녹화 시스템 (ShowUI-Aloha 방식) | 새 워크플로우를 위한 엔지니어 시연 캡처 |
+| **P2** | 실행 전 안전 제약 조건 | 위험한 액션 방지 |
+| **P3** | 탐색 크롤러 | 모든 RCS 화면과 요소 자동 발견 |
+| **P3** | 소형 모델로의 지식 증류 | 팹 내 프로덕션 배포 |
 
 ---
 
-## 6. Key Papers & Tools Reference
+## 6. 핵심 논문 & 도구 레퍼런스
 
-### Must-Read (directly applicable to our engineering use case)
+### 필독 (엔지니어링 유즈케이스에 직접 적용 가능)
 
-| Paper/Tool | Key Contribution | Link |
+| 논문/도구 | 핵심 기여 | 링크 |
 |---|---|---|
-| **InfraMind** (Sept 2025) | Industrial GUI framework: exploration, safety, state ID, knowledge distillation | arxiv:2509.13704 |
-| **ActionEngine** (Feb 2025) | State machine memory for GUI agents, 95% success, 11.8x cost reduction | arxiv:2602.20502 |
-| **AgentRR** (May 2025) | Record-and-replay with multi-level experience abstraction | arxiv:2505.17716 |
-| **ShowUI-Aloha** (Dec 2025) | Complete demo recording → trace generation pipeline | github:showlab/ShowUI-Aloha |
-| **VeriSafe Agent** (Mar 2025) | DSL-based pre-execution safety verification | arxiv:2503.18492 |
-| **OmniParser V2** (Feb 2025) | Pure-vision screen parsing (YOLOv8 + Florence-2 + PaddleOCR) | github:microsoft/OmniParser |
-| **WorldGUI** (Feb 2025) | Desktop GUI benchmark exposing agent failure modes | arxiv:2502.08047 |
+| **InfraMind** (2025년 9월) | 산업용 GUI 프레임워크: 탐색, 안전, 상태 식별, 지식 증류 | arxiv:2509.13704 |
+| **ActionEngine** (2025년 2월) | GUI 에이전트를 위한 state machine 메모리, 95% 성공률, 11.8배 비용 절감 | arxiv:2602.20502 |
+| **AgentRR** (2025년 5월) | 다단계 경험 추상화를 통한 Record-and-Replay | arxiv:2505.17716 |
+| **ShowUI-Aloha** (2025년 12월) | 완전한 시연 녹화 → trace 생성 파이프라인 | github:showlab/ShowUI-Aloha |
+| **VeriSafe Agent** (2025년 3월) | DSL 기반 실행 전 안전 검증 | arxiv:2503.18492 |
+| **OmniParser V2** (2025년 2월) | 순수 비전 화면 파싱 (YOLOv8 + Florence-2 + PaddleOCR) | github:microsoft/OmniParser |
+| **WorldGUI** (2025년 2월) | 데스크톱 GUI 벤치마크, 에이전트 실패 모드 분석 | arxiv:2502.08047 |
 
-### Important Context
+### 주요 참고 자료
 
-| Paper/Tool | Key Contribution | Link |
+| 논문/도구 | 핵심 기여 | 링크 |
 |---|---|---|
-| **UI-TARS 2** (2025) | SOTA end-to-end GUI agent with System-2 reasoning | arxiv:2509.02544 |
-| **Agent-S3** (2025) | Two-tier architecture, surpasses human on OSWorld | github:simular-ai/Agent-S |
-| **UFO2** (Apr 2025) | Dual-agent + hybrid perception (accessibility + vision fusion) | github:microsoft/UFO |
-| **GUI-Actor** (2025) | Coordinate-free grounding, outperforms UI-TARS-72B at 7B | microsoft.github.io/GUI-Actor |
-| **RegionFocus** (2025) | Visual zoom for test-time scaling, +28% grounding | arxiv:2505.00684 |
-| **PC Agent-E** (2025) | 141% improvement with 312 human trajectories | arxiv:2505.13909 |
-| **VAGEN** (2025) | Three-stage verification: static → retrospective → probing | arxiv:2602.00575 |
+| **UI-TARS 2** (2025) | System-2 추론을 갖춘 SOTA 엔드투엔드 GUI 에이전트 | arxiv:2509.02544 |
+| **Agent-S3** (2025) | 2계층 아키텍처, OSWorld에서 사람 능가 | github:simular-ai/Agent-S |
+| **UFO2** (2025년 4월) | 듀얼 에이전트 + 하이브리드 인식 (accessibility + vision 융합) | github:microsoft/UFO |
+| **GUI-Actor** (2025) | 좌표 비의존 그라운딩, 7B로 UI-TARS-72B 능가 | microsoft.github.io/GUI-Actor |
+| **RegionFocus** (2025) | 테스트 타임 스케일링을 위한 visual zoom, +28% 그라운딩 | arxiv:2505.00684 |
+| **PC Agent-E** (2025) | 312개 사람 궤적으로 141% 성능 향상 | arxiv:2505.13909 |
+| **VAGEN** (2025) | 3단계 검증: static → retrospective → probing | arxiv:2602.00575 |
 
-### Semiconductor-specific
+### 반도체 특화
 
-| Resource | Relevance |
+| 자료 | 관련성 |
 |---|---|
-| **GUIDE-X** (SPIE 2025) | VLM+LLM for semiconductor X-ray inspection guidance |
-| **Canopus AI / Siemens** (Jan 2026) | AI-driven metrology workflow automation |
-| **Applied Materials AIx** | Real-time process recipe optimization |
-| **Design-Based Metrology** | Existing CAD-to-recipe automation (different level than GUI) |
+| **GUIDE-X** (SPIE 2025) | 반도체 X-ray 검사 가이던스를 위한 VLM+LLM |
+| **Canopus AI / Siemens** (2026년 1월) | AI 기반 계측 워크플로우 자동화 |
+| **Applied Materials AIx** | 실시간 프로세스 레시피 최적화 |
+| **Design-Based Metrology** | 기존 CAD-to-recipe 자동화 (GUI 레벨과는 다른 계층) |
 
 ---
 
-## 7. Summary: Key Takeaways for Our Project
+## 7. 요약: 프로젝트 핵심 시사점
 
-1. **State machine > ReAct for known workflows**: Recipe setup is predictable — don't waste VLM calls on reasoning when the workflow is fixed. Use VLM only for element location and verification.
+1. **알려진 워크플로우에서는 State machine > ReAct**: 레시피 설정은 예측 가능하다 — 워크플로우가 고정된 상황에서 추론에 VLM 호출을 낭비하지 않는다. VLM은 요소 위치 파악과 검증에만 사용.
 
-2. **Set-of-Mark is the easiest accuracy win**: Overlay numbered bounding boxes on screenshots before sending to VLM. OmniParser V2 can detect interactive elements purely from vision.
+2. **Set-of-Mark이 가장 쉬운 정확도 향상 방법**: 스크린샷에 번호가 매겨진 bounding box를 오버레이한 후 VLM에 전송. OmniParser V2는 순수 비전으로 인터랙티브 요소를 감지 가능.
 
-3. **Record once, replay many**: Use ShowUI-Aloha or custom recording to capture one demo, parameterize it, then replay with different recipe values.
+3. **한 번 녹화, 여러 번 재생**: ShowUI-Aloha 또는 커스텀 녹화로 하나의 시연을 캡처, 파라미터화한 후 다른 레시피 값으로 재생.
 
-4. **Dual state identification beats single**: CLIP embedding similarity + OCR keyword matching is more robust than either alone (InfraMind approach).
+4. **이중 상태 식별이 단일보다 우수**: CLIP 임베딩 유사도 + OCR 키워드 매칭은 단독 사용보다 더 견고 (InfraMind 접근법).
 
-5. **Readback verification is non-negotiable for engineering**: After every typed value, screenshot → OCR → verify. This is what separates industrial automation from consumer-app agents.
+5. **엔지니어링에서 readback 검증은 필수**: 모든 입력 값 후 스크린샷 → OCR → 검증. 이것이 산업용 자동화를 소비자 앱 에이전트와 구분 짓는 핵심.
 
-6. **Observation masking > summarization for history**: Keep last 10 turns detailed, replace older with text placeholders. Simpler, cheaper, and often more effective than LLM summarization.
+6. **히스토리 관리에서 observation masking > 요약**: 최근 10턴은 상세 유지, 이전 것은 텍스트 placeholder로 대체. 더 단순하고, 저렴하며, LLM 요약보다 종종 더 효과적.
 
-7. **Safety constraints must be explicit**: Define a DSL or blacklist for dangerous actions. Never rely on VLM "common sense" for safety in engineering contexts.
+7. **안전 제약 조건은 명시적이어야 함**: 위험한 액션에 대한 DSL 또는 블랙리스트 정의. 엔지니어링 환경에서 VLM의 "상식"에 안전을 의존하지 않는다.
 
-8. **Our two-stage OCR pipeline is validated by research**: The field confirms that pipeline OCR outperforms end-to-end VLMs on dense/complex layouts. Keep and strengthen this approach.
+8. **자체 2단계 OCR 파이프라인은 연구에 의해 검증됨**: 학계에서도 밀집/복잡 레이아웃에서 파이프라인 OCR이 엔드투엔드 VLM보다 우수함을 확인. 이 접근법을 유지하고 강화할 것.

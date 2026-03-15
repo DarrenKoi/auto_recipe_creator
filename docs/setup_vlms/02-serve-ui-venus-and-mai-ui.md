@@ -40,6 +40,9 @@ ss -ltn | grep 800
 - [prepare_variant_envs.py](../../deploy_vlms/scripts/prepare_variant_envs.py)
 
 스크립트는 오프라인/내부망 전용 환경변수를 먼저 세팅한 뒤 `python -m vllm.entrypoints.openai.api_server`를 실행한다.
+`start_model.py`와 `start_*.py`는 기본적으로 nohup 유사 백그라운드 모드로 떠서 터미널을 닫아도 유지된다.
+로그는 `deploy_vlms/runtime/logs/<instance>.log`, PID는 `deploy_vlms/runtime/pids/<instance>.pid`에 남는다.
+현재 셸에 붙여 디버깅하고 싶으면 [start_model.py](../../deploy_vlms/scripts/start_model.py)의 `RUN_IN_BACKGROUND` 값을 `0`으로 바꾼다.
 아래 예시는 클라우드 서버에서 `deploy_vlms`로 이동한 상태를 기준으로 한다.
 
 ```bash
@@ -123,12 +126,12 @@ python scripts/check_vlm.py http://127.0.0.1:8130 ui-venus-30b
 
 ## 5. 수동 운영 메모
 
-권한 제약이 있으면 모델별로 별도 셸에서 시작 스크립트를 실행하고, 응답 확인 후 그대로 유지하는 방식이 가장 단순하다.
+권한 제약이 있으면 시작 스크립트로 백그라운드 기동 후 포트 헬스 체크와 로그 파일 확인만 하는 방식이 가장 단순하다.
 
-- `UI-Venus`와 `MAI-UI`는 각각 다른 셸 또는 세션에서 실행한다.
-- 중단은 해당 셸에서 `Ctrl+C`로 처리한다.
+- `UI-Venus`와 `MAI-UI`는 같은 셸에서 순서대로 올려도 된다. 스크립트가 바로 반환된다.
+- 중단은 `python scripts/stop_model.py <instance>`로 처리한다.
 - 포트 점유 프로세스를 다시 확인할 때는 `ss -ltnp | grep 800` 같은 명령으로 PID를 찾는다.
-- 로그 확인은 현재 실행 중인 터미널 출력 또는 별도 리다이렉트한 로그 파일 기준으로 본다.
+- 로그 확인은 `tail -f runtime/logs/<instance>.log` 기준으로 본다.
 
 ## 6. 다음 단계 확장
 

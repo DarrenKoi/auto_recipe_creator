@@ -161,6 +161,13 @@ python scripts/check_vlm.py http://127.0.0.1:8130 ui-venus-30b
 - proxy 환경변수는 기본적으로 제거한다.
 - 회사 정책상 outbound가 이미 차단되어 있다면, 추가 네트워크 설명은 생략해도 된다.
 
+운영 메모:
+
+- `start_model.py`와 `start_*.py`는 기본적으로 nohup 유사 백그라운드 모드로 실행된다.
+- 로그는 `deploy_vlms/runtime/logs/<instance>.log`, PID는 `deploy_vlms/runtime/pids/<instance>.pid`에 기록된다.
+- 중단은 `python scripts/stop_model.py <instance>`를 사용한다.
+- 현재 터미널에 붙여 디버깅하려면 [start_model.py](../../deploy_vlms/scripts/start_model.py)의 `RUN_IN_BACKGROUND` 값을 `0`으로 바꾼다.
+
 ## 이 저장소와 바로 연결되는 설정 키
 
 `poc/work`는 아래 키를 사용한다.

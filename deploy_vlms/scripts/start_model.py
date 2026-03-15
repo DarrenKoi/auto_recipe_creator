@@ -1,5 +1,9 @@
 """임의 instance 또는 family-size 조합으로 VLM 인스턴스를 시작한다.
 
+기본 동작은 nohup과 비슷한 백그라운드 실행이다.
+터미널을 닫아도 프로세스가 유지되며 로그/ PID 파일은 `deploy_vlms/runtime/` 아래에 남는다.
+필요하면 이 파일 상단의 `RUN_IN_BACKGROUND` 값을 1/0으로 바꿔서 동작을 전환한다.
+
 사용법:
   python start_model.py <instance>
   python start_model.py <family> <size>
@@ -8,11 +12,30 @@
   python start_model.py ui-venus
   python start_model.py ui-venus 30b
   python start_model.py mai-ui-7b
+
+환경 변수:
+  START_MODEL_LOG_DIR=/path/to/logs
+  START_MODEL_PID_DIR=/path/to/pids
 """
 
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
+
+
+STARTUP_POLL_SEC = 1.0
+RUN_IN_BACKGROUND = 1
+
+
+def log(msg: str) -> None:
+    print(f"[INFO] {msg}")
+
+
+def fail(msg: str) -> None:
+    print(f"[ERROR] {msg}", file=sys.stderr)
+    sys.exit(1)
 
 
 def normalize_token(value: str) -> str:
@@ -29,10 +52,65 @@ def resolve_instance() -> str:
     sys.exit(1)
 
 
+def resolve_runtime_paths(script_dir: Path, instance: str) -> tuple[Path, Path]:
+    deploy_vlms_root = Path(os.environ.get("DEPLOY_VLMS_ROOT", "").strip() or script_dir.parent)
+    runtime_root = deploy_vlms_root / "runtime"
+    log_dir = Path(os.environ.get("START_MODEL_LOG_DIR", "").strip() or (runtime_root / "logs"))
+    pid_dir = Path(os.environ.get("START_MODEL_PID_DIR", "").strip() or (runtime_root / "pids"))
+    log_dir.mkdir(parents=True, exist_ok=True)
+    pid_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir / f"{instance}.log", pid_dir / f"{instance}.pid"
+
+
+def launch_foreground(script_dir: Path, instance: str) -> int:
+    cmd = [sys.executable, str(script_dir / "serve_vlm.py"), instance]
+    log(f"Starting instance={instance} in foreground")
+    return subprocess.call(cmd)
+
+
+def launch_detached(script_dir: Path, instance: str) -> int:
+    cmd = [sys.executable, str(script_dir / "serve_vlm.py"), instance]
+    log_path, pid_path = resolve_runtime_paths(script_dir, instance)
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+
+    with log_path.open("a", encoding="utf-8") as log_file:
+        launched_at = time.strftime("%Y-%m-%d %H:%M:%S")
+        log_file.write(f"\n[INFO] Launch requested at {launched_at} for instance={instance}\n")
+        log_file.flush()
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            env=env,
+        )
+
+    time.sleep(STARTUP_POLL_SEC)
+    return_code = proc.poll()
+    if return_code is not None:
+        pid_path.unlink(missing_ok=True)
+        fail(
+            f"instance={instance} exited during startup (rc={return_code}). "
+            f"Check log: {log_path}"
+        )
+
+    pid_path.write_text(f"{proc.pid}\n", encoding="utf-8")
+    log(f"Started instance={instance} in background")
+    log(f"PID={proc.pid}")
+    log(f"LOG={log_path}")
+    log(f"PID_FILE={pid_path}")
+    log(f"To stop: python {script_dir / 'stop_model.py'} {instance}")
+    return 0
+
+
 def main() -> None:
     instance = resolve_instance()
     script_dir = Path(__file__).resolve().parent
-    sys.exit(subprocess.call([sys.executable, str(script_dir / "serve_vlm.py"), instance]))
+    if RUN_IN_BACKGROUND:
+        sys.exit(launch_detached(script_dir, instance))
+    sys.exit(launch_foreground(script_dir, instance))
 
 
 if __name__ == "__main__":

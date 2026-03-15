@@ -11,9 +11,12 @@ python scripts/start_mai_ui.py
 python scripts/check_vlm.py http://127.0.0.1:8001 ui-venus-1.5-8b
 ss -ltnp | grep 800
 curl http://127.0.0.1:8001/v1/models
+tail -f runtime/logs/ui-venus.log
 ```
 
-중단은 해당 셸에서 `Ctrl+C`로 처리하고, 백그라운드로 돌렸다면 포트 기준으로 PID를 찾아 종료하면 된다. `mai-ui`, `ui-tars`도 같은 방식으로 보면 된다.
+`start_model.py`와 `start_*.py`는 기본적으로 nohup 유사 백그라운드 모드다.
+중단은 `python scripts/stop_model.py <instance>`로 처리하고, 로그는 `runtime/logs/<instance>.log`에서 확인하면 된다. `mai-ui`, `ui-tars`도 같은 방식으로 본다.
+현재 셸에 붙여 실행해야 하면 [start_model.py](../../deploy_vlms/scripts/start_model.py)의 `RUN_IN_BACKGROUND` 값을 `0`으로 바꾼다.
 
 size variant는 아래처럼 generic start script를 쓰는 편이 더 단순하다.
 

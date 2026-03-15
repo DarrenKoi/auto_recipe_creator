@@ -341,6 +341,8 @@ def check_forward_models(
                 "config_known": target.config_known,
                 "config_enabled": target.config_enabled,
                 "base_url": base_url,
+                "health_url": health_url,
+                "models_url": models_url,
                 "override_used": override_used,
                 "health_ok": health_probe.get("ok", False),
                 "health_status_code": health_probe.get("status_code"),
@@ -370,13 +372,21 @@ def print_summary(config: ProbeConfig, targets: list[ProbeTarget], results: list
     print(f"  점검 대상:         {target_service_names}")
     print(f"  Timeout:           {config.timeout_sec}s")
 
+    print("\n  Resolved URLs:")
+    for result in results:
+        service = str(result.get("service") or "")
+        base_url = str(result.get("base_url") or "(계산 실패)")
+        models_url = str(result.get("models_url") or "(계산 실패)")
+        print(f"  - {service}: {base_url}")
+        print(f"    models -> {models_url}")
+
     print(
         f"\n  {'서비스':<18} {'포트':<6} {'모델':<22} {'health':<10} {'models':<10} "
-        f"{'모델 일치':<10} {'응답시간':<10} {'base URL':<34} {'비고'}"
+        f"{'모델 일치':<10} {'응답시간':<10} {'total path':<52} {'비고'}"
     )
     print(
         f"  {'─' * 18} {'─' * 6} {'─' * 22} {'─' * 10} {'─' * 10} "
-        f"{'─' * 10} {'─' * 10} {'─' * 34} {'─' * 18}"
+        f"{'─' * 10} {'─' * 10} {'─' * 52} {'─' * 18}"
     )
 
     all_ok = True
@@ -385,7 +395,7 @@ def print_summary(config: ProbeConfig, targets: list[ProbeTarget], results: list
         port = result.get("port")
         port_str = str(port) if port not in {None, ""} else "-"
         model_name = str(result.get("expected_model") or result.get("display_name") or service)
-        base_url = str(result.get("base_url") or "")
+        models_url = str(result.get("models_url") or "")
 
         health_status = "OK" if result.get("health_ok") else "FAIL"
         if result.get("models_ok") and (
@@ -422,7 +432,7 @@ def print_summary(config: ProbeConfig, targets: list[ProbeTarget], results: list
 
         print(
             f"  {service:<18} {port_str:<6} {model_name[:22]:<22} {health_status:<10} {models_status:<10} "
-            f"{match_str:<10} {latency_str:<10} {base_url[:34]:<34} {note}"
+            f"{match_str:<10} {latency_str:<10} {models_url[:52]:<52} {note}"
         )
 
     print(f"\n  configured primary VLM: {DEFAULT_PRIMARY_VLM_SERVICE} ({DEFAULT_PRIMARY_VLM_MODEL_NAME})")

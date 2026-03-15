@@ -12,11 +12,16 @@ Flask proxy 를 거치지 않고 code-server 의 forwarded address
   CODE_SERVER_FORWARD_PATH_TEMPLATE=/proxy/{port}/
   CODE_SERVER_FORWARD_TIMEOUT_SEC=5.0
   CODE_SERVER_FORWARD_API_KEY=<optional default bearer token>
-  CODE_SERVER_FORWARD_UI_VENUS_BASE_URL=http://host/proxy/8001/
+  CODE_SERVER_FORWARD_UI_VENUS_BASE_URL=http://itc-1stop-solution-gpu-image-vscode.aipp02.skhynix.com/proxy/8001/
   CODE_SERVER_FORWARD_UI_VENUS_API_KEY=<optional per-service bearer token>
 
 호환용 환경변수:
   기존 `FORWARD_URL_*` 값을 이미 쓰고 있으면 그대로 재사용할 수 있다.
+
+주의:
+  `CODE_SERVER_FORWARD_<SERVICE>_BASE_URL` 을 지정하면
+  `CODE_SERVER_FORWARD_ROOT_URL` + `CODE_SERVER_FORWARD_PATH_TEMPLATE` 조합 대신
+  해당 full forwarded URL 을 그대로 사용한다.
 
 사용법:
   uv run python poc/work2/code_server_forward_connection_check.py
@@ -389,7 +394,8 @@ def print_summary(config: ProbeConfig, targets: list[ProbeTarget], results: list
         f"{'─' * 10} {'─' * 10} {'─' * 52} {'─' * 18}"
     )
 
-    all_ok = True
+    reachable_all = True
+    match_all = True
     for result in results:
         service = str(result.get("service") or "")
         port = result.get("port")
@@ -398,19 +404,14 @@ def print_summary(config: ProbeConfig, targets: list[ProbeTarget], results: list
         models_url = str(result.get("models_url") or "")
 
         health_status = "OK" if result.get("health_ok") else "FAIL"
-        if result.get("models_ok") and (
-            not str(result.get("expected_model") or "").strip() or result.get("model_match")
-        ):
-            models_status = "OK"
-        elif result.get("models_ok"):
-            models_status = "MISMATCH"
-            all_ok = False
-        else:
-            models_status = "FAIL"
-            all_ok = False
+        models_status = "OK" if result.get("models_ok") else "FAIL"
+        if not result.get("models_ok"):
+            reachable_all = False
 
         expected_model = str(result.get("expected_model") or "").strip()
         match_str = "O" if expected_model and result.get("model_match") else "-" if not expected_model else "X"
+        if expected_model and not result.get("model_match"):
+            match_all = False
         latency_ms = result.get("models_latency_ms")
         latency_str = f"{latency_ms}ms" if latency_ms is not None else "-"
 
@@ -439,10 +440,12 @@ def print_summary(config: ProbeConfig, targets: list[ProbeTarget], results: list
     print(f"  configured OCR VLM:     {DEFAULT_OCR_VLM_SERVICE} ({DEFAULT_OCR_VLM_MODEL_NAME})")
 
     print(f"{SEPARATOR}")
-    if all_ok:
-        print("  결과: code-server forward URL 로 직접 접근 가능")
+    if reachable_all:
+        print("  결과: 모든 서비스가 code-server forward URL /v1/models 로 직접 접근 가능")
     else:
-        print("  결과: 일부 서비스 direct 연결 실패 — 위 비고 확인")
+        print("  결과: 일부 서비스의 /v1/models 직접 연결 실패 — 위 비고 확인")
+    if not match_all:
+        print("  참고: 일부 서비스는 reachable 하지만 configured model name 과 응답 model id 가 다름")
     print(SEPARATOR)
 
 

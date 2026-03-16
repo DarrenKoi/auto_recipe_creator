@@ -62,7 +62,6 @@ ELEMENT_COLORS = {
     "shortcut_button": "cyan",
 }
 DESKTOP_SCAN_BACKENDS = ("uia", "win32")
-FALLBACK_WINDOW_WAIT_SEC = float(os.getenv("RCS_FALLBACK_WINDOW_WAIT_SEC", "2.0"))
 LOGIN_WINDOW_MAX_WIDTH = int(os.getenv("RCS_LOGIN_WINDOW_MAX_WIDTH", "900"))
 LOGIN_WINDOW_MAX_HEIGHT = int(os.getenv("RCS_LOGIN_WINDOW_MAX_HEIGHT", "700"))
 LOGIN_WINDOW_MAX_AREA = int(os.getenv("RCS_LOGIN_WINDOW_MAX_AREA", "500000"))
@@ -214,15 +213,11 @@ def _ensure_rcs_running() -> int | None:
     if launch_pid is None:
         print("[INFO] PID 없음 → open_rcs fallback 실행")
         _run_open_rcs_fallback()
-        print(f"[INFO] 로그인 창 표시 대기: {FALLBACK_WINDOW_WAIT_SEC}s")
-        time.sleep(FALLBACK_WINDOW_WAIT_SEC)
         launch_pid = _load_open_rcs_pid()
     # 상태 파일에 PID 는 있지만 프로세스가 죽어 있음
     elif not _is_pid_alive(launch_pid):
         print(f"[INFO] PID {launch_pid} 프로세스 미실행 → open_rcs fallback 실행")
         _run_open_rcs_fallback()
-        print(f"[INFO] 로그인 창 표시 대기: {FALLBACK_WINDOW_WAIT_SEC}s")
-        time.sleep(FALLBACK_WINDOW_WAIT_SEC)
         launch_pid = _load_open_rcs_pid()
 
     # fallback 후에도 PID 확보 여부 + 생존 여부 최종 확인

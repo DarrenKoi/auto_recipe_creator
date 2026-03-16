@@ -35,6 +35,7 @@ EXIT_ALREADY_OPEN = "already_open"
 EXIT_EARLY_CRASH = "early_crash"
 
 EARLY_CRASH_WAIT_SEC = 0.5
+LOGIN_WINDOW_WAIT_SEC = float(os.getenv("RCS_LOGIN_WINDOW_WAIT_SEC", "2.0"))
 
 
 def format_elapsed_ms(start_time: float) -> str:
@@ -227,6 +228,8 @@ def main() -> str:
 
     write_open_rcs_state(process.pid, EXIT_SUCCESS)
     info(f"RCS 실행 요청 완료: pid={process.pid}")
+    info(f"로그인 창 표시 대기: {LOGIN_WINDOW_WAIT_SEC}s")
+    time.sleep(LOGIN_WINDOW_WAIT_SEC)
     info(f"open_rcs end-to-end elapsed={format_elapsed_ms(script_started_at)}")
     log_work2_event(
         component="open_rcs",

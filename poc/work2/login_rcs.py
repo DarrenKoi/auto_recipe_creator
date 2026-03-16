@@ -63,6 +63,12 @@ DESKTOP_SCAN_BACKENDS = ("uia", "win32")
 LOGIN_WINDOW_MAX_WIDTH = int(os.getenv("RCS_LOGIN_WINDOW_MAX_WIDTH", "900"))
 LOGIN_WINDOW_MAX_HEIGHT = int(os.getenv("RCS_LOGIN_WINDOW_MAX_HEIGHT", "700"))
 LOGIN_WINDOW_MAX_AREA = int(os.getenv("RCS_LOGIN_WINDOW_MAX_AREA", "500000"))
+LOGIN_USE_PID_HINT = os.getenv("RCS_LOGIN_USE_PID_HINT", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 EXIT_SUCCESS = "success"
 EXIT_LOGIN_WINDOW_NOT_FOUND = "login_window_not_found"
@@ -112,6 +118,27 @@ def _is_probable_login_dialog(window, window_title: str) -> bool:
         and height <= LOGIN_WINDOW_MAX_HEIGHT
         and area <= LOGIN_WINDOW_MAX_AREA
     )
+
+
+def _login_window_filter(window, window_title: str) -> bool:
+    """로그인 창 후보 필터. 작은 로그인 대화상자만 통과시킨다."""
+    size_info = _read_window_size(window)
+    if size_info is None:
+        return False
+
+    width, height, area = size_info
+    is_match = (
+        width > 0
+        and height > 0
+        and width <= LOGIN_WINDOW_MAX_WIDTH
+        and height <= LOGIN_WINDOW_MAX_HEIGHT
+        and area <= LOGIN_WINDOW_MAX_AREA
+    )
+    print(
+        "[INFO] 로그인 창 후보 점검 "
+        f"title={window_title!r}, size={width}x{height}, area={area}, match={is_match}"
+    )
+    return is_match
 
 
 def _load_open_rcs_pid() -> int | None:
@@ -164,34 +191,47 @@ def _run_open_rcs_fallback() -> None:
 
 
 def _find_login_window() -> tuple[object | None, str, str]:
-    """PID 힌트 우선, 실패 시 title scan 으로 로그인 창을 찾는다."""
+    """작은 로그인 대화상자를 우선 탐색하고, 필요 시 PID 힌트를 사용한다."""
     launch_pid = _load_open_rcs_pid()
     if launch_pid is None:
         _run_open_rcs_fallback()
         launch_pid = _load_open_rcs_pid()
 
-    if launch_pid is not None:
-        login_window, window_title, backend = find_window_by_pid_and_title_prefix(
-            launch_pid,
-            WINDOW_TITLE_PREFIX,
-            DESKTOP_SCAN_BACKENDS,
-        )
-        if login_window is not None:
-            return login_window, window_title, backend
-
+    print("[INFO] 로그인 창 탐색 시작: desktop visible scan")
     login_window, window_title, backend = find_window_by_title_prefix(
         WINDOW_TITLE_PREFIX,
         DESKTOP_SCAN_BACKENDS,
         visible_only=True,
+        window_filter=_login_window_filter,
     )
     if login_window is not None:
         return login_window, window_title, backend
 
-    return find_window_by_title_prefix(
+    print("[INFO] 로그인 창 탐색 계속: desktop all scan")
+    login_window, window_title, backend = find_window_by_title_prefix(
         WINDOW_TITLE_PREFIX,
         DESKTOP_SCAN_BACKENDS,
         visible_only=False,
+        window_filter=_login_window_filter,
     )
+    if login_window is not None:
+        return login_window, window_title, backend
+
+    if launch_pid is not None and LOGIN_USE_PID_HINT:
+        print("[INFO] 로그인 창 탐색 계속: PID hint scan")
+        return find_window_by_pid_and_title_prefix(
+            launch_pid,
+            WINDOW_TITLE_PREFIX,
+            DESKTOP_SCAN_BACKENDS,
+            window_filter=_login_window_filter,
+        )
+
+    if launch_pid is not None and not LOGIN_USE_PID_HINT:
+        print(
+            "[INFO] PID hint scan 생략: RCS_LOGIN_USE_PID_HINT=false "
+            f"(pid={launch_pid})"
+        )
+    return None, "", ""
 
 
 def _locate_login_controls(login_window, window_title: str, backend: str) -> str:

@@ -750,6 +750,7 @@ def _call_model(
         latency_ms=latency_ms,
         token_usage=client.last_token_usage,
         endpoint=client.endpoint,
+        response_text=raw_response,
     )
 
     parsed_json = None

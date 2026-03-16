@@ -1,6 +1,7 @@
 """윈도우 창 탐색 유틸리티."""
 
 import time
+from typing import Callable
 
 from pywinauto import Desktop
 from pywinauto.application import Application
@@ -50,12 +51,17 @@ def find_window_by_pid_and_title_prefix(
     backends: tuple[str, ...] = ("uia", "win32"),
     *,
     connect_timeout: float = 2.0,
+    window_filter: Callable[[object, str], bool] | None = None,
 ) -> tuple[object | None, str, str]:
     """특정 PID 에 연결해 title_prefix 로 시작하는 첫 창을 반환한다."""
     search_started_at = time.time()
     for backend in backends:
         backend_started_at = time.time()
         app = Application(backend=backend)
+        print(
+            "[INFO] 로그인 창 PID 연결 시도 "
+            f"backend={backend}, pid={process_id}, timeout={connect_timeout}s"
+        )
         try:
             app.connect(process=process_id, timeout=connect_timeout)
         except Exception as exc:
@@ -89,6 +95,12 @@ def find_window_by_pid_and_title_prefix(
                 continue
 
             if title.startswith(title_prefix):
+                if window_filter is not None and not window_filter(win, title):
+                    print(
+                        "[INFO] 로그인 창 PID 후보 제외 "
+                        f"backend={backend}, pid={process_id}, title={title!r}"
+                    )
+                    continue
                 print(
                     "[INFO] 로그인 창 PID 발견 "
                     f"backend={backend}, pid={process_id}, title={title!r}, "
@@ -109,6 +121,7 @@ def find_window_by_title_prefix(
     backends: tuple[str, ...] = ("uia", "win32"),
     *,
     visible_only: bool = True,
+    window_filter: Callable[[object, str], bool] | None = None,
 ) -> tuple[object | None, str, str]:
     """top-level 창 중 title_prefix 로 시작하는 첫 창을 반환한다."""
     search_started_at = time.time()
@@ -139,6 +152,12 @@ def find_window_by_title_prefix(
                 continue
 
             if title.startswith(title_prefix):
+                if window_filter is not None and not window_filter(win, title):
+                    print(
+                        "[INFO] 로그인 창 후보 제외 "
+                        f"backend={backend}, title={title!r}, visible_only={visible_only}"
+                    )
+                    continue
                 print(
                     "[INFO] 로그인 창 발견 "
                     f"backend={backend}, title={title!r}, "

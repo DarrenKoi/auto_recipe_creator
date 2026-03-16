@@ -94,6 +94,7 @@ def log_vlm_call(
     token_usage: dict[str, int] | None = None,
     error: str = "",
     endpoint: str = "",
+    response_text: str = "",
     log_name: str = "vlm_calls",
 ) -> None:
     """VLM 호출 결과를 로그에 기록한다."""
@@ -105,6 +106,11 @@ def log_vlm_call(
             "service=%s model=%s status=ok latency_ms=%.1f %s endpoint=%s",
             service, model, latency_ms, tokens, endpoint,
         )
+        if response_text:
+            logger.info("--- VLM response start ---")
+            for line in response_text.splitlines():
+                logger.info(line)
+            logger.info("--- VLM response end ---")
     else:
         logger.error(
             "service=%s model=%s status=error latency_ms=%.1f %s error=%s endpoint=%s",

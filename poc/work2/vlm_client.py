@@ -272,6 +272,7 @@ class Work2VLMClient:
             latency_ms=(time.time() - started_at) * 1000,
             token_usage=dict(self._client.last_token_usage or {}),
             endpoint=self.endpoint,
+            response_text=text,
             log_name=self.log_name,
         )
         return Work2VLMResponse(

@@ -15,6 +15,8 @@ import sys
 import time
 from pathlib import Path
 
+import psutil
+
 from dotenv import load_dotenv
 
 from poc.work2.logger import log_work2_event
@@ -165,6 +167,15 @@ def _load_open_rcs_pid() -> int | None:
     return None
 
 
+def _is_pid_alive(pid: int) -> bool:
+    """PID 에 해당하는 프로세스가 실행 중인지 확인한다."""
+    try:
+        proc = psutil.Process(pid)
+        return proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return False
+
+
 def _run_open_rcs_fallback() -> None:
     """open_rcs.py 를 실행해 PID 상태 파일 생성을 재시도한다."""
     command = [sys.executable, str(OPEN_RCS_SCRIPT_PATH)]
@@ -191,23 +202,19 @@ def _run_open_rcs_fallback() -> None:
 
 
 def _find_login_window() -> tuple[object | None, str, str]:
-    """작은 로그인 대화상자를 우선 탐색하고, 필요 시 PID 힌트를 사용한다."""
+    """PID 생존 확인 후 로그인 대화상자를 탐색한다. PID 가 없거나 죽었으면 open_rcs fallback."""
     launch_pid = _load_open_rcs_pid()
+
     if launch_pid is None:
+        print("[INFO] PID 없음 → open_rcs fallback 실행")
+        _run_open_rcs_fallback()
+        launch_pid = _load_open_rcs_pid()
+    elif not _is_pid_alive(launch_pid):
+        print(f"[INFO] PID {launch_pid} 프로세스 미실행 → open_rcs fallback 실행")
         _run_open_rcs_fallback()
         launch_pid = _load_open_rcs_pid()
 
-    print("[INFO] 로그인 창 탐색 시작: desktop visible scan")
-    login_window, window_title, backend = find_window_by_title_prefix(
-        WINDOW_TITLE_PREFIX,
-        DESKTOP_SCAN_BACKENDS,
-        visible_only=True,
-        window_filter=_login_window_filter,
-    )
-    if login_window is not None:
-        return login_window, window_title, backend
-
-    print("[INFO] 로그인 창 탐색 계속: desktop all scan")
+    print("[INFO] 로그인 창 탐색 시작: desktop all scan")
     login_window, window_title, backend = find_window_by_title_prefix(
         WINDOW_TITLE_PREFIX,
         DESKTOP_SCAN_BACKENDS,

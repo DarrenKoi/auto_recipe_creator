@@ -1,7 +1,7 @@
 """RCS 메인 화면에서 View/List 탭을 VLM으로 검출하고 탭을 순차 클릭하는 스크립트 (Windows 전용).
 
 이미 로그인된 RCS 메인 창을 데스크톱에서 찾아 스크린샷을 캡처한 뒤,
-UI-Venus primary + PaddleOCR assist pipeline 으로 View/List 탭 좌표를 요청하고, 디버그 이미지를 저장한 다음
+main_tabs purpose VLM + PaddleOCR assist pipeline 으로 View/List 탭 좌표를 요청하고, 디버그 이미지를 저장한 다음
 View 탭과 List 탭을 순서대로 클릭한다.
 """
 
@@ -31,8 +31,8 @@ PIPELINE_CONFIG = apply_pipeline_env_defaults()
 
 # ─────────────────────────── 설정 ───────────────────────────
 
-VLM_API_URL = str(PIPELINE_CONFIG["primary_api_url"] or "")
-VLM_API_KEY = str(PIPELINE_CONFIG["primary_api_key"] or "")
+VLM_API_URL = str(PIPELINE_CONFIG["main_tabs_api_url"] or "")
+VLM_API_KEY = str(PIPELINE_CONFIG["main_tabs_api_key"] or "")
 PYWINAUTO_BACKEND = os.environ.get("PYWINAUTO_BACKEND", "").strip().lower() or "win32"
 MAIN_WINDOW_TITLE_REGEX = (
     os.environ.get("RCS_MAIN_WINDOW_REGEX", r"\brcs\b.*\[server\s*:[^\]]+\]").strip()
@@ -52,7 +52,7 @@ DESKTOP_SCAN_BACKENDS = tuple(
     dict.fromkeys(b for b in _desktop_backends if b in {"uia", "win32"})
 ) or ("uia", "win32")
 
-VLM_MODEL = str(PIPELINE_CONFIG["primary_model_name"] or "ui-venus-1.5-8b")
+VLM_MODEL = str(PIPELINE_CONFIG["main_tabs_model_name"] or "ui-venus-1.5-8b")
 
 TARGET_ELEMENTS = ["view_tab", "list_tab"]
 TAB_CLICK_SEQUENCE = ("view_tab", "list_tab")
@@ -110,16 +110,16 @@ def main() -> int:
     print("[INFO] RCS 메인 창에서 View/List 탭 검출 시작")
     if VLM_API_URL:
         print(
-            f"[INFO] pipeline: primary={PIPELINE_CONFIG['primary_service']} "
+            f"[INFO] pipeline: main_tabs={PIPELINE_CONFIG['main_tabs_service']} "
             f"({VLM_MODEL}) -> ocr={PIPELINE_CONFIG['ocr_service']} "
             f"({PIPELINE_CONFIG['ocr_model_name']})"
         )
         print(
-            f"[INFO] primary endpoint={VLM_API_URL}, "
+            f"[INFO] main_tabs endpoint={VLM_API_URL}, "
             f"ocr endpoint={PIPELINE_CONFIG['ocr_api_url']}"
         )
     else:
-        print("[WARNING] primary VLM API URL이 비어 있습니다. poc/work2/flask_vlm.py 의 공유 설정을 확인하세요.")
+        print("[WARNING] main_tabs VLM API URL이 비어 있습니다. poc/work2/flask_vlm.py 의 공유 설정을 확인하세요.")
 
     main_window, main_title, debug_rows = find_existing_main_window(
         DESKTOP_SCAN_BACKENDS, _main_title_matcher

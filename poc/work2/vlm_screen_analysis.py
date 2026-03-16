@@ -44,7 +44,7 @@ class MeasurementJudgment:
 
 
 class VLMScreenAnalyzer:
-    """UI-Venus primary + PaddleOCR assist 기반 화면 분석 클래스."""
+    """screen_analysis purpose VLM + PaddleOCR assist 기반 화면 분석 클래스."""
 
     def __init__(
         self,
@@ -54,16 +54,16 @@ class VLMScreenAnalyzer:
         pipeline_config: Optional[dict[str, object]] = None,
     ):
         self.pipeline_config = pipeline_config or apply_pipeline_env_defaults()
-        self.api_key = api_key or str(self.pipeline_config.get("primary_api_key", "") or "")
+        self.api_key = api_key or str(self.pipeline_config.get("screen_analysis_api_key", "") or "")
         self.api_base_url = (
             api_base_url
-            or str(self.pipeline_config.get("primary_api_url", "") or "")
+            or str(self.pipeline_config.get("screen_analysis_api_url", "") or "")
             or os.environ.get("VLM_API_URL")
             or os.environ.get("VLM_API_BASE_URL")
         )
         self.model_name = (
             model_name
-            or str(self.pipeline_config.get("primary_model_name", "") or "")
+            or str(self.pipeline_config.get("screen_analysis_model_name", "") or "")
             or os.environ.get("VLM_MODEL_NAME", "")
         )
         self.vlm_client = LangChainOpenAICompatibleVLMClient(
@@ -264,7 +264,7 @@ class VLMScreenAnalyzer:
         try:
             result = self.vlm_client.chat_with_image(request)
             log_vlm_call(
-                service="primary",
+                service="screen_analysis",
                 model=self.model_name,
                 status="ok",
                 latency_ms=(time.time() - start_ms) * 1000,
@@ -274,7 +274,7 @@ class VLMScreenAnalyzer:
             return result
         except Exception as exc:
             log_vlm_call(
-                service="primary",
+                service="screen_analysis",
                 model=self.model_name,
                 status="error",
                 latency_ms=(time.time() - start_ms) * 1000,

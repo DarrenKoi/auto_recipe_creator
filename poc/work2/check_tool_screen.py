@@ -251,7 +251,7 @@ def _capture_and_analyze_screen(window, settings: ToolScreenSettings) -> None:
 
     pipeline_config = apply_pipeline_env_defaults()
     debug_model_name = str(
-        pipeline_config.get("primary_model_name")
+        pipeline_config.get("screen_analysis_model_name")
         or os.environ.get("VLM_MODEL_NAME")
         or ""
     ).strip()
@@ -317,12 +317,12 @@ def _capture_and_analyze_screen(window, settings: ToolScreenSettings) -> None:
             return
 
         print(
-            f"[INFO] pipeline: primary={pipeline_config['primary_service']} "
+            f"[INFO] pipeline: screen_analysis={pipeline_config['screen_analysis_service']} "
             f"({config.vlm.model_name}) -> ocr={pipeline_config['ocr_service']} "
             f"({pipeline_config['ocr_model_name']})"
         )
         print(
-            f"[INFO] primary endpoint={config.vlm.api_url}, "
+            f"[INFO] screen_analysis endpoint={config.vlm.api_url}, "
             f"ocr endpoint={pipeline_config['ocr_api_url']}"
         )
 

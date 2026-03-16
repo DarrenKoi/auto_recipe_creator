@@ -1,4 +1,4 @@
-"""OCR assist helpers for the `ui-venus -> paddleocr` work2 pipeline."""
+"""OCR assist helpers for purpose-based work2 VLM pipelines."""
 
 from dataclasses import dataclass
 from typing import Iterable
@@ -152,7 +152,7 @@ def build_ocr_extra_instructions(
     *,
     max_items: int = 8,
 ) -> tuple[str, ...]:
-    """Convert OCR result into short prompt instructions for the primary VLM."""
+    """Convert OCR result into short prompt instructions for the paired UI VLM."""
     if result is None:
         return ()
 

@@ -28,11 +28,11 @@ from pywinauto import Desktop, mouse
 from pywinauto.application import Application
 from pywinauto.keyboard import send_keys
 
-from flask_api.vlm_serve.config import get_service_by_slug
 from poc.work.vlm_openai_client import ChatImageRequest, LangChainOpenAICompatibleVLMClient
 from poc.work2.flask_vlm import (
     apply_pipeline_env_defaults,
     fetch_vlm_health,
+    get_service_by_slug,
     normalize_vlm_health_entries,
     resolve_service_proxy_url,
 )
@@ -504,7 +504,7 @@ def _run_benchmark(
         extra_instructions=ocr_extra,
     )
 
-    api_key = str(pipeline_config.get("primary_api_key") or "")
+    api_key = str(pipeline_config.get("shared_api_key") or "")
     results: list[dict[str, Any]] = []
 
     for target in service_targets:
@@ -673,8 +673,8 @@ def _print_benchmark_summary(results: list[dict[str, Any]]) -> None:
 
 def main() -> int:
     print(
-        f"[INFO] pipeline: primary={PIPELINE_CONFIG['primary_service']} "
-        f"({PIPELINE_CONFIG['primary_model_name']}), "
+        f"[INFO] pipeline: screen_analysis={PIPELINE_CONFIG['screen_analysis_service']} "
+        f"({PIPELINE_CONFIG['screen_analysis_model_name']}), "
         f"ocr={PIPELINE_CONFIG['ocr_service']} "
         f"({PIPELINE_CONFIG['ocr_model_name']})"
     )

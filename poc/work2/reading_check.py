@@ -27,13 +27,13 @@ from typing import Any
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
-from flask_api.vlm_serve.config import get_service_by_slug
 from poc.work.screen_capture import ScreenCapture
 from poc.work.vlm_openai_client import ChatImageRequest, OpenAICompatibleVLMClient
 from poc.work2 import debug_image_dir
 from poc.work2.flask_vlm import (
     apply_pipeline_env_defaults,
     fetch_vlm_health,
+    get_service_by_slug,
     normalize_vlm_health_entries,
 )
 from poc.work2.logger import log_vlm_call
@@ -477,27 +477,28 @@ def _build_service_target(
 ) -> dict[str, Any]:
     """service slug + optional health row 로 실제 호출 대상 정보를 구성한다."""
     flask_base_url = str(pipeline.get("flask_api_base_url") or "").rstrip("/")
-    primary_service = str(pipeline.get("primary_service") or "").strip()
-    primary_api_url = str(pipeline.get("primary_api_url") or "").strip()
-    primary_api_key = str(pipeline.get("primary_api_key") or "").strip()
-    primary_model = str(pipeline.get("primary_model_name") or "").strip()
+    screen_analysis_service = str(pipeline.get("screen_analysis_service") or "").strip()
+    screen_analysis_api_url = str(pipeline.get("screen_analysis_api_url") or "").strip()
+    screen_analysis_api_key = str(pipeline.get("screen_analysis_api_key") or "").strip()
+    screen_analysis_model = str(pipeline.get("screen_analysis_model_name") or "").strip()
     ocr_service = str(pipeline.get("ocr_service") or "").strip()
     ocr_api_url = str(pipeline.get("ocr_api_url") or "").strip()
     ocr_api_key = str(pipeline.get("ocr_api_key") or "").strip()
     ocr_model = str(pipeline.get("ocr_model_name") or "").strip()
+    shared_api_key = str(pipeline.get("shared_api_key") or "").strip()
 
     service_entry = get_service_by_slug(service_slug)
-    if service_slug == primary_service:
-        api_url = primary_api_url
-        api_key = primary_api_key
-        configured_model = primary_model
+    if service_slug == screen_analysis_service:
+        api_url = screen_analysis_api_url
+        api_key = screen_analysis_api_key
+        configured_model = screen_analysis_model
     elif service_slug == ocr_service:
         api_url = ocr_api_url
         api_key = ocr_api_key
         configured_model = ocr_model
     else:
         api_url = str((health_row or {}).get("api_url") or "").strip() or _build_proxy_url(flask_base_url, service_slug)
-        api_key = primary_api_key
+        api_key = shared_api_key
         configured_model = str((health_row or {}).get("expected_model") or "").strip()
         if not configured_model and service_entry is not None:
             configured_model = service_entry.model_name

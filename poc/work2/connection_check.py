@@ -1,9 +1,7 @@
-"""독립 실행 가능한 Flask proxy VLM 연결 점검 스크립트.
+"""Flask proxy VLM 연결 점검 스크립트.
 
-이 파일 하나만으로 Flask `/api/vlm_serve/health` 와
-각 proxy route 의 `/v1/models` 응답을 점검한다.
-`flask_api` 폴더나 `poc.work2.flask_vlm` 에 의존하지 않도록
-공유 base URL, 기본 screen-analysis/OCR 모델, 서비스 registry 를 모두 이 파일에 고정한다.
+Flask `/api/vlm_serve/health` 와 각 proxy route 의 `/v1/models` 응답을 점검한다.
+VLM 서비스 registry 및 Flask URL 설정은 `flask_vlm.py` 에서 가져온다.
 
 필요하면 `CONNECTION_CHECK_SERVICES=slug1,slug2,...` 환경변수로 대상 route 를 제한할 수 있다.
 
@@ -18,161 +16,26 @@
 
 import os
 import time
-from dataclasses import dataclass
 
 import requests
 
+from poc.work2.flask_vlm import (
+    ALL_VLM_SERVICES,
+    DEFAULT_OCR_MODEL_NAME,
+    DEFAULT_OCR_SERVICE,
+    DEFAULT_SCREEN_ANALYSIS_MODEL_NAME,
+    DEFAULT_SCREEN_ANALYSIS_SERVICE,
+    DEFAULT_VLM_HEALTH_TIMEOUT_SEC,
+    fetch_vlm_health,
+    get_service_by_slug,
+    normalize_vlm_health_entries,
+    resolve_flask_api_base_url,
+    resolve_service_proxy_url,
+    resolve_vlm_health_url,
+)
 
-@dataclass(frozen=True)
-class VLMServiceEntry:
-    """connection_check 전용 고정 서비스 정의."""
-
-    route_slug: str
-    display_name: str
-    model_name: str
-    enabled: bool = True
-
-
-DEFAULT_FLASK_API_BASE_URL = "http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api"
-DEFAULT_SCREEN_ANALYSIS_SERVICE = "ui-venus"
-DEFAULT_SCREEN_ANALYSIS_MODEL_NAME = "ui-venus-1.5-8b"
-DEFAULT_OCR_VLM_SERVICE = "paddleocr-vl-1.5"
-DEFAULT_OCR_VLM_MODEL_NAME = "paddleocr-vl-1.5"
-
-ALL_VLM_SERVICES: list[VLMServiceEntry] = [
-    VLMServiceEntry("ui-venus", "UI-Venus-1.5-8B", "ui-venus-1.5-8b", enabled=True),
-    VLMServiceEntry("mai-ui", "MAI-UI-8B", "mai-ui-8b", enabled=True),
-    VLMServiceEntry("ui-tars", "UI-TARS-1.5-7B", "ui-tars-1.5-7b", enabled=True),
-    VLMServiceEntry("paddleocr-vl-1.5", "PaddleOCR-VL-1.5", "paddleocr-vl-1.5", enabled=True),
-    VLMServiceEntry("got-ocr", "GOT-OCR-2.0-hf", "got-ocr-2.0-hf", enabled=True),
-]
-
-SERVICE_MAP: dict[str, VLMServiceEntry] = {service.route_slug: service for service in ALL_VLM_SERVICES}
-
-TIMEOUT_SEC = 5.0
+TIMEOUT_SEC = DEFAULT_VLM_HEALTH_TIMEOUT_SEC
 SEPARATOR = "-" * 80
-
-
-def _get_service_by_slug(service_slug: str) -> VLMServiceEntry | None:
-    """고정 registry 에서 service slug 를 조회한다."""
-    return SERVICE_MAP.get(service_slug)
-
-
-def _build_proxy_url(flask_base_url: str, service_slug: str) -> str:
-    """Flask base URL 에서 service proxy base URL 을 구성한다."""
-    base_url = flask_base_url.rstrip("/")
-    if not base_url:
-        return ""
-
-    service_path = f"/api/vlm_serve/{service_slug}"
-    if base_url.endswith(service_path):
-        return base_url
-    if base_url.endswith("/api/vlm_serve"):
-        return f"{base_url}/{service_slug}"
-    if base_url.endswith("/api"):
-        return f"{base_url}/vlm_serve/{service_slug}"
-    return f"{base_url}{service_path}"
-
-
-def resolve_flask_api_base_url() -> str:
-    """고정된 Flask API base URL 을 반환한다."""
-    return DEFAULT_FLASK_API_BASE_URL.rstrip("/")
-
-
-def resolve_vlm_health_url(flask_base_url: str | None = None) -> str:
-    """Flask VLM health endpoint URL 을 반환한다."""
-    base_url = (flask_base_url or resolve_flask_api_base_url()).rstrip("/")
-    if base_url.endswith("/vlm_serve"):
-        return f"{base_url}/health"
-    return f"{base_url}/vlm_serve/health"
-
-
-def resolve_service_proxy_url(
-    service_slug: str,
-    *,
-    flask_base_url: str | None = None,
-) -> str:
-    """service slug 기준 Flask proxy base URL 을 반환한다."""
-    base_url = (flask_base_url or resolve_flask_api_base_url()).rstrip("/")
-    return _build_proxy_url(base_url, service_slug)
-
-
-def fetch_vlm_health(
-    *,
-    flask_base_url: str | None = None,
-    timeout_sec: float = TIMEOUT_SEC,
-) -> dict[str, object]:
-    """Flask VLM health payload 를 가져온다."""
-    health_url = resolve_vlm_health_url(flask_base_url=flask_base_url)
-    response = requests.get(health_url, timeout=timeout_sec)
-    response.raise_for_status()
-
-    payload = response.json()
-    if not isinstance(payload, dict):
-        raise ValueError(f"VLM health 응답 형식이 올바르지 않습니다: {payload!r}")
-    return payload
-
-
-def normalize_vlm_health_entries(
-    health_body: dict[str, object],
-    *,
-    flask_base_url: str | None = None,
-) -> list[dict[str, object]]:
-    """health payload 의 `vlm_statuses` 를 공통 row 형식으로 정규화한다."""
-    statuses = health_body.get("vlm_statuses")
-    if not isinstance(statuses, list):
-        return []
-
-    registered_services = {
-        str(item).strip()
-        for item in health_body.get("registered_vlms", [])
-        if str(item).strip()
-    }
-    base_url = (flask_base_url or resolve_flask_api_base_url()).rstrip("/")
-    rows: list[dict[str, object]] = []
-    seen: set[str] = set()
-
-    for item in statuses:
-        if not isinstance(item, dict):
-            continue
-
-        service_slug = str(item.get("service", "") or "").strip()
-        if not service_slug or service_slug in seen:
-            continue
-        seen.add(service_slug)
-
-        service_entry = _get_service_by_slug(service_slug)
-        health_status = str(item.get("health_status", "") or "").strip()
-        display_name = str(
-            item.get("display_name")
-            or (service_entry.display_name if service_entry else service_slug)
-            or service_slug
-        ).strip()
-        expected_model = str(
-            item.get("served_model_name")
-            or (service_entry.model_name if service_entry else "")
-            or ""
-        ).strip()
-        proxy_registered = bool(item.get("proxy_registered")) or service_slug in registered_services
-
-        rows.append(
-            {
-                "service": service_slug,
-                "display_name": display_name,
-                "expected_model": expected_model,
-                "health_status": health_status,
-                "proxy_registered": proxy_registered,
-                "config_known": service_entry is not None,
-                "config_enabled": None if service_entry is None else service_entry.enabled,
-                "api_url": _build_proxy_url(base_url, service_slug) if proxy_registered else "",
-                "upstream_base_url": str(item.get("upstream_base_url", "") or "").strip(),
-                "reason": str(item.get("reason", "") or "").strip(),
-                "source_env": str(item.get("source_env", "") or "").strip(),
-                "runtime": str(item.get("runtime", "") or "").strip(),
-            }
-        )
-
-    return rows
 
 
 def _parse_requested_services() -> tuple[str, ...]:
@@ -189,7 +52,7 @@ def _parse_requested_services() -> tuple[str, ...]:
 
 def _fallback_target_row(service_slug: str) -> dict[str, object]:
     """health endpoint 를 못 쓸 때 사용할 최소 대상 row 를 구성한다."""
-    service_entry = _get_service_by_slug(service_slug)
+    service_entry = get_service_by_slug(service_slug)
     proxy_registered = service_entry is not None and service_entry.enabled
     return {
         "service": service_slug,
@@ -401,7 +264,7 @@ def print_summary(
         f"\n  configured screen analysis VLM: "
         f"{DEFAULT_SCREEN_ANALYSIS_SERVICE} ({DEFAULT_SCREEN_ANALYSIS_MODEL_NAME})"
     )
-    print(f"  configured OCR VLM:     {DEFAULT_OCR_VLM_SERVICE} ({DEFAULT_OCR_VLM_MODEL_NAME})")
+    print(f"  configured OCR VLM:     {DEFAULT_OCR_SERVICE} ({DEFAULT_OCR_MODEL_NAME})")
 
     print(f"{SEPARATOR}")
     if all_ok:

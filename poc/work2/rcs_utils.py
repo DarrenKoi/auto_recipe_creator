@@ -19,6 +19,8 @@ from PIL import Image, ImageDraw, ImageFont
 from pywinauto import Desktop, mouse
 from pywinauto.application import Application
 
+from poc.work2.logger import log_work2_event
+
 
 __all__ = [
     "capture_window",
@@ -27,9 +29,11 @@ __all__ = [
     "encode_image_webp",
     "extract_json",
     "find_existing_main_window",
+    "format_elapsed_ms",
     "is_main_window_title",
     "launch_application",
     "parse_coords",
+    "save_debug_webp",
     "save_marked_image",
     "scan_window_list",
     "wait_for_window_by_title_prefix",
@@ -109,6 +113,35 @@ def encode_image_webp(
     return b64, w, h
 
 
+def save_debug_webp(
+    image: "Image.Image",
+    out_path: Path,
+    *,
+    quality: int = 90,
+    log_name: str = "work2",
+) -> None:
+    """VLM 입력과 동일한 WebP 이미지를 디버그 경로에 저장한다."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    debug_img = image.convert("RGB") if image.mode != "RGB" else image
+    debug_img.save(out_path, format="WEBP", quality=quality)
+    print(f"[INFO] VLM 입력 WebP 저장: {out_path}")
+    log_work2_event(
+        component="debug_image",
+        message="saved_webp",
+        log_name=log_name,
+        path=out_path,
+        quality=quality,
+    )
+
+
+def format_elapsed_ms(start_time: float) -> str:
+    """start_time 이후 경과 시간을 사람이 읽기 쉬운 문자열로 반환한다."""
+    elapsed_ms = (time.time() - start_time) * 1000
+    if elapsed_ms < 1000:
+        return f"{elapsed_ms:.0f}ms"
+    return f"{elapsed_ms / 1000:.2f}s"
+
+
 # ─────────────────────────── 마우스 클릭 ───────────────────────────
 
 
@@ -169,12 +202,14 @@ def launch_application(
     backend: str,
     *,
     wait_for_idle: bool = False,
+    log_name: str = "work2",
 ):
     """RCS 실행 파일을 시작하고 pywinauto Application 객체를 반환한다.
 
     일부 RCS 배포본은 `Application.start()` 에서 실패하거나 실행 후 자식 프로세스로
     UI를 넘길 수 있어 subprocess fallback 을 함께 제공한다.
     """
+    launch_started_at = time.time()
     cmd_str = subprocess.list2cmdline([str(exe_path)])
     work_dir = str(exe_path.parent)
     print(f"[INFO] 작업 디렉토리: {work_dir}")
@@ -185,10 +220,34 @@ def launch_application(
             work_dir=work_dir,
             wait_for_idle=wait_for_idle,
         )
-        print("[INFO] pywinauto Application.start 실행 성공")
+        print(
+            "[INFO] pywinauto Application.start 실행 성공 "
+            f"(elapsed={format_elapsed_ms(launch_started_at)})"
+        )
+        log_work2_event(
+            component="rcs_launch",
+            message="application_start_ok",
+            log_name=log_name,
+            exe_path=exe_path,
+            backend=backend,
+            elapsed_ms=f"{(time.time() - launch_started_at) * 1000:.1f}",
+        )
         return app
     except Exception as exc:
-        print(f"[WARNING] Application.start 실패, subprocess 로 재시도합니다: {exc}")
+        print(
+            "[WARNING] Application.start 실패, subprocess 로 재시도합니다: "
+            f"{exc} (elapsed={format_elapsed_ms(launch_started_at)})"
+        )
+        log_work2_event(
+            component="rcs_launch",
+            message="application_start_failed",
+            level="warning",
+            log_name=log_name,
+            exe_path=exe_path,
+            backend=backend,
+            error=exc,
+            elapsed_ms=f"{(time.time() - launch_started_at) * 1000:.1f}",
+        )
 
     try:
         proc = subprocess.Popen([str(exe_path)], cwd=work_dir)
@@ -198,10 +257,36 @@ def launch_application(
     app = Application(backend=backend)
     try:
         app.connect(process=proc.pid, timeout=10)
-        print(f"[INFO] subprocess 시작 후 프로세스 연결 성공: pid={proc.pid}")
+        print(
+            "[INFO] subprocess 시작 후 프로세스 연결 성공: "
+            f"pid={proc.pid}, elapsed={format_elapsed_ms(launch_started_at)}"
+        )
+        log_work2_event(
+            component="rcs_launch",
+            message="subprocess_connect_ok",
+            log_name=log_name,
+            exe_path=exe_path,
+            backend=backend,
+            pid=proc.pid,
+            elapsed_ms=f"{(time.time() - launch_started_at) * 1000:.1f}",
+        )
     except Exception as exc:
         # RCS가 자식 프로세스로 UI를 넘기는 경우 connect가 실패해도 desktop scan으로 찾을 수 있다.
-        print(f"[WARNING] 시작 프로세스 직접 연결 실패, desktop scan 으로 계속 진행합니다: {exc}")
+        print(
+            "[WARNING] 시작 프로세스 직접 연결 실패, desktop scan 으로 계속 진행합니다: "
+            f"{exc} (elapsed={format_elapsed_ms(launch_started_at)})"
+        )
+        log_work2_event(
+            component="rcs_launch",
+            message="subprocess_connect_failed",
+            level="warning",
+            log_name=log_name,
+            exe_path=exe_path,
+            backend=backend,
+            pid=proc.pid,
+            error=exc,
+            elapsed_ms=f"{(time.time() - launch_started_at) * 1000:.1f}",
+        )
 
     return app
 
@@ -328,8 +413,11 @@ def wait_for_window_by_title_prefix(
     backends: tuple[str, ...],
     title_prefix: str,
     timeout_sec: float,
+    *,
+    log_name: str = "work2",
 ):
     """앱/데스크톱 전체를 함께 스캔해 title_prefix 로 시작하는 창을 기다린다."""
+    wait_started_at = time.time()
     deadline = time.time() + timeout_sec
     debug_rows: list[str] = []
     matcher = lambda title: title.startswith(title_prefix)
@@ -343,6 +431,19 @@ def wait_for_window_by_title_prefix(
 
         window, title = scan_window_list(app_windows, "app", debug_rows, matcher)
         if window is not None:
+            print(
+                f"[INFO] 로그인 창을 app 에서 찾았습니다: '{title}' "
+                f"(elapsed={format_elapsed_ms(wait_started_at)})"
+            )
+            log_work2_event(
+                component="window_wait",
+                message="login_window_found",
+                log_name=log_name,
+                source="app",
+                title=title,
+                title_prefix=title_prefix,
+                elapsed_ms=f"{(time.time() - wait_started_at) * 1000:.1f}",
+            )
             return window
 
         for backend in backends:
@@ -362,7 +463,19 @@ def wait_for_window_by_title_prefix(
                 matcher,
             )
             if window is not None:
-                print(f"[INFO] 로그인 창을 desktop[{backend}] 에서 찾았습니다: '{title}'")
+                print(
+                    f"[INFO] 로그인 창을 desktop[{backend}] 에서 찾았습니다: '{title}' "
+                    f"(elapsed={format_elapsed_ms(wait_started_at)})"
+                )
+                log_work2_event(
+                    component="window_wait",
+                    message="login_window_found",
+                    log_name=log_name,
+                    source=f"desktop[{backend}]",
+                    title=title,
+                    title_prefix=title_prefix,
+                    elapsed_ms=f"{(time.time() - wait_started_at) * 1000:.1f}",
+                )
                 return window
 
         time.sleep(0.5)
@@ -370,6 +483,15 @@ def wait_for_window_by_title_prefix(
     if debug_rows:
         for row in debug_rows[-12:]:
             print(f"[DEBUG] login-window {row}")
+    log_work2_event(
+        component="window_wait",
+        message="login_window_timeout",
+        level="error",
+        log_name=log_name,
+        title_prefix=title_prefix,
+        timeout_sec=timeout_sec,
+        debug_tail=" | ".join(debug_rows[-6:]) if debug_rows else "",
+    )
     raise TimeoutError(
         f"'{title_prefix}' 으로 시작하는 창을 {timeout_sec:.0f}초 내에 찾지 못했습니다"
     )

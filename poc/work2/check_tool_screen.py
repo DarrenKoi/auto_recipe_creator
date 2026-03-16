@@ -4,7 +4,7 @@
     RCS_TOOL_NAME                대상 툴명 (기본: MCD018)
     RCS_TOOL_SCREEN_TIMEOUT      창 탐색 대기 시간(초, 기본: 15)
     RCS_TOOL_SCREEN_SETTLE_SEC   폴링 간격(초, 기본: 0.5)
-    RCS_TOOL_SCREEN_BACKENDS     pywinauto 백엔드 (기본: uia,win32)
+    RCS_TOOL_SCREEN_BACKENDS     pywinauto 백엔드 (기본: uia)
     RCS_TOOL_SCREEN_ACTIVATE     감지 후 창 활성화 시도 여부 (기본: true)
     RCS_TOOL_SCREEN_VLM_ANALYZE  감지 후 VLM 화면 분석 여부 (기본: true)
     RCS_TOOL_SCREEN_DEBUG        디버그 모드 (기본: false)
@@ -51,10 +51,10 @@ def load_settings() -> ToolScreenSettings:
     tool_name = os.environ.get("RCS_TOOL_NAME", "").strip() or DEFAULT_TOOL_NAME
     raw_backends = [
         b.strip().lower()
-        for b in os.environ.get("RCS_TOOL_SCREEN_BACKENDS", "uia,win32").split(",")
+        for b in os.environ.get("RCS_TOOL_SCREEN_BACKENDS", "uia").split(",")
         if b.strip().lower() in {"win32", "uia"}
     ]
-    backends = tuple(raw_backends) if raw_backends else ("uia", "win32")
+    backends = tuple(raw_backends) if raw_backends else ("uia",)
 
     return ToolScreenSettings(
         tool_name=tool_name,

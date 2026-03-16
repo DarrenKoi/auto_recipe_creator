@@ -23,12 +23,14 @@ from __future__ import annotations
 
 import base64
 import json as _json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import requests
 
 from poc.work2.flask_vlm import get_service_by_slug, resolve_service_proxy_url
+from poc.work2.logger import log_vlm_call
 
 
 @dataclass(frozen=True)
@@ -194,6 +196,7 @@ class Work2VLMClient:
         model_name: str | None = None,
         api_url: str | None = None,
         timeout_sec: float = 120.0,
+        log_name: str = "vlm_calls",
     ):
         service_entry = get_service_by_slug(service_slug)
         if service_entry is None:
@@ -216,6 +219,7 @@ class Work2VLMClient:
         self.api_key = api_key.strip()
         self.model_name = resolved_model_name
         self.timeout_sec = timeout_sec
+        self.log_name = log_name.strip() or "vlm_calls"
         self._client = OpenAICompatibleVLMClient(
             base_url=self.api_url,
             api_key=self.api_key,
@@ -246,7 +250,30 @@ class Work2VLMClient:
             image_mime=image_mime,
             temperature=temperature,
         )
-        text = self._client.chat_with_image(request)
+        started_at = time.time()
+        try:
+            text = self._client.chat_with_image(request)
+        except Exception as exc:
+            log_vlm_call(
+                service=self.service_slug,
+                model=request.model,
+                status="error",
+                latency_ms=(time.time() - started_at) * 1000,
+                token_usage=dict(self._client.last_token_usage or {}),
+                error=str(exc),
+                endpoint=self.endpoint,
+                log_name=self.log_name,
+            )
+            raise
+        log_vlm_call(
+            service=self.service_slug,
+            model=request.model,
+            status="ok",
+            latency_ms=(time.time() - started_at) * 1000,
+            token_usage=dict(self._client.last_token_usage or {}),
+            endpoint=self.endpoint,
+            log_name=self.log_name,
+        )
         return Work2VLMResponse(
             service_slug=self.service_slug,
             model_name=request.model,

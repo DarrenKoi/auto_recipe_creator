@@ -23,18 +23,21 @@ from poc.work2.rcs_utils import (
     encode_image_webp,
     extract_json,
     find_existing_main_window,
+    format_elapsed_ms,
     is_main_window_title,
     launch_application,
     parse_coords,
+    save_debug_webp,
     save_marked_image,
     wait_for_window_by_title_prefix,
 )
+from poc.work2.logger import log_work2_event
 from poc.work2.vlm_client import Work2VLMClient
 
 load_dotenv()
 
 RCS_EXE = Path(os.environ.get("RCS_EXE_PATH", r"C:\Users\2067928\Documents\RCS\RcsMainHD.exe"))
-PYWINAUTO_BACKEND = os.environ.get("PYWINAUTO_BACKEND", "").strip().lower() or "win32"
+PYWINAUTO_BACKEND = os.environ.get("PYWINAUTO_BACKEND", "").strip().lower() or "uia"
 MAIN_WINDOW_TITLE_REGEX = (
     os.environ.get("RCS_MAIN_WINDOW_REGEX", r"\brcs\b.*\[server\s*:[^\]]+\]").strip()
     or r"\brcs\b.*\[server\s*:[^\]]+\]"
@@ -45,18 +48,19 @@ DEBUG_MAIN_WINDOW_TITLES = (
 )
 _desktop_backends_raw = [
     item.strip().lower()
-    for item in os.environ.get("RCS_DESKTOP_SCAN_BACKENDS", "win32,uia").split(",")
+    for item in os.environ.get("RCS_DESKTOP_SCAN_BACKENDS", "uia").split(",")
     if item.strip()
 ]
 _desktop_backends = _desktop_backends_raw + [PYWINAUTO_BACKEND]
 DESKTOP_SCAN_BACKENDS = tuple(
     dict.fromkeys(item for item in _desktop_backends if item in {"uia", "win32"})
-) or ("uia", "win32")
+) or ("uia",)
 
 LAUNCH_TIMEOUT = 10.0
 WINDOW_TITLE_PREFIX = "Remote Control System"
 LOGIN_SERVICE_SLUG = "ui-venus"
 DEBUG_IMAGE_DIR = Path(__file__).parent / "debug_images"
+LOG_NAME = Path(__file__).stem
 INPUT_BUTTON_TARGETS = [
     "server_input",
     "userid_input",
@@ -108,6 +112,8 @@ def _exe_bitness(exe_path: Path) -> int | None:
 def _resolve_backend(exe_path: Path) -> str:
     """혼합 비트 환경에서 32/64비트 호환성이 높은 백엔드를 선택한다."""
     backend = PYWINAUTO_BACKEND
+    if backend == "uia":
+        return "uia"
     exe_bits = _exe_bitness(exe_path)
     py_bits = _python_bitness()
 
@@ -132,12 +138,20 @@ def _save_debug_jpeg(image, out_path: Path) -> None:
     debug_img = image.convert("RGB") if image.mode != "RGB" else image
     debug_img.save(out_path, format="JPEG", quality=95)
     print(f"[INFO] 원본 캡처 저장: {out_path}")
+    log_work2_event(
+        component="debug_image",
+        message="saved_jpeg",
+        log_name=LOG_NAME,
+        path=out_path,
+        quality=95,
+    )
 
 
 def _locate_login_controls(login_window) -> int:
     """로그인 다이얼로그 스크린샷을 ui-venus 로 분석하고 overlay 를 저장한다."""
+    locate_started_at = time.time()
     image = capture_window(login_window)
-    client = Work2VLMClient(service_slug=LOGIN_SERVICE_SLUG)
+    client = Work2VLMClient(service_slug=LOGIN_SERVICE_SLUG, log_name=LOG_NAME)
 
     raw_path = debug_image_path(
         DEBUG_IMAGE_DIR,
@@ -145,6 +159,12 @@ def _locate_login_controls(login_window) -> int:
         model_name=client.model_name,
     )
     _save_debug_jpeg(image, raw_path)
+    vlm_input_path = debug_image_path(
+        DEBUG_IMAGE_DIR,
+        "login_rcs_vlm_input.webp",
+        model_name=client.model_name,
+    )
+    save_debug_webp(image, vlm_input_path, log_name=LOG_NAME)
 
     image_b64, width, height = encode_image_webp(image)
     system_message, user_text = build_rcs_login_locator_prompt(
@@ -182,14 +202,51 @@ def _locate_login_controls(login_window) -> int:
         model_name=response.model_name,
     )
     save_marked_image(image, parsed, ELEMENT_COLORS, overlay_path)
+    print(
+        "[INFO] 디버그 이미지: "
+        f"capture={raw_path}, vlm_input={vlm_input_path}, overlay={overlay_path}"
+    )
+    print(f"[INFO] 로그인 이미지 분석 전체 소요: {format_elapsed_ms(locate_started_at)}")
+    log_work2_event(
+        component="login_rcs",
+        message="analysis_finished",
+        log_name=LOG_NAME,
+        service=client.service_slug,
+        model=response.model_name or client.model_name,
+        capture_path=raw_path,
+        vlm_input_path=vlm_input_path,
+        overlay_path=overlay_path,
+        detected=detected,
+        target_count=len(INPUT_BUTTON_TARGETS),
+        elapsed_ms=f"{(time.time() - locate_started_at) * 1000:.1f}",
+    )
     return 0 if detected > 0 else 4
 
 
 def main() -> int:
     """스크립트 엔트리포인트."""
+    script_started_at = time.time()
+    precheck_started_at = time.time()
+    log_work2_event(
+        component="login_rcs",
+        message="script_started",
+        log_name=LOG_NAME,
+        exe_path=RCS_EXE,
+        backend_default=PYWINAUTO_BACKEND,
+        desktop_backends=",".join(DESKTOP_SCAN_BACKENDS),
+    )
     existing_window, existing_title, debug_rows = find_existing_main_window(
         DESKTOP_SCAN_BACKENDS,
         _main_title_matcher,
+    )
+    print(f"[INFO] 기존 메인 창 점검 소요: {format_elapsed_ms(precheck_started_at)}")
+    log_work2_event(
+        component="login_rcs",
+        message="existing_main_window_checked",
+        log_name=LOG_NAME,
+        elapsed_ms=f"{(time.time() - precheck_started_at) * 1000:.1f}",
+        found=existing_window is not None,
+        title=existing_title,
     )
     if DEBUG_MAIN_WINDOW_TITLES:
         print(f"[DEBUG] 메인 창 regex: {MAIN_WINDOW_TITLE_REGEX!r}")
@@ -211,26 +268,69 @@ def main() -> int:
     backend = _resolve_backend(RCS_EXE)
     print(f"[INFO] RCS 시작: {RCS_EXE}")
     print(f"[INFO] pywinauto 백엔드: {backend}")
+    launch_started_at = time.time()
     try:
-        app = launch_application(RCS_EXE, backend, wait_for_idle=False)
+        app = launch_application(RCS_EXE, backend, wait_for_idle=False, log_name=LOG_NAME)
     except RuntimeError as exc:
         print(f"[ERROR] {exc}")
+        log_work2_event(
+            component="login_rcs",
+            message="launch_failed",
+            level="error",
+            log_name=LOG_NAME,
+            error=exc,
+        )
         return 3
+    print(f"[INFO] RCS 프로세스 시작 단계 소요: {format_elapsed_ms(launch_started_at)}")
+    log_work2_event(
+        component="login_rcs",
+        message="launch_completed",
+        log_name=LOG_NAME,
+        backend=backend,
+        elapsed_ms=f"{(time.time() - launch_started_at) * 1000:.1f}",
+    )
 
+    wait_started_at = time.time()
     try:
         login_window = wait_for_window_by_title_prefix(
             app,
             DESKTOP_SCAN_BACKENDS,
             WINDOW_TITLE_PREFIX,
             LAUNCH_TIMEOUT,
+            log_name=LOG_NAME,
         )
     except TimeoutError as exc:
         print(f"[ERROR] {exc}")
+        log_work2_event(
+            component="login_rcs",
+            message="login_window_wait_failed",
+            level="error",
+            log_name=LOG_NAME,
+            error=exc,
+            elapsed_ms=f"{(time.time() - wait_started_at) * 1000:.1f}",
+        )
         return 3
+    print(f"[INFO] 로그인 창 탐색 소요: {format_elapsed_ms(wait_started_at)}")
+    log_work2_event(
+        component="login_rcs",
+        message="login_window_found",
+        log_name=LOG_NAME,
+        title=login_window.window_text(),
+        elapsed_ms=f"{(time.time() - wait_started_at) * 1000:.1f}",
+    )
 
     print(f"[INFO] 로그인 창 발견: '{login_window.window_text()}'")
     time.sleep(1.0)
-    return _locate_login_controls(login_window)
+    result = _locate_login_controls(login_window)
+    print(f"[INFO] login_rcs 전체 소요: {format_elapsed_ms(script_started_at)}")
+    log_work2_event(
+        component="login_rcs",
+        message="script_finished",
+        log_name=LOG_NAME,
+        result=result,
+        elapsed_ms=f"{(time.time() - script_started_at) * 1000:.1f}",
+    )
+    return result
 
 
 if __name__ == "__main__":

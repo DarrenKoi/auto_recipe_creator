@@ -33,7 +33,7 @@ PIPELINE_CONFIG = apply_pipeline_env_defaults()
 
 VLM_API_URL = str(PIPELINE_CONFIG["main_tabs_api_url"] or "")
 VLM_API_KEY = str(PIPELINE_CONFIG["main_tabs_api_key"] or "")
-PYWINAUTO_BACKEND = os.environ.get("PYWINAUTO_BACKEND", "").strip().lower() or "win32"
+PYWINAUTO_BACKEND = os.environ.get("PYWINAUTO_BACKEND", "").strip().lower() or "uia"
 MAIN_WINDOW_TITLE_REGEX = (
     os.environ.get("RCS_MAIN_WINDOW_REGEX", r"\brcs\b.*\[server\s*:[^\]]+\]").strip()
     or r"\brcs\b.*\[server\s*:[^\]]+\]"
@@ -44,13 +44,13 @@ DEBUG_MAIN_WINDOW_TITLES = (
 )
 _desktop_backends_raw = [
     item.strip().lower()
-    for item in os.environ.get("RCS_DESKTOP_SCAN_BACKENDS", "win32,uia").split(",")
+    for item in os.environ.get("RCS_DESKTOP_SCAN_BACKENDS", "uia").split(",")
     if item.strip()
 ]
 _desktop_backends = _desktop_backends_raw + [PYWINAUTO_BACKEND]
 DESKTOP_SCAN_BACKENDS = tuple(
     dict.fromkeys(b for b in _desktop_backends if b in {"uia", "win32"})
-) or ("uia", "win32")
+) or ("uia",)
 
 VLM_MODEL = str(PIPELINE_CONFIG["main_tabs_model_name"] or "ui-venus-1.5-8b")
 

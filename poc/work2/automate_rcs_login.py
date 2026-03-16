@@ -57,7 +57,7 @@ PIPELINE_CONFIG = apply_pipeline_env_defaults()
 # ─────────────────────────── 설정 ───────────────────────────
 
 RCS_EXE = Path(os.environ.get("RCS_EXE_PATH", r"C:\Users\2067928\Documents\RCS\RcsMainHD.exe"))
-PYWINAUTO_BACKEND = os.environ.get("PYWINAUTO_BACKEND", "").strip().lower() or "win32"
+PYWINAUTO_BACKEND = os.environ.get("PYWINAUTO_BACKEND", "").strip().lower() or "uia"
 MAIN_WINDOW_TITLE_REGEX = (
     os.environ.get("RCS_MAIN_WINDOW_REGEX", r"\brcs\b.*\[server\s*:[^\]]+\]").strip()
     or r"\brcs\b.*\[server\s*:[^\]]+\]"
@@ -68,13 +68,13 @@ DEBUG_MAIN_WINDOW_TITLES = (
 )
 _desktop_backends_raw = [
     item.strip().lower()
-    for item in os.environ.get("RCS_DESKTOP_SCAN_BACKENDS", "win32,uia").split(",")
+    for item in os.environ.get("RCS_DESKTOP_SCAN_BACKENDS", "uia").split(",")
     if item.strip()
 ]
 _desktop_backends = _desktop_backends_raw + [PYWINAUTO_BACKEND]
 DESKTOP_SCAN_BACKENDS = tuple(
     dict.fromkeys(b for b in _desktop_backends if b in {"uia", "win32"})
-) or ("uia", "win32")
+) or ("uia",)
 
 LAUNCH_TIMEOUT = 30.0
 WINDOW_TITLE_PREFIX = "Remote Control System"
@@ -333,6 +333,8 @@ def _exe_bitness(exe_path: Path) -> int | None:
 def _resolve_backend(exe_path: Path) -> str:
     """혼합 비트 환경에서 32/64비트 호환성이 높은 백엔드를 선택한다."""
     backend = PYWINAUTO_BACKEND
+    if backend == "uia":
+        return "uia"
     exe_bits = _exe_bitness(exe_path)
     py_bits = _python_bitness()
 

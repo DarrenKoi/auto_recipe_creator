@@ -6,11 +6,11 @@ from typing import Iterable
 RCS_MAIN_TAB_TARGET_SPECS = {
     "view_tab": (
         "TAB. In the top-left tab strip, locate the first letter 'V' of the 'View' tab label. "
-        "Use 'V' as the anchor to identify the tab, then return the center point of the full tab label."
+        "Use 'V' as the anchor to identify the tab, then return a safe click point inside the View tab area."
     ),
     "list_tab": (
         "TAB. In the top-left tab strip, locate the first letter 'L' of the 'List' tab label. "
-        "Use 'L' as the anchor to identify the tab, then return the center point of the full tab label."
+        "Use 'L' as the anchor to identify the tab, then return a safe click point inside the List tab area."
     ),
 }
 
@@ -21,7 +21,7 @@ DEFAULT_RCS_MAIN_TAB_TARGET_KEYS = (
 
 
 def _json_stub(target_keys: tuple[str, ...]) -> str:
-    lines = ["{"]
+    lines = ['{', '    "coord_system": "relative_1000",']
     for idx, key in enumerate(target_keys):
         comma = "," if idx < len(target_keys) - 1 else ""
         lines.append(f'    "{key}": {{"x": ..., "y": ...}}{comma}')
@@ -45,7 +45,8 @@ def build_rcs_main_tab_locator_prompt(
         "You are a precise GUI element locator. "
         f"The image is {width}x{height} pixels. "
         "The origin (0, 0) is the top-left corner of the image. "
-        "Return coordinates as integer pixel values. "
+        "Return click-safe coordinates using coord_system='relative_1000'. "
+        "In this coordinate system, x and y are integers from 0 to 1000 relative to the image. "
         "Respond ONLY with valid JSON."
     )
 
@@ -63,7 +64,7 @@ def build_rcs_main_tab_locator_prompt(
         "then return the center point of that tab label.",
         "Ignore similar words elsewhere in the window.",
         "",
-        f"Find the pixel coordinates of these {len(keys)} elements:",
+        f"Find the click-safe coordinates of these {len(keys)} elements:",
         "",
     ]
     for idx, key in enumerate(keys, start=1):
@@ -79,8 +80,10 @@ def build_rcs_main_tab_locator_prompt(
         [
             "",
             f"Image size: {width} x {height} pixels.",
-            f"x range: 0 (left edge) to {width} (right edge).",
-            f"y range: 0 (top edge) to {height} (bottom edge).",
+            "Use coord_system='relative_1000'.",
+            "x and y must be integers from 0 to 1000.",
+            "0 means the left/top edge. 1000 means the right/bottom edge.",
+            "Return a safe click point inside each tab area, not on the border.",
             "",
             "Return ONLY this JSON (all values are integers):",
             _json_stub(keys),

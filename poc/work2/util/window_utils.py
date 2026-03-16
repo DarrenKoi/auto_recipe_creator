@@ -47,7 +47,7 @@ def activate_window(
 def find_window_by_pid_and_title_prefix(
     process_id: int,
     title_prefix: str,
-    backends: tuple[str, ...] = ("win32", "uia"),
+    backends: tuple[str, ...] = ("uia", "win32"),
     *,
     connect_timeout: float = 2.0,
 ) -> tuple[object | None, str, str]:
@@ -106,7 +106,7 @@ def find_window_by_pid_and_title_prefix(
 
 def find_window_by_title_prefix(
     title_prefix: str,
-    backends: tuple[str, ...] = ("win32", "uia"),
+    backends: tuple[str, ...] = ("uia", "win32"),
     *,
     visible_only: bool = True,
 ) -> tuple[object | None, str, str]:

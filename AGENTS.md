@@ -4,26 +4,51 @@
 AI-powered automation system for CD-SEM/VeritySEM recipe setup. The project combines VLM-based screen analysis with GUI automation to reduce manual recipe creation work.
 
 ## Project Structure & Module Organization
-- `poc/work2/`: Phase 2 primary workstream. Flask proxy-based VLM/OCR pipeline, shared model routing, and Windows RCS automation experiments live here.
+- `poc/work2/`: Phase 2 primary workstream. Flask proxy-based VLM routing, shared model defaults, and Windows RCS automation experiments live here.
 - `poc/work/`: Phase 1 legacy/reference area. Keep only reusable concepts and temporary shared utilities needed during migration; do not add new feature work here unless it directly unblocks `poc/work2`.
 - `poc/home/`: Personal/home-study variant using Hugging Face APIs (`demo.py`, `test_setup.py`).
 - `test/video_frame_parser/`: Video-frame parsing pipeline plus unit tests in `test/video_frame_parser/tests/`.
 - `test/vlm_input_control/`, `test/workflow_extractor/`: Integration-style and extractor experiments.
 - `docs/`: Architecture notes, GUI automation research, and setup guides.
 
-### `poc/work2/` detailed map (current)
+### `poc/work2/` current structure
+```text
+poc/work2/
+├── __init__.py
+├── connection_check.py
+├── flask_vlm.py
+├── logger.py
+├── login_rcs.py
+├── open_rcs.py
+├── rcs_utils.py
+├── reading_check.py
+├── vlm_client.py
+├── debug_images/
+│   └── .gitkeep
+├── prompts/
+│   ├── __init__.py
+│   ├── ocr_assist.py
+│   ├── rcs_login.py
+│   ├── rcs_main_tabs.py
+│   └── screen_analysis.py
+└── util/
+    ├── __init__.py
+    ├── debug_image_utils.py
+    ├── image_utils.py
+    ├── json_utils.py
+    ├── time_utils.py
+    └── window_utils.py
+```
+
 - `poc/work2/flask_vlm.py`: Shared Phase 2 Flask proxy route/model registry. This is the single source of truth for coworker-facing service slug, model name, and endpoint mappings.
 - `poc/work2/connection_check.py`: Flask `/api/vlm_serve/health` and per-service `/v1/models` connection checker.
 - `poc/work2/vlm_client.py`: Simple image-capable client for calling Flask proxy VLM services by service slug from task scripts.
 - `poc/work2/open_rcs.py`: Minimal RCS launcher. Only opens `RcsMainHD.exe` and checks whether an RCS window is already present.
-- `poc/work2/reading_check.py`: Single-monitor screenshot benchmark that compares multiple UI VLM services and optionally OCR assist output.
-- `poc/work2/pipeline_ocr.py`: OCR assist stage for selected UI VLM pipelines.
-- `poc/work2/vlm_screen_analysis.py`: Screen/state analysis built on a selected VLM service + optional OCR hints.
-- `poc/work2/rcs_utils.py`: Shared capture/click/debug/window-search/JSON parsing helpers for Windows automation flows.
 - `poc/work2/login_rcs.py`: Login dialog capture + VLM coordinate marking script used during the rebuild.
-- `poc/work2/click_rcs_view_mode.py`: View/List tab locator + click flow on the logged-in RCS main window.
-- `poc/work2/check_tool_screen.py`: Tool window detection plus optional VLM UI analysis after a tool screen opens.
-- `poc/work2/prompts/`: Phase 2 prompt builders (`rcs_login`, `rcs_main_tabs`, `screen_analysis`, `ocr_assist`).
+- `poc/work2/reading_check.py`: Single-monitor screenshot benchmark that compares multiple UI VLM services and can include direct OCR-model comparison output.
+- `poc/work2/rcs_utils.py`: Shared capture/click/debug/window-search/JSON parsing helpers for Windows automation flows.
+- `poc/work2/prompts/`: Prompt builders retained under `work2`; some modules are reusable helpers for rebuild experiments rather than standalone entrypoints.
+- `poc/work2/util/`: Smaller helper modules for image, JSON, timing, debug-image, and window utilities.
 - `poc/work2/logger.py`: File logger for VLM latency / status / token usage under `poc/work2/logs/`.
 
 ### Phase 1 retention policy
@@ -38,8 +63,6 @@ AI-powered automation system for CD-SEM/VeritySEM recipe setup. The project comb
 - `uv run python poc/work2/open_rcs.py`: Start `RcsMainHD.exe` only, without the old combined login automation flow.
 - `uv run python poc/work2/reading_check.py`: Compare UI VLM services on a captured monitor screenshot.
 - `uv run python poc/work2/login_rcs.py`: Capture the login dialog and save VLM-marked debug images (Windows).
-- `uv run python poc/work2/click_rcs_view_mode.py`: Detect and click View/List tabs on the RCS main window (Windows).
-- `uv run python poc/work2/check_tool_screen.py`: Detect a tool screen and analyze it with the Phase 2 pipeline (Windows).
 - `uv run python -m poc.home.test_setup`: Validate local home-study environment.
 - `uv run python -m poc.home.demo`: Run home-study VLM demo flow.
 - `uv run pytest test/video_frame_parser/tests/`: Run unit tests for the video parser module.
@@ -89,10 +112,9 @@ AI-powered automation system for CD-SEM/VeritySEM recipe setup. The project comb
 - Centralize team-default pipeline settings in `poc/work2/flask_vlm.py` so coworkers can run scripts without per-user `.env` sprawl.
 - Use `poc/work2/connection_check.py` to validate Flask proxy health and route/model readiness before debugging automation behavior.
 - Use `poc/work2/reading_check.py` for model comparison and keep RCS-specific rebuild steps separated into smaller scripts.
-- Keep service-slug based VLM + OCR assist composition in `poc/work2/pipeline_ocr.py` and `poc/work2/vlm_screen_analysis.py`.
 - Prefer direct model selection after `poc/work2/connection_check.py`: check available services, then hardcode the service slug each script wants to use.
 - Consolidate reusable Windows automation helpers in `poc/work2/rcs_utils.py` and reusable prompt builders in `poc/work2/prompts/`.
-- Validate the real RCS workflow on office Windows in this order: connection check -> open RCS -> login dialog analysis -> main tab interaction -> tool screen analysis.
+- Validate the real RCS workflow on office Windows in this order: connection check -> open RCS -> login dialog analysis.
 - Migration direction:
 - Do not expand Phase 1 scripts unless it is the shortest path to unblock Phase 2.
 - When Phase 2 code needs legacy helpers, prefer porting the reusable helper into `poc/work2` or a future shared module instead of adding more Phase 1 business logic.

@@ -15,7 +15,7 @@ RCS_LOGIN_TARGET_SPECS = {
     "server_input": (
         "COMBOBOX / DROPDOWN — The server selection control next to the 'Server' label. "
         "This is a white rectangular area with a small dropdown arrow (▼) on its right edge. "
-        "Return the center of this entire dropdown control."
+        "Return a safe click point inside the usable middle area of this dropdown control."
     ),
     "userid_label": (
         "TEXT LABEL — The static text 'User ID' displayed on the left side of the second form row. "
@@ -24,7 +24,7 @@ RCS_LOGIN_TARGET_SPECS = {
     "userid_input": (
         "TEXT INPUT — The editable text field next to the 'User ID' label. "
         "This is a white rectangular input area with a thin border. "
-        "Return the center of this text field."
+        "Return a safe click point inside the editable area, away from the border."
     ),
     "password_label": (
         "TEXT LABEL — The static text 'Password' displayed on the left side of the third form row. "
@@ -33,22 +33,22 @@ RCS_LOGIN_TARGET_SPECS = {
     "password_input": (
         "TEXT INPUT — The editable text field next to the 'Password' label. "
         "This is a white rectangular input area with a thin border. "
-        "Return the center of this text field."
+        "Return a safe click point inside the editable area, away from the border."
     ),
     "login_button": (
         "BUTTON — The button labeled 'Log In' at the bottom of the dialog. "
         "It has raised 3D borders in Windows classic style. "
-        "Return the center of this button."
+        "Return a safe click point inside this button, away from the border."
     ),
     "cancel_button": (
         "BUTTON — The button labeled 'Cancel' at the bottom of the dialog. "
         "It has raised 3D borders in Windows classic style. "
-        "Return the center of this button."
+        "Return a safe click point inside this button, away from the border."
     ),
     "shortcut_button": (
         "BUTTON — A button with Korean text (e.g. '바로가기 설정') in the bottom area. "
         "It may be positioned separately from the Log In and Cancel buttons. "
-        "Return the center of this button."
+        "Return a safe click point inside this button, away from the border."
     ),
 }
 
@@ -67,7 +67,7 @@ DEFAULT_RCS_LOGIN_TARGET_KEYS = (
 
 def _json_stub(target_keys: tuple[str, ...]) -> str:
     """응답 JSON 형태의 예시 스텁을 생성한다."""
-    lines = ["{"]
+    lines = ['{', '    "coord_system": "relative_1000",']
     for idx, key in enumerate(target_keys):
         comma = "," if idx < len(target_keys) - 1 else ""
         lines.append(f'    "{key}": {{"x": ..., "y": ...}}{comma}')
@@ -96,7 +96,8 @@ def build_rcs_login_locator_prompt(
         f"The screenshot is {width}x{height} pixels. "
         "Coordinate origin (0, 0) is the top-left corner; "
         "x increases rightward, y increases downward. "
-        "Return integer pixel coordinates at the visual center of each requested element. "
+        "Return click-safe coordinates using coord_system='relative_1000'. "
+        "In this coordinate system, x and y are integers from 0 to 1000 relative to the image. "
         "Respond ONLY with valid JSON — no explanation, no markdown fences."
     )
 
@@ -116,7 +117,7 @@ def build_rcs_login_locator_prompt(
         "- The Server combobox has a dropdown arrow (▼) on its right edge.",
         "- Buttons have raised 3D borders typical of Windows classic style.",
         "",
-        f"Find the CENTER coordinates of these {len(keys)} UI elements:",
+        f"Find the CLICK-SAFE coordinates of these {len(keys)} UI elements:",
         "",
     ]
     for idx, key in enumerate(keys, start=1):
@@ -132,7 +133,10 @@ def build_rcs_login_locator_prompt(
         [
             "",
             f"Image dimensions: {width} x {height} pixels.",
-            f"Valid x range: 0 to {width - 1}. Valid y range: 0 to {height - 1}.",
+            "Use coord_system='relative_1000'.",
+            "x and y must be integers from 0 to 1000.",
+            "0 means the left/top edge. 1000 means the right/bottom edge.",
+            "Return a safe click point inside each control, not on the border.",
             "",
             "Return ONLY this JSON (all coordinate values must be integers):",
             _json_stub(keys),

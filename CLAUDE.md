@@ -9,7 +9,7 @@ AI-powered automation system for CD-SEM/VeritySEM recipe setup. Uses VLM (Vision
 ## Repository Structure
 
 ```
-poc/work2/               # Phase 2 primary: Flask proxy VLM routing, multi-model benchmark, OCR pipeline
+poc/work2/               # Phase 2 primary: Flask proxy VLM routing, RCS rebuild scripts, shared helpers
 poc/work2/prompts/       # VLM prompt builders (one module per screen/task)
 poc/work/                # Phase 1 legacy — shared utilities only (vlm_openai_client, screen_capture, config, rcs_common)
 poc/home/                # Personal study PoC: HuggingFace free API — NO office relation
@@ -20,6 +20,36 @@ test/vlm_input_control/  # Screen capture + VLM analysis + mouse/keyboard contro
 test/video_frame_parser/ # CLIP-based video frame extraction & analysis (GPU cluster)
 test/workflow_extractor/ # CCTV-to-knowledge ingestion pipeline
 docs/                    # Architecture research notes and setup guides
+```
+
+### Current `poc/work2/` structure
+
+```text
+poc/work2/
+├── __init__.py
+├── connection_check.py
+├── flask_vlm.py
+├── logger.py
+├── login_rcs.py
+├── open_rcs.py
+├── rcs_utils.py
+├── reading_check.py
+├── vlm_client.py
+├── debug_images/
+│   └── .gitkeep
+├── prompts/
+│   ├── __init__.py
+│   ├── ocr_assist.py
+│   ├── rcs_login.py
+│   ├── rcs_main_tabs.py
+│   └── screen_analysis.py
+└── util/
+    ├── __init__.py
+    ├── debug_image_utils.py
+    ├── image_utils.py
+    ├── json_utils.py
+    ├── time_utils.py
+    └── window_utils.py
 ```
 
 ## Setup & Dependencies
@@ -50,8 +80,6 @@ uv run python poc/work2/connection_check.py    # Verify Flask proxy + VLM servic
 uv run python poc/work2/open_rcs.py            # Start RCS only
 uv run python poc/work2/reading_check.py       # Multi-VLM UI component comparison
 uv run python poc/work2/login_rcs.py           # Login dialog capture + VLM marking
-uv run python poc/work2/click_rcs_view_mode.py # Tab switching with OCR assist
-uv run python poc/work2/check_tool_screen.py   # Tool viewer detection + VLM analysis
 
 # poc/home — personal study only
 uv run python -m poc.home.test_setup       # Validate HuggingFace env
@@ -87,11 +115,6 @@ uv run python -m test.vlm_input_control.integration_test
 
 | Class | Location | Purpose |
 |-------|----------|---------|
-| `VLMScreenAnalyzer` | `poc/work2/vlm_screen_analysis.py` | Primary+OCR pipeline screen analysis |
-| `ScreenAnalysisResult` | `poc/work2/vlm_screen_analysis.py` | State recognition result (state_id, confidence, ui_elements, suggested_actions) |
-| `MeasurementJudgment` | `poc/work2/vlm_screen_analysis.py` | Measurement success/failure judgment |
-| `OCRHintResult` | `poc/work2/pipeline_ocr.py` | OCR text extraction result (texts, focus_hits) |
-| `ToolScreenSettings` | `poc/work2/check_tool_screen.py` | Tool viewer detection config (tool_name, timeout, backends, vlm_analyze) |
 | `ChatImageRequest` | `poc/work/vlm_openai_client.py` | VLM API request builder (shared, imported by work2) |
 | `LangChainOpenAICompatibleVLMClient` | `poc/work/vlm_openai_client.py` | OpenAI-compatible VLM client (shared, imported by work2) |
 | `ScreenCapture` | `poc/work/screen_capture.py` | Screenshot utility via mss (shared, imported by work2) |
@@ -125,16 +148,6 @@ Instead of direct VLM API calls, `poc/work2/` routes through a Flask proxy at th
 - **Proxy URL pattern**: `{flask_base}/api/vlm_serve/{service_slug}/v1/chat/completions`
 - `flask_vlm.py` helpers: `resolve_service_proxy_url()`, `fetch_vlm_health()`, `normalize_vlm_health_entries()`
 
-### Two-stage VLM pipeline
-
-Primary VLM + OCR assist (PaddleOCR-VL) for improved accuracy on GUI text elements.
-
-1. `pipeline_ocr.collect_ocr_hint_result()` sends screenshot to PaddleOCR-VL, extracts visible text lines as `OCRHintResult` (texts + focus_hits matching target words)
-2. `pipeline_ocr.build_ocr_extra_instructions()` converts OCR result to instruction tuples injected into the primary VLM prompt
-3. Primary VLM (ui-venus) receives the image + OCR hints as `extra_instructions` and makes final coordinate/element decisions from pixels
-
-OCR hints are advisory only — the primary VLM always makes final decisions from the actual image.
-
 ### RCS automation workflow (poc/work2/)
 
 Each step is a standalone script. All use Flask proxy routing via `flask_vlm.py`:
@@ -142,9 +155,7 @@ Each step is a standalone script. All use Flask proxy routing via `flask_vlm.py`
 1. **`connection_check.py`** — Verifies Flask API health + probes each VLM service's `/v1/models` endpoint. Renders status table.
 2. **`open_rcs.py`** — Starts `RcsMainHD.exe` only. Does not depend on the older combined login automation flow.
 3. **`login_rcs.py`** — Captures the login dialog, runs a selected VLM on the image, and saves marked debug outputs for rebuild work.
-4. **`click_rcs_view_mode.py`** — Tab switching with OCR assist. Uses first-letter anchoring ('V' for View, 'L' for List). Applies offset correction (list_tab.x = view_tab.x + 50px).
-5. **`check_tool_screen.py`** — Polls for tool viewer window (`RcsViewerHD.exe`), optionally captures + analyzes with VLMScreenAnalyzer (OCR-assisted). Saves source JPEG + marked overlay.
-6. **`reading_check.py`** — Captures monitor screenshot, sends to multiple UI VLMs in parallel, compares component/coordinate responses. Saves per-model overlays + normalized JSON.
+4. **`reading_check.py`** — Captures monitor screenshot, sends to multiple UI VLMs in parallel, compares component/coordinate responses. Saves per-model overlays + normalized JSON.
 
 ### poc/work2/ VLM prompt builders
 

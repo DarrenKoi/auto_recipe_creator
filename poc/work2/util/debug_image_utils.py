@@ -78,10 +78,12 @@ def save_marked_image(
         font = ImageFont.load_default()
 
     radius = 12
+    img_w, img_h = debug_img.size
     for name, pt in elements.items():
         if not isinstance(pt, dict) or "x" not in pt or "y" not in pt:
             continue
-        x, y = int(pt["x"]), int(pt["y"])
+        x = max(0, min(int(pt["x"]), img_w - 1))
+        y = max(0, min(int(pt["y"]), img_h - 1))
         color = colors.get(name, "white")
         draw.line([(x - radius, y), (x + radius, y)], fill=color, width=2)
         draw.line([(x, y - radius), (x, y + radius)], fill=color, width=2)

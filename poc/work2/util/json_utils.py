@@ -18,18 +18,122 @@ def extract_json(text: str) -> dict:
     return json.loads(text)
 
 
+def _normalize_coord_system(value) -> str | None:
+    """좌표계 문자열을 내부 표준값으로 정규화한다."""
+    if value is None:
+        return None
+
+    text = str(value).strip().lower()
+    if not text:
+        return None
+
+    aliases = {
+        "pixel": "pixel",
+        "pixels": "pixel",
+        "absolute_pixel": "pixel",
+        "absolute_pixels": "pixel",
+        "relative_1000": "relative_1000",
+        "normalized_1000": "relative_1000",
+        "0_1000": "relative_1000",
+        "0-1000": "relative_1000",
+        "relative_1": "relative_1",
+        "normalized_0_1": "relative_1",
+        "normalized_1": "relative_1",
+        "0_1": "relative_1",
+        "0-1": "relative_1",
+        "percent": "percent",
+        "%": "percent",
+    }
+    return aliases.get(text)
+
+
+def _to_pixel_coordinate(
+    value,
+    axis_size: int,
+    coord_system: str | None = None,
+) -> tuple[int | None, str]:
+    """숫자/문자/정규화 좌표를 이미지 픽셀 좌표로 변환한다."""
+    if axis_size <= 0 or value is None or isinstance(value, bool):
+        return None, "invalid"
+
+    numeric: float
+    is_percent = False
+    looks_fractional = False
+
+    if isinstance(value, int):
+        numeric = float(value)
+    elif isinstance(value, float):
+        numeric = value
+        looks_fractional = not value.is_integer()
+    else:
+        text = str(value).strip()
+        if not text:
+            return None, "invalid"
+        if text.endswith("%"):
+            text = text[:-1].strip()
+            is_percent = True
+        looks_fractional = "." in text or "e" in text.lower()
+        try:
+            numeric = float(text)
+        except ValueError:
+            return None, "invalid"
+
+    max_index = axis_size - 1
+    mode = "pixel"
+
+    if coord_system == "pixel":
+        mode = "pixel"
+    elif coord_system == "relative_1000":
+        numeric = (numeric / 1000.0) * max_index
+        mode = "relative_1000"
+    elif coord_system == "relative_1":
+        numeric = numeric * max_index
+        mode = "relative_1"
+    elif coord_system == "percent" or is_percent:
+        numeric = (numeric / 100.0) * max_index
+        mode = "percent"
+    elif 0.0 <= numeric <= 1.0 and looks_fractional:
+        numeric = numeric * max_index
+        mode = "normalized_0_1"
+    elif 0.0 <= numeric <= max_index:
+        mode = "pixel"
+    elif 0.0 <= numeric <= 1000.0:
+        numeric = (numeric / 1000.0) * max_index
+        mode = "normalized_0_1000"
+    else:
+        mode = "pixel_clamped"
+
+    coord = int(round(numeric))
+    clamped = max(0, min(coord, max_index))
+    if clamped != coord:
+        mode = f"{mode}+clamped"
+    return clamped, mode
+
+
 def parse_coords(data: dict, keys: list[str], img_w: int, img_h: int) -> dict:
-    """VLM 응답 좌표를 정수로 변환하고 범위를 검증한다."""
+    """VLM 응답 좌표를 픽셀 정수로 변환하고 범위를 보정한다."""
+    coord_system = _normalize_coord_system(
+        data.get("coord_system") or data.get("coordinate_system")
+    )
+    if coord_system:
+        print(f"[INFO] coord_system={coord_system}")
+
     for key in keys:
         pt = data.get(key)
         if not pt:
             print(f"  [MISS] {key:20s} - VLM 응답에 없음")
             continue
-        raw_x, raw_y = pt.get("x", 0), pt.get("y", 0)
-        x, y = int(raw_x), int(raw_y)
+
+        raw_x, raw_y = pt.get("x"), pt.get("y")
+        x, x_mode = _to_pixel_coordinate(raw_x, img_w, coord_system)
+        y, y_mode = _to_pixel_coordinate(raw_y, img_h, coord_system)
+        if x is None or y is None:
+            print(f"  [MISS] {key:20s} - 좌표 변환 실패 raw=({raw_x}, {raw_y})")
+            continue
+
         data[key] = {"x": x, "y": y}
-        suffix = ""
-        if not (0 <= x <= img_w and 0 <= y <= img_h):
-            suffix = " <- OUT OF BOUNDS"
-        print(f"  [RAW ] {key:20s} - raw=({raw_x}, {raw_y}) -> px=({x}, {y}){suffix}")
+        print(
+            f"  [RAW ] {key:20s} - raw=({raw_x}, {raw_y}) "
+            f"-> px=({x}, {y}) [x:{x_mode}, y:{y_mode}]"
+        )
     return data

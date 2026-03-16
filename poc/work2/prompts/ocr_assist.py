@@ -23,6 +23,6 @@ def build_ocr_assist_prompt(
     PaddleOCR-VL-1.5 는 ``OCR:`` 키워드에 대해 학습되었으므로
     시스템 메시지 없이 키워드만 전송한다.
     ``context_label``, ``focus_words``, ``max_items`` 는
-    호출 측(pipeline_ocr.py)에서 응답 후처리에 사용된다.
+    호출 측에서 응답 후처리에 사용된다.
     """
     return "", "OCR:"

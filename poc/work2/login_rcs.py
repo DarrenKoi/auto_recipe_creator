@@ -59,7 +59,7 @@ ELEMENT_COLORS = {
     "cancel_button": "magenta",
     "shortcut_button": "cyan",
 }
-DESKTOP_SCAN_BACKENDS = ("win32", "uia")
+DESKTOP_SCAN_BACKENDS = ("uia", "win32")
 
 EXIT_SUCCESS = "success"
 EXIT_LOGIN_WINDOW_NOT_FOUND = "login_window_not_found"
@@ -158,6 +158,24 @@ def _find_login_window() -> tuple[object | None, str, str]:
 def _locate_login_controls(login_window, window_title: str, backend: str) -> str:
     """로그인 창 스크린샷을 VLM 으로 분석하고 overlay 를 저장한다."""
     locate_started_at = time.time()
+    if not activate_window(
+        login_window,
+        debug_label=f"login_window recapture backend={backend} title={window_title!r}",
+    ):
+        print(
+            f"[ERROR] 로그인 창 재활성화 실패: title={window_title!r}, backend={backend}"
+        )
+        log_work2_event(
+            component="login_rcs",
+            message="login_window_reactivate_failed",
+            level="error",
+            log_name=LOG_NAME,
+            title=window_title,
+            backend=backend,
+            elapsed_ms=f"{(time.time() - locate_started_at) * 1000:.1f}",
+        )
+        return EXIT_LOGIN_WINDOW_ACTIVATE_FAILED
+
     try:
         image = capture_window(login_window)
     except Exception as exc:

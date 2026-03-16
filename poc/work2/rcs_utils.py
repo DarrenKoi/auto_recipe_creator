@@ -20,6 +20,7 @@ from pywinauto import Desktop, mouse
 from pywinauto.application import Application
 
 from poc.work2.logger import log_work2_event
+from poc.work2.util.json_utils import parse_coords as util_parse_coords
 
 
 __all__ = [
@@ -59,20 +60,8 @@ def extract_json(text: str) -> dict:
 
 
 def parse_coords(data: dict, keys: list[str], img_w: int, img_h: int) -> dict:
-    """VLM 응답 좌표를 정수로 변환하고 범위를 검증한다."""
-    for key in keys:
-        pt = data.get(key)
-        if not pt:
-            print(f"  [MISS] {key:20s} — VLM 응답에 없음")
-            continue
-        raw_x, raw_y = pt.get("x", 0), pt.get("y", 0)
-        x, y = int(raw_x), int(raw_y)
-        data[key] = {"x": x, "y": y}
-        out = ""
-        if not (0 <= x <= img_w and 0 <= y <= img_h):
-            out = " ← OUT OF BOUNDS"
-        print(f"  [RAW ] {key:20s} — raw=({raw_x}, {raw_y}) → px=({x}, {y}){out}")
-    return data
+    """VLM 응답 좌표를 픽셀 정수로 변환하고 범위를 보정한다."""
+    return util_parse_coords(data, keys, img_w, img_h)
 
 
 # ─────────────────────────── 화면 캡처 ───────────────────────────
@@ -348,10 +337,12 @@ def save_marked_image(
         font = ImageFont.load_default()
 
     r = 12
+    img_w, img_h = debug_img.size
     for name, pt in elements.items():
         if not isinstance(pt, dict) or "x" not in pt or "y" not in pt:
             continue
-        x, y = int(pt["x"]), int(pt["y"])
+        x = max(0, min(int(pt["x"]), img_w - 1))
+        y = max(0, min(int(pt["y"]), img_h - 1))
         color = colors.get(name, "white")
         # 십자선
         draw.line([(x - r, y), (x + r, y)], fill=color, width=2)

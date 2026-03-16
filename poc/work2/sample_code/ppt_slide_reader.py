@@ -302,20 +302,23 @@ def _format_result_text(result: dict) -> str:
     return "\n".join(lines)
 
 
-def save_result(image_path: Path, result: dict) -> Path:
-    """분석 결과를 읽기 좋은 텍스트 파일로 저장한다."""
+def save_result(image_path: Path, result: dict) -> None:
+    """분석 결과와 OCR 원문을 각각 별도 파일로 저장한다."""
     out_dir = get_output_dir(image_path)
+
+    # VLM 분석 결과
     txt_path = out_dir / "result.txt"
-    text = _format_result_text(result)
-
-    ocr_text = result.get("_ocr_text", "")
-    if ocr_text:
-        text += f"\n\n{'─'*40}\nOCR 원문 (참고용):\n{'─'*40}\n{ocr_text}\n"
-
     with open(txt_path, "w", encoding="utf-8") as f:
-        f.write(text + "\n")
+        f.write(_format_result_text(result) + "\n")
     print(f"[INFO] 결과 저장: {out_dir.name}/result.txt")
-    return txt_path
+
+    # OCR 원문
+    ocr_text = result.get("_ocr_text", "").strip()
+    if ocr_text:
+        ocr_path = out_dir / "ocr_raw.txt"
+        with open(ocr_path, "w", encoding="utf-8") as f:
+            f.write(ocr_text + "\n")
+        print(f"[INFO] OCR 저장: {out_dir.name}/ocr_raw.txt")
 
 
 # ──────────────────────────────────────────────

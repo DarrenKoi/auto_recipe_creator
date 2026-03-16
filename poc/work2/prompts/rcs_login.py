@@ -103,6 +103,9 @@ def build_rcs_login_locator_prompt(
 
     lines = [
         "This screenshot shows a Windows 'Remote Control System' login dialog.",
+        "The screenshot contains only the currently captured login dialog window.",
+        "Do not reason about the full desktop or the larger main window shown after login succeeds.",
+        "All coordinates are relative to this login dialog image only.",
         "",
         "DIALOG STRUCTURE:",
         "- Three labeled form rows arranged vertically:",

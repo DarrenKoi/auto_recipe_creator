@@ -23,7 +23,21 @@
       "WebFetch(domain:www.microsoft.com)",
       "Bash(gh api:*)",
       "WebFetch(domain:docs.ultralytics.com)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(chmod:*)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/auto-commit-push.sh",
+            "timeout": 30
+          }
+        ]
+      }
     ]
   }
 }

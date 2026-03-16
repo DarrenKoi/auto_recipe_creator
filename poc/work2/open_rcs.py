@@ -161,21 +161,7 @@ def main() -> str:
             exe_path=RCS_EXE,
         )
         return EXIT_EXE_NOT_FOUND
-
-    try:
-        exe_size = RCS_EXE.stat().st_size
-    except OSError as exc:
-        error(f"실행 파일 접근 실패: {exc}")
-        log_work2_event(
-            component="open_rcs",
-            message="exe_access_error",
-            level="error",
-            log_name=LOG_NAME,
-            exe_path=RCS_EXE,
-            error=exc,
-        )
-        return EXIT_LAUNCH_FAILED
-    info(f"exe_exists=True size={exe_size}")
+    info("exe confirmed")
 
     existing_processes = find_existing_rcs_processes(RCS_EXE)
     if existing_processes:

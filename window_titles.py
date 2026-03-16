@@ -65,14 +65,19 @@ def _format_handle(handle: int | None) -> str:
     return hex(handle)
 
 
-def _read_window_text(user32, hwnd: int) -> str:
-    """Win32 API 로 창 제목을 읽는다."""
-    text_length = int(user32.GetWindowTextLengthW(hwnd))
-    if text_length <= 0:
-        return ""
+_TITLE_BUF_SIZE = 512
+"""고정 버퍼 크기. GetWindowTextLengthW 호출을 생략하기 위해 사용."""
 
-    buffer = ctypes.create_unicode_buffer(text_length + 1)
-    copied = int(user32.GetWindowTextW(hwnd, buffer, len(buffer)))
+
+def _read_window_text(user32, hwnd: int, buffer=None) -> str:
+    """Win32 API 로 창 제목을 읽는다.
+
+    buffer 를 미리 할당해 전달하면 재할당 비용을 줄인다.
+    """
+    if buffer is None:
+        buffer = ctypes.create_unicode_buffer(_TITLE_BUF_SIZE)
+
+    copied = int(user32.GetWindowTextW(hwnd, buffer, _TITLE_BUF_SIZE))
     if copied <= 0:
         return ""
 
@@ -90,6 +95,7 @@ def _collect_window_rows(*, visible_only: bool) -> list[WindowRow]:
     user32 = ctypes.windll.user32
     rows: list[WindowRow] = []
     seen_handles: set[int] = set()
+    buf = ctypes.create_unicode_buffer(_TITLE_BUF_SIZE)
 
     enum_windows_proc = ctypes.WINFUNCTYPE(
         wintypes.BOOL,
@@ -106,7 +112,11 @@ def _collect_window_rows(*, visible_only: bool) -> list[WindowRow]:
         if visible_only and not user32.IsWindowVisible(hwnd):
             return True
 
-        title = _read_window_text(user32, handle)
+        copied = int(user32.GetWindowTextW(hwnd, buf, _TITLE_BUF_SIZE))
+        if copied <= 0:
+            return True
+
+        title = _normalize_window_title(buf.value)
         if not title:
             return True
 
@@ -165,10 +175,11 @@ def main() -> int:
 
     try:
         user32 = ctypes.windll.user32
+        buf = ctypes.create_unicode_buffer(_TITLE_BUF_SIZE)
         foreground_handle = _read_foreground_window_handle(user32)
         foreground_title = ""
         if foreground_handle is not None:
-            foreground_title = _read_window_text(user32, foreground_handle)
+            foreground_title = _read_window_text(user32, foreground_handle, buf)
         rows = _collect_window_rows(visible_only=settings.visible_only)
     except Exception as exc:
         print(f"[ERROR] 창 제목 조회 실패: error={exc}")

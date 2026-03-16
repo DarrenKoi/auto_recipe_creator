@@ -103,7 +103,7 @@ def _json_stub(target_keys: tuple[str, ...]) -> str:
     return "\n".join(lines)
 
 
-def build_rcs_login_locator_prompt(
+def build_login_rcs_locator_prompt(
     width: int,
     height: int,
     target_keys: Iterable[str] | None = None,

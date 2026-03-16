@@ -20,7 +20,7 @@ import psutil
 from dotenv import load_dotenv
 
 from poc.work2.logger import log_work2_event
-from poc.work2.prompts import build_rcs_login_locator_prompt
+from poc.work2.prompts import build_login_rcs_locator_prompt
 from poc.work2.util import (
     activate_window,
     capture_window,
@@ -425,7 +425,7 @@ def _locate_login_controls(login_window, window_title: str, backend: str) -> str
     save_debug_webp(image, vlm_input_path, log_name=LOG_NAME)
 
     image_b64, width, height = encode_image_webp(image)
-    system_message, user_text = build_rcs_login_locator_prompt(
+    system_message, user_text = build_login_rcs_locator_prompt(
         width=width,
         height=height,
         target_keys=LOGIN_TARGET_KEYS,

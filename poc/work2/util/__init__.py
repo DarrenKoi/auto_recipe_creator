@@ -5,16 +5,21 @@ from .image_utils import capture_window, encode_image_webp
 from .json_utils import extract_json, parse_coords
 from .time_utils import format_elapsed_ms
 from .window_utils import (
+    WindowRow,
     activate_window,
+    collect_window_rows,
     find_window_by_pid_and_title_prefix,
     find_window_by_title_prefix,
     foreground_window,
     get_window_process_id,
+    read_foreground_window_info,
 )
 
 __all__ = [
+    "WindowRow",
     "activate_window",
     "capture_window",
+    "collect_window_rows",
     "debug_image_path",
     "encode_image_webp",
     "extract_json",
@@ -24,6 +29,7 @@ __all__ = [
     "foreground_window",
     "get_window_process_id",
     "parse_coords",
+    "read_foreground_window_info",
     "save_debug_jpeg",
     "save_debug_webp",
     "save_marked_image",

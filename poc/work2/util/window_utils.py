@@ -4,14 +4,25 @@ import ctypes
 import os
 import re
 import time
+from ctypes import wintypes
+from dataclasses import dataclass
 from typing import Callable
 
 from pywinauto import Desktop
-from pywinauto.application import Application
 
 from .time_utils import format_elapsed_ms
 
 _SW_RESTORE = 9
+_TITLE_BUF_SIZE = 512
+
+
+@dataclass(frozen=True)
+class WindowRow:
+    """top-level 창 스캔 결과."""
+
+    title: str
+    handle: int
+    process_id: int
 
 
 def _normalize_window_title(title: str) -> str:
@@ -25,47 +36,6 @@ def _normalize_window_title(title: str) -> str:
     return " ".join(cleaned.split())
 
 
-def _collect_window_title_candidates(window) -> list[tuple[str, str]]:
-    """window_text 외 후보 필드까지 모아 비교용 제목 목록을 만든다."""
-    raw_candidates: list[str] = []
-
-    try:
-        title = window.window_text()
-    except Exception:
-        title = ""
-    if isinstance(title, str):
-        raw_candidates.append(title)
-
-    try:
-        texts = window.texts()
-    except Exception:
-        texts = []
-    for item in texts:
-        if isinstance(item, str):
-            raw_candidates.append(item)
-
-    element_info = getattr(window, "element_info", None)
-    if element_info is not None:
-        for attr_name in ("name", "rich_text"):
-            try:
-                value = getattr(element_info, attr_name, "")
-            except Exception:
-                value = ""
-            if isinstance(value, str):
-                raw_candidates.append(value)
-
-    candidates: list[tuple[str, str]] = []
-    seen_normalized: set[str] = set()
-    for raw_title in raw_candidates:
-        normalized = _normalize_window_title(raw_title)
-        if not normalized or normalized in seen_normalized:
-            continue
-        seen_normalized.add(normalized)
-        candidates.append((raw_title, normalized))
-
-    return candidates
-
-
 def _compile_title_prefix_pattern(title_prefix: str) -> re.Pattern[str] | None:
     """title_prefix 문자열을 regex prefix 패턴으로 변환한다."""
     normalized_prefix = _normalize_window_title(title_prefix)
@@ -76,33 +46,98 @@ def _compile_title_prefix_pattern(title_prefix: str) -> re.Pattern[str] | None:
     return re.compile(pattern_text, re.IGNORECASE)
 
 
-def _match_title_prefix(
-    window,
-    title_prefix: str,
-) -> tuple[bool, str, str, str]:
-    """창의 여러 title 후보 중 regex prefix 와 매칭되는 값을 찾는다."""
-    candidates = _collect_window_title_candidates(window)
-    if not candidates:
-        return False, "", "", ""
-
-    title_pattern = _compile_title_prefix_pattern(title_prefix)
-    if title_pattern is None:
-        raw_title, normalized_title = candidates[0]
-        return False, raw_title, normalized_title, ""
-
-    for raw_title, normalized_title in candidates:
-        if title_pattern.match(normalized_title):
-            return True, raw_title, normalized_title, "regex_prefix"
-
-    raw_title, normalized_title = candidates[0]
-    return False, raw_title, normalized_title, ""
-
-
 def _format_handle(handle: int | None) -> str:
     """handle 값을 사람이 읽기 쉬운 형태로 변환한다."""
     if handle is None:
         return "N/A"
     return hex(handle)
+
+
+def _read_window_text(user32, hwnd: int, buffer=None) -> str:
+    """Win32 API 로 창 제목을 읽는다."""
+    if buffer is None:
+        buffer = ctypes.create_unicode_buffer(_TITLE_BUF_SIZE)
+
+    copied = int(user32.GetWindowTextW(hwnd, buffer, _TITLE_BUF_SIZE))
+    if copied <= 0:
+        return ""
+
+    return _normalize_window_title(buffer.value)
+
+
+def _read_window_process_id(user32, hwnd: int) -> int:
+    """Win32 API 로 창의 process id 를 읽는다."""
+    process_id = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
+    return int(process_id.value)
+
+
+def read_foreground_window_info() -> tuple[int | None, str]:
+    """현재 foreground 창의 handle 과 title 을 반환한다."""
+    if os.name != "nt":
+        return None, ""
+
+    user32 = ctypes.windll.user32
+    foreground_handle = int(user32.GetForegroundWindow()) or None
+    if foreground_handle is None:
+        return None, ""
+
+    buf = ctypes.create_unicode_buffer(_TITLE_BUF_SIZE)
+    return foreground_handle, _read_window_text(user32, foreground_handle, buf)
+
+
+def collect_window_rows(
+    *,
+    visible_only: bool = True,
+    process_id: int | None = None,
+) -> list[WindowRow]:
+    """현재 top-level 창 제목 목록을 Win32 API 로 빠르게 수집한다."""
+    if os.name != "nt":
+        return []
+
+    user32 = ctypes.windll.user32
+    rows: list[WindowRow] = []
+    seen_handles: set[int] = set()
+    buf = ctypes.create_unicode_buffer(_TITLE_BUF_SIZE)
+
+    enum_windows_proc = ctypes.WINFUNCTYPE(
+        wintypes.BOOL,
+        wintypes.HWND,
+        wintypes.LPARAM,
+    )
+
+    @enum_windows_proc
+    def _enum_callback(hwnd, _lparam):
+        handle = int(hwnd)
+        if handle <= 0 or handle in seen_handles:
+            return True
+
+        if visible_only and not user32.IsWindowVisible(hwnd):
+            return True
+
+        window_process_id = _read_window_process_id(user32, hwnd)
+        if process_id is not None and process_id > 0 and window_process_id != process_id:
+            return True
+
+        title = _read_window_text(user32, hwnd, buf)
+        if not title:
+            return True
+
+        seen_handles.add(handle)
+        rows.append(
+            WindowRow(
+                title=title,
+                handle=handle,
+                process_id=window_process_id,
+            )
+        )
+        return True
+
+    result = user32.EnumWindows(_enum_callback, 0)
+    if result == 0:
+        raise ctypes.WinError()
+
+    return rows
 
 
 def _extract_window_handle(window) -> int | None:
@@ -285,6 +320,80 @@ def activate_window(
         return False
 
 
+def _wrap_window_handle(handle: int, backend: str, desktops: dict[str, object]):
+    """Win32 handle 을 pywinauto wrapper 로 변환한다."""
+    desktop = desktops.get(backend)
+    if desktop is None:
+        desktop = Desktop(backend=backend)
+        desktops[backend] = desktop
+
+    window_spec = desktop.window(handle=handle)
+    return window_spec.wrapper_object()
+
+
+def _find_window_from_rows(
+    rows: list[WindowRow],
+    title_prefix: str,
+    backends: tuple[str, ...],
+    *,
+    search_started_at: float,
+    search_label: str,
+    window_filter: Callable[[object, str], bool] | None = None,
+    extra_log: str = "",
+) -> tuple[object | None, str, str]:
+    """raw Win32 rows 중 title prefix 에 맞는 창을 wrapper 로 반환한다."""
+    title_pattern = _compile_title_prefix_pattern(title_prefix)
+    if title_pattern is None:
+        print(f"[INFO] {search_label} 생략: 빈 title_prefix")
+        return None, "", ""
+
+    matched_rows = [row for row in rows if title_pattern.match(row.title)]
+    print(
+        f"[INFO] {search_label} "
+        f"title_prefix={title_prefix!r}, "
+        f"window_count={len(rows)}, matched_count={len(matched_rows)}, "
+        f"elapsed={format_elapsed_ms(search_started_at)}{extra_log}"
+    )
+    if not matched_rows:
+        return None, "", ""
+
+    desktops: dict[str, object] = {}
+    for row in matched_rows:
+        for backend in backends:
+            try:
+                window = _wrap_window_handle(row.handle, backend, desktops)
+            except Exception as exc:
+                print(
+                    f"[INFO] {search_label} wrapper 생성 실패 "
+                    f"backend={backend}, title={row.title!r}, "
+                    f"handle={_format_handle(row.handle)}, error={exc}"
+                )
+                continue
+
+            if window_filter is not None and not window_filter(window, row.title):
+                print(
+                    f"[INFO] {search_label} 후보 제외 "
+                    f"backend={backend}, title={row.title!r}, "
+                    f"handle={_format_handle(row.handle)}, pid={row.process_id}"
+                )
+                continue
+
+            print(
+                f"[INFO] {search_label} 발견 "
+                f"backend={backend}, title={row.title!r}, "
+                f"handle={_format_handle(row.handle)}, pid={row.process_id}, "
+                f"total_elapsed={format_elapsed_ms(search_started_at)}"
+            )
+            return window, row.title, backend
+
+    print(
+        f"[INFO] {search_label} wrapper 변환 실패 "
+        f"title_prefix={title_prefix!r}, matched_count={len(matched_rows)}, "
+        f"elapsed={format_elapsed_ms(search_started_at)}"
+    )
+    return None, "", ""
+
+
 def find_window_by_pid_and_title_prefix(
     process_id: int,
     title_prefix: str,
@@ -293,67 +402,28 @@ def find_window_by_pid_and_title_prefix(
     connect_timeout: float = 2.0,
     window_filter: Callable[[object, str], bool] | None = None,
 ) -> tuple[object | None, str, str]:
-    """특정 PID 에 연결해 title_prefix 와 유사 매칭되는 첫 창을 반환한다."""
+    """특정 PID 의 top-level 창 중 title_prefix 와 유사 매칭되는 첫 창을 반환한다."""
+    del connect_timeout
+
     search_started_at = time.time()
-    for backend in backends:
-        backend_started_at = time.time()
-        app = Application(backend=backend)
+    try:
+        rows = collect_window_rows(visible_only=False, process_id=process_id)
+    except Exception as exc:
         print(
-            "[INFO] 로그인 창 PID 연결 시도 "
-            f"backend={backend}, pid={process_id}, timeout={connect_timeout}s"
+            "[INFO] 로그인 창 PID raw 조회 실패 "
+            f"pid={process_id}, error={exc}"
         )
-        try:
-            app.connect(process=process_id, timeout=connect_timeout)
-        except Exception as exc:
-            print(
-                "[INFO] 로그인 창 PID 연결 실패 "
-                f"backend={backend}, pid={process_id}, error={exc}"
-            )
-            continue
+        return None, "", ""
 
-        try:
-            windows = app.windows()
-        except Exception as exc:
-            print(
-                "[INFO] 로그인 창 PID 조회 실패 "
-                f"backend={backend}, pid={process_id}, error={exc}"
-            )
-            continue
-
-        print(
-            "[INFO] 로그인 창 PID 조회 "
-            f"backend={backend}, pid={process_id}, window_count={len(windows)}, "
-            f"elapsed={format_elapsed_ms(backend_started_at)}"
-        )
-        for win in windows:
-            is_match, title, normalized_title, match_mode = _match_title_prefix(win, title_prefix)
-            if not title:
-                continue
-
-            if not is_match:
-                continue
-
-            if window_filter is not None and not window_filter(win, title):
-                print(
-                    "[INFO] 로그인 창 PID 후보 제외 "
-                    f"backend={backend}, pid={process_id}, title={title!r}, "
-                    f"normalized_title={normalized_title!r}, match_mode={match_mode}"
-                )
-                continue
-            print(
-                "[INFO] 로그인 창 PID 발견 "
-                f"backend={backend}, pid={process_id}, title={title!r}, "
-                f"normalized_title={normalized_title!r}, match_mode={match_mode}, "
-                f"total_elapsed={format_elapsed_ms(search_started_at)}"
-            )
-            return win, title, backend
-
-    print(
-        "[INFO] 로그인 창 PID 미발견 "
-        f"pid={process_id}, title_prefix={title_prefix!r}, "
-        f"elapsed={format_elapsed_ms(search_started_at)}"
+    return _find_window_from_rows(
+        rows,
+        title_prefix,
+        backends,
+        search_started_at=search_started_at,
+        search_label="로그인 창 PID raw 조회",
+        window_filter=window_filter,
+        extra_log=f", pid={process_id}",
     )
-    return None, "", ""
 
 
 def find_window_by_title_prefix(
@@ -365,50 +435,21 @@ def find_window_by_title_prefix(
 ) -> tuple[object | None, str, str]:
     """top-level 창 중 title_prefix 와 유사 매칭되는 첫 창을 반환한다."""
     search_started_at = time.time()
-    for backend in backends:
-        backend_started_at = time.time()
-        try:
-            windows = Desktop(backend=backend).windows(
-                top_level_only=True,
-                visible_only=visible_only,
-            )
-        except Exception as exc:
-            print(f"[INFO] 로그인 창 조회 실패: backend={backend}, error={exc}")
-            continue
-
+    try:
+        rows = collect_window_rows(visible_only=visible_only)
+    except Exception as exc:
         print(
-            "[INFO] 로그인 창 조회 "
-            f"backend={backend}, visible_only={visible_only}, "
-            f"window_count={len(windows)}, "
-            f"elapsed={format_elapsed_ms(backend_started_at)}"
+            "[INFO] 로그인 창 raw 조회 실패 "
+            f"visible_only={visible_only}, error={exc}"
         )
-        for win in windows:
-            is_match, title, normalized_title, match_mode = _match_title_prefix(win, title_prefix)
-            if not title:
-                continue
+        return None, "", ""
 
-            if not is_match:
-                continue
-
-            if window_filter is not None and not window_filter(win, title):
-                print(
-                    "[INFO] 로그인 창 후보 제외 "
-                    f"backend={backend}, title={title!r}, "
-                    f"normalized_title={normalized_title!r}, match_mode={match_mode}, "
-                    f"visible_only={visible_only}"
-                )
-                continue
-            print(
-                "[INFO] 로그인 창 발견 "
-                f"backend={backend}, title={title!r}, "
-                f"normalized_title={normalized_title!r}, match_mode={match_mode}, "
-                f"total_elapsed={format_elapsed_ms(search_started_at)}"
-            )
-            return win, title, backend
-
-    print(
-        "[INFO] 로그인 창 미발견 "
-        f"title_prefix={title_prefix!r}, visible_only={visible_only}, "
-        f"elapsed={format_elapsed_ms(search_started_at)}"
+    return _find_window_from_rows(
+        rows,
+        title_prefix,
+        backends,
+        search_started_at=search_started_at,
+        search_label="로그인 창 raw 조회",
+        window_filter=window_filter,
+        extra_log=f", visible_only={visible_only}",
     )
-    return None, "", ""

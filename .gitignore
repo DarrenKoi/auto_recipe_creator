@@ -1,6 +1,7 @@
 # not share
 output/
 **/node_modules/
+.codex/hooks/state/
 
 # Python
 __pycache__/

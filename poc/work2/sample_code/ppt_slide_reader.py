@@ -1,4 +1,4 @@
-"""PPT 슬라이드 이미지 → 구조화된 내용 추출 샘플 코드.
+"""PPT 슬라이드 이미지 → 구조화된 내용/레이아웃 추출 샘플 코드.
 
 이 폴더는 독립 실행 가능 — 프로젝트 내 다른 모듈에 의존하지 않는다.
 동료에게 이 폴더만 복사해서 공유하면 바로 사용 가능.
@@ -19,7 +19,7 @@
 
     OCR 결과를 VLM 에게 참고 자료로 제공하므로 텍스트 오탈자가 크게 줄어든다.
 
-필요 패키지: requests (표준 라이브러리 외 유일한 의존성)
+필요 패키지: requests, Pillow(overlay 이미지 저장용)
 """
 
 import base64
@@ -29,6 +29,16 @@ import time
 from pathlib import Path
 
 import requests
+
+try:
+    from PIL import Image, ImageDraw, ImageFont
+
+    PIL_AVAILABLE = True
+except ImportError:
+    Image = None
+    ImageDraw = None
+    ImageFont = None
+    PIL_AVAILABLE = False
 
 # ──────────────────────────────────────────────
 # 설정 — 필요 시 여기만 수정
@@ -46,6 +56,21 @@ OCR_URL = f"{FLASK_API_BASE}/vlm_serve/{OCR_SERVICE}"
 TIMEOUT_SEC = 120.0
 SAMPLE_DIR = Path(__file__).parent
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+LAYOUT_COORD_SCALE = 1000
+OVERLAY_IMAGE_SUFFIX = ".overlay.jpg"
+LAYOUT_JSON_SUFFIX = ".layout.json"
+
+BOX_COLORS = {
+    "title": (21, 101, 192),
+    "subtitle": (25, 118, 210),
+    "text_box": (30, 136, 229),
+    "chart": (239, 108, 0),
+    "table": (46, 125, 50),
+    "image": (123, 31, 162),
+    "diagram": (123, 31, 162),
+    "footer": (97, 97, 97),
+    "other": (0, 121, 107),
+}
 
 
 # ──────────────────────────────────────────────
@@ -189,6 +214,251 @@ Important:
 - Write ALL your descriptions, summaries, takeaways, and key_points in Korean.
   Exception: if the slide is entirely in English with no Korean at all, respond in English."""
 
+LAYOUT_SYSTEM_MESSAGE = """\
+You are an expert presentation layout analyst.
+Your task is to identify the visible bounding boxes of the major PPT objects in a slide screenshot.
+Respond ONLY with a JSON object (no markdown fences, no explanation).
+
+The OCR text is provided as a reference for short labels only.
+Your coordinates must describe the visual object positions in the screenshot."""
+
+LAYOUT_PROMPT_TEMPLATE = """\
+Below is the OCR-extracted text from this slide (use it only as a reference for labels):
+--- OCR TEXT ---
+{ocr_text}
+--- END OCR TEXT ---
+
+Identify the main layout objects needed to reconstruct this slide later.
+Focus especially on title/subtitle text boxes, body text boxes, charts, tables, and major images/diagrams.
+
+Return JSON in exactly this format:
+{{
+  "elements": [
+    {{
+      "type": "title|subtitle|text_box|chart|table|image|diagram|footer|other",
+      "label": "short label or first few words",
+      "bbox_1000": {{
+        "left": 0,
+        "top": 0,
+        "right": 1000,
+        "bottom": 1000
+      }}
+    }}
+  ]
+}}
+
+Rules:
+- Coordinates are normalized to a 1000 x 1000 slide space.
+- Return one box per logical PPT object, not one box per text line.
+- For charts, include the full chart area, including axis labels and legend.
+- Exclude the slide background and tiny decorative shapes that are not meaningful content.
+- Order elements top-to-bottom, then left-to-right."""
+
+
+def _clean_model_text(raw_text: str) -> str:
+    """모델 응답에서 코드 펜스를 제거한다."""
+    text = raw_text.strip()
+    if not text.startswith("```"):
+        return text
+
+    lines = text.split("\n")
+    lines = [line for line in lines if not line.strip().startswith("```")]
+    return "\n".join(lines).strip()
+
+
+def _parse_json_response(raw_text: str, label: str) -> dict | None:
+    """모델 응답을 JSON 으로 파싱한다."""
+    cleaned_text = _clean_model_text(raw_text)
+    try:
+        return json.loads(cleaned_text)
+    except json.JSONDecodeError as exc:
+        print(f"[WARNING] {label} JSON 파싱 실패: {exc}")
+        print(f"[INFO] {label} Raw 응답:\n{cleaned_text}")
+        return None
+
+
+def _coerce_float(value) -> float | None:
+    """문자열/숫자를 float 로 변환한다."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _extract_bbox_1000(raw_bbox) -> dict | None:
+    """레이아웃 박스를 정규화한다."""
+    if isinstance(raw_bbox, dict):
+        if {"left", "top", "right", "bottom"} <= raw_bbox.keys():
+            left = _coerce_float(raw_bbox.get("left"))
+            top = _coerce_float(raw_bbox.get("top"))
+            right = _coerce_float(raw_bbox.get("right"))
+            bottom = _coerce_float(raw_bbox.get("bottom"))
+        elif {"x", "y", "width", "height"} <= raw_bbox.keys():
+            left = _coerce_float(raw_bbox.get("x"))
+            top = _coerce_float(raw_bbox.get("y"))
+            width = _coerce_float(raw_bbox.get("width"))
+            height = _coerce_float(raw_bbox.get("height"))
+            if None in {left, top, width, height}:
+                return None
+            right = left + width
+            bottom = top + height
+        elif {"x", "y", "w", "h"} <= raw_bbox.keys():
+            left = _coerce_float(raw_bbox.get("x"))
+            top = _coerce_float(raw_bbox.get("y"))
+            width = _coerce_float(raw_bbox.get("w"))
+            height = _coerce_float(raw_bbox.get("h"))
+            if None in {left, top, width, height}:
+                return None
+            right = left + width
+            bottom = top + height
+        else:
+            return None
+    elif isinstance(raw_bbox, list) and len(raw_bbox) == 4:
+        left = _coerce_float(raw_bbox[0])
+        top = _coerce_float(raw_bbox[1])
+        right = _coerce_float(raw_bbox[2])
+        bottom = _coerce_float(raw_bbox[3])
+    else:
+        return None
+
+    if None in {left, top, right, bottom}:
+        return None
+
+    left = int(round(max(0.0, min(LAYOUT_COORD_SCALE, left))))
+    top = int(round(max(0.0, min(LAYOUT_COORD_SCALE, top))))
+    right = int(round(max(0.0, min(LAYOUT_COORD_SCALE, right))))
+    bottom = int(round(max(0.0, min(LAYOUT_COORD_SCALE, bottom))))
+
+    if right <= left or bottom <= top:
+        return None
+
+    return {
+        "left": left,
+        "top": top,
+        "right": right,
+        "bottom": bottom,
+    }
+
+
+def _normalize_element_type(raw_type: str) -> str:
+    """모델이 반환한 요소 타입을 통일한다."""
+    normalized = raw_type.strip().lower().replace("-", "_").replace(" ", "_")
+    alias_map = {
+        "body": "text_box",
+        "body_text": "text_box",
+        "bullet": "text_box",
+        "paragraph": "text_box",
+        "text": "text_box",
+        "textbox": "text_box",
+        "text_area": "text_box",
+        "textblock": "text_box",
+        "picture": "image",
+        "photo": "image",
+        "logo": "image",
+        "screenshot": "image",
+    }
+    normalized = alias_map.get(normalized, normalized)
+    if normalized not in BOX_COLORS:
+        return "other"
+    return normalized
+
+
+def _normalize_layout_elements(raw_elements) -> list[dict]:
+    """레이아웃 박스 목록을 정리한다."""
+    if not isinstance(raw_elements, list):
+        return []
+
+    normalized_elements = []
+    for item in raw_elements:
+        if not isinstance(item, dict):
+            continue
+
+        bbox = _extract_bbox_1000(
+            item.get("bbox_1000") or item.get("bbox") or item.get("box")
+        )
+        if bbox is None:
+            continue
+
+        element_type = _normalize_element_type(str(item.get("type") or "other"))
+        label = str(
+            item.get("label")
+            or item.get("text")
+            or item.get("title")
+            or item.get("description")
+            or ""
+        ).strip()
+
+        normalized_elements.append({
+            "type": element_type,
+            "label": label,
+            "bbox_1000": bbox,
+        })
+
+    normalized_elements.sort(
+        key=lambda item: (item["bbox_1000"]["top"], item["bbox_1000"]["left"])
+    )
+
+    for index, item in enumerate(normalized_elements, 1):
+        item["index"] = index
+
+    return normalized_elements
+
+
+def _bbox_1000_to_pixels(bbox_1000: dict, image_size: tuple[int, int]) -> dict:
+    """1000 기준 좌표를 실제 이미지 픽셀 좌표로 변환한다."""
+    width, height = image_size
+    max_x = max(0, width - 1)
+    max_y = max(0, height - 1)
+
+    left = int(round((bbox_1000["left"] / LAYOUT_COORD_SCALE) * width))
+    top = int(round((bbox_1000["top"] / LAYOUT_COORD_SCALE) * height))
+    right = int(round((bbox_1000["right"] / LAYOUT_COORD_SCALE) * width))
+    bottom = int(round((bbox_1000["bottom"] / LAYOUT_COORD_SCALE) * height))
+
+    left = max(0, min(max_x, left))
+    top = max(0, min(max_y, top))
+    right = max(left + 1, min(width, right))
+    bottom = max(top + 1, min(height, bottom))
+
+    return {
+        "left": left,
+        "top": top,
+        "right": right,
+        "bottom": bottom,
+    }
+
+
+def _get_image_size(image_path: Path) -> tuple[int, int] | None:
+    """Pillow 로 이미지 크기를 읽는다."""
+    if not PIL_AVAILABLE:
+        return None
+
+    with Image.open(image_path) as image:
+        return image.size
+
+
+def _enrich_layout_elements(
+    raw_elements: list[dict],
+    image_size: tuple[int, int] | None,
+) -> list[dict]:
+    """레이아웃 요소에 픽셀 좌표를 추가한다."""
+    enriched_elements = []
+    for item in raw_elements:
+        enriched_item = dict(item)
+        if image_size is not None:
+            enriched_item["bbox_pixels"] = _bbox_1000_to_pixels(
+                item["bbox_1000"], image_size,
+            )
+        enriched_elements.append(enriched_item)
+    return enriched_elements
+
 
 # ──────────────────────────────────────────────
 # 파이프라인 함수들
@@ -223,6 +493,82 @@ def run_chart_ocr(image_path: Path) -> str:
     return text
 
 
+def run_layout_analysis(image_path: Path, ocr_text: str) -> list[dict]:
+    """VLM 으로 텍스트 박스/차트 등의 레이아웃 박스를 추출한다."""
+    print(f"[INFO] [3단계] 레이아웃 박스 분석 중... ({VLM_SERVICE})")
+    user_prompt = LAYOUT_PROMPT_TEMPLATE.format(ocr_text=ocr_text)
+
+    start = time.time()
+    try:
+        raw_text, usage = vlm_chat(
+            VLM_URL, VLM_MODEL, image_path, LAYOUT_SYSTEM_MESSAGE, user_prompt, temperature=0.0,
+        )
+    except Exception as exc:
+        print(f"[WARNING] 레이아웃 분석 실패: {exc}")
+        return []
+
+    elapsed = time.time() - start
+    print(f"[INFO] 레이아웃 응답 시간: {elapsed:.1f}초")
+
+    if usage:
+        print(
+            f"[INFO] 레이아웃 토큰: prompt={usage.get('prompt_tokens', '?')}, "
+            f"completion={usage.get('completion_tokens', '?')}, "
+            f"total={usage.get('total_tokens', '?')}"
+        )
+
+    parsed = _parse_json_response(raw_text, "레이아웃")
+    if not isinstance(parsed, dict):
+        return []
+
+    elements = _normalize_layout_elements(parsed.get("elements"))
+    print(f"[INFO] 레이아웃 박스 추출: {len(elements)}개")
+    return elements
+
+
+def build_combined_ocr(image_path: Path) -> str:
+    """OCR 텍스트와 차트 인식 결과를 하나로 합친다."""
+    ocr_text = run_ocr(image_path)
+    chart_text = run_chart_ocr(image_path)
+
+    combined_ocr = ocr_text
+    if chart_text:
+        combined_ocr += f"\n\n[Chart Data]\n{chart_text}"
+    if not combined_ocr.strip():
+        combined_ocr = "(OCR 결과 없음 — 이미지만으로 분석)"
+    return combined_ocr
+
+
+def analyze_slide_layout(image_path: Path) -> dict | None:
+    """단일 슬라이드 이미지에서 레이아웃 박스만 추출한다."""
+    print(f"\n{'='*60}")
+    print(f"[INFO] 레이아웃 분석 시작: {image_path.name}")
+    print(f"{'='*60}")
+
+    if not image_path.exists():
+        print(f"[WARNING] 파일이 존재하지 않습니다: {image_path}")
+        return None
+
+    file_size_kb = image_path.stat().st_size / 1024
+    print(f"[INFO] 파일 크기: {file_size_kb:.1f} KB")
+
+    combined_ocr = build_combined_ocr(image_path)
+    layout_elements = run_layout_analysis(image_path, combined_ocr)
+
+    result = {
+        "_ocr_text": combined_ocr,
+        "_layout_elements": [],
+    }
+
+    image_size = _get_image_size(image_path)
+    if image_size is not None:
+        result["_image_size"] = {"width": image_size[0], "height": image_size[1]}
+    if layout_elements:
+        result["_layout_elements"] = _enrich_layout_elements(layout_elements, image_size)
+
+    return result
+
+
 def analyze_slide(image_path: Path) -> dict | None:
     """단일 슬라이드 이미지를 분석하여 구조화된 결과를 반환한다."""
     print(f"\n{'='*60}")
@@ -237,14 +583,7 @@ def analyze_slide(image_path: Path) -> dict | None:
     print(f"[INFO] 파일 크기: {file_size_kb:.1f} KB")
 
     # ── 1단계: OCR 텍스트 추출 ──
-    ocr_text = run_ocr(image_path)
-    chart_text = run_chart_ocr(image_path)
-
-    combined_ocr = ocr_text
-    if chart_text:
-        combined_ocr += f"\n\n[Chart Data]\n{chart_text}"
-    if not combined_ocr.strip():
-        combined_ocr = "(OCR 결과 없음 — 이미지만으로 분석)"
+    combined_ocr = build_combined_ocr(image_path)
 
     # ── 2단계: VLM 구조 분석 (OCR 텍스트 참조) ──
     print(f"[INFO] [2단계] VLM 구조 분석 중... ({VLM_SERVICE})")
@@ -269,22 +608,21 @@ def analyze_slide(image_path: Path) -> dict | None:
             f"total={usage.get('total_tokens', '?')}"
         )
 
-    # JSON 파싱
-    raw_text = raw_text.strip()
-    if raw_text.startswith("```"):
-        lines = raw_text.split("\n")
-        lines = [l for l in lines if not l.strip().startswith("```")]
-        raw_text = "\n".join(lines).strip()
+    result = _parse_json_response(raw_text, "구조 분석")
+    if result is None:
+        return {"raw_response": _clean_model_text(raw_text), "_ocr_text": combined_ocr}
 
-    try:
-        result = json.loads(raw_text)
-        print(f"[INFO] JSON 파싱 성공")
-        result["_ocr_text"] = combined_ocr
-        return result
-    except json.JSONDecodeError as exc:
-        print(f"[WARNING] JSON 파싱 실패: {exc}")
-        print(f"[INFO] Raw 응답:\n{raw_text}")
-        return {"raw_response": raw_text, "_ocr_text": combined_ocr}
+    print(f"[INFO] JSON 파싱 성공")
+    result["_ocr_text"] = combined_ocr
+
+    layout_elements = run_layout_analysis(image_path, combined_ocr)
+    image_size = _get_image_size(image_path)
+    if image_size is not None:
+        result["_image_size"] = {"width": image_size[0], "height": image_size[1]}
+    if layout_elements:
+        result["_layout_elements"] = _enrich_layout_elements(layout_elements, image_size)
+
+    return result
 
 
 # ──────────────────────────────────────────────
@@ -362,6 +700,17 @@ def print_result(image_name: str, result: dict) -> None:
     if footer:
         print(f"\n■ 푸터/노트: {footer}")
 
+    layout_elements = result.get("_layout_elements") or []
+    if layout_elements:
+        print(f"\n■ 레이아웃 박스 ({len(layout_elements)}개):")
+        for item in layout_elements:
+            bbox = item.get("bbox_pixels") or item.get("bbox_1000") or {}
+            print(
+                f"  [{item.get('index', '?')}] {item.get('type', 'other')} "
+                f"({bbox.get('left', '?')}, {bbox.get('top', '?')}) - "
+                f"({bbox.get('right', '?')}, {bbox.get('bottom', '?')})"
+            )
+
     print()
 
 
@@ -434,7 +783,123 @@ def _format_result_text(result: dict) -> str:
     if footer:
         lines.append(f"\n푸터/노트: {footer}")
 
+    layout_elements = result.get("_layout_elements") or []
+    if layout_elements:
+        lines.append(f"\n레이아웃 박스 ({len(layout_elements)}개):")
+        for item in layout_elements:
+            bbox_1000 = item.get("bbox_1000") or {}
+            pixels = item.get("bbox_pixels") or {}
+            label = item.get("label")
+            line = (
+                f"  [{item.get('index', '?')}] {item.get('type', 'other')} "
+                f"norm=({bbox_1000.get('left', '?')}, {bbox_1000.get('top', '?')}, "
+                f"{bbox_1000.get('right', '?')}, {bbox_1000.get('bottom', '?')})"
+            )
+            if pixels:
+                line += (
+                    f" px=({pixels.get('left', '?')}, {pixels.get('top', '?')}, "
+                    f"{pixels.get('right', '?')}, {pixels.get('bottom', '?')})"
+                )
+            if label:
+                line += f" label={label}"
+            lines.append(line)
+
     return "\n".join(lines)
+
+
+def save_layout_result(image_path: Path, result: dict) -> Path | None:
+    """레이아웃 박스를 JSON 파일로 저장한다."""
+    layout_elements = result.get("_layout_elements") or []
+    if not layout_elements:
+        return None
+
+    layout_path = image_path.with_suffix(LAYOUT_JSON_SUFFIX)
+    payload = {
+        "source_image": image_path.name,
+        "image_size": result.get("_image_size"),
+        "elements": layout_elements,
+    }
+
+    with open(layout_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    print(f"[INFO] 레이아웃 저장: {layout_path.name}")
+    return layout_path
+
+
+def save_overlay_image(image_path: Path, result: dict) -> Path | None:
+    """원본 이미지 위에 레이아웃 박스를 그린 overlay 이미지를 저장한다."""
+    layout_elements = result.get("_layout_elements") or []
+    if not layout_elements:
+        return None
+
+    if not PIL_AVAILABLE:
+        print("[WARNING] Pillow 미설치로 overlay 이미지 저장을 건너뜁니다.")
+        return None
+
+    overlay_path = image_path.with_suffix(OVERLAY_IMAGE_SUFFIX)
+
+    with Image.open(image_path) as image:
+        base_image = image.convert("RGBA")
+        overlay = Image.new("RGBA", base_image.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay, "RGBA")
+        font = ImageFont.load_default()
+
+        line_width = max(2, min(base_image.size) // 250)
+        label_padding = max(4, line_width + 1)
+
+        for item in layout_elements:
+            bbox = item.get("bbox_pixels")
+            if not bbox:
+                bbox = _bbox_1000_to_pixels(item["bbox_1000"], base_image.size)
+
+            color = BOX_COLORS.get(item.get("type", "other"), BOX_COLORS["other"])
+            outline_color = (*color, 255)
+            fill_color = (*color, 36)
+
+            left = bbox["left"]
+            top = bbox["top"]
+            right = bbox["right"]
+            bottom = bbox["bottom"]
+
+            draw.rectangle(
+                (left, top, right, bottom),
+                outline=outline_color,
+                width=line_width,
+                fill=fill_color,
+            )
+
+            label_text = f"{item.get('index', '?')}. {item.get('type', 'other')}"
+            text_bbox = draw.textbbox((0, 0), label_text, font=font)
+            text_width = text_bbox[2] - text_bbox[0]
+            text_height = text_bbox[3] - text_bbox[1]
+
+            label_width = text_width + label_padding * 2
+            label_height = text_height + label_padding * 2
+            label_left = min(left, max(0, base_image.width - label_width))
+            label_top = top - label_height - label_padding
+            if label_top < 0:
+                label_top = min(max(0, top + label_padding), max(0, base_image.height - label_height))
+
+            label_right = label_left + label_width
+            label_bottom = label_top + label_height
+
+            draw.rectangle(
+                (label_left, label_top, label_right, label_bottom),
+                fill=(*color, 220),
+            )
+            draw.text(
+                (label_left + label_padding, label_top + label_padding),
+                label_text,
+                fill=(255, 255, 255, 255),
+                font=font,
+            )
+
+        merged = Image.alpha_composite(base_image, overlay).convert("RGB")
+        merged.save(overlay_path, quality=95)
+
+    print(f"[INFO] Overlay 저장: {overlay_path.name}")
+    return overlay_path
 
 
 def save_result(image_path: Path, result: dict) -> Path:
@@ -480,6 +945,8 @@ def main():
             results[image_path.name] = result
             print_result(image_path.name, result)
             save_result(image_path, result)
+            save_layout_result(image_path, result)
+            save_overlay_image(image_path, result)
 
     print(f"\n{'='*60}")
     print(f"[INFO] 분석 완료: {len(results)}/{len(image_paths)}개 성공")

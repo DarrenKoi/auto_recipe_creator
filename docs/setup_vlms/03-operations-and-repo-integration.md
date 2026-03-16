@@ -29,7 +29,12 @@ python scripts/check_vlm.py http://127.0.0.1:8130 ui-venus-30b
 
 ## 2. PoC 코드와 연결하는 방법
 
-이 저장소의 `poc/work`는 OpenAI 호환 endpoint를 아래 환경변수로 읽는다.
+이 저장소에는 현재 두 경로가 있다.
+
+- legacy `poc/work`: OpenAI 호환 endpoint를 환경변수로 읽는다.
+- current `poc/work2`: coworker-facing client 경로이며, `poc/work2/flask_vlm.py`의 hardcoded service registry 와 `poc/work2/vlm_client.py`를 사용한다.
+
+legacy `poc/work`가 읽는 키는 아래와 같다.
 
 - `VLM_API_URL` 또는 `VLM_API_BASE_URL`
 - `VLM_API_KEY`
@@ -37,18 +42,25 @@ python scripts/check_vlm.py http://127.0.0.1:8130 ui-venus-30b
 
 관련 코드는 [poc/work/config.py](../../poc/work/config.py), [poc/work/vlm_screen_analysis.py](../../poc/work/vlm_screen_analysis.py), [poc/work/vlm_openai_client.py](../../poc/work/vlm_openai_client.py)에 있다.
 
-모델이 이미 클라우드 서버의 `data/models/` 아래에 있으므로, 이 저장소 쪽에서는 모델 다운로드를 신경 쓸 필요 없이 endpoint와 alias만 맞추면 된다.
+`poc/work2` 정책은 다르다. coworkers 가 `flask_api` 폴더 구조나 서버-side env를 몰라도 되도록, client 쪽에서 service slug / model / endpoint mapping 을 고정 관리한다.
+
+- `poc/work2/flask_vlm.py`: service slug -> model name / API URL registry
+- `poc/work2/vlm_client.py`: 선택한 service slug 로 이미지 요청 전송
+- `poc/work2/connection_check.py`: 현재 서버에 살아 있는 service 확인
+
+즉, 모델이 이미 클라우드 서버의 `data/models/` 아래에 있으므로, client는 서버 내부 구현 대신 endpoint와 alias contract만 맞추면 된다.
 
 실제 클라우드 주소 기준:
 
 - base URL: `http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com`
 - Flask API root: `http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api`
 
-현재 코드 사실:
+현재 운영 사실:
 
-- `flask_api`의 기본 prefix는 `/api`다.
 - VLM proxy는 `/api/vlm_serve/<service>/v1/...` 형태로 제공된다.
 - 따라서 coworkers 에게는 direct port 대신 Flask API 주소를 줄 수 있다.
+- `poc/work2`는 이 주소를 `poc/work2/flask_vlm.py`에 hardcode 하며, 서버 저장소의 `flask_api` Python 코드 import 에 의존하지 않는다.
+- 각 task script 는 connection check 후 원하는 service slug 를 직접 고른다.
 
 ## 3. URL 패턴 정리
 
@@ -77,9 +89,11 @@ coworkers 용 공용 주소는 아래처럼 쓰면 된다.
 - `/api/vlm_serve/ui-venus/v1/models`
 - `/api/vlm_serve/ui-venus/v1/chat/completions`
 
-## 4. 추천 `.env` 관리 방식
+## 4. 추천 설정 관리 방식
 
-실험별 `.env`를 따로 두고, 현재 활성 파일만 `poc/work/.env`로 두는 식이 가장 단순하다.
+legacy `poc/work`는 실험별 `.env`를 따로 두고, 현재 활성 파일만 `poc/work/.env`로 두는 식이 가장 단순하다.
+
+반대로 `poc/work2`는 coworker 공용 경로이므로 endpoint/model을 `.env`보다 코드에서 고정해 두는 편이 맞다. 현재 정책은 [poc/work2/flask_vlm.py](../../poc/work2/flask_vlm.py)를 source of truth 로 두고, `connection_check.py`로 사용 가능 서비스를 확인한 뒤 각 script 가 원하는 service slug 를 직접 고르는 것이다.
 
 ### 4.1 UI-Venus 실험용
 
@@ -178,6 +192,8 @@ uv run python -m poc.work.list_up_tools
 ```
 
 이 저장소의 클라이언트는 base URL 끝의 `/v1`를 자동 보정하므로 `http://host:8001`만 넣어도 된다.
+
+`poc/work2`에서는 `.env`를 바꿔 끼우기보다 `flask_vlm.py`의 service registry 를 유지하고, 각 스크립트에서 선택한 service slug 를 `vlm_client.py`로 호출한다.
 
 ## 6. 운영 표준
 

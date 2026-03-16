@@ -66,5 +66,6 @@ __all__ = [
     "automate_rcs_login",
     "check_tool_screen",
     "click_rcs_view_mode",
+    "vlm_client",
     "vlm_screen_analysis",
 ]

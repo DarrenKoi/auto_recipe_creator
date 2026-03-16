@@ -12,11 +12,12 @@ AI-powered automation system for CD-SEM/VeritySEM recipe setup. The project comb
 - `docs/`: Architecture notes, GUI automation research, and setup guides.
 
 ### `poc/work2/` detailed map (current)
-- `poc/work2/flask_vlm.py`: Shared Phase 2 pipeline settings and Flask proxy route/model resolution. This is the single source of truth for team-default VLM/OCR endpoints.
+- `poc/work2/flask_vlm.py`: Shared Phase 2 Flask proxy route/model registry. This is the single source of truth for coworker-facing service slug, model name, and endpoint mappings.
 - `poc/work2/connection_check.py`: Flask `/api/vlm_serve/health` and per-service `/v1/models` connection checker.
+- `poc/work2/vlm_client.py`: Simple image-capable client for calling Flask proxy VLM services by service slug from task scripts.
 - `poc/work2/reading_check.py`: Single-monitor screenshot benchmark that compares multiple UI VLM services and optionally OCR assist output.
-- `poc/work2/pipeline_ocr.py`: OCR assist stage for `ui-venus -> paddleocr-vl` style pipelines.
-- `poc/work2/vlm_screen_analysis.py`: Screen/state analysis built on primary VLM + optional OCR hints.
+- `poc/work2/pipeline_ocr.py`: OCR assist stage for selected UI VLM pipelines.
+- `poc/work2/vlm_screen_analysis.py`: Screen/state analysis built on a selected VLM service + optional OCR hints.
 - `poc/work2/rcs_utils.py`: Shared capture/click/debug/window-search/JSON parsing helpers for Windows automation flows.
 - `poc/work2/automate_rcs_login.py`: RCS login locator benchmark and login-click automation across multiple serving UI models.
 - `poc/work2/click_rcs_view_mode.py`: View/List tab locator + click flow on the logged-in RCS main window.
@@ -68,6 +69,7 @@ AI-powered automation system for CD-SEM/VeritySEM recipe setup. The project comb
 - Treat `poc/work2/` as the primary implementation surface. New automation/pipeline work should land there by default.
 - `poc/work/` is no longer the main workstream. Avoid adding new Phase 1 entrypoints, prompts, or workflow branches unless they are needed as temporary compatibility layers for `poc/work2`.
 - `poc/work2/` currently still imports some legacy helpers from `poc/work/` (`vlm_openai_client`, `screen_capture`, `config`, `rcs_common`). When touching those boundaries, prefer reducing the dependency rather than growing it.
+- `poc/work2/` must remain independent from server-side `flask_api` source code and its local env assumptions. Coworkers should be able to run `poc/work2` with only this repo and the hardcoded/shared client-side endpoint definitions in `poc/work2/flask_vlm.py`.
 - Run Phase 2 scripts via `uv run python poc/work2/<script>.py` unless a module explicitly requires another invocation form.
 - For imports across `test/` sibling modules, use `from video_frame_parser...` style when operating with `PYTHONPATH=./test`.
 - Canonical office gateway host is `itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com`; if repo docs mention `webpp`, treat that as stale and keep `webapp`.
@@ -84,7 +86,8 @@ AI-powered automation system for CD-SEM/VeritySEM recipe setup. The project comb
 - Centralize team-default pipeline settings in `poc/work2/flask_vlm.py` so coworkers can run scripts without per-user `.env` sprawl.
 - Use `poc/work2/connection_check.py` to validate Flask proxy health and route/model readiness before debugging automation behavior.
 - Use `poc/work2/reading_check.py` and `poc/work2/automate_rcs_login.py` to compare serving UI models on the same screen/task.
-- Keep primary VLM + OCR assist composition in `poc/work2/pipeline_ocr.py` and `poc/work2/vlm_screen_analysis.py`.
+- Keep service-slug based VLM + OCR assist composition in `poc/work2/pipeline_ocr.py` and `poc/work2/vlm_screen_analysis.py`.
+- Prefer direct model selection after `poc/work2/connection_check.py`: check available services, then hardcode the service slug each script wants to use.
 - Consolidate reusable Windows automation helpers in `poc/work2/rcs_utils.py` and reusable prompt builders in `poc/work2/prompts/`.
 - Validate the real RCS workflow on office Windows in this order: connection check -> login -> main tab interaction -> tool screen analysis.
 - Migration direction:

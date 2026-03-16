@@ -122,13 +122,13 @@
 
 ### 추천 2안: 실제 운영용
 
-1. Primary GUI model: `UI-Venus-1.5-8B` 또는 `UI-TARS-1.5-7B`
+1. main UI service 후보: `UI-Venus-1.5-8B` 또는 `UI-TARS-1.5-7B`
 2. Zoom-in sidecar: `MAI-UI-8B`
 3. OCR default sidecar: `PaddleOCR-VL-1.5`
 4. OCR fallback: `GOT-OCR-2.0-hf`
 5. External baseline: `Kimi-K2.5`
 
-현재 `poc/work2/flask_vlm.py` 기본값은 `UI-Venus` + `PaddleOCR-VL-1.5`이므로, 여기에서 `UI-TARS` 비교와 `MAI-UI` 조건부 호출만 추가하는 방식이 변경 폭이 가장 작다.
+현재 `poc/work2`는 단일 "primary VLM"도, purpose slot도 두지 않고 service slug 를 직접 고른다. 기본 registry 는 `poc/work2/flask_vlm.py`, 실제 호출은 `poc/work2/vlm_client.py` 기준으로 맞추면 되므로, 여기에서 `UI-TARS` 비교와 `MAI-UI` 조건부 호출만 추가하는 방식이 변경 폭이 가장 작다.
 
 ## 6. 실행 시 주의할 점
 

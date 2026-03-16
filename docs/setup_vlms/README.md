@@ -11,8 +11,9 @@
 
 주의:
 
-- 현재 저장소의 `flask_api` 패키지는 `/api/vlm_serve/<service>/v1/...` 형태의 VLM proxy route를 제공한다.
-- 즉, coworkers 용 endpoint는 `http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/ui-venus` 같은 형태로 잡으면 된다.
+- 서버는 `/api/vlm_serve/<service>/v1/...` 형태의 VLM proxy route를 제공한다.
+- 다만 `poc/work2`는 서버 저장소 내부의 `flask_api` 코드나 env를 읽지 않는 client-side 독립 경로여야 한다.
+- 즉, coworkers 용 endpoint는 `http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/ui-venus` 같은 형태로 고정해서 `poc/work2/flask_vlm.py`에 두고, 실제 task 코드는 `poc/work2/vlm_client.py`로 service slug 를 골라 호출하는 것이 현재 정책이다.
 
 ## 권장 시작점
 
@@ -90,7 +91,10 @@ GPU_PROCESS_RESERVE_GIB=4
 - `MODEL_ID`는 클라우드 서버의 로컬 절대경로를 사용한다. 지금처럼 모델이 이미 `data/models/` 아래에 받아져 있으면 그 경로를 직접 쓰는 편이 가장 안정적이다.
 - 공통 설정과 모델별 설정을 분리한다.
 - 권한 범위 내에서 수동 실행 + 헬스 체크 기준으로 운영한다.
-- 이 저장소에서는 `VLM_API_URL`, `VLM_MODEL_NAME`, `VLM_API_KEY`만 맞추면 바로 붙는다.
+- `poc/work2`는 coworker-facing client 경로이므로 서버 측 `flask_api` 설정 복사에 의존하지 말고, `poc/work2/flask_vlm.py`의 hardcoded endpoint/model registry를 source of truth로 유지한다.
+- `poc/work2`는 단일 "primary model" 개념도, shared purpose slot (`screen_analysis`, `main_tabs`, `ocr`)도 두지 않는다.
+- 대신 `poc/work2/connection_check.py`로 현재 사용 가능한 서비스를 확인한 뒤, 각 task script 가 원하는 service slug 를 직접 고르고 `poc/work2/vlm_client.py`로 호출한다.
+- legacy `poc/work` 계열은 여전히 `VLM_API_URL`, `VLM_MODEL_NAME`, `VLM_API_KEY` 중심으로 붙는다.
 
 ## 문서 순서
 
@@ -171,12 +175,19 @@ python scripts/check_vlm.py http://127.0.0.1:8130 ui-venus-30b
 
 ## 이 저장소와 바로 연결되는 설정 키
 
-`poc/work`는 아래 키를 사용한다.
+legacy `poc/work`는 아래 키를 사용한다.
 
 - `VLM_API_URL`
 - `VLM_API_BASE_URL`
 - `VLM_API_KEY`
 - `VLM_MODEL_NAME`
+
+`poc/work2`는 별도 `.env`보다 [poc/work2/flask_vlm.py](../../poc/work2/flask_vlm.py)의 service registry 와 [poc/work2/vlm_client.py](../../poc/work2/vlm_client.py)를 우선한다.
+
+- `flask_vlm.py`: service slug -> model name / endpoint mapping
+- `vlm_client.py`: 선택한 service slug 로 이미지 요청 전송
+
+즉, `poc/work2`는 task code 안에서 `service_slug="ui-venus"` 같은 식으로 직접 고른다.
 
 클라이언트가 `/v1`를 자동 처리하므로 아래 둘 다 사용 가능하다.
 
@@ -194,4 +205,5 @@ python scripts/check_vlm.py http://127.0.0.1:8130 ui-venus-30b
 - 공통값은 `common.env`, 모델별 값은 `models/<name>.env`
 - size variant는 `models/<family>-<size>.env`로 확장하고, port/KV cache 관련 튜닝도 model env에서 개별 관리
 - 수동 검증 후 같은 시작 스크립트로 재기동/운영
-- PoC 전환은 `poc/work/.env`에서 `VLM_API_URL`과 `VLM_MODEL_NAME`만 바꾸면 된다
+- `poc/work2`는 `poc/work2/flask_vlm.py`와 `poc/work2/vlm_client.py`를 기준으로 service slug 를 직접 선택해 쓰고, coworkers 는 서버 쪽 `flask_api` 코드나 env를 알 필요가 없다
+- legacy `poc/work` 전환은 `poc/work/.env`에서 `VLM_API_URL`과 `VLM_MODEL_NAME`만 바꾸면 된다

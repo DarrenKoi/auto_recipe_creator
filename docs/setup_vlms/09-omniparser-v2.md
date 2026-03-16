@@ -155,13 +155,13 @@ upstream repo에는 `omnitool/omniparserserver/omniparserserver.py`가 있지만
 1. 같은 Python 환경 또는 현재 운영 env에 OmniParser 의존성 추가
 2. `flask_api/omniparser/` 아래에 전용 blueprint 추가
 3. `/api/omniparser/parse`, `/api/omniparser/health` 같은 API 제공
-4. `poc/work2`에서는 이 API를 sidecar parser로 호출하고, 기존 `ui-venus` 같은 primary VLM과 조합
+4. `poc/work2`에서는 이 API를 sidecar parser로 호출하고, 기존 UI VLM service slug 선택 흐름과 조합
 
 즉, 배포 단위는 `별도 env`가 아니라 `별도 Flask service surface`로 보는 편이 맞다.
 
 ## 6. 이 저장소 기준 정리
 
-`OmniParser v2`는 지금 바로 `deploy_vlms/scripts/serve_vlm.py`에 넣어 배포할 대상이라기보다, `별도 model/runtime path + 로컬 weights`를 가진 parser 서비스로 보는 편이 맞다. 현재 repo에는 OmniParser integration 코드가 커밋되어 있지 않으므로, 향후 구현 시에는 `flask_api/vlm_serve`에 억지로 넣기보다 `flask_api/omniparser` 같은 별도 폴더에서 API를 열고, `poc/work2`에서 기존 primary VLM들과 함께 쓰는 구성이 가장 자연스럽다.
+`OmniParser v2`는 지금 바로 `deploy_vlms/scripts/serve_vlm.py`에 넣어 배포할 대상이라기보다, `별도 model/runtime path + 로컬 weights`를 가진 parser 서비스로 보는 편이 맞다. 현재 repo에는 OmniParser integration 코드가 커밋되어 있지 않으므로, 향후 구현 시에는 `flask_api/vlm_serve`에 억지로 넣기보다 `flask_api/omniparser` 같은 별도 폴더에서 API를 열고, `poc/work2`에서 기존 UI VLM service slug 선택 흐름과 함께 쓰는 구성이 가장 자연스럽다.
 
 ## 7. 참고 source
 

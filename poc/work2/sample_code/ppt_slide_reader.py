@@ -1,37 +1,126 @@
 """PPT 슬라이드 이미지 → 구조화된 내용 추출 샘플 코드.
 
+이 폴더는 독립 실행 가능 — 프로젝트 내 다른 모듈에 의존하지 않는다.
+동료에게 이 폴더만 복사해서 공유하면 바로 사용 가능.
+
 사용법:
-    # 프로젝트 루트에서 실행
+    # 이 폴더에서 바로 실행
+    pip install requests
+    python ppt_slide_reader.py
+
+    # 또는 프로젝트 루트에서
     uv run python poc/work2/sample_code/ppt_slide_reader.py
 
-    # sample_code/ 폴더에 .jpg 또는 .png 이미지를 넣어두면 자동으로 읽는다.
+    # 이 폴더에 .jpg 또는 .png 이미지를 넣어두면 자동으로 읽는다.
 
 파이프라인 (2단계):
     1단계: paddleocr-vl-1.5 로 이미지에서 텍스트를 정확히 추출 (OCR)
     2단계: ui-venus-1.5-8b 가 OCR 텍스트를 참조하여 슬라이드 구조를 분석 (VLM)
 
     OCR 결과를 VLM 에게 참고 자료로 제공하므로 텍스트 오탈자가 크게 줄어든다.
+
+필요 패키지: requests (표준 라이브러리 외 유일한 의존성)
 """
 
+import base64
 import json
 import sys
 import time
 from pathlib import Path
 
-from poc.work2.vlm_client import Work2VLMClient
+import requests
 
 # ──────────────────────────────────────────────
-# 설정
+# 설정 — 필요 시 여기만 수정
 # ──────────────────────────────────────────────
-VLM_SERVICE_SLUG = "ui-venus"
-OCR_SERVICE_SLUG = "paddleocr-vl-1.5"
+FLASK_API_BASE = "http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api"
+
+VLM_SERVICE = "ui-venus"
+VLM_MODEL = "ui-venus-1.5-8b"
+VLM_URL = f"{FLASK_API_BASE}/vlm_serve/{VLM_SERVICE}"
+
+OCR_SERVICE = "paddleocr-vl-1.5"
+OCR_MODEL = "paddleocr-vl-1.5"
+OCR_URL = f"{FLASK_API_BASE}/vlm_serve/{OCR_SERVICE}"
+
+TIMEOUT_SEC = 120.0
 SAMPLE_DIR = Path(__file__).parent
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
-# sample_code/ 폴더 내 jpg/png 이미지를 자동 수집
-IMAGE_PATHS = sorted(
-    p for p in SAMPLE_DIR.iterdir()
-    if p.suffix.lower() in IMAGE_EXTENSIONS
-)
+
+
+# ──────────────────────────────────────────────
+# 최소 VLM 클라이언트 (독립 실행용)
+# ──────────────────────────────────────────────
+def _detect_mime(image_bytes: bytes) -> str:
+    """이미지 header 로 MIME type 을 추정한다."""
+    if image_bytes[:2] == b"\xff\xd8":
+        return "image/jpeg"
+    if image_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/jpeg"
+
+
+def vlm_chat(
+    base_url: str,
+    model: str,
+    image_path: Path,
+    system_message: str,
+    user_text: str,
+    temperature: float = 0.0,
+) -> tuple[str, dict]:
+    """OpenAI-compatible VLM endpoint 에 이미지 + 텍스트를 보내고 응답을 반환한다.
+
+    Returns:
+        (response_text, token_usage_dict)
+    """
+    image_bytes = image_path.read_bytes()
+    mime = _detect_mime(image_bytes)
+    b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+    messages = []
+    if system_message:
+        messages.append({"role": "system", "content": system_message})
+    messages.append({
+        "role": "user",
+        "content": [
+            {"type": "text", "text": user_text},
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64}"},
+            },
+        ],
+    })
+
+    endpoint = base_url.rstrip("/")
+    if not endpoint.endswith("/v1/chat/completions"):
+        if endpoint.endswith("/v1"):
+            endpoint += "/chat/completions"
+        else:
+            endpoint += "/v1/chat/completions"
+
+    resp = requests.post(
+        endpoint,
+        headers={"Content-Type": "application/json"},
+        json={"model": model, "messages": messages, "temperature": temperature},
+        timeout=TIMEOUT_SEC,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    choices = data.get("choices") or []
+    if not choices:
+        raise ValueError(f"VLM 응답에 choices 없음: {json.dumps(data, ensure_ascii=False)[:300]}")
+
+    content = choices[0].get("message", {}).get("content", "")
+    if isinstance(content, list):
+        content = "\n".join(
+            item.get("text", "") for item in content if isinstance(item, dict)
+        ).strip()
+
+    return str(content), data.get("usage") or {}
+
 
 # ──────────────────────────────────────────────
 # VLM 프롬프트
@@ -101,53 +190,40 @@ Important:
   Exception: if the slide is entirely in English with no Korean at all, respond in English."""
 
 
-def run_ocr(ocr_client: Work2VLMClient, image_path: Path) -> str:
+# ──────────────────────────────────────────────
+# 파이프라인 함수들
+# ──────────────────────────────────────────────
+def run_ocr(image_path: Path) -> str:
     """PaddleOCR-VL 로 이미지에서 텍스트를 추출한다."""
-    print(f"[INFO] [1단계] OCR 텍스트 추출 중... ({OCR_SERVICE_SLUG})")
+    print(f"[INFO] [1단계] OCR 텍스트 추출 중... ({OCR_SERVICE})")
     start = time.time()
     try:
-        response = ocr_client.chat_with_image_path(
-            image_path=image_path,
-            system_message="",
-            user_text="OCR:",
-            temperature=0.0,
-        )
+        text, _ = vlm_chat(OCR_URL, OCR_MODEL, image_path, "", "OCR:")
     except Exception as exc:
         print(f"[WARNING] OCR 호출 실패 (VLM 단독으로 진행): {exc}")
         return ""
-
     elapsed = time.time() - start
-    ocr_text = response.text.strip()
-    print(f"[INFO] OCR 완료: {elapsed:.1f}초, {len(ocr_text)}자 추출")
-    return ocr_text
+    text = text.strip()
+    print(f"[INFO] OCR 완료: {elapsed:.1f}초, {len(text)}자 추출")
+    return text
 
 
-def run_chart_ocr(ocr_client: Work2VLMClient, image_path: Path) -> str:
+def run_chart_ocr(image_path: Path) -> str:
     """PaddleOCR-VL 의 Chart Recognition 으로 차트 데이터를 추출한다."""
-    print(f"[INFO] [1단계] 차트 인식 중... ({OCR_SERVICE_SLUG})")
+    print(f"[INFO] [1단계] 차트 인식 중... ({OCR_SERVICE})")
     start = time.time()
     try:
-        response = ocr_client.chat_with_image_path(
-            image_path=image_path,
-            system_message="",
-            user_text="Chart Recognition:",
-            temperature=0.0,
-        )
+        text, _ = vlm_chat(OCR_URL, OCR_MODEL, image_path, "", "Chart Recognition:")
     except Exception as exc:
         print(f"[WARNING] Chart OCR 호출 실패 (무시): {exc}")
         return ""
-
     elapsed = time.time() - start
-    chart_text = response.text.strip()
-    print(f"[INFO] Chart OCR 완료: {elapsed:.1f}초, {len(chart_text)}자 추출")
-    return chart_text
+    text = text.strip()
+    print(f"[INFO] Chart OCR 완료: {elapsed:.1f}초, {len(text)}자 추출")
+    return text
 
 
-def analyze_slide(
-    vlm_client: Work2VLMClient,
-    ocr_client: Work2VLMClient,
-    image_path: Path,
-) -> dict | None:
+def analyze_slide(image_path: Path) -> dict | None:
     """단일 슬라이드 이미지를 분석하여 구조화된 결과를 반환한다."""
     print(f"\n{'='*60}")
     print(f"[INFO] 분석 시작: {image_path.name}")
@@ -161,10 +237,9 @@ def analyze_slide(
     print(f"[INFO] 파일 크기: {file_size_kb:.1f} KB")
 
     # ── 1단계: OCR 텍스트 추출 ──
-    ocr_text = run_ocr(ocr_client, image_path)
-    chart_text = run_chart_ocr(ocr_client, image_path)
+    ocr_text = run_ocr(image_path)
+    chart_text = run_chart_ocr(image_path)
 
-    # OCR 결과 결합
     combined_ocr = ocr_text
     if chart_text:
         combined_ocr += f"\n\n[Chart Data]\n{chart_text}"
@@ -172,16 +247,13 @@ def analyze_slide(
         combined_ocr = "(OCR 결과 없음 — 이미지만으로 분석)"
 
     # ── 2단계: VLM 구조 분석 (OCR 텍스트 참조) ──
-    print(f"[INFO] [2단계] VLM 구조 분석 중... ({VLM_SERVICE_SLUG})")
+    print(f"[INFO] [2단계] VLM 구조 분석 중... ({VLM_SERVICE})")
     user_prompt = USER_PROMPT_TEMPLATE.format(ocr_text=combined_ocr)
 
     start = time.time()
     try:
-        response = vlm_client.chat_with_image_path(
-            image_path=image_path,
-            system_message=SYSTEM_MESSAGE,
-            user_text=user_prompt,
-            temperature=0.1,
+        raw_text, usage = vlm_chat(
+            VLM_URL, VLM_MODEL, image_path, SYSTEM_MESSAGE, user_prompt, temperature=0.1,
         )
     except Exception as exc:
         print(f"[ERROR] VLM 호출 실패: {exc}")
@@ -190,8 +262,6 @@ def analyze_slide(
     elapsed = time.time() - start
     print(f"[INFO] VLM 응답 시간: {elapsed:.1f}초")
 
-    # 토큰 사용량
-    usage = response.token_usage
     if usage:
         print(
             f"[INFO] 토큰: prompt={usage.get('prompt_tokens', '?')}, "
@@ -199,9 +269,8 @@ def analyze_slide(
             f"total={usage.get('total_tokens', '?')}"
         )
 
-    # JSON 파싱 시도
-    raw_text = response.text.strip()
-    # markdown 코드 펜스 제거
+    # JSON 파싱
+    raw_text = raw_text.strip()
     if raw_text.startswith("```"):
         lines = raw_text.split("\n")
         lines = [l for l in lines if not l.strip().startswith("```")]
@@ -218,6 +287,9 @@ def analyze_slide(
         return {"raw_response": raw_text, "_ocr_text": combined_ocr}
 
 
+# ──────────────────────────────────────────────
+# 출력 / 저장
+# ──────────────────────────────────────────────
 def print_result(image_name: str, result: dict) -> None:
     """분석 결과를 보기 좋게 출력한다."""
     print(f"\n{'─'*60}")
@@ -228,7 +300,6 @@ def print_result(image_name: str, result: dict) -> None:
         print(result["raw_response"])
         return
 
-    # 제목
     title = result.get("slide_title")
     if title:
         print(f"\n■ 제목: {title}")
@@ -236,26 +307,22 @@ def print_result(image_name: str, result: dict) -> None:
     if subtitle:
         print(f"  부제: {subtitle}")
 
-    # 전체 주제
     topic = result.get("overall_topic")
     if topic:
         print(f"\n■ 주제: {topic}")
 
-    # 본문
     body = result.get("body_text") or []
     if body:
         print(f"\n■ 본문 ({len(body)}항목):")
         for i, text in enumerate(body, 1):
             print(f"  {i}. {text}")
 
-    # 핵심 포인트
     key_points = result.get("key_points") or []
     if key_points:
         print(f"\n■ 핵심 포인트:")
         for point in key_points:
             print(f"  • {point}")
 
-    # 차트
     charts = result.get("charts") or []
     if charts:
         print(f"\n■ 차트 ({len(charts)}개):")
@@ -271,7 +338,6 @@ def print_result(image_name: str, result: dict) -> None:
             if takeaway:
                 print(f"      핵심: {takeaway}")
 
-    # 표
     tables = result.get("tables") or []
     if tables:
         print(f"\n■ 표 ({len(tables)}개):")
@@ -281,19 +347,17 @@ def print_result(image_name: str, result: dict) -> None:
             rows = table.get("rows") or []
             if headers:
                 print(f"      헤더: {' | '.join(headers)}")
-            for row in rows[:5]:  # 최대 5행만 출력
+            for row in rows[:5]:
                 print(f"      → {' | '.join(str(v) for v in row)}")
             if len(rows) > 5:
                 print(f"      ... 외 {len(rows) - 5}행")
 
-    # 이미지/다이어그램
     images = result.get("images_and_diagrams") or []
     if images:
         print(f"\n■ 이미지/다이어그램 ({len(images)}개):")
         for img in images:
             print(f"  • [{img.get('type', '?')}] {img.get('description', '')}")
 
-    # 푸터
     footer = result.get("footer_or_notes")
     if footer:
         print(f"\n■ 푸터/노트: {footer}")
@@ -378,7 +442,6 @@ def save_result(image_path: Path, result: dict) -> Path:
     txt_path = image_path.with_suffix(".result.txt")
     text = _format_result_text(result)
 
-    # OCR 원문도 함께 기록
     ocr_text = result.get("_ocr_text", "")
     if ocr_text:
         text += f"\n\n{'─'*40}\nOCR 원문 (참고용):\n{'─'*40}\n{ocr_text}\n"
@@ -389,46 +452,37 @@ def save_result(image_path: Path, result: dict) -> Path:
     return txt_path
 
 
+# ──────────────────────────────────────────────
+# 메인
+# ──────────────────────────────────────────────
 def main():
     """메인 실행."""
-    print("[INFO] PPT 슬라이드 분석기 시작")
-    print(f"[INFO] OCR 모델: {OCR_SERVICE_SLUG}")
-    print(f"[INFO] VLM 모델: {VLM_SERVICE_SLUG}")
-    print(f"[INFO] 대상 이미지: {len(IMAGE_PATHS)}개")
+    image_paths = sorted(
+        p for p in SAMPLE_DIR.iterdir()
+        if p.suffix.lower() in IMAGE_EXTENSIONS
+    )
 
-    # 존재하는 이미지만 필터
-    valid_images = [p for p in IMAGE_PATHS if p.exists()]
-    if not valid_images:
+    print("[INFO] PPT 슬라이드 분석기 시작")
+    print(f"[INFO] OCR: {OCR_SERVICE} ({OCR_URL})")
+    print(f"[INFO] VLM: {VLM_SERVICE} ({VLM_URL})")
+    print(f"[INFO] 대상 이미지: {len(image_paths)}개")
+
+    if not image_paths:
         print(f"[ERROR] 분석할 이미지가 없습니다.")
-        print(f"[INFO] sample_code/ 폴더에 .jpg 또는 .png 이미지를 넣어주세요.")
+        print(f"[INFO] 이 폴더에 .jpg 또는 .png 이미지를 넣어주세요.")
         print(f"[INFO] 경로: {SAMPLE_DIR}")
         sys.exit(1)
 
-    print(f"[INFO] 존재하는 이미지: {len(valid_images)}개")
-
-    # 클라이언트 생성
-    try:
-        ocr_client = Work2VLMClient(service_slug=OCR_SERVICE_SLUG)
-        vlm_client = Work2VLMClient(service_slug=VLM_SERVICE_SLUG)
-    except Exception as exc:
-        print(f"[ERROR] 클라이언트 생성 실패: {exc}")
-        sys.exit(1)
-
-    print(f"[INFO] OCR endpoint: {ocr_client.endpoint}")
-    print(f"[INFO] VLM endpoint: {vlm_client.endpoint}")
-
-    # 각 이미지 분석
     results = {}
-    for image_path in valid_images:
-        result = analyze_slide(vlm_client, ocr_client, image_path)
+    for image_path in image_paths:
+        result = analyze_slide(image_path)
         if result is not None:
             results[image_path.name] = result
             print_result(image_path.name, result)
             save_result(image_path, result)
 
-    # 요약
     print(f"\n{'='*60}")
-    print(f"[INFO] 분석 완료: {len(results)}/{len(valid_images)}개 성공")
+    print(f"[INFO] 분석 완료: {len(results)}/{len(image_paths)}개 성공")
     print(f"{'='*60}")
 
 

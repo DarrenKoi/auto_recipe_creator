@@ -19,7 +19,6 @@ poc/work2/
 ├── logger.py
 ├── login_rcs.py
 ├── open_rcs.py
-├── reading_check.py
 ├── vlm_client.py
 ├── debug_images/
 │   └── .gitkeep
@@ -43,7 +42,6 @@ poc/work2/
 - `poc/work2/vlm_client.py`: Simple image-capable client for calling Flask proxy VLM services by service slug from task scripts.
 - `poc/work2/open_rcs.py`: Minimal RCS launcher. Only opens `RcsMainHD.exe` and checks whether an RCS window is already present.
 - `poc/work2/login_rcs.py`: Login dialog capture + VLM coordinate marking script used during the rebuild.
-- `poc/work2/reading_check.py`: Single-monitor screenshot benchmark that compares multiple UI VLM services and can include direct OCR-model comparison output.
 - `poc/work2/util/`: Smaller helper modules for image, JSON, timing, debug-image, and window utilities.
 - `poc/work2/prompts/`: Prompt builders retained under `work2`; some modules are reusable helpers for rebuild experiments rather than standalone entrypoints.
 - `poc/work2/logger.py`: File logger for VLM latency / status / token usage under `poc/work2/logs/`.
@@ -53,7 +51,6 @@ poc/work2/
 - `uv sync --extra home`: Install optional home-study dependencies.
 - `uv run python poc/work2/connection_check.py`: Verify Flask proxy VLM/OCR routing and live `/v1/models` connectivity.
 - `uv run python poc/work2/open_rcs.py`: Start `RcsMainHD.exe` only, without the old combined login automation flow.
-- `uv run python poc/work2/reading_check.py`: Compare UI VLM services on a captured monitor screenshot.
 - `uv run python poc/work2/login_rcs.py`: Capture the login dialog and save VLM-marked debug images (Windows).
 - `uv run python -m poc.home.test_setup`: Validate local home-study environment.
 - `uv run python -m poc.home.demo`: Run home-study VLM demo flow.
@@ -101,7 +98,6 @@ poc/work2/
 - Current focus areas:
 - Centralize team-default pipeline settings in `poc/work2/flask_vlm.py` so coworkers can run scripts without per-user `.env` sprawl.
 - Use `poc/work2/connection_check.py` to validate Flask proxy health and route or model readiness before debugging automation behavior.
-- Use `poc/work2/reading_check.py` for model comparison and keep RCS-specific rebuild steps separated into smaller scripts.
 - Prefer direct model selection after `poc/work2/connection_check.py`: check available services, then hardcode the service slug each script wants to use.
 - Consolidate reusable Windows automation helpers in `poc/work2/util/` and reusable prompt builders in `poc/work2/prompts/`.
 - Validate the real RCS workflow on office Windows in this order: connection check -> open RCS -> login dialog analysis.

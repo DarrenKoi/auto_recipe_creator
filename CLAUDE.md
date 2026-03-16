@@ -31,7 +31,6 @@ poc/work2/
 ├── logger.py
 ├── login_rcs.py
 ├── open_rcs.py
-├── reading_check.py
 ├── vlm_client.py
 ├── debug_images/
 │   └── .gitkeep
@@ -76,7 +75,6 @@ uv pip install -r test/video_frame_parser/requirements.txt  # torch, opencv, pym
 # poc/work2 — company automation (Flask proxy, no per-PC .env needed)
 uv run python poc/work2/connection_check.py    # Verify Flask proxy + VLM service health
 uv run python poc/work2/open_rcs.py            # Start RCS only
-uv run python poc/work2/reading_check.py       # Multi-VLM UI component comparison
 uv run python poc/work2/login_rcs.py           # Login dialog capture + VLM marking
 
 # poc/home — personal study only
@@ -143,7 +141,6 @@ Each step is a standalone script. All use Flask proxy routing via `flask_vlm.py`
 1. `connection_check.py` verifies Flask API health and probes each VLM service's `/v1/models` endpoint.
 2. `open_rcs.py` starts `RcsMainHD.exe` only.
 3. `login_rcs.py` captures the login dialog, runs a selected VLM on the image, and saves marked debug outputs.
-4. `reading_check.py` captures a monitor screenshot, sends it to multiple UI VLMs in parallel, and compares component or coordinate responses.
 
 ### `poc/work2/` VLM Prompt Builders
 

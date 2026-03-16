@@ -8,6 +8,7 @@
 """
 
 import os
+import json
 import subprocess
 import sys
 import time
@@ -25,6 +26,7 @@ RCS_EXE = Path(
 )
 LOG_NAME = Path(__file__).stem
 OPEN_ANOTHER_RCS_PROCESS = 0
+OPEN_RCS_STATE_PATH = Path(__file__).parent / "logs" / "open_rcs_state.json"
 
 EXIT_SUCCESS = "success"
 EXIT_EXE_NOT_FOUND = "exe_not_found"
@@ -51,6 +53,22 @@ def info(message: str) -> None:
 def error(message: str) -> None:
     """open_rcs 전용 에러 로그를 출력한다."""
     print(f"[ERROR][open_rcs] {message}")
+
+
+def write_open_rcs_state(pid: int, status: str) -> None:
+    """후속 스크립트가 재연결할 수 있도록 RCS 프로세스 정보를 저장한다."""
+    OPEN_RCS_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "pid": int(pid),
+        "status": status,
+        "exe_path": str(RCS_EXE),
+        "written_at": time.time(),
+    }
+    OPEN_RCS_STATE_PATH.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    info(f"state file updated: {OPEN_RCS_STATE_PATH}")
 
 
 def _normalize_path_text(path_text: str | None) -> str:
@@ -167,6 +185,8 @@ def main() -> str:
 
     if existing_processes and OPEN_ANOTHER_RCS_PROCESS == 0:
         info("기존 RCS 프로세스가 이미 실행 중이므로 새로 열지 않습니다.")
+        existing_pid = int(existing_processes[0]["pid"])
+        write_open_rcs_state(existing_pid, EXIT_ALREADY_OPEN)
         log_work2_event(
             component="open_rcs",
             message="launch_skipped_already_open",
@@ -205,6 +225,7 @@ def main() -> str:
         )
         return EXIT_EARLY_CRASH
 
+    write_open_rcs_state(process.pid, EXIT_SUCCESS)
     info(f"RCS 실행 요청 완료: pid={process.pid}")
     info(f"open_rcs end-to-end elapsed={format_elapsed_ms(script_started_at)}")
     log_work2_event(

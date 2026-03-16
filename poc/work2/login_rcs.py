@@ -1,7 +1,7 @@
 """RCS 로그인 창 읽기 전용 스크립트.
 
 이미 떠 있는 `Remote Control System` 로그인 창을 캡처하고,
-VLM 으로 입력창/버튼 좌표를 읽어 debug image 를 생성한다.
+VLM 으로 라벨/입력창/버튼 좌표를 읽어 debug image 를 생성한다.
 
 사용법:
   1. uv run python poc/work2/open_rcs.py
@@ -46,17 +46,23 @@ DEBUG_IMAGE_DIR = Path(__file__).parent / "debug_images"
 OPEN_RCS_STATE_PATH = Path(__file__).parent / "logs" / "open_rcs_state.json"
 OPEN_RCS_SCRIPT_PATH = Path(__file__).parent / "open_rcs.py"
 LOG_NAME = Path(__file__).stem
-INPUT_BUTTON_TARGETS = [
+LOGIN_TARGET_KEYS = [
+    "server_label",
     "server_input",
+    "userid_label",
     "userid_input",
+    "password_label",
     "password_input",
     "login_button",
     "cancel_button",
     "shortcut_button",
 ]
 ELEMENT_COLORS = {
+    "server_label": "gold",
     "server_input": "salmon",
+    "userid_label": "dodgerblue",
     "userid_input": "deepskyblue",
+    "password_label": "chartreuse",
     "password_input": "limegreen",
     "login_button": "orange",
     "cancel_button": "magenta",
@@ -414,7 +420,7 @@ def _locate_login_controls(login_window, window_title: str, backend: str) -> str
     system_message, user_text = build_rcs_login_locator_prompt(
         width=width,
         height=height,
-        target_keys=INPUT_BUTTON_TARGETS,
+        target_keys=LOGIN_TARGET_KEYS,
     )
 
     print(
@@ -466,12 +472,12 @@ def _locate_login_controls(login_window, window_title: str, backend: str) -> str
         return EXIT_VLM_PARSE_ERROR
 
     print(f"[INFO] 파싱된 JSON:\n{json.dumps(data, indent=2)}\n")
-    parsed = parse_coords(data, INPUT_BUTTON_TARGETS, width, height)
+    parsed = parse_coords(data, LOGIN_TARGET_KEYS, width, height)
 
     detected = sum(
-        1 for key in INPUT_BUTTON_TARGETS if key in parsed and isinstance(parsed[key], dict)
+        1 for key in LOGIN_TARGET_KEYS if key in parsed and isinstance(parsed[key], dict)
     )
-    print(f"[INFO] 검출 결과: {detected}/{len(INPUT_BUTTON_TARGETS)}")
+    print(f"[INFO] 검출 결과: {detected}/{len(LOGIN_TARGET_KEYS)}")
 
     overlay_path = debug_image_path(
         DEBUG_IMAGE_DIR,
@@ -496,7 +502,7 @@ def _locate_login_controls(login_window, window_title: str, backend: str) -> str
         vlm_input_path=vlm_input_path,
         overlay_path=overlay_path,
         detected=detected,
-        target_count=len(INPUT_BUTTON_TARGETS),
+        target_count=len(LOGIN_TARGET_KEYS),
         elapsed_ms=f"{(time.time() - locate_started_at) * 1000:.1f}",
     )
     return EXIT_SUCCESS if detected > 0 else EXIT_VLM_NO_DETECTION

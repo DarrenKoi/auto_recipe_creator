@@ -10,30 +10,33 @@ from typing import Iterable
 RCS_LOGIN_TARGET_SPECS = {
     "server_label": (
         "TEXT LABEL — The static text 'Server' displayed on the left side of the first form row. "
-        "Return the center of this label text."
+        "Return the center of this label text only. Do not return the combobox area."
     ),
     "server_input": (
         "COMBOBOX / DROPDOWN — The server selection control next to the 'Server' label. "
         "This is a white rectangular area with a small dropdown arrow (▼) on its right edge. "
-        "Return a safe click point inside the usable middle area of this dropdown control."
+        "Return a safe click point inside the usable middle area of this dropdown control. "
+        "Do not return the adjacent 'Server' label text."
     ),
     "userid_label": (
         "TEXT LABEL — The static text 'User ID' displayed on the left side of the second form row. "
-        "Return the center of this label text."
+        "Return the center of this label text only. Do not return the editable field."
     ),
     "userid_input": (
         "TEXT INPUT — The editable text field next to the 'User ID' label. "
         "This is a white rectangular input area with a thin border. "
-        "Return a safe click point inside the editable area, away from the border."
+        "Return a safe click point inside the editable area, away from the border. "
+        "Do not return the adjacent 'User ID' label text."
     ),
     "password_label": (
         "TEXT LABEL — The static text 'Password' displayed on the left side of the third form row. "
-        "Return the center of this label text."
+        "Return the center of this label text only. Do not return the password field."
     ),
     "password_input": (
         "TEXT INPUT — The editable text field next to the 'Password' label. "
         "This is a white rectangular input area with a thin border. "
-        "Return a safe click point inside the editable area, away from the border."
+        "Return a safe click point inside the editable area, away from the border. "
+        "Do not return the adjacent 'Password' label text."
     ),
     "login_button": (
         "BUTTON — The button labeled 'Log In' at the bottom of the dialog. "
@@ -119,6 +122,7 @@ def build_rcs_login_locator_prompt(
         "- Input fields and the combobox are white rectangular areas with thin borders.",
         "- The Server combobox has a dropdown arrow (▼) on its right edge.",
         "- Buttons have raised 3D borders typical of Windows classic style.",
+        "- For each row, the left-side label text and the right-side editable control must be treated as separate targets.",
         "",
         f"Find the CLICK-SAFE coordinates of these {len(keys)} UI elements:",
         "",

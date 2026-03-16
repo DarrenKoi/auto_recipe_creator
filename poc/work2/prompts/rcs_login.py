@@ -10,48 +10,57 @@ from typing import Iterable
 RCS_LOGIN_TARGET_SPECS = {
     "server_label": (
         "TEXT LABEL — The static text 'Server' displayed on the left side of the first form row. "
-        "Return the center of this label text only. Do not return the combobox area."
+        "Return the center of the full bounding box of the visible label text only. "
+        "Do not return the combobox area, and do not bias toward the top of the letters."
     ),
     "server_input": (
         "COMBOBOX / DROPDOWN — The server selection control next to the 'Server' label. "
         "This is a white rectangular area with a small dropdown arrow (▼) on its right edge. "
-        "Return a safe click point inside the usable middle area of this dropdown control. "
+        "Return a safe click point inside the full combobox rectangle, slightly below the geometric center "
+        "(around 55-60% of the control height from the top edge), away from the border. "
         "Do not return the adjacent 'Server' label text."
     ),
     "userid_label": (
         "TEXT LABEL — The static text 'User ID' displayed on the left side of the second form row. "
-        "Return the center of this label text only. Do not return the editable field."
+        "Return the center of the full bounding box of the visible label text only. "
+        "Do not return the editable field, and do not bias toward the top of the letters."
     ),
     "userid_input": (
         "TEXT INPUT — The editable text field next to the 'User ID' label. "
         "This is a white rectangular input area with a thin border. "
-        "Return a safe click point inside the editable area, away from the border. "
+        "Return a safe click point inside the full input rectangle, slightly below the geometric center "
+        "(around 55-60% of the control height from the top edge), away from the border. "
         "Do not return the adjacent 'User ID' label text."
     ),
     "password_label": (
         "TEXT LABEL — The static text 'Password' displayed on the left side of the third form row. "
-        "Return the center of this label text only. Do not return the password field."
+        "Return the center of the full bounding box of the visible label text only. "
+        "Do not return the password field, and do not bias toward the top of the letters."
     ),
     "password_input": (
         "TEXT INPUT — The editable text field next to the 'Password' label. "
         "This is a white rectangular input area with a thin border. "
-        "Return a safe click point inside the editable area, away from the border. "
+        "Return a safe click point inside the full input rectangle, slightly below the geometric center "
+        "(around 55-60% of the control height from the top edge), away from the border. "
         "Do not return the adjacent 'Password' label text."
     ),
     "login_button": (
         "BUTTON — The button labeled 'Log In' at the bottom of the dialog. "
         "It has raised 3D borders in Windows classic style. "
-        "Return a safe click point inside this button, away from the border."
+        "Return a safe click point inside the full button rectangle, slightly below the geometric center "
+        "(around 55-60% of the control height from the top edge), away from the border."
     ),
     "cancel_button": (
         "BUTTON — The button labeled 'Cancel' at the bottom of the dialog. "
         "It has raised 3D borders in Windows classic style. "
-        "Return a safe click point inside this button, away from the border."
+        "Return a safe click point inside the full button rectangle, slightly below the geometric center "
+        "(around 55-60% of the control height from the top edge), away from the border."
     ),
     "shortcut_button": (
         "BUTTON — A button with Korean text (e.g. '바로가기 설정') in the bottom area. "
         "It may be positioned separately from the Log In and Cancel buttons. "
-        "Return a safe click point inside this button, away from the border."
+        "Return a safe click point inside the full button rectangle, slightly below the geometric center "
+        "(around 55-60% of the control height from the top edge), away from the border."
     ),
 }
 
@@ -106,9 +115,9 @@ def build_rcs_login_locator_prompt(
 
     lines = [
         "This screenshot shows a Windows 'Remote Control System' login dialog.",
-        "The screenshot contains only the currently captured login dialog window.",
+        "The screenshot contains the currently captured login dialog window, including its visible title bar and borders.",
         "Do not reason about the full desktop or the larger main window shown after login succeeds.",
-        "All coordinates are relative to this login dialog image only.",
+        "All coordinates are relative to this full login dialog image only.",
         "",
         "DIALOG STRUCTURE:",
         "- Three labeled form rows arranged vertically:",
@@ -123,6 +132,10 @@ def build_rcs_login_locator_prompt(
         "- The Server combobox has a dropdown arrow (▼) on its right edge.",
         "- Buttons have raised 3D borders typical of Windows classic style.",
         "- For each row, the left-side label text and the right-side editable control must be treated as separate targets.",
+        "- Measure coordinates on the full screenshot exactly as shown, including title bar and outer border.",
+        "- For labels, use the center of the full visible text bounding box, not the top of the letters.",
+        "- For input fields, comboboxes, and buttons, use the full control rectangle and prefer a point slightly below true center.",
+        "- Never use the top highlight, caption baseline, or upper border as the click point.",
         "",
         f"Find the CLICK-SAFE coordinates of these {len(keys)} UI elements:",
         "",
@@ -144,6 +157,7 @@ def build_rcs_login_locator_prompt(
             "x and y must be integers from 0 to 1000.",
             "0 means the left/top edge. 1000 means the right/bottom edge.",
             "Return a safe click point inside each control, not on the border.",
+            "For interactive controls, the y coordinate should usually be slightly lower than exact center, not higher.",
             "",
             "Return ONLY this JSON (all coordinate values must be integers):",
             _json_stub(keys),

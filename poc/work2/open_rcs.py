@@ -8,6 +8,7 @@
 """
 
 import os
+import re
 import subprocess
 import sys
 import time
@@ -17,16 +18,32 @@ from dotenv import load_dotenv
 
 from poc.work2.logger import log_work2_event
 
+try:
+    from pywinauto import Desktop
+
+    PYWINAUTO_AVAILABLE = True
+except Exception:
+    Desktop = None
+    PYWINAUTO_AVAILABLE = False
+
 load_dotenv()
 
 RCS_EXE = Path(
     os.environ.get("RCS_EXE_PATH", r"C:\Users\2067928\Documents\RCS\RcsMainHD.exe")
 )
 LOG_NAME = Path(__file__).stem
+WINDOW_TITLE_PREFIX = "Remote Control System"
+MAIN_WINDOW_TITLE_REGEX = (
+    os.environ.get("RCS_MAIN_WINDOW_REGEX", r"\brcs\b.*\[server\s*:[^\]]+\]").strip()
+    or r"\brcs\b.*\[server\s*:[^\]]+\]"
+)
+DESKTOP_SCAN_BACKENDS = ("win32", "uia")
+OPEN_ANOTHER_LOGIN_WINDOW = 0
 
 EXIT_SUCCESS = "success"
 EXIT_EXE_NOT_FOUND = "exe_not_found"
 EXIT_LAUNCH_FAILED = "launch_failed"
+EXIT_ALREADY_OPEN = "already_open"
 
 
 def format_elapsed_ms(start_time: float) -> str:
@@ -35,11 +52,6 @@ def format_elapsed_ms(start_time: float) -> str:
     if elapsed_ms < 1000:
         return f"{elapsed_ms:.0f}ms"
     return f"{elapsed_ms / 1000:.2f}s"
-
-
-def debug(message: str) -> None:
-    """open_rcs 전용 디버그 로그를 출력한다."""
-    print(f"[DEBUG][open_rcs] {message}")
 
 
 def info(message: str) -> None:
@@ -52,6 +64,71 @@ def error(message: str) -> None:
     print(f"[ERROR][open_rcs] {message}")
 
 
+def _is_login_window_title(title: str) -> bool:
+    """RCS 로그인 창 제목인지 판별한다."""
+    normalized = title.strip()
+    return normalized.startswith(WINDOW_TITLE_PREFIX)
+
+
+def _is_main_window_title(title: str) -> bool:
+    """RCS 메인 창 제목인지 판별한다."""
+    try:
+        return re.search(MAIN_WINDOW_TITLE_REGEX, title, flags=re.IGNORECASE) is not None
+    except re.error:
+        lowered = title.lower()
+        return "rcs" in lowered and "[server" in lowered
+
+
+def scan_existing_rcs_windows() -> list[tuple[str, str]]:
+    """현재 떠 있는 RCS 관련 창 제목을 수집한다."""
+    if not PYWINAUTO_AVAILABLE:
+        info("pywinauto unavailable; window title scan skipped")
+        return []
+
+    matches: list[tuple[str, str]] = []
+    for backend in DESKTOP_SCAN_BACKENDS:
+        scan_started_at = time.time()
+        try:
+            windows = Desktop(backend=backend).windows(
+                top_level_only=True,
+                visible_only=True,
+            )
+        except Exception as exc:
+            info(f"backend={backend} window scan failed: {exc}")
+            continue
+
+        info(
+            f"backend={backend} window_count={len(windows)} scan_elapsed={format_elapsed_ms(scan_started_at)}"
+        )
+        for win in windows:
+            try:
+                title = (win.window_text() or "").strip()
+            except Exception as exc:
+                info(f"backend={backend} window_text failed: {exc}")
+                continue
+
+            if not title:
+                continue
+
+            info(f"backend={backend} title={title!r}")
+
+            if _is_login_window_title(title):
+                matches.append(("login", title))
+                continue
+
+            if _is_main_window_title(title):
+                matches.append(("main", title))
+
+    deduped_matches: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in matches:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped_matches.append(item)
+    return deduped_matches
+
+
 def launch_rcs(exe_path: Path) -> subprocess.Popen:
     """RCS 실행 파일만 빠르게 시작한다."""
     launch_started_at = time.time()
@@ -62,9 +139,9 @@ def launch_rcs(exe_path: Path) -> subprocess.Popen:
     if os.name == "nt":
         creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
-    debug(f"cwd={work_dir}")
-    debug(f"command={command!r}")
-    debug(f"creationflags={creationflags}")
+    info(f"cwd={work_dir}")
+    info(f"command={command!r}")
+    info(f"creationflags={creationflags}")
 
     try:
         process = subprocess.Popen(
@@ -85,6 +162,7 @@ def main() -> str:
     """RCS 실행 파일을 시작한다."""
     script_started_at = time.time()
     info(f"script start: exe_path={RCS_EXE}")
+    info(f"OPEN_ANOTHER_LOGIN_WINDOW={OPEN_ANOTHER_LOGIN_WINDOW}")
     log_work2_event(
         component="open_rcs",
         message="script_started",
@@ -103,7 +181,24 @@ def main() -> str:
         )
         return EXIT_EXE_NOT_FOUND
 
-    debug(f"exe_exists=True size={RCS_EXE.stat().st_size}")
+    info(f"exe_exists=True size={RCS_EXE.stat().st_size}")
+
+    existing_windows = scan_existing_rcs_windows()
+    if existing_windows:
+        info(f"existing_rcs_windows={existing_windows}")
+    else:
+        info("existing_rcs_windows=[]")
+
+    if existing_windows and OPEN_ANOTHER_LOGIN_WINDOW == 0:
+        info("기존 RCS 창이 이미 열려 있으므로 새 로그인 창을 열지 않습니다.")
+        log_work2_event(
+            component="open_rcs",
+            message="launch_skipped_already_open",
+            log_name=LOG_NAME,
+            exe_path=RCS_EXE,
+            existing_windows=existing_windows,
+        )
+        return EXIT_ALREADY_OPEN
 
     try:
         process = launch_rcs(RCS_EXE)

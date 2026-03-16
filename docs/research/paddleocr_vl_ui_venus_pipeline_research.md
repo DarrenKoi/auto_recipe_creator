@@ -62,7 +62,14 @@
 - 빠른 좌표+텍스트 1차 패스: 일반 PaddleOCR 또는 PP-OCR
 - 더 풍부한 파싱과 어려운 케이스: `PaddleOCR-VL-1.5`
 
-현재 이 저장소는 proxy 경로를 통해 `paddleocr-vl-1.5`를 노출하고 있다. 나중에 latency가 중요해지면 더 가벼운 local PaddleOCR pass를 추가할 수 있다.
+현재 이 저장소는 Flask proxy를 통해 `paddleocr-vl-1.5`를 노출하고 있다.
+
+- **서버 측 설정**: `flask_api/vlm_serve/config.py` — `VLMServiceEntry("paddleocr-vl-1.5", ..., upstream_port=8004)`
+- **클라이언트 측 설정**: `poc/work2/flask_vlm.py` — `PADDLEOCR_VL_1_5_API_URL`, `SHARED_PIPELINE_SETTINGS["ocr_service"]`
+- **proxy URL 패턴**: `{flask_base}/api/vlm_serve/paddleocr-vl-1.5/v1/chat/completions`
+- **같은 proxy에 등록된 다른 OCR 옵션**: `got-ocr` (GOT-OCR-2.0-hf, port 8005)
+
+나중에 latency가 중요해지면 더 가벼운 local PaddleOCR pass를 추가할 수 있다.
 
 ## PaddleOCR-VL-1.5의 한계
 
@@ -210,13 +217,22 @@
 
 ### Option A: 현재 구조를 크게 안 흔드는 방식
 
-1. 기본 GUI analysis model은 `UI-Venus`
-2. 텍스트와 구조 sidecar는 `PaddleOCR-VL-1.5`
+1. 기본 GUI analysis model은 `UI-Venus` — `poc/work2/flask_vlm.py`의 `DEFAULT_SCREEN_ANALYSIS_SERVICE = "ui-venus"`
+2. 텍스트와 구조 sidecar는 `PaddleOCR-VL-1.5` — `DEFAULT_OCR_SERVICE = "paddleocr-vl-1.5"`
 3. extraction task에서는 OCR 결과를 먼저 구조화
 4. raw OCR dump 대신 compact OCR hint를 `UI-Venus`에 전달
 5. low-confidence 영역에만 crop retry 수행
 
-이 방식은 현재 `poc/work2/flask_vlm.py` 구조와 잘 맞는다.
+이 방식은 현재 `poc/work2/flask_vlm.py`의 purpose-based 설정 구조(`SHARED_PIPELINE_SETTINGS`, `resolve_*` 함수들)와 잘 맞는다.
+
+현재 사용 가능한 관련 인프라:
+- **VLM 호출**: `poc/work2/vlm_client.py`
+- **OCR 프롬프트**: `poc/work2/prompts/ocr_assist.py` (`build_ocr_assist_prompt()`)
+- **UI 분석 프롬프트**: `poc/work2/prompts/screen_analysis.py` (`build_state_recognition_prompt()`, `build_general_query_prompt()`, `build_measurement_judgment_prompt()`)
+- **로그인 좌표 추출**: `poc/work2/prompts/login_rcs.py` (`build_login_rcs_locator_prompt()`)
+- **탭 좌표 추출**: `poc/work2/prompts/rcs_main_tabs.py` (`build_rcs_main_tab_locator_prompt()`)
+- **유틸리티**: `poc/work2/util/` (image_utils, json_utils, debug_image_utils, window_utils, time_utils)
+- **서비스 레지스트리**: `flask_api/vlm_serve/config.py` (ui-venus:8001, mai-ui:8002, ui-tars:8003, paddleocr-vl-1.5:8004, got-ocr:8005)
 
 ### Option B: extraction latency와 precision을 더 올리는 방식
 
@@ -249,11 +265,24 @@
 
 ## 바로 이어서 할 작업
 
-1. `poc/work2/prompts/ocr_assist.py`에서 `OCR:` 하드코딩 대신 task-keyword branching 추가
-2. `text`, `coords`, `score`, `block_type`를 반환하는 OCR normalization helper 추가
-3. `UI-Venus` prompt에 넣을 compact OCR-hint format 표준화
-4. low-confidence crop-retry 규칙 추가
+### 현재 상태 (2026-03-17)
+
+- `poc/work2/prompts/ocr_assist.py`의 `build_ocr_assist_prompt()`는 `"OCR:"` 키워드만 하드코딩
+- `poc/work2/flask_vlm.py`에 purpose-based 설정(`screen_analysis`, `main_tabs`, `ocr`)과 `resolve_*` 함수 완비
+- 서비스 레지스트리에 5개 VLM 등록 완료 (`flask_api/vlm_serve/config.py`)
+- OCR 응답 후처리용 파라미터(`context_label`, `focus_words`, `max_items`)는 `build_ocr_assist_prompt()` 시그니처에 있지만 아직 prompt에 반영되지 않음
+
+### 다음 단계
+
+1. `poc/work2/prompts/ocr_assist.py`에서 `OCR:` 하드코딩 대신 task-keyword branching 추가 (`OCR:`, `Spotting:`, `Table Recognition:`, `Chart Recognition:` 분기)
+2. `text`, `coords`, `score`, `block_type`를 반환하는 OCR normalization helper를 `poc/work2/util/`에 추가
+3. `UI-Venus` prompt에 넣을 compact OCR-hint format 표준화 (`poc/work2/prompts/screen_analysis.py` 또는 새 모듈)
+4. low-confidence crop-retry 규칙 추가 (`poc/work2/util/image_utils.py`의 crop 생성 + 재호출 로직)
 5. screenshot-vs-photo 입력 유형에 따른 conditional preprocessing 추가
+
+## 참고: GOT-OCR-2.0 (got-ocr)
+
+이 저장소에는 `PaddleOCR-VL-1.5` 외에 `GOT-OCR-2.0-hf`도 서비스 레지스트리에 등록되어 있다 (`flask_api/vlm_serve/got_ocr.py`, port 8005). 이 문서는 `PaddleOCR-VL-1.5`와 `UI-Venus`의 조합에 초점을 두고 있지만, `GOT-OCR-2.0`도 OCR 단계의 대안 또는 보조로 고려할 수 있다. 필요 시 별도 조사 메모로 분리한다.
 
 ## Sources
 

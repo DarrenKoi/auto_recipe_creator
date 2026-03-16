@@ -29,6 +29,7 @@ from vlm_common import (
     VLM_URL,
     build_combined_ocr,
     collect_images,
+    get_output_dir,
     parse_json_response,
     print_token_usage,
     vlm_chat,
@@ -333,7 +334,8 @@ def save_layout_json(image_path: Path, result: dict) -> Path | None:
     if not elements:
         return None
 
-    layout_path = image_path.with_suffix(LAYOUT_JSON_SUFFIX)
+    out_dir = get_output_dir(image_path)
+    layout_path = out_dir / "layout.json"
     payload = {
         "source_image": image_path.name,
         "image_size": result.get("_image_size"),
@@ -341,7 +343,7 @@ def save_layout_json(image_path: Path, result: dict) -> Path | None:
     }
     with open(layout_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
-    print(f"[INFO] 레이아웃 저장: {layout_path.name}")
+    print(f"[INFO] 레이아웃 저장: {out_dir.name}/layout.json")
     return layout_path
 
 
@@ -354,7 +356,8 @@ def save_overlay_image(image_path: Path, result: dict) -> Path | None:
         print("[WARNING] Pillow 미설치로 overlay 이미지 저장을 건너뜁니다.")
         return None
 
-    overlay_path = image_path.with_suffix(OVERLAY_IMAGE_SUFFIX)
+    out_dir = get_output_dir(image_path)
+    overlay_path = out_dir / "overlay.jpg"
 
     with Image.open(image_path) as img:
         base = img.convert("RGBA")
@@ -395,7 +398,7 @@ def save_overlay_image(image_path: Path, result: dict) -> Path | None:
         merged = Image.alpha_composite(base, overlay).convert("RGB")
         merged.save(overlay_path, quality=95)
 
-    print(f"[INFO] Overlay 저장: {overlay_path.name}")
+    print(f"[INFO] Overlay 저장: {out_dir.name}/overlay.jpg")
     return overlay_path
 
 

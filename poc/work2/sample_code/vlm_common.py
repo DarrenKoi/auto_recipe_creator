@@ -178,6 +178,13 @@ def collect_images() -> list[Path]:
     )
 
 
+def get_output_dir(image_path: Path) -> Path:
+    """이미지 이름(확장자 제외)으로 출력 폴더를 생성하고 반환한다."""
+    output_dir = image_path.parent / image_path.stem
+    output_dir.mkdir(exist_ok=True)
+    return output_dir
+
+
 def print_token_usage(usage: dict, prefix: str = "") -> None:
     """토큰 사용량을 출력한다."""
     if not usage:

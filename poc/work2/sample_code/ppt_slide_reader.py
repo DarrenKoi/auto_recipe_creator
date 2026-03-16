@@ -29,6 +29,7 @@ from vlm_common import (
     build_combined_ocr,
     clean_model_text,
     collect_images,
+    get_output_dir,
     parse_json_response,
     print_token_usage,
     vlm_chat,
@@ -299,7 +300,8 @@ def _format_result_text(result: dict) -> str:
 
 def save_result(image_path: Path, result: dict) -> Path:
     """분석 결과를 읽기 좋은 텍스트 파일로 저장한다."""
-    txt_path = image_path.with_suffix(".result.txt")
+    out_dir = get_output_dir(image_path)
+    txt_path = out_dir / "result.txt"
     text = _format_result_text(result)
 
     ocr_text = result.get("_ocr_text", "")
@@ -308,7 +310,7 @@ def save_result(image_path: Path, result: dict) -> Path:
 
     with open(txt_path, "w", encoding="utf-8") as f:
         f.write(text + "\n")
-    print(f"[INFO] 결과 저장: {txt_path.name}")
+    print(f"[INFO] 결과 저장: {out_dir.name}/result.txt")
     return txt_path
 
 

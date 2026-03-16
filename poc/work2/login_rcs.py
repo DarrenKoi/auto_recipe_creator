@@ -53,7 +53,7 @@ DESKTOP_SCAN_BACKENDS = tuple(
     dict.fromkeys(item for item in _desktop_backends if item in {"uia", "win32"})
 ) or ("uia", "win32")
 
-LAUNCH_TIMEOUT = 30.0
+LAUNCH_TIMEOUT = 10.0
 WINDOW_TITLE_PREFIX = "Remote Control System"
 LOGIN_SERVICE_SLUG = "ui-venus"
 DEBUG_IMAGE_DIR = Path(__file__).parent / "debug_images"
@@ -225,9 +225,13 @@ def main() -> int:
 
     backend = _resolve_backend(RCS_EXE)
     cmd_str = subprocess.list2cmdline([str(RCS_EXE)])
+    work_dir = str(RCS_EXE.parent)
     print(f"[INFO] RCS 시작: {RCS_EXE}")
+    print(f"[INFO] 작업 디렉토리: {work_dir}")
     print(f"[INFO] pywinauto 백엔드: {backend}")
-    app = Application(backend=backend).start(cmd_str, wait_for_idle=False)
+    app = Application(backend=backend).start(
+        cmd_str, work_dir=work_dir, wait_for_idle=False,
+    )
 
     try:
         login_window = _wait_for_login_window(app)

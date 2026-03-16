@@ -82,7 +82,9 @@ Important:
 - Read ALL text carefully, including small labels, axis values, and annotations.
 - For charts, try to read actual data values (numbers, percentages) where visible.
 - Preserve technical terms, abbreviations, and units exactly as shown.
-- If the slide contains Korean text, keep it in Korean."""
+- Preserve any Korean text from the slide exactly as shown.
+- Write ALL your descriptions, summaries, takeaways, and key_points in Korean.
+  Exception: if the slide is entirely in English with no Korean at all, respond in English."""
 
 
 def analyze_slide(client: Work2VLMClient, image_path: Path) -> dict | None:
@@ -224,13 +226,86 @@ def print_result(image_name: str, result: dict) -> None:
     print()
 
 
+def _format_result_text(result: dict) -> str:
+    """분석 결과를 사람이 읽기 좋은 텍스트로 변환한다."""
+    if "raw_response" in result:
+        return result["raw_response"]
+
+    lines: list[str] = []
+
+    title = result.get("slide_title")
+    if title:
+        lines.append(f"제목: {title}")
+    subtitle = result.get("subtitle")
+    if subtitle:
+        lines.append(f"부제: {subtitle}")
+
+    topic = result.get("overall_topic")
+    if topic:
+        lines.append(f"\n주제: {topic}")
+
+    body = result.get("body_text") or []
+    if body:
+        lines.append(f"\n본문 ({len(body)}항목):")
+        for i, text in enumerate(body, 1):
+            lines.append(f"  {i}. {text}")
+
+    key_points = result.get("key_points") or []
+    if key_points:
+        lines.append("\n핵심 포인트:")
+        for point in key_points:
+            lines.append(f"  - {point}")
+
+    charts = result.get("charts") or []
+    if charts:
+        lines.append(f"\n차트 ({len(charts)}개):")
+        for i, chart in enumerate(charts, 1):
+            lines.append(f"  [{i}] {chart.get('chart_type', '?')} - {chart.get('chart_title', '제목 없음')}")
+            desc = chart.get("description")
+            if desc:
+                lines.append(f"      설명: {desc}")
+            data = chart.get("data_points") or []
+            if data:
+                for d in data:
+                    lines.append(f"      - {d}")
+            takeaway = chart.get("key_takeaway")
+            if takeaway:
+                lines.append(f"      핵심: {takeaway}")
+
+    tables = result.get("tables") or []
+    if tables:
+        lines.append(f"\n표 ({len(tables)}개):")
+        for i, table in enumerate(tables, 1):
+            lines.append(f"  [{i}] {table.get('table_title', '제목 없음')}")
+            headers = table.get("headers") or []
+            rows = table.get("rows") or []
+            if headers:
+                lines.append(f"      {' | '.join(headers)}")
+                lines.append(f"      {'-+-'.join('-' * len(h) for h in headers)}")
+            for row in rows:
+                lines.append(f"      {' | '.join(str(v) for v in row)}")
+
+    images = result.get("images_and_diagrams") or []
+    if images:
+        lines.append(f"\n이미지/다이어그램 ({len(images)}개):")
+        for img in images:
+            lines.append(f"  - [{img.get('type', '?')}] {img.get('description', '')}")
+
+    footer = result.get("footer_or_notes")
+    if footer:
+        lines.append(f"\n푸터/노트: {footer}")
+
+    return "\n".join(lines)
+
+
 def save_result(image_path: Path, result: dict) -> Path:
-    """분석 결과를 JSON 파일로 저장한다."""
-    output_path = image_path.with_suffix(".result.json")
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(result, f, ensure_ascii=False, indent=2)
-    print(f"[INFO] 결과 저장: {output_path.name}")
-    return output_path
+    """분석 결과를 읽기 좋은 텍스트 파일로 저장한다."""
+    txt_path = image_path.with_suffix(".result.txt")
+    text = _format_result_text(result)
+    with open(txt_path, "w", encoding="utf-8") as f:
+        f.write(text + "\n")
+    print(f"[INFO] 결과 저장: {txt_path.name}")
+    return txt_path
 
 
 def main():

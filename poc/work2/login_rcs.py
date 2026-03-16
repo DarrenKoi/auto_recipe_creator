@@ -62,6 +62,7 @@ ELEMENT_COLORS = {
     "shortcut_button": "cyan",
 }
 DESKTOP_SCAN_BACKENDS = ("uia", "win32")
+FALLBACK_WINDOW_WAIT_SEC = float(os.getenv("RCS_FALLBACK_WINDOW_WAIT_SEC", "2.0"))
 LOGIN_WINDOW_MAX_WIDTH = int(os.getenv("RCS_LOGIN_WINDOW_MAX_WIDTH", "900"))
 LOGIN_WINDOW_MAX_HEIGHT = int(os.getenv("RCS_LOGIN_WINDOW_MAX_HEIGHT", "700"))
 LOGIN_WINDOW_MAX_AREA = int(os.getenv("RCS_LOGIN_WINDOW_MAX_AREA", "500000"))
@@ -201,20 +202,52 @@ def _run_open_rcs_fallback() -> None:
         print(f"[INFO] open_rcs stderr:\n{result.stderr.strip()}\n")
 
 
-def _find_login_window() -> tuple[object | None, str, str]:
-    """PID 생존 확인 후 로그인 대화상자를 탐색한다. PID 가 없거나 죽었으면 open_rcs fallback."""
+def _ensure_rcs_running() -> int | None:
+    """RCS 프로세스가 실행 중인지 확인하고, 없으면 open_rcs fallback 을 실행한다.
+
+    Returns:
+        살아있는 RCS PID, 또는 확보 실패 시 None.
+    """
     launch_pid = _load_open_rcs_pid()
 
+    # 상태 파일 자체가 없거나 PID 가 기록되어 있지 않음
     if launch_pid is None:
         print("[INFO] PID 없음 → open_rcs fallback 실행")
         _run_open_rcs_fallback()
+        print(f"[INFO] 로그인 창 표시 대기: {FALLBACK_WINDOW_WAIT_SEC}s")
+        time.sleep(FALLBACK_WINDOW_WAIT_SEC)
         launch_pid = _load_open_rcs_pid()
+    # 상태 파일에 PID 는 있지만 프로세스가 죽어 있음
     elif not _is_pid_alive(launch_pid):
         print(f"[INFO] PID {launch_pid} 프로세스 미실행 → open_rcs fallback 실행")
         _run_open_rcs_fallback()
+        print(f"[INFO] 로그인 창 표시 대기: {FALLBACK_WINDOW_WAIT_SEC}s")
+        time.sleep(FALLBACK_WINDOW_WAIT_SEC)
         launch_pid = _load_open_rcs_pid()
 
-    print("[INFO] 로그인 창 탐색 시작: desktop all scan")
+    # fallback 후에도 PID 확보 여부 + 생존 여부 최종 확인
+    if launch_pid is None:
+        print("[ERROR] open_rcs fallback 후에도 PID 확보 실패")
+        return None
+
+    alive = _is_pid_alive(launch_pid)
+    print(
+        f"[INFO] RCS PID 최종 확인: pid={launch_pid}, alive={alive}"
+    )
+    if not alive:
+        print(f"[ERROR] PID {launch_pid} 가 여전히 실행 중이지 않음 — 창 탐색 불가")
+        return None
+
+    return launch_pid
+
+
+def _find_login_window() -> tuple[object | None, str, str]:
+    """RCS 프로세스 생존 확인 후 로그인 대화상자를 탐색한다."""
+    launch_pid = _ensure_rcs_running()
+    if launch_pid is None:
+        return None, "", ""
+
+    print(f"[INFO] 로그인 창 탐색 시작: desktop all scan (rcs pid={launch_pid})")
     login_window, window_title, backend = find_window_by_title_prefix(
         WINDOW_TITLE_PREFIX,
         DESKTOP_SCAN_BACKENDS,
@@ -222,16 +255,28 @@ def _find_login_window() -> tuple[object | None, str, str]:
         window_filter=_login_window_filter,
     )
     if login_window is not None:
+        print(f"[INFO] 로그인 창 발견 → 포커스 활성화: title={window_title!r}")
+        activate_window(
+            login_window,
+            debug_label=f"login_window_found backend={backend} title={window_title!r}",
+        )
         return login_window, window_title, backend
 
     if launch_pid is not None and LOGIN_USE_PID_HINT:
         print("[INFO] 로그인 창 탐색 계속: PID hint scan")
-        return find_window_by_pid_and_title_prefix(
+        login_window, window_title, backend = find_window_by_pid_and_title_prefix(
             launch_pid,
             WINDOW_TITLE_PREFIX,
             DESKTOP_SCAN_BACKENDS,
             window_filter=_login_window_filter,
         )
+        if login_window is not None:
+            print(f"[INFO] 로그인 창 발견 (PID hint) → 포커스 활성화: title={window_title!r}")
+            activate_window(
+                login_window,
+                debug_label=f"login_window_found_pid backend={backend} title={window_title!r}",
+            )
+        return login_window, window_title, backend
 
     if launch_pid is not None and not LOGIN_USE_PID_HINT:
         print(

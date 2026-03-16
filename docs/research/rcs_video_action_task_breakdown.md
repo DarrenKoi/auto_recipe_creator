@@ -523,5 +523,5 @@ VLM이 자유 서술이 아니라 single-step JSON 을 반환하게 하는 promp
 
 ## 관련 문서
 
-- [RCS 비디오-투-액션 구현 가이드](/Users/daeyoung/Codes/auto_recipe_creator/docs/research/rcs_video_action_implementation_guide_ko.md)
-- [RCS 비전-투-액션 연구 메모](/Users/daeyoung/Codes/auto_recipe_creator/docs/research/rcs_video_to_action_research_ko.md)
+- [RCS 비디오-투-액션 구현 가이드](/Users/daeyoung/Codes/auto_recipe_creator/docs/research/rcs_video_action_implementation_guide.md)
+- [RCS 비전-투-액션 연구 메모](/Users/daeyoung/Codes/auto_recipe_creator/docs/research/rcs_video_to_action_research.md)

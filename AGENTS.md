@@ -20,7 +20,6 @@ poc/work2/
 ├── logger.py
 ├── login_rcs.py
 ├── open_rcs.py
-├── rcs_utils.py
 ├── reading_check.py
 ├── vlm_client.py
 ├── debug_images/
@@ -46,9 +45,8 @@ poc/work2/
 - `poc/work2/open_rcs.py`: Minimal RCS launcher. Only opens `RcsMainHD.exe` and checks whether an RCS window is already present.
 - `poc/work2/login_rcs.py`: Login dialog capture + VLM coordinate marking script used during the rebuild.
 - `poc/work2/reading_check.py`: Single-monitor screenshot benchmark that compares multiple UI VLM services and can include direct OCR-model comparison output.
-- `poc/work2/rcs_utils.py`: Shared capture/click/debug/window-search/JSON parsing helpers for Windows automation flows.
-- `poc/work2/prompts/`: Prompt builders retained under `work2`; some modules are reusable helpers for rebuild experiments rather than standalone entrypoints.
 - `poc/work2/util/`: Smaller helper modules for image, JSON, timing, debug-image, and window utilities.
+- `poc/work2/prompts/`: Prompt builders retained under `work2`; some modules are reusable helpers for rebuild experiments rather than standalone entrypoints.
 - `poc/work2/logger.py`: File logger for VLM latency / status / token usage under `poc/work2/logs/`.
 
 ### Phase 1 retention policy
@@ -113,7 +111,7 @@ poc/work2/
 - Use `poc/work2/connection_check.py` to validate Flask proxy health and route/model readiness before debugging automation behavior.
 - Use `poc/work2/reading_check.py` for model comparison and keep RCS-specific rebuild steps separated into smaller scripts.
 - Prefer direct model selection after `poc/work2/connection_check.py`: check available services, then hardcode the service slug each script wants to use.
-- Consolidate reusable Windows automation helpers in `poc/work2/rcs_utils.py` and reusable prompt builders in `poc/work2/prompts/`.
+- Consolidate reusable Windows automation helpers in `poc/work2/util/` and reusable prompt builders in `poc/work2/prompts/`.
 - Validate the real RCS workflow on office Windows in this order: connection check -> open RCS -> login dialog analysis.
 - Migration direction:
 - Do not expand Phase 1 scripts unless it is the shortest path to unblock Phase 2.

@@ -1,7 +1,7 @@
 """RCS 프로그램 실행 전용 스크립트.
 
 `RcsMainHD.exe` 만 빠르게 실행한다.
-로그인 창 탐색, pywinauto 연결, rcs_utils 의존성은 사용하지 않는다.
+로그인 창 탐색이나 후속 자동화 단계는 여기서 처리하지 않는다.
 
 사용법:
   uv run python poc/work2/open_rcs.py

@@ -32,7 +32,6 @@ poc/work2/
 ├── logger.py
 ├── login_rcs.py
 ├── open_rcs.py
-├── rcs_utils.py
 ├── reading_check.py
 ├── vlm_client.py
 ├── debug_images/
@@ -167,17 +166,13 @@ Each prompt builder in `poc/work2/prompts/` returns a `(system_message, user_mes
 - `build_measurement_judgment_prompt()` — Measurement success/failure judgment with suggested adjustments
 - `build_general_query_prompt()` — Generic screen QA
 
-### Shared utilities (poc/work2/rcs_utils.py)
+### Shared utilities (poc/work2/util/)
 
-Key functions for RCS automation scripts:
-- `capture_window()` — mss screenshot of pywinauto window region → PIL Image
-- `encode_image_webp()` — PIL Image → base64 WebP (quality=90)
-- `click_at()` — VLM coords → screen coords → click (with retry, falls back to pywinauto.mouse)
-- `extract_json()` — Extracts JSON from VLM response text (handles markdown fences)
-- `parse_coords()` — Validates/converts VLM coordinate dict to integers, checks bounds
-- `find_existing_main_window()` — Desktop-wide window search across pywinauto backends
-- `save_marked_image()` — Overlays crosshairs + circles + labels at detected coordinates
-- `debug_image_path()` — Returns model-specific debug image path
+The old monolithic `rcs_utils.py` has been split into smaller helper modules:
+- `image_utils.py` — `capture_window()`, `encode_image_webp()`
+- `json_utils.py` — `extract_json()`, `parse_coords()`
+- `debug_image_utils.py` — `debug_image_path()`, `save_debug_jpeg()`, `save_debug_webp()`, `save_marked_image()`
+- `window_utils.py` — `activate_window()`, `find_window_by_title_prefix()`, `find_window_by_pid_and_title_prefix()`
 
 ### poc/work2/ vs poc/work/ (Phase comparison)
 

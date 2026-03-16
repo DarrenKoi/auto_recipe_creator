@@ -192,11 +192,11 @@ VLM 응답까지 500ms-2000ms 소요되는 동안 SEM 이미지는 1-4회 갱신
 | 위치 | 더블클릭 지원 | 방식 |
 |------|-------------|------|
 | `test/vlm_input_control/mouse_control.py` | **있음** | pynput `controller.click(Button.left, 2)` |
-| `poc/work2/rcs_utils.py:click_at()` | **없음** | pywinauto single click만 |
+| `poc/work2/` 공용 click helper | **없음** | 현재 별도 helper 미구현 |
 
 #### 확장 방향
 
-`click_at()`에 `click_count` 파라미터를 추가한다. `click_count=2`일 때:
+공용 `click_at()` helper 를 다시 도입한다면 `click_count` 파라미터를 포함한다. `click_count=2`일 때:
 
 ```python
 # 1차 시도: pywinauto
@@ -371,7 +371,7 @@ StateTransition(
 | `poc/work2/automate_probe_move.py` | 신규 | 프로브 재위치 (안전 가드 포함) |
 | `poc/work2/prompts/probe_monitor.py` | 신규 | SEM 이미지 분석용 VLM 프롬프트 |
 | `poc/work2/prompts/__init__.py` | 수정 | 신규 프롬프트 빌더 re-export |
-| `poc/work2/rcs_utils.py` | 수정 | `click_at()`에 `click_count`, `safe_mode` 추가 |
+| `poc/work2/util/` | 수정/추가 | click helper 모듈 도입 및 `click_count`, `safe_mode` 지원 |
 | `poc/work2/vlm_screen_analysis.py` | 수정 | `capture_verify_act()` 메서드 추가 |
 
 ---
@@ -525,7 +525,7 @@ def test_region_excludes_dynamic_area():
 | 상태 추적 | 없음 (단발성) | 연속 모니터링 + 상태 전이 이력 |
 | 프로브 제어 | 없음 | 더블클릭 기반 프로브 이동 + 이동 검증 |
 
-Phase 3 코드는 `poc/work2/` 디렉토리 내에 추가되며, 기존 모듈 (`vlm_screen_analysis.py`, `rcs_utils.py`)을 확장한다. Phase 2의 기존 기능은 **하위 호환**을 유지한다 — 기존 스크립트는 새 파라미터 없이 동일하게 동작.
+Phase 3 코드는 `poc/work2/` 디렉토리 내에 추가되며, 기존 모듈 (`vlm_screen_analysis.py`, `util/`)을 확장한다. Phase 2의 기존 기능은 **하위 호환**을 유지한다 — 기존 스크립트는 새 파라미터 없이 동일하게 동작.
 
 ---
 

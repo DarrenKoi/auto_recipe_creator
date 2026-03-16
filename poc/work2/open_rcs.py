@@ -11,11 +11,21 @@ import os
 import subprocess
 import sys
 import time
+from csv import reader
+from io import StringIO
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 from poc.work2.logger import log_work2_event
+
+try:
+    import psutil
+
+    PSUTIL_AVAILABLE = True
+except Exception:
+    psutil = None
+    PSUTIL_AVAILABLE = False
 
 load_dotenv()
 
@@ -23,10 +33,12 @@ RCS_EXE = Path(
     os.environ.get("RCS_EXE_PATH", r"C:\Users\2067928\Documents\RCS\RcsMainHD.exe")
 )
 LOG_NAME = Path(__file__).stem
+OPEN_ANOTHER_RCS_PROCESS = 0
 
 EXIT_SUCCESS = "success"
 EXIT_EXE_NOT_FOUND = "exe_not_found"
 EXIT_LAUNCH_FAILED = "launch_failed"
+EXIT_ALREADY_OPEN = "already_open"
 
 
 def format_elapsed_ms(start_time: float) -> str:
@@ -45,6 +57,101 @@ def info(message: str) -> None:
 def error(message: str) -> None:
     """open_rcs 전용 에러 로그를 출력한다."""
     print(f"[ERROR][open_rcs] {message}")
+
+
+def _normalize_path_text(path_text: str | None) -> str:
+    """경로 비교를 위해 소문자 기준 문자열로 정규화한다."""
+    if not path_text:
+        return ""
+    return str(Path(path_text)).replace("\\", "/").lower()
+
+
+def find_existing_rcs_processes(exe_path: Path) -> list[dict[str, str | int]]:
+    """이미 실행 중인 RCS 프로세스를 빠르게 찾는다."""
+    exe_name = exe_path.name.lower()
+    exe_path_text = _normalize_path_text(str(exe_path))
+    matches: list[dict[str, str | int]] = []
+
+    if PSUTIL_AVAILABLE:
+        scan_started_at = time.time()
+        info("process scan backend=psutil")
+        for proc in psutil.process_iter(["pid", "name", "exe"]):
+            try:
+                pid = proc.info.get("pid")
+                name = (proc.info.get("name") or "").strip()
+                running_exe = (proc.info.get("exe") or "").strip()
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+
+            name_match = name.lower() == exe_name
+            exe_match = _normalize_path_text(running_exe) == exe_path_text
+            if not name_match and not exe_match:
+                continue
+
+            matches.append(
+                {
+                    "pid": int(pid) if pid is not None else -1,
+                    "name": name,
+                    "exe": running_exe,
+                }
+            )
+
+        info(
+            f"process scan done: backend=psutil count={len(matches)} elapsed={format_elapsed_ms(scan_started_at)}"
+        )
+        return matches
+
+    if os.name != "nt":
+        info("process scan skipped: psutil unavailable and non-Windows platform")
+        return matches
+
+    scan_started_at = time.time()
+    info("process scan backend=tasklist")
+    try:
+        result = subprocess.run(
+            [
+                "tasklist",
+                "/FI",
+                f"IMAGENAME eq {exe_path.name}",
+                "/FO",
+                "CSV",
+                "/NH",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+    except OSError as exc:
+        info(f"tasklist execution failed: {exc}")
+        return matches
+    except subprocess.TimeoutExpired:
+        info("tasklist execution timed out")
+        return matches
+
+    for row in reader(StringIO(result.stdout)):
+        if len(row) < 2:
+            continue
+        image_name = row[0].strip()
+        pid_text = row[1].strip()
+        if image_name.lower() != exe_name:
+            continue
+        try:
+            pid = int(pid_text)
+        except ValueError:
+            pid = -1
+        matches.append(
+            {
+                "pid": pid,
+                "name": image_name,
+                "exe": "",
+            }
+        )
+
+    info(
+        f"process scan done: backend=tasklist count={len(matches)} elapsed={format_elapsed_ms(scan_started_at)}"
+    )
+    return matches
 
 
 def launch_rcs(exe_path: Path) -> subprocess.Popen:
@@ -80,6 +187,7 @@ def main() -> str:
     """RCS 실행 파일을 시작한다."""
     script_started_at = time.time()
     info(f"script start: exe_path={RCS_EXE}")
+    info(f"OPEN_ANOTHER_RCS_PROCESS={OPEN_ANOTHER_RCS_PROCESS}")
     log_work2_event(
         component="open_rcs",
         message="script_started",
@@ -99,6 +207,23 @@ def main() -> str:
         return EXIT_EXE_NOT_FOUND
 
     info(f"exe_exists=True size={RCS_EXE.stat().st_size}")
+
+    existing_processes = find_existing_rcs_processes(RCS_EXE)
+    if existing_processes:
+        info(f"existing_rcs_processes={existing_processes}")
+    else:
+        info("existing_rcs_processes=[]")
+
+    if existing_processes and OPEN_ANOTHER_RCS_PROCESS == 0:
+        info("기존 RCS 프로세스가 이미 실행 중이므로 새로 열지 않습니다.")
+        log_work2_event(
+            component="open_rcs",
+            message="launch_skipped_already_open",
+            log_name=LOG_NAME,
+            exe_path=RCS_EXE,
+            existing_processes=existing_processes,
+        )
+        return EXIT_ALREADY_OPEN
 
     try:
         process = launch_rcs(RCS_EXE)

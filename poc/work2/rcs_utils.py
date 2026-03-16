@@ -215,14 +215,20 @@ def launch_application(
     print(f"[INFO] 작업 디렉토리: {work_dir}")
 
     try:
+        start_call_started_at = time.time()
+        print(
+            "[DEBUG] Application.start 호출 "
+            f"(wait_for_idle={wait_for_idle}, backend={backend})"
+        )
         app = Application(backend=backend).start(
             cmd_str,
             work_dir=work_dir,
             wait_for_idle=wait_for_idle,
         )
         print(
-            "[INFO] pywinauto Application.start 실행 성공 "
-            f"(elapsed={format_elapsed_ms(launch_started_at)})"
+            "[INFO] pywinauto Application.start 반환 "
+            f"(call_elapsed={format_elapsed_ms(start_call_started_at)}, "
+            f"total_elapsed={format_elapsed_ms(launch_started_at)})"
         )
         log_work2_event(
             component="rcs_launch",
@@ -236,7 +242,8 @@ def launch_application(
     except Exception as exc:
         print(
             "[WARNING] Application.start 실패, subprocess 로 재시도합니다: "
-            f"{exc} (elapsed={format_elapsed_ms(launch_started_at)})"
+            f"{exc} (call_elapsed={format_elapsed_ms(start_call_started_at)}, "
+            f"total_elapsed={format_elapsed_ms(launch_started_at)})"
         )
         log_work2_event(
             component="rcs_launch",
@@ -249,17 +256,25 @@ def launch_application(
             elapsed_ms=f"{(time.time() - launch_started_at) * 1000:.1f}",
         )
 
+    popen_started_at = time.time()
     try:
         proc = subprocess.Popen([str(exe_path)], cwd=work_dir)
     except OSError as exc:
         raise RuntimeError(f"실행 파일 시작 실패: {exc}") from exc
+    print(
+        "[DEBUG] subprocess.Popen 반환 "
+        f"(pid={proc.pid}, elapsed={format_elapsed_ms(popen_started_at)}, "
+        f"total_elapsed={format_elapsed_ms(launch_started_at)})"
+    )
 
     app = Application(backend=backend)
+    connect_started_at = time.time()
     try:
         app.connect(process=proc.pid, timeout=10)
         print(
             "[INFO] subprocess 시작 후 프로세스 연결 성공: "
-            f"pid={proc.pid}, elapsed={format_elapsed_ms(launch_started_at)}"
+            f"pid={proc.pid}, connect_elapsed={format_elapsed_ms(connect_started_at)}, "
+            f"total_elapsed={format_elapsed_ms(launch_started_at)}"
         )
         log_work2_event(
             component="rcs_launch",
@@ -274,7 +289,8 @@ def launch_application(
         # RCS가 자식 프로세스로 UI를 넘기는 경우 connect가 실패해도 desktop scan으로 찾을 수 있다.
         print(
             "[WARNING] 시작 프로세스 직접 연결 실패, desktop scan 으로 계속 진행합니다: "
-            f"{exc} (elapsed={format_elapsed_ms(launch_started_at)})"
+            f"{exc} (connect_elapsed={format_elapsed_ms(connect_started_at)}, "
+            f"total_elapsed={format_elapsed_ms(launch_started_at)})"
         )
         log_work2_event(
             component="rcs_launch",
@@ -390,21 +406,37 @@ def find_existing_main_window(
 ) -> tuple[Any, str, list[str]]:
     """이미 떠 있는 메인 RCS 창을 데스크톱 전체에서 탐색한다."""
     debug_rows: list[str] = []
+    search_started_at = time.time()
     for backend in backends:
+        backend_started_at = time.time()
         try:
             desktop_windows = Desktop(backend=backend).windows(
                 top_level_only=True, visible_only=True
             )
         except Exception as exc:
             debug_rows.append(f"desktop[{backend}] windows-error={exc}")
+            print(
+                "[DEBUG] 기존 메인 창 탐색 실패 "
+                f"(desktop[{backend}], elapsed={format_elapsed_ms(backend_started_at)}): {exc}"
+            )
             continue
+        print(
+            "[DEBUG] 기존 메인 창 탐색 "
+            f"(desktop[{backend}], window_count={len(desktop_windows)}, "
+            f"elapsed={format_elapsed_ms(backend_started_at)})"
+        )
 
         main_window, main_title = scan_window_list(
             desktop_windows, f"desktop[{backend}]", debug_rows, matcher
         )
         if main_window is not None:
+            print(
+                "[INFO] 기존 메인 창 탐색 hit "
+                f"(desktop[{backend}], total_elapsed={format_elapsed_ms(search_started_at)})"
+            )
             return main_window, main_title, debug_rows
 
+    print(f"[DEBUG] 기존 메인 창 탐색 miss (total_elapsed={format_elapsed_ms(search_started_at)})")
     return None, "", debug_rows
 
 
@@ -421,19 +453,27 @@ def wait_for_window_by_title_prefix(
     deadline = time.time() + timeout_sec
     debug_rows: list[str] = []
     matcher = lambda title: title.startswith(title_prefix)
+    poll_count = 0
+    next_progress_log_at = wait_started_at
 
     while time.time() < deadline:
+        poll_count += 1
+        progress_due = time.time() >= next_progress_log_at
         try:
+            app_scan_started_at = time.time()
             app_windows = app.windows()
         except Exception as exc:
             debug_rows.append(f"app windows-error={exc}")
             app_windows = []
+            app_scan_elapsed = "error"
+        else:
+            app_scan_elapsed = format_elapsed_ms(app_scan_started_at)
 
         window, title = scan_window_list(app_windows, "app", debug_rows, matcher)
         if window is not None:
             print(
                 f"[INFO] 로그인 창을 app 에서 찾았습니다: '{title}' "
-                f"(elapsed={format_elapsed_ms(wait_started_at)})"
+                f"(elapsed={format_elapsed_ms(wait_started_at)}, poll={poll_count})"
             )
             log_work2_event(
                 component="window_wait",
@@ -446,15 +486,23 @@ def wait_for_window_by_title_prefix(
             )
             return window
 
+        desktop_scan_summaries: list[str] = []
         for backend in backends:
             try:
+                backend_scan_started_at = time.time()
                 desktop_windows = Desktop(backend=backend).windows(
                     top_level_only=True,
                     visible_only=True,
                 )
             except Exception as exc:
                 debug_rows.append(f"desktop[{backend}] windows-error={exc}")
+                if progress_due:
+                    desktop_scan_summaries.append(f"{backend}=error:{exc}")
                 continue
+            if progress_due:
+                desktop_scan_summaries.append(
+                    f"{backend}={len(desktop_windows)}@{format_elapsed_ms(backend_scan_started_at)}"
+                )
 
             window, title = scan_window_list(
                 desktop_windows,
@@ -465,7 +513,7 @@ def wait_for_window_by_title_prefix(
             if window is not None:
                 print(
                     f"[INFO] 로그인 창을 desktop[{backend}] 에서 찾았습니다: '{title}' "
-                    f"(elapsed={format_elapsed_ms(wait_started_at)})"
+                    f"(elapsed={format_elapsed_ms(wait_started_at)}, poll={poll_count})"
                 )
                 log_work2_event(
                     component="window_wait",
@@ -477,6 +525,16 @@ def wait_for_window_by_title_prefix(
                     elapsed_ms=f"{(time.time() - wait_started_at) * 1000:.1f}",
                 )
                 return window
+
+        if progress_due:
+            desktop_summary = ", ".join(desktop_scan_summaries) or "no-desktop-scan"
+            print(
+                "[DEBUG] 로그인 창 대기 중 "
+                f"(poll={poll_count}, elapsed={format_elapsed_ms(wait_started_at)}, "
+                f"app_windows={len(app_windows)}, app_scan={app_scan_elapsed}, "
+                f"desktop={desktop_summary})"
+            )
+            next_progress_log_at = time.time() + 2.0
 
         time.sleep(0.5)
 

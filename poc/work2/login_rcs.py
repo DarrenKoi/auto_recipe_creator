@@ -48,7 +48,7 @@ DEBUG_MAIN_WINDOW_TITLES = (
 )
 _desktop_backends_raw = [
     item.strip().lower()
-    for item in os.environ.get("RCS_DESKTOP_SCAN_BACKENDS", "uia").split(",")
+    for item in os.environ.get("RCS_DESKTOP_SCAN_BACKENDS", "win32,uia").split(",")
     if item.strip()
 ]
 _desktop_backends = _desktop_backends_raw + [PYWINAUTO_BACKEND]
@@ -315,7 +315,10 @@ def main() -> str:
             error=exc,
         )
         return EXIT_LAUNCH_FAILED
-    print(f"[INFO] RCS 프로세스 시작 단계 소요: {format_elapsed_ms(launch_started_at)}")
+    print(
+        "[INFO] RCS 프로세스 spawn/connect 소요 "
+        f"(wait_for_idle=False): {format_elapsed_ms(launch_started_at)}"
+    )
     log_work2_event(
         component="login_rcs",
         message="launch_completed",
@@ -344,7 +347,7 @@ def main() -> str:
             elapsed_ms=f"{(time.time() - wait_started_at) * 1000:.1f}",
         )
         return EXIT_LAUNCH_FAILED
-    print(f"[INFO] 로그인 창 탐색 소요: {format_elapsed_ms(wait_started_at)}")
+    print(f"[INFO] 로그인 창 준비 소요: {format_elapsed_ms(wait_started_at)}")
     log_work2_event(
         component="login_rcs",
         message="login_window_found",
@@ -357,7 +360,7 @@ def main() -> str:
     # 로그인 창이 완전히 렌더링될 때까지 대기
     time.sleep(1.0)
     result = _locate_login_controls(login_window)
-    print(f"[INFO] login_rcs 전체 소요: {format_elapsed_ms(script_started_at)}")
+    print(f"[INFO] login_rcs end-to-end 소요: {format_elapsed_ms(script_started_at)}")
     log_work2_event(
         component="login_rcs",
         message="script_finished",

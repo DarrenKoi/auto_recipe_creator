@@ -68,7 +68,7 @@ DEBUG_MAIN_WINDOW_TITLES = (
 )
 _desktop_backends_raw = [
     item.strip().lower()
-    for item in os.environ.get("RCS_DESKTOP_SCAN_BACKENDS", "uia").split(",")
+    for item in os.environ.get("RCS_DESKTOP_SCAN_BACKENDS", "win32,uia").split(",")
     if item.strip()
 ]
 _desktop_backends = _desktop_backends_raw + [PYWINAUTO_BACKEND]

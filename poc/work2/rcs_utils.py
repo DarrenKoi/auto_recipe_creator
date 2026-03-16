@@ -202,12 +202,18 @@ def launch_application(
     backend: str,
     *,
     wait_for_idle: bool = False,
+    start_timeout: float = 5.0,
+    connect_timeout: float = 5.0,
     log_name: str = "work2",
 ):
     """RCS 실행 파일을 시작하고 pywinauto Application 객체를 반환한다.
 
     일부 RCS 배포본은 `Application.start()` 에서 실패하거나 실행 후 자식 프로세스로
     UI를 넘길 수 있어 subprocess fallback 을 함께 제공한다.
+
+    start_timeout: Application.start() 의 최대 대기 시간(초). pywinauto 기본값(60s)
+        대신 명시적으로 지정하여 느린 start() 를 빠르게 실패시킨다.
+    connect_timeout: subprocess fallback 시 app.connect() 의 최대 대기 시간(초).
     """
     launch_started_at = time.time()
     cmd_str = subprocess.list2cmdline([str(exe_path)])
@@ -218,11 +224,12 @@ def launch_application(
         start_call_started_at = time.time()
         print(
             "[DEBUG] Application.start 호출 "
-            f"(wait_for_idle={wait_for_idle}, backend={backend})"
+            f"(wait_for_idle={wait_for_idle}, timeout={start_timeout}s, backend={backend})"
         )
         app = Application(backend=backend).start(
             cmd_str,
             work_dir=work_dir,
+            timeout=start_timeout,
             wait_for_idle=wait_for_idle,
         )
         print(
@@ -270,7 +277,7 @@ def launch_application(
     app = Application(backend=backend)
     connect_started_at = time.time()
     try:
-        app.connect(process=proc.pid, timeout=10)
+        app.connect(process=proc.pid, timeout=connect_timeout)
         print(
             "[INFO] subprocess 시작 후 프로세스 연결 성공: "
             f"pid={proc.pid}, connect_elapsed={format_elapsed_ms(connect_started_at)}, "

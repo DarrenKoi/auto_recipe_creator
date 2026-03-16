@@ -10,8 +10,10 @@ from typing import Iterable
 RCS_LOGIN_TARGET_SPECS = {
     "window_title_text": (
         "TITLE TEXT — The visible window title text in the title bar near the top-left area. "
-        "It starts with 'Remote Control System'. Return the center of the full visible bounding box "
-        "of the title text only. Do not return the icon area or the form controls below."
+        "It starts with 'Remote Control System'. "
+        "Return the center of the FIRST visible character 'R' only, not the center of the whole title text. "
+        "Use the middle of the letter body, not the top edge of the glyph. "
+        "Do not return the icon area or the form controls below."
     ),
     "close_button": (
         "TITLE BAR BUTTON — The standard Windows close button with an 'X' mark at the top-right corner "
@@ -27,9 +29,9 @@ RCS_LOGIN_TARGET_SPECS = {
     "server_input": (
         "COMBOBOX / DROPDOWN — The server selection control next to the 'Server' label. "
         "This is a white rectangular area with a small dropdown arrow (▼) on its right edge. "
-        "Return a safe click point in the LEFT inner text/value area of the combobox, where a user would click "
-        "to focus the current value area. Use a point around 20-30% of the control width from the left edge "
-        "and around 58-65% of the control height from the top edge. "
+        "If text is visible inside the combobox, return the center of its FIRST visible character. "
+        "If the combobox appears empty, return the position where the text cursor would appear — "
+        "the leftmost inner typing position, just inside the left border of the white area. "
         "Do not return the dropdown arrow, the top highlight, the upper border, or the adjacent 'Server' label text."
     ),
     "userid_label": (
@@ -41,10 +43,10 @@ RCS_LOGIN_TARGET_SPECS = {
     "userid_input": (
         "TEXT INPUT — The editable text field next to the 'User ID' label. "
         "This is a white rectangular input area with a thin border. "
-        "Return a safe click point in the LEFT inner typing area, near where typed text would begin. "
-        "Use a point around 12-20% of the control width from the left edge and around 58-65% of the control "
-        "height from the top edge. Do not return the top border, the upper highlight, or the adjacent "
-        "'User ID' label text."
+        "If text is visible inside the field, return the center of its FIRST visible character. "
+        "If the field appears empty, return the position where the text cursor would appear — "
+        "the leftmost inner typing position, just inside the left border of the white area. "
+        "Do not return the top border, the upper highlight, or the adjacent 'User ID' label text."
     ),
     "password_label": (
         "TEXT LABEL — The static text 'Password' displayed on the left side of the third form row. "
@@ -55,10 +57,10 @@ RCS_LOGIN_TARGET_SPECS = {
     "password_input": (
         "TEXT INPUT — The editable text field next to the 'Password' label. "
         "This is a white rectangular input area with a thin border. "
-        "Return a safe click point in the LEFT inner typing area, near where typed text would begin. "
-        "Use a point around 12-20% of the control width from the left edge and around 58-65% of the control "
-        "height from the top edge. Do not return the top border, the upper highlight, or the adjacent "
-        "'Password' label text."
+        "If text or masked dots are visible inside the field, return the center of the FIRST visible character or dot. "
+        "If the field appears empty, return the position where the text cursor would appear — "
+        "the leftmost inner typing position, just inside the left border of the white area. "
+        "Do not return the top border, the upper highlight, or the adjacent 'Password' label text."
     ),
     "login_button": (
         "BUTTON TEXT ANCHOR — The button labeled 'Log In' at the bottom of the dialog. "
@@ -156,7 +158,7 @@ def build_rcs_login_locator_prompt(
         "- Measure coordinates on the full screenshot exactly as shown, including title bar and outer border.",
         "- For text labels and button labels, use the FIRST visible character only, not the center of the whole word.",
         "- For text labels and button labels, use the middle of that first character body, not the top of the glyph.",
-        "- For input fields and the combobox, use a LEFT-INNER click point where text would begin, not the geometric center.",
+        "- For input fields and the combobox, if text is visible return the first character anchor; if empty return the leftmost cursor position just inside the left border.",
         "- For interactive controls, avoid the top highlight, the caption baseline, the upper border, and the far-right arrow area.",
         "- Within each form row, the label anchor and the input anchor should lie on the same horizontal band; if uncertain, choose slightly lower rather than higher.",
         "",
@@ -180,7 +182,7 @@ def build_rcs_login_locator_prompt(
             "x and y must be integers from 0 to 1000.",
             "0 means the left/top edge. 1000 means the right/bottom edge.",
             "For text labels and button labels, return the specified first-character anchor point.",
-            "For input fields and the combobox, return a safe left-inner click point, not a border point.",
+            "For input fields and the combobox, return the first visible character anchor if text is present, or the leftmost cursor position just inside the left border if empty.",
             "For form rows, prefer a slightly lower y within the row rather than a higher y if uncertain.",
             "",
             "Return ONLY this JSON (all coordinate values must be integers):",

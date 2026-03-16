@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 import psutil
 
 from poc.work2.logger import log_work2_event
+from poc.work2.util import activate_window, find_window_by_title_prefix
 
 load_dotenv()
 
@@ -35,7 +36,11 @@ EXIT_ALREADY_OPEN = "already_open"
 EXIT_EARLY_CRASH = "early_crash"
 
 EARLY_CRASH_WAIT_SEC = 0.5
-LOGIN_WINDOW_WAIT_SEC = float(os.getenv("RCS_LOGIN_WINDOW_WAIT_SEC", "2.0"))
+LOGIN_WINDOW_WAIT_SEC = float(os.getenv("RCS_LOGIN_WINDOW_WAIT_SEC", "4.0"))
+LOGIN_WINDOW_TITLE_PREFIX = "Remote Control System"
+LOGIN_WINDOW_MAX_WIDTH = int(os.getenv("RCS_LOGIN_WINDOW_MAX_WIDTH", "900"))
+LOGIN_WINDOW_MAX_HEIGHT = int(os.getenv("RCS_LOGIN_WINDOW_MAX_HEIGHT", "700"))
+LOGIN_WINDOW_MAX_AREA = int(os.getenv("RCS_LOGIN_WINDOW_MAX_AREA", "500000"))
 
 
 def format_elapsed_ms(start_time: float) -> str:
@@ -113,6 +118,52 @@ def find_existing_rcs_processes(exe_path: Path) -> list[dict[str, str | int]]:
     return matches
 
 
+def _login_window_filter(window, window_title: str) -> bool:
+    """로그인 대화상자 크기 범위인 창만 통과시킨다."""
+    try:
+        rect = window.rectangle()
+    except Exception:
+        return False
+    width = max(0, int(rect.right - rect.left))
+    height = max(0, int(rect.bottom - rect.top))
+    area = width * height
+    return (
+        width > 0
+        and height > 0
+        and width <= LOGIN_WINDOW_MAX_WIDTH
+        and height <= LOGIN_WINDOW_MAX_HEIGHT
+        and area <= LOGIN_WINDOW_MAX_AREA
+    )
+
+
+def _activate_login_window() -> bool:
+    """로그인 창을 찾아 포커스를 활성화한다."""
+    activate_started_at = time.time()
+    info("로그인 창 탐색 시작")
+    login_window, window_title, backend = find_window_by_title_prefix(
+        LOGIN_WINDOW_TITLE_PREFIX,
+        ("uia", "win32"),
+        visible_only=False,
+        window_filter=_login_window_filter,
+    )
+    if login_window is None:
+        info(
+            f"로그인 창 미발견: elapsed={format_elapsed_ms(activate_started_at)}"
+        )
+        return False
+
+    result = activate_window(
+        login_window,
+        debug_label=f"login_window backend={backend} title={window_title!r}",
+    )
+    info(
+        f"로그인 창 활성화 {'성공' if result else '실패'}: "
+        f"title={window_title!r}, backend={backend}, "
+        f"elapsed={format_elapsed_ms(activate_started_at)}"
+    )
+    return result
+
+
 def launch_rcs(exe_path: Path) -> subprocess.Popen:
     """RCS 실행 파일만 빠르게 시작한다."""
     launch_started_at = time.time()
@@ -188,6 +239,7 @@ def main() -> str:
         info("기존 RCS 프로세스가 이미 실행 중이므로 새로 열지 않습니다.")
         existing_pid = int(existing_processes[0]["pid"])
         write_open_rcs_state(existing_pid, EXIT_ALREADY_OPEN)
+        _activate_login_window()
         log_work2_event(
             component="open_rcs",
             message="launch_skipped_already_open",
@@ -230,6 +282,7 @@ def main() -> str:
     info(f"RCS 실행 요청 완료: pid={process.pid}")
     info(f"로그인 창 표시 대기: {LOGIN_WINDOW_WAIT_SEC}s")
     time.sleep(LOGIN_WINDOW_WAIT_SEC)
+    _activate_login_window()
     info(f"open_rcs end-to-end elapsed={format_elapsed_ms(script_started_at)}")
     log_work2_event(
         component="open_rcs",

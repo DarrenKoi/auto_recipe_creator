@@ -185,7 +185,8 @@ def _run_open_rcs_fallback() -> None:
             command,
             check=False,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
     except Exception as exc:
         print(f"[INFO] open_rcs fallback 실행 실패: {exc}")
@@ -195,10 +196,12 @@ def _run_open_rcs_fallback() -> None:
         "[INFO] open_rcs fallback 종료 "
         f"returncode={result.returncode}"
     )
-    if result.stdout.strip():
-        print(f"[INFO] open_rcs stdout:\n{result.stdout.strip()}\n")
-    if result.stderr.strip():
-        print(f"[INFO] open_rcs stderr:\n{result.stderr.strip()}\n")
+    stdout_text = (result.stdout or "").strip()
+    stderr_text = (result.stderr or "").strip()
+    if stdout_text:
+        print(f"[INFO] open_rcs stdout:\n{stdout_text}\n")
+    if stderr_text:
+        print(f"[INFO] open_rcs stderr:\n{stderr_text}\n")
 
 
 def _ensure_rcs_running() -> int | None:

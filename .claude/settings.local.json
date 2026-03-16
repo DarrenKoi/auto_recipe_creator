@@ -22,7 +22,8 @@
       "WebFetch(domain:dev.to)",
       "WebFetch(domain:www.microsoft.com)",
       "Bash(gh api:*)",
-      "WebFetch(domain:docs.ultralytics.com)"
+      "WebFetch(domain:docs.ultralytics.com)",
+      "Bash(ls:*)"
     ]
   }
 }

@@ -47,8 +47,9 @@ uv pip install -r test/video_frame_parser/requirements.txt  # torch, opencv, pym
 ```bash
 # poc/work2 — Phase 2 company automation (Flask proxy, no per-PC .env needed)
 uv run python poc/work2/connection_check.py    # Verify Flask proxy + VLM service health
+uv run python poc/work2/open_rcs.py            # Start RCS only
 uv run python poc/work2/reading_check.py       # Multi-VLM UI component comparison
-uv run python poc/work2/automate_rcs_login.py  # Multi-model benchmark + RCS login
+uv run python poc/work2/login_rcs.py           # Login dialog capture + VLM marking
 uv run python poc/work2/click_rcs_view_mode.py # Tab switching with OCR assist
 uv run python poc/work2/check_tool_screen.py   # Tool viewer detection + VLM analysis
 
@@ -139,15 +140,11 @@ OCR hints are advisory only — the primary VLM always makes final decisions fro
 Each step is a standalone script. All use Flask proxy routing via `flask_vlm.py`:
 
 1. **`connection_check.py`** — Verifies Flask API health + probes each VLM service's `/v1/models` endpoint. Renders status table.
-2. **`automate_rcs_login.py`** — Multi-model VLM benchmark on RCS login screen:
-   - Auto-discovers benchmark targets from Flask health (serving + proxy_registered)
-   - Captures login window → single OCR call (shared) → loops over target services with `build_rcs_login_locator_prompt()`
-   - Compares detection accuracy, saves per-model marked images, prints comparison table
-   - Executes click using best result (default: login_button)
-   - Waits for post-login main window via regex matching
-3. **`click_rcs_view_mode.py`** — Tab switching with OCR assist. Uses first-letter anchoring ('V' for View, 'L' for List). Applies offset correction (list_tab.x = view_tab.x + 50px).
-4. **`check_tool_screen.py`** — Polls for tool viewer window (`RcsViewerHD.exe`), optionally captures + analyzes with VLMScreenAnalyzer (OCR-assisted). Saves source JPEG + marked overlay.
-5. **`reading_check.py`** — Captures monitor screenshot, sends to multiple UI VLMs in parallel, compares component/coordinate responses. Saves per-model overlays + normalized JSON.
+2. **`open_rcs.py`** — Starts `RcsMainHD.exe` only. Does not depend on the older combined login automation flow.
+3. **`login_rcs.py`** — Captures the login dialog, runs a selected VLM on the image, and saves marked debug outputs for rebuild work.
+4. **`click_rcs_view_mode.py`** — Tab switching with OCR assist. Uses first-letter anchoring ('V' for View, 'L' for List). Applies offset correction (list_tab.x = view_tab.x + 50px).
+5. **`check_tool_screen.py`** — Polls for tool viewer window (`RcsViewerHD.exe`), optionally captures + analyzes with VLMScreenAnalyzer (OCR-assisted). Saves source JPEG + marked overlay.
+6. **`reading_check.py`** — Captures monitor screenshot, sends to multiple UI VLMs in parallel, compares component/coordinate responses. Saves per-model overlays + normalized JSON.
 
 ### poc/work2/ VLM prompt builders
 

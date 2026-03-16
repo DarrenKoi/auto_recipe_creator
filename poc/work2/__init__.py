@@ -63,10 +63,10 @@ __all__ = [
     "prompts",
     "rcs_utils",
     "resolve_debug_model_name",
-    "automate_rcs_login",
     "login_rcs",
     "check_tool_screen",
     "click_rcs_view_mode",
+    "open_rcs",
     "vlm_client",
     "vlm_screen_analysis",
 ]

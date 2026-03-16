@@ -410,15 +410,17 @@ def _locate_login_controls(login_window, window_title: str, backend: str) -> str
 
     raw_path = debug_image_path(
         DEBUG_IMAGE_DIR,
-        f"login_rcs_capture_{debug_stamp}.jpg",
+        "login_rcs_capture.jpg",
         model_name=client.model_name,
+        timestamp_tag=debug_stamp,
     )
     save_debug_jpeg(image, raw_path, log_name=LOG_NAME)
 
     vlm_input_path = debug_image_path(
         DEBUG_IMAGE_DIR,
-        f"login_rcs_vlm_input_{debug_stamp}.webp",
+        "login_rcs_vlm_input.webp",
         model_name=client.model_name,
+        timestamp_tag=debug_stamp,
     )
     save_debug_webp(image, vlm_input_path, log_name=LOG_NAME)
 
@@ -487,8 +489,9 @@ def _locate_login_controls(login_window, window_title: str, backend: str) -> str
 
     overlay_path = debug_image_path(
         DEBUG_IMAGE_DIR,
-        f"login_rcs_overlay_{debug_stamp}.jpg",
+        "login_rcs_overlay.jpg",
         model_name=response.model_name or client.model_name,
+        timestamp_tag=debug_stamp,
     )
     save_marked_image(image, parsed, ELEMENT_COLORS, overlay_path)
     print(

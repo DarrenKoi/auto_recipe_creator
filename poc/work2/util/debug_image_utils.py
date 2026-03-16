@@ -12,12 +12,16 @@ def debug_image_path(
     debug_dir: Path,
     filename: str,
     model_name: str | None = None,
+    timestamp_tag: str | None = None,
+    now: float | None = None,
 ) -> Path:
-    """모델명 하위 디렉터리를 포함한 디버그 이미지 경로를 반환한다."""
+    """모델명 하위 디렉터리와 타임스탬프 prefix 를 포함한 경로를 반환한다."""
     return resolve_debug_image_path(
         debug_dir,
         filename,
         model_name=model_name,
+        timestamp_tag=timestamp_tag,
+        now=now,
     )
 
 

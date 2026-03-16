@@ -6,7 +6,7 @@ import time
 def make_timestamp_tag(now: float | None = None) -> str:
     """파일명에 넣기 좋은 초 단위 타임스탬프를 반환한다."""
     resolved_now = time.time() if now is None else now
-    return time.strftime("%Y%m%d_%H%M%S", time.localtime(resolved_now))
+    return time.strftime("%y%m%d_%H%M%S", time.localtime(resolved_now))
 
 
 def format_elapsed_ms(start_time: float) -> str:

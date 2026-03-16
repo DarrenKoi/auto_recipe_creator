@@ -6,7 +6,12 @@ PoC Work2 Module (Flask VLM proxy test)
 """
 
 import os
+import re
+import time
 from pathlib import Path
+
+
+_TIMESTAMP_PREFIX_PATTERN = re.compile(r"^\d{6}_\d{6}_")
 
 
 def _slugify_model_name(model_name: str) -> str:
@@ -49,9 +54,24 @@ def debug_image_path(
     debug_root: Path,
     filename: str,
     model_name: str | None = None,
+    timestamp_tag: str | None = None,
+    now: float | None = None,
 ) -> Path:
     """모델명 하위 폴더를 포함한 디버그 이미지 파일 경로를 반환한다."""
-    return debug_image_dir(debug_root, model_name=model_name) / filename
+    relative_path = Path(filename)
+    resolved_name = relative_path.name
+    if not _TIMESTAMP_PREFIX_PATTERN.match(resolved_name):
+        if timestamp_tag:
+            resolved_tag = str(timestamp_tag).strip()
+        else:
+            resolved_now = time.time() if now is None else now
+            resolved_tag = time.strftime("%y%m%d_%H%M%S", time.localtime(resolved_now))
+        resolved_name = f"{resolved_tag}_{resolved_name}"
+
+    return (
+        debug_image_dir(debug_root, model_name=model_name)
+        / relative_path.with_name(resolved_name)
+    )
 
 __all__ = [
     "debug_image_dir",

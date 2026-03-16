@@ -88,9 +88,9 @@ Fill in every field you can identify. If a field is not present in the slide, us
     }}
   ],
   "footer_or_notes": "Page number, copyright, footnotes, or source citations",
-  "overall_topic": "One-sentence summary of what this slide is about",
-  "key_points": [
-    "Top 3-5 key takeaways or important facts from the slide"
+  "overall_topic": "One-sentence summary describing the slide's purpose and context (do NOT repeat the title)",
+  "key_insights": [
+    "2-3 analytical insights or implications NOT already stated in body_text — interpret, don't repeat"
   ]
 }}
 
@@ -99,7 +99,11 @@ Important:
 - For charts, try to read actual data values (numbers, percentages) where visible.
 - Preserve technical terms, abbreviations, and units exactly as shown.
 - Preserve any Korean text from the slide exactly as shown.
-- Write ALL your descriptions, summaries, takeaways, and key_points in Korean.
+- NO DUPLICATION: each piece of text must appear in exactly ONE field.
+  slide_title, subtitle, body_text, chart descriptions, table data, and footer must not overlap.
+  key_insights must provide NEW analysis, not restate body_text.
+  overall_topic must describe context/purpose, not copy the title.
+- Write ALL your descriptions, summaries, and key_insights in Korean.
   Exception: if the slide is entirely in English with no Korean at all, respond in English."""
 
 
@@ -178,10 +182,10 @@ def print_result(image_name: str, result: dict) -> None:
         for i, text in enumerate(body, 1):
             print(f"  {i}. {text}")
 
-    key_points = result.get("key_points") or []
-    if key_points:
-        print(f"\n■ 핵심 포인트:")
-        for point in key_points:
+    insights = result.get("key_insights") or []
+    if insights:
+        print(f"\n■ 핵심 인사이트:")
+        for point in insights:
             print(f"  • {point}")
 
     charts = result.get("charts") or []
@@ -250,10 +254,10 @@ def _format_result_text(result: dict) -> str:
         for i, text in enumerate(body, 1):
             lines.append(f"  {i}. {text}")
 
-    key_points = result.get("key_points") or []
-    if key_points:
-        lines.append("\n핵심 포인트:")
-        for point in key_points:
+    insights = result.get("key_insights") or []
+    if insights:
+        lines.append("\n핵심 인사이트:")
+        for point in insights:
             lines.append(f"  - {point}")
 
     charts = result.get("charts") or []

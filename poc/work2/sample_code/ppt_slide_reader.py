@@ -4,8 +4,7 @@
     # 프로젝트 루트에서 실행
     uv run python poc/work2/sample_code/ppt_slide_reader.py
 
-    # sample_code/ 폴더에 sample1.jpg, sample2.jpg 를 넣어두면 자동으로 읽는다.
-    # 별도 이미지 경로를 지정할 수도 있다 (스크립트 하단 IMAGE_PATHS 수정).
+    # sample_code/ 폴더에 .jpg 또는 .png 이미지를 넣어두면 자동으로 읽는다.
 
 모델: ui-venus-1.5-8b (Flask proxy 경유)
 목적: 기술 PPT 슬라이드 캡처 이미지에서 제목, 본문, 차트, 표 등을 구조화하여 추출
@@ -23,11 +22,12 @@ from poc.work2.vlm_client import Work2VLMClient
 # ──────────────────────────────────────────────
 SERVICE_SLUG = "ui-venus"
 SAMPLE_DIR = Path(__file__).parent
-# 분석할 이미지 목록 — 필요 시 경로 추가/변경
-IMAGE_PATHS = [
-    SAMPLE_DIR / "sample1.jpg",
-    SAMPLE_DIR / "sample2.jpg",
-]
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+# sample_code/ 폴더 내 jpg/png 이미지를 자동 수집
+IMAGE_PATHS = sorted(
+    p for p in SAMPLE_DIR.iterdir()
+    if p.suffix.lower() in IMAGE_EXTENSIONS
+)
 
 # ──────────────────────────────────────────────
 # VLM 프롬프트
@@ -243,7 +243,7 @@ def main():
     valid_images = [p for p in IMAGE_PATHS if p.exists()]
     if not valid_images:
         print(f"[ERROR] 분석할 이미지가 없습니다.")
-        print(f"[INFO] sample_code/ 폴더에 sample1.jpg, sample2.jpg 를 넣어주세요.")
+        print(f"[INFO] sample_code/ 폴더에 .jpg 또는 .png 이미지를 넣어주세요.")
         print(f"[INFO] 경로: {SAMPLE_DIR}")
         sys.exit(1)
 

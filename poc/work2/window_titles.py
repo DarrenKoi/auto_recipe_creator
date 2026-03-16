@@ -1,14 +1,16 @@
 """현재 열려 있는 창 제목 목록을 빠르게 출력하는 테스트 스크립트.
 
 사용법:
-  uv run python window_titles.py
+  uv run python poc/work2/window_titles.py
 
 선택 환경변수:
   WINDOW_TITLES_VISIBLE_ONLY=true
+  WINDOW_TITLES_TARGET_REGEX=^Remote Control System(?:\\b| .*)
 """
 
 import ctypes
 import os
+import re
 import sys
 from ctypes import wintypes
 from dataclasses import dataclass
@@ -37,6 +39,10 @@ class WindowTitlesSettings:
     """창 제목 조회 설정."""
 
     visible_only: bool = _parse_bool_env("WINDOW_TITLES_VISIBLE_ONLY", True)
+    target_regex: str = os.getenv(
+        "WINDOW_TITLES_TARGET_REGEX",
+        r"^Remote Control System(?:\b| .*)",
+    )
 
 
 @dataclass(frozen=True)
@@ -132,7 +138,6 @@ def _collect_window_rows(*, visible_only: bool) -> list[WindowRow]:
 
 
 _SW_RESTORE = 9
-_CUBEMAIN_KEYWORD = "CubeMain"
 
 
 def _focus_window(user32, hwnd: int) -> bool:
@@ -146,22 +151,41 @@ def _focus_window(user32, hwnd: int) -> bool:
     return bool(user32.SetForegroundWindow(hwnd))
 
 
-def _find_and_focus_cubemain(user32, rows: list[WindowRow]) -> bool:
-    """rows 에서 CubeMain 창을 찾아 foreground 로 올린다."""
+def _compile_target_regex(pattern_text: str) -> re.Pattern[str] | None:
+    """대상 창 제목용 정규식을 compile 한다."""
+    try:
+        return re.compile(pattern_text, re.IGNORECASE)
+    except re.error as exc:
+        print(
+            f"[ERROR] WINDOW_TITLES_TARGET_REGEX 컴파일 실패: "
+            f"pattern={pattern_text!r}, error={exc}"
+        )
+        return None
+
+
+def _find_and_focus_target_window(
+    user32,
+    rows: list[WindowRow],
+    title_pattern: re.Pattern[str],
+) -> bool:
+    """rows 에서 정규식 prefix 와 매칭되는 창을 찾아 foreground 로 올린다."""
     for row in rows:
-        if _CUBEMAIN_KEYWORD in row.title:
+        if title_pattern.match(row.title):
             print(
-                f"[INFO] CubeMain 창 발견: title={row.title!r}, "
+                f"[INFO] 대상 창 발견: title={row.title!r}, "
                 f"handle={_format_handle(row.handle)}"
             )
             ok = _focus_window(user32, row.handle)
             if ok:
-                print("[INFO] CubeMain 창을 foreground 로 활성화했습니다.")
+                print("[INFO] 대상 창을 foreground 로 활성화했습니다.")
             else:
                 print("[WARNING] SetForegroundWindow 실패 — 권한 또는 포커스 제한.")
             return ok
 
-    print(f"[INFO] '{_CUBEMAIN_KEYWORD}' 창을 찾지 못했습니다.")
+    print(
+        f"[INFO] 대상 창을 찾지 못했습니다: "
+        f"target_regex={title_pattern.pattern!r}"
+    )
     return False
 
 
@@ -205,7 +229,14 @@ def main() -> int:
         return 1
 
     settings = WindowTitlesSettings()
-    print(f"[INFO] 창 제목 조회 시작: visible_only={settings.visible_only}")
+    print(
+        "[INFO] 창 제목 조회 시작: "
+        f"visible_only={settings.visible_only}, "
+        f"target_regex={settings.target_regex!r}"
+    )
+    title_pattern = _compile_target_regex(settings.target_regex)
+    if title_pattern is None:
+        return 1
 
     try:
         user32 = ctypes.windll.user32
@@ -219,7 +250,7 @@ def main() -> int:
         print(f"[ERROR] 창 제목 조회 실패: error={exc}")
         return 1
 
-    _find_and_focus_cubemain(user32, rows)
+    _find_and_focus_target_window(user32, rows, title_pattern)
 
     _print_report(
         visible_only=settings.visible_only,

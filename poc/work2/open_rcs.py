@@ -18,7 +18,12 @@ from dotenv import load_dotenv
 import psutil
 
 from poc.work2.logger import log_work2_event
-from poc.work2.util import activate_window, find_window_by_title_prefix
+from poc.work2.util import (
+    activate_window,
+    find_window_by_pid_and_title_prefix,
+    find_window_by_title_prefix,
+    get_window_process_id,
+)
 
 load_dotenv()
 
@@ -34,6 +39,7 @@ EXIT_EXE_NOT_FOUND = "exe_not_found"
 EXIT_LAUNCH_FAILED = "launch_failed"
 EXIT_ALREADY_OPEN = "already_open"
 EXIT_EARLY_CRASH = "early_crash"
+EXIT_LOGIN_WINDOW_ACTIVATE_FAILED = "login_window_activate_failed"
 
 EARLY_CRASH_WAIT_SEC = 0.5
 LOGIN_WINDOW_WAIT_SEC = float(os.getenv("RCS_LOGIN_WINDOW_WAIT_SEC", "4.0"))
@@ -136,32 +142,47 @@ def _login_window_filter(window, window_title: str) -> bool:
     )
 
 
-def _activate_login_window() -> bool:
-    """로그인 창을 찾아 포커스를 활성화한다."""
+def _activate_login_window(process_id: int | None = None) -> tuple[bool, int | None]:
+    """로그인 창을 찾아 포커스를 활성화하고, 실제 창 PID 를 반환한다."""
     activate_started_at = time.time()
-    info("로그인 창 탐색 시작")
-    login_window, window_title, backend = find_window_by_title_prefix(
-        LOGIN_WINDOW_TITLE_PREFIX,
-        ("uia", "win32"),
-        visible_only=False,
-        window_filter=_login_window_filter,
-    )
+    login_window = None
+    window_title = ""
+    backend = ""
+
+    if process_id is not None and process_id > 0:
+        info(f"로그인 창 PID 우선 탐색 시작: pid={process_id}")
+        login_window, window_title, backend = find_window_by_pid_and_title_prefix(
+            process_id,
+            LOGIN_WINDOW_TITLE_PREFIX,
+            ("uia", "win32"),
+            window_filter=_login_window_filter,
+        )
+
+    if login_window is None:
+        info("로그인 창 전역 탐색 시작")
+        login_window, window_title, backend = find_window_by_title_prefix(
+            LOGIN_WINDOW_TITLE_PREFIX,
+            ("uia", "win32"),
+            visible_only=False,
+            window_filter=_login_window_filter,
+        )
     if login_window is None:
         info(
             f"로그인 창 미발견: elapsed={format_elapsed_ms(activate_started_at)}"
         )
-        return False
+        return False, None
 
     result = activate_window(
         login_window,
         debug_label=f"login_window backend={backend} title={window_title!r}",
     )
+    actual_pid = get_window_process_id(login_window) or process_id
     info(
         f"로그인 창 활성화 {'성공' if result else '실패'}: "
-        f"title={window_title!r}, backend={backend}, "
+        f"title={window_title!r}, backend={backend}, pid={actual_pid}, "
         f"elapsed={format_elapsed_ms(activate_started_at)}"
     )
-    return result
+    return result, actual_pid
 
 
 def launch_rcs(exe_path: Path) -> subprocess.Popen:
@@ -238,14 +259,37 @@ def main() -> str:
     if existing_processes and OPEN_ANOTHER_RCS_PROCESS == 0:
         info("기존 RCS 프로세스가 이미 실행 중이므로 새로 열지 않습니다.")
         existing_pid = int(existing_processes[0]["pid"])
-        write_open_rcs_state(existing_pid, EXIT_ALREADY_OPEN)
-        _activate_login_window()
+        activate_ok, actual_pid = _activate_login_window(existing_pid)
+        state_pid = actual_pid or existing_pid
+        if not activate_ok:
+            write_open_rcs_state(state_pid, EXIT_LOGIN_WINDOW_ACTIVATE_FAILED)
+            log_work2_event(
+                component="open_rcs",
+                message="login_window_activate_failed",
+                level="error",
+                log_name=LOG_NAME,
+                exe_path=RCS_EXE,
+                pid=state_pid,
+                elapsed_ms=f"{(time.time() - script_started_at) * 1000:.1f}",
+            )
+            return EXIT_LOGIN_WINDOW_ACTIVATE_FAILED
+
+        write_open_rcs_state(state_pid, EXIT_ALREADY_OPEN)
         log_work2_event(
             component="open_rcs",
             message="launch_skipped_already_open",
             log_name=LOG_NAME,
             exe_path=RCS_EXE,
             existing_processes=existing_processes,
+        )
+        log_work2_event(
+            component="open_rcs",
+            message="script_finished",
+            log_name=LOG_NAME,
+            result=EXIT_ALREADY_OPEN,
+            exe_path=RCS_EXE,
+            pid=state_pid,
+            elapsed_ms=f"{(time.time() - script_started_at) * 1000:.1f}",
         )
         return EXIT_ALREADY_OPEN
 
@@ -278,11 +322,26 @@ def main() -> str:
         )
         return EXIT_EARLY_CRASH
 
-    write_open_rcs_state(process.pid, EXIT_SUCCESS)
     info(f"RCS 실행 요청 완료: pid={process.pid}")
     info(f"로그인 창 표시 대기: {LOGIN_WINDOW_WAIT_SEC}s")
     time.sleep(LOGIN_WINDOW_WAIT_SEC)
-    _activate_login_window()
+    activate_ok, actual_pid = _activate_login_window(process.pid)
+    state_pid = actual_pid or process.pid
+    if not activate_ok:
+        write_open_rcs_state(state_pid, EXIT_LOGIN_WINDOW_ACTIVATE_FAILED)
+        error(f"로그인 창 활성화 실패: pid={state_pid}")
+        log_work2_event(
+            component="open_rcs",
+            message="login_window_activate_failed",
+            level="error",
+            log_name=LOG_NAME,
+            exe_path=RCS_EXE,
+            pid=state_pid,
+            elapsed_ms=f"{(time.time() - script_started_at) * 1000:.1f}",
+        )
+        return EXIT_LOGIN_WINDOW_ACTIVATE_FAILED
+
+    write_open_rcs_state(state_pid, EXIT_SUCCESS)
     info(f"open_rcs end-to-end elapsed={format_elapsed_ms(script_started_at)}")
     log_work2_event(
         component="open_rcs",
@@ -290,7 +349,7 @@ def main() -> str:
         log_name=LOG_NAME,
         result=EXIT_SUCCESS,
         exe_path=RCS_EXE,
-        pid=process.pid,
+        pid=state_pid,
         elapsed_ms=f"{(time.time() - script_started_at) * 1000:.1f}",
     )
     return EXIT_SUCCESS
@@ -298,7 +357,7 @@ def main() -> str:
 
 if __name__ == "__main__":
     exit_result = main()
-    if exit_result != EXIT_SUCCESS:
+    if exit_result not in {EXIT_SUCCESS, EXIT_ALREADY_OPEN}:
         print(f"[EXIT] {exit_result}")
         sys.exit(1)
     sys.exit(0)

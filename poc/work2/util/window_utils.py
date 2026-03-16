@@ -1,5 +1,8 @@
 """윈도우 창 탐색 유틸리티."""
 
+import ctypes
+import os
+import re
 import time
 from typing import Callable
 
@@ -7,6 +10,8 @@ from pywinauto import Desktop
 from pywinauto.application import Application
 
 from .time_utils import format_elapsed_ms
+
+_SW_RESTORE = 9
 
 
 def _normalize_window_title(title: str) -> str:
@@ -61,68 +66,184 @@ def _collect_window_title_candidates(window) -> list[tuple[str, str]]:
     return candidates
 
 
-def _tokens_appear_in_order(text: str, tokens: list[str]) -> bool:
-    """토큰들이 순서대로 등장하는 느슨한 fallback 매칭."""
-    if not tokens:
-        return False
+def _compile_title_prefix_pattern(title_prefix: str) -> re.Pattern[str] | None:
+    """title_prefix 문자열을 regex prefix 패턴으로 변환한다."""
+    normalized_prefix = _normalize_window_title(title_prefix)
+    if not normalized_prefix:
+        return None
 
-    search_pos = 0
-    for token in tokens:
-        index = text.find(token, search_pos)
-        if index < 0:
-            return False
-        search_pos = index + len(token)
-    return True
-
-
-def _is_title_boundary(text: str, index: int) -> bool:
-    """부분 문자열 매칭 시 시작 위치가 단어 중간이 아닌지 확인한다."""
-    if index <= 0:
-        return True
-    return not text[index - 1].isalnum()
+    pattern_text = rf"^{re.escape(normalized_prefix)}(?:\b| .*)"
+    return re.compile(pattern_text, re.IGNORECASE)
 
 
 def _match_title_prefix(
     window,
     title_prefix: str,
 ) -> tuple[bool, str, str, str]:
-    """창의 여러 title 후보 중 prefix 와 매칭되는 값을 찾는다."""
+    """창의 여러 title 후보 중 regex prefix 와 매칭되는 값을 찾는다."""
     candidates = _collect_window_title_candidates(window)
     if not candidates:
         return False, "", "", ""
 
-    normalized_prefix = _normalize_window_title(title_prefix)
-    if not normalized_prefix:
+    title_pattern = _compile_title_prefix_pattern(title_prefix)
+    if title_pattern is None:
         raw_title, normalized_title = candidates[0]
         return False, raw_title, normalized_title, ""
 
-    lowered_prefix = normalized_prefix.casefold()
-    prefix_tokens = [token for token in lowered_prefix.split(" ") if token]
-    best_fallback: tuple[str, str, str] | None = None
-
     for raw_title, normalized_title in candidates:
-        lowered_title = normalized_title.casefold()
-        if lowered_title.startswith(lowered_prefix):
-            return True, raw_title, normalized_title, "startswith"
-
-        index = lowered_title.find(lowered_prefix)
-        if index >= 0:
-            end_index = index + len(lowered_prefix)
-            if _is_title_boundary(lowered_title, index) and (
-                end_index >= len(lowered_title)
-                or not lowered_title[end_index].isalnum()
-            ):
-                return True, raw_title, normalized_title, "boundary_contains"
-
-        if best_fallback is None and _tokens_appear_in_order(lowered_title, prefix_tokens):
-            best_fallback = (raw_title, normalized_title, "token_order")
-
-    if best_fallback is not None:
-        raw_title, normalized_title, match_mode = best_fallback
-        return True, raw_title, normalized_title, match_mode
+        if title_pattern.match(normalized_title):
+            return True, raw_title, normalized_title, "regex_prefix"
 
     raw_title, normalized_title = candidates[0]
     return False, raw_title, normalized_title, ""
+
+
+def _format_handle(handle: int | None) -> str:
+    """handle 값을 사람이 읽기 쉬운 형태로 변환한다."""
+    if handle is None:
+        return "N/A"
+    return hex(handle)
+
+
+def _extract_window_handle(window) -> int | None:
+    """pywinauto wrapper 에서 Win32 handle 을 최대한 안전하게 꺼낸다."""
+    for attr_name in ("handle", "hwnd"):
+        try:
+            value = getattr(window, attr_name, None)
+        except Exception:
+            value = None
+        if isinstance(value, int) and value > 0:
+            return value
+
+    element_info = getattr(window, "element_info", None)
+    if element_info is not None:
+        try:
+            value = getattr(element_info, "handle", None)
+        except Exception:
+            value = None
+        if isinstance(value, int) and value > 0:
+            return value
+
+    try:
+        wrapper = window.wrapper_object()
+    except Exception:
+        wrapper = None
+
+    if wrapper is not None and wrapper is not window:
+        for attr_name in ("handle", "hwnd"):
+            try:
+                value = getattr(wrapper, attr_name, None)
+            except Exception:
+                value = None
+            if isinstance(value, int) and value > 0:
+                return value
+
+    return None
+
+
+def get_window_process_id(window) -> int | None:
+    """pywinauto wrapper 에서 process id 를 최대한 안전하게 꺼낸다."""
+    for attr_name in ("process_id",):
+        try:
+            value = getattr(window, attr_name, None)
+        except Exception:
+            value = None
+
+        if callable(value):
+            try:
+                value = value()
+            except Exception:
+                value = None
+
+        if isinstance(value, int) and value > 0:
+            return value
+
+    element_info = getattr(window, "element_info", None)
+    if element_info is not None:
+        try:
+            value = getattr(element_info, "process_id", None)
+        except Exception:
+            value = None
+        if isinstance(value, int) and value > 0:
+            return value
+
+    try:
+        wrapper = window.wrapper_object()
+    except Exception:
+        wrapper = None
+
+    if wrapper is not None and wrapper is not window:
+        try:
+            value = getattr(wrapper, "process_id", None)
+        except Exception:
+            value = None
+
+        if callable(value):
+            try:
+                value = value()
+            except Exception:
+                value = None
+
+        if isinstance(value, int) and value > 0:
+            return value
+
+    return None
+
+
+def foreground_window(
+    window,
+    *,
+    debug_label: str = "window",
+    settle_sec: float = 0.15,
+) -> bool:
+    """Win32 API 로 창을 foreground 로 올린다."""
+    if os.name != "nt":
+        print(f"[INFO] Win32 foreground 생략(non-nt): {debug_label}")
+        return False
+
+    handle = _extract_window_handle(window)
+    if handle is None:
+        print(f"[INFO] 창 handle 조회 실패: {debug_label}")
+        return False
+
+    try:
+        user32 = ctypes.windll.user32
+    except Exception as exc:
+        print(f"[INFO] user32 접근 실패: {debug_label}, error={exc}")
+        return False
+
+    try:
+        if user32.IsIconic(handle):
+            print(
+                f"[INFO] Win32 restore 시도: {debug_label}, "
+                f"handle={_format_handle(handle)}"
+            )
+            user32.ShowWindow(handle, _SW_RESTORE)
+            time.sleep(settle_sec)
+
+        set_foreground_ok = bool(user32.SetForegroundWindow(handle))
+        time.sleep(settle_sec)
+        foreground_handle = int(user32.GetForegroundWindow()) or None
+    except Exception as exc:
+        print(f"[INFO] Win32 foreground 실패: {debug_label}, error={exc}")
+        return False
+
+    is_foreground = foreground_handle == handle
+    if is_foreground:
+        print(
+            f"[INFO] Win32 foreground 완료: {debug_label}, "
+            f"handle={_format_handle(handle)}, "
+            f"foreground_handle={_format_handle(foreground_handle)}"
+        )
+        return True
+
+    print(
+        f"[INFO] Win32 foreground 미확인: {debug_label}, "
+        f"handle={_format_handle(handle)}, "
+        f"foreground_handle={_format_handle(foreground_handle)}, "
+        f"set_foreground_ok={set_foreground_ok}"
+    )
+    return False
 
 
 def activate_window(
@@ -139,6 +260,9 @@ def activate_window(
             time.sleep(settle_sec)
     except Exception as exc:
         print(f"[INFO] 창 restore 실패: {debug_label}, error={exc}")
+
+    if foreground_window(window, debug_label=debug_label, settle_sec=settle_sec):
+        return True
 
     try:
         window.set_focus()

@@ -4,7 +4,13 @@ from .debug_image_utils import debug_image_path, save_debug_jpeg, save_debug_web
 from .image_utils import capture_window, encode_image_webp
 from .json_utils import extract_json, parse_coords
 from .time_utils import format_elapsed_ms
-from .window_utils import activate_window, find_window_by_pid_and_title_prefix, find_window_by_title_prefix
+from .window_utils import (
+    activate_window,
+    find_window_by_pid_and_title_prefix,
+    find_window_by_title_prefix,
+    foreground_window,
+    get_window_process_id,
+)
 
 __all__ = [
     "activate_window",
@@ -15,6 +21,8 @@ __all__ = [
     "find_window_by_pid_and_title_prefix",
     "find_window_by_title_prefix",
     "format_elapsed_ms",
+    "foreground_window",
+    "get_window_process_id",
     "parse_coords",
     "save_debug_jpeg",
     "save_debug_webp",

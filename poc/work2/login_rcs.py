@@ -30,6 +30,7 @@ from poc.work2.util import (
     find_window_by_pid_and_title_prefix,
     find_window_by_title_prefix,
     format_elapsed_ms,
+    foreground_window,
     parse_coords,
     save_debug_jpeg,
     save_debug_webp,
@@ -65,13 +66,6 @@ DESKTOP_SCAN_BACKENDS = ("uia", "win32")
 LOGIN_WINDOW_MAX_WIDTH = int(os.getenv("RCS_LOGIN_WINDOW_MAX_WIDTH", "900"))
 LOGIN_WINDOW_MAX_HEIGHT = int(os.getenv("RCS_LOGIN_WINDOW_MAX_HEIGHT", "700"))
 LOGIN_WINDOW_MAX_AREA = int(os.getenv("RCS_LOGIN_WINDOW_MAX_AREA", "500000"))
-LOGIN_USE_PID_HINT = os.getenv("RCS_LOGIN_USE_PID_HINT", "").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-
 EXIT_SUCCESS = "success"
 EXIT_LOGIN_WINDOW_NOT_FOUND = "login_window_not_found"
 EXIT_LOGIN_WINDOW_ACTIVATE_FAILED = "login_window_activate_failed"
@@ -167,11 +161,72 @@ def _load_open_rcs_pid() -> int | None:
     return None
 
 
-def _is_pid_alive(pid: int) -> bool:
-    """PID 에 해당하는 프로세스가 실행 중인지 확인한다."""
+def _load_open_rcs_exe_path() -> str:
+    """open_rcs 상태 파일에서 기대하는 실행 파일 경로를 읽는다."""
+    if not OPEN_RCS_STATE_PATH.exists():
+        return ""
+
+    try:
+        data = json.loads(OPEN_RCS_STATE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+
+    exe_path = data.get("exe_path")
+    if isinstance(exe_path, str):
+        return exe_path.strip()
+    return ""
+
+
+def _normalize_path_text(path_text: str | None) -> str:
+    """경로 비교를 위해 소문자 기준 문자열로 정규화한다."""
+    if not path_text:
+        return ""
+    return str(path_text).replace("\\", "/").lower()
+
+
+def _is_pid_alive(pid: int, expected_exe_path: str = "") -> bool:
+    """PID 가 살아 있고, 필요하면 기대한 RCS 실행 파일과도 일치하는지 확인한다."""
     try:
         proc = psutil.Process(pid)
-        return proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE
+        if not proc.is_running() or proc.status() == psutil.STATUS_ZOMBIE:
+            return False
+
+        expected_path = _normalize_path_text(expected_exe_path)
+        if not expected_path:
+            return True
+
+        try:
+            running_exe = proc.exe()
+        except (psutil.AccessDenied, psutil.NoSuchProcess):
+            running_exe = ""
+
+        normalized_running_exe = _normalize_path_text(running_exe)
+        if normalized_running_exe:
+            is_match = normalized_running_exe == expected_path
+            print(
+                "[INFO] PID 실행 파일 점검 "
+                f"pid={pid}, expected={expected_exe_path!r}, "
+                f"running={running_exe!r}, match={is_match}"
+            )
+            return is_match
+
+        expected_name = Path(expected_exe_path).name.strip().lower()
+        try:
+            running_name = (proc.name() or "").strip().lower()
+        except (psutil.AccessDenied, psutil.NoSuchProcess):
+            running_name = ""
+
+        if running_name:
+            is_match = running_name == expected_name
+            print(
+                "[INFO] PID 실행 파일명 점검 "
+                f"pid={pid}, expected_name={expected_name!r}, "
+                f"running_name={running_name!r}, match={is_match}"
+            )
+            return is_match
+
+        print(f"[INFO] PID 실행 파일 점검 불가: pid={pid}, expected={expected_exe_path!r}")
+        return False
     except (psutil.NoSuchProcess, psutil.AccessDenied):
         return False
 
@@ -211,26 +266,32 @@ def _ensure_rcs_running() -> int | None:
         살아있는 RCS PID, 또는 확보 실패 시 None.
     """
     launch_pid = _load_open_rcs_pid()
+    expected_exe_path = _load_open_rcs_exe_path()
 
     # 상태 파일 자체가 없거나 PID 가 기록되어 있지 않음
     if launch_pid is None:
         print("[INFO] PID 없음 → open_rcs fallback 실행")
         _run_open_rcs_fallback()
         launch_pid = _load_open_rcs_pid()
+        expected_exe_path = _load_open_rcs_exe_path()
     # 상태 파일에 PID 는 있지만 프로세스가 죽어 있음
-    elif not _is_pid_alive(launch_pid):
-        print(f"[INFO] PID {launch_pid} 프로세스 미실행 → open_rcs fallback 실행")
+    elif not _is_pid_alive(launch_pid, expected_exe_path):
+        print(
+            f"[INFO] PID {launch_pid} 프로세스 검증 실패 → open_rcs fallback 실행"
+        )
         _run_open_rcs_fallback()
         launch_pid = _load_open_rcs_pid()
+        expected_exe_path = _load_open_rcs_exe_path()
 
     # fallback 후에도 PID 확보 여부 + 생존 여부 최종 확인
     if launch_pid is None:
         print("[ERROR] open_rcs fallback 후에도 PID 확보 실패")
         return None
 
-    alive = _is_pid_alive(launch_pid)
+    alive = _is_pid_alive(launch_pid, expected_exe_path)
     print(
-        f"[INFO] RCS PID 최종 확인: pid={launch_pid}, alive={alive}"
+        f"[INFO] RCS PID 최종 확인: pid={launch_pid}, alive={alive}, "
+        f"expected_exe_path={expected_exe_path!r}"
     )
     if not alive:
         print(f"[ERROR] PID {launch_pid} 가 여전히 실행 중이지 않음 — 창 탐색 불가")
@@ -245,7 +306,22 @@ def _find_login_window() -> tuple[object | None, str, str]:
     if launch_pid is None:
         return None, "", ""
 
-    print(f"[INFO] 로그인 창 탐색 시작: desktop all scan (rcs pid={launch_pid})")
+    print(f"[INFO] 로그인 창 탐색 시작: PID 우선 scan (rcs pid={launch_pid})")
+    login_window, window_title, backend = find_window_by_pid_and_title_prefix(
+        launch_pid,
+        WINDOW_TITLE_PREFIX,
+        DESKTOP_SCAN_BACKENDS,
+        window_filter=_login_window_filter,
+    )
+    if login_window is not None:
+        print(f"[INFO] 로그인 창 발견 (PID 우선) → 포커스 활성화: title={window_title!r}")
+        activate_window(
+            login_window,
+            debug_label=f"login_window_found_pid_first backend={backend} title={window_title!r}",
+        )
+        return login_window, window_title, backend
+
+    print(f"[INFO] 로그인 창 탐색 계속: desktop all scan (rcs pid={launch_pid})")
     login_window, window_title, backend = find_window_by_title_prefix(
         WINDOW_TITLE_PREFIX,
         DESKTOP_SCAN_BACKENDS,
@@ -253,34 +329,13 @@ def _find_login_window() -> tuple[object | None, str, str]:
         window_filter=_login_window_filter,
     )
     if login_window is not None:
-        print(f"[INFO] 로그인 창 발견 → 포커스 활성화: title={window_title!r}")
+        print(f"[INFO] 로그인 창 발견 (desktop scan) → 포커스 활성화: title={window_title!r}")
         activate_window(
             login_window,
-            debug_label=f"login_window_found backend={backend} title={window_title!r}",
+            debug_label=f"login_window_found_desktop backend={backend} title={window_title!r}",
         )
         return login_window, window_title, backend
 
-    if launch_pid is not None and LOGIN_USE_PID_HINT:
-        print("[INFO] 로그인 창 탐색 계속: PID hint scan")
-        login_window, window_title, backend = find_window_by_pid_and_title_prefix(
-            launch_pid,
-            WINDOW_TITLE_PREFIX,
-            DESKTOP_SCAN_BACKENDS,
-            window_filter=_login_window_filter,
-        )
-        if login_window is not None:
-            print(f"[INFO] 로그인 창 발견 (PID hint) → 포커스 활성화: title={window_title!r}")
-            activate_window(
-                login_window,
-                debug_label=f"login_window_found_pid backend={backend} title={window_title!r}",
-            )
-        return login_window, window_title, backend
-
-    if launch_pid is not None and not LOGIN_USE_PID_HINT:
-        print(
-            "[INFO] PID hint scan 생략: RCS_LOGIN_USE_PID_HINT=false "
-            f"(pid={launch_pid})"
-        )
     return None, "", ""
 
 
@@ -297,6 +352,25 @@ def _locate_login_controls(login_window, window_title: str, backend: str) -> str
         log_work2_event(
             component="login_rcs",
             message="login_window_reactivate_failed",
+            level="error",
+            log_name=LOG_NAME,
+            title=window_title,
+            backend=backend,
+            elapsed_ms=f"{(time.time() - locate_started_at) * 1000:.1f}",
+        )
+        return EXIT_LOGIN_WINDOW_ACTIVATE_FAILED
+
+    if not foreground_window(
+        login_window,
+        debug_label=f"login_window screenshot backend={backend} title={window_title!r}",
+    ):
+        print(
+            f"[ERROR] 로그인 창 foreground 활성화 실패: "
+            f"title={window_title!r}, backend={backend}"
+        )
+        log_work2_event(
+            component="login_rcs",
+            message="login_window_foreground_failed",
             level="error",
             log_name=LOG_NAME,
             title=window_title,

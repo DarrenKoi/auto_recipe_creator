@@ -48,6 +48,8 @@ OPEN_RCS_STATE_PATH = Path(__file__).parent / "logs" / "open_rcs_state.json"
 OPEN_RCS_SCRIPT_PATH = Path(__file__).parent / "open_rcs.py"
 LOG_NAME = Path(__file__).stem
 LOGIN_TARGET_KEYS = [
+    "window_title_text",
+    "close_button",
     "server_label",
     "server_input",
     "userid_label",
@@ -59,6 +61,8 @@ LOGIN_TARGET_KEYS = [
     "shortcut_button",
 ]
 ELEMENT_COLORS = {
+    "window_title_text": "tomato",
+    "close_button": "violet",
     "server_label": "gold",
     "server_input": "salmon",
     "userid_label": "dodgerblue",

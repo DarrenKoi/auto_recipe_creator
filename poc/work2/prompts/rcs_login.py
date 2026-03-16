@@ -8,6 +8,16 @@ from typing import Iterable
 
 
 RCS_LOGIN_TARGET_SPECS = {
+    "window_title_text": (
+        "TITLE TEXT — The visible window title text in the title bar near the top-left area. "
+        "It starts with 'Remote Control System'. Return the center of the full visible bounding box "
+        "of the title text only. Do not return the icon area or the form controls below."
+    ),
+    "close_button": (
+        "TITLE BAR BUTTON — The standard Windows close button with an 'X' mark at the top-right corner "
+        "of the title bar. Return the center of the full clickable close-button rectangle. "
+        "Do not return the nearby border or title-bar background."
+    ),
     "server_label": (
         "TEXT LABEL — The static text 'Server' displayed on the left side of the first form row. "
         "Return the center of the full bounding box of the visible label text only. "
@@ -65,6 +75,8 @@ RCS_LOGIN_TARGET_SPECS = {
 }
 
 DEFAULT_RCS_LOGIN_TARGET_KEYS = (
+    "window_title_text",
+    "close_button",
     "server_label",
     "server_input",
     "userid_label",
@@ -120,6 +132,7 @@ def build_rcs_login_locator_prompt(
         "All coordinates are relative to this full login dialog image only.",
         "",
         "DIALOG STRUCTURE:",
+        "- Top title bar with visible title text and a standard close button at the top-right corner",
         "- Three labeled form rows arranged vertically:",
         "  Row 1: 'Server' label (left) + combobox/dropdown (right, white area with ▼ arrow)",
         "  Row 2: 'User ID' label (left) + text input field (right, white editable area)",
@@ -127,6 +140,8 @@ def build_rcs_login_locator_prompt(
         "- Buttons below the form rows (e.g. 'Log In', 'Cancel', Korean text button)",
         "",
         "VISUAL CUES:",
+        "- The title bar is at the very top of the window and contains the window title text.",
+        "- The close button is the small standard Windows button with an 'X' mark at the far top-right.",
         "- Labels are static text on a gray dialog background.",
         "- Input fields and the combobox are white rectangular areas with thin borders.",
         "- The Server combobox has a dropdown arrow (▼) on its right edge.",

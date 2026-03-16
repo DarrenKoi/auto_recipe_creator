@@ -82,6 +82,7 @@
 - screenshot 만으로 mobile / desktop / web navigation 가능
 - `ScreenSpot-Pro`, `ScreenSpot-v2`, `OSWorld-G`, `AndroidWorld` 등 GUI benchmark 에서 강한 성능
 - `visual-only reasoning`을 강조
+- 공식 repo 가 별도로 `+ZoomIn` variant 결과를 제시하므로, small target / dense area 에서 crop 기반 재해석 전략과 궁합이 좋다.
 
 특히 `UI-Venus-1.5-8B` 모델 카드는 `2026-02-09` 공개된 1.5 technical report 기준으로, grounding 과 navigation 을 모두 포함하는 unified GUI agent 로 설명한다.
 

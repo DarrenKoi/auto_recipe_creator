@@ -131,6 +131,40 @@ def _collect_window_rows(*, visible_only: bool) -> list[WindowRow]:
     return rows
 
 
+_SW_RESTORE = 9
+_CUBEMAIN_KEYWORD = "CubeMain"
+
+
+def _focus_window(user32, hwnd: int) -> bool:
+    """창을 foreground 로 활성화한다.
+
+    최소화 상태면 복원 후 SetForegroundWindow 를 호출한다.
+    """
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, _SW_RESTORE)
+
+    return bool(user32.SetForegroundWindow(hwnd))
+
+
+def _find_and_focus_cubemain(user32, rows: list[WindowRow]) -> bool:
+    """rows 에서 CubeMain 창을 찾아 foreground 로 올린다."""
+    for row in rows:
+        if _CUBEMAIN_KEYWORD in row.title:
+            print(
+                f"[INFO] CubeMain 창 발견: title={row.title!r}, "
+                f"handle={_format_handle(row.handle)}"
+            )
+            ok = _focus_window(user32, row.handle)
+            if ok:
+                print("[INFO] CubeMain 창을 foreground 로 활성화했습니다.")
+            else:
+                print("[WARNING] SetForegroundWindow 실패 — 권한 또는 포커스 제한.")
+            return ok
+
+    print(f"[INFO] '{_CUBEMAIN_KEYWORD}' 창을 찾지 못했습니다.")
+    return False
+
+
 def _print_report(
     *,
     visible_only: bool,
@@ -184,6 +218,8 @@ def main() -> int:
     except Exception as exc:
         print(f"[ERROR] 창 제목 조회 실패: error={exc}")
         return 1
+
+    _find_and_focus_cubemain(user32, rows)
 
     _print_report(
         visible_only=settings.visible_only,

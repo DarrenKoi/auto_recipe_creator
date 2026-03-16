@@ -76,6 +76,7 @@ uv run python -m test.vlm_input_control.integration_test
 - **Korean docstrings** throughout all modules
 - **Print-based logging**: `[INFO]`, `[ERROR]`, `[WARNING]` prefixes (never the `logging` module). Exception: `poc/work2/logger.py` uses Python `logging` with `RotatingFileHandler` for VLM call audit trail (`poc/work2/logs/vlm_calls.log`).
 - **Absolute imports** within `poc/work2/`: use `from poc.work2.xxx import ...`. Cross-module imports from `poc.work` shared utilities use `from poc.work.xxx import ...` (e.g., `vlm_openai_client`, `screen_capture`, `config`, `rcs_common`).
+- **`__all__` in `__init__.py` is optional**: Do not add or maintain explicit `__all__` exports unless they provide clear value for a curated package API.
 - **Image format convention**: Save debug screenshots locally as **JPEG** (smaller file size for storage). When sending images to VLM APIs, convert to **WebP** (quality=90) to reduce API payload size — WebP compression does not hurt VLM coordinate/element recognition accuracy.
 - **Safe mode**: Most interactive modules default to `SAFE_MODE=true` to prevent actual mouse/keyboard output
 - **No CLI arguments**: Do not use `argparse` or CLI flags. All configuration comes from `flask_vlm.SHARED_PIPELINE_SETTINGS` (team defaults), environment variables (overrides), or hardcoded defaults in the source files. Scripts should run with just `uv run python <script>.py`

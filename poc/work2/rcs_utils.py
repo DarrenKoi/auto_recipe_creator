@@ -213,6 +213,8 @@ def save_marked_image(
 
     debug_dir = out_path.parent
     debug_dir.mkdir(parents=True, exist_ok=True)
+    if out_path.suffix.lower() in {".jpg", ".jpeg"} and debug_img.mode != "RGB":
+        debug_img = debug_img.convert("RGB")
     debug_img.save(out_path)
     print(f"[INFO] 디버그 이미지 저장: {out_path}")
 

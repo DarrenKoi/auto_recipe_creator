@@ -64,6 +64,7 @@ __all__ = [
     "rcs_utils",
     "resolve_debug_model_name",
     "automate_rcs_login",
+    "login_rcs",
     "check_tool_screen",
     "click_rcs_view_mode",
     "vlm_client",

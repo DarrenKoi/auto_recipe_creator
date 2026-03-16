@@ -51,7 +51,7 @@ AI-powered automation system for CD-SEM/VeritySEM recipe setup. The project comb
 - Use print-based logging prefixes (`[INFO]`, `[WARNING]`, `[ERROR]`); do not introduce the `logging` module unless a file already depends on it.
 - Use absolute imports within `poc/work2/` (`from poc.work2.xxx import ...`) and keep existing absolute imports for legacy `poc/work/` modules. Do not use `sys.path` hacks or `try/except` relative-vs-bare fallbacks. Sub-package `__init__.py` files may keep relative imports.
 - Use import guards for optional dependencies with `<LIB>_AVAILABLE` flags.
-- Follow existing module patterns: dataclass-based configs, enums for fixed categories, and explicit `__all__` exports in package initializers.
+- Follow existing module patterns: dataclass-based configs and enums for fixed categories. Explicit `__all__` exports in package initializers are optional, not required.
 - Prefer `.env` + `python-dotenv` for runtime config loading.
 - For data models used with storage layers (MongoDB/FAISS flows), keep `to_dict()` / `from_dict()` serialization patterns.
 - Save debug screenshots locally as **JPEG** (smaller file size). Convert images to **WebP** (quality=90) before sending to VLM APIs to reduce payload size — WebP does not hurt VLM recognition accuracy.

@@ -78,6 +78,13 @@ ELEMENT_COLORS = {
     "shortcut_button": "cyan",
 }
 
+EXIT_SUCCESS = "success"
+EXIT_EXE_NOT_FOUND = "exe_not_found"
+EXIT_ALREADY_LOGGED_IN = "already_logged_in"
+EXIT_LAUNCH_FAILED = "launch_failed"
+EXIT_VLM_NO_DETECTION = "vlm_no_detection"
+EXIT_VLM_REQUEST_ERROR = "vlm_request_error"
+
 try:
     VLM_TEMPERATURE = float(os.getenv("VLM_TEMPERATURE", "0.0"))
 except ValueError:
@@ -147,7 +154,7 @@ def _save_debug_jpeg(image, out_path: Path) -> None:
     )
 
 
-def _locate_login_controls(login_window) -> int:
+def _locate_login_controls(login_window) -> str:
     """로그인 다이얼로그 스크린샷을 ui-venus 로 분석하고 overlay 를 저장한다."""
     locate_started_at = time.time()
     image = capture_window(login_window)
@@ -177,17 +184,44 @@ def _locate_login_controls(login_window) -> int:
         f"[INFO] VLM 요청: service={client.service_slug}, "
         f"model={client.model_name}, endpoint={client.endpoint}"
     )
-    response = client.chat_with_image_b64(
-        image_b64=image_b64,
-        image_mime="image/webp",
-        system_message=system_message,
-        user_text=user_text,
-        temperature=VLM_TEMPERATURE,
-    )
+    try:
+        response = client.chat_with_image_b64(
+            image_b64=image_b64,
+            image_mime="image/webp",
+            system_message=system_message,
+            user_text=user_text,
+            temperature=VLM_TEMPERATURE,
+        )
+    except Exception as exc:
+        print(f"[ERROR] VLM 요청 실패: {exc}")
+        log_work2_event(
+            component="login_rcs",
+            message="vlm_request_failed",
+            level="error",
+            log_name=LOG_NAME,
+            service=client.service_slug,
+            error=exc,
+            elapsed_ms=f"{(time.time() - locate_started_at) * 1000:.1f}",
+        )
+        return EXIT_VLM_REQUEST_ERROR
+
     print(f"[INFO] VLM 응답 수신: tokens={response.token_usage or {}}")
     print(f"[INFO] 원문 응답:\n{response.text}\n")
 
     data = extract_json(response.text)
+    if data is None:
+        print("[ERROR] VLM 응답에서 JSON 을 추출할 수 없습니다.")
+        log_work2_event(
+            component="login_rcs",
+            message="vlm_json_parse_failed",
+            level="error",
+            log_name=LOG_NAME,
+            service=client.service_slug,
+            raw_text=response.text[:500],
+            elapsed_ms=f"{(time.time() - locate_started_at) * 1000:.1f}",
+        )
+        return EXIT_VLM_REQUEST_ERROR
+
     print(f"[INFO] 파싱된 JSON:\n{json.dumps(data, indent=2)}\n")
     parsed = parse_coords(data, INPUT_BUTTON_TARGETS, width, height)
 
@@ -220,13 +254,12 @@ def _locate_login_controls(login_window) -> int:
         target_count=len(INPUT_BUTTON_TARGETS),
         elapsed_ms=f"{(time.time() - locate_started_at) * 1000:.1f}",
     )
-    return 0 if detected > 0 else 4
+    return EXIT_SUCCESS if detected > 0 else EXIT_VLM_NO_DETECTION
 
 
-def main() -> int:
+def main() -> str:
     """스크립트 엔트리포인트."""
     script_started_at = time.time()
-    precheck_started_at = time.time()
     log_work2_event(
         component="login_rcs",
         message="script_started",
@@ -235,6 +268,7 @@ def main() -> int:
         backend_default=PYWINAUTO_BACKEND,
         desktop_backends=",".join(DESKTOP_SCAN_BACKENDS),
     )
+    precheck_started_at = time.time()
     existing_window, existing_title, debug_rows = find_existing_main_window(
         DESKTOP_SCAN_BACKENDS,
         _main_title_matcher,
@@ -259,11 +293,11 @@ def main() -> int:
     if existing_window is not None:
         print(f"[WARNING] 이미 로그인된 RCS 메인 창이 떠 있습니다: '{existing_title}'")
         print("[WARNING] 로그인 다이얼로그 대신 메인 창이 활성 상태일 수 있으니 먼저 상태를 정리하세요.")
-        return 2
+        return EXIT_ALREADY_LOGGED_IN
 
     if not RCS_EXE.exists():
         print(f"[ERROR] 실행 파일을 찾을 수 없습니다: {RCS_EXE}")
-        return 1
+        return EXIT_EXE_NOT_FOUND
 
     backend = _resolve_backend(RCS_EXE)
     print(f"[INFO] RCS 시작: {RCS_EXE}")
@@ -280,7 +314,7 @@ def main() -> int:
             log_name=LOG_NAME,
             error=exc,
         )
-        return 3
+        return EXIT_LAUNCH_FAILED
     print(f"[INFO] RCS 프로세스 시작 단계 소요: {format_elapsed_ms(launch_started_at)}")
     log_work2_event(
         component="login_rcs",
@@ -309,7 +343,7 @@ def main() -> int:
             error=exc,
             elapsed_ms=f"{(time.time() - wait_started_at) * 1000:.1f}",
         )
-        return 3
+        return EXIT_LAUNCH_FAILED
     print(f"[INFO] 로그인 창 탐색 소요: {format_elapsed_ms(wait_started_at)}")
     log_work2_event(
         component="login_rcs",
@@ -320,6 +354,7 @@ def main() -> int:
     )
 
     print(f"[INFO] 로그인 창 발견: '{login_window.window_text()}'")
+    # 로그인 창이 완전히 렌더링될 때까지 대기
     time.sleep(1.0)
     result = _locate_login_controls(login_window)
     print(f"[INFO] login_rcs 전체 소요: {format_elapsed_ms(script_started_at)}")
@@ -334,4 +369,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    exit_result = main()
+    if exit_result != EXIT_SUCCESS:
+        print(f"[EXIT] {exit_result}")
+        sys.exit(1)
+    sys.exit(0)

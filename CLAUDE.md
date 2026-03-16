@@ -74,6 +74,7 @@ uv run python -m test.vlm_input_control.integration_test
 ## Code Conventions
 
 - **Korean docstrings** throughout all modules
+- **No `__future__` imports by default**: Do not add `from __future__ import annotations` or any other `__future__` import unless the user explicitly asks for it.
 - **Print-based logging**: `[INFO]`, `[ERROR]`, `[WARNING]` prefixes (never the `logging` module). Exception: `poc/work2/logger.py` uses Python `logging` with `RotatingFileHandler` for VLM call audit trail (`poc/work2/logs/vlm_calls.log`).
 - **Absolute imports** within `poc/work2/`: use `from poc.work2.xxx import ...`. Cross-module imports from `poc.work` shared utilities use `from poc.work.xxx import ...` (e.g., `vlm_openai_client`, `screen_capture`, `config`, `rcs_common`).
 - **`__all__` in `__init__.py` is optional**: Do not add or maintain explicit `__all__` exports unless they provide clear value for a curated package API.

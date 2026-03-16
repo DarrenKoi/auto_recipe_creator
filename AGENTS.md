@@ -46,6 +46,7 @@ AI-powered automation system for CD-SEM/VeritySEM recipe setup. The project comb
 
 ## Core Coding Rules (Must Follow)
 - Target Python `>=3.10`; use 4-space indentation and PEP 8 naming (`snake_case` functions/files, `PascalCase` classes, `UPPER_SNAKE_CASE` constants).
+- Do not add `from __future__ import annotations` or other `__future__` imports unless the user explicitly asks for them.
 - Use uv-managed execution only: run Python/test commands via `uv run ...` (do not use plain `python` or `pip`).
 - Keep docstrings/comments aligned with surrounding module language conventions (Korean docstrings are common in this repo).
 - Use print-based logging prefixes (`[INFO]`, `[WARNING]`, `[ERROR]`); do not introduce the `logging` module unless a file already depends on it.

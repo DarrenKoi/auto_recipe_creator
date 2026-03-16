@@ -534,7 +534,7 @@ def main() -> int:
         return 7
 
     print(f"[INFO] 대상 툴 '{TARGET_TOOL_NAME}' 클릭 완료")
-    print("[INFO] 툴 화면 확인: python -m poc.work.check_tool_screen")
+    print("[INFO] 대상 툴 클릭 후 후속 검증은 별도 단계에서 진행하세요.")
 
     return 0
 

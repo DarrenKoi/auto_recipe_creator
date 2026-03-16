@@ -3,7 +3,7 @@
 from .debug_image_utils import debug_image_path, save_debug_jpeg, save_debug_webp, save_marked_image
 from .image_utils import capture_window, encode_image_webp
 from .json_utils import extract_json, parse_coords
-from .time_utils import format_elapsed_ms
+from .time_utils import format_elapsed_ms, make_timestamp_tag
 from .window_utils import (
     WindowRow,
     activate_window,
@@ -28,6 +28,7 @@ __all__ = [
     "format_elapsed_ms",
     "foreground_window",
     "get_window_process_id",
+    "make_timestamp_tag",
     "parse_coords",
     "read_foreground_window_info",
     "save_debug_jpeg",

@@ -3,6 +3,17 @@
 import time
 
 
+def make_timestamp_tag(now: float | None = None) -> str:
+    """파일명에 넣기 좋은 밀리초 포함 타임스탬프를 반환한다."""
+    resolved_now = time.time() if now is None else now
+    whole_seconds = int(resolved_now)
+    milliseconds = int((resolved_now - whole_seconds) * 1000)
+    return (
+        f"{time.strftime('%Y%m%d_%H%M%S', time.localtime(resolved_now))}"
+        f"_{milliseconds:03d}"
+    )
+
+
 def format_elapsed_ms(start_time: float) -> str:
     """start_time 이후 경과 시간을 사람이 읽기 쉬운 문자열로 반환한다."""
     elapsed_ms = (time.time() - start_time) * 1000

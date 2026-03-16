@@ -31,6 +31,7 @@ from poc.work2.util import (
     find_window_by_title_prefix,
     format_elapsed_ms,
     foreground_window,
+    make_timestamp_tag,
     parse_coords,
     save_debug_jpeg,
     save_debug_webp,
@@ -348,6 +349,7 @@ def _find_login_window() -> tuple[object | None, str, str]:
 def _locate_login_controls(login_window, window_title: str, backend: str) -> str:
     """로그인 창 스크린샷을 VLM 으로 분석하고 overlay 를 저장한다."""
     locate_started_at = time.time()
+    debug_stamp = make_timestamp_tag(locate_started_at)
     if not activate_window(
         login_window,
         debug_label=f"login_window recapture backend={backend} title={window_title!r}",
@@ -404,14 +406,14 @@ def _locate_login_controls(login_window, window_title: str, backend: str) -> str
 
     raw_path = debug_image_path(
         DEBUG_IMAGE_DIR,
-        "login_rcs_capture.jpg",
+        f"login_rcs_capture_{debug_stamp}.jpg",
         model_name=client.model_name,
     )
     save_debug_jpeg(image, raw_path, log_name=LOG_NAME)
 
     vlm_input_path = debug_image_path(
         DEBUG_IMAGE_DIR,
-        "login_rcs_vlm_input.webp",
+        f"login_rcs_vlm_input_{debug_stamp}.webp",
         model_name=client.model_name,
     )
     save_debug_webp(image, vlm_input_path, log_name=LOG_NAME)
@@ -481,7 +483,7 @@ def _locate_login_controls(login_window, window_title: str, backend: str) -> str
 
     overlay_path = debug_image_path(
         DEBUG_IMAGE_DIR,
-        "login_rcs_overlay.jpg",
+        f"login_rcs_overlay_{debug_stamp}.jpg",
         model_name=response.model_name or client.model_name,
     )
     save_marked_image(image, parsed, ELEMENT_COLORS, overlay_path)

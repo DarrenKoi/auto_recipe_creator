@@ -9,6 +9,122 @@ from pywinauto.application import Application
 from .time_utils import format_elapsed_ms
 
 
+def _normalize_window_title(title: str) -> str:
+    """창 제목 비교 전 공백/제어 문자를 정리한다."""
+    cleaned = (
+        title.replace("\x00", " ")
+        .replace("\u200b", " ")
+        .replace("\ufeff", " ")
+        .strip()
+    )
+    return " ".join(cleaned.split())
+
+
+def _collect_window_title_candidates(window) -> list[tuple[str, str]]:
+    """window_text 외 후보 필드까지 모아 비교용 제목 목록을 만든다."""
+    raw_candidates: list[str] = []
+
+    try:
+        title = window.window_text()
+    except Exception:
+        title = ""
+    if isinstance(title, str):
+        raw_candidates.append(title)
+
+    try:
+        texts = window.texts()
+    except Exception:
+        texts = []
+    for item in texts:
+        if isinstance(item, str):
+            raw_candidates.append(item)
+
+    element_info = getattr(window, "element_info", None)
+    if element_info is not None:
+        for attr_name in ("name", "rich_text"):
+            try:
+                value = getattr(element_info, attr_name, "")
+            except Exception:
+                value = ""
+            if isinstance(value, str):
+                raw_candidates.append(value)
+
+    candidates: list[tuple[str, str]] = []
+    seen_normalized: set[str] = set()
+    for raw_title in raw_candidates:
+        normalized = _normalize_window_title(raw_title)
+        if not normalized or normalized in seen_normalized:
+            continue
+        seen_normalized.add(normalized)
+        candidates.append((raw_title, normalized))
+
+    return candidates
+
+
+def _tokens_appear_in_order(text: str, tokens: list[str]) -> bool:
+    """토큰들이 순서대로 등장하는 느슨한 fallback 매칭."""
+    if not tokens:
+        return False
+
+    search_pos = 0
+    for token in tokens:
+        index = text.find(token, search_pos)
+        if index < 0:
+            return False
+        search_pos = index + len(token)
+    return True
+
+
+def _is_title_boundary(text: str, index: int) -> bool:
+    """부분 문자열 매칭 시 시작 위치가 단어 중간이 아닌지 확인한다."""
+    if index <= 0:
+        return True
+    return not text[index - 1].isalnum()
+
+
+def _match_title_prefix(
+    window,
+    title_prefix: str,
+) -> tuple[bool, str, str, str]:
+    """창의 여러 title 후보 중 prefix 와 매칭되는 값을 찾는다."""
+    candidates = _collect_window_title_candidates(window)
+    if not candidates:
+        return False, "", "", ""
+
+    normalized_prefix = _normalize_window_title(title_prefix)
+    if not normalized_prefix:
+        raw_title, normalized_title = candidates[0]
+        return False, raw_title, normalized_title, ""
+
+    lowered_prefix = normalized_prefix.casefold()
+    prefix_tokens = [token for token in lowered_prefix.split(" ") if token]
+    best_fallback: tuple[str, str, str] | None = None
+
+    for raw_title, normalized_title in candidates:
+        lowered_title = normalized_title.casefold()
+        if lowered_title.startswith(lowered_prefix):
+            return True, raw_title, normalized_title, "startswith"
+
+        index = lowered_title.find(lowered_prefix)
+        if index >= 0:
+            end_index = index + len(lowered_prefix)
+            if _is_title_boundary(lowered_title, index) and (
+                end_index >= len(lowered_title)
+                or not lowered_title[end_index].isalnum()
+            ):
+                return True, raw_title, normalized_title, "boundary_contains"
+
+        if best_fallback is None and _tokens_appear_in_order(lowered_title, prefix_tokens):
+            best_fallback = (raw_title, normalized_title, "token_order")
+
+    if best_fallback is not None:
+        raw_title, normalized_title, match_mode = best_fallback
+        return True, raw_title, normalized_title, match_mode
+
+    raw_title, normalized_title = candidates[0]
+    return False, raw_title, normalized_title, ""
+
+
 def activate_window(
     window,
     *,
@@ -53,7 +169,7 @@ def find_window_by_pid_and_title_prefix(
     connect_timeout: float = 2.0,
     window_filter: Callable[[object, str], bool] | None = None,
 ) -> tuple[object | None, str, str]:
-    """특정 PID 에 연결해 title_prefix 로 시작하는 첫 창을 반환한다."""
+    """특정 PID 에 연결해 title_prefix 와 유사 매칭되는 첫 창을 반환한다."""
     search_started_at = time.time()
     for backend in backends:
         backend_started_at = time.time()
@@ -86,27 +202,27 @@ def find_window_by_pid_and_title_prefix(
             f"elapsed={format_elapsed_ms(backend_started_at)}"
         )
         for win in windows:
-            try:
-                title = (win.window_text() or "").strip()
-            except Exception:
-                continue
-
+            is_match, title, normalized_title, match_mode = _match_title_prefix(win, title_prefix)
             if not title:
                 continue
 
-            if title.startswith(title_prefix):
-                if window_filter is not None and not window_filter(win, title):
-                    print(
-                        "[INFO] 로그인 창 PID 후보 제외 "
-                        f"backend={backend}, pid={process_id}, title={title!r}"
-                    )
-                    continue
+            if not is_match:
+                continue
+
+            if window_filter is not None and not window_filter(win, title):
                 print(
-                    "[INFO] 로그인 창 PID 발견 "
+                    "[INFO] 로그인 창 PID 후보 제외 "
                     f"backend={backend}, pid={process_id}, title={title!r}, "
-                    f"total_elapsed={format_elapsed_ms(search_started_at)}"
+                    f"normalized_title={normalized_title!r}, match_mode={match_mode}"
                 )
-                return win, title, backend
+                continue
+            print(
+                "[INFO] 로그인 창 PID 발견 "
+                f"backend={backend}, pid={process_id}, title={title!r}, "
+                f"normalized_title={normalized_title!r}, match_mode={match_mode}, "
+                f"total_elapsed={format_elapsed_ms(search_started_at)}"
+            )
+            return win, title, backend
 
     print(
         "[INFO] 로그인 창 PID 미발견 "
@@ -123,7 +239,7 @@ def find_window_by_title_prefix(
     visible_only: bool = True,
     window_filter: Callable[[object, str], bool] | None = None,
 ) -> tuple[object | None, str, str]:
-    """top-level 창 중 title_prefix 로 시작하는 첫 창을 반환한다."""
+    """top-level 창 중 title_prefix 와 유사 매칭되는 첫 창을 반환한다."""
     search_started_at = time.time()
     for backend in backends:
         backend_started_at = time.time()
@@ -143,27 +259,28 @@ def find_window_by_title_prefix(
             f"elapsed={format_elapsed_ms(backend_started_at)}"
         )
         for win in windows:
-            try:
-                title = (win.window_text() or "").strip()
-            except Exception:
-                continue
-
+            is_match, title, normalized_title, match_mode = _match_title_prefix(win, title_prefix)
             if not title:
                 continue
 
-            if title.startswith(title_prefix):
-                if window_filter is not None and not window_filter(win, title):
-                    print(
-                        "[INFO] 로그인 창 후보 제외 "
-                        f"backend={backend}, title={title!r}, visible_only={visible_only}"
-                    )
-                    continue
+            if not is_match:
+                continue
+
+            if window_filter is not None and not window_filter(win, title):
                 print(
-                    "[INFO] 로그인 창 발견 "
+                    "[INFO] 로그인 창 후보 제외 "
                     f"backend={backend}, title={title!r}, "
-                    f"total_elapsed={format_elapsed_ms(search_started_at)}"
+                    f"normalized_title={normalized_title!r}, match_mode={match_mode}, "
+                    f"visible_only={visible_only}"
                 )
-                return win, title, backend
+                continue
+            print(
+                "[INFO] 로그인 창 발견 "
+                f"backend={backend}, title={title!r}, "
+                f"normalized_title={normalized_title!r}, match_mode={match_mode}, "
+                f"total_elapsed={format_elapsed_ms(search_started_at)}"
+            )
+            return win, title, backend
 
     print(
         "[INFO] 로그인 창 미발견 "

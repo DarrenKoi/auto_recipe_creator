@@ -62,6 +62,7 @@ __all__ = [
     "pipeline_ocr",
     "prompts",
     "rcs_utils",
+    "util",
     "resolve_debug_model_name",
     "login_rcs",
     "check_tool_screen",

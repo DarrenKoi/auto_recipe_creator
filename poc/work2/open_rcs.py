@@ -11,21 +11,12 @@ import os
 import subprocess
 import sys
 import time
-from csv import reader
-from io import StringIO
 from pathlib import Path
 
 from dotenv import load_dotenv
+import psutil
 
 from poc.work2.logger import log_work2_event
-
-try:
-    import psutil
-
-    PSUTIL_AVAILABLE = True
-except Exception:
-    psutil = None
-    PSUTIL_AVAILABLE = False
 
 load_dotenv()
 
@@ -39,6 +30,9 @@ EXIT_SUCCESS = "success"
 EXIT_EXE_NOT_FOUND = "exe_not_found"
 EXIT_LAUNCH_FAILED = "launch_failed"
 EXIT_ALREADY_OPEN = "already_open"
+EXIT_EARLY_CRASH = "early_crash"
+
+EARLY_CRASH_WAIT_SEC = 0.5
 
 
 def format_elapsed_ms(start_time: float) -> str:
@@ -71,85 +65,31 @@ def find_existing_rcs_processes(exe_path: Path) -> list[dict[str, str | int]]:
     exe_name = exe_path.name.lower()
     exe_path_text = _normalize_path_text(str(exe_path))
     matches: list[dict[str, str | int]] = []
-
-    if PSUTIL_AVAILABLE:
-        scan_started_at = time.time()
-        info("process scan backend=psutil")
-        for proc in psutil.process_iter(["pid", "name", "exe"]):
-            try:
-                pid = proc.info.get("pid")
-                name = (proc.info.get("name") or "").strip()
-                running_exe = (proc.info.get("exe") or "").strip()
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                continue
-
-            name_match = name.lower() == exe_name
-            exe_match = _normalize_path_text(running_exe) == exe_path_text
-            if not name_match and not exe_match:
-                continue
-
-            matches.append(
-                {
-                    "pid": int(pid) if pid is not None else -1,
-                    "name": name,
-                    "exe": running_exe,
-                }
-            )
-
-        info(
-            f"process scan done: backend=psutil count={len(matches)} elapsed={format_elapsed_ms(scan_started_at)}"
-        )
-        return matches
-
-    if os.name != "nt":
-        info("process scan skipped: psutil unavailable and non-Windows platform")
-        return matches
-
     scan_started_at = time.time()
-    info("process scan backend=tasklist")
-    try:
-        result = subprocess.run(
-            [
-                "tasklist",
-                "/FI",
-                f"IMAGENAME eq {exe_path.name}",
-                "/FO",
-                "CSV",
-                "/NH",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=2.0,
-            check=False,
-        )
-    except OSError as exc:
-        info(f"tasklist execution failed: {exc}")
-        return matches
-    except subprocess.TimeoutExpired:
-        info("tasklist execution timed out")
-        return matches
-
-    for row in reader(StringIO(result.stdout)):
-        if len(row) < 2:
-            continue
-        image_name = row[0].strip()
-        pid_text = row[1].strip()
-        if image_name.lower() != exe_name:
-            continue
+    info("process scan backend=psutil")
+    for proc in psutil.process_iter(["pid", "name", "exe"]):
         try:
-            pid = int(pid_text)
-        except ValueError:
-            pid = -1
+            pid = proc.info.get("pid")
+            name = (proc.info.get("name") or "").strip()
+            running_exe = (proc.info.get("exe") or "").strip()
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+
+        name_match = name.lower() == exe_name
+        exe_match = _normalize_path_text(running_exe) == exe_path_text
+        if not name_match and not exe_match:
+            continue
+
         matches.append(
             {
-                "pid": pid,
-                "name": image_name,
-                "exe": "",
+                "pid": int(pid) if pid is not None else -1,
+                "name": name,
+                "exe": running_exe,
             }
         )
 
     info(
-        f"process scan done: backend=tasklist count={len(matches)} elapsed={format_elapsed_ms(scan_started_at)}"
+        f"process scan done: backend=psutil count={len(matches)} elapsed={format_elapsed_ms(scan_started_at)}"
     )
     return matches
 
@@ -159,21 +99,19 @@ def launch_rcs(exe_path: Path) -> subprocess.Popen:
     launch_started_at = time.time()
     work_dir = str(exe_path.parent)
     command = [str(exe_path)]
-    creationflags = 0
 
+    popen_kwargs: dict = {"cwd": work_dir}
     if os.name == "nt":
-        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        popen_kwargs["creationflags"] = getattr(
+            subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+        )
 
     info(f"cwd={work_dir}")
     info(f"command={command!r}")
-    info(f"creationflags={creationflags}")
+    info(f"creationflags={popen_kwargs.get('creationflags', 'N/A (non-nt)')}")
 
     try:
-        process = subprocess.Popen(
-            command,
-            cwd=work_dir,
-            creationflags=creationflags,
-        )
+        process = subprocess.Popen(command, **popen_kwargs)
     except OSError as exc:
         raise RuntimeError(f"실행 파일 시작 실패: {exc}") from exc
 
@@ -206,7 +144,20 @@ def main() -> str:
         )
         return EXIT_EXE_NOT_FOUND
 
-    info(f"exe_exists=True size={RCS_EXE.stat().st_size}")
+    try:
+        exe_size = RCS_EXE.stat().st_size
+    except OSError as exc:
+        error(f"실행 파일 접근 실패: {exc}")
+        log_work2_event(
+            component="open_rcs",
+            message="exe_access_error",
+            level="error",
+            log_name=LOG_NAME,
+            exe_path=RCS_EXE,
+            error=exc,
+        )
+        return EXIT_LAUNCH_FAILED
+    info(f"exe_exists=True size={exe_size}")
 
     existing_processes = find_existing_rcs_processes(RCS_EXE)
     if existing_processes:
@@ -238,6 +189,21 @@ def main() -> str:
             error=exc,
         )
         return EXIT_LAUNCH_FAILED
+
+    time.sleep(EARLY_CRASH_WAIT_SEC)
+    exit_code = process.poll()
+    if exit_code is not None:
+        error(f"프로세스가 즉시 종료됨: pid={process.pid} exit_code={exit_code}")
+        log_work2_event(
+            component="open_rcs",
+            message="early_crash",
+            level="error",
+            log_name=LOG_NAME,
+            exe_path=RCS_EXE,
+            pid=process.pid,
+            exit_code=exit_code,
+        )
+        return EXIT_EARLY_CRASH
 
     info(f"RCS 실행 요청 완료: pid={process.pid}")
     info(f"open_rcs end-to-end elapsed={format_elapsed_ms(script_started_at)}")

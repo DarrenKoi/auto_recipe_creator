@@ -22,11 +22,127 @@
 from __future__ import annotations
 
 import base64
+import json as _json
 from dataclasses import dataclass
 from pathlib import Path
 
-from poc.work.vlm_openai_client import ChatImageRequest, OpenAICompatibleVLMClient
+import requests
+
 from poc.work2.flask_vlm import get_service_by_slug, resolve_service_proxy_url
+
+
+@dataclass(frozen=True)
+class ChatImageRequest:
+    """VLM 채팅 이미지 요청 데이터."""
+
+    model: str
+    system_message: str
+    user_text: str
+    image_b64: str
+    image_mime: str = "image/webp"
+    temperature: float = 0.0
+
+
+class OpenAICompatibleVLMClient:
+    """OpenAI-compatible chat-completions endpoint 용 최소 클라이언트."""
+
+    def __init__(self, base_url: str, api_key: str = "", timeout_sec: float = 120.0):
+        self.base_url = (base_url or "").strip().rstrip("/")
+        self.api_key = (api_key or "").strip()
+        self.timeout_sec = timeout_sec
+        self.last_token_usage: dict[str, int] = {}
+
+    @property
+    def endpoint(self) -> str:
+        if self.base_url.endswith("/v1"):
+            return f"{self.base_url}/chat/completions"
+        return f"{self.base_url}/v1/chat/completions"
+
+    def _headers(self) -> dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
+    @staticmethod
+    def _coerce_content(content: object) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            chunks: list[str] = []
+            for item in content:
+                if isinstance(item, dict):
+                    text = item.get("text")
+                    if isinstance(text, str):
+                        chunks.append(text)
+            return "\n".join(chunks).strip()
+        return str(content)
+
+    def chat_with_image(self, request: ChatImageRequest) -> str:
+        """이미지 포함 chat completions 요청을 보내고 응답 텍스트를 반환한다."""
+        b64_len_kb = len(request.image_b64) * 3 / 4 / 1024
+        print(f"[INFO] VLM 요청: model={request.model}, image={b64_len_kb:.1f}KB ({request.image_mime})")
+
+        messages: list[dict] = []
+        if request.system_message:
+            messages.append({"role": "system", "content": request.system_message})
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": request.user_text},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{request.image_mime};base64,{request.image_b64}"
+                        },
+                    },
+                ],
+            },
+        )
+
+        payload = {
+            "model": request.model,
+            "messages": messages,
+            "temperature": request.temperature,
+        }
+
+        response = requests.post(
+            self.endpoint,
+            headers=self._headers(),
+            json=payload,
+            timeout=self.timeout_sec,
+        )
+
+        print(f"[INFO] VLM 응답 status={response.status_code}")
+        print(
+            f"[INFO] VLM 응답 headers: "
+            f"content-type={response.headers.get('content-type', 'N/A')}"
+        )
+        try:
+            raw_body = response.json()
+            log_body = dict(raw_body)
+            if "choices" in log_body:
+                log_body["choices"] = f"[{len(raw_body['choices'])} item(s)]"
+            print(
+                f"[INFO] VLM 응답 body (요약): "
+                f"{_json.dumps(log_body, ensure_ascii=False)}"
+            )
+        except Exception:
+            print(f"[INFO] VLM 응답 body (raw): {response.text[:500]}")
+
+        response.raise_for_status()
+
+        data = response.json()
+        self.last_token_usage = data.get("usage") or {}
+        choices = data.get("choices") or []
+        if not choices:
+            raise ValueError(
+                f"VLM response has no choices: "
+                f"{_json.dumps(data, ensure_ascii=False)[:300]}"
+            )
+        message = choices[0].get("message") or {}
+        return self._coerce_content(message.get("content", ""))
 
 
 def _detect_image_mime(image_bytes: bytes, fallback: str = "image/webp") -> str:
@@ -214,6 +330,8 @@ def send_image_request(
 
 
 __all__ = [
+    "ChatImageRequest",
+    "OpenAICompatibleVLMClient",
     "Work2VLMClient",
     "Work2VLMResponse",
     "list_supported_services",

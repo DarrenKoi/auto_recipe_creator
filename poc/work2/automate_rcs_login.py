@@ -17,7 +17,6 @@ pywinauto 는 창 실행·탐색에만 사용한다.
 import json
 import os
 import struct
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -25,7 +24,6 @@ from typing import Any
 
 import requests
 from pywinauto import Desktop, mouse
-from pywinauto.application import Application
 from pywinauto.keyboard import send_keys
 
 from poc.work.vlm_openai_client import ChatImageRequest, LangChainOpenAICompatibleVLMClient
@@ -47,9 +45,11 @@ from poc.work2.rcs_utils import (
     extract_json,
     find_existing_main_window,
     is_main_window_title,
+    launch_application,
     parse_coords,
     save_marked_image,
     scan_window_list,
+    wait_for_window_by_title_prefix,
 )
 
 PIPELINE_CONFIG = apply_pipeline_env_defaults()
@@ -344,21 +344,6 @@ def _resolve_backend(exe_path: Path) -> str:
         return "uia"
 
     return backend
-
-
-def _wait_for_login_window(app):
-    """'Remote Control System' 으로 시작하는 창이 나타날 때까지 대기."""
-    deadline = time.time() + LAUNCH_TIMEOUT
-    while time.time() < deadline:
-        for win in app.windows():
-            try:
-                title = win.window_text() or ""
-            except Exception:
-                continue
-            if title.startswith(WINDOW_TITLE_PREFIX):
-                return win
-        time.sleep(0.5)
-    raise TimeoutError(f"로그인 창을 {LAUNCH_TIMEOUT:.0f}초 내에 찾지 못했습니다")
 
 
 def _scan_main_window_candidates(app):
@@ -700,12 +685,20 @@ def main() -> int:
 
     print(f"[INFO] RCS 시작: {RCS_EXE}")
     backend = _resolve_backend(RCS_EXE)
-    cmd_str = subprocess.list2cmdline([str(RCS_EXE)])
     print(f"[INFO] pywinauto 백엔드: {backend}")
-    app = Application(backend=backend).start(cmd_str, wait_for_idle=False)
+    try:
+        app = launch_application(RCS_EXE, backend, wait_for_idle=False)
+    except RuntimeError as exc:
+        print(f"[ERROR] {exc}")
+        return 3
 
     try:
-        login_window = _wait_for_login_window(app)
+        login_window = wait_for_window_by_title_prefix(
+            app,
+            DESKTOP_SCAN_BACKENDS,
+            WINDOW_TITLE_PREFIX,
+            LAUNCH_TIMEOUT,
+        )
         print(f"[INFO] 로그인 창 발견: '{login_window.window_text()}'")
     except TimeoutError as exc:
         print(f"[ERROR] {exc}")

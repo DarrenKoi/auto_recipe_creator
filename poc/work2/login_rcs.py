@@ -10,13 +10,11 @@ ui-venus VLM 에 좌표 검출을 요청한 뒤 입력창/버튼 중심점을 �
 import json
 import os
 import struct
-import subprocess
 import sys
 import time
 from pathlib import Path
 
 from dotenv import load_dotenv
-from pywinauto.application import Application
 
 from poc.work2.prompts import build_rcs_login_locator_prompt
 from poc.work2.rcs_utils import (
@@ -26,8 +24,10 @@ from poc.work2.rcs_utils import (
     extract_json,
     find_existing_main_window,
     is_main_window_title,
+    launch_application,
     parse_coords,
     save_marked_image,
+    wait_for_window_by_title_prefix,
 )
 from poc.work2.vlm_client import Work2VLMClient
 
@@ -121,21 +121,6 @@ def _resolve_backend(exe_path: Path) -> str:
     return backend
 
 
-def _wait_for_login_window(app) -> object:
-    """'Remote Control System' 으로 시작하는 로그인 창이 나타날 때까지 대기한다."""
-    deadline = time.time() + LAUNCH_TIMEOUT
-    while time.time() < deadline:
-        for win in app.windows():
-            try:
-                title = win.window_text() or ""
-            except Exception:
-                continue
-            if title.startswith(WINDOW_TITLE_PREFIX):
-                return win
-        time.sleep(0.5)
-    raise TimeoutError(f"로그인 창을 {LAUNCH_TIMEOUT:.0f}초 내에 찾지 못했습니다")
-
-
 def _main_title_matcher(title: str) -> bool:
     """메인 RCS 창 제목인지 판별한다."""
     return is_main_window_title(title, MAIN_WINDOW_TITLE_REGEX)
@@ -224,17 +209,21 @@ def main() -> int:
         return 1
 
     backend = _resolve_backend(RCS_EXE)
-    cmd_str = subprocess.list2cmdline([str(RCS_EXE)])
-    work_dir = str(RCS_EXE.parent)
     print(f"[INFO] RCS 시작: {RCS_EXE}")
-    print(f"[INFO] 작업 디렉토리: {work_dir}")
     print(f"[INFO] pywinauto 백엔드: {backend}")
-    app = Application(backend=backend).start(
-        cmd_str, work_dir=work_dir, wait_for_idle=False,
-    )
+    try:
+        app = launch_application(RCS_EXE, backend, wait_for_idle=False)
+    except RuntimeError as exc:
+        print(f"[ERROR] {exc}")
+        return 3
 
     try:
-        login_window = _wait_for_login_window(app)
+        login_window = wait_for_window_by_title_prefix(
+            app,
+            DESKTOP_SCAN_BACKENDS,
+            WINDOW_TITLE_PREFIX,
+            LAUNCH_TIMEOUT,
+        )
     except TimeoutError as exc:
         print(f"[ERROR] {exc}")
         return 3

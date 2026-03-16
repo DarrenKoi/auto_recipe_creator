@@ -24,12 +24,13 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
+import mss
+import mss.tools
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
-from poc.work.screen_capture import ScreenCapture
-from poc.work.vlm_openai_client import ChatImageRequest, OpenAICompatibleVLMClient
 from poc.work2 import debug_image_dir
+from poc.work2.vlm_client import ChatImageRequest, OpenAICompatibleVLMClient
 from poc.work2.flask_vlm import (
     apply_pipeline_env_defaults,
     fetch_vlm_health,
@@ -216,13 +217,17 @@ def _looks_like_ocr_service(service_row: dict[str, Any]) -> bool:
 
 def _capture_monitor_image(monitor_index: int) -> Image.Image | None:
     """단일 물리 모니터를 캡처하여 PIL 이미지로 반환한다."""
-    capture = ScreenCapture(output_dir=str(DEBUG_IMAGE_DIR))
-    monitors = []
     try:
-        monitors = list(getattr(capture.sct, "monitors", []) or []) if capture.sct else []
+        sct = mss.mss()
+    except Exception as exc:
+        print(f"[ERROR] mss 초기화 실패: {exc}")
+        return None
+
+    try:
+        monitors = sct.monitors
         physical_count = max(0, len(monitors) - 1)
         if physical_count <= 0:
-            print("[ERROR] 현재 환경에서는 물리 모니터가 감지되지 않았습니다. monitor 0(전체 데스크톱)만 노출됩니다.")
+            print("[ERROR] 현재 환경에서는 물리 모니터가 감지되지 않았습니다.")
             return None
 
         if monitor_index > physical_count:
@@ -233,19 +238,20 @@ def _capture_monitor_image(monitor_index: int) -> Image.Image | None:
             )
             return None
 
-        png_data = capture.capture_monitor(monitor_index=monitor_index, save=False)
+        screenshot = sct.grab(monitors[monitor_index])
+        png_data = mss.tools.to_png(screenshot.rgb, screenshot.size)
+        print(
+            f"[INFO] 모니터 {monitor_index} 캡처 완료: "
+            f"{screenshot.width}x{screenshot.height}"
+        )
     except Exception as exc:
         print(f"[ERROR] 모니터 {monitor_index} 캡처 실패: {exc}")
         return None
     finally:
         try:
-            capture.close()
+            sct.close()
         except Exception:
             pass
-
-    if not png_data:
-        print(f"[ERROR] 모니터 {monitor_index} 캡처 데이터가 비어 있습니다.")
-        return None
 
     image = Image.open(BytesIO(png_data))
     if image.mode != "RGB":

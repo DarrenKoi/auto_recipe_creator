@@ -1,7 +1,7 @@
 """RCS 로그인 화면 UI 요소 좌표 추출용 VLM 프롬프트 빌더.
 
 UI-specialized VLM (ui-venus, mai-ui 등)에 최적화된 프롬프트를 구성한다.
-텍스트는 첫 글자(anchor point), 입력 컨트롤은 좌측 입력 시작 지점 위주로 반환하도록 유도한다.
+레이블 텍스트는 중심점, 입력 컨트롤은 좌측 내부 click-safe point 위주로 반환하도록 유도한다.
 """
 
 from typing import Iterable
@@ -11,8 +11,7 @@ RCS_LOGIN_TARGET_SPECS = {
     "window_title_text": (
         "TITLE TEXT — The visible window title text in the title bar near the top-left area. "
         "It starts with 'Remote Control System'. "
-        "Return the center of the FIRST visible character 'R' only, not the center of the whole title text. "
-        "Use the middle of the letter body, not the top edge of the glyph. "
+        "Return the center of the full visible bounding box of the title text only. "
         "Do not return the icon area or the form controls below."
     ),
     "close_button": (
@@ -22,63 +21,60 @@ RCS_LOGIN_TARGET_SPECS = {
     ),
     "server_label": (
         "TEXT LABEL — The static text 'Server' displayed on the left side of the first form row. "
-        "Return the center of the FIRST visible character 'S' only, not the center of the whole word. "
-        "Use the middle of the letter body, not the top edge of the glyph. "
-        "Do not return the combobox area."
+        "Return the center of the full bounding box of the visible label text only. "
+        "Do not return the combobox area, and do not bias toward the top of the letters."
     ),
     "server_input": (
         "COMBOBOX / DROPDOWN — The server selection control next to the 'Server' label. "
         "This is a white rectangular area with a small dropdown arrow (▼) on its right edge. "
-        "If text is visible inside the combobox, return the center of its FIRST visible character. "
-        "If the combobox appears empty, return the position where the text cursor would appear — "
-        "the leftmost inner typing position, just inside the left border of the white area. "
+        "Return a safe click point in the left inner text/value area of the combobox, where a user would click "
+        "to focus the current value area. Use a point around 20-30% of the control width from the left edge "
+        "and around 58-65% of the control height from the top edge. "
         "Do not return the dropdown arrow, the top highlight, the upper border, or the adjacent 'Server' label text."
     ),
     "userid_label": (
         "TEXT LABEL — The static text 'User ID' displayed on the left side of the second form row. "
-        "Return the center of the FIRST visible character 'U' only, not the center of the whole phrase. "
-        "Use the middle of the letter body, not the top edge of the glyph. "
-        "Do not return the editable field."
+        "Return the center of the full bounding box of the visible label text only. "
+        "Do not return the editable field, and do not bias toward the top of the letters."
     ),
     "userid_input": (
         "TEXT INPUT — The editable text field next to the 'User ID' label. "
         "This is a white rectangular input area with a thin border. "
-        "If text is visible inside the field, return the center of its FIRST visible character. "
-        "If the field appears empty, return the position where the text cursor would appear — "
-        "the leftmost inner typing position, just inside the left border of the white area. "
-        "Do not return the top border, the upper highlight, or the adjacent 'User ID' label text."
+        "Return a safe click point in the left inner typing area, near where typed text would begin. "
+        "Use a point around 12-20% of the control width from the left edge and around 58-65% of the control "
+        "height from the top edge. Do not return the top border, the upper highlight, or the adjacent "
+        "'User ID' label text."
     ),
     "password_label": (
         "TEXT LABEL — The static text 'Password' displayed on the left side of the third form row. "
-        "Return the center of the FIRST visible character 'P' only, not the center of the whole word. "
-        "Use the middle of the letter body, not the top edge of the glyph. "
-        "Do not return the password field."
+        "Return the center of the full bounding box of the visible label text only. "
+        "Do not return the password field, and do not bias toward the top of the letters."
     ),
     "password_input": (
         "TEXT INPUT — The editable text field next to the 'Password' label. "
         "This is a white rectangular input area with a thin border. "
-        "If text or masked dots are visible inside the field, return the center of the FIRST visible character or dot. "
-        "If the field appears empty, return the position where the text cursor would appear — "
-        "the leftmost inner typing position, just inside the left border of the white area. "
-        "Do not return the top border, the upper highlight, or the adjacent 'Password' label text."
+        "Return a safe click point in the left inner typing area, near where typed text would begin. "
+        "Use a point around 12-20% of the control width from the left edge and around 58-65% of the control "
+        "height from the top edge. Do not return the top border, the upper highlight, or the adjacent "
+        "'Password' label text."
     ),
     "login_button": (
-        "BUTTON TEXT ANCHOR — The button labeled 'Log In' at the bottom of the dialog. "
+        "BUTTON — The button labeled 'Log In' at the bottom of the dialog. "
         "It has raised 3D borders in Windows classic style. "
-        "Return the center of the FIRST visible character 'L' in the button text only. "
-        "Do not return the full button center or the button border."
+        "Return a safe click point at the geometric center of the full clickable button rectangle. "
+        "Do not return the text baseline, top highlight, or button border."
     ),
     "cancel_button": (
-        "BUTTON TEXT ANCHOR — The button labeled 'Cancel' at the bottom of the dialog. "
+        "BUTTON — The button labeled 'Cancel' at the bottom of the dialog. "
         "It has raised 3D borders in Windows classic style. "
-        "Return the center of the FIRST visible character 'C' in the button text only. "
-        "Do not return the full button center or the button border."
+        "Return a safe click point at the geometric center of the full clickable button rectangle. "
+        "Do not return the text baseline, top highlight, or button border."
     ),
     "shortcut_button": (
-        "BUTTON TEXT ANCHOR — A button with Korean text (e.g. '바로가기 설정') in the bottom area. "
+        "BUTTON — A button with Korean text (e.g. '바로가기 설정') in the bottom area. "
         "It may be positioned separately from the Log In and Cancel buttons. "
-        "Return the center of the FIRST visible Korean character in the button text only. "
-        "Do not return the full button center or the button border."
+        "Return a safe click point at the geometric center of the full clickable button rectangle. "
+        "Do not return the text baseline, top highlight, or button border."
     ),
 }
 
@@ -115,7 +111,7 @@ def build_rcs_login_locator_prompt(
 ) -> tuple[str, str]:
     """RCS 로그인 화면 UI 요소 좌표 추출용 system/user 프롬프트를 구성한다.
 
-    UI-specialized VLM 에 최적화: 텍스트는 첫 글자 anchor, 입력 컨트롤은 좌측 내부 click-safe point 로 유도한다.
+    UI-specialized VLM 에 최적화: 레이블 텍스트는 중심, 입력 컨트롤은 좌측 내부 click-safe point 로 유도한다.
     """
     keys = tuple(target_keys) if target_keys is not None else DEFAULT_RCS_LOGIN_TARGET_KEYS
     missing = [key for key in keys if key not in RCS_LOGIN_TARGET_SPECS]
@@ -156,13 +152,13 @@ def build_rcs_login_locator_prompt(
         "- Buttons have raised 3D borders typical of Windows classic style.",
         "- For each row, the left-side label text and the right-side editable control must be treated as separate targets.",
         "- Measure coordinates on the full screenshot exactly as shown, including title bar and outer border.",
-        "- For text labels and button labels, use the FIRST visible character only, not the center of the whole word.",
-        "- For text labels and button labels, use the middle of that first character body, not the top of the glyph.",
-        "- For input fields and the combobox, if text is visible return the first character anchor; if empty return the leftmost cursor position just inside the left border.",
+        "- For text labels and the title text, use the center of the full visible text bounding box, not the top of the letters.",
+        "- For input fields and the combobox, use a left-inner click point where text would begin, not the first visible character and not the geometric center.",
+        "- For buttons, use the center of the full clickable button rectangle, not the text baseline and not the border.",
         "- For interactive controls, avoid the top highlight, the caption baseline, the upper border, and the far-right arrow area.",
         "- Within each form row, the label anchor and the input anchor should lie on the same horizontal band; if uncertain, choose slightly lower rather than higher.",
         "",
-        f"Find the required anchor coordinates of these {len(keys)} UI elements:",
+        f"Find the required coordinates of these {len(keys)} UI elements:",
         "",
     ]
     for idx, key in enumerate(keys, start=1):
@@ -181,8 +177,9 @@ def build_rcs_login_locator_prompt(
             "Use coord_system='relative_1000'.",
             "x and y must be integers from 0 to 1000.",
             "0 means the left/top edge. 1000 means the right/bottom edge.",
-            "For text labels and button labels, return the specified first-character anchor point.",
-            "For input fields and the combobox, return the first visible character anchor if text is present, or the leftmost cursor position just inside the left border if empty.",
+            "For text labels and the title text, return the center of the full visible text bounding box.",
+            "For buttons, return the center of the full clickable button rectangle.",
+            "For input fields and the combobox, return a safe left-inner click point, not a border point.",
             "For form rows, prefer a slightly lower y within the row rather than a higher y if uncertain.",
             "",
             "Return ONLY this JSON (all coordinate values must be integers):",

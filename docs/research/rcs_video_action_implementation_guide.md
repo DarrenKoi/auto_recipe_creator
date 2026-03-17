@@ -862,4 +862,5 @@ human correction 은 가장 가치 있는 학습 데이터다.
 
 ## 관련 문서
 
-- [RCS 비전-투-액션 연구 메모](/Users/daeyoung/Codes/auto_recipe_creator/docs/research/rcs_video_to_action_research.md)
+- [RCS 비디오-투-액션 개요](/Users/daeyoung/Codes/auto_recipe_creator/docs/research/rcs_video_to_action_overview.md)
+- [RCS 비디오-투-액션 작업 분해 문서](/Users/daeyoung/Codes/auto_recipe_creator/docs/research/rcs_video_action_task_breakdown.md)

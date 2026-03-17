@@ -513,4 +513,4 @@ OmniParser V2는 파서(전처리기)이지 에이전트(의사결정자)가 아
 | OmniParser V2 Replicate API | https://replicate.com/microsoft/omniparser-v2 |
 | ScreenSpot Pro 벤치마크 | OmniParser V2 논문 내 참조 |
 | 기존 리서치: VLM GUI 자동화 | `docs/research/vlm_gui_automation_for_engineering.md` |
-| 기존 리서치: GUI VLM 벤치마크 | `docs/research/gui_vlm_benchmark_report.md` |
+| 기존 리서치: GUI 모델 선택 / 벤치마크 | `docs/research/gui_model_selection_and_benchmark_plan.md` |

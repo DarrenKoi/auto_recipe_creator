@@ -2,6 +2,10 @@
 
 from .ocr_assist import build_ocr_assist_prompt
 from .login_rcs import build_login_rcs_locator_prompt
+from .login_rcs_ui_tars import (
+    build_login_rcs_ui_tars_prompt,
+    build_single_element_prompt as build_login_rcs_ui_tars_single_prompt,
+)
 from .rcs_main_tabs import build_rcs_main_tab_locator_prompt
 from .screen_analysis import (
     build_general_query_prompt,
@@ -12,6 +16,8 @@ from .screen_analysis import (
 __all__ = [
     "build_ocr_assist_prompt",
     "build_login_rcs_locator_prompt",
+    "build_login_rcs_ui_tars_prompt",
+    "build_login_rcs_ui_tars_single_prompt",
     "build_rcs_main_tab_locator_prompt",
     "build_state_recognition_prompt",
     "build_measurement_judgment_prompt",

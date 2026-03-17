@@ -51,6 +51,7 @@ class ChatImageRequest:
     image_mime: str = "image/webp"
     temperature: float = 0.0
     max_tokens: int = DEFAULT_MAX_TOKENS
+    frequency_penalty: float | None = None
     stream: bool = False
 
 
@@ -245,6 +246,8 @@ class OpenAICompatibleVLMClient:
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
         }
+        if request.frequency_penalty is not None:
+            payload["frequency_penalty"] = request.frequency_penalty
         if request.stream:
             payload["stream"] = True
 
@@ -411,6 +414,7 @@ class Work2VLMClient:
         image_mime: str = "image/webp",
         temperature: float = 0.0,
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        frequency_penalty: float | None = None,
         model_name: str | None = None,
         stream: bool | None = None,
     ) -> Work2VLMResponse:
@@ -423,6 +427,7 @@ class Work2VLMClient:
             image_mime=image_mime,
             temperature=temperature,
             max_tokens=max_tokens,
+            frequency_penalty=frequency_penalty,
             stream=self.prefer_stream if stream is None else bool(stream),
         )
         started_at = time.time()
@@ -467,6 +472,7 @@ class Work2VLMClient:
         image_mime: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        frequency_penalty: float | None = None,
         model_name: str | None = None,
         stream: bool | None = None,
     ) -> Work2VLMResponse:
@@ -480,6 +486,7 @@ class Work2VLMClient:
             image_mime=mime,
             temperature=temperature,
             max_tokens=max_tokens,
+            frequency_penalty=frequency_penalty,
             model_name=model_name,
             stream=stream,
         )
@@ -493,6 +500,7 @@ class Work2VLMClient:
         image_mime: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        frequency_penalty: float | None = None,
         model_name: str | None = None,
         stream: bool | None = None,
     ) -> Work2VLMResponse:
@@ -506,6 +514,7 @@ class Work2VLMClient:
             image_mime=image_mime,
             temperature=temperature,
             max_tokens=max_tokens,
+            frequency_penalty=frequency_penalty,
             model_name=model_name,
             stream=stream,
         )
@@ -521,6 +530,7 @@ def send_image_request(
     image_mime: str | None = None,
     temperature: float = 0.0,
     max_tokens: int = DEFAULT_MAX_TOKENS,
+    frequency_penalty: float | None = None,
     model_name: str | None = None,
     timeout_sec: float = 120.0,
     stream: bool | None = None,
@@ -539,6 +549,7 @@ def send_image_request(
         image_mime=image_mime,
         temperature=temperature,
         max_tokens=max_tokens,
+        frequency_penalty=frequency_penalty,
         model_name=model_name,
         stream=stream,
     )

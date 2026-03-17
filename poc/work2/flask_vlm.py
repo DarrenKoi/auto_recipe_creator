@@ -87,20 +87,16 @@ SHARED_PIPELINE_SETTINGS: dict[str, str | bool] = {
     # API key 는 `poc/work2/.env` 의 `COMMON_LLM_API_KEY` 에 넣는다.
     "company_llm_base_url": DEFAULT_COMPANY_LLM_BASE_URL,
 
-    "shared_api_key": "",
     "screen_analysis_service": DEFAULT_SCREEN_ANALYSIS_SERVICE,
     "screen_analysis_model_name": DEFAULT_SCREEN_ANALYSIS_MODEL_NAME,
     "screen_analysis_api_url": DEFAULT_SCREEN_ANALYSIS_API_URL,
-    "screen_analysis_api_key": "",
     "main_tabs_service": DEFAULT_MAIN_TABS_SERVICE,
     "main_tabs_model_name": DEFAULT_MAIN_TABS_MODEL_NAME,
     "main_tabs_api_url": DEFAULT_MAIN_TABS_API_URL,
-    "main_tabs_api_key": "",
     "ocr_pipeline_enabled": DEFAULT_OCR_PIPELINE_ENABLED,
     "ocr_service": DEFAULT_OCR_SERVICE,
     "ocr_model_name": DEFAULT_OCR_MODEL_NAME,
     "ocr_api_url": DEFAULT_OCR_API_URL,
-    "ocr_api_key": "",
 }
 
 ALL_VLM_SERVICES: list[VLMServiceEntry] = [
@@ -351,23 +347,26 @@ def normalize_vlm_health_entries(
     return rows
 
 
-def resolve_shared_api_key() -> str:
-    """공통으로 사용할 API key 를 반환한다."""
-    return _shared_text("shared_api_key")
-
-
 def resolve_company_llm_api_base_url() -> str:
     """회사 공용 direct LLM base URL 을 반환한다."""
     return (_shared_text("company_llm_base_url") or DEFAULT_COMPANY_LLM_BASE_URL).rstrip("/")
 
 
 def resolve_company_llm_api_key() -> str:
-    """회사 공용 direct LLM API key 를 반환한다."""
-    return os.getenv(COMMON_LLM_API_KEY_ENV, "").strip() or resolve_shared_api_key()
+    """회사 공용 direct LLM API key 를 반환한다.
+
+    `poc/work2/.env` 의 `COMMON_LLM_API_KEY` 에서만 읽는다.
+    Flask proxy 서비스는 API key 를 사용하지 않는다.
+    """
+    return os.getenv(COMMON_LLM_API_KEY_ENV, "").strip()
 
 
 def resolve_service_api_key(service_slug: str, default: str = "") -> str:
-    """service slug 별 기본 API key 를 반환한다."""
+    """service slug 별 API key 를 반환한다.
+
+    direct 서비스만 `COMMON_LLM_API_KEY` 를 사용하고,
+    proxy 서비스는 API key 없이 동작한다.
+    """
     service_entry = get_service_by_slug(service_slug)
     if service_entry is None:
         return default
@@ -394,11 +393,6 @@ def resolve_screen_analysis_api_url() -> str:
     )
 
 
-def resolve_screen_analysis_api_key() -> str:
-    """화면 분석 목적에 사용할 API key 를 반환한다."""
-    return _shared_text("screen_analysis_api_key") or resolve_shared_api_key()
-
-
 def resolve_screen_analysis_model_name(default: str = DEFAULT_SCREEN_ANALYSIS_MODEL_NAME) -> str:
     """화면 분석 목적에 사용할 model name 을 반환한다."""
     return _shared_text("screen_analysis_model_name") or default
@@ -419,11 +413,6 @@ def resolve_main_tabs_api_url() -> str:
         resolve_main_tabs_service(),
         flask_base_url=resolve_flask_api_base_url(),
     )
-
-
-def resolve_main_tabs_api_key() -> str:
-    """RCS main tabs 목적에 사용할 API key 를 반환한다."""
-    return _shared_text("main_tabs_api_key") or resolve_shared_api_key()
 
 
 def resolve_main_tabs_model_name(default: str = DEFAULT_MAIN_TABS_MODEL_NAME) -> str:
@@ -448,11 +437,6 @@ def resolve_ocr_vlm_api_url() -> str:
     )
 
 
-def resolve_ocr_vlm_api_key() -> str:
-    """OCR stage 에 사용할 API key 를 반환한다."""
-    return _shared_text("ocr_api_key") or resolve_shared_api_key()
-
-
 def resolve_ocr_vlm_model_name(default: str = DEFAULT_OCR_MODEL_NAME) -> str:
     """OCR stage 에 사용할 model name 을 반환한다."""
     return _shared_text("ocr_model_name") or default
@@ -468,21 +452,17 @@ def resolve_pipeline_config(
         "flask_api_base_url": resolve_flask_api_base_url(),
         "company_llm_base_url": resolve_company_llm_api_base_url(),
         "company_llm_api_key": resolve_company_llm_api_key(),
-        "shared_api_key": resolve_shared_api_key(),
         "screen_analysis_service": resolve_screen_analysis_service(),
         "screen_analysis_api_url": resolve_screen_analysis_api_url(),
-        "screen_analysis_api_key": resolve_screen_analysis_api_key(),
         "screen_analysis_model_name": resolve_screen_analysis_model_name(
             default=default_screen_analysis_model
         ),
         "main_tabs_service": resolve_main_tabs_service(),
         "main_tabs_api_url": resolve_main_tabs_api_url(),
-        "main_tabs_api_key": resolve_main_tabs_api_key(),
         "main_tabs_model_name": resolve_main_tabs_model_name(default=default_main_tabs_model),
         "ocr_pipeline_enabled": _shared_flag("ocr_pipeline_enabled", DEFAULT_OCR_PIPELINE_ENABLED),
         "ocr_service": resolve_ocr_vlm_service(),
         "ocr_api_url": resolve_ocr_vlm_api_url(),
-        "ocr_api_key": resolve_ocr_vlm_api_key(),
         "ocr_model_name": resolve_ocr_vlm_model_name(default=default_ocr_model),
     }
 
@@ -504,12 +484,10 @@ def apply_pipeline_env_defaults(
     )
 
     api_url = str(config.get("screen_analysis_api_url", "") or "")
-    api_key = str(config.get("screen_analysis_api_key", "") or "")
     model_name = str(config.get("screen_analysis_model_name", "") or "")
 
     os.environ["VLM_API_URL"] = api_url
     os.environ["VLM_API_BASE_URL"] = api_url
-    os.environ["VLM_API_KEY"] = api_key
     os.environ["VLM_MODEL_NAME"] = model_name
 
     return config
@@ -558,21 +536,17 @@ __all__ = [
     "get_service_by_slug",
     "normalize_vlm_health_entries",
     "resolve_flask_api_base_url",
-    "resolve_main_tabs_api_key",
     "resolve_main_tabs_api_url",
     "resolve_main_tabs_model_name",
     "resolve_main_tabs_service",
-    "resolve_ocr_vlm_api_key",
     "resolve_ocr_vlm_api_url",
     "resolve_ocr_vlm_model_name",
     "resolve_ocr_vlm_service",
     "resolve_pipeline_config",
-    "resolve_screen_analysis_api_key",
     "resolve_screen_analysis_api_url",
     "resolve_screen_analysis_model_name",
     "resolve_screen_analysis_service",
     "resolve_service_api_key",
     "resolve_service_proxy_url",
-    "resolve_shared_api_key",
     "resolve_vlm_health_url",
 ]

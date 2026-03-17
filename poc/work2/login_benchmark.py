@@ -49,6 +49,7 @@ STATUS_PARSE_ERROR = "parse_error"
 STATUS_SKIPPED_UNHEALTHY = "skipped_unhealthy"
 
 HEALTH_PROBE_TIMEOUT_SEC = float(os.getenv("VLM_HEALTH_PROBE_TIMEOUT_SEC", "5.0"))
+HEALTH_PROBE_TIMEOUT_DIRECT_SEC = float(os.getenv("VLM_HEALTH_PROBE_TIMEOUT_DIRECT_SEC", "20.0"))
 
 
 @dataclass(frozen=True)
@@ -137,6 +138,7 @@ def _probe_service_health(service_slug: str) -> tuple[bool, str]:
     Returns:
         (healthy, reason) 튜플. healthy=True 이면 모델이 서빙 중.
     """
+    from poc.work2.flask_vlm import get_service_by_slug as _get_svc
     from poc.work2.flask_vlm import resolve_service_api_key
 
     base_url = resolve_service_proxy_url(service_slug)
@@ -154,8 +156,12 @@ def _probe_service_health(service_slug: str) -> tuple[bool, str]:
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
+    svc = _get_svc(service_slug)
+    is_direct = svc is not None and svc.connection_mode == "direct"
+    timeout = HEALTH_PROBE_TIMEOUT_DIRECT_SEC if is_direct else HEALTH_PROBE_TIMEOUT_SEC
+
     try:
-        resp = requests.get(models_url, headers=headers, timeout=HEALTH_PROBE_TIMEOUT_SEC)
+        resp = requests.get(models_url, headers=headers, timeout=timeout)
     except requests.RequestException as exc:
         return False, f"probe 연결 실패: {exc}"
 

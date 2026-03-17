@@ -30,6 +30,8 @@
 | [`paddleocr_vl_ui_venus_pipeline_research.md`](./paddleocr_vl_ui_venus_pipeline_research.md) | `PaddleOCR-VL-1.5`와 `UI-Venus` 역할 분리와 조합 방식 |
 | [`omniparser_v2_integration_research.md`](./omniparser_v2_integration_research.md) | OCR sidecar를 OmniParser 계열로 바꿀 때의 기대 효과와 리스크 |
 | [`vllm_runtime_and_unsloth_finetuning.md`](./vllm_runtime_and_unsloth_finetuning.md) | vLLM 서빙 구조, tokenizer/processor가 왜 필요한지, 작은 GPU 환경의 LoRA/QLoRA 학습 전략 |
+| [`encode_decode_and_model_architecture.md`](./encode_decode_and_model_architecture.md) | tokenizer의 encode/decode와 모델 architecture의 encoder/decoder 차이, 왜 어떤 모델은 한쪽만 가지는지 정리 |
+| [`pagedattention_and_prefix_caching.md`](./pagedattention_and_prefix_caching.md) | `PagedAttention`과 `prefix caching`이 각각 무엇을 최적화하는지 설명 |
 
 ## RCS 비디오-투-액션
 

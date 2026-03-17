@@ -1,19 +1,34 @@
 """poc.work2 전용 경량 유틸리티 묶음."""
 
 from .debug_image_utils import debug_image_path, save_debug_jpeg, save_debug_webp, save_marked_image
-from .image_utils import capture_window, encode_image_webp
 from .json_utils import extract_json, parse_coords
 from .time_utils import format_elapsed_ms, make_timestamp_tag
-from .window_utils import (
-    WindowRow,
-    activate_window,
-    collect_window_rows,
-    find_window_by_pid_and_title_prefix,
-    find_window_by_title_prefix,
-    foreground_window,
-    get_window_process_id,
-    read_foreground_window_info,
-)
+
+IMAGE_UTILS_AVAILABLE = False
+WINDOW_UTILS_AVAILABLE = False
+
+try:
+    from .image_utils import capture_window, encode_image_webp
+
+    IMAGE_UTILS_AVAILABLE = True
+except ImportError:
+    pass
+
+try:
+    from .window_utils import (
+        WindowRow,
+        activate_window,
+        collect_window_rows,
+        find_window_by_pid_and_title_prefix,
+        find_window_by_title_prefix,
+        foreground_window,
+        get_window_process_id,
+        read_foreground_window_info,
+    )
+
+    WINDOW_UTILS_AVAILABLE = True
+except ImportError:
+    pass
 
 __all__ = [
     "WindowRow",

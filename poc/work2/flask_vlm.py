@@ -22,16 +22,24 @@ class VLMServiceEntry:
     model_name: str
     api_url: str
     enabled: bool = True
+    connection_mode: str = "proxy"
+    prompt_family: str = "gui"
+    benchmark_role: str = ""
 
 DEFAULT_FLASK_API_BASE_URL = "http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api"
+DEFAULT_COMPANY_LLM_BASE_URL = "http://common.llm.skhynix.com.com/v1"
 DEFAULT_VLM_HEALTH_TIMEOUT_SEC = 5.0
 
+KIMI_K2_5_MODEL_NAME = "Kimi-K2.5"
+QWEN3_VL_30B_INSTRUCT_MODEL_NAME = "Qwen3-VL-30B-Instruct"
 UI_VENUS_MODEL_NAME = "ui-venus-1.5-8b"
 MAI_UI_MODEL_NAME = "mai-ui-8b"
 UI_TARS_MODEL_NAME = "ui-tars-1.5-7b"
 PADDLEOCR_VL_1_5_MODEL_NAME = "paddleocr-vl-1.5"
 GOT_OCR_MODEL_NAME = "got-ocr-2.0-hf"
 
+KIMI_K2_5_API_URL = DEFAULT_COMPANY_LLM_BASE_URL
+QWEN3_VL_30B_INSTRUCT_API_URL = DEFAULT_COMPANY_LLM_BASE_URL
 UI_VENUS_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/ui-venus"
 MAI_UI_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/mai-ui"
 UI_TARS_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/ui-tars"
@@ -57,6 +65,7 @@ DEFAULT_OCR_PIPELINE_ENABLED = True
 # 3) 필요 시 direct URL/API key 도 여기서만 관리한다.
 SHARED_PIPELINE_SETTINGS: dict[str, str | bool] = {
     "flask_api_base_url": DEFAULT_FLASK_API_BASE_URL,
+    "company_llm_base_url": DEFAULT_COMPANY_LLM_BASE_URL,
     "shared_api_key": "",
     "screen_analysis_service": DEFAULT_SCREEN_ANALYSIS_SERVICE,
     "screen_analysis_model_name": DEFAULT_SCREEN_ANALYSIS_MODEL_NAME,
@@ -74,17 +83,76 @@ SHARED_PIPELINE_SETTINGS: dict[str, str | bool] = {
 }
 
 ALL_VLM_SERVICES: list[VLMServiceEntry] = [
-    VLMServiceEntry("ui-venus", "UI-Venus-1.5-8B", UI_VENUS_MODEL_NAME, UI_VENUS_API_URL, enabled=True),
-    VLMServiceEntry("mai-ui", "MAI-UI-8B", MAI_UI_MODEL_NAME, MAI_UI_API_URL, enabled=True),
-    VLMServiceEntry("ui-tars", "UI-TARS-1.5-7B", UI_TARS_MODEL_NAME, UI_TARS_API_URL, enabled=True),
+    VLMServiceEntry(
+        "kimi-k2.5",
+        "Kimi-K2.5",
+        KIMI_K2_5_MODEL_NAME,
+        KIMI_K2_5_API_URL,
+        enabled=True,
+        connection_mode="direct",
+        prompt_family="gui",
+        benchmark_role="primary_gui",
+    ),
+    VLMServiceEntry(
+        "qwen3-vl-30b-instruct",
+        "Qwen3-VL-30B-Instruct",
+        QWEN3_VL_30B_INSTRUCT_MODEL_NAME,
+        QWEN3_VL_30B_INSTRUCT_API_URL,
+        enabled=True,
+        connection_mode="direct",
+        prompt_family="gui",
+        benchmark_role="primary_gui",
+    ),
+    VLMServiceEntry(
+        "ui-venus",
+        "UI-Venus-1.5-8B",
+        UI_VENUS_MODEL_NAME,
+        UI_VENUS_API_URL,
+        enabled=True,
+        connection_mode="proxy",
+        prompt_family="gui",
+        benchmark_role="primary_gui",
+    ),
+    VLMServiceEntry(
+        "mai-ui",
+        "MAI-UI-8B",
+        MAI_UI_MODEL_NAME,
+        MAI_UI_API_URL,
+        enabled=True,
+        connection_mode="proxy",
+        prompt_family="gui",
+        benchmark_role="zoom_in_sidecar",
+    ),
+    VLMServiceEntry(
+        "ui-tars",
+        "UI-TARS-1.5-7B",
+        UI_TARS_MODEL_NAME,
+        UI_TARS_API_URL,
+        enabled=True,
+        connection_mode="proxy",
+        prompt_family="gui",
+        benchmark_role="primary_gui",
+    ),
     VLMServiceEntry(
         "paddleocr-vl-1.5",
         "PaddleOCR-VL-1.5",
         PADDLEOCR_VL_1_5_MODEL_NAME,
         PADDLEOCR_VL_1_5_API_URL,
         enabled=True,
+        connection_mode="proxy",
+        prompt_family="ocr",
+        benchmark_role="ocr_default",
     ),
-    VLMServiceEntry("got-ocr", "GOT-OCR-2.0-hf", GOT_OCR_MODEL_NAME, GOT_OCR_API_URL, enabled=True),
+    VLMServiceEntry(
+        "got-ocr",
+        "GOT-OCR-2.0-hf",
+        GOT_OCR_MODEL_NAME,
+        GOT_OCR_API_URL,
+        enabled=True,
+        connection_mode="proxy",
+        prompt_family="ocr",
+        benchmark_role="ocr_fallback",
+    ),
 ]
 ENABLED_VLM_SERVICES: list[VLMServiceEntry] = [service for service in ALL_VLM_SERVICES if service.enabled]
 _SERVICE_MAP: dict[str, VLMServiceEntry] = {service.route_slug: service for service in ALL_VLM_SERVICES}
@@ -100,6 +168,18 @@ def get_service_by_slug(slug: str) -> VLMServiceEntry | None:
 def get_enabled_slugs() -> set[str]:
     """활성 서비스 route_slug 집합을 반환한다."""
     return {service.route_slug for service in ENABLED_VLM_SERVICES}
+
+
+def get_enabled_services_by_role(benchmark_role: str) -> list[VLMServiceEntry]:
+    """지정 benchmark_role 의 활성 서비스 목록을 반환한다."""
+    role = (benchmark_role or "").strip()
+    if not role:
+        return []
+    return [
+        service
+        for service in ENABLED_VLM_SERVICES
+        if service.benchmark_role == role
+    ]
 
 
 def _shared_text(name: str) -> str:
@@ -154,6 +234,8 @@ def resolve_service_proxy_url(
     """service slug 기준 Flask proxy base URL 을 반환한다."""
     service_entry = get_service_by_slug(service_slug)
     if service_entry is not None:
+        if service_entry.connection_mode == "direct":
+            return service_entry.api_url.rstrip("/")
         if flask_base_url is None:
             return service_entry.api_url.rstrip("/")
 
@@ -391,6 +473,7 @@ def apply_pipeline_env_defaults(
 
 __all__ = [
     "ALL_VLM_SERVICES",
+    "DEFAULT_COMPANY_LLM_BASE_URL",
     "DEFAULT_FLASK_API_BASE_URL",
     "DEFAULT_MAIN_TABS_API_URL",
     "DEFAULT_MAIN_TABS_MODEL_NAME",
@@ -406,10 +489,14 @@ __all__ = [
     "ENABLED_VLM_SERVICES",
     "GOT_OCR_API_URL",
     "GOT_OCR_MODEL_NAME",
+    "KIMI_K2_5_API_URL",
+    "KIMI_K2_5_MODEL_NAME",
     "MAI_UI_API_URL",
     "MAI_UI_MODEL_NAME",
     "PADDLEOCR_VL_1_5_API_URL",
     "PADDLEOCR_VL_1_5_MODEL_NAME",
+    "QWEN3_VL_30B_INSTRUCT_API_URL",
+    "QWEN3_VL_30B_INSTRUCT_MODEL_NAME",
     "SERVICE_API_URLS",
     "SERVICE_MODEL_NAMES",
     "SHARED_PIPELINE_SETTINGS",
@@ -421,6 +508,7 @@ __all__ = [
     "apply_pipeline_env_defaults",
     "fetch_vlm_health",
     "get_enabled_slugs",
+    "get_enabled_services_by_role",
     "get_service_by_slug",
     "normalize_vlm_health_entries",
     "resolve_flask_api_base_url",

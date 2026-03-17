@@ -82,6 +82,7 @@ __all__ = [
     "prompts",
     "util",
     "resolve_debug_model_name",
+    "login_benchmark",
     "login_rcs",
     "open_rcs",
     "vlm_client",

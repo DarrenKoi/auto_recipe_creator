@@ -19,30 +19,26 @@ import psutil
 
 from dotenv import load_dotenv
 
+from poc.work2.login_benchmark import (
+    benchmark_has_success,
+    print_benchmark_summary,
+    resolve_service_slugs_from_env,
+    run_login_benchmark,
+)
 from poc.work2.logger import log_work2_event
-from poc.work2.prompts import build_login_rcs_locator_prompt
 from poc.work2.util import (
     activate_window,
     capture_window,
-    debug_image_path,
-    encode_image_webp,
-    extract_json,
     find_window_by_pid_and_title_prefix,
     find_window_by_title_prefix,
     format_elapsed_ms,
     foreground_window,
     make_timestamp_tag,
-    parse_coords,
-    save_debug_jpeg,
-    save_debug_webp,
-    save_marked_image,
 )
-from poc.work2.vlm_client import Work2VLMClient
 
 load_dotenv()
 
 WINDOW_TITLE_PREFIX = "Remote Control System"
-LOGIN_SERVICE_SLUG = "ui-venus"
 DEBUG_IMAGE_DIR = Path(__file__).parent / "debug_images"
 OPEN_RCS_STATE_PATH = Path(__file__).parent / "logs" / "open_rcs_state.json"
 OPEN_RCS_SCRIPT_PATH = Path(__file__).parent / "open_rcs.py"
@@ -383,115 +379,56 @@ def _locate_login_controls(login_window, window_title: str, backend: str) -> str
             elapsed_ms=f"{(time.time() - locate_started_at) * 1000:.1f}",
         )
         return EXIT_CAPTURE_FAILED
-    client = Work2VLMClient(service_slug=LOGIN_SERVICE_SLUG, log_name=LOG_NAME)
-
-    raw_path = debug_image_path(
-        DEBUG_IMAGE_DIR,
-        "login_rcs_capture.jpg",
-        model_name=client.model_name,
-        timestamp_tag=debug_stamp,
-    )
-    save_debug_jpeg(image, raw_path, log_name=LOG_NAME)
-
-    vlm_input_path = debug_image_path(
-        DEBUG_IMAGE_DIR,
-        "login_rcs_vlm_input.webp",
-        model_name=client.model_name,
-        timestamp_tag=debug_stamp,
-    )
-    save_debug_webp(image, vlm_input_path, log_name=LOG_NAME)
-
-    image_b64, width, height = encode_image_webp(image)
-    system_message, user_text = build_login_rcs_locator_prompt(
-        width=width,
-        height=height,
-        target_keys=LOGIN_TARGET_KEYS,
-    )
-
+    service_slugs = resolve_service_slugs_from_env()
     print(
         f"[INFO] 로그인 창 분석 시작: backend={backend}, title={window_title!r}, "
-        f"size={width}x{height}"
+        f"service_slugs={', '.join(service_slugs)}"
     )
-    print(
-        f"[INFO] VLM 요청: service={client.service_slug}, "
-        f"model={client.model_name}, endpoint={client.endpoint}"
-    )
+
     try:
-        response = client.chat_with_image_b64(
-            image_b64=image_b64,
-            image_mime="image/webp",
-            system_message=system_message,
-            user_text=user_text,
+        results = run_login_benchmark(
+            image=image,
+            service_slugs=service_slugs,
+            debug_image_dir=DEBUG_IMAGE_DIR,
+            debug_stamp=debug_stamp,
+            target_keys=LOGIN_TARGET_KEYS,
+            element_colors=ELEMENT_COLORS,
             temperature=VLM_TEMPERATURE,
+            base_log_name=LOG_NAME,
+            context_fields={
+                "backend": backend,
+                "window_title": window_title,
+            },
         )
-    except Exception as exc:
-        print(f"[ERROR] VLM 요청 실패: {exc}")
+    except ValueError as exc:
+        print(f"[ERROR] 로그인 벤치마크 설정 오류: {exc}")
         log_work2_event(
             component="login_rcs",
-            message="vlm_request_failed",
+            message="benchmark_configuration_invalid",
             level="error",
             log_name=LOG_NAME,
-            service=client.service_slug,
+            backend=backend,
+            window_title=window_title,
             error=exc,
             elapsed_ms=f"{(time.time() - locate_started_at) * 1000:.1f}",
         )
         return EXIT_VLM_REQUEST_ERROR
 
-    print(f"[INFO] VLM 응답 수신: tokens={response.token_usage or {}}")
-    print(f"[INFO] 원문 응답:\n{response.text}\n")
-
-    try:
-        data = extract_json(response.text)
-    except Exception as exc:
-        print(f"[ERROR] VLM 응답 JSON 파싱 실패: {exc}")
-        log_work2_event(
-            component="login_rcs",
-            message="vlm_json_parse_failed",
-            level="error",
-            log_name=LOG_NAME,
-            service=client.service_slug,
-            raw_text=response.text[:500],
-            error=exc,
-            elapsed_ms=f"{(time.time() - locate_started_at) * 1000:.1f}",
-        )
-        return EXIT_VLM_PARSE_ERROR
-
-    print(f"[INFO] 파싱된 JSON:\n{json.dumps(data, indent=2)}\n")
-    parsed = parse_coords(data, LOGIN_TARGET_KEYS, width, height)
-
-    detected = sum(
-        1 for key in LOGIN_TARGET_KEYS if key in parsed and isinstance(parsed[key], dict)
-    )
-    print(f"[INFO] 검출 결과: {detected}/{len(LOGIN_TARGET_KEYS)}")
-
-    overlay_path = debug_image_path(
-        DEBUG_IMAGE_DIR,
-        "login_rcs_overlay.jpg",
-        model_name=response.model_name or client.model_name,
-        timestamp_tag=debug_stamp,
-    )
-    save_marked_image(image, parsed, ELEMENT_COLORS, overlay_path)
-    print(
-        "[INFO] 디버그 이미지: "
-        f"capture={raw_path}, vlm_input={vlm_input_path}, overlay={overlay_path}"
-    )
+    print_benchmark_summary(results)
+    best_detected = max((item.detected_count for item in results), default=0)
     print(f"[INFO] 로그인 이미지 분석 전체 소요: {format_elapsed_ms(locate_started_at)}")
     log_work2_event(
         component="login_rcs",
-        message="analysis_finished",
+        message="benchmark_finished",
         log_name=LOG_NAME,
-        service=client.service_slug,
-        model=response.model_name or client.model_name,
         backend=backend,
         window_title=window_title,
-        capture_path=raw_path,
-        vlm_input_path=vlm_input_path,
-        overlay_path=overlay_path,
-        detected=detected,
+        service_slugs=",".join(item.service_slug for item in results),
+        best_detected=best_detected,
         target_count=len(LOGIN_TARGET_KEYS),
         elapsed_ms=f"{(time.time() - locate_started_at) * 1000:.1f}",
     )
-    return EXIT_SUCCESS if detected > 0 else EXIT_VLM_NO_DETECTION
+    return EXIT_SUCCESS if benchmark_has_success(results) else EXIT_VLM_NO_DETECTION
 
 
 def main() -> str:

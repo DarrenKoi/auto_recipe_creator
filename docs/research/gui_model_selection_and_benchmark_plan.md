@@ -21,11 +21,12 @@
 
 ## 로컬 설정 스냅샷
 
-현재 저장소 안의 설정 파일 기준으로는 아래 5개 서비스가 모두 등록되어 있다.
+현재 저장소 안의 설정 파일 기준으로는 아래 7개 서비스가 모두 등록되어 있다.
 
 | 역할 | 서비스 | 비고 |
 |------|--------|------|
 | 외부 baseline | `Kimi-K2.5` | 회사 API 경로를 통한 기준선 |
+| 외부 baseline | `Qwen3-VL-30B-Instruct` | 회사 API 경로를 통한 대형 비교축 |
 | GUI primary A | `ui-venus` | 기본 full-screen grounding 후보 |
 | GUI primary B | `ui-tars` | 비교용 full-screen grounding 후보 |
 | zoom-in sidecar | `mai-ui` | 작은 crop 재탐색 |
@@ -41,10 +42,26 @@
 가장 먼저 비교할 축은 아래다.
 
 1. `Kimi-K2.5` full-screen pass
-2. `UI-Venus` full-screen pass
-3. `UI-TARS` full-screen pass
+2. `Qwen3-VL-30B-Instruct` full-screen pass
+3. `UI-Venus` full-screen pass
+4. `UI-TARS` full-screen pass
 
 이 단계에서는 sidecar를 붙이지 않는다. 그래야 coarse grounding 자체의 차이를 분리해서 볼 수 있다.
+
+### `poc/work2` 시작점
+
+현재 저장소에서는 로그인 화면 기준 1차 비교를 아래처럼 맞춘다.
+
+1. `uv run python poc/work2/open_rcs.py`
+2. `uv run python poc/work2/login_rcs.py`
+
+기본 비교 서비스는 `kimi-k2.5`, `qwen3-vl-30b-instruct`, `ui-venus`, `ui-tars` 순서다.
+필요하면 `RCS_LOGIN_SERVICE_SLUGS=ui-venus,ui-tars`처럼 override 한다.
+
+디버그 산출물은 모델명 기준으로 분리한다.
+
+- 이미지: `poc/work2/debug_images/<model-slug>/...`
+- 로그: `poc/work2/logs/login_rcs_<model-slug>.log`
 
 ### 2단계: zoom-in sidecar 추가
 

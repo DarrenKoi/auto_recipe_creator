@@ -3,13 +3,22 @@
 import base64
 from io import BytesIO
 
-import mss
-import mss.tools
 from PIL import Image
+
+try:
+    import mss
+    import mss.tools
+
+    MSS_AVAILABLE = True
+except ImportError:
+    MSS_AVAILABLE = False
 
 
 def capture_window(window) -> "Image.Image":
     """pywinauto 창 영역을 mss로 캡처하여 PIL Image로 반환한다."""
+    if not MSS_AVAILABLE:
+        raise ImportError("mss 라이브러리가 필요합니다.")
+
     rect = window.rectangle()
     region = {
         "left": rect.left,

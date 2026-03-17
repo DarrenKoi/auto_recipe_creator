@@ -116,6 +116,16 @@ def _probe_url(url: str) -> dict:
     return result
 
 
+def _build_models_url(base_url: str) -> str:
+    """OpenAI-compatible base URL 에서 `/models` probe URL 을 만든다."""
+    normalized = (base_url or "").strip().rstrip("/")
+    if not normalized:
+        return ""
+    if normalized.endswith("/v1"):
+        return f"{normalized}/models"
+    return f"{normalized}/v1/models"
+
+
 def check_flask_health(flask_base_url: str) -> dict | None:
     """Flask /api/vlm_serve/health 엔드포인트를 호출한다."""
     health_url = resolve_vlm_health_url(flask_base_url=flask_base_url)
@@ -148,7 +158,7 @@ def check_proxy_models(flask_base_url: str, target_services: list[dict[str, obje
                 route_slug,
                 flask_base_url=flask_base_url,
             )
-        proxy_url = f"{proxy_base_url.rstrip('/')}/v1/models" if proxy_base_url else ""
+        proxy_url = _build_models_url(proxy_base_url)
         probe = dict(target)
         probe["url"] = proxy_url
 

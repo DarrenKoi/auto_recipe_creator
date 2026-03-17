@@ -43,7 +43,7 @@ OPEN_RCS_STATE_PATH = Path(__file__).parent / "logs" / "open_rcs_state.json"
 OPEN_RCS_SCRIPT_PATH = Path(__file__).parent / "open_rcs.py"
 LOG_NAME = Path(__file__).stem
 COMPONENT_NAME = LOG_NAME
-REV2_SERVICE_SLUGS = ("ui-venus", "ui-tars")
+REV2_SERVICE_SLUGS = ("ui-venus", "mai-ui")
 LOGIN_TARGET_KEYS = [
     "window_title_text",
     "close_button",

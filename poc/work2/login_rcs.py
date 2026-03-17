@@ -80,7 +80,6 @@ LOGIN_WINDOW_MAX_AREA = int(os.getenv("RCS_LOGIN_WINDOW_MAX_AREA", "500000"))
 EXIT_SUCCESS = "success"
 EXIT_LOGIN_WINDOW_NOT_FOUND = "login_window_not_found"
 EXIT_LOGIN_WINDOW_ACTIVATE_FAILED = "login_window_activate_failed"
-EXIT_LOGIN_WINDOW_SIZE_MISMATCH = "login_window_size_mismatch"
 EXIT_VLM_NO_DETECTION = "vlm_no_detection"
 EXIT_VLM_REQUEST_ERROR = "vlm_request_error"
 EXIT_VLM_PARSE_ERROR = "vlm_parse_error"
@@ -103,28 +102,6 @@ def _read_window_size(window) -> tuple[int, int, int] | None:
     width = max(0, int(rect.right - rect.left))
     height = max(0, int(rect.bottom - rect.top))
     return width, height, width * height
-
-
-def _is_probable_login_dialog(window, window_title: str) -> bool:
-    """선택된 창이 로그인 대화상자 크기 범위인지 점검한다."""
-    size_info = _read_window_size(window)
-    if size_info is None:
-        return False
-
-    width, height, area = size_info
-    print(
-        "[INFO] 로그인 창 크기 점검 "
-        f"title={window_title!r}, size={width}x{height}, area={area}, "
-        f"limits={LOGIN_WINDOW_MAX_WIDTH}x{LOGIN_WINDOW_MAX_HEIGHT}, "
-        f"max_area={LOGIN_WINDOW_MAX_AREA}"
-    )
-    return (
-        width > 0
-        and height > 0
-        and width <= LOGIN_WINDOW_MAX_WIDTH
-        and height <= LOGIN_WINDOW_MAX_HEIGHT
-        and area <= LOGIN_WINDOW_MAX_AREA
-    )
 
 
 def _login_window_filter(window, window_title: str) -> bool:
@@ -541,39 +518,6 @@ def main() -> str:
             title_prefix=WINDOW_TITLE_PREFIX,
         )
         return EXIT_LOGIN_WINDOW_NOT_FOUND
-
-    if not activate_window(
-        login_window,
-        debug_label=f"login_window backend={backend} title={window_title!r}",
-    ):
-        print(f"[ERROR] 로그인 창 활성화 실패: title={window_title!r}, backend={backend}")
-        log_work2_event(
-            component="login_rcs",
-            message="login_window_activate_failed",
-            level="error",
-            log_name=LOG_NAME,
-            title=window_title,
-            backend=backend,
-        )
-        return EXIT_LOGIN_WINDOW_ACTIVATE_FAILED
-
-    if not _is_probable_login_dialog(login_window, window_title):
-        print(
-            "[ERROR] 선택된 창이 로그인 대화상자 크기 범위를 벗어났습니다. "
-            "로그인 후 메인 창일 가능성이 큽니다."
-        )
-        log_work2_event(
-            component="login_rcs",
-            message="login_window_size_mismatch",
-            level="error",
-            log_name=LOG_NAME,
-            title=window_title,
-            backend=backend,
-            max_width=LOGIN_WINDOW_MAX_WIDTH,
-            max_height=LOGIN_WINDOW_MAX_HEIGHT,
-            max_area=LOGIN_WINDOW_MAX_AREA,
-        )
-        return EXIT_LOGIN_WINDOW_SIZE_MISMATCH
 
     result = _locate_login_controls(login_window, window_title, backend)
     print(f"[INFO] login_rcs end-to-end 소요: {format_elapsed_ms(script_started_at)}")

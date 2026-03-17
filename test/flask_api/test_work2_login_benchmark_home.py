@@ -66,19 +66,16 @@ def test_build_models_url_accepts_direct_v1_base_url():
     )
 
 
-def test_company_llm_api_key_slot_is_used_for_direct_models():
-    original = SHARED_PIPELINE_SETTINGS.get("company_llm_api_key", "")
-    try:
-        SHARED_PIPELINE_SETTINGS["company_llm_api_key"] = "test-company-key"
+def test_company_llm_api_key_uses_work2_env_file_convention(monkeypatch):
+    monkeypatch.setenv("WORK2_COMPANY_LLM_API_KEY", "test-company-key")
 
-        assert resolve_company_llm_api_key() == "test-company-key"
-        assert resolve_service_api_key("kimi-k2.5") == "test-company-key"
-        assert resolve_service_api_key("qwen3-vl-30b-instruct") == "test-company-key"
+    assert "company_llm_api_key" not in SHARED_PIPELINE_SETTINGS
+    assert resolve_company_llm_api_key() == "test-company-key"
+    assert resolve_service_api_key("kimi-k2.5") == "test-company-key"
+    assert resolve_service_api_key("qwen3-vl-30b-instruct") == "test-company-key"
 
-        client = Work2VLMClient(service_slug="kimi-k2.5")
-        assert client.api_key == "test-company-key"
-    finally:
-        SHARED_PIPELINE_SETTINGS["company_llm_api_key"] = original
+    client = Work2VLMClient(service_slug="kimi-k2.5")
+    assert client.api_key == "test-company-key"
 
 
 def test_extract_json_repairs_common_ui_model_almost_json_shapes():

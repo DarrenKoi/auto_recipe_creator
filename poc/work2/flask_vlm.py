@@ -1,16 +1,32 @@
 """`poc.work2`에서 공용으로 사용하는 purpose-based VLM 설정 유틸리티.
 
 이 파일은 팀 공용 기본값의 단일 진입점이다.
-동료들은 별도 `.env` 없이도 `poc/work2` 스크립트를 바로 실행할 수 있어야 하므로,
 Flask proxy 주소와 목적별(screen_analysis, main_tabs, ocr) 모델 선택을 여기서 함께 관리한다.
+민감한 값이 필요한 경우에는 코드 수정 대신 `poc/work2/.env` 에서 읽는다.
 즉, `poc/work2` 는 서버 저장소 내부의 `flask_api` 코드나 환경변수에 의존하지 않는다.
 """
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import requests
+
+try:
+    from dotenv import load_dotenv
+
+    DOTENV_AVAILABLE = True
+except ImportError:
+    DOTENV_AVAILABLE = False
+
+
+WORK2_DIR = Path(__file__).resolve().parent
+WORK2_DOTENV_PATH = WORK2_DIR / ".env"
+WORK2_COMPANY_LLM_API_KEY_ENV = "WORK2_COMPANY_LLM_API_KEY"
+
+if DOTENV_AVAILABLE and WORK2_DOTENV_PATH.is_file():
+    load_dotenv(WORK2_DOTENV_PATH)
 
 
 @dataclass(frozen=True)
@@ -62,15 +78,14 @@ DEFAULT_OCR_PIPELINE_ENABLED = True
 # 의도:
 # 1) 동료 PC마다 별도 `.env` 파일을 만들지 않는다.
 # 2) 목적별 모델 선택을 코드에서 명시한다.
-# 3) 필요 시 direct URL/API key 도 여기서만 관리한다.
+# 3) 민감한 API key 는 코드가 아니라 `poc/work2/.env` 에 둔다.
 SHARED_PIPELINE_SETTINGS: dict[str, str | bool] = {
     "flask_api_base_url": DEFAULT_FLASK_API_BASE_URL,
 
     # 회사 공용 direct LLM (`common.llm.skhynix.com`) 연결 정보.
-    # `Kimi-K2.5`, `Qwen3-VL-30B-Instruct` 가 이 값을 사용한다.
-    # 필요 시 아래 `company_llm_api_key` 에 본인 API key 를 넣는다.
+    # `Kimi-K2.5`, `Qwen3-VL-30B-Instruct` 가 이 base URL 을 사용한다.
+    # API key 는 `poc/work2/.env` 의 `WORK2_COMPANY_LLM_API_KEY` 에 넣는다.
     "company_llm_base_url": DEFAULT_COMPANY_LLM_BASE_URL,
-    "company_llm_api_key": "",
 
     "shared_api_key": "",
     "screen_analysis_service": DEFAULT_SCREEN_ANALYSIS_SERVICE,
@@ -348,7 +363,7 @@ def resolve_company_llm_api_base_url() -> str:
 
 def resolve_company_llm_api_key() -> str:
     """회사 공용 direct LLM API key 를 반환한다."""
-    return _shared_text("company_llm_api_key") or resolve_shared_api_key()
+    return os.getenv(WORK2_COMPANY_LLM_API_KEY_ENV, "").strip() or resolve_shared_api_key()
 
 
 def resolve_service_api_key(service_slug: str, default: str = "") -> str:

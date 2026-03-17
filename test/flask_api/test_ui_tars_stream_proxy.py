@@ -61,3 +61,36 @@ def test_ui_tars_proxy_preserves_stream_flag(monkeypatch):
     assert b"delta" in response.data
     payload = json.loads(captured["data"].decode("utf-8"))
     assert payload["stream"] is True
+
+
+def test_ui_tars_proxy_forces_stream_when_client_sent_false(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_request(**kwargs):
+        captured.update(kwargs)
+        return DummyResponse(
+            status_code=200,
+            body=(
+                b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
+                b"data: [DONE]\n\n"
+            ),
+            headers={"Content-Type": "text/event-stream"},
+        )
+
+    monkeypatch.setattr("flask_api.vlm_serve.service_template.requests.request", fake_request)
+
+    app = _create_test_app()
+    client = app.test_client()
+
+    response = client.post(
+        "/api/vlm_serve/ui-tars/v1/chat/completions",
+        json={
+            "model": "ui-tars-1.5-7b",
+            "stream": False,
+            "messages": [{"role": "user", "content": "ping"}],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = json.loads(captured["data"].decode("utf-8"))
+    assert payload["stream"] is True

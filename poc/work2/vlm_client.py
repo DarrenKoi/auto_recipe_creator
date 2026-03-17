@@ -192,6 +192,28 @@ class OpenAICompatibleVLMClient:
 
         return ""
 
+    @staticmethod
+    def _extract_finish_reasons(data: object) -> list[str]:
+        """choices 에 담긴 finish_reason 목록을 추출한다."""
+        if not isinstance(data, dict):
+            return []
+
+        choices = data.get("choices")
+        if not isinstance(choices, list):
+            return []
+
+        reasons: list[str] = []
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            reason = choice.get("finish_reason")
+            if reason is None:
+                continue
+            text = str(reason).strip()
+            if text:
+                reasons.append(text)
+        return reasons
+
     @classmethod
     def _extract_text_from_sse_body(cls, body_text: str) -> str:
         if not body_text:
@@ -328,6 +350,9 @@ class OpenAICompatibleVLMClient:
                     f"completion={usage.get('completion_tokens', '?')}, "
                     f"total={usage.get('total_tokens', '?')}"
                 )
+            finish_reasons = self._extract_finish_reasons(data)
+            if finish_reasons:
+                print(f"[INFO] VLM finish_reason: {finish_reasons}")
             text = self._extract_text_from_json_body(data)
             if text:
                 return text

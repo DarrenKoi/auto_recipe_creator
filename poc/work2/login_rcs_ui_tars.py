@@ -69,6 +69,23 @@ try:
 except ValueError:
     VLM_TEMPERATURE = 0.0
 
+
+def resolve_ui_tars_stream_override() -> bool | None:
+    """UI-TARS stream 사용 여부를 환경변수에서 읽는다."""
+    raw = os.getenv("UI_TARS_STREAM", "auto").strip().lower()
+    if not raw or raw == "auto":
+        return None
+    if raw in {"1", "true", "yes", "on", "stream"}:
+        return True
+    if raw in {"0", "false", "no", "off", "nostream"}:
+        return False
+
+    print(
+        f"[WARNING] UI_TARS_STREAM 값이 잘못되었습니다: {raw!r}. "
+        "service 기본 stream 설정을 사용합니다."
+    )
+    return None
+
 # ── Action 파싱 패턴 ─────────────────────────────────────────────────
 # click(start_box='(197,525)') 형태에서 좌표를 추출한다.
 _ACTION_COORD_PATTERN = re.compile(
@@ -198,6 +215,7 @@ def run_ui_tars_batch_analysis(
     target_keys: tuple[str, ...] = DEFAULT_UI_TARS_TARGET_KEYS,
     element_colors: dict[str, str] | None = None,
     temperature: float = 0.0,
+    stream: bool | None = None,
 ) -> dict:
     """캡처된 로그인 이미지를 UI-TARS 에 한 번에 보내 전체 요소를 탐색한다."""
     colors = element_colors or ELEMENT_COLORS
@@ -237,7 +255,8 @@ def run_ui_tars_batch_analysis(
     print(
         f"[INFO] UI-TARS 배치 분석 시작: "
         f"model={client.model_name}, endpoint={client.endpoint}, "
-        f"image={width}x{height}"
+        f"image={width}x{height}, "
+        f"stream={client.prefer_stream if stream is None else stream}"
     )
 
     started_at = time.time()
@@ -249,7 +268,7 @@ def run_ui_tars_batch_analysis(
             user_text=user_text,
             temperature=temperature,
             max_tokens=UI_TARS_MAX_TOKENS,
-            stream=False,
+            stream=stream,
         )
     except Exception as exc:
         elapsed_ms = (time.time() - started_at) * 1000
@@ -320,6 +339,7 @@ def run_ui_tars_per_element_analysis(
     target_keys: tuple[str, ...] = DEFAULT_UI_TARS_TARGET_KEYS,
     element_colors: dict[str, str] | None = None,
     temperature: float = 0.0,
+    stream: bool | None = None,
 ) -> dict:
     """각 요소를 개별 요청으로 하나씩 탐색한다 (느리지만 더 정확할 수 있음)."""
     colors = element_colors or ELEMENT_COLORS
@@ -357,7 +377,7 @@ def run_ui_tars_per_element_analysis(
                 user_text=user_text,
                 temperature=temperature,
                 max_tokens=200,
-                stream=False,
+                stream=stream,
             )
         except Exception as exc:
             print(f"  [ERROR] {key} 요청 실패: {exc}")
@@ -459,6 +479,7 @@ def main() -> str:
 
     # 배치 모드(기본) vs 개별 모드 vs 진단 프로브 선택
     mode = os.getenv("UI_TARS_MODE", "batch").strip().lower()
+    stream_override = resolve_ui_tars_stream_override()
 
     if mode == "probe":
         print("[INFO] UI-TARS 진단 프로브 모드 (텍스트 전용, 창 불필요)")
@@ -503,6 +524,7 @@ def main() -> str:
             debug_image_dir=DEBUG_IMAGE_DIR,
             debug_stamp=debug_stamp,
             temperature=VLM_TEMPERATURE,
+            stream=stream_override,
         )
     else:
         print("[INFO] UI-TARS 배치 모드 실행")
@@ -511,6 +533,7 @@ def main() -> str:
             debug_image_dir=DEBUG_IMAGE_DIR,
             debug_stamp=debug_stamp,
             temperature=VLM_TEMPERATURE,
+            stream=stream_override,
         )
 
     status = result.get("status", "unknown")

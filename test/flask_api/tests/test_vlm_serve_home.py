@@ -66,6 +66,7 @@ def test_vlm_serve_root_returns_live_health_payload(client, monkeypatch):
     assert set(payload["registered_vlms"]) == {
         "ui-venus",
         "mai-ui",
+        "ui-tars",
         "paddleocr-vl-1.5",
         "got-ocr",
     }
@@ -99,6 +100,7 @@ def test_vlm_serve_health_lists_serving_models(client, monkeypatch):
     assert set(payload["registered_vlms"]) == {
         "ui-venus",
         "mai-ui",
+        "ui-tars",
         "paddleocr-vl-1.5",
         "got-ocr",
     }
@@ -113,6 +115,7 @@ def test_vlm_serve_health_lists_serving_models(client, monkeypatch):
     }
     assert status_map["ui-venus"]["health_status"] == "serving"
     assert status_map["mai-ui"]["health_status"] == "unreachable"
+    assert status_map["ui-tars"]["health_status"] == "unreachable"
     assert status_map["paddleocr-vl-1.5"]["health_status"] == "serving"
     assert status_map["got-ocr"]["health_status"] == "unreachable"
 

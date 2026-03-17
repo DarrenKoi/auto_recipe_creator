@@ -7,6 +7,7 @@ SERVICE_CONFIG = VLMServiceConfig(
     route_slug="ui-tars",
     display_name="UI-TARS-1.5-7B",
     upstream_port=8003,
+    force_stream=True,
 )
 service_blueprint = create_vlm_service_blueprint(SERVICE_CONFIG)
 

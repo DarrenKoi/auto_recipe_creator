@@ -1,10 +1,11 @@
 """VLM 서비스 blueprint template.
 
 이미지 분석 전용 프록시이지만, upstream 이 `stream=true` 에서만
-정상적인 assistant content 를 주는 경우가 있어 요청 body 는 그대로 전달한다.
+정상적인 assistant content 를 주는 경우가 있어 서비스별 최소 보정을 허용한다.
 프록시 자체는 upstream 응답을 끝까지 버퍼링한 뒤 그대로 반환한다.
 """
 
+import json
 import logging
 import os
 import time
@@ -26,6 +27,7 @@ class VLMServiceConfig:
     route_slug: str
     display_name: str
     upstream_port: int
+    force_stream: bool = False
 
     @property
     def env_prefix(self) -> str:
@@ -75,10 +77,50 @@ def _upstream_timeout() -> tuple[float, float]:
     return connect_timeout, read_timeout
 
 
-def _prepare_upstream_body(raw_body: bytes, content_type: str) -> bytes:
+def _prepare_upstream_body(
+    config: VLMServiceConfig,
+    upstream_path: str,
+    raw_body: bytes,
+    content_type: str,
+) -> bytes:
     """요청 body 를 upstream 으로 넘기기 전에 필요한 최소 보정만 수행한다."""
-    del content_type
-    return raw_body
+    if not raw_body:
+        return raw_body
+
+    if not config.force_stream:
+        return raw_body
+
+    normalized_path = f"/{upstream_path.lstrip('/')}"
+    if normalized_path != "/v1/chat/completions":
+        return raw_body
+
+    if "json" not in (content_type or "").lower():
+        return raw_body
+
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except Exception:
+        logger.warning(
+            "could not coerce stream flag service=%s path=%s content_type=%s",
+            config.route_slug,
+            normalized_path,
+            content_type,
+        )
+        return raw_body
+
+    if not isinstance(payload, dict):
+        return raw_body
+
+    if payload.get("stream") is True:
+        return raw_body
+
+    payload["stream"] = True
+    logger.info(
+        "forcing stream=true service=%s path=%s",
+        config.route_slug,
+        normalized_path,
+    )
+    return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
 
 def _build_upstream_headers() -> dict[str, str]:
@@ -123,6 +165,8 @@ def _proxy_request(config: VLMServiceConfig, upstream_path: str):
     upstream_url = f"{config.upstream_base_url.rstrip('/')}/{upstream_path.lstrip('/')}"
     start_time = time.monotonic()
     request_body = _prepare_upstream_body(
+        config,
+        upstream_path,
         request.get_data(cache=True),
         request.content_type or "",
     )

@@ -55,6 +55,7 @@ DEFAULT_VARIANTS = (
     "script_nonstream",
     "script_stream",
     "script_stream_with_system",
+    "single_element_image_first_stream",
     "single_element_stream",
 )
 
@@ -255,6 +256,47 @@ def extract_text(data: object, raw_text: str) -> str:
     return OpenAICompatibleVLMClient._extract_text_from_sse_body(raw_text)
 
 
+def summarize_sse_body(raw_text: str) -> dict[str, object]:
+    """SSE body 구조를 간단히 요약한다."""
+    lines = [line.strip() for line in (raw_text or "").splitlines() if line.strip()]
+    data_lines = [line for line in lines if line.startswith("data:")]
+    content_chunks = 0
+    role_only_chunks = 0
+    done_markers = 0
+
+    for line in data_lines:
+        payload_text = line[5:].strip()
+        if payload_text == "[DONE]":
+            done_markers += 1
+            continue
+        try:
+            payload = json.loads(payload_text)
+        except Exception:
+            continue
+        choices = payload.get("choices") if isinstance(payload, dict) else None
+        if not isinstance(choices, list):
+            continue
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            delta = choice.get("delta")
+            if not isinstance(delta, dict):
+                continue
+            if delta.get("content"):
+                content_chunks += 1
+            elif delta.get("role") and len(delta) == 1:
+                role_only_chunks += 1
+
+    return {
+        "line_count": len(lines),
+        "data_line_count": len(data_lines),
+        "content_chunks": content_chunks,
+        "role_only_chunks": role_only_chunks,
+        "done_markers": done_markers,
+        "done_only": bool(data_lines) and content_chunks == 0 and role_only_chunks == 0 and done_markers > 0,
+    }
+
+
 def build_messages(
     *,
     system_message: str,
@@ -387,6 +429,28 @@ def build_variant_payload(
             "stream": True,
         }
 
+    if variant == "single_element_image_first_stream":
+        _, user_text = build_single_element_prompt("login_button")
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/webp;base64,{image_b64}"},
+                    },
+                    {"type": "text", "text": user_text},
+                ],
+            },
+        ]
+        return {
+            "model": model_name,
+            "messages": messages,
+            "temperature": 0.0,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+
     if variant == "script_stream_max_new_tokens":
         _, user_text = build_login_rcs_ui_tars_prompt(
             target_keys=("userid_input", "password_input", "login_button")
@@ -481,23 +545,27 @@ def run_variant(
         text = extract_text(body_json, body_text)
         usage = body_json.get("usage") if isinstance(body_json, dict) else {}
         finish_reasons = extract_finish_reasons(body_json)
+        content_type = response.headers.get("content-type", "")
+        sse_summary = summarize_sse_body(body_text) if "event-stream" in content_type else {}
         summary = {
             "variant": variant,
             "status": "ok" if response.status_code < 400 else "http_error",
             "status_code": response.status_code,
-            "content_type": response.headers.get("content-type", ""),
+            "content_type": content_type,
             "elapsed_ms": round(elapsed_ms, 1),
             "usage": usage or {},
             "finish_reasons": finish_reasons,
             "response_chars": len(body_text),
             "extracted_text": text,
+            "raw_preview": body_text[:500],
+            "sse_summary": sse_summary,
             "response_path": str(response_path),
         }
         _write_json(summary_path, summary)
         print(
             f"[RESULT] {variant:28s} status={response.status_code} "
             f"usage={usage or {}} finish={finish_reasons or []} "
-            f"text={_truncate(text)}"
+            f"sse={sse_summary or {}} text={_truncate(text)}"
         )
         if response.status_code >= 400:
             print(f"[ERROR] {variant} raw body: {_truncate(body_text, limit=400)}")

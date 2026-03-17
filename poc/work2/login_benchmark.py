@@ -12,10 +12,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+import requests
+
 from poc.work2 import resolve_debug_model_name
 from poc.work2.flask_vlm import (
     get_enabled_services_by_role,
     get_service_by_slug,
+    resolve_service_proxy_url,
 )
 from poc.work2.logger import log_work2_event
 from poc.work2.prompts import build_login_rcs_locator_prompt
@@ -43,6 +46,9 @@ OCR_LOGIN_EXTRA_INSTRUCTIONS = (
 STATUS_OK = "ok"
 STATUS_REQUEST_ERROR = "request_error"
 STATUS_PARSE_ERROR = "parse_error"
+STATUS_SKIPPED_UNHEALTHY = "skipped_unhealthy"
+
+HEALTH_PROBE_TIMEOUT_SEC = float(os.getenv("VLM_HEALTH_PROBE_TIMEOUT_SEC", "5.0"))
 
 
 @dataclass(frozen=True)
@@ -123,6 +129,76 @@ def build_prompt_for_service(
 def build_model_log_name(base_log_name: str, model_name: str) -> str:
     """모델명 기준 파일 로그명을 만든다."""
     return f"{(base_log_name or 'work2').strip() or 'work2'}_{resolve_debug_model_name(model_name)}"
+
+
+def _probe_service_health(service_slug: str) -> tuple[bool, str]:
+    """서비스의 /v1/models 를 호출하여 정상 여부를 빠르게 확인한다.
+
+    Returns:
+        (healthy, reason) 튜플. healthy=True 이면 모델이 서빙 중.
+    """
+    from poc.work2.flask_vlm import resolve_service_api_key
+
+    base_url = resolve_service_proxy_url(service_slug)
+    if not base_url:
+        return False, "proxy URL 미확인"
+
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/v1"):
+        models_url = f"{normalized}/models"
+    else:
+        models_url = f"{normalized}/v1/models"
+
+    headers: dict[str, str] = {}
+    api_key = resolve_service_api_key(service_slug)
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        resp = requests.get(models_url, headers=headers, timeout=HEALTH_PROBE_TIMEOUT_SEC)
+    except requests.RequestException as exc:
+        return False, f"probe 연결 실패: {exc}"
+
+    if resp.status_code >= 400:
+        return False, f"probe HTTP {resp.status_code}"
+
+    try:
+        body = resp.json()
+    except ValueError:
+        return False, "probe 응답이 JSON 이 아님"
+
+    data = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(data, list) or not data:
+        return False, f"probe 모델 목록 비어 있음: {str(body)[:120]}"
+
+    model_ids = [item.get("id", "") for item in data if isinstance(item, dict)]
+    return True, f"serving: {', '.join(model_ids)}"
+
+
+def _make_skipped_result(
+    service_slug: str,
+    display_name: str,
+    model_name: str,
+    target_count: int,
+    reason: str,
+) -> LoginBenchmarkResult:
+    """건강하지 않은 서비스를 건너뛸 때 사용하는 결과를 생성한다."""
+    return LoginBenchmarkResult(
+        service_slug=service_slug,
+        display_name=display_name,
+        model_name=model_name,
+        status=STATUS_SKIPPED_UNHEALTHY,
+        detected_count=0,
+        target_count=target_count,
+        elapsed_ms=0.0,
+        raw_capture_path=Path(),
+        vlm_input_path=Path(),
+        overlay_path=None,
+        raw_response_path=None,
+        parsed_json_path=None,
+        token_usage={},
+        error=reason,
+    )
 
 
 def _write_debug_text(path: Path, text: str) -> None:
@@ -338,15 +414,46 @@ def run_login_benchmark(
 ) -> list[LoginBenchmarkResult]:
     """여러 서비스에 동일 로그인 이미지를 보내어 결과를 수집한다."""
     resolved_slugs = parse_service_slugs(",".join(service_slugs), ())
+    target_key_list = list(target_keys)
     results: list[LoginBenchmarkResult] = []
     for service_slug in resolved_slugs:
+        service_entry = get_service_by_slug(service_slug)
+        if service_entry is None:
+            continue
+
+        healthy, reason = _probe_service_health(service_slug)
+        if not healthy:
+            print(
+                f"[WARNING] {service_slug} 건강 점검 실패 → 건너뜀: {reason}"
+            )
+            log_work2_event(
+                component="login_benchmark",
+                message="service_skipped_unhealthy",
+                level="warning",
+                log_name=base_log_name,
+                service=service_slug,
+                model=service_entry.model_name,
+                reason=reason,
+            )
+            results.append(
+                _make_skipped_result(
+                    service_slug=service_slug,
+                    display_name=service_entry.display_name,
+                    model_name=service_entry.model_name,
+                    target_count=len(target_key_list),
+                    reason=reason,
+                )
+            )
+            continue
+
+        print(f"[INFO] {service_slug} 건강 점검 통과: {reason}")
         results.append(
             run_login_analysis_for_service(
                 image=image,
                 service_slug=service_slug,
                 debug_image_dir=debug_image_dir,
                 debug_stamp=debug_stamp,
-                target_keys=target_keys,
+                target_keys=target_key_list,
                 element_colors=element_colors,
                 temperature=temperature,
                 base_log_name=base_log_name,
@@ -374,7 +481,10 @@ def print_benchmark_summary(results: Iterable[LoginBenchmarkResult]) -> None:
     for item in rows:
         detected = f"{item.detected_count}/{item.target_count}"
         latency = f"{item.elapsed_ms:.1f}ms"
-        note = str(item.raw_response_path or item.error or "-")
+        if item.status == STATUS_SKIPPED_UNHEALTHY:
+            note = item.error or "unhealthy"
+        else:
+            note = str(item.raw_response_path or item.error or "-")
         print(
             f"  {item.service_slug:<16} {item.model_name[:22]:<22} {item.status:<14} "
             f"{detected:<10} {latency:<12} {note}"
@@ -404,6 +514,7 @@ __all__ = [
     "STATUS_OK",
     "STATUS_PARSE_ERROR",
     "STATUS_REQUEST_ERROR",
+    "STATUS_SKIPPED_UNHEALTHY",
     "benchmark_has_success",
     "build_model_log_name",
     "build_prompt_for_service",

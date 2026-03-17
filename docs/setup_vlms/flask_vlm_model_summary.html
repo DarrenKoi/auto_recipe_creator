@@ -3,483 +3,186 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Flask VLM Model Summary</title>
+  <title>Flask VLM 요약</title>
   <style>
     :root {
-      --bg: #09111f;
-      --bg-2: #111c34;
-      --panel: rgba(9, 17, 31, 0.72);
-      --panel-strong: rgba(14, 25, 46, 0.92);
-      --text: #edf4ff;
-      --muted: #a7b9d8;
-      --line: rgba(181, 205, 255, 0.18);
-      --hero-1: #58f0ff;
-      --hero-2: #ff5db1;
-      --hero-3: #ffe45c;
-      --venus: #4de7ff;
-      --mai: #ff8f53;
-      --tars: #c66bff;
-      --paddle: #63ffb2;
-      --got: #ffd564;
-      --shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
-      --radius-xl: 28px;
-      --radius-lg: 22px;
-      --radius-md: 16px;
+      --bg: #ffffff;
+      --bg-soft: #f7f8ff;
+      --text: #1f2340;
+      --muted: #5d6685;
+      --line: #e7e9f5;
+      --pink: #ff4fa3;
+      --sky: #35c8ff;
+      --blue: #5d6bff;
+      --orange: #ff8a3d;
+      --green: #19c984;
+      --yellow: #ffcf40;
+      --shadow: 0 18px 45px rgba(76, 92, 146, 0.12);
+      --radius-xl: 32px;
+      --radius-lg: 24px;
+      --radius-md: 18px;
     }
 
     * {
       box-sizing: border-box;
     }
 
-    html {
-      scroll-behavior: smooth;
-    }
-
     body {
       margin: 0;
-      min-height: 100vh;
       color: var(--text);
       background:
-        radial-gradient(circle at 12% 18%, rgba(77, 231, 255, 0.22), transparent 22%),
-        radial-gradient(circle at 88% 14%, rgba(255, 93, 177, 0.20), transparent 20%),
-        radial-gradient(circle at 24% 88%, rgba(99, 255, 178, 0.14), transparent 24%),
-        radial-gradient(circle at 78% 78%, rgba(255, 213, 100, 0.16), transparent 24%),
-        linear-gradient(145deg, #050b16 0%, #0b1530 44%, #0f1833 100%);
-      font-family: "Pretendard Variable", "SUIT Variable", "Avenir Next", "Noto Sans KR", sans-serif;
+        radial-gradient(circle at top left, rgba(53, 200, 255, 0.12), transparent 28%),
+        radial-gradient(circle at top right, rgba(255, 79, 163, 0.10), transparent 28%),
+        linear-gradient(180deg, #ffffff 0%, #fbfbff 100%);
+      font-family: "Pretendard Variable", "SUIT Variable", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
       line-height: 1.6;
-      overflow-x: hidden;
-    }
-
-    body::before,
-    body::after {
-      content: "";
-      position: fixed;
-      inset: auto;
-      width: 38vw;
-      height: 38vw;
-      border-radius: 50%;
-      filter: blur(48px);
-      opacity: 0.22;
-      z-index: 0;
-      pointer-events: none;
-      animation: drift 14s ease-in-out infinite alternate;
-    }
-
-    body::before {
-      top: -10vw;
-      left: -8vw;
-      background: linear-gradient(135deg, var(--hero-1), transparent 65%);
-    }
-
-    body::after {
-      right: -10vw;
-      bottom: -12vw;
-      background: linear-gradient(135deg, var(--hero-2), transparent 65%);
-      animation-duration: 18s;
-    }
-
-    @keyframes drift {
-      from {
-        transform: translate3d(0, 0, 0) scale(1);
-      }
-      to {
-        transform: translate3d(28px, -18px, 0) scale(1.08);
-      }
-    }
-
-    @keyframes glow {
-      0%, 100% {
-        box-shadow: 0 0 0 rgba(0, 0, 0, 0);
-      }
-      50% {
-        box-shadow: 0 0 28px rgba(255, 255, 255, 0.08);
-      }
     }
 
     .page {
-      position: relative;
-      z-index: 1;
-      max-width: 1280px;
+      max-width: 1180px;
       margin: 0 auto;
-      padding: 40px 20px 72px;
+      padding: 28px 18px 56px;
     }
 
     .hero {
-      position: relative;
-      overflow: hidden;
       padding: 34px;
-      border: 1px solid rgba(255, 255, 255, 0.11);
       border-radius: var(--radius-xl);
       background:
-        linear-gradient(135deg, rgba(88, 240, 255, 0.12), rgba(255, 93, 177, 0.08) 52%, rgba(255, 228, 92, 0.10)),
-        rgba(9, 17, 31, 0.78);
-      backdrop-filter: blur(18px);
+        linear-gradient(135deg, rgba(53, 200, 255, 0.14), rgba(255, 79, 163, 0.10) 48%, rgba(255, 207, 64, 0.18)),
+        #ffffff;
+      border: 1px solid rgba(93, 107, 255, 0.10);
       box-shadow: var(--shadow);
-      animation: glow 9s ease-in-out infinite;
-    }
-
-    .hero::before {
-      content: "";
-      position: absolute;
-      inset: 0;
-      background:
-        linear-gradient(120deg, rgba(255, 255, 255, 0.10), transparent 34%),
-        linear-gradient(300deg, rgba(255, 255, 255, 0.08), transparent 34%);
-      pointer-events: none;
     }
 
     .eyebrow {
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
+      display: inline-block;
       padding: 8px 14px;
       border-radius: 999px;
-      background: rgba(255, 255, 255, 0.08);
-      color: #f8fbff;
+      background: #ffffff;
+      border: 1px solid rgba(93, 107, 255, 0.12);
+      color: var(--blue);
       font-size: 13px;
-      font-weight: 800;
-      letter-spacing: 0.12em;
+      font-weight: 900;
+      letter-spacing: 0.08em;
       text-transform: uppercase;
     }
 
-    h1,
-    h2,
-    h3 {
+    h1, h2, h3 {
       margin: 0;
-      font-family: "Space Grotesk", "Avenir Next", "Pretendard Variable", sans-serif;
       letter-spacing: -0.03em;
     }
 
     h1 {
       margin-top: 16px;
-      font-size: clamp(2.2rem, 4vw, 4.6rem);
-      line-height: 0.98;
+      font-size: clamp(2.2rem, 4.5vw, 4.3rem);
+      line-height: 1.05;
+      font-weight: 900;
     }
 
-    .hero-gradient {
-      background: linear-gradient(90deg, var(--hero-1), #8fd8ff 26%, #ffd7f1 62%, var(--hero-3));
+    .highlight {
+      background: linear-gradient(90deg, var(--pink), var(--blue), var(--orange));
       -webkit-background-clip: text;
       background-clip: text;
       color: transparent;
     }
 
-    .hero-copy {
-      max-width: 780px;
-      margin-top: 18px;
-      font-size: 1.03rem;
+    .hero p {
+      max-width: 820px;
+      margin: 16px 0 0;
       color: var(--muted);
+      font-size: 1.02rem;
     }
 
-    .hero-note {
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
       margin-top: 20px;
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 14px;
     }
 
-    .note-card {
-      padding: 16px 18px;
-      border-radius: var(--radius-md);
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid rgba(255, 255, 255, 0.09);
-    }
-
-    .note-card strong {
-      display: block;
-      margin-bottom: 4px;
-      font-size: 0.95rem;
+    .chip {
+      padding: 9px 14px;
+      border-radius: 999px;
+      font-weight: 800;
+      font-size: 0.92rem;
       color: #ffffff;
+      box-shadow: var(--shadow);
     }
 
-    .note-card span {
-      color: var(--muted);
-      font-size: 0.94rem;
-    }
+    .chip.sky { background: linear-gradient(135deg, #2dcfff, #3f8cff); }
+    .chip.pink { background: linear-gradient(135deg, #ff4fa3, #ff7d73); }
+    .chip.green { background: linear-gradient(135deg, #18c983, #4fdc7e); }
 
     .section {
-      margin-top: 28px;
+      margin-top: 26px;
     }
 
     .section-title {
       margin-bottom: 14px;
-      font-size: 1.2rem;
-      font-weight: 800;
+      font-size: 1.25rem;
+      font-weight: 900;
     }
 
-    code {
-      padding: 3px 8px;
-      border-radius: 8px;
-      background: rgba(0, 0, 0, 0.22);
-      color: #ffffff;
-    }
-
-    .route-strip,
-    .summary-grid,
-    .card-grid {
-      display: grid;
-      gap: 16px;
-    }
-
-    .route-strip {
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-    }
-
-    .route-item {
-      padding: 18px;
-      border-radius: var(--radius-md);
-      border: 1px solid var(--line);
-      background: var(--panel);
-      backdrop-filter: blur(16px);
-      box-shadow: var(--shadow);
-    }
-
-    .route-item .label {
-      display: inline-flex;
-      padding: 6px 10px;
-      border-radius: 999px;
-      font-size: 0.74rem;
-      font-weight: 800;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      background: rgba(255, 255, 255, 0.08);
-      color: #ffffff;
-    }
-
-    .route-item h3 {
-      margin-top: 12px;
-      font-size: 1.05rem;
-    }
-
-    .route-item code {
-      display: inline-block;
-      margin-top: 8px;
-      padding: 6px 10px;
-      border-radius: 10px;
-      background: rgba(0, 0, 0, 0.22);
-      color: #f5f8ff;
-      font-size: 0.84rem;
-    }
-
-    .summary-grid {
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-    }
-
-    .summary-box {
-      padding: 18px;
-      border-radius: var(--radius-md);
-      border: 1px solid var(--line);
-      background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.03)),
-        var(--panel);
-      box-shadow: var(--shadow);
-    }
-
-    .summary-box strong {
-      display: block;
-      margin-bottom: 8px;
-      font-size: 0.92rem;
-      color: #ffffff;
-    }
-
-    .summary-box p {
-      margin: 0;
-      color: var(--muted);
-      font-size: 0.94rem;
-    }
-
-    .card-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .call-grid {
+    .grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 16px;
     }
 
-    .callout {
-      padding: 20px;
-      border-radius: var(--radius-md);
+    .card {
+      padding: 22px;
+      border-radius: var(--radius-lg);
+      background: #ffffff;
       border: 1px solid var(--line);
-      background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03)),
-        var(--panel);
       box-shadow: var(--shadow);
-    }
-
-    .callout strong {
-      color: #ffffff;
-    }
-
-    .callout p {
-      margin: 0;
-      color: var(--muted);
-      font-size: 0.95rem;
-    }
-
-    .callout p + p {
-      margin-top: 10px;
-    }
-
-    .code-card {
-      padding: 20px;
-      border-radius: var(--radius-md);
-      border: 1px solid rgba(255, 255, 255, 0.10);
-      background:
-        linear-gradient(150deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03)),
-        rgba(8, 15, 29, 0.82);
-      box-shadow: var(--shadow);
-    }
-
-    .code-card h3 {
-      font-size: 1.02rem;
-      color: #ffffff;
-    }
-
-    .endpoint {
-      margin-top: 10px;
-      color: var(--muted);
-      font-size: 0.92rem;
-    }
-
-    pre {
-      margin: 14px 0 0;
-      padding: 16px;
-      overflow-x: auto;
-      border-radius: 16px;
-      background: #06101d;
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      color: #edf4ff;
-      font-size: 0.85rem;
-      line-height: 1.55;
-      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
-    }
-
-    pre code {
-      padding: 0;
-      background: transparent;
-      color: inherit;
-      border-radius: 0;
-    }
-
-    .model-card {
       position: relative;
       overflow: hidden;
-      padding: 24px;
-      border-radius: var(--radius-lg);
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      background:
-        linear-gradient(145deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03)),
-        var(--panel-strong);
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(18px);
     }
 
-    .model-card::before {
+    .card::before {
       content: "";
       position: absolute;
       inset: 0 auto auto 0;
       width: 100%;
-      height: 5px;
+      height: 6px;
       background: var(--accent);
     }
 
-    .model-card::after {
-      content: "";
-      position: absolute;
-      top: -80px;
-      right: -40px;
-      width: 180px;
-      height: 180px;
-      border-radius: 50%;
-      background: radial-gradient(circle, color-mix(in srgb, var(--accent) 35%, transparent), transparent 66%);
-      filter: blur(10px);
-      opacity: 0.8;
-      pointer-events: none;
-    }
-
-    .card-top {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 14px;
-    }
-
-    .type-badge {
-      display: inline-flex;
-      align-items: center;
+    .badge {
+      display: inline-block;
       padding: 7px 12px;
       border-radius: 999px;
-      font-size: 0.74rem;
+      font-size: 0.76rem;
       font-weight: 900;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.06em;
       text-transform: uppercase;
-      background: color-mix(in srgb, var(--accent) 20%, rgba(255, 255, 255, 0.08));
-      color: #ffffff;
-      border: 1px solid color-mix(in srgb, var(--accent) 60%, rgba(255, 255, 255, 0.14));
+      background: var(--soft);
+      color: var(--accent-strong);
     }
 
-    .role {
-      margin-top: 8px;
-      color: var(--muted);
-      font-size: 0.88rem;
+    .card h3 {
+      margin-top: 14px;
+      font-size: 1.45rem;
+      font-weight: 900;
     }
 
-    .model-card h2 {
-      margin-top: 12px;
-      font-size: clamp(1.4rem, 2vw, 2rem);
-      color: #ffffff;
-    }
-
-    .slug {
+    .one-line {
       margin-top: 10px;
-      display: inline-block;
-      padding: 7px 10px;
-      border-radius: 10px;
-      background: rgba(0, 0, 0, 0.22);
-      color: #f5f8ff;
-      font-size: 0.84rem;
+      color: var(--muted);
       font-weight: 700;
     }
 
-    .best-fit {
+    .block {
       margin-top: 18px;
-      padding: 14px 16px;
-      border-radius: 14px;
-      background: color-mix(in srgb, var(--accent) 12%, rgba(255, 255, 255, 0.05));
-      border: 1px solid color-mix(in srgb, var(--accent) 45%, rgba(255, 255, 255, 0.10));
-    }
-
-    .best-fit strong {
-      display: block;
-      margin-bottom: 4px;
-      color: #ffffff;
-      font-size: 0.9rem;
-    }
-
-    .best-fit span {
-      color: #e9f1ff;
-      font-size: 0.94rem;
-    }
-
-    .detail-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 16px;
-      margin-top: 18px;
-    }
-
-    .detail-block {
       padding: 16px;
-      border-radius: 16px;
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: var(--radius-md);
+      background: var(--soft);
     }
 
-    .detail-block h3 {
-      margin-bottom: 10px;
-      font-size: 0.95rem;
-      color: #ffffff;
+    .block strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 0.96rem;
     }
 
     ul {
@@ -487,71 +190,123 @@
       padding-left: 18px;
     }
 
-    li + li {
-      margin-top: 8px;
-    }
-
     li {
       color: var(--muted);
       font-size: 0.95rem;
     }
 
-    strong.inline {
-      color: #ffffff;
+    li + li {
+      margin-top: 8px;
     }
 
-    .foot {
-      margin-top: 28px;
-      padding: 18px 20px;
-      border-radius: var(--radius-md);
+    .venus {
+      --accent: linear-gradient(90deg, #35c8ff, #5d6bff);
+      --accent-strong: #315eff;
+      --soft: #eef5ff;
+    }
+
+    .mai {
+      --accent: linear-gradient(90deg, #ff8a3d, #ff4fa3);
+      --accent-strong: #ff6b43;
+      --soft: #fff2ea;
+    }
+
+    .tars {
+      --accent: linear-gradient(90deg, #7e57ff, #ff62aa);
+      --accent-strong: #734dff;
+      --soft: #f3efff;
+    }
+
+    .paddle {
+      --accent: linear-gradient(90deg, #19c984, #34d6ba);
+      --accent-strong: #12b778;
+      --soft: #ebfff7;
+    }
+
+    .got {
+      --accent: linear-gradient(90deg, #ffcf40, #ff9447);
+      --accent-strong: #ff9d27;
+      --soft: #fff8e8;
+    }
+
+    .usage {
+      padding: 24px;
+      border-radius: var(--radius-xl);
+      background: #ffffff;
       border: 1px solid var(--line);
-      background: rgba(255, 255, 255, 0.05);
+      box-shadow: var(--shadow);
+    }
+
+    .usage-top {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+
+    .pill {
+      display: inline-block;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: #eef5ff;
+      color: #315eff;
+      font-size: 0.84rem;
+      font-weight: 900;
+    }
+
+    .usage p {
+      margin: 0 0 14px;
+      color: var(--muted);
+    }
+
+    .endpoint {
+      margin-bottom: 14px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: #f7f8ff;
+      border: 1px solid var(--line);
+      word-break: break-all;
+      font-weight: 700;
+      color: #2f3555;
+    }
+
+    pre {
+      margin: 0;
+      padding: 18px;
+      overflow-x: auto;
+      border-radius: 18px;
+      background: #1e2238;
+      color: #f6f7ff;
+      font-size: 0.88rem;
+      line-height: 1.55;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+    }
+
+    code {
+      font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+    }
+
+    .note {
+      margin-top: 14px;
       color: var(--muted);
       font-size: 0.94rem;
     }
 
-    .foot code {
-      color: #ffffff;
-      background: rgba(0, 0, 0, 0.22);
-      padding: 3px 8px;
-      border-radius: 8px;
-    }
-
-    .venus { --accent: var(--venus); }
-    .mai { --accent: var(--mai); }
-    .tars { --accent: var(--tars); }
-    .paddle { --accent: var(--paddle); }
-    .got { --accent: var(--got); }
-
-    @media (max-width: 1120px) {
-      .route-strip,
-      .summary-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-
-      .card-grid {
-        grid-template-columns: 1fr;
-      }
-
-      .call-grid {
+    @media (max-width: 880px) {
+      .grid {
         grid-template-columns: 1fr;
       }
     }
 
-    @media (max-width: 720px) {
+    @media (max-width: 640px) {
       .page {
-        padding: 24px 14px 56px;
+        padding: 18px 12px 40px;
       }
 
-      .hero {
-        padding: 24px 20px;
-      }
-
-      .hero-note,
-      .route-strip,
-      .summary-grid,
-      .detail-grid {
-        grid-template-columns: 1fr;
+      .hero,
+      .usage {
+        padding: 22px;
       }
     }
   </style>
@@ -559,270 +314,147 @@
 <body>
   <main class="page">
     <section class="hero">
-      <div class="eyebrow">Flask VLM Setup Snapshot</div>
-      <h1><span class="hero-gradient">5 Models</span> Your Team Can Read at a Glance</h1>
-      <p class="hero-copy">
-        이 페이지는 <code>docs/setup_vlms</code> 문서와 <code>poc/work2/flask_vlm.py</code> 기준으로,
-        현재 Flask VLM 문맥에서 같이 운영하는 5개 모델을 빠르게 비교한 요약본이다.
-        핵심은 <strong class="inline">무엇을 잘하는지</strong>와 <strong class="inline">어디에 가장 잘 맞는지</strong>다.
+      <div class="eyebrow">Flask VLM</div>
+      <h1><span class="highlight">PPT 슬라이드도 읽고</span>, PDF 이미지도 보고, GUI 자동화까지</h1>
+      <p>
+        지금 쓰는 Flask VLM 환경에서 바로 붙여 볼 수 있는 5개 모델을 간단히 정리했다.
+        핵심은 어떤 모델이 화면 읽기, OCR, 클릭 포인트 찾기, GUI 해석에 더 잘 맞는지다.
       </p>
-      <div class="hero-note">
-        <div class="note-card">
-          <strong>기본 화면 분석</strong>
-          <span><code>ui-venus</code>가 <code>screen_analysis</code>와 <code>main_tabs</code> 기본값이다.</span>
-        </div>
-        <div class="note-card">
-          <strong>기본 OCR</strong>
-          <span><code>paddleocr-vl-1.5</code>가 현재 기본 OCR service 로 잡혀 있다.</span>
-        </div>
-        <div class="note-card">
-          <strong>범위</strong>
-          <span>이 문서는 Flask-hosted / Flask-integrated 5개 모델에 집중한다. direct company LLM 항목은 제외했다.</span>
-        </div>
+      <div class="chips">
+        <span class="chip sky">PPT Slides</span>
+        <span class="chip pink">PDF Images</span>
+        <span class="chip green">GUI Automation</span>
       </div>
     </section>
 
     <section class="section">
-      <h2 class="section-title">Service Slugs</h2>
-      <div class="route-strip">
-        <article class="route-item">
-          <div class="label">Primary GUI</div>
+      <h2 class="section-title">지금 보면 되는 5개 모델</h2>
+      <div class="grid">
+        <article class="card venus">
+          <span class="badge">GUI 주력</span>
           <h3>UI-Venus-1.5-8B</h3>
-          <code>ui-venus</code>
+          <div class="one-line">화면 구조 파악, 클릭 후보 찾기, GUI grounding 에 가장 균형이 좋다.</div>
+          <div class="block">
+            <strong>무엇을 잘하나</strong>
+            <ul>
+              <li>스크린샷에서 중요한 버튼, 패널, 입력 영역 같은 UI 요소를 읽기 좋다.</li>
+              <li>화면 분석과 다음 navigation 판단을 함께 보기 좋다.</li>
+              <li>PPT 화면, 앱 화면, 업무용 GUI 같이 구조가 있는 이미지를 해석할 때 무난하다.</li>
+            </ul>
+          </div>
+          <div class="block">
+            <strong>강점 포인트</strong>
+            <ul>
+              <li>5개 중 가장 범용적인 GUI 기본 카드다.</li>
+              <li>화면 분석용 첫 선택지로 두기 편하다.</li>
+              <li>복잡한 자동화 전에 먼저 화면을 읽어 주는 역할로 잘 맞는다.</li>
+            </ul>
+          </div>
         </article>
-        <article class="route-item">
-          <div class="label">Sidecar GUI</div>
+
+        <article class="card mai">
+          <span class="badge">현장형 GUI</span>
           <h3>MAI-UI-8B</h3>
-          <code>mai-ui</code>
+          <div class="one-line">실제 사용자 상호작용과 모바일 중심 흐름을 더 강하게 보는 쪽이다.</div>
+          <div class="block">
+            <strong>무엇을 잘하나</strong>
+            <ul>
+              <li>사용자가 다음에 무엇을 누를지, 어떤 행동 흐름이 자연스러운지 해석하기 좋다.</li>
+              <li>모바일 느낌의 화면이나 실제 사용 시나리오에 잘 맞는다.</li>
+              <li>도구 호출이나 협업형 에이전트 흐름과 연결해 생각하기 좋다.</li>
+            </ul>
+          </div>
+          <div class="block">
+            <strong>강점 포인트</strong>
+            <ul>
+              <li>실사용 문맥, 운영형 시나리오 해석이 선명하다.</li>
+              <li>단순히 화면을 읽는 것보다 행동 의도를 설명할 때 강점이 있다.</li>
+            </ul>
+          </div>
         </article>
-        <article class="route-item">
-          <div class="label">Reasoning GUI</div>
+
+        <article class="card tars">
+          <span class="badge">추론형 에이전트</span>
           <h3>UI-TARS-1.5-7B</h3>
-          <code>ui-tars</code>
+          <div class="one-line">단순 클릭 탐지보다 reasoning-heavy computer use 성향이 더 강하다.</div>
+          <div class="block">
+            <strong>무엇을 잘하나</strong>
+            <ul>
+              <li>브라우저 사용, 앱 사용, 범용 computer-use 시나리오를 넓게 다룬다.</li>
+              <li>다음 행동을 왜 선택해야 하는지 reasoning 흐름을 붙여 보기 좋다.</li>
+              <li>복잡한 GUI 자동화 전 단계 실험에 어울린다.</li>
+            </ul>
+          </div>
+          <div class="block">
+            <strong>강점 포인트</strong>
+            <ul>
+              <li>5개 중 에이전트 성향과 범용성이 가장 넓다.</li>
+              <li>단계적 판단이 필요한 화면에서 비교 실험용으로 좋다.</li>
+            </ul>
+          </div>
         </article>
-        <article class="route-item">
-          <div class="label">Default OCR</div>
+
+        <article class="card paddle">
+          <span class="badge">기본 OCR</span>
           <h3>PaddleOCR-VL-1.5</h3>
-          <code>paddleocr-vl-1.5</code>
+          <div class="one-line">텍스트 많은 화면, PDF 이미지, 표지 화면 같은 OCR 작업의 기본 선택지다.</div>
+          <div class="block">
+            <strong>무엇을 잘하나</strong>
+            <ul>
+              <li>이미지 안의 텍스트를 읽고 정리하는 역할에 잘 맞는다.</li>
+              <li>PDF를 이미지로 만든 뒤 내용 추출할 때 쓰기 좋다.</li>
+              <li>문서형 화면, 텍스트 중심 슬라이드 캡처에도 잘 맞는다.</li>
+            </ul>
+          </div>
+          <div class="block">
+            <strong>강점 포인트</strong>
+            <ul>
+              <li>현재 운영 구조에서 가장 실무적인 OCR 기본 카드다.</li>
+              <li>텍스트 중심 이미지 처리에서 단순하고 안정적으로 쓰기 좋다.</li>
+            </ul>
+          </div>
         </article>
-        <article class="route-item">
-          <div class="label">OCR Fallback</div>
+
+        <article class="card got">
+          <span class="badge">보조 OCR</span>
           <h3>GOT-OCR-2.0-hf</h3>
-          <code>got-ocr</code>
-        </article>
-      </div>
-    </section>
-
-    <section class="section">
-      <h2 class="section-title">Quick Pick</h2>
-      <div class="summary-grid">
-        <div class="summary-box">
-          <strong>UI-Venus</strong>
-          <p>GUI grounding 과 navigation 을 균형 있게 가져가야 할 때 가장 무난한 주력 카드.</p>
-        </div>
-        <div class="summary-box">
-          <strong>MAI-UI</strong>
-          <p>실제 모바일/배포 상황, 사용자 상호작용, 협업형 agent 흐름을 볼 때 강점이 있다.</p>
-        </div>
-        <div class="summary-box">
-          <strong>UI-TARS</strong>
-          <p>단순 클릭보다 reasoning-heavy computer use 성향을 보고 싶을 때 적합하다.</p>
-        </div>
-        <div class="summary-box">
-          <strong>PaddleOCR-VL</strong>
-          <p>기존 vLLM 운영 체계에 가장 자연스럽게 들어가는 기본 OCR 선택지다.</p>
-        </div>
-        <div class="summary-box">
-          <strong>GOT-OCR</strong>
-          <p>전용 runtime 으로 OCR만 분리 검증하거나 fallback 성격으로 다룰 때 유리하다.</p>
-        </div>
-      </div>
-    </section>
-
-    <section class="section">
-      <h2 class="section-title">Model Cards</h2>
-      <div class="card-grid">
-        <article class="model-card venus">
-          <div class="card-top">
-            <div>
-              <div class="type-badge">GUI Core</div>
-              <h2>UI-Venus-1.5-8B</h2>
-              <div class="role">Qwen3-VL 계열 / 현재 기본 screen analysis, main tabs</div>
-            </div>
+          <div class="one-line">OCR 전용 fallback 이나 별도 OCR 검증용으로 보면 이해가 쉽다.</div>
+          <div class="block">
+            <strong>무엇을 잘하나</strong>
+            <ul>
+              <li>이미지 텍스트 추출을 별도 경로로 검증할 때 좋다.</li>
+              <li>기본 OCR 결과와 비교해 보는 보조 카드로 쓸 수 있다.</li>
+              <li>PDF 이미지, 잘린 캡처, OCR 정확도 비교 실험에 어울린다.</li>
+            </ul>
           </div>
-          <div class="slug">service slug: ui-venus</div>
-          <div class="best-fit">
-            <strong>Best Fit</strong>
-            <span>RCS 화면처럼 복합 GUI 를 분석하고, grounding 과 navigation 을 함께 안정적으로 보고 싶을 때.</span>
-          </div>
-          <div class="detail-grid">
-            <section class="detail-block">
-              <h3>What It Can Do</h3>
-              <ul>
-                <li>스크린샷에서 <strong class="inline">GUI grounding</strong>과 위치 기반 해석을 수행한다.</li>
-                <li><strong class="inline">mobile + web + browser</strong> 문맥을 하나의 GUI agent 흐름으로 다룬다.</li>
-                <li>화면 구조를 보고 다음 navigation 방향을 정하는 용도에 잘 맞는다.</li>
-              </ul>
-            </section>
-            <section class="detail-block">
-              <h3>Strength Points</h3>
-              <ul>
-                <li><strong class="inline">unified, end-to-end GUI agent</strong> 성격이 강해서 범용 화면 분석에 균형이 좋다.</li>
-                <li>문서상 <strong class="inline">grounding + cross-platform navigation</strong> 완성도가 핵심 강점으로 정리되어 있다.</li>
-                <li>현재 저장소에서도 기본 선택지라서 팀 공용 기준점으로 쓰기 쉽다.</li>
-              </ul>
-            </section>
-          </div>
-        </article>
-
-        <article class="model-card mai">
-          <div class="card-top">
-            <div>
-              <div class="type-badge">GUI Sidecar</div>
-              <h2>MAI-UI-8B</h2>
-              <div class="role">Qwen3-VL 계열 / zoom-in sidecar benchmark role</div>
-            </div>
-          </div>
-          <div class="slug">service slug: mai-ui</div>
-          <div class="best-fit">
-            <strong>Best Fit</strong>
-            <span>실제 모바일 환경, 사용자 상호작용, 도구 호출, device-cloud 협업 같은 운영형 GUI agent 관점이 중요할 때.</span>
-          </div>
-          <div class="detail-grid">
-            <section class="detail-block">
-              <h3>What It Can Do</h3>
-              <ul>
-                <li><strong class="inline">mobile-centric GUI navigation</strong> 을 중심으로 동작을 해석한다.</li>
-                <li><strong class="inline">agent-user interaction</strong> 과 MCP tool call 문맥을 모델 설명에 직접 포함한다.</li>
-                <li>device 와 cloud 가 나뉜 실제 배포 구조를 염두에 둔 GUI 흐름 검토에 맞는다.</li>
-              </ul>
-            </section>
-            <section class="detail-block">
-              <h3>Strength Points</h3>
-              <ul>
-                <li><strong class="inline">real-world centric</strong> 성격이 강해서 운영 시나리오 해석이 선명하다.</li>
-                <li>동적 환경 대응과 협업형 agent 구조를 전면에 둔 점이 차별점이다.</li>
-                <li>현재 registry 상 <strong class="inline">sidecar</strong> 포지션이라 보조 비교 모델로 두기 좋다.</li>
-              </ul>
-            </section>
-          </div>
-        </article>
-
-        <article class="model-card tars">
-          <div class="card-top">
-            <div>
-              <div class="type-badge">Reasoning Agent</div>
-              <h2>UI-TARS-1.5-7B</h2>
-              <div class="role">Qwen2.5-VL 계열 / primary GUI benchmark candidate</div>
-            </div>
-          </div>
-          <div class="slug">service slug: ui-tars</div>
-          <div class="best-fit">
-            <strong>Best Fit</strong>
-            <span>단순 화면 읽기보다 reasoning-heavy computer use, browser use, phone use 흐름까지 폭넓게 보고 싶을 때.</span>
-          </div>
-          <div class="detail-grid">
-            <section class="detail-block">
-              <h3>What It Can Do</h3>
-              <ul>
-                <li><strong class="inline">computer use</strong>, browser use, phone use, game / virtual world 까지 넓게 다룬다.</li>
-                <li>스크린샷 기반 행동 판단을 넘어서 <strong class="inline">thought-before-action</strong> 스타일 reasoning 을 밀어 준다.</li>
-                <li>좀 더 일반적인 멀티모달 agent 성향을 실험할 때 적합하다.</li>
-              </ul>
-            </section>
-            <section class="detail-block">
-              <h3>Strength Points</h3>
-              <ul>
-                <li><strong class="inline">범용성</strong>이 가장 넓고 reasoning color 가 가장 강하다.</li>
-                <li><strong class="inline">inference-time scaling</strong> 을 강조해 깊이 있는 agent 실험에 어울린다.</li>
-                <li>다만 runtime 민감도가 높아 배포 난도가 다른 두 GUI 모델보다 크다는 점도 같이 기억해야 한다.</li>
-              </ul>
-            </section>
-          </div>
-        </article>
-
-        <article class="model-card paddle">
-          <div class="card-top">
-            <div>
-              <div class="type-badge">OCR Default</div>
-              <h2>PaddleOCR-VL-1.5</h2>
-              <div class="role">OCR family / 현재 기본 OCR pipeline service</div>
-            </div>
-          </div>
-          <div class="slug">service slug: paddleocr-vl-1.5</div>
-          <div class="best-fit">
-            <strong>Best Fit</strong>
-            <span>팀 공용 OCR 경로를 기존 GPU 서버와 기존 vLLM wrapper 안에 가장 자연스럽게 편입해야 할 때.</span>
-          </div>
-          <div class="detail-grid">
-            <section class="detail-block">
-              <h3>What It Can Do</h3>
-              <ul>
-                <li>이미지에서 <strong class="inline">OCR text 추출</strong>을 수행하는 전용 OCR VLM 역할을 맡는다.</li>
-                <li>기존 Flask VLM 서비스 구조 안에서 기본 OCR endpoint 로 연결하기 쉽다.</li>
-                <li>문서 기준으로 <strong class="inline">vLLM</strong> 경로에 바로 편입 가능한 OCR 모델이다.</li>
-              </ul>
-            </section>
-            <section class="detail-block">
-              <h3>Strength Points</h3>
-              <ul>
-                <li><strong class="inline">기존 vLLM wrapper 재사용</strong>이 가능해서 운영 단순성이 높다.</li>
-                <li>현재 Linux 클라우드 기준 별도 Paddle 패키지 없이도 정리된 배포 경로가 있다.</li>
-                <li>그래서 이 저장소에서는 <strong class="inline">default OCR</strong> 로 두기 가장 실무적이다.</li>
-              </ul>
-            </section>
-          </div>
-        </article>
-
-        <article class="model-card got">
-          <div class="card-top">
-            <div>
-              <div class="type-badge">OCR Fallback</div>
-              <h2>GOT-OCR-2.0-hf</h2>
-              <div class="role">OCR fallback / transformers direct inference path</div>
-            </div>
-          </div>
-          <div class="slug">service slug: got-ocr</div>
-          <div class="best-fit">
-            <strong>Best Fit</strong>
-            <span>OCR 전용 검증을 별도 runtime 으로 분리하고 싶거나, 기본 OCR 외에 독립 fallback 경로를 확보하고 싶을 때.</span>
-          </div>
-          <div class="detail-grid">
-            <section class="detail-block">
-              <h3>What It Can Do</h3>
-              <ul>
-                <li>이미지 기반 <strong class="inline">OCR 추론</strong>을 수행한다.</li>
-                <li><strong class="inline">transformers 직접 추론</strong> 경로로 smoke test 와 전용 wrapper 검토가 가능하다.</li>
-                <li>팀 공용 API 전에 <strong class="inline">로컬 또는 전용 Python runtime</strong> 으로 먼저 검증하는 흐름에 맞는다.</li>
-              </ul>
-            </section>
-            <section class="detail-block">
-              <h3>Strength Points</h3>
-              <ul>
-                <li>현재 클라우드 런타임에서 큰 업그레이드 없이 바로 테스트 가능한 점이 실무 강점이다.</li>
-                <li>GPU, dtype, runtime 을 모델 전용으로 고정해 <strong class="inline">분리 검증</strong>하기 쉽다.</li>
-                <li>다만 문서 기준 <strong class="inline">vLLM supported model</strong> 경로는 아니므로, 운영 경로는 PaddleOCR 보다 덜 단순하다.</li>
-              </ul>
-            </section>
+          <div class="block">
+            <strong>강점 포인트</strong>
+            <ul>
+              <li>OCR 전용 실험용 카드로 분리하기 쉽다.</li>
+              <li>기본 OCR 외에 한 번 더 확인하는 fallback 성격으로 이해하면 편하다.</li>
+            </ul>
           </div>
         </article>
       </div>
     </section>
 
     <section class="section">
-      <h2 class="section-title">Call From Local PC</h2>
-      <div class="call-grid">
-        <div class="callout">
-          <p><strong>권장 호출 방식</strong>: 동료 PC 에서는 repo helper 없이 <code>requests.post(...)</code> 로 Flask proxy 를 직접 호출하면 가장 단순하다.</p>
-          <p><strong>실행 위치</strong>: 로컬 PC 에서 바로 Python 스크립트로 실행하면 된다. repo import 는 필요 없다.</p>
-          <p><strong>사전 점검</strong>: 먼저 <code>uv run python poc/work2/connection_check.py</code> 로 서비스가 살아 있는지 확인한다.</p>
-          <p><strong>요청 형식</strong>: 이미지 파일을 base64 로 바꾼 뒤, JSON dict 안에 <code>model</code>, <code>messages</code>, <code>image_url</code> 를 넣어 POST 하면 된다.</p>
-          <p><strong>이미지 권장 형식</strong>: 가능하면 <code>.webp</code> 이미지를 보내면 현재 repo 운영 원칙과 맞다.</p>
+      <h2 class="section-title">UI-Venus 이렇게 쓰면 된다</h2>
+      <div class="usage">
+        <div class="usage-top">
+          <span class="pill">가장 단순한 연결 방식</span>
+          <span class="pill">requests.post</span>
+          <span class="pill">image + dict payload</span>
         </div>
-
-        <div class="callout">
-          <p><strong>공통 패턴</strong>: 아래 코드에서 <code>url</code>, <code>model</code>, <code>prompt</code> 만 바꾸면 5개 모델을 같은 방식으로 호출할 수 있다.</p>
-          <pre><code>import base64
+        <p>
+          설명은 길게 필요 없다. 이미지를 base64 로 바꾸고, JSON dict 로 POST 하면 된다.
+          화면 읽기, PPT 슬라이드 캡처, PDF 이미지, GUI 분석 모두 같은 형식으로 붙인다.
+        </p>
+        <div class="endpoint">
+          POST URL:
+          http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/ui-venus/v1/chat/completions
+        </div>
+        <pre><code>import base64
 from pathlib import Path
 
 import requests
@@ -838,7 +470,10 @@ payload = {
         {
             "role": "user",
             "content": [
-                {"type": "text", "text": "Analyze this screen in JSON."},
+                {
+                    "type": "text",
+                    "text": "Analyze this image and return the important UI items in JSON.",
+                },
                 {
                     "type": "image_url",
                     "image_url": {
@@ -852,237 +487,19 @@ payload = {
     "max_tokens": 1024,
 }
 
-response = requests.post(
-    "http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/ui-venus/v1/chat/completions",
-    json=payload,
-    timeout=120,
-)
-response.raise_for_status()
-data = response.json()
-print(data["choices"][0]["message"]["content"])</code></pre>
-        </div>
-
-        <div class="code-card">
-          <h3>UI-Venus Example</h3>
-          <div class="endpoint">POST URL: <code>http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/ui-venus/v1/chat/completions</code></div>
-          <pre><code>import base64
-from pathlib import Path
-
-import requests
-
-img_b64 = base64.b64encode(
-    Path("/ABS/PATH/TO/rcs_screen.webp").read_bytes()
-).decode("utf-8")
-
-payload = {
-    "model": "ui-venus-1.5-8b",
-    "messages": [
-        {"role": "system", "content": "Respond only with JSON."},
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": "List the major clickable controls and their roles in JSON.",
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/webp;base64,{img_b64}"},
-                },
-            ],
-        },
-    ],
-    "temperature": 0.0,
-    "max_tokens": 1024,
-}
-
 r = requests.post(
     "http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/ui-venus/v1/chat/completions",
     json=payload,
     timeout=120,
 )
 r.raise_for_status()
-print(r.json()["choices"][0]["message"]["content"])</code></pre>
-        </div>
 
-        <div class="code-card">
-          <h3>MAI-UI Example</h3>
-          <div class="endpoint">POST URL: <code>http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/mai-ui/v1/chat/completions</code></div>
-          <pre><code>import base64
-from pathlib import Path
-
-import requests
-
-img_b64 = base64.b64encode(
-    Path("/ABS/PATH/TO/mobile_like_screen.webp").read_bytes()
-).decode("utf-8")
-
-payload = {
-    "model": "mai-ui-8b",
-    "messages": [
-        {"role": "system", "content": "Respond only with JSON."},
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": "Return target area, action type, and reason in JSON.",
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/webp;base64,{img_b64}"},
-                },
-            ],
-        },
-    ],
-    "temperature": 0.0,
-    "max_tokens": 1024,
-}
-
-r = requests.post(
-    "http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/mai-ui/v1/chat/completions",
-    json=payload,
-    timeout=120,
-)
-r.raise_for_status()
-print(r.json()["choices"][0]["message"]["content"])</code></pre>
-        </div>
-
-        <div class="code-card">
-          <h3>UI-TARS Example</h3>
-          <div class="endpoint">POST URL: <code>http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/ui-tars/v1/chat/completions</code></div>
-          <pre><code>import base64
-from pathlib import Path
-
-import requests
-
-img_b64 = base64.b64encode(
-    Path("/ABS/PATH/TO/complex_gui.webp").read_bytes()
-).decode("utf-8")
-
-payload = {
-    "model": "ui-tars-1.5-7b",
-    "messages": [
-        {"role": "system", "content": "Respond only with JSON."},
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": "Return observation, decision, and next action in JSON.",
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/webp;base64,{img_b64}"},
-                },
-            ],
-        },
-    ],
-    "temperature": 0.0,
-    "max_tokens": 1024,
-}
-
-r = requests.post(
-    "http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/ui-tars/v1/chat/completions",
-    json=payload,
-    timeout=120,
-)
-r.raise_for_status()
-print(r.json()["choices"][0]["message"]["content"])</code></pre>
-        </div>
-
-        <div class="code-card">
-          <h3>PaddleOCR-VL-1.5 Example</h3>
-          <div class="endpoint">POST URL: <code>http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/paddleocr-vl-1.5/v1/chat/completions</code></div>
-          <pre><code>import base64
-from pathlib import Path
-
-import requests
-
-img_b64 = base64.b64encode(
-    Path("/ABS/PATH/TO/text_heavy_screen.webp").read_bytes()
-).decode("utf-8")
-
-payload = {
-    "model": "paddleocr-vl-1.5",
-    "messages": [
-        {"role": "system", "content": "Respond only with JSON."},
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": "Read all visible text and return the OCR result in JSON.",
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/webp;base64,{img_b64}"},
-                },
-            ],
-        },
-    ],
-    "temperature": 0.0,
-    "max_tokens": 1024,
-}
-
-r = requests.post(
-    "http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/paddleocr-vl-1.5/v1/chat/completions",
-    json=payload,
-    timeout=120,
-)
-r.raise_for_status()
-print(r.json()["choices"][0]["message"]["content"])</code></pre>
-        </div>
-
-        <div class="code-card">
-          <h3>GOT-OCR-2.0-hf Example</h3>
-          <div class="endpoint">POST URL: <code>http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/got-ocr/v1/chat/completions</code></div>
-          <pre><code>import base64
-from pathlib import Path
-
-import requests
-
-img_b64 = base64.b64encode(
-    Path("/ABS/PATH/TO/ocr_target.webp").read_bytes()
-).decode("utf-8")
-
-payload = {
-    "model": "got-ocr-2.0-hf",
-    "messages": [
-        {"role": "system", "content": "Respond only with JSON."},
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": "Extract the text and return the OCR result in JSON.",
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/webp;base64,{img_b64}"},
-                },
-            ],
-        },
-    ],
-    "temperature": 0.0,
-    "max_tokens": 1024,
-}
-
-r = requests.post(
-    "http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/got-ocr/v1/chat/completions",
-    json=payload,
-    timeout=120,
-)
-r.raise_for_status()
-print(r.json()["choices"][0]["message"]["content"])</code></pre>
+result = r.json()
+print(result["choices"][0]["message"]["content"])</code></pre>
+        <div class="note">
+          다른 모델도 방식은 같다. 바꿀 것은 URL 과 <code>model</code> 값뿐이다.
         </div>
       </div>
-    </section>
-
-    <section class="foot">
-      요약 기준 파일: <code>poc/work2/flask_vlm.py</code>, <code>docs/setup_vlms/README.md</code>,
-      <code>02-serve-ui-venus-and-mai-ui.md</code>, <code>05-ui-tars-vs-others.md</code>,
-      <code>07-paddleocr-vl-1.5.md</code>, <code>08-got-ocr-2.0-hf.md</code>.
     </section>
   </main>
 </body>

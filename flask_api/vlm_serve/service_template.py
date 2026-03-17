@@ -1,7 +1,8 @@
 """VLM 서비스 blueprint template.
 
-이미지 분석 전용 프록시이므로 스트리밍은 사용하지 않는다.
-클라이언트가 stream=true 를 보내더라도 무시하고 전체 응답을 한 번에 반환한다.
+이미지 분석 전용 프록시이지만, upstream 이 `stream=true` 에서만
+정상적인 assistant content 를 주는 경우가 있어 요청 body 는 그대로 전달한다.
+프록시 자체는 upstream 응답을 끝까지 버퍼링한 뒤 그대로 반환한다.
 """
 
 import logging
@@ -74,19 +75,9 @@ def _upstream_timeout() -> tuple[float, float]:
     return connect_timeout, read_timeout
 
 
-def _force_stream_off(raw_body: bytes, content_type: str) -> bytes:
-    """요청 body 에서 stream 필드를 false 로 강제한다."""
-    if not content_type or "json" not in content_type:
-        return raw_body
-    try:
-        import json
-
-        payload = json.loads(raw_body)
-        if isinstance(payload, dict) and "stream" in payload:
-            payload["stream"] = False
-            return json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        pass
+def _prepare_upstream_body(raw_body: bytes, content_type: str) -> bytes:
+    """요청 body 를 upstream 으로 넘기기 전에 필요한 최소 보정만 수행한다."""
+    del content_type
     return raw_body
 
 
@@ -131,7 +122,7 @@ def _proxy_request(config: VLMServiceConfig, upstream_path: str):
     """현재 요청을 upstream vLLM 으로 프록시한다 (비스트리밍)."""
     upstream_url = f"{config.upstream_base_url.rstrip('/')}/{upstream_path.lstrip('/')}"
     start_time = time.monotonic()
-    request_body = _force_stream_off(
+    request_body = _prepare_upstream_body(
         request.get_data(cache=True),
         request.content_type or "",
     )

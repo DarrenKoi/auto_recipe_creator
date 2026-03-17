@@ -41,6 +41,7 @@ class VLMServiceEntry:
     connection_mode: str = "proxy"
     prompt_family: str = "gui"
     benchmark_role: str = ""
+    prefer_stream: bool = False
 
 DEFAULT_FLASK_API_BASE_URL = "http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api"
 DEFAULT_COMPANY_LLM_BASE_URL = "http://common.llm.skhynix.com/v1"
@@ -149,6 +150,7 @@ ALL_VLM_SERVICES: list[VLMServiceEntry] = [
         connection_mode="proxy",
         prompt_family="gui",
         benchmark_role="primary_gui",
+        prefer_stream=True,
     ),
     VLMServiceEntry(
         "paddleocr-vl-1.5",

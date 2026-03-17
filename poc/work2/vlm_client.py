@@ -47,6 +47,7 @@ class ChatImageRequest:
     image_b64: str
     image_mime: str = "image/webp"
     temperature: float = 0.0
+    stream: bool = False
 
 
 class OpenAICompatibleVLMClient:
@@ -75,7 +76,15 @@ class OpenAICompatibleVLMClient:
         if isinstance(content, str):
             return content
         if isinstance(content, dict):
-            for key in ("text", "content", "value", "output_text"):
+            for key in (
+                "text",
+                "content",
+                "value",
+                "output_text",
+                "reasoning_content",
+                "arguments",
+                "function",
+            ):
                 value = content.get(key)
                 if value is None:
                     continue
@@ -93,6 +102,36 @@ class OpenAICompatibleVLMClient:
         return str(content)
 
     @classmethod
+    def _extract_text_from_message_like(cls, payload: object) -> str:
+        if isinstance(payload, dict):
+            for key in (
+                "content",
+                "text",
+                "output_text",
+                "reasoning_content",
+                "tool_calls",
+                "function_call",
+                "function",
+            ):
+                value = payload.get(key)
+                if value is None:
+                    continue
+                text = cls._coerce_content(value)
+                if text:
+                    return text
+            return ""
+        return cls._coerce_content(payload)
+
+    @staticmethod
+    def _looks_like_chat_wrapper(data: object) -> bool:
+        if not isinstance(data, dict):
+            return False
+        return any(
+            key in data
+            for key in ("choices", "usage", "id", "object", "model", "created")
+        )
+
+    @classmethod
     def _extract_text_from_choice(cls, choice: object) -> str:
         if not isinstance(choice, dict):
             return ""
@@ -101,7 +140,7 @@ class OpenAICompatibleVLMClient:
             value = choice.get(key)
             if value is None:
                 continue
-            text = cls._coerce_content(value)
+            text = cls._extract_text_from_message_like(value)
             if text:
                 return text
 
@@ -141,7 +180,10 @@ class OpenAICompatibleVLMClient:
 
         message = data.get("message")
         if message is not None:
-            return cls._coerce_content(message).strip()
+            return cls._extract_text_from_message_like(message).strip()
+
+        if not cls._looks_like_chat_wrapper(data):
+            return _json.dumps(data, ensure_ascii=False)
 
         return ""
 
@@ -198,6 +240,8 @@ class OpenAICompatibleVLMClient:
             "messages": messages,
             "temperature": request.temperature,
         }
+        if request.stream:
+            payload["stream"] = True
 
         response = requests.post(
             self.endpoint,
@@ -236,6 +280,11 @@ class OpenAICompatibleVLMClient:
             text = self._extract_text_from_json_body(data)
             if text:
                 return text
+            if self._looks_like_chat_wrapper(data):
+                raise ValueError(
+                    "VLM JSON response has no usable assistant text. "
+                    f"body={_json.dumps(data, ensure_ascii=False)[:500]}"
+                )
 
         sse_text = self._extract_text_from_sse_body(body_text)
         if sse_text:
@@ -321,6 +370,7 @@ class Work2VLMClient:
         self.model_name = resolved_model_name
         self.timeout_sec = timeout_sec
         self.log_name = log_name.strip() or "vlm_calls"
+        self.prefer_stream = service_entry.prefer_stream
         self._client = OpenAICompatibleVLMClient(
             base_url=self.api_url,
             api_key=self.api_key,
@@ -341,6 +391,7 @@ class Work2VLMClient:
         image_mime: str = "image/webp",
         temperature: float = 0.0,
         model_name: str | None = None,
+        stream: bool | None = None,
     ) -> Work2VLMResponse:
         """이미 base64 인코딩된 이미지를 사용해 요청한다."""
         request = ChatImageRequest(
@@ -350,6 +401,7 @@ class Work2VLMClient:
             image_b64=image_b64,
             image_mime=image_mime,
             temperature=temperature,
+            stream=self.prefer_stream if stream is None else bool(stream),
         )
         started_at = time.time()
         try:
@@ -393,6 +445,7 @@ class Work2VLMClient:
         image_mime: str | None = None,
         temperature: float = 0.0,
         model_name: str | None = None,
+        stream: bool | None = None,
     ) -> Work2VLMResponse:
         """raw image bytes 를 base64 인코딩해서 요청한다."""
         mime = (image_mime or _detect_image_mime(image_bytes)).strip() or "image/webp"
@@ -404,6 +457,7 @@ class Work2VLMClient:
             image_mime=mime,
             temperature=temperature,
             model_name=model_name,
+            stream=stream,
         )
 
     def chat_with_image_path(
@@ -415,6 +469,7 @@ class Work2VLMClient:
         image_mime: str | None = None,
         temperature: float = 0.0,
         model_name: str | None = None,
+        stream: bool | None = None,
     ) -> Work2VLMResponse:
         """로컬 이미지 파일을 읽어 요청한다."""
         path = Path(image_path)
@@ -426,6 +481,7 @@ class Work2VLMClient:
             image_mime=image_mime,
             temperature=temperature,
             model_name=model_name,
+            stream=stream,
         )
 
 
@@ -440,6 +496,7 @@ def send_image_request(
     temperature: float = 0.0,
     model_name: str | None = None,
     timeout_sec: float = 120.0,
+    stream: bool | None = None,
 ) -> Work2VLMResponse:
     """한 번만 쓸 때 사용할 편의 함수."""
     client = Work2VLMClient(
@@ -455,6 +512,7 @@ def send_image_request(
         image_mime=image_mime,
         temperature=temperature,
         model_name=model_name,
+        stream=stream,
     )
 
 

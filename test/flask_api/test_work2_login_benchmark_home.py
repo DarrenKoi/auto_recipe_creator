@@ -56,6 +56,18 @@ def test_build_prompt_for_service_keeps_same_output_contract_for_ocr_and_gui():
     assert "Keep the same JSON schema and coord_system as the GUI models." in ocr_user
 
 
+def test_build_prompt_for_service_adds_ui_tars_grounding_hint():
+    system_message, user_text = build_prompt_for_service(
+        "ui-tars",
+        width=800,
+        height=600,
+        target_keys=("login_button",),
+    )
+
+    assert system_message.startswith("GROUNDING task for a desktop GUI screenshot.")
+    assert '"login_button": {"x": ..., "y": ...}' in user_text
+
+
 def test_build_model_log_name_separates_files_by_model_name():
     assert build_model_log_name("login_rcs", "UI-Venus-1.5-8B") == "login_rcs_ui-venus-1.5-8b"
 

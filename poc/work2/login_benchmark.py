@@ -118,12 +118,20 @@ def build_prompt_for_service(
     if service_entry.prompt_family == "ocr":
         extra_instructions = OCR_LOGIN_EXTRA_INSTRUCTIONS
 
-    return build_login_rcs_locator_prompt(
+    system_message, user_text = build_login_rcs_locator_prompt(
         width=width,
         height=height,
         target_keys=target_keys,
         extra_instructions=extra_instructions,
     )
+    if service_slug == "ui-tars":
+        system_message = (
+            "GROUNDING task for a desktop GUI screenshot. "
+            "Return only the requested JSON coordinates.\n"
+            f"{system_message}"
+        )
+
+    return system_message, user_text
 
 
 def build_model_log_name(base_log_name: str, model_name: str) -> str:

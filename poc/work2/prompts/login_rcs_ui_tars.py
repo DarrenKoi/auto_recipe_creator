@@ -56,8 +56,11 @@ def build_login_rcs_ui_tars_prompt(
 ) -> tuple[str, str]:
     """UI-TARS 용 RCS 로그인 화면 요소 탐색 system/user 프롬프트를 구성한다.
 
+    UI-TARS-1.5-7B 는 별도의 system role 메시지를 지원하지 않으므로,
+    시스템 지시사항을 user 텍스트 앞에 병합하여 반환한다.
+
     Returns:
-        (system_message, user_text) 튜플.
+        (system_message, user_text) 튜플. system_message 는 빈 문자열.
     """
     keys = tuple(target_keys) if target_keys is not None else DEFAULT_UI_TARS_TARGET_KEYS
     missing = [key for key in keys if key not in UI_TARS_LOGIN_ELEMENT_DESCRIPTIONS]
@@ -65,6 +68,8 @@ def build_login_rcs_ui_tars_prompt(
         raise ValueError(f"Unknown target keys for UI-TARS prompt: {missing}")
 
     lines = [
+        GROUNDING_SYSTEM_PROMPT,
+        "",
         "This screenshot shows a Windows 'Remote Control System' login dialog.",
         "Find the following GUI elements and report their center positions.",
         "",
@@ -79,23 +84,25 @@ def build_login_rcs_ui_tars_prompt(
         "element_name: click(start_box='(x,y)')",
     ])
 
-    return GROUNDING_SYSTEM_PROMPT, "\n".join(lines)
+    return "", "\n".join(lines)
 
 
 def build_single_element_prompt(element_key: str) -> tuple[str, str]:
     """UI-TARS GROUNDING 모드로 단일 요소 좌표를 요청하는 프롬프트를 구성한다.
 
     한 번에 하나의 요소만 찾도록 요청하여 정확도를 높인다.
+    UI-TARS-1.5-7B 는 별도의 system role 을 지원하지 않으므로
+    지시사항을 user 텍스트에 병합한다.
     """
     if element_key not in UI_TARS_LOGIN_ELEMENT_DESCRIPTIONS:
         raise ValueError(f"Unknown element key: {element_key}")
 
     desc = UI_TARS_LOGIN_ELEMENT_DESCRIPTIONS[element_key]
-    system_message = (
+    user_text = (
         "You are a GUI agent. You are given a task and a screenshot.\n"
         "You need to find the requested GUI element and click on it.\n"
-        "Output only: click(start_box='(x,y)') with absolute pixel coordinates."
+        "Output only: click(start_box='(x,y)') with absolute pixel coordinates.\n"
+        f"\nClick on {desc}."
     )
-    user_text = f"Click on {desc}."
 
-    return system_message, user_text
+    return "", user_text

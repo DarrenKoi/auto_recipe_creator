@@ -206,6 +206,13 @@
       font-weight: 800;
     }
 
+    code {
+      padding: 3px 8px;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.22);
+      color: #ffffff;
+    }
+
     .route-strip,
     .summary-grid,
     .card-grid {
@@ -282,6 +289,77 @@
 
     .card-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .call-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .callout {
+      padding: 20px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--line);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03)),
+        var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .callout strong {
+      color: #ffffff;
+    }
+
+    .callout p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .callout p + p {
+      margin-top: 10px;
+    }
+
+    .code-card {
+      padding: 20px;
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      background:
+        linear-gradient(150deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03)),
+        rgba(8, 15, 29, 0.82);
+      box-shadow: var(--shadow);
+    }
+
+    .code-card h3 {
+      font-size: 1.02rem;
+      color: #ffffff;
+    }
+
+    .endpoint {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    pre {
+      margin: 14px 0 0;
+      padding: 16px;
+      overflow-x: auto;
+      border-radius: 16px;
+      background: #06101d;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: #edf4ff;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+    }
+
+    pre code {
+      padding: 0;
+      background: transparent;
+      color: inherit;
+      border-radius: 0;
     }
 
     .model-card {
@@ -452,6 +530,10 @@
       }
 
       .card-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .call-grid {
         grid-template-columns: 1fr;
       }
     }
@@ -724,6 +806,276 @@
             </section>
           </div>
         </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Call From Local PC</h2>
+      <div class="call-grid">
+        <div class="callout">
+          <p><strong>권장 호출 방식</strong>: 동료 PC 에서는 repo helper 없이 <code>requests.post(...)</code> 로 Flask proxy 를 직접 호출하면 가장 단순하다.</p>
+          <p><strong>실행 위치</strong>: 로컬 PC 에서 바로 Python 스크립트로 실행하면 된다. repo import 는 필요 없다.</p>
+          <p><strong>사전 점검</strong>: 먼저 <code>uv run python poc/work2/connection_check.py</code> 로 서비스가 살아 있는지 확인한다.</p>
+          <p><strong>요청 형식</strong>: 이미지 파일을 base64 로 바꾼 뒤, JSON dict 안에 <code>model</code>, <code>messages</code>, <code>image_url</code> 를 넣어 POST 하면 된다.</p>
+          <p><strong>이미지 권장 형식</strong>: 가능하면 <code>.webp</code> 이미지를 보내면 현재 repo 운영 원칙과 맞다.</p>
+        </div>
+
+        <div class="callout">
+          <p><strong>공통 패턴</strong>: 아래 코드에서 <code>url</code>, <code>model</code>, <code>prompt</code> 만 바꾸면 5개 모델을 같은 방식으로 호출할 수 있다.</p>
+          <pre><code>import base64
+from pathlib import Path
+
+import requests
+
+img_b64 = base64.b64encode(
+    Path("/ABS/PATH/TO/sample.webp").read_bytes()
+).decode("utf-8")
+
+payload = {
+    "model": "ui-venus-1.5-8b",
+    "messages": [
+        {"role": "system", "content": "Respond only with JSON."},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Analyze this screen in JSON."},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/webp;base64,{img_b64}"
+                    },
+                },
+            ],
+        },
+    ],
+    "temperature": 0.0,
+    "max_tokens": 1024,
+}
+
+response = requests.post(
+    "http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/ui-venus/v1/chat/completions",
+    json=payload,
+    timeout=120,
+)
+response.raise_for_status()
+data = response.json()
+print(data["choices"][0]["message"]["content"])</code></pre>
+        </div>
+
+        <div class="code-card">
+          <h3>UI-Venus Example</h3>
+          <div class="endpoint">POST URL: <code>http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/ui-venus/v1/chat/completions</code></div>
+          <pre><code>import base64
+from pathlib import Path
+
+import requests
+
+img_b64 = base64.b64encode(
+    Path("/ABS/PATH/TO/rcs_screen.webp").read_bytes()
+).decode("utf-8")
+
+payload = {
+    "model": "ui-venus-1.5-8b",
+    "messages": [
+        {"role": "system", "content": "Respond only with JSON."},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "List the major clickable controls and their roles in JSON.",
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/webp;base64,{img_b64}"},
+                },
+            ],
+        },
+    ],
+    "temperature": 0.0,
+    "max_tokens": 1024,
+}
+
+r = requests.post(
+    "http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/ui-venus/v1/chat/completions",
+    json=payload,
+    timeout=120,
+)
+r.raise_for_status()
+print(r.json()["choices"][0]["message"]["content"])</code></pre>
+        </div>
+
+        <div class="code-card">
+          <h3>MAI-UI Example</h3>
+          <div class="endpoint">POST URL: <code>http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/mai-ui/v1/chat/completions</code></div>
+          <pre><code>import base64
+from pathlib import Path
+
+import requests
+
+img_b64 = base64.b64encode(
+    Path("/ABS/PATH/TO/mobile_like_screen.webp").read_bytes()
+).decode("utf-8")
+
+payload = {
+    "model": "mai-ui-8b",
+    "messages": [
+        {"role": "system", "content": "Respond only with JSON."},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Return target area, action type, and reason in JSON.",
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/webp;base64,{img_b64}"},
+                },
+            ],
+        },
+    ],
+    "temperature": 0.0,
+    "max_tokens": 1024,
+}
+
+r = requests.post(
+    "http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/mai-ui/v1/chat/completions",
+    json=payload,
+    timeout=120,
+)
+r.raise_for_status()
+print(r.json()["choices"][0]["message"]["content"])</code></pre>
+        </div>
+
+        <div class="code-card">
+          <h3>UI-TARS Example</h3>
+          <div class="endpoint">POST URL: <code>http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/ui-tars/v1/chat/completions</code></div>
+          <pre><code>import base64
+from pathlib import Path
+
+import requests
+
+img_b64 = base64.b64encode(
+    Path("/ABS/PATH/TO/complex_gui.webp").read_bytes()
+).decode("utf-8")
+
+payload = {
+    "model": "ui-tars-1.5-7b",
+    "messages": [
+        {"role": "system", "content": "Respond only with JSON."},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Return observation, decision, and next action in JSON.",
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/webp;base64,{img_b64}"},
+                },
+            ],
+        },
+    ],
+    "temperature": 0.0,
+    "max_tokens": 1024,
+}
+
+r = requests.post(
+    "http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/ui-tars/v1/chat/completions",
+    json=payload,
+    timeout=120,
+)
+r.raise_for_status()
+print(r.json()["choices"][0]["message"]["content"])</code></pre>
+        </div>
+
+        <div class="code-card">
+          <h3>PaddleOCR-VL-1.5 Example</h3>
+          <div class="endpoint">POST URL: <code>http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/paddleocr-vl-1.5/v1/chat/completions</code></div>
+          <pre><code>import base64
+from pathlib import Path
+
+import requests
+
+img_b64 = base64.b64encode(
+    Path("/ABS/PATH/TO/text_heavy_screen.webp").read_bytes()
+).decode("utf-8")
+
+payload = {
+    "model": "paddleocr-vl-1.5",
+    "messages": [
+        {"role": "system", "content": "Respond only with JSON."},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Read all visible text and return the OCR result in JSON.",
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/webp;base64,{img_b64}"},
+                },
+            ],
+        },
+    ],
+    "temperature": 0.0,
+    "max_tokens": 1024,
+}
+
+r = requests.post(
+    "http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/paddleocr-vl-1.5/v1/chat/completions",
+    json=payload,
+    timeout=120,
+)
+r.raise_for_status()
+print(r.json()["choices"][0]["message"]["content"])</code></pre>
+        </div>
+
+        <div class="code-card">
+          <h3>GOT-OCR-2.0-hf Example</h3>
+          <div class="endpoint">POST URL: <code>http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/got-ocr/v1/chat/completions</code></div>
+          <pre><code>import base64
+from pathlib import Path
+
+import requests
+
+img_b64 = base64.b64encode(
+    Path("/ABS/PATH/TO/ocr_target.webp").read_bytes()
+).decode("utf-8")
+
+payload = {
+    "model": "got-ocr-2.0-hf",
+    "messages": [
+        {"role": "system", "content": "Respond only with JSON."},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Extract the text and return the OCR result in JSON.",
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/webp;base64,{img_b64}"},
+                },
+            ],
+        },
+    ],
+    "temperature": 0.0,
+    "max_tokens": 1024,
+}
+
+r = requests.post(
+    "http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api/vlm_serve/got-ocr/v1/chat/completions",
+    json=payload,
+    timeout=120,
+)
+r.raise_for_status()
+print(r.json()["choices"][0]["message"]["content"])</code></pre>
+        </div>
       </div>
     </section>
 

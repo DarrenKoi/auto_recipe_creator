@@ -37,6 +37,9 @@ from poc.work2.flask_vlm import (
 from poc.work2.logger import log_vlm_call
 
 
+DEFAULT_MAX_TOKENS = 4096
+
+
 @dataclass(frozen=True)
 class ChatImageRequest:
     """VLM 채팅 이미지 요청 데이터."""
@@ -47,6 +50,7 @@ class ChatImageRequest:
     image_b64: str
     image_mime: str = "image/webp"
     temperature: float = 0.0
+    max_tokens: int = DEFAULT_MAX_TOKENS
     stream: bool = False
 
 
@@ -239,6 +243,7 @@ class OpenAICompatibleVLMClient:
             "model": request.model,
             "messages": messages,
             "temperature": request.temperature,
+            "max_tokens": request.max_tokens,
         }
         if request.stream:
             payload["stream"] = True
@@ -270,13 +275,28 @@ class OpenAICompatibleVLMClient:
         response.raise_for_status()
 
         body_text = response.text
+        body_len = len(body_text)
+        if body_len == 0:
+            print("[WARNING] VLM 응답 body 가 비어 있음 (0 bytes)")
+        else:
+            print(f"[INFO] VLM 응답 body 길이: {body_len} chars")
+
         try:
             data = response.json()
         except ValueError:
             data = None
+            print(f"[INFO] VLM 응답이 JSON 이 아님, SSE 파싱 시도 (body 앞 200자: {body_text[:200]!r})")
 
         if isinstance(data, dict):
             self.last_token_usage = data.get("usage") or {}
+            usage = data.get("usage") or {}
+            if usage:
+                print(
+                    f"[INFO] VLM token usage: "
+                    f"prompt={usage.get('prompt_tokens', '?')}, "
+                    f"completion={usage.get('completion_tokens', '?')}, "
+                    f"total={usage.get('total_tokens', '?')}"
+                )
             text = self._extract_text_from_json_body(data)
             if text:
                 return text
@@ -390,6 +410,7 @@ class Work2VLMClient:
         user_text: str,
         image_mime: str = "image/webp",
         temperature: float = 0.0,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
         model_name: str | None = None,
         stream: bool | None = None,
     ) -> Work2VLMResponse:
@@ -401,6 +422,7 @@ class Work2VLMClient:
             image_b64=image_b64,
             image_mime=image_mime,
             temperature=temperature,
+            max_tokens=max_tokens,
             stream=self.prefer_stream if stream is None else bool(stream),
         )
         started_at = time.time()
@@ -444,6 +466,7 @@ class Work2VLMClient:
         user_text: str,
         image_mime: str | None = None,
         temperature: float = 0.0,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
         model_name: str | None = None,
         stream: bool | None = None,
     ) -> Work2VLMResponse:
@@ -456,6 +479,7 @@ class Work2VLMClient:
             user_text=user_text,
             image_mime=mime,
             temperature=temperature,
+            max_tokens=max_tokens,
             model_name=model_name,
             stream=stream,
         )
@@ -468,6 +492,7 @@ class Work2VLMClient:
         user_text: str,
         image_mime: str | None = None,
         temperature: float = 0.0,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
         model_name: str | None = None,
         stream: bool | None = None,
     ) -> Work2VLMResponse:
@@ -480,6 +505,7 @@ class Work2VLMClient:
             user_text=user_text,
             image_mime=image_mime,
             temperature=temperature,
+            max_tokens=max_tokens,
             model_name=model_name,
             stream=stream,
         )
@@ -494,6 +520,7 @@ def send_image_request(
     api_key: str = "",
     image_mime: str | None = None,
     temperature: float = 0.0,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
     model_name: str | None = None,
     timeout_sec: float = 120.0,
     stream: bool | None = None,
@@ -511,6 +538,7 @@ def send_image_request(
         user_text=user_text,
         image_mime=image_mime,
         temperature=temperature,
+        max_tokens=max_tokens,
         model_name=model_name,
         stream=stream,
     )

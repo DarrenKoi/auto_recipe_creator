@@ -74,15 +74,101 @@ class OpenAICompatibleVLMClient:
     def _coerce_content(content: object) -> str:
         if isinstance(content, str):
             return content
+        if isinstance(content, dict):
+            for key in ("text", "content", "value", "output_text"):
+                value = content.get(key)
+                if value is None:
+                    continue
+                text = OpenAICompatibleVLMClient._coerce_content(value)
+                if text:
+                    return text
+            return _json.dumps(content, ensure_ascii=False)
         if isinstance(content, list):
             chunks: list[str] = []
             for item in content:
-                if isinstance(item, dict):
-                    text = item.get("text")
-                    if isinstance(text, str):
-                        chunks.append(text)
+                text = OpenAICompatibleVLMClient._coerce_content(item)
+                if text:
+                    chunks.append(text)
             return "\n".join(chunks).strip()
         return str(content)
+
+    @classmethod
+    def _extract_text_from_choice(cls, choice: object) -> str:
+        if not isinstance(choice, dict):
+            return ""
+
+        for key in ("message", "delta"):
+            value = choice.get(key)
+            if value is None:
+                continue
+            text = cls._coerce_content(value)
+            if text:
+                return text
+
+        for key in ("text", "content", "output_text", "reasoning_content"):
+            value = choice.get(key)
+            if value is None:
+                continue
+            text = cls._coerce_content(value)
+            if text:
+                return text
+
+        return ""
+
+    @classmethod
+    def _extract_text_from_json_body(cls, data: object) -> str:
+        if not isinstance(data, dict):
+            return ""
+
+        choices = data.get("choices") or []
+        if isinstance(choices, list):
+            chunks: list[str] = []
+            for choice in choices:
+                text = cls._extract_text_from_choice(choice)
+                if text:
+                    chunks.append(text)
+            joined = "".join(chunks).strip()
+            if joined:
+                return joined
+
+        for key in ("output_text", "text", "content"):
+            value = data.get(key)
+            if value is None:
+                continue
+            text = cls._coerce_content(value)
+            if text:
+                return text
+
+        message = data.get("message")
+        if message is not None:
+            return cls._coerce_content(message).strip()
+
+        return ""
+
+    @classmethod
+    def _extract_text_from_sse_body(cls, body_text: str) -> str:
+        if not body_text:
+            return ""
+
+        chunks: list[str] = []
+        for raw_line in body_text.splitlines():
+            line = raw_line.strip()
+            if not line.startswith("data:"):
+                continue
+            payload_text = line[5:].strip()
+            if not payload_text or payload_text == "[DONE]":
+                continue
+            try:
+                payload = _json.loads(payload_text)
+            except Exception:
+                chunks.append(payload_text)
+                continue
+
+            text = cls._extract_text_from_json_body(payload)
+            if text:
+                chunks.append(text)
+
+        return "".join(chunks).strip()
 
     def chat_with_image(self, request: ChatImageRequest) -> str:
         """이미지 포함 chat completions 요청을 보내고 응답 텍스트를 반환한다."""
@@ -139,16 +225,27 @@ class OpenAICompatibleVLMClient:
 
         response.raise_for_status()
 
-        data = response.json()
-        self.last_token_usage = data.get("usage") or {}
-        choices = data.get("choices") or []
-        if not choices:
-            raise ValueError(
-                f"VLM response has no choices: "
-                f"{_json.dumps(data, ensure_ascii=False)[:300]}"
-            )
-        message = choices[0].get("message") or {}
-        return self._coerce_content(message.get("content", ""))
+        body_text = response.text
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+
+        if isinstance(data, dict):
+            self.last_token_usage = data.get("usage") or {}
+            text = self._extract_text_from_json_body(data)
+            if text:
+                return text
+
+        sse_text = self._extract_text_from_sse_body(body_text)
+        if sse_text:
+            return sse_text
+
+        stripped_body = body_text.strip()
+        if stripped_body:
+            return stripped_body
+
+        raise ValueError("VLM response has no usable text content.")
 
 
 def _detect_image_mime(image_bytes: bytes, fallback: str = "image/webp") -> str:

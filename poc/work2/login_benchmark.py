@@ -49,7 +49,6 @@ STATUS_PARSE_ERROR = "parse_error"
 STATUS_SKIPPED_UNHEALTHY = "skipped_unhealthy"
 
 HEALTH_PROBE_TIMEOUT_SEC = float(os.getenv("VLM_HEALTH_PROBE_TIMEOUT_SEC", "5.0"))
-HEALTH_PROBE_TIMEOUT_DIRECT_SEC = float(os.getenv("VLM_HEALTH_PROBE_TIMEOUT_DIRECT_SEC", "20.0"))
 
 
 @dataclass(frozen=True)
@@ -133,7 +132,7 @@ def build_model_log_name(base_log_name: str, model_name: str) -> str:
 
 
 def _probe_service_health(service_slug: str) -> tuple[bool, str]:
-    """서비스의 /v1/models 를 호출하여 정상 여부를 빠르게 확인한다.
+    """서비스의 사전 건강 상태를 빠르게 확인한다.
 
     Returns:
         (healthy, reason) 튜플. healthy=True 이면 모델이 서빙 중.
@@ -144,6 +143,10 @@ def _probe_service_health(service_slug: str) -> tuple[bool, str]:
     base_url = resolve_service_proxy_url(service_slug)
     if not base_url:
         return False, "proxy URL 미확인"
+
+    svc = _get_svc(service_slug)
+    if svc is not None and svc.connection_mode == "direct":
+        return True, f"direct preflight skipped: {svc.model_name}"
 
     normalized = base_url.rstrip("/")
     if normalized.endswith("/v1"):
@@ -156,12 +159,8 @@ def _probe_service_health(service_slug: str) -> tuple[bool, str]:
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    svc = _get_svc(service_slug)
-    is_direct = svc is not None and svc.connection_mode == "direct"
-    timeout = HEALTH_PROBE_TIMEOUT_DIRECT_SEC if is_direct else HEALTH_PROBE_TIMEOUT_SEC
-
     try:
-        resp = requests.get(models_url, headers=headers, timeout=timeout)
+        resp = requests.get(models_url, headers=headers, timeout=HEALTH_PROBE_TIMEOUT_SEC)
     except requests.RequestException as exc:
         return False, f"probe 연결 실패: {exc}"
 

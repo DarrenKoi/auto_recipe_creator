@@ -1,8 +1,11 @@
 """poc.work2.login_benchmark home 테스트."""
 
+from poc.work2 import login_benchmark
 from poc.work2.connection_check import _build_models_url
 from poc.work2.flask_vlm import (
+    KIMI_K2_5_MODEL_NAME,
     SHARED_PIPELINE_SETTINGS,
+    get_service_by_slug,
     resolve_company_llm_api_key,
     resolve_service_api_key,
 )
@@ -57,6 +60,11 @@ def test_build_model_log_name_separates_files_by_model_name():
     assert build_model_log_name("login_rcs", "UI-Venus-1.5-8B") == "login_rcs_ui-venus-1.5-8b"
 
 
+def test_kimi_service_uses_exact_company_model_name():
+    assert KIMI_K2_5_MODEL_NAME == "Kimi-K2.5"
+    assert get_service_by_slug("kimi-k2.5").model_name == "Kimi-K2.5"
+
+
 def test_build_models_url_accepts_direct_v1_base_url():
     assert _build_models_url("http://common.llm.skhynix.com/v1") == (
         "http://common.llm.skhynix.com/v1/models"
@@ -76,6 +84,18 @@ def test_company_llm_api_key_uses_common_llm_env(monkeypatch):
 
     client = Work2VLMClient(service_slug="kimi-k2.5")
     assert client.api_key == "test-company-key"
+
+
+def test_direct_company_probe_skips_models_list_check(monkeypatch):
+    def fail_get(*args, **kwargs):
+        raise AssertionError("direct company services should not probe /models")
+
+    monkeypatch.setattr(login_benchmark.requests, "get", fail_get)
+
+    healthy, reason = login_benchmark._probe_service_health("kimi-k2.5")
+
+    assert healthy is True
+    assert reason == "direct preflight skipped: Kimi-K2.5"
 
 
 def test_extract_json_repairs_common_ui_model_almost_json_shapes():

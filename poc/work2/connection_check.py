@@ -1,6 +1,7 @@
 """Flask proxy VLM 연결 점검 스크립트.
 
 Flask `/api/vlm_serve/health` 와 각 proxy route 의 `/v1/models` 응답을 점검한다.
+회사 공용 direct 모델은 `/models` probe 를 강제하지 않고 skip 처리한다.
 VLM 서비스 registry 및 Flask URL 설정은 `flask_vlm.py` 에서 가져온다.
 
 필요하면 `CONNECTION_CHECK_SERVICES=slug1,slug2,...` 환경변수로 대상 route 를 제한할 수 있다.
@@ -53,13 +54,19 @@ def _parse_requested_services() -> tuple[str, ...]:
 def _fallback_target_row(service_slug: str) -> dict[str, object]:
     """health endpoint 를 못 쓸 때 사용할 최소 대상 row 를 구성한다."""
     service_entry = get_service_by_slug(service_slug)
-    proxy_registered = service_entry is not None and service_entry.enabled
+    connection_mode = service_entry.connection_mode if service_entry else ""
+    proxy_registered = (
+        service_entry is not None
+        and service_entry.enabled
+        and connection_mode != "direct"
+    )
     return {
         "service": service_slug,
         "display_name": service_entry.display_name if service_entry else service_slug,
         "expected_model": service_entry.model_name if service_entry else "",
         "health_status": "",
         "proxy_registered": proxy_registered,
+        "connection_mode": connection_mode,
         "config_known": service_entry is not None,
         "config_enabled": None if service_entry is None else service_entry.enabled,
         "api_url": resolve_service_proxy_url(service_slug) if proxy_registered else "",
@@ -147,19 +154,48 @@ def check_flask_health(flask_base_url: str) -> dict | None:
 
 
 def check_proxy_models(flask_base_url: str, target_services: list[dict[str, object]]) -> list[dict]:
-    """각 VLM 서비스의 proxy route 를 통해 /v1/models 를 호출한다."""
+    """각 서비스의 probe 결과를 수집한다.
+
+    direct 회사 모델은 `/models` probe 대신 skip 결과만 남긴다.
+    """
     results = []
     for target in target_services:
         route_slug = str(target["service"])
         expected_model = str(target["expected_model"])
+        service_entry = get_service_by_slug(route_slug)
+        connection_mode = str(
+            target.get("connection_mode")
+            or (service_entry.connection_mode if service_entry else "")
+            or ""
+        ).strip()
         proxy_base_url = str(target.get("api_url") or "").strip()
         if not proxy_base_url:
             proxy_base_url = resolve_service_proxy_url(
                 route_slug,
                 flask_base_url=flask_base_url,
             )
-        proxy_url = _build_models_url(proxy_base_url)
         probe = dict(target)
+        probe["connection_mode"] = connection_mode
+
+        if connection_mode == "direct":
+            probe["url"] = proxy_base_url
+            probe.update(
+                {
+                    "ok": True,
+                    "status_code": None,
+                    "latency_ms": None,
+                    "body": None,
+                    "error": None,
+                    "detected_models": [],
+                    "model_match": None,
+                    "skipped": True,
+                    "reason": "direct company API: /models probe 미사용",
+                }
+            )
+            results.append(probe)
+            continue
+
+        proxy_url = _build_models_url(proxy_base_url)
         probe["url"] = proxy_url
 
         if not bool(target.get("proxy_registered")):
@@ -171,7 +207,7 @@ def check_proxy_models(flask_base_url: str, target_services: list[dict[str, obje
                     "body": None,
                     "error": None,
                     "detected_models": [],
-                    "model_match": False,
+                    "model_match": None,
                     "skipped": True,
                 }
             )
@@ -244,7 +280,9 @@ def print_summary(
             status = "FAIL"
             all_ok = False
 
-        if str(probe.get("expected_model", "")).strip():
+        if probe.get("skipped") or not isinstance(probe.get("model_match"), bool):
+            match_str = "-"
+        elif str(probe.get("expected_model", "")).strip():
             match_str = "O" if probe["model_match"] else "X"
         else:
             match_str = "-"

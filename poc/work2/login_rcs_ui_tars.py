@@ -457,12 +457,13 @@ def main() -> str:
         service=SERVICE_SLUG,
     )
 
-    # 진단 프로브: UI-TARS 가 텍스트 전용으로도 생성하는지 확인
-    if os.getenv("UI_TARS_PROBE", "1").strip() == "1":
-        probe_ui_tars_text_only()
-
-    # 배치 모드(기본) vs 개별 모드 선택
+    # 배치 모드(기본) vs 개별 모드 vs 진단 프로브 선택
     mode = os.getenv("UI_TARS_MODE", "batch").strip().lower()
+
+    if mode == "probe":
+        print("[INFO] UI-TARS 진단 프로브 모드 (텍스트 전용, 창 불필요)")
+        probe_ui_tars_text_only()
+        return "probe_done"
 
     login_window, window_title, backend = _find_login_window()
     if login_window is None:

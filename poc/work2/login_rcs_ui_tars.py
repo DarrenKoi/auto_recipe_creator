@@ -403,6 +403,43 @@ def run_ui_tars_per_element_analysis(
     }
 
 
+# ── UI-TARS 진단 프로브 ───────────────────────────────────────────
+def probe_ui_tars_text_only() -> None:
+    """UI-TARS 에 이미지 없이 간단한 텍스트만 보내 응답 생성을 확인한다.
+
+    completion_tokens=1 문제 진단용. 이미지 없이도 1 토큰이면 모델/vLLM 설정 문제,
+    이미지 있을 때만 1 토큰이면 이미지 처리 문제로 원인을 분리할 수 있다.
+    """
+    import requests as _requests
+
+    service_entry = get_service_by_slug(SERVICE_SLUG)
+    if service_entry is None:
+        print(f"[PROBE] 서비스 {SERVICE_SLUG} 를 찾을 수 없습니다.")
+        return
+
+    proxy_url = resolve_service_proxy_url(SERVICE_SLUG)
+    endpoint = f"{proxy_url.rstrip('/')}/v1/chat/completions"
+
+    # 1) 텍스트 전용 요청
+    payload = {
+        "model": service_entry.model_name,
+        "messages": [
+            {
+                "role": "user",
+                "content": "Hello, describe what you can do in one sentence.",
+            },
+        ],
+        "temperature": 0.0,
+        "max_tokens": 100,
+    }
+    print(f"[PROBE] UI-TARS 텍스트 전용 요청: endpoint={endpoint}")
+    try:
+        resp = _requests.post(endpoint, json=payload, timeout=30)
+        print(f"[PROBE] status={resp.status_code}, body={resp.text[:600]}")
+    except Exception as exc:
+        print(f"[PROBE] 텍스트 전용 요청 실패: {exc}")
+
+
 # ── 창 탐색은 login_rcs_Rev2 와 동일 로직 재사용 ────────────────────
 def _find_login_window():
     """login_rcs_Rev2 의 창 탐색 로직을 재사용한다."""
@@ -419,6 +456,10 @@ def main() -> str:
         log_name=LOG_NAME,
         service=SERVICE_SLUG,
     )
+
+    # 진단 프로브: UI-TARS 가 텍스트 전용으로도 생성하는지 확인
+    if os.getenv("UI_TARS_PROBE", "1").strip() == "1":
+        probe_ui_tars_text_only()
 
     # 배치 모드(기본) vs 개별 모드 선택
     mode = os.getenv("UI_TARS_MODE", "batch").strip().lower()

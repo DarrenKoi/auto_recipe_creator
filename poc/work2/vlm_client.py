@@ -251,6 +251,25 @@ class OpenAICompatibleVLMClient:
         if request.stream:
             payload["stream"] = True
 
+        # 요청 메시지 구조 진단 (base64 이미지 데이터 제외)
+        diag_messages = []
+        for msg in messages:
+            if isinstance(msg.get("content"), list):
+                diag_parts = []
+                for part in msg["content"]:
+                    if part.get("type") == "image_url":
+                        url = (part.get("image_url") or {}).get("url", "")
+                        diag_parts.append({"type": "image_url", "url_prefix": url[:40] + "..."})
+                    else:
+                        diag_parts.append(part)
+                diag_messages.append({"role": msg["role"], "content": diag_parts})
+            else:
+                diag_messages.append(msg)
+        print(
+            f"[INFO] VLM 요청 메시지 구조: "
+            f"{_json.dumps(diag_messages, ensure_ascii=False, indent=None)[:800]}"
+        )
+
         response = requests.post(
             self.endpoint,
             headers=self._headers(),
@@ -272,6 +291,15 @@ class OpenAICompatibleVLMClient:
                 f"[INFO] VLM 응답 body (요약): "
                 f"{_json.dumps(log_body, ensure_ascii=False)}"
             )
+            # completion_tokens 가 극히 작으면 choices 전체를 진단용으로 출력한다.
+            usage = raw_body.get("usage") or {}
+            completion_tokens = usage.get("completion_tokens", -1)
+            if isinstance(completion_tokens, int) and 0 <= completion_tokens <= 5:
+                choices = raw_body.get("choices") or []
+                print(
+                    f"[WARNING] completion_tokens={completion_tokens} 로 매우 작음. "
+                    f"choices 전문: {_json.dumps(choices, ensure_ascii=False)}"
+                )
         except Exception:
             print(f"[INFO] VLM 응답 body (raw): {response.text[:500]}")
 

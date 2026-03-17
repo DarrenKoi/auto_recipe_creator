@@ -31,8 +31,6 @@
   GPU VRAM 외에 host RAM이 왜 중요한지 설명할 때 참고한다.
 - [`06-multi-size-variants.md`](./06-multi-size-variants.md)
   size variant 비교가 필요할 때만 본다.
-- [`09-omniparser-v2.md`](./09-omniparser-v2.md)
-  future sidecar 확장안이 필요할 때만 본다.
 
 ## 4. coworker-facing 코드 앵커
 

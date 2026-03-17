@@ -14,8 +14,6 @@
 
 ## 2. 발표 중 필요할 때만 펼쳐볼 deep dive
 
-- [`omniparser_v2_integration_research.md`](./omniparser_v2_integration_research.md)
-  OCR sidecar를 OmniParser 계열로 바꿀 때의 기대 효과와 리스크를 설명한다.
 - [`vllm_runtime_and_unsloth_finetuning.md`](./vllm_runtime_and_unsloth_finetuning.md)
   vLLM 런타임 구조, tokenizer/processor 역할, 작은 GPU 환경의 학습 전략을 정리한다.
 - [`encode_decode_and_model_architecture.md`](./encode_decode_and_model_architecture.md)

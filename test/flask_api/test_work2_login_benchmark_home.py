@@ -51,8 +51,8 @@ def test_build_model_log_name_separates_files_by_model_name():
 
 
 def test_build_models_url_accepts_direct_v1_base_url():
-    assert _build_models_url("http://common.llm.skhynix.com.com/v1") == (
-        "http://common.llm.skhynix.com.com/v1/models"
+    assert _build_models_url("http://common.llm.skhynix.com/v1") == (
+        "http://common.llm.skhynix.com/v1/models"
     )
     assert _build_models_url("http://example.com/api/vlm_serve/ui-venus") == (
         "http://example.com/api/vlm_serve/ui-venus/v1/models"

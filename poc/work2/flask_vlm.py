@@ -27,7 +27,7 @@ class VLMServiceEntry:
     benchmark_role: str = ""
 
 DEFAULT_FLASK_API_BASE_URL = "http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api"
-DEFAULT_COMPANY_LLM_BASE_URL = "http://common.llm.skhynix.com.com/v1"
+DEFAULT_COMPANY_LLM_BASE_URL = "http://common.llm.skhynix.com/v1"
 DEFAULT_VLM_HEALTH_TIMEOUT_SEC = 5.0
 
 KIMI_K2_5_MODEL_NAME = "Kimi-K2.5"

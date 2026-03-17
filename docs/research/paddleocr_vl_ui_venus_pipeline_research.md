@@ -12,6 +12,8 @@
 
 이 문서는 `2026-03-17` 기준으로 작성했으며, 공식 저장소, 공식 모델 카드, 공식 문서, 공식 기술 보고서만 근거로 사용했다.
 
+같은 날짜 기준으로 `deploy_vlms/` 에 배치된 전체 모델 5종(`UI-Venus`, `UI-TARS`, `MAI-UI`, `PaddleOCR-VL-1.5`, `GOT-OCR-2.0-hf`)의 역할 분리와 파이프라인 운영 메모는 `docs/research/deploy_vlms_model_roles_and_pipeline_research.md` 로 별도 정리했다.
+
 ## 요약
 
 - **정보 추출 중심(extraction-heavy)** 작업에서는 `PaddleOCR-VL-1.5 -> UI-Venus` 순서가 기본값으로 더 적합하다.

@@ -19,7 +19,7 @@ from pathlib import Path
 
 
 STARTUP_POLL_SEC = 2.0
-INTER_MODEL_DELAY_SEC = 3.0
+INTER_MODEL_DELAY_SEC = 10.0
 
 VLLM_MODELS = [
     "ui-venus",

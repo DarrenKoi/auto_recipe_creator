@@ -24,7 +24,12 @@
       "Bash(gh api:*)",
       "WebFetch(domain:docs.ultralytics.com)",
       "Bash(ls:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Read(//private/tmp/**)",
+      "Bash(gh search:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(gh issue:*)",
+      "WebFetch(domain:qwen.readthedocs.io)"
     ]
   },
   "hooks": {

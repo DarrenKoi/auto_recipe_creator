@@ -10,7 +10,13 @@ const {
 } = require("./pptxgenjs_helpers/layout");
 
 const OUT_DIR = __dirname;
-const OUT_FILE = path.join(OUT_DIR, "flask_vlm_coworker_intro.pptx");
+const OUT_FILE = path.resolve(
+  OUT_DIR,
+  "../../..",
+  "docs",
+  "setup_vlms",
+  "flask_vlm_coworker_intro.pptx"
+);
 
 const pptx = new PptxGenJS();
 pptx.layout = "LAYOUT_WIDE";

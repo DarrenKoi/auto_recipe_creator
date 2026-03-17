@@ -29,7 +29,7 @@
 | [`deploy_vlms_model_roles_and_pipeline_research.md`](./deploy_vlms_model_roles_and_pipeline_research.md) | 배치된 5개 모델의 역할, 강점, 한계, `poc/work2` 파이프라인 적용 해석 |
 | [`paddleocr_vl_ui_venus_pipeline_research.md`](./paddleocr_vl_ui_venus_pipeline_research.md) | `PaddleOCR-VL-1.5`와 `UI-Venus` 역할 분리와 조합 방식 |
 | [`omniparser_v2_integration_research.md`](./omniparser_v2_integration_research.md) | OCR sidecar를 OmniParser 계열로 바꿀 때의 기대 효과와 리스크 |
-| [`vllm_runtime_and_unsloth_finetuning.md`](./vllm_runtime_and_unsloth_finetuning.md) | vLLM 서빙 구조와 작은 GPU 환경의 LoRA/QLoRA 학습 전략 |
+| [`vllm_runtime_and_unsloth_finetuning.md`](./vllm_runtime_and_unsloth_finetuning.md) | vLLM 서빙 구조, tokenizer/processor가 왜 필요한지, 작은 GPU 환경의 LoRA/QLoRA 학습 전략 |
 
 ## RCS 비디오-투-액션
 
@@ -46,3 +46,14 @@
 | `engineering_screen_vlm_recommendations.md` | `gui_model_selection_and_benchmark_plan.md` + `deploy_vlms_model_roles_and_pipeline_research.md` 로 통합 |
 | `gui_vlm_benchmark_report.md` | `gui_model_selection_and_benchmark_plan.md` 로 통합 |
 | `rcs_video_to_action_research.md` | `rcs_video_to_action_overview.md` + `rcs_video_action_implementation_guide.md` 로 통합 |
+
+## LLM 실행 기초
+
+LLM에서 tokenizer는 **문자열을 모델이 처리할 수 있는 토큰 ID 시퀀스로 바꾸는 변환기**다. 모델은 글자나 단어를 직접 읽는 것이 아니라, tokenizer가 만든 토큰 ID를 embedding으로 바꾼 뒤 다음 토큰 확률을 계산한다.
+
+- 입력 시에는 `text -> tokens` 변환이 필요하다. prompt를 숫자 ID 배열로 바꿔야 GPU 위 모델이 prefill/decode를 수행할 수 있다.
+- 출력 시에는 `tokens -> text` 변환이 필요하다. 모델이 생성한 다음 토큰 ID들을 다시 사람이 읽을 수 있는 문자열로 복원해야 한다.
+- 같은 base model이라도 **반드시 그 모델에 맞는 tokenizer**를 써야 한다. vocabulary, special token, chat template이 어긋나면 출력 품질이 깨지거나 프롬프트 형식이 틀어진다.
+- VLM에서는 보통 텍스트는 tokenizer가, 이미지/비디오는 processor가 맡는다. 둘 다 결국 모델이 처리 가능한 token/embedding 형태로 바꾸는 전처리 단계다.
+
+즉, tokenizer는 선택 부품이 아니라 **모델 실행 경로의 일부**다. tokenizer 없이 LLM은 자연어 입력을 숫자 시퀀스로 바꾸지 못하고, 생성 결과도 다시 텍스트로 해석할 수 없다. 관련 상세 메모는 [`vllm_runtime_and_unsloth_finetuning.md`](./vllm_runtime_and_unsloth_finetuning.md)를 보면 된다.

@@ -65,7 +65,13 @@ DEFAULT_OCR_PIPELINE_ENABLED = True
 # 3) 필요 시 direct URL/API key 도 여기서만 관리한다.
 SHARED_PIPELINE_SETTINGS: dict[str, str | bool] = {
     "flask_api_base_url": DEFAULT_FLASK_API_BASE_URL,
+
+    # 회사 공용 direct LLM (`common.llm.skhynix.com`) 연결 정보.
+    # `Kimi-K2.5`, `Qwen3-VL-30B-Instruct` 가 이 값을 사용한다.
+    # 필요 시 아래 `company_llm_api_key` 에 본인 API key 를 넣는다.
     "company_llm_base_url": DEFAULT_COMPANY_LLM_BASE_URL,
+    "company_llm_api_key": "",
+
     "shared_api_key": "",
     "screen_analysis_service": DEFAULT_SCREEN_ANALYSIS_SERVICE,
     "screen_analysis_model_name": DEFAULT_SCREEN_ANALYSIS_MODEL_NAME,
@@ -335,6 +341,27 @@ def resolve_shared_api_key() -> str:
     return _shared_text("shared_api_key")
 
 
+def resolve_company_llm_api_base_url() -> str:
+    """회사 공용 direct LLM base URL 을 반환한다."""
+    return (_shared_text("company_llm_base_url") or DEFAULT_COMPANY_LLM_BASE_URL).rstrip("/")
+
+
+def resolve_company_llm_api_key() -> str:
+    """회사 공용 direct LLM API key 를 반환한다."""
+    return _shared_text("company_llm_api_key") or resolve_shared_api_key()
+
+
+def resolve_service_api_key(service_slug: str, default: str = "") -> str:
+    """service slug 별 기본 API key 를 반환한다."""
+    service_entry = get_service_by_slug(service_slug)
+    if service_entry is None:
+        return default
+
+    if service_entry.connection_mode == "direct":
+        return resolve_company_llm_api_key() or default
+    return default
+
+
 def resolve_screen_analysis_service(default: str = DEFAULT_SCREEN_ANALYSIS_SERVICE) -> str:
     """화면 분석 목적에 사용할 Flask proxy service slug 를 반환한다."""
     return _shared_text("screen_analysis_service") or default
@@ -424,6 +451,8 @@ def resolve_pipeline_config(
     """공유 purpose-based pipeline 설정을 반환한다."""
     return {
         "flask_api_base_url": resolve_flask_api_base_url(),
+        "company_llm_base_url": resolve_company_llm_api_base_url(),
+        "company_llm_api_key": resolve_company_llm_api_key(),
         "shared_api_key": resolve_shared_api_key(),
         "screen_analysis_service": resolve_screen_analysis_service(),
         "screen_analysis_api_url": resolve_screen_analysis_api_url(),
@@ -507,6 +536,8 @@ __all__ = [
     "VLMServiceEntry",
     "apply_pipeline_env_defaults",
     "fetch_vlm_health",
+    "resolve_company_llm_api_base_url",
+    "resolve_company_llm_api_key",
     "get_enabled_slugs",
     "get_enabled_services_by_role",
     "get_service_by_slug",
@@ -525,6 +556,7 @@ __all__ = [
     "resolve_screen_analysis_api_url",
     "resolve_screen_analysis_model_name",
     "resolve_screen_analysis_service",
+    "resolve_service_api_key",
     "resolve_service_proxy_url",
     "resolve_shared_api_key",
     "resolve_vlm_health_url",

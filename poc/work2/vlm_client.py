@@ -29,7 +29,11 @@ from pathlib import Path
 
 import requests
 
-from poc.work2.flask_vlm import get_service_by_slug, resolve_service_proxy_url
+from poc.work2.flask_vlm import (
+    get_service_by_slug,
+    resolve_service_api_key,
+    resolve_service_proxy_url,
+)
 from poc.work2.logger import log_vlm_call
 
 
@@ -216,7 +220,7 @@ class Work2VLMClient:
         self.service_slug = service_slug
         self.display_name = service_entry.display_name
         self.api_url = resolved_api_url
-        self.api_key = api_key.strip()
+        self.api_key = (api_key or resolve_service_api_key(service_slug)).strip()
         self.model_name = resolved_model_name
         self.timeout_sec = timeout_sec
         self.log_name = log_name.strip() or "vlm_calls"

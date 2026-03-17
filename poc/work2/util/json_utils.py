@@ -1,21 +1,109 @@
 """VLM 응답 JSON 처리 유틸리티."""
 
+import ast
 import json
+import re
+
+
+_TRAILING_COMMA_PATTERN = re.compile(r",(\s*[}\]])")
+_FENCE_PATTERN = re.compile(r"```(?:json)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
+
+
+def _strip_code_fence(text: str) -> str:
+    """markdown code fence 를 벗긴다."""
+    match = _FENCE_PATTERN.search(text)
+    if match:
+        return match.group(1).strip()
+    return text.strip()
+
+
+def _extract_first_balanced_object(text: str) -> str:
+    """문자열 안의 첫 balanced JSON object 부분만 추출한다."""
+    start = text.find("{")
+    if start < 0:
+        return ""
+
+    depth = 0
+    in_string = False
+    escape = False
+    quote_char = ""
+    for idx in range(start, len(text)):
+        char = text[idx]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == quote_char:
+                in_string = False
+            continue
+
+        if char in {'"', "'"}:
+            in_string = True
+            quote_char = char
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : idx + 1]
+    return ""
+
+
+def _normalize_json_candidate(text: str) -> str:
+    """JSON 파싱 전에 자주 섞이는 노이즈를 정리한다."""
+    normalized = (
+        text.replace("\u201c", '"')
+        .replace("\u201d", '"')
+        .replace("\u2018", "'")
+        .replace("\u2019", "'")
+        .strip()
+    )
+    normalized = _TRAILING_COMMA_PATTERN.sub(r"\1", normalized)
+    return normalized
+
+
+def _try_parse_candidate(text: str) -> dict | None:
+    """후보 문자열을 dict 로 파싱한다."""
+    if not text:
+        return None
+
+    normalized = _normalize_json_candidate(text)
+    try:
+        parsed = json.loads(normalized)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        pass
+
+    try:
+        parsed = ast.literal_eval(normalized)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        pass
+
+    return None
 
 
 def extract_json(text: str) -> dict:
     """VLM 응답 텍스트에서 JSON 객체를 추출한다."""
-    if "```json" in text:
-        start = text.find("```json") + 7
-        end = text.find("```", start)
-        if end != -1:
-            return json.loads(text[start:end].strip())
-    if "{" in text:
-        start = text.find("{")
-        end = text.rfind("}")
-        if end > start:
-            return json.loads(text[start : end + 1])
-    return json.loads(text)
+    candidates = [
+        _strip_code_fence(text),
+        _extract_first_balanced_object(text),
+        text.strip(),
+    ]
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = candidate.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        parsed = _try_parse_candidate(normalized)
+        if parsed is not None:
+            return parsed
+
+    raise json.JSONDecodeError("JSON object not found", text, 0)
 
 
 def _normalize_coord_system(value) -> str | None:

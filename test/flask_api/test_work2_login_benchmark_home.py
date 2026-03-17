@@ -1,11 +1,18 @@
 """poc.work2.login_benchmark home 테스트."""
 
 from poc.work2.connection_check import _build_models_url
+from poc.work2.flask_vlm import (
+    SHARED_PIPELINE_SETTINGS,
+    resolve_company_llm_api_key,
+    resolve_service_api_key,
+)
 from poc.work2.login_benchmark import (
     build_model_log_name,
     build_prompt_for_service,
     resolve_benchmark_service_slugs,
 )
+from poc.work2.util.json_utils import extract_json
+from poc.work2.vlm_client import Work2VLMClient
 
 
 def test_resolve_benchmark_service_slugs_defaults_to_primary_gui_order():
@@ -57,3 +64,33 @@ def test_build_models_url_accepts_direct_v1_base_url():
     assert _build_models_url("http://example.com/api/vlm_serve/ui-venus") == (
         "http://example.com/api/vlm_serve/ui-venus/v1/models"
     )
+
+
+def test_company_llm_api_key_slot_is_used_for_direct_models():
+    original = SHARED_PIPELINE_SETTINGS.get("company_llm_api_key", "")
+    try:
+        SHARED_PIPELINE_SETTINGS["company_llm_api_key"] = "test-company-key"
+
+        assert resolve_company_llm_api_key() == "test-company-key"
+        assert resolve_service_api_key("kimi-k2.5") == "test-company-key"
+        assert resolve_service_api_key("qwen3-vl-30b-instruct") == "test-company-key"
+
+        client = Work2VLMClient(service_slug="kimi-k2.5")
+        assert client.api_key == "test-company-key"
+    finally:
+        SHARED_PIPELINE_SETTINGS["company_llm_api_key"] = original
+
+
+def test_extract_json_repairs_common_ui_model_almost_json_shapes():
+    fenced = """```json
+    {
+      "coord_system": "relative_1000",
+      "login_button": {"x": 512, "y": 824},
+    }
+    ```"""
+    assert extract_json(fenced)["login_button"] == {"x": 512, "y": 824}
+
+    python_like = """Here is the result:
+    {'coord_system': 'relative_1000', 'cancel_button': {'x': 700, 'y': 820}}
+    """
+    assert extract_json(python_like)["cancel_button"] == {"x": 700, "y": 820}

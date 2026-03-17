@@ -23,7 +23,7 @@ except ImportError:
 
 WORK2_DIR = Path(__file__).resolve().parent
 WORK2_DOTENV_PATH = WORK2_DIR / ".env"
-WORK2_COMPANY_LLM_API_KEY_ENV = "WORK2_COMPANY_LLM_API_KEY"
+COMMON_LLM_API_KEY_ENV = "COMMON_LLM_API_KEY"
 
 if DOTENV_AVAILABLE and WORK2_DOTENV_PATH.is_file():
     load_dotenv(WORK2_DOTENV_PATH)
@@ -84,7 +84,7 @@ SHARED_PIPELINE_SETTINGS: dict[str, str | bool] = {
 
     # 회사 공용 direct LLM (`common.llm.skhynix.com`) 연결 정보.
     # `Kimi-K2.5`, `Qwen3-VL-30B-Instruct` 가 이 base URL 을 사용한다.
-    # API key 는 `poc/work2/.env` 의 `WORK2_COMPANY_LLM_API_KEY` 에 넣는다.
+    # API key 는 `poc/work2/.env` 의 `COMMON_LLM_API_KEY` 에 넣는다.
     "company_llm_base_url": DEFAULT_COMPANY_LLM_BASE_URL,
 
     "shared_api_key": "",
@@ -363,7 +363,7 @@ def resolve_company_llm_api_base_url() -> str:
 
 def resolve_company_llm_api_key() -> str:
     """회사 공용 direct LLM API key 를 반환한다."""
-    return os.getenv(WORK2_COMPANY_LLM_API_KEY_ENV, "").strip() or resolve_shared_api_key()
+    return os.getenv(COMMON_LLM_API_KEY_ENV, "").strip() or resolve_shared_api_key()
 
 
 def resolve_service_api_key(service_slug: str, default: str = "") -> str:

@@ -66,8 +66,8 @@ def test_build_models_url_accepts_direct_v1_base_url():
     )
 
 
-def test_company_llm_api_key_uses_work2_env_file_convention(monkeypatch):
-    monkeypatch.setenv("WORK2_COMPANY_LLM_API_KEY", "test-company-key")
+def test_company_llm_api_key_uses_common_llm_env(monkeypatch):
+    monkeypatch.setenv("COMMON_LLM_API_KEY", "test-company-key")
 
     assert "company_llm_api_key" not in SHARED_PIPELINE_SETTINGS
     assert resolve_company_llm_api_key() == "test-company-key"

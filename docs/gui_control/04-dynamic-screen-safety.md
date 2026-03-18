@@ -1,109 +1,109 @@
 # Dynamic Screen Safety
 
-This document condenses the dynamic-screen research into a working policy for SEM/probe-monitor automation.
+이 문서는 dynamic screen 관련 연구를 SEM/probe-monitor automation용 운영 정책으로 압축한 문서입니다.
 
-## 1. Why Dynamic Screens Are Different
+## 1. Dynamic Screen이 다른 이유
 
-Static dialogs tolerate latency. Probe-monitor and live SEM screens do not.
+정적인 dialog는 어느 정도 latency를 견딜 수 있습니다. 하지만 probe-monitor와 live SEM 화면은 그렇지 않습니다.
 
-Main risks:
+주요 위험:
 
-- the screenshot changes during model inference
-- state transitions are captured mid-animation
-- a wrong double-click can trigger physical probe movement
+- 모델 inference 중 screenshot이 바뀜
+- state transition이 animation 중간 상태로 캡처됨
+- 잘못된 double-click이 실제 probe 이동을 유발할 수 있음
 
-The automation policy must treat these screens as a different safety class.
+따라서 automation 정책은 이런 화면을 별도의 safety class로 다뤄야 합니다.
 
-## 2. Tiered Risk Model
+## 2. 단계별 Risk 모델
 
 ### Tier 1: Read-Only Monitoring
 
-- periodic screenshot analysis
-- status and anomaly detection
-- no physical action
+- 주기적인 screenshot 분석
+- 상태 및 이상 징후 탐지
+- 물리적 action 없음
 
 ### Tier 2: Low-Risk Recovery
 
-- click static UI buttons outside danger regions
-- retry or dismiss recoverable UI states
+- danger region 밖의 정적인 UI 버튼 클릭
+- 복구 가능한 UI 상태 재시도 또는 dismiss
 
 ### Tier 3: High-Risk Probe Actions
 
-- SEM/probe area targeting
-- double-click driven repositioning
-- actions that can affect real equipment state
+- SEM/probe 영역 target 지정
+- double-click 기반 재위치 조정
+- 실제 장비 상태에 영향을 줄 수 있는 action
 
-Tier 3 requires the strongest guard rails and should stay opt-in.
+Tier 3는 가장 강한 guard rail이 필요하며, opt-in 상태로 유지되어야 합니다.
 
-## 3. Region-Based Stability
+## 3. 영역 기반 안정성
 
-Do not ask whether the whole screen is stable. Ask whether the relevant region is stable.
+전체 화면이 안정적인지를 묻지 말고, 관련 영역이 안정적인지를 물어야 합니다.
 
-Typical zone classes:
+일반적인 zone class:
 
-- `static`: menu bars, toolbars, side panels
-- `dynamic`: logs, status bars, changing but non-dangerous data
-- `danger`: probe monitor or other physical-impact regions
+- `static`: menu bar, toolbar, side panel
+- `dynamic`: log, status bar, 변화하지만 위험하지는 않은 데이터
+- `danger`: probe monitor 또는 기타 물리적 영향이 있는 영역
 
-For static UI clicks:
+정적인 UI click의 경우:
 
-- ignore the SEM image region
-- evaluate stability on the menu/panel area
+- SEM image 영역은 무시한다
+- menu/panel 영역을 기준으로 안정성을 평가한다
 
-For probe verification:
+probe 검증의 경우:
 
-- focus on the probe-monitor region only
+- probe-monitor 영역에만 집중한다
 
-## 4. Stability Rules
+## 4. 안정성 규칙
 
-Practical defaults:
+실무 기본값:
 
-- poll every `0.3s`
-- require at least `2` consecutive stable checks
-- treat `diff_ratio < 0.02` as stable
-- abort after about `10s` timeout
+- `0.3s`마다 poll
+- 최소 `2`회 연속 stable check 필요
+- `diff_ratio < 0.02`이면 stable로 간주
+- 약 `10s` timeout 후 중단
 
-Verification rule after a model response:
+모델 응답 이후의 verification 규칙:
 
-- if the relevant region changed by more than about `10%`, the predicted coordinates should be considered stale
-- recapture and re-evaluate instead of clicking
+- 관련 영역이 약 `10%` 이상 바뀌었으면 예측 좌표는 stale로 간주해야 합니다
+- 클릭하지 말고 다시 캡처해서 재평가해야 합니다
 
-## 5. Safe Execution Pattern
+## 5. 안전한 실행 패턴
 
-Use:
+사용할 패턴:
 
 `capture -> stabilize -> analyze -> verify -> act`
 
-Not:
+사용하면 안 되는 패턴:
 
 `capture -> analyze -> click after a long delay`
 
-For dynamic screens, the verification capture is not optional.
+dynamic screen에서는 verification capture가 선택사항이 아닙니다.
 
-## 6. Double-Click Guard Rails
+## 6. Double-Click Guard Rail
 
-High-risk double-click actions should pass all three checks:
+high-risk double-click action은 다음 세 조건을 모두 통과해야 합니다:
 
 1. `SAFE_MODE=false`
-2. target is in an allowed zone or an explicit danger override is present
-3. the action builder explicitly allows `click_count=2`
+2. target이 허용 zone 안에 있거나 명시적인 danger override가 존재함
+3. action builder가 `click_count=2`를 명시적으로 허용함
 
-If any check fails, log the blocked action and keep the evidence.
+하나라도 실패하면 차단된 action을 기록하고 evidence를 보존합니다.
 
-## 7. Prompting Differences For Probe Screens
+## 7. Probe 화면용 프롬프팅 차이
 
-Probe-monitor prompts should:
+probe-monitor 프롬프트는 다음을 포함해야 합니다:
 
-- mention that the image is a live SEM/probe frame
-- separate current probe location from target location
-- make the monitor boundary explicit
-- reject coordinates outside the monitor region
+- 이미지가 live SEM/probe frame임을 명시
+- 현재 probe 위치와 target 위치를 분리해서 설명
+- monitor boundary를 명확히 제시
+- monitor 영역 밖 좌표는 거부
 
-Use OCR hints only as support. The core task is still visual target grounding under motion.
+OCR hint는 보조 수단으로만 사용합니다. 핵심 작업은 여전히 움직이는 화면 위에서의 visual target grounding입니다.
 
-## 8. Operational Guidance
+## 8. 운영 가이드
 
-- Start with Tier 1 monitoring before enabling Tier 2 or Tier 3.
-- Keep human approval for any action that can move a probe or change a high-risk recipe state.
-- Save region overlays showing the static, dynamic, and danger zones.
-- Tune zone percentages on office Windows machines, not on macOS.
+- Tier 2 또는 Tier 3를 켜기 전에 먼저 Tier 1 monitoring부터 시작합니다.
+- probe를 움직이거나 high-risk recipe state를 바꿀 수 있는 action에는 human approval을 유지합니다.
+- static, dynamic, danger zone을 표시한 region overlay를 저장합니다.
+- zone 비율 튜닝은 macOS가 아니라 사무실 Windows 장비에서 수행합니다.

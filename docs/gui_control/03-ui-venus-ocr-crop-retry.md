@@ -1,132 +1,132 @@
-# UI-Venus, OCR, And Crop-Retry
+# UI-Venus, OCR, 그리고 Crop-Retry
 
-This document consolidates the repository's guidance on `UI-Venus`, OCR sidecars, and crop-retry grounding for dense engineering UIs.
+이 문서는 밀도 높은 engineering UI를 대상으로 한 `UI-Venus`, OCR sidecar, crop-retry grounding 가이드를 정리한 문서입니다.
 
-## 1. Start Order Depends On The Task
+## 1. 시작 순서는 작업 유형에 따라 달라진다
 
-### 1.1 Grounding-Heavy Tasks
+### 1.1 Grounding 비중이 큰 작업
 
-Examples:
+예시:
 
-- find the login button
-- pick a tab
-- click the input field next to a label
+- 로그인 버튼 찾기
+- tab 선택하기
+- label 옆 input field 클릭하기
 
-Recommended order:
+권장 순서:
 
 1. `UI-Venus` full-screen pass
-2. crop retry if needed
-3. OCR only when text disambiguation is required
+2. 필요하면 crop retry
+3. 텍스트로 구분이 꼭 필요할 때만 OCR
 
-### 1.2 Extraction-Heavy Tasks
+### 1.2 Extraction 비중이 큰 작업
 
-Examples:
+예시:
 
-- read parameter values
-- extract a table row
-- verify an exact numeric field
+- parameter 값 읽기
+- table row 추출하기
+- 정확한 numeric field 검증하기
 
-Recommended order:
+권장 순서:
 
-1. `PaddleOCR-VL-1.5` or OCR pipeline first
-2. normalize text plus coordinates
-3. use `UI-Venus` to decide semantic role or clickable surface
+1. 먼저 `PaddleOCR-VL-1.5` 또는 OCR pipeline 사용
+2. 텍스트와 좌표를 normalize
+3. semantic role 또는 clickable surface 결정에는 `UI-Venus` 사용
 
-## 2. Prompting Rules For UI-Venus
+## 2. UI-Venus 프롬프팅 규칙
 
-Treat `UI-Venus` as a single-target grounder.
+`UI-Venus`는 single-target grounder로 취급합니다.
 
-Recommended prompt shape:
+권장 프롬프트 형태:
 
-- one screenshot
-- one target
-- one point
-- explicit refusal path such as `[-1,-1]`
+- screenshot 하나
+- target 하나
+- point 하나
+- `[-1,-1]` 같은 명시적 refusal 경로
 
-Anchor the request with:
+요청을 고정할 때 사용할 anchor:
 
-- visible label text
-- row/column relation
-- panel or dialog name
-- left/right/above/below relation
-- state words such as active, selected, checked
+- 화면에 보이는 label text
+- row/column 관계
+- panel 또는 dialog 이름
+- left/right/above/below 관계
+- active, selected, checked 같은 state 표현
 
-Better:
+더 좋은 예:
 
 - "the editable text field to the right of the visible label 'User ID'"
 - "the numeric input field in the 'Exposure' row inside the right parameter panel"
 
-Avoid:
+피할 것:
 
-- multiple targets in one grounding call
-- long JSON schemas when only a point is needed
-- mixing planning, OCR, and grounding in one prompt
+- 하나의 grounding call에 여러 target 넣기
+- 점 하나만 필요할 때 긴 JSON schema 요구하기
+- planning, OCR, grounding을 하나의 프롬프트에 섞기
 
-## 3. OCR Mode Selection
+## 3. OCR 모드 선택
 
 | Need | Best mode |
-|------|-----------|
-| broad text extraction | `OCR:` |
-| text plus location | `Spotting:` |
-| grid/table structure | `Table Recognition:` |
-| hard crop reread | `GOT-OCR-2.0-hf` |
+| ------ | ----------- |
+| 넓은 범위의 텍스트 추출 | `OCR:` |
+| 텍스트와 위치가 모두 필요 | `Spotting:` |
+| grid/table 구조 | `Table Recognition:` |
+| 어려운 crop 재판독 | `GOT-OCR-2.0-hf` |
 
-Practical rule:
+실무 규칙:
 
-- use `Spotting:` when the final click depends on text coordinates
-- use `OCR:` when only the content matters
-- use `Table Recognition:` for report-like or parameter-grid screens
+- 최종 click이 텍스트 좌표에 의존하면 `Spotting:` 사용
+- 내용만 중요하면 `OCR:` 사용
+- report형 화면이나 parameter grid에는 `Table Recognition:` 사용
 
-## 4. When Crop Retry Should Fire
+## 4. Crop Retry를 실행해야 하는 시점
 
-Use crop retry if one or more of these are true:
+다음 중 하나 이상이 참이면 crop retry를 사용합니다:
 
-- model confidence is below `0.6`
-- target minimum side is below `40px`
-- target area ratio is below `0.003`
-- more than `3` similar neighbors exist within about `80px`
-- the first pass lands in a dense toolbar or parameter grid
+- model confidence가 `0.6` 미만
+- target의 최소 변 길이가 `40px` 미만
+- target area ratio가 `0.003` 미만
+- 약 `80px` 안에 유사한 이웃이 `3`개 초과로 존재
+- 첫 번째 pass가 밀집된 toolbar 또는 parameter grid에 떨어짐
 
-Practical crop policy:
+실무용 crop 정책:
 
-- center the crop on the first predicted point
-- start around `20%` to `30%` of the short image side
-- retry one or two larger windows if context is insufficient
-- remap crop coordinates back to original pixels before execution
+- 첫 번째 예측 point를 중심으로 crop한다
+- 짧은 이미지 변 길이의 `20%`~`30%` 정도로 시작한다
+- context가 부족하면 더 큰 window로 한두 번 재시도한다
+- 실행 전에 crop 좌표를 원본 pixel 좌표로 다시 매핑한다
 
-Common failures to guard against:
+자주 발생하는 실수:
 
-- forgetting the crop offset during remap
-- mixing `relative_1000` and pixel coordinates
-- using the wrong crop width/height during back-conversion
+- remap 시 crop offset을 잊어버리는 경우
+- `relative_1000`와 pixel 좌표를 섞는 경우
+- 원복 변환에 잘못된 crop width/height를 사용하는 경우
 
-## 5. Merge Rules
+## 5. 병합 규칙
 
-### 5.1 Text Buttons Or Tabs
+### 5.1 Text Button 또는 Tab
 
-- if OCR finds the exact target text with a strong box, prefer the OCR box center
-- reject the merge if the crop-grounded point is far outside that box neighborhood
+- OCR이 정확한 target text를 강한 box로 찾으면 OCR box 중심을 우선한다
+- crop-grounded point가 그 box 주변에서 너무 멀리 벗어나면 병합을 거부한다
 
-### 5.2 Input Field Next To A Label
+### 5.2 Label 옆 Input Field
 
-- use OCR to find the correct row or label anchor
-- use `UI-Venus` for the final clickable field point
-- reject if the field point does not align with the anchored row
+- OCR로 올바른 row 또는 label anchor를 찾는다
+- 최종 clickable field point는 `UI-Venus`로 결정한다
+- field point가 anchor row와 맞지 않으면 거부한다
 
-### 5.3 No Reliable OCR Anchor
+### 5.3 신뢰할 수 있는 OCR Anchor가 없음
 
-- fall back to the crop-grounded `UI-Venus` point
-- mark the strategy explicitly in the debug JSON
+- crop-grounded `UI-Venus` point로 fallback한다
+- 사용한 전략을 debug JSON에 명시한다
 
-### 5.4 Conflicting Evidence
+### 5.4 증거가 충돌함
 
-- do not click
-- mark the result unresolved
-- capture artifacts for review
+- 클릭하지 않는다
+- 결과를 unresolved로 표시한다
+- review용 artifact를 저장한다
 
-## 6. Current Repo Anchors
+## 6. 현재 Repo 기준 파일
 
-The main files to align with this strategy are:
+이 전략과 정렬되어야 하는 주요 파일:
 
 - `poc/work2/login_rcs_ui_venus.py`
 - `poc/work2/login_rcs_ui_venus_rev2.py`
@@ -136,24 +136,24 @@ The main files to align with this strategy are:
 - `poc/work2/prompts/prompt_ocr_assist.py`
 - `poc/work2/util/image_utils.py`
 
-## 7. Recommended Implementation Sequence
+## 7. 권장 구현 순서
 
-1. keep the full-screen `UI-Venus` pass
-2. add crop-region helpers and coordinate remap helpers
-3. add OCR task branching in `prompt_ocr_assist.py`
-4. store a compact OCR hint instead of raw OCR dumps
-5. add merge rules for button targets and labeled inputs
-6. save evidence artifacts before enabling real clicks
+1. full-screen `UI-Venus` pass는 유지한다
+2. crop-region helper와 coordinate remap helper를 추가한다
+3. `prompt_ocr_assist.py`에 OCR task branching을 추가한다
+4. raw OCR dump 대신 compact OCR hint를 저장한다
+5. button target과 labeled input용 merge rule을 추가한다
+6. 실제 click을 켜기 전에 evidence artifact를 저장한다
 
-## 8. Debug Artifact Standard
+## 8. Debug Artifact 표준
 
-For each target, keep:
+각 target마다 다음을 유지합니다:
 
-- source screenshot as JPEG
-- sent payload as WebP if applicable
-- raw model outputs
+- source screenshot은 JPEG
+- 적용 가능하면 전송 payload는 WebP
+- raw model output
 - crop image
-- overlay image with full-screen point, crop point, and final point
-- final decision JSON including strategy name
+- full-screen point, crop point, final point를 그린 overlay image
+- strategy name을 포함한 최종 decision JSON
 
-This is the fastest way to improve grounding quality without guessing.
+추측에 의존하지 않고 grounding 품질을 올리는 가장 빠른 방법입니다.

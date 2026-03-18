@@ -220,7 +220,7 @@ def run_login_analysis_for_service(
     context_fields: dict[str, object] | None = None,
 ) -> LoginBenchmarkResult:
     """캡처된 로그인 이미지를 한 서비스로 분석한다."""
-    context = dict(context_fields or {})
+    context = context_fields or {}
     target_key_tuple = tuple(target_keys)
     service_entry = get_service_by_slug(service_slug)
     if service_entry is None:

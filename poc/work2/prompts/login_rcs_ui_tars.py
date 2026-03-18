@@ -1,8 +1,8 @@
 """RCS 로그인 화면 UI 요소 좌표 추출용 UI-TARS 전용 프롬프트 빌더.
 
-UI-TARS-1.5 는 Qwen2.5-VL 기반 GUI agent 모델로,
-일반 VLM 과 달리 `Thought: / Action: click(start_box='(x,y)')` 형식으로 출력한다.
-좌표는 smart-resize 된 이미지 공간의 절대 픽셀값이다.
+UI-TARS 공식 문서는 grounding 용도로 단일 `Action:` 출력을 권장한다.
+이 모듈은 그 규약을 따르되, batch 모드에서는 각 줄 앞에 실제 target key 를
+붙여 여러 요소를 한 번에 요청할 수 있도록 보조 프롬프트를 제공한다.
 """
 
 from typing import Iterable
@@ -36,42 +36,54 @@ DEFAULT_UI_TARS_TARGET_KEYS = (
     "shortcut_button",
 )
 
-GROUNDING_SYSTEM_PROMPT = (
+UI_TARS_SINGLE_ACTION_SYSTEM_PROMPT = (
     "You are a GUI agent. You are given a task and a screenshot of a desktop application.\n"
-    "You need to identify the requested GUI elements and report their positions.\n"
-    "For each element, output its name and position using the format:\n"
-    "element_name: click(start_box='(x,y)')\n"
+    "You need to perform the next grounding action to complete the task.\n"
+    "\n"
+    "## Output Format\n"
+    "Action: ...\n"
+    "\n"
+    "## Action Space\n"
+    "click(point='x y')\n"
     "\n"
     "Rules:\n"
-    "- Output one line per element.\n"
-    "- Coordinates (x, y) are absolute pixel positions in the screenshot.\n"
-    "- x=0 is the left edge, y=0 is the top edge.\n"
-    "- If an element is not visible, skip it.\n"
-    "- Do not output any other text, explanation, or markdown."
+    "- Output exactly one action line.\n"
+    "- Do not describe the screenshot.\n"
+    "- Do not explain the coordinate space.\n"
+    "- Do not output markdown or extra text."
+)
+
+UI_TARS_MULTI_ACTION_SYSTEM_PROMPT = (
+    "You are a GUI agent. You are given a task and a screenshot of a desktop application.\n"
+    "You need to identify multiple requested GUI elements and output one grounding action per detected element.\n"
+    "\n"
+    "## Output Format\n"
+    "<target_key>: Action: click(point='x y')\n"
+    "\n"
+    "Rules:\n"
+    "- Use the exact target_key provided by the user.\n"
+    "- Never literally output the placeholder word element_name.\n"
+    "- Do not describe the screenshot.\n"
+    "- Do not explain the coordinate space.\n"
+    "- If an element is not visible, omit it.\n"
+    "- Do not output markdown or extra text."
 )
 
 
 def build_login_rcs_ui_tars_prompt(
     target_keys: Iterable[str] | None = None,
 ) -> tuple[str, str]:
-    """UI-TARS 용 RCS 로그인 화면 요소 탐색 system/user 프롬프트를 구성한다.
-
-    UI-TARS-1.5-7B 는 별도의 system role 메시지를 지원하지 않으므로,
-    시스템 지시사항을 user 텍스트 앞에 병합하여 반환한다.
-
-    Returns:
-        (system_message, user_text) 튜플. system_message 는 빈 문자열.
-    """
+    """UI-TARS 용 batch 요소 탐색 system/user 프롬프트를 구성한다."""
     keys = tuple(target_keys) if target_keys is not None else DEFAULT_UI_TARS_TARGET_KEYS
     missing = [key for key in keys if key not in UI_TARS_LOGIN_ELEMENT_DESCRIPTIONS]
     if missing:
         raise ValueError(f"Unknown target keys for UI-TARS prompt: {missing}")
 
     lines = [
-        GROUNDING_SYSTEM_PROMPT,
-        "",
         "This screenshot shows a Windows 'Remote Control System' login dialog.",
-        "Find the following GUI elements and report their center positions.",
+        "Locate the following GUI elements and report one click action per detected item.",
+        "Use the exact target key before each action line.",
+        "Do not literally output the word element_name.",
         "",
     ]
     for idx, key in enumerate(keys, start=1):
@@ -80,29 +92,29 @@ def build_login_rcs_ui_tars_prompt(
 
     lines.extend([
         "",
-        "Output format (one line per element):",
-        "element_name: click(start_box='(x,y)')",
+        "Output format (one line per detected element):",
+        "<target_key>: Action: click(point='x y')",
+        "Example:",
+        "server_input: Action: click(point='344 182')",
     ])
 
-    return "", "\n".join(lines)
+    return UI_TARS_MULTI_ACTION_SYSTEM_PROMPT, "\n".join(lines)
 
 
 def build_single_element_prompt(element_key: str) -> tuple[str, str]:
-    """UI-TARS GROUNDING 모드로 단일 요소 좌표를 요청하는 프롬프트를 구성한다.
-
-    한 번에 하나의 요소만 찾도록 요청하여 정확도를 높인다.
-    UI-TARS-1.5-7B 는 별도의 system role 을 지원하지 않으므로
-    지시사항을 user 텍스트에 병합한다.
-    """
+    """UI-TARS 공식 grounding 형식으로 단일 요소 좌표를 요청한다."""
     if element_key not in UI_TARS_LOGIN_ELEMENT_DESCRIPTIONS:
         raise ValueError(f"Unknown element key: {element_key}")
 
     desc = UI_TARS_LOGIN_ELEMENT_DESCRIPTIONS[element_key]
     user_text = (
-        "You are a GUI agent. You are given a task and a screenshot.\n"
-        "You need to find the requested GUI element and click on it.\n"
-        "Output only: click(start_box='(x,y)') with absolute pixel coordinates.\n"
-        f"\nClick on {desc}."
+        "This screenshot shows a Windows 'Remote Control System' login dialog.\n"
+        "Find the requested GUI element and click its center.\n"
+        f"Target key: {element_key}\n"
+        f"Target description: {desc}\n"
+        "\n"
+        "Return only:\n"
+        "Action: click(point='x y')"
     )
 
-    return "", user_text
+    return UI_TARS_SINGLE_ACTION_SYSTEM_PROMPT, user_text

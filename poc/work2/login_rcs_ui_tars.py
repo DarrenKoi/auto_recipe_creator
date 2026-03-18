@@ -1,8 +1,10 @@
 """RCS 로그인 창 UI-TARS 전용 분석 스크립트.
 
-UI-TARS-1.5-7B 는 일반 VLM 과 달리 GUI agent 모델로,
-`Thought: / Action: click(start_box='(x,y)')` 형식으로 응답한다.
-좌표는 Qwen2.5-VL 의 smart-resize 된 이미지 공간의 절대 픽셀값이므로,
+UI-TARS 는 공식 grounding 프롬프트에서 `Action: click(point='x y')`
+형식의 단일 액션 출력을 권장한다.
+배포/템플릿에 따라 `click(start_box='(x,y)')` 형식도 나올 수 있으므로
+두 형식을 모두 파싱한다.
+좌표는 Qwen2.5-VL 의 smart-resize 된 이미지 공간 기준이므로
 원본 이미지 좌표로 역변환이 필요하다.
 
 사용법:
@@ -10,7 +12,6 @@ UI-TARS-1.5-7B 는 일반 VLM 과 달리 GUI agent 모델로,
   2. uv run python poc/work2/login_rcs_ui_tars.py
 """
 
-import json
 import math
 import os
 import re
@@ -89,13 +90,36 @@ def resolve_ui_tars_stream_override() -> bool | None:
     return None
 
 # ── Action 파싱 패턴 ─────────────────────────────────────────────────
-# click(start_box='(197,525)') 형태에서 좌표를 추출한다.
-_ACTION_COORD_PATTERN = re.compile(
-    r"click\s*\(\s*start_box\s*=\s*['\"]?\(?\s*(\d+)\s*,\s*(\d+)\s*\)?\s*['\"]?\s*\)"
+_KEY_PREFIX = r"(?P<key>(?!Action\b)(?!Thought\b)[A-Za-z_][\w-]*)"
+_ACTION_PREFIX = r"(?:Action\s*:\s*)?"
+_COORD_VALUE = (
+    r"['\"]?"
+    r"(?:<point>)?"
+    r"\(?\s*"
+    r"(?P<x>\d+)\s*[,\s]+\s*(?P<y>\d+)"
+    r"\s*\)?"
+    r"(?:</point>)?"
+    r"['\"]?"
 )
-# element_name: click(...) 형태에서 요소 이름과 좌표를 추출한다.
-_ELEMENT_LINE_PATTERN = re.compile(
-    r"(\w+)\s*:\s*click\s*\(\s*start_box\s*=\s*['\"]?\(?\s*(\d+)\s*,\s*(\d+)\s*\)?\s*['\"]?\s*\)"
+_LABELED_POINT_ACTION_PATTERN = re.compile(
+    rf"{_KEY_PREFIX}\s*:\s*{_ACTION_PREFIX}"
+    rf"click\s*\(\s*point\s*=\s*{_COORD_VALUE}\s*\)",
+    re.IGNORECASE,
+)
+_LABELED_START_BOX_ACTION_PATTERN = re.compile(
+    rf"{_KEY_PREFIX}\s*:\s*{_ACTION_PREFIX}"
+    rf"click\s*\(\s*start_box\s*=\s*{_COORD_VALUE}\s*\)",
+    re.IGNORECASE,
+)
+_POINT_ACTION_PATTERN = re.compile(
+    rf"{_ACTION_PREFIX}"
+    rf"click\s*\(\s*point\s*=\s*{_COORD_VALUE}\s*\)",
+    re.IGNORECASE,
+)
+_START_BOX_ACTION_PATTERN = re.compile(
+    rf"{_ACTION_PREFIX}"
+    rf"click\s*\(\s*start_box\s*=\s*{_COORD_VALUE}\s*\)",
+    re.IGNORECASE,
 )
 
 
@@ -149,6 +173,58 @@ def convert_ui_tars_coords(
     return actual_x, actual_y
 
 
+def _extract_action_from_line(line: str) -> tuple[str, int, int, str] | None:
+    """응답 한 줄에서 UI-TARS click action 을 추출한다."""
+    stripped = line.strip().strip("`")
+    if not stripped:
+        return None
+
+    labeled_patterns = (
+        ("point", _LABELED_POINT_ACTION_PATTERN),
+        ("start_box", _LABELED_START_BOX_ACTION_PATTERN),
+    )
+    unlabeled_patterns = (
+        ("point", _POINT_ACTION_PATTERN),
+        ("start_box", _START_BOX_ACTION_PATTERN),
+    )
+
+    for action_style, pattern in labeled_patterns:
+        match = pattern.match(stripped)
+        if match is None:
+            continue
+        key = (match.groupdict().get("key") or "").strip()
+        return key, int(match.group("x")), int(match.group("y")), action_style
+
+    for action_style, pattern in unlabeled_patterns:
+        match = pattern.search(stripped)
+        if match is None:
+            continue
+        key = (match.groupdict().get("key") or "").strip()
+        return key, int(match.group("x")), int(match.group("y")), action_style
+    return None
+
+
+def _resolve_action_key(raw_key: str, target_keys: tuple[str, ...]) -> str | None:
+    """파싱된 action label 을 실제 target key 로 매핑한다."""
+    key = (raw_key or "").strip()
+    if not key:
+        if len(target_keys) == 1:
+            return target_keys[0]
+        return None
+
+    if key in target_keys:
+        return key
+
+    if key.lower() == "element_name":
+        if len(target_keys) == 1:
+            return target_keys[0]
+        print("  [MISS] literal placeholder 'element_name' detected - batch mapping skipped")
+        return None
+
+    print(f"  [MISS] unknown action label from UI-TARS: {key}")
+    return None
+
+
 def parse_ui_tars_response(
     text: str,
     original_width: int,
@@ -165,26 +241,26 @@ def parse_ui_tars_response(
 
     coords: dict[str, dict[str, int]] = {}
 
-    # 패턴 1: element_name: click(start_box='(x,y)') 형태
-    for match in _ELEMENT_LINE_PATTERN.finditer(text):
-        name = match.group(1).strip()
-        mx, my = int(match.group(2)), int(match.group(3))
+    for raw_line in text.splitlines():
+        parsed = _extract_action_from_line(raw_line)
+        if parsed is None:
+            continue
+
+        raw_key, mx, my, action_style = parsed
+        name = _resolve_action_key(raw_key, target_keys)
+        if name is None:
+            if len(target_keys) > 1:
+                print(f"  [MISS] unlabeled/unknown batch action ignored: {raw_line.strip()!r}")
+            continue
+        if name in coords:
+            print(f"  [SKIP] duplicate action for {name}: {raw_line.strip()!r}")
+            continue
+
         ax, ay = convert_ui_tars_coords(mx, my, original_width, original_height)
         coords[name] = {"x": ax, "y": ay}
         print(
-            f"  [TARS] {name:20s} - model=({mx}, {my}) → px=({ax}, {ay})"
+            f"  [TARS] {name:20s} - {action_style}=({mx}, {my}) → px=({ax}, {ay})"
         )
-
-    # 패턴 2: 단일 click(start_box='(x,y)') — 단일 요소 모드일 때
-    if not coords:
-        match = _ACTION_COORD_PATTERN.search(text)
-        if match and len(target_keys) == 1:
-            mx, my = int(match.group(1)), int(match.group(2))
-            ax, ay = convert_ui_tars_coords(mx, my, original_width, original_height)
-            coords[target_keys[0]] = {"x": ax, "y": ay}
-            print(
-                f"  [TARS] {target_keys[0]:20s} - model=({mx}, {my}) → px=({ax}, {ay}) [single]"
-            )
 
     # 매칭 안 된 target_keys 리포트
     for key in target_keys:
@@ -256,6 +332,7 @@ def run_ui_tars_batch_analysis(
             user_text=user_text,
             temperature=temperature,
             max_tokens=UI_TARS_MAX_TOKENS,
+            frequency_penalty=UI_TARS_FREQUENCY_PENALTY,
             stream=stream,
         )
     except Exception as exc:
@@ -365,6 +442,7 @@ def run_ui_tars_per_element_analysis(
                 user_text=user_text,
                 temperature=temperature,
                 max_tokens=200,
+                frequency_penalty=UI_TARS_FREQUENCY_PENALTY,
                 stream=stream,
             )
         except Exception as exc:
@@ -465,8 +543,8 @@ def main() -> str:
         service=SERVICE_SLUG,
     )
 
-    # 배치 모드(기본) vs 개별 모드 vs 진단 프로브 선택
-    mode = os.getenv("UI_TARS_MODE", "batch").strip().lower()
+    # UI-TARS 공식 grounding 사용 방식은 단일 액션 출력이므로 개별 모드를 기본으로 둔다.
+    mode = os.getenv("UI_TARS_MODE", "per_element").strip().lower()
     stream_override = resolve_ui_tars_stream_override()
 
     if mode == "probe":
@@ -515,6 +593,11 @@ def main() -> str:
             stream=stream_override,
         )
     else:
+        if mode == "batch":
+            print(
+                "[WARNING] UI-TARS batch 모드는 실험적입니다. "
+                "공식 grounding 사용 방식은 per_element 모드에 더 가깝습니다."
+            )
         print("[INFO] UI-TARS 배치 모드 실행")
         result = run_ui_tars_batch_analysis(
             image=image,

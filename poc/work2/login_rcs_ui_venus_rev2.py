@@ -163,7 +163,8 @@ def _build_visible_only_prompt(
         "Observe only what is actually visible in the screenshot. "
         "Do not assume a predefined login schema or hidden elements. "
         f"The screenshot is {width}x{height} pixels. "
-        "Use coord_system='relative_1000' where x and y are integers from 0 to 1000. "
+        "Use coord_system='pixel' where x and y are integer pixel coordinates in the original image. "
+        "Coordinate origin (0, 0) is the top-left corner of the image. "
         "Respond ONLY with valid JSON."
     )
 
@@ -176,7 +177,7 @@ If you cannot clearly see an element, omit it.
 
 Return at most {max_items} items in this JSON shape:
 {{
-  "coord_system": "relative_1000",
+  "coord_system": "pixel",
   "elements": [
     {{
       "name": "short stable name based on what is visibly shown",
@@ -196,7 +197,8 @@ Rules:
 - For interactive controls, ground the point a user would actually click.
 - visible_text must be copied from the screenshot when readable; otherwise use an empty string.
 - name should be short and practical, but it must still come from what is visible in the screenshot.
-- x and y must be integers from 0 to 1000.
+- x and y must be integer pixel coordinates in this exact {width}x{height} image.
+- Do not use normalized coordinates, percentages, or relative_1000.
 - Return JSON only, with no markdown and no explanation.
 """.strip()
 
@@ -371,7 +373,10 @@ def _run_visible_prompt(
     overlay_colors[ORIGIN_MARKER_KEY] = ORIGIN_MARKER_COLOR
     normalized_payload = {
         "prompt_profile": prompt_profile,
-        "coord_system": parsed_json.get("coord_system") or parsed_json.get("coordinate_system"),
+        "model_coord_system": parsed_json.get("coord_system") or parsed_json.get("coordinate_system"),
+        "interpreted_coord_system": "pixel",
+        "image_width": width,
+        "image_height": height,
         "element_count": len(normalized_elements),
         "elements": normalized_elements,
         "overlay_guides": [
@@ -399,9 +404,15 @@ def _normalize_visible_elements(
     if not isinstance(raw_elements, list):
         raise ValueError("JSON 응답에 elements 리스트가 없습니다.")
 
-    coord_payload = {
-        "coord_system": parsed_json.get("coord_system") or parsed_json.get("coordinate_system")
-    }
+    model_coord_system = (
+        parsed_json.get("coord_system") or parsed_json.get("coordinate_system")
+    )
+    print(
+        "[INFO] visible coord 해석 "
+        f"model_coord_system={model_coord_system!r}, forced_coord_system='pixel'"
+    )
+
+    coord_payload = {"coord_system": "pixel"}
     key_order: list[str] = []
     metadata_by_key: dict[str, dict] = {}
     seen_keys: set[str] = set()
@@ -432,6 +443,7 @@ def _normalize_visible_elements(
             "visible_text": visible_text,
             "raw_x": raw_x,
             "raw_y": raw_y,
+            "model_coord_system": model_coord_system,
         }
 
     parsed_coords = parse_coords(coord_payload, key_order, img_w, img_h)
@@ -451,6 +463,8 @@ def _normalize_visible_elements(
             "name": meta["name"],
             "role": meta["role"],
             "visible_text": meta["visible_text"],
+            "model_coord_system": meta["model_coord_system"],
+            "interpreted_coord_system": "pixel",
             "raw_x": meta["raw_x"],
             "raw_y": meta["raw_y"],
             "x": int(pt["x"]),

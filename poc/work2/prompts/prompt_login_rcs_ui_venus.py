@@ -22,20 +22,6 @@ UI_VENUS_LOGIN_ELEMENT_DESCRIPTIONS: dict[str, str] = {
     "shortcut_button": "the Korean text button in the bottom area (for example '바로가기 설정')",
 }
 
-DEFAULT_UI_VENUS_TARGET_KEYS = (
-    "window_title_text",
-    "close_button",
-    "server_label",
-    "server_input",
-    "userid_label",
-    "userid_input",
-    "password_label",
-    "password_input",
-    "login_button",
-    "cancel_button",
-    "shortcut_button",
-)
-
 # ---------------------------------------------------------------------------
 # 공식 UI-Venus 1.5 단일 요소 grounding 프롬프트
 # ---------------------------------------------------------------------------
@@ -102,7 +88,7 @@ def build_login_rcs_ui_venus_prompt(
     이 함수는 레거시 호환용으로 보존한다.
     새 코드는 build_ui_venus_single_element_prompt 를 사용할 것.
     """
-    keys = tuple(target_keys) if target_keys is not None else DEFAULT_UI_VENUS_TARGET_KEYS
+    keys = tuple(target_keys) if target_keys is not None else tuple(UI_VENUS_LOGIN_ELEMENT_DESCRIPTIONS)
     missing = [key for key in keys if key not in UI_VENUS_LOGIN_ELEMENT_DESCRIPTIONS]
     if missing:
         raise ValueError(f"Unknown target keys for UI-Venus prompt: {missing}")

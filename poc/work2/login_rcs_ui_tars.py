@@ -30,6 +30,8 @@ from poc.work2.prompts.login_rcs_ui_tars import (
 from poc.work2.util.debug_image_utils import (
     debug_image_path,
     save_debug_jpeg,
+    save_debug_json,
+    save_debug_text,
     save_debug_webp,
     save_marked_image,
 )
@@ -192,20 +194,6 @@ def parse_ui_tars_response(
     return coords
 
 
-def _write_debug_text(path: Path, text: str) -> None:
-    """디버그 텍스트 파일을 저장한다."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-
-
-def _write_debug_json(path: Path, payload: dict) -> None:
-    """디버그 JSON 파일을 저장한다."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
 
 def run_ui_tars_batch_analysis(
     *,
@@ -291,7 +279,7 @@ def run_ui_tars_batch_analysis(
         }
 
     elapsed_ms = (time.time() - started_at) * 1000
-    _write_debug_text(raw_response_path, response.text)
+    save_debug_text(raw_response_path, response.text)
     print(f"[INFO] UI-TARS 응답 수신: tokens={response.token_usage or {}}")
     print(f"[INFO] UI-TARS 원문 응답:\n{response.text}\n")
 
@@ -300,7 +288,7 @@ def run_ui_tars_batch_analysis(
     )
 
     detected_count = len(parsed_coords)
-    _write_debug_json(parsed_json_path, parsed_coords)
+    save_debug_json(parsed_json_path, parsed_coords)
     save_marked_image(image, parsed_coords, colors, overlay_path)
 
     print(
@@ -385,7 +373,7 @@ def run_ui_tars_per_element_analysis(
 
         elem_elapsed_ms = (time.time() - started_at) * 1000
         response_path = Path(str(responses_dir)) / f"{key}.txt"
-        _write_debug_text(response_path, response.text)
+        save_debug_text(response_path, response.text)
         print(f"  [INFO] {key} 응답: {response.text.strip()!r} ({elem_elapsed_ms:.0f}ms)")
 
         parsed = parse_ui_tars_response(

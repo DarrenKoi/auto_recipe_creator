@@ -15,7 +15,6 @@ UI-Venus 1.5 공식 grounding 형식으로 단일 요소씩 좌표를 추출한�
   2. uv run python poc/work2/login_rcs_ui_venus_rev2.py
 """
 
-import json
 import re
 import sys
 import time
@@ -39,7 +38,7 @@ from poc.work2.util import (
     save_debug_webp,
     save_marked_image,
 )
-from poc.work2.util.debug_image_utils import save_debug_json, save_debug_text
+from poc.work2.util.debug_image_utils import save_debug_json
 from poc.work2.vlm_client import Work2VLMClient
 
 load_dotenv()
@@ -60,20 +59,7 @@ EXIT_CAPTURE_FAILED = "capture_failed"
 # 이번 rev2 에서 찾을 요소 목록 — 지금은 userid_input 만
 TARGET_KEYS = ("userid_input",)
 
-ELEMENT_COLORS = {
-    "window_title_text": "tomato",
-    "close_button": "white",
-    "server_label": "gold",
-    "server_input": "salmon",
-    "userid_label": "gold",
-    "userid_input": "deepskyblue",
-    "password_label": "gold",
-    "password_input": "limegreen",
-    "login_button": "orange",
-    "cancel_button": "orange",
-    "shortcut_button": "violet",
-}
-FALLBACK_COLOR = "cyan"
+MARKER_COLOR = "red"
 
 # [x, y] 좌표 파싱 정규식
 _COORD_PATTERN = re.compile(r"\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]")
@@ -244,11 +230,8 @@ def _analyze_login_elements(login_window, window_title: str, backend: str) -> st
 
     # 오버레이 이미지 생성
     if results:
-        overlay_points = {}
-        overlay_colors = {}
-        for r in results:
-            overlay_points[r["key"]] = {"x": r["x"], "y": r["y"]}
-            overlay_colors[r["key"]] = ELEMENT_COLORS.get(r["key"], FALLBACK_COLOR)
+        overlay_points = {r["key"]: {"x": r["x"], "y": r["y"]} for r in results}
+        overlay_colors = {r["key"]: MARKER_COLOR for r in results}
 
         overlay_path = debug_image_path(
             DEBUG_IMAGE_DIR, "login_rcs_grounding_overlay.jpg",

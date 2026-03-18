@@ -73,7 +73,6 @@ ELEMENT_COLORS = {
 DESKTOP_SCAN_BACKENDS = ("uia", "win32")
 LOGIN_WINDOW_MAX_WIDTH = int(os.getenv("RCS_LOGIN_WINDOW_MAX_WIDTH", "900"))
 LOGIN_WINDOW_MAX_HEIGHT = int(os.getenv("RCS_LOGIN_WINDOW_MAX_HEIGHT", "700"))
-LOGIN_WINDOW_MAX_AREA = int(os.getenv("RCS_LOGIN_WINDOW_MAX_AREA", "500000"))
 EXIT_SUCCESS = "success"
 EXIT_LOGIN_WINDOW_NOT_FOUND = "login_window_not_found"
 EXIT_LOGIN_WINDOW_ACTIVATE_FAILED = "login_window_activate_failed"
@@ -88,8 +87,8 @@ except ValueError:
     VLM_TEMPERATURE = 0.0
 
 
-def _read_window_size(window) -> tuple[int, int, int] | None:
-    """창 크기를 width, height, area로 반환한다."""
+def _read_window_size(window) -> tuple[int, int] | None:
+    """창 크기를 width, height로 반환한다."""
     try:
         rect = window.rectangle()
     except Exception as exc:
@@ -98,7 +97,7 @@ def _read_window_size(window) -> tuple[int, int, int] | None:
 
     width = max(0, int(rect.right - rect.left))
     height = max(0, int(rect.bottom - rect.top))
-    return width, height, width * height
+    return width, height
 
 
 def _login_window_filter(window, window_title: str) -> bool:
@@ -107,13 +106,13 @@ def _login_window_filter(window, window_title: str) -> bool:
     if size_info is None:
         return False
 
-    width, height, area = size_info
+    width, height = size_info
+    area = width * height
     is_match = (
         width > 0
         and height > 0
         and width <= LOGIN_WINDOW_MAX_WIDTH
         and height <= LOGIN_WINDOW_MAX_HEIGHT
-        and area <= LOGIN_WINDOW_MAX_AREA
     )
     print(
         "[INFO] 로그인 창 후보 점검 "

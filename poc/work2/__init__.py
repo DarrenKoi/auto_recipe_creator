@@ -84,6 +84,7 @@ __all__ = [
     "resolve_debug_model_name",
     "login_benchmark",
     "login_rcs",
+    "login_rcs_ui_venus",
     "open_rcs",
     "vlm_client",
 ]

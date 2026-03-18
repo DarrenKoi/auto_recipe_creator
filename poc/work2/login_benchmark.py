@@ -22,7 +22,10 @@ from poc.work2.flask_vlm import (
     resolve_service_proxy_url,
 )
 from poc.work2.logger import log_work2_event
-from poc.work2.prompts import build_login_rcs_locator_prompt
+from poc.work2.prompts import (
+    build_login_rcs_locator_prompt,
+    build_login_rcs_ui_venus_prompt,
+)
 from poc.work2.util.debug_image_utils import (
     debug_image_path,
     save_debug_jpeg,
@@ -116,6 +119,13 @@ def build_prompt_for_service(
     service_entry = get_service_by_slug(service_slug)
     if service_entry is None:
         raise ValueError(f"알 수 없는 service slug: {service_slug}")
+
+    if service_slug == "ui-venus":
+        return build_login_rcs_ui_venus_prompt(
+            width=width,
+            height=height,
+            target_keys=target_keys,
+        )
 
     extra_instructions = None
     if service_entry.prompt_family == "ocr":

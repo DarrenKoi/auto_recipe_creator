@@ -114,9 +114,23 @@ def save_marked_image(
         )
         label = f"{name} ({x},{y})"
         if "input" in name or "button" in name:
-            draw.text((x + radius + 3, y + 4), label, fill=color, font=font)
+            text_x = x + radius + 3
+            text_y = y + 4
         else:
-            draw.text((x + radius + 3, y - 16), label, fill=color, font=font)
+            text_x = x + radius + 3
+            text_y = y - 16
+
+        try:
+            left, top, right, bottom = draw.textbbox((0, 0), label, font=font)
+            text_w = max(0, int(right - left))
+            text_h = max(0, int(bottom - top))
+        except Exception:
+            text_w = max(0, len(label) * 7)
+            text_h = 16
+
+        text_x = max(0, min(int(text_x), max(0, img_w - text_w)))
+        text_y = max(0, min(int(text_y), max(0, img_h - text_h)))
+        draw.text((text_x, text_y), label, fill=color, font=font)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if out_path.suffix.lower() in {".jpg", ".jpeg"} and debug_img.mode != "RGB":

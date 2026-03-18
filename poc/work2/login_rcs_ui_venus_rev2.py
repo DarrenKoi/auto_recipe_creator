@@ -73,6 +73,8 @@ FALLBACK_COLORS = (
     "chartreuse",
     "salmon",
 )
+ORIGIN_MARKER_KEY = "00_image_origin"
+ORIGIN_MARKER_COLOR = "red"
 
 try:
     VLM_TEMPERATURE = float(os.getenv("VLM_TEMPERATURE", "0.0"))
@@ -363,11 +365,23 @@ def _run_visible_prompt(
         img_w=width,
         img_h=height,
     )
+    overlay_points = dict(overlay_points)
+    overlay_colors = dict(overlay_colors)
+    overlay_points[ORIGIN_MARKER_KEY] = {"x": 0, "y": 0}
+    overlay_colors[ORIGIN_MARKER_KEY] = ORIGIN_MARKER_COLOR
     normalized_payload = {
         "prompt_profile": prompt_profile,
         "coord_system": parsed_json.get("coord_system") or parsed_json.get("coordinate_system"),
         "element_count": len(normalized_elements),
         "elements": normalized_elements,
+        "overlay_guides": [
+            {
+                "name": ORIGIN_MARKER_KEY,
+                "x": 0,
+                "y": 0,
+                "color": ORIGIN_MARKER_COLOR,
+            }
+        ],
     }
     save_debug_json(parsed_json_path, normalized_payload)
     save_marked_image(image, overlay_points, overlay_colors, overlay_path)

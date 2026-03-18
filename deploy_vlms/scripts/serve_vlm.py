@@ -431,6 +431,8 @@ def main() -> None:
     create_vllm_do_not_track_file = env("CREATE_VLLM_DO_NOT_TRACK_FILE") or "1"
     api_key = env("API_KEY")
     chat_template = env("CHAT_TEMPLATE")
+    if chat_template and not os.path.isabs(chat_template):
+        chat_template = os.path.join(config_root, chat_template)
     mm_encoder_tp_mode = env("MM_ENCODER_TP_MODE")
     model_impl = env("MODEL_IMPL")
     max_num_batched_tokens = env("MAX_NUM_BATCHED_TOKENS")

@@ -207,7 +207,6 @@ def _make_skipped_result(
     )
 
 
-
 def run_login_analysis_for_service(
     *,
     image: "Image.Image",

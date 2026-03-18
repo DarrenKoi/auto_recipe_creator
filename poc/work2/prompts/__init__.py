@@ -2,7 +2,11 @@
 
 from .prompt_ocr_assist import build_ocr_assist_prompt
 from .prompt_login_rcs import build_login_rcs_locator_prompt
-from .prompt_login_rcs_ui_venus import build_login_rcs_ui_venus_prompt
+from .prompt_login_rcs_ui_venus import (
+    build_login_rcs_ui_venus_prompt,
+    build_ui_venus_single_element_prompt,
+    build_ui_venus_single_element_prompt_by_key,
+)
 from .prompt_login_rcs_ui_tars import (
     build_login_rcs_ui_tars_prompt,
     build_single_element_prompt as build_login_rcs_ui_tars_single_prompt,
@@ -18,6 +22,8 @@ __all__ = [
     "build_ocr_assist_prompt",
     "build_login_rcs_locator_prompt",
     "build_login_rcs_ui_venus_prompt",
+    "build_ui_venus_single_element_prompt",
+    "build_ui_venus_single_element_prompt_by_key",
     "build_login_rcs_ui_tars_prompt",
     "build_login_rcs_ui_tars_single_prompt",
     "build_rcs_main_tab_locator_prompt",

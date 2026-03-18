@@ -1,8 +1,8 @@
 """RCS 로그인 화면 UI-Venus 전용 grounding 프롬프트 빌더.
 
-UI-Venus 에게 각 요소의 좌표를 직접 규정하지 않고,
-스크린샷 안에서 실제로 보이는 text/control 을 찾은 뒤
-사용자가 실제 클릭할 grounding point 를 고르게 유도한다.
+UI-Venus 1.5 공식 grounding 프롬프트 형식을 따른다.
+한 번에 하나의 요소만 요청하고, 모델이 [x, y] (0-1000) 좌표를 반환한다.
+요소가 보이지 않으면 [-1, -1] 을 반환한다.
 """
 
 from typing import Iterable
@@ -14,7 +14,7 @@ UI_VENUS_LOGIN_ELEMENT_DESCRIPTIONS: dict[str, str] = {
     "server_label": "the visible text label 'Server' in the first form row",
     "server_input": "the server dropdown or combo box control in the first form row",
     "userid_label": "the visible text label 'User ID' in the second form row",
-    "userid_input": "the editable text field in the second form row",
+    "userid_input": "the editable text field next to the 'User ID' label where a user would click to type their user ID",
     "password_label": "the visible text label 'Password' in the third form row",
     "password_input": "the editable password field in the third form row",
     "login_button": "the 'Log In' button near the bottom of the dialog",
@@ -36,6 +36,50 @@ DEFAULT_UI_VENUS_TARGET_KEYS = (
     "shortcut_button",
 )
 
+# ---------------------------------------------------------------------------
+# 공식 UI-Venus 1.5 단일 요소 grounding 프롬프트
+# ---------------------------------------------------------------------------
+
+UI_VENUS_OFFICIAL_PROMPT_TEMPLATE = (
+    "Output the center point of the position corresponding to the following instruction: "
+    "{instruction}. "
+    "The output should just be the coordinates of a point, in the format [x,y]. "
+    "Additionally, if the task is infeasible (e.g., the task is not related to the image), "
+    "the output should be [-1,-1]."
+)
+
+
+def build_ui_venus_single_element_prompt(
+    instruction: str,
+) -> tuple[str, str]:
+    """UI-Venus 1.5 공식 grounding 형식으로 단일 요소 좌표를 요청한다.
+
+    Args:
+        instruction: 찾을 요소에 대한 자연어 설명.
+
+    Returns:
+        (system_message, user_message) 튜플.
+        system_message 는 빈 문자열 — 공식 형식은 user message 만 사용한다.
+    """
+    user_text = UI_VENUS_OFFICIAL_PROMPT_TEMPLATE.format(instruction=instruction)
+    return "", user_text
+
+
+def build_ui_venus_single_element_prompt_by_key(
+    element_key: str,
+) -> tuple[str, str]:
+    """element_key 를 사용해 공식 단일 요소 프롬프트를 구성한다."""
+    if element_key not in UI_VENUS_LOGIN_ELEMENT_DESCRIPTIONS:
+        raise ValueError(f"Unknown element key: {element_key}")
+
+    instruction = UI_VENUS_LOGIN_ELEMENT_DESCRIPTIONS[element_key]
+    return build_ui_venus_single_element_prompt(instruction)
+
+
+# ---------------------------------------------------------------------------
+# 레거시: 여러 요소를 한 번에 요청하는 batch 프롬프트 (참고용 보존)
+# ---------------------------------------------------------------------------
+
 
 def _json_stub(target_keys: tuple[str, ...]) -> str:
     """응답 JSON 예시를 생성한다."""
@@ -52,7 +96,12 @@ def build_login_rcs_ui_venus_prompt(
     height: int,
     target_keys: Iterable[str] | None = None,
 ) -> tuple[str, str]:
-    """UI-Venus 용 grounding 중심 system/user 프롬프트를 구성한다."""
+    """UI-Venus 용 batch grounding system/user 프롬프트를 구성한다.
+
+    NOTE: 공식 UI-Venus 1.5 형식은 단일 요소 프롬프트이다.
+    이 함수는 레거시 호환용으로 보존한다.
+    새 코드는 build_ui_venus_single_element_prompt 를 사용할 것.
+    """
     keys = tuple(target_keys) if target_keys is not None else DEFAULT_UI_VENUS_TARGET_KEYS
     missing = [key for key in keys if key not in UI_VENUS_LOGIN_ELEMENT_DESCRIPTIONS]
     if missing:

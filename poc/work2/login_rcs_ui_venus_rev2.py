@@ -86,6 +86,10 @@ try:
 except ValueError:
     DEFAULT_VISIBLE_ELEMENT_LIMIT = 12
 
+COMPARE_PROMPTS_ENABLED = os.getenv(
+    "RCS_LOGIN_COMPARE_PROMPTS", "true"
+).strip().lower() in {"1", "true", "yes", "on", "y"}
+
 
 def _find_login_window():
     """기존 Rev2 로그인 창 탐색 로직을 재사용한다."""
@@ -145,8 +149,13 @@ def _build_visible_only_prompt(
     width: int,
     height: int,
     max_items: int,
+    prompt_profile: str = "loose",
 ) -> tuple[str, str]:
     """고정 target key 없이 visible-first grounding 프롬프트를 구성한다."""
+    profile = (prompt_profile or "loose").strip().lower()
+    if profile not in {"loose", "anchored"}:
+        raise ValueError(f"알 수 없는 prompt_profile: {prompt_profile}")
+
     system_message = (
         "GROUNDING task for a desktop GUI screenshot. "
         "Observe only what is actually visible in the screenshot. "
@@ -188,7 +197,181 @@ Rules:
 - x and y must be integers from 0 to 1000.
 - Return JSON only, with no markdown and no explanation.
 """.strip()
+
+    if profile == "anchored":
+        user_text = (
+            f"{user_text}\n"
+            "\n"
+            "ANCHOR RULES:\n"
+            "- For title_text and label, place the point at the vertical center of the full visible text, not the top edge of glyphs.\n"
+            "- For input, password_input, and combobox, place the point inside the control body where a user would click, not on the upper border or highlight.\n"
+            "- For button, place the point at the geometric center of the clickable button surface.\n"
+            "- If unsure between a slightly higher point and a slightly lower point on the same visible element, choose the slightly lower point.\n"
+            "- Avoid top borders, title-bar margins, and the upper highlight line of classic Windows controls."
+        )
     return system_message, user_text
+
+
+def _stable_match_key(item: dict) -> str:
+    """prompt 간 비교를 위한 안정적인 요소 식별 키를 만든다."""
+    role = _normalize_role(item.get("role"))
+    visible_text = _slugify_label(_clean_text(item.get("visible_text")))
+    name = _slugify_label(_clean_text(item.get("name")))
+    if visible_text and visible_text != "element":
+        return f"{role}:{visible_text}"
+    return f"{role}:{name}"
+
+
+def _compare_prompt_runs(
+    loose_elements: list[dict],
+    anchored_elements: list[dict],
+) -> dict:
+    """동일 스크린샷의 loose/anchored prompt 결과를 비교한다."""
+    loose_map: dict[str, dict] = {}
+    for item in loose_elements:
+        loose_map.setdefault(_stable_match_key(item), item)
+
+    anchored_map: dict[str, dict] = {}
+    for item in anchored_elements:
+        anchored_map.setdefault(_stable_match_key(item), item)
+
+    shared_keys = sorted(set(loose_map) & set(anchored_map))
+    matches: list[dict] = []
+    downward_count = 0
+    upward_count = 0
+    same_count = 0
+
+    for key in shared_keys:
+        loose_item = loose_map[key]
+        anchored_item = anchored_map[key]
+        delta_y = int(anchored_item["y"]) - int(loose_item["y"])
+        if delta_y > 0:
+            downward_count += 1
+        elif delta_y < 0:
+            upward_count += 1
+        else:
+            same_count += 1
+        matches.append(
+            {
+                "match_key": key,
+                "role": anchored_item["role"],
+                "name": anchored_item["name"],
+                "visible_text": anchored_item["visible_text"],
+                "loose_y": int(loose_item["y"]),
+                "anchored_y": int(anchored_item["y"]),
+                "delta_y": delta_y,
+                "loose_x": int(loose_item["x"]),
+                "anchored_x": int(anchored_item["x"]),
+                "delta_x": int(anchored_item["x"]) - int(loose_item["x"]),
+            }
+        )
+
+    avg_delta_y = 0.0
+    if matches:
+        avg_delta_y = sum(item["delta_y"] for item in matches) / len(matches)
+
+    prompting_issue_suspected = (
+        bool(matches)
+        and downward_count > upward_count
+        and avg_delta_y >= 3.0
+    )
+    return {
+        "matched_count": len(matches),
+        "loose_count": len(loose_elements),
+        "anchored_count": len(anchored_elements),
+        "downward_count": downward_count,
+        "upward_count": upward_count,
+        "same_count": same_count,
+        "avg_delta_y": round(avg_delta_y, 2),
+        "prompting_issue_suspected": prompting_issue_suspected,
+        "matches": matches,
+    }
+
+
+def _print_compare_summary(summary: dict) -> None:
+    """prompt 비교 결과를 콘솔에 짧게 출력한다."""
+    print(
+        "[INFO] prompt 비교 요약 "
+        f"matched={summary.get('matched_count', 0)}, "
+        f"downward={summary.get('downward_count', 0)}, "
+        f"upward={summary.get('upward_count', 0)}, "
+        f"same={summary.get('same_count', 0)}, "
+        f"avg_delta_y={summary.get('avg_delta_y', 0.0)}"
+    )
+    if summary.get("prompting_issue_suspected"):
+        print("[INFO] anchored prompt 가 전반적으로 더 아래 y 를 선택함 → prompting issue 가능성 높음")
+    elif summary.get("matched_count", 0) > 0:
+        print("[INFO] prompt 만으로 설명되는 systematic downward 이동은 뚜렷하지 않음")
+
+
+def _run_visible_prompt(
+    *,
+    image,
+    image_b64: str,
+    client: Work2VLMClient,
+    width: int,
+    height: int,
+    debug_stamp: str,
+    prompt_profile: str,
+) -> tuple[str, list[dict]]:
+    """하나의 prompt profile 로 visible-first 분석을 수행한다."""
+    file_tag = "anchored" if prompt_profile == "anchored" else "loose"
+    raw_response_path = debug_image_path(
+        DEBUG_IMAGE_DIR,
+        f"login_rcs_visible_response_{file_tag}.txt",
+        model_name=client.model_name,
+        timestamp_tag=debug_stamp,
+    )
+    parsed_json_path = debug_image_path(
+        DEBUG_IMAGE_DIR,
+        f"login_rcs_visible_response_{file_tag}.json",
+        model_name=client.model_name,
+        timestamp_tag=debug_stamp,
+    )
+    overlay_path = debug_image_path(
+        DEBUG_IMAGE_DIR,
+        f"login_rcs_visible_overlay_{file_tag}.jpg",
+        model_name=client.model_name,
+        timestamp_tag=debug_stamp,
+    )
+
+    system_message, user_text = _build_visible_only_prompt(
+        width=width,
+        height=height,
+        max_items=DEFAULT_VISIBLE_ELEMENT_LIMIT,
+        prompt_profile=prompt_profile,
+    )
+    response = client.chat_with_image_b64(
+        image_b64=image_b64,
+        image_mime="image/webp",
+        system_message=system_message,
+        user_text=user_text,
+        temperature=VLM_TEMPERATURE,
+    )
+    save_debug_text(raw_response_path, response.text)
+    print(f"[INFO] [{prompt_profile}] VLM 응답 수신: tokens={response.token_usage or {}}")
+    print(f"[INFO] [{prompt_profile}] 원문 응답:\n{response.text}\n")
+
+    parsed_json = extract_json(response.text)
+    print(
+        f"[INFO] [{prompt_profile}] 파싱된 JSON:\n"
+        f"{json.dumps(parsed_json, ensure_ascii=False, indent=2)}\n"
+    )
+
+    normalized_elements, overlay_points, overlay_colors = _normalize_visible_elements(
+        parsed_json,
+        img_w=width,
+        img_h=height,
+    )
+    normalized_payload = {
+        "prompt_profile": prompt_profile,
+        "coord_system": parsed_json.get("coord_system") or parsed_json.get("coordinate_system"),
+        "element_count": len(normalized_elements),
+        "elements": normalized_elements,
+    }
+    save_debug_json(parsed_json_path, normalized_payload)
+    save_marked_image(image, overlay_points, overlay_colors, overlay_path)
+    return response.model_name or client.model_name, normalized_elements
 
 
 def _normalize_visible_elements(
@@ -340,21 +523,9 @@ def _analyze_visible_login_elements(login_window, window_title: str, backend: st
         model_name=client.model_name,
         timestamp_tag=debug_stamp,
     )
-    raw_response_path = debug_image_path(
+    compare_summary_path = debug_image_path(
         DEBUG_IMAGE_DIR,
-        "login_rcs_visible_response.txt",
-        model_name=client.model_name,
-        timestamp_tag=debug_stamp,
-    )
-    parsed_json_path = debug_image_path(
-        DEBUG_IMAGE_DIR,
-        "login_rcs_visible_response.json",
-        model_name=client.model_name,
-        timestamp_tag=debug_stamp,
-    )
-    overlay_path = debug_image_path(
-        DEBUG_IMAGE_DIR,
-        "login_rcs_visible_overlay.jpg",
+        "login_rcs_visible_compare_summary.json",
         model_name=client.model_name,
         timestamp_tag=debug_stamp,
     )
@@ -362,11 +533,6 @@ def _analyze_visible_login_elements(login_window, window_title: str, backend: st
     save_debug_jpeg(image, raw_capture_path, log_name=LOG_NAME)
     save_debug_webp(image, vlm_input_path, log_name=LOG_NAME)
     image_b64, width, height = encode_image_webp(image)
-    system_message, user_text = _build_visible_only_prompt(
-        width=width,
-        height=height,
-        max_items=DEFAULT_VISIBLE_ELEMENT_LIMIT,
-    )
 
     print(
         f"[INFO] 로그인 창 visible-first 분석 시작: backend={backend}, "
@@ -374,12 +540,14 @@ def _analyze_visible_login_elements(login_window, window_title: str, backend: st
     )
 
     try:
-        response = client.chat_with_image_b64(
+        model_name, loose_elements = _run_visible_prompt(
+            image=image,
             image_b64=image_b64,
-            image_mime="image/webp",
-            system_message=system_message,
-            user_text=user_text,
-            temperature=VLM_TEMPERATURE,
+            client=client,
+            width=width,
+            height=height,
+            debug_stamp=debug_stamp,
+            prompt_profile="loose",
         )
     except Exception as exc:
         print(f"[ERROR] VLM 요청 실패: {exc}")
@@ -397,65 +565,42 @@ def _analyze_visible_login_elements(login_window, window_title: str, backend: st
         )
         return EXIT_VLM_REQUEST_ERROR
 
-    save_debug_text(raw_response_path, response.text)
-    print(f"[INFO] VLM 응답 수신: tokens={response.token_usage or {}}")
-    print(f"[INFO] 원문 응답:\n{response.text}\n")
-
+    anchored_elements: list[dict] = []
     try:
-        parsed_json = extract_json(response.text)
+        if COMPARE_PROMPTS_ENABLED:
+            _, anchored_elements = _run_visible_prompt(
+                image=image,
+                image_b64=image_b64,
+                client=client,
+                width=width,
+                height=height,
+                debug_stamp=debug_stamp,
+                prompt_profile="anchored",
+            )
     except Exception as exc:
-        print(f"[ERROR] VLM JSON 파싱 실패: {exc}")
+        print(f"[ERROR] anchored prompt 비교 실패: {exc}")
         log_work2_event(
             component=COMPONENT_NAME,
-            message="vlm_json_parse_failed",
-            level="error",
+            message="anchored_prompt_compare_failed",
+            level="warning",
             log_name=LOG_NAME,
             backend=backend,
             window_title=window_title,
             service=PRIMARY_SERVICE_SLUG,
-            model=response.model_name or client.model_name,
+            model=model_name,
             error=exc,
-            raw_response_path=raw_response_path,
             elapsed_ms=f"{(time.time() - started_at) * 1000:.1f}",
         )
-        return EXIT_VLM_PARSE_ERROR
 
-    print(f"[INFO] 파싱된 JSON:\n{json.dumps(parsed_json, ensure_ascii=False, indent=2)}\n")
-
-    try:
-        normalized_elements, overlay_points, overlay_colors = _normalize_visible_elements(
-            parsed_json,
-            img_w=width,
-            img_h=height,
-        )
-    except Exception as exc:
-        print(f"[ERROR] visible element 정규화 실패: {exc}")
-        log_work2_event(
-            component=COMPONENT_NAME,
-            message="visible_elements_normalize_failed",
-            level="error",
-            log_name=LOG_NAME,
-            backend=backend,
-            window_title=window_title,
-            service=PRIMARY_SERVICE_SLUG,
-            model=response.model_name or client.model_name,
-            error=exc,
-            raw_response_path=raw_response_path,
-            elapsed_ms=f"{(time.time() - started_at) * 1000:.1f}",
-        )
-        return EXIT_VLM_PARSE_ERROR
-
-    normalized_payload = {
-        "coord_system": parsed_json.get("coord_system") or parsed_json.get("coordinate_system"),
-        "element_count": len(normalized_elements),
-        "elements": normalized_elements,
-    }
-    save_debug_json(parsed_json_path, normalized_payload)
-    save_marked_image(image, overlay_points, overlay_colors, overlay_path)
+    compare_summary = None
+    if anchored_elements:
+        compare_summary = _compare_prompt_runs(loose_elements, anchored_elements)
+        save_debug_json(compare_summary_path, compare_summary)
+        _print_compare_summary(compare_summary)
 
     print(
         "[INFO] visible-first 분석 결과 "
-        f"detected={len(normalized_elements)}, elapsed={format_elapsed_ms(started_at)}"
+        f"detected={len(loose_elements)}, elapsed={format_elapsed_ms(started_at)}"
     )
     log_work2_event(
         component=COMPONENT_NAME,
@@ -464,16 +609,20 @@ def _analyze_visible_login_elements(login_window, window_title: str, backend: st
         backend=backend,
         window_title=window_title,
         service=PRIMARY_SERVICE_SLUG,
-        model=response.model_name or client.model_name,
-        detected=len(normalized_elements),
+        model=model_name,
+        detected=len(loose_elements),
+        anchored_detected=len(anchored_elements),
+        compare_summary_path=compare_summary_path if compare_summary is not None else "",
+        prompting_issue_suspected=(
+            compare_summary.get("prompting_issue_suspected")
+            if compare_summary is not None
+            else ""
+        ),
         raw_capture_path=raw_capture_path,
         vlm_input_path=vlm_input_path,
-        raw_response_path=raw_response_path,
-        parsed_json_path=parsed_json_path,
-        overlay_path=overlay_path,
         elapsed_ms=f"{(time.time() - started_at) * 1000:.1f}",
     )
-    return EXIT_SUCCESS if normalized_elements else EXIT_VLM_NO_DETECTION
+    return EXIT_SUCCESS if loose_elements else EXIT_VLM_NO_DETECTION
 
 
 def main() -> str:

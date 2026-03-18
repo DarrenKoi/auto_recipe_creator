@@ -53,7 +53,6 @@ EXIT_SUCCESS = "success"
 EXIT_LOGIN_WINDOW_NOT_FOUND = "login_window_not_found"
 EXIT_LOGIN_WINDOW_ACTIVATE_FAILED = "login_window_activate_failed"
 EXIT_VLM_NO_DETECTION = "vlm_no_detection"
-EXIT_VLM_REQUEST_ERROR = "vlm_request_error"
 EXIT_CAPTURE_FAILED = "capture_failed"
 
 # 이번 rev2 에서 찾을 요소 목록 — 지금은 userid_input 만

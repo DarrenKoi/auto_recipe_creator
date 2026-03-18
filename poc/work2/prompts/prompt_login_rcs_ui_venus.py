@@ -7,7 +7,7 @@ UI-Venus 1.5 공식 grounding 프롬프트 형식을 따른다.
 
 from typing import Iterable
 
-
+# 로그인 대화상자 UI 요소 설명 — 단일 요소 프롬프트와 레거시 batch 프롬프트 공용
 UI_VENUS_LOGIN_ELEMENT_DESCRIPTIONS: dict[str, str] = {
     "window_title_text": "the visible window title text 'Remote Control System' in the title bar",
     "close_button": "the standard Windows close button with an 'X' in the title bar",

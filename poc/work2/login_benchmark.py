@@ -317,7 +317,7 @@ def run_login_analysis_for_service(
         )
 
     elapsed_ms = (time.time() - started_at) * 1000
-    _write_debug_text(raw_response_path, response.text)
+    save_debug_text(raw_response_path, response.text)
     print(f"[INFO] VLM 응답 수신: tokens={response.token_usage or {}}")
     print(f"[INFO] 원문 응답:\n{response.text}\n")
 
@@ -354,7 +354,7 @@ def run_login_analysis_for_service(
         )
 
     print(f"[INFO] 파싱된 JSON:\n{json.dumps(parsed_json, ensure_ascii=False, indent=2)}\n")
-    _write_debug_json(parsed_json_path, parsed_json)
+    save_debug_json(parsed_json_path, parsed_json)
     parsed_coords = parse_coords(parsed_json, list(target_key_tuple), width, height)
     detected_count = sum(
         1 for key in target_key_tuple if key in parsed_coords and isinstance(parsed_coords[key], dict)

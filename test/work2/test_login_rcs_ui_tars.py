@@ -1,5 +1,5 @@
 from poc.work2.login_rcs_ui_tars import convert_ui_tars_coords, parse_ui_tars_response
-from poc.work2.prompts.login_rcs_ui_tars import (
+from poc.work2.prompts.prompt_login_rcs_ui_tars import (
     build_login_rcs_ui_tars_prompt,
     build_single_element_prompt,
 )

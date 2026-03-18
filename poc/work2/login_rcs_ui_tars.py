@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 
 from poc.work2.flask_vlm import get_service_by_slug, resolve_service_proxy_url
 from poc.work2.logger import log_work2_event
-from poc.work2.prompts.login_rcs_ui_tars import (
+from poc.work2.prompts.prompt_login_rcs_ui_tars import (
     DEFAULT_UI_TARS_TARGET_KEYS,
     build_login_rcs_ui_tars_prompt,
     build_single_element_prompt,

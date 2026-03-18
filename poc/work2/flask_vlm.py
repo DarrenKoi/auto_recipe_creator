@@ -150,7 +150,6 @@ ALL_VLM_SERVICES: list[VLMServiceEntry] = [
         connection_mode="proxy",
         prompt_family="gui",
         benchmark_role="primary_gui",
-        prefer_stream=True,
     ),
     VLMServiceEntry(
         "paddleocr-vl-1.5",

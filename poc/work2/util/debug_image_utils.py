@@ -1,5 +1,6 @@
 """디버그 이미지 저장 유틸리티."""
 
+import json
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -63,6 +64,21 @@ def save_debug_webp(
         log_name=log_name,
         path=out_path,
         quality=quality,
+    )
+
+
+def save_debug_text(path: Path, text: str) -> None:
+    """디버그 텍스트 파일을 저장한다."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def save_debug_json(path: Path, payload: dict) -> None:
+    """디버그 JSON 파일을 저장한다."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
 
 

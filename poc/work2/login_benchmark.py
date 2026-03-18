@@ -18,6 +18,7 @@ from poc.work2 import resolve_debug_model_name
 from poc.work2.flask_vlm import (
     get_enabled_services_by_role,
     get_service_by_slug,
+    resolve_service_api_key,
     resolve_service_proxy_url,
 )
 from poc.work2.logger import log_work2_event
@@ -25,6 +26,8 @@ from poc.work2.prompts import build_login_rcs_locator_prompt
 from poc.work2.util.debug_image_utils import (
     debug_image_path,
     save_debug_jpeg,
+    save_debug_json,
+    save_debug_text,
     save_debug_webp,
     save_marked_image,
 )
@@ -124,13 +127,6 @@ def build_prompt_for_service(
         target_keys=target_keys,
         extra_instructions=extra_instructions,
     )
-    if service_slug == "ui-tars":
-        system_message = (
-            "GROUNDING task for a desktop GUI screenshot. "
-            "Return only the requested JSON coordinates.\n"
-            f"{system_message}"
-        )
-
     return system_message, user_text
 
 
@@ -145,14 +141,11 @@ def _probe_service_health(service_slug: str) -> tuple[bool, str]:
     Returns:
         (healthy, reason) 튜플. healthy=True 이면 모델이 서빙 중.
     """
-    from poc.work2.flask_vlm import get_service_by_slug as _get_svc
-    from poc.work2.flask_vlm import resolve_service_api_key
-
     base_url = resolve_service_proxy_url(service_slug)
     if not base_url:
         return False, "proxy URL 미확인"
 
-    svc = _get_svc(service_slug)
+    svc = get_service_by_slug(service_slug)
     if svc is not None and svc.connection_mode == "direct":
         return True, f"direct preflight skipped: {svc.model_name}"
 
@@ -213,18 +206,6 @@ def _make_skipped_result(
         error=reason,
     )
 
-
-def _write_debug_text(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-
-
-def _write_debug_json(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
 
 
 def run_login_analysis_for_service(
@@ -426,7 +407,7 @@ def run_login_benchmark(
     context_fields: dict[str, object] | None = None,
 ) -> list[LoginBenchmarkResult]:
     """여러 서비스에 동일 로그인 이미지를 보내어 결과를 수집한다."""
-    resolved_slugs = parse_service_slugs(",".join(service_slugs), ())
+    resolved_slugs = parse_service_slugs(None, service_slugs)
     target_key_list = list(target_keys)
     results: list[LoginBenchmarkResult] = []
     for service_slug in resolved_slugs:

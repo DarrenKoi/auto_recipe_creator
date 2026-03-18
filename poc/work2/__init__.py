@@ -85,6 +85,7 @@ __all__ = [
     "login_benchmark",
     "login_rcs",
     "login_rcs_ui_venus",
+    "login_rcs_ui_venus_rev2",
     "open_rcs",
     "vlm_client",
 ]

@@ -28,6 +28,7 @@
 | [`gui_model_selection_and_benchmark_plan.md`](./gui_model_selection_and_benchmark_plan.md) | 현재 저장소 기준 비교 순서, sidecar escalation 규칙, 측정 항목 |
 | [`deploy_vlms_model_roles_and_pipeline_research.md`](./deploy_vlms_model_roles_and_pipeline_research.md) | 배치된 5개 모델의 역할, 강점, 한계, `poc/work2` 파이프라인 적용 해석 |
 | [`paddleocr_vl_ui_venus_pipeline_research.md`](./paddleocr_vl_ui_venus_pipeline_research.md) | `PaddleOCR-VL-1.5`와 `UI-Venus` 역할 분리와 조합 방식 |
+| [`ui_venus_grounding_and_ocr_for_engineering_ui.md`](./ui_venus_grounding_and_ocr_for_engineering_ui.md) | `UI-Venus` grounding 프롬프트, crop retry, OCR 좌표 보정까지 포함한 엔지니어링 UI 정밀 그라운딩 가이드 |
 | [`omniparser_v2_integration_research.md`](./omniparser_v2_integration_research.md) | OCR sidecar를 OmniParser 계열로 바꿀 때의 기대 효과와 리스크 |
 | [`vllm_runtime_and_unsloth_finetuning.md`](./vllm_runtime_and_unsloth_finetuning.md) | vLLM 서빙 구조, tokenizer/processor가 왜 필요한지, 작은 GPU 환경의 LoRA/QLoRA 학습 전략 |
 | [`encode_decode_and_model_architecture.md`](./encode_decode_and_model_architecture.md) | tokenizer의 encode/decode와 모델 architecture의 encoder/decoder 차이, 왜 어떤 모델은 한쪽만 가지는지 정리 |

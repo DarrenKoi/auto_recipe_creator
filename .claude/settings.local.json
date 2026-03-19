@@ -29,7 +29,8 @@
       "Bash(gh search:*)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(gh issue:*)",
-      "WebFetch(domain:qwen.readthedocs.io)"
+      "WebFetch(domain:qwen.readthedocs.io)",
+      "Bash(uv pip:*)"
     ]
   },
   "hooks": {

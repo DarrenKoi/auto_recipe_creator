@@ -40,21 +40,15 @@ Coworker-facing automation should prefer the proxy-style contract.
 
 ## 3. Repo Integration Contract
 
-### 3.1 `poc/work`
-
-Legacy code uses environment variables:
-
-- `VLM_API_URL`
-- `VLM_API_KEY`
-- `VLM_MODEL_NAME`
-
-### 3.2 `poc/work2`
+### 3.1 `poc/work2`
 
 Current code uses:
 
 - `poc/work2/flask_vlm.py` for service registry
 - `poc/work2/vlm_client.py` for service-slug based calls
 - `poc/work2/connection_check.py` for live service discovery
+
+Legacy `poc/work` has been removed after the migration to `work2`.
 
 Important rule:
 

@@ -1,7 +1,7 @@
 Flask>=3.0.0
 
 # Core — screen capture, VLM API, input control, config
-# (from poc/work/requirements.txt)
+# Shared runtime dependencies for current `poc/work2` flows
 mss>=9.0.0
 pynput>=1.7.6
 Pillow>=10.0.0
@@ -10,7 +10,7 @@ langchain-core>=0.3.0
 langchain-openai>=0.3.0
 python-dotenv>=1.0.0
 
-# Windows GUI automation used by poc/work
+# Windows GUI automation used by poc/work2
 pywinauto>=0.6.8
 
 # RAG — CCTV-based screen understanding

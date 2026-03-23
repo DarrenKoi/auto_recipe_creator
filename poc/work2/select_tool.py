@@ -68,7 +68,7 @@ EXIT_OCR_REQUEST_ERROR = "ocr_request_error"
 
 PRE_CLICK_SETTLE_SEC = 0.2
 POST_DOUBLE_CLICK_SETTLE_SEC = 0.5
-OCR_MAX_TOKENS = 2048
+OCR_MAX_TOKENS = 4096
 
 def _env_float(name: str, default: float) -> float:
     """float 환경변수를 읽고 잘못된 값이면 default 를 사용한다."""

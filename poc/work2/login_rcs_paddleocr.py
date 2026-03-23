@@ -36,7 +36,7 @@ load_dotenv()
 
 SERVICE_SLUG = "paddleocr-vl-1.5"
 OCR_PROMPT = os.getenv("LOGIN_RCS_PADDLEOCR_PROMPT", "OCR:").strip() or "OCR:"
-MAX_TOKENS = int(os.getenv("LOGIN_RCS_PADDLEOCR_MAX_TOKENS", "4096"))
+DEFAULT_MAX_TOKENS = 512
 DEBUG_IMAGE_DIR = Path(__file__).parent / "debug_images" / "login_rcs_paddleocr"
 LOG_NAME = Path(__file__).stem
 
@@ -46,6 +46,49 @@ EXIT_LOGIN_WINDOW_ACTIVATE_FAILED = "login_window_activate_failed"
 EXIT_CAPTURE_FAILED = "capture_failed"
 EXIT_OCR_REQUEST_ERROR = "ocr_request_error"
 EXIT_OCR_EMPTY = "ocr_empty"
+
+
+def _resolve_max_tokens() -> int:
+    """OCR 응답 길이에 맞는 안전한 max_tokens 값을 반환한다."""
+    raw_value = os.getenv("LOGIN_RCS_PADDLEOCR_MAX_TOKENS", "").strip()
+    if not raw_value:
+        return DEFAULT_MAX_TOKENS
+
+    try:
+        resolved = int(raw_value)
+    except ValueError:
+        print(
+            "[WARNING] LOGIN_RCS_PADDLEOCR_MAX_TOKENS 값이 잘못되었습니다. "
+            f"default={DEFAULT_MAX_TOKENS} 를 사용합니다: {raw_value!r}"
+        )
+        return DEFAULT_MAX_TOKENS
+
+    if resolved <= 0:
+        print(
+            "[WARNING] LOGIN_RCS_PADDLEOCR_MAX_TOKENS 는 1 이상이어야 합니다. "
+            f"default={DEFAULT_MAX_TOKENS} 를 사용합니다: {resolved}"
+        )
+        return DEFAULT_MAX_TOKENS
+
+    # OCR 텍스트 추출은 긴 completion 이 필요 없으므로 보수적으로 상한을 둔다.
+    if resolved > 1024:
+        print(
+            "[WARNING] LOGIN_RCS_PADDLEOCR_MAX_TOKENS 가 너무 큽니다. "
+            f"1024 로 낮춰 사용합니다: {resolved}"
+        )
+        return 1024
+
+    return resolved
+
+
+def _is_context_budget_error(error_text: str) -> bool:
+    """컨텍스트 예산 초과 유형의 서버 오류인지 확인한다."""
+    normalized = error_text.lower()
+    return (
+        "context is only" in normalized
+        or "maximum input length" in normalized
+        or "requested 4096 output tokens" in normalized
+    )
 
 
 def _normalize_lines(raw_text: str, max_items: int = 80) -> list[str]:
@@ -180,6 +223,8 @@ def _run_login_ocr(login_window, window_title: str, backend: str) -> str:
         timeout_sec=120.0,
         log_name=LOG_NAME,
     )
+    max_tokens = _resolve_max_tokens()
+    print(f"[INFO] PaddleOCR max_tokens={max_tokens}")
 
     try:
         response = client.chat_with_image_path(
@@ -188,10 +233,16 @@ def _run_login_ocr(login_window, window_title: str, backend: str) -> str:
             user_text=OCR_PROMPT,
             image_mime="image/webp",
             temperature=0.0,
-            max_tokens=MAX_TOKENS,
+            max_tokens=max_tokens,
         )
     except Exception as exc:
         print(f"[ERROR] PaddleOCR 요청 실패: {exc}")
+        if _is_context_budget_error(str(exc)):
+            print(
+                "[ERROR] PaddleOCR completion budget 가 너무 큽니다. "
+                "LOGIN_RCS_PADDLEOCR_MAX_TOKENS 를 더 작은 값으로 지정하세요. "
+                "예: 256 또는 512"
+            )
         log_work2_event(
             component="login_rcs_paddleocr",
             message="ocr_request_failed",
@@ -218,6 +269,7 @@ def _run_login_ocr(login_window, window_title: str, backend: str) -> str:
             "window_title": window_title,
             "backend": backend,
             "prompt_text": OCR_PROMPT,
+            "max_tokens": max_tokens,
             "raw_text": raw_text,
             "normalized_lines": normalized_lines,
             "line_count": len(normalized_lines),

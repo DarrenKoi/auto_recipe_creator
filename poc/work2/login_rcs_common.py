@@ -7,13 +7,15 @@ import sys
 import time
 from pathlib import Path
 
-import psutil
+try:
+    import psutil
 
-from poc.work2.util import (
-    activate_window,
-    find_window_by_pid_and_title_prefix,
-    find_window_by_title_prefix,
-)
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    psutil = None
+    PSUTIL_AVAILABLE = False
+
+from poc.work2 import util as work2_util
 
 
 WINDOW_TITLE_PREFIX = "Remote Control System"
@@ -23,6 +25,21 @@ OPEN_RCS_SCRIPT_PATH = Path(__file__).parent / "open_rcs.py"
 DESKTOP_SCAN_BACKENDS = ("uia", "win32")
 LOGIN_WINDOW_MAX_WIDTH = int(os.getenv("RCS_LOGIN_WINDOW_MAX_WIDTH", "900"))
 LOGIN_WINDOW_MAX_HEIGHT = int(os.getenv("RCS_LOGIN_WINDOW_MAX_HEIGHT", "700"))
+activate_window = getattr(work2_util, "activate_window", None)
+find_window_by_pid_and_title_prefix = getattr(
+    work2_util,
+    "find_window_by_pid_and_title_prefix",
+    None,
+)
+find_window_by_title_prefix = getattr(work2_util, "find_window_by_title_prefix", None)
+WINDOW_UTILS_AVAILABLE = all(
+    callable(func)
+    for func in (
+        activate_window,
+        find_window_by_pid_and_title_prefix,
+        find_window_by_title_prefix,
+    )
+)
 
 
 def _read_window_size(window) -> tuple[int, int] | None:
@@ -108,6 +125,10 @@ def _normalize_path_text(path_text: str | None) -> str:
 
 def _is_pid_alive(pid: int, expected_exe_path: str = "") -> bool:
     """PID 가 살아 있고, 필요하면 기대한 RCS 실행 파일과도 일치하는지 확인한다."""
+    if not PSUTIL_AVAILABLE:
+        print(f"[INFO] psutil unavailable: pid liveness check skipped (pid={pid})")
+        return False
+
     try:
         proc = psutil.Process(pid)
         if not proc.is_running() or proc.status() == psutil.STATUS_ZOMBIE:
@@ -212,6 +233,10 @@ def _ensure_rcs_running() -> int | None:
 
 def find_login_window() -> tuple[object | None, str, str]:
     """RCS 프로세스 생존 확인 후 로그인 대화상자를 탐색한다."""
+    if not WINDOW_UTILS_AVAILABLE:
+        print("[ERROR] window_utils unavailable - 로그인 창 탐색 불가")
+        return None, "", ""
+
     launch_pid = _ensure_rcs_running()
     if launch_pid is None:
         return None, "", ""
@@ -251,6 +276,10 @@ def find_login_window() -> tuple[object | None, str, str]:
 
 def find_rcs_main_window() -> tuple[object | None, str, str]:
     """로그인 후 메인 RCS 창을 탐색한다."""
+    if not WINDOW_UTILS_AVAILABLE:
+        print("[ERROR] window_utils unavailable - 메인 창 탐색 불가")
+        return None, "", ""
+
     print(f"[INFO] 메인 RCS 창 탐색 시작: title_prefix={RCS_MAIN_WINDOW_TITLE_PREFIX!r}")
     main_window, window_title, backend = find_window_by_title_prefix(
         RCS_MAIN_WINDOW_TITLE_PREFIX,

@@ -14,12 +14,25 @@ import sys
 import time
 from pathlib import Path
 
-from dotenv import load_dotenv
-import psutil
+try:
+    from dotenv import load_dotenv
+
+    DOTENV_AVAILABLE = True
+except ImportError:
+    DOTENV_AVAILABLE = False
+
+try:
+    import psutil
+
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    psutil = None
+    PSUTIL_AVAILABLE = False
 
 from poc.work2.logger import log_work2_event
 
-load_dotenv()
+if DOTENV_AVAILABLE:
+    load_dotenv()
 
 RCS_EXE = Path(
     os.environ.get("RCS_EXE_PATH", r"C:\Users\2067928\Documents\RCS\RcsMainHD.exe")
@@ -80,6 +93,10 @@ def _normalize_path_text(path_text: str | None) -> str:
 
 def find_existing_rcs_processes(exe_path: Path) -> list[dict[str, str | int]]:
     """이미 실행 중인 RCS 프로세스를 빠르게 찾는다."""
+    if not PSUTIL_AVAILABLE:
+        info("process scan skipped: psutil unavailable")
+        return []
+
     exe_name = exe_path.name.lower()
     exe_path_text = _normalize_path_text(str(exe_path))
     matches: list[dict[str, str | int]] = []

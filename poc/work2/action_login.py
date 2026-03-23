@@ -15,12 +15,11 @@ pynput 으로 실제 클릭을 수행한다.
 
 import sys
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-from poc.work2.login_rcs_common import WINDOW_TITLE_PREFIX, find_login_window
+from poc.work2.login_rcs_common import WINDOW_TITLE_PREFIX, find_login_window, DESKTOP_SCAN_BACKENDS
 from poc.work2.login_rcs_ui_venus_mai import (
     EXIT_SUCCESS,
     PREDEFINED_TARGETS,
@@ -28,7 +27,12 @@ from poc.work2.login_rcs_ui_venus_mai import (
     analyze_login_target,
 )
 from poc.work2.logger import log_work2_event
-from poc.work2.util import activate_window, foreground_window, format_elapsed_ms
+from poc.work2.util import (
+    activate_window,
+    find_window_by_title_prefix,
+    foreground_window,
+    format_elapsed_ms,
+)
 
 try:
     from pynput.mouse import Button, Controller as MouseController
@@ -52,6 +56,11 @@ ACTION_TARGETS = ["login_button"]
 # 클릭 전후 대기 시간 (초)
 PRE_CLICK_SETTLE_SEC = 0.2
 POST_CLICK_SETTLE_SEC = 0.3
+
+# 로그인 성공 확인 — 메인 RCS 창 탐색
+RCS_MAIN_WINDOW_TITLE_PREFIX = "RCS -"
+LOGIN_VERIFY_POLL_INTERVAL_SEC = 1.0
+LOGIN_VERIFY_TIMEOUT_SEC = 15.0
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +101,56 @@ def _click_at_screen(screen_point: dict, target_key: str) -> bool:
     mouse.click(Button.left)
     print(f"[INFO] 클릭 완료: target={target_key}, screen=({sx}, {sy})")
     return True
+
+
+# ---------------------------------------------------------------------------
+# 로그인 성공 확인
+# ---------------------------------------------------------------------------
+
+
+def _wait_for_rcs_main_window() -> tuple[object | None, str, str]:
+    """로그인 후 메인 RCS 창이 나타날 때까지 폴링한다.
+
+    성공 시 창을 foreground 로 활성화하고 (window, title, backend) 를 반환한다.
+    타임아웃 시 (None, "", "") 를 반환한다.
+    """
+    print(
+        f"[INFO] 메인 RCS 창 대기 시작: "
+        f"title_prefix={RCS_MAIN_WINDOW_TITLE_PREFIX!r}, "
+        f"timeout={LOGIN_VERIFY_TIMEOUT_SEC}s"
+    )
+    deadline = time.time() + LOGIN_VERIFY_TIMEOUT_SEC
+    attempt = 0
+
+    while time.time() < deadline:
+        attempt += 1
+        window, title, backend = find_window_by_title_prefix(
+            RCS_MAIN_WINDOW_TITLE_PREFIX,
+            DESKTOP_SCAN_BACKENDS,
+            visible_only=True,
+        )
+        if window is not None:
+            print(
+                f"[INFO] 메인 RCS 창 발견 (attempt={attempt}): "
+                f"title={title!r}, backend={backend}"
+            )
+            activate_window(
+                window,
+                debug_label=f"rcs_main_window backend={backend} title={title!r}",
+            )
+            foreground_window(
+                window,
+                debug_label=f"rcs_main_window_foreground backend={backend} title={title!r}",
+            )
+            return window, title, backend
+
+        time.sleep(LOGIN_VERIFY_POLL_INTERVAL_SEC)
+
+    print(
+        f"[WARNING] 메인 RCS 창 타임아웃: "
+        f"{LOGIN_VERIFY_TIMEOUT_SEC}s 내 미발견 (attempts={attempt})"
+    )
+    return None, "", ""
 
 
 # ---------------------------------------------------------------------------
@@ -174,23 +233,51 @@ def main() -> str:
         click_results.append({"target": target_key, "clicked": clicked})
         time.sleep(POST_CLICK_SETTLE_SEC)
 
-    # 결과 요약
+    # 클릭 결과 요약
     success_count = sum(1 for r in click_results if r["clicked"])
     print(
-        f"\n[INFO] 액션 완료: {success_count}/{len(click_results)} 클릭 성공, "
-        f"총 소요={format_elapsed_ms(script_started_at)}"
+        f"\n[INFO] 클릭 완료: {success_count}/{len(click_results)} 성공, "
+        f"소요={format_elapsed_ms(script_started_at)}"
     )
+
+    if success_count == 0:
+        log_work2_event(
+            component=COMPONENT_NAME,
+            message="action_finished",
+            log_name=LOG_NAME,
+            click_results=click_results,
+            login_verified=False,
+            elapsed_ms=f"{(time.time() - script_started_at) * 1000:.1f}",
+        )
+        return "click_failed"
+
+    # 4. 로그인 성공 확인 — 메인 RCS 창 대기
+    print(f"\n[INFO] === 로그인 성공 확인 ===")
+    rcs_window, rcs_title, rcs_backend = _wait_for_rcs_main_window()
+
+    login_verified = rcs_window is not None
     log_work2_event(
         component=COMPONENT_NAME,
         message="action_finished",
         log_name=LOG_NAME,
         click_results=click_results,
+        login_verified=login_verified,
+        rcs_main_title=rcs_title,
         elapsed_ms=f"{(time.time() - script_started_at) * 1000:.1f}",
     )
 
-    if success_count == len(click_results):
+    if login_verified:
+        print(
+            f"[INFO] 로그인 성공 확인! title={rcs_title!r}, "
+            f"총 소요={format_elapsed_ms(script_started_at)}"
+        )
         return "success"
-    return "partial_success"
+
+    print(
+        f"[WARNING] 로그인 버튼 클릭 후 메인 창 미확인. "
+        f"총 소요={format_elapsed_ms(script_started_at)}"
+    )
+    return "login_not_verified"
 
 
 if __name__ == "__main__":

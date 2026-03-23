@@ -34,10 +34,17 @@ from poc.work2.util import (
 
 try:
     from pynput.mouse import Button, Controller as MouseController
-    PYNPUT_AVAILABLE = True
+    PYNPUT_MOUSE_AVAILABLE = True
 except ImportError:
-    PYNPUT_AVAILABLE = False
-    print("[WARNING] pynput 미설치 — 클릭 동작은 로그만 출력됩니다.")
+    PYNPUT_MOUSE_AVAILABLE = False
+    print("[WARNING] pynput.mouse 미설치 — 클릭 동작은 로그만 출력됩니다.")
+
+try:
+    from pynput.keyboard import Key, Controller as KeyboardController
+    PYNPUT_KEYBOARD_AVAILABLE = True
+except ImportError:
+    PYNPUT_KEYBOARD_AVAILABLE = False
+    print("[WARNING] pynput.keyboard 미설치 — 타이핑 동작은 로그만 출력됩니다.")
 
 load_dotenv()
 
@@ -48,12 +55,36 @@ load_dotenv()
 LOG_NAME = Path(__file__).stem
 COMPONENT_NAME = LOG_NAME
 
-# 클릭할 타겟 순서
-ACTION_TARGETS = ["login_button"]
+# ---------------------------------------------------------------------------
+# 타이핑 기능 토글 — True 면 ID/PW 입력 후 로그인 버튼 클릭
+# ---------------------------------------------------------------------------
+TYPING_ENABLED = True
+
+# 타이핑할 자격증명
+CREDENTIAL_USER_ID = "2067928"
+CREDENTIAL_PASSWORD = "1"
+
+# 타이핑 대상 → 입력값 매핑
+TYPING_TARGETS: dict[str, str] = {
+    "userid_input": CREDENTIAL_USER_ID,
+    "password_input": CREDENTIAL_PASSWORD,
+}
+
+# 클릭할 타겟 순서 (TYPING_ENABLED 시 타이핑 타겟이 앞에 추가됨)
+_CLICK_ONLY_TARGETS = ["login_button"]
+ACTION_TARGETS = (
+    list(TYPING_TARGETS.keys()) + _CLICK_ONLY_TARGETS
+    if TYPING_ENABLED
+    else _CLICK_ONLY_TARGETS
+)
 
 # 클릭 전후 대기 시간 (초)
 PRE_CLICK_SETTLE_SEC = 0.2
 POST_CLICK_SETTLE_SEC = 0.3
+
+# 타이핑 관련 대기 시간 (초)
+CHAR_TYPE_DELAY_SEC = 0.03
+POST_TYPE_SETTLE_SEC = 0.3
 
 def _image_point_to_screen(window, image_point: dict) -> dict[str, int] | None:
     """이미지 픽셀 좌표를 스크린 절대 좌표로 변환한다."""
@@ -70,23 +101,52 @@ def _image_point_to_screen(window, image_point: dict) -> dict[str, int] | None:
 
 
 # ---------------------------------------------------------------------------
-# 클릭 실행
+# 클릭 / 타이핑 실행
 # ---------------------------------------------------------------------------
 
 
-def _click_at_screen(screen_point: dict, target_key: str) -> bool:
+def _click_at_screen(screen_point: dict, target_key: str, click_count: int = 1) -> bool:
     """스크린 좌표에서 마우스 좌클릭을 수행한다."""
     sx, sy = screen_point["x"], screen_point["y"]
 
-    if not PYNPUT_AVAILABLE:
+    if not PYNPUT_MOUSE_AVAILABLE:
         print(f"[INFO] [DRY-RUN] 클릭 생략 (pynput 없음): target={target_key}, screen=({sx}, {sy})")
         return True
 
     mouse = MouseController()
     mouse.position = (sx, sy)
     time.sleep(0.01)
-    mouse.click(Button.left)
-    print(f"[INFO] 클릭 완료: target={target_key}, screen=({sx}, {sy})")
+    mouse.click(Button.left, click_count)
+    print(f"[INFO] 클릭 완료 (x{click_count}): target={target_key}, screen=({sx}, {sy})")
+    return True
+
+
+def _clear_and_type(text: str, target_key: str) -> bool:
+    """기존 텍스트를 Ctrl+A → Delete 로 지운 뒤, 새 텍스트를 타이핑한다."""
+    if not PYNPUT_KEYBOARD_AVAILABLE:
+        print(f"[INFO] [DRY-RUN] 타이핑 생략 (pynput 없음): target={target_key}, text={text!r}")
+        return True
+
+    kb = KeyboardController()
+
+    # Ctrl+A 로 전체 선택
+    kb.press(Key.ctrl)
+    kb.press("a")
+    kb.release("a")
+    kb.release(Key.ctrl)
+    time.sleep(0.05)
+
+    # Delete 로 선택 영역 삭제
+    kb.press(Key.delete)
+    kb.release(Key.delete)
+    time.sleep(0.05)
+
+    # 한 글자씩 타이핑
+    for ch in text:
+        kb.type(ch)
+        time.sleep(CHAR_TYPE_DELAY_SEC)
+
+    print(f"[INFO] 타이핑 완료: target={target_key}, text={text!r}")
     return True
 
 
@@ -156,14 +216,30 @@ def main() -> str:
             click_results.append({"target": target_key, "clicked": False})
             continue
 
-        print(
-            f"[INFO] 클릭 실행: target={target_key}, "
-            f"image=({result.point['x']}, {result.point['y']}), "
-            f"screen=({screen_point['x']}, {screen_point['y']})"
-        )
-        clicked = _click_at_screen(screen_point, target_key)
-        click_results.append({"target": target_key, "clicked": clicked})
-        time.sleep(POST_CLICK_SETTLE_SEC)
+        # 타이핑 대상인 경우: 클릭 → 기존 텍스트 지우고 타이핑
+        type_value = TYPING_TARGETS.get(target_key) if TYPING_ENABLED else None
+        if type_value is not None:
+            print(
+                f"[INFO] 타이핑 타겟 클릭: target={target_key}, "
+                f"screen=({screen_point['x']}, {screen_point['y']})"
+            )
+            clicked = _click_at_screen(screen_point, target_key)
+            if clicked:
+                time.sleep(0.1)
+                typed = _clear_and_type(type_value, target_key)
+                click_results.append({"target": target_key, "clicked": clicked, "typed": typed})
+            else:
+                click_results.append({"target": target_key, "clicked": False, "typed": False})
+            time.sleep(POST_TYPE_SETTLE_SEC)
+        else:
+            print(
+                f"[INFO] 클릭 실행: target={target_key}, "
+                f"image=({result.point['x']}, {result.point['y']}), "
+                f"screen=({screen_point['x']}, {screen_point['y']})"
+            )
+            clicked = _click_at_screen(screen_point, target_key)
+            click_results.append({"target": target_key, "clicked": clicked})
+            time.sleep(POST_CLICK_SETTLE_SEC)
 
     # 클릭 결과 요약
     success_count = sum(1 for r in click_results if r["clicked"])

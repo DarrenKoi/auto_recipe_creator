@@ -16,4 +16,4 @@ def test_mai_ui_zoom_prompt_guides_left_inner_click_area() -> None:
     _, user_text = build_login_rcs_mai_ui_zoom_prompt()
 
     assert "left-inner text entry area" in user_text
-    assert "Do not click the label text, border, highlight" in user_text
+    assert "Do not click on label text, borders, highlights" in user_text

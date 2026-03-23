@@ -128,7 +128,7 @@ def test_chat_with_image_raises_when_chat_wrapper_content_is_null(monkeypatch):
         )
 
 
-def test_work2_client_enables_stream_by_default_for_ui_tars(monkeypatch):
+def test_work2_client_does_not_send_stream_by_default_for_ui_tars(monkeypatch):
     captured_payload: dict[str, object] = {}
 
     def fake_post(*args, **kwargs):
@@ -150,6 +150,35 @@ def test_work2_client_enables_stream_by_default_for_ui_tars(monkeypatch):
         image_mime="image/webp",
         system_message="json only",
         user_text="ping",
+    )
+
+    assert "stream" not in captured_payload
+    assert json.loads(response.text) == {"coord_system": "relative_1000"}
+
+
+def test_work2_client_can_explicitly_enable_stream_for_ui_tars(monkeypatch):
+    captured_payload: dict[str, object] = {}
+
+    def fake_post(*args, **kwargs):
+        captured_payload.update(kwargs["json"])
+        return DummyResponse(
+            status_code=200,
+            body=(
+                b'data: {"choices":[{"delta":{"content":"{\\"coord_system\\": \\"relative_1000\\"}"}}]}\n\n'
+                b"data: [DONE]\n\n"
+            ),
+            headers={"Content-Type": "text/event-stream"},
+        )
+
+    monkeypatch.setattr("poc.work2.vlm_client.requests.post", fake_post)
+
+    client = Work2VLMClient(service_slug="ui-tars")
+    response = client.chat_with_image_b64(
+        image_b64="dGVzdA==",
+        image_mime="image/webp",
+        system_message="json only",
+        user_text="ping",
+        stream=True,
     )
 
     assert captured_payload["stream"] is True

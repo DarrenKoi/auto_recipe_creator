@@ -82,7 +82,6 @@ __all__ = [
     "prompts",
     "util",
     "resolve_debug_model_name",
-    "login_benchmark",
     "login_rcs",
     "login_rcs_ui_venus",
     "login_rcs_ui_venus_rev2",

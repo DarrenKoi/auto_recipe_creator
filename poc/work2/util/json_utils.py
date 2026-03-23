@@ -330,6 +330,11 @@ def parse_coords(data: dict, keys: list[str], img_w: int, img_h: int) -> dict:
     return data
 
 
+def normalize_tool_text(text: str) -> str:
+    """OCR 텍스트 비교를 위해 영숫자만 남기고 대문자로 정규화한다."""
+    return "".join(ch for ch in (text or "").upper() if ch.isalnum())
+
+
 def normalize_lines(raw_text: str, max_items: int = 120) -> list[str]:
     """OCR 응답을 고유 줄 목록으로 정리한다."""
     if not raw_text.strip():

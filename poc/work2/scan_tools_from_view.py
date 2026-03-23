@@ -28,17 +28,24 @@ from poc.work2.prompts import build_ocr_assist_prompt
 from poc.work2.ui_venus_mai_locator import EXIT_SUCCESS, analyze_window_target
 from poc.work2.util import (
     activate_window,
+    build_relative_crop_box,
     capture_window,
+    click_at_screen,
     crop_image,
     debug_image_path,
+    env_flag,
+    env_float,
+    env_int,
     foreground_window,
     format_elapsed_ms,
     image_point_to_screen,
     make_timestamp_tag,
     normalize_lines,
+    normalize_tool_text,
     save_debug_jpeg,
     save_debug_webp,
     save_marked_bboxes,
+    scroll_at_screen,
 )
 from poc.work2.util.debug_image_utils import save_debug_json, save_debug_text
 from poc.work2.view_list_tab_rcs import PREDEFINED_TARGETS
@@ -53,20 +60,11 @@ except ImportError:
     CV_AVAILABLE = False
     print("[WARNING] cv2/numpy 미설치 — green box 탐지는 content crop 전체 fallback 으로 동작합니다.")
 
-try:
-    from pynput.mouse import Button, Controller as MouseController
-
-    PYNPUT_MOUSE_AVAILABLE = True
-except ImportError:
-    PYNPUT_MOUSE_AVAILABLE = False
-    print("[WARNING] pynput.mouse 미설치 — 클릭/스크롤 동작은 로그만 출력됩니다.")
-
 load_dotenv()
 
 
 DEBUG_IMAGE_DIR = Path(__file__).parent / "debug_images" / "scan_tools_from_view"
 LOG_NAME = Path(__file__).stem
-COMPONENT_NAME = LOG_NAME
 OCR_SERVICE_SLUG = "paddleocr-vl-1.5"
 
 EXIT_MAIN_WINDOW_NOT_FOUND = "main_window_not_found"
@@ -82,135 +80,31 @@ POST_SCROLL_WAIT_SEC = 1.2
 POST_DOUBLE_CLICK_WAIT_SEC = 0.5
 OCR_MAX_TOKENS = 512
 
-
-def _env_flag(name: str, default: bool = False) -> bool:
-    """bool 환경변수를 파싱한다."""
-    raw = os.environ.get(name, "").strip()
-    if not raw:
-        return default
-    return raw.lower() in {"1", "true", "yes", "on", "y"}
-
-
-def _env_int(name: str, default: int) -> int:
-    """int 환경변수를 읽고 잘못된 값이면 default 를 사용한다."""
-    raw_value = os.getenv(name, "").strip()
-    if not raw_value:
-        return default
-
-    try:
-        return int(raw_value)
-    except ValueError:
-        print(f"[WARNING] {name} 값이 잘못되었습니다. default={default} 사용: {raw_value!r}")
-        return default
-
-
-def _env_float(name: str, default: float) -> float:
-    """float 환경변수를 읽고 잘못된 값이면 default 를 사용한다."""
-    raw_value = os.getenv(name, "").strip()
-    if not raw_value:
-        return default
-
-    try:
-        return float(raw_value)
-    except ValueError:
-        print(f"[WARNING] {name} 값이 잘못되었습니다. default={default} 사용: {raw_value!r}")
-        return default
-
-
-SAFE_MODE = _env_flag("SAFE_MODE", default=True)
-ACTION_ENABLED = _env_flag("SCAN_VIEW_ACTION_ENABLED", default=not SAFE_MODE)
+SAFE_MODE = env_flag("SAFE_MODE", default=True)
+ACTION_ENABLED = env_flag("SCAN_VIEW_ACTION_ENABLED", default=not SAFE_MODE)
 TARGET_TOOL_ID = os.getenv("SCAN_VIEW_TARGET_TOOL_ID", "MCDC04").strip() or "MCDC04"
 
-DOWN_STEPS = max(1, _env_int("SCAN_VIEW_DOWN_STEPS", 8))
-UP_STEPS = max(1, _env_int("SCAN_VIEW_UP_STEPS", 8))
-DOWN_SCROLL_DY = _env_int("SCAN_VIEW_DOWN_SCROLL_DY", -8)
-UP_SCROLL_DY = _env_int("SCAN_VIEW_UP_SCROLL_DY", 8)
-MAX_GREEN_BOXES = max(1, _env_int("SCAN_VIEW_MAX_GREEN_BOXES", 16))
+DOWN_STEPS = max(1, env_int("SCAN_VIEW_DOWN_STEPS", 8))
+UP_STEPS = max(1, env_int("SCAN_VIEW_UP_STEPS", 8))
+DOWN_SCROLL_DY = env_int("SCAN_VIEW_DOWN_SCROLL_DY", -8)
+UP_SCROLL_DY = env_int("SCAN_VIEW_UP_SCROLL_DY", 8)
+MAX_GREEN_BOXES = max(1, env_int("SCAN_VIEW_MAX_GREEN_BOXES", 16))
 
-CONTENT_REGION_LEFT_RATIO = _env_float("SCAN_VIEW_CONTENT_LEFT_RATIO", 0.08)
-CONTENT_REGION_TOP_RATIO = _env_float("SCAN_VIEW_CONTENT_TOP_RATIO", 0.10)
-CONTENT_REGION_RIGHT_RATIO = _env_float("SCAN_VIEW_CONTENT_RIGHT_RATIO", 0.98)
-CONTENT_REGION_BOTTOM_RATIO = _env_float("SCAN_VIEW_CONTENT_BOTTOM_RATIO", 0.96)
+CONTENT_REGION_LEFT_RATIO = env_float("SCAN_VIEW_CONTENT_LEFT_RATIO", 0.08)
+CONTENT_REGION_TOP_RATIO = env_float("SCAN_VIEW_CONTENT_TOP_RATIO", 0.10)
+CONTENT_REGION_RIGHT_RATIO = env_float("SCAN_VIEW_CONTENT_RIGHT_RATIO", 0.98)
+CONTENT_REGION_BOTTOM_RATIO = env_float("SCAN_VIEW_CONTENT_BOTTOM_RATIO", 0.96)
 
-GREEN_MIN_WIDTH = max(20, _env_int("SCAN_VIEW_GREEN_MIN_WIDTH", 90))
-GREEN_MIN_HEIGHT = max(12, _env_int("SCAN_VIEW_GREEN_MIN_HEIGHT", 18))
-GREEN_MAX_HEIGHT = max(GREEN_MIN_HEIGHT, _env_int("SCAN_VIEW_GREEN_MAX_HEIGHT", 120))
-GREEN_MIN_AREA = max(200, _env_int("SCAN_VIEW_GREEN_MIN_AREA", 2200))
-GREEN_MIN_ASPECT = _env_float("SCAN_VIEW_GREEN_MIN_ASPECT", 1.8)
-GREEN_MIN_COVERAGE = _env_float("SCAN_VIEW_GREEN_MIN_COVERAGE", 0.35)
+GREEN_MIN_WIDTH = max(20, env_int("SCAN_VIEW_GREEN_MIN_WIDTH", 90))
+GREEN_MIN_HEIGHT = max(12, env_int("SCAN_VIEW_GREEN_MIN_HEIGHT", 18))
+GREEN_MAX_HEIGHT = max(GREEN_MIN_HEIGHT, env_int("SCAN_VIEW_GREEN_MAX_HEIGHT", 120))
+GREEN_MIN_AREA = max(200, env_int("SCAN_VIEW_GREEN_MIN_AREA", 2200))
+GREEN_MIN_ASPECT = env_float("SCAN_VIEW_GREEN_MIN_ASPECT", 1.8)
+GREEN_MIN_COVERAGE = env_float("SCAN_VIEW_GREEN_MIN_COVERAGE", 0.35)
 
-CLICK_Y_OFFSET_RATIO = _env_float("SCAN_VIEW_CLICK_Y_OFFSET_RATIO", 1.6)
-CLICK_Y_OFFSET_MIN = max(12, _env_int("SCAN_VIEW_CLICK_Y_OFFSET_MIN", 28))
-CLICK_Y_OFFSET_MAX = max(CLICK_Y_OFFSET_MIN, _env_int("SCAN_VIEW_CLICK_Y_OFFSET_MAX", 120))
-
-
-def _build_relative_crop_box(
-    width: int,
-    height: int,
-    left_ratio: float,
-    top_ratio: float,
-    right_ratio: float,
-    bottom_ratio: float,
-) -> dict[str, int]:
-    """이미지 크기와 비율로 crop box 를 만든다."""
-    left = int(round(width * min(max(left_ratio, 0.0), 1.0)))
-    top = int(round(height * min(max(top_ratio, 0.0), 1.0)))
-    right = int(round(width * min(max(right_ratio, 0.0), 1.0)))
-    bottom = int(round(height * min(max(bottom_ratio, 0.0), 1.0)))
-
-    right = max(left + 1, right)
-    bottom = max(top + 1, bottom)
-    right = min(width, right)
-    bottom = min(height, bottom)
-    return {
-        "left": left,
-        "top": top,
-        "right": right,
-        "bottom": bottom,
-    }
-
-
-def _click_at_screen(screen_point: dict[str, int], target_key: str, click_count: int = 1) -> bool:
-    """스크린 좌표에서 마우스 클릭을 수행한다."""
-    sx, sy = screen_point["x"], screen_point["y"]
-
-    if not ACTION_ENABLED or not PYNPUT_MOUSE_AVAILABLE:
-        print(
-            f"[INFO] [DRY-RUN] 클릭 생략: target={target_key}, screen=({sx}, {sy}), "
-            f"click_count={click_count}, action_enabled={ACTION_ENABLED}, "
-            f"pynput={PYNPUT_MOUSE_AVAILABLE}"
-        )
-        return True
-
-    mouse = MouseController()
-    mouse.position = (sx, sy)
-    time.sleep(0.01)
-    mouse.click(Button.left, click_count)
-    print(
-        f"[INFO] 클릭 완료: target={target_key}, screen=({sx}, {sy}), "
-        f"click_count={click_count}"
-    )
-    return True
-
-
-def _scroll_at_screen(screen_point: dict[str, int], dy: int, phase: str, step_index: int) -> bool:
-    """스크린 좌표에서 mouse wheel scroll 을 수행한다."""
-    sx, sy = screen_point["x"], screen_point["y"]
-
-    if not ACTION_ENABLED or not PYNPUT_MOUSE_AVAILABLE:
-        print(
-            f"[INFO] [DRY-RUN] scroll 생략: phase={phase}, step={step_index}, "
-            f"screen=({sx}, {sy}), dy={dy}, action_enabled={ACTION_ENABLED}, "
-            f"pynput={PYNPUT_MOUSE_AVAILABLE}"
-        )
-        return True
-
-    mouse = MouseController()
-    mouse.position = (sx, sy)
-    time.sleep(0.01)
-    mouse.scroll(0, dy)
-    print(f"[INFO] scroll 완료: phase={phase}, step={step_index}, screen=({sx}, {sy}), dy={dy}")
-    return True
+CLICK_Y_OFFSET_RATIO = env_float("SCAN_VIEW_CLICK_Y_OFFSET_RATIO", 1.6)
+CLICK_Y_OFFSET_MIN = max(12, env_int("SCAN_VIEW_CLICK_Y_OFFSET_MIN", 28))
+CLICK_Y_OFFSET_MAX = max(CLICK_Y_OFFSET_MIN, env_int("SCAN_VIEW_CLICK_Y_OFFSET_MAX", 120))
 
 
 def _capture_main_window(main_window, window_title: str, backend: str):
@@ -234,11 +128,6 @@ def _capture_main_window(main_window, window_title: str, backend: str):
     except Exception as exc:
         print(f"[ERROR] 메인 창 캡처 실패: {exc}")
         return None
-
-
-def _normalize_tool_text(text: str) -> str:
-    """OCR 텍스트 비교를 위해 영숫자만 남기고 대문자로 정규화한다."""
-    return "".join(ch for ch in (text or "").upper() if ch.isalnum())
 
 
 def _sort_boxes_reading_order(boxes: list[dict[str, int]]) -> list[dict[str, int]]:
@@ -384,14 +273,15 @@ def _save_green_box_overlay(
     return overlay_path
 
 
-def _extract_normalized_tokens(raw_text: str) -> list[str]:
+def _extract_normalized_tokens(raw_text: str, cached_lines: list[str] | None = None) -> list[str]:
     """OCR 원문에서 영숫자 토큰 후보를 정규화해서 반환한다."""
     tokens: list[str] = []
     seen: set[str] = set()
 
-    for line in normalize_lines(raw_text):
+    lines = cached_lines if cached_lines is not None else normalize_lines(raw_text)
+    for line in lines:
         parts = re.split(r"[^A-Za-z0-9]+", line)
-        variants = [_normalize_tool_text(line), *(_normalize_tool_text(part) for part in parts)]
+        variants = [normalize_tool_text(line), *(normalize_tool_text(part) for part in parts)]
         for candidate in variants:
             if not candidate or candidate in seen:
                 continue
@@ -399,6 +289,16 @@ def _extract_normalized_tokens(raw_text: str) -> list[str]:
             tokens.append(candidate)
 
     return tokens
+
+
+def _build_ocr_artifacts(ocr_result: dict) -> dict:
+    """OCR 결과에서 artifact 경로 dict 를 만든다."""
+    return {
+        "capture": ocr_result["capture_path"],
+        "input_webp": ocr_result["webp_path"],
+        "ocr_text": ocr_result["raw_response_path"],
+        "result_json": ocr_result["result_json_path"],
+    }
 
 
 def _compute_click_point_below_box(
@@ -434,29 +334,22 @@ def _run_box_ocr(
         context_label="view_green_box",
     )
 
+    prefix = f"scan_tools_from_view_{phase}_{step_index:02d}_box_{box_index:02d}"
     capture_path = debug_image_path(
-        DEBUG_IMAGE_DIR,
-        f"scan_tools_from_view_{phase}_{step_index:02d}_box_{box_index:02d}_crop.jpg",
-        model_name=client.model_name,
-        timestamp_tag=timestamp_tag,
+        DEBUG_IMAGE_DIR, f"{prefix}_crop.jpg",
+        model_name=client.model_name, timestamp_tag=timestamp_tag,
     )
     webp_path = debug_image_path(
-        DEBUG_IMAGE_DIR,
-        f"scan_tools_from_view_{phase}_{step_index:02d}_box_{box_index:02d}_input.webp",
-        model_name=client.model_name,
-        timestamp_tag=timestamp_tag,
+        DEBUG_IMAGE_DIR, f"{prefix}_input.webp",
+        model_name=client.model_name, timestamp_tag=timestamp_tag,
     )
     raw_response_path = debug_image_path(
-        DEBUG_IMAGE_DIR,
-        f"scan_tools_from_view_{phase}_{step_index:02d}_box_{box_index:02d}_ocr.txt",
-        model_name=client.model_name,
-        timestamp_tag=timestamp_tag,
+        DEBUG_IMAGE_DIR, f"{prefix}_ocr.txt",
+        model_name=client.model_name, timestamp_tag=timestamp_tag,
     )
     result_json_path = debug_image_path(
-        DEBUG_IMAGE_DIR,
-        f"scan_tools_from_view_{phase}_{step_index:02d}_box_{box_index:02d}_result.json",
-        model_name=client.model_name,
-        timestamp_tag=timestamp_tag,
+        DEBUG_IMAGE_DIR, f"{prefix}_result.json",
+        model_name=client.model_name, timestamp_tag=timestamp_tag,
     )
 
     save_debug_jpeg(box_image, capture_path, log_name=LOG_NAME)
@@ -472,7 +365,8 @@ def _run_box_ocr(
     )
 
     raw_text = response.text.strip()
-    normalized_tokens = _extract_normalized_tokens(raw_text)
+    normalized_lines_list = normalize_lines(raw_text)
+    normalized_tokens = _extract_normalized_tokens(raw_text, cached_lines=normalized_lines_list)
 
     save_debug_text(raw_response_path, raw_text)
     save_debug_json(
@@ -489,7 +383,7 @@ def _run_box_ocr(
             "box_index": box_index,
             "prompt_text": user_text,
             "raw_text": raw_text,
-            "normalized_lines": normalize_lines(raw_text),
+            "normalized_lines": normalized_lines_list,
             "normalized_tokens": normalized_tokens,
             "token_usage": response.token_usage,
         },
@@ -516,7 +410,7 @@ def _open_view_tab(main_window, window_title: str, backend: str) -> tuple[str, d
         target,
         debug_image_dir=DEBUG_IMAGE_DIR,
         log_name=LOG_NAME,
-        component_name=COMPONENT_NAME,
+        component_name=LOG_NAME,
         artifact_prefix="scan_tools_from_view_view_tab",
         result_mode="ui_venus_then_mai_ui_main_tabs",
     )
@@ -533,14 +427,12 @@ def _open_view_tab(main_window, window_title: str, backend: str) -> tuple[str, d
     )
     time.sleep(PRE_CLICK_SETTLE_SEC)
 
-    clicked = _click_at_screen(screen_point, "view_tab", click_count=1)
-    if clicked:
-        time.sleep(POST_VIEW_CLICK_WAIT_SEC)
+    click_at_screen(screen_point, "view_tab", click_count=1, action_enabled=ACTION_ENABLED)
+    time.sleep(POST_VIEW_CLICK_WAIT_SEC)
 
     return EXIT_SUCCESS, {
         "image_point": result.point,
         "screen_point": screen_point,
-        "clicked": clicked,
         "action_enabled": ACTION_ENABLED,
     }
 
@@ -568,7 +460,7 @@ def _scan_current_screen_for_target(
     save_debug_jpeg(image, full_capture_path, log_name=LOG_NAME)
 
     full_w, full_h = image.size
-    content_crop_box = _build_relative_crop_box(
+    content_crop_box = build_relative_crop_box(
         full_w,
         full_h,
         CONTENT_REGION_LEFT_RATIO,
@@ -596,7 +488,7 @@ def _scan_current_screen_for_target(
         for box in relative_boxes
     ]
 
-    target_normalized = _normalize_tool_text(target_tool_id)
+    target_normalized = normalize_tool_text(target_tool_id)
     match_entry: dict | None = None
     scan_entries: list[dict] = []
 
@@ -621,6 +513,7 @@ def _scan_current_screen_for_target(
             return EXIT_OCR_REQUEST_ERROR, None
 
         matched = target_normalized in ocr_result["normalized_tokens"]
+        artifacts = _build_ocr_artifacts(ocr_result)
         click_point = None
         if matched:
             click_point = _compute_click_point_below_box(box, content_crop_box)
@@ -636,12 +529,7 @@ def _scan_current_screen_for_target(
                 },
                 "ocr_raw_text": ocr_result["raw_text"],
                 "ocr_normalized_tokens": ocr_result["normalized_tokens"],
-                "artifacts": {
-                    "capture": ocr_result["capture_path"],
-                    "input_webp": ocr_result["webp_path"],
-                    "ocr_text": ocr_result["raw_response_path"],
-                    "result_json": ocr_result["result_json_path"],
-                },
+                "artifacts": artifacts,
             }
 
         scan_entries.append(
@@ -652,12 +540,7 @@ def _scan_current_screen_for_target(
                 "matched_target": matched,
                 "ocr_raw_text": ocr_result["raw_text"],
                 "ocr_normalized_tokens": ocr_result["normalized_tokens"],
-                "artifacts": {
-                    "capture": ocr_result["capture_path"],
-                    "input_webp": ocr_result["webp_path"],
-                    "ocr_text": ocr_result["raw_response_path"],
-                    "result_json": ocr_result["result_json_path"],
-                },
+                "artifacts": artifacts,
                 "token_usage": ocr_result["token_usage"],
             }
         )
@@ -703,6 +586,67 @@ def _scan_current_screen_for_target(
     return EXIT_SUCCESS, payload
 
 
+def _run_scroll_pass(
+    main_window,
+    window_title: str,
+    backend: str,
+    client: Work2VLMClient,
+    timestamp_tag: str,
+    target_tool_id: str,
+    scroll_anchor_screen_point: dict[str, int],
+    *,
+    phase: str,
+    num_steps: int,
+    scroll_dy: int,
+    search_steps: list[dict],
+) -> tuple[str, dict | None]:
+    """한 방향(down 또는 up) scroll pass 를 실행하고 target 을 찾으면 반환한다."""
+    # 첫 scroll 전에 content 영역을 클릭하여 RCS 위젯에 scroll focus 를 잡는다.
+    foreground_window(
+        main_window,
+        debug_label=f"scan_tools_from_view_focus_click_{phase}",
+    )
+    time.sleep(PRE_CLICK_SETTLE_SEC)
+    click_at_screen(
+        scroll_anchor_screen_point,
+        f"focus_content_{phase}",
+        click_count=1,
+        action_enabled=ACTION_ENABLED,
+    )
+    time.sleep(PRE_CLICK_SETTLE_SEC)
+
+    for step_index in range(1, num_steps + 1):
+        foreground_window(
+            main_window,
+            debug_label=f"scan_tools_from_view_pre_scroll_{phase}_{step_index}",
+        )
+        time.sleep(PRE_CLICK_SETTLE_SEC)
+        scroll_at_screen(
+            scroll_anchor_screen_point, scroll_dy, phase, step_index,
+            action_enabled=ACTION_ENABLED,
+        )
+        time.sleep(POST_SCROLL_WAIT_SEC)
+
+        step_exit_code, step_payload = _scan_current_screen_for_target(
+            main_window,
+            window_title,
+            backend,
+            client,
+            timestamp_tag,
+            target_tool_id,
+            phase=phase,
+            step_index=step_index,
+        )
+        if step_exit_code != EXIT_SUCCESS or step_payload is None:
+            return step_exit_code, None
+
+        search_steps.append(step_payload)
+        if step_payload["matched"]:
+            return EXIT_SUCCESS, step_payload
+
+    return EXIT_TARGET_NOT_FOUND, None
+
+
 def _search_target_with_scroll(
     main_window,
     window_title: str,
@@ -737,63 +681,23 @@ def _search_target_with_scroll(
     if scroll_anchor_screen_point is None:
         return EXIT_CAPTURE_FAILED, {"search_steps": search_steps}
 
-    for step_index in range(1, DOWN_STEPS + 1):
-        foreground_window(
-            main_window,
-            debug_label=f"scan_tools_from_view_pre_scroll_down_{step_index}",
+    for phase, num_steps, scroll_dy in [
+        ("down", DOWN_STEPS, DOWN_SCROLL_DY),
+        ("up", UP_STEPS, UP_SCROLL_DY),
+    ]:
+        pass_exit_code, found_step = _run_scroll_pass(
+            main_window, window_title, backend, client,
+            timestamp_tag, target_tool_id, scroll_anchor_screen_point,
+            phase=phase, num_steps=num_steps, scroll_dy=scroll_dy,
+            search_steps=search_steps,
         )
-        time.sleep(PRE_CLICK_SETTLE_SEC)
-        _scroll_at_screen(scroll_anchor_screen_point, DOWN_SCROLL_DY, "down", step_index)
-        time.sleep(POST_SCROLL_WAIT_SEC)
-
-        step_exit_code, step_payload = _scan_current_screen_for_target(
-            main_window,
-            window_title,
-            backend,
-            client,
-            timestamp_tag,
-            target_tool_id,
-            phase="down",
-            step_index=step_index,
-        )
-        if step_exit_code != EXIT_SUCCESS or step_payload is None:
-            return step_exit_code, {"search_steps": search_steps}
-
-        search_steps.append(step_payload)
-        if step_payload["matched"]:
+        if pass_exit_code == EXIT_SUCCESS and found_step is not None:
             return EXIT_SUCCESS, {
                 "search_steps": search_steps,
-                "found_step": step_payload,
+                "found_step": found_step,
             }
-
-    for step_index in range(1, UP_STEPS + 1):
-        foreground_window(
-            main_window,
-            debug_label=f"scan_tools_from_view_pre_scroll_up_{step_index}",
-        )
-        time.sleep(PRE_CLICK_SETTLE_SEC)
-        _scroll_at_screen(scroll_anchor_screen_point, UP_SCROLL_DY, "up", step_index)
-        time.sleep(POST_SCROLL_WAIT_SEC)
-
-        step_exit_code, step_payload = _scan_current_screen_for_target(
-            main_window,
-            window_title,
-            backend,
-            client,
-            timestamp_tag,
-            target_tool_id,
-            phase="up",
-            step_index=step_index,
-        )
-        if step_exit_code != EXIT_SUCCESS or step_payload is None:
-            return step_exit_code, {"search_steps": search_steps}
-
-        search_steps.append(step_payload)
-        if step_payload["matched"]:
-            return EXIT_SUCCESS, {
-                "search_steps": search_steps,
-                "found_step": step_payload,
-            }
+        if pass_exit_code not in {EXIT_SUCCESS, EXIT_TARGET_NOT_FOUND}:
+            return pass_exit_code, {"search_steps": search_steps}
 
     if fallback_match is not None:
         return EXIT_SUCCESS, {
@@ -811,7 +715,7 @@ def main() -> str:
     timestamp_tag = make_timestamp_tag(script_started_at)
 
     log_work2_event(
-        component=COMPONENT_NAME,
+        component=LOG_NAME,
         message="script_started",
         log_name=LOG_NAME,
         target_tool_id=TARGET_TOOL_ID,
@@ -829,7 +733,7 @@ def main() -> str:
             "먼저 로그인해서 메인 창을 띄운 뒤 다시 실행하세요."
         )
         log_work2_event(
-            component=COMPONENT_NAME,
+            component=LOG_NAME,
             message="main_window_not_found",
             level="error",
             log_name=LOG_NAME,
@@ -876,10 +780,11 @@ def main() -> str:
                 debug_label=f"scan_tools_from_view_pre_open_{TARGET_TOOL_ID}",
             )
             time.sleep(PRE_CLICK_SETTLE_SEC)
-            double_clicked = _click_at_screen(
+            double_clicked = click_at_screen(
                 double_click_screen_point,
                 f"open_{TARGET_TOOL_ID}",
                 click_count=2,
+                action_enabled=ACTION_ENABLED,
             )
             time.sleep(POST_DOUBLE_CLICK_WAIT_SEC)
     elif search_exit_code == EXIT_TARGET_NOT_FOUND:
@@ -926,7 +831,7 @@ def main() -> str:
         f"action_enabled={ACTION_ENABLED}"
     )
     log_work2_event(
-        component=COMPONENT_NAME,
+        component=LOG_NAME,
         message="script_finished",
         log_name=LOG_NAME,
         result=exit_code,

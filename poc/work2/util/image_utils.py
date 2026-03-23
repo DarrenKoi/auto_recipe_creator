@@ -52,6 +52,32 @@ def encode_image_webp(
     return b64, width, height
 
 
+def build_relative_crop_box(
+    width: int,
+    height: int,
+    left_ratio: float,
+    top_ratio: float,
+    right_ratio: float,
+    bottom_ratio: float,
+) -> dict[str, int]:
+    """이미지 크기와 비율로 crop box 를 만든다."""
+    left = int(round(width * min(max(left_ratio, 0.0), 1.0)))
+    top = int(round(height * min(max(top_ratio, 0.0), 1.0)))
+    right = int(round(width * min(max(right_ratio, 0.0), 1.0)))
+    bottom = int(round(height * min(max(bottom_ratio, 0.0), 1.0)))
+
+    right = max(left + 1, right)
+    bottom = max(top + 1, bottom)
+    right = min(width, right)
+    bottom = min(height, bottom)
+    return {
+        "left": left,
+        "top": top,
+        "right": right,
+        "bottom": bottom,
+    }
+
+
 def crop_image(image: "Image.Image", crop_box: dict[str, int]) -> "Image.Image":
     """crop box ({left, top, right, bottom}) 기준으로 이미지를 잘라낸다."""
     return image.crop(

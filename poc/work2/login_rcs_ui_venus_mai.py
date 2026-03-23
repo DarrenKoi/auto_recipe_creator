@@ -54,6 +54,15 @@ load_dotenv()
 
 
 @dataclass
+class TargetResult:
+    """2단계 파이프라인 실행 결과."""
+
+    exit_code: str
+    target_key: str
+    point: dict | None = None  # {"x": int, "y": int} — 이미지 픽셀 좌표
+
+
+@dataclass
 class TargetConfig:
     """2단계 파이프라인의 타겟 요소 설정.
 
@@ -449,12 +458,12 @@ def _run_mai_ui_refinement(
 # ---------------------------------------------------------------------------
 
 
-def _analyze_login_target(
+def analyze_login_target(
     login_window,
     window_title: str,
     backend: str,
     target: TargetConfig,
-) -> str:
+) -> TargetResult:
     """로그인 창에서 지정된 타겟을 2단계로 찾는다."""
     started_at = time.time()
     debug_stamp = make_timestamp_tag(started_at)
@@ -464,14 +473,14 @@ def _analyze_login_target(
         debug_label=f"login_window backend={backend} title={window_title!r}",
     ):
         print(f"[ERROR] 로그인 창 활성화 실패: title={window_title!r}")
-        return EXIT_LOGIN_WINDOW_ACTIVATE_FAILED
+        return TargetResult(EXIT_LOGIN_WINDOW_ACTIVATE_FAILED, target.key)
 
     if not foreground_window(
         login_window,
         debug_label=f"login_window screenshot backend={backend} title={window_title!r}",
     ):
         print(f"[ERROR] 로그인 창 foreground 실패: title={window_title!r}")
-        return EXIT_LOGIN_WINDOW_ACTIVATE_FAILED
+        return TargetResult(EXIT_LOGIN_WINDOW_ACTIVATE_FAILED, target.key)
 
     try:
         image = capture_window(login_window)
@@ -486,7 +495,7 @@ def _analyze_login_target(
             window_title=window_title,
             error=exc,
         )
-        return EXIT_CAPTURE_FAILED
+        return TargetResult(EXIT_CAPTURE_FAILED, target.key)
 
     coarse_client = Work2VLMClient(service_slug=COARSE_SERVICE_SLUG, log_name=LOG_NAME)
 
@@ -505,7 +514,7 @@ def _analyze_login_target(
             target_key=target.key,
             coarse_service=COARSE_SERVICE_SLUG,
         )
-        return EXIT_VLM_NO_DETECTION
+        return TargetResult(EXIT_VLM_NO_DETECTION, target.key)
 
     crop_box = _build_crop_box(coarse_result["bbox_pixels"], full_w, full_h, target)
     crop_image = _crop_image(image, crop_box)
@@ -555,7 +564,7 @@ def _analyze_login_target(
             target_key=target.key,
             refine_service=REFINE_SERVICE_SLUG,
         )
-        return EXIT_VLM_NO_DETECTION
+        return TargetResult(EXIT_VLM_NO_DETECTION, target.key)
 
     refined_full_point = _map_resized_point_to_full_image(
         refine_result["point"], crop_box, crop_w, crop_h, zoom_w, zoom_h,
@@ -672,7 +681,7 @@ def _analyze_login_target(
         final_point=refined_full_point,
         elapsed_ms=f"{(time.time() - started_at) * 1000:.1f}",
     )
-    return EXIT_SUCCESS
+    return TargetResult(EXIT_SUCCESS, target.key, point=refined_full_point)
 
 
 def main() -> str:
@@ -704,19 +713,19 @@ def main() -> str:
         )
         return EXIT_LOGIN_WINDOW_NOT_FOUND
 
-    result = _analyze_login_target(login_window, window_title, backend, target)
+    result = analyze_login_target(login_window, window_title, backend, target)
     print(f"[INFO] {LOG_NAME} 총 소요: {format_elapsed_ms(script_started_at)}")
     log_work2_event(
         component=COMPONENT_NAME,
         message="script_finished",
         log_name=LOG_NAME,
-        result=result,
+        result=result.exit_code,
         target_key=target.key,
         window_title=window_title,
         backend=backend,
         elapsed_ms=f"{(time.time() - script_started_at) * 1000:.1f}",
     )
-    return result
+    return result.exit_code
 
 
 if __name__ == "__main__":

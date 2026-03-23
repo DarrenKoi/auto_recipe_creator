@@ -25,6 +25,7 @@ from poc.work2.util import (
     foreground_window,
     format_elapsed_ms,
     make_timestamp_tag,
+    normalize_lines,
     save_debug_jpeg,
     save_debug_webp,
 )
@@ -89,26 +90,6 @@ def _is_context_budget_error(error_text: str) -> bool:
         or "maximum input length" in normalized
         or "requested 4096 output tokens" in normalized
     )
-
-
-def _normalize_lines(raw_text: str, max_items: int = 80) -> list[str]:
-    """OCR 응답을 사람이 보기 쉬운 고유 줄 목록으로 정리한다."""
-    if not raw_text.strip():
-        return []
-
-    lines: list[str] = []
-    seen: set[str] = set()
-    for raw_line in raw_text.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        if line in seen:
-            continue
-        seen.add(line)
-        lines.append(line)
-        if len(lines) >= max_items:
-            break
-    return lines
 
 
 def _print_ocr_preview(lines: list[str]) -> None:
@@ -257,7 +238,7 @@ def _run_login_ocr(login_window, window_title: str, backend: str) -> str:
         return EXIT_OCR_REQUEST_ERROR
 
     raw_text = response.text.strip()
-    normalized_lines = _normalize_lines(raw_text)
+    normalized_lines = normalize_lines(raw_text)
     save_debug_text(raw_response_path, raw_text)
     save_debug_json(
         result_json_path,

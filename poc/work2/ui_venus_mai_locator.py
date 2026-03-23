@@ -16,6 +16,7 @@ from poc.work2.util import (
     bbox_1000_to_pixels,
     bbox_center,
     capture_window,
+    crop_image,
     debug_image_path,
     encode_image_webp,
     foreground_window,
@@ -125,13 +126,6 @@ def _build_crop_box(
         "right": crop_right,
         "bottom": crop_bottom,
     }
-
-
-def _crop_image(image: Image.Image, crop_box: dict) -> Image.Image:
-    """crop box 기준으로 이미지를 잘라낸다."""
-    return image.crop(
-        (crop_box["left"], crop_box["top"], crop_box["right"], crop_box["bottom"])
-    )
 
 
 def _resize_crop_for_mai(image: Image.Image) -> tuple[Image.Image, dict]:
@@ -435,9 +429,9 @@ def analyze_window_target(
         return TargetResult(EXIT_VLM_NO_DETECTION, target.key)
 
     crop_box = _build_crop_box(coarse_result["bbox_pixels"], full_w, full_h, target)
-    crop_image = _crop_image(image, crop_box)
-    crop_w, crop_h = crop_image.size
-    zoom_image, zoom_meta = _resize_crop_for_mai(crop_image)
+    cropped = crop_image(image, crop_box)
+    crop_w, crop_h = cropped.size
+    zoom_image, zoom_meta = _resize_crop_for_mai(cropped)
     zoom_b64, zoom_w, zoom_h = encode_image_webp(zoom_image)
 
     refine_client = Work2VLMClient(service_slug=refine_service_slug, log_name=log_name)

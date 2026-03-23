@@ -32,6 +32,7 @@ from poc.work2.util import (
     capture_window,
     foreground_window,
     format_elapsed_ms,
+    image_point_to_screen,
 )
 
 try:
@@ -88,20 +89,6 @@ POST_CLICK_SETTLE_SEC = 0.3
 PRE_TYPE_DOUBLE_CLICK_SETTLE_SEC = 0.1
 CHAR_TYPE_DELAY_SEC = 0.03
 POST_TYPE_SETTLE_SEC = 0.3
-
-def _image_point_to_screen(window, image_point: dict) -> dict[str, int] | None:
-    """이미지 픽셀 좌표를 스크린 절대 좌표로 변환한다."""
-    try:
-        rect = window.rectangle()
-    except Exception as exc:
-        print(f"[ERROR] 창 rectangle 조회 실패: {exc}")
-        return None
-
-    return {
-        "x": rect.left + image_point["x"],
-        "y": rect.top + image_point["y"],
-    }
-
 
 # ---------------------------------------------------------------------------
 # 클릭 / 타이핑 실행
@@ -232,7 +219,7 @@ def main() -> str:
         )
         time.sleep(PRE_CLICK_SETTLE_SEC)
 
-        screen_point = _image_point_to_screen(login_window, result.point)
+        screen_point = image_point_to_screen(login_window, result.point)
         if screen_point is None:
             print(f"[ERROR] 스크린 좌표 변환 실패: target={target_key}")
             click_results.append({"target": target_key, "clicked": False})

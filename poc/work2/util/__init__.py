@@ -13,6 +13,7 @@ from .json_utils import (
     coerce_float,
     extract_json,
     normalize_bbox_1000,
+    normalize_lines,
     parse_coords,
 )
 from .time_utils import format_elapsed_ms, make_timestamp_tag
@@ -21,7 +22,7 @@ IMAGE_UTILS_AVAILABLE = False
 WINDOW_UTILS_AVAILABLE = False
 
 try:
-    from .image_utils import capture_window, encode_image_webp
+    from .image_utils import capture_window, crop_image, encode_image_webp
 
     IMAGE_UTILS_AVAILABLE = True
 except ImportError:
@@ -36,6 +37,7 @@ try:
         find_window_by_title_prefix,
         foreground_window,
         get_window_process_id,
+        image_point_to_screen,
         read_foreground_window_info,
     )
 
@@ -50,6 +52,7 @@ __all__ = [
     "bbox_center",
     "capture_window",
     "coerce_float",
+    "crop_image",
     "collect_window_rows",
     "debug_image_path",
     "encode_image_webp",
@@ -59,8 +62,10 @@ __all__ = [
     "format_elapsed_ms",
     "foreground_window",
     "get_window_process_id",
+    "image_point_to_screen",
     "make_timestamp_tag",
     "normalize_bbox_1000",
+    "normalize_lines",
     "parse_coords",
     "read_foreground_window_info",
     "save_debug_jpeg",

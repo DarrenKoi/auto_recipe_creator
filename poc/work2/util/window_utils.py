@@ -453,3 +453,17 @@ def find_window_by_title_prefix(
         window_filter=window_filter,
         extra_log=f", visible_only={visible_only}",
     )
+
+
+def image_point_to_screen(window, image_point: dict) -> dict[str, int] | None:
+    """윈도우 이미지 좌표를 스크린 절대 좌표로 변환한다."""
+    try:
+        rect = window.rectangle()
+    except Exception as exc:
+        print(f"[ERROR] 창 rectangle 조회 실패: {exc}")
+        return None
+
+    return {
+        "x": rect.left + image_point["x"],
+        "y": rect.top + image_point["y"],
+    }

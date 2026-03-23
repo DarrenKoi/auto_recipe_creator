@@ -328,3 +328,21 @@ def parse_coords(data: dict, keys: list[str], img_w: int, img_h: int) -> dict:
             f"-> px=({x}, {y}) [x:{x_mode}, y:{y_mode}]"
         )
     return data
+
+
+def normalize_lines(raw_text: str, max_items: int = 120) -> list[str]:
+    """OCR 응답을 고유 줄 목록으로 정리한다."""
+    if not raw_text.strip():
+        return []
+
+    lines: list[str] = []
+    seen: set[str] = set()
+    for raw_line in raw_text.splitlines():
+        line = raw_line.strip()
+        if not line or line in seen:
+            continue
+        seen.add(line)
+        lines.append(line)
+        if len(lines) >= max_items:
+            break
+    return lines

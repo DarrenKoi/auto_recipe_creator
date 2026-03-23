@@ -50,3 +50,10 @@ def encode_image_webp(
         f"{len(buffer.getvalue()) / 1024:.1f}KB"
     )
     return b64, width, height
+
+
+def crop_image(image: "Image.Image", crop_box: dict[str, int]) -> "Image.Image":
+    """crop box ({left, top, right, bottom}) 기준으로 이미지를 잘라낸다."""
+    return image.crop(
+        (crop_box["left"], crop_box["top"], crop_box["right"], crop_box["bottom"])
+    )

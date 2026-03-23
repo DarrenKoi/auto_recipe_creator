@@ -23,6 +23,7 @@ from poc.work2.util import (
     debug_image_path,
     foreground_window,
     format_elapsed_ms,
+    image_point_to_screen,
     make_timestamp_tag,
 )
 from poc.work2.util.debug_image_utils import save_debug_json
@@ -106,20 +107,6 @@ def analyze_main_tab_targets(
     return results
 
 
-def _image_point_to_screen(window, image_point: dict) -> dict[str, int] | None:
-    """이미지 픽셀 좌표를 스크린 절대 좌표로 변환한다."""
-    try:
-        rect = window.rectangle()
-    except Exception as exc:
-        print(f"[ERROR] 창 rectangle 조회 실패: {exc}")
-        return None
-
-    return {
-        "x": rect.left + image_point["x"],
-        "y": rect.top + image_point["y"],
-    }
-
-
 def _click_at_screen(screen_point: dict, target_key: str) -> bool:
     """스크린 좌표에서 마우스 좌클릭을 수행한다."""
     sx, sy = screen_point["x"], screen_point["y"]
@@ -157,7 +144,7 @@ def perform_tab_actions(
         )
         time.sleep(PRE_CLICK_SETTLE_SEC)
 
-        screen_point = _image_point_to_screen(main_window, result.point)
+        screen_point = image_point_to_screen(main_window, result.point)
         if screen_point is None:
             print(f"[ERROR] 스크린 좌표 변환 실패: target={target_key}")
             action_results.append({"target": target_key, "clicked": False})

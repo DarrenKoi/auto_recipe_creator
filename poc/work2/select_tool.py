@@ -30,10 +30,13 @@ from poc.work2.ui_venus_mai_locator import (
 from poc.work2.util import (
     activate_window,
     capture_window,
+    crop_image,
     debug_image_path,
     foreground_window,
     format_elapsed_ms,
+    image_point_to_screen,
     make_timestamp_tag,
+    normalize_lines,
     save_debug_jpeg,
     save_debug_webp,
 )
@@ -55,7 +58,6 @@ TARGET_TOOL_ID = os.getenv("SELECT_TOOL_TARGET_ID", "6MCD2201").strip() or "6MCD
 OCR_SERVICE_SLUG = "paddleocr-vl-1.5"
 DEBUG_IMAGE_DIR = Path(__file__).parent / "debug_images" / "select_tool"
 LOG_NAME = Path(__file__).stem
-COMPONENT_NAME = LOG_NAME
 
 EXIT_MAIN_WINDOW_NOT_FOUND = "main_window_not_found"
 EXIT_WINDOW_ACTIVATE_FAILED = "window_activate_failed"
@@ -110,26 +112,6 @@ def _normalize_tool_text(text: str) -> str:
     return "".join(ch for ch in (text or "").upper() if ch.isalnum())
 
 
-def _normalize_lines(raw_text: str, max_items: int = 120) -> list[str]:
-    """OCR 응답을 고유 줄 목록으로 정리한다."""
-    if not raw_text.strip():
-        return []
-
-    lines: list[str] = []
-    seen: set[str] = set()
-    for raw_line in raw_text.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        if line in seen:
-            continue
-        seen.add(line)
-        lines.append(line)
-        if len(lines) >= max_items:
-            break
-    return lines
-
-
 def _build_relative_crop_box(
     width: int,
     height: int,
@@ -153,27 +135,6 @@ def _build_relative_crop_box(
         "top": top,
         "right": right,
         "bottom": bottom,
-    }
-
-
-def _crop_image(image, crop_box: dict[str, int]):
-    """crop box 기준으로 이미지를 잘라낸다."""
-    return image.crop(
-        (crop_box["left"], crop_box["top"], crop_box["right"], crop_box["bottom"])
-    )
-
-
-def _image_point_to_screen(window, image_point: dict) -> dict[str, int] | None:
-    """윈도우 이미지 좌표를 스크린 절대 좌표로 변환한다."""
-    try:
-        rect = window.rectangle()
-    except Exception as exc:
-        print(f"[ERROR] 창 rectangle 조회 실패: {exc}")
-        return None
-
-    return {
-        "x": rect.left + image_point["x"],
-        "y": rect.top + image_point["y"],
     }
 
 
@@ -281,14 +242,13 @@ def _run_list_ocr(
         raise
 
     raw_text = response.text.strip()
-    normalized_lines = _normalize_lines(raw_text)
+    normalized_lines = normalize_lines(raw_text)
     normalized_target = _normalize_tool_text(tool_id)
-    normalized_joined = _normalize_tool_text("\n".join(normalized_lines))
     matched_lines = [
         line for line in normalized_lines
         if normalized_target and normalized_target in _normalize_tool_text(line)
     ]
-    target_visible = bool(normalized_target and normalized_target in normalized_joined)
+    target_visible = bool(matched_lines)
 
     save_debug_text(raw_response_path, raw_text)
     save_debug_json(
@@ -315,15 +275,8 @@ def _run_list_ocr(
         print(f"[INFO] OCR matched line {index}: {line}")
 
     return {
-        "raw_text": raw_text,
-        "normalized_lines": normalized_lines,
         "matched_lines": matched_lines,
         "target_visible": target_visible,
-        "response": response,
-        "capture_path": list_capture_path,
-        "webp_path": list_webp_path,
-        "raw_response_path": raw_response_path,
-        "result_json_path": result_json_path,
     }
 
 
@@ -333,7 +286,7 @@ def main() -> str:
     timestamp_tag = make_timestamp_tag(script_started_at)
 
     log_work2_event(
-        component=COMPONENT_NAME,
+        component=LOG_NAME,
         message="script_started",
         log_name=LOG_NAME,
         target_tool_id=TARGET_TOOL_ID,
@@ -347,7 +300,7 @@ def main() -> str:
             "먼저 로그인 후 List 탭까지 연 뒤 다시 실행하세요."
         )
         log_work2_event(
-            component=COMPONENT_NAME,
+            component=LOG_NAME,
             message="main_window_not_found",
             level="error",
             log_name=LOG_NAME,
@@ -358,7 +311,7 @@ def main() -> str:
     image = _capture_main_window(main_window, window_title, backend)
     if image is None:
         log_work2_event(
-            component=COMPONENT_NAME,
+            component=LOG_NAME,
             message="window_activate_or_capture_failed",
             level="error",
             log_name=LOG_NAME,
@@ -372,13 +325,7 @@ def main() -> str:
         "main_window_capture.jpg",
         timestamp_tag=timestamp_tag,
     )
-    full_webp_path = debug_image_path(
-        DEBUG_IMAGE_DIR,
-        "main_window_input.webp",
-        timestamp_tag=timestamp_tag,
-    )
     save_debug_jpeg(image, full_capture_path, log_name=LOG_NAME)
-    save_debug_webp(image, full_webp_path, quality=90, log_name=LOG_NAME)
 
     full_w, full_h = image.size
     list_crop_box = _build_relative_crop_box(
@@ -389,7 +336,7 @@ def main() -> str:
         LIST_REGION_RIGHT_RATIO,
         LIST_REGION_BOTTOM_RATIO,
     )
-    list_image = _crop_image(image, list_crop_box)
+    list_image = crop_image(image, list_crop_box)
     print(
         f"[INFO] Tool List crop: box={list_crop_box}, "
         f"size={list_image.size[0]}x{list_image.size[1]}"
@@ -405,7 +352,7 @@ def main() -> str:
         )
     except Exception as exc:
         log_work2_event(
-            component=COMPONENT_NAME,
+            component=LOG_NAME,
             message="ocr_request_failed",
             level="error",
             log_name=LOG_NAME,
@@ -444,7 +391,7 @@ def main() -> str:
         _tool_row_target(TARGET_TOOL_ID),
         debug_image_dir=DEBUG_IMAGE_DIR,
         log_name=LOG_NAME,
-        component_name=COMPONENT_NAME,
+        component_name=LOG_NAME,
         artifact_prefix=f"select_tool_{TARGET_TOOL_ID.lower()}",
         result_mode="ui_venus_then_mai_ui_tool_list",
         image=list_image,
@@ -460,7 +407,7 @@ def main() -> str:
         "x": list_crop_box["left"] + tool_result.point["x"],
         "y": list_crop_box["top"] + tool_result.point["y"],
     }
-    screen_point = _image_point_to_screen(main_window, full_image_point)
+    screen_point = image_point_to_screen(main_window, full_image_point)
     if screen_point is None:
         return EXIT_CAPTURE_FAILED
 
@@ -507,7 +454,7 @@ def main() -> str:
     )
     print(f"[INFO] 요약 JSON 저장: {summary_path}")
     log_work2_event(
-        component=COMPONENT_NAME,
+        component=LOG_NAME,
         message="script_finished",
         log_name=LOG_NAME,
         result=exit_code,

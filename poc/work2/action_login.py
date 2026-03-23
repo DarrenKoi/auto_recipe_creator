@@ -19,7 +19,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from poc.work2.login_rcs_common import WINDOW_TITLE_PREFIX, find_login_window, DESKTOP_SCAN_BACKENDS
+from poc.work2.login_rcs_common import find_login_window, wait_for_rcs_main_window
 from poc.work2.login_rcs_ui_venus_mai import (
     EXIT_SUCCESS,
     PREDEFINED_TARGETS,
@@ -28,8 +28,6 @@ from poc.work2.login_rcs_ui_venus_mai import (
 )
 from poc.work2.logger import log_work2_event
 from poc.work2.util import (
-    activate_window,
-    find_window_by_title_prefix,
     foreground_window,
     format_elapsed_ms,
 )
@@ -56,17 +54,6 @@ ACTION_TARGETS = ["login_button"]
 # 클릭 전후 대기 시간 (초)
 PRE_CLICK_SETTLE_SEC = 0.2
 POST_CLICK_SETTLE_SEC = 0.3
-
-# 로그인 성공 확인 — 메인 RCS 창 탐색
-RCS_MAIN_WINDOW_TITLE_PREFIX = "RCS -"
-LOGIN_VERIFY_POLL_INTERVAL_SEC = 2.0
-LOGIN_VERIFY_TIMEOUT_SEC = 15.0
-
-
-# ---------------------------------------------------------------------------
-# 화면 좌표 변환
-# ---------------------------------------------------------------------------
-
 
 def _image_point_to_screen(window, image_point: dict) -> dict[str, int] | None:
     """이미지 픽셀 좌표를 스크린 절대 좌표로 변환한다."""
@@ -101,61 +88,6 @@ def _click_at_screen(screen_point: dict, target_key: str) -> bool:
     mouse.click(Button.left)
     print(f"[INFO] 클릭 완료: target={target_key}, screen=({sx}, {sy})")
     return True
-
-
-# ---------------------------------------------------------------------------
-# 로그인 성공 확인
-# ---------------------------------------------------------------------------
-
-
-def _wait_for_rcs_main_window() -> tuple[object | None, str, str]:
-    """로그인 후 메인 RCS 창이 나타날 때까지 폴링한다.
-
-    성공 시 창을 foreground 로 활성화하고 (window, title, backend) 를 반환한다.
-    타임아웃 시 (None, "", "") 를 반환한다.
-    """
-    print(
-        f"[INFO] 메인 RCS 창 대기 시작: "
-        f"title_prefix={RCS_MAIN_WINDOW_TITLE_PREFIX!r}, "
-        f"timeout={LOGIN_VERIFY_TIMEOUT_SEC}s"
-    )
-    deadline = time.time() + LOGIN_VERIFY_TIMEOUT_SEC
-    attempt = 0
-
-    while time.time() < deadline:
-        attempt += 1
-        window, title, backend = find_window_by_title_prefix(
-            RCS_MAIN_WINDOW_TITLE_PREFIX,
-            DESKTOP_SCAN_BACKENDS,
-            visible_only=True,
-        )
-        if window is not None:
-            print(
-                f"[INFO] 메인 RCS 창 발견 (attempt={attempt}): "
-                f"title={title!r}, backend={backend}"
-            )
-            activate_window(
-                window,
-                debug_label=f"rcs_main_window backend={backend} title={title!r}",
-            )
-            foreground_window(
-                window,
-                debug_label=f"rcs_main_window_foreground backend={backend} title={title!r}",
-            )
-            return window, title, backend
-
-        time.sleep(LOGIN_VERIFY_POLL_INTERVAL_SEC)
-
-    print(
-        f"[WARNING] 메인 RCS 창 타임아웃: "
-        f"{LOGIN_VERIFY_TIMEOUT_SEC}s 내 미발견 (attempts={attempt})"
-    )
-    return None, "", ""
-
-
-# ---------------------------------------------------------------------------
-# 메인 파이프라인
-# ---------------------------------------------------------------------------
 
 
 def main() -> str:
@@ -253,7 +185,7 @@ def main() -> str:
 
     # 4. 로그인 성공 확인 — 메인 RCS 창 대기
     print(f"\n[INFO] === 로그인 성공 확인 ===")
-    rcs_window, rcs_title, rcs_backend = _wait_for_rcs_main_window()
+    rcs_window, rcs_title, _rcs_backend = wait_for_rcs_main_window()
 
     login_verified = rcs_window is not None
     log_work2_event(

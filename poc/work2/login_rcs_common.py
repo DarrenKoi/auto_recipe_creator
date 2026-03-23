@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import psutil
@@ -16,6 +17,7 @@ from poc.work2.util import (
 
 
 WINDOW_TITLE_PREFIX = "Remote Control System"
+RCS_MAIN_WINDOW_TITLE_PREFIX = "RCS -"
 OPEN_RCS_STATE_PATH = Path(__file__).parent / "logs" / "open_rcs_state.json"
 OPEN_RCS_SCRIPT_PATH = Path(__file__).parent / "open_rcs.py"
 DESKTOP_SCAN_BACKENDS = ("uia", "win32")
@@ -247,8 +249,61 @@ def find_login_window() -> tuple[object | None, str, str]:
     return None, "", ""
 
 
+def find_rcs_main_window() -> tuple[object | None, str, str]:
+    """로그인 후 메인 RCS 창을 탐색한다."""
+    print(f"[INFO] 메인 RCS 창 탐색 시작: title_prefix={RCS_MAIN_WINDOW_TITLE_PREFIX!r}")
+    main_window, window_title, backend = find_window_by_title_prefix(
+        RCS_MAIN_WINDOW_TITLE_PREFIX,
+        DESKTOP_SCAN_BACKENDS,
+        visible_only=True,
+    )
+    if main_window is None:
+        return None, "", ""
+
+    print(f"[INFO] 메인 RCS 창 발견 -> 포커스 활성화: title={window_title!r}")
+    activate_window(
+        main_window,
+        debug_label=f"rcs_main_window backend={backend} title={window_title!r}",
+    )
+    return main_window, window_title, backend
+
+
+def wait_for_rcs_main_window(
+    timeout_sec: float = 15.0,
+    poll_interval_sec: float = 2.0,
+) -> tuple[object | None, str, str]:
+    """메인 RCS 창이 나타날 때까지 폴링한다."""
+    print(
+        f"[INFO] 메인 RCS 창 대기 시작: "
+        f"title_prefix={RCS_MAIN_WINDOW_TITLE_PREFIX!r}, timeout={timeout_sec}s"
+    )
+    deadline = time.time() + timeout_sec
+    attempt = 0
+
+    while time.time() < deadline:
+        attempt += 1
+        main_window, window_title, backend = find_rcs_main_window()
+        if main_window is not None:
+            print(
+                f"[INFO] 메인 RCS 창 발견 (attempt={attempt}): "
+                f"title={window_title!r}, backend={backend}"
+            )
+            return main_window, window_title, backend
+
+        time.sleep(poll_interval_sec)
+
+    print(
+        f"[WARNING] 메인 RCS 창 타임아웃: "
+        f"{timeout_sec}s 내 미발견 (attempts={attempt})"
+    )
+    return None, "", ""
+
+
 __all__ = [
     "DESKTOP_SCAN_BACKENDS",
+    "RCS_MAIN_WINDOW_TITLE_PREFIX",
     "WINDOW_TITLE_PREFIX",
     "find_login_window",
+    "find_rcs_main_window",
+    "wait_for_rcs_main_window",
 ]

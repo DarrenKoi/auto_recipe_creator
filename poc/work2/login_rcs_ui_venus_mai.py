@@ -27,12 +27,15 @@ from poc.work2.prompts.prompt_login_rcs_ui_venus import (
 )
 from poc.work2.util import (
     activate_window,
+    bbox_1000_to_pixels,
+    bbox_center,
     capture_window,
     debug_image_path,
     encode_image_webp,
     foreground_window,
     format_elapsed_ms,
     make_timestamp_tag,
+    normalize_bbox_1000,
     parse_coords,
     save_debug_jpeg,
     save_debug_webp,
@@ -75,105 +78,6 @@ TARGET_MIN_RESIZED_HEIGHT = 320
 MAX_RESIZED_WIDTH = 1400
 MAX_RESIZED_HEIGHT = 900
 MAX_UPSCALE = 4.0
-
-
-def _coerce_float(value) -> float | None:
-    """문자열/숫자를 float 로 변환한다."""
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        stripped = value.strip()
-        if not stripped:
-            return None
-        try:
-            return float(stripped)
-        except ValueError:
-            return None
-    return None
-
-
-def _normalize_bbox_1000(raw_bbox) -> dict | None:
-    """모델 bbox 응답을 0-1000 기준 dict 로 정규화한다."""
-    if raw_bbox is None:
-        return None
-
-    if isinstance(raw_bbox, dict):
-        if {"left", "top", "right", "bottom"} <= raw_bbox.keys():
-            left = _coerce_float(raw_bbox.get("left"))
-            top = _coerce_float(raw_bbox.get("top"))
-            right = _coerce_float(raw_bbox.get("right"))
-            bottom = _coerce_float(raw_bbox.get("bottom"))
-        elif {"x", "y", "width", "height"} <= raw_bbox.keys():
-            left = _coerce_float(raw_bbox.get("x"))
-            top = _coerce_float(raw_bbox.get("y"))
-            width = _coerce_float(raw_bbox.get("width"))
-            height = _coerce_float(raw_bbox.get("height"))
-            if None in {left, top, width, height}:
-                return None
-            right = left + width
-            bottom = top + height
-        elif {"x", "y", "w", "h"} <= raw_bbox.keys():
-            left = _coerce_float(raw_bbox.get("x"))
-            top = _coerce_float(raw_bbox.get("y"))
-            width = _coerce_float(raw_bbox.get("w"))
-            height = _coerce_float(raw_bbox.get("h"))
-            if None in {left, top, width, height}:
-                return None
-            right = left + width
-            bottom = top + height
-        else:
-            return None
-    elif isinstance(raw_bbox, list) and len(raw_bbox) == 4:
-        left = _coerce_float(raw_bbox[0])
-        top = _coerce_float(raw_bbox[1])
-        right = _coerce_float(raw_bbox[2])
-        bottom = _coerce_float(raw_bbox[3])
-    else:
-        return None
-
-    if None in {left, top, right, bottom}:
-        return None
-
-    left = int(round(max(0.0, min(1000.0, left))))
-    top = int(round(max(0.0, min(1000.0, top))))
-    right = int(round(max(0.0, min(1000.0, right))))
-    bottom = int(round(max(0.0, min(1000.0, bottom))))
-    if right <= left or bottom <= top:
-        return None
-
-    return {
-        "left": left,
-        "top": top,
-        "right": right,
-        "bottom": bottom,
-    }
-
-
-def _to_pixel(value: float, axis_size: int) -> int:
-    """0-1000 정규화 좌표를 픽셀 좌표로 변환한다."""
-    pixel = value / 1000.0 * (axis_size - 1)
-    return max(0, min(int(round(pixel)), axis_size - 1))
-
-
-def _bbox_1000_to_pixels(bbox_1000: dict, img_w: int, img_h: int) -> dict:
-    """0-1000 bbox 를 픽셀 bbox 로 변환한다."""
-    left = _to_pixel(bbox_1000["left"], img_w)
-    top = _to_pixel(bbox_1000["top"], img_h)
-    right = max(left + 1, min(img_w, _to_pixel(bbox_1000["right"], img_w) + 1))
-    bottom = max(top + 1, min(img_h, _to_pixel(bbox_1000["bottom"], img_h) + 1))
-    return {
-        "left": left,
-        "top": top,
-        "right": right,
-        "bottom": bottom,
-    }
-
-
-def _bbox_center(bbox: dict) -> dict[str, int]:
-    """bbox 중심 좌표를 반환한다."""
-    center_x = int(round((bbox["left"] + bbox["right"] - 1) / 2))
-    center_y = int(round((bbox["top"] + bbox["bottom"] - 1) / 2))
-    return {"x": center_x, "y": center_y}
 
 
 def _ensure_min_span(start: int, end: int, total: int, minimum: int) -> tuple[int, int]:
@@ -385,7 +289,6 @@ def _run_ui_venus_coarse_bbox(
     system_message, user_text = build_ui_venus_single_element_bbox_prompt_by_key(TARGET_KEY)
     response = client.chat_with_image_b64(
         image_b64=image_b64,
-        image_mime="image/webp",
         system_message=system_message,
         user_text=user_text,
         temperature=0.0,
@@ -393,38 +296,30 @@ def _run_ui_venus_coarse_bbox(
     print(f"[INFO] [ui-venus] coarse 응답: {response.text!r}")
     print(f"[INFO] [ui-venus] tokens={response.token_usage or {}}")
 
+    base_result = {
+        "response_text": response.text,
+        "token_usage": response.token_usage or {},
+    }
+
     try:
         parsed = extract_json(response.text)
     except Exception as exc:
         print(f"[WARNING] [ui-venus] coarse JSON 파싱 실패: {exc}")
-        return {
-            "response_text": response.text,
-            "token_usage": response.token_usage or {},
-            "bbox_1000": None,
-            "bbox_pixels": None,
-            "center": None,
-        }
+        return {**base_result, "bbox_1000": None, "bbox_pixels": None, "center": None}
 
-    bbox_1000 = _normalize_bbox_1000(parsed.get("bbox"))
+    bbox_1000 = normalize_bbox_1000(parsed.get("bbox"))
     if bbox_1000 is None:
         print("[INFO] [ui-venus] coarse bbox 미검출")
-        return {
-            "response_text": response.text,
-            "token_usage": response.token_usage or {},
-            "bbox_1000": None,
-            "bbox_pixels": None,
-            "center": None,
-        }
+        return {**base_result, "bbox_1000": None, "bbox_pixels": None, "center": None}
 
-    bbox_pixels = _bbox_1000_to_pixels(bbox_1000, img_w, img_h)
-    center = _bbox_center(bbox_pixels)
+    bbox_pixels = bbox_1000_to_pixels(bbox_1000, img_w, img_h)
+    center = bbox_center(bbox_pixels)
     print(
         f"[INFO] [ui-venus] bbox1000={bbox_1000} -> px={bbox_pixels}, "
         f"center=({center['x']}, {center['y']})"
     )
     return {
-        "response_text": response.text,
-        "token_usage": response.token_usage or {},
+        **base_result,
         "bbox_1000": bbox_1000,
         "bbox_pixels": bbox_pixels,
         "center": center,
@@ -441,7 +336,6 @@ def _run_mai_ui_refinement(
     system_message, user_text = build_login_rcs_mai_ui_zoom_prompt()
     response = client.chat_with_image_b64(
         image_b64=zoom_b64,
-        image_mime="image/webp",
         system_message=system_message,
         user_text=user_text,
         temperature=0.0,
@@ -512,8 +406,6 @@ def _analyze_login_target(login_window, window_title: str, backend: str) -> str:
         return EXIT_CAPTURE_FAILED
 
     coarse_client = Work2VLMClient(service_slug=COARSE_SERVICE_SLUG, log_name=LOG_NAME)
-    refine_client = Work2VLMClient(service_slug=REFINE_SERVICE_SLUG, log_name=LOG_NAME)
-    pipeline_model_name = f"{coarse_client.model_name}__{refine_client.model_name}"
 
     full_b64, full_w, full_h = encode_image_webp(image)
     coarse_result = _run_ui_venus_coarse_bbox(coarse_client, full_b64, full_w, full_h)
@@ -535,6 +427,18 @@ def _analyze_login_target(login_window, window_title: str, backend: str) -> str:
     zoom_image, zoom_meta = _resize_crop_for_mai(crop_image)
     zoom_b64, zoom_w, zoom_h = encode_image_webp(zoom_image)
 
+    refine_client = Work2VLMClient(service_slug=REFINE_SERVICE_SLUG, log_name=LOG_NAME)
+    pipeline_model_name = f"{coarse_client.model_name}__{refine_client.model_name}"
+
+    print(
+        f"[INFO] coarse->zoom pipeline 시작: full={full_w}x{full_h}, "
+        f"crop={crop_w}x{crop_h}, zoom={zoom_w}x{zoom_h}, "
+        f"coarse_service={COARSE_SERVICE_SLUG}, refine_service={REFINE_SERVICE_SLUG}"
+    )
+
+    refine_result = _run_mai_ui_refinement(refine_client, zoom_b64, zoom_w, zoom_h)
+
+    # debug I/O 는 양쪽 VLM 호출 완료 후 일괄 저장
     input_paths = _save_pipeline_inputs(
         image=image,
         zoom_image=zoom_image,
@@ -554,14 +458,6 @@ def _analyze_login_target(login_window, window_title: str, backend: str) -> str:
         timestamp_tag=debug_stamp,
     )
     save_debug_text(coarse_response_path, coarse_result["response_text"])
-
-    print(
-        f"[INFO] coarse->zoom pipeline 시작: full={full_w}x{full_h}, "
-        f"crop={crop_w}x{crop_h}, zoom={zoom_w}x{zoom_h}, "
-        f"coarse_service={COARSE_SERVICE_SLUG}, refine_service={REFINE_SERVICE_SLUG}"
-    )
-
-    refine_result = _run_mai_ui_refinement(refine_client, zoom_b64, zoom_w, zoom_h)
     if refine_result is not None:
         save_debug_text(refine_response_path, refine_result["response_text"])
     if refine_result is None or refine_result["point"] is None:

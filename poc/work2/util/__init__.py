@@ -7,7 +7,14 @@ from .debug_image_utils import (
     save_marked_bboxes,
     save_marked_image,
 )
-from .json_utils import extract_json, parse_coords
+from .json_utils import (
+    bbox_1000_to_pixels,
+    bbox_center,
+    coerce_float,
+    extract_json,
+    normalize_bbox_1000,
+    parse_coords,
+)
 from .time_utils import format_elapsed_ms, make_timestamp_tag
 
 IMAGE_UTILS_AVAILABLE = False
@@ -39,7 +46,10 @@ except ImportError:
 __all__ = [
     "WindowRow",
     "activate_window",
+    "bbox_1000_to_pixels",
+    "bbox_center",
     "capture_window",
+    "coerce_float",
     "collect_window_rows",
     "debug_image_path",
     "encode_image_webp",
@@ -50,6 +60,7 @@ __all__ = [
     "foreground_window",
     "get_window_process_id",
     "make_timestamp_tag",
+    "normalize_bbox_1000",
     "parse_coords",
     "read_foreground_window_info",
     "save_debug_jpeg",

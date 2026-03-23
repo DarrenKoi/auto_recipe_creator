@@ -25,15 +25,18 @@ from poc.work2.prompts.prompt_login_rcs_ui_venus import (
 )
 from poc.work2.util import (
     activate_window,
+    bbox_1000_to_pixels,
+    bbox_center,
     capture_window,
     debug_image_path,
     encode_image_webp,
     foreground_window,
     format_elapsed_ms,
     make_timestamp_tag,
+    normalize_bbox_1000,
     save_debug_jpeg,
-    save_marked_bboxes,
     save_debug_webp,
+    save_marked_bboxes,
 )
 from poc.work2.util.debug_image_utils import save_debug_json
 from poc.work2.util.json_utils import extract_json
@@ -79,99 +82,6 @@ def _find_login_window():
     return _find()
 
 
-def _coerce_float(value) -> float | None:
-    """문자열/숫자를 float 로 변환한다."""
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        stripped = value.strip()
-        if not stripped:
-            return None
-        try:
-            return float(stripped)
-        except ValueError:
-            return None
-    return None
-
-
-def _normalize_bbox_1000(raw_bbox) -> dict | None:
-    """모델 bbox 응답을 0-1000 기준 dict 로 정규화한다."""
-    if raw_bbox is None:
-        return None
-
-    if isinstance(raw_bbox, dict):
-        if {"left", "top", "right", "bottom"} <= raw_bbox.keys():
-            left = _coerce_float(raw_bbox.get("left"))
-            top = _coerce_float(raw_bbox.get("top"))
-            right = _coerce_float(raw_bbox.get("right"))
-            bottom = _coerce_float(raw_bbox.get("bottom"))
-        elif {"x", "y", "width", "height"} <= raw_bbox.keys():
-            left = _coerce_float(raw_bbox.get("x"))
-            top = _coerce_float(raw_bbox.get("y"))
-            width = _coerce_float(raw_bbox.get("width"))
-            height = _coerce_float(raw_bbox.get("height"))
-            if None in {left, top, width, height}:
-                return None
-            right = left + width
-            bottom = top + height
-        elif {"x", "y", "w", "h"} <= raw_bbox.keys():
-            left = _coerce_float(raw_bbox.get("x"))
-            top = _coerce_float(raw_bbox.get("y"))
-            width = _coerce_float(raw_bbox.get("w"))
-            height = _coerce_float(raw_bbox.get("h"))
-            if None in {left, top, width, height}:
-                return None
-            right = left + width
-            bottom = top + height
-        else:
-            return None
-    elif isinstance(raw_bbox, list) and len(raw_bbox) == 4:
-        left = _coerce_float(raw_bbox[0])
-        top = _coerce_float(raw_bbox[1])
-        right = _coerce_float(raw_bbox[2])
-        bottom = _coerce_float(raw_bbox[3])
-    else:
-        return None
-
-    if None in {left, top, right, bottom}:
-        return None
-
-    left = int(round(max(0.0, min(1000.0, left))))
-    top = int(round(max(0.0, min(1000.0, top))))
-    right = int(round(max(0.0, min(1000.0, right))))
-    bottom = int(round(max(0.0, min(1000.0, bottom))))
-
-    if right <= left or bottom <= top:
-        return None
-
-    return {
-        "left": left,
-        "top": top,
-        "right": right,
-        "bottom": bottom,
-    }
-
-
-def _to_pixel(value: float, axis_size: int) -> int:
-    """0-1000 정규화 좌표를 픽셀 좌표로 변환한다."""
-    pixel = value / 1000.0 * (axis_size - 1)
-    return max(0, min(int(round(pixel)), axis_size - 1))
-
-
-def _bbox_1000_to_pixels(bbox_1000: dict, img_w: int, img_h: int) -> dict:
-    """0-1000 bbox 를 픽셀 bbox 로 변환한다."""
-    left = _to_pixel(bbox_1000["left"], img_w)
-    top = _to_pixel(bbox_1000["top"], img_h)
-    right = max(left + 1, min(img_w, _to_pixel(bbox_1000["right"], img_w) + 1))
-    bottom = max(top + 1, min(img_h, _to_pixel(bbox_1000["bottom"], img_h) + 1))
-    return {
-        "left": left,
-        "top": top,
-        "right": right,
-        "bottom": bottom,
-    }
-
-
 def _ground_single_element_bbox(
     client: Work2VLMClient,
     image_b64: str,
@@ -188,7 +98,6 @@ def _ground_single_element_bbox(
 
     response = client.chat_with_image_b64(
         image_b64=image_b64,
-        image_mime="image/webp",
         system_message=system_message,
         user_text=user_text,
         temperature=0.0,
@@ -203,25 +112,24 @@ def _ground_single_element_bbox(
         print(f"[INFO] [{element_key}] JSON 파싱 실패")
         return None
 
-    bbox_1000 = _normalize_bbox_1000(parsed.get("bbox"))
+    bbox_1000 = normalize_bbox_1000(parsed.get("bbox"))
     if bbox_1000 is None:
         print(f"[INFO] [{element_key}] bbox 추출 실패 또는 미검출")
         return None
 
-    bbox_pixels = _bbox_1000_to_pixels(bbox_1000, img_w, img_h)
-    center_x = int(round((bbox_pixels["left"] + bbox_pixels["right"] - 1) / 2))
-    center_y = int(round((bbox_pixels["top"] + bbox_pixels["bottom"] - 1) / 2))
+    bbox_pixels = bbox_1000_to_pixels(bbox_1000, img_w, img_h)
+    center = bbox_center(bbox_pixels)
     print(
         f"[INFO] [{element_key}] bbox1000={bbox_1000} "
-        f"-> px={bbox_pixels}, center=({center_x}, {center_y})"
+        f"-> px={bbox_pixels}, center=({center['x']}, {center['y']})"
     )
 
     return {
         "key": element_key,
         "bbox_1000": bbox_1000,
         "bbox_pixels": bbox_pixels,
-        "center_x": center_x,
-        "center_y": center_y,
+        "center_x": center["x"],
+        "center_y": center["y"],
         "response_text": response.text,
     }
 

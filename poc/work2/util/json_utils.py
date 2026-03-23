@@ -106,6 +106,109 @@ def extract_json(text: str) -> dict:
     raise json.JSONDecodeError("JSON object not found", text, 0)
 
 
+def coerce_float(value) -> float | None:
+    """문자열/숫자를 float 로 변환한다. 변환 불가 시 None."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            return float(stripped)
+        except ValueError:
+            return None
+    return None
+
+
+def normalize_bbox_1000(raw_bbox) -> dict | None:
+    """모델 bbox 응답을 0-1000 기준 {left, top, right, bottom} dict 로 정규화한다.
+
+    dict (left/top/right/bottom, x/y/width/height, x/y/w/h) 와
+    4-element list 형식을 모두 처리한다.
+    """
+    if raw_bbox is None:
+        return None
+
+    if isinstance(raw_bbox, dict):
+        if {"left", "top", "right", "bottom"} <= raw_bbox.keys():
+            left = coerce_float(raw_bbox.get("left"))
+            top = coerce_float(raw_bbox.get("top"))
+            right = coerce_float(raw_bbox.get("right"))
+            bottom = coerce_float(raw_bbox.get("bottom"))
+        elif {"x", "y", "width", "height"} <= raw_bbox.keys():
+            left = coerce_float(raw_bbox.get("x"))
+            top = coerce_float(raw_bbox.get("y"))
+            width = coerce_float(raw_bbox.get("width"))
+            height = coerce_float(raw_bbox.get("height"))
+            if None in {left, top, width, height}:
+                return None
+            right = left + width
+            bottom = top + height
+        elif {"x", "y", "w", "h"} <= raw_bbox.keys():
+            left = coerce_float(raw_bbox.get("x"))
+            top = coerce_float(raw_bbox.get("y"))
+            width = coerce_float(raw_bbox.get("w"))
+            height = coerce_float(raw_bbox.get("h"))
+            if None in {left, top, width, height}:
+                return None
+            right = left + width
+            bottom = top + height
+        else:
+            return None
+    elif isinstance(raw_bbox, list) and len(raw_bbox) == 4:
+        left = coerce_float(raw_bbox[0])
+        top = coerce_float(raw_bbox[1])
+        right = coerce_float(raw_bbox[2])
+        bottom = coerce_float(raw_bbox[3])
+    else:
+        return None
+
+    if None in {left, top, right, bottom}:
+        return None
+
+    left = int(round(max(0.0, min(1000.0, left))))
+    top = int(round(max(0.0, min(1000.0, top))))
+    right = int(round(max(0.0, min(1000.0, right))))
+    bottom = int(round(max(0.0, min(1000.0, bottom))))
+    if right <= left or bottom <= top:
+        return None
+
+    return {
+        "left": left,
+        "top": top,
+        "right": right,
+        "bottom": bottom,
+    }
+
+
+def _bbox_coord_to_pixel(value: float, axis_size: int) -> int:
+    """0-1000 정규화 좌표 하나를 픽셀 좌표로 변환한다."""
+    pixel = value / 1000.0 * (axis_size - 1)
+    return max(0, min(int(round(pixel)), axis_size - 1))
+
+
+def bbox_1000_to_pixels(bbox_1000: dict, img_w: int, img_h: int) -> dict:
+    """0-1000 bbox 를 픽셀 bbox 로 변환한다."""
+    left = _bbox_coord_to_pixel(bbox_1000["left"], img_w)
+    top = _bbox_coord_to_pixel(bbox_1000["top"], img_h)
+    right = max(left + 1, min(img_w, _bbox_coord_to_pixel(bbox_1000["right"], img_w) + 1))
+    bottom = max(top + 1, min(img_h, _bbox_coord_to_pixel(bbox_1000["bottom"], img_h) + 1))
+    return {
+        "left": left,
+        "top": top,
+        "right": right,
+        "bottom": bottom,
+    }
+
+
+def bbox_center(bbox: dict) -> dict[str, int]:
+    """bbox 중심 좌표를 {x, y} dict 로 반환한다."""
+    center_x = int(round((bbox["left"] + bbox["right"] - 1) / 2))
+    center_y = int(round((bbox["top"] + bbox["bottom"] - 1) / 2))
+    return {"x": center_x, "y": center_y}
+
+
 def _normalize_coord_system(value) -> str | None:
     """좌표계 문자열을 내부 표준값으로 정규화한다."""
     if value is None:

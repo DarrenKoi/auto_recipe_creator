@@ -68,7 +68,7 @@ EXIT_OCR_REQUEST_ERROR = "ocr_request_error"
 
 PRE_CLICK_SETTLE_SEC = 0.2
 POST_DOUBLE_CLICK_SETTLE_SEC = 0.5
-OCR_MAX_TOKENS = 1024
+OCR_MAX_TOKENS = 4096
 
 def _env_float(name: str, default: float) -> float:
     """float 환경변수를 읽고 잘못된 값이면 default 를 사용한다."""
@@ -242,7 +242,7 @@ def _run_list_ocr(
         raise
 
     raw_text = response.text.strip()
-    normalized_lines = normalize_lines(raw_text)
+    normalized_lines = normalize_lines(raw_text, max_items=300)
     normalized_target = _normalize_tool_text(tool_id)
     matched_lines = [
         line for line in normalized_lines

@@ -82,8 +82,12 @@ def analyze_login_target(
     window_title: str,
     backend: str,
     target: TargetConfig,
+    image=None,
 ) -> TargetResult:
-    """로그인 창에서 지정된 타겟을 2단계로 찾는다."""
+    """로그인 창에서 지정된 타겟을 2단계로 찾는다.
+
+    image 가 주어지면 창 캡처를 건너뛰고 해당 이미지를 재사용한다.
+    """
     return analyze_window_target(
         login_window,
         window_title,
@@ -94,6 +98,7 @@ def analyze_login_target(
         component_name=COMPONENT_NAME,
         artifact_prefix="login_rcs",
         result_mode="ui_venus_then_mai_ui_single_target",
+        image=image,
     )
 
 

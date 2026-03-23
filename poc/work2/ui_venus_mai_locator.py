@@ -376,39 +376,44 @@ def analyze_window_target(
     coarse_service_slug: str = "ui-venus",
     refine_service_slug: str = "mai-ui",
     result_mode: str = "ui_venus_then_mai_ui_single_target",
+    image: Image.Image | None = None,
 ) -> TargetResult:
-    """임의의 윈도우에서 지정된 타겟을 2단계로 찾는다."""
+    """임의의 윈도우에서 지정된 타겟을 2단계로 찾는다.
+
+    image 가 주어지면 창 활성화/캡처를 건너뛰고 해당 이미지를 사용한다.
+    """
     started_at = time.time()
     debug_stamp = make_timestamp_tag(started_at)
 
-    if not activate_window(
-        window,
-        debug_label=f"window backend={backend} title={window_title!r}",
-    ):
-        print(f"[ERROR] 창 활성화 실패: title={window_title!r}")
-        return TargetResult(EXIT_WINDOW_ACTIVATE_FAILED, target.key)
+    if image is None:
+        if not activate_window(
+            window,
+            debug_label=f"window backend={backend} title={window_title!r}",
+        ):
+            print(f"[ERROR] 창 활성화 실패: title={window_title!r}")
+            return TargetResult(EXIT_WINDOW_ACTIVATE_FAILED, target.key)
 
-    if not foreground_window(
-        window,
-        debug_label=f"window screenshot backend={backend} title={window_title!r}",
-    ):
-        print(f"[ERROR] 창 foreground 실패: title={window_title!r}")
-        return TargetResult(EXIT_WINDOW_ACTIVATE_FAILED, target.key)
+        if not foreground_window(
+            window,
+            debug_label=f"window screenshot backend={backend} title={window_title!r}",
+        ):
+            print(f"[ERROR] 창 foreground 실패: title={window_title!r}")
+            return TargetResult(EXIT_WINDOW_ACTIVATE_FAILED, target.key)
 
-    try:
-        image = capture_window(window)
-    except Exception as exc:
-        print(f"[ERROR] 창 캡처 실패: {exc}")
-        log_work2_event(
-            component=component_name,
-            message="capture_failed",
-            level="error",
-            log_name=log_name,
-            backend=backend,
-            window_title=window_title,
-            error=exc,
-        )
-        return TargetResult(EXIT_CAPTURE_FAILED, target.key)
+        try:
+            image = capture_window(window)
+        except Exception as exc:
+            print(f"[ERROR] 창 캡처 실패: {exc}")
+            log_work2_event(
+                component=component_name,
+                message="capture_failed",
+                level="error",
+                log_name=log_name,
+                backend=backend,
+                window_title=window_title,
+                error=exc,
+            )
+            return TargetResult(EXIT_CAPTURE_FAILED, target.key)
 
     coarse_client = Work2VLMClient(service_slug=coarse_service_slug, log_name=log_name)
 

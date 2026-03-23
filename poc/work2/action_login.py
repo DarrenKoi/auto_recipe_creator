@@ -28,6 +28,8 @@ from poc.work2.login_rcs_ui_venus_mai import (
 )
 from poc.work2.logger import log_work2_event
 from poc.work2.util import (
+    activate_window,
+    capture_window,
     foreground_window,
     format_elapsed_ms,
 )
@@ -172,7 +174,23 @@ def main() -> str:
 
     print(f"[INFO] 로그인 창 발견: title={window_title!r}, backend={backend}")
 
-    # 2. 타겟 탐지
+    # 2. 스크린샷 1회 캡처 → 모든 타겟 탐지에 재사용
+    if not activate_window(login_window, debug_label="action_login_activate"):
+        print("[ERROR] 로그인 창 활성화 실패")
+        return "window_activate_failed"
+
+    if not foreground_window(login_window, debug_label="action_login_capture"):
+        print("[ERROR] 로그인 창 foreground 실패")
+        return "window_activate_failed"
+
+    try:
+        shared_image = capture_window(login_window)
+    except Exception as exc:
+        print(f"[ERROR] 로그인 창 캡처 실패: {exc}")
+        return "capture_failed"
+
+    print(f"[INFO] 스크린샷 캡처 완료: {shared_image.size[0]}x{shared_image.size[1]}")
+
     detected: list[tuple[str, TargetResult]] = []
 
     for target_key in ACTION_TARGETS:
@@ -182,7 +200,10 @@ def main() -> str:
             continue
 
         print(f"\n[INFO] === 타겟 탐지 시작: {target_key} ===")
-        result = analyze_login_target(login_window, window_title, backend, target_config)
+        result = analyze_login_target(
+            login_window, window_title, backend, target_config,
+            image=shared_image,
+        )
 
         if result.exit_code == EXIT_SUCCESS and result.point is not None:
             print(

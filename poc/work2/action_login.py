@@ -85,6 +85,7 @@ PRE_CLICK_SETTLE_SEC = 0.2
 POST_CLICK_SETTLE_SEC = 0.3
 
 # 타이핑 관련 대기 시간 (초)
+PRE_TYPE_DOUBLE_CLICK_SETTLE_SEC = 0.1
 CHAR_TYPE_DELAY_SEC = 0.03
 POST_TYPE_SETTLE_SEC = 0.3
 
@@ -124,14 +125,14 @@ def _click_at_screen(screen_point: dict, target_key: str, click_count: int = 1) 
 
 
 def _clear_and_type(text: str, target_key: str) -> bool:
-    """기존 텍스트를 Ctrl+A → Delete 로 지운 뒤, 새 텍스트를 타이핑한다."""
+    """기존 텍스트를 선택/삭제한 뒤, 새 텍스트를 타이핑한다."""
     if not PYNPUT_KEYBOARD_AVAILABLE:
         print(f"[INFO] [DRY-RUN] 타이핑 생략 (pynput 없음): target={target_key}, text={text!r}")
         return True
 
     kb = KeyboardController()
 
-    # Ctrl+A 로 전체 선택
+    # 더블클릭으로 입력창 포커스를 안정적으로 맞춘 뒤 Ctrl+A 로 전체 선택
     kb.press(Key.ctrl)
     kb.press("a")
     kb.release("a")
@@ -241,12 +242,12 @@ def main() -> str:
         type_value = TYPING_TARGETS.get(target_key) if TYPING_ENABLED else None
         if type_value is not None:
             print(
-                f"[INFO] 타이핑 타겟 클릭: target={target_key}, "
+                f"[INFO] 타이핑 타겟 더블클릭: target={target_key}, "
                 f"screen=({screen_point['x']}, {screen_point['y']})"
             )
-            clicked = _click_at_screen(screen_point, target_key)
+            clicked = _click_at_screen(screen_point, target_key, click_count=2)
             if clicked:
-                time.sleep(0.1)
+                time.sleep(PRE_TYPE_DOUBLE_CLICK_SETTLE_SEC)
                 typed = _clear_and_type(type_value, target_key)
                 click_results.append({"target": target_key, "clicked": clicked, "typed": typed})
             else:

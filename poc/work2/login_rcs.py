@@ -8,7 +8,6 @@ VLM 으로 라벨/입력창/버튼 좌표를 읽어 debug image 를 생성한다
   2. uv run python poc/work2/login_rcs.py
 """
 
-import json
 import os
 import sys
 import time
@@ -31,8 +30,6 @@ from poc.work2.logger import log_work2_event
 from poc.work2.util import (
     activate_window,
     capture_window,
-    find_window_by_pid_and_title_prefix,
-    find_window_by_title_prefix,
     format_elapsed_ms,
     foreground_window,
     make_timestamp_tag,
@@ -40,7 +37,6 @@ from poc.work2.util import (
 
 load_dotenv()
 
-WINDOW_TITLE_PREFIX = "Remote Control System"
 DEBUG_IMAGE_DIR = Path(__file__).parent / "debug_images"
 LOG_NAME = Path(__file__).stem
 LOGIN_TARGET_KEYS = [
@@ -69,8 +65,6 @@ ELEMENT_COLORS = {
     "cancel_button": "magenta",
     "shortcut_button": "cyan",
 }
-LOGIN_WINDOW_MAX_WIDTH = int(os.getenv("RCS_LOGIN_WINDOW_MAX_WIDTH", "900"))
-LOGIN_WINDOW_MAX_HEIGHT = int(os.getenv("RCS_LOGIN_WINDOW_MAX_HEIGHT", "700"))
 EXIT_SUCCESS = "success"
 EXIT_LOGIN_WINDOW_NOT_FOUND = "login_window_not_found"
 EXIT_LOGIN_WINDOW_ACTIVATE_FAILED = "login_window_activate_failed"
@@ -83,6 +77,8 @@ try:
     VLM_TEMPERATURE = float(os.getenv("VLM_TEMPERATURE", "0.0"))
 except ValueError:
     VLM_TEMPERATURE = 0.0
+
+
 def _locate_login_controls(login_window, window_title: str, backend: str) -> str:
     """로그인 창 스크린샷을 VLM 으로 분석하고 overlay 를 저장한다."""
     locate_started_at = time.time()

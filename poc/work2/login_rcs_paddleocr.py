@@ -26,10 +26,9 @@ from poc.work2.util import (
     format_elapsed_ms,
     make_timestamp_tag,
     save_debug_jpeg,
-    save_debug_json,
-    save_debug_text,
     save_debug_webp,
 )
+from poc.work2.util.debug_image_utils import save_debug_json, save_debug_text
 from poc.work2.vlm_client import Work2VLMClient
 
 

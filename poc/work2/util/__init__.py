@@ -1,6 +1,12 @@
 """poc.work2 전용 경량 유틸리티 묶음."""
 
-from .debug_image_utils import debug_image_path, save_debug_jpeg, save_debug_webp, save_marked_image
+from .debug_image_utils import (
+    debug_image_path,
+    save_debug_jpeg,
+    save_debug_webp,
+    save_marked_bboxes,
+    save_marked_image,
+)
 from .json_utils import extract_json, parse_coords
 from .time_utils import format_elapsed_ms, make_timestamp_tag
 
@@ -48,5 +54,6 @@ __all__ = [
     "read_foreground_window_info",
     "save_debug_jpeg",
     "save_debug_webp",
+    "save_marked_bboxes",
     "save_marked_image",
 ]

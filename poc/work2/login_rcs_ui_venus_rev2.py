@@ -1,21 +1,18 @@
 """RCS 로그인 창 UI-Venus Rev2 분석 스크립트.
 
 이미 떠 있는 `Remote Control System` 로그인 창을 캡처하고,
-UI-Venus 1.5 공식 grounding 형식으로 단일 요소씩 좌표를 추출한다.
+UI-Venus 기반으로 단일 요소씩 bbox grounding 실험을 수행한다.
 
-공식 프롬프트:
-  "Output the center point of the position corresponding to the following
-   instruction: {instruction}. The output should just be the coordinates
-   of a point, in the format [x,y]."
-
-응답: [x, y] (0-1000 정규화 좌표) 또는 [-1, -1] (보이지 않는 요소)
+실험 프롬프트:
+  요소별 자연어 instruction 을 넣고 bbox JSON 을 요청한다.
+  이 스크립트는 텍스트/버튼/입력창에 대해
+  모델이 박스를 얼마나 안정적으로 주는지 확인하는 목적이다.
 
 사용법:
   1. uv run python poc/work2/open_rcs.py
   2. uv run python poc/work2/login_rcs_ui_venus_rev2.py
 """
 
-import re
 import sys
 import time
 from pathlib import Path
@@ -24,7 +21,7 @@ from dotenv import load_dotenv
 
 from poc.work2.logger import log_work2_event
 from poc.work2.prompts.prompt_login_rcs_ui_venus import (
-    build_ui_venus_single_element_prompt_by_key,
+    build_ui_venus_single_element_bbox_prompt_by_key,
 )
 from poc.work2.util import (
     activate_window,
@@ -35,10 +32,11 @@ from poc.work2.util import (
     format_elapsed_ms,
     make_timestamp_tag,
     save_debug_jpeg,
+    save_marked_bboxes,
     save_debug_webp,
-    save_marked_image,
 )
 from poc.work2.util.debug_image_utils import save_debug_json
+from poc.work2.util.json_utils import extract_json
 from poc.work2.vlm_client import Work2VLMClient
 
 load_dotenv()
@@ -55,13 +53,23 @@ EXIT_LOGIN_WINDOW_ACTIVATE_FAILED = "login_window_activate_failed"
 EXIT_VLM_NO_DETECTION = "vlm_no_detection"
 EXIT_CAPTURE_FAILED = "capture_failed"
 
-# 이번 rev2 에서 찾을 요소 목록 — 지금은 userid_input 만
-TARGET_KEYS = ("userid_input",)
+TARGET_KEYS = (
+    "userid_label",
+    "userid_input",
+    "password_label",
+    "password_input",
+    "login_button",
+    "cancel_button",
+)
 
-MARKER_COLOR = "red"
-
-# [x, y] 좌표 파싱 정규식
-_COORD_PATTERN = re.compile(r"\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]")
+MARKER_COLORS = {
+    "userid_label": "dodgerblue",
+    "userid_input": "deepskyblue",
+    "password_label": "chartreuse",
+    "password_input": "limegreen",
+    "login_button": "orange",
+    "cancel_button": "magenta",
+}
 
 
 def _find_login_window():
@@ -71,24 +79,77 @@ def _find_login_window():
     return _find()
 
 
-def _parse_point_response(text: str) -> tuple[float, float] | None:
-    """VLM 응답에서 [x, y] 좌표를 추출한다.
+def _coerce_float(value) -> float | None:
+    """문자열/숫자를 float 로 변환한다."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            return float(stripped)
+        except ValueError:
+            return None
+    return None
 
-    Returns:
-        (x, y) 0-1000 정규화 좌표. 파싱 실패 또는 [-1, -1] 이면 None.
-    """
-    match = _COORD_PATTERN.search(text)
-    if not match:
+
+def _normalize_bbox_1000(raw_bbox) -> dict | None:
+    """모델 bbox 응답을 0-1000 기준 dict 로 정규화한다."""
+    if raw_bbox is None:
         return None
 
-    x = float(match.group(1))
-    y = float(match.group(2))
-
-    # [-1, -1] 은 요소를 찾지 못했다는 공식 refusal 응답
-    if x < 0 or y < 0:
+    if isinstance(raw_bbox, dict):
+        if {"left", "top", "right", "bottom"} <= raw_bbox.keys():
+            left = _coerce_float(raw_bbox.get("left"))
+            top = _coerce_float(raw_bbox.get("top"))
+            right = _coerce_float(raw_bbox.get("right"))
+            bottom = _coerce_float(raw_bbox.get("bottom"))
+        elif {"x", "y", "width", "height"} <= raw_bbox.keys():
+            left = _coerce_float(raw_bbox.get("x"))
+            top = _coerce_float(raw_bbox.get("y"))
+            width = _coerce_float(raw_bbox.get("width"))
+            height = _coerce_float(raw_bbox.get("height"))
+            if None in {left, top, width, height}:
+                return None
+            right = left + width
+            bottom = top + height
+        elif {"x", "y", "w", "h"} <= raw_bbox.keys():
+            left = _coerce_float(raw_bbox.get("x"))
+            top = _coerce_float(raw_bbox.get("y"))
+            width = _coerce_float(raw_bbox.get("w"))
+            height = _coerce_float(raw_bbox.get("h"))
+            if None in {left, top, width, height}:
+                return None
+            right = left + width
+            bottom = top + height
+        else:
+            return None
+    elif isinstance(raw_bbox, list) and len(raw_bbox) == 4:
+        left = _coerce_float(raw_bbox[0])
+        top = _coerce_float(raw_bbox[1])
+        right = _coerce_float(raw_bbox[2])
+        bottom = _coerce_float(raw_bbox[3])
+    else:
         return None
 
-    return x, y
+    if None in {left, top, right, bottom}:
+        return None
+
+    left = int(round(max(0.0, min(1000.0, left))))
+    top = int(round(max(0.0, min(1000.0, top))))
+    right = int(round(max(0.0, min(1000.0, right))))
+    bottom = int(round(max(0.0, min(1000.0, bottom))))
+
+    if right <= left or bottom <= top:
+        return None
+
+    return {
+        "left": left,
+        "top": top,
+        "right": right,
+        "bottom": bottom,
+    }
 
 
 def _to_pixel(value: float, axis_size: int) -> int:
@@ -97,20 +158,33 @@ def _to_pixel(value: float, axis_size: int) -> int:
     return max(0, min(int(round(pixel)), axis_size - 1))
 
 
-def _ground_single_element(
+def _bbox_1000_to_pixels(bbox_1000: dict, img_w: int, img_h: int) -> dict:
+    """0-1000 bbox 를 픽셀 bbox 로 변환한다."""
+    left = _to_pixel(bbox_1000["left"], img_w)
+    top = _to_pixel(bbox_1000["top"], img_h)
+    right = max(left + 1, min(img_w, _to_pixel(bbox_1000["right"], img_w) + 1))
+    bottom = max(top + 1, min(img_h, _to_pixel(bbox_1000["bottom"], img_h) + 1))
+    return {
+        "left": left,
+        "top": top,
+        "right": right,
+        "bottom": bottom,
+    }
+
+
+def _ground_single_element_bbox(
     client: Work2VLMClient,
     image_b64: str,
     element_key: str,
     img_w: int,
     img_h: int,
 ) -> dict | None:
-    """단일 요소에 대해 공식 UI-Venus grounding 을 수행한다.
+    """단일 요소에 대해 bbox grounding 실험을 수행한다.
 
     Returns:
-        {"key": str, "x": int, "y": int, "raw_x": float, "raw_y": float,
-         "response_text": str} 또는 None.
+        bbox/center/raw_response 정보가 담긴 dict 또는 None.
     """
-    system_message, user_text = build_ui_venus_single_element_prompt_by_key(element_key)
+    system_message, user_text = build_ui_venus_single_element_bbox_prompt_by_key(element_key)
 
     response = client.chat_with_image_b64(
         image_b64=image_b64,
@@ -123,28 +197,37 @@ def _ground_single_element(
     print(f"[INFO] [{element_key}] VLM 응답: {response.text!r}")
     print(f"[INFO] [{element_key}] tokens={response.token_usage or {}}")
 
-    point = _parse_point_response(response.text)
-    if point is None:
-        print(f"[INFO] [{element_key}] 좌표 추출 실패 또는 refusal [-1,-1]")
+    try:
+        parsed = extract_json(response.text)
+    except Exception:
+        print(f"[INFO] [{element_key}] JSON 파싱 실패")
         return None
 
-    raw_x, raw_y = point
-    px_x = _to_pixel(raw_x, img_w)
-    px_y = _to_pixel(raw_y, img_h)
-    print(f"[INFO] [{element_key}] raw=({raw_x}, {raw_y}) -> px=({px_x}, {px_y})")
+    bbox_1000 = _normalize_bbox_1000(parsed.get("bbox"))
+    if bbox_1000 is None:
+        print(f"[INFO] [{element_key}] bbox 추출 실패 또는 미검출")
+        return None
+
+    bbox_pixels = _bbox_1000_to_pixels(bbox_1000, img_w, img_h)
+    center_x = int(round((bbox_pixels["left"] + bbox_pixels["right"] - 1) / 2))
+    center_y = int(round((bbox_pixels["top"] + bbox_pixels["bottom"] - 1) / 2))
+    print(
+        f"[INFO] [{element_key}] bbox1000={bbox_1000} "
+        f"-> px={bbox_pixels}, center=({center_x}, {center_y})"
+    )
 
     return {
         "key": element_key,
-        "x": px_x,
-        "y": px_y,
-        "raw_x": raw_x,
-        "raw_y": raw_y,
+        "bbox_1000": bbox_1000,
+        "bbox_pixels": bbox_pixels,
+        "center_x": center_x,
+        "center_y": center_y,
         "response_text": response.text,
     }
 
 
 def _analyze_login_elements(login_window, window_title: str, backend: str) -> str:
-    """로그인 창을 캡처하고 공식 단일 요소 grounding 으로 분석한다."""
+    """로그인 창을 캡처하고 단일 요소 bbox grounding 으로 분석한다."""
     started_at = time.time()
     debug_stamp = make_timestamp_tag(started_at)
 
@@ -186,7 +269,7 @@ def _analyze_login_elements(login_window, window_title: str, backend: str) -> st
     save_debug_webp(image, vlm_input_path, log_name=LOG_NAME)
 
     print(
-        f"[INFO] 공식 UI-Venus 단일 요소 grounding 시작: "
+        f"[INFO] UI-Venus bbox grounding 실험 시작: "
         f"image={width}x{height}, targets={TARGET_KEYS}"
     )
 
@@ -194,7 +277,7 @@ def _analyze_login_elements(login_window, window_title: str, backend: str) -> st
     results: list[dict] = []
     for element_key in TARGET_KEYS:
         try:
-            result = _ground_single_element(
+            result = _ground_single_element_bbox(
                 client, image_b64, element_key, width, height,
             )
             if result is not None:
@@ -212,7 +295,8 @@ def _analyze_login_elements(login_window, window_title: str, backend: str) -> st
 
     # 결과 저장
     result_payload = {
-        "coord_system": "official_ui_venus_1000",
+        "coord_system": "relative_1000",
+        "mode": "ui_venus_bbox_experiment",
         "image_width": width,
         "image_height": height,
         "target_count": len(TARGET_KEYS),
@@ -229,14 +313,19 @@ def _analyze_login_elements(login_window, window_title: str, backend: str) -> st
 
     # 오버레이 이미지 생성
     if results:
-        overlay_points = {r["key"]: {"x": r["x"], "y": r["y"]} for r in results}
-        overlay_colors = {r["key"]: MARKER_COLOR for r in results}
+        overlay_items = {
+            r["key"]: {
+                "bbox": r["bbox_pixels"],
+                "center": {"x": r["center_x"], "y": r["center_y"]},
+            }
+            for r in results
+        }
 
         overlay_path = debug_image_path(
             DEBUG_IMAGE_DIR, "login_rcs_grounding_overlay.jpg",
             model_name=client.model_name, timestamp_tag=debug_stamp,
         )
-        save_marked_image(image, overlay_points, overlay_colors, overlay_path)
+        save_marked_bboxes(image, overlay_items, MARKER_COLORS, overlay_path)
         print(f"[INFO] 오버레이 이미지 저장: {overlay_path}")
 
     elapsed = format_elapsed_ms(started_at)

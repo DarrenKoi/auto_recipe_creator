@@ -34,6 +34,31 @@ UI_VENUS_OFFICIAL_PROMPT_TEMPLATE = (
     "the output should be [-1,-1]."
 )
 
+UI_VENUS_BBOX_PROMPT_TEMPLATE = """\
+Identify the single target described below in this desktop GUI screenshot:
+{instruction}
+
+Return ONLY a JSON object in this exact format:
+{{
+  "coord_system": "relative_1000",
+  "bbox": {{
+    "left": 0,
+    "top": 0,
+    "right": 1000,
+    "bottom": 1000
+  }}
+}}
+
+Rules:
+- Coordinates are normalized to a 0-1000 image space.
+- Return the full visible bounding box of the target.
+- For visible text, box the visible text only.
+- For editable fields, combo boxes, and buttons, box the full clickable control rectangle.
+- Do not return explanation, markdown, comments, or extra keys.
+- If the target is not visible enough to ground, return:
+  {{"coord_system": "relative_1000", "bbox": null}}
+"""
+
 
 def build_ui_venus_single_element_prompt(
     instruction: str,
@@ -60,6 +85,25 @@ def build_ui_venus_single_element_prompt_by_key(
 
     instruction = UI_VENUS_LOGIN_ELEMENT_DESCRIPTIONS[element_key]
     return build_ui_venus_single_element_prompt(instruction)
+
+
+def build_ui_venus_single_element_bbox_prompt(
+    instruction: str,
+) -> tuple[str, str]:
+    """실험용 bbox grounding 형식으로 단일 요소 박스를 요청한다."""
+    user_text = UI_VENUS_BBOX_PROMPT_TEMPLATE.format(instruction=instruction)
+    return "", user_text
+
+
+def build_ui_venus_single_element_bbox_prompt_by_key(
+    element_key: str,
+) -> tuple[str, str]:
+    """element_key 를 사용해 bbox grounding 프롬프트를 구성한다."""
+    if element_key not in UI_VENUS_LOGIN_ELEMENT_DESCRIPTIONS:
+        raise ValueError(f"Unknown element key: {element_key}")
+
+    instruction = UI_VENUS_LOGIN_ELEMENT_DESCRIPTIONS[element_key]
+    return build_ui_venus_single_element_bbox_prompt(instruction)
 
 
 # ---------------------------------------------------------------------------

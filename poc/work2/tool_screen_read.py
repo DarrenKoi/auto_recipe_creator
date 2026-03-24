@@ -152,6 +152,19 @@ def _collect_capture_images() -> list[Path]:
     return results
 
 
+def _collect_artifact_paths(debug_dir: Path, artifact_prefix: str) -> list[str]:
+    """artifact prefix 로 생성된 디버그 파일 경로를 모아 반환한다."""
+    if not debug_dir.is_dir():
+        return []
+
+    results: list[str] = []
+    pattern = f"*{artifact_prefix}*"
+    for path in sorted(debug_dir.rglob(pattern)):
+        if path.is_file():
+            results.append(str(path))
+    return results
+
+
 def _load_image(image_path: Path) -> Image.Image:
     """이미지 파일을 RGB PIL Image 로 읽는다."""
     with Image.open(image_path) as opened:
@@ -506,10 +519,15 @@ def _run_vlm_title_locate(
         result_mode="tool_screen_recipe_monitor_title_offline",
         image=image,
     )
+    generated_artifacts = _collect_artifact_paths(
+        debug_dir,
+        f"{artifact_prefix}_recipe_monitor",
+    )
     return {
         "status": result.exit_code,
         "target_key": result.target_key,
         "point": result.point,
+        "artifacts": generated_artifacts,
     }
 
 
@@ -561,6 +579,7 @@ def _analyze_single_image(image_path: Path) -> dict:
             "capture": str(source_artifacts["capture"]),
             "webp": str(source_artifacts["webp"]),
         },
+        "all_debug_artifacts": _collect_artifact_paths(debug_dir, artifact_prefix),
         "elapsed_ms": round((time.time() - started_at) * 1000, 1),
     }
     result_path = debug_image_path(

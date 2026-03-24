@@ -24,6 +24,14 @@ import sys
 import time
 from pathlib import Path
 
+from stop_model import (
+    collect_targets,
+    find_listening_pids_by_port,
+    find_vllm_processes,
+    resolve_port_for_instance,
+    stop_instance,
+)
+
 
 STARTUP_POLL_SEC = 1.0
 RUN_IN_BACKGROUND = 1
@@ -31,6 +39,10 @@ RUN_IN_BACKGROUND = 1
 
 def log(msg: str) -> None:
     print(f"[INFO] {msg}")
+
+
+def warn(msg: str) -> None:
+    print(f"[WARNING] {msg}")
 
 
 def fail(msg: str) -> None:
@@ -105,9 +117,39 @@ def launch_detached(script_dir: Path, instance: str) -> int:
     return 0
 
 
+def stop_if_already_running(instance: str) -> None:
+    """이미 실행 중인 인스턴스가 있으면 종료한 뒤 포트가 해제될 때까지 대기한다."""
+    port = resolve_port_for_instance(instance)
+    processes = find_vllm_processes()
+    targets = collect_targets(processes, instance, port)
+    if not targets:
+        return
+
+    pids = ", ".join(str(t["pid"]) for t in targets)
+    warn(
+        f"Instance {instance} already running on port {port} "
+        f"(PID {pids}). Stopping first..."
+    )
+    stop_instance(processes, instance, port)
+
+    # 포트 해제 대기
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        if not find_listening_pids_by_port(port):
+            break
+        time.sleep(0.5)
+    else:
+        remaining = find_listening_pids_by_port(port)
+        if remaining:
+            fail(f"Port {port} still occupied after stop (PIDs: {remaining})")
+
+    log(f"Previous instance stopped. Proceeding with fresh start.")
+
+
 def main() -> None:
     instance = resolve_instance()
     script_dir = Path(__file__).resolve().parent
+    stop_if_already_running(instance)
     if RUN_IN_BACKGROUND:
         sys.exit(launch_detached(script_dir, instance))
     sys.exit(launch_foreground(script_dir, instance))

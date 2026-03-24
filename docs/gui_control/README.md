@@ -24,6 +24,7 @@
 3. [`03-ui-venus-ocr-crop-retry.md`](./03-ui-venus-ocr-crop-retry.md)
 4. [`04-dynamic-screen-safety.md`](./04-dynamic-screen-safety.md)
 5. [`05-rcs-video-to-action.md`](./05-rcs-video-to-action.md)
+6. [`06-view-tab-embedded-align-fail-monitoring.md`](./06-view-tab-embedded-align-fail-monitoring.md)
 
 ## 현재 권장 실행 순서
 

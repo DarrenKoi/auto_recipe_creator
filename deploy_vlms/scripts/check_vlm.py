@@ -9,6 +9,7 @@ config/models/*.env 파일에서 PORT와 SERVED_MODEL_NAME을 읽어
 """
 
 import sys
+import json
 import urllib.request
 import urllib.error
 from pathlib import Path
@@ -57,9 +58,28 @@ def check_model(host: str, port: int, expected_name: str) -> tuple[bool, str]:
     except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
         return False, str(e)
 
-    if expected_name in raw:
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return False, "JSON 응답 파싱 실패"
+
+    data = payload.get("data")
+    if not isinstance(data, list):
+        return False, "응답에 model data 목록이 없음"
+
+    model_ids = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        model_id = str(item.get("id") or "").strip()
+        if model_id:
+            model_ids.append(model_id)
+
+    if expected_name in model_ids:
         return True, ""
-    return False, f"응답에 '{expected_name}' 없음"
+    if model_ids:
+        return False, f"기대 모델 '{expected_name}' 없음 (응답: {', '.join(model_ids)})"
+    return False, f"기대 모델 '{expected_name}' 없음 (응답에 id 없음)"
 
 
 def main() -> None:

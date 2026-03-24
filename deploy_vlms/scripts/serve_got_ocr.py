@@ -66,8 +66,8 @@ CROP_TO_PATCHES = env_flag("CROP_TO_PATCHES", default=False)
 MIN_PATCHES = int(env("MIN_PATCHES") or "1")
 MAX_PATCHES = int(env("MAX_PATCHES") or "12")
 MAX_NEW_TOKENS = int(env("MAX_NEW_TOKENS") or "4096")
-PORT = int(env("GOT_OCR_SERVE_PORT") or "8005")
-SERVED_MODEL_NAME = "got-ocr-2.0-hf"
+PORT = int(env("GOT_OCR_SERVE_PORT") or env("PORT") or "8005")
+SERVED_MODEL_NAME = env("SERVED_MODEL_NAME") or "got-ocr-2.0-hf"
 
 os.environ["CUDA_VISIBLE_DEVICES"] = GPU_ID
 
@@ -234,4 +234,6 @@ def ocr():
 
 
 if __name__ == "__main__":
+    print(f"[INFO] HOST=0.0.0.0 PORT={PORT}")
+    print(f"[INFO] SERVED_MODEL_NAME={SERVED_MODEL_NAME}")
     app.run(host="0.0.0.0", port=PORT)

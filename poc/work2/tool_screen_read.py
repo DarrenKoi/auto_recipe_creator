@@ -3,14 +3,15 @@
 목적:
   1. `poc/work2/capture_images/` 에 저장된 스크린샷을 직접 읽는다.
   2. OCR 모델로 화면 내 텍스트 판독 결과를 저장한다.
-  3. `ui-venus` + `mai-ui` 2단계 파이프라인으로 작은 창 제목
-     `Recipe Monitor` 클릭 좌표를 찾는다.
+  3. `ui-venus` + `mai-ui` 2단계 파이프라인으로 여러 UI target 을
+     one-by-one 으로 순차 탐지한다.
 
 사용법:
   1. `poc/work2/capture_images/` 에 JPG/PNG/WebP 스크린샷을 넣는다.
   2. 필요 시 `.env` 에 아래 값을 넣는다.
      - `TOOL_SCREEN_READ_TARGET_TITLE=Recipe Monitor`
-     - `TOOL_SCREEN_READ_OCR_SERVICES=paddleocr-vl-1.5,got-ocr`
+     - `TOOL_SCREEN_READ_TARGETS=Recipe Monitor,Recipe Button under Port-C,Queue button,File Manager Button`
+     - `TOOL_SCREEN_READ_OCR_SERVICES=paddleocr-vl-1.5`
      - `TOOL_SCREEN_READ_IMAGE_FILTER=RecipeMonitor`
   3. `uv run python poc/work2/tool_screen_read.py`
 """
@@ -20,6 +21,7 @@ import os
 import re
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import requests
@@ -63,12 +65,17 @@ SUPPORTED_IMAGE_EXTENSIONS = {
     ".tiff",
 }
 
-DEFAULT_OCR_SERVICES = ("paddleocr-vl-1.5", "got-ocr")
+DEFAULT_OCR_SERVICES = ("paddleocr-vl-1.5",)
 DEFAULT_OCR_MAX_TOKENS = 512
 DEFAULT_TIMEOUT_SEC = 120.0
 
 TARGET_TITLE = os.getenv("TOOL_SCREEN_READ_TARGET_TITLE", "Recipe Monitor").strip() or "Recipe Monitor"
 IMAGE_FILTER = os.getenv("TOOL_SCREEN_READ_IMAGE_FILTER", "").strip().lower()
+DEFAULT_ITERATION_TARGET_LABELS = (
+    "Recipe Button under Port-C",
+    "Queue button",
+    "File Manager Button",
+)
 GOT_FORMAT_OUTPUT = os.getenv("TOOL_SCREEN_READ_GOT_FORMAT_OUTPUT", "true").strip().lower() in {
     "1",
     "true",
@@ -90,6 +97,33 @@ EXIT_NO_IMAGES = "no_images"
 EXIT_PARTIAL = "partial"
 
 
+@dataclass
+class ScreenReadTarget:
+    """tool screen 에서 순차 탐지할 단일 target 설정."""
+
+    key: str
+    label: str
+    description: str
+    focus_words: tuple[str, ...]
+    left_pad_ratio: float = 1.25
+    right_pad_ratio: float = 0.45
+    vertical_pad_ratio: float = 1.6
+    min_crop_width: int = 320
+    min_crop_height: int = 120
+
+    def to_target_config(self) -> TargetConfig:
+        """ui_venus_mai_locator.TargetConfig 로 변환한다."""
+        return TargetConfig(
+            key=self.key,
+            description=self.description,
+            left_pad_ratio=self.left_pad_ratio,
+            right_pad_ratio=self.right_pad_ratio,
+            vertical_pad_ratio=self.vertical_pad_ratio,
+            min_crop_width=self.min_crop_width,
+            min_crop_height=self.min_crop_height,
+        )
+
+
 def _parse_ocr_services() -> list[str]:
     """OCR 서비스 목록을 환경변수에서 읽는다."""
     raw_value = os.getenv("TOOL_SCREEN_READ_OCR_SERVICES", "").strip()
@@ -102,6 +136,131 @@ def _parse_ocr_services() -> list[str]:
         if service_slug and service_slug not in resolved:
             resolved.append(service_slug)
     return resolved or list(DEFAULT_OCR_SERVICES)
+
+
+def _parse_list_env(raw_value: str) -> list[str]:
+    """comma/semicolon/newline 구분 문자열을 중복 없이 파싱한다."""
+    results: list[str] = []
+    for part in re.split(r"[\n,;]+", raw_value or ""):
+        item = part.strip()
+        if item and item not in results:
+            results.append(item)
+    return results
+
+
+def _normalize_target_name(text: str) -> str:
+    """target 비교용 문자열을 느슨하게 정규화한다."""
+    return re.sub(r"[^a-z0-9]+", " ", (text or "").strip().lower()).strip()
+
+
+def _sanitize_target_key(text: str) -> str:
+    """target key 용 안전한 snake_case 문자열을 만든다."""
+    normalized = re.sub(r"[^A-Za-z0-9]+", "_", (text or "").strip().lower()).strip("_")
+    return normalized or "target"
+
+
+def _parse_target_labels() -> list[str]:
+    """순차 탐지할 target label 목록을 반환한다."""
+    raw_value = os.getenv("TOOL_SCREEN_READ_TARGETS", "").strip()
+    if raw_value:
+        parsed = _parse_list_env(raw_value)
+        if parsed:
+            return parsed
+
+    defaults = [TARGET_TITLE, *DEFAULT_ITERATION_TARGET_LABELS]
+    resolved: list[str] = []
+    for item in defaults:
+        if item and item not in resolved:
+            resolved.append(item)
+    return resolved
+
+
+def _build_title_target(title_text: str) -> ScreenReadTarget:
+    """작은 내부 창 제목 탐지용 target 설정을 만든다."""
+    return ScreenReadTarget(
+        key="recipe_monitor_title",
+        label=title_text,
+        description=(
+            f"the visible title text '{title_text}' of the small child window "
+            "inside the application screenshot"
+        ),
+        focus_words=(title_text,),
+        left_pad_ratio=2.0,
+        right_pad_ratio=2.0,
+        vertical_pad_ratio=2.2,
+        min_crop_width=360,
+        min_crop_height=140,
+    )
+
+
+def _build_generic_control_target(target_text: str) -> ScreenReadTarget:
+    """일반 button/control 탐지용 target 설정을 만든다."""
+    normalized_key = _sanitize_target_key(target_text)
+    return ScreenReadTarget(
+        key=normalized_key,
+        label=target_text,
+        description=(
+            f"the clickable UI control, button, or tab that best matches '{target_text}' "
+            "in the application screenshot. Return the center of the actual clickable target. "
+            "If multiple similar controls exist, prefer the one whose nearby text most strongly "
+            "matches the full target phrase."
+        ),
+        focus_words=(target_text,),
+        left_pad_ratio=1.2,
+        right_pad_ratio=1.2,
+        vertical_pad_ratio=1.8,
+        min_crop_width=420,
+        min_crop_height=180,
+    )
+
+
+def _make_unique_target_key(base_key: str, used_keys: set[str]) -> str:
+    """중복 target key 가 생기지 않도록 suffix 를 붙인다."""
+    if base_key not in used_keys:
+        return base_key
+
+    index = 2
+    while True:
+        candidate = f"{base_key}_{index:02d}"
+        if candidate not in used_keys:
+            return candidate
+        index += 1
+
+
+def _resolve_targets() -> list[ScreenReadTarget]:
+    """환경변수/기본값으로부터 실행 target 목록을 구성한다."""
+    resolved: list[ScreenReadTarget] = []
+    used_keys: set[str] = set()
+    title_name = _normalize_target_name(TARGET_TITLE)
+
+    for label in _parse_target_labels():
+        if _normalize_target_name(label) == title_name:
+            target = _build_title_target(label)
+        else:
+            target = _build_generic_control_target(label)
+
+        target.key = _make_unique_target_key(target.key, used_keys)
+        used_keys.add(target.key)
+        resolved.append(target)
+    return resolved
+
+
+def _collect_target_focus_words(targets: list[ScreenReadTarget]) -> list[str]:
+    """OCR prompt 에 넣을 focus words 를 target 목록에서 모은다."""
+    results: list[str] = []
+    seen: set[str] = set()
+
+    for target in targets:
+        for focus_word in target.focus_words:
+            normalized = focus_word.strip()
+            if not normalized:
+                continue
+            key = normalized.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            results.append(normalized)
+    return results
 
 
 def _resolve_ocr_max_tokens() -> int:
@@ -237,6 +396,7 @@ def _run_chat_ocr(
     image_webp_path: Path,
     image_width: int,
     image_height: int,
+    focus_words: list[str],
     debug_dir: Path,
     artifact_prefix: str,
     timestamp_tag: str,
@@ -254,7 +414,7 @@ def _run_chat_ocr(
         image_width,
         image_height,
         context_label="tool_screen",
-        focus_words=[TARGET_TITLE],
+        focus_words=focus_words or [TARGET_TITLE],
     )
     response_path = debug_image_path(
         debug_dir,
@@ -453,6 +613,7 @@ def _run_ocr_services(
     image_webp_path: Path,
     image_width: int,
     image_height: int,
+    focus_words: list[str],
     debug_dir: Path,
     artifact_prefix: str,
     timestamp_tag: str,
@@ -474,6 +635,7 @@ def _run_ocr_services(
                 image_webp_path=image_webp_path,
                 image_width=image_width,
                 image_height=image_height,
+                focus_words=focus_words,
                 debug_dir=debug_dir,
                 artifact_prefix=artifact_prefix,
                 timestamp_tag=timestamp_tag,
@@ -482,61 +644,69 @@ def _run_ocr_services(
     return results
 
 
-def _build_recipe_monitor_target() -> TargetConfig:
-    """작은 내부 창 제목 탐지용 타겟 설정을 반환한다."""
-    return TargetConfig(
-        key="recipe_monitor_title",
-        description=(
-            f"the visible title text '{TARGET_TITLE}' of the small child window "
-            "inside the application screenshot"
-        ),
-        left_pad_ratio=2.0,
-        right_pad_ratio=2.0,
-        vertical_pad_ratio=2.2,
-        min_crop_width=360,
-        min_crop_height=140,
-    )
-
-
-def _run_vlm_title_locate(
+def _run_vlm_target_locates(
     image: Image.Image,
     image_path: Path,
+    targets: list[ScreenReadTarget],
     debug_dir: Path,
     artifact_prefix: str,
-) -> dict:
-    """ui-venus + mai-ui 로 `Recipe Monitor` 제목 클릭 좌표를 찾는다."""
-    result = analyze_window_target(
-        window=None,
-        window_title=image_path.name,
-        backend="offline_file",
-        target=_build_recipe_monitor_target(),
-        debug_image_dir=debug_dir,
-        log_name=LOG_NAME,
-        component_name="tool_screen_read",
-        artifact_prefix=f"{artifact_prefix}_recipe_monitor",
-        coarse_service_slug="ui-venus",
-        refine_service_slug="mai-ui",
-        result_mode="tool_screen_recipe_monitor_title_offline",
-        image=image,
-    )
-    generated_artifacts = _collect_artifact_paths(
-        debug_dir,
-        f"{artifact_prefix}_recipe_monitor",
-    )
-    return {
-        "status": result.exit_code,
-        "target_key": result.target_key,
-        "point": result.point,
-        "artifacts": generated_artifacts,
-    }
+) -> list[dict]:
+    """ui-venus + mai-ui 로 여러 target 을 순차 탐지한다."""
+    results: list[dict] = []
+    for target in targets:
+        print(f"[INFO] VLM target 탐지 시작: key={target.key}, label={target.label!r}")
+        current_prefix = f"{artifact_prefix}_{target.key}"
+        locate_result = analyze_window_target(
+            window=None,
+            window_title=image_path.name,
+            backend="offline_file",
+            target=target.to_target_config(),
+            debug_image_dir=debug_dir,
+            log_name=LOG_NAME,
+            component_name="tool_screen_read",
+            artifact_prefix=current_prefix,
+            coarse_service_slug="ui-venus",
+            refine_service_slug="mai-ui",
+            result_mode=f"tool_screen_{target.key}_offline",
+            image=image,
+        )
+        generated_artifacts = _collect_artifact_paths(debug_dir, current_prefix)
+        results.append(
+            {
+                "status": locate_result.exit_code,
+                "target_key": locate_result.target_key,
+                "target_label": target.label,
+                "target_description": target.description,
+                "point": locate_result.point,
+                "artifacts": generated_artifacts,
+            }
+        )
+    return results
 
 
-def _analyze_single_image(image_path: Path) -> dict:
+def _find_title_target_result(
+    target_results: list[dict],
+    targets: list[ScreenReadTarget],
+) -> dict | None:
+    """기존 summary 호환용으로 title target 결과를 하나 반환한다."""
+    title_name = _normalize_target_name(TARGET_TITLE)
+    target_map = {target.key: target for target in targets}
+    for result in target_results:
+        target = target_map.get(result.get("target_key", ""))
+        if target is None:
+            continue
+        if _normalize_target_name(target.label) == title_name:
+            return result
+    return None
+
+
+def _analyze_single_image(image_path: Path, targets: list[ScreenReadTarget]) -> dict:
     """단일 스크린샷에 대해 OCR/VLM 분석을 수행한다."""
     started_at = time.time()
     timestamp_tag = make_timestamp_tag(started_at)
     artifact_prefix = _sanitize_stem(image_path.stem)
     debug_dir = DEBUG_IMAGE_DIR / artifact_prefix
+    focus_words = _collect_target_focus_words(targets)
 
     print(f"[INFO] 분석 시작: image={image_path}")
     image = _load_image(image_path)
@@ -550,19 +720,22 @@ def _analyze_single_image(image_path: Path) -> dict:
         image_webp_path=source_artifacts["webp"],
         image_width=image.size[0],
         image_height=image.size[1],
+        focus_words=focus_words,
         debug_dir=debug_dir,
         artifact_prefix=artifact_prefix,
         timestamp_tag=timestamp_tag,
     )
-    vlm_result = _run_vlm_title_locate(
+    target_results = _run_vlm_target_locates(
         image=image,
         image_path=image_path,
+        targets=targets,
         debug_dir=debug_dir,
         artifact_prefix=artifact_prefix,
     )
+    title_result = _find_title_target_result(target_results, targets)
 
     status = EXIT_SUCCESS
-    if vlm_result["status"] != EXIT_SUCCESS or any(
+    if any(result.get("status") != EXIT_SUCCESS for result in target_results) or any(
         result.get("status") != EXIT_SUCCESS for result in ocr_results
     ):
         status = EXIT_PARTIAL
@@ -573,8 +746,10 @@ def _analyze_single_image(image_path: Path) -> dict:
         "image_width": image.size[0],
         "image_height": image.size[1],
         "target_title": TARGET_TITLE,
+        "target_labels": [target.label for target in targets],
         "ocr_results": ocr_results,
-        "vlm_recipe_monitor": vlm_result,
+        "vlm_recipe_monitor": title_result,
+        "target_results": target_results,
         "source_artifacts": {
             "capture": str(source_artifacts["capture"]),
             "webp": str(source_artifacts["webp"]),
@@ -626,14 +801,16 @@ def main() -> int:
         )
         return 1
 
+    targets = _resolve_targets()
     print(
         f"[INFO] tool screen 판독 시작: image_count={len(image_paths)}, "
-        f"target_title={TARGET_TITLE!r}, ocr_services={_parse_ocr_services()}"
+        f"targets={[target.label for target in targets]}, "
+        f"ocr_services={_parse_ocr_services()}"
     )
     results: list[dict] = []
     for image_path in image_paths:
         try:
-            results.append(_analyze_single_image(image_path))
+            results.append(_analyze_single_image(image_path, targets))
         except Exception as exc:
             error_text = str(exc)
             print(f"[ERROR] 이미지 분석 실패: image={image_path}, error={error_text}")
@@ -660,6 +837,7 @@ def main() -> int:
         {
             "capture_dir": str(CAPTURE_IMAGE_DIR),
             "target_title": TARGET_TITLE,
+            "target_labels": [target.label for target in targets],
             "ocr_services": _parse_ocr_services(),
             "image_filter": IMAGE_FILTER,
             "image_count": len(image_paths),

@@ -25,6 +25,7 @@
 4. [`04-dynamic-screen-safety.md`](./04-dynamic-screen-safety.md)
 5. [`05-rcs-video-to-action.md`](./05-rcs-video-to-action.md)
 6. [`06-view-tab-embedded-align-fail-monitoring.md`](./06-view-tab-embedded-align-fail-monitoring.md)
+7. [`07-window-overlap-and-hidden-title-strategy.md`](./07-window-overlap-and-hidden-title-strategy.md)
 
 ## 현재 권장 실행 순서
 

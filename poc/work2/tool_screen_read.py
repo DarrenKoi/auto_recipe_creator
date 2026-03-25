@@ -9,8 +9,7 @@
 사용법:
   1. `poc/work2/capture_images/` 에 JPG/PNG/WebP 스크린샷을 넣는다.
   2. 필요 시 `.env` 에 아래 값을 넣는다.
-     - `TOOL_SCREEN_READ_TARGET_TITLE=Recipe Monitor`
-     - `TOOL_SCREEN_READ_TARGETS=Recipe Monitor,Recipe Button under Port-C,Queue button,File Manager Button`
+     - `TOOL_SCREEN_READ_TARGETS=Recipe Button under Port-C,Queue button,File Manager Button`
      - `TOOL_SCREEN_READ_OCR_SERVICES=paddleocr-vl-1.5`
      - `TOOL_SCREEN_READ_IMAGE_FILTER=RecipeMonitor`
   3. `uv run python poc/work2/tool_screen_read.py`
@@ -69,7 +68,6 @@ DEFAULT_OCR_SERVICES = ("paddleocr-vl-1.5",)
 DEFAULT_OCR_MAX_TOKENS = 512
 DEFAULT_TIMEOUT_SEC = 120.0
 
-TARGET_TITLE = os.getenv("TOOL_SCREEN_READ_TARGET_TITLE", "Recipe Monitor").strip() or "Recipe Monitor"
 IMAGE_FILTER = os.getenv("TOOL_SCREEN_READ_IMAGE_FILTER", "").strip().lower()
 DEFAULT_ITERATION_TARGET_LABELS = (
     "Recipe Button under Port-C",
@@ -167,30 +165,12 @@ def _parse_target_labels() -> list[str]:
         if parsed:
             return parsed
 
-    defaults = [TARGET_TITLE, *DEFAULT_ITERATION_TARGET_LABELS]
+    defaults = list(DEFAULT_ITERATION_TARGET_LABELS)
     resolved: list[str] = []
     for item in defaults:
         if item and item not in resolved:
             resolved.append(item)
     return resolved
-
-
-def _build_title_target(title_text: str) -> ScreenReadTarget:
-    """작은 내부 창 제목 탐지용 target 설정을 만든다."""
-    return ScreenReadTarget(
-        key="recipe_monitor_title",
-        label=title_text,
-        description=(
-            f"the visible title text '{title_text}' of the small child window "
-            "inside the application screenshot"
-        ),
-        focus_words=(title_text,),
-        left_pad_ratio=2.0,
-        right_pad_ratio=2.0,
-        vertical_pad_ratio=2.2,
-        min_crop_width=360,
-        min_crop_height=140,
-    )
 
 
 def _build_generic_control_target(target_text: str) -> ScreenReadTarget:
@@ -231,14 +211,9 @@ def _resolve_targets() -> list[ScreenReadTarget]:
     """환경변수/기본값으로부터 실행 target 목록을 구성한다."""
     resolved: list[ScreenReadTarget] = []
     used_keys: set[str] = set()
-    title_name = _normalize_target_name(TARGET_TITLE)
 
     for label in _parse_target_labels():
-        if _normalize_target_name(label) == title_name:
-            target = _build_title_target(label)
-        else:
-            target = _build_generic_control_target(label)
-
+        target = _build_generic_control_target(label)
         target.key = _make_unique_target_key(target.key, used_keys)
         used_keys.add(target.key)
         resolved.append(target)
@@ -414,7 +389,7 @@ def _run_chat_ocr(
         image_width,
         image_height,
         context_label="tool_screen",
-        focus_words=focus_words or [TARGET_TITLE],
+        focus_words=focus_words,
     )
     response_path = debug_image_path(
         debug_dir,
@@ -683,23 +658,6 @@ def _run_vlm_target_locates(
         )
     return results
 
-
-def _find_title_target_result(
-    target_results: list[dict],
-    targets: list[ScreenReadTarget],
-) -> dict | None:
-    """기존 summary 호환용으로 title target 결과를 하나 반환한다."""
-    title_name = _normalize_target_name(TARGET_TITLE)
-    target_map = {target.key: target for target in targets}
-    for result in target_results:
-        target = target_map.get(result.get("target_key", ""))
-        if target is None:
-            continue
-        if _normalize_target_name(target.label) == title_name:
-            return result
-    return None
-
-
 def _analyze_single_image(image_path: Path, targets: list[ScreenReadTarget]) -> dict:
     """단일 스크린샷에 대해 OCR/VLM 분석을 수행한다."""
     started_at = time.time()
@@ -732,7 +690,6 @@ def _analyze_single_image(image_path: Path, targets: list[ScreenReadTarget]) -> 
         debug_dir=debug_dir,
         artifact_prefix=artifact_prefix,
     )
-    title_result = _find_title_target_result(target_results, targets)
 
     status = EXIT_SUCCESS
     if any(result.get("status") != EXIT_SUCCESS for result in target_results) or any(
@@ -745,10 +702,8 @@ def _analyze_single_image(image_path: Path, targets: list[ScreenReadTarget]) -> 
         "image_path": str(image_path),
         "image_width": image.size[0],
         "image_height": image.size[1],
-        "target_title": TARGET_TITLE,
         "target_labels": [target.label for target in targets],
         "ocr_results": ocr_results,
-        "vlm_recipe_monitor": title_result,
         "target_results": target_results,
         "source_artifacts": {
             "capture": str(source_artifacts["capture"]),
@@ -836,7 +791,6 @@ def main() -> int:
         summary_path,
         {
             "capture_dir": str(CAPTURE_IMAGE_DIR),
-            "target_title": TARGET_TITLE,
             "target_labels": [target.label for target in targets],
             "ocr_services": _parse_ocr_services(),
             "image_filter": IMAGE_FILTER,

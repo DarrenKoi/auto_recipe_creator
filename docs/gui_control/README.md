@@ -26,6 +26,7 @@
 5. [`05-rcs-video-to-action.md`](./05-rcs-video-to-action.md)
 6. [`06-view-tab-embedded-align-fail-monitoring.md`](./06-view-tab-embedded-align-fail-monitoring.md)
 7. [`07-window-overlap-and-hidden-title-strategy.md`](./07-window-overlap-and-hidden-title-strategy.md)
+8. [`08-workflow-engine-and-retry-strategy.md`](./08-workflow-engine-and-retry-strategy.md)
 
 ## 현재 권장 실행 순서
 

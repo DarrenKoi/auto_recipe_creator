@@ -70,17 +70,23 @@ class WorkflowStep:
     step_id: str                    # 예: "click_userid_input"
     step_type: str                  # "click" | "type" | "double_click" | "scroll" | "verify_only"
     target_description: str         # VLM 프롬프트에 전달할 타겟 설명
-    expected_outcome: dict          # 검증 시 기대하는 상태 변화
+    precondition: dict              # 실행 전에 만족해야 하는 조건
+    success_condition: dict         # 실행 후 기대하는 상태 변화
+    skip_condition: dict | None = None  # 이미 만족되면 step 생략
     safety_tier: int                # 0-3 (doc 04 참조)
     max_retries: int = 3            # 이 step의 최대 재시도 횟수
-    retry_strategy: str = "ladder"  # "ladder" | "jitter_only" | "model_only"
+    retry_profile: str = "default_text_field"  # step 특성별 재시도 프로필
     depends_on: list[str] = None    # 선행 step_id 목록 (None = 이전 step 성공 필요)
+    idempotent: bool = True         # resume / 재실행 시 안전 여부
     timeout_sec: float = 30.0       # 이 step 전체 타임아웃
 ```
 
-`expected_outcome` 예시:
+`precondition` / `success_condition` 예시:
 
 ```python
+# 클릭 전 login dialog 가 실제로 보이는지 확인
+{"type": "window_visible", "title_fragment": "Log In"}
+
 # click 후 dialog 닫힘 확인
 {"type": "dialog_disappeared", "title_fragment": "Log In"}
 
@@ -90,6 +96,12 @@ class WorkflowStep:
 # 새 화면 전환 확인
 {"type": "window_appeared", "title_prefix": "Remote Control System"}
 ```
+
+왜 이렇게 나누는가:
+
+- `depends_on`은 "이전 step이 성공했는가"만 표현합니다
+- 실제 GUI 자동화에서는 "지금도 그 성공 상태가 유효한가"를 별도로 확인해야 합니다
+- resume 시에도 `precondition` / `skip_condition`이 있어야 이미 완료된 step을 안전하게 건너뛸 수 있습니다
 
 ### 2.2 상태 머신
 
@@ -119,6 +131,16 @@ not_started → running → completed
               aborted (재시도 예산 소진)
 ```
 
+추가로 step 결과는 단순 success/fail 외에 **실패 분류(reason class)** 를 가져야 합니다:
+
+- `detect_failed`: 타겟 좌표를 찾지 못함
+- `act_failed`: 클릭/타이핑 입력 자체가 실패
+- `verify_failed`: 액션은 했지만 기대 결과가 확인되지 않음
+- `window_unstable`: transition frame, occlusion, foreground 흔들림
+- `unsafe_to_retry`: safety tier 또는 safe zone 규칙 위반
+
+이 분류가 있어야 재시도가 "고정 ladder"가 아니라 "실패 유형별 routing"으로 바뀝니다.
+
 ### 2.3 RCS 로그인 워크플로 예시
 
 `action_login.py`의 현재 흐름을 step으로 분해하면:
@@ -129,7 +151,8 @@ LOGIN_WORKFLOW = [
         step_id="ensure_rcs",
         step_type="verify_only",
         target_description="RCS 프로세스 실행 확인",
-        expected_outcome={"type": "process_alive", "exe_name": "RcsMainHD.exe"},
+        precondition={"type": "always"},
+        success_condition={"type": "process_alive", "exe_name": "RcsMainHD.exe"},
         safety_tier=0,
         max_retries=1,
     ),
@@ -137,7 +160,8 @@ LOGIN_WORKFLOW = [
         step_id="find_login_window",
         step_type="verify_only",
         target_description="로그인 창 탐색",
-        expected_outcome={"type": "window_found", "title_fragment": "Log In"},
+        precondition={"type": "process_alive", "exe_name": "RcsMainHD.exe"},
+        success_condition={"type": "window_found", "title_fragment": "Log In"},
         safety_tier=0,
         max_retries=3,
     ),
@@ -145,7 +169,9 @@ LOGIN_WORKFLOW = [
         step_id="click_userid_input",
         step_type="double_click",
         target_description="the editable text field next to the 'User ID' label",
-        expected_outcome={"type": "field_focused"},
+        precondition={"type": "window_visible", "title_fragment": "Log In"},
+        success_condition={"type": "field_ready_for_input", "verify_method": "uia_or_ocr"},
+        retry_profile="text_field_click",
         safety_tier=2,
         max_retries=3,
     ),
@@ -153,7 +179,10 @@ LOGIN_WORKFLOW = [
         step_id="type_userid",
         step_type="type",
         target_description="User ID 입력 필드에 텍스트 입력",
-        expected_outcome={"type": "text_appeared", "expected_text": "2067928", "verify_method": "ocr"},
+        precondition={"type": "field_ready_for_input", "target_key": "userid_input"},
+        success_condition={"type": "text_appeared", "expected_text": "2067928", "verify_method": "ocr"},
+        skip_condition={"type": "text_already_present", "expected_text": "2067928", "verify_method": "ocr"},
+        retry_profile="typed_text",
         safety_tier=2,
         max_retries=2,
         depends_on=["click_userid_input"],
@@ -162,7 +191,9 @@ LOGIN_WORKFLOW = [
         step_id="click_password_input",
         step_type="double_click",
         target_description="the editable text field next to the 'Password' label",
-        expected_outcome={"type": "field_focused"},
+        precondition={"type": "window_visible", "title_fragment": "Log In"},
+        success_condition={"type": "field_ready_for_input", "verify_method": "uia_only"},
+        retry_profile="password_field_click",
         safety_tier=2,
         max_retries=3,
     ),
@@ -170,7 +201,10 @@ LOGIN_WORKFLOW = [
         step_id="type_password",
         step_type="type",
         target_description="Password 입력 필드에 텍스트 입력",
-        expected_outcome={"type": "text_appeared", "expected_text": "***", "verify_method": "skip"},
+        precondition={"type": "field_ready_for_input", "target_key": "password_input"},
+        success_condition={"type": "password_entered", "verify_method": "masked"},
+        retry_profile="password_type",
+        idempotent=False,
         safety_tier=2,
         max_retries=2,
         depends_on=["click_password_input"],
@@ -179,7 +213,9 @@ LOGIN_WORKFLOW = [
         step_id="click_login_button",
         step_type="click",
         target_description="the 'Log In' button at the bottom of the dialog",
-        expected_outcome={"type": "window_appeared", "title_prefix": "Remote Control System"},
+        precondition={"type": "credentials_ready"},
+        success_condition={"type": "window_appeared", "title_prefix": "Remote Control System"},
+        retry_profile="dialog_submit",
         safety_tier=2,
         max_retries=2,
     ),
@@ -217,6 +253,12 @@ class WorkflowRunner:
         for attempt in range(step.max_retries + 1):
             strategy = self._pick_strategy(step, attempt)
 
+            # 0. 창 안정성 확인
+            stability = self._check_window_stability(step)
+            if not stability.ok:
+                self._handle_unstable_window(step, stability)
+                continue
+
             # 1. 캡처
             before_image = capture_window(self.window)
 
@@ -232,9 +274,21 @@ class WorkflowRunner:
             # 4. 검증
             verified = self._verify(step, before_image)
             if verified:
-                return StepResult(status="success", attempt=attempt, strategy=strategy)
+                return StepResult(
+                    step_id=step.step_id,
+                    status="success",
+                    failure_class=None,
+                    attempt_count=attempt + 1,
+                    strategy_used=strategy,
+                )
 
-        return StepResult(status="escalated", attempt=step.max_retries)
+        return StepResult(
+            step_id=step.step_id,
+            status="escalated",
+            failure_class="retry_budget_exhausted",
+            attempt_count=step.max_retries + 1,
+            strategy_used=strategy,
+        )
 ```
 
 기존 모듈과의 연동:
@@ -273,16 +327,24 @@ VLM을 사용한 시각적 검증은 없습니다.
 - after 캡처는 반드시 **액션 수행 후 새로 찍어야** 합니다 (stale 방지, doc 04 참조)
 - before/after 둘 다 VLM에 전송하되, 질문은 **구체적**이어야 합니다
 - "무엇이 바뀌었나?"가 아니라 "이 특정 변화가 일어났는가?"로 질문합니다
+- before/after 비교 전에 frame 이 stable 한지 먼저 확인합니다
+- unstable frame 이면 verify 실패가 아니라 `window_unstable`로 분류하고 recapture 먼저 시도합니다
 
 ### 3.3 Step Type별 검증 프롬프트
 
 | step_type | 검증 질문 | 검증 수단 |
 |-----------|----------|----------|
 | `click` (버튼) | "이전에 보이던 dialog가 사라졌는가?" 또는 "버튼이 pressed 상태인가?" | VLM before/after |
-| `click` (필드) | "입력 필드에 커서/포커스가 들어갔는가?" | VLM (커서 깜빡임은 어려움) |
+| `click` (필드) | "입력 준비 상태가 되었는가?" | UIA/pywinauto 우선, 보조로 OCR/VLM |
 | `type` | "입력 필드에 기대한 텍스트가 보이는가?" | OCR (가장 확실) |
 | `double_click` | "새로운 화면이 열렸는가?" | VLM + 윈도우 타이틀 체크 |
 | `scroll` | "리스트 내용이 변경되었는가?" | VLM before/after |
+
+주의:
+
+- `field_focused`를 VLM 단독으로 판정하는 것은 권장하지 않습니다
+- Windows UIA 정보가 있으면 먼저 사용하고, 없을 때만 OCR/VLM을 보조 증거로 씁니다
+- password field 는 plaintext OCR 검증 대신 "입력 마스크 개수 증가", "dialog 상태 변화", "submit 후 성공 여부"를 더 신뢰합니다
 
 새 프롬프트 빌더가 필요합니다:
 
@@ -292,7 +354,7 @@ VLM을 사용한 시각적 검증은 없습니다.
 def build_action_verification_prompt(
     step_type: str,
     target_description: str,
-    expected_outcome: dict,
+    success_condition: dict,
 ) -> tuple[str, str]:
     """액션 후행 검증 프롬프트를 생성한다.
 
@@ -310,6 +372,12 @@ confidence >= 0.6 AND verified == true   → 약한 성공, 로그 경고, 1회 
 verified == false OR confidence < 0.6    → 실패, 재시도 진입
 타임아웃 (응답 없음)                       → 실패
 ```
+
+보강 규칙:
+
+- `type` step 에서 입력 후 검증이 약하면 먼저 `verify_only` 재캡처를 1회 수행합니다
+- 입력이 실제로 반영되었는지 불확실할 때는 곧바로 같은 문자열을 다시 타이핑하지 않습니다
+- `idempotent=False` step 은 검증 실패 시 기본값이 재실행이 아니라 `halt_or_manual_check` 입니다
 
 ### 3.5 VLM 실현 가능성 분석
 
@@ -352,18 +420,47 @@ verified == false OR confidence < 0.6    → 실패, 재시도 진입
 | Tier 2 | VLM before/after 비교 | UI 상태 변화 판단 필요 |
 | Tier 3 | VLM + OCR + 사람 확인 | 장비 영향 있는 액션 |
 
+실무 규칙:
+
+- 가능한 경우 "가장 싼 검증"을 먼저 씁니다
+- window title / UIA / OCR 로 충분한 step 에는 VLM을 붙이지 않습니다
+- VLM 검증은 "시각적 상태 변화가 핵심인 step"에만 집중합니다
+
 ## 4. 재시도 전략 (Retry with Variation)
 
 ### 4.1 Escalation Ladder
 
-실패 시 단계적으로 전략을 바꿔가며 재시도합니다:
+실패 시 단계적으로 전략을 바꿔가며 재시도한다는 방향은 맞습니다.
+다만 **모든 실패에 동일한 ladder**를 적용하면 불필요한 액션이 늘어납니다.
+
+권장 방식은 "고정 ladder"보다 **실패 유형별 retry routing** 입니다:
+
+| failure_class | 첫 대응 | 다음 대응 |
+|--------------|---------|----------|
+| `window_unstable` | recapture only | foreground / overlap recovery |
+| `detect_failed` | same detect retry | crop-retry / model fallback / OCR anchor |
+| `verify_failed` | verify-only recapture | limited jitter or alternative verification |
+| `act_failed` | window refocus | same action 1회만 재시도 |
+| `unsafe_to_retry` | 즉시 halt | 사람 에스컬레이션 |
+
+즉, ladder 는 "전부 순서대로"가 아니라 **해당 failure_class 에서 허용된 subset**만 사용해야 합니다.
+
+예시:
 
 ```
-Level 0: 동일 재시도
+detect_failed  → recapture → crop-retry → model fallback → OCR anchor → escalate
+verify_failed  → recapture+verify_only → alternative verifier → limited jitter → escalate
+window_unstable → recapture → foreground → doc 07 recovery → escalate
+```
+
+그래도 설명 편의를 위해 기본 ladder 를 아래처럼 둘 수 있습니다:
+
+```
+Level 0: recapture 또는 동일 재시도
    ↓ 실패
-Level 1: 좌표 jitter
+Level 1: verify-only recapture / foreground recovery
    ↓ 실패
-Level 2: Crop-retry zoom
+Level 2: 좌표 jitter 또는 Crop-retry zoom
    ↓ 실패
 Level 3: 대체 VLM 모델
    ↓ 실패
@@ -377,6 +474,7 @@ Level 5: 사람 에스컬레이션
 - 같은 파라미터로 재캡처 + 재탐지
 - 일시적인 화면 상태 변화(transition frame)로 인한 실패를 커버
 - settle 대기 후 재캡처이므로 exponential backoff 불필요
+- 단, `verify_failed`에서는 "같은 액션 재수행"보다 `verify_only` 재캡처를 먼저 시도합니다
 
 ### 4.3 Level 1: 좌표 Jitter
 
@@ -399,6 +497,8 @@ def jitter_point(point: dict, offset: int = 5) -> list[dict]:
 - jitter 후보는 **doc 04의 safe zone 범위 내**에 있어야 합니다
 - 십자(cross) 패턴이 random보다 체계적입니다
 - offset 기본값: 5px (RCS login dialog 기준으로 충분)
+- jitter 는 `detect_failed` 또는 `verify_failed` 중 "오차가 작은 클릭성 control"에만 적용합니다
+- `type_password` 같은 비가역 step 에는 기본적으로 jitter 재실행을 적용하지 않습니다
 
 ### 4.4 Level 2: Crop-Retry Zoom
 
@@ -457,6 +557,11 @@ OCR 전체 화면 → 타겟 텍스트 위치 발견 → 해당 영역만 crop �
 - VLM의 탐색 범위를 좁혀서 정확도 향상
 - 텍스트 기반 앵커는 VLM 좌표보다 안정적
 
+운영 규칙:
+
+- text-labeled control 은 OCR anchor 를 model fallback 보다 먼저 쓸 수도 있습니다
+- icon-only control 은 OCR 단계가 무의미할 수 있으므로 retry profile 에서 비활성화할 수 있습니다
+
 ### 4.7 Level 5: 사람 에스컬레이션
 
 모든 자동 재시도가 소진되면:
@@ -488,6 +593,11 @@ WORKFLOW_TOTAL_RETRY_BUDGET = 10
 # 예산 소진 시 → 워크플로 중단, 에스컬레이션
 ```
 
+추가 권장:
+
+- per-step 예산 외에 `non_idempotent_retry_budget = 0 or 1` 을 둡니다
+- password 입력, destructive submit, 장비 영향 step 은 별도 예산으로 제한합니다
+
 ## 5. 워크플로 메모리 / 상태 관리
 
 ### 5.1 Per-Step 결과 기록
@@ -500,6 +610,7 @@ class StepResult:
     """단일 step의 실행 결과."""
     step_id: str
     status: str                    # "success" | "failed" | "skipped" | "escalated"
+    failure_class: str | None      # "detect_failed" | "verify_failed" | ...
     attempt_count: int
     strategy_used: str             # 마지막 성공/실패 시 사용한 전략
     vlm_service_used: str          # 마지막 시도에서 사용한 VLM 서비스
@@ -512,6 +623,13 @@ class StepResult:
     elapsed_ms: float
     timestamp: str
 ```
+
+추가로 있으면 좋은 필드:
+
+- `window_title_before`
+- `window_title_after`
+- `safe_mode`
+- `artifact_redacted`: 민감정보 마스킹 여부
 
 ### 5.2 Workflow Run 상태 파일
 
@@ -547,6 +665,12 @@ poc/work2/logs/workflow_runs/
 }
 ```
 
+민감정보 처리 규칙:
+
+- password step 은 plaintext 기대값을 저장하지 않습니다
+- OCR raw text 는 필요 시 redact 버전과 원본을 분리하고, 기본 분석 경로는 redact 버전을 사용합니다
+- screenshot artifact 는 password field 주변을 blur/mask 한 버전을 별도 저장할 수 있습니다
+
 ### 5.3 Checkpoint / Resume
 
 워크플로가 중단되었을 때 이어서 진행합니다:
@@ -572,7 +696,9 @@ def resume(self, run_state_path: str) -> WorkflowRun:
 주의사항:
 - resume 시 **윈도우를 다시 찾아야** 합니다 (시간이 지나면 상태가 바뀜)
 - 완료된 step의 결과는 유지하되, "이전 step 결과가 여전히 유효한가?"는 검증이 필요할 수 있음
-- v1에서는 단순하게: 완료된 step 건너뛰기 + 남은 step 순차 실행
+- resume 직후에는 최근 성공 step 자체보다 **다음 step의 precondition**을 다시 검증하는 방식이 안전합니다
+- `idempotent=False` step 이 마지막 성공 step 이었다면 단순 skip 보다 수동 확인 절차가 필요할 수 있습니다
+- v1에서는 이 기능을 넣지 않고, 상태 저장 포맷만 먼저 준비하는 편이 현실적입니다
 
 ### 5.4 실패 이력 기반 적응 (v2)
 
@@ -595,12 +721,21 @@ failure_history = load_failure_stats("click_userid_input")
 
 | 모듈 | 역할 |
 |------|------|
-| `poc/work2/workflow_step.py` | `WorkflowStep`, `StepResult`, `WorkflowRun` dataclass |
+| `poc/work2/workflow_types.py` | `WorkflowStep`, `StepResult`, `WorkflowRun` dataclass |
 | `poc/work2/workflow_runner.py` | 순차 실행기, 재시도 루프, checkpoint |
-| `poc/work2/workflow_verify.py` | 후행 검증 로직 (VLM/OCR/윈도우 타이틀) |
-| `poc/work2/workflow_retry.py` | 재시도 전략 (jitter, crop-zoom, model fallback) |
+| `poc/work2/workflow_verify.py` | 후행 검증 로직 (VLM/OCR/UIA/윈도우 타이틀) |
+| `poc/work2/workflow_retry.py` | 재시도 전략 (jitter, crop-zoom, model fallback, failure routing) |
 | `poc/work2/prompts/prompt_action_verify.py` | 검증용 VLM 프롬프트 빌더 |
 | `poc/work2/workflow_login.py` | RCS 로그인 워크플로 정의 (action_login.py의 워크플로 버전) |
+
+v1에서는 모듈을 더 줄여도 됩니다:
+
+- `workflow_types.py`
+- `workflow_runner.py`
+- `workflow_login.py`
+
+즉, 검증/재시도 로직도 처음에는 `workflow_runner.py` 내부 private helper 로 시작해도 괜찮습니다.
+실제 login workflow 1개가 안정된 뒤에 모듈 분리를 해도 늦지 않습니다.
 
 ### 6.2 기존 모듈 연동
 
@@ -629,14 +764,16 @@ Phase 1: dataclass + 골격
    WorkflowRunner 골격 (순차 실행만, 검증/재시도 없음)
    action_login.py 로직을 workflow_login.py로 매핑
 
-Phase 2: 후행 검증
+Phase 2: 안정성 게이트 + 후행 검증
+   foreground / recapture / unstable frame 분류
    prompt_action_verify.py 프롬프트 빌더
    workflow_verify.py 검증 로직
-   click/type step에 VLM/OCR 검증 연결
+   click/type step에 UIA/OCR/VLM hybrid 검증 연결
 
-Phase 3: 재시도 — jitter + model fallback
+Phase 3: failure-aware 재시도
    workflow_retry.py 전략 구현
-   escalation ladder 통합
+   failure_class 분류 + retry routing
+   jitter + model fallback 통합
    재시도 예산 관리
 
 Phase 4: crop-retry zoom + OCR cross-validation
@@ -661,14 +798,19 @@ Phase 6: 실패 이력 기반 적응 (v2)
 - 모든 재시도는 **전체 증거 trail**을 남깁니다 (before/after 스크린샷, VLM 응답, 좌표)
 - Tier 3 step은 액션 **전과 후** 모두 검증이 필요합니다
 - `SAFE_MODE` 토글은 워크플로 레벨에서도 존중됩니다
+- password / credential step 의 artifact 와 로그는 기본적으로 redact 합니다
+- `idempotent=False` step 은 검증 실패 시 자동 재실행보다 수동 확인을 우선합니다
+- unstable / occluded frame 은 "모델 실패"가 아니라 "입력 화면 품질 실패"로 취급합니다
 
 ## 8. v1 범위
 
 **v1에 포함:**
 - `WorkflowStep` / `StepResult` / `WorkflowRun` dataclass
 - 순차 실행기 (dependency 체크 포함)
-- VLM 후행 검증 (click/type step)
-- 재시도: jitter + model fallback (Level 0-3)
+- precondition / success_condition / skip_condition 기반 step 계약
+- foreground / recapture 중심의 stability gate
+- hybrid 후행 검증 (window title / UIA / OCR 우선, 필요한 곳만 VLM)
+- failure-aware 재시도: recapture, jitter, model fallback
 - per-step 결과 JSON 로깅
 - RCS 로그인 워크플로 구현
 
@@ -679,3 +821,4 @@ Phase 6: 실패 이력 기반 적응 (v2)
 - VLM 기반 동적 워크플로 생성
 - doc 06 align-fail 모니터링 통합
 - doc 07 occlusion recovery 통합
+- password artifact masking 자동화 고도화

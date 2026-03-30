@@ -62,10 +62,12 @@ class ConditionChecker:
         conditions = group.conditions or []
         if not conditions:
             return True
-        results = [self.check_condition(condition) for condition in conditions]
+        # 단축 평가(short-circuit): VLM/OCR 호출 비용을 절약한다.
+        # ALL: 하나라도 False면 즉시 False 반환
+        # ANY: 하나라도 True면 즉시 True 반환
         if group.group_type == ConditionGroupType.ALL:
-            return all(results)
-        return any(results)
+            return all(self.check_condition(c) for c in conditions)
+        return any(self.check_condition(c) for c in conditions)
 
     _handlers: dict  # ConditionType → Callable[[StepCondition], bool]
 ```
@@ -93,7 +95,7 @@ class WorkflowStep:
     safety_tier: int = 2                # 0-3 (doc 04 참조)
     max_retries: int = 3               # 이 step의 최대 재시도 횟수
     retry_profile: str = "default_text_field"  # step 특성별 재시도 프로필
-    depends_on: list[str] | None = None # 선행 step_id 목록 (None = 이전 step 성공 필요)
+    depends_on: list[str] | None = None # 선행 step_id 목록 (None = 직전 step 성공 필요, [] = 의존성 없음)
     idempotent: bool = True            # resume / 재실행 시 안전 여부
     timeout_sec: float = 30.0          # 이 step 전체 타임아웃
     detect_timeout_sec: float = 15.0   # VLM 탐지 단계 타임아웃
@@ -212,6 +214,7 @@ v1에서는 `paused` 상태를 저장하되, 자동 `resume()`까지는 구현 �
 - `verify_timeout`: 검증 phase 타임아웃 초과
 - `window_unstable`: transition frame, occlusion, foreground 흔들림
 - `unexpected_foreground`: 예상치 못한 윈도우가 전면에 출현 (Section 2.5)
+- `precondition_lost`: 재시도 중 precondition이 더 이상 만족되지 않음 (예: 윈도우 닫힘)
 - `unsafe_to_retry`: safety tier 또는 safe zone 규칙 위반
 - `halt_non_idempotent`: idempotent=False step의 검증 실패로 자동 재실행 차단
 
@@ -444,12 +447,22 @@ class WorkflowRunner:
         return run
 
     def _execute_with_retry(self, step: WorkflowStep, run: WorkflowRun) -> StepResult:
+        strategy = "initial"  # 루프 밖에서 초기화 — 조기 break 시 unbound 방지
         for attempt in range(step.max_retries + 1):
             # 워크플로 전체 예산 확인
             if not self._has_retry_budget(step, run) and attempt > 0:
                 break
 
             strategy = self._pick_strategy(step, attempt)
+
+            # 0-pre. preconditions 재확인 — GUI 상태가 재시도 사이에 변할 수 있음
+            if not self._condition_checker.check_group(step.preconditions):
+                return StepResult(
+                    step_id=step.step_id, status="escalated",
+                    failure_class="precondition_lost",
+                    attempt_count=attempt + 1,
+                    strategy_used=strategy,
+                )
 
             # 0. 예상치 못한 foreground 윈도우 검사
             fg_check = self._check_foreground(step)
@@ -460,7 +473,9 @@ class WorkflowRunner:
                         step_id=step.step_id, status="escalated",
                         failure_class="unexpected_foreground",
                     )
-                # 복구 성공 시 이번 attempt를 처음부터 재시작
+                # 복구 성공 시 이번 attempt를 처음부터 재시작하되,
+                # 무한 루프 방지를 위해 foreground 복구 횟수를 제한한다.
+                run.increment_retry_count()
                 continue
 
             # 1. 창 안정성 확인

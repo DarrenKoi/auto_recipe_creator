@@ -49,11 +49,10 @@ def _wait_until_stable(
         False: max_wait_sec 내에 안정화되지 않음
     """
     prev_hash = self._capture_and_hash(self.window)
-    elapsed = 0.0
+    deadline = time.monotonic() + max_wait_sec
 
-    while elapsed < max_wait_sec:
+    while time.monotonic() < deadline:
         time.sleep(poll_interval_sec)
-        elapsed += poll_interval_sec
 
         curr_hash = self._capture_and_hash(self.window)
         similarity = self._compare_hashes(prev_hash, curr_hash)
@@ -131,6 +130,7 @@ confidence >= 0.8 AND verified == true   → 성공
 confidence >= 0.6 AND verified == true   → 약한 성공, 로그 경고, 1회 재검증 가능
 verified == false OR confidence < 0.6    → 실패, 기본 동작은 HALT / escalation
 타임아웃 (응답 없음)                       → 실패 (failure_class = "verify_timeout")
+JSON 파싱 실패 (malformed VLM 응답)       → 실패 (failure_class = "verify_parse_error"), 1회 재검증 후 escalation
 ```
 
 보강 규칙:

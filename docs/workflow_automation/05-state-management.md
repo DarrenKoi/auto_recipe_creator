@@ -58,6 +58,12 @@ poc/work2/logs/workflow_runs/
   "current_step_index": 6,
   "total_retries_used": 2,
   "retry_budget_remaining": 8,
+  "settings_snapshot": {
+    "service_fallback_order": ["ui-venus", "mai-ui"],
+    "total_retry_budget": 10,
+    "settle_max_wait_sec": 3.0,
+    "safe_mode": true
+  },
   "interrupts_encountered": [],
   "step_results": [
     {"step_id": "ensure_rcs", "status": "success", "attempt_count": 1},

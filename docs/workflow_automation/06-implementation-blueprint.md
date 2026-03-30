@@ -17,6 +17,7 @@ v1에서는 모듈을 더 줄여도 됩니다:
 
 - `workflow_types.py` (`StepCondition`, `ConditionType` 포함)
 - `workflow_runner.py` (`ConditionChecker` 내장)
+- `workflow_config.py` (`WorkflowSettings` — retry budget, settle threshold 등 매직넘버 방지)
 - `workflow_login.py`
 
 즉, 검증/재시도 로직도 처음에는 `workflow_runner.py` 내부 private helper 로 시작해도 괜찮습니다.
@@ -54,7 +55,9 @@ Phase 1: dataclass + 골격
    ConditionGroup, ConditionChecker 기본 구현
    WorkflowRunner 골격 (순차 실행만, 검증/재시도 없음)
    action_login.py 로직을 workflow_login.py로 매핑
-   완료 기준: action_login.py 흐름이 step 목록으로만 재현되고, 추가 액션 없이 dry-run trace 출력 가능
+   완료 기준: action_login.py 흐름이 step 목록으로만 재현되고, dry-run 모드에서
+   각 step의 step_id, step_type, preconditions 평가 결과를 [INFO] 로그로 출력 가능.
+   macOS에서 `uv run python poc/work2/workflow_login.py` 실행 시 ImportError 없이 trace 출력 확인
 
 Phase 2: 안정성 게이트 + 후행 검증
    foreground 검사 (unexpected_foreground 감지 + 알려진 interrupt 자동 처리)
@@ -62,7 +65,9 @@ Phase 2: 안정성 게이트 + 후행 검증
    prompt_action_verify.py 프롬프트 빌더
    workflow_verify.py 검증 로직
    click/type step에 UIA/OCR/VLM hybrid 검증 연결
-   완료 기준: office Windows 에서 로그인 dialog 캡처 후 verify-only step 이 성공/실패를 일관되게 기록
+   완료 기준:
+   - macOS: workflow_verify.py 가 import 가능하고, mock 이미지로 histogram 비교 + JSON 판정 로직 단위 테스트 통과
+   - Windows (office): 로그인 dialog 캡처 후 verify-only step 이 성공/실패를 일관되게 기록
 
 Phase 3: failure-aware 재시도
    workflow_retry.py 전략 구현

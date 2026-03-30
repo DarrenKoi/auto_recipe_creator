@@ -16,6 +16,8 @@
 | `verify_failed` | verify-only recapture | alternative verification → escalation |
 | `verify_timeout` | 검증 방식 변경 (VLM → OCR) | verify-only recapture → escalation |
 | `act_failed` | window refocus | same action 1회만 재시도 |
+| `precondition_lost` | foreground 복구 시도 | 즉시 escalation (GUI 상태 회복 불가) |
+| `verify_parse_error` | 같은 verifier 1회 재시도 | alternative verifier → escalation |
 | `halt_non_idempotent` | 즉시 halt | 사람 에스컬레이션 |
 | `unsafe_to_retry` | 즉시 halt | 사람 에스컬레이션 |
 
@@ -111,6 +113,12 @@ def jitter_point(
         valid.append(c)
 
     return valid
+
+# 호출부에서 빈 리스트 처리 필수:
+# candidates = jitter_point(...)
+# if not candidates:
+#     # jitter 불가 → 다음 retry level (crop-retry / model fallback)로 즉시 이동
+#     pass
 ```
 
 규칙:

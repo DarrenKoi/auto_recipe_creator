@@ -27,7 +27,7 @@
 - foreground 윈도우 검사 + 알려진 interrupt 자동 처리
 - poll-until-stable 안정화 대기 (histogram 기본, imagehash 선택)
 - hybrid 후행 검증 (window title / UIA / OCR 우선, 필요한 곳만 VLM, optional dependency guard 포함)
-- failure-aware 재시도: recapture, jitter (bbox 경계 포함), model fallback
+- failure-aware 재시도: recapture, jitter (bbox 경계 포함), model fallback, verify_parse_error 처리
 - non-idempotent step HALT 처리 (act 이후 자동 재실행 차단)
 - per-step + per-workflow 재시도 예산 (reserved_retry_budget 포함)
 - per-step 결과 JSON 로깅

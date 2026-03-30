@@ -2,8 +2,8 @@
 
 ## 2.1 Step 조건 타입 시스템
 
-조건(precondition / success_condition / skip_condition)을 raw dict로 관리하면 오타나 누락 필드가 런타임까지 발견되지 않습니다.
-타입 안전을 위해 **enum + dataclass 기반 조건 타입**을 사용합니다:
+조건(preconditions / success_criteria / skip_if)을 raw dict로 관리하면 오타나 누락 필드가 런타임까지 발견되지 않습니다.
+타입 안전을 위해 **원자 조건 + 조건 그룹(enum + dataclass)** 구조를 사용합니다:
 
 ```python
 from enum import Enum
@@ -19,33 +19,53 @@ class ConditionType(Enum):
     FIELD_READY_FOR_INPUT = "field_ready_for_input"
     TEXT_APPEARED = "text_appeared"
     TEXT_ALREADY_PRESENT = "text_already_present"
-    PASSWORD_ENTERED = "password_entered"
-    CREDENTIALS_READY = "credentials_ready"
+    MASKED_TEXT_PRESENT = "masked_text_present"
 
 
 @dataclass
 class StepCondition:
-    """step의 실행/성공/생략 조건을 정의하는 타입 안전 구조체."""
+    """단일 원자 조건을 정의하는 타입 안전 구조체."""
     condition_type: ConditionType
     title_fragment: str | None = None   # WINDOW_VISIBLE, WINDOW_FOUND, DIALOG_DISAPPEARED
     title_prefix: str | None = None     # WINDOW_APPEARED
     exe_name: str | None = None         # PROCESS_ALIVE
     expected_text: str | None = None    # TEXT_APPEARED, TEXT_ALREADY_PRESENT
-    verify_method: str | None = None    # "ocr" | "uia_or_ocr" | "uia_only" | "masked"
+    verify_method: str | None = None    # "ocr" | "uia_or_ocr" | "uia_only" | "masked" | "window_title"
     target_key: str | None = None       # FIELD_READY_FOR_INPUT 등에서 대상 지정
+
+
+class ConditionGroupType(Enum):
+    ALL = "all"
+    ANY = "any"
+
+
+@dataclass
+class ConditionGroup:
+    """여러 원자 조건을 AND / OR 로 묶는 구조."""
+    group_type: ConditionGroupType = ConditionGroupType.ALL
+    conditions: list[StepCondition] | None = None
 ```
 
 조건 평가는 `ConditionChecker` 클래스에 집중합니다:
 
 ```python
 class ConditionChecker:
-    """StepCondition을 실제 GUI 상태와 대조하여 평가한다."""
+    """StepCondition / ConditionGroup 을 실제 GUI 상태와 대조하여 평가한다."""
 
-    def check(self, condition: StepCondition) -> bool:
+    def check_condition(self, condition: StepCondition) -> bool:
         handler = self._handlers.get(condition.condition_type)
         if handler is None:
             raise ValueError(f"미지원 조건 타입: {condition.condition_type}")
         return handler(condition)
+
+    def check_group(self, group: ConditionGroup) -> bool:
+        conditions = group.conditions or []
+        if not conditions:
+            return True
+        results = [self.check_condition(condition) for condition in conditions]
+        if group.group_type == ConditionGroupType.ALL:
+            return all(results)
+        return any(results)
 
     _handlers: dict  # ConditionType → Callable[[StepCondition], bool]
 ```
@@ -53,7 +73,8 @@ class ConditionChecker:
 이 구조의 이점:
 - **IDE 자동완성**: condition_type에 올 수 있는 값을 즉시 확인 가능
 - **누락 필드 조기 발견**: dataclass 초기화 시 필수 필드 검증
-- **새 조건 타입 추가**: Enum에 추가 → handler 구현 → 끝. 문자열 매칭 분기문이 흩어지지 않음
+- **조건 폭발 방지**: `CREDENTIALS_READY` 같은 step 전용 복합 enum 을 늘리지 않아도 됨
+- **재사용성**: 동일 원자 조건을 여러 step에서 조합해 재사용 가능
 
 ## 2.2 Step 정의
 
@@ -66,9 +87,9 @@ class WorkflowStep:
     step_id: str                        # 예: "click_userid_input"
     step_type: str                      # "click" | "type" | "double_click" | "scroll" | "verify_only"
     target_description: str             # VLM 프롬프트에 전달할 타겟 설명
-    precondition: StepCondition         # 실행 전에 만족해야 하는 조건
-    success_condition: StepCondition    # 실행 후 기대하는 상태 변화
-    skip_condition: StepCondition | None = None  # 이미 만족되면 step 생략
+    preconditions: ConditionGroup       # 실행 전에 만족해야 하는 조건 묶음
+    success_criteria: ConditionGroup    # 실행 후 기대하는 상태 변화 묶음
+    skip_if: ConditionGroup | None = None  # 이미 만족되면 step 생략
     safety_tier: int = 2                # 0-3 (doc 04 참조)
     max_retries: int = 3               # 이 step의 최대 재시도 횟수
     retry_profile: str = "default_text_field"  # step 특성별 재시도 프로필
@@ -81,27 +102,46 @@ class WorkflowStep:
     reserved_retry_budget: int = 0     # 워크플로 전체 예산에서 이 step에 예약된 최소 재시도 횟수
 ```
 
-`precondition` / `success_condition` 예시:
+`preconditions` / `success_criteria` 예시:
 
 ```python
 # 클릭 전 login dialog 가 실제로 보이는지 확인
-StepCondition(condition_type=ConditionType.WINDOW_VISIBLE, title_fragment="Log In")
+ConditionGroup(
+    conditions=[
+        StepCondition(condition_type=ConditionType.WINDOW_VISIBLE, title_fragment="Log In"),
+    ],
+)
 
 # click 후 dialog 닫힘 확인
-StepCondition(condition_type=ConditionType.DIALOG_DISAPPEARED, title_fragment="Log In")
+ConditionGroup(
+    conditions=[
+        StepCondition(condition_type=ConditionType.DIALOG_DISAPPEARED, title_fragment="Log In"),
+    ],
+)
 
-# type 후 필드에 텍스트 입력 확인
-StepCondition(condition_type=ConditionType.TEXT_APPEARED, expected_text="2067928", verify_method="ocr")
+# login 버튼 클릭 전 자격 증명 준비 완료 확인
+ConditionGroup(
+    group_type=ConditionGroupType.ALL,
+    conditions=[
+        StepCondition(condition_type=ConditionType.WINDOW_VISIBLE, title_fragment="Log In"),
+        StepCondition(condition_type=ConditionType.TEXT_APPEARED, expected_text="2067928", verify_method="ocr"),
+        StepCondition(condition_type=ConditionType.MASKED_TEXT_PRESENT, target_key="password_input", verify_method="masked"),
+    ],
+)
 
 # 새 화면 전환 확인
-StepCondition(condition_type=ConditionType.WINDOW_APPEARED, title_prefix="Remote Control System")
+ConditionGroup(
+    conditions=[
+        StepCondition(condition_type=ConditionType.WINDOW_APPEARED, title_prefix="Remote Control System"),
+    ],
+)
 ```
 
 왜 이렇게 나누는가:
 
 - `depends_on`은 "이전 step이 성공했는가"만 표현합니다
 - 실제 GUI 자동화에서는 "지금도 그 성공 상태가 유효한가"를 별도로 확인해야 합니다
-- resume 시에도 `precondition` / `skip_condition`이 있어야 이미 완료된 step을 안전하게 건너뛸 수 있습니다
+- v1에서도 `preconditions` / `skip_if`가 있어야 이미 완료된 step을 안전하게 건너뛸 수 있습니다
 
 ## 2.3 Phase별 타임아웃 설계
 
@@ -156,10 +196,12 @@ pending → env_check → detecting → acting → settling → verifying → su
 ```
 not_started → running → completed
                  ↓
-              paused (checkpoint 저장) → resumed → running
+              paused (state 파일 저장, 수동 확인 대기)
                  ↓
-              aborted (재시도 예산 소진)
+              aborted (재시도 예산 소진 또는 안전 규칙 위반)
 ```
+
+v1에서는 `paused` 상태를 저장하되, 자동 `resume()`까지는 구현 범위에 넣지 않습니다.
 
 추가로 step 결과는 단순 success/fail 외에 **실패 분류(reason class)** 를 가져야 합니다:
 
@@ -235,8 +277,10 @@ LOGIN_WORKFLOW = [
         step_id="ensure_rcs",
         step_type="verify_only",
         target_description="RCS 프로세스 실행 확인",
-        precondition=StepCondition(condition_type=ConditionType.ALWAYS),
-        success_condition=StepCondition(condition_type=ConditionType.PROCESS_ALIVE, exe_name="RcsMainHD.exe"),
+        preconditions=ConditionGroup(conditions=[StepCondition(condition_type=ConditionType.ALWAYS)]),
+        success_criteria=ConditionGroup(
+            conditions=[StepCondition(condition_type=ConditionType.PROCESS_ALIVE, exe_name="RcsMainHD.exe")]
+        ),
         safety_tier=0,
         max_retries=1,
     ),
@@ -244,8 +288,12 @@ LOGIN_WORKFLOW = [
         step_id="find_login_window",
         step_type="verify_only",
         target_description="로그인 창 탐색",
-        precondition=StepCondition(condition_type=ConditionType.PROCESS_ALIVE, exe_name="RcsMainHD.exe"),
-        success_condition=StepCondition(condition_type=ConditionType.WINDOW_FOUND, title_fragment="Log In"),
+        preconditions=ConditionGroup(
+            conditions=[StepCondition(condition_type=ConditionType.PROCESS_ALIVE, exe_name="RcsMainHD.exe")]
+        ),
+        success_criteria=ConditionGroup(
+            conditions=[StepCondition(condition_type=ConditionType.WINDOW_FOUND, title_fragment="Log In")]
+        ),
         safety_tier=0,
         max_retries=3,
     ),
@@ -253,8 +301,12 @@ LOGIN_WORKFLOW = [
         step_id="click_userid_input",
         step_type="double_click",
         target_description="the editable text field next to the 'User ID' label",
-        precondition=StepCondition(condition_type=ConditionType.WINDOW_VISIBLE, title_fragment="Log In"),
-        success_condition=StepCondition(condition_type=ConditionType.FIELD_READY_FOR_INPUT, verify_method="uia_or_ocr"),
+        preconditions=ConditionGroup(
+            conditions=[StepCondition(condition_type=ConditionType.WINDOW_VISIBLE, title_fragment="Log In")]
+        ),
+        success_criteria=ConditionGroup(
+            conditions=[StepCondition(condition_type=ConditionType.FIELD_READY_FOR_INPUT, verify_method="uia_or_ocr")]
+        ),
         retry_profile="text_field_click",
         safety_tier=2,
         max_retries=3,
@@ -263,9 +315,27 @@ LOGIN_WORKFLOW = [
         step_id="type_userid",
         step_type="type",
         target_description="User ID 입력 필드에 텍스트 입력",
-        precondition=StepCondition(condition_type=ConditionType.FIELD_READY_FOR_INPUT, target_key="userid_input"),
-        success_condition=StepCondition(condition_type=ConditionType.TEXT_APPEARED, expected_text="2067928", verify_method="ocr"),
-        skip_condition=StepCondition(condition_type=ConditionType.TEXT_ALREADY_PRESENT, expected_text="2067928", verify_method="ocr"),
+        preconditions=ConditionGroup(
+            conditions=[StepCondition(condition_type=ConditionType.FIELD_READY_FOR_INPUT, target_key="userid_input")]
+        ),
+        success_criteria=ConditionGroup(
+            conditions=[
+                StepCondition(
+                    condition_type=ConditionType.TEXT_APPEARED,
+                    expected_text="2067928",
+                    verify_method="ocr",
+                ),
+            ],
+        ),
+        skip_if=ConditionGroup(
+            conditions=[
+                StepCondition(
+                    condition_type=ConditionType.TEXT_ALREADY_PRESENT,
+                    expected_text="2067928",
+                    verify_method="ocr",
+                ),
+            ],
+        ),
         retry_profile="typed_text",
         safety_tier=2,
         max_retries=2,
@@ -275,8 +345,12 @@ LOGIN_WORKFLOW = [
         step_id="click_password_input",
         step_type="double_click",
         target_description="the editable text field next to the 'Password' label",
-        precondition=StepCondition(condition_type=ConditionType.WINDOW_VISIBLE, title_fragment="Log In"),
-        success_condition=StepCondition(condition_type=ConditionType.FIELD_READY_FOR_INPUT, verify_method="uia_only"),
+        preconditions=ConditionGroup(
+            conditions=[StepCondition(condition_type=ConditionType.WINDOW_VISIBLE, title_fragment="Log In")]
+        ),
+        success_criteria=ConditionGroup(
+            conditions=[StepCondition(condition_type=ConditionType.FIELD_READY_FOR_INPUT, verify_method="uia_only")]
+        ),
         retry_profile="password_field_click",
         safety_tier=2,
         max_retries=3,
@@ -285,8 +359,18 @@ LOGIN_WORKFLOW = [
         step_id="type_password",
         step_type="type",
         target_description="Password 입력 필드에 텍스트 입력",
-        precondition=StepCondition(condition_type=ConditionType.FIELD_READY_FOR_INPUT, target_key="password_input"),
-        success_condition=StepCondition(condition_type=ConditionType.PASSWORD_ENTERED, verify_method="masked"),
+        preconditions=ConditionGroup(
+            conditions=[StepCondition(condition_type=ConditionType.FIELD_READY_FOR_INPUT, target_key="password_input")]
+        ),
+        success_criteria=ConditionGroup(
+            conditions=[
+                StepCondition(
+                    condition_type=ConditionType.MASKED_TEXT_PRESENT,
+                    target_key="password_input",
+                    verify_method="masked",
+                ),
+            ],
+        ),
         retry_profile="password_type",
         idempotent=False,
         safety_tier=2,
@@ -297,8 +381,21 @@ LOGIN_WORKFLOW = [
         step_id="click_login_button",
         step_type="click",
         target_description="the 'Log In' button at the bottom of the dialog",
-        precondition=StepCondition(condition_type=ConditionType.CREDENTIALS_READY),
-        success_condition=StepCondition(condition_type=ConditionType.WINDOW_APPEARED, title_prefix="Remote Control System"),
+        preconditions=ConditionGroup(
+            group_type=ConditionGroupType.ALL,
+            conditions=[
+                StepCondition(condition_type=ConditionType.WINDOW_VISIBLE, title_fragment="Log In"),
+                StepCondition(condition_type=ConditionType.TEXT_APPEARED, expected_text="2067928", verify_method="ocr"),
+                StepCondition(
+                    condition_type=ConditionType.MASKED_TEXT_PRESENT,
+                    target_key="password_input",
+                    verify_method="masked",
+                ),
+            ],
+        ),
+        success_criteria=ConditionGroup(
+            conditions=[StepCondition(condition_type=ConditionType.WINDOW_APPEARED, title_prefix="Remote Control System")]
+        ),
         retry_profile="dialog_submit",
         safety_tier=2,
         max_retries=2,
@@ -324,8 +421,8 @@ class WorkflowRunner:
                 run.abort(f"dependency_failed: {step.depends_on}")
                 break
 
-            # skip_condition 확인
-            if step.skip_condition and self._condition_checker.check(step.skip_condition):
+            # skip_if 확인
+            if step.skip_if and self._condition_checker.check_group(step.skip_if):
                 run.record(StepResult(step_id=step.step_id, status="skipped"))
                 continue
 
@@ -414,7 +511,27 @@ class WorkflowRunner:
                     attempt_count=attempt + 1,
                     strategy_used=strategy,
                 )
-            run.increment_retry_count()
+
+            # 검증 실패는 기본적으로 HALT / escalate 대상이다.
+            # 단, 같은 액션을 다시 수행하지 않는 verify-only 재확인만 제한적으로 허용한다.
+            if not step.idempotent:
+                return StepResult(
+                    step_id=step.step_id,
+                    status="escalated",
+                    failure_class="halt_non_idempotent",
+                    attempt_count=attempt + 1,
+                    strategy_used=strategy,
+                )
+            if self._can_retry_after_verify_failure(step, attempt):
+                run.increment_retry_count()
+                continue
+            return StepResult(
+                step_id=step.step_id,
+                status="escalated",
+                failure_class="verify_failed",
+                attempt_count=attempt + 1,
+                strategy_used=strategy,
+            )
 
         return StepResult(
             step_id=step.step_id,

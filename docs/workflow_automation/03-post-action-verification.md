@@ -65,17 +65,30 @@ def _wait_until_stable(
     return False
 ```
 
-구현 옵션 (가벼운 순서):
-1. **pHash (perceptual hash)**: `imagehash` 라이브러리, 해밍 거리 비교. 가장 빠름
-2. **Pixel histogram 비교**: `PIL.Image.histogram()` 차이. 전역 변화 감지에 적합
+구현 옵션:
+1. **Pixel histogram 비교**: `PIL.Image.histogram()` 차이. 현재 의존성만으로 바로 구현 가능
+2. **pHash (perceptual hash)**: `imagehash` 라이브러리, 해밍 거리 비교. 선택적 정확도 향상
 3. **SSIM**: `skimage.metrics.structural_similarity`. 정확하지만 느림. v1에서는 불필요
 
-v1 권장: pHash 사용. 설치 부담 없고(`imagehash`), 충분히 정확합니다.
+v1 권장:
+- 기본값은 `PIL.Image.histogram()` 기반 안정화 비교
+- `imagehash`가 설치된 환경에서는 pHash를 선택적으로 활성화
+- optional dependency 가 없다고 step 자체가 실패해서는 안 되며, 가능한 verifier 로 degrade 해야 합니다
 
 규칙:
 - `max_wait_sec`는 step별로 조정 가능합니다 (scroll step은 길게, click step은 짧게)
 - 안정화 실패 시 `window_unstable`로 분류하고, 재캡처 후 재시도합니다
 - 최소 1회는 반드시 대기합니다 (poll_interval_sec 만큼)
+
+### Optional Dependency / Capability Guard
+
+워크플로 검증기는 환경마다 사용할 수 있는 능력이 다를 수 있습니다.
+v1에서는 다음 capability guard 를 명시합니다:
+
+- `PIL` 기반 histogram 비교: **필수 경로**
+- `imagehash`: 있으면 사용, 없으면 histogram 으로 fallback
+- Windows UIA / pywinauto: 있으면 우선 사용, 없으면 OCR 또는 window title 검증으로 fallback
+- 어떤 optional verifier 가 없더라도 `unsafe_to_retry` 상황이 아닌 한, 즉시 crash 하지 않고 capability 로그를 남겨야 합니다
 
 ## 3.3 Step Type별 검증 프롬프트
 
@@ -101,7 +114,7 @@ v1 권장: pHash 사용. 설치 부담 없고(`imagehash`), 충분히 정확합�
 def build_action_verification_prompt(
     step_type: str,
     target_description: str,
-    success_condition: StepCondition,
+    success_criteria: ConditionGroup,
 ) -> tuple[str, str]:
     """액션 후행 검증 프롬프트를 생성한다.
 
@@ -116,14 +129,15 @@ def build_action_verification_prompt(
 ```
 confidence >= 0.8 AND verified == true   → 성공
 confidence >= 0.6 AND verified == true   → 약한 성공, 로그 경고, 1회 재검증 가능
-verified == false OR confidence < 0.6    → 실패, 재시도 진입
+verified == false OR confidence < 0.6    → 실패, 기본 동작은 HALT / escalation
 타임아웃 (응답 없음)                       → 실패 (failure_class = "verify_timeout")
 ```
 
 보강 규칙:
 
-- `type` step 에서 입력 후 검증이 약하면 먼저 `verify_only` 재캡처를 1회 수행합니다
+- `type` step 에서 입력 후 검증이 약하면 먼저 **액션 재실행이 아닌** `verify_only` 재캡처를 1회 수행합니다
 - 입력이 실제로 반영되었는지 불확실할 때는 곧바로 같은 문자열을 다시 타이핑하지 않습니다
+- `verify_failed` / `verify_timeout` 에서 자동으로 허용되는 것은 **verifier 교체 또는 재캡처 기반 재검증** 뿐입니다
 - `idempotent=False` step 은 검증 실패 시 기본값이 재실행이 아니라 `halt_non_idempotent` 입니다 ([04-retry-strategy.md](04-retry-strategy.md) Section 4.8 참조)
 
 ## 3.5 VLM 실현 가능성 분석

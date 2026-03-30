@@ -9,6 +9,7 @@
 | `poc/work2/workflow_verify.py` | 후행 검증 로직 (VLM/OCR/UIA/윈도우 타이틀), poll-until-stable |
 | `poc/work2/workflow_retry.py` | 재시도 전략 (jitter, crop-zoom, model fallback, failure routing) |
 | `poc/work2/workflow_conditions.py` | `ConditionChecker` — 조건 타입 평가 로직 |
+| `poc/work2/workflow_config.py` | `WorkflowSettings` dataclass, retry/settle/verification 기본값 |
 | `poc/work2/prompts/prompt_action_verify.py` | 검증용 VLM 프롬프트 빌더 |
 | `poc/work2/workflow_login.py` | RCS 로그인 워크플로 정의 (action_login.py의 워크플로 버전) |
 
@@ -31,15 +32,18 @@ v1에서는 모듈을 더 줄여도 됩니다:
 - `ui_venus_mai_locator.py` — 2단계 파이프라인 호출 그대로 사용
 
 설정 추가가 필요한 모듈:
-- `flask_vlm.py` — `SHARED_PIPELINE_SETTINGS`에 워크플로 관련 기본값 추가
+- `flask_vlm.py` — 서비스 slug / 모델명 source of truth 로 유지
+- `workflow_config.py` — 워크플로 운영 기본값을 별도 dataclass 로 관리
 
 ```python
-# flask_vlm.py SHARED_PIPELINE_SETTINGS 에 추가
-"workflow_verify_service": "paddleocr-vl-1.5",      # 검증용 OCR 서비스
-"workflow_service_fallback": ["ui-venus", "mai-ui"],  # 모델 fallback 순서
-"workflow_total_retry_budget": 10,                    # 전체 재시도 예산
-"workflow_settle_max_wait_sec": 3.0,                  # poll-until-stable 최대 대기
-"workflow_settle_similarity_threshold": 0.98,          # 안정화 판정 임계값
+@dataclass(frozen=True)
+class WorkflowSettings:
+    verify_service: str = "paddleocr-vl-1.5"
+    service_fallback_order: tuple[str, ...] = ("ui-venus", "mai-ui")
+    total_retry_budget: int = 10
+    settle_max_wait_sec: float = 3.0
+    settle_similarity_threshold: float = 0.98
+    allow_optional_imagehash: bool = False
 ```
 
 ## 6.3 단계별 구현 순서
@@ -47,33 +51,42 @@ v1에서는 모듈을 더 줄여도 됩니다:
 ```
 Phase 1: dataclass + 골격
    WorkflowStep, StepCondition, ConditionType, StepResult, WorkflowRun dataclass 정의
-   ConditionChecker 기본 구현
+   ConditionGroup, ConditionChecker 기본 구현
    WorkflowRunner 골격 (순차 실행만, 검증/재시도 없음)
    action_login.py 로직을 workflow_login.py로 매핑
+   완료 기준: action_login.py 흐름이 step 목록으로만 재현되고, 추가 액션 없이 dry-run trace 출력 가능
 
 Phase 2: 안정성 게이트 + 후행 검증
    foreground 검사 (unexpected_foreground 감지 + 알려진 interrupt 자동 처리)
-   poll-until-stable 구현 (pHash 기반)
+   poll-until-stable 구현 (histogram 기본, imagehash 선택)
    prompt_action_verify.py 프롬프트 빌더
    workflow_verify.py 검증 로직
    click/type step에 UIA/OCR/VLM hybrid 검증 연결
+   완료 기준: office Windows 에서 로그인 dialog 캡처 후 verify-only step 이 성공/실패를 일관되게 기록
 
 Phase 3: failure-aware 재시도
    workflow_retry.py 전략 구현
    failure_class 분류 + retry routing
-   jitter (element bbox 경계 검사 포함) + model fallback 통합
+   jitter (element bbox 있을 때만) + model fallback 통합
    재시도 예산 관리 (reserved_retry_budget 포함)
    non-idempotent step HALT 처리
+   완료 기준: detect_failed / verify_failed / halt_non_idempotent 케이스가 서로 다른 routing 을 타는 로그 확인
 
 Phase 4: crop-retry zoom + OCR cross-validation
    ui_venus_mai_locator.py 2단계 파이프라인을 재시도 전략으로 연결
    OCR pre-check 통합
+   완료 기준: text-labeled control 에서 OCR anchor 유무에 따라 retry 경로가 달라짐을 증거로 확인
 
-Phase 5: 상태 저장 + checkpoint/resume
+Phase 5: 상태 저장 + pause metadata
    WorkflowRun JSON 저장/로드
-   resume 로직 (non-idempotent halt resume_option 포함)
+   paused 상태 / resume_options 저장
+   완료 기준: halt 시 run_state.json 만으로 마지막 step, 증거 경로, 수동 선택지가 복원 가능
 
 Phase 6: 실패 이력 기반 적응 (v2)
    실패 통계 집계
    VLM 서비스 자동 선택
 ```
+
+권장 검증 게이트:
+- 각 phase 종료 시 macOS 개발 환경 문법 검증 + office Windows 실기 확인을 분리해 기록합니다
+- 최소 증거: 실행 명령, 결과 로그, before/after artifact 경로, failure_class 샘플

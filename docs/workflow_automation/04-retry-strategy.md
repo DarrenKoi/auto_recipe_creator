@@ -13,8 +13,8 @@
 | `unexpected_foreground` | interrupt 자동 처리 | foreground 복구 → escalation |
 | `detect_failed` | same detect retry | crop-retry / model fallback / OCR anchor |
 | `detect_timeout` | 같은 모델 1회 재시도 | 더 빠른 모델로 fallback |
-| `verify_failed` | verify-only recapture | limited jitter or alternative verification |
-| `verify_timeout` | 검증 방식 변경 (VLM → OCR) | 검증 생략 + 경고 로그 |
+| `verify_failed` | verify-only recapture | alternative verification → escalation |
+| `verify_timeout` | 검증 방식 변경 (VLM → OCR) | verify-only recapture → escalation |
 | `act_failed` | window refocus | same action 1회만 재시도 |
 | `halt_non_idempotent` | 즉시 halt | 사람 에스컬레이션 |
 | `unsafe_to_retry` | 즉시 halt | 사람 에스컬레이션 |
@@ -26,8 +26,8 @@
 ```
 detect_failed       → recapture → crop-retry → model fallback → OCR anchor → escalate
 detect_timeout      → same model retry → faster model → escalate
-verify_failed       → recapture+verify_only → alternative verifier → limited jitter → escalate
-verify_timeout      → switch verify method → skip verify with warning → escalate
+verify_failed       → recapture+verify_only → alternative verifier → escalate
+verify_timeout      → switch verify method → verify_only recapture → escalate
 window_unstable     → recapture → foreground → doc 07 recovery → escalate
 unexpected_foreground → auto-dismiss → foreground recovery → escalate
 halt_non_idempotent → 즉시 escalate (자동 재실행 금지)
@@ -59,6 +59,20 @@ Level 5: 사람 에스컬레이션
 ## 4.3 Level 1: 좌표 Jitter
 
 VLM이 반환한 좌표가 약간 빗나간 경우를 커버합니다.
+
+전제:
+
+```python
+@dataclass
+class DetectionResult:
+    point: dict | None
+    element_bbox: dict | None
+    service_slug: str
+    raw_response_path: str | None
+```
+
+`jitter`는 `DetectionResult.element_bbox`가 있을 때만 활성화합니다.
+bbox가 없으면 같은 액션을 더 위험하게 반복하는 셈이므로 `crop-retry` 또는 `model fallback`으로 바로 넘어갑니다.
 
 ```python
 def jitter_point(
@@ -101,8 +115,7 @@ def jitter_point(
 
 규칙:
 - jitter 후보는 **doc 04의 safe zone 범위 내**에 있어야 합니다
-- VLM이 bounding box를 반환했다면 **element bbox 내**로도 제한합니다
-- bbox 없이 safe zone만으로 제한하면 작은 체크박스 등에서 요소 밖을 클릭할 수 있습니다
+- **element bbox 가 없으면 jitter 자체를 수행하지 않습니다**
 - 십자(cross) 패턴이 random보다 체계적입니다
 - offset 기본값: 5px (RCS login dialog 기준으로 충분)
 - jitter 는 `detect_failed` 또는 `verify_failed` 중 "오차가 작은 클릭성 control"에만 적용합니다
@@ -138,8 +151,8 @@ client_mai = Work2VLMClient(service_slug="mai-ui")
 fallback 순서 예시 (설정 가능):
 
 ```python
-# flask_vlm.SHARED_PIPELINE_SETTINGS 에 추가
-"workflow_service_fallback_order": ["ui-venus", "mai-ui", "kimi-k2.5"],
+# WorkflowSettings 예시
+service_fallback_order = ["ui-venus", "mai-ui", "kimi-k2.5"]
 ```
 
 각 모델의 특성:

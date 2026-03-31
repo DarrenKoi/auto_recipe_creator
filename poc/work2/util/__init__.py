@@ -24,6 +24,24 @@ IMAGE_UTILS_AVAILABLE = False
 MOUSE_UTILS_AVAILABLE = False
 WINDOW_UTILS_AVAILABLE = False
 
+build_relative_crop_box = None
+capture_window = None
+crop_image = None
+encode_image_webp = None
+
+click_at_screen = None
+scroll_at_screen = None
+
+WindowRow = None
+activate_window = None
+collect_window_rows = None
+find_window_by_pid_and_title_prefix = None
+find_window_by_title_prefix = None
+foreground_window = None
+get_window_process_id = None
+image_point_to_screen = None
+read_foreground_window_info = None
+
 try:
     from .image_utils import (
         build_relative_crop_box,

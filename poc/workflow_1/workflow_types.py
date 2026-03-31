@@ -127,7 +127,7 @@ class StepResult:
     timestamp: str
     window_title_before: str | None = None
     window_title_after: str | None = None
-    safe_mode: bool = True
+    safe_mode: bool = False
     artifact_redacted: bool = False
     needs_manual_check: bool = False
     manual_check_reason: str | None = None

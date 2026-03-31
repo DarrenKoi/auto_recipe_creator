@@ -15,8 +15,8 @@ class WorkflowSettings:
     settle_max_wait_sec: float = 3.0
     settle_similarity_threshold: float = 0.98
     allow_optional_imagehash: bool = False
-    safe_mode: bool = True
-    action_enabled: bool = False
+    safe_mode: bool = False
+    action_enabled: bool = True
     typing_enabled: bool = True
     pre_click_settle_sec: float = 0.2
     post_click_settle_sec: float = 0.3
@@ -36,7 +36,7 @@ class WorkflowSettings:
 
 def load_workflow_settings() -> WorkflowSettings:
     """환경변수와 기본값으로 WorkflowSettings 를 생성한다."""
-    safe_mode = env_flag("SAFE_MODE", default=True)
+    safe_mode = env_flag("SAFE_MODE", default=False)
     action_enabled = env_flag("ACTION_LOGIN_ACTION_ENABLED", default=not safe_mode)
 
     return WorkflowSettings(

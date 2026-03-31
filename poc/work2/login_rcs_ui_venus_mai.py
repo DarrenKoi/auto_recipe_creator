@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 
 from poc.work2.login_rcs_common import WINDOW_TITLE_PREFIX, find_login_window
 from poc.work2.logger import log_work2_event
-from poc.work2.ui_venus_mai_locator import (
+from poc.work2.workflow_1.ui_venus_mai_locator import (
     EXIT_SUCCESS,
     EXIT_WINDOW_ACTIVATE_FAILED,
     TargetConfig,

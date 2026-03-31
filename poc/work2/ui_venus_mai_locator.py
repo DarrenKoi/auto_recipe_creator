@@ -1,6 +1,7 @@
 """재사용 가능한 UI-Venus + MAI-UI 2단계 타겟 로케이터."""
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -265,11 +266,10 @@ def _run_ui_venus_coarse_bbox(
     img_w: int,
     img_h: int,
     target: TargetConfig,
+    prompt_builder: Callable[[str], tuple[str, str]],
 ) -> dict | None:
     """ui-venus 로 full image coarse bbox 를 찾는다."""
-    system_message, user_text = build_ui_venus_single_element_bbox_prompt(
-        target.description,
-    )
+    system_message, user_text = prompt_builder(target.description)
     response = client.chat_with_image_b64(
         image_b64=image_b64,
         system_message=system_message,
@@ -315,11 +315,10 @@ def _run_mai_ui_refinement(
     zoom_w: int,
     zoom_h: int,
     target: TargetConfig,
+    prompt_builder: Callable[[str, str], tuple[str, str]],
 ) -> dict | None:
     """mai-ui 로 zoom crop 안의 refined click point 를 찾는다."""
-    system_message, user_text = build_mai_ui_zoom_prompt(
-        target.key, target.description,
-    )
+    system_message, user_text = prompt_builder(target.key, target.description)
     response = client.chat_with_image_b64(
         image_b64=zoom_b64,
         system_message=system_message,
@@ -371,6 +370,8 @@ def analyze_window_target(
     refine_service_slug: str = "mai-ui",
     result_mode: str = "ui_venus_then_mai_ui_single_target",
     image: Image.Image | None = None,
+    coarse_prompt_builder: Callable[[str], tuple[str, str]] = build_ui_venus_single_element_bbox_prompt,
+    refine_prompt_builder: Callable[[str, str], tuple[str, str]] = build_mai_ui_zoom_prompt,
 ) -> TargetResult:
     """임의의 윈도우에서 지정된 타겟을 2단계로 찾는다.
 
@@ -413,7 +414,12 @@ def analyze_window_target(
 
     full_b64, full_w, full_h = encode_image_webp(image)
     coarse_result = _run_ui_venus_coarse_bbox(
-        coarse_client, full_b64, full_w, full_h, target,
+        coarse_client,
+        full_b64,
+        full_w,
+        full_h,
+        target,
+        coarse_prompt_builder,
     )
     if coarse_result is None or coarse_result["bbox_pixels"] is None:
         log_work2_event(
@@ -444,7 +450,12 @@ def analyze_window_target(
     )
 
     refine_result = _run_mai_ui_refinement(
-        refine_client, zoom_b64, zoom_w, zoom_h, target,
+        refine_client,
+        zoom_b64,
+        zoom_w,
+        zoom_h,
+        target,
+        refine_prompt_builder,
     )
 
     input_paths = _save_pipeline_inputs(

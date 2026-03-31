@@ -43,6 +43,11 @@ except ImportError:
     Key = None
     print("[WARNING] pynput.keyboard 미설치 — 타이핑 동작은 로그만 출력됩니다.")
 
+try:
+    from poc.work2.util.mouse_utils import PYNPUT_MOUSE_AVAILABLE
+except ImportError:
+    PYNPUT_MOUSE_AVAILABLE = False
+
 load_dotenv()
 
 
@@ -527,67 +532,124 @@ def execute_login_step(
         if not settings.action_enabled:
             if target_key == "password_input":
                 print(
-                    "[INFO] [DRY-RUN] 입력 step 생략: "
+                    "[INFO] [DRY-RUN] 입력 step skip: "
                     f"target={target_key}, clicks=1+2, chars={len(step.input_text or '')}"
                 )
             else:
                 print(
-                    "[INFO] [DRY-RUN] 입력 step 생략: "
+                    "[INFO] [DRY-RUN] 입력 step skip: "
                     f"target={target_key}, clicks=1+2, text={(step.input_text or '')!r}"
                 )
-            typed_values = context.setdefault("typed_values", {})
-            typed_values[target_key] = step.input_text or ""
-            context["focused_target_key"] = target_key
-            time.sleep(settings.post_type_settle_sec)
-        else:
-            if not callable(click_at_screen):
-                return _build_base_result(
-                    step,
-                    started_at,
-                    settings,
-                    status="failed",
-                    failure_class="act_failed",
-                    error_message="click_at_screen unavailable",
-                    detected_point=detection.point,
-                    screen_point=screen_point,
-                    before_screenshot=before_screenshot,
-                    window_title_before=window_title,
-                )
-
-            click_at_screen(
-                screen_point,
-                target_key,
-                click_count=1,
-                action_enabled=settings.action_enabled,
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="skipped",
+                error_message="dry_run_skip",
+                detected_point=detection.point,
+                screen_point=screen_point,
+                before_screenshot=before_screenshot,
+                window_title_before=window_title,
+                window_title_after=window_title,
             )
-            time.sleep(settings.pre_type_click_settle_sec)
-            click_at_screen(
-                screen_point,
-                target_key,
-                click_count=2,
-                action_enabled=settings.action_enabled,
-            )
-            time.sleep(settings.pre_type_double_click_settle_sec)
-            typed_ok = _clear_and_type(step.input_text or "", target_key, settings)
-            if not typed_ok:
-                return _build_base_result(
-                    step,
-                    started_at,
-                    settings,
-                    status="failed",
-                    failure_class="act_failed",
-                    error_message=f"타이핑 실패: {target_key}",
-                    detected_point=detection.point,
-                    screen_point=screen_point,
-                    before_screenshot=before_screenshot,
-                    window_title_before=window_title,
-                )
 
-            typed_values = context.setdefault("typed_values", {})
-            typed_values[target_key] = step.input_text or ""
-            context["focused_target_key"] = target_key
-            time.sleep(settings.post_type_settle_sec)
+        if not PYNPUT_MOUSE_AVAILABLE or not PYNPUT_KEYBOARD_AVAILABLE:
+            print(
+                "[INFO] 입력 step skip: "
+                f"target={target_key}, pynput_mouse={PYNPUT_MOUSE_AVAILABLE}, "
+                f"pynput_keyboard={PYNPUT_KEYBOARD_AVAILABLE}"
+            )
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="skipped",
+                error_message="input_device_unavailable",
+                detected_point=detection.point,
+                screen_point=screen_point,
+                before_screenshot=before_screenshot,
+                window_title_before=window_title,
+                window_title_after=window_title,
+            )
+
+        if not callable(click_at_screen):
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="failed",
+                failure_class="act_failed",
+                error_message="click_at_screen unavailable",
+                detected_point=detection.point,
+                screen_point=screen_point,
+                before_screenshot=before_screenshot,
+                window_title_before=window_title,
+            )
+
+        click_at_screen(
+            screen_point,
+            target_key,
+            click_count=1,
+            action_enabled=settings.action_enabled,
+        )
+        time.sleep(settings.pre_type_click_settle_sec)
+        click_at_screen(
+            screen_point,
+            target_key,
+            click_count=2,
+            action_enabled=settings.action_enabled,
+        )
+        time.sleep(settings.pre_type_double_click_settle_sec)
+        typed_ok = _clear_and_type(step.input_text or "", target_key, settings)
+        if not typed_ok:
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="failed",
+                failure_class="act_failed",
+                error_message=f"타이핑 실패: {target_key}",
+                detected_point=detection.point,
+                screen_point=screen_point,
+                before_screenshot=before_screenshot,
+                window_title_before=window_title,
+            )
+
+        typed_values = context.setdefault("typed_values", {})
+        typed_values[target_key] = step.input_text or ""
+        context["focused_target_key"] = target_key
+        time.sleep(settings.post_type_settle_sec)
     elif step.step_type == "click":
+        if not settings.action_enabled:
+            print(f"[INFO] [DRY-RUN] 클릭 step skip: target={target_key}, click_count=1")
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="skipped",
+                error_message="dry_run_skip",
+                detected_point=detection.point,
+                screen_point=screen_point,
+                before_screenshot=before_screenshot,
+                window_title_before=window_title,
+                window_title_after=window_title,
+            )
+
+        if not PYNPUT_MOUSE_AVAILABLE:
+            print(f"[INFO] 클릭 step skip: target={target_key}, pynput_mouse={PYNPUT_MOUSE_AVAILABLE}")
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="skipped",
+                error_message="input_device_unavailable",
+                detected_point=detection.point,
+                screen_point=screen_point,
+                before_screenshot=before_screenshot,
+                window_title_before=window_title,
+                window_title_after=window_title,
+            )
+
         if not callable(click_at_screen):
             return _build_base_result(
                 step,

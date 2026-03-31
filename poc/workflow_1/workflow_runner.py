@@ -261,7 +261,7 @@ class WorkflowRunner:
         missing = [
             dep_step_id
             for dep_step_id in step.depends_on
-            if step_statuses.get(dep_step_id) != "success"
+            if step_statuses.get(dep_step_id) not in {"success", "skipped"}
         ]
         if not missing:
             return None

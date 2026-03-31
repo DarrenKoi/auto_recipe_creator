@@ -13,6 +13,7 @@ from poc.workflow_1.login_rcs_common import (
     find_login_window,
     wait_for_rcs_main_window,
 )
+from poc.workflow_1.debug_artifacts import save_debug_jpeg
 from poc.workflow_1.logger import log_work2_event
 from poc.work2.util import (
     activate_window,
@@ -21,7 +22,6 @@ from poc.work2.util import (
     foreground_window,
     format_elapsed_ms,
     image_point_to_screen,
-    save_debug_jpeg,
 )
 from poc.workflow_1.workflow_config import WorkflowSettings, load_workflow_settings
 from poc.workflow_1.workflow_runner import WorkflowRunner
@@ -260,7 +260,7 @@ def _maybe_save_capture(context: dict, filename: str, image, *, allow_save: bool
         return None
 
     output_path = run_dir / filename
-    save_debug_jpeg(image, output_path, log_name=LOG_NAME)
+    save_debug_jpeg(image, output_path)
     return str(output_path)
 
 

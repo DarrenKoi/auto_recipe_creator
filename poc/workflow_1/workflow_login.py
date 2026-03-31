@@ -524,53 +524,69 @@ def execute_login_step(
     context["active_target_key"] = target_key
 
     if step.step_type == "type":
-        if not callable(click_at_screen):
-            return _build_base_result(
-                step,
-                started_at,
-                settings,
-                status="failed",
-                failure_class="act_failed",
-                error_message="click_at_screen unavailable",
-                detected_point=detection.point,
-                screen_point=screen_point,
-                before_screenshot=before_screenshot,
-                window_title_before=window_title,
-            )
+        if not settings.action_enabled:
+            if target_key == "password_input":
+                print(
+                    "[INFO] [DRY-RUN] 입력 step 생략: "
+                    f"target={target_key}, clicks=1+2, chars={len(step.input_text or '')}"
+                )
+            else:
+                print(
+                    "[INFO] [DRY-RUN] 입력 step 생략: "
+                    f"target={target_key}, clicks=1+2, text={(step.input_text or '')!r}"
+                )
+            typed_values = context.setdefault("typed_values", {})
+            typed_values[target_key] = step.input_text or ""
+            context["focused_target_key"] = target_key
+            time.sleep(settings.post_type_settle_sec)
+        else:
+            if not callable(click_at_screen):
+                return _build_base_result(
+                    step,
+                    started_at,
+                    settings,
+                    status="failed",
+                    failure_class="act_failed",
+                    error_message="click_at_screen unavailable",
+                    detected_point=detection.point,
+                    screen_point=screen_point,
+                    before_screenshot=before_screenshot,
+                    window_title_before=window_title,
+                )
 
-        click_at_screen(
-            screen_point,
-            target_key,
-            click_count=1,
-            action_enabled=settings.action_enabled,
-        )
-        time.sleep(settings.pre_type_click_settle_sec)
-        click_at_screen(
-            screen_point,
-            target_key,
-            click_count=2,
-            action_enabled=settings.action_enabled,
-        )
-        time.sleep(settings.pre_type_double_click_settle_sec)
-        typed_ok = _clear_and_type(step.input_text or "", target_key, settings)
-        if not typed_ok:
-            return _build_base_result(
-                step,
-                started_at,
-                settings,
-                status="failed",
-                failure_class="act_failed",
-                error_message=f"타이핑 실패: {target_key}",
-                detected_point=detection.point,
-                screen_point=screen_point,
-                before_screenshot=before_screenshot,
-                window_title_before=window_title,
+            click_at_screen(
+                screen_point,
+                target_key,
+                click_count=1,
+                action_enabled=settings.action_enabled,
             )
+            time.sleep(settings.pre_type_click_settle_sec)
+            click_at_screen(
+                screen_point,
+                target_key,
+                click_count=2,
+                action_enabled=settings.action_enabled,
+            )
+            time.sleep(settings.pre_type_double_click_settle_sec)
+            typed_ok = _clear_and_type(step.input_text or "", target_key, settings)
+            if not typed_ok:
+                return _build_base_result(
+                    step,
+                    started_at,
+                    settings,
+                    status="failed",
+                    failure_class="act_failed",
+                    error_message=f"타이핑 실패: {target_key}",
+                    detected_point=detection.point,
+                    screen_point=screen_point,
+                    before_screenshot=before_screenshot,
+                    window_title_before=window_title,
+                )
 
-        typed_values = context.setdefault("typed_values", {})
-        typed_values[target_key] = step.input_text or ""
-        context["focused_target_key"] = target_key
-        time.sleep(settings.post_type_settle_sec)
+            typed_values = context.setdefault("typed_values", {})
+            typed_values[target_key] = step.input_text or ""
+            context["focused_target_key"] = target_key
+            time.sleep(settings.post_type_settle_sec)
     elif step.step_type == "click":
         if not callable(click_at_screen):
             return _build_base_result(

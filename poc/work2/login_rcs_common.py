@@ -123,10 +123,11 @@ def _normalize_path_text(path_text: str | None) -> str:
     return str(path_text).replace("\\", "/").lower()
 
 
-def _is_pid_alive(pid: int, expected_exe_path: str = "") -> bool:
+def _is_pid_alive(pid: int, expected_exe_path: str = "", *, log_detail: bool = False) -> bool:
     """PID 가 살아 있고, 필요하면 기대한 RCS 실행 파일과도 일치하는지 확인한다."""
     if not PSUTIL_AVAILABLE:
-        print(f"[INFO] psutil unavailable: pid liveness check skipped (pid={pid})")
+        if log_detail:
+            print(f"[INFO] psutil unavailable: pid liveness check skipped (pid={pid})")
         return False
 
     try:
@@ -146,11 +147,12 @@ def _is_pid_alive(pid: int, expected_exe_path: str = "") -> bool:
         normalized_running_exe = _normalize_path_text(running_exe)
         if normalized_running_exe:
             is_match = normalized_running_exe == expected_path
-            print(
-                "[INFO] PID 실행 파일 점검 "
-                f"pid={pid}, expected={expected_exe_path!r}, "
-                f"running={running_exe!r}, match={is_match}"
-            )
+            if log_detail:
+                print(
+                    "[INFO] PID 실행 파일 점검 "
+                    f"pid={pid}, expected={expected_exe_path!r}, "
+                    f"running={running_exe!r}, match={is_match}"
+                )
             return is_match
 
         expected_name = Path(expected_exe_path).name.strip().lower()
@@ -161,14 +163,16 @@ def _is_pid_alive(pid: int, expected_exe_path: str = "") -> bool:
 
         if running_name:
             is_match = running_name == expected_name
-            print(
-                "[INFO] PID 실행 파일명 점검 "
-                f"pid={pid}, expected_name={expected_name!r}, "
-                f"running_name={running_name!r}, match={is_match}"
-            )
+            if log_detail:
+                print(
+                    "[INFO] PID 실행 파일명 점검 "
+                    f"pid={pid}, expected_name={expected_name!r}, "
+                    f"running_name={running_name!r}, match={is_match}"
+                )
             return is_match
 
-        print(f"[INFO] PID 실행 파일 점검 불가: pid={pid}, expected={expected_exe_path!r}")
+        if log_detail:
+            print(f"[INFO] PID 실행 파일 점검 불가: pid={pid}, expected={expected_exe_path!r}")
         return False
     except (psutil.NoSuchProcess, psutil.AccessDenied):
         return False

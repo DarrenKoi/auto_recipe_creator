@@ -251,57 +251,43 @@ class OpenAICompatibleVLMClient:
         if request.stream:
             payload["stream"] = True
 
-        response = requests.post(
-            self.endpoint,
-            headers=self._headers(),
-            json=payload,
-            timeout=self.timeout_sec,
-        )
-
-        print(f"[INFO] VLM 응답 status={response.status_code}")
-        print(
-            f"[INFO] VLM 응답 headers: "
-            f"content-type={response.headers.get('content-type', 'N/A')}"
-        )
         try:
-            raw_body = response.json()
-            log_body = dict(raw_body)
-            if "choices" in log_body:
-                log_body["choices"] = f"[{len(raw_body['choices'])} item(s)]"
-            print(
-                f"[INFO] VLM 응답 body (요약): "
-                f"{_json.dumps(log_body, ensure_ascii=False)}"
+            response = requests.post(
+                self.endpoint,
+                headers=self._headers(),
+                json=payload,
+                timeout=self.timeout_sec,
             )
-        except Exception:
-            print(f"[INFO] VLM 응답 body (raw): {response.text[:500]}")
-
-        response.raise_for_status()
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            if status_code is None:
+                print(f"[ERROR] VLM 응답 실패: model={request.model}, error={exc}")
+            else:
+                print(
+                    f"[ERROR] VLM 응답 실패: model={request.model}, "
+                    f"status={status_code}, error={exc}"
+                )
+            raise
 
         body_text = response.text
-        body_len = len(body_text)
-        if body_len == 0:
-            print("[WARNING] VLM 응답 body 가 비어 있음 (0 bytes)")
-        else:
-            print(f"[INFO] VLM 응답 body 길이: {body_len} chars")
 
         try:
             data = response.json()
         except ValueError:
             data = None
-            print(f"[INFO] VLM 응답이 JSON 이 아님, SSE 파싱 시도 (body 앞 200자: {body_text[:200]!r})")
 
         if isinstance(data, dict):
             self.last_token_usage = data.get("usage") or {}
-            usage = data.get("usage") or {}
-            if usage:
+            text = self._extract_text_from_json_body(data)
+            if text:
+                usage = self.last_token_usage or {}
                 print(
-                    f"[INFO] VLM token usage: "
+                    f"[INFO] VLM 응답 성공: model={request.model}, "
                     f"prompt={usage.get('prompt_tokens', '?')}, "
                     f"completion={usage.get('completion_tokens', '?')}, "
                     f"total={usage.get('total_tokens', '?')}"
                 )
-            text = self._extract_text_from_json_body(data)
-            if text:
                 return text
             if self._looks_like_chat_wrapper(data):
                 raise ValueError(
@@ -311,10 +297,18 @@ class OpenAICompatibleVLMClient:
 
         sse_text = self._extract_text_from_sse_body(body_text)
         if sse_text:
+            print(
+                f"[INFO] VLM 응답 성공: model={request.model}, "
+                "prompt=?, completion=?, total=?"
+            )
             return sse_text
 
         stripped_body = body_text.strip()
         if stripped_body:
+            print(
+                f"[INFO] VLM 응답 성공: model={request.model}, "
+                "prompt=?, completion=?, total=?"
+            )
             return stripped_body
 
         raise ValueError("VLM response has no usable text content.")

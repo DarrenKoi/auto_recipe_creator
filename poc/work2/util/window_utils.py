@@ -233,12 +233,10 @@ def foreground_window(
 ) -> bool:
     """Win32 API 로 창을 foreground 로 올린다."""
     if os.name != "nt":
-        print(f"[INFO] Win32 foreground 생략(non-nt): {debug_label}")
         return False
 
     handle = _extract_window_handle(window)
     if handle is None:
-        print(f"[INFO] 창 handle 조회 실패: {debug_label}")
         return False
 
     try:
@@ -249,10 +247,6 @@ def foreground_window(
 
     try:
         if user32.IsIconic(handle):
-            print(
-                f"[INFO] Win32 restore 시도: {debug_label}, "
-                f"handle={_format_handle(handle)}"
-            )
             user32.ShowWindow(handle, _SW_RESTORE)
             time.sleep(settle_sec)
 
@@ -265,19 +259,9 @@ def foreground_window(
 
     is_foreground = foreground_handle == handle
     if is_foreground:
-        print(
-            f"[INFO] Win32 foreground 완료: {debug_label}, "
-            f"handle={_format_handle(handle)}, "
-            f"foreground_handle={_format_handle(foreground_handle)}"
-        )
         return True
 
-    print(
-        f"[INFO] Win32 foreground 미확인: {debug_label}, "
-        f"handle={_format_handle(handle)}, "
-        f"foreground_handle={_format_handle(foreground_handle)}, "
-        f"set_foreground_ok={set_foreground_ok}"
-    )
+    print(f"[INFO] Win32 foreground 미확인: {debug_label}, set_foreground_ok={set_foreground_ok}")
     return False
 
 
@@ -290,22 +274,22 @@ def activate_window(
     """창을 restore/focus 해서 캡처 가능한 상태로 만든다."""
     try:
         if hasattr(window, "is_minimized") and window.is_minimized():
-            print(f"[INFO] 창 restore 시도: {debug_label}")
             window.restore()
             time.sleep(settle_sec)
-    except Exception as exc:
-        print(f"[INFO] 창 restore 실패: {debug_label}, error={exc}")
+    except Exception:
+        pass
 
     if foreground_window(window, debug_label=debug_label, settle_sec=settle_sec):
+        print(f"[INFO] 창 활성화 완료: {debug_label}, strategy=foreground")
         return True
 
     try:
         window.set_focus()
         time.sleep(settle_sec)
-        print(f"[INFO] 창 focus 완료: {debug_label}")
+        print(f"[INFO] 창 활성화 완료: {debug_label}, strategy=set_focus")
         return True
-    except Exception as exc:
-        print(f"[INFO] 창 focus 실패: {debug_label}, error={exc}")
+    except Exception:
+        pass
 
     try:
         rect = window.rectangle()
@@ -313,10 +297,10 @@ def activate_window(
         rel_y = min(18, max(1, rect.bottom - rect.top - 2))
         window.click_input(coords=(rel_x, rel_y), button="left")
         time.sleep(settle_sec)
-        print(f"[INFO] 창 click_input focus 폴백 성공: {debug_label}")
+        print(f"[INFO] 창 활성화 완료: {debug_label}, strategy=click_input")
         return True
-    except Exception as exc:
-        print(f"[INFO] 창 click_input focus 폴백 실패: {debug_label}, error={exc}")
+    except Exception:
+        print(f"[INFO] 창 활성화 실패: {debug_label}")
         return False
 
 

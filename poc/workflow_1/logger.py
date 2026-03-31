@@ -101,17 +101,13 @@ def log_vlm_call(
     """VLM 호출 결과를 로그에 기록한다."""
     logger = _get_logger(log_name)
     tokens = _format_tokens(token_usage)
+    response_chars = len(response_text or "")
 
     if status == "ok":
         logger.info(
-            "service=%s model=%s status=ok latency_ms=%.1f %s endpoint=%s",
-            service, model, latency_ms, tokens, endpoint,
+            "service=%s model=%s status=ok latency_ms=%.1f %s endpoint=%s response_chars=%s",
+            service, model, latency_ms, tokens, endpoint, response_chars,
         )
-        if response_text:
-            logger.info("--- VLM response start ---")
-            for line in response_text.splitlines():
-                logger.info(line)
-            logger.info("--- VLM response end ---")
     else:
         logger.error(
             "service=%s model=%s status=error latency_ms=%.1f %s error=%s endpoint=%s",

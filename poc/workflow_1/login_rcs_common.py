@@ -21,7 +21,7 @@ from poc.work2 import util as work2_util
 
 WINDOW_TITLE_PREFIX = "Remote Control System"
 RCS_MAIN_WINDOW_TITLE_PREFIX = "RCS -"
-RCS_UPDATER_WINDOW_TITLE_PREFIX = "RCS Updater (V."
+RCS_UPDATER_WINDOW_TITLE_PREFIX = "RCS Updater"
 OPEN_RCS_STATE_PATH = LOG_DIR / "open_rcs_state.json"
 OPEN_RCS_SCRIPT_PATH = Path(__file__).parent / "open_rcs.py"
 DESKTOP_SCAN_BACKENDS = ("uia", "win32")

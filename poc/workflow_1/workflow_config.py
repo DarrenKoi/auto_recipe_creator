@@ -27,7 +27,7 @@ class WorkflowSettings:
     post_type_settle_sec: float = 0.3
     post_login_wait_sec: float = 3.0
     login_verify_timeout_sec: float = 15.0
-    login_verify_poll_interval_sec: float = 2.0
+    login_verify_poll_interval_sec: float = 0.5
 
     def to_snapshot(self) -> dict:
         """상태 저장용 설정 스냅샷."""
@@ -64,7 +64,7 @@ def load_workflow_settings() -> WorkflowSettings:
         post_type_settle_sec=env_float("ACTION_LOGIN_POST_TYPE_SETTLE_SEC", 0.3),
         post_login_wait_sec=env_float("ACTION_LOGIN_POST_LOGIN_WAIT_SEC", 3.0),
         login_verify_timeout_sec=env_float("ACTION_LOGIN_VERIFY_TIMEOUT_SEC", 15.0),
-        login_verify_poll_interval_sec=env_float("ACTION_LOGIN_VERIFY_POLL_INTERVAL_SEC", 2.0),
+        login_verify_poll_interval_sec=env_float("ACTION_LOGIN_VERIFY_POLL_INTERVAL_SEC", 0.5),
     )
 
 

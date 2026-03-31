@@ -8,10 +8,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from poc.workflow_1.login_rcs_common import (
+    RCS_MAIN_WINDOW_TITLE_PREFIX,
     RCS_UPDATER_WINDOW_TITLE_PREFIX,
     WINDOW_TITLE_PREFIX,
+    find_rcs_main_window,
+    find_rcs_updater_window,
     find_login_window,
-    wait_for_rcs_updater_window,
 )
 from poc.workflow_1.debug_artifacts import save_debug_jpeg
 from poc.workflow_1.logger import log_work2_event
@@ -27,6 +29,7 @@ from poc.workflow_1.workflow_config import WorkflowSettings, load_workflow_setti
 from poc.workflow_1.workflow_runner import WorkflowRunner
 from poc.workflow_1.workflow_types import (
     ConditionGroup,
+    ConditionGroupType,
     ConditionType,
     StepCondition,
     StepResult,
@@ -185,15 +188,21 @@ def build_login_workflow_steps(
         WorkflowStep(
             step_id="verify_updater_window",
             step_type="verify_only",
-            target_description="verify that the RCS Updater window appeared after login",
+            target_description="verify that the updater or main RCS window appeared after login",
             preconditions=ConditionGroup(
                 conditions=[StepCondition(condition_type=ConditionType.ALWAYS)]
             ),
             success_criteria=ConditionGroup(
+                group_type=ConditionGroupType.ANY,
                 conditions=[
                     StepCondition(
                         condition_type=ConditionType.WINDOW_APPEARED,
                         title_prefix=RCS_UPDATER_WINDOW_TITLE_PREFIX,
+                        verify_method="window_title",
+                    ),
+                    StepCondition(
+                        condition_type=ConditionType.WINDOW_APPEARED,
+                        title_prefix=RCS_MAIN_WINDOW_TITLE_PREFIX,
                         verify_method="window_title",
                     ),
                 ]
@@ -345,6 +354,53 @@ def _build_base_result(
     )
 
 
+def _wait_for_post_login_window(
+    settings: WorkflowSettings,
+) -> tuple[object | None, str, str, str]:
+    """로그인 후 updater 또는 메인 RCS 창이 나타날 때까지 폴링한다."""
+    deadline = time.time() + settings.login_verify_timeout_sec
+    poll_interval_sec = max(0.1, settings.login_verify_poll_interval_sec)
+    attempt = 0
+
+    print(
+        "[INFO] 로그인 후 창 대기 시작: "
+        f"updater_prefix={RCS_UPDATER_WINDOW_TITLE_PREFIX!r}, "
+        f"main_prefix={RCS_MAIN_WINDOW_TITLE_PREFIX!r}, "
+        f"timeout={settings.login_verify_timeout_sec}s, "
+        f"poll_interval={poll_interval_sec}s"
+    )
+
+    while time.time() < deadline:
+        attempt += 1
+
+        updater_window, updater_title, updater_backend = find_rcs_updater_window()
+        if updater_window is not None:
+            print(
+                f"[INFO] 로그인 후 updater 창 발견 (attempt={attempt}): "
+                f"title={updater_title!r}, backend={updater_backend}"
+            )
+            return updater_window, updater_title, updater_backend, "updater_window_found"
+
+        main_window, main_title, main_backend = find_rcs_main_window()
+        if main_window is not None:
+            print(
+                f"[INFO] 로그인 후 메인 창 발견 (attempt={attempt}): "
+                f"title={main_title!r}, backend={main_backend}"
+            )
+            return main_window, main_title, main_backend, "main_window_found"
+
+        remaining_sec = deadline - time.time()
+        if remaining_sec <= 0:
+            break
+        time.sleep(min(poll_interval_sec, remaining_sec))
+
+    print(
+        "[WARNING] 로그인 후 창 타임아웃: "
+        f"{settings.login_verify_timeout_sec}s 내 updater/main window 미발견"
+    )
+    return None, "", "", "post_login_window_not_found"
+
+
 def execute_login_step(
     step: WorkflowStep,
     context: dict,
@@ -388,20 +444,19 @@ def execute_login_step(
             )
 
         time.sleep(settings.post_login_wait_sec)
-        updater_window, updater_title, _backend = wait_for_rcs_updater_window(
-            timeout_sec=settings.login_verify_timeout_sec,
-            poll_interval_sec=settings.login_verify_poll_interval_sec,
+        post_login_window, post_login_title, _backend, verify_reason = _wait_for_post_login_window(
+            settings
         )
-        context["post_login_window"] = updater_window
-        context["post_login_title"] = updater_title
-        context["rcs_main_window"] = updater_window
-        context["rcs_main_title"] = updater_title
-        context["login_window_visible"] = updater_window is None
+        context["post_login_window"] = post_login_window
+        context["post_login_title"] = post_login_title
+        context["rcs_main_window"] = post_login_window
+        context["rcs_main_title"] = post_login_title
+        context["login_window_visible"] = post_login_window is None
 
         after_screenshot = None
-        if updater_window is not None and callable(capture_window):
+        if post_login_window is not None and callable(capture_window):
             try:
-                main_image = capture_window(updater_window)
+                main_image = capture_window(post_login_window)
             except Exception:
                 main_image = None
             after_screenshot = _maybe_save_capture(
@@ -411,17 +466,17 @@ def execute_login_step(
                 allow_save=True,
             )
 
-        if updater_window is None:
+        if post_login_window is None:
             return _build_base_result(
                 step,
                 started_at,
                 settings,
                 status="failed",
                 failure_class="verify_failed",
-                error_message="로그인 버튼 클릭 후 RCS Updater 창 미확인",
-                verification_result={"verified": False, "reason": "updater_window_not_found"},
+                error_message="로그인 버튼 클릭 후 RCS Updater 또는 메인 RCS 창 미확인",
+                verification_result={"verified": False, "reason": verify_reason},
                 after_screenshot=after_screenshot,
-                window_title_after=updater_title,
+                window_title_after=post_login_title,
                 vlm_service_used="window_title",
             )
 
@@ -429,9 +484,9 @@ def execute_login_step(
             step,
             started_at,
             settings,
-            verification_result={"verified": True, "reason": "updater_window_found"},
+            verification_result={"verified": True, "reason": verify_reason},
             after_screenshot=after_screenshot,
-            window_title_after=updater_title,
+            window_title_after=post_login_title,
             vlm_service_used="window_title",
         )
 

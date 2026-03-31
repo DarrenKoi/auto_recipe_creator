@@ -79,8 +79,12 @@ class ConditionChecker:
         return self._check_window_visible(condition)
 
     def _check_window_appeared(self, condition: StepCondition) -> bool:
-        window = self.context.get("rcs_main_window")
-        title = str(self.context.get("rcs_main_title") or "")
+        window = self.context.get("post_login_window") or self.context.get("rcs_main_window")
+        title = str(
+            self.context.get("post_login_title")
+            or self.context.get("rcs_main_title")
+            or ""
+        )
         if condition.title_prefix:
             return window is not None and title.lower().startswith(condition.title_prefix.lower())
         return window is not None

@@ -8,10 +8,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from poc.workflow_1.login_rcs_common import (
-    RCS_MAIN_WINDOW_TITLE_PREFIX,
+    RCS_UPDATER_WINDOW_TITLE_PREFIX,
     WINDOW_TITLE_PREFIX,
     find_login_window,
-    wait_for_rcs_main_window,
+    wait_for_rcs_updater_window,
 )
 from poc.workflow_1.debug_artifacts import save_debug_jpeg
 from poc.workflow_1.logger import log_work2_event
@@ -178,9 +178,9 @@ def build_login_workflow_steps(
     )
     steps.append(
         WorkflowStep(
-            step_id="verify_main_window",
+            step_id="verify_updater_window",
             step_type="verify_only",
-            target_description="verify that the RCS main window appeared after login",
+            target_description="verify that the RCS Updater window appeared after login",
             preconditions=ConditionGroup(
                 conditions=[StepCondition(condition_type=ConditionType.ALWAYS)]
             ),
@@ -188,7 +188,7 @@ def build_login_workflow_steps(
                 conditions=[
                     StepCondition(
                         condition_type=ConditionType.WINDOW_APPEARED,
-                        title_prefix=RCS_MAIN_WINDOW_TITLE_PREFIX,
+                        title_prefix=RCS_UPDATER_WINDOW_TITLE_PREFIX,
                         verify_method="window_title",
                     ),
                 ]
@@ -265,30 +265,24 @@ def _maybe_save_capture(context: dict, filename: str, image, *, allow_save: bool
 
 
 def _clear_and_type(text: str, target_key: str, settings: WorkflowSettings) -> bool:
-    """입력창 내용을 지우고 새 문자열을 입력한다."""
+    """선택된 입력창 내용을 backspace 로 지운 뒤 새 문자열을 입력한다."""
     if not settings.action_enabled or not PYNPUT_KEYBOARD_AVAILABLE:
         if target_key == "password_input":
             print(
-                "[INFO] [DRY-RUN] 비밀번호 타이핑 생략: "
+                "[INFO] [DRY-RUN] 비밀번호 입력 시퀀스 생략: "
                 f"target={target_key}, chars={len(text)}, action_enabled={settings.action_enabled}"
             )
         else:
             print(
-                f"[INFO] [DRY-RUN] 타이핑 생략: target={target_key}, "
+                f"[INFO] [DRY-RUN] 입력 시퀀스 생략: target={target_key}, "
                 f"text={text!r}, action_enabled={settings.action_enabled}"
             )
         return True
 
     keyboard = KeyboardController()
-    keyboard.press(Key.ctrl)
-    keyboard.press("a")
-    keyboard.release("a")
-    keyboard.release(Key.ctrl)
-    time.sleep(0.05)
-
-    keyboard.press(Key.delete)
-    keyboard.release(Key.delete)
-    time.sleep(0.05)
+    keyboard.press(Key.backspace)
+    keyboard.release(Key.backspace)
+    time.sleep(settings.post_type_backspace_settle_sec)
 
     for ch in text:
         keyboard.type(ch)
@@ -388,18 +382,21 @@ def execute_login_step(
                 vlm_service_used="window_title",
             )
 
-        main_window, main_title, _backend = wait_for_rcs_main_window(
+        time.sleep(settings.post_login_wait_sec)
+        updater_window, updater_title, _backend = wait_for_rcs_updater_window(
             timeout_sec=settings.login_verify_timeout_sec,
             poll_interval_sec=settings.login_verify_poll_interval_sec,
         )
-        context["rcs_main_window"] = main_window
-        context["rcs_main_title"] = main_title
-        context["login_window_visible"] = main_window is None
+        context["post_login_window"] = updater_window
+        context["post_login_title"] = updater_title
+        context["rcs_main_window"] = updater_window
+        context["rcs_main_title"] = updater_title
+        context["login_window_visible"] = updater_window is None
 
         after_screenshot = None
-        if main_window is not None and callable(capture_window):
+        if updater_window is not None and callable(capture_window):
             try:
-                main_image = capture_window(main_window)
+                main_image = capture_window(updater_window)
             except Exception:
                 main_image = None
             after_screenshot = _maybe_save_capture(
@@ -409,17 +406,17 @@ def execute_login_step(
                 allow_save=True,
             )
 
-        if main_window is None:
+        if updater_window is None:
             return _build_base_result(
                 step,
                 started_at,
                 settings,
                 status="failed",
                 failure_class="verify_failed",
-                error_message="로그인 버튼 클릭 후 메인 창 미확인",
-                verification_result={"verified": False, "reason": "main_window_not_found"},
+                error_message="로그인 버튼 클릭 후 RCS Updater 창 미확인",
+                verification_result={"verified": False, "reason": "updater_window_not_found"},
                 after_screenshot=after_screenshot,
-                window_title_after=main_title,
+                window_title_after=updater_title,
                 vlm_service_used="window_title",
             )
 
@@ -427,9 +424,9 @@ def execute_login_step(
             step,
             started_at,
             settings,
-            verification_result={"verified": True, "reason": "main_window_found"},
+            verification_result={"verified": True, "reason": "updater_window_found"},
             after_screenshot=after_screenshot,
-            window_title_after=main_title,
+            window_title_after=updater_title,
             vlm_service_used="window_title",
         )
 
@@ -541,6 +538,13 @@ def execute_login_step(
                 window_title_before=window_title,
             )
 
+        click_at_screen(
+            screen_point,
+            target_key,
+            click_count=1,
+            action_enabled=settings.action_enabled,
+        )
+        time.sleep(settings.pre_type_click_settle_sec)
         click_at_screen(
             screen_point,
             target_key,

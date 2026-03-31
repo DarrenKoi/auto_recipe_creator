@@ -21,6 +21,7 @@ from poc.work2 import util as work2_util
 
 WINDOW_TITLE_PREFIX = "Remote Control System"
 RCS_MAIN_WINDOW_TITLE_PREFIX = "RCS -"
+RCS_UPDATER_WINDOW_TITLE_PREFIX = "RCS Updater (V."
 OPEN_RCS_STATE_PATH = LOG_DIR / "open_rcs_state.json"
 OPEN_RCS_SCRIPT_PATH = Path(__file__).parent / "open_rcs.py"
 DESKTOP_SCAN_BACKENDS = ("uia", "win32")
@@ -298,6 +299,29 @@ def find_rcs_main_window() -> tuple[object | None, str, str]:
     return main_window, window_title, backend
 
 
+def find_rcs_updater_window() -> tuple[object | None, str, str]:
+    """로그인 후 RCS Updater 창을 탐색한다."""
+    if not WINDOW_UTILS_AVAILABLE:
+        print("[ERROR] window_utils unavailable - updater 창 탐색 불가")
+        return None, "", ""
+
+    print(f"[INFO] RCS Updater 창 탐색 시작: title_prefix={RCS_UPDATER_WINDOW_TITLE_PREFIX!r}")
+    updater_window, window_title, backend = find_window_by_title_prefix(
+        RCS_UPDATER_WINDOW_TITLE_PREFIX,
+        DESKTOP_SCAN_BACKENDS,
+        visible_only=True,
+    )
+    if updater_window is None:
+        return None, "", ""
+
+    print(f"[INFO] RCS Updater 창 발견 -> 포커스 활성화: title={window_title!r}")
+    activate_window(
+        updater_window,
+        debug_label=f"rcs_updater_window backend={backend} title={window_title!r}",
+    )
+    return updater_window, window_title, backend
+
+
 def wait_for_rcs_main_window(
     timeout_sec: float = 15.0,
     poll_interval_sec: float = 2.0,
@@ -329,11 +353,45 @@ def wait_for_rcs_main_window(
     return None, "", ""
 
 
+def wait_for_rcs_updater_window(
+    timeout_sec: float = 15.0,
+    poll_interval_sec: float = 2.0,
+) -> tuple[object | None, str, str]:
+    """RCS Updater 창이 나타날 때까지 폴링한다."""
+    print(
+        f"[INFO] RCS Updater 창 대기 시작: "
+        f"title_prefix={RCS_UPDATER_WINDOW_TITLE_PREFIX!r}, timeout={timeout_sec}s"
+    )
+    deadline = time.time() + timeout_sec
+    attempt = 0
+
+    while time.time() < deadline:
+        attempt += 1
+        updater_window, window_title, backend = find_rcs_updater_window()
+        if updater_window is not None:
+            print(
+                f"[INFO] RCS Updater 창 발견 (attempt={attempt}): "
+                f"title={window_title!r}, backend={backend}"
+            )
+            return updater_window, window_title, backend
+
+        time.sleep(poll_interval_sec)
+
+    print(
+        f"[WARNING] RCS Updater 창 타임아웃: "
+        f"{timeout_sec}s 내 미발견 (attempts={attempt})"
+    )
+    return None, "", ""
+
+
 __all__ = [
     "DESKTOP_SCAN_BACKENDS",
     "RCS_MAIN_WINDOW_TITLE_PREFIX",
+    "RCS_UPDATER_WINDOW_TITLE_PREFIX",
     "WINDOW_TITLE_PREFIX",
     "find_login_window",
     "find_rcs_main_window",
+    "find_rcs_updater_window",
     "wait_for_rcs_main_window",
+    "wait_for_rcs_updater_window",
 ]

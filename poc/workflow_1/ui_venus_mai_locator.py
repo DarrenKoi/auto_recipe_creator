@@ -11,7 +11,6 @@ from poc.workflow_1.debug_artifacts import (
     save_debug_jpeg,
     save_debug_json,
     save_debug_text,
-    save_debug_webp,
     save_marked_bboxes,
 )
 from poc.workflow_1.logger import log_work2_event
@@ -236,16 +235,10 @@ def _save_pipeline_inputs(
     log_name: str,
     artifact_prefix: str,
 ) -> dict[str, Path]:
-    """원본/zoom 입력 artifact 를 저장한다."""
+    """원본/zoom JPEG artifact 를 저장한다."""
     capture_path = debug_image_path(
         debug_image_dir,
         f"{artifact_prefix}_capture.jpg",
-        model_name=pipeline_model_name,
-        timestamp_tag=debug_stamp,
-    )
-    full_webp_path = debug_image_path(
-        debug_image_dir,
-        f"{artifact_prefix}_full_input.webp",
         model_name=pipeline_model_name,
         timestamp_tag=debug_stamp,
     )
@@ -255,21 +248,11 @@ def _save_pipeline_inputs(
         model_name=pipeline_model_name,
         timestamp_tag=debug_stamp,
     )
-    zoom_webp_path = debug_image_path(
-        debug_image_dir,
-        f"{artifact_prefix}_zoom_input.webp",
-        model_name=pipeline_model_name,
-        timestamp_tag=debug_stamp,
-    )
     save_debug_jpeg(image, capture_path)
-    save_debug_webp(image, full_webp_path)
     save_debug_jpeg(zoom_image, zoom_capture_path)
-    save_debug_webp(zoom_image, zoom_webp_path)
     return {
         "capture": capture_path,
-        "full_webp": full_webp_path,
         "zoom_capture": zoom_capture_path,
-        "zoom_webp": zoom_webp_path,
     }
 
 
@@ -576,9 +559,7 @@ def analyze_window_target(
         "refined_point_full_pixels": refined_full_point,
         "artifacts": {
             "capture": str(input_paths["capture"]),
-            "full_webp": str(input_paths["full_webp"]),
             "zoom_capture": str(input_paths["zoom_capture"]),
-            "zoom_webp": str(input_paths["zoom_webp"]),
             "ui_venus_response": str(coarse_response_path),
             "mai_ui_response": str(refine_response_path),
             "overlay": str(overlay_path),

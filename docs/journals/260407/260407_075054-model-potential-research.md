@@ -10,6 +10,12 @@
 - `Qdrant`의 특성을 조사했다. Qdrant 공식 문서 기준으로 Qdrant는 client-server 형태의 vector database이며, dense vector뿐 아니라 sparse vector, named vector, payload filtering, HNSW 기반 검색, sharding/replication, hybrid retrieval을 지원한다. 공식 hybrid search 문서는 dense + sparse + multivector reranking까지 한 collection에 구성하는 예시를 제공한다. 소스: `https://qdrant.tech/documentation/overview/`, `https://qdrant.tech/documentation/advanced-tutorials/reranking-hybrid-search/`
 - `Qdrant`로 이 프로젝트에서 할 수 있는 일도 정리했다. 현재 `test/video_frame_parser/db_handler.py`는 `MongoDB + FAISS`를 나눠 쓰고 있는데, Qdrant를 도입하면 화면 임베딩, OCR 키워드 sparse vector, 액션 단계 메타데이터를 한 검색 계층으로 묶을 수 있다. 예를 들어 `frame_id`, `video_id`, `step_name`, `window_title`, `ocr_text` payload를 함께 저장하고, dense image retrieval + payload filter + sparse OCR keyword search를 조합한 검색이 가능하다. 따라서 개인용 실험을 넘어 coworker 공유형 retrieval service가 필요해질 때 잠재력이 크다.
 - 후보군을 현재 사용 중인 것과 비교해 우선순위도 정리했다. `InternVL3-8B`는 현재 `UI-Venus`를 바로 대체하는 모델이라기보다 planner/verifier 성격의 보강 후보이고, `DINOv2`는 현재 `CLIP` 대체 또는 보강 후보이며, `NV-DINOv2`는 DINOv2의 enterprise/NVIDIA stack 특화 대안이고, `Qdrant`는 현재 `FAISS`를 확장 가능한 service 형태로 바꾸는 저장소 후보라고 보는 것이 가장 현실적이다.
+- H200 2장 적재 가능성도 함께 정리했다. NVIDIA 공식 사양 기준 H200은 GPU당 `141GB HBM3e`, `4.8TB/s` 대역폭을 제공하므로 2장 구성은 총 `282GB` VRAM 풀을 가진다. 소스: `https://www.nvidia.com/en-us/data-center/h200/`
+- `InternVL3-8B`는 공개 모델 카드 기준 `8B params`, `BF16` 모델이다. 단순 계산으로 BF16 가중치만 약 `16GB` 수준이고, 실제 추론 시 vision tower, KV cache, activation, runtime overhead를 포함해도 H200 1장에 충분히 들어갈 가능성이 높다. 따라서 H200 2장에서는 "무리 없이 적재 가능" 쪽으로 보는 것이 맞다. 다만 긴 컨텍스트, 다중 이미지 배치, 높은 동시성에서는 KV cache가 커지므로 단일 GPU 고정인지 tensor parallel 분산인지 운영 방식만 정하면 된다. 이 판단은 H200 공식 VRAM과 공개 파라미터 수를 기반으로 한 추정이다.
+- `DINOv2`는 Meta 공식 저장소 기준 `ViT-B/14` 86M, `ViT-L/14` 300M, `ViT-g/14` 1.1B 파라미터까지 공개되어 있다. BF16 추론 가중치 기준으로 대략 `0.2GB`, `0.6GB`, `2.2GB` 급이므로, 어떤 공개 variant를 쓰더라도 H200 1장에 매우 여유 있게 들어간다. 2장 H200을 쓰는 경우는 적재 가능성보다 대량 배치 처리량이나 파인튜닝 속도 개선이 더 큰 의미를 가진다. 소스: `https://github.com/facebookresearch/dinov2`
+- `NV-DINOv2`는 NVIDIA가 DINOv2 계열 기반 visual foundation model로 설명하지만, 공개 페이지에서 고정 파라미터 수나 정확한 메모리 프로파일을 일괄 표로 제공하지는 않았다. 다만 공식 설명상 localization/classification backbone과 domain adaptation 흐름에 초점이 있으므로, 일반적인 backbone 추론은 H200 2장에 충분히 들어갈 가능성이 높다. 반면 SSL 재학습이나 대규모 domain adaptation은 입력 해상도, batch size, adapter/head 구성에 따라 메모리 사용량이 크게 달라져서 "무조건 충분"이라고 단정하기는 어렵다. 공개 문서만으로는 이 부분의 정확한 상한을 확정할 수 없었다.
+- `Qdrant`는 모델이 아니라 vector database이므로 기본적으로 H200 2장에 "적재"하는 대상이 아니다. 공식 문서 기준 Qdrant는 기본적으로 CPU 중심으로 동작하고, 필요할 때 GPU indexing을 추가로 켤 수 있다. 따라서 이 프로젝트에서 Qdrant 도입 여부는 GPU VRAM보다는 CPU/RAM/NVMe와 운영 편의성 문제에 가깝다. H200은 Qdrant 자체보다, Qdrant에 넣을 임베딩을 생성하는 `InternVL3-8B`, `DINOv2`, `CLIP` 같은 모델 쪽에 쓰게 된다. 소스: `https://qdrant.tech/documentation/faq/qdrant-fundamentals/`, `https://qdrant.tech/documentation/guides/running-with-gpu/`
+- 실무 결론도 정리했다. 현재 후보 중 H200 2장에 대해 적재 걱정을 해야 하는 것은 사실상 없다. `InternVL3-8B`는 추론 기준으로 넉넉하고, `DINOv2`는 더 가볍고, `Qdrant`는 GPU 의존 대상이 아니며, `NV-DINOv2`만 학습 recipe 세부 조건이 불명확해 "추론은 매우 가능성이 높고, 대규모 적응 학습은 설정 확인 필요" 정도가 현실적인 결론이다.
 
 ### 2. 수정 내용
 - 신규 파일 추가: `docs/journals/260407/260407_075054-model-potential-research.md`
@@ -20,6 +26,7 @@
 - `DINOv2`는 `test/video_frame_parser/analyzer.py`의 `CLIP` 임베딩 경로와 나란히 붙일 수 있는 최소 PoC를 만들고, `유사 화면 검색 정확도`, `상태 클러스터링 품질`, `처리 속도`를 비교한다.
 - `Qdrant`는 `MongoDB + FAISS`를 즉시 전면 교체하기보다, `frame_id/video_id/step_name/window_title` payload와 `image_dense`, `ocr_sparse`를 함께 넣는 작은 collection schema PoC부터 만든다.
 - `NV-DINOv2`는 NVIDIA TAO/DeepStream 연동까지 운영할 의사가 있는지 먼저 판단한 뒤 진행한다. 운영 복잡도를 감수할 계획이 없다면 우선순위는 open `DINOv2`보다 낮게 두는 편이 맞다.
+- GPU 적재성 검증이 필요하면, 실제 사무실 H200 2장 서버에서 각 후보에 대해 `단일 이미지 추론`, `배치 추론`, `최대 동시성`, `OOM 발생 시점`을 분리해 측정한다. 특히 `InternVL3-8B`는 KV cache 증가량을, `NV-DINOv2`는 학습 해상도와 batch size에 따른 메모리 곡선을 따로 기록하는 편이 좋다.
 
 ### 4. 메모리 업데이트
 - 변경 없음

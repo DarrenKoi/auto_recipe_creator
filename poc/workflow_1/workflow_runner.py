@@ -79,15 +79,27 @@ class ConditionChecker:
         return self._check_window_visible(condition)
 
     def _check_window_appeared(self, condition: StepCondition) -> bool:
-        window = self.context.get("post_login_window") or self.context.get("rcs_main_window")
-        title = str(
-            self.context.get("post_login_title")
-            or self.context.get("rcs_main_title")
-            or ""
-        )
         if condition.title_prefix:
-            return window is not None and title.lower().startswith(condition.title_prefix.lower())
-        return window is not None
+            prefix = condition.title_prefix.lower()
+            candidates = (
+                (
+                    self.context.get("post_login_window"),
+                    str(self.context.get("post_login_title") or ""),
+                ),
+                (
+                    self.context.get("rcs_main_window"),
+                    str(self.context.get("rcs_main_title") or ""),
+                ),
+            )
+            return any(
+                window is not None and title.lower().startswith(prefix)
+                for window, title in candidates
+            )
+
+        return (
+            self.context.get("post_login_window") is not None
+            or self.context.get("rcs_main_window") is not None
+        )
 
     def _check_dialog_disappeared(self, condition: StepCondition) -> bool:
         if self.context.get("login_window_visible") is False:

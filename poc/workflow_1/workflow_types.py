@@ -99,6 +99,7 @@ class WorkflowStep:
     verify_timeout_sec: float = 10.0
     reserved_retry_budget: int = 0
     input_text: str | None = None
+    action_value: str | None = None
     redact_input_text: bool = False
 
     def to_dict(self) -> dict:

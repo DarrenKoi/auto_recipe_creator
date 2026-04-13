@@ -17,6 +17,15 @@ from poc.workflow_1.login_rcs_common import (
 )
 from poc.workflow_1.debug_artifacts import save_debug_jpeg
 from poc.workflow_1.logger import log_work2_event
+from poc.workflow_1.select_tool import (
+    EXIT_SUCCESS as SELECT_TOOL_SUCCESS,
+    load_target_tool_name,
+    select_tool_from_main_window,
+)
+from poc.workflow_1.view_list_tab_rcs import (
+    EXIT_SUCCESS as LIST_TAB_SUCCESS,
+    click_list_tab_in_main_window,
+)
 from poc.work2.util import (
     activate_window,
     capture_window,
@@ -87,6 +96,7 @@ def load_login_credentials() -> dict[str, str]:
 def build_login_workflow_steps(
     settings: WorkflowSettings,
     credentials: dict[str, str],
+    target_tool_name: str = "",
 ) -> list[WorkflowStep]:
     """로그인 워크플로 step 목록을 구성한다."""
     detect_success, targets, _analyze = _load_login_targets()
@@ -211,6 +221,59 @@ def build_login_workflow_steps(
             depends_on=["click_login_button"],
         )
     )
+
+    normalized_tool_name = target_tool_name.strip()
+    if normalized_tool_name:
+        main_window_visible = ConditionGroup(
+            conditions=[
+                StepCondition(
+                    condition_type=ConditionType.WINDOW_APPEARED,
+                    title_prefix=RCS_MAIN_WINDOW_TITLE_PREFIX,
+                    verify_method="window_title",
+                ),
+            ]
+        )
+        steps.append(
+            WorkflowStep(
+                step_id="ensure_main_window",
+                step_type="observe_main_window",
+                target_description="wait until the main RCS window is visible after login",
+                preconditions=ConditionGroup(
+                    conditions=[StepCondition(condition_type=ConditionType.ALWAYS)]
+                ),
+                success_criteria=main_window_visible,
+                safety_tier=1,
+                depends_on=["verify_updater_window"],
+            )
+        )
+        steps.append(
+            WorkflowStep(
+                step_id="click_list_tab",
+                step_type="click_main_tab",
+                target_key="list_tab",
+                target_description="click the List tab in the main RCS window",
+                preconditions=main_window_visible,
+                success_criteria=ConditionGroup(
+                    conditions=[StepCondition(condition_type=ConditionType.ALWAYS)]
+                ),
+                depends_on=["ensure_main_window"],
+            )
+        )
+        steps.append(
+            WorkflowStep(
+                step_id="open_target_tool",
+                step_type="double_click_tool",
+                target_key="tool_row",
+                target_description=f"double-click the tool row named {normalized_tool_name!r}",
+                preconditions=main_window_visible,
+                success_criteria=ConditionGroup(
+                    conditions=[StepCondition(condition_type=ConditionType.ALWAYS)]
+                ),
+                depends_on=["click_list_tab"],
+                action_value=normalized_tool_name,
+            )
+        )
+
     return steps
 
 
@@ -262,6 +325,83 @@ def _capture_login_window(context: dict, step: WorkflowStep) -> tuple[object, st
     context["last_captured_image"] = image
     context["window_title_before"] = window_title
     return login_window, window_title, backend, image
+
+
+def _ensure_main_window_context(
+    context: dict,
+    settings: WorkflowSettings,
+    *,
+    wait_for_window: bool = False,
+) -> tuple[object | None, str, str]:
+    """현재 메인 RCS 창 context 를 갱신한다."""
+    cached_window = context.get("rcs_main_window")
+    cached_title = str(context.get("rcs_main_title") or "")
+    cached_backend = str(context.get("rcs_main_backend") or "")
+    if (
+        cached_window is not None
+        and cached_title.lower().startswith(RCS_MAIN_WINDOW_TITLE_PREFIX.lower())
+    ):
+        return cached_window, cached_title, cached_backend
+
+    if wait_for_window:
+        main_window, window_title, backend = wait_for_rcs_main_window(
+            timeout_sec=settings.login_verify_timeout_sec,
+            poll_interval_sec=max(0.1, settings.login_verify_poll_interval_sec),
+        )
+    else:
+        main_window, window_title, backend = find_rcs_main_window()
+
+    context["rcs_main_window"] = main_window
+    context["rcs_main_title"] = window_title
+    context["rcs_main_backend"] = backend
+    return main_window, window_title, backend
+
+
+def _capture_main_window(
+    context: dict,
+    step: WorkflowStep,
+    settings: WorkflowSettings,
+) -> tuple[object, str, str, object] | tuple[None, str, str, None]:
+    """메인 RCS 창을 foreground 로 올리고 캡처한다."""
+    main_window, window_title, backend = _ensure_main_window_context(
+        context,
+        settings,
+        wait_for_window=True,
+    )
+    if main_window is None:
+        return None, window_title, backend, None
+
+    if not callable(activate_window) or not callable(foreground_window):
+        print("[ERROR] window_utils unavailable - 메인 창 활성화/foreground 불가")
+        return main_window, window_title, backend, None
+
+    if not activate_window(
+        main_window,
+        debug_label=f"{step.step_id} activate backend={backend} title={window_title!r}",
+    ):
+        print(f"[ERROR] 메인 창 활성화 실패: step={step.step_id}")
+        return main_window, window_title, backend, None
+
+    if not foreground_window(
+        main_window,
+        debug_label=f"{step.step_id} foreground backend={backend} title={window_title!r}",
+    ):
+        print(f"[ERROR] 메인 창 foreground 실패: step={step.step_id}")
+        return main_window, window_title, backend, None
+
+    if not callable(capture_window):
+        print("[ERROR] capture_window unavailable - 메인 창 스크린샷 캡처 불가")
+        return main_window, window_title, backend, None
+
+    try:
+        image = capture_window(main_window)
+    except Exception as exc:
+        print(f"[ERROR] 메인 창 캡처 실패: {exc}")
+        return main_window, window_title, backend, None
+
+    context["last_captured_image"] = image
+    context["window_title_before"] = window_title
+    return main_window, window_title, backend, image
 
 
 def _maybe_save_capture(context: dict, filename: str, image, *, allow_save: bool) -> str | None:
@@ -432,6 +572,34 @@ def execute_login_step(
             vlm_service_used="",
         )
 
+    if step.step_type == "observe_main_window":
+        main_window, window_title, backend = _ensure_main_window_context(
+            context,
+            settings,
+            wait_for_window=True,
+        )
+        if main_window is None:
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="failed",
+                failure_class="main_window_not_found",
+                error_message="로그인 후 메인 RCS 창을 찾지 못했습니다.",
+                window_title_before=window_title,
+                vlm_service_used="window_title",
+            )
+
+        print(f"[INFO] 메인 RCS 창 발견: title={window_title!r}, backend={backend}")
+        return _build_base_result(
+            step,
+            started_at,
+            settings,
+            window_title_before=window_title,
+            window_title_after=window_title,
+            vlm_service_used="window_title",
+        )
+
     if step.step_type == "verify_only":
         if not settings.action_enabled:
             return _build_base_result(
@@ -444,13 +612,23 @@ def execute_login_step(
             )
 
         time.sleep(settings.post_login_wait_sec)
-        post_login_window, post_login_title, _backend, verify_reason = _wait_for_post_login_window(
+        post_login_window, post_login_title, post_login_backend, verify_reason = _wait_for_post_login_window(
             settings
         )
         context["post_login_window"] = post_login_window
         context["post_login_title"] = post_login_title
-        context["rcs_main_window"] = post_login_window
-        context["rcs_main_title"] = post_login_title
+        context["post_login_backend"] = post_login_backend
+        if (
+            post_login_window is not None
+            and post_login_title.lower().startswith(RCS_MAIN_WINDOW_TITLE_PREFIX.lower())
+        ):
+            context["rcs_main_window"] = post_login_window
+            context["rcs_main_title"] = post_login_title
+            context["rcs_main_backend"] = post_login_backend
+        else:
+            context["rcs_main_window"] = None
+            context["rcs_main_title"] = ""
+            context["rcs_main_backend"] = ""
         context["login_window_visible"] = post_login_window is None
 
         after_screenshot = None
@@ -488,6 +666,228 @@ def execute_login_step(
             after_screenshot=after_screenshot,
             window_title_after=post_login_title,
             vlm_service_used="window_title",
+        )
+
+    if step.step_type == "click_main_tab":
+        main_window, window_title, backend, image = _capture_main_window(context, step, settings)
+        if main_window is None:
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="failed",
+                failure_class="main_window_not_found",
+                error_message="메인 RCS 창을 찾지 못했습니다.",
+                window_title_before=window_title,
+            )
+        if image is None:
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="failed",
+                failure_class="capture_failed",
+                error_message="메인 RCS 창 캡처 또는 foreground 활성화 실패",
+                window_title_before=window_title,
+            )
+
+        before_screenshot = _maybe_save_capture(
+            context,
+            f"before_{step.step_id}.jpeg",
+            image,
+            allow_save=True,
+        )
+        if settings.action_enabled and not PYNPUT_MOUSE_AVAILABLE:
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="skipped",
+                error_message="input_device_unavailable",
+                before_screenshot=before_screenshot,
+                window_title_before=window_title,
+                window_title_after=window_title,
+            )
+
+        tab_result = click_list_tab_in_main_window(
+            main_window,
+            window_title,
+            backend,
+            action_enabled=settings.action_enabled,
+            image=image,
+            pre_click_settle_sec=settings.pre_click_settle_sec,
+            post_click_settle_sec=settings.post_list_tab_settle_sec,
+            log_name=LOG_NAME,
+            component_name=COMPONENT_NAME,
+        )
+        if tab_result.exit_code != LIST_TAB_SUCCESS:
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="failed",
+                failure_class="act_failed",
+                error_message=f"List 탭 클릭 실패: exit_code={tab_result.exit_code}",
+                detected_point=tab_result.detected_point,
+                screen_point=tab_result.screen_point,
+                before_screenshot=before_screenshot,
+                window_title_before=window_title,
+                vlm_service_used="ui-venus+mai-ui",
+            )
+
+        after_screenshot = None
+        if callable(capture_window):
+            try:
+                after_image = capture_window(main_window)
+            except Exception:
+                after_image = None
+            after_screenshot = _maybe_save_capture(
+                context,
+                f"after_{step.step_id}.jpeg",
+                after_image,
+                allow_save=after_image is not None,
+            )
+
+        step_status = "success" if settings.action_enabled else "skipped"
+        error_message = None if settings.action_enabled else "dry_run_skip"
+        return _build_base_result(
+            step,
+            started_at,
+            settings,
+            status=step_status,
+            error_message=error_message,
+            detected_point=tab_result.detected_point,
+            screen_point=tab_result.screen_point,
+            before_screenshot=before_screenshot,
+            after_screenshot=after_screenshot,
+            window_title_before=window_title,
+            window_title_after=window_title,
+            vlm_service_used="ui-venus+mai-ui",
+        )
+
+    if step.step_type == "double_click_tool":
+        main_window, window_title, backend, image = _capture_main_window(context, step, settings)
+        if main_window is None:
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="failed",
+                failure_class="main_window_not_found",
+                error_message="메인 RCS 창을 찾지 못했습니다.",
+                window_title_before=window_title,
+            )
+        if image is None:
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="failed",
+                failure_class="capture_failed",
+                error_message="메인 RCS 창 캡처 또는 foreground 활성화 실패",
+                window_title_before=window_title,
+            )
+
+        tool_name = (step.action_value or context.get("target_tool_name") or "").strip()
+        if not tool_name:
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="failed",
+                failure_class="invalid_target",
+                error_message="선택할 Tool 이름이 비어 있습니다.",
+                window_title_before=window_title,
+            )
+
+        before_screenshot = _maybe_save_capture(
+            context,
+            f"before_{step.step_id}.jpeg",
+            image,
+            allow_save=True,
+        )
+        if settings.action_enabled and not PYNPUT_MOUSE_AVAILABLE:
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="skipped",
+                error_message="input_device_unavailable",
+                before_screenshot=before_screenshot,
+                window_title_before=window_title,
+                window_title_after=window_title,
+            )
+
+        selection_result = select_tool_from_main_window(
+            main_window,
+            window_title,
+            backend,
+            tool_name,
+            action_enabled=settings.action_enabled,
+            image=image,
+            pre_click_settle_sec=settings.pre_click_settle_sec,
+            post_double_click_settle_sec=settings.post_double_click_settle_sec,
+            log_name=LOG_NAME,
+            component_name=COMPONENT_NAME,
+        )
+        if selection_result.exit_code != SELECT_TOOL_SUCCESS:
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="failed",
+                failure_class="act_failed",
+                error_message=(
+                    f"Tool 더블클릭 실패: tool_name={tool_name!r}, "
+                    f"exit_code={selection_result.exit_code}"
+                ),
+                detected_point=selection_result.tool_point_on_full_image,
+                screen_point=selection_result.tool_point_on_screen,
+                verification_result={
+                    "target_tool_name": tool_name,
+                    "ocr_target_visible": selection_result.ocr_target_visible,
+                    "matched_lines": selection_result.matched_lines,
+                },
+                before_screenshot=before_screenshot,
+                window_title_before=window_title,
+                vlm_service_used="paddleocr-vl-1.5+ui-venus+mai-ui",
+            )
+
+        context["selected_tool_name"] = tool_name
+
+        after_screenshot = None
+        if callable(capture_window):
+            try:
+                after_image = capture_window(main_window)
+            except Exception:
+                after_image = None
+            after_screenshot = _maybe_save_capture(
+                context,
+                f"after_{step.step_id}.jpeg",
+                after_image,
+                allow_save=after_image is not None,
+            )
+
+        step_status = "success" if settings.action_enabled else "skipped"
+        error_message = None if settings.action_enabled else "dry_run_skip"
+        return _build_base_result(
+            step,
+            started_at,
+            settings,
+            status=step_status,
+            error_message=error_message,
+            detected_point=selection_result.tool_point_on_full_image,
+            screen_point=selection_result.tool_point_on_screen,
+            verification_result={
+                "target_tool_name": tool_name,
+                "ocr_target_visible": selection_result.ocr_target_visible,
+                "matched_lines": selection_result.matched_lines,
+            },
+            before_screenshot=before_screenshot,
+            after_screenshot=after_screenshot,
+            window_title_before=window_title,
+            window_title_after=window_title,
+            vlm_service_used="paddleocr-vl-1.5+ui-venus+mai-ui",
         )
 
     login_window, window_title, backend, image = _capture_login_window(context, step)
@@ -769,15 +1169,25 @@ def execute_login_step(
     )
 
 
-def run_login_workflow(settings: WorkflowSettings | None = None):
+def run_login_workflow(
+    settings: WorkflowSettings | None = None,
+    *,
+    target_tool_name: str | None = None,
+):
     """RCS 로그인 워크플로를 실행한다."""
     resolved_settings = settings or load_workflow_settings()
     credentials = load_login_credentials()
-    steps = build_login_workflow_steps(resolved_settings, credentials)
+    resolved_tool_name = (target_tool_name or load_target_tool_name()).strip()
+    steps = build_login_workflow_steps(
+        resolved_settings,
+        credentials,
+        resolved_tool_name,
+    )
 
     context = {
         "typed_values": {},
         "process_exe_name": "RcsMainHD.exe",
+        "target_tool_name": resolved_tool_name,
     }
     runner = WorkflowRunner(
         resolved_settings,
@@ -794,6 +1204,7 @@ def run_login_workflow(settings: WorkflowSettings | None = None):
         safe_mode=resolved_settings.safe_mode,
         action_enabled=resolved_settings.action_enabled,
         typing_enabled=resolved_settings.typing_enabled,
+        target_tool_name=resolved_tool_name,
     )
     run = runner.run(
         steps,

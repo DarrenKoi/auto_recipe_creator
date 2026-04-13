@@ -21,7 +21,7 @@ from poc.workflow_1.login_rcs_common import (
 )
 from poc.workflow_1.debug_artifacts import save_debug_jpeg
 from poc.workflow_1.logger import log_work2_event
-from poc.workflow_1.select_tool import (
+from poc.workflow_1.workflow_select_tool import (
     EXIT_SUCCESS as SELECT_TOOL_SUCCESS,
     load_target_tool_name,
     select_tool_from_main_window,

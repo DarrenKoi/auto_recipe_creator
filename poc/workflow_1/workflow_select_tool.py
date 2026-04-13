@@ -66,8 +66,8 @@ class ToolListVisibilityResult:
 
 OCR_SERVICE_SLUG = "paddleocr-vl-1.5"
 DEFAULT_TARGET_TOOL_NAME = "6MCD2201"
-DEBUG_ARTIFACT_DIR = DEBUG_IMAGE_DIR / "select_tool"
-LOG_NAME = "select_tool"
+DEBUG_ARTIFACT_DIR = DEBUG_IMAGE_DIR / "workflow_select_tool"
+LOG_NAME = "workflow_select_tool"
 COMPONENT_NAME = LOG_NAME
 DEFAULT_ACTION_ENABLED = os.getenv("ACTION_LOGIN_ACTION_ENABLED", "true").strip().lower() not in {
     "0",
@@ -84,6 +84,7 @@ EXIT_TOOL_NAME_NOT_VISIBLE = "tool_name_not_visible"
 EXIT_TOOL_ROW_NOT_FOUND = "tool_row_not_found"
 EXIT_OCR_REQUEST_ERROR = "ocr_request_error"
 EXIT_INVALID_TOOL_NAME = "invalid_tool_name"
+EXIT_INVALID_MAIN_WINDOW = "invalid_main_window"
 
 OCR_MAX_TOKENS = 4096
 
@@ -118,6 +119,16 @@ def load_target_tool_name(default: str = "") -> str:
         if value:
             return value
     return default.strip()
+
+
+def _is_valid_main_window_title(window_title: str) -> bool:
+    """List 탭 체크가 수행될 메인 RCS 창 제목인지 확인한다."""
+    normalized_title = (window_title or "").strip()
+    if not normalized_title.startswith(RCS_MAIN_WINDOW_TITLE_PREFIX):
+        return False
+
+    lowered = normalized_title.lower()
+    return "server" in lowered and "user" in lowered
 
 
 def _tool_row_target(tool_name: str) -> TargetConfig:
@@ -183,16 +194,20 @@ def _build_relative_crop_box(
 
 def _capture_main_window(main_window, window_title: str, backend: str):
     """메인 창을 활성화하고 한 번 캡처한다."""
+    if not _is_valid_main_window_title(window_title):
+        print(f"[ERROR] 메인 RCS 창 제목이 예상 형식이 아닙니다: title={window_title!r}")
+        return None
+
     if not activate_window(
         main_window,
-        debug_label=f"select_tool activate backend={backend} title={window_title!r}",
+        debug_label=f"workflow_select_tool activate backend={backend} title={window_title!r}",
     ):
         print(f"[ERROR] 메인 창 활성화 실패: title={window_title!r}")
         return None
 
     if not foreground_window(
         main_window,
-        debug_label=f"select_tool screenshot backend={backend} title={window_title!r}",
+        debug_label=f"workflow_select_tool screenshot backend={backend} title={window_title!r}",
     ):
         print(f"[ERROR] 메인 창 foreground 실패: title={window_title!r}")
         return None
@@ -320,6 +335,11 @@ def select_tool_from_main_window(
             exit_code=EXIT_INVALID_TOOL_NAME,
             target_tool_name=tool_name,
         )
+    if not _is_valid_main_window_title(window_title):
+        return ToolSelectionResult(
+            exit_code=EXIT_INVALID_MAIN_WINDOW,
+            target_tool_name=normalized_tool_name,
+        )
 
     started_at = time.time()
     timestamp_tag = make_timestamp_tag(started_at)
@@ -390,7 +410,7 @@ def select_tool_from_main_window(
         debug_image_dir=resolved_debug_dir,
         log_name=log_name,
         component_name=component_name,
-        artifact_prefix=f"select_tool_{normalized_tool_name.lower()}",
+        artifact_prefix=f"workflow_select_tool_{normalized_tool_name.lower()}",
         result_mode="ui_venus_then_mai_ui_tool_list",
         image=list_image,
     )
@@ -445,7 +465,7 @@ def select_tool_from_main_window(
 
     summary_path = debug_image_path(
         resolved_debug_dir,
-        "select_tool_summary.json",
+        "workflow_select_tool_summary.json",
         timestamp_tag=timestamp_tag,
     )
     save_debug_json(
@@ -496,6 +516,11 @@ def verify_tool_visible_in_list(
         return ToolListVisibilityResult(
             exit_code=EXIT_INVALID_TOOL_NAME,
             target_tool_name=tool_name,
+        )
+    if not _is_valid_main_window_title(window_title):
+        return ToolListVisibilityResult(
+            exit_code=EXIT_INVALID_MAIN_WINDOW,
+            target_tool_name=normalized_tool_name,
         )
 
     started_at = time.time()

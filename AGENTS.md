@@ -5,7 +5,6 @@ AI-powered automation system for CD-SEM/VeritySEM recipe setup. The project comb
 
 ## Project Structure & Module Organization
 - `poc/work2/`: Primary workstream. Flask proxy-based VLM routing, shared model defaults, and Windows RCS automation experiments live here.
-- `poc/home/`: Personal/home-study variant using Hugging Face APIs (`demo.py`, `test_setup.py`).
 - `test/video_frame_parser/`: Video-frame parsing pipeline plus unit tests in `test/video_frame_parser/tests/`.
 - `test/vlm_input_control/`, `test/workflow_extractor/`: Integration-style and extractor experiments.
 - `docs/`: Architecture notes, GUI automation research, and setup guides.
@@ -48,12 +47,9 @@ poc/work2/
 
 ## Build, Test, and Development Commands
 - `uv sync --extra dev`: Install core project and dev dependencies from `pyproject.toml`.
-- `uv sync --extra home`: Install optional home-study dependencies.
 - `uv run python poc/work2/connection_check.py`: Verify Flask proxy VLM/OCR routing and live `/v1/models` connectivity.
 - `uv run python poc/work2/open_rcs.py`: Start `RcsMainHD.exe` only, without the old combined login automation flow.
 - `uv run python poc/work2/login_rcs.py`: Capture the login dialog and save VLM-marked debug images (Windows).
-- `uv run python -m poc.home.test_setup`: Validate local home-study environment.
-- `uv run python -m poc.home.demo`: Run home-study VLM demo flow.
 - `uv run pytest test/video_frame_parser/tests/`: Run unit tests for the video parser module.
 - `uv run python -m test.vlm_input_control.integration_test`: Run input-control integration checks.
 - `uv run python -m test.video_frame_parser.example_usage`: Run parser example pipeline.

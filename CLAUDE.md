@@ -11,7 +11,6 @@ AI-powered automation system for CD-SEM/VeritySEM recipe setup. Uses VLM (Vision
 ```
 poc/work2/               # Primary workstream: Flask proxy VLM routing, RCS rebuild scripts, shared helpers
 poc/work2/prompts/       # VLM prompt builders (one module per screen/task)
-poc/home/                # Personal study PoC: HuggingFace free API — NO office relation
 flask_api/               # Flask API services (VLM proxy, health endpoints)
 flask_api/vlm_serve/     # VLM service registry, health-driven discovery, per-model proxy blueprints
 deploy_vlms/             # VLM deployment configs, scripts, and operational docs
@@ -58,9 +57,6 @@ Use uv-managed workflows by default: `uv sync`, `uv run`, and `uv pip ...`.
 # Core project + dev tools
 uv sync --extra dev
 
-# Add home-study extras (HuggingFace)
-uv sync --extra home
-
 # All-in-one requirements install via uv-managed pip compatibility
 uv pip install -r requirements.txt
 
@@ -76,10 +72,6 @@ uv pip install -r test/video_frame_parser/requirements.txt  # torch, opencv, pym
 uv run python poc/work2/connection_check.py    # Verify Flask proxy + VLM service health
 uv run python poc/work2/open_rcs.py            # Start RCS only
 uv run python poc/work2/login_rcs.py           # Login dialog capture + VLM marking
-
-# poc/home — personal study only
-uv run python -m poc.home.test_setup           # Validate HuggingFace env
-uv run python -m poc.home.demo                 # Mode configured in .env or hardcoded
 
 # Video frame parser
 uv run python -m test.video_frame_parser.example_usage

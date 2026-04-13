@@ -100,7 +100,11 @@ class CommandResult:
 
 ### 4.2 `intent_parser.py` — NLU (Natural Language Understanding)
 
-**Primary path**: Send command to `kimi-k2.5` (company text LLM) with a structured prompt that forces JSON output.
+**Primary path**: Send command to a **configurable text LLM** with a structured prompt that forces JSON output. No vision needed — any text-capable model works.
+
+- NLU model is resolved from `SHARED_PIPELINE_SETTINGS["nlu_service"]` or env var `NLU_SERVICE`
+- Works with any registered service: kimi-k2.5, qwen3-vl-30b, or future text models
+- The service just needs an OpenAI-compatible `/v1/chat/completions` endpoint
 
 ```
 System: You are a command parser for an RCS automation system.
@@ -240,7 +244,7 @@ uv run python -m poc.workflow_1.command_orchestrator
 
 Interactive loop keeps the orchestrator alive for multiple commands, maintaining state across them (e.g., already logged in → skip login on next command).
 
-**NLU approach**: LLM-first via kimi-k2.5 with regex fallback when LLM is unavailable.
+**NLU approach**: LLM-first (configurable model) with regex fallback when LLM is unavailable.
 
 ---
 

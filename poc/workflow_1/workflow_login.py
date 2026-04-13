@@ -9,11 +9,15 @@ from dotenv import load_dotenv
 
 from poc.workflow_1.login_rcs_common import (
     RCS_MAIN_WINDOW_TITLE_PREFIX,
+    REMOTE_MONITORING_WINDOW_TITLE_PREFIX,
     RCS_UPDATER_WINDOW_TITLE_PREFIX,
     WINDOW_TITLE_PREFIX,
     find_rcs_main_window,
+    find_remote_monitoring_window,
     find_rcs_updater_window,
     find_login_window,
+    wait_for_rcs_main_window,
+    wait_for_remote_monitoring_window,
 )
 from poc.workflow_1.debug_artifacts import save_debug_jpeg
 from poc.workflow_1.logger import log_work2_event
@@ -21,6 +25,7 @@ from poc.workflow_1.select_tool import (
     EXIT_SUCCESS as SELECT_TOOL_SUCCESS,
     load_target_tool_name,
     select_tool_from_main_window,
+    verify_tool_visible_in_list,
 )
 from poc.workflow_1.view_list_tab_rcs import (
     EXIT_SUCCESS as LIST_TAB_SUCCESS,
@@ -261,6 +266,20 @@ def build_login_workflow_steps(
         )
         steps.append(
             WorkflowStep(
+                step_id="verify_list_tab_opened",
+                step_type="verify_list_tab",
+                target_key="list_tab",
+                target_description=f"verify that the List tab is open and {normalized_tool_name!r} is visible in the tool list",
+                preconditions=main_window_visible,
+                success_criteria=ConditionGroup(
+                    conditions=[StepCondition(condition_type=ConditionType.ALWAYS)]
+                ),
+                depends_on=["click_list_tab"],
+                action_value=normalized_tool_name,
+            )
+        )
+        steps.append(
+            WorkflowStep(
                 step_id="open_target_tool",
                 step_type="double_click_tool",
                 target_key="tool_row",
@@ -269,7 +288,21 @@ def build_login_workflow_steps(
                 success_criteria=ConditionGroup(
                     conditions=[StepCondition(condition_type=ConditionType.ALWAYS)]
                 ),
-                depends_on=["click_list_tab"],
+                depends_on=["verify_list_tab_opened"],
+                action_value=normalized_tool_name,
+            )
+        )
+        steps.append(
+            WorkflowStep(
+                step_id="verify_target_tool_opened",
+                step_type="verify_tool_window",
+                target_key="tool_window",
+                target_description=f"verify that a Remote Monitoring System window for {normalized_tool_name!r} opened",
+                preconditions=main_window_visible,
+                success_criteria=ConditionGroup(
+                    conditions=[StepCondition(condition_type=ConditionType.ALWAYS)]
+                ),
+                depends_on=["open_target_tool"],
                 action_value=normalized_tool_name,
             )
         )
@@ -541,6 +574,29 @@ def _wait_for_post_login_window(
     return None, "", "", "post_login_window_not_found"
 
 
+def _wait_for_target_tool_window(
+    tool_name: str,
+    settings: WorkflowSettings,
+) -> tuple[object | None, str, str, str]:
+    """대상 툴용 Remote Monitoring System 창이 나타날 때까지 대기한다."""
+    initial_wait_sec = max(0.0, settings.post_tool_open_initial_wait_sec)
+    if initial_wait_sec > 0:
+        print(
+            f"[INFO] Tool 창 초기 대기: tool_name={tool_name!r}, "
+            f"initial_wait={initial_wait_sec:.1f}s"
+        )
+        time.sleep(initial_wait_sec)
+
+    tool_window, tool_title, tool_backend = wait_for_remote_monitoring_window(
+        tool_name,
+        timeout_sec=settings.tool_open_verify_timeout_sec,
+        poll_interval_sec=max(0.1, settings.tool_open_verify_poll_interval_sec),
+    )
+    if tool_window is None:
+        return None, "", "", "tool_window_not_found"
+    return tool_window, tool_title, tool_backend, "tool_window_found"
+
+
 def execute_login_step(
     step: WorkflowStep,
     context: dict,
@@ -765,6 +821,88 @@ def execute_login_step(
             vlm_service_used="ui-venus+mai-ui",
         )
 
+    if step.step_type == "verify_list_tab":
+        if not settings.action_enabled or not PYNPUT_MOUSE_AVAILABLE:
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="skipped",
+                verification_result={"verified": False, "reason": "dry_run_skip"},
+                vlm_service_used="paddleocr-vl-1.5",
+            )
+
+        main_window, window_title, backend, image = _capture_main_window(context, step, settings)
+        if main_window is None:
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="failed",
+                failure_class="main_window_not_found",
+                error_message="메인 RCS 창을 찾지 못했습니다.",
+                window_title_before=window_title,
+                vlm_service_used="paddleocr-vl-1.5",
+            )
+        if image is None:
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="failed",
+                failure_class="capture_failed",
+                error_message="메인 RCS 창 캡처 또는 foreground 활성화 실패",
+                window_title_before=window_title,
+                vlm_service_used="paddleocr-vl-1.5",
+            )
+
+        tool_name = (step.action_value or context.get("target_tool_name") or "").strip()
+        visibility_result = verify_tool_visible_in_list(
+            main_window,
+            window_title,
+            backend,
+            tool_name,
+            image=image,
+            log_name=LOG_NAME,
+            component_name=COMPONENT_NAME,
+        )
+        if visibility_result.exit_code != SELECT_TOOL_SUCCESS:
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="failed",
+                failure_class="verify_failed",
+                error_message=(
+                    f"List 탭 검증 실패: tool_name={tool_name!r}, "
+                    f"exit_code={visibility_result.exit_code}"
+                ),
+                verification_result={
+                    "verified": False,
+                    "target_tool_name": tool_name,
+                    "matched_lines": visibility_result.matched_lines,
+                    "list_crop_box": visibility_result.list_crop_box,
+                },
+                window_title_before=window_title,
+                window_title_after=window_title,
+                vlm_service_used="paddleocr-vl-1.5",
+            )
+
+        return _build_base_result(
+            step,
+            started_at,
+            settings,
+            verification_result={
+                "verified": True,
+                "target_tool_name": tool_name,
+                "matched_lines": visibility_result.matched_lines,
+                "list_crop_box": visibility_result.list_crop_box,
+            },
+            window_title_before=window_title,
+            window_title_after=window_title,
+            vlm_service_used="paddleocr-vl-1.5",
+        )
+
     if step.step_type == "double_click_tool":
         main_window, window_title, backend, image = _capture_main_window(context, step, settings)
         if main_window is None:
@@ -888,6 +1026,86 @@ def execute_login_step(
             window_title_before=window_title,
             window_title_after=window_title,
             vlm_service_used="paddleocr-vl-1.5+ui-venus+mai-ui",
+        )
+
+    if step.step_type == "verify_tool_window":
+        if not settings.action_enabled or not PYNPUT_MOUSE_AVAILABLE:
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="skipped",
+                verification_result={"verified": False, "reason": "dry_run_skip"},
+                vlm_service_used="window_title",
+            )
+
+        tool_name = (step.action_value or context.get("target_tool_name") or "").strip()
+        if not tool_name:
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="failed",
+                failure_class="invalid_target",
+                error_message="검증할 Tool 이름이 비어 있습니다.",
+                vlm_service_used="window_title",
+            )
+
+        tool_window, tool_title, tool_backend, verify_reason = _wait_for_target_tool_window(
+            tool_name,
+            settings,
+        )
+        context["tool_window"] = tool_window
+        context["tool_window_title"] = tool_title
+        context["tool_window_backend"] = tool_backend
+
+        after_screenshot = None
+        if tool_window is not None and callable(capture_window):
+            try:
+                tool_image = capture_window(tool_window)
+            except Exception:
+                tool_image = None
+            after_screenshot = _maybe_save_capture(
+                context,
+                f"after_{step.step_id}.jpeg",
+                tool_image,
+                allow_save=tool_image is not None,
+            )
+
+        if tool_window is None:
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="failed",
+                failure_class="verify_failed",
+                error_message=(
+                    f"툴 창 검증 실패: title_prefix={REMOTE_MONITORING_WINDOW_TITLE_PREFIX!r}, "
+                    f"tool_name={tool_name!r}"
+                ),
+                verification_result={
+                    "verified": False,
+                    "reason": verify_reason,
+                    "target_tool_name": tool_name,
+                },
+                after_screenshot=after_screenshot,
+                window_title_after=tool_title,
+                vlm_service_used="window_title",
+            )
+
+        return _build_base_result(
+            step,
+            started_at,
+            settings,
+            verification_result={
+                "verified": True,
+                "reason": verify_reason,
+                "target_tool_name": tool_name,
+                "tool_window_title": tool_title,
+            },
+            after_screenshot=after_screenshot,
+            window_title_after=tool_title,
+            vlm_service_used="window_title",
         )
 
     login_window, window_title, backend, image = _capture_login_window(context, step)

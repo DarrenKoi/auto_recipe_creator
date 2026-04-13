@@ -22,6 +22,7 @@ from poc.workflow_1 import util as workflow_1_util
 WINDOW_TITLE_PREFIX = "Remote Control System"
 RCS_MAIN_WINDOW_TITLE_PREFIX = "RCS -"
 RCS_UPDATER_WINDOW_TITLE_PREFIX = "RCS Updater"
+REMOTE_MONITORING_WINDOW_TITLE_PREFIX = "Remote Monitoring System -"
 OPEN_RCS_STATE_PATH = LOG_DIR / "open_rcs_state.json"
 OPEN_RCS_SCRIPT_PATH = Path(__file__).parent / "open_rcs.py"
 DESKTOP_SCAN_BACKENDS = ("uia", "win32")
@@ -326,6 +327,81 @@ def find_rcs_updater_window() -> tuple[object | None, str, str]:
     return updater_window, window_title, backend
 
 
+def _tool_window_filter(window, window_title: str, tool_name: str = "") -> bool:
+    """원격 모니터링 툴 창 후보 필터."""
+    del window
+    normalized_title = (window_title or "").strip().lower()
+    normalized_tool_name = (tool_name or "").strip().lower()
+    if not normalized_title.startswith(REMOTE_MONITORING_WINDOW_TITLE_PREFIX.lower()):
+        return False
+    if normalized_tool_name and normalized_tool_name not in normalized_title:
+        return False
+    return True
+
+
+def find_remote_monitoring_window(tool_name: str = "") -> tuple[object | None, str, str]:
+    """툴 더블클릭 후 뜨는 Remote Monitoring System 창을 탐색한다."""
+    if not WINDOW_UTILS_AVAILABLE:
+        print("[ERROR] window_utils unavailable - Remote Monitoring System 창 탐색 불가")
+        return None, "", ""
+
+    print(
+        "[INFO] Remote Monitoring System 창 탐색 시작: "
+        f"title_prefix={REMOTE_MONITORING_WINDOW_TITLE_PREFIX!r}, tool_name={tool_name!r}"
+    )
+    tool_window, window_title, backend = find_window_by_title_prefix(
+        REMOTE_MONITORING_WINDOW_TITLE_PREFIX,
+        DESKTOP_SCAN_BACKENDS,
+        visible_only=True,
+        window_filter=lambda window, title: _tool_window_filter(window, title, tool_name),
+    )
+    if tool_window is None:
+        return None, "", ""
+
+    print(f"[INFO] Remote Monitoring System 창 발견 -> 포커스 활성화: title={window_title!r}")
+    activate_window(
+        tool_window,
+        debug_label=f"remote_monitoring_window backend={backend} title={window_title!r}",
+    )
+    return tool_window, window_title, backend
+
+
+def wait_for_remote_monitoring_window(
+    tool_name: str,
+    timeout_sec: float = 6.0,
+    poll_interval_sec: float = 0.5,
+) -> tuple[object | None, str, str]:
+    """툴 창이 나타날 때까지 폴링한다."""
+    print(
+        f"[INFO] Remote Monitoring System 창 대기 시작: "
+        f"title_prefix={REMOTE_MONITORING_WINDOW_TITLE_PREFIX!r}, "
+        f"tool_name={tool_name!r}, timeout={timeout_sec}s"
+    )
+    deadline = time.time() + timeout_sec
+    attempt = 0
+
+    while time.time() < deadline:
+        attempt += 1
+        tool_window, window_title, backend = find_remote_monitoring_window(tool_name)
+        if tool_window is not None:
+            print(
+                f"[INFO] Remote Monitoring System 창 발견 (attempt={attempt}): "
+                f"title={window_title!r}, backend={backend}"
+            )
+            return tool_window, window_title, backend
+
+        remaining_sec = deadline - time.time()
+        if remaining_sec <= 0:
+            break
+        time.sleep(min(poll_interval_sec, remaining_sec))
+
+    print(
+        f"[WARNING] Remote Monitoring System 창 타임아웃: "
+        f"{timeout_sec}s 내 미발견 (tool_name={tool_name!r}, attempts={attempt})"
+    )
+    return None, "", ""
+
+
 def wait_for_rcs_main_window(
     timeout_sec: float = 15.0,
     poll_interval_sec: float = 2.0,
@@ -391,11 +467,14 @@ def wait_for_rcs_updater_window(
 __all__ = [
     "DESKTOP_SCAN_BACKENDS",
     "RCS_MAIN_WINDOW_TITLE_PREFIX",
+    "REMOTE_MONITORING_WINDOW_TITLE_PREFIX",
     "RCS_UPDATER_WINDOW_TITLE_PREFIX",
     "WINDOW_TITLE_PREFIX",
     "find_login_window",
     "find_rcs_main_window",
+    "find_remote_monitoring_window",
     "find_rcs_updater_window",
     "wait_for_rcs_main_window",
+    "wait_for_remote_monitoring_window",
     "wait_for_rcs_updater_window",
 ]

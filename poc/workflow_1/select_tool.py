@@ -53,6 +53,17 @@ class ToolSelectionResult:
     double_clicked: bool = False
 
 
+@dataclass
+class ToolListVisibilityResult:
+    """List 탭 가시성 검증 결과."""
+
+    exit_code: str
+    target_tool_name: str
+    matched_lines: list[str] = field(default_factory=list)
+    target_visible: bool = False
+    list_crop_box: dict | None = None
+
+
 OCR_SERVICE_SLUG = "paddleocr-vl-1.5"
 DEFAULT_TARGET_TOOL_NAME = "6MCD2201"
 DEBUG_ARTIFACT_DIR = DEBUG_IMAGE_DIR / "select_tool"
@@ -464,6 +475,80 @@ def select_tool_from_main_window(
         tool_point_on_full_image=full_image_point,
         tool_point_on_screen=screen_point,
         double_clicked=double_clicked,
+    )
+
+
+def verify_tool_visible_in_list(
+    main_window,
+    window_title: str,
+    backend: str,
+    tool_name: str,
+    *,
+    image=None,
+    debug_image_dir=None,
+    log_name: str = LOG_NAME,
+    component_name: str = COMPONENT_NAME,
+) -> ToolListVisibilityResult:
+    """현재 메인 창 List 영역에서 대상 Tool 이름이 보이는지 검증한다."""
+    resolved_debug_dir = debug_image_dir or DEBUG_ARTIFACT_DIR
+    normalized_tool_name = tool_name.strip()
+    if not normalized_tool_name:
+        return ToolListVisibilityResult(
+            exit_code=EXIT_INVALID_TOOL_NAME,
+            target_tool_name=tool_name,
+        )
+
+    started_at = time.time()
+    timestamp_tag = make_timestamp_tag(started_at)
+    main_image = image or _capture_main_window(main_window, window_title, backend)
+    if main_image is None:
+        return ToolListVisibilityResult(
+            exit_code=EXIT_CAPTURE_FAILED,
+            target_tool_name=normalized_tool_name,
+        )
+
+    full_w, full_h = main_image.size
+    list_crop_box = _build_relative_crop_box(
+        full_w,
+        full_h,
+        LIST_REGION_LEFT_RATIO,
+        LIST_REGION_TOP_RATIO,
+        LIST_REGION_RIGHT_RATIO,
+        LIST_REGION_BOTTOM_RATIO,
+    )
+    list_image = crop_image(main_image, list_crop_box)
+
+    try:
+        ocr_result = _run_list_ocr(
+            list_image,
+            normalized_tool_name,
+            timestamp_tag,
+            window_title,
+            backend,
+            debug_image_dir=resolved_debug_dir,
+            log_name=log_name,
+        )
+    except Exception as exc:
+        log_work2_event(
+            component=component_name,
+            message="verify_list_ocr_request_failed",
+            level="error",
+            log_name=log_name,
+            target_tool_name=normalized_tool_name,
+            error=exc,
+        )
+        return ToolListVisibilityResult(
+            exit_code=EXIT_OCR_REQUEST_ERROR,
+            target_tool_name=normalized_tool_name,
+            list_crop_box=list_crop_box,
+        )
+
+    return ToolListVisibilityResult(
+        exit_code=DETECT_SUCCESS if ocr_result["target_visible"] else EXIT_TOOL_NAME_NOT_VISIBLE,
+        target_tool_name=normalized_tool_name,
+        matched_lines=ocr_result["matched_lines"],
+        target_visible=ocr_result["target_visible"],
+        list_crop_box=list_crop_box,
     )
 
 

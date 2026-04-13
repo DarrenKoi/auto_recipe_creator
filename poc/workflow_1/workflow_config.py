@@ -27,6 +27,9 @@ class WorkflowSettings:
     char_type_delay_sec: float = 0.03
     post_type_settle_sec: float = 0.3
     post_double_click_settle_sec: float = 0.5
+    post_tool_open_initial_wait_sec: float = 2.5
+    tool_open_verify_timeout_sec: float = 6.0
+    tool_open_verify_poll_interval_sec: float = 0.5
     post_login_wait_sec: float = 3.0
     login_verify_timeout_sec: float = 15.0
     login_verify_poll_interval_sec: float = 0.5
@@ -66,6 +69,9 @@ def load_workflow_settings() -> WorkflowSettings:
         char_type_delay_sec=env_float("ACTION_LOGIN_CHAR_TYPE_DELAY_SEC", 0.03),
         post_type_settle_sec=env_float("ACTION_LOGIN_POST_TYPE_SETTLE_SEC", 0.3),
         post_double_click_settle_sec=env_float("ACTION_TOOL_POST_DOUBLE_CLICK_SETTLE_SEC", 0.5),
+        post_tool_open_initial_wait_sec=env_float("ACTION_TOOL_POST_OPEN_INITIAL_WAIT_SEC", 2.5),
+        tool_open_verify_timeout_sec=env_float("ACTION_TOOL_VERIFY_TIMEOUT_SEC", 6.0),
+        tool_open_verify_poll_interval_sec=env_float("ACTION_TOOL_VERIFY_POLL_INTERVAL_SEC", 0.5),
         post_login_wait_sec=env_float("ACTION_LOGIN_POST_LOGIN_WAIT_SEC", 3.0),
         login_verify_timeout_sec=env_float("ACTION_LOGIN_VERIFY_TIMEOUT_SEC", 15.0),
         login_verify_poll_interval_sec=env_float("ACTION_LOGIN_VERIFY_POLL_INTERVAL_SEC", 0.5),

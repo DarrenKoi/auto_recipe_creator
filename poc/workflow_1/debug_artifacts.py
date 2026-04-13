@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from poc.work2 import debug_image_path as resolve_debug_image_path
+from poc.workflow_1 import debug_image_path as resolve_debug_image_path
 
 
 def debug_image_path(

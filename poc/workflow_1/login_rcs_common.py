@@ -16,7 +16,7 @@ except ImportError:
     PSUTIL_AVAILABLE = False
 
 from poc.workflow_1 import LOG_DIR
-from poc.work2 import util as work2_util
+from poc.workflow_1 import util as workflow_1_util
 
 
 WINDOW_TITLE_PREFIX = "Remote Control System"
@@ -27,13 +27,13 @@ OPEN_RCS_SCRIPT_PATH = Path(__file__).parent / "open_rcs.py"
 DESKTOP_SCAN_BACKENDS = ("uia", "win32")
 LOGIN_WINDOW_MAX_WIDTH = int(os.getenv("RCS_LOGIN_WINDOW_MAX_WIDTH", "900"))
 LOGIN_WINDOW_MAX_HEIGHT = int(os.getenv("RCS_LOGIN_WINDOW_MAX_HEIGHT", "700"))
-activate_window = getattr(work2_util, "activate_window", None)
+activate_window = getattr(workflow_1_util, "activate_window", None)
 find_window_by_pid_and_title_prefix = getattr(
-    work2_util,
+    workflow_1_util,
     "find_window_by_pid_and_title_prefix",
     None,
 )
-find_window_by_title_prefix = getattr(work2_util, "find_window_by_title_prefix", None)
+find_window_by_title_prefix = getattr(workflow_1_util, "find_window_by_title_prefix", None)
 WINDOW_UTILS_AVAILABLE = all(
     callable(func)
     for func in (

@@ -14,11 +14,11 @@ from poc.workflow_1.debug_artifacts import (
     save_marked_bboxes,
 )
 from poc.workflow_1.logger import log_work2_event
-from poc.work2.prompts.prompt_login_rcs_mai_ui import build_mai_ui_zoom_prompt
-from poc.work2.prompts.prompt_login_rcs_ui_venus import (
+from poc.workflow_1.prompts.prompt_login_rcs_mai_ui import build_mai_ui_zoom_prompt
+from poc.workflow_1.prompts.prompt_login_rcs_ui_venus import (
     build_ui_venus_single_element_bbox_prompt,
 )
-from poc.work2.util import (
+from poc.workflow_1.util import (
     activate_window,
     bbox_1000_to_pixels,
     bbox_center,
@@ -31,8 +31,8 @@ from poc.work2.util import (
     normalize_bbox_1000,
     parse_coords,
 )
-from poc.work2.util.json_utils import extract_json
-from poc.work2.vlm_client import Work2VLMClient
+from poc.workflow_1.util.json_utils import extract_json
+from poc.workflow_1.vlm_client import Workflow1VLMClient
 
 
 @dataclass
@@ -257,7 +257,7 @@ def _save_pipeline_inputs(
 
 
 def _run_ui_venus_coarse_bbox(
-    client: Work2VLMClient,
+    client: Workflow1VLMClient,
     image_b64: str,
     img_w: int,
     img_h: int,
@@ -306,7 +306,7 @@ def _run_ui_venus_coarse_bbox(
 
 
 def _run_mai_ui_refinement(
-    client: Work2VLMClient,
+    client: Workflow1VLMClient,
     zoom_b64: str,
     zoom_w: int,
     zoom_h: int,
@@ -404,7 +404,7 @@ def analyze_window_target(
             )
             return TargetResult(EXIT_CAPTURE_FAILED, target.key)
 
-    coarse_client = Work2VLMClient(service_slug=coarse_service_slug, log_name=log_name)
+    coarse_client = Workflow1VLMClient(service_slug=coarse_service_slug, log_name=log_name)
 
     full_b64, full_w, full_h = encode_image_webp(image)
     coarse_result = _run_ui_venus_coarse_bbox(
@@ -429,7 +429,7 @@ def analyze_window_target(
     zoom_image, zoom_meta = _resize_crop_for_mai(cropped)
     zoom_b64, zoom_w, zoom_h = encode_image_webp(zoom_image)
 
-    refine_client = Work2VLMClient(service_slug=refine_service_slug, log_name=log_name)
+    refine_client = Workflow1VLMClient(service_slug=refine_service_slug, log_name=log_name)
     pipeline_model_name = f"{coarse_client.model_name}__{refine_client.model_name}"
 
     print(

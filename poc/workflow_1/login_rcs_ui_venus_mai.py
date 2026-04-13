@@ -28,7 +28,7 @@ from poc.workflow_1.ui_venus_mai_locator import (
     TargetResult,
     analyze_window_target,
 )
-from poc.work2.util import format_elapsed_ms
+from poc.workflow_1.util import format_elapsed_ms
 
 load_dotenv()
 

@@ -2,7 +2,7 @@
 
 from dataclasses import asdict, dataclass
 
-from poc.work2.util import env_flag, env_float, env_int
+from poc.workflow_1.util import env_flag, env_float, env_int
 
 
 @dataclass(frozen=True)

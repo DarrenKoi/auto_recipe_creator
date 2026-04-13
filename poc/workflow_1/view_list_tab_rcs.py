@@ -16,7 +16,7 @@ from poc.workflow_1.ui_venus_mai_locator import (
     TargetConfig,
     analyze_window_target,
 )
-from poc.work2.util import (
+from poc.workflow_1.util import (
     click_at_screen,
     foreground_window,
     format_elapsed_ms,

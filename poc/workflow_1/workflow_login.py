@@ -26,7 +26,7 @@ from poc.workflow_1.view_list_tab_rcs import (
     EXIT_SUCCESS as LIST_TAB_SUCCESS,
     click_list_tab_in_main_window,
 )
-from poc.work2.util import (
+from poc.workflow_1.util import (
     activate_window,
     capture_window,
     click_at_screen,
@@ -56,7 +56,7 @@ except ImportError:
     print("[WARNING] pynput.keyboard 미설치 — 타이핑 동작은 로그만 출력됩니다.")
 
 try:
-    from poc.work2.util.mouse_utils import PYNPUT_MOUSE_AVAILABLE
+    from poc.workflow_1.util.mouse_utils import PYNPUT_MOUSE_AVAILABLE
 except ImportError:
     PYNPUT_MOUSE_AVAILABLE = False
 

@@ -23,7 +23,7 @@ from poc.workflow_1.ui_venus_mai_locator import (
     TargetConfig,
     analyze_window_target,
 )
-from poc.work2.util import (
+from poc.workflow_1.util import (
     activate_window,
     capture_window,
     click_at_screen,
@@ -33,7 +33,7 @@ from poc.work2.util import (
     image_point_to_screen,
     make_timestamp_tag,
 )
-from poc.work2.vlm_client import Work2VLMClient
+from poc.workflow_1.vlm_client import Workflow1VLMClient
 
 load_dotenv()
 
@@ -204,7 +204,7 @@ def _run_list_ocr(
     log_name: str,
 ) -> dict:
     """좌측 Tool List crop 을 OCR 로 읽고 대상 Tool 이름 존재 여부를 확인한다."""
-    client = Work2VLMClient(
+    client = Workflow1VLMClient(
         service_slug=OCR_SERVICE_SLUG,
         timeout_sec=120.0,
         log_name=log_name,

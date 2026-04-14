@@ -9,7 +9,6 @@
 """
 
 import os
-import sys
 import time
 import threading
 from datetime import datetime
@@ -37,18 +36,19 @@ except ImportError:
 
 from poc.workflow_1.office_align_fail_alarm import filter_align_fail, get_cdsem_alarms
 from poc.workflow_1.logger import log_work2_event
+from poc.workflow_1.util import env_int
 
 LOG_NAME = Path(__file__).stem
 COMPONENT_NAME = LOG_NAME
 
 # ── 설정 (환경변수) ────────────────────────────────────────────────
-POLL_INTERVAL_SEC = int(os.getenv("ALIGN_FAIL_POLL_SEC", "120"))
-MAX_RECORD_SEC = int(os.getenv("ALIGN_FAIL_MAX_RECORD_SEC", "600"))
+POLL_INTERVAL_SEC = env_int("ALIGN_FAIL_POLL_SEC", 120)
+MAX_RECORD_SEC = env_int("ALIGN_FAIL_MAX_RECORD_SEC", 600)
 RECORDING_DIR = Path(os.getenv(
     "ALIGN_FAIL_RECORDING_DIR",
     str(Path(__file__).resolve().parent / "recordings"),
 ))
-RECORD_FPS = int(os.getenv("ALIGN_FAIL_RECORD_FPS", "5"))
+RECORD_FPS = env_int("ALIGN_FAIL_RECORD_FPS", 5)
 
 
 class AlignFailRecorder:
@@ -126,11 +126,8 @@ def connect_rcs_to_tool(eqp_id: str) -> bool:
     기존 워크플로를 재사용:
       open_rcs → login → select tool
     """
-    from poc.workflow_1.open_rcs import launch_rcs, RCS_EXE, EXIT_SUCCESS as OPEN_SUCCESS
-    from poc.workflow_1.workflow_login import (
-        run_login_workflow,
-        EXIT_SUCCESS as LOGIN_SUCCESS,
-    )
+    from poc.workflow_1.open_rcs import launch_rcs, RCS_EXE
+    from poc.workflow_1.workflow_login import run_login_workflow
 
     # 1) RCS 실행
     print(f"[INFO] RCS 실행 시작 (대상 Tool: {eqp_id})")
@@ -203,9 +200,8 @@ def monitor_loop():
 
                     # 녹화 시작
                     recorder = AlignFailRecorder(eqp_id)
-                    output_path = recorder.start()
-                    if output_path and str(output_path):
-                        active_recorders[eqp_id] = recorder
+                    recorder.start()
+                    active_recorders[eqp_id] = recorder
 
                     already_handled.add(eqp_id)
 

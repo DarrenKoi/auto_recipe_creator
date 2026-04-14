@@ -51,6 +51,7 @@ class ToolSelectionResult:
     tool_point_on_full_image: dict | None = None
     tool_point_on_screen: dict | None = None
     double_clicked: bool = False
+    selected_attempt: str | None = None
 
 
 @dataclass
@@ -62,6 +63,8 @@ class ToolListVisibilityResult:
     matched_lines: list[str] = field(default_factory=list)
     target_visible: bool = False
     list_crop_box: dict | None = None
+    selected_attempt: str | None = None
+    visibility_source: str | None = None
 
 
 OCR_SERVICE_SLUG = "paddleocr-vl-1.5"
@@ -87,6 +90,10 @@ EXIT_INVALID_TOOL_NAME = "invalid_tool_name"
 EXIT_INVALID_MAIN_WINDOW = "invalid_main_window"
 
 OCR_MAX_TOKENS = 4096
+LIST_OCR_MIN_WIDTH = int(os.getenv("SELECT_TOOL_LIST_OCR_MIN_WIDTH", "960"))
+LIST_OCR_MIN_HEIGHT = int(os.getenv("SELECT_TOOL_LIST_OCR_MIN_HEIGHT", "900"))
+LIST_OCR_MAX_WIDTH = int(os.getenv("SELECT_TOOL_LIST_OCR_MAX_WIDTH", "1400"))
+LIST_OCR_MAX_HEIGHT = int(os.getenv("SELECT_TOOL_LIST_OCR_MAX_HEIGHT", "1800"))
 
 
 def _env_float(name: str, default: float) -> float:
@@ -106,6 +113,7 @@ LIST_REGION_LEFT_RATIO = _env_float("SELECT_TOOL_LIST_LEFT_RATIO", 0.00)
 LIST_REGION_TOP_RATIO = _env_float("SELECT_TOOL_LIST_TOP_RATIO", 0.10)
 LIST_REGION_RIGHT_RATIO = _env_float("SELECT_TOOL_LIST_RIGHT_RATIO", 0.42)
 LIST_REGION_BOTTOM_RATIO = _env_float("SELECT_TOOL_LIST_BOTTOM_RATIO", 0.98)
+LIST_OCR_MAX_UPSCALE = _env_float("SELECT_TOOL_LIST_OCR_MAX_UPSCALE", 3.0)
 
 
 def load_target_tool_name(default: str = "") -> str:
@@ -192,6 +200,116 @@ def _build_relative_crop_box(
     }
 
 
+def _resize_tool_list_image(image):
+    """Tool list crop 을 OCR/VLM 입력용으로 확대한다."""
+    width, height = image.size
+    min_scale = max(
+        1.0,
+        LIST_OCR_MIN_WIDTH / max(1, width),
+        LIST_OCR_MIN_HEIGHT / max(1, height),
+    )
+    max_scale = min(
+        LIST_OCR_MAX_UPSCALE,
+        LIST_OCR_MAX_WIDTH / max(1, width),
+        LIST_OCR_MAX_HEIGHT / max(1, height),
+    )
+    scale = max(1.0, min(min_scale, max_scale))
+    resized_width = max(1, int(round(width * scale)))
+    resized_height = max(1, int(round(height * scale)))
+    if resized_width == width and resized_height == height:
+        return image, {
+            "resized": False,
+            "scale": 1.0,
+            "width": width,
+            "height": height,
+        }
+
+    resized = image.resize((resized_width, resized_height))
+    return resized, {
+        "resized": True,
+        "scale": scale,
+        "width": resized_width,
+        "height": resized_height,
+    }
+
+
+def _map_point_from_working_image(point: dict, base_width: int, base_height: int, working_width: int, working_height: int) -> dict[str, int]:
+    """리사이즈된 작업 이미지 좌표를 원본 list crop 좌표로 복원한다."""
+    mapped_x = int(round(point["x"] * max(base_width - 1, 0) / max(working_width - 1, 1)))
+    mapped_y = int(round(point["y"] * max(base_height - 1, 0) / max(working_height - 1, 1)))
+    return {
+        "x": max(0, min(mapped_x, base_width - 1)),
+        "y": max(0, min(mapped_y, base_height - 1)),
+    }
+
+
+def _build_list_crop_attempts(main_image) -> list[dict]:
+    """Tool list 인식용 crop 시도 목록을 구성한다."""
+    full_w, full_h = main_image.size
+    focused_right_ratio = min(
+        LIST_REGION_RIGHT_RATIO,
+        max(LIST_REGION_LEFT_RATIO + 0.20, LIST_REGION_RIGHT_RATIO - 0.08),
+    )
+    attempt_specs = [
+        {
+            "name": "focused_left",
+            "left_ratio": LIST_REGION_LEFT_RATIO,
+            "top_ratio": max(0.0, LIST_REGION_TOP_RATIO - 0.02),
+            "right_ratio": focused_right_ratio,
+            "bottom_ratio": min(1.0, LIST_REGION_BOTTOM_RATIO + 0.01),
+        },
+        {
+            "name": "default",
+            "left_ratio": LIST_REGION_LEFT_RATIO,
+            "top_ratio": LIST_REGION_TOP_RATIO,
+            "right_ratio": LIST_REGION_RIGHT_RATIO,
+            "bottom_ratio": LIST_REGION_BOTTOM_RATIO,
+        },
+    ]
+
+    attempts: list[dict] = []
+    seen_boxes: set[tuple[int, int, int, int]] = set()
+    for spec in attempt_specs:
+        crop_box = _build_relative_crop_box(
+            full_w,
+            full_h,
+            spec["left_ratio"],
+            spec["top_ratio"],
+            spec["right_ratio"],
+            spec["bottom_ratio"],
+        )
+        crop_key = (
+            crop_box["left"],
+            crop_box["top"],
+            crop_box["right"],
+            crop_box["bottom"],
+        )
+        if crop_key in seen_boxes:
+            continue
+        seen_boxes.add(crop_key)
+
+        base_image = crop_image(main_image, crop_box)
+        working_image, resize_meta = _resize_tool_list_image(base_image)
+        attempts.append(
+            {
+                "name": spec["name"],
+                "crop_box": crop_box,
+                "base_image": base_image,
+                "working_image": working_image,
+                "base_size": {
+                    "width": base_image.size[0],
+                    "height": base_image.size[1],
+                },
+                "working_size": {
+                    "width": working_image.size[0],
+                    "height": working_image.size[1],
+                },
+                "resize_meta": resize_meta,
+            }
+        )
+    return attempts
+
+
 def _capture_main_window(main_window, window_title: str, backend: str):
     """메인 창을 활성화하고 한 번 캡처한다."""
     if not _is_valid_main_window_title(window_title):
@@ -228,6 +346,7 @@ def _run_list_ocr(
     *,
     debug_image_dir,
     log_name: str,
+    artifact_label: str = "tool_list",
 ) -> dict:
     """좌측 Tool List crop 을 OCR 로 읽고 대상 Tool 이름 존재 여부를 확인한다."""
     client = Workflow1VLMClient(
@@ -244,25 +363,25 @@ def _run_list_ocr(
 
     list_capture_path = debug_image_path(
         debug_image_dir,
-        "tool_list_crop.jpg",
+        f"{artifact_label}_crop.jpg",
         model_name=client.model_name,
         timestamp_tag=timestamp_tag,
     )
     list_webp_path = debug_image_path(
         debug_image_dir,
-        "tool_list_input.webp",
+        f"{artifact_label}_input.webp",
         model_name=client.model_name,
         timestamp_tag=timestamp_tag,
     )
     raw_response_path = debug_image_path(
         debug_image_dir,
-        "tool_list_ocr_response.txt",
+        f"{artifact_label}_ocr_response.txt",
         model_name=client.model_name,
         timestamp_tag=timestamp_tag,
     )
     result_json_path = debug_image_path(
         debug_image_dir,
-        "tool_list_ocr_result.json",
+        f"{artifact_label}_ocr_result.json",
         model_name=client.model_name,
         timestamp_tag=timestamp_tag,
     )
@@ -308,9 +427,130 @@ def _run_list_ocr(
         },
     )
     return {
+        "raw_text": raw_text,
+        "normalized_lines": normalized_lines,
         "matched_lines": matched_lines,
         "target_visible": target_visible,
     }
+
+
+def _run_tool_list_ocr_attempts(
+    main_image,
+    tool_name: str,
+    timestamp_tag: str,
+    window_title: str,
+    backend: str,
+    *,
+    debug_image_dir,
+    log_name: str,
+    component_name: str,
+) -> tuple[list[dict], list[dict]]:
+    """여러 list crop 시도에서 OCR 을 수행한다."""
+    attempts = _build_list_crop_attempts(main_image)
+    ocr_attempts: list[dict] = []
+    errors: list[dict] = []
+
+    for attempt in attempts:
+        try:
+            ocr_result = _run_list_ocr(
+                attempt["working_image"],
+                tool_name,
+                timestamp_tag,
+                window_title,
+                backend,
+                debug_image_dir=debug_image_dir,
+                log_name=log_name,
+                artifact_label=f"tool_list_{attempt['name']}",
+            )
+        except Exception as exc:
+            log_work2_event(
+                component=component_name,
+                message="ocr_request_failed",
+                level="error",
+                log_name=log_name,
+                target_tool_name=tool_name,
+                attempt_name=attempt["name"],
+                error=exc,
+            )
+            errors.append(
+                {
+                    "attempt_name": attempt["name"],
+                    "crop_box": attempt["crop_box"],
+                    "resize_meta": attempt["resize_meta"],
+                    "error": str(exc),
+                }
+            )
+            continue
+
+        ocr_attempts.append(
+            {
+                **attempt,
+                "ocr_result": ocr_result,
+            }
+        )
+    return ocr_attempts, errors
+
+
+def _locate_tool_on_attempts(
+    main_window,
+    window_title: str,
+    backend: str,
+    normalized_tool_name: str,
+    attempts: list[dict],
+    *,
+    debug_image_dir,
+    log_name: str,
+    component_name: str,
+) -> tuple[dict | None, list[dict]]:
+    """OCR 결과가 있는 crop 시도들에서 tool row grounding 을 순차 시도한다."""
+    detection_attempts: list[dict] = []
+    visible_first = [attempt for attempt in attempts if attempt["ocr_result"]["target_visible"]]
+    fallback_attempts = [attempt for attempt in attempts if not attempt["ocr_result"]["target_visible"]]
+
+    for attempt in [*visible_first, *fallback_attempts]:
+        tool_result = analyze_window_target(
+            main_window,
+            window_title,
+            backend,
+            _tool_row_target(normalized_tool_name),
+            debug_image_dir=debug_image_dir,
+            log_name=log_name,
+            component_name=component_name,
+            artifact_prefix=f"workflow_select_tool_{normalized_tool_name.lower()}_{attempt['name']}",
+            result_mode="ui_venus_then_mai_ui_tool_list",
+            image=attempt["working_image"],
+        )
+
+        mapped_point = None
+        if tool_result.point is not None:
+            mapped_point = _map_point_from_working_image(
+                tool_result.point,
+                attempt["base_size"]["width"],
+                attempt["base_size"]["height"],
+                attempt["working_size"]["width"],
+                attempt["working_size"]["height"],
+            )
+
+        detection_attempt = {
+            "attempt_name": attempt["name"],
+            "crop_box": attempt["crop_box"],
+            "resize_meta": attempt["resize_meta"],
+            "ocr_target_visible": attempt["ocr_result"]["target_visible"],
+            "ocr_matched_lines": attempt["ocr_result"]["matched_lines"],
+            "tool_result_exit_code": tool_result.exit_code,
+            "tool_point_on_working_image": tool_result.point,
+            "tool_point_on_list_crop": mapped_point,
+        }
+        detection_attempts.append(detection_attempt)
+
+        if tool_result.exit_code == DETECT_SUCCESS and mapped_point is not None:
+            return {
+                "attempt": attempt,
+                "tool_result": tool_result,
+                "mapped_point": mapped_point,
+            }, detection_attempts
+
+    return None, detection_attempts
 
 
 def select_tool_from_main_window(
@@ -357,86 +597,71 @@ def select_tool_from_main_window(
     )
     save_debug_jpeg(main_image, full_capture_path)
 
-    full_w, full_h = main_image.size
-    list_crop_box = _build_relative_crop_box(
-        full_w,
-        full_h,
-        LIST_REGION_LEFT_RATIO,
-        LIST_REGION_TOP_RATIO,
-        LIST_REGION_RIGHT_RATIO,
-        LIST_REGION_BOTTOM_RATIO,
-    )
-    list_image = crop_image(main_image, list_crop_box)
-
-    try:
-        ocr_result = _run_list_ocr(
-            list_image,
-            normalized_tool_name,
-            timestamp_tag,
-            window_title,
-            backend,
-            debug_image_dir=resolved_debug_dir,
-            log_name=log_name,
-        )
-    except Exception as exc:
-        log_work2_event(
-            component=component_name,
-            message="ocr_request_failed",
-            level="error",
-            log_name=log_name,
-            target_tool_name=normalized_tool_name,
-            error=exc,
-        )
-        return ToolSelectionResult(
-            exit_code=EXIT_OCR_REQUEST_ERROR,
-            target_tool_name=normalized_tool_name,
-            list_crop_box=list_crop_box,
-        )
-
-    if not ocr_result["target_visible"]:
-        return ToolSelectionResult(
-            exit_code=EXIT_TOOL_NAME_NOT_VISIBLE,
-            target_tool_name=normalized_tool_name,
-            matched_lines=ocr_result["matched_lines"],
-            ocr_target_visible=False,
-            list_crop_box=list_crop_box,
-        )
-
-    tool_result = analyze_window_target(
-        main_window,
+    ocr_attempts, ocr_errors = _run_tool_list_ocr_attempts(
+        main_image,
+        normalized_tool_name,
+        timestamp_tag,
         window_title,
         backend,
-        _tool_row_target(normalized_tool_name),
         debug_image_dir=resolved_debug_dir,
         log_name=log_name,
         component_name=component_name,
-        artifact_prefix=f"workflow_select_tool_{normalized_tool_name.lower()}",
-        result_mode="ui_venus_then_mai_ui_tool_list",
-        image=list_image,
     )
-    if tool_result.exit_code != DETECT_SUCCESS or tool_result.point is None:
+    if not ocr_attempts and ocr_errors:
         return ToolSelectionResult(
-            exit_code=EXIT_TOOL_ROW_NOT_FOUND,
+            exit_code=EXIT_OCR_REQUEST_ERROR,
             target_tool_name=normalized_tool_name,
-            matched_lines=ocr_result["matched_lines"],
-            ocr_target_visible=True,
-            list_crop_box=list_crop_box,
+            list_crop_box=ocr_errors[0]["crop_box"] if ocr_errors else None,
         )
 
+    located_attempt, detection_attempts = _locate_tool_on_attempts(
+        main_window,
+        window_title,
+        backend,
+        normalized_tool_name,
+        ocr_attempts,
+        debug_image_dir=resolved_debug_dir,
+        log_name=log_name,
+        component_name=component_name,
+    )
+
+    visible_attempts = [attempt for attempt in ocr_attempts if attempt["ocr_result"]["target_visible"]]
+    best_visible_attempt = visible_attempts[0] if visible_attempts else None
+    selected_attempt = located_attempt["attempt"] if located_attempt is not None else best_visible_attempt
+    list_crop_box = selected_attempt["crop_box"] if selected_attempt is not None else None
+    matched_lines = (
+        selected_attempt["ocr_result"]["matched_lines"]
+        if selected_attempt is not None
+        else []
+    )
+
+    if located_attempt is None:
+        return ToolSelectionResult(
+            exit_code=EXIT_TOOL_ROW_NOT_FOUND if best_visible_attempt is not None else EXIT_TOOL_NAME_NOT_VISIBLE,
+            target_tool_name=normalized_tool_name,
+            matched_lines=matched_lines,
+            ocr_target_visible=best_visible_attempt is not None,
+            list_crop_box=list_crop_box,
+            selected_attempt=selected_attempt["name"] if selected_attempt is not None else None,
+        )
+
+    tool_result = located_attempt["tool_result"]
+    list_crop_point = located_attempt["mapped_point"]
     full_image_point = {
-        "x": list_crop_box["left"] + tool_result.point["x"],
-        "y": list_crop_box["top"] + tool_result.point["y"],
+        "x": list_crop_box["left"] + list_crop_point["x"],
+        "y": list_crop_box["top"] + list_crop_point["y"],
     }
     screen_point = image_point_to_screen(main_window, full_image_point)
     if screen_point is None:
         return ToolSelectionResult(
             exit_code=EXIT_CAPTURE_FAILED,
             target_tool_name=normalized_tool_name,
-            matched_lines=ocr_result["matched_lines"],
-            ocr_target_visible=True,
+            matched_lines=matched_lines,
+            ocr_target_visible=selected_attempt["ocr_result"]["target_visible"],
             list_crop_box=list_crop_box,
-            tool_point_on_list_crop=tool_result.point,
+            tool_point_on_list_crop=list_crop_point,
             tool_point_on_full_image=full_image_point,
+            selected_attempt=selected_attempt["name"],
         )
 
     if not foreground_window(
@@ -446,12 +671,13 @@ def select_tool_from_main_window(
         return ToolSelectionResult(
             exit_code=EXIT_WINDOW_ACTIVATE_FAILED,
             target_tool_name=normalized_tool_name,
-            matched_lines=ocr_result["matched_lines"],
-            ocr_target_visible=True,
+            matched_lines=matched_lines,
+            ocr_target_visible=selected_attempt["ocr_result"]["target_visible"],
             list_crop_box=list_crop_box,
-            tool_point_on_list_crop=tool_result.point,
+            tool_point_on_list_crop=list_crop_point,
             tool_point_on_full_image=full_image_point,
             tool_point_on_screen=screen_point,
+            selected_attempt=selected_attempt["name"],
         )
 
     time.sleep(max(0.0, pre_click_settle_sec))
@@ -475,9 +701,23 @@ def select_tool_from_main_window(
             "backend": backend,
             "target_tool_name": normalized_tool_name,
             "list_crop_box": list_crop_box,
-            "ocr_target_visible": ocr_result["target_visible"],
-            "ocr_matched_lines": ocr_result["matched_lines"],
-            "tool_point_on_list_crop": tool_result.point,
+            "selected_attempt": selected_attempt["name"],
+            "selected_attempt_resize_meta": selected_attempt["resize_meta"],
+            "ocr_target_visible": selected_attempt["ocr_result"]["target_visible"],
+            "ocr_matched_lines": matched_lines,
+            "ocr_attempts": [
+                {
+                    "attempt_name": attempt["name"],
+                    "crop_box": attempt["crop_box"],
+                    "resize_meta": attempt["resize_meta"],
+                    "ocr_target_visible": attempt["ocr_result"]["target_visible"],
+                    "ocr_matched_lines": attempt["ocr_result"]["matched_lines"],
+                }
+                for attempt in ocr_attempts
+            ],
+            "ocr_errors": ocr_errors,
+            "detection_attempts": detection_attempts,
+            "tool_point_on_list_crop": list_crop_point,
             "tool_point_on_full_image": full_image_point,
             "tool_point_on_screen": screen_point,
             "double_clicked": double_clicked,
@@ -488,13 +728,14 @@ def select_tool_from_main_window(
     return ToolSelectionResult(
         exit_code=DETECT_SUCCESS if double_clicked else EXIT_TOOL_ROW_NOT_FOUND,
         target_tool_name=normalized_tool_name,
-        matched_lines=ocr_result["matched_lines"],
-        ocr_target_visible=True,
+        matched_lines=matched_lines,
+        ocr_target_visible=selected_attempt["ocr_result"]["target_visible"],
         list_crop_box=list_crop_box,
-        tool_point_on_list_crop=tool_result.point,
+        tool_point_on_list_crop=list_crop_point,
         tool_point_on_full_image=full_image_point,
         tool_point_on_screen=screen_point,
         double_clicked=double_clicked,
+        selected_attempt=selected_attempt["name"],
     )
 
 
@@ -532,48 +773,67 @@ def verify_tool_visible_in_list(
             target_tool_name=normalized_tool_name,
         )
 
-    full_w, full_h = main_image.size
-    list_crop_box = _build_relative_crop_box(
-        full_w,
-        full_h,
-        LIST_REGION_LEFT_RATIO,
-        LIST_REGION_TOP_RATIO,
-        LIST_REGION_RIGHT_RATIO,
-        LIST_REGION_BOTTOM_RATIO,
+    ocr_attempts, ocr_errors = _run_tool_list_ocr_attempts(
+        main_image,
+        normalized_tool_name,
+        timestamp_tag,
+        window_title,
+        backend,
+        debug_image_dir=resolved_debug_dir,
+        log_name=log_name,
+        component_name=component_name,
     )
-    list_image = crop_image(main_image, list_crop_box)
-
-    try:
-        ocr_result = _run_list_ocr(
-            list_image,
-            normalized_tool_name,
-            timestamp_tag,
-            window_title,
-            backend,
-            debug_image_dir=resolved_debug_dir,
-            log_name=log_name,
-        )
-    except Exception as exc:
-        log_work2_event(
-            component=component_name,
-            message="verify_list_ocr_request_failed",
-            level="error",
-            log_name=log_name,
-            target_tool_name=normalized_tool_name,
-            error=exc,
-        )
+    if not ocr_attempts and ocr_errors:
         return ToolListVisibilityResult(
             exit_code=EXIT_OCR_REQUEST_ERROR,
             target_tool_name=normalized_tool_name,
-            list_crop_box=list_crop_box,
+            list_crop_box=ocr_errors[0]["crop_box"] if ocr_errors else None,
         )
 
+    visible_attempts = [attempt for attempt in ocr_attempts if attempt["ocr_result"]["target_visible"]]
+    if visible_attempts:
+        selected_attempt = visible_attempts[0]
+        return ToolListVisibilityResult(
+            exit_code=DETECT_SUCCESS,
+            target_tool_name=normalized_tool_name,
+            matched_lines=selected_attempt["ocr_result"]["matched_lines"],
+            target_visible=True,
+            list_crop_box=selected_attempt["crop_box"],
+            selected_attempt=selected_attempt["name"],
+            visibility_source="ocr",
+        )
+
+    located_attempt, _ = _locate_tool_on_attempts(
+        main_window,
+        window_title,
+        backend,
+        normalized_tool_name,
+        ocr_attempts,
+        debug_image_dir=resolved_debug_dir,
+        log_name=log_name,
+        component_name=component_name,
+    )
+    if located_attempt is not None:
+        selected_attempt = located_attempt["attempt"]
+        return ToolListVisibilityResult(
+            exit_code=DETECT_SUCCESS,
+            target_tool_name=normalized_tool_name,
+            matched_lines=[],
+            target_visible=True,
+            list_crop_box=selected_attempt["crop_box"],
+            selected_attempt=selected_attempt["name"],
+            visibility_source="vlm_grounding",
+        )
+
+    fallback_attempt = ocr_attempts[0] if ocr_attempts else None
     return ToolListVisibilityResult(
-        exit_code=DETECT_SUCCESS if ocr_result["target_visible"] else EXIT_TOOL_NAME_NOT_VISIBLE,
+        exit_code=EXIT_TOOL_NAME_NOT_VISIBLE,
         target_tool_name=normalized_tool_name,
-        matched_lines=ocr_result["matched_lines"],
-        target_visible=ocr_result["target_visible"],
-        list_crop_box=list_crop_box,
+        matched_lines=[],
+        target_visible=False,
+        list_crop_box=fallback_attempt["crop_box"] if fallback_attempt is not None else None,
+        selected_attempt=fallback_attempt["name"] if fallback_attempt is not None else None,
+        visibility_source="ocr",
     )
 
 

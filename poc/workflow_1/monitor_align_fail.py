@@ -174,22 +174,22 @@ def monitor_loop():
             if fails.empty:
                 print(f"[INFO] {datetime.now().strftime('%H:%M:%S')} — Align Fail 없음")
             else:
-                for _, row in fails.iterrows():
-                    eqp_id = row["EQP_ID"]
+                for row in fails.itertuples(index=False):
+                    eqp_id = row.EQP_ID
 
                     if eqp_id in already_handled:
                         print(f"[INFO] {eqp_id} 이미 처리됨 — 건너뜀")
                         continue
 
                     print(f"[WARNING] Align Fail 감지: EQP_ID={eqp_id}, "
-                          f"시각={row['ALARM_TIME']}")
+                          f"시각={row.ALARM_TIME}")
 
                     log_work2_event(
                         component=COMPONENT_NAME,
                         message="align_fail_detected",
                         log_name=LOG_NAME,
                         eqp_id=eqp_id,
-                        alarm_time=row["ALARM_TIME"],
+                        alarm_time=row.ALARM_TIME,
                     )
 
                     # RCS 접속

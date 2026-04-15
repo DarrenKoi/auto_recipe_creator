@@ -48,5 +48,6 @@
         ]
       }
     ]
-  }
+  },
+  "prefersReducedMotion": true
 }

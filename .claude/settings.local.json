@@ -32,7 +32,8 @@
       "WebFetch(domain:qwen.readthedocs.io)",
       "Bash(uv pip:*)",
       "Bash(find:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Skill(codex:rescue)"
     ]
   },
   "hooks": {

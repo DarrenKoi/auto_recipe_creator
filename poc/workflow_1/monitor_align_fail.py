@@ -176,7 +176,7 @@ def monitor_loop():
             else:
                 for row in fails.itertuples(index=False):
                     eqp_id = row.EQP_ID
-                    alarm_time = getattr(row, "CREATE_DTTS", getattr(row, "ALARM_TIME", None))
+                    alarm_time = getattr(row, "UTC9", None)
 
                     if eqp_id in already_handled:
                         print(f"[INFO] {eqp_id} 이미 처리됨 — 건너뜀")

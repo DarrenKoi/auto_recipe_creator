@@ -1,4 +1,4 @@
-"""Channel 4 CCTV 선택 이후 전체 화면을 녹화한다.
+"""Channel 4 CCTV 선택 이후 대상 창만 녹화한다.
 
 사용법:
   uv run python poc/workflow_1/record_screen_ch4.py
@@ -33,7 +33,7 @@ except ImportError:
     print("[WARNING] mss 미설치 — 화면 캡처 불가")
 
 from poc.workflow_1.logger import log_work2_event
-from poc.workflow_1.util import env_int
+from poc.workflow_1.util import WINDOW_UTILS_AVAILABLE, env_int, foreground_window
 
 load_dotenv()
 
@@ -98,7 +98,7 @@ def _sanitize_output_stem(output_stem: str) -> str:
 
 
 class ScreenRecorder:
-    """백그라운드 스레드에서 전체 화면을 녹화한다."""
+    """백그라운드 스레드에서 대상 창 또는 전체 화면을 녹화한다."""
 
     def __init__(
         self,
@@ -109,6 +109,8 @@ class ScreenRecorder:
         fps: int = RECORD_FPS,
         codec: str = DEFAULT_CODEC,
         extension: str = DEFAULT_EXTENSION,
+        target_window=None,
+        target_window_title: str = "",
         log_name: str = LOG_NAME,
         component_name: str = COMPONENT_NAME,
     ):
@@ -118,6 +120,8 @@ class ScreenRecorder:
         self._fps = max(1, int(fps))
         self._codec = (codec or "").strip() or DEFAULT_CODEC
         self._extension = _normalize_extension(extension)
+        self._target_window = target_window
+        self._target_window_title = (target_window_title or "").strip()
         self._log_name = log_name
         self._component_name = component_name
         self._stop_event = threading.Event()
@@ -142,6 +146,32 @@ class ScreenRecorder:
     def resolved_codec(self) -> str:
         """실제로 사용된 코덱 문자열을 반환한다."""
         return self._resolved_codec
+
+    def _resolve_capture_region(self) -> dict[str, int] | None:
+        """대상 창의 현재 화면 좌표를 mss capture region 으로 변환한다."""
+        if self._target_window is None:
+            return None
+
+        try:
+            rect = self._target_window.rectangle()
+        except Exception as exc:
+            self._error_message = f"대상 창 rectangle 조회 실패: {exc}"
+            return None
+
+        width = int(rect.right - rect.left)
+        height = int(rect.bottom - rect.top)
+        if width <= 1 or height <= 1:
+            self._error_message = (
+                f"대상 창 크기가 비정상적입니다: {width}x{height}"
+            )
+            return None
+
+        return {
+            "left": int(rect.left),
+            "top": int(rect.top),
+            "width": width,
+            "height": height,
+        }
 
     def start(self) -> Path | None:
         """녹화를 시작하고 출력 파일 경로를 반환한다."""
@@ -178,6 +208,13 @@ class ScreenRecorder:
             name=f"recorder-{self._output_stem}",
             daemon=True,
         )
+
+        if self._target_window is not None and WINDOW_UTILS_AVAILABLE:
+            foreground_window(
+                self._target_window,
+                debug_label=self._target_window_title or self._output_stem,
+            )
+
         self._thread.start()
         self._ready_event.wait(timeout=3.0)
 
@@ -200,6 +237,7 @@ class ScreenRecorder:
             log_name=self._log_name,
             output_path=str(self._output_path),
             codec=self._resolved_codec or self._codec,
+            capture_target=self._target_window_title or "full_screen",
             fps=self._fps,
             max_record_sec=self._max_record_sec,
         )
@@ -220,6 +258,7 @@ class ScreenRecorder:
                 log_name=self._log_name,
                 output_path=str(self._output_path),
                 codec=self._resolved_codec or self._codec,
+                capture_target=self._target_window_title or "full_screen",
                 error=self._error_message or "",
             )
         return self._output_path
@@ -272,9 +311,20 @@ class ScreenRecorder:
         writer = None
         try:
             with mss.mss() as sct:
-                monitor = sct.monitors[0]
-                width = int(monitor["width"])
-                height = int(monitor["height"])
+                capture_region = self._resolve_capture_region()
+                if self._target_window is not None and capture_region is None:
+                    return
+
+                if capture_region is None:
+                    monitor = sct.monitors[0]
+                    width = int(monitor["width"])
+                    height = int(monitor["height"])
+                    monitor_region = monitor
+                else:
+                    width = int(capture_region["width"])
+                    height = int(capture_region["height"])
+                    monitor_region = capture_region
+
                 writer = self._open_video_writer(width, height)
                 if writer is None:
                     return
@@ -293,9 +343,17 @@ class ScreenRecorder:
                         break
 
                     frame_started_at = time.time()
-                    img = sct.grab(monitor)
+                    if self._target_window is not None:
+                        updated_region = self._resolve_capture_region()
+                        if updated_region is None:
+                            break
+                        monitor_region = updated_region
+
+                    img = sct.grab(monitor_region)
                     frame = np.array(img)
                     frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+                    if frame.shape[1] != width or frame.shape[0] != height:
+                        frame = cv2.resize(frame, (width, height))
                     writer.write(frame)
                     elapsed = time.time() - frame_started_at
                     if elapsed < frame_interval:
@@ -326,10 +384,12 @@ def record_screen(
     fps: int = RECORD_FPS,
     codec: str = DEFAULT_CODEC,
     extension: str = DEFAULT_EXTENSION,
+    target_window=None,
+    target_window_title: str = "",
     log_name: str = LOG_NAME,
     component_name: str = COMPONENT_NAME,
 ) -> Path | None:
-    """현재 전체 화면을 녹화하고 저장 파일 경로를 반환한다."""
+    """대상 창 또는 현재 전체 화면을 녹화하고 저장 파일 경로를 반환한다."""
     recorder = ScreenRecorder(
         output_stem=output_stem,
         output_dir=output_dir,
@@ -337,6 +397,8 @@ def record_screen(
         fps=fps,
         codec=codec,
         extension=extension,
+        target_window=target_window,
+        target_window_title=target_window_title,
         log_name=log_name,
         component_name=component_name,
     )
@@ -356,8 +418,27 @@ def record_screen(
 
 
 def main() -> str:
-    """Channel 4 전체화면 녹화를 시작한다."""
-    output_path = record_screen()
+    """DVR player 창 또는 전체 화면 녹화를 시작한다."""
+    target_window = None
+    target_window_title = ""
+
+    if os.name == "nt":
+        try:
+            from poc.workflow_1.workflow_select_ch4_cctv import _find_player_window
+
+            target_window, target_window_title, _backend, _process_name = _find_player_window()
+        except Exception as exc:
+            print(f"[ERROR] DVR player 창 조회 실패: {exc}")
+            return "player_window_not_found"
+
+        if target_window is None:
+            print("[ERROR] DVR player 창을 찾지 못했습니다.")
+            return "player_window_not_found"
+
+    output_path = record_screen(
+        target_window=target_window,
+        target_window_title=target_window_title,
+    )
     if output_path is None:
         print("[ERROR] 화면 녹화 실패")
         return "record_failed"

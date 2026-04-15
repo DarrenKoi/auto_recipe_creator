@@ -358,6 +358,8 @@ def main() -> str:
         )
         recording_path = record_screen(
             output_stem=f"ch4_cctv_{process_name or 'player'}",
+            target_window=player_window,
+            target_window_title=window_title,
             log_name=LOG_NAME,
             component_name=COMPONENT_NAME,
         )

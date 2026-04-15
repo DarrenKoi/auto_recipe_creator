@@ -3,17 +3,17 @@
 import os
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
 from poc.workflow_1 import DEBUG_IMAGE_DIR
+from poc.workflow_1 import workflow_select_tool as base_select_tool
 from poc.workflow_1 import workflow_select_tool_cctv as cctv_workflow
 from poc.workflow_1.debug_artifacts import (
     debug_image_path,
     save_debug_jpeg,
     save_debug_json,
-    save_marked_bboxes,
 )
 from poc.workflow_1.logger import log_work2_event
 from poc.workflow_1.ui_venus_mai_locator import (
@@ -43,10 +43,10 @@ load_dotenv()
 LOG_NAME = "workflow_select_ch4_cctv"
 COMPONENT_NAME = LOG_NAME
 DEBUG_ARTIFACT_DIR = DEBUG_IMAGE_DIR / "workflow_select_ch4_cctv"
-DEFAULT_ACTION_ENABLED = cctv_workflow.DEFAULT_ACTION_ENABLED
+DEFAULT_ACTION_ENABLED = base_select_tool.DEFAULT_ACTION_ENABLED
 
-PLAYER_PROCESS_NAME_SET = cctv_workflow.PLAYER_PROCESS_NAME_SET
 PLAYER_PROCESS_NAMES = cctv_workflow.PLAYER_PROCESS_NAMES
+PLAYER_PROCESS_NAME_SET = cctv_workflow.PLAYER_PROCESS_NAME_SET
 
 EXIT_SUCCESS = DETECT_SUCCESS
 EXIT_PLAYER_WINDOW_NOT_FOUND = "player_window_not_found"
@@ -56,10 +56,10 @@ EXIT_WINDOW_ACTIVATE_FAILED = "window_activate_failed"
 EXIT_CH4_NOT_FOUND = "ch4_not_found"
 EXIT_CLICK_FAILED = "click_failed"
 
-PRE_CLICK_SETTLE_SEC = cctv_workflow.base_select_tool._env_float(
+PRE_CLICK_SETTLE_SEC = base_select_tool._env_float(
     "SELECT_CH4_PRE_CLICK_SETTLE_SEC", 0.2,
 )
-POST_CLICK_SETTLE_SEC = cctv_workflow.base_select_tool._env_float(
+POST_CLICK_SETTLE_SEC = base_select_tool._env_float(
     "SELECT_CH4_POST_CLICK_SETTLE_SEC", 0.5,
 )
 
@@ -74,6 +74,11 @@ class Ch4SelectionResult:
     ch4_point_on_full_image: dict | None = None
     ch4_point_on_screen: dict | None = None
     clicked: bool = False
+
+
+def _normalize_process_name(name: str) -> str:
+    """process name 비교용 소문자 문자열을 반환한다."""
+    return (name or "").strip().lower()
 
 
 def _ch4_target() -> TargetConfig:
@@ -109,7 +114,7 @@ def _find_player_window() -> tuple[object | None, str, str, str]:
     if not WINDOW_UTILS_AVAILABLE or not PSUTIL_AVAILABLE:
         return None, "", "", ""
 
-    from poc.workflow_1.util import collect_window_rows, find_window_by_title_prefix
+    from poc.workflow_1.util import collect_window_rows
 
     process_name_by_pid: dict[int, str] = {}
     for proc in psutil.process_iter(["pid", "name"]):
@@ -120,7 +125,7 @@ def _find_player_window() -> tuple[object | None, str, str, str]:
             continue
         if pid <= 0:
             continue
-        if cctv_workflow._normalize_process_name(name) not in PLAYER_PROCESS_NAME_SET:
+        if _normalize_process_name(name) not in PLAYER_PROCESS_NAME_SET:
             continue
         process_name_by_pid[pid] = name
 
@@ -178,7 +183,7 @@ def select_ch4_from_player_window(
     started_at = time.time()
     timestamp_tag = make_timestamp_tag(started_at)
 
-    from poc.workflow_1.util import capture_window, encode_image_webp
+    from poc.workflow_1.util import capture_window
 
     if not foreground_window(
         player_window,

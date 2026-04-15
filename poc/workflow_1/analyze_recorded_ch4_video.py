@@ -1,7 +1,7 @@
 """녹화된 CH4 AVI 영상을 1초 간격 프레임으로 분석하고 VLM 결과를 저장한다.
 
 기본 실행:
-  PYTHONPATH=./test uv run python poc/workflow_1/analyze_recorded_ch4_video.py
+  uv run python poc/workflow_1/analyze_recorded_ch4_video.py
 """
 
 import json
@@ -20,6 +20,7 @@ from poc.workflow_1.flask_vlm import (
 from poc.workflow_1.util import env_float, env_int, format_elapsed_ms, make_timestamp_tag
 from poc.workflow_1.util.json_utils import extract_json
 from poc.workflow_1.vlm_client import Workflow1VLMClient
+from poc.workflow_1.video_frame_extractor import ExtractorConfig, VideoFrameExtractor
 
 load_dotenv()
 
@@ -40,20 +41,6 @@ DEFAULT_VLM_MODEL_NAME = (
     os.getenv("CH4_ANALYZE_VLM_MODEL_NAME", DEFAULT_SCREEN_ANALYSIS_MODEL_NAME).strip()
     or DEFAULT_SCREEN_ANALYSIS_MODEL_NAME
 )
-
-
-def _load_video_frame_parser():
-    """video_frame_parser 모듈을 지연 로드한다."""
-    try:
-        from video_frame_parser.config import ExtractorConfig
-        from video_frame_parser.extractor import VideoFrameExtractor
-    except ImportError as exc:
-        raise RuntimeError(
-            "video_frame_parser import 실패. "
-            "PYTHONPATH=./test 로 실행해 주세요."
-        ) from exc
-    return ExtractorConfig, VideoFrameExtractor
-
 
 def _resolve_video_path() -> Path | None:
     """분석할 비디오 파일 경로를 결정한다."""
@@ -209,12 +196,6 @@ def analyze_video() -> str:
     video_path = _resolve_video_path()
     if video_path is None:
         return "video_not_found"
-
-    try:
-        ExtractorConfig, VideoFrameExtractor = _load_video_frame_parser()
-    except RuntimeError as exc:
-        print(f"[ERROR] {exc}")
-        return "video_frame_parser_import_failed"
 
     output_dir = _build_output_dir(video_path)
     frames_dir = output_dir / "frames"

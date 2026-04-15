@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from dotenv import load_dotenv
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 from poc.workflow_1 import DEBUG_IMAGE_DIR, WORKFLOW_1_DIR
 from poc.workflow_1.debug_artifacts import (
@@ -150,6 +150,7 @@ def _normalize_frame_result(
     *,
     frame_path: str,
     overlay_path: str | None,
+    review_overlay_path: str | None,
     frame_data,
     raw_response_text: str,
     parsed_payload: dict | None,
@@ -163,6 +164,7 @@ def _normalize_frame_result(
         "frame_type": frame_data.frame_type.value,
         "frame_path": frame_path,
         "cursor_overlay_path": overlay_path or "",
+        "review_overlay_path": review_overlay_path or "",
         "raw_response_text": raw_response_text,
         "analysis": parsed_payload or {},
     }
@@ -249,6 +251,108 @@ def _save_cursor_overlay(
         return str(overlay_path)
 
 
+def _save_review_overlay(
+    *,
+    frame_path: str,
+    frame_id: str,
+    frame_number: int,
+    timestamp_sec: float,
+    change_score: float,
+    analysis_payload: dict | None,
+    output_dir: Path,
+) -> str:
+    """분석한 전체 프레임에 기본 정보와 커서 위치를 함께 그려 저장한다."""
+    with Image.open(frame_path) as image:
+        review_img = image.convert("RGB")
+        draw = ImageDraw.Draw(review_img)
+        try:
+            font = ImageFont.truetype("arial.ttf", 18)
+        except Exception:
+            font = ImageFont.load_default()
+
+        header = (
+            f"frame={frame_number}  ts={timestamp_sec:.2f}s  "
+            f"change={change_score:.4f}"
+        )
+        draw.rectangle([(0, 0), (review_img.size[0], 30)], fill="black")
+        draw.text((8, 6), header, fill="yellow", font=font)
+
+        cursor_point = None
+        if isinstance(analysis_payload, dict):
+            cursor_point = _extract_cursor_point(analysis_payload, review_img.size)
+        if cursor_point is not None:
+            x = cursor_point["x"]
+            y = cursor_point["y"]
+            draw.line([(x - 14, y), (x + 14, y)], fill="red", width=3)
+            draw.line([(x, y - 14), (x, y + 14)], fill="red", width=3)
+            draw.ellipse([(x - 9, y - 9), (x + 9, y + 9)], outline="red", width=3)
+            label_x = min(x + 14, max(0, review_img.size[0] - 70))
+            label_y = max(34, y - 8)
+            draw.text((label_x, label_y), "cursor", fill="red", font=font)
+
+        output_path = output_dir / f"{frame_id}_review.jpg"
+        review_img.save(output_path, format="JPEG", quality=95)
+        return str(output_path)
+
+
+def _build_contact_sheet(
+    *,
+    frame_results: list[dict],
+    output_path: Path,
+    thumb_width: int = 320,
+    columns: int = 3,
+) -> str | None:
+    """분석된 전체 프레임을 한 장의 컨택트시트로 저장한다."""
+    if not frame_results:
+        return None
+
+    try:
+        font = ImageFont.truetype("arial.ttf", 16)
+    except Exception:
+        font = ImageFont.load_default()
+
+    thumbs: list[Image.Image] = []
+    for item in frame_results:
+        source_path = item.get("review_overlay_path") or item.get("frame_path")
+        if not source_path:
+            continue
+
+        with Image.open(source_path) as image:
+            base = image.convert("RGB")
+            ratio = thumb_width / max(1, base.size[0])
+            thumb_height = max(1, int(round(base.size[1] * ratio)))
+            thumb = base.resize((thumb_width, thumb_height))
+
+        label = (
+            f"f={item['frame_number']} "
+            f"t={item['timestamp_sec']:.2f}s "
+            f"c={item['change_score']:.3f}"
+        )
+        labeled = Image.new("RGB", (thumb_width, thumb_height + 24), color="black")
+        labeled.paste(thumb, (0, 24))
+        draw = ImageDraw.Draw(labeled)
+        draw.text((6, 4), label, fill="yellow", font=font)
+        thumbs.append(labeled)
+
+    if not thumbs:
+        return None
+
+    columns = max(1, columns)
+    rows = (len(thumbs) + columns - 1) // columns
+    cell_w = max(thumb.size[0] for thumb in thumbs)
+    cell_h = max(thumb.size[1] for thumb in thumbs)
+    sheet = Image.new("RGB", (cell_w * columns, cell_h * rows), color=(32, 32, 32))
+
+    for index, thumb in enumerate(thumbs):
+        row = index // columns
+        col = index % columns
+        sheet.paste(thumb, (col * cell_w, row * cell_h))
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(output_path, format="JPEG", quality=92)
+    return str(output_path)
+
+
 def _build_timeline_text(video_path: Path, frame_results: list[dict]) -> str:
     """사람이 읽기 쉬운 타임라인 텍스트를 만든다."""
     lines = [f"video={video_path}"]
@@ -288,9 +392,11 @@ def analyze_video() -> str:
     output_dir = _build_output_dir(video_path)
     frames_dir = output_dir / "frames"
     overlays_dir = output_dir / "cursor_overlays"
+    review_dir = output_dir / "review_frames"
     results_dir = output_dir / "results"
     frames_dir.mkdir(parents=True, exist_ok=True)
     overlays_dir.mkdir(parents=True, exist_ok=True)
+    review_dir.mkdir(parents=True, exist_ok=True)
     results_dir.mkdir(parents=True, exist_ok=True)
 
     extractor_config = ExtractorConfig(
@@ -358,6 +464,7 @@ def analyze_video() -> str:
 
             parsed_payload = None
             overlay_path = None
+            review_overlay_path = None
             try:
                 parsed_payload = extract_json(response.text)
                 overlay_path = _save_cursor_overlay(
@@ -372,9 +479,20 @@ def analyze_video() -> str:
                     "raw_response 를 그대로 저장합니다."
                 )
 
+            review_overlay_path = _save_review_overlay(
+                frame_path=frame_path,
+                frame_id=frame_data.frame_id,
+                frame_number=int(frame_data.frame_number),
+                timestamp_sec=float(frame_data.timestamp),
+                change_score=float(frame_data.change_score or 0.0),
+                analysis_payload=parsed_payload,
+                output_dir=review_dir,
+            )
+
             frame_result = _normalize_frame_result(
                 frame_path=frame_path,
                 overlay_path=overlay_path,
+                review_overlay_path=review_overlay_path,
                 frame_data=frame_data,
                 raw_response_text=response.text,
                 parsed_payload=parsed_payload,
@@ -404,6 +522,10 @@ def analyze_video() -> str:
         "output_dir": str(output_dir),
         "frame_results": frame_results,
     }
+    summary["contact_sheet_path"] = _build_contact_sheet(
+        frame_results=frame_results,
+        output_path=output_dir / "contact_sheet.jpg",
+    ) or ""
     save_debug_json(output_dir / "summary.json", summary)
     save_debug_text(output_dir / "timeline.txt", _build_timeline_text(video_path, frame_results))
 

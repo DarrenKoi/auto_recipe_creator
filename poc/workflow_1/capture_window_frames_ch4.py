@@ -1,5 +1,7 @@
 """DVR player 창을 100ms 간격 JPEG 프레임으로 저장한다.
 
+기본 최대 캡처 시간은 8분(480초)이다.
+
 기본 실행:
   uv run python poc/workflow_1/capture_window_frames_ch4.py
 """
@@ -21,7 +23,7 @@ LOG_NAME = "capture_window_frames_ch4"
 DEFAULT_OUTPUT_DIR = RECORDING_DIR / LOG_NAME
 DEFAULT_FRAME_INTERVAL_MS = env_int("CH4_CAPTURE_FRAME_INTERVAL_MS", 100)
 DEFAULT_MAX_FRAMES = env_int("CH4_CAPTURE_FRAME_MAX_FRAMES", 0)
-DEFAULT_MAX_DURATION_SEC = env_float("CH4_CAPTURE_MAX_DURATION_SEC", 0.0)
+DEFAULT_MAX_DURATION_SEC = env_float("CH4_CAPTURE_MAX_DURATION_SEC", 480.0)
 DEFAULT_JPEG_QUALITY = env_int("CH4_CAPTURE_JPEG_QUALITY", 95)
 
 

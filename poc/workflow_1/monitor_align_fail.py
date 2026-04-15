@@ -1,10 +1,10 @@
-"""Align Fail 모니터링 + RCS/CCTV 접속 + CH4 프레임 캡처 스크립트.
+"""Align Fail 모니터링 + CCTV 이동 + CH4 프레임 캡처 스크립트.
 
 2분 주기로 CD-SEM 알람을 조회하여 ALID=9006 (Align Fail)이 감지되면:
-  1. 해당 EQP_ID 의 Tool 에 RCS 로 접속
-  2. 해당 Tool 의 CCTV(DVR) 창을 열기
+  1. 사용자가 미리 열어 둔 RCS Tool List 창을 사용
+  2. 해당 EQP_ID 의 Tool DVR(CCTV) 창을 열기
   3. Channel 4 를 확대
-  4. `capture_window_frames_ch4.py` 를 사용해 프레임 캡처
+  4. `capture_window_frames_ch4.py` 를 사용해 최대 8분 프레임 캡처
 
 사용법:
   uv run python poc/workflow_1/monitor_align_fail.py
@@ -24,40 +24,6 @@ COMPONENT_NAME = LOG_NAME
 
 # ── 설정 (환경변수) ────────────────────────────────────────────────
 POLL_INTERVAL_SEC = env_int("ALIGN_FAIL_POLL_SEC", 120)
-
-
-def connect_rcs_to_tool(eqp_id: str) -> bool:
-    """RCS 를 실행하고 해당 EQP_ID Tool 에 접속한다.
-
-    기존 워크플로를 재사용:
-      open_rcs → login → select tool
-    """
-    from poc.workflow_1.open_rcs import launch_rcs, RCS_EXE
-    from poc.workflow_1.workflow_login import run_login_workflow
-
-    # 1) RCS 실행
-    print(f"[INFO] RCS 실행 시작 (대상 Tool: {eqp_id})")
-    try:
-        proc = launch_rcs(RCS_EXE)
-        if proc is None:
-            print("[ERROR] RCS 실행 실패")
-            return False
-    except Exception as exc:
-        print(f"[ERROR] RCS 실행 중 예외: {exc}")
-        return False
-
-    # 2) 로그인 + Tool 선택 (run_login_workflow 가 전체 흐름 처리)
-    print(f"[INFO] 로그인 워크플로 시작 (target_tool_name={eqp_id})")
-    try:
-        run = run_login_workflow(target_tool_name=eqp_id)
-        if run.status == "completed":
-            print(f"[INFO] RCS Tool 접속 성공: {eqp_id}")
-            return True
-        print(f"[WARNING] 로그인 워크플로 미완료: status={run.status}")
-        return False
-    except Exception as exc:
-        print(f"[ERROR] 로그인 워크플로 중 예외: {exc}")
-        return False
 
 
 def open_cctv_for_tool(eqp_id: str) -> bool:
@@ -216,12 +182,13 @@ def monitor_loop():
     """메인 모니터링 루프.
 
     2분 주기로 알람을 조회하고, Align Fail 감지 시
-    RCS/CCTV 접속 후 CH4 프레임 캡처를 시작한다.
+    이미 열어 둔 Tool List 창에서 DVR -> CH4 -> 프레임 캡처를 수행한다.
     """
     already_handled: set[str] = set()
 
     print(f"[INFO] Align Fail 모니터링 시작 (주기={POLL_INTERVAL_SEC}s)")
-    print("[INFO] 감지 시 동작: RCS 접속 → CCTV 열기 → CH4 확대 → 프레임 캡처")
+    print("[INFO] 전제 조건: RCS Tool List 창을 미리 열어 두어야 합니다.")
+    print("[INFO] 감지 시 동작: Tool DVR 열기 → CH4 확대 → 최대 8분 프레임 캡처")
 
     while True:
         try:
@@ -254,12 +221,6 @@ def monitor_loop():
                         eqp_id=eqp_id,
                         alarm_time=alarm_time,
                     )
-
-                    # RCS 접속
-                    connected = connect_rcs_to_tool(eqp_id)
-                    if not connected:
-                        print(f"[ERROR] {eqp_id} RCS 접속 실패 — 다음 주기 재시도")
-                        continue
 
                     cctv_opened = open_cctv_for_tool(eqp_id)
                     if not cctv_opened:

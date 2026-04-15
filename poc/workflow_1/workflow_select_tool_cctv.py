@@ -53,7 +53,6 @@ class ToolCCTVSelectionResult:
     dvr_icon_point_on_list_crop: dict | None = None
     dvr_icon_point_on_full_image: dict | None = None
     dvr_icon_point_on_screen: dict | None = None
-    dvr_search_box_on_working_image: dict | None = None
     dvr_search_box_on_list_crop: dict | None = None
     clicked: bool = False
     dvr_window_verified: bool = False
@@ -83,6 +82,7 @@ EXIT_DVR_ICON_NOT_FOUND = "dvr_icon_not_found"
 EXIT_OCR_REQUEST_ERROR = base_select_tool.EXIT_OCR_REQUEST_ERROR
 EXIT_INVALID_TOOL_NAME = base_select_tool.EXIT_INVALID_TOOL_NAME
 EXIT_INVALID_MAIN_WINDOW = base_select_tool.EXIT_INVALID_MAIN_WINDOW
+EXIT_DVR_ICON_WRONG_ROW = "dvr_icon_wrong_row"
 EXIT_DVR_WINDOW_NOT_FOUND = "dvr_window_not_found"
 EXIT_DVR_VERIFY_UNAVAILABLE = "dvr_verify_unavailable"
 
@@ -90,10 +90,6 @@ VERIFY_TIMEOUT_SEC = base_select_tool._env_float("SELECT_TOOL_CCTV_VERIFY_TIMEOU
 VERIFY_POLL_INTERVAL_SEC = base_select_tool._env_float(
     "SELECT_TOOL_CCTV_VERIFY_POLL_INTERVAL_SEC",
     0.5,
-)
-DVR_SEARCH_LEFT_RATIO_MIN = base_select_tool._env_float(
-    "SELECT_TOOL_CCTV_DVR_SEARCH_LEFT_RATIO_MIN",
-    0.46,
 )
 DVR_SEARCH_ROW_HALF_HEIGHT_RATIO = base_select_tool._env_float(
     "SELECT_TOOL_CCTV_DVR_SEARCH_ROW_HALF_HEIGHT_RATIO",
@@ -114,9 +110,6 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-DVR_SEARCH_LEFT_OFFSET_PX = _env_int("SELECT_TOOL_CCTV_DVR_SEARCH_LEFT_OFFSET_PX", 48)
-DVR_SEARCH_RIGHT_MARGIN_PX = _env_int("SELECT_TOOL_CCTV_DVR_SEARCH_RIGHT_MARGIN_PX", 6)
-DVR_SEARCH_MIN_WIDTH_PX = _env_int("SELECT_TOOL_CCTV_DVR_SEARCH_MIN_WIDTH_PX", 280)
 DVR_SEARCH_MIN_HEIGHT_PX = _env_int("SELECT_TOOL_CCTV_DVR_SEARCH_MIN_HEIGHT_PX", 120)
 DVR_SEARCH_MIN_ROW_HALF_HEIGHT_PX = _env_int(
     "SELECT_TOOL_CCTV_DVR_SEARCH_MIN_ROW_HALF_HEIGHT_PX",
@@ -126,6 +119,10 @@ DVR_SEARCH_MAX_ROW_HALF_HEIGHT_PX = _env_int(
     "SELECT_TOOL_CCTV_DVR_SEARCH_MAX_ROW_HALF_HEIGHT_PX",
     120,
 )
+DVR_ICON_Y_TOLERANCE_PX = _env_int(
+    "SELECT_TOOL_CCTV_DVR_ICON_Y_TOLERANCE_PX",
+    40,
+)
 
 
 def _dvr_icon_target(tool_name: str) -> TargetConfig:
@@ -134,8 +131,9 @@ def _dvr_icon_target(tool_name: str) -> TargetConfig:
         key="dvr_icon",
         description=(
             f"the blue circular DVR open icon for the tool row '{tool_name}'. "
-            f"This image already shows only the right-side area of that matched row in the left-side "
-            f"RCS tool list. The icon looks like a blue LP record or blue disc. "
+            f"This image shows the full row of the RCS tool list — the tool name text is on the left "
+            f"and the DVR icon is on the right side. First confirm the tool name '{tool_name}' is "
+            f"visible on the left, then find the blue LP record / blue disc icon on the same row. "
             f"Return a safe click point near the center of that blue circle, not the tool text."
         ),
         left_pad_ratio=0.4,
@@ -168,60 +166,31 @@ def _ensure_min_span(start: int, end: int, total: int, minimum: int) -> tuple[in
     return start, end
 
 
-def _build_dvr_search_box(tool_point: dict, image_width: int, image_height: int) -> dict[str, int]:
-    """찾아낸 tool row 기준으로 우측 DVR 아이콘 탐색 영역을 만든다."""
-    left = max(
-        tool_point["x"] + max(0, DVR_SEARCH_LEFT_OFFSET_PX),
-        int(round(image_width * max(0.0, min(DVR_SEARCH_LEFT_RATIO_MIN, 0.95)))),
-    )
-    left = max(0, min(left, max(0, image_width - 1)))
-    right = max(left + 1, image_width - max(0, DVR_SEARCH_RIGHT_MARGIN_PX))
-    left, right = _ensure_min_span(left, right, image_width, max(1, DVR_SEARCH_MIN_WIDTH_PX))
+def _build_dvr_row_strip_on_list_crop(
+    tool_point_on_list_crop: dict,
+    list_crop_width: int,
+    list_crop_height: int,
+) -> dict[str, int]:
+    """tool row 기준으로 base_image (list crop) 에서 전체 폭 row strip 을 만든다.
 
-    band_half_height = int(round(image_height * max(0.0, DVR_SEARCH_ROW_HALF_HEIGHT_RATIO)))
+    tool name 부터 DVR 아이콘까지 한 줄 전체가 보이도록 left=0 부터 시작한다.
+    VLM 이 tool name 을 확인한 뒤 같은 행의 DVR 아이콘을 정확히 찾을 수 있다.
+    """
+    left = 0
+    right = list_crop_width
+
+    band_half_height = int(round(list_crop_height * max(0.0, DVR_SEARCH_ROW_HALF_HEIGHT_RATIO)))
     band_half_height = max(DVR_SEARCH_MIN_ROW_HALF_HEIGHT_PX, band_half_height)
     band_half_height = min(DVR_SEARCH_MAX_ROW_HALF_HEIGHT_PX, band_half_height)
-    top = max(0, tool_point["y"] - band_half_height)
-    bottom = min(image_height, tool_point["y"] + band_half_height + 1)
-    top, bottom = _ensure_min_span(top, bottom, image_height, max(1, DVR_SEARCH_MIN_HEIGHT_PX))
+    top = max(0, tool_point_on_list_crop["y"] - band_half_height)
+    bottom = min(list_crop_height, tool_point_on_list_crop["y"] + band_half_height + 1)
+    top, bottom = _ensure_min_span(top, bottom, list_crop_height, max(1, DVR_SEARCH_MIN_HEIGHT_PX))
 
     return {
         "left": left,
         "top": top,
         "right": right,
         "bottom": bottom,
-    }
-
-
-def _map_working_point_to_list_crop(point: dict, attempt: dict) -> dict[str, int]:
-    """working image 좌표를 원본 list crop 좌표로 복원한다."""
-    return base_select_tool._map_point_from_working_image(
-        point,
-        attempt["base_size"]["width"],
-        attempt["base_size"]["height"],
-        attempt["working_size"]["width"],
-        attempt["working_size"]["height"],
-    )
-
-
-def _map_working_box_to_list_crop(box: dict, attempt: dict) -> dict[str, int]:
-    """working image bbox 를 원본 list crop bbox 로 복원한다."""
-    top_left = _map_working_point_to_list_crop(
-        {"x": box["left"], "y": box["top"]},
-        attempt,
-    )
-    bottom_right = _map_working_point_to_list_crop(
-        {
-            "x": max(0, box["right"] - 1),
-            "y": max(0, box["bottom"] - 1),
-        },
-        attempt,
-    )
-    return {
-        "left": top_left["x"],
-        "top": top_left["y"],
-        "right": bottom_right["x"] + 1,
-        "bottom": bottom_right["y"] + 1,
     }
 
 
@@ -425,22 +394,20 @@ def select_tool_cctv_from_main_window(
             selected_attempt=selected_attempt["name"] if selected_attempt is not None else None,
         )
 
-    tool_result = located_attempt["tool_result"]
-    tool_point_on_working_image = tool_result.point
     tool_point_on_list_crop = located_attempt["mapped_point"]
     tool_point_on_full_image = {
         "x": list_crop_box["left"] + tool_point_on_list_crop["x"],
         "y": list_crop_box["top"] + tool_point_on_list_crop["y"],
     }
 
-    dvr_search_box_on_working_image = _build_dvr_search_box(
-        tool_point_on_working_image,
-        selected_attempt["working_size"]["width"],
-        selected_attempt["working_size"]["height"],
+    dvr_row_strip_on_list_crop = _build_dvr_row_strip_on_list_crop(
+        tool_point_on_list_crop,
+        selected_attempt["base_size"]["width"],
+        selected_attempt["base_size"]["height"],
     )
     dvr_search_image = base_select_tool.crop_image(
-        selected_attempt["working_image"],
-        dvr_search_box_on_working_image,
+        selected_attempt["base_image"],
+        dvr_row_strip_on_list_crop,
     )
 
     icon_result = analyze_window_target(
@@ -459,10 +426,6 @@ def select_tool_cctv_from_main_window(
         image=dvr_search_image,
     )
     if icon_result.exit_code != DETECT_SUCCESS or icon_result.point is None:
-        dvr_search_box_on_list_crop = _map_working_box_to_list_crop(
-            dvr_search_box_on_working_image,
-            selected_attempt,
-        )
         return ToolCCTVSelectionResult(
             exit_code=EXIT_DVR_ICON_NOT_FOUND,
             target_tool_name=normalized_tool_name,
@@ -472,24 +435,40 @@ def select_tool_cctv_from_main_window(
             tool_point_on_list_crop=tool_point_on_list_crop,
             tool_point_on_full_image=tool_point_on_full_image,
             selected_attempt=selected_attempt["name"],
-            dvr_search_box_on_working_image=dvr_search_box_on_working_image,
-            dvr_search_box_on_list_crop=dvr_search_box_on_list_crop,
+            dvr_search_box_on_list_crop=dvr_row_strip_on_list_crop,
         )
 
-    icon_point_on_working_image = {
-        "x": dvr_search_box_on_working_image["left"] + icon_result.point["x"],
-        "y": dvr_search_box_on_working_image["top"] + icon_result.point["y"],
+    list_crop_point = {
+        "x": dvr_row_strip_on_list_crop["left"] + icon_result.point["x"],
+        "y": dvr_row_strip_on_list_crop["top"] + icon_result.point["y"],
     }
-    list_crop_point = _map_working_point_to_list_crop(icon_point_on_working_image, selected_attempt)
+
+    y_delta = abs(list_crop_point["y"] - tool_point_on_list_crop["y"])
+    if y_delta > DVR_ICON_Y_TOLERANCE_PX:
+        print(
+            f"[WARNING] DVR 아이콘 y 좌표가 tool row 와 불일치: "
+            f"tool_y={tool_point_on_list_crop['y']}, dvr_icon_y={list_crop_point['y']}, "
+            f"delta={y_delta}px > tolerance={DVR_ICON_Y_TOLERANCE_PX}px"
+        )
+        return ToolCCTVSelectionResult(
+            exit_code=EXIT_DVR_ICON_WRONG_ROW,
+            target_tool_name=normalized_tool_name,
+            matched_lines=matched_lines,
+            ocr_target_visible=True,
+            list_crop_box=list_crop_box,
+            tool_point_on_list_crop=tool_point_on_list_crop,
+            tool_point_on_full_image=tool_point_on_full_image,
+            selected_attempt=selected_attempt["name"],
+            dvr_icon_point_on_list_crop=list_crop_point,
+            dvr_search_box_on_list_crop=dvr_row_strip_on_list_crop,
+        )
+
     full_image_point = {
         "x": list_crop_box["left"] + list_crop_point["x"],
         "y": list_crop_box["top"] + list_crop_point["y"],
     }
     screen_point = image_point_to_screen(main_window, full_image_point)
-    dvr_search_box_on_list_crop = _map_working_box_to_list_crop(
-        dvr_search_box_on_working_image,
-        selected_attempt,
-    )
+    dvr_search_box_on_list_crop = dvr_row_strip_on_list_crop
     if screen_point is None:
         return ToolCCTVSelectionResult(
             exit_code=EXIT_CAPTURE_FAILED,
@@ -502,7 +481,6 @@ def select_tool_cctv_from_main_window(
             selected_attempt=selected_attempt["name"],
             dvr_icon_point_on_list_crop=list_crop_point,
             dvr_icon_point_on_full_image=full_image_point,
-            dvr_search_box_on_working_image=dvr_search_box_on_working_image,
             dvr_search_box_on_list_crop=dvr_search_box_on_list_crop,
         )
 
@@ -522,7 +500,6 @@ def select_tool_cctv_from_main_window(
             dvr_icon_point_on_list_crop=list_crop_point,
             dvr_icon_point_on_full_image=full_image_point,
             dvr_icon_point_on_screen=screen_point,
-            dvr_search_box_on_working_image=dvr_search_box_on_working_image,
             dvr_search_box_on_list_crop=dvr_search_box_on_list_crop,
         )
 
@@ -585,12 +562,12 @@ def select_tool_cctv_from_main_window(
             "detection_attempts": detection_attempts,
             "tool_point_on_list_crop": tool_point_on_list_crop,
             "tool_point_on_full_image": tool_point_on_full_image,
-            "dvr_search_box_on_working_image": dvr_search_box_on_working_image,
             "dvr_search_box_on_list_crop": dvr_search_box_on_list_crop,
-            "dvr_icon_point_on_working_image": icon_point_on_working_image,
             "dvr_icon_point_on_list_crop": list_crop_point,
             "dvr_icon_point_on_full_image": full_image_point,
             "dvr_icon_point_on_screen": screen_point,
+            "dvr_icon_y_delta_px": y_delta,
+            "dvr_icon_y_tolerance_px": DVR_ICON_Y_TOLERANCE_PX,
             "double_clicked": clicked,
             "action_enabled": action_enabled,
             "existing_player_windows_before_click": existing_player_windows,
@@ -612,7 +589,6 @@ def select_tool_cctv_from_main_window(
         dvr_icon_point_on_list_crop=list_crop_point,
         dvr_icon_point_on_full_image=full_image_point,
         dvr_icon_point_on_screen=screen_point,
-        dvr_search_box_on_working_image=dvr_search_box_on_working_image,
         dvr_search_box_on_list_crop=dvr_search_box_on_list_crop,
         clicked=clicked,
         dvr_window_verified=dvr_window_verified,

@@ -16,7 +16,6 @@ from poc.workflow_1.debug_artifacts import (
     save_debug_json,
 )
 from poc.workflow_1.logger import log_work2_event
-from poc.workflow_1.record_screen_ch4 import record_screen
 from poc.workflow_1.ui_venus_mai_locator import (
     EXIT_SUCCESS as DETECT_SUCCESS,
     TargetConfig,
@@ -56,7 +55,7 @@ EXIT_CAPTURE_FAILED = "capture_failed"
 EXIT_WINDOW_ACTIVATE_FAILED = "window_activate_failed"
 EXIT_CH4_NOT_FOUND = "ch4_not_found"
 EXIT_CLICK_FAILED = "click_failed"
-EXIT_RECORD_FAILED = "record_failed"
+EXIT_FRAME_CAPTURE_FAILED = "frame_capture_failed"
 
 PRE_CLICK_SETTLE_SEC = base_select_tool._env_float(
     "SELECT_CH4_PRE_CLICK_SETTLE_SEC", 0.2,
@@ -348,25 +347,21 @@ def main() -> str:
     )
 
     if result.exit_code == EXIT_SUCCESS and result.clicked:
-        print("[INFO] Channel 4 클릭 성공 — 화면 녹화를 시작합니다.")
+        from poc.workflow_1.capture_window_frames_ch4 import capture_frames
+
+        print("[INFO] Channel 4 클릭 성공 — 프레임 캡처를 시작합니다.")
         log_work2_event(
             component=COMPONENT_NAME,
-            message="ch4_click_success_record_start",
+            message="ch4_click_success_frame_capture_start",
             log_name=LOG_NAME,
             window_title=window_title,
             process_name=process_name,
         )
-        recording_path = record_screen(
-            output_stem=f"ch4_cctv_{process_name or 'player'}",
-            target_window=player_window,
-            target_window_title=window_title,
-            log_name=LOG_NAME,
-            component_name=COMPONENT_NAME,
-        )
-        if recording_path is None:
-            print("[ERROR] Channel 4 클릭 후 화면 녹화 실패")
-            return EXIT_RECORD_FAILED
-        print(f"[INFO] Channel 4 화면 녹화 저장 완료: {recording_path}")
+        capture_exit_code = capture_frames()
+        if capture_exit_code != EXIT_SUCCESS:
+            print(f"[ERROR] Channel 4 클릭 후 프레임 캡처 실패: {capture_exit_code}")
+            return EXIT_FRAME_CAPTURE_FAILED
+        print("[INFO] Channel 4 프레임 캡처 완료")
 
     print(
         f"[INFO] {LOG_NAME} 총 소요: {format_elapsed_ms(started_at)}, "

@@ -40,8 +40,8 @@ load_dotenv()
 LOG_NAME = "record_screen_ch4"
 COMPONENT_NAME = LOG_NAME
 DEFAULT_OUTPUT_STEM = "ch4_cctv"
-DEFAULT_CODEC = os.getenv("CH4_RECORD_CODEC", "mp4v").strip() or "mp4v"
-DEFAULT_EXTENSION = os.getenv("CH4_RECORD_EXTENSION", "mp4").strip() or "mp4"
+DEFAULT_CODEC = os.getenv("CH4_RECORD_CODEC", "MJPG").strip() or "MJPG"
+DEFAULT_EXTENSION = os.getenv("CH4_RECORD_EXTENSION", "avi").strip() or "avi"
 RECORDING_DIR = Path(
     os.getenv(
         "CH4_RECORDING_DIR",
@@ -78,9 +78,9 @@ def _build_codec_candidates(
         candidates.append(item)
 
     add(preferred_codec, preferred_extension)
-    add("mp4v", "mp4")
     add("MJPG", "avi")
     add("XVID", "avi")
+    add("mp4v", "mp4")
     return candidates
 
 

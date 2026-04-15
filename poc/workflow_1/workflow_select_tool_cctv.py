@@ -9,7 +9,12 @@ from dotenv import load_dotenv
 
 from poc.workflow_1 import DEBUG_IMAGE_DIR
 from poc.workflow_1 import workflow_select_tool as base_select_tool
-from poc.workflow_1.debug_artifacts import debug_image_path, save_debug_jpeg, save_debug_json
+from poc.workflow_1.debug_artifacts import (
+    debug_image_path,
+    save_debug_jpeg,
+    save_debug_json,
+    save_marked_bboxes,
+)
 from poc.workflow_1.logger import log_work2_event
 from poc.workflow_1.login_rcs_common import wait_for_rcs_main_window
 from poc.workflow_1.ui_venus_mai_locator import (
@@ -136,11 +141,11 @@ def _dvr_icon_target(tool_name: str) -> TargetConfig:
             f"visible on the left, then find the blue LP record / blue disc icon on the same row. "
             f"Return a safe click point near the center of that blue circle, not the tool text."
         ),
-        left_pad_ratio=0.4,
-        right_pad_ratio=1.5,
-        vertical_pad_ratio=0.9,
-        min_crop_width=240,
-        min_crop_height=120,
+        left_pad_ratio=6.0,
+        right_pad_ratio=1.0,
+        vertical_pad_ratio=0.4,
+        min_crop_width=600,
+        min_crop_height=60,
     )
 
 
@@ -191,6 +196,16 @@ def _build_dvr_row_strip_on_list_crop(
         "top": top,
         "right": right,
         "bottom": bottom,
+    }
+
+
+def _point_to_tiny_bbox(point: dict, img_w: int, img_h: int, radius: int = 10) -> dict:
+    """포인트를 overlay 용 작은 bbox 로 감싼다."""
+    return {
+        "left": max(0, point["x"] - radius),
+        "top": max(0, point["y"] - radius),
+        "right": min(img_w, point["x"] + radius + 1),
+        "bottom": min(img_h, point["y"] + radius + 1),
     }
 
 
@@ -462,6 +477,33 @@ def select_tool_cctv_from_main_window(
             dvr_icon_point_on_list_crop=list_crop_point,
             dvr_search_box_on_list_crop=dvr_row_strip_on_list_crop,
         )
+
+    strip_w, strip_h = dvr_search_image.size
+    tool_point_on_strip = {
+        "x": tool_point_on_list_crop["x"] - dvr_row_strip_on_list_crop["left"],
+        "y": tool_point_on_list_crop["y"] - dvr_row_strip_on_list_crop["top"],
+    }
+    dvr_icon_on_strip = icon_result.point
+    overlay_items = {
+        "tool_name": {
+            "bbox": _point_to_tiny_bbox(tool_point_on_strip, strip_w, strip_h),
+            "center": tool_point_on_strip,
+        },
+        "dvr_icon": {
+            "bbox": _point_to_tiny_bbox(dvr_icon_on_strip, strip_w, strip_h),
+            "center": dvr_icon_on_strip,
+        },
+    }
+    overlay_colors = {
+        "tool_name": "lime",
+        "dvr_icon": "deepskyblue",
+    }
+    strip_overlay_path = debug_image_path(
+        resolved_debug_dir,
+        f"workflow_select_tool_cctv_{normalized_tool_name.lower()}_dvr_row_strip_overlay.jpg",
+        timestamp_tag=timestamp_tag,
+    )
+    save_marked_bboxes(dvr_search_image, overlay_items, overlay_colors, strip_overlay_path)
 
     full_image_point = {
         "x": list_crop_box["left"] + list_crop_point["x"],

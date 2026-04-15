@@ -4,6 +4,9 @@
 2. coarse bbox 주변을 crop + zoom 한 뒤 mai-ui 로 precise cursor tip/bbox 탐지
 
 기본 실행:
+  uv run python poc/workflow_1/extract_recorded_ch4_frames.py
+
+하위 호환 실행:
   uv run python poc/workflow_1/locate_cursor_in_captured_frames.py
 """
 

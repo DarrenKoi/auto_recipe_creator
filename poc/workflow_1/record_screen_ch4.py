@@ -79,8 +79,6 @@ def _build_codec_candidates(
 
     add(preferred_codec, preferred_extension)
     add("mp4v", "mp4")
-    add("avc1", "mp4")
-    add("H264", "mp4")
     add("MJPG", "avi")
     add("XVID", "avi")
     return candidates

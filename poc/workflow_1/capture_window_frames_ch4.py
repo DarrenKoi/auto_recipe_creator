@@ -10,7 +10,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from poc.workflow_1 import DEBUG_IMAGE_DIR
+from poc.workflow_1 import RECORDING_DIR
 from poc.workflow_1.debug_artifacts import save_debug_jpeg, save_debug_json, save_debug_text
 from poc.workflow_1.util import WINDOW_UTILS_AVAILABLE, capture_window, env_float, env_int, format_elapsed_ms
 from poc.workflow_1.workflow_select_ch4_cctv import _find_player_window
@@ -18,7 +18,7 @@ from poc.workflow_1.workflow_select_ch4_cctv import _find_player_window
 load_dotenv()
 
 LOG_NAME = "capture_window_frames_ch4"
-DEFAULT_OUTPUT_DIR = DEBUG_IMAGE_DIR / LOG_NAME
+DEFAULT_OUTPUT_DIR = RECORDING_DIR / LOG_NAME
 DEFAULT_FRAME_INTERVAL_MS = env_int("CH4_CAPTURE_FRAME_INTERVAL_MS", 100)
 DEFAULT_MAX_FRAMES = env_int("CH4_CAPTURE_FRAME_MAX_FRAMES", 0)
 DEFAULT_MAX_DURATION_SEC = env_float("CH4_CAPTURE_MAX_DURATION_SEC", 0.0)

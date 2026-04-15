@@ -13,6 +13,7 @@ from pathlib import Path
 WORKFLOW_1_DIR = Path(__file__).resolve().parent
 DEBUG_IMAGE_DIR = WORKFLOW_1_DIR / "debug_images"
 LOG_DIR = WORKFLOW_1_DIR / "logs"
+RECORDING_DIR = WORKFLOW_1_DIR / "recordings"
 
 _TIMESTAMP_PREFIX_PATTERN = re.compile(r"^\d{6}_\d{6}_")
 
@@ -79,6 +80,7 @@ def debug_image_path(
 __all__ = [
     "DEBUG_IMAGE_DIR",
     "LOG_DIR",
+    "RECORDING_DIR",
     "WORKFLOW_1_DIR",
     "debug_image_dir",
     "debug_image_path",

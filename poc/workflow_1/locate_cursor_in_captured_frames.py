@@ -14,7 +14,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from PIL import Image
 
-from poc.workflow_1 import DEBUG_IMAGE_DIR
+from poc.workflow_1 import RECORDING_DIR
 from poc.workflow_1.debug_artifacts import save_debug_json, save_debug_text, save_marked_bboxes
 from poc.workflow_1.flask_vlm import MAI_UI_MODEL_NAME, UI_VENUS_MODEL_NAME
 from poc.workflow_1.util import env_int, format_elapsed_ms, make_timestamp_tag
@@ -30,8 +30,8 @@ from poc.workflow_1.vlm_client import Workflow1VLMClient
 load_dotenv()
 
 LOG_NAME = "locate_cursor_in_captured_frames"
-DEFAULT_CAPTURE_ROOT = DEBUG_IMAGE_DIR / "capture_window_frames_ch4"
-DEFAULT_OUTPUT_ROOT = DEBUG_IMAGE_DIR / LOG_NAME
+DEFAULT_CAPTURE_ROOT = RECORDING_DIR / "capture_window_frames_ch4"
+DEFAULT_OUTPUT_ROOT = RECORDING_DIR / LOG_NAME
 DEFAULT_MAX_FRAMES = env_int("CH4_CURSOR_MAX_FRAMES", 0)
 DEFAULT_CROP_PADDING_PX = env_int("CH4_CURSOR_CROP_PADDING_PX", 48)
 DEFAULT_ZOOM_SCALE = max(1, env_int("CH4_CURSOR_ZOOM_SCALE", 3))

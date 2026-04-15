@@ -10,9 +10,14 @@ import time
 from pathlib import Path
 
 from dotenv import load_dotenv
+from PIL import Image
 
 from poc.workflow_1 import DEBUG_IMAGE_DIR, WORKFLOW_1_DIR
-from poc.workflow_1.debug_artifacts import save_debug_json, save_debug_text
+from poc.workflow_1.debug_artifacts import (
+    save_debug_json,
+    save_debug_text,
+    save_marked_bboxes,
+)
 from poc.workflow_1.flask_vlm import (
     DEFAULT_SCREEN_ANALYSIS_MODEL_NAME,
     DEFAULT_SCREEN_ANALYSIS_SERVICE,
@@ -144,6 +149,7 @@ def _analysis_user_prompt(
 def _normalize_frame_result(
     *,
     frame_path: str,
+    overlay_path: str | None,
     frame_data,
     raw_response_text: str,
     parsed_payload: dict | None,
@@ -156,9 +162,91 @@ def _normalize_frame_result(
         "change_score": round(float(frame_data.change_score or 0.0), 6),
         "frame_type": frame_data.frame_type.value,
         "frame_path": frame_path,
+        "cursor_overlay_path": overlay_path or "",
         "raw_response_text": raw_response_text,
         "analysis": parsed_payload or {},
     }
+
+
+def _coerce_pixel(value) -> int | None:
+    """좌표 값을 int 픽셀로 변환한다."""
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(round(value))
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            return int(round(float(stripped)))
+        except ValueError:
+            return None
+    return None
+
+
+def _extract_cursor_point(analysis_payload: dict, image_size: tuple[int, int]) -> dict[str, int] | None:
+    """VLM 응답에서 커서 좌표를 읽고 이미지 범위로 clamp 한다."""
+    if not isinstance(analysis_payload, dict):
+        return None
+    if analysis_payload.get("cursor_visible") is not True:
+        return None
+
+    raw_point = analysis_payload.get("cursor_position")
+    if not isinstance(raw_point, dict):
+        return None
+
+    x = _coerce_pixel(raw_point.get("x"))
+    y = _coerce_pixel(raw_point.get("y"))
+    if x is None or y is None:
+        return None
+
+    img_w, img_h = image_size
+    if img_w <= 0 or img_h <= 0:
+        return None
+
+    return {
+        "x": max(0, min(x, img_w - 1)),
+        "y": max(0, min(y, img_h - 1)),
+    }
+
+
+def _save_cursor_overlay(
+    *,
+    frame_path: str,
+    frame_id: str,
+    analysis_payload: dict | None,
+    overlays_dir: Path,
+) -> str | None:
+    """커서 위치가 있으면 overlay 이미지를 저장한다."""
+    if not isinstance(analysis_payload, dict):
+        return None
+
+    with Image.open(frame_path) as image:
+        cursor_point = _extract_cursor_point(analysis_payload, image.size)
+        if cursor_point is None:
+            return None
+
+        radius = 12
+        bbox = {
+            "left": max(0, cursor_point["x"] - radius),
+            "top": max(0, cursor_point["y"] - radius),
+            "right": min(image.size[0], cursor_point["x"] + radius + 1),
+            "bottom": min(image.size[1], cursor_point["y"] + radius + 1),
+        }
+        overlay_path = overlays_dir / f"{frame_id}_cursor_overlay.jpg"
+        save_marked_bboxes(
+            image.copy(),
+            elements={
+                "cursor": {
+                    "bbox": bbox,
+                    "center": cursor_point,
+                }
+            },
+            colors={"cursor": "red"},
+            out_path=overlay_path,
+        )
+        return str(overlay_path)
 
 
 def _build_timeline_text(video_path: Path, frame_results: list[dict]) -> str:
@@ -199,8 +287,10 @@ def analyze_video() -> str:
 
     output_dir = _build_output_dir(video_path)
     frames_dir = output_dir / "frames"
+    overlays_dir = output_dir / "cursor_overlays"
     results_dir = output_dir / "results"
     frames_dir.mkdir(parents=True, exist_ok=True)
+    overlays_dir.mkdir(parents=True, exist_ok=True)
     results_dir.mkdir(parents=True, exist_ok=True)
 
     extractor_config = ExtractorConfig(
@@ -267,8 +357,15 @@ def analyze_video() -> str:
             )
 
             parsed_payload = None
+            overlay_path = None
             try:
                 parsed_payload = extract_json(response.text)
+                overlay_path = _save_cursor_overlay(
+                    frame_path=frame_path,
+                    frame_id=frame_data.frame_id,
+                    analysis_payload=parsed_payload,
+                    overlays_dir=overlays_dir,
+                )
             except json.JSONDecodeError:
                 print(
                     f"[WARNING] JSON 파싱 실패: frame={frame_data.frame_number}, "
@@ -277,6 +374,7 @@ def analyze_video() -> str:
 
             frame_result = _normalize_frame_result(
                 frame_path=frame_path,
+                overlay_path=overlay_path,
                 frame_data=frame_data,
                 raw_response_text=response.text,
                 parsed_payload=parsed_payload,

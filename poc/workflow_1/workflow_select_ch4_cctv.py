@@ -90,7 +90,7 @@ def _ch4_target() -> TargetConfig:
             "DVR / CCTV player window. The window shows a grid of camera channels "
             "(typically 2x2). Channel 4 is normally in the bottom-right quadrant. "
             "It is the channel that shows the tool's software screen with text like "
-            "'Recipe Monitor', 'Image', 'Job', or similar UI elements. "
+            "'Image', 'Function', 'Queue', or similar UI elements. "
             "The other channels (1, 2, 3) usually show the physical tool or chamber. "
             "If all channels appear black or off, pick the bottom-right quadrant. "
             "Return a safe double-click point at the center of Channel 4's viewport."

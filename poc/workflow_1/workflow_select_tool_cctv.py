@@ -141,11 +141,11 @@ def _dvr_icon_target(tool_name: str) -> TargetConfig:
             f"visible on the left, then find the blue LP record / blue disc icon on the same row. "
             f"Return a safe click point near the center of that blue circle, not the tool text."
         ),
-        left_pad_ratio=6.0,
+        left_pad_ratio=20.0,
         right_pad_ratio=1.0,
-        vertical_pad_ratio=0.4,
-        min_crop_width=600,
-        min_crop_height=60,
+        vertical_pad_ratio=0.15,
+        min_crop_width=1200,
+        min_crop_height=36,
     )
 
 

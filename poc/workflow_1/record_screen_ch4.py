@@ -40,6 +40,8 @@ load_dotenv()
 LOG_NAME = "record_screen_ch4"
 COMPONENT_NAME = LOG_NAME
 DEFAULT_OUTPUT_STEM = "ch4_cctv"
+DEFAULT_CODEC = os.getenv("CH4_RECORD_CODEC", "mp4v").strip() or "mp4v"
+DEFAULT_EXTENSION = os.getenv("CH4_RECORD_EXTENSION", "mp4").strip() or "mp4"
 RECORDING_DIR = Path(
     os.getenv(
         "CH4_RECORDING_DIR",
@@ -48,6 +50,40 @@ RECORDING_DIR = Path(
 )
 MAX_RECORD_SEC = env_int("CH4_MAX_RECORD_SEC", 600)
 RECORD_FPS = env_int("CH4_RECORD_FPS", 5)
+
+
+def _normalize_extension(extension: str) -> str:
+    """파일 확장자를 점 없이 정규화한다."""
+    normalized = (extension or "").strip().lower().lstrip(".")
+    return normalized or DEFAULT_EXTENSION
+
+
+def _build_codec_candidates(
+    preferred_codec: str,
+    preferred_extension: str,
+) -> list[tuple[str, str]]:
+    """시도할 코덱/확장자 후보 목록을 만든다."""
+    candidates: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(codec: str, extension: str) -> None:
+        normalized_codec = (codec or "").strip()
+        normalized_extension = _normalize_extension(extension)
+        if not normalized_codec:
+            return
+        item = (normalized_codec, normalized_extension)
+        if item in seen:
+            return
+        seen.add(item)
+        candidates.append(item)
+
+    add(preferred_codec, preferred_extension)
+    add("mp4v", "mp4")
+    add("avc1", "mp4")
+    add("H264", "mp4")
+    add("MJPG", "avi")
+    add("XVID", "avi")
+    return candidates
 
 
 def _sanitize_output_stem(output_stem: str) -> str:
@@ -73,6 +109,8 @@ class ScreenRecorder:
         output_dir: Path = RECORDING_DIR,
         max_record_sec: int = MAX_RECORD_SEC,
         fps: int = RECORD_FPS,
+        codec: str = DEFAULT_CODEC,
+        extension: str = DEFAULT_EXTENSION,
         log_name: str = LOG_NAME,
         component_name: str = COMPONENT_NAME,
     ):
@@ -80,6 +118,8 @@ class ScreenRecorder:
         self._output_dir = Path(output_dir)
         self._max_record_sec = max(1, int(max_record_sec))
         self._fps = max(1, int(fps))
+        self._codec = (codec or "").strip() or DEFAULT_CODEC
+        self._extension = _normalize_extension(extension)
         self._log_name = log_name
         self._component_name = component_name
         self._stop_event = threading.Event()
@@ -88,6 +128,7 @@ class ScreenRecorder:
         self._thread: threading.Thread | None = None
         self._output_path: Path | None = None
         self._error_message = ""
+        self._resolved_codec = ""
 
     @property
     def output_path(self) -> Path | None:
@@ -98,6 +139,11 @@ class ScreenRecorder:
     def error_message(self) -> str:
         """녹화 중 발생한 오류 메시지를 반환한다."""
         return self._error_message
+
+    @property
+    def resolved_codec(self) -> str:
+        """실제로 사용된 코덱 문자열을 반환한다."""
+        return self._resolved_codec
 
     def start(self) -> Path | None:
         """녹화를 시작하고 출력 파일 경로를 반환한다."""
@@ -120,8 +166,12 @@ class ScreenRecorder:
 
         self._output_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%y%m%d_%H%M%S")
-        self._output_path = self._output_dir / f"{self._output_stem}_{ts}.avi"
+        self._output_path = (
+            self._output_dir
+            / f"{self._output_stem}_{ts}.{self._extension}"
+        )
         self._error_message = ""
+        self._resolved_codec = ""
         self._stop_event.clear()
         self._ready_event.clear()
         self._finished_event.clear()
@@ -151,6 +201,7 @@ class ScreenRecorder:
             message="record_started",
             log_name=self._log_name,
             output_path=str(self._output_path),
+            codec=self._resolved_codec or self._codec,
             fps=self._fps,
             max_record_sec=self._max_record_sec,
         )
@@ -170,6 +221,7 @@ class ScreenRecorder:
                 message="record_stopped",
                 log_name=self._log_name,
                 output_path=str(self._output_path),
+                codec=self._resolved_codec or self._codec,
                 error=self._error_message or "",
             )
         return self._output_path
@@ -181,6 +233,42 @@ class ScreenRecorder:
         self._thread.join(timeout=timeout)
         return not self._thread.is_alive()
 
+    def _open_video_writer(self, width: int, height: int):
+        """지원 가능한 코덱을 순서대로 시도하여 VideoWriter 를 연다."""
+        candidates = _build_codec_candidates(self._codec, self._extension)
+        last_error = "cv2.VideoWriter 초기화 실패"
+
+        for codec, extension in candidates:
+            candidate_path = (
+                self._output_dir
+                / f"{self._output_stem}_{datetime.now().strftime('%y%m%d_%H%M%S')}.{extension}"
+            )
+            fourcc = cv2.VideoWriter_fourcc(*codec)
+            writer = cv2.VideoWriter(
+                str(candidate_path),
+                fourcc,
+                self._fps,
+                (width, height),
+            )
+            if writer.isOpened():
+                self._output_path = candidate_path
+                self._resolved_codec = codec
+                if codec != self._codec or extension != self._extension:
+                    print(
+                        "[WARNING] 요청한 코덱 사용 불가. "
+                        f"fallback codec={codec}, ext={extension}"
+                    )
+                return writer
+
+            writer.release()
+            last_error = (
+                f"cv2.VideoWriter 초기화 실패 "
+                f"(codec={codec}, ext={extension})"
+            )
+
+        self._error_message = last_error
+        return None
+
     def _record_loop(self) -> None:
         """실제 캡처 루프."""
         writer = None
@@ -189,15 +277,8 @@ class ScreenRecorder:
                 monitor = sct.monitors[0]
                 width = int(monitor["width"])
                 height = int(monitor["height"])
-                fourcc = cv2.VideoWriter_fourcc(*"XVID")
-                writer = cv2.VideoWriter(
-                    str(self._output_path),
-                    fourcc,
-                    self._fps,
-                    (width, height),
-                )
-                if not writer.isOpened():
-                    self._error_message = "cv2.VideoWriter 초기화 실패"
+                writer = self._open_video_writer(width, height)
+                if writer is None:
                     return
 
                 self._ready_event.set()
@@ -245,6 +326,8 @@ def record_screen(
     output_dir: Path = RECORDING_DIR,
     max_record_sec: int = MAX_RECORD_SEC,
     fps: int = RECORD_FPS,
+    codec: str = DEFAULT_CODEC,
+    extension: str = DEFAULT_EXTENSION,
     log_name: str = LOG_NAME,
     component_name: str = COMPONENT_NAME,
 ) -> Path | None:
@@ -254,6 +337,8 @@ def record_screen(
         output_dir=output_dir,
         max_record_sec=max_record_sec,
         fps=fps,
+        codec=codec,
+        extension=extension,
         log_name=log_name,
         component_name=component_name,
     )

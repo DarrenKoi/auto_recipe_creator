@@ -1,0 +1,23 @@
+# Minimal Python dependencies for deploy_vlms runtime.
+#
+# Scope:
+# - deploy_vlms/scripts/*.py
+# - flask_api/vlm_serve/*
+# - web_main.py / flask_api proxy exposure for coworker-facing endpoints
+#
+# Notes:
+# - GPU driver / CUDA runtime / NVIDIA container runtime are NOT handled by pip.
+# - For ui-venus / mai-ui / ui-tars / paddleocr-vl vLLM serving, `vllm` is the
+#   key package and brings in a compatible torch build in the usual setup.
+# - GOT-OCR scripts in deploy_vlms also use torch/transformers/Pillow/Flask.
+
+# Flask proxy + health checks
+Flask>=3.0.0
+requests>=2.31.0
+
+# Image handling used by GOT-OCR serving path
+Pillow>=10.0.0
+
+# Core model-serving runtime
+transformers>=4.35.0
+vllm

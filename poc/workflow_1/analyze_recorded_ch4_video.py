@@ -420,8 +420,10 @@ def analyze_video() -> str:
     )
 
     frame_results: list[dict] = []
+    sampled_frame_reviews: list[dict] = []
     analyzed_count = 0
     skipped_count = 0
+    sampled_count = 0
     previous_frame_note = "none"
 
     with VideoFrameExtractor(extractor_config) as extractor:
@@ -434,6 +436,27 @@ def analyze_video() -> str:
 
         for frame_data in extractor.extract_frames(max_frames=max_frames):
             frame_path = extractor.save_frame(frame_data, frames_dir)
+            sampled_count += 1
+
+            review_overlay_path = _save_review_overlay(
+                frame_path=frame_path,
+                frame_id=frame_data.frame_id,
+                frame_number=int(frame_data.frame_number),
+                timestamp_sec=float(frame_data.timestamp),
+                change_score=float(frame_data.change_score or 0.0),
+                analysis_payload=None,
+                output_dir=review_dir,
+            )
+            sampled_frame_reviews.append(
+                {
+                    "frame_id": frame_data.frame_id,
+                    "frame_number": frame_data.frame_number,
+                    "timestamp_sec": round(float(frame_data.timestamp), 3),
+                    "change_score": round(float(frame_data.change_score or 0.0), 6),
+                    "frame_path": frame_path,
+                    "review_overlay_path": review_overlay_path,
+                }
+            )
 
             if not _should_analyze_frame(frame_data, analyzed_count):
                 skipped_count += 1
@@ -464,7 +487,6 @@ def analyze_video() -> str:
 
             parsed_payload = None
             overlay_path = None
-            review_overlay_path = None
             try:
                 parsed_payload = extract_json(response.text)
                 overlay_path = _save_cursor_overlay(
@@ -516,6 +538,7 @@ def analyze_video() -> str:
         "max_frames": max_frames,
         "vlm_service": DEFAULT_VLM_SERVICE,
         "vlm_model_name": DEFAULT_VLM_MODEL_NAME,
+        "sampled_frames": sampled_count,
         "analyzed_frames": analyzed_count,
         "skipped_frames": skipped_count,
         "elapsed": format_elapsed_ms(started_at),
@@ -523,7 +546,7 @@ def analyze_video() -> str:
         "frame_results": frame_results,
     }
     summary["contact_sheet_path"] = _build_contact_sheet(
-        frame_results=frame_results,
+        frame_results=sampled_frame_reviews,
         output_path=output_dir / "contact_sheet.jpg",
     ) or ""
     save_debug_json(output_dir / "summary.json", summary)

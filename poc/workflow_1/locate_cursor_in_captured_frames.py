@@ -7,7 +7,6 @@
   uv run python poc/workflow_1/locate_cursor_in_captured_frames.py
 """
 
-import json
 import os
 import time
 from pathlib import Path
@@ -43,7 +42,7 @@ DEFAULT_REFINE_MODEL = os.getenv("CH4_CURSOR_REFINE_MODEL_NAME", MAI_UI_MODEL_NA
 
 
 def _resolve_capture_dir() -> Path | None:
-    """분석할 캡처 프레임 디렉터리를 결정한다."""
+    """분석할 캡처 프레임 세트 또는 frames 디렉터리를 결정한다."""
     raw_path = os.getenv("CH4_CURSOR_FRAMES_DIR", "").strip()
     if raw_path:
         path = Path(raw_path).expanduser()
@@ -70,18 +69,56 @@ def _resolve_capture_dir() -> Path | None:
     return latest
 
 
-def _load_capture_summary(capture_dir: Path) -> dict | None:
-    """캡처 단계 summary.json 을 읽는다."""
-    summary_path = capture_dir / "summary.json"
-    if not summary_path.is_file():
-        print(f"[ERROR] summary.json 이 없습니다: {summary_path}")
-        return None
+def _resolve_frames_dir(capture_dir: Path) -> Path | None:
+    """실제 JPEG 프레임들이 있는 디렉터리를 결정한다."""
+    if capture_dir.name == "frames":
+        return capture_dir
 
-    try:
-        return json.loads(summary_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        print(f"[ERROR] summary.json 파싱 실패: {exc}")
-        return None
+    frames_dir = capture_dir / "frames"
+    if frames_dir.is_dir():
+        return frames_dir
+
+    jpeg_files = sorted(capture_dir.glob("*.jpg"))
+    if jpeg_files:
+        return capture_dir
+
+    print(f"[ERROR] frames 디렉터리 또는 JPEG 프레임이 없습니다: {capture_dir}")
+    return None
+
+
+def _parse_timestamp_sec_from_name(frame_path: Path) -> float:
+    """frame 파일명에 포함된 밀리초 타임스탬프를 파싱한다."""
+    stem = frame_path.stem
+    for part in reversed(stem.split("_")):
+        if part.endswith("ms") and part[:-2].isdigit():
+            return round(int(part[:-2]) / 1000.0, 3)
+    return 0.0
+
+
+def _collect_frame_items(frames_dir: Path) -> list[dict]:
+    """frames 디렉터리에서 분석 대상 프레임 목록을 만든다."""
+    frame_paths = sorted(
+        path
+        for path in frames_dir.iterdir()
+        if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg"}
+    )
+
+    frame_items: list[dict] = []
+    for index, frame_path in enumerate(frame_paths):
+        frame_index = index
+        parts = frame_path.stem.split("_")
+        if len(parts) >= 2 and parts[0] == "frame" and parts[1].isdigit():
+            frame_index = int(parts[1])
+
+        frame_items.append(
+            {
+                "index": frame_index,
+                "timestamp_sec": _parse_timestamp_sec_from_name(frame_path),
+                "frame_path": str(frame_path.resolve()),
+            }
+        )
+
+    return frame_items
 
 
 def _build_output_dir(capture_dir: Path) -> Path:
@@ -339,13 +376,13 @@ def locate_cursors() -> str:
     if capture_dir is None:
         return "capture_dir_not_found"
 
-    summary = _load_capture_summary(capture_dir)
-    if summary is None:
-        return "summary_not_found"
+    frames_dir = _resolve_frames_dir(capture_dir)
+    if frames_dir is None:
+        return "frames_dir_not_found"
 
-    frame_items = summary.get("frame_items") or []
+    frame_items = _collect_frame_items(frames_dir)
     if not frame_items:
-        print(f"[ERROR] 분석할 frame_items 가 없습니다: {capture_dir}")
+        print(f"[ERROR] 분석할 JPEG 프레임이 없습니다: {frames_dir}")
         return "frame_items_empty"
 
     output_dir = _build_output_dir(capture_dir)
@@ -370,7 +407,7 @@ def locate_cursors() -> str:
 
     max_frames = DEFAULT_MAX_FRAMES if DEFAULT_MAX_FRAMES > 0 else None
     print(
-        f"[INFO] 커서 탐지 시작: capture_dir={capture_dir}, "
+        f"[INFO] 커서 탐지 시작: capture_dir={capture_dir}, frames_dir={frames_dir}, "
         f"coarse={DEFAULT_COARSE_SERVICE}/{DEFAULT_COARSE_MODEL}, "
         f"refine={DEFAULT_REFINE_SERVICE}/{DEFAULT_REFINE_MODEL}, "
         f"zoom_scale={DEFAULT_ZOOM_SCALE}, "

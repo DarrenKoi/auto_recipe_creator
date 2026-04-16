@@ -67,6 +67,13 @@ def open_cctv_for_tool(eqp_id: str) -> bool:
     return True
 
 
+def _find_tool_list_window():
+    """현재 열려 있는 RCS Tool List 메인 창을 반환한다."""
+    from poc.workflow_1.login_rcs_common import wait_for_rcs_main_window
+
+    return wait_for_rcs_main_window()
+
+
 def select_ch4_for_capture() -> bool:
     """열려 있는 DVR player 창에서 Channel 4 를 확대한다."""
     from poc.workflow_1.workflow_select_ch4_cctv import (
@@ -126,6 +133,69 @@ def capture_alarm_frames(eqp_id: str) -> bool:
         return False
 
     print(f"[INFO] CH4 프레임 캡처 성공 (target_tool_name={eqp_id})")
+    return True
+
+
+def close_dvr_and_return_to_tool_list(
+    tool_list_window,
+    tool_list_title: str,
+) -> bool:
+    """DVR 창을 닫고 Tool List 창으로 포커스를 되돌린다."""
+    from poc.workflow_1.util import activate_window
+    from poc.workflow_1.workflow_select_ch4_cctv import _find_player_window
+
+    player_window, player_title, _backend, process_name = _find_player_window()
+    if player_window is None:
+        print("[WARNING] 닫을 DVR player 창을 찾지 못했습니다. Tool List 복귀만 시도합니다.")
+    else:
+        try:
+            activate_window(
+                player_window,
+                debug_label=f"close_dvr_{process_name or 'player'}",
+            )
+        except Exception:
+            pass
+
+        closed = False
+        for method_name in ("close",):
+            try:
+                close_method = getattr(player_window, method_name, None)
+                if callable(close_method):
+                    close_method()
+                    closed = True
+                    break
+            except Exception as exc:
+                print(f"[WARNING] DVR 창 닫기 실패: method={method_name}, error={exc}")
+
+        if not closed:
+            try:
+                player_window.type_keys("%{F4}")
+                closed = True
+            except Exception as exc:
+                print(f"[WARNING] DVR Alt+F4 닫기 실패: error={exc}")
+
+        time.sleep(0.7)
+        print(
+            f"[INFO] DVR 창 닫기 {'완료' if closed else '실패'}: "
+            f"title={player_title!r}, process={process_name}"
+        )
+
+    if tool_list_window is None:
+        tool_list_window, tool_list_title, _backend = _find_tool_list_window()
+
+    if tool_list_window is None:
+        print("[ERROR] Tool List 창 복귀 실패: 메인 RCS 창을 찾지 못했습니다.")
+        return False
+
+    refocused = activate_window(
+        tool_list_window,
+        debug_label=tool_list_title or "rcs_tool_list",
+    )
+    if not refocused:
+        print(f"[ERROR] Tool List 창 활성화 실패: title={tool_list_title!r}")
+        return False
+
+    print(f"[INFO] Tool List 창 복귀 완료: title={tool_list_title!r}")
     return True
 
 
@@ -202,6 +272,8 @@ def monitor_loop():
                     eqp_id = str(_row_value(row, "EQP_ID", "eqp_id", "tool_name") or "").strip()
                     alarm_time = _row_value(row, "UTC9", "utc9", "alarm_time")
                     alarm_key = f"{eqp_id}:{alarm_time}" if alarm_time else eqp_id
+                    tool_list_window = None
+                    tool_list_title = ""
 
                     if not eqp_id:
                         print("[WARNING] EQP_ID 없는 Align Fail row 발견 — 건너뜀")
@@ -222,22 +294,35 @@ def monitor_loop():
                         alarm_time=alarm_time,
                     )
 
-                    cctv_opened = open_cctv_for_tool(eqp_id)
-                    if not cctv_opened:
-                        print(f"[ERROR] {eqp_id} CCTV 창 열기 실패 — 다음 주기 재시도")
+                    tool_list_window, tool_list_title, _backend = _find_tool_list_window()
+                    if tool_list_window is None:
+                        print("[ERROR] Tool List 창을 찾지 못했습니다 — 다음 주기 재시도")
                         continue
 
-                    ch4_selected = select_ch4_for_capture()
-                    if not ch4_selected:
-                        print(f"[ERROR] {eqp_id} Channel 4 확대 실패 — 다음 주기 재시도")
-                        continue
+                    try:
+                        cctv_opened = open_cctv_for_tool(eqp_id)
+                        if not cctv_opened:
+                            print(f"[ERROR] {eqp_id} CCTV 창 열기 실패 — 다음 주기 재시도")
+                            continue
 
-                    captured = capture_alarm_frames(eqp_id)
-                    if not captured:
-                        print(f"[ERROR] {eqp_id} CH4 프레임 캡처 실패 — 다음 주기 재시도")
-                        continue
+                        ch4_selected = select_ch4_for_capture()
+                        if not ch4_selected:
+                            print(f"[ERROR] {eqp_id} Channel 4 확대 실패 — 다음 주기 재시도")
+                            continue
 
-                    already_handled.add(alarm_key)
+                        captured = capture_alarm_frames(eqp_id)
+                        if not captured:
+                            print(f"[ERROR] {eqp_id} CH4 프레임 캡처 실패 — 다음 주기 재시도")
+                            continue
+
+                        already_handled.add(alarm_key)
+                    finally:
+                        returned = close_dvr_and_return_to_tool_list(
+                            tool_list_window,
+                            tool_list_title,
+                        )
+                        if not returned:
+                            print("[WARNING] 후처리 완료 후 Tool List 창 복귀에 실패했습니다.")
 
         except KeyboardInterrupt:
             print("\n[INFO] 모니터링 중단 (Ctrl+C)")

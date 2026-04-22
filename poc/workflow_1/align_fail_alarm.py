@@ -18,9 +18,10 @@ from pathlib import Path
 
 from poc.workflow_1 import LOG_DIR
 from poc.workflow_1.office_align_fail_alarm import filter_align_fail, get_cdsem_alarms
-from poc.workflow_1.util import env_int
+from poc.workflow_1.util import env_flag, env_int
 
 POLL_INTERVAL_SEC = env_int("ALIGN_FAIL_POLL_SEC", 60)
+POPUP_ENABLED_DEFAULT = True
 ALARM_LOG_PATH = LOG_DIR / "align_fail_alarms.txt"
 
 
@@ -113,8 +114,12 @@ def notify_align_fail(eqp_id: str, alarm_time: str, alarm_name: str) -> None:
     _show_popup_windows(title, message)
 
 
-def process_fail_rows(fails, already_handled: set[str]) -> int:
-    """감지된 fails 에 대해 로깅 + 팝업을 수행한다. 새로 처리된 수를 반환."""
+def process_fail_rows(
+    fails,
+    already_handled: set[str],
+    popup_enabled: bool = True,
+) -> int:
+    """감지된 fails 에 대해 로깅(+옵션 팝업)을 수행한다. 새로 처리된 수를 반환."""
     newly_handled = 0
     for row in _iter_alarm_rows(fails):
         eqp_id = str(_row_value(row, "EQP_ID", "eqp_id", "tool_name") or "").strip()
@@ -137,7 +142,8 @@ def process_fail_rows(fails, already_handled: set[str]) -> int:
             f"ALID={alid}, 시각={alarm_time}"
         )
         append_alarm_record(eqp_id, str(alarm_time or ""), alarm_name, alid)
-        notify_align_fail(eqp_id, str(alarm_time or ""), alarm_name)
+        if popup_enabled:
+            notify_align_fail(eqp_id, str(alarm_time or ""), alarm_name)
 
         already_handled.add(alarm_key)
         newly_handled += 1
@@ -145,11 +151,20 @@ def process_fail_rows(fails, already_handled: set[str]) -> int:
     return newly_handled
 
 
-def monitor_loop() -> None:
-    """메인 감지 루프 — 1분 주기 기본."""
+def monitor_loop(popup_enabled: bool | None = None) -> None:
+    """메인 감지 루프 — 1분 주기 기본.
+
+    popup_enabled:
+      - True  → Align Fail 감지 시 Windows MessageBox 팝업 표시 (기본)
+      - False → 텍스트 로그만 기록, 팝업 없음
+      - None  → 환경변수 `ALIGN_FAIL_POPUP` 로 결정 (미설정 시 True)
+    """
+    if popup_enabled is None:
+        popup_enabled = env_flag("ALIGN_FAIL_POPUP", POPUP_ENABLED_DEFAULT)
+
     already_handled: set[str] = set()
 
-    print(f"[INFO] Align Fail 감지 시작 (주기={POLL_INTERVAL_SEC}s)")
+    print(f"[INFO] Align Fail 감지 시작 (주기={POLL_INTERVAL_SEC}s, 팝업={'on' if popup_enabled else 'off'})")
     print(f"[INFO] 누적 로그 파일: {ALARM_LOG_PATH}")
 
     while True:
@@ -160,7 +175,7 @@ def monitor_loop() -> None:
             if _alarm_rows_empty(fails):
                 print(f"[INFO] {datetime.now().strftime('%H:%M:%S')} — Align Fail 없음")
             else:
-                count = process_fail_rows(fails, already_handled)
+                count = process_fail_rows(fails, already_handled, popup_enabled=popup_enabled)
                 if count == 0:
                     print(
                         f"[INFO] {datetime.now().strftime('%H:%M:%S')} — "

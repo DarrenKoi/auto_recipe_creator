@@ -33,7 +33,9 @@
       "Bash(uv pip:*)",
       "Bash(find:*)",
       "Bash(wc:*)",
-      "Skill(codex:rescue)"
+      "Skill(codex:rescue)",
+      "Skill(update-config)",
+      "Bash(bash -n .claude/hooks/auto-commit-push.sh)"
     ]
   },
   "hooks": {

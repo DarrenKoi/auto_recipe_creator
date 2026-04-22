@@ -114,28 +114,57 @@ def notify_align_fail(eqp_id: str, alarm_time: str, alarm_name: str) -> None:
     _show_popup_windows(title, message)
 
 
-def process_fail_rows(
-    fails,
-    already_handled: set[str],
-    popup_enabled: bool = True,
-) -> int:
-    """감지된 fails 에 대해 로깅(+옵션 팝업)을 수행한다. 새로 처리된 수를 반환."""
-    newly_handled = 0
+def _collapse_rows_by_tool(fails) -> dict[str, dict]:
+    """같은 EQP_ID 의 여러 알람 row 를 하나로 합친다 (첫 번째 row 채택)."""
+    by_tool: dict[str, dict] = {}
     for row in _iter_alarm_rows(fails):
         eqp_id = str(_row_value(row, "EQP_ID", "eqp_id", "tool_name") or "").strip()
-        alarm_time = _row_value(row, "UTC9", "utc9", "alarm_time")
-        alarm_name = str(
-            _row_value(row, "ALARM_NAME", "alarm_name", "DESCRIPTION") or "Align Fail"
-        ).strip()
-        alid = str(_row_value(row, "ALID", "alarm_id", "al_id") or "9006").strip()
-
         if not eqp_id:
             print("[WARNING] EQP_ID 없는 Align Fail row 발견 — 건너뜀")
             continue
-
-        alarm_key = f"{eqp_id}:{alarm_time}" if alarm_time else eqp_id
-        if alarm_key in already_handled:
+        if eqp_id in by_tool:
             continue
+        by_tool[eqp_id] = {
+            "eqp_id": eqp_id,
+            "alarm_time": _row_value(row, "UTC9", "utc9", "alarm_time"),
+            "alarm_name": str(
+                _row_value(row, "ALARM_NAME", "alarm_name", "DESCRIPTION")
+                or "Align Fail"
+            ).strip(),
+            "alid": str(_row_value(row, "ALID", "alarm_id", "al_id") or "9006").strip(),
+        }
+    return by_tool
+
+
+def process_fail_rows(
+    fails,
+    active_tools: set[str],
+    popup_enabled: bool = True,
+) -> int:
+    """EQP_ID 기준으로 edge-triggered 알림을 수행한다.
+
+    - 같은 EQP_ID 에서 여러 알람 code 가 와도 하나로 취급.
+    - 이전 poll 에서 이미 활성이던 EQP_ID 는 다시 알리지 않음.
+    - 이번 poll 에 사라진 EQP_ID 는 `active_tools` 에서 제거 (복구 시 재알림 가능).
+
+    `active_tools` 는 in-place 로 갱신된다. 새로 알린 개수를 반환.
+    """
+    by_tool = _collapse_rows_by_tool(fails)
+    current_tools = set(by_tool.keys())
+
+    new_tools = current_tools - active_tools
+    cleared_tools = active_tools - current_tools
+
+    for eqp_id in sorted(cleared_tools):
+        print(f"[INFO] Align Fail 해제: EQP_ID={eqp_id}")
+    active_tools.difference_update(cleared_tools)
+
+    newly_handled = 0
+    for eqp_id in sorted(new_tools):
+        info = by_tool[eqp_id]
+        alarm_time = info["alarm_time"]
+        alarm_name = info["alarm_name"]
+        alid = info["alid"]
 
         print(
             f"[WARNING] Align Fail 감지: EQP_ID={eqp_id}, "
@@ -145,7 +174,7 @@ def process_fail_rows(
         if popup_enabled:
             notify_align_fail(eqp_id, str(alarm_time or ""), alarm_name)
 
-        already_handled.add(alarm_key)
+        active_tools.add(eqp_id)
         newly_handled += 1
 
     return newly_handled
@@ -162,10 +191,11 @@ def monitor_loop(popup_enabled: bool | None = None) -> None:
     if popup_enabled is None:
         popup_enabled = env_flag("ALIGN_FAIL_POPUP", POPUP_ENABLED_DEFAULT)
 
-    already_handled: set[str] = set()
+    active_tools: set[str] = set()
 
     print(f"[INFO] Align Fail 감지 시작 (주기={POLL_INTERVAL_SEC}s, 팝업={'on' if popup_enabled else 'off'})")
     print(f"[INFO] 누적 로그 파일: {ALARM_LOG_PATH}")
+    print("[INFO] 같은 EQP_ID 의 중복 알람은 한 번만 알립니다 (해제 후 재감지 시 재알림).")
 
     while True:
         try:
@@ -173,13 +203,17 @@ def monitor_loop(popup_enabled: bool | None = None) -> None:
             fails = filter_align_fail(alarms)
 
             if _alarm_rows_empty(fails):
+                if active_tools:
+                    for eqp_id in sorted(active_tools):
+                        print(f"[INFO] Align Fail 해제: EQP_ID={eqp_id}")
+                    active_tools.clear()
                 print(f"[INFO] {datetime.now().strftime('%H:%M:%S')} — Align Fail 없음")
             else:
-                count = process_fail_rows(fails, already_handled, popup_enabled=popup_enabled)
+                count = process_fail_rows(fails, active_tools, popup_enabled=popup_enabled)
                 if count == 0:
                     print(
                         f"[INFO] {datetime.now().strftime('%H:%M:%S')} — "
-                        f"모두 이전 감지분 (신규 없음)"
+                        f"신규 없음 (활성 {len(active_tools)}대 유지)"
                     )
         except KeyboardInterrupt:
             print("\n[INFO] 감지 중단 (Ctrl+C)")

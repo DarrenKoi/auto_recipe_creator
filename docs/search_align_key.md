@@ -79,42 +79,221 @@ Flask VLM 프록시에 등록된 모델은 다음과 같다 (`flask_api/vlm_serv
 
 ## 3. Classical image processing 은 여전히 필요한가?
 
-**필요하다. 그리고 주 매칭기로 써야 한다.** 이 문제는 classical CV 가
-이기는 모든 조건을 가지고 있다.
+**필요하다. 단, 순수 픽셀 NCC 가 아니라 "구조(structure) 수준" 의 매칭이
+중심이어야 한다.** 이 구분이 매우 중요하다.
 
-- Reference 와 target 이 같은 modality (둘 다 grayscale SEM 캡처).
-- 회전은 대체로 bounded (스테이지가 웨이퍼 notch 에 정렬되어 있어 yaw 가
-  거의 0 에 가깝다).
-- 스케일은 레시피 배율로 알려져 있고, 차이가 있어도 한두 단계의 이산
-  배율만 시도하면 된다.
-- 조명은 단일 Tool 안에서는 비교적 안정적이다.
-- 성공 판정 기준이 단단한 숫자 — NCC correlation score.
+### 3.0 "같다" 를 어느 레벨에서 판단할 것인가
 
-구체적 툴박스 (내가 시도할 순서대로).
+레시피에 저장된 align-key 이미지와 SEM monitor 에서 본 이미지는 **픽셀로는
+같지 않다.** 같은 Tool, 같은 웨이퍼 위 같은 fiducial 이라도 다음이 전부
+다르게 찍힌다.
 
-1. **Normalized Cross-Correlation (NCC) template matching.**
-   `cv2.matchTemplate(img, template, cv2.TM_CCOEFF_NORMED)`. 싸고 빠르고,
-   업계 default. Multi-scale (±1 magnification step) 과 작은 rotation
-   sweep (예: ±3°) 을 얹으면 거의 대부분 잡힌다. Peak score 와 위치를
-   보고, threshold 이하면 기각 — threshold 는 실제 데이터 몇 장으로 튜닝.
+- beam current / detector gain / dwell time 차이 → 밝기·대비·노이즈 분포
+- 디포커스 미묘한 변화 → 엣지 sharpness
+- 스테이지 yaw 의 아주 작은 회전 (수 도 이내)
+- 배율이 정확히 같아도 scan rotation 이나 rescan 으로 인한 1~2% 스케일
+- 웨이퍼 표면 오염, charging, 노이즈 프레임
 
-2. **Feature-based matching (ORB, AKAZE, SIFT).** Key 에 corner/junction
-   이 분명하지만 배경이 복잡할 때 유리. RANSAC homography 로 sub-pixel
-   좌표까지 얻는다. NCC 보다 느리지만 부분 가림이나 대비 변화에 훨씬
-   robust 하다.
+그래서 사용자의 직관이 정확하다 — "픽셀이 똑같다" 가 아니라 **"큰 박스
+3~4개가 특정 배치로 있다"** 가 우리가 실제로 의지할 signature 다. 이 수준은
+다음과 같이 계층적으로 정리된다.
 
-3. **Phase correlation** — 회전이 진짜로 0 인 pure translation 상황이면
-   가장 빠르고 조명 변화에 매우 강하다.
+| 레벨 | 무엇을 비교하는가 | 대표 기법 | 대비/노이즈 변화에 |
+|------|------------------|-----------|-------------------|
+| L0 픽셀 | 밝기 값 그대로 | `cv2.matchTemplate(TM_CCOEFF_NORMED)` | **약함** |
+| L1 엣지/그래디언트 | Sobel / Canny 후 매칭 | Edge-NCC, **Chamfer matching** | **강함** |
+| L2 Keypoint | corner/blob descriptor | **ORB / AKAZE / SIFT** + RANSAC | **매우 강함** |
+| L3 형상(contour) | 박스 개수·크기·배치 | Contour detect → geometric matching | **매우 강함** |
+| L4 의미 | "박스 3개 삼각 배치" | VLM / CNN embedding | 강하지만 비정량 |
 
-4. **가벼운 preprocessing** 을 두 이미지 모두에 공통으로 먼저 적용:
-   CLAHE (local contrast), 작은 Gaussian blur (픽셀 노이즈 억제),
-   그리고 선택적으로 Sobel / gradient 이미지로 변환해서 "밝기" 가 아닌
-   "구조" 로 매칭하게 한다.
+사용자가 묘사한 "큰 박스 3~4개와 마크" 는 **L1 ~ L3 에 정확히 들어맞는
+패턴**이다. 따라서 본 시스템의 주 매칭기는 L1/L3 조합이고, L0 raw NCC 는
+보조/샘플링용이다.
 
-이 스택은 deterministic 이고, CPU 에서 FOV 당 수 ms 로 돌고, frame 간에
-비교 가능한 물리적 confidence 를 돌려준다. "웨이퍼를 돌아다니며 Key 를
-찾을 때까지 탐색한다" 는 문제가 실제로 필요로 하는 것은 바로 이것 —
-stage 가 움직일 때마다 단조 증가해야 할 *정량적 유사도 신호* 다.
+### 3.1 왜 raw 픽셀 NCC 만으로는 부족한가 (그리고 그래도 쓸모는 있다)
+
+`cv2.matchTemplate(TM_CCOEFF_NORMED)` 은 평균을 뺀 cross-correlation 이기
+때문에 **전역 밝기 offset 과 contrast scale 에는 이미 정규화되어 있다.**
+즉 "전체가 조금 어둡다" 정도는 견딘다. 하지만 다음에는 빠르게 무너진다.
+
+- **국소적 contrast 변화** (CLAHE 가 필요한 이유)
+- **노이즈 분포가 크게 다른 경우** — 노이즈도 밝기 통계에 섞여 들어간다
+- **엣지의 부호가 반전된 경우** (밝은 박스 ↔ 어두운 박스) — 이건 raw NCC
+  에서는 치명적이다
+- **텍스처가 다른 경우** — 템플릿은 깨끗, live FOV 는 charging 으로 인해
+  같은 박스가 texture 로 덮여 있을 수 있다
+
+그래서 raw 픽셀 NCC 는 **전처리 없이 주 매칭기로 쓰면 안 된다.** 다만
+다음 두 용도로는 유용하다.
+
+- **초기 coarse search 의 속도 캐리**: 다른 기법보다 10~100배 빠르니까,
+  의심 영역을 top-N 개로 줄이는 1차 필터로 돌리고, 상세 검증은 L1/L2 로
+  한다.
+- **동일 Tool 내에서 같은 스캔 조건이 보장되는 경우** 의 확인용.
+
+### 3.2 권장 주 매칭기 1 — Edge-NCC / Chamfer matching (L1)
+
+아이디어는 단순하다 — "박스는 **엣지**다." 두 이미지를 모두 엣지 영상으로
+바꿔 놓고 매칭하면 절대 밝기·노이즈·텍스처는 거의 날아간다.
+
+**Edge-NCC 파이프라인:**
+
+```python
+def preprocess(img):
+    g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+    g = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(g)
+    g = cv2.GaussianBlur(g, (3, 3), 0)
+    gx = cv2.Sobel(g, cv2.CV_32F, 1, 0, ksize=3)
+    gy = cv2.Sobel(g, cv2.CV_32F, 0, 1, ksize=3)
+    mag = cv2.magnitude(gx, gy)
+    mag = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX).astype("uint8")
+    return mag
+
+def match_edge_ncc(template, fov):
+    t = preprocess(template)
+    f = preprocess(fov)
+    res = cv2.matchTemplate(f, t, cv2.TM_CCOEFF_NORMED)
+    _, max_val, _, max_loc = cv2.minMaxLoc(res)
+    return max_val, max_loc  # max_val 이 신뢰도, max_loc 이 좌상단 좌표
+```
+
+**Chamfer matching (한 단계 더 강함):**
+
+1. 두 이미지에 `cv2.Canny` 로 이진 엣지 맵을 만든다.
+2. FOV 엣지 맵에 `cv2.distanceTransform` 을 적용해서 "각 픽셀에서 가장
+   가까운 엣지까지의 거리" 를 구한다.
+3. 템플릿 엣지를 슬라이딩시키며 **거리 맵 값의 합** 을 계산 — 합이 작을
+   수록 엣지 배치가 잘 포개진 위치다.
+4. OpenCV 에 `cv2.distanceTransform` 은 있고, chamfer matcher 자체는
+   `cv2.createChamferMatcher` (버전에 따라 contrib) 또는 직접 convolve
+   로 몇 줄로 구현 가능.
+
+Chamfer 는 **엣지 부분 누락, 끊김, 살짝의 노이즈** 에도 매우 강건해서
+"박스 몇 개의 배치" 같은 sparse 구조 매칭에 사실상 표준이다. 반도체
+업계의 여러 "address mark" 검출 알고리즘이 이 계열이다.
+
+### 3.3 권장 주 매칭기 2 — Feature matching (L2)
+
+박스의 **코너** 를 keypoint 로 잡고, descriptor 로 비교한 뒤, RANSAC 으로
+기하 정합(homography/affine) 을 푸는 방식. 박스 4개만 있어도 코너 16개라
+충분하다.
+
+```python
+def match_features(template, fov):
+    detector = cv2.AKAZE_create()             # ORB 도 OK, 훨씬 빠름
+    kp1, des1 = detector.detectAndCompute(template, None)
+    kp2, des2 = detector.detectAndCompute(fov,      None)
+
+    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+    matches = bf.knnMatch(des1, des2, k=2)
+    # Lowe's ratio test
+    good = [m for m, n in matches if m.distance < 0.75 * n.distance]
+    if len(good) < 8:
+        return None
+
+    src = np.float32([kp1[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
+    dst = np.float32([kp2[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
+    H, mask = cv2.findHomography(src, dst, cv2.RANSAC, 5.0)
+    inliers = int(mask.sum()) if mask is not None else 0
+    # inliers / len(good) 이 높으면 강한 매칭 — 0.6 이상을 threshold 로.
+    return H, inliers, len(good)
+```
+
+장점:
+
+- **회전·스케일·부분 가림 전부 내성**. FOV 가 템플릿의 일부만 보여줘도
+  inlier 가 살아 있으면 매칭된다.
+- Homography 덕분에 **sub-pixel 위치 + 회전/스케일까지 동시에 나온다.**
+  그대로 stage 좌표로 환산할 수 있다.
+- `inliers` 수가 자연스러운 confidence.
+
+단점:
+
+- SEM 의 **매끈한 박스 내부** 에는 feature 가 적어 코너 탐지기가 주로
+  박스 모서리만 잡는다 → keypoint 수 자체가 적을 수 있다. AKAZE 가 ORB
+  보다 잘 잡는 편.
+- 템플릿이 **repetitive pattern** (바둑판 등) 이면 descriptor 가 혼동된다.
+  이때는 L3 geometric matching 으로 넘어가야 한다.
+
+### 3.4 권장 주 매칭기 3 — Contour / Geometric matching (L3)
+
+"박스 3~4개 배치" 를 *직접* 비교하는 가장 honest 한 접근.
+
+1. 두 이미지에 CLAHE + Gaussian blur + Otsu 이진화 (`cv2.threshold
+   ..., cv2.THRESH_BINARY | cv2.THRESH_OTSU`).
+2. `cv2.findContours` 로 외곽선 추출.
+3. 면적 / 종횡비 / `cv2.approxPolyDP` 꼭짓점 4개 조건으로 "큰 박스" 만
+   필터링.
+4. 템플릿에서 박스 N개, FOV 에서 박스 M개가 나오면, **두 박스 집합 간
+   기하 정합** 을 푼다:
+   - 각 박스의 중심을 점군으로 보고, N 점과 M 점 사이의 최적 매칭을
+     RANSAC + affine fit 로 찾는다 (박스 수가 4개 내외면 조합 탐색도
+     충분히 빠르다).
+   - 박스 크기 비율과 상대 거리 비율까지 비교하면 false positive 가
+     크게 줄어든다.
+
+이 방식의 장점은 **스케일·회전·밝기 전부 무관** 하고, 결과가 "박스
+배치가 동일한가" 에 대한 **해석 가능한 증거** (N개 박스 중 K개가
+matched) 로 나온다는 것이다. 단점은 이진화가 실패하면 (FOV 콘트라스트가
+너무 낮거나 charging 이 심하면) contour 자체가 무너진다는 것. 그래서
+preprocessing (CLAHE, 필요하면 adaptive threshold) 이 중요하다.
+
+### 3.5 권장 실전 조합
+
+하나만 고르지 말고 **짧은 파이프라인** 으로 쓴다.
+
+```
+FOV 캡처
+   │
+   ├── (fast) raw NCC coarse  → top-3 후보 위치
+   │
+   ├── 각 후보 근방 crop
+   │     ├── Edge-NCC / Chamfer  → score_struct
+   │     └── AKAZE + RANSAC      → inliers
+   │
+   └── 최고 후보에서:
+         • Contour-based 박스 개수/배치 교차확인
+         • (선택) VLM 에 "두 패치가 같은 fiducial 인가?" 최종 veto
+
+결정:
+  score_struct ≥ HIGH  AND  inliers ≥ K    → 성공, 위치 반환
+  그 외                                      → 실패 → stage 이동
+```
+
+각 단계가 서로 다른 가정을 검증하므로 하나가 무너져도 나머지가 잡아낸다.
+각 단계의 수치는 실제 데이터 10~30 쌍으로 반드시 튜닝해야 한다 (§6).
+
+### 3.6 Preprocessing 체크리스트
+
+세 매칭기 모두 아래 전처리를 공유하는 게 권장된다.
+
+- Grayscale 변환
+- **CLAHE** (`clipLimit=2.0, tileGridSize=(8,8)`) — 국소 대비 균등화
+- 작은 **Gaussian blur** (3×3) — 샷 노이즈 억제
+- (엣지 계열 한정) Sobel magnitude 또는 Canny (`low=50, high=150` 정도
+  기본, 이미지에 맞춰 튜닝)
+- (이진화 계열 한정) Otsu 또는 adaptive threshold
+
+### 3.7 Sub-pixel / sub-FOV 정확도가 필요한 경우
+
+최종 좌표가 필요한 stage 이동에는 sub-pixel 정밀도가 중요하다.
+
+- NCC 계열은 peak 주변에 **2차 parabola fit** 을 해서 sub-pixel refinement.
+- Feature matching 은 homography 자체가 이미 sub-pixel.
+- Contour 중심은 `cv2.moments` 로 centroid 까지 sub-pixel.
+
+### 3.8 이 스택의 성질
+
+- **Deterministic** — 같은 입력이면 같은 출력.
+- **CPU-only, FOV 당 수~수십 ms.** GPU 불필요.
+- **Calibrated confidence** — Edge-NCC score, inlier ratio, matched-box
+  count 전부 숫자. Threshold 로 성공/실패 로깅 가능.
+- **해석 가능** — 어느 단계가 왜 떨어졌는지 디버그 이미지로 남길 수 있다
+  (엣지 맵, matched keypoint drawing, contour 오버레이).
+
+"웨이퍼를 돌아다니며 Key 를 찾을 때까지 탐색한다" 는 문제가 실제로
+필요로 하는 신호 — **stage 가 움직일 때마다 단조 증가해야 할 정량적
+유사도** — 를 이 스택이 준다. VLM 은 이 숫자를 만들 수 없다.
 
 ---
 
@@ -219,12 +398,15 @@ stage 가 움직일 때마다 단조 증가해야 할 *정량적 유사도 신�
   바깥을 감싸는 형태다.
 - **현재 VLM 들이 매칭 자체를 할 수 있는가?** 신뢰도 있게는 불가. 그들은
   GUI/OCR 모델이지 SEM 패턴 매처가 아니며, calibrated score 를 주지 않는다.
-- **Image processing 이 필요한가?** 필요하다. 이 문제에 가장 적합한
-  도구이며, 주 매칭기로 써야 한다 (NCC template matching 기본, 필요하면
-  feature matching 과 전처리 추가).
+- **Image processing 이 필요한가?** 필요하다. 단, **raw 픽셀 NCC 가 아니라
+  "구조 수준" 매칭이 중심**이어야 한다. 레시피 이미지와 SEM monitor
+  이미지는 픽셀이 다르지만 "박스 3~4개 배치" 라는 구조는 같다. 권장
+  스택은 **Edge-NCC / Chamfer matching (L1) + AKAZE feature matching
+  (L2) + Contour 기반 박스 배치 매칭 (L3)** 의 교차 검증 (§3).
 - **VLM 이 "유사/비유사" 판정을 할 수 있는가?** 거친 의미 수준에서는
   가능하고, veto / tiebreaker 로는 유용하다. Stage 이동의 핵심 결정자로는
   부적합하다.
-- **무엇을 먼저 만들어야 하는가?** 실장비에서 촬영한 레시피/FOV 쌍
-  데이터셋. 그다음 오프라인 NCC 프로토타입. 그 score 분포가 이후 모든
-  설계의 토대가 된다.
+- **무엇을 먼저 만들어야 하는가?** 실장비에서 촬영한 (레시피 key 이미지,
+  그것이 포함된 FOV) 쌍 10~30 장. 그다음 오프라인에서 Edge-NCC +
+  AKAZE + Contour 3종 프로토타입을 돌려 score/inlier/matched-box 분포를
+  본다. 그 분포가 threshold 튜닝과 이후 모든 설계의 토대가 된다.

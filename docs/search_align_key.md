@@ -392,7 +392,195 @@ FOV 캡처
 
 ---
 
-## 7. 짧은 답변 요약
+## 7. 운영 결정사항 (2026-04-27 확정)
+
+§1~6 의 분석을 바탕으로, 실제 운영 시 다음 사항들을 확정했다. 이후
+구현은 이 결정을 따른다.
+
+### 7.1 Template 입력 모델
+
+- **현재 단계**: 레시피의 align key 는 *실측 SEM 이미지* — Align Fail 발생
+  시점에 **서버를 통해 on-demand 로 전달** 받는다 (사전 캐싱 ❌).
+- **향후 단계**: CAD 도면(벡터) 도 입력 소스로 추가될 예정. CAD 는
+  노이즈가 0 이라 SEM 이미지보다 더 안정적인 template 이 된다.
+- **알고리즘 호환성**: §3 의 Edge-based 파이프라인은 두 입력을 모두
+  "binary edge map" 으로 정규화하므로, 입력 소스가 바뀌어도 매칭
+  알고리즘은 그대로 재사용한다.
+- **로컬 캐시 정책**: 동일 recipe_id 가 짧은 시간 내 재발할 수 있으므로
+  **5분 TTL 캐시** + 서버 응답에 `version/etag` 포함하여 stale cache
+  방어. 엔지니어 갱신 직후 stale template 으로 매칭하는 것을 막아야 함.
+
+### 7.2 해상도 정규화 (가장 중요한 디테일)
+
+레시피마다 해상도가 매번 다르다는 제약이 있어, **픽셀 해상도와 물리
+해상도(nm/pixel) 두 축 모두 정규화가 필수**이다. 정규화를 틀리면 같은
+align key 라도 점수가 30~50% 떨어져서 알고리즘 탓으로 오인하기 쉽다.
+
+- **Case A — 서버가 nm/pixel 메타를 줄 수 있는 경우 (선호)**
+  - `scale = template.nm_per_pixel / frame_nm_per_pixel` 로 단일 스케일
+    리사이즈 → 빠르고 정확.
+- **Case B — 메타가 없는 경우 (현실적 fallback)**
+  - 0.7x ~ 1.4x 를 5단계 (`0.7, 0.85, 1.0, 1.2, 1.4`) multi-scale
+    Chamfer matching.
+  - Best score 를 낸 scale 을 기억해두고 다음 루프부터는 ±10% 범위만
+    재탐색 (수렴 가속).
+
+서버 메타 제공 가능 여부는 베이스라인 분기점이며, 운영 데이터가 모이기
+전까지는 Case B 로 시작한다.
+
+### 7.3 합성 점수와 3단계 분기
+
+§3.5 의 캐스케이드를 단일 스칼라로 합성한다. **NCC/SSIM 등 픽셀 레벨
+지표는 1차 지표로 사용하지 않는다** (공정 변화로 픽셀 동일성 가정 불가 —
+사용자 명시 제약).
+
+```
+score = 0.6 * chamfer_score + 0.4 * orb_inlier_ratio
+```
+
+| 점수 구간 | 동작 | 의미 |
+|---|---|---|
+| `score ≥ 0.75` (HIGH) | match 판정 → 좌표 반환 → 다음 단계 진행 | 자동 진행 |
+| `0.55 ≤ score < 0.75` (MID) | VLM 에 미세 이동/배율 조정 제안 요청 | VLM 루프 |
+| `score < 0.55` 가 5회 연속 (N=5) | **엔지니어에게 align key 갱신 요청 알람** | Human escape |
+
+- `N=5 연속` 은 일시적 화면 흔들림/스테이지 이동 중 캡처를 걸러내기
+  위한 hysteresis.
+- 임계값 (0.75 / 0.55) 과 N (=5) 은 cold-start 보수값. 운영 2~4주
+  후 positive/negative 점수 분포로 ROC 캘리브레이션 → recipe 별로 다른
+  값을 쓸 수 있도록 `dict[recipe_id, thresholds]` 구조로 보관.
+
+### 7.4 점진적 Drift 대응 — Auto-update 금지
+
+공정 변화 폭이 *극적이지 않은 점진적 drift* 라는 도메인 제약을 활용한다.
+극적 변화 시에는 엔지니어가 align key 를 갱신하므로, 시스템은 다음만
+한다.
+
+- **Template 자동 업데이트 ❌** — Recipe align key 는 항상 사람이 검증한
+  ground truth 로 유지. Silent drift 로 더럽혀지면 안 됨.
+- **점수 시계열 누적 ⭕** — 매 매칭의 best-score 를
+  `logs/align_score_trend.jsonl` 로 저장.
+- **추세 모니터링** — 주/월 단위로 EQP_ID × Recipe 별 median score 추세
+  확인. 4주 이동평균이 일정 기울기 이상으로 하락하면 **"갱신 권고"
+  리포트 자동 생성** (결정과 실행은 엔지니어).
+
+### 7.5 엔지니어 호출 — 시각 비교 + 외부 플랫폼 webhook
+
+`align_fail_alarm.py` 의 Windows MessageBox 패턴은 **사용하지 않는다**.
+대신 **전용 소통 플랫폼** (TBD — Slack / MS Teams / 사내 시스템 중 하나)
+으로 webhook 알림을 보낸다. 알림은 **Recipe vs SEM 시각 비교 이미지**
+를 첨부해야 엔지니어 업무 효율이 좋다.
+
+페이로드 구성:
+
+- **3-pane 합성 이미지**: `[Recipe template | Best SEM frame | Edge
+  overlay]` — 어디가 안 맞는지 즉시 보이도록.
+- **메타 데이터**: `EQP_ID`, `recipe_id`, `recipe_version`, 발생 시각,
+  최근 5회 `(score, best_xy, scale)`, 매칭 알고리즘 버전.
+
+### 7.6 핵심 인터페이스 (시그니처 초안)
+
+구현 시작점을 명확히 하기 위해 dataclass + 함수 시그니처를 미리 고정.
+
+```python
+from dataclasses import dataclass
+from datetime import datetime
+import numpy as np
+
+@dataclass
+class AlignKeyTemplate:
+    """서버에서 받은 align key + 전처리 결과를 보존."""
+    recipe_id: str
+    version: str                          # 캐시 무효화용 etag
+    raw_image: np.ndarray                 # 원본 (디버그/시각화용)
+    edge_map: np.ndarray                  # 전처리 결과
+    distance_transform: np.ndarray        # Chamfer 입력
+    nm_per_pixel: float | None            # 물리 해상도 (None → multi-scale)
+    key_type: str | None                  # "cross"/"box"/... (선택)
+    fetched_at: datetime
+
+def fetch_align_key(recipe_id: str, *, use_cache: bool = True) -> AlignKeyTemplate:
+    """서버에서 align key 요청. 5분 TTL + version 체크."""
+
+@dataclass
+class AlignKeyMatchResult:
+    score: float                  # 합성 점수 [0,1]
+    chamfer_score: float
+    orb_inlier_ratio: float
+    best_xy: tuple[int, int]      # SEM 프레임 좌표
+    best_scale: float             # 매칭된 스케일
+    decision: str                 # "match" | "adjust" | "low"
+    debug_overlay: np.ndarray     # SEM + edge overlay (시각화용)
+
+def compute_align_key_score(
+    template: AlignKeyTemplate,
+    frame: np.ndarray,
+    *,
+    frame_nm_per_pixel: float | None = None,
+    roi_hint: tuple[int, int, int, int] | None = None,  # (x, y, w, h)
+) -> AlignKeyMatchResult:
+    """매 프레임 호출. roi_hint 는 VLM 직전 제안 영역."""
+
+def render_engineer_review_image(
+    template: AlignKeyTemplate,
+    sem_frame: np.ndarray,
+    match_result: AlignKeyMatchResult,
+) -> np.ndarray:
+    """[Recipe | SEM | overlay] 3-pane 합성 — 알림 첨부용."""
+
+def notify_engineer_for_review(
+    *,
+    eqp_id: str,
+    template: AlignKeyTemplate,
+    recent_results: list[AlignKeyMatchResult],
+    best_frame: np.ndarray,
+) -> None:
+    """전용 플랫폼 webhook 으로 시각 비교 이미지 + 메타 전송."""
+```
+
+### 7.7 데이터 플로우 (운영)
+
+```
+[Align Fail 감지] (poc/workflow_1/monitor_align_fail.py 기존 경로)
+        │
+        ▼
+[fetch_align_key(recipe_id)] ──→ AlignKeyTemplate (server, 5min TTL)
+        │
+        ▼
+[Template 1회 전처리: 해상도 정규화 + Canny + Distance Transform]
+        │
+        ▼
+[탐색 루프 시작]
+   ┌──→ SEM 프레임 캡처 (CH4 캡처 파이프라인 재사용)
+   │       │
+   │       ▼
+   │   compute_align_key_score(template, frame, roi_hint=...)
+   │       │
+   │       ├── decision == "match"  ──→ 좌표 반환, 종료
+   │       ├── decision == "adjust" ──→ VLM 에 다음 이동 제안 요청 ─┐
+   │       └── decision == "low"    ──→ low_count++ ────────────────┤
+   │                                                                 │
+   └─────────────────────────────────────────────────────────────────┘
+        │ (low_count ≥ 5)
+        ▼
+[render_engineer_review_image() → notify_engineer_for_review()]
+        │
+        ▼
+[엔지니어가 align key 갱신 → 서버 version 갱신 → 다음 발생 시 새 template fetch]
+```
+
+### 7.8 미해결 — 다음 답이 필요한 항목
+
+1. **서버가 `nm_per_pixel` 메타를 응답에 포함시킬 수 있는가?**
+   (포함 가능 → §7.2 Case A, 불가 → Case B 로 baseline 시작)
+2. **전용 소통 플랫폼이 무엇인가?** (Slack / Teams / 사내 시스템)
+   `notify_engineer_for_review()` 의 transport 가 이에 따라 결정됨.
+3. **Align key ROI 크기가 recipe 별로 가변인가, 고정인가?**
+   (Chamfer 탐색 범위와 ORB keypoint 추출 영역 결정)
+
+---
+
+## 8. 짧은 답변 요약
 
 - **타당한가?** 그렇다. 단, classical CV 가 중심이고 VLM·RCS 자동화는
   바깥을 감싸는 형태다.

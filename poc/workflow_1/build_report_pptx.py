@@ -303,6 +303,239 @@ def build_slide_2(prs):
     )
 
 
+def _add_role_card(slide, *, left, top, width, height, role, model, responsibility, output, color):
+    box = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE, left, top, width, height
+    )
+    box.fill.solid()
+    box.fill.fore_color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+    box.line.color.rgb = color
+    box.line.width = Pt(1.5)
+    box.shadow.inherit = False
+
+    role_box = slide.shapes.add_textbox(
+        left + Inches(0.2), top + Inches(0.12), width - Inches(0.4), Inches(0.35)
+    )
+    p = role_box.text_frame.paragraphs[0]
+    run = p.add_run()
+    run.text = role
+    _set_run(run, size=11, bold=True, color=color)
+
+    model_box = slide.shapes.add_textbox(
+        left + Inches(0.2), top + Inches(0.45), width - Inches(0.4), Inches(0.35)
+    )
+    p = model_box.text_frame.paragraphs[0]
+    run = p.add_run()
+    run.text = model
+    _set_run(run, size=14, bold=True, color=NAVY)
+
+    body_box = slide.shapes.add_textbox(
+        left + Inches(0.2),
+        top + Inches(0.85),
+        width - Inches(0.4),
+        height - Inches(1.0),
+    )
+    tf = body_box.text_frame
+    tf.word_wrap = True
+    p = tf.paragraphs[0]
+    p.space_after = Pt(3)
+    run = p.add_run()
+    run.text = f"역할: {responsibility}"
+    _set_run(run, size=10.5, color=TEXT)
+
+    p = tf.add_paragraph()
+    p.space_after = Pt(3)
+    run = p.add_run()
+    run.text = f"산출: {output}"
+    _set_run(run, size=10.5, color=MUTED)
+
+
+def build_slide_collab_overview(prs):
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+
+    _add_title_band(
+        slide,
+        "여러 모델이 협력해서 자동화를 완성한다",
+        "단일 모델의 한계를 역할 분담으로 보완 — UI 위치 / 정밀 클릭 / 텍스트 검증 / 정량 점수",
+    )
+
+    _add_section_card(
+        slide,
+        left=Inches(0.4),
+        top=Inches(1.4),
+        width=Inches(12.55),
+        height=Inches(1.55),
+        heading="왜 협력이 필요한가",
+        bullets=[
+            "단일 VLM 으로 '어디를 클릭할지' 를 한 번에 픽셀 정확도로 맞히기는 어렵다 —"
+            " 전체 화면에서 좌표를 직접 찍으면 오차가 커서 실제 입력 자동화가 깨진다",
+            "VLM 은 호출 간 기억이 없는(stateless) 모델이므로,"
+            " '직전에 무엇을 했는가' 를 외부에서 보존하고 다음 모델로 넘겨야 한다",
+            "그래서 한 모델이 모든 일을 하는 대신,"
+            " 각 단계의 강점이 다른 모델을 파이프라인으로 엮어 GUI 자동화를 안정화한다",
+        ],
+    )
+
+    role_top = Inches(3.1)
+    role_height = Inches(2.55)
+    role_width = Inches(3.05)
+    gap = Inches(0.13)
+    left = Inches(0.4)
+
+    roles = [
+        (
+            "1. Coarse Locator",
+            "UI-Venus 1.5 (8B)",
+            "전체 화면에서 타겟 UI 요소의 대략적 bbox 를 찾아낸다",
+            "bbox_1000 좌표 + 타겟 영역 crop 후보",
+            NAVY,
+        ),
+        (
+            "2. Fine Refiner",
+            "MAI-UI",
+            "Coarse bbox 주변을 확대한 zoom crop 에서 정밀 클릭 좌표를 찍는다",
+            "(x, y) 픽셀 단위 클릭 포인트",
+            ACCENT,
+        ),
+        (
+            "3. Text Verifier",
+            "PaddleOCR-VL 1.5",
+            "입력 후 화면의 텍스트를 OCR 로 읽어 의도한 값이 들어갔는지 검증한다",
+            "필드별 OCR 결과 + 일치 여부",
+            NAVY,
+        ),
+        (
+            "4. CV Scorer",
+            "OpenCV (Template / SSIM / ORB)",
+            "프레임-템플릿 유사도를 정량 점수화하여 stateless VLM 의 기억을 대신한다",
+            "수치 매칭 점수 + best-frame 좌표",
+            ACCENT,
+        ),
+    ]
+
+    for role, model, responsibility, output, color in roles:
+        _add_role_card(
+            slide,
+            left=left,
+            top=role_top,
+            width=role_width,
+            height=role_height,
+            role=role,
+            model=model,
+            responsibility=responsibility,
+            output=output,
+            color=color,
+        )
+        left += role_width + gap
+
+    _add_section_card(
+        slide,
+        left=Inches(0.4),
+        top=Inches(5.85),
+        width=Inches(12.55),
+        height=Inches(1.1),
+        heading="협력으로 얻는 것",
+        bullets=[
+            "정확도: Coarse → Fine 분리로 클릭 좌표 오차를 ‘대략 영역’ 수준에서 ‘픽셀’ 수준으로 축소",
+            "검증성: 액션 → OCR 검증 → 다음 액션 의 폐루프(closed-loop) 자동화로 무인 신뢰도 확보",
+        ],
+    )
+
+    _add_footer(
+        slide,
+        "UI-Venus + MAI-UI + PaddleOCR-VL + OpenCV  =  GUI 자동화에 필요한 능력의 모듈식 조합",
+    )
+
+
+def build_slide_collab_pipeline(prs):
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+
+    _add_title_band(
+        slide,
+        "협력 파이프라인: Coarse → Zoom → Fine → Verify",
+        "RCS 로그인 자동화에서 실제 동작하는 다중 모델 협업 흐름",
+    )
+
+    steps = [
+        (
+            "Capture",
+            "RCS 로그인 창을 캡처하여 WebP 로 인코딩 후 Flask 프록시로 전달",
+        ),
+        (
+            "UI-Venus",
+            "전체 이미지에서 'User ID 입력 필드' 의 coarse bbox(gold) 를 추출",
+        ),
+        (
+            "Crop & Zoom",
+            "Coarse bbox 주변에 padding 을 더해 잘라내고 확대하여 디테일 보존",
+        ),
+        (
+            "MAI-UI",
+            "Zoom crop 에서 refined 클릭 포인트(deepskyblue) 를 픽셀 단위로 결정",
+        ),
+        (
+            "PaddleOCR-VL",
+            "클릭 → 키 입력 후 화면을 다시 OCR 하여 의도한 값이 입력됐는지 검증",
+        ),
+    ]
+
+    step_top = Inches(1.5)
+    step_height = Inches(1.55)
+    step_width = Inches(2.45)
+    gap = Inches(0.07)
+    left = Inches(0.4)
+    for idx, (title, detail) in enumerate(steps, start=1):
+        _add_pipeline_step(
+            slide,
+            left=left,
+            top=step_top,
+            width=step_width,
+            height=step_height,
+            index=idx,
+            title=title,
+            detail=detail,
+        )
+        left += step_width + gap
+
+    _add_section_card(
+        slide,
+        left=Inches(0.4),
+        top=Inches(3.3),
+        width=Inches(6.25),
+        height=Inches(3.55),
+        heading="모델 간 데이터 흐름",
+        bullets=[
+            "UI-Venus 출력(bbox_1000) → 픽셀 bbox 환산 → crop box 계산 입력으로 전달",
+            "Crop 이미지 + 동일한 target description → MAI-UI 입력으로 전달 (역할 키 재사용)",
+            "MAI-UI 의 zoom 좌표 → crop 오프셋을 더해 원본 이미지 좌표계로 역변환",
+            "원본 좌표계의 클릭 포인트 → pynput 으로 실제 클릭/키 입력 실행",
+            "입력 후 캡처 → PaddleOCR-VL 로 텍스트 검증 → 다음 단계 진행 또는 재시도",
+        ],
+    )
+
+    _add_section_card(
+        slide,
+        left=Inches(6.85),
+        top=Inches(3.3),
+        width=Inches(6.1),
+        height=Inches(3.55),
+        heading="구현 위치 / 핵심 파일",
+        bullets=[
+            "ui_venus_mai_locator.py — analyze_window_target() 가 2단계 파이프라인 오케스트레이션",
+            "_run_ui_venus_coarse_bbox() / _run_mai_ui_refinement() — 각 모델 호출 분리",
+            "_build_crop_box() — coarse bbox + padding 비율로 zoom 영역 산출",
+            "prompts/prompt_login_rcs_ui_venus.py / prompt_login_rcs_mai_ui.py — 모델별 프롬프트 분리",
+            "prompts/prompt_ocr_assist.py — PaddleOCR-VL 기반 텍스트 검증 프롬프트",
+            "flask_vlm.py — service slug 별로 ui-venus / mai-ui / paddleocr-vl-1.5 라우팅",
+        ],
+    )
+
+    _add_footer(
+        slide,
+        "Coarse Locator → Fine Refiner → Text Verifier  •  서로 다른 모델이 자기 강점만 책임진다",
+    )
+
+
 def _add_loop_node(slide, *, left, top, width, height, title, detail, color):
     box = slide.shapes.add_shape(
         MSO_SHAPE.ROUNDED_RECTANGLE, left, top, width, height
@@ -487,6 +720,8 @@ def main():
 
     build_slide_1(prs)
     build_slide_2(prs)
+    build_slide_collab_overview(prs)
+    build_slide_collab_pipeline(prs)
     build_slide_3(prs)
 
     prs.save(OUTPUT_PATH)

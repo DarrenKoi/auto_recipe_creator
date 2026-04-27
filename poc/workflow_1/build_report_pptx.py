@@ -303,6 +303,183 @@ def build_slide_2(prs):
     )
 
 
+def _add_loop_node(slide, *, left, top, width, height, title, detail, color):
+    box = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE, left, top, width, height
+    )
+    box.fill.solid()
+    box.fill.fore_color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+    box.line.color.rgb = color
+    box.line.width = Pt(1.5)
+    box.shadow.inherit = False
+
+    title_box = slide.shapes.add_textbox(
+        left + Inches(0.15), top + Inches(0.1), width - Inches(0.3), Inches(0.35)
+    )
+    p = title_box.text_frame.paragraphs[0]
+    run = p.add_run()
+    run.text = title
+    _set_run(run, size=12, bold=True, color=color)
+
+    body_box = slide.shapes.add_textbox(
+        left + Inches(0.15),
+        top + Inches(0.5),
+        width - Inches(0.3),
+        height - Inches(0.6),
+    )
+    tf = body_box.text_frame
+    tf.word_wrap = True
+    p = tf.paragraphs[0]
+    run = p.add_run()
+    run.text = detail
+    _set_run(run, size=10, color=MUTED)
+
+
+def _add_arrow(slide, *, left, top, width, height, color, direction="right"):
+    shape_map = {
+        "right": MSO_SHAPE.RIGHT_ARROW,
+        "left": MSO_SHAPE.LEFT_ARROW,
+        "down": MSO_SHAPE.DOWN_ARROW,
+        "up": MSO_SHAPE.UP_ARROW,
+    }
+    arrow = slide.shapes.add_shape(shape_map[direction], left, top, width, height)
+    arrow.fill.solid()
+    arrow.fill.fore_color.rgb = color
+    arrow.line.fill.background()
+
+
+def build_slide_3(prs):
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+
+    _add_title_band(
+        slide,
+        "다음 난관: 움직이는 SEM 화면에서 Align Key 자동 추적",
+        "VLM 의 무기억(stateless) 한계를 이미지 프로세싱 스코어링으로 보완하는 탐색 루프",
+    )
+
+    _add_section_card(
+        slide,
+        left=Inches(0.4),
+        top=Inches(1.4),
+        width=Inches(6.25),
+        height=Inches(2.0),
+        heading="문제",
+        bullets=[
+            "SEM Monitor 화면은 스테이지 이동에 따라 실시간으로 바뀜 (정지 이미지가 아님)",
+            "현재 화면이 Recipe 상의 Align Key 와 동일한지를 매 프레임 판단해야 함",
+            "VLM 은 호출 간 기억이 없어 '이전에 본 위치/유사도' 를 스스로 추적하지 못함",
+            "단일 VLM 호출만으로는 정량적 매칭 점수를 안정적으로 얻기 어려움",
+        ],
+    )
+
+    _add_section_card(
+        slide,
+        left=Inches(6.85),
+        top=Inches(1.4),
+        width=Inches(6.1),
+        height=Inches(2.0),
+        heading="해결 전략",
+        bullets=[
+            "역할 분리: Image Processing = '얼마나 닮았나' (객관 점수),"
+            " VLM = '다음에 어디를 볼까' (탐색 정책)",
+            "매 프레임 Recipe Align Key vs SEM 화면을 점수화 →"
+            " 외부 상태로 보존하여 VLM 의 무기억 보완",
+            "점수가 임계값을 넘을 때까지 VLM 이 스테이지 이동 방향을 제안하며 루프",
+            "Best-score 프레임/좌표를 저장하여 실패 시 fallback 으로 활용",
+        ],
+    )
+
+    # 루프 다이어그램 (좌→우 4단계 + 하단 피드백 화살표)
+    loop_top = Inches(3.7)
+    loop_height = Inches(1.55)
+    node_width = Inches(2.55)
+    gap = Inches(0.35)
+    arrow_width = Inches(0.3)
+    arrow_height = Inches(0.45)
+
+    nodes = [
+        (
+            "1. Capture",
+            "SEM Monitor 창에서 현재 프레임 캡처 (CH4 캡처 파이프라인 재사용)",
+            NAVY,
+        ),
+        (
+            "2. Score (CV)",
+            "Recipe Align Key 템플릿 vs 현재 프레임 → 유사도 점수\n"
+            "(Template Match / SSIM / ORB feature)",
+            ACCENT,
+        ),
+        (
+            "3. Decide (VLM)",
+            "점수 + 현재 프레임을 VLM 에 전달 → 일치 여부 판정 +\n"
+            "다음 이동 방향(↑↓←→/배율) 제안",
+            NAVY,
+        ),
+        (
+            "4. Move Stage",
+            "VLM 제안에 따라 SEM 스테이지 이동 명령 →\n"
+            "임계값 도달까지 1단계로 회귀",
+            ACCENT,
+        ),
+    ]
+
+    left = Inches(0.4)
+    node_lefts = []
+    for idx, (title, detail, color) in enumerate(nodes):
+        _add_loop_node(
+            slide,
+            left=left,
+            top=loop_top,
+            width=node_width,
+            height=loop_height,
+            title=title,
+            detail=detail,
+            color=color,
+        )
+        node_lefts.append(left)
+        if idx < len(nodes) - 1:
+            arrow_left = left + node_width + Inches(0.025)
+            arrow_top = loop_top + (loop_height - arrow_height) / 2
+            _add_arrow(
+                slide,
+                left=arrow_left,
+                top=arrow_top,
+                width=arrow_width,
+                height=arrow_height,
+                color=NAVY,
+                direction="right",
+            )
+        left += node_width + gap
+
+    # 피드백 루프 라벨 (하단)
+    feedback_box = slide.shapes.add_textbox(
+        Inches(0.4), loop_top + loop_height + Inches(0.1), Inches(12.55), Inches(0.35)
+    )
+    p = feedback_box.text_frame.paragraphs[0]
+    p.alignment = 2  # center
+    run = p.add_run()
+    run.text = "↻  점수 < 임계값이면 1단계로 회귀 (Best-score 갱신하며 수렴까지 반복)"
+    _set_run(run, size=11, bold=True, color=ACCENT)
+
+    _add_section_card(
+        slide,
+        left=Inches(0.4),
+        top=Inches(5.85),
+        width=Inches(12.55),
+        height=Inches(1.1),
+        heading="기술 스택 & 검증 지표",
+        bullets=[
+            "이미지 매칭: OpenCV Template Matching · SSIM · ORB/AKAZE feature score 후보 비교",
+            "수렴 지표: 매칭 점수 임계값 도달까지의 평균 루프 횟수 / 실패율 / Best-score fallback 정확도",
+        ],
+    )
+
+    _add_footer(
+        slide,
+        "Stateless VLM + Stateful CV Score = Convergent Search Loop",
+    )
+
+
 def main():
     prs = Presentation()
     prs.slide_width = Inches(13.333)
@@ -310,6 +487,7 @@ def main():
 
     build_slide_1(prs)
     build_slide_2(prs)
+    build_slide_3(prs)
 
     prs.save(OUTPUT_PATH)
     print(f"[INFO] PPTX saved: {OUTPUT_PATH}")

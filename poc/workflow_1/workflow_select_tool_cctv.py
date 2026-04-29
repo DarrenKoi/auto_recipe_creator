@@ -711,6 +711,7 @@ def select_tool_cctv_from_main_window(
             "lp_search_box": lp_search_box,
             "dvr_icon_point_on_full_image": dvr_full_image_point,
             "dvr_icon_point_on_screen": dvr_screen_point,
+            "dvr_icon_detection_artifacts": icon_result.artifacts,
             "dvr_icon_overlay_path": dvr_icon_overlay_path,
             "dvr_icon_y_delta_px": y_delta,
             "dvr_icon_y_tolerance_px": DVR_ICON_Y_TOLERANCE_PX,

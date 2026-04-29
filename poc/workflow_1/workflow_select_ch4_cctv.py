@@ -281,6 +281,7 @@ def select_ch4_from_player_window(
             "process_name": process_name,
             "ch4_point_on_full_image": ch4_full_point,
             "ch4_point_on_screen": ch4_screen_point,
+            "detection_artifacts": ch4_result.artifacts,
             "double_clicked": clicked,
             "action_enabled": action_enabled,
             "elapsed_ms": f"{(time.time() - started_at) * 1000:.1f}",

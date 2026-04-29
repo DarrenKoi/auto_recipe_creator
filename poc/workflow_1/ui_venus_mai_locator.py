@@ -772,8 +772,8 @@ def analyze_window_target(
         model_name=pipeline_model_name,
         timestamp_tag=debug_stamp,
     )
-    save_debug_json(result_json_path, result_payload)
     result_payload["artifacts"]["result_json"] = str(result_json_path)
+    save_debug_json(result_json_path, result_payload)
     print(
         f"[INFO] pipeline 완료: target={target.key}, "
         f"point=({refined_full_point['x']}, {refined_full_point['y']}), "

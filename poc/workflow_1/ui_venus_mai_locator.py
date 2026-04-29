@@ -1,7 +1,7 @@
 """재사용 가능한 UI-Venus + MAI-UI 2단계 타겟 로케이터."""
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from PIL import Image
@@ -42,6 +42,7 @@ class TargetResult:
     exit_code: str
     target_key: str
     point: dict | None = None
+    artifacts: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -256,6 +257,118 @@ def _save_pipeline_inputs(
     }
 
 
+def _save_pipeline_failure_capture(
+    image: Image.Image,
+    pipeline_model_name: str,
+    debug_stamp: str,
+    *,
+    debug_image_dir: Path,
+    artifact_prefix: str,
+) -> Path:
+    """coarse 단계 실패 시에도 원본 캡처를 저장한다."""
+    capture_path = debug_image_path(
+        debug_image_dir,
+        f"{artifact_prefix}_capture.jpg",
+        model_name=pipeline_model_name,
+        timestamp_tag=debug_stamp,
+    )
+    save_debug_jpeg(image, capture_path)
+    return capture_path
+
+
+def _save_full_pipeline_overlay(
+    image: Image.Image,
+    target: TargetConfig,
+    coarse_result: dict,
+    crop_box: dict | None,
+    refined_full_point: dict | None,
+    pipeline_model_name: str,
+    debug_stamp: str,
+    *,
+    debug_image_dir: Path,
+    artifact_prefix: str,
+    filename_suffix: str = "ui_venus_mai_overlay",
+) -> Path:
+    """full image 위에 UI-Venus bbox 와 MAI-UI point 를 마킹한다."""
+    full_w, full_h = image.size
+    coarse_key = f"{target.key}_ui_venus"
+    crop_key = f"{target.key}_crop_region"
+    refined_key = f"{target.key}_mai_ui"
+    overlay_colors = {
+        coarse_key: OVERLAY_COLORS["coarse"],
+        crop_key: OVERLAY_COLORS["crop"],
+        refined_key: OVERLAY_COLORS["refined"],
+    }
+
+    overlay_items = {
+        coarse_key: {
+            "bbox": coarse_result["bbox_pixels"],
+            "center": coarse_result["center"],
+        },
+    }
+    if crop_box is not None:
+        overlay_items[crop_key] = {"bbox": crop_box}
+    if refined_full_point is not None:
+        overlay_items[refined_key] = {
+            "bbox": _point_to_tiny_bbox(refined_full_point, full_w, full_h),
+            "center": refined_full_point,
+        }
+
+    overlay_path = debug_image_path(
+        debug_image_dir,
+        f"{artifact_prefix}_{filename_suffix}.jpg",
+        model_name=pipeline_model_name,
+        timestamp_tag=debug_stamp,
+    )
+    save_marked_bboxes(image, overlay_items, overlay_colors, overlay_path)
+    return overlay_path
+
+
+def _save_zoom_pipeline_overlay(
+    zoom_image: Image.Image,
+    target: TargetConfig,
+    coarse_bbox_pixels: dict,
+    crop_box: dict,
+    refine_point: dict | None,
+    pipeline_model_name: str,
+    debug_stamp: str,
+    *,
+    debug_image_dir: Path,
+    artifact_prefix: str,
+    filename_suffix: str = "ui_venus_mai_zoom_overlay",
+) -> Path:
+    """MAI-UI zoom crop 위에 coarse bbox 와 refined point 를 마킹한다."""
+    zoom_w, zoom_h = zoom_image.size
+    coarse_key = f"{target.key}_ui_venus"
+    refined_key = f"{target.key}_mai_ui"
+    overlay_colors = {
+        coarse_key: OVERLAY_COLORS["coarse"],
+        refined_key: OVERLAY_COLORS["refined"],
+    }
+
+    overlay_items = {
+        coarse_key: {
+            "bbox": _scale_bbox_to_resized_crop(
+                coarse_bbox_pixels, crop_box, zoom_w, zoom_h,
+            ),
+        },
+    }
+    if refine_point is not None:
+        overlay_items[refined_key] = {
+            "bbox": _point_to_tiny_bbox(refine_point, zoom_w, zoom_h),
+            "center": refine_point,
+        }
+
+    overlay_path = debug_image_path(
+        debug_image_dir,
+        f"{artifact_prefix}_{filename_suffix}.jpg",
+        model_name=pipeline_model_name,
+        timestamp_tag=debug_stamp,
+    )
+    save_marked_bboxes(zoom_image, overlay_items, overlay_colors, overlay_path)
+    return overlay_path
+
+
 def _run_ui_venus_coarse_bbox(
     client: Workflow1VLMClient,
     image_b64: str,
@@ -405,12 +518,61 @@ def analyze_window_target(
             return TargetResult(EXIT_CAPTURE_FAILED, target.key)
 
     coarse_client = Workflow1VLMClient(service_slug=coarse_service_slug, log_name=log_name)
+    refine_client = Workflow1VLMClient(service_slug=refine_service_slug, log_name=log_name)
+    pipeline_model_name = f"{coarse_client.model_name}__{refine_client.model_name}"
 
     full_b64, full_w, full_h = encode_image_webp(image)
     coarse_result = _run_ui_venus_coarse_bbox(
         coarse_client, full_b64, full_w, full_h, target,
     )
     if coarse_result is None or coarse_result["bbox_pixels"] is None:
+        capture_path = _save_pipeline_failure_capture(
+            image=image,
+            pipeline_model_name=pipeline_model_name,
+            debug_stamp=debug_stamp,
+            debug_image_dir=debug_image_dir,
+            artifact_prefix=artifact_prefix,
+        )
+        coarse_response_path = debug_image_path(
+            debug_image_dir,
+            f"{artifact_prefix}_ui_venus_response.txt",
+            model_name=pipeline_model_name,
+            timestamp_tag=debug_stamp,
+        )
+        save_debug_text(
+            coarse_response_path,
+            "" if coarse_result is None else coarse_result["response_text"],
+        )
+        result_json_path = debug_image_path(
+            debug_image_dir,
+            f"{artifact_prefix}_ui_venus_mai_result.json",
+            model_name=pipeline_model_name,
+            timestamp_tag=debug_stamp,
+        )
+        artifacts = {
+            "capture": str(capture_path),
+            "ui_venus_response": str(coarse_response_path),
+            "result_json": str(result_json_path),
+        }
+        save_debug_json(
+            result_json_path,
+            {
+                "mode": result_mode,
+                "status": EXIT_VLM_NO_DETECTION,
+                "failure_stage": "ui_venus",
+                "target_key": target.key,
+                "target_description": target.description,
+                "image_width": full_w,
+                "image_height": full_h,
+                "coarse_service": coarse_service_slug,
+                "coarse_model": coarse_client.model_name,
+                "refine_service": refine_service_slug,
+                "refine_model": refine_client.model_name,
+                "coarse_bbox_1000": None,
+                "coarse_bbox_pixels": None,
+                "artifacts": artifacts,
+            },
+        )
         log_work2_event(
             component=component_name,
             message="coarse_bbox_missing",
@@ -421,16 +583,13 @@ def analyze_window_target(
             target_key=target.key,
             coarse_service=coarse_service_slug,
         )
-        return TargetResult(EXIT_VLM_NO_DETECTION, target.key)
+        return TargetResult(EXIT_VLM_NO_DETECTION, target.key, artifacts=artifacts)
 
     crop_box = _build_crop_box(coarse_result["bbox_pixels"], full_w, full_h, target)
     cropped = crop_image(image, crop_box)
     crop_w, crop_h = cropped.size
     zoom_image, zoom_meta = _resize_crop_for_mai(cropped)
     zoom_b64, zoom_w, zoom_h = encode_image_webp(zoom_image)
-
-    refine_client = Workflow1VLMClient(service_slug=refine_service_slug, log_name=log_name)
-    pipeline_model_name = f"{coarse_client.model_name}__{refine_client.model_name}"
 
     print(
         f"[INFO] coarse->zoom pipeline 시작: target={target.key}, "
@@ -467,6 +626,73 @@ def analyze_window_target(
     if refine_result is not None:
         save_debug_text(refine_response_path, refine_result["response_text"])
     if refine_result is None or refine_result["point"] is None:
+        overlay_path = _save_full_pipeline_overlay(
+            image=image,
+            target=target,
+            coarse_result=coarse_result,
+            crop_box=crop_box,
+            refined_full_point=None,
+            pipeline_model_name=pipeline_model_name,
+            debug_stamp=debug_stamp,
+            debug_image_dir=debug_image_dir,
+            artifact_prefix=artifact_prefix,
+            filename_suffix="ui_venus_partial_overlay",
+        )
+        zoom_overlay_path = _save_zoom_pipeline_overlay(
+            zoom_image=zoom_image,
+            target=target,
+            coarse_bbox_pixels=coarse_result["bbox_pixels"],
+            crop_box=crop_box,
+            refine_point=None,
+            pipeline_model_name=pipeline_model_name,
+            debug_stamp=debug_stamp,
+            debug_image_dir=debug_image_dir,
+            artifact_prefix=artifact_prefix,
+            filename_suffix="ui_venus_partial_zoom_overlay",
+        )
+        result_json_path = debug_image_path(
+            debug_image_dir,
+            f"{artifact_prefix}_ui_venus_mai_result.json",
+            model_name=pipeline_model_name,
+            timestamp_tag=debug_stamp,
+        )
+        artifacts = {
+            "capture": str(input_paths["capture"]),
+            "zoom_capture": str(input_paths["zoom_capture"]),
+            "ui_venus_response": str(coarse_response_path),
+            "mai_ui_response": str(refine_response_path),
+            "partial_overlay": str(overlay_path),
+            "partial_zoom_overlay": str(zoom_overlay_path),
+            "result_json": str(result_json_path),
+        }
+        save_debug_json(
+            result_json_path,
+            {
+                "mode": result_mode,
+                "status": EXIT_VLM_NO_DETECTION,
+                "failure_stage": "mai_ui",
+                "target_key": target.key,
+                "target_description": target.description,
+                "image_width": full_w,
+                "image_height": full_h,
+                "crop_box_pixels": crop_box,
+                "crop_width": crop_w,
+                "crop_height": crop_h,
+                "zoom_width": zoom_w,
+                "zoom_height": zoom_h,
+                "zoom_meta": zoom_meta,
+                "coarse_service": coarse_service_slug,
+                "coarse_model": coarse_client.model_name,
+                "coarse_bbox_1000": coarse_result["bbox_1000"],
+                "coarse_bbox_pixels": coarse_result["bbox_pixels"],
+                "coarse_center_pixels": coarse_result["center"],
+                "refine_service": refine_service_slug,
+                "refine_model": refine_client.model_name,
+                "refined_point_zoom_pixels": None,
+                "refined_point_full_pixels": None,
+                "artifacts": artifacts,
+            },
+        )
         log_work2_event(
             component=component_name,
             message="refined_point_missing",
@@ -477,7 +703,7 @@ def analyze_window_target(
             target_key=target.key,
             refine_service=refine_service_slug,
         )
-        return TargetResult(EXIT_VLM_NO_DETECTION, target.key)
+        return TargetResult(EXIT_VLM_NO_DETECTION, target.key, artifacts=artifacts)
 
     refined_full_point = _map_resized_point_to_full_image(
         refine_result["point"], crop_box, crop_w, crop_h, zoom_w, zoom_h,
@@ -487,54 +713,28 @@ def analyze_window_target(
         f"{refined_full_point['y']})"
     )
 
-    coarse_key = f"{target.key}_ui_venus"
-    crop_key = f"{target.key}_crop_region"
-    refined_key = f"{target.key}_mai_ui"
-    overlay_colors = {
-        coarse_key: OVERLAY_COLORS["coarse"],
-        crop_key: OVERLAY_COLORS["crop"],
-        refined_key: OVERLAY_COLORS["refined"],
-    }
-
-    full_overlay_items = {
-        coarse_key: {
-            "bbox": coarse_result["bbox_pixels"],
-            "center": coarse_result["center"],
-        },
-        crop_key: {
-            "bbox": crop_box,
-        },
-        refined_key: {
-            "bbox": _point_to_tiny_bbox(refined_full_point, full_w, full_h),
-            "center": refined_full_point,
-        },
-    }
-    overlay_path = debug_image_path(
-        debug_image_dir,
-        f"{artifact_prefix}_ui_venus_mai_overlay.jpg",
-        model_name=pipeline_model_name,
-        timestamp_tag=debug_stamp,
+    overlay_path = _save_full_pipeline_overlay(
+        image=image,
+        target=target,
+        coarse_result=coarse_result,
+        crop_box=crop_box,
+        refined_full_point=refined_full_point,
+        pipeline_model_name=pipeline_model_name,
+        debug_stamp=debug_stamp,
+        debug_image_dir=debug_image_dir,
+        artifact_prefix=artifact_prefix,
     )
-    save_marked_bboxes(image, full_overlay_items, overlay_colors, overlay_path)
-
-    crop_overlay_items = {
-        coarse_key: {
-            "bbox": _scale_bbox_to_resized_crop(
-                coarse_result["bbox_pixels"], crop_box, zoom_w, zoom_h,
-            ),
-        },
-        refined_key: {
-            "bbox": _point_to_tiny_bbox(refine_result["point"], zoom_w, zoom_h),
-            "center": refine_result["point"],
-        },
-    }
-    zoom_overlay_path = debug_image_path(
-        debug_image_dir,
-        f"{artifact_prefix}_ui_venus_mai_zoom_overlay.jpg",
-        model_name=pipeline_model_name,
-        timestamp_tag=debug_stamp,
+    zoom_overlay_path = _save_zoom_pipeline_overlay(
+        zoom_image=zoom_image,
+        target=target,
+        coarse_bbox_pixels=coarse_result["bbox_pixels"],
+        crop_box=crop_box,
+        refine_point=refine_result["point"],
+        pipeline_model_name=pipeline_model_name,
+        debug_stamp=debug_stamp,
+        debug_image_dir=debug_image_dir,
+        artifact_prefix=artifact_prefix,
     )
-    save_marked_bboxes(zoom_image, crop_overlay_items, overlay_colors, zoom_overlay_path)
 
     result_payload = {
         "mode": result_mode,
@@ -573,6 +773,7 @@ def analyze_window_target(
         timestamp_tag=debug_stamp,
     )
     save_debug_json(result_json_path, result_payload)
+    result_payload["artifacts"]["result_json"] = str(result_json_path)
     print(
         f"[INFO] pipeline 완료: target={target.key}, "
         f"point=({refined_full_point['x']}, {refined_full_point['y']}), "
@@ -594,7 +795,12 @@ def analyze_window_target(
         final_point=refined_full_point,
         elapsed_ms=f"{(time.time() - started_at) * 1000:.1f}",
     )
-    return TargetResult(EXIT_SUCCESS, target.key, point=refined_full_point)
+    return TargetResult(
+        EXIT_SUCCESS,
+        target.key,
+        point=refined_full_point,
+        artifacts=result_payload["artifacts"],
+    )
 
 
 __all__ = [

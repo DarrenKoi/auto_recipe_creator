@@ -58,6 +58,8 @@ class ToolCCTVSelectionResult:
     dvr_icon_point_on_full_image: dict | None = None
     dvr_icon_point_on_screen: dict | None = None
     dvr_search_box_on_list_crop: dict | None = None
+    row_click_overlay_path: str | None = None
+    dvr_icon_overlay_path: str | None = None
     clicked: bool = False
     dvr_window_verified: bool = False
     detected_player_windows: list[dict] = field(default_factory=list)
@@ -421,6 +423,17 @@ def select_tool_cctv_from_main_window(
         "x": list_crop_box["left"] + tool_point_on_list_crop["x"],
         "y": list_crop_box["top"] + tool_point_on_list_crop["y"],
     }
+    row_click_overlay_path = base_select_tool._save_tool_click_overlay(
+        main_image,
+        list_crop_box,
+        tool_point_on_full_image,
+        debug_image_dir=resolved_debug_dir,
+        timestamp_tag=timestamp_tag,
+        filename=(
+            f"workflow_select_tool_cctv_{normalized_tool_name.lower()}_"
+            "row_click_overlay.jpg"
+        ),
+    )
 
     # ── Phase 1: 단일 클릭으로 tool row 선택 (파란색 하이라이트) ──
     tool_screen_point = image_point_to_screen(main_window, tool_point_on_full_image)
@@ -434,6 +447,7 @@ def select_tool_cctv_from_main_window(
             tool_point_on_list_crop=tool_point_on_list_crop,
             tool_point_on_full_image=tool_point_on_full_image,
             selected_attempt=selected_attempt["name"],
+            row_click_overlay_path=row_click_overlay_path,
         )
 
     if not foreground_window(
@@ -449,6 +463,7 @@ def select_tool_cctv_from_main_window(
             tool_point_on_list_crop=tool_point_on_list_crop,
             tool_point_on_full_image=tool_point_on_full_image,
             selected_attempt=selected_attempt["name"],
+            row_click_overlay_path=row_click_overlay_path,
         )
 
     time.sleep(max(0.0, pre_click_settle_sec))
@@ -468,6 +483,7 @@ def select_tool_cctv_from_main_window(
             tool_point_on_list_crop=tool_point_on_list_crop,
             tool_point_on_full_image=tool_point_on_full_image,
             selected_attempt=selected_attempt["name"],
+            row_click_overlay_path=row_click_overlay_path,
         )
     print(
         f"[INFO] Phase 1: tool row 단일 클릭 완료 → 파란색 하이라이트 대기 "
@@ -489,6 +505,7 @@ def select_tool_cctv_from_main_window(
             tool_point_on_list_crop=tool_point_on_list_crop,
             tool_point_on_full_image=tool_point_on_full_image,
             selected_attempt=selected_attempt["name"],
+            row_click_overlay_path=row_click_overlay_path,
         )
 
     recapture_path = debug_image_path(
@@ -540,6 +557,7 @@ def select_tool_cctv_from_main_window(
             tool_point_on_full_image=tool_point_on_full_image,
             selected_attempt=selected_attempt["name"],
             dvr_search_box_on_list_crop=lp_search_box,
+            row_click_overlay_path=row_click_overlay_path,
         )
 
     dvr_full_image_point = {
@@ -565,6 +583,7 @@ def select_tool_cctv_from_main_window(
             selected_attempt=selected_attempt["name"],
             dvr_icon_point_on_full_image=dvr_full_image_point,
             dvr_search_box_on_list_crop=lp_search_box,
+            row_click_overlay_path=row_click_overlay_path,
         )
 
     # LP 아이콘 위치 overlay (재캡처 이미지 위에 tool_name + dvr_icon 마킹)
@@ -588,6 +607,7 @@ def select_tool_cctv_from_main_window(
         timestamp_tag=timestamp_tag,
     )
     save_marked_bboxes(recaptured_image, overlay_items, overlay_colors, overlay_path)
+    dvr_icon_overlay_path = str(overlay_path)
 
     dvr_screen_point = image_point_to_screen(main_window, dvr_full_image_point)
     if dvr_screen_point is None:
@@ -602,6 +622,8 @@ def select_tool_cctv_from_main_window(
             selected_attempt=selected_attempt["name"],
             dvr_icon_point_on_full_image=dvr_full_image_point,
             dvr_search_box_on_list_crop=lp_search_box,
+            row_click_overlay_path=row_click_overlay_path,
+            dvr_icon_overlay_path=dvr_icon_overlay_path,
         )
 
     if not foreground_window(
@@ -620,6 +642,8 @@ def select_tool_cctv_from_main_window(
             dvr_icon_point_on_full_image=dvr_full_image_point,
             dvr_icon_point_on_screen=dvr_screen_point,
             dvr_search_box_on_list_crop=lp_search_box,
+            row_click_overlay_path=row_click_overlay_path,
+            dvr_icon_overlay_path=dvr_icon_overlay_path,
         )
 
     existing_player_windows = _collect_player_windows()
@@ -682,10 +706,12 @@ def select_tool_cctv_from_main_window(
             "tool_point_on_list_crop": tool_point_on_list_crop,
             "tool_point_on_full_image": tool_point_on_full_image,
             "tool_screen_point": tool_screen_point,
+            "row_click_overlay_path": row_click_overlay_path,
             "row_single_clicked": row_clicked,
             "lp_search_box": lp_search_box,
             "dvr_icon_point_on_full_image": dvr_full_image_point,
             "dvr_icon_point_on_screen": dvr_screen_point,
+            "dvr_icon_overlay_path": dvr_icon_overlay_path,
             "dvr_icon_y_delta_px": y_delta,
             "dvr_icon_y_tolerance_px": DVR_ICON_Y_TOLERANCE_PX,
             "double_clicked": clicked,
@@ -709,6 +735,8 @@ def select_tool_cctv_from_main_window(
         dvr_icon_point_on_full_image=dvr_full_image_point,
         dvr_icon_point_on_screen=dvr_screen_point,
         dvr_search_box_on_list_crop=lp_search_box,
+        row_click_overlay_path=row_click_overlay_path,
+        dvr_icon_overlay_path=dvr_icon_overlay_path,
         clicked=clicked,
         dvr_window_verified=dvr_window_verified,
         detected_player_windows=detected_player_windows,

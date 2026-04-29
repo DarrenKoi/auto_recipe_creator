@@ -142,6 +142,7 @@ def click_list_tab_in_main_window(
             "target_key": LIST_TAB_TARGET.key,
             "detected_point": detection.point,
             "screen_point": screen_point,
+            "detection_artifacts": detection.artifacts,
             "clicked": clicked,
             "action_enabled": action_enabled,
         },

@@ -451,6 +451,17 @@ def _maybe_save_capture(context: dict, filename: str, image, *, allow_save: bool
     return str(output_path)
 
 
+def _workflow_debug_image_dir(context: dict) -> Path | None:
+    """워크플로 run_dir 아래에 VLM overlay/debug image 저장 위치를 만든다."""
+    run_dir = context.get("run_dir")
+    if not isinstance(run_dir, Path):
+        return None
+
+    debug_dir = run_dir / "debug_images"
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    return debug_dir
+
+
 def _clear_and_type(text: str, target_key: str, settings: WorkflowSettings) -> bool:
     """선택된 입력창 내용을 backspace 로 지운 뒤 새 문자열을 입력한다."""
     if not settings.action_enabled or not PYNPUT_KEYBOARD_AVAILABLE:
@@ -773,6 +784,7 @@ def execute_login_step(
             image=image,
             pre_click_settle_sec=settings.pre_click_settle_sec,
             post_click_settle_sec=settings.post_list_tab_settle_sec,
+            debug_image_dir=_workflow_debug_image_dir(context),
             log_name=LOG_NAME,
             component_name=COMPONENT_NAME,
         )
@@ -863,6 +875,7 @@ def execute_login_step(
             backend,
             tool_name,
             image=image,
+            debug_image_dir=_workflow_debug_image_dir(context),
             log_name=LOG_NAME,
             component_name=COMPONENT_NAME,
         )
@@ -965,6 +978,7 @@ def execute_login_step(
             image=image,
             pre_click_settle_sec=settings.pre_click_settle_sec,
             post_double_click_settle_sec=settings.post_double_click_settle_sec,
+            debug_image_dir=_workflow_debug_image_dir(context),
             log_name=LOG_NAME,
             component_name=COMPONENT_NAME,
         )
@@ -1159,6 +1173,7 @@ def execute_login_step(
         backend,
         target_config,
         image=image,
+        debug_image_dir=_workflow_debug_image_dir(context),
     )
     if detection.exit_code != detect_success or detection.point is None:
         return _build_base_result(

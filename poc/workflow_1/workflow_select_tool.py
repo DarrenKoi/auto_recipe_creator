@@ -14,6 +14,7 @@ from poc.workflow_1.debug_artifacts import (
     save_debug_json,
     save_debug_text,
     save_debug_webp,
+    save_marked_bboxes,
 )
 from poc.workflow_1.logger import log_work2_event
 from poc.workflow_1.login_rcs_common import RCS_MAIN_WINDOW_TITLE_PREFIX, wait_for_rcs_main_window
@@ -52,6 +53,7 @@ class ToolSelectionResult:
     tool_point_on_screen: dict | None = None
     double_clicked: bool = False
     selected_attempt: str | None = None
+    click_overlay_path: str | None = None
 
 
 @dataclass
@@ -241,6 +243,50 @@ def _map_point_from_working_image(point: dict, base_width: int, base_height: int
         "x": max(0, min(mapped_x, base_width - 1)),
         "y": max(0, min(mapped_y, base_height - 1)),
     }
+
+
+def _point_to_tiny_bbox(point: dict, img_w: int, img_h: int, radius: int = 10) -> dict:
+    """포인트를 overlay 용 작은 bbox 로 감싼다."""
+    return {
+        "left": max(0, point["x"] - radius),
+        "top": max(0, point["y"] - radius),
+        "right": min(img_w, point["x"] + radius + 1),
+        "bottom": min(img_h, point["y"] + radius + 1),
+    }
+
+
+def _save_tool_click_overlay(
+    image,
+    list_crop_box: dict,
+    click_point_on_full_image: dict,
+    *,
+    debug_image_dir,
+    timestamp_tag: str,
+    filename: str,
+) -> str:
+    """full main-window screenshot 위에 list crop 과 최종 click point 를 저장한다."""
+    img_w, img_h = image.size
+    overlay_path = debug_image_path(
+        debug_image_dir,
+        filename,
+        timestamp_tag=timestamp_tag,
+    )
+    save_marked_bboxes(
+        image,
+        {
+            "tool_list_region": {"bbox": list_crop_box},
+            "tool_click_point": {
+                "bbox": _point_to_tiny_bbox(click_point_on_full_image, img_w, img_h),
+                "center": click_point_on_full_image,
+            },
+        },
+        {
+            "tool_list_region": "white",
+            "tool_click_point": "deepskyblue",
+        },
+        overlay_path,
+    )
+    return str(overlay_path)
 
 
 def _build_list_crop_attempts(main_image) -> list[dict]:
@@ -540,6 +586,7 @@ def _locate_tool_on_attempts(
             "tool_result_exit_code": tool_result.exit_code,
             "tool_point_on_working_image": tool_result.point,
             "tool_point_on_list_crop": mapped_point,
+            "tool_detection_artifacts": tool_result.artifacts,
         }
         detection_attempts.append(detection_attempt)
 
@@ -651,6 +698,14 @@ def select_tool_from_main_window(
         "x": list_crop_box["left"] + list_crop_point["x"],
         "y": list_crop_box["top"] + list_crop_point["y"],
     }
+    click_overlay_path = _save_tool_click_overlay(
+        main_image,
+        list_crop_box,
+        full_image_point,
+        debug_image_dir=resolved_debug_dir,
+        timestamp_tag=timestamp_tag,
+        filename=f"workflow_select_tool_{normalized_tool_name.lower()}_click_overlay.jpg",
+    )
     screen_point = image_point_to_screen(main_window, full_image_point)
     if screen_point is None:
         return ToolSelectionResult(
@@ -662,6 +717,7 @@ def select_tool_from_main_window(
             tool_point_on_list_crop=list_crop_point,
             tool_point_on_full_image=full_image_point,
             selected_attempt=selected_attempt["name"],
+            click_overlay_path=click_overlay_path,
         )
 
     if not foreground_window(
@@ -678,6 +734,7 @@ def select_tool_from_main_window(
             tool_point_on_full_image=full_image_point,
             tool_point_on_screen=screen_point,
             selected_attempt=selected_attempt["name"],
+            click_overlay_path=click_overlay_path,
         )
 
     time.sleep(max(0.0, pre_click_settle_sec))
@@ -720,6 +777,7 @@ def select_tool_from_main_window(
             "tool_point_on_list_crop": list_crop_point,
             "tool_point_on_full_image": full_image_point,
             "tool_point_on_screen": screen_point,
+            "click_overlay_path": click_overlay_path,
             "double_clicked": double_clicked,
             "action_enabled": action_enabled,
         },
@@ -736,6 +794,7 @@ def select_tool_from_main_window(
         tool_point_on_screen=screen_point,
         double_clicked=double_clicked,
         selected_attempt=selected_attempt["name"],
+        click_overlay_path=click_overlay_path,
     )
 
 

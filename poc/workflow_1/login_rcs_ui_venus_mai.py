@@ -82,6 +82,7 @@ def analyze_login_target(
     backend: str,
     target: TargetConfig,
     image=None,
+    debug_image_dir=None,
 ) -> TargetResult:
     """로그인 창에서 지정된 타겟을 2단계로 찾는다.
 
@@ -92,7 +93,7 @@ def analyze_login_target(
         window_title,
         backend,
         target,
-        debug_image_dir=DEBUG_IMAGE_DIR,
+        debug_image_dir=debug_image_dir or DEBUG_IMAGE_DIR,
         log_name=LOG_NAME,
         component_name=COMPONENT_NAME,
         artifact_prefix="login_rcs",

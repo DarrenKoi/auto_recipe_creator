@@ -83,3 +83,37 @@ def crop_image(image: "Image.Image", crop_box: dict[str, int]) -> "Image.Image":
     return image.crop(
         (crop_box["left"], crop_box["top"], crop_box["right"], crop_box["bottom"])
     )
+
+
+def ensure_min_span(start: int, end: int, total: int, minimum: int) -> tuple[int, int]:
+    """최소 span 을 보장하도록 [start, end] 구간을 확장한다."""
+    span = end - start
+    if span >= minimum:
+        return start, end
+
+    extra = minimum - span
+    grow_before = extra // 2
+    grow_after = extra - grow_before
+    start = max(0, start - grow_before)
+    end = min(total, end + grow_after)
+
+    if end - start >= minimum:
+        return start, end
+
+    if start == 0:
+        end = min(total, minimum)
+    elif end == total:
+        start = max(0, total - minimum)
+    return start, end
+
+
+def point_to_tiny_bbox(
+    point: dict, img_w: int, img_h: int, radius: int = 10,
+) -> dict[str, int]:
+    """포인트를 overlay 용 작은 bbox 로 감싼다."""
+    return {
+        "left": max(0, point["x"] - radius),
+        "top": max(0, point["y"] - radius),
+        "right": min(img_w, point["x"] + radius + 1),
+        "bottom": min(img_h, point["y"] + radius + 1),
+    }

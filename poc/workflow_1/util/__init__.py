@@ -1,7 +1,14 @@
 """workflow_1 전용 경량 유틸리티 묶음."""
 
 from .env_utils import env_flag, env_float, env_int
-from .image_utils import build_relative_crop_box, capture_window, crop_image, encode_image_webp
+from .image_utils import (
+    build_relative_crop_box,
+    capture_window,
+    crop_image,
+    encode_image_webp,
+    ensure_min_span,
+    point_to_tiny_bbox,
+)
 from .json_utils import (
     bbox_1000_to_pixels,
     bbox_center,

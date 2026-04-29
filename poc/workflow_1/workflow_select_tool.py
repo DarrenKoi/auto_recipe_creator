@@ -33,6 +33,7 @@ from poc.workflow_1.util import (
     format_elapsed_ms,
     image_point_to_screen,
     make_timestamp_tag,
+    point_to_tiny_bbox,
 )
 from poc.workflow_1.vlm_client import Workflow1VLMClient
 
@@ -245,16 +246,6 @@ def _map_point_from_working_image(point: dict, base_width: int, base_height: int
     }
 
 
-def _point_to_tiny_bbox(point: dict, img_w: int, img_h: int, radius: int = 10) -> dict:
-    """포인트를 overlay 용 작은 bbox 로 감싼다."""
-    return {
-        "left": max(0, point["x"] - radius),
-        "top": max(0, point["y"] - radius),
-        "right": min(img_w, point["x"] + radius + 1),
-        "bottom": min(img_h, point["y"] + radius + 1),
-    }
-
-
 def _save_tool_click_overlay(
     image,
     list_crop_box: dict,
@@ -276,7 +267,7 @@ def _save_tool_click_overlay(
         {
             "tool_list_region": {"bbox": list_crop_box},
             "tool_click_point": {
-                "bbox": _point_to_tiny_bbox(click_point_on_full_image, img_w, img_h),
+                "bbox": point_to_tiny_bbox(click_point_on_full_image, img_w, img_h),
                 "center": click_point_on_full_image,
             },
         },

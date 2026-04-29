@@ -26,10 +26,12 @@ from poc.workflow_1.util import (
     WINDOW_UTILS_AVAILABLE,
     click_at_screen,
     collect_window_rows,
+    ensure_min_span,
     foreground_window,
     format_elapsed_ms,
     image_point_to_screen,
     make_timestamp_tag,
+    point_to_tiny_bbox,
 )
 
 try:
@@ -155,28 +157,6 @@ def _dvr_icon_target(tool_name: str) -> TargetConfig:
     )
 
 
-def _ensure_min_span(start: int, end: int, total: int, minimum: int) -> tuple[int, int]:
-    """최소 길이를 만족하도록 구간을 확장한다."""
-    span = end - start
-    if span >= minimum:
-        return start, end
-
-    extra = minimum - span
-    grow_before = extra // 2
-    grow_after = extra - grow_before
-    start = max(0, start - grow_before)
-    end = min(total, end + grow_after)
-
-    if end - start >= minimum:
-        return start, end
-
-    if start == 0:
-        end = min(total, minimum)
-    elif end == total:
-        start = max(0, total - minimum)
-    return start, end
-
-
 def _build_lp_icon_search_box(
     tool_y_on_full_image: int,
     full_image_width: int,
@@ -196,7 +176,7 @@ def _build_lp_icon_search_box(
 
     top = max(0, tool_y_on_full_image - LP_ICON_ROW_HALF_HEIGHT_PX)
     bottom = min(full_image_height, tool_y_on_full_image + LP_ICON_ROW_HALF_HEIGHT_PX + 1)
-    top, bottom = _ensure_min_span(
+    top, bottom = ensure_min_span(
         top, bottom, full_image_height, max(1, LP_ICON_MIN_HEIGHT_PX),
     )
 
@@ -205,16 +185,6 @@ def _build_lp_icon_search_box(
         "top": top,
         "right": right,
         "bottom": bottom,
-    }
-
-
-def _point_to_tiny_bbox(point: dict, img_w: int, img_h: int, radius: int = 10) -> dict:
-    """포인트를 overlay 용 작은 bbox 로 감싼다."""
-    return {
-        "left": max(0, point["x"] - radius),
-        "top": max(0, point["y"] - radius),
-        "right": min(img_w, point["x"] + radius + 1),
-        "bottom": min(img_h, point["y"] + radius + 1),
     }
 
 
@@ -589,11 +559,11 @@ def select_tool_cctv_from_main_window(
     # LP 아이콘 위치 overlay (재캡처 이미지 위에 tool_name + dvr_icon 마킹)
     overlay_items = {
         "tool_name": {
-            "bbox": _point_to_tiny_bbox(tool_point_on_full_image, recap_w, recap_h),
+            "bbox": point_to_tiny_bbox(tool_point_on_full_image, recap_w, recap_h),
             "center": tool_point_on_full_image,
         },
         "dvr_icon": {
-            "bbox": _point_to_tiny_bbox(dvr_full_image_point, recap_w, recap_h),
+            "bbox": point_to_tiny_bbox(dvr_full_image_point, recap_w, recap_h),
             "center": dvr_full_image_point,
         },
     }

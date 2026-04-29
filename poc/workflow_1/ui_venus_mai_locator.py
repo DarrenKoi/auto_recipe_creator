@@ -25,11 +25,13 @@ from poc.workflow_1.util import (
     capture_window,
     crop_image,
     encode_image_webp,
+    ensure_min_span,
     foreground_window,
     format_elapsed_ms,
     make_timestamp_tag,
     normalize_bbox_1000,
     parse_coords,
+    point_to_tiny_bbox,
 )
 from poc.workflow_1.util.json_utils import extract_json
 from poc.workflow_1.vlm_client import Workflow1VLMClient
@@ -87,29 +89,6 @@ def _print_vlm_understanding(service_slug: str, response_text: str, token_usage:
     print(f"[INFO] [{service_slug}] tokens={token_usage or {}}")
 
 
-def _ensure_min_span(start: int, end: int, total: int, minimum: int) -> tuple[int, int]:
-    """최소 span 을 보장하도록 구간을 확장한다."""
-    span = end - start
-    if span >= minimum:
-        return start, end
-
-    extra = minimum - span
-    grow_before = extra // 2
-    grow_after = extra - grow_before
-    start = max(0, start - grow_before)
-    end = min(total, end + grow_after)
-
-    span = end - start
-    if span >= minimum:
-        return start, end
-
-    if start == 0:
-        end = min(total, minimum)
-    elif end == total:
-        start = max(0, total - minimum)
-    return start, end
-
-
 def _build_crop_box(
     coarse_bbox: dict,
     img_w: int,
@@ -128,10 +107,10 @@ def _build_crop_box(
     crop_right = min(img_w, coarse_bbox["right"] + right_pad)
     crop_bottom = min(img_h, coarse_bbox["bottom"] + vertical_pad)
 
-    crop_left, crop_right = _ensure_min_span(
+    crop_left, crop_right = ensure_min_span(
         crop_left, crop_right, img_w, target.min_crop_width,
     )
-    crop_top, crop_bottom = _ensure_min_span(
+    crop_top, crop_bottom = ensure_min_span(
         crop_top, crop_bottom, img_h, target.min_crop_height,
     )
     return {
@@ -213,16 +192,6 @@ def _scale_bbox_to_resized_crop(bbox: dict, crop_box: dict, resized_w: int, resi
         "top": int(round(relative["top"] * resized_h / crop_h)),
         "right": int(round(relative["right"] * resized_w / crop_w)),
         "bottom": int(round(relative["bottom"] * resized_h / crop_h)),
-    }
-
-
-def _point_to_tiny_bbox(point: dict, img_w: int, img_h: int, radius: int = 10) -> dict:
-    """포인트를 overlay 용 작은 bbox 로 감싼다."""
-    return {
-        "left": max(0, point["x"] - radius),
-        "top": max(0, point["y"] - radius),
-        "right": min(img_w, point["x"] + radius + 1),
-        "bottom": min(img_h, point["y"] + radius + 1),
     }
 
 
@@ -310,7 +279,7 @@ def _save_full_pipeline_overlay(
         overlay_items[crop_key] = {"bbox": crop_box}
     if refined_full_point is not None:
         overlay_items[refined_key] = {
-            "bbox": _point_to_tiny_bbox(refined_full_point, full_w, full_h),
+            "bbox": point_to_tiny_bbox(refined_full_point, full_w, full_h),
             "center": refined_full_point,
         }
 
@@ -355,7 +324,7 @@ def _save_zoom_pipeline_overlay(
     }
     if refine_point is not None:
         overlay_items[refined_key] = {
-            "bbox": _point_to_tiny_bbox(refine_point, zoom_w, zoom_h),
+            "bbox": point_to_tiny_bbox(refine_point, zoom_w, zoom_h),
             "center": refine_point,
         }
 

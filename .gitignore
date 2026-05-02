@@ -47,6 +47,8 @@ logs/
 poc/work/debug_images/
 poc/work2/debug_images/*
 !poc/work2/debug_images/.gitkeep
+poc/workflow_1/debug_images/*
+!poc/workflow_1/debug_images/.gitkeep
 *.png
 *.jpg
 *.jpeg

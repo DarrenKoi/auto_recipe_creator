@@ -383,29 +383,64 @@ def compute_align_key_score(
     """
     gray_frame = _to_grayscale(frame)
 
-    # ROI hint 가 있으면 그 영역만 잘라서 그 안에서 매칭한다.
-    roi_origin = (0, 0)
-    if roi_hint is not None:
-        x, y, w, h = roi_hint
-        x = max(0, x)
-        y = max(0, y)
-        x1 = min(gray_frame.shape[1], x + w)
-        y1 = min(gray_frame.shape[0], y + h)
-        gray_frame = gray_frame[y:y1, x:x1].copy()
-        roi_origin = (x, y)
-
-    _frame_edges, frame_dt = preprocess_for_matching(gray_frame)
-
-    # 스케일 결정.
+    # 스케일 결정 — ROI 검증에서 최소 크롭 크기 산출에 필요하므로 먼저.
     if (
         template.nm_per_pixel is not None
         and frame_nm_per_pixel is not None
         and frame_nm_per_pixel > 0
     ):
         single_scale = template.nm_per_pixel / frame_nm_per_pixel
+        if single_scale <= 0:
+            raise ValueError(
+                f"resolved scale must be positive, got {single_scale} "
+                f"(template.nm_per_pixel={template.nm_per_pixel}, "
+                f"frame_nm_per_pixel={frame_nm_per_pixel})"
+            )
         scales: tuple[float, ...] = (float(single_scale),)
     else:
         scales = DEFAULT_SCALES
+
+    # 가능한 최소 템플릿 크기 (모든 스케일 중 최소). Chamfer 가 매칭하려면
+    # 프레임/크롭이 이보다는 커야 한다.
+    th0, tw0 = template.edge_map.shape[:2]
+    min_scale = min(scales)
+    min_th = max(8, int(round(th0 * min_scale)))
+    min_tw = max(8, int(round(tw0 * min_scale)))
+
+    # ROI hint 가 있으면 그 영역만 잘라서 그 안에서 매칭한다.
+    roi_origin = (0, 0)
+    if roi_hint is not None:
+        if not (isinstance(roi_hint, tuple) and len(roi_hint) == 4):
+            raise ValueError(
+                f"roi_hint must be a 4-tuple (x, y, w, h), got {roi_hint!r}"
+            )
+        rx, ry, rw, rh = (int(v) for v in roi_hint)
+        if rw <= 0 or rh <= 0:
+            raise ValueError(
+                f"roi_hint width/height must be positive, got w={rw}, h={rh}"
+            )
+        fh, fw = gray_frame.shape[:2]
+        x0 = max(0, rx)
+        y0 = max(0, ry)
+        x1 = min(fw, rx + rw)
+        y1 = min(fh, ry + rh)
+        if x1 <= x0 or y1 <= y0:
+            raise ValueError(
+                f"roi_hint {(rx, ry, rw, rh)} does not intersect frame "
+                f"of size {(fw, fh)}"
+            )
+        crop_w = x1 - x0
+        crop_h = y1 - y0
+        if crop_w <= min_tw or crop_h <= min_th:
+            raise ValueError(
+                f"roi_hint crop {(crop_w, crop_h)} is smaller than the "
+                f"smallest scaled template {(min_tw, min_th)} "
+                f"(min_scale={min_scale:.3f}); widen the ROI or skip the hint"
+            )
+        gray_frame = gray_frame[y0:y1, x0:x1].copy()
+        roi_origin = (x0, y0)
+
+    _frame_edges, frame_dt = preprocess_for_matching(gray_frame)
 
     chamfer_score, (cx, cy), best_scale, (tw, th) = compute_chamfer_score(
         template, frame_dt, scales=scales

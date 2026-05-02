@@ -27,8 +27,10 @@ negative 점수 분리를 검증하는 것이 목적이다.
 
 | 파일 | 역할 |
 |------|------|
-| `poc/workflow_1/align_key_matcher.py` | 매칭 엔진 — `AlignKeyTemplate`, `AlignKeyMatchResult`, `build_template`, `compute_chamfer_score`, `compute_orb_inlier_ratio`, `compute_align_key_score`, `save_overlay_jpeg` |
-| `poc/workflow_1/test_align_key_match.py` | 합성 데이터 생성 + 10 케이스 실행 + 디버그 산출물 저장 |
+| `poc/workflow_2/__init__.py` | 패키지 진입점 — `WORKFLOW_2_DIR`, `DEBUG_IMAGE_DIR`, `LOG_DIR` 상수 |
+| `poc/workflow_2/align_key_matcher.py` | 매칭 엔진 — `AlignKeyTemplate`, `AlignKeyMatchResult`, `build_template`, `compute_chamfer_score`, `compute_orb_inlier_ratio`, `compute_align_key_score`, `save_overlay_jpeg` |
+| `poc/workflow_2/test_align_key_match.py` | 합성 데이터 생성 + 10 케이스 실행 + 디버그 산출물 저장 |
+| `poc/workflow_2/search_align_key.py` | search loop 오케스트레이션 — `AlignKeySearchConfig`, `AlignKeySearchState`, `AlignKeySearchOutcome`, `search_align_key()`. 사무실 (RCS 캡처+pywinauto 이동) 과 Mac (가상 wafer+mock 이동) 양쪽에서 동일 흐름으로 돌아가도록 `capture_fn`/`move_stage_fn` injection. `__main__` 에 가상 wafer 데모 포함 |
 | `docs/test_align_key_match.md` | 본 문서 (테스트 계획 + 파일 목록) |
 
 ### 의존하는 기존 파일 (수정하지 않음)
@@ -36,13 +38,13 @@ negative 점수 분리를 검증하는 것이 목적이다.
 | 파일 | 사용 이유 |
 |------|----------|
 | `docs/search_align_key.md` | §3 알고리즘, §7 운영 결정사항 (특히 §7.3 임계값, §7.6 인터페이스) |
-| `poc/workflow_1/__init__.py` | `DEBUG_IMAGE_DIR` 상수 import |
+| `poc/workflow_2/__init__.py` | `DEBUG_IMAGE_DIR` 상수 import |
 | `pyproject.toml` | `opencv-contrib-python>=4.8.0`, `numpy>=1.24.0`, `pandas>=2.0.0`, `python-pptx>=0.6.21` 의존성 추가 |
 
 ### 산출물 (실행 시마다 생성)
 
 ```
-poc/workflow_1/debug_images/align_search/<YYMMDD_HHMMSS>/
+poc/workflow_2/debug_images/align_search/<YYMMDD_HHMMSS>/
     case_01_pos_identity_frame.jpg
     case_01_pos_identity_template.jpg
     case_01_pos_identity_overlay.jpg     # 매칭 박스 + 점수 텍스트가 그려진 결과
@@ -129,7 +131,7 @@ field 로 저주파 밝기 변화 (~60–200) 를 시뮬레이션. feature-spars
 ## 실행 방법
 
 ```bash
-uv run python poc/workflow_1/test_align_key_match.py
+uv run python poc/workflow_2/test_align_key_match.py
 ```
 
 CLI 인자 없음 (프로젝트 컨벤션). 출력 디렉토리 경로는 stdout 에 출력된다.

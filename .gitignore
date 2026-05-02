@@ -49,6 +49,10 @@ poc/work2/debug_images/*
 !poc/work2/debug_images/.gitkeep
 poc/workflow_1/debug_images/*
 !poc/workflow_1/debug_images/.gitkeep
+poc/workflow_2/debug_images/*
+!poc/workflow_2/debug_images/.gitkeep
+poc/workflow_2/logs/*
+!poc/workflow_2/logs/.gitkeep
 *.png
 *.jpg
 *.jpeg

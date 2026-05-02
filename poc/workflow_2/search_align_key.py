@@ -88,38 +88,34 @@ class AlignKeySearchOutcome:
 # ------------------------------------------------------------------
 
 
-def _square_spiral_offset(idx: int, step: int) -> tuple[int, int]:
-    """사각 spiral 의 idx 번째 (dx, dy) — 0,1,2,... 가 (0,0),(step,0),(step,step),....
+def _square_spiral_step(idx: int, step: int) -> tuple[int, int]:
+    """사각 spiral 의 idx 번째 *step delta* — 직전 위치 대비 (dx, dy).
+
+    Leg 길이는 1,1,2,2,3,3,4,4,... 이고 방향은 R,U,L,D 순환이다. 따라서
+    누적 좌표는 ``(0,0) → (1,0) → (1,-1) → (0,-1) → (-1,-1) → (-1,0) → ...``.
+    호출자는 매 iteration 마다 idx=1,2,3,... 으로 호출해 *현재 위치에 더할*
+    delta 를 받는다 (origin 기준 누적값이 아님 — 그게 이전 버그였음).
 
     coarse search 의 default 전략. VLM 힌트가 있으면 override 가능.
     """
     if idx <= 0:
         return 0, 0
-    # 사각 spiral: 길이 1,1,2,2,3,3,4,4,... 의 segments, 방향 R,U,L,D 순환.
-    segments_done = 0
-    leg = 1
-    direction = 0  # 0=R, 1=U, 2=L, 3=D.
-    x, y = 0, 0
-    moves_in_leg = 0
-    visited = 0
-    while visited < idx:
-        if direction == 0:
-            x += step
-        elif direction == 1:
-            y -= step
-        elif direction == 2:
-            x -= step
-        else:
-            y += step
-        visited += 1
-        moves_in_leg += 1
-        if moves_in_leg == leg:
-            moves_in_leg = 0
-            direction = (direction + 1) % 4
-            segments_done += 1
-            if segments_done % 2 == 0:
-                leg += 1
-    return x, y
+    # idx 가 어느 leg 에 속하는지 찾는다. Leg 1,2 는 길이 1, leg 3,4 는 길이 2,
+    # 일반적으로 leg L 의 길이는 ⌈L/2⌉. 누적 길이가 idx 이상이 되면 그 leg.
+    leg = 0
+    cum = 0
+    while cum < idx:
+        leg += 1
+        leg_length = (leg + 1) // 2
+        cum += leg_length
+    direction = (leg - 1) % 4  # 0=R, 1=U, 2=L, 3=D.
+    if direction == 0:
+        return step, 0
+    if direction == 1:
+        return 0, -step
+    if direction == 2:
+        return -step, 0
+    return 0, step
 
 
 # ------------------------------------------------------------------
@@ -206,7 +202,7 @@ def search_align_key(
                 dx, dy = vlm_consult_fn(result, state)
             else:
                 # VLM 미장착 prototype: 작은 step 으로 nudge.
-                dx, dy = _square_spiral_offset(i + 1, config.coarse_step_px // 4)
+                dx, dy = _square_spiral_step(i + 1, config.coarse_step_px // 4)
         else:  # "low"
             state.low_streak += 1
             recent_lows.append(result)
@@ -225,7 +221,7 @@ def search_align_key(
                     iter_count=i + 1,
                     history=state.history,
                 )
-            dx, dy = _square_spiral_offset(i + 1, config.coarse_step_px)
+            dx, dy = _square_spiral_step(i + 1, config.coarse_step_px)
 
         state = move_stage_fn(state, dx, dy)
 

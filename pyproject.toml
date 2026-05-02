@@ -13,6 +13,10 @@ dependencies = [
     "langchain-core>=1.0.0",
     "langchain-openai>=1.0.0",
     "python-dotenv>=1.0.0",
+    "opencv-contrib-python>=4.8.0",
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "python-pptx>=0.6.21",
 ]
 
 [project.optional-dependencies]

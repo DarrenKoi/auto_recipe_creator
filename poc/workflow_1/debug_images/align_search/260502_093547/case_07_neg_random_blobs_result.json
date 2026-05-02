@@ -1,0 +1,17 @@
+{
+  "score": 0.44238276977709057,
+  "chamfer_score": 0.737304616295151,
+  "orb_inlier_ratio": 0.0,
+  "best_xy": [
+    371,
+    183
+  ],
+  "best_scale": 0.7,
+  "decision": "low",
+  "case_id": 7,
+  "label": "neg_random_blobs",
+  "is_positive": false,
+  "ground_truth_xy": null,
+  "passed": true,
+  "note": "ok (low)"
+}

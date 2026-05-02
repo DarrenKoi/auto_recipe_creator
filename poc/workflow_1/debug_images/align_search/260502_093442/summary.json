@@ -1,0 +1,192 @@
+{
+  "run_tag": "260502_093442",
+  "n_total": 10,
+  "n_pass": 9,
+  "cases": [
+    {
+      "score": 0.8239129741558636,
+      "chamfer_score": 0.9731882902597727,
+      "orb_inlier_ratio": 0.6,
+      "best_xy": [
+        164,
+        128
+      ],
+      "best_scale": 1.0,
+      "decision": "match",
+      "case_id": 1,
+      "label": "pos_identity",
+      "is_positive": true,
+      "ground_truth_xy": [
+        164,
+        128
+      ],
+      "passed": true,
+      "note": "ok (err=0.0px)"
+    },
+    {
+      "score": 0.7504011168910972,
+      "chamfer_score": 0.9543722318555323,
+      "orb_inlier_ratio": 0.4444444444444444,
+      "best_xy": [
+        451,
+        170
+      ],
+      "best_scale": 1.0,
+      "decision": "match",
+      "case_id": 2,
+      "label": "pos_mild",
+      "is_positive": true,
+      "ground_truth_xy": [
+        451,
+        170
+      ],
+      "passed": true,
+      "note": "ok (err=0.0px)"
+    },
+    {
+      "score": 0.7278769976220814,
+      "chamfer_score": 0.9464616627034689,
+      "orb_inlier_ratio": 0.4,
+      "best_xy": [
+        628,
+        387
+      ],
+      "best_scale": 0.85,
+      "decision": "adjust",
+      "case_id": 3,
+      "label": "pos_scale_down",
+      "is_positive": true,
+      "ground_truth_xy": [
+        629,
+        388
+      ],
+      "passed": true,
+      "note": "ok (err=1.4px)"
+    },
+    {
+      "score": 0.5646276863784949,
+      "chamfer_score": 0.9410461439641582,
+      "orb_inlier_ratio": 0.0,
+      "best_xy": [
+        182,
+        361
+      ],
+      "best_scale": 1.2,
+      "decision": "adjust",
+      "case_id": 4,
+      "label": "pos_scale_up",
+      "is_positive": true,
+      "ground_truth_xy": [
+        183,
+        361
+      ],
+      "passed": true,
+      "note": "ok (err=1.0px)"
+    },
+    {
+      "score": 0.5374698226032119,
+      "chamfer_score": 0.8957830376720198,
+      "orb_inlier_ratio": 0.0,
+      "best_xy": [
+        407,
+        326
+      ],
+      "best_scale": 0.7,
+      "decision": "low",
+      "case_id": 5,
+      "label": "pos_hard",
+      "is_positive": true,
+      "ground_truth_xy": [
+        648,
+        325
+      ],
+      "passed": false,
+      "note": "decision=low"
+    },
+    {
+      "score": 0.4020354747503826,
+      "chamfer_score": 0.670059124583971,
+      "orb_inlier_ratio": 0.0,
+      "best_xy": [
+        358,
+        441
+      ],
+      "best_scale": 0.7,
+      "decision": "low",
+      "case_id": 6,
+      "label": "neg_plain_wafer",
+      "is_positive": false,
+      "ground_truth_xy": null,
+      "passed": true,
+      "note": "ok (low)"
+    },
+    {
+      "score": 0.4447290429204946,
+      "chamfer_score": 0.7412150715341577,
+      "orb_inlier_ratio": 0.0,
+      "best_xy": [
+        372,
+        182
+      ],
+      "best_scale": 0.7,
+      "decision": "low",
+      "case_id": 7,
+      "label": "neg_random_blobs",
+      "is_positive": false,
+      "ground_truth_xy": null,
+      "passed": true,
+      "note": "ok (low)"
+    },
+    {
+      "score": 0.45513363138109725,
+      "chamfer_score": 0.7585560523018288,
+      "orb_inlier_ratio": 0.0,
+      "best_xy": [
+        398,
+        50
+      ],
+      "best_scale": 0.7,
+      "decision": "low",
+      "case_id": 8,
+      "label": "neg_wrong_pattern",
+      "is_positive": false,
+      "ground_truth_xy": null,
+      "passed": true,
+      "note": "ok (low)"
+    },
+    {
+      "score": 0.4021765264591729,
+      "chamfer_score": 0.6702942107652882,
+      "orb_inlier_ratio": 0.0,
+      "best_xy": [
+        151,
+        59
+      ],
+      "best_scale": 0.7,
+      "decision": "low",
+      "case_id": 9,
+      "label": "neg_strong_charging",
+      "is_positive": false,
+      "ground_truth_xy": null,
+      "passed": true,
+      "note": "ok (low)"
+    },
+    {
+      "score": 0.4477118359032351,
+      "chamfer_score": 0.7461863931720585,
+      "orb_inlier_ratio": 0.0,
+      "best_xy": [
+        210,
+        258
+      ],
+      "best_scale": 0.85,
+      "decision": "low",
+      "case_id": 10,
+      "label": "neg_out_of_scale",
+      "is_positive": false,
+      "ground_truth_xy": null,
+      "passed": true,
+      "note": "ok (low)"
+    }
+  ]
+}

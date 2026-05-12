@@ -44,6 +44,17 @@ LOG_NAME = "test_vlm_popup_and_cursor_on_frames"
 DEFAULT_CAPTURE_ROOT = RECORDING_DIR / "capture_window_frames_tool"
 DEFAULT_OUTPUT_ROOT = RECORDING_DIR / LOG_NAME
 
+# ====================================================================
+# 분석할 캡처 폴더를 여기에 직접 적어 사용한다 (가장 우선 적용된다).
+# 예시:
+#   CAPTURE_DIR_OVERRIDE = r"C:\Users\me\auto_recipe_creator\poc\workflow_1\recordings\capture_window_frames_tool\260512_103045_MyTool_RemoteMonitoringSystem"
+#   CAPTURE_DIR_OVERRIDE = r"C:\some\path\frames"  # frames 디렉터리를 바로 지정해도 된다
+#
+# 비워두면 (빈 문자열) TEST_VLM_FRAMES_DIR 환경 변수를 먼저 보고,
+# 그것도 없으면 DEFAULT_CAPTURE_ROOT 의 가장 최근 세션을 자동 선택한다.
+# ====================================================================
+CAPTURE_DIR_OVERRIDE = r""
+
 DEFAULT_REQUEST_DELAY_SEC = env_float("TEST_VLM_REQUEST_DELAY_SEC", 1.0)
 DEFAULT_MIN_CHANGE_AREA_PX = env_int("TEST_VLM_MIN_CHANGE_AREA_PX", 5000)
 DEFAULT_DIFF_THRESHOLD = env_int("TEST_VLM_DIFF_THRESHOLD", 25)
@@ -54,7 +65,19 @@ DEFAULT_MODEL = os.getenv("TEST_VLM_MODEL_NAME", UI_VENUS_MODEL_NAME).strip() or
 
 
 def _resolve_capture_dir() -> Path | None:
-    """분석할 캡처 프레임 세트 또는 frames 디렉터리를 결정한다."""
+    """분석할 캡처 프레임 세트 또는 frames 디렉터리를 결정한다.
+
+    우선순위: CAPTURE_DIR_OVERRIDE > TEST_VLM_FRAMES_DIR env > 자동 최신 선택.
+    """
+    override = (CAPTURE_DIR_OVERRIDE or "").strip()
+    if override:
+        path = Path(override).expanduser()
+        if path.is_dir():
+            print(f"[INFO] CAPTURE_DIR_OVERRIDE 사용: {path}")
+            return path.resolve()
+        print(f"[ERROR] CAPTURE_DIR_OVERRIDE 디렉터리를 찾지 못했습니다: {path}")
+        return None
+
     raw_path = os.getenv("TEST_VLM_FRAMES_DIR", "").strip()
     if raw_path:
         path = Path(raw_path).expanduser()

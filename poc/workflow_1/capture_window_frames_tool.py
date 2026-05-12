@@ -116,6 +116,8 @@ def capture_frames() -> str:
         f"output_dir={output_dir}"
     )
 
+    # 창 탐색 대기 시간이 5분 캡처 예산을 깎지 않도록 타이머를 캡처 직전에 재설정한다.
+    started_at = time.time()
     frame_items: list[dict] = []
     frame_index = 0
     capture_error: str | None = None

@@ -123,7 +123,7 @@ DVR_ICON_Y_TOLERANCE_PX = _env_int(
 
 LP_ICON_LEFT_RATIO = base_select_tool._env_float(
     "SELECT_TOOL_CCTV_LP_ICON_LEFT_RATIO",
-    0.40,
+    0.0,
 )
 LP_ICON_ROW_HALF_HEIGHT_PX = _env_int(
     "SELECT_TOOL_CCTV_LP_ICON_ROW_HALF_HEIGHT_PX",
@@ -144,10 +144,13 @@ def _dvr_icon_target(tool_name: str) -> TargetConfig:
     return TargetConfig(
         key="dvr_icon",
         description=(
-            f"the blue circular LP record / DVR icon on the currently selected "
-            f"(blue-highlighted) row for tool '{tool_name}'. "
-            f"The selected row has a blue background. Find the round LP disc icon "
-            f"on that highlighted row and return a safe click point at its center."
+            f"the blue circular LP record / DVR icon on the row whose visible "
+            f"tool name text is exactly '{tool_name}'. To locate the correct "
+            f"row, first find the first letter '{tool_name[:1]}' of "
+            f"'{tool_name}' in the left tool-name column, use it as an anchor "
+            f"to identify the full row, then return a safe click point at the "
+            f"center of the round LP disc icon on that same row's right side. "
+            f"The selected row also has a blue background highlight."
         ),
         left_pad_ratio=1.0,
         right_pad_ratio=1.0,

@@ -87,3 +87,43 @@ Large VLM은 reasoning error를 줄이는 데 도움이 되지만, 보이지 않
 - [pipeline_plan.md](./pipeline_plan.md)
 - [rag_db_plan.md](./rag_db_plan.md)
 - [benchmark_plan.md](./benchmark_plan.md)
+- [../docs/screenshot_document_extraction_pipeline_plan.md](../docs/screenshot_document_extraction_pipeline_plan.md) — 단계별 capture → extract → organize 계획
+
+## 단계별 실행 (capture → extract → organize)
+
+세 단계는 모두 `logs/pipeline_state.json` 원장(ledger)을 공유한다.
+중간에 멈춰도 같은 명령을 다시 실행하면 끝낸 페이지를 건너뛰고 이어서 처리한다.
+
+```bash
+# 0) 의존성 설치
+uv sync --extra dev
+# Windows 에서 Office 자동화도 같이 쓰려면:
+# uv pip install ".[windows]"
+
+# 1) 입력 파일을 data/inputs/ 에 떨어뜨린 뒤 캡처 실행
+uv run python side_projects/screenshot_document_extraction/run_capture.py
+# → data/captures/<doc_id>/page_001.jpg ...
+
+# 2) 캡처된 이미지를 VLM + OCR 로 추출
+uv run python side_projects/screenshot_document_extraction/run_extract.py
+# → data/extracted/<doc_id>/page_NNN.{paddleocr,uivenus,raw}.json
+
+# 3) LLM 이 읽기 좋게 정리
+uv run python side_projects/screenshot_document_extraction/run_organize.py
+# → data/organized/<doc_id>/document.md + document.json + pages/
+
+# 또는 세 단계 한 번에:
+uv run python side_projects/screenshot_document_extraction/run_all.py
+```
+
+지원 확장자: `.pptx/.ppt`, `.docx/.doc`, `.xlsx/.xls`, `.pdf`.
+
+폴더 의미:
+- `data/inputs/` — 사용자가 원본 파일을 떨어뜨리는 곳.
+- `data/captures/<doc_id>/` — 페이지별 JPEG 와 메타 JSON.
+- `data/extracted/<doc_id>/` — paddleocr/ui-venus 응답과 머지 raw.json.
+- `data/organized/<doc_id>/` — LLM 친화적 Markdown 과 JSON.
+
+원장(`logs/pipeline_state.json`)을 직접 보면 각 doc 의 단계별 상태(`pending|in_progress|done|failed`)와
+완료된 페이지 번호를 확인할 수 있다. 실패한 항목을 다시 시도하려면
+`SCREENSHOT_EXTRACTION_RETRY_FAILED=true` 환경변수로 실행한다.

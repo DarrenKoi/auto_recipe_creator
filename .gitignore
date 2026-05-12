@@ -53,6 +53,13 @@ poc/workflow_2/debug_images/*
 !poc/workflow_2/debug_images/.gitkeep
 poc/workflow_2/logs/*
 !poc/workflow_2/logs/.gitkeep
+!side_projects/screenshot_document_extraction/logs/
+side_projects/screenshot_document_extraction/logs/*
+!side_projects/screenshot_document_extraction/logs/.gitkeep
+!side_projects/screenshot_document_extraction/logs/.gitignore
+!side_projects/screenshot_document_extraction/data/captures/
+side_projects/screenshot_document_extraction/data/captures/*
+!side_projects/screenshot_document_extraction/data/captures/.gitkeep
 *.png
 *.jpg
 *.jpeg

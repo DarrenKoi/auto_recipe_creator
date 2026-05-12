@@ -1,0 +1,4 @@
+# 파이프라인 로그와 원장은 git 에 올리지 않는다.
+*
+!.gitignore
+!.gitkeep

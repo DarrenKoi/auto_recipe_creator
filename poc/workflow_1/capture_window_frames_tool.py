@@ -118,6 +118,7 @@ def capture_frames() -> str:
 
     frame_items: list[dict] = []
     frame_index = 0
+    capture_error: str | None = None
 
     while True:
         if DEFAULT_MAX_FRAMES > 0 and frame_index >= DEFAULT_MAX_FRAMES:
@@ -131,7 +132,8 @@ def capture_frames() -> str:
         try:
             image = capture_window(tool_window)
         except Exception as exc:
-            print(f"[ERROR] 창 캡처 실패: frame={frame_index}, error={exc}")
+            capture_error = f"frame={frame_index}: {exc}"
+            print(f"[ERROR] 창 캡처 실패: {capture_error}")
             break
 
         frame_name = f"frame_{frame_index:04d}_{int(round(elapsed_sec * 1000)):08d}ms.jpg"
@@ -167,6 +169,7 @@ def capture_frames() -> str:
         "max_frames": DEFAULT_MAX_FRAMES,
         "max_duration_sec": DEFAULT_MAX_DURATION_SEC,
         "captured_frames": len(frame_items),
+        "capture_error": capture_error,
         "elapsed": format_elapsed_ms(started_at),
         "output_dir": str(output_dir),
         "frames_dir": str(frames_dir),
@@ -174,6 +177,20 @@ def capture_frames() -> str:
     }
     save_debug_json(output_dir / "summary.json", summary)
     save_debug_text(output_dir / "timeline.txt", _build_timeline_text(frame_items))
+
+    if capture_error is not None:
+        print(
+            f"[ERROR] 툴 창 프레임 캡처 중단: captured={len(frame_items)}, "
+            f"elapsed={format_elapsed_ms(started_at)}, error={capture_error}, output_dir={output_dir}"
+        )
+        return "capture_failed"
+
+    if len(frame_items) == 0:
+        print(
+            f"[ERROR] 툴 창 프레임이 한 장도 저장되지 않았습니다: "
+            f"elapsed={format_elapsed_ms(started_at)}, output_dir={output_dir}"
+        )
+        return "no_frames_captured"
 
     print(
         f"[INFO] 툴 창 프레임 캡처 완료: captured={len(frame_items)}, "

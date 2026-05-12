@@ -1,0 +1,16 @@
+# 사용자 입력과 파이프라인 산출물은 git 에 올리지 않는다.
+*
+!.gitignore
+!.gitkeep
+!inputs/
+!captures/
+!extracted/
+!organized/
+inputs/*
+!inputs/.gitkeep
+captures/*
+!captures/.gitkeep
+extracted/*
+!extracted/.gitkeep
+organized/*
+!organized/.gitkeep

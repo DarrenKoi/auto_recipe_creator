@@ -17,12 +17,17 @@ dependencies = [
     "numpy>=1.24.0",
     "pandas>=2.0.0",
     "python-pptx>=0.6.21",
+    "pymupdf>=1.24.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
+]
+# Office COM 자동화 (Windows 전용). 다른 플랫폼에서는 설치하지 않는다.
+windows = [
+    "pywin32>=306; sys_platform == 'win32'",
 ]
 
 [build-system]

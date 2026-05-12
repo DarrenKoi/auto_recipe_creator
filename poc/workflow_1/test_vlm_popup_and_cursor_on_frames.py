@@ -29,6 +29,7 @@ from poc.workflow_1.locate_cursor_in_captured_frames import (
     _coarse_user_prompt,
 )
 from poc.workflow_1.util import env_float, env_int, format_elapsed_ms, make_timestamp_tag
+from poc.workflow_1.util.image_utils import encode_image_webp
 from poc.workflow_1.util.json_utils import (
     bbox_1000_to_pixels,
     bbox_center,
@@ -260,15 +261,17 @@ def _popup_user_prompt() -> str:
 
 def _run_popup_detection(
     *,
-    frame_path: Path,
+    image_b64: str,
+    width: int,
+    height: int,
     client: Workflow1VLMClient,
 ) -> tuple[dict, dict | None]:
     """프레임 전체에서 정렬 관련 팝업의 bbox 를 탐지한다."""
-    response = client.chat_with_image_path(
-        image_path=frame_path,
+    response = client.chat_with_image_b64(
+        image_b64=image_b64,
         system_message=_popup_system_prompt(),
         user_text=_popup_user_prompt(),
-        image_mime="image/jpeg",
+        image_mime="image/webp",
         temperature=0.0,
     )
     parsed = extract_json(response.text)
@@ -279,22 +282,22 @@ def _run_popup_detection(
     if bbox_1000 is None:
         return parsed, None
 
-    with Image.open(frame_path) as image:
-        bbox_px = bbox_1000_to_pixels(bbox_1000, image.size[0], image.size[1])
-    return parsed, bbox_px
+    return parsed, bbox_1000_to_pixels(bbox_1000, width, height)
 
 
 def _run_cursor_coarse_detection(
     *,
-    frame_path: Path,
+    image_b64: str,
+    width: int,
+    height: int,
     client: Workflow1VLMClient,
 ) -> tuple[dict, dict | None]:
     """프레임 전체에서 마우스 커서의 coarse bbox 를 탐지한다."""
-    response = client.chat_with_image_path(
-        image_path=frame_path,
+    response = client.chat_with_image_b64(
+        image_b64=image_b64,
         system_message=_coarse_system_prompt(),
         user_text=_coarse_user_prompt(),
-        image_mime="image/jpeg",
+        image_mime="image/webp",
         temperature=0.0,
     )
     parsed = extract_json(response.text)
@@ -305,9 +308,7 @@ def _run_cursor_coarse_detection(
     if bbox_1000 is None:
         return parsed, None
 
-    with Image.open(frame_path) as image:
-        bbox_px = bbox_1000_to_pixels(bbox_1000, image.size[0], image.size[1])
-    return parsed, bbox_px
+    return parsed, bbox_1000_to_pixels(bbox_1000, width, height)
 
 
 def _save_overlay(
@@ -473,11 +474,20 @@ def run_test() -> str:
             f"ts={timestamp_sec:.3f}s, path={frame_path.name}"
         )
 
+        try:
+            with Image.open(frame_path) as image:
+                image_b64, frame_w, frame_h = encode_image_webp(image, quality=90)
+        except Exception as exc:
+            print(f"[ERROR] WebP 인코딩 실패: rank={rank}, error={exc}")
+            continue
+
         popup_payload: dict = {}
         popup_bbox: dict | None = None
         try:
             popup_payload, popup_bbox = _run_popup_detection(
-                frame_path=frame_path,
+                image_b64=image_b64,
+                width=frame_w,
+                height=frame_h,
                 client=client,
             )
         except Exception as exc:
@@ -490,7 +500,9 @@ def run_test() -> str:
         cursor_bbox: dict | None = None
         try:
             cursor_payload, cursor_bbox = _run_cursor_coarse_detection(
-                frame_path=frame_path,
+                image_b64=image_b64,
+                width=frame_w,
+                height=frame_h,
                 client=client,
             )
         except Exception as exc:

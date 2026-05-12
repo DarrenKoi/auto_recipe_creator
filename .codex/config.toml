@@ -1,6 +1,1 @@
-notify = [
-  "/bin/zsh",
-  "-lc",
-  'repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"; exec /usr/bin/env python3 "$repo_root/.codex/hooks/auto_commit_push.py" "$1"',
-  "codex-notify",
-]
+# Project-local Codex config intentionally has no keys.

@@ -71,7 +71,7 @@ class ToolListVisibilityResult:
 
 
 OCR_SERVICE_SLUG = "paddleocr-vl-1.5"
-DEFAULT_TARGET_TOOL_NAME = "6MCD2201"
+DEFAULT_TARGET_TOOL_NAME = "MCD630"
 DEBUG_ARTIFACT_DIR = DEBUG_IMAGE_DIR / "workflow_select_tool"
 LOG_NAME = "workflow_select_tool"
 COMPONENT_NAME = LOG_NAME

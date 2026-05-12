@@ -1,87 +1,87 @@
-# Screenshot Document Extraction Side Project
+# 스크린샷 문서 추출 Side Project
 
-## Purpose
+## 목적
 
-This side project studies whether the current company-served VLM/OCR models can recover useful information from screenshots of DRM-protected documents.
+이 side project는 회사 내부에서 제공되는 VLM/OCR 모델로 DRM 보호 문서의 스크린샷에서 유용한 정보를 얼마나 복원할 수 있는지 검토합니다.
 
-The practical goal is to build a retrieval-ready database for RAG. The extraction should preserve content together with context, provenance, and confidence so later agents can answer questions from the captured document evidence instead of from loose summaries.
+실질적인 목표는 RAG에 바로 사용할 수 있는 retrieval-ready database를 구축하는 것입니다. 단순 요약이 아니라, 캡처된 문서 증거에서 나중에 agent가 답변할 수 있도록 content, context, provenance, confidence를 함께 보존해야 합니다.
 
-The target inputs are screenshots of:
+대상 입력은 다음 문서의 스크린샷입니다.
 
-- PowerPoint slides
-- PDF pages
-- Excel sheets
+- PowerPoint slide
+- PDF page
+- Excel sheet
 
-The project is screenshot-only. It does not parse protected files directly, remove DRM, bypass access controls, or automate around document protection. The goal is to extract information that is already visible on screen.
+이 프로젝트는 screenshot-only 방식입니다. 보호된 파일을 직접 파싱하거나, DRM을 제거하거나, 접근 제어를 우회하거나, 문서 보호 기능을 우회하는 자동화를 만들지 않습니다. 목표는 화면에 이미 보이는 정보만 추출하는 것입니다.
 
-## Available Model Roles
+## 사용 가능한 모델 역할
 
-The current repo already has a usable model-service foundation in `poc/work2`:
+현재 repo에는 `poc/work2` 기반의 모델 서비스 구조가 이미 있습니다.
 
-- `poc/work2/flask_vlm.py` defines shared service slugs, model names, and endpoint mappings.
-- `poc/work2/vlm_client.py` provides an OpenAI-compatible image client.
-- `poc/work2/connection_check.py` verifies the Flask proxy and per-service `/v1/models` readiness.
+- `poc/work2/flask_vlm.py`: shared service slug, model name, endpoint mapping을 정의합니다.
+- `poc/work2/vlm_client.py`: OpenAI-compatible image client를 제공합니다.
+- `poc/work2/connection_check.py`: Flask proxy와 service별 `/v1/models` readiness를 확인합니다.
 
-For this side project, use the models as a tiered system:
+이 side project에서는 모델을 tiered system으로 사용합니다.
 
 | Model | Service slug | Primary role |
 | --- | --- | --- |
-| PaddleOCR-VL-1.5 | `paddleocr-vl-1.5` | OCR, reading order, tables, formulas, charts, document parsing |
-| UI-Venus-1.5-8B | `ui-venus` | whole-screenshot layout and UI/document visual understanding |
-| MAI-UI-8B | `mai-ui` | crop-level refinement for dense or small regions |
-| Kimi-K2.5 | `kimi-k2.5` | slow high-quality synthesis, ambiguity resolution, and final reasoning |
+| PaddleOCR-VL-1.5 | `paddleocr-vl-1.5` | OCR, reading order, table, formula, chart, document parsing |
+| UI-Venus-1.5-8B | `ui-venus` | 전체 스크린샷 layout 및 UI/document visual understanding |
+| MAI-UI-8B | `mai-ui` | dense region 또는 작은 region의 crop-level refinement |
+| Kimi-K2.5 | `kimi-k2.5` | 느리지만 고품질 synthesis, ambiguity resolution, final reasoning |
 
-## Expected Outputs
+## 기대 출력
 
-For each screenshot, the extraction pipeline should produce:
+각 스크린샷에 대해 extraction pipeline은 다음을 생성해야 합니다.
 
 - Raw OCR text
-- Detected regions such as title, body, table, chart, formula, footer, legend, and notes
-- Structured tables when visible cell boundaries and text are recoverable
-- Chart summaries based on visible labels, axes, legends, and trends
-- A final Markdown summary for human reading
-- A final JSON payload with confidence, source regions, and unresolved fields
-- RAG-ready chunks with source path, screenshot/page order, region type, bbox, surrounding context, and confidence
+- title, body, table, chart, formula, footer, legend, notes 같은 detected region
+- visible cell boundary와 text를 복원할 수 있는 경우 structured table
+- visible label, axis, legend, trend 기반 chart summary
+- 사람이 읽기 위한 final Markdown summary
+- confidence, source region, unresolved field를 포함한 final JSON payload
+- source path, screenshot/page order, region type, bbox, surrounding context, confidence를 포함한 RAG-ready chunk
 
-For a group of screenshots, the pipeline should produce:
+여러 스크린샷 묶음에 대해서는 다음을 생성해야 합니다.
 
-- A merged outline
+- Merged outline
 - Key facts
 - Table inventory
 - Chart inventory
 - Low-confidence review checklist
-- Retrieval metadata for document/session-level search and filtering
+- Document/session-level search와 filtering을 위한 retrieval metadata
 
-## Practical Limits
+## 현실적인 한계
 
-Screenshots do not contain the original Office/PDF object structure. The pipeline can only infer from visible pixels. Expected weak points are:
+스크린샷에는 원본 Office/PDF object structure가 없습니다. Pipeline은 visible pixel에서만 추론할 수 있습니다. 약한 지점은 다음과 같습니다.
 
-- Tiny text
-- Blurry or compressed screenshots
-- Hidden Excel rows or columns
-- Truncated cells
-- Overlapping labels
-- Charts without visible numeric labels
-- Speaker notes or comments not visible in the screenshot
+- 너무 작은 text
+- 흐리거나 압축된 screenshot
+- 숨겨진 Excel row 또는 column
+- 잘린 cell
+- 겹친 label
+- visible numeric label이 없는 chart
+- screenshot에 보이지 않는 speaker note 또는 comment
 
-The large VLM should reduce reasoning errors, but it cannot recover information that is not visible.
+Large VLM은 reasoning error를 줄이는 데 도움이 되지만, 보이지 않는 정보를 복원할 수는 없습니다.
 
-## Recommended First Experiment
+## 권장 첫 실험
 
-1. Run `uv run python poc/work2/connection_check.py` to verify available services.
-2. Collect a small local screenshot set:
-   - 3 PowerPoint screenshots
-   - 3 PDF page screenshots
-   - 3 Excel screenshots
-3. Run the extraction manually or with a minimal script:
-   - `paddleocr-vl-1.5` first
-   - `ui-venus` second
-   - crop retry with `mai-ui` or `paddleocr-vl-1.5`
-   - final merge with `kimi-k2.5` only when needed
-4. Convert extracted regions into RAG chunks using `rag_db_plan.md`.
-5. Score the results using `benchmark_plan.md`.
+1. `uv run python poc/work2/connection_check.py`를 실행해 사용 가능한 service를 확인합니다.
+2. 작은 local screenshot set을 준비합니다.
+   - PowerPoint screenshot 3개
+   - PDF page screenshot 3개
+   - Excel screenshot 3개
+3. 수동 또는 minimal script로 extraction을 실행합니다.
+   - 먼저 `paddleocr-vl-1.5`
+   - 그다음 `ui-venus`
+   - `mai-ui` 또는 `paddleocr-vl-1.5`로 crop retry
+   - 필요한 경우에만 `kimi-k2.5`로 final merge
+4. 추출된 region을 `rag_db_plan.md` 기준으로 RAG chunk로 변환합니다.
+5. `benchmark_plan.md` 기준으로 결과를 평가합니다.
 
-## Related Documents
+## 관련 문서
 
 - [research_notes.md](./research_notes.md)
 - [pipeline_plan.md](./pipeline_plan.md)

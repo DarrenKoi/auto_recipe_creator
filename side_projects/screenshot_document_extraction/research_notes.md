@@ -1,117 +1,117 @@
-# Research Notes
+# 조사 노트
 
-## Question
+## 질문
 
-Can the current company-available models extract useful information from screenshots of PowerPoint, PDF, and Excel content when the underlying files cannot be parsed directly because they are DRM protected?
+DRM 보호 때문에 원본 PowerPoint, PDF, Excel 파일을 직접 파싱할 수 없을 때, 현재 회사에서 사용할 수 있는 모델들이 스크린샷에서 유용한 정보를 추출할 수 있는가?
 
-Working answer: yes, but only for visible information. The strongest design is a hybrid extraction pipeline where OCR/document parsing models provide evidence, GUI/layout models interpret visual structure, and a large VLM performs final synthesis on top of extracted evidence.
+현재 판단은 "가능하지만, 화면에 보이는 정보에 한정된다"입니다. 가장 강한 설계는 OCR/document parsing 모델이 evidence를 제공하고, GUI/layout 모델이 visual structure를 해석하며, large VLM이 추출된 evidence 위에서 final synthesis를 수행하는 hybrid extraction pipeline입니다.
 
-## Model Capability Notes
+## 모델 Capability 정리
 
 ### PaddleOCR-VL-1.5
 
-PaddleOCR-VL-1.5 is the best first-pass model for this side project because it is document-focused rather than GUI-action-focused.
+PaddleOCR-VL-1.5는 GUI action보다 document parsing에 초점이 맞춰진 모델이므로, 이 side project의 first-pass 모델로 가장 적합합니다.
 
-Relevant capabilities from the official documentation and model card:
+공식 문서와 model card에서 확인한 관련 capability는 다음과 같습니다.
 
-- OCR and page-level document parsing
+- OCR 및 page-level document parsing
 - Table recognition
 - Formula recognition
 - Chart recognition
 - Text spotting
 - Seal recognition
-- Robustness cases that include screen photography, illumination variation, skew, scanning, and warping
+- Screen photography, illumination variation, skew, scanning, warping 같은 robustness case
 
 Sources:
 
 - PaddleOCR-VL-1.5 docs: <https://www.paddleocr.ai/latest/en/version3.x/algorithm/PaddleOCR-VL/PaddleOCR-VL-1.5.html>
 - PaddleOCR-VL-1.5 model card: <https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.5>
 
-Recommended role:
+권장 역할:
 
-- Extract raw text and reading order.
-- Parse visible tables and formulas.
-- Identify chart text, legends, axes, and visible data labels.
-- Produce the first evidence layer before any high-level VLM interpretation.
+- Raw text와 reading order를 추출합니다.
+- 보이는 table과 formula를 parse합니다.
+- Chart text, legend, axis, visible data label을 식별합니다.
+- 고수준 VLM 해석 전에 첫 번째 evidence layer를 생성합니다.
 
 ### UI-Venus-1.5-8B
 
-UI-Venus is a GUI agent model family built for GUI grounding, navigation, and visual understanding across real-world application screens. The model card documents OpenAI-compatible serving through vLLM and describes strong GUI grounding performance.
+UI-Venus는 GUI grounding, navigation, real-world application screen의 visual understanding을 위해 설계된 GUI agent model family입니다. Model card는 vLLM을 통한 OpenAI-compatible serving과 GUI grounding 성능을 설명합니다.
 
 Source:
 
 - UI-Venus-1.5-8B model card: <https://huggingface.co/inclusionAI/UI-Venus-1.5-8B>
 
-Recommended role:
+권장 역할:
 
-- Detect high-level regions in a full screenshot.
-- Identify whether the screenshot is a slide, PDF page, spreadsheet, dialog, or mixed screen.
-- Label visual blocks such as title, subtitle, body, table, chart, legend, toolbar, footnote, and page number.
-- Provide crop boxes for refinement.
+- Full screenshot에서 high-level region을 감지합니다.
+- Screenshot이 slide, PDF page, spreadsheet, dialog, mixed screen 중 무엇인지 식별합니다.
+- title, subtitle, body, table, chart, legend, toolbar, footnote, page number 같은 visual block을 labeling합니다.
+- refinement를 위한 crop box를 제공합니다.
 
 ### MAI-UI-8B
 
-MAI-UI is also a GUI-focused model family. The 8B model card documents OpenAI-compatible serving and grounding performance across GUI benchmarks.
+MAI-UI도 GUI-focused model family입니다. 8B model card는 OpenAI-compatible serving과 GUI benchmark 기반 grounding 성능을 설명합니다.
 
 Source:
 
 - MAI-UI-8B model card: <https://huggingface.co/Tongyi-MAI/MAI-UI-8B>
 
-Recommended role:
+권장 역할:
 
-- Refine crops from dense layouts.
-- Inspect small chart legends, Excel table headers, footers, and labels.
-- Cross-check UI-Venus region proposals when a region is visually ambiguous.
+- Dense layout에서 crop을 refine합니다.
+- 작은 chart legend, Excel table header, footer, label을 검사합니다.
+- Region이 모호할 때 UI-Venus region proposal을 cross-check합니다.
 
 ### Kimi-K2.5
 
-The repo already defines a direct company API model entry for `kimi-k2.5` in `poc/work2/flask_vlm.py`. Its response time is expected to be slower, so it should not run on every crop.
+Repo의 `poc/work2/flask_vlm.py`에는 `kimi-k2.5` direct company API model entry가 이미 정의되어 있습니다. 응답 시간이 느릴 수 있으므로 모든 crop에 실행하지 않습니다.
 
-Recommended role:
+권장 역할:
 
-- Merge OCR and visual evidence into a final structured answer.
-- Resolve conflicts between OCR output and layout model interpretation.
-- Summarize slide intent and chart meaning.
-- Normalize extracted tables into consistent schemas.
-- Produce final Markdown and JSON with confidence notes.
+- OCR과 visual evidence를 final structured answer로 merge합니다.
+- OCR output과 layout model interpretation이 충돌할 때 해결합니다.
+- Slide intent와 chart meaning을 요약합니다.
+- 추출된 table을 일관된 schema로 normalize합니다.
+- Confidence note를 포함한 final Markdown과 JSON을 생성합니다.
 
-Use it only after cheaper passes have collected evidence, or when the extraction confidence is low.
+이 모델은 더 저렴한 pass가 evidence를 충분히 모은 뒤, 또는 extraction confidence가 낮을 때만 사용합니다.
 
-## Why A Hybrid Pipeline Is Needed
+## Hybrid Pipeline이 필요한 이유
 
-No single model should own the whole task:
+단일 모델이 전체 작업을 소유하면 안 됩니다.
 
-- OCR models are strongest at visible text and document elements, but may miss high-level business meaning.
-- GUI grounding models are useful for region detection and visual hierarchy, but they are not the most reliable source of exact text.
-- Large VLMs are valuable for synthesis, but slow and more likely to hallucinate if asked to read dense screenshots directly without OCR evidence.
+- OCR model은 visible text와 document element에는 강하지만, high-level business meaning은 놓칠 수 있습니다.
+- GUI grounding model은 region detection과 visual hierarchy에는 유용하지만, 정확한 text의 가장 신뢰할 수 있는 source는 아닙니다.
+- Large VLM은 synthesis에 유용하지만, OCR evidence 없이 dense screenshot을 직접 읽게 하면 느리고 hallucination 가능성이 커집니다.
 
-The pipeline should therefore separate:
+따라서 pipeline은 다음 책임을 분리해야 합니다.
 
 - Evidence extraction
 - Region detection
 - Crop refinement
 - Final reasoning
 
-## Data Types And Expected Difficulty
+## Data Type별 예상 난이도
 
-| Source type | Easy cases | Hard cases |
+| Source type | 쉬운 case | 어려운 case |
 | --- | --- | --- |
-| PowerPoint | large title/body text, simple charts, visible tables | dense slides, small footnotes, screenshots embedded inside slides |
-| PDF | text-heavy pages, numbered sections, visible tables | scanned low-resolution pages, multi-column reading order, equations |
-| Excel | visible grids, headers, simple formulas shown in cells | hidden rows/columns, wide sheets, tiny values, merged cells, filters |
+| PowerPoint | 큰 title/body text, 단순 chart, visible table | dense slide, 작은 footnote, slide 안에 포함된 screenshot |
+| PDF | text-heavy page, numbered section, visible table | low-resolution scan page, multi-column reading order, equation |
+| Excel | visible grid, header, cell에 보이는 simple formula | hidden row/column, wide sheet, tiny value, merged cell, filter |
 
-## Safety Boundary
+## 안전 경계
 
-This project must stay on the screen-observation side:
+이 프로젝트는 screen-observation 범위에 머물러야 합니다.
 
-- Allowed: user-captured screenshots of content the user can view.
-- Allowed: OCR and VLM analysis of visible pixels.
-- Not allowed: DRM removal, protected file parsing, hidden-content extraction, credential bypass, or automation intended to defeat access controls.
+- 허용: 사용자가 볼 수 있는 content의 user-captured screenshot
+- 허용: visible pixel에 대한 OCR 및 VLM analysis
+- 금지: DRM removal, protected file parsing, hidden-content extraction, credential bypass, 접근 제어 우회 목적의 automation
 
-## Research Hypotheses
+## 연구 가설
 
-1. PaddleOCR-VL alone will recover most visible text, but will not always produce useful business-level summaries.
-2. UI-Venus will improve region routing for slides, spreadsheets, and mixed UI screenshots.
-3. MAI-UI will improve small-region extraction when used on crops, not full screenshots.
-4. Kimi-K2.5 will improve final document summaries and conflict resolution, but should be gated by confidence or used as a final synthesis step because of latency.
-5. The best measurable improvement will come from crop retry and evidence merging, not from switching one model for another.
+1. PaddleOCR-VL만으로도 대부분의 visible text는 복원하지만, useful business-level summary는 항상 만들지 못할 수 있습니다.
+2. UI-Venus는 slide, spreadsheet, mixed UI screenshot의 region routing을 개선할 것입니다.
+3. MAI-UI는 full screenshot보다 crop에 사용할 때 small-region extraction을 개선할 것입니다.
+4. Kimi-K2.5는 final document summary와 conflict resolution을 개선하지만, latency 때문에 confidence gate 또는 final synthesis step으로 제한해야 합니다.
+5. 가장 큰 개선은 특정 모델 하나를 바꾸는 것보다 crop retry와 evidence merging에서 나올 가능성이 큽니다.

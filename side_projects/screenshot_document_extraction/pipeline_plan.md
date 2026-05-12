@@ -4,7 +4,7 @@
 
 Build a screenshot-only extraction workflow that recovers as much visible information as possible from PowerPoint, PDF, and Excel screenshots.
 
-The workflow should produce both machine-readable JSON and human-readable Markdown. It should reuse the existing `poc/work2` VLM service definitions and client patterns.
+The workflow should produce both machine-readable JSON and human-readable Markdown. Its main downstream purpose is a RAG database, so each extracted item must keep enough context, provenance, and confidence to be retrieved safely later. It should reuse the existing `poc/work2` VLM service definitions and client patterns.
 
 ## Inputs
 
@@ -13,6 +13,7 @@ Minimum input per item:
 - Screenshot image path
 - Optional source type hint: `powerpoint`, `pdf`, `excel`, or `unknown`
 - Optional user goal: for example, `summarize`, `extract_table`, `extract_chart`, or `full_extract`
+- Optional document/session metadata: title, owner, source system, capture date, topic, and confidentiality label
 
 Images should be kept as local JPEG artifacts and sent to VLM APIs as WebP payloads when possible, matching the current repo convention.
 
@@ -24,6 +25,8 @@ The final output should use this conceptual schema:
 {
   "source_image": "path/to/screenshot.jpg",
   "source_type": "powerpoint|pdf|excel|unknown",
+  "document_id": "",
+  "screenshot_index": 1,
   "overall_confidence": 0.0,
   "summary_markdown": "",
   "regions": [
@@ -32,6 +35,7 @@ The final output should use this conceptual schema:
       "type": "title|body|table|chart|formula|footer|legend|other",
       "bbox": {"left": 0, "top": 0, "right": 0, "bottom": 0},
       "text": "",
+      "surrounding_context": "",
       "confidence": 0.0,
       "model_sources": ["paddleocr-vl-1.5", "ui-venus"]
     }
@@ -39,6 +43,7 @@ The final output should use this conceptual schema:
   "tables": [],
   "charts": [],
   "formulas": [],
+  "rag_chunks": [],
   "unresolved": []
 }
 ```
@@ -205,6 +210,46 @@ Create a review packet for each screenshot:
 
 The review loop should be lightweight. A human should be able to correct the final JSON or mark the screenshot as not extractable.
 
+## Stage 8: RAG Chunk Generation
+
+Goal:
+
+- Convert extraction evidence into records that can be embedded, searched, filtered, and cited.
+
+Chunk types:
+
+- `region_text`: title/body/footer text from one visual region
+- `table_summary`: table title, headers, important rows, and notes
+- `table_row`: row-level chunk when each row has independent meaning
+- `chart_summary`: chart title, axes, legends, visible values, and inferred trend
+- `formula`: formula text plus nearby label/context
+- `document_summary`: screenshot-level or session-level summary
+
+Each chunk should include:
+
+- `chunk_id`
+- `document_id`
+- `source_image`
+- `screenshot_index`
+- `source_type`
+- `region_id`
+- `region_type`
+- `bbox`
+- `content`
+- `context_before`
+- `context_after`
+- `parent_heading`
+- `model_sources`
+- `confidence`
+- `review_status`
+
+Rules:
+
+- Preserve table and chart context rather than embedding isolated cell text.
+- Keep bbox and source image paths so retrieved answers can cite visible evidence.
+- Mark low-confidence chunks as searchable but not trusted for direct answer generation unless the user accepts uncertain evidence.
+- Keep original OCR text and cleaned content separately when they differ.
+
 ## Implementation Shape For A Later Code Pass
 
 Recommended package location:
@@ -218,6 +263,7 @@ Potential files:
 - `models.py`
 - `merge.py`
 - `schemas.py`
+- `rag_chunks.py`
 
 Reuse:
 
@@ -226,3 +272,5 @@ Reuse:
 - `poc.work2.util.image_utils.encode_image_webp`
 
 Do not add CLI-heavy argument parsing for the first version. Prefer `.env` and in-code defaults, matching the repo's current operational-script style.
+
+The RAG database design details live in [rag_db_plan.md](./rag_db_plan.md).

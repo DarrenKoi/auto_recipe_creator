@@ -4,6 +4,8 @@
 
 Measure whether the hybrid model pipeline actually improves extraction from screenshots of PowerPoint, PDF, and Excel content.
 
+Because the purpose is a RAG database, the benchmark should measure not only extraction accuracy but also retrieval usefulness: whether chunks preserve enough context to answer later questions with citations.
+
 The benchmark should compare:
 
 - `paddleocr-vl-1.5` only
@@ -120,16 +122,28 @@ Record per model call:
 
 This matters because `kimi-k2.5` is expected to be slow.
 
+### RAG Readiness
+
+Measure whether extracted output is suitable for retrieval:
+
+- Content chunks have source image, screenshot order, region type, and bbox.
+- Tables and charts retain surrounding labels and headings.
+- Chunk text is specific enough for embedding search.
+- Low-confidence evidence is labeled clearly.
+- Retrieved chunks can support an answer without requiring the original model to guess missing context.
+
+Score each screenshot from 0.0 to 1.0.
+
 ## Comparison Matrix
 
 For each screenshot, record:
 
-| Pipeline | Text | Table | Chart | Layout | Hallucination | Latency | Notes |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| OCR only |  |  |  |  |  |  |  |
-| OCR + UI-Venus |  |  |  |  |  |  |  |
-| OCR + UI-Venus + crops |  |  |  |  |  |  |  |
-| Full with Kimi-K2.5 |  |  |  |  |  |  |  |
+| Pipeline | Text | Table | Chart | Layout | RAG readiness | Hallucination | Latency | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| OCR only |  |  |  |  |  |  |  |  |
+| OCR + UI-Venus |  |  |  |  |  |  |  |  |
+| OCR + UI-Venus + crops |  |  |  |  |  |  |  |  |
+| Full with Kimi-K2.5 |  |  |  |  |  |  |  |  |
 
 ## Acceptance Criteria
 
@@ -140,6 +154,8 @@ The side project is worth implementing further if:
 - The full pipeline reduces hallucinations compared with direct large-VLM reading.
 - Crop refinement improves dense-table or small-label cases.
 - Kimi-K2.5 improves summary quality enough to justify its latency on complex pages.
+- RAG readiness reaches at least 0.7 for most screenshots.
+- Retrieved chunks include enough source metadata to cite the screenshot and region.
 
 ## Failure Categories
 
@@ -153,6 +169,9 @@ Use these labels in benchmark notes:
 - `hallucinated_value`
 - `model_timeout`
 - `unparseable_screenshot`
+- `context_missing_for_rag`
+- `chunk_too_broad`
+- `chunk_too_fragmented`
 
 ## Next Step After Benchmark
 
@@ -161,5 +180,6 @@ If results are promising, implement a minimal extraction script that:
 1. Reads screenshots from an input folder.
 2. Runs the tiered model pipeline.
 3. Writes one JSON and one Markdown file per screenshot.
-4. Writes a session-level summary.
-5. Logs model latency and failures.
+4. Writes RAG chunk records following `rag_db_plan.md`.
+5. Writes a session-level summary.
+6. Logs model latency and failures.

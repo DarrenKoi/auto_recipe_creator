@@ -4,6 +4,8 @@
 
 This side project studies whether the current company-served VLM/OCR models can recover useful information from screenshots of DRM-protected documents.
 
+The practical goal is to build a retrieval-ready database for RAG. The extraction should preserve content together with context, provenance, and confidence so later agents can answer questions from the captured document evidence instead of from loose summaries.
+
 The target inputs are screenshots of:
 
 - PowerPoint slides
@@ -39,6 +41,7 @@ For each screenshot, the extraction pipeline should produce:
 - Chart summaries based on visible labels, axes, legends, and trends
 - A final Markdown summary for human reading
 - A final JSON payload with confidence, source regions, and unresolved fields
+- RAG-ready chunks with source path, screenshot/page order, region type, bbox, surrounding context, and confidence
 
 For a group of screenshots, the pipeline should produce:
 
@@ -47,6 +50,7 @@ For a group of screenshots, the pipeline should produce:
 - Table inventory
 - Chart inventory
 - Low-confidence review checklist
+- Retrieval metadata for document/session-level search and filtering
 
 ## Practical Limits
 
@@ -74,10 +78,12 @@ The large VLM should reduce reasoning errors, but it cannot recover information 
    - `ui-venus` second
    - crop retry with `mai-ui` or `paddleocr-vl-1.5`
    - final merge with `kimi-k2.5` only when needed
-4. Score the results using `benchmark_plan.md`.
+4. Convert extracted regions into RAG chunks using `rag_db_plan.md`.
+5. Score the results using `benchmark_plan.md`.
 
 ## Related Documents
 
 - [research_notes.md](./research_notes.md)
 - [pipeline_plan.md](./pipeline_plan.md)
+- [rag_db_plan.md](./rag_db_plan.md)
 - [benchmark_plan.md](./benchmark_plan.md)

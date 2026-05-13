@@ -28,6 +28,7 @@ dev = [
 # Office COM 자동화 (Windows 전용). 다른 플랫폼에서는 설치하지 않는다.
 windows = [
     "pywin32>=306; sys_platform == 'win32'",
+    "xlwings>=0.31.0; sys_platform == 'win32'",
 ]
 
 [build-system]

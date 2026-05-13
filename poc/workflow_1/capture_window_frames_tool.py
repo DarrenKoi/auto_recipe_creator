@@ -26,18 +26,31 @@ from poc.workflow_1.util import (
     env_int,
     format_elapsed_ms,
 )
-from poc.workflow_1.workflow_select_tool import DEFAULT_TARGET_TOOL_NAME, load_target_tool_name
 
 load_dotenv()
 
 LOG_NAME = "capture_window_frames_tool"
 DEFAULT_OUTPUT_DIR = RECORDING_DIR / LOG_NAME
+DEFAULT_TARGET_TOOL_NAME = "MCD630"
 DEFAULT_FRAME_INTERVAL_MS = env_int("TOOL_CAPTURE_FRAME_INTERVAL_MS", 500)
 DEFAULT_MAX_FRAMES = env_int("TOOL_CAPTURE_FRAME_MAX_FRAMES", 0)
 DEFAULT_MAX_DURATION_SEC = env_float("TOOL_CAPTURE_MAX_DURATION_SEC", 300.0)
 DEFAULT_JPEG_QUALITY = env_int("TOOL_CAPTURE_JPEG_QUALITY", 95)
 DEFAULT_WINDOW_WAIT_SEC = env_float("TOOL_CAPTURE_WINDOW_WAIT_SEC", 30.0)
 DEFAULT_WINDOW_POLL_SEC = env_float("TOOL_CAPTURE_WINDOW_POLL_SEC", 0.5)
+
+
+def load_target_tool_name(default: str = "") -> str:
+    """환경변수에서 목표 Tool 이름을 읽는다."""
+    for env_name in (
+        "ACTION_TARGET_TOOL_NAME",
+        "ACTION_SELECT_TOOL_NAME",
+        "SELECT_TOOL_TARGET_ID",
+    ):
+        value = os.getenv(env_name, "").strip()
+        if value:
+            return value
+    return default.strip()
 
 
 def _sanitize_name(text: str) -> str:

@@ -1,13 +1,16 @@
-"""템플릿 없이 자연어 프롬프트만으로 VLM 이 "Image Operation Box" 를
+"""템플릿 없이 자연어 프롬프트만으로 VLM 이 "SEM Monitor Box" 를
 찾아낼 수 있는지 검증하는 5장 샘플 프로브.
 
-설명되는 박스 (Image Operation Box, 통칭 "SEM box"):
-  - 두 부분이 옆으로 붙어 하나의 큰 블록을 이룬다:
-    (A) Live SEM image area — 어둡고 실시간으로 갱신되는 wafer/시료 그레이스케일 영상.
-    (B) Operation 버튼 패널 — 'AMS', 'ACD', 'Next', 'DDS' 등 SEM 조작 버튼이
-        세로/격자 형태로 배치된 인접 패널.
-  - VLM 은 두 영역을 하나의 직사각 bbox 로 함께 감싸야 한다.
-    (예전 프롬프트는 버튼 패널만 잡아서 live SEM image 가 누락되는 문제가 있었다.)
+설명되는 박스 (SEM Monitor Box, live wafer-pattern view):
+  - 실시간으로 갱신되는 wafer/시료 그레이스케일 SEM 영상이 나오는 큰 직사각 영역.
+  - 박스 **상단**에 현재 모니터링 모드를 가리키는 짧은 라벨 (예: 'Optics', 'OM') 이
+    텍스트로 표시된다. 이 텍스트가 박스를 식별하는 1차 앵커이다.
+  - 박스 **위에는** SEM 조작용 플로팅 컨트롤 패널 ('Optics', 'Function', 'AMP',
+    'Next', 'DDS' 등) 이 부분적으로 겹쳐서 그려져 있다. 이 패널들은 박스의
+    *인접* 영역이 아니라 박스 화면을 가리고 있는 *오버레이* 이다.
+  - VLM 은 컨트롤 패널이 가린 부분까지 포함해 라이브 SEM 영상의 전체 사각형을
+    하나의 bbox 로 반환해야 한다. (오버레이 패널만 잡거나, 가려지지 않은 일부만
+    잡으면 오답.)
 
 입력은 `poc/workflow_2/filter_frames_by_change.py` 가 만든
 `change_events.json` 의 events 에서 5개를 random sample 한다.
@@ -114,51 +117,60 @@ def _sample_events(events: list[dict], count: int) -> list[dict]:
 
 
 def _sem_box_system_prompt() -> str:
-    """Image Operation Box 탐지 시스템 프롬프트."""
+    """SEM Monitor Box 탐지 시스템 프롬프트."""
     return (
         "You analyse a screenshot of a Windows CD-SEM Tool application. "
         "Return strict JSON only. "
-        "Locate the 'Image Operation Box' — a single rectangular region that contains TWO "
-        "tightly-coupled parts arranged side-by-side and treated as one logical area:\n"
-        "  (A) Live SEM image area: a dark, real-time-updating grayscale image of the wafer "
-        "or sample being scanned. It looks like a noisy electron-microscope image, not a "
-        "color photograph.\n"
-        "  (B) Operation button panel: a vertical or grid arrangement of short-label buttons "
-        "sitting flush against one edge of the live SEM image. Typical button labels you "
-        "should expect to read here include 'AMS', 'ACD', 'Next', 'DDS', and similar short "
-        "SEM operation commands.\n"
-        "Return a bounding box that encloses BOTH the live SEM image area and the adjacent "
-        "button panel together, as one rectangular block. "
-        "Do NOT return only the button panel and do NOT return only the live SEM image — "
-        "either one alone is the wrong answer. "
-        "Do not include unrelated panels, separate toolbars, the window title bar, or other "
-        "tabs of the application. "
-        "If you cannot see both parts together, set panel_visible=false."
+        "Locate the 'SEM Monitor Box' — a single rectangular region that shows the "
+        "LIVE, actively-updating grayscale electron-microscope image of the wafer "
+        "or sample being scanned. It looks like a dark, noisy, real-time SEM video "
+        "feed showing wafer patterns, NOT a color photograph and NOT a static UI panel.\n"
+        "Anchors for identification:\n"
+        "  - At the TOP of this box there is a short text label that names the current "
+        "monitoring mode. Typical values are 'Optics' or 'OM'. Find this label first; "
+        "the SEM Monitor Box is the large rectangular live-image region directly "
+        "underneath it.\n"
+        "  - Floating control panels labelled 'Optics', 'Function', 'AMP', 'Next', "
+        "'DDS' (and similar short SEM operation commands) are drawn ON TOP of this "
+        "box, partially covering the live wafer image. These overlay panels are a "
+        "STRONG SECONDARY CLUE that you are looking at the SEM Monitor Box, but they "
+        "are NOT the box itself and the bbox must NOT shrink to fit around them.\n"
+        "The returned bbox must enclose the FULL rectangle of the live wafer view, "
+        "INCLUDING the parts that are currently hidden behind the overlay control "
+        "panels. Estimate the underlying rectangle from the visible live-image edges "
+        "and the position of the mode label at the top. "
+        "Do NOT return a bbox of just the overlay control panels. "
+        "Do NOT return a bbox of only the uncovered slivers of the live image. "
+        "Do not include unrelated panels, separate toolbars, the window title bar, or "
+        "other tabs of the application. "
+        "If no live wafer-pattern region is visible at all, set panel_visible=false."
     )
 
 
 def _sem_box_user_prompt() -> str:
-    """Image Operation Box 탐지 사용자 프롬프트."""
+    """SEM Monitor Box 탐지 사용자 프롬프트."""
     return (
         "Return JSON with this exact schema:\n"
         "{\n"
         '  "panel_visible": true,\n'
         '  "coord_system": "relative_1000",\n'
         '  "panel_bbox": {"left": 0, "top": 0, "right": 0, "bottom": 0},\n'
-        '  "image_area_side": "left | right",\n'
-        '  "visible_buttons": ["AMS", "ACD", "Next", "DDS"],\n'
+        '  "mode_label": "Optics",\n'
+        '  "overlay_panels_seen": ["Optics", "Function", "AMP", "Next", "DDS"],\n'
         '  "confidence": 0.0,\n'
         '  "evidence": "short string explaining what you used to identify the region"\n'
         "}\n"
-        "panel_bbox must tightly enclose the ENTIRE Image Operation Box — both the live SEM "
-        "image area and the adjacent button panel together, as one rectangle. "
-        "image_area_side tells which side of the bbox the live SEM image occupies relative "
-        "to the button panel (use 'left' if the live image is on the left and the buttons "
-        "are on the right; use 'right' for the opposite). "
-        "visible_buttons should list 2~6 button labels you actually read inside the panel "
-        "(expected examples: 'AMS', 'ACD', 'Next', 'DDS'). "
-        "If the region is not visible as a single connected block, set panel_visible=false, "
-        "panel_bbox=null, image_area_side=null, visible_buttons=[]."
+        "panel_bbox must tightly enclose the ENTIRE underlying live wafer-pattern "
+        "rectangle as one box, INCLUDING any portion currently hidden behind the "
+        "floating control panels overlaid on top of it. "
+        "mode_label is the short text you actually read at the top of the SEM "
+        "Monitor Box (expected values: 'Optics' or 'OM'); use null if you cannot "
+        "read it. "
+        "overlay_panels_seen should list 1~5 of the floating control panel labels "
+        "you actually read covering the live image (expected examples: 'Optics', "
+        "'Function', 'AMP', 'Next', 'DDS'). "
+        "If no live wafer-pattern region is visible, set panel_visible=false, "
+        "panel_bbox=null, mode_label=null, overlay_panels_seen=[]."
     )
 
 
@@ -188,15 +200,15 @@ def _run_sem_box_detection(
 
 
 def _save_overlay(*, frame_path: Path, panel_bbox: dict, output_path: Path) -> str:
-    """frame 위에 Image Operation Box bbox 를 마킹한다."""
+    """frame 위에 SEM Monitor Box bbox 를 마킹한다."""
     with Image.open(frame_path) as image:
         elements = {
-            "image_operation_box": {"bbox": panel_bbox, "center": bbox_center(panel_bbox)},
+            "sem_monitor_box": {"bbox": panel_bbox, "center": bbox_center(panel_bbox)},
         }
         save_marked_bboxes(
             image.convert("RGB"),
             elements=elements,
-            colors={"image_operation_box": "magenta"},
+            colors={"sem_monitor_box": "magenta"},
             out_path=output_path,
         )
     return str(output_path)
@@ -215,14 +227,14 @@ def _build_timeline_text(results: list[dict]) -> str:
     lines = []
     for item in results:
         bbox = item.get("panel_bbox") or {}
-        buttons = ", ".join(item.get("visible_buttons") or [])
+        overlays = ", ".join(item.get("overlay_panels_seen") or [])
         lines.append(
             f"rank={int(item.get('rank') or 0):03d} "
             f"frame={int(item.get('frame_index') or 0):04d} "
             f"panel={'Y' if bbox else 'N'} "
-            f"image_side={item.get('image_area_side') or '-':<7s} "
+            f"mode={item.get('mode_label') or '-':<8s} "
             f"conf={item.get('panel_confidence', '')} "
-            f"buttons=[{buttons}] "
+            f"overlays=[{overlays}] "
             f"bbox={bbox}"
         )
     return "\n".join(lines) + "\n"
@@ -325,8 +337,8 @@ def run_test() -> str:
             "panel_bbox": panel_bbox or {},
             "panel_confidence": payload.get("confidence"),
             "panel_evidence": payload.get("evidence"),
-            "image_area_side": payload.get("image_area_side"),
-            "visible_buttons": payload.get("visible_buttons") or [],
+            "mode_label": payload.get("mode_label"),
+            "overlay_panels_seen": payload.get("overlay_panels_seen") or [],
         }
         save_debug_json(results_dir / f"{rank:03d}_frame_{frame_index:04d}.json", result)
         results.append(result)

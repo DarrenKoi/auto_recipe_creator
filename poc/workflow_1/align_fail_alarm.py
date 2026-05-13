@@ -13,8 +13,10 @@ CCTV/캡처/GUI 자동화 로직은 포함하지 않는다. 순수 감지 + 알�
 import threading
 import time
 from collections.abc import Iterable, Mapping
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+
+import pandas as pd
 
 from poc.workflow_1 import LOG_DIR
 from poc.workflow_1.office_align_fail_alarm import filter_align_fail, get_cdsem_alarms
@@ -66,13 +68,37 @@ def _row_value(row, *field_names: str):
     return None
 
 
-def append_alarm_record(eqp_id: str, alarm_time: str, alarm_name: str, alid: str) -> None:
+def filter_rows_within_window(rows: "pd.DataFrame", window_sec: int) -> "pd.DataFrame":
+    """UTC9 가 현재 시각 기준 `window_sec` 이내인 row 만 남긴다.
+
+    UTC9 가 비어있거나 파싱 불가한 row 는 제외한다.
+    """
+    if window_sec <= 0 or rows is None or rows.empty or "UTC9" not in rows.columns:
+        return rows
+
+    cutoff = datetime.now() - timedelta(seconds=window_sec)
+    timestamps = pd.to_datetime(rows["UTC9"], errors="coerce")
+    mask = timestamps.notna() & (timestamps >= cutoff)
+    return rows[mask].reset_index(drop=True)
+
+
+def append_alarm_record(
+    eqp_id: str,
+    alarm_time: str,
+    alarm_name: str,
+    alid: str,
+    recipe_id: str = "",
+    operation_desc: str = "",
+    lot_type_cd: str = "",
+) -> None:
     """감지된 Align Fail 을 텍스트 파일에 누적 기록한다."""
     ALARM_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     detected_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = (
         f"{detected_at} | EQP_ID={eqp_id} | ALID={alid} | "
-        f"ALARM_NAME={alarm_name} | UTC9={alarm_time}\n"
+        f"ALARM_NAME={alarm_name} | UTC9={alarm_time} | "
+        f"RECIPE_ID={recipe_id} | OPERATION_DESC={operation_desc} | "
+        f"LOT_TYPE_CD={lot_type_cd}\n"
     )
     with ALARM_LOG_PATH.open("a", encoding="utf-8") as fp:
         fp.write(line)
@@ -102,13 +128,23 @@ def _show_popup_windows(title: str, message: str) -> None:
         print(f"[WARNING] 팝업 표시 실패: {exc}")
 
 
-def notify_align_fail(eqp_id: str, alarm_time: str, alarm_name: str) -> None:
+def notify_align_fail(
+    eqp_id: str,
+    alarm_time: str,
+    alarm_name: str,
+    recipe_id: str = "",
+    operation_desc: str = "",
+    lot_type_cd: str = "",
+) -> None:
     """Align Fail 감지 시 팝업 알림."""
     title = "CD-SEM Align Fail 감지"
     message = (
-        f"EQP_ID: {eqp_id}\n"
-        f"ALARM : {alarm_name}\n"
-        f"TIME  : {alarm_time}\n\n"
+        f"EQP_ID    : {eqp_id}\n"
+        f"ALARM     : {alarm_name}\n"
+        f"TIME      : {alarm_time}\n"
+        f"RECIPE_ID : {recipe_id}\n"
+        f"OPERATION : {operation_desc}\n"
+        f"LOT_TYPE  : {lot_type_cd}\n\n"
         f"로그: {ALARM_LOG_PATH}"
     )
     _show_popup_windows(title, message)
@@ -126,12 +162,17 @@ def _collapse_rows_by_tool(fails) -> dict[str, dict]:
             continue
         by_tool[eqp_id] = {
             "eqp_id": eqp_id,
-            "alarm_time": _row_value(row, "UTC9", "utc9", "alarm_time"),
+            "alarm_time": _row_value(row, "TIMESTAMP", "timestamp", "UTC9", "utc9", "alarm_time"),
             "alarm_name": str(
                 _row_value(row, "ALARM_NAME", "alarm_name", "DESCRIPTION")
                 or "Align Fail"
             ).strip(),
             "alid": str(_row_value(row, "ALID", "alarm_id", "al_id") or "9006").strip(),
+            "recipe_id": str(_row_value(row, "RECIPE_ID", "recipe_id") or "").strip(),
+            "operation_desc": str(
+                _row_value(row, "OPERATION_DESC", "operation_desc") or ""
+            ).strip(),
+            "lot_type_cd": str(_row_value(row, "LOT_TYPE_CD", "lot_type_cd") or "").strip(),
         }
     return by_tool
 
@@ -162,17 +203,31 @@ def process_fail_rows(
     newly_handled = 0
     for eqp_id in sorted(new_tools):
         info = by_tool[eqp_id]
-        alarm_time = info["alarm_time"]
+        alarm_time = str(info["alarm_time"] or "")
         alarm_name = info["alarm_name"]
         alid = info["alid"]
+        recipe_id = info["recipe_id"]
+        operation_desc = info["operation_desc"]
+        lot_type_cd = info["lot_type_cd"]
 
         print(
             f"[WARNING] Align Fail 감지: EQP_ID={eqp_id}, "
-            f"ALID={alid}, 시각={alarm_time}"
+            f"ALID={alid}, RECIPE_ID={recipe_id}, LOT_TYPE={lot_type_cd}, "
+            f"시각={alarm_time}"
         )
-        append_alarm_record(eqp_id, str(alarm_time or ""), alarm_name, alid)
+        append_alarm_record(
+            eqp_id, alarm_time, alarm_name, alid,
+            recipe_id=recipe_id,
+            operation_desc=operation_desc,
+            lot_type_cd=lot_type_cd,
+        )
         if popup_enabled:
-            notify_align_fail(eqp_id, str(alarm_time or ""), alarm_name)
+            notify_align_fail(
+                eqp_id, alarm_time, alarm_name,
+                recipe_id=recipe_id,
+                operation_desc=operation_desc,
+                lot_type_cd=lot_type_cd,
+            )
 
         active_tools.add(eqp_id)
         newly_handled += 1
@@ -201,6 +256,7 @@ def monitor_loop(popup_enabled: bool | None = None) -> None:
         try:
             alarms = get_cdsem_alarms()
             fails = filter_align_fail(alarms)
+            fails = filter_rows_within_window(fails, POLL_INTERVAL_SEC)
 
             if _alarm_rows_empty(fails):
                 if active_tools:

@@ -7,7 +7,7 @@
 
 흐름:
   - curr_frame 을 WebP 인코딩 → VLM coarse cursor 호출
-    (workflow_1.locate_cursor_in_captured_frames 의 _coarse_*_prompt 재사용)
+    (DVR / RCS / RCS-on-SEM-Monitor 3가지 커서 변형을 모두 묘사한 로컬 프롬프트 사용)
   - cv2.absdiff(prev, curr) 를 native resolution 그레이스케일로 계산
     (threshold → dilate; filter_frames_by_change 와 같은 파이프라인)
   - 커서 중심 좌표를 중심으로 한 사각형 ROI 안의 변화 픽셀을 카운트한다.
@@ -33,10 +33,6 @@ from PIL import Image
 from poc.workflow_2 import WORKFLOW_2_DIR
 from poc.workflow_1.debug_artifacts import save_debug_json, save_debug_text, save_marked_bboxes
 from poc.workflow_1.flask_vlm import UI_VENUS_MODEL_NAME
-from poc.workflow_1.locate_cursor_in_captured_frames import (
-    _coarse_system_prompt,
-    _coarse_user_prompt,
-)
 from poc.workflow_1.util import env_float, env_int, format_elapsed_ms, make_timestamp_tag
 from poc.workflow_1.util.image_utils import encode_image_webp
 from poc.workflow_1.util.json_utils import (
@@ -163,6 +159,46 @@ def _count_changed_in_window(mask: "cv2.typing.MatLike", window: dict) -> int:
     return int(cv2.countNonZero(crop))
 
 
+def _cursor_system_prompt() -> str:
+    """CD-SEM 환경에 맞는 cursor coarse detection 시스템 프롬프트.
+
+    DVR / RCS / RCS-on-SEM-Monitor 세 가지 커서 변형을 모두 인지하도록 설명한다.
+    """
+    return (
+        "You locate the mouse cursor inside a screenshot of CD-SEM tooling. "
+        "The cursor can appear in one of three forms depending on which window the pointer is over:\n"
+        "  1) DVR camera feed: a small black 'X' (crosshair) glyph, ~10-20 px on each side.\n"
+        "  2) RCS application (default Windows pointer): a small black arrow with a thin white outline.\n"
+        "  3) RCS SEM Monitor box (the dark live-SEM image area): the same arrow inverted to "
+        "white with a thin black outline so it stays visible against the dark background.\n"
+        "Return strict JSON only. Locate ONLY the mouse cursor; do not confuse it with similar-looking "
+        "but static UI artifacts such as SEM crosshair reticles, alignment-key marks, toolbar icon glyphs, "
+        "or measurement annotations. A real cursor sits on top of the underlying content, is small "
+        "(typically 12-32 px on a side), and never has anti-aliased text or numbers attached to it. "
+        "If no cursor is visible, say so."
+    )
+
+
+def _cursor_user_prompt() -> str:
+    """CD-SEM 환경에 맞는 cursor coarse detection 사용자 프롬프트."""
+    return (
+        "Return JSON with this exact schema:\n"
+        "{\n"
+        '  "cursor_visible": true,\n'
+        '  "cursor_kind": "dvr_x | rcs_black_arrow | rcs_white_arrow",\n'
+        '  "coord_system": "relative_1000",\n'
+        '  "cursor_bbox": {"left": 0, "top": 0, "right": 0, "bottom": 0},\n'
+        '  "confidence": 0.0,\n'
+        '  "evidence": "short string describing the glyph and where it sits"\n'
+        "}\n"
+        "The bbox must tightly enclose the entire visible cursor glyph (X for dvr_x, "
+        "the full arrow shape for rcs_black_arrow / rcs_white_arrow). "
+        "Set cursor_kind to whichever of the three variants you actually see; if you cannot tell, "
+        'set it to "unknown". '
+        "If no cursor is visible, set cursor_visible=false, cursor_bbox=null, and cursor_kind=null."
+    )
+
+
 def _run_cursor_detection(
     *,
     image_b64: str,
@@ -173,8 +209,8 @@ def _run_cursor_detection(
     """프레임 전체에서 마우스 커서의 coarse bbox 를 탐지한다."""
     response = client.chat_with_image_b64(
         image_b64=image_b64,
-        system_message=_coarse_system_prompt(),
-        user_text=_coarse_user_prompt(),
+        system_message=_cursor_system_prompt(),
+        user_text=_cursor_user_prompt(),
         image_mime="image/webp",
         temperature=0.0,
     )
@@ -236,6 +272,7 @@ def _build_timeline_text(results: list[dict]) -> str:
             f"click={'Y' if item.get('is_click_event') else 'N'} "
             f"changed_in_window={int(item.get('changed_in_window') or 0):>6d} "
             f"focus={float(item.get('click_focus_ratio') or 0.0):.3f} "
+            f"kind={item.get('cursor_kind') or '-':<16s} "
             f"cursor_conf={item.get('cursor_confidence', '')}"
         )
     return "\n".join(lines) + "\n"
@@ -367,6 +404,7 @@ def run_test() -> str:
             "overlay_path": overlay_path,
             "cursor_payload": cursor_payload,
             "cursor_bbox": cursor_bbox or {},
+            "cursor_kind": cursor_payload.get("cursor_kind"),
             "cursor_confidence": cursor_payload.get("confidence"),
             "cursor_evidence": cursor_payload.get("evidence"),
             "click_window": click_window or {},

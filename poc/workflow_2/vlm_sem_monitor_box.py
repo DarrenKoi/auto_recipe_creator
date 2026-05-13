@@ -1,10 +1,13 @@
-"""템플릿 없이 자연어 프롬프트만으로 VLM 이 "SEM monitor box" 를
+"""템플릿 없이 자연어 프롬프트만으로 VLM 이 "Image Operation Box" 를
 찾아낼 수 있는지 검증하는 5장 샘플 프로브.
 
-설명되는 박스:
-  - Tool 화면 좌하단 (bottom-left) 부근에 위치한 큰 패널.
-  - 전체 화면의 약 1/4 정도 크기.
-  - 'Optics', 'PM', 'FOV', 'View Setup' 등 SEM 제어 버튼이 모여 있다.
+설명되는 박스 (Image Operation Box, 통칭 "SEM box"):
+  - 두 부분이 옆으로 붙어 하나의 큰 블록을 이룬다:
+    (A) Live SEM image area — 어둡고 실시간으로 갱신되는 wafer/시료 그레이스케일 영상.
+    (B) Operation 버튼 패널 — 'AMS', 'ACD', 'Next', 'DDS' 등 SEM 조작 버튼이
+        세로/격자 형태로 배치된 인접 패널.
+  - VLM 은 두 영역을 하나의 직사각 bbox 로 함께 감싸야 한다.
+    (예전 프롬프트는 버튼 패널만 잡아서 live SEM image 가 누락되는 문제가 있었다.)
 
 입력은 `poc/workflow_2/filter_frames_by_change.py` 가 만든
 `change_events.json` 의 events 에서 5개를 random sample 한다.
@@ -111,36 +114,51 @@ def _sample_events(events: list[dict], count: int) -> list[dict]:
 
 
 def _sem_box_system_prompt() -> str:
-    """SEM monitor box 탐지 시스템 프롬프트."""
+    """Image Operation Box 탐지 시스템 프롬프트."""
     return (
         "You analyse a screenshot of a Windows CD-SEM Tool application. "
         "Return strict JSON only. "
-        "Locate the SEM monitor panel — a large UI panel typically positioned "
-        "in the bottom-left quadrant of the screen, roughly one quarter of the "
-        "total screen area. The panel contains a vertical or grid arrangement "
-        "of buttons labelled with SEM control terms such as 'Optics', 'PM', "
-        "'FOV', 'View Setup', 'Stage', 'Wafer', and similar commands. "
-        "Do not return the entire screen, the title bar, or any unrelated panel. "
-        "If no such panel is visible, set panel_visible=false."
+        "Locate the 'Image Operation Box' — a single rectangular region that contains TWO "
+        "tightly-coupled parts arranged side-by-side and treated as one logical area:\n"
+        "  (A) Live SEM image area: a dark, real-time-updating grayscale image of the wafer "
+        "or sample being scanned. It looks like a noisy electron-microscope image, not a "
+        "color photograph.\n"
+        "  (B) Operation button panel: a vertical or grid arrangement of short-label buttons "
+        "sitting flush against one edge of the live SEM image. Typical button labels you "
+        "should expect to read here include 'AMS', 'ACD', 'Next', 'DDS', and similar short "
+        "SEM operation commands.\n"
+        "Return a bounding box that encloses BOTH the live SEM image area and the adjacent "
+        "button panel together, as one rectangular block. "
+        "Do NOT return only the button panel and do NOT return only the live SEM image — "
+        "either one alone is the wrong answer. "
+        "Do not include unrelated panels, separate toolbars, the window title bar, or other "
+        "tabs of the application. "
+        "If you cannot see both parts together, set panel_visible=false."
     )
 
 
 def _sem_box_user_prompt() -> str:
-    """SEM monitor box 탐지 사용자 프롬프트."""
+    """Image Operation Box 탐지 사용자 프롬프트."""
     return (
         "Return JSON with this exact schema:\n"
         "{\n"
         '  "panel_visible": true,\n'
         '  "coord_system": "relative_1000",\n'
         '  "panel_bbox": {"left": 0, "top": 0, "right": 0, "bottom": 0},\n'
-        '  "visible_buttons": ["Optics", "PM", "FOV", "View Setup"],\n'
+        '  "image_area_side": "left | right",\n'
+        '  "visible_buttons": ["AMS", "ACD", "Next", "DDS"],\n'
         '  "confidence": 0.0,\n'
-        '  "evidence": "short string explaining what you used to identify the panel"\n'
+        '  "evidence": "short string explaining what you used to identify the region"\n'
         "}\n"
-        "The bbox must tightly enclose the SEM monitor panel only. "
-        "visible_buttons should list 2~6 labels you actually read inside the panel. "
-        "If no SEM monitor panel is visible, set panel_visible=false, panel_bbox=null, "
-        "visible_buttons=[]."
+        "panel_bbox must tightly enclose the ENTIRE Image Operation Box — both the live SEM "
+        "image area and the adjacent button panel together, as one rectangle. "
+        "image_area_side tells which side of the bbox the live SEM image occupies relative "
+        "to the button panel (use 'left' if the live image is on the left and the buttons "
+        "are on the right; use 'right' for the opposite). "
+        "visible_buttons should list 2~6 button labels you actually read inside the panel "
+        "(expected examples: 'AMS', 'ACD', 'Next', 'DDS'). "
+        "If the region is not visible as a single connected block, set panel_visible=false, "
+        "panel_bbox=null, image_area_side=null, visible_buttons=[]."
     )
 
 
@@ -170,15 +188,15 @@ def _run_sem_box_detection(
 
 
 def _save_overlay(*, frame_path: Path, panel_bbox: dict, output_path: Path) -> str:
-    """frame 위에 SEM panel bbox 를 마킹한다."""
+    """frame 위에 Image Operation Box bbox 를 마킹한다."""
     with Image.open(frame_path) as image:
         elements = {
-            "sem_monitor_panel": {"bbox": panel_bbox, "center": bbox_center(panel_bbox)},
+            "image_operation_box": {"bbox": panel_bbox, "center": bbox_center(panel_bbox)},
         }
         save_marked_bboxes(
             image.convert("RGB"),
             elements=elements,
-            colors={"sem_monitor_panel": "magenta"},
+            colors={"image_operation_box": "magenta"},
             out_path=output_path,
         )
     return str(output_path)
@@ -202,6 +220,7 @@ def _build_timeline_text(results: list[dict]) -> str:
             f"rank={int(item.get('rank') or 0):03d} "
             f"frame={int(item.get('frame_index') or 0):04d} "
             f"panel={'Y' if bbox else 'N'} "
+            f"image_side={item.get('image_area_side') or '-':<7s} "
             f"conf={item.get('panel_confidence', '')} "
             f"buttons=[{buttons}] "
             f"bbox={bbox}"
@@ -306,6 +325,7 @@ def run_test() -> str:
             "panel_bbox": panel_bbox or {},
             "panel_confidence": payload.get("confidence"),
             "panel_evidence": payload.get("evidence"),
+            "image_area_side": payload.get("image_area_side"),
             "visible_buttons": payload.get("visible_buttons") or [],
         }
         save_debug_json(results_dir / f"{rank:03d}_frame_{frame_index:04d}.json", result)

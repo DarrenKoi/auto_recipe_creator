@@ -1,0 +1,770 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>filter_frames_by_change — 변화 이벤트 필터 파이프라인</title>
+<style>
+  :root {
+    --bg: #0e1117;
+    --panel: #161b22;
+    --panel2: #1c2230;
+    --border: #2a3140;
+    --text: #e6edf3;
+    --muted: #9aa4b2;
+    --accent: #58a6ff;
+    --accent2: #7ee787;
+    --warn: #f0b429;
+    --danger: #ff7b72;
+    --kbd: #30363d;
+    --code-bg: #0b0f14;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+    line-height: 1.65;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 40px 28px 80px; }
+  h1 {
+    font-size: 30px; margin: 0 0 6px 0; letter-spacing: -0.02em;
+  }
+  .subtitle { color: var(--muted); margin-bottom: 32px; font-size: 15px; }
+  h2 {
+    font-size: 22px; margin-top: 48px; margin-bottom: 12px;
+    padding-bottom: 8px; border-bottom: 1px solid var(--border);
+    letter-spacing: -0.01em;
+  }
+  h3 { font-size: 17px; margin-top: 24px; margin-bottom: 8px; color: var(--accent); }
+  p { margin: 10px 0; }
+  code, kbd {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+  }
+  code {
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--accent2);
+  }
+  kbd {
+    background: var(--kbd); border: 1px solid #444c56;
+    padding: 1px 6px; border-radius: 4px;
+    font-size: 12px;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  pre code { background: none; padding: 0; color: var(--text); }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin: 16px 0;
+  }
+  .step-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin: 20px 0;
+  }
+  .step-header {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 6px;
+  }
+  .step-num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--accent); color: #0b0f14;
+    font-weight: 700; font-size: 14px;
+  }
+  .step-title { font-size: 18px; font-weight: 600; }
+  .why {
+    background: var(--panel2);
+    border-left: 3px solid var(--accent2);
+    padding: 8px 14px;
+    margin: 10px 0;
+    border-radius: 0 6px 6px 0;
+    font-size: 14px;
+    color: var(--text);
+  }
+  .why strong { color: var(--accent2); }
+  .note {
+    background: var(--panel2);
+    border-left: 3px solid var(--warn);
+    padding: 8px 14px;
+    margin: 10px 0;
+    border-radius: 0 6px 6px 0;
+    font-size: 14px;
+  }
+  .note strong { color: var(--warn); }
+
+  .pipeline-overview {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    align-items: center; justify-content: center;
+    margin: 24px 0;
+  }
+  .pip-node {
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    padding: 8px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-family: "SF Mono", Menlo, monospace;
+  }
+  .pip-arrow { color: var(--muted); font-size: 16px; }
+
+  table {
+    width: 100%; border-collapse: collapse;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 12px 0;
+    font-size: 14px;
+  }
+  th, td {
+    padding: 10px 14px; text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  th { background: var(--panel2); color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+
+  .svg-frame {
+    display: block; margin: 18px auto;
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  .caption {
+    text-align: center; color: var(--muted);
+    font-size: 13px; margin-top: -6px; margin-bottom: 18px;
+    font-style: italic;
+  }
+
+  .toc {
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 22px;
+    margin-bottom: 32px;
+  }
+  .toc ol { margin: 6px 0; padding-left: 20px; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+
+  .muted { color: var(--muted); }
+  .accent { color: var(--accent); }
+  .green  { color: var(--accent2); }
+  .warn   { color: var(--warn); }
+  .danger { color: var(--danger); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>filter_frames_by_change.py</h1>
+<p class="subtitle">
+  <code>poc/workflow_2/filter_frames_by_change.py</code> 가 수천 장의 캡처 프레임에서
+  &quot;뭔가 바뀐 순간&quot;만 골라내는 방법 — OpenCV 고전 영상처리 파이프라인 시각 해설.
+</p>
+
+<div class="toc">
+  <strong>목차</strong>
+  <ol>
+    <li><a href="#bigpicture">큰 그림: 왜 필터링이 필요한가</a></li>
+    <li><a href="#pipeline">파이프라인 한눈에 보기</a></li>
+    <li><a href="#step1">Step 1 — Grayscale 로딩 &amp; Resize</a></li>
+    <li><a href="#step2">Step 2 — <code>cv2.absdiff</code> (절댓값 차이)</a></li>
+    <li><a href="#step3">Step 3 — <code>cv2.threshold</code> (이진화)</a></li>
+    <li><a href="#step4">Step 4 — <code>cv2.dilate</code> (팽창)</a></li>
+    <li><a href="#step5">Step 5 — <code>connectedComponentsWithStats</code> (연결요소 면적)</a></li>
+    <li><a href="#gate">Step 6 — 면적 게이트 &amp; 이벤트 기록</a></li>
+    <li><a href="#tuning">파라미터 튜닝 가이드</a></li>
+    <li><a href="#caveats">한계와 함정</a></li>
+  </ol>
+</div>
+
+<!-- =========================================================== -->
+<h2 id="bigpicture">1. 큰 그림: 왜 필터링이 필요한가</h2>
+
+<p>
+  <code>capture_window_frames_tool.py</code> 가 5분 동안 500&nbsp;ms 간격으로 Tool 창을 캡처하면
+  약 <strong>600장</strong>의 JPEG 가 쌓인다. 이 중 대부분은 <em>이전 프레임과 거의 동일</em>한
+  &quot;정적 화면&quot; 이다. 팝업이 뜨거나, 다이얼로그가 닫히거나, SEM 이미지가 갱신되는
+  실제 &quot;사건&quot; 이 발생한 프레임은 전체의 5&ndash;10% 수준.
+</p>
+
+<div class="why">
+  <strong>왜 미리 거르나?</strong> 다음 단계인 VLM 분석(<code>vlm_cursor_click_filter.py</code> 등) 은
+  프레임 1장당 수 초 + 비용이 든다. 600장 × VLM = 비현실적.
+  <strong>변화가 있는 ~50장만</strong> VLM 에게 넘기는 것이 본 스크립트의 미션.
+</div>
+
+<!-- 개념 그림: 600 frames → 50 events -->
+<svg class="svg-frame" viewBox="0 0 880 200" width="100%" xmlns="http://www.w3.org/2000/svg">
+  <!-- 600 frames row -->
+  <text x="20" y="30" fill="#9aa4b2" font-size="13" font-family="monospace">input: ~600 frames</text>
+  <g>
+    <!-- many small ticks -->
+    <g fill="#2a3140" stroke="#2a3140">
+      <rect x="20" y="44" width="3" height="22"/>
+      <rect x="27" y="44" width="3" height="22"/>
+      <rect x="34" y="44" width="3" height="22"/>
+      <rect x="41" y="44" width="3" height="22"/>
+      <rect x="48" y="44" width="3" height="22"/>
+      <rect x="55" y="44" width="3" height="22"/>
+      <rect x="62" y="44" width="3" height="22"/>
+      <rect x="69" y="44" width="3" height="22"/>
+      <rect x="76" y="44" width="3" height="22"/>
+      <rect x="83" y="44" width="3" height="22"/>
+    </g>
+    <!-- change events highlighted -->
+    <rect x="90" y="44" width="3" height="22" fill="#7ee787"/>
+    <g fill="#2a3140"><rect x="97" y="44" width="3" height="22"/><rect x="104" y="44" width="3" height="22"/><rect x="111" y="44" width="3" height="22"/><rect x="118" y="44" width="3" height="22"/></g>
+    <rect x="125" y="44" width="3" height="22" fill="#7ee787"/>
+    <g fill="#2a3140"><rect x="132" y="44" width="3" height="22"/><rect x="139" y="44" width="3" height="22"/><rect x="146" y="44" width="3" height="22"/></g>
+    <rect x="153" y="44" width="3" height="22" fill="#7ee787"/>
+    <g fill="#2a3140"><rect x="160" y="44" width="3" height="22"/><rect x="167" y="44" width="3" height="22"/><rect x="174" y="44" width="3" height="22"/></g>
+    <rect x="181" y="44" width="3" height="22" fill="#7ee787"/>
+    <g fill="#2a3140"><rect x="188" y="44" width="3" height="22"/><rect x="195" y="44" width="3" height="22"/><rect x="202" y="44" width="3" height="22"/></g>
+    <rect x="209" y="44" width="3" height="22" fill="#7ee787"/>
+    <g fill="#2a3140"><rect x="216" y="44" width="3" height="22"/><rect x="223" y="44" width="3" height="22"/></g>
+    <rect x="230" y="44" width="3" height="22" fill="#7ee787"/>
+    <g fill="#2a3140"><rect x="237" y="44" width="3" height="22"/><rect x="244" y="44" width="3" height="22"/></g>
+    <rect x="251" y="44" width="3" height="22" fill="#7ee787"/>
+    <g fill="#2a3140">
+      <rect x="258" y="44" width="3" height="22"/><rect x="265" y="44" width="3" height="22"/>
+      <rect x="272" y="44" width="3" height="22"/><rect x="279" y="44" width="3" height="22"/>
+      <rect x="286" y="44" width="3" height="22"/><rect x="293" y="44" width="3" height="22"/>
+      <rect x="300" y="44" width="3" height="22"/><rect x="307" y="44" width="3" height="22"/>
+    </g>
+    <text x="320" y="60" fill="#9aa4b2" font-size="12" font-family="monospace">… 600 frames …</text>
+  </g>
+
+  <!-- arrow + pipeline -->
+  <path d="M440 56 L490 56" stroke="#58a6ff" stroke-width="2" fill="none" marker-end="url(#arr)"/>
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L8,5 L0,10 z" fill="#58a6ff"/>
+    </marker>
+  </defs>
+  <rect x="495" y="40" width="180" height="36" rx="6" fill="#1c2230" stroke="#58a6ff"/>
+  <text x="585" y="63" fill="#58a6ff" font-size="13" text-anchor="middle" font-family="monospace">absdiff pipeline</text>
+
+  <!-- arrow out -->
+  <path d="M680 56 L730 56" stroke="#7ee787" stroke-width="2" fill="none" marker-end="url(#arr2)"/>
+  <defs>
+    <marker id="arr2" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L8,5 L0,10 z" fill="#7ee787"/>
+    </marker>
+  </defs>
+
+  <!-- output: ~50 events -->
+  <text x="735" y="30" fill="#9aa4b2" font-size="13" font-family="monospace">~50 events</text>
+  <g fill="#7ee787">
+    <rect x="735" y="44" width="6" height="22"/>
+    <rect x="747" y="44" width="6" height="22"/>
+    <rect x="759" y="44" width="6" height="22"/>
+    <rect x="771" y="44" width="6" height="22"/>
+    <rect x="783" y="44" width="6" height="22"/>
+    <rect x="795" y="44" width="6" height="22"/>
+    <rect x="807" y="44" width="6" height="22"/>
+    <rect x="819" y="44" width="6" height="22"/>
+    <rect x="831" y="44" width="6" height="22"/>
+    <rect x="843" y="44" width="6" height="22"/>
+  </g>
+
+  <!-- bottom labels -->
+  <text x="170" y="120" fill="#9aa4b2" font-size="13" text-anchor="middle">
+    회색 = 변화 없음
+  </text>
+  <rect x="105" y="108" width="10" height="10" fill="#2a3140"/>
+  <text x="170" y="142" fill="#7ee787" font-size="13" text-anchor="middle">
+    초록 = change event 후보
+  </text>
+  <rect x="105" y="130" width="10" height="10" fill="#7ee787"/>
+
+  <text x="585" y="120" fill="#e6edf3" font-size="13" text-anchor="middle">
+    OpenCV 고전 영상처리만으로
+  </text>
+  <text x="585" y="140" fill="#e6edf3" font-size="13" text-anchor="middle">
+    저비용 prefilter
+  </text>
+</svg>
+
+<!-- =========================================================== -->
+<h2 id="pipeline">2. 파이프라인 한눈에 보기</h2>
+
+<div class="pipeline-overview">
+  <div class="pip-node">JPEG 프레임 N장</div>
+  <span class="pip-arrow">→</span>
+  <div class="pip-node">Grayscale + Resize</div>
+  <span class="pip-arrow">→</span>
+  <div class="pip-node">absdiff(prev, curr)</div>
+  <span class="pip-arrow">→</span>
+  <div class="pip-node">threshold T=25</div>
+  <span class="pip-arrow">→</span>
+  <div class="pip-node">dilate 5×5 ×2</div>
+  <span class="pip-arrow">→</span>
+  <div class="pip-node">connected components</div>
+  <span class="pip-arrow">→</span>
+  <div class="pip-node">largest_blob ≥ 5000?</div>
+</div>
+
+<p>
+  핵심 함수 두 개를 보면 흐름이 한눈에 보인다.
+</p>
+
+<pre><code><span class="muted"># filter_frames_by_change.py:161-189</span>
+def _compute_change_stats(prev_gray, curr_gray, diff_threshold):
+    diff   = cv2.absdiff(prev_gray, curr_gray)               <span class="muted"># Step 2</span>
+    _, th  = cv2.threshold(diff, diff_threshold, 255,
+                           cv2.THRESH_BINARY)                <span class="muted"># Step 3</span>
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5,5))
+    dil    = cv2.dilate(th, kernel, iterations=2)            <span class="muted"># Step 4</span>
+
+    num_labels, _, stats, _ = cv2.connectedComponentsWithStats(
+        dil, connectivity=8)                                 <span class="muted"># Step 5</span>
+    largest = max((stats[i, cv2.CC_STAT_AREA]
+                   for i in range(1, num_labels)), default=0)
+    return {"largest_blob_area_px": int(largest), ...}
+</code></pre>
+
+<!-- =========================================================== -->
+<h2 id="step1">3. Step 1 — Grayscale 로딩 &amp; Resize</h2>
+
+<div class="step-card">
+  <div class="step-header">
+    <span class="step-num">1</span>
+    <span class="step-title">컬러 → 1채널 + 폭 1280px 로 축소</span>
+  </div>
+  <pre><code>image = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+if w &gt; 1280:
+    image = cv2.resize(image, (1280, new_h), interpolation=cv2.INTER_AREA)</code></pre>
+
+  <div class="why">
+    <strong>왜 그레이스케일?</strong> 변화 감지에는 휘도 정보면 충분하다.
+    RGB 3채널 → 1채널로 줄이면 메모리·연산이 1/3. UI 변화(팝업, 텍스트 갱신)는
+    색상보다 밝기 차이로 충분히 잡힌다.
+  </div>
+  <div class="why">
+    <strong>왜 1280px 다운샘플?</strong> 원본은 보통 2560+ 폭. <code>absdiff</code> 와
+    <code>dilate</code> 의 연산량은 픽셀 수에 선형 비례. 폭을 절반으로 줄이면 연산량이
+    1/4. <code>INTER_AREA</code> 보간은 다운샘플 시 모아레가 적고 평균화 효과로 노이즈도 줄여준다.
+  </div>
+</div>
+
+<svg class="svg-frame" viewBox="0 0 720 180" width="100%" xmlns="http://www.w3.org/2000/svg">
+  <!-- color 2560x1440 -->
+  <rect x="20" y="30" width="240" height="135" fill="url(#colorGrad)" stroke="#444"/>
+  <defs>
+    <linearGradient id="colorGrad" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#ff7b72"/>
+      <stop offset="50%" stop-color="#7ee787"/>
+      <stop offset="100%" stop-color="#58a6ff"/>
+    </linearGradient>
+  </defs>
+  <text x="140" y="20" fill="#9aa4b2" font-size="12" text-anchor="middle" font-family="monospace">color, 2560×1440</text>
+  <text x="140" y="180" fill="#e6edf3" font-size="12" text-anchor="middle">~11 MB / frame</text>
+
+  <path d="M280 95 L340 95" stroke="#58a6ff" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- grayscale 1280 -->
+  <rect x="350" y="55" width="180" height="80" fill="url(#grayGrad)" stroke="#444"/>
+  <defs>
+    <linearGradient id="grayGrad" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#222"/>
+      <stop offset="100%" stop-color="#ccc"/>
+    </linearGradient>
+  </defs>
+  <text x="440" y="45" fill="#9aa4b2" font-size="12" text-anchor="middle" font-family="monospace">gray, 1280×720</text>
+  <text x="440" y="155" fill="#e6edf3" font-size="12" text-anchor="middle">~0.9 MB / frame</text>
+
+  <text x="630" y="100" fill="#7ee787" font-size="13" text-anchor="middle" font-family="monospace">~12× 더 가벼움</text>
+</svg>
+
+<!-- =========================================================== -->
+<h2 id="step2">4. Step 2 — <code>cv2.absdiff</code> (절댓값 차이)</h2>
+
+<div class="step-card">
+  <div class="step-header">
+    <span class="step-num">2</span>
+    <span class="step-title">인접 두 프레임의 픽셀별 |a − b|</span>
+  </div>
+  <pre><code>diff = cv2.absdiff(prev_gray, curr_gray)</code></pre>
+
+  <p>
+    같은 위치의 두 픽셀이 동일하면 결과는 <code>0</code> (검정), 다를수록 큰 값(255 = 흰색).
+    움직이지 않은 영역은 까맣게, 변한 영역만 밝게 떠오른다.
+  </p>
+
+  <div class="why">
+    <strong>왜 단순 빼기가 아니라 절댓값?</strong> <code>uint8</code> 은 음수가 없다.
+    <code>a − b</code> 가 음수가 되면 underflow 로 wrap-around(255 근처) 되어 의미가 깨진다.
+    <code>absdiff</code> 는 항상 <code>|a−b|</code> 를 반환해 부호 문제를 회피한다.
+  </div>
+</div>
+
+<!-- SVG illustration: prev frame, curr frame, diff -->
+<svg class="svg-frame" viewBox="0 0 760 220" width="100%" xmlns="http://www.w3.org/2000/svg">
+  <!-- prev frame: window with no popup -->
+  <g>
+    <text x="100" y="20" fill="#9aa4b2" font-size="13" text-anchor="middle" font-family="monospace">prev frame (t)</text>
+    <rect x="20" y="30" width="160" height="120" fill="#2a3140" stroke="#444"/>
+    <!-- toolbar -->
+    <rect x="20" y="30" width="160" height="18" fill="#3a4250"/>
+    <!-- SEM image area -->
+    <rect x="30" y="58" width="140" height="82" fill="#1c2230"/>
+    <circle cx="100" cy="99" r="20" fill="#666"/>
+  </g>
+
+  <text x="200" y="95" fill="#58a6ff" font-size="22" text-anchor="middle">−</text>
+
+  <!-- curr frame: popup appeared -->
+  <g>
+    <text x="300" y="20" fill="#9aa4b2" font-size="13" text-anchor="middle" font-family="monospace">curr frame (t+1)</text>
+    <rect x="220" y="30" width="160" height="120" fill="#2a3140" stroke="#444"/>
+    <rect x="220" y="30" width="160" height="18" fill="#3a4250"/>
+    <rect x="230" y="58" width="140" height="82" fill="#1c2230"/>
+    <circle cx="300" cy="99" r="20" fill="#666"/>
+    <!-- popup -->
+    <rect x="255" y="70" width="90" height="50" fill="#ffd86b" stroke="#a37b00"/>
+    <text x="300" y="100" fill="#222" font-size="11" text-anchor="middle">POPUP!</text>
+  </g>
+
+  <text x="400" y="95" fill="#58a6ff" font-size="22" text-anchor="middle">=</text>
+
+  <!-- diff: most black, popup region white -->
+  <g>
+    <text x="500" y="20" fill="#9aa4b2" font-size="13" text-anchor="middle" font-family="monospace">absdiff result</text>
+    <rect x="420" y="30" width="160" height="120" fill="#000" stroke="#444"/>
+    <!-- white blob for popup -->
+    <rect x="455" y="70" width="90" height="50" fill="#fff"/>
+  </g>
+
+  <!-- annotation -->
+  <path d="M580 95 L640 95" stroke="#7ee787" stroke-width="2" marker-end="url(#arrG)"/>
+  <defs>
+    <marker id="arrG" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L8,5 L0,10 z" fill="#7ee787"/>
+    </marker>
+  </defs>
+  <text x="700" y="85" fill="#7ee787" font-size="13" text-anchor="middle">변화 영역만</text>
+  <text x="700" y="105" fill="#7ee787" font-size="13" text-anchor="middle">밝게 도드라짐</text>
+
+  <text x="380" y="195" fill="#9aa4b2" font-size="12" text-anchor="middle" font-style="italic">
+    움직이지 않은 모든 픽셀 → 0(검정), 변한 픽셀 → 0 초과(밝음)
+  </text>
+</svg>
+
+<!-- =========================================================== -->
+<h2 id="step3">5. Step 3 — <code>cv2.threshold</code> (이진화)</h2>
+
+<div class="step-card">
+  <div class="step-header">
+    <span class="step-num">3</span>
+    <span class="step-title">차이가 T=25 이상이면 255, 미만이면 0</span>
+  </div>
+  <pre><code>_, thresh = cv2.threshold(diff, 25, 255, cv2.THRESH_BINARY)</code></pre>
+
+  <div class="why">
+    <strong>왜 임계값?</strong> JPEG 압축, 카메라 노이즈, 안티앨리어싱 등으로
+    같은 화면이라도 픽셀값이 1&ndash;10 정도 흔들린다. T&nbsp;=&nbsp;25 미만은
+    &quot;노이즈&quot; 로 간주해 버리고, 실제 UI 변경(보통 50&ndash;255 차이) 만 남긴다.
+  </div>
+  <div class="why">
+    <strong>왜 단순 binary?</strong> 후속 단계(연결요소 분석)는 0/255 이진 마스크가 필요.
+    <code>THRESH_OTSU</code> 같은 적응형 방법도 가능하지만, &quot;무변화 프레임&quot; 의 경우
+    Otsu 가 노이즈를 강제로 분할해버려 false positive 가 늘어난다. 고정 임계값이 더 안전.
+  </div>
+</div>
+
+<!-- threshold histogram-style illustration -->
+<svg class="svg-frame" viewBox="0 0 720 220" width="100%" xmlns="http://www.w3.org/2000/svg">
+  <!-- x axis -->
+  <line x1="60" y1="170" x2="660" y2="170" stroke="#666"/>
+  <line x1="60" y1="40"  x2="60"  y2="170" stroke="#666"/>
+  <text x="60"  y="190" fill="#9aa4b2" font-size="11" text-anchor="middle">0</text>
+  <text x="360" y="190" fill="#9aa4b2" font-size="11" text-anchor="middle">128</text>
+  <text x="660" y="190" fill="#9aa4b2" font-size="11" text-anchor="middle">255</text>
+  <text x="360" y="210" fill="#9aa4b2" font-size="12" text-anchor="middle">absdiff 픽셀값</text>
+
+  <!-- noise hump near 0 -->
+  <path d="M60 168 Q90 90 120 168 Q140 168 160 170 Z" fill="#ff7b72" opacity="0.7"/>
+  <text x="100" y="80" fill="#ff7b72" font-size="11" text-anchor="middle">노이즈 (대다수)</text>
+
+  <!-- real change bump around 150 -->
+  <path d="M340 168 Q400 120 460 168 Z" fill="#7ee787" opacity="0.7"/>
+  <text x="400" y="110" fill="#7ee787" font-size="11" text-anchor="middle">실제 UI 변화</text>
+
+  <!-- threshold line at 25 -->
+  <line x1="120" y1="35" x2="120" y2="170" stroke="#f0b429" stroke-width="2" stroke-dasharray="4 4"/>
+  <text x="120" y="30" fill="#f0b429" font-size="12" text-anchor="middle" font-family="monospace">T = 25</text>
+
+  <!-- arrows: kill / keep -->
+  <text x="85"  y="155" fill="#ff7b72" font-size="11" text-anchor="middle">→ 0</text>
+  <text x="400" y="155" fill="#7ee787" font-size="11" text-anchor="middle">→ 255</text>
+</svg>
+<p class="caption">임계값 25는 "이 정도 차이는 노이즈" 와 "이건 진짜 변화" 의 경계선</p>
+
+<!-- =========================================================== -->
+<h2 id="step4">6. Step 4 — <code>cv2.dilate</code> (팽창)</h2>
+
+<div class="step-card">
+  <div class="step-header">
+    <span class="step-num">4</span>
+    <span class="step-title">5×5 사각 커널로 2회 팽창 — 흩어진 점들을 덩어리로</span>
+  </div>
+  <pre><code>kernel  = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+dilated = cv2.dilate(thresh, kernel, iterations=2)</code></pre>
+
+  <p>
+    팽창은 흰색 픽셀 주변을 모두 흰색으로 채우는 모폴로지 연산이다.
+    5×5 커널 × 2회 ≒ 각 흰 픽셀의 영향 반경이 약 <strong>5px</strong>.
+  </p>
+
+  <div class="why">
+    <strong>왜 팽창?</strong> 텍스트 변경 같은 작은 사건은 absdiff 결과가
+    수십 개의 작은 점으로 흩어진다. 그대로 connectedComponents 를 돌리면
+    각 점이 별도 블롭으로 잡혀 &quot;가장 큰 블롭&quot; 면적이 작게 나온다.
+    팽창은 가까운 점들을 하나의 큰 덩어리로 묶어 &quot;실제 변화 영역&quot; 의 크기를
+    제대로 측정하게 해준다.
+  </div>
+</div>
+
+<svg class="svg-frame" viewBox="0 0 720 200" width="100%" xmlns="http://www.w3.org/2000/svg">
+  <!-- before: scattered dots -->
+  <text x="130" y="20" fill="#9aa4b2" font-size="13" text-anchor="middle" font-family="monospace">threshold 직후</text>
+  <rect x="30" y="30" width="200" height="140" fill="#0b0f14" stroke="#444"/>
+  <g fill="#fff">
+    <circle cx="70"  cy="60"  r="2"/>
+    <circle cx="80"  cy="75"  r="2"/>
+    <circle cx="95"  cy="68"  r="3"/>
+    <circle cx="110" cy="80"  r="2"/>
+    <circle cx="125" cy="72"  r="2"/>
+    <circle cx="140" cy="90"  r="3"/>
+    <circle cx="100" cy="105" r="2"/>
+    <circle cx="115" cy="115" r="2"/>
+    <circle cx="155" cy="105" r="2"/>
+    <circle cx="170" cy="120" r="3"/>
+    <circle cx="180" cy="100" r="2"/>
+    <circle cx="190" cy="130" r="2"/>
+  </g>
+  <text x="130" y="185" fill="#ff7b72" font-size="11" text-anchor="middle">12개의 작은 블롭 — 최대 면적 ≈ 28px</text>
+
+  <!-- arrow -->
+  <path d="M250 95 L310 95" stroke="#58a6ff" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="280" y="80" fill="#58a6ff" font-size="11" text-anchor="middle">dilate ×2</text>
+
+  <!-- after: one blob -->
+  <text x="420" y="20" fill="#9aa4b2" font-size="13" text-anchor="middle" font-family="monospace">dilate 후</text>
+  <rect x="320" y="30" width="200" height="140" fill="#0b0f14" stroke="#444"/>
+  <ellipse cx="430" cy="95" rx="80" ry="40" fill="#fff"/>
+  <text x="420" y="185" fill="#7ee787" font-size="11" text-anchor="middle">1개 큰 블롭 — 면적 ≈ 10000px</text>
+
+  <!-- conclusion -->
+  <text x="630" y="80" fill="#7ee787" font-size="13" text-anchor="middle">"한 사건" 의</text>
+  <text x="630" y="100" fill="#7ee787" font-size="13" text-anchor="middle">총 면적이</text>
+  <text x="630" y="120" fill="#7ee787" font-size="13" text-anchor="middle">살아남는다</text>
+</svg>
+
+<!-- =========================================================== -->
+<h2 id="step5">7. Step 5 — <code>connectedComponentsWithStats</code></h2>
+
+<div class="step-card">
+  <div class="step-header">
+    <span class="step-num">5</span>
+    <span class="step-title">흰색 덩어리를 label 단위로 분리하고 각 면적 측정</span>
+  </div>
+  <pre><code>num_labels, _, stats, _ = cv2.connectedComponentsWithStats(
+    dilated, connectivity=8)
+
+for label in range(1, num_labels):           <span class="muted"># 0번은 배경, 건너뜀</span>
+    area = int(stats[label, cv2.CC_STAT_AREA])
+    if area &gt; largest_blob_area:
+        largest_blob_area = area</code></pre>
+
+  <p>
+    <code>connectivity=8</code> 은 대각선으로 붙은 픽셀도 같은 덩어리로 간주.
+    반환되는 <code>stats</code> 는 <code>[label, [x, y, w, h, area]]</code> 행렬이며,
+    label <code>0</code> 은 배경이라 <code>range(1, num_labels)</code> 로 스킵한다.
+  </p>
+
+  <div class="why">
+    <strong>왜 합계가 아닌 &quot;가장 큰 블롭&quot;?</strong>
+    화면 곳곳에 작은 변화가 흩어진 경우(예: 시계 표시가 째깍거리는 동시에
+    스크롤바가 미세하게 떨림) 합계는 크지만 &quot;사건&quot; 은 아니다.
+    가장 큰 단일 영역을 본다는 건 &quot;<em>한 곳에서 충분히 큰 일이 일어났는가</em>&quot;
+    를 묻는 것 — 팝업·다이얼로그·이미지 갱신 같은 진짜 이벤트 신호.
+  </div>
+</div>
+
+<svg class="svg-frame" viewBox="0 0 720 200" width="100%" xmlns="http://www.w3.org/2000/svg">
+  <rect x="20" y="20" width="680" height="160" fill="#0b0f14" stroke="#444"/>
+
+  <!-- big blob -->
+  <ellipse cx="180" cy="100" rx="80" ry="50" fill="#7ee787"/>
+  <text x="180" y="105" fill="#0b0f14" font-size="14" text-anchor="middle" font-weight="bold">label=1</text>
+  <text x="180" y="170" fill="#7ee787" font-size="12" text-anchor="middle" font-family="monospace">area = 12,400 ★</text>
+
+  <!-- small blob 1 -->
+  <circle cx="380" cy="60" r="12" fill="#ff7b72"/>
+  <text x="380" y="64" fill="#0b0f14" font-size="10" text-anchor="middle" font-weight="bold">2</text>
+  <text x="380" y="90" fill="#ff7b72" font-size="11" text-anchor="middle" font-family="monospace">area = 450</text>
+
+  <!-- small blob 2 -->
+  <circle cx="490" cy="130" r="10" fill="#ff7b72"/>
+  <text x="490" y="134" fill="#0b0f14" font-size="10" text-anchor="middle" font-weight="bold">3</text>
+  <text x="490" y="160" fill="#ff7b72" font-size="11" text-anchor="middle" font-family="monospace">area = 310</text>
+
+  <!-- small blob 3 -->
+  <circle cx="600" cy="80" r="8" fill="#ff7b72"/>
+  <text x="600" y="84" fill="#0b0f14" font-size="10" text-anchor="middle" font-weight="bold">4</text>
+  <text x="600" y="110" fill="#ff7b72" font-size="11" text-anchor="middle" font-family="monospace">area = 200</text>
+
+  <!-- legend -->
+  <text x="360" y="40" fill="#e6edf3" font-size="13" text-anchor="middle">
+    largest_blob_area = max(12400, 450, 310, 200) = <tspan fill="#7ee787" font-family="monospace">12,400</tspan>
+  </text>
+</svg>
+
+<!-- =========================================================== -->
+<h2 id="gate">8. Step 6 — 면적 게이트 &amp; 이벤트 기록</h2>
+
+<div class="step-card">
+  <div class="step-header">
+    <span class="step-num">6</span>
+    <span class="step-title">largest_blob_area ≥ 5000 → "change event"</span>
+  </div>
+  <pre><code><span class="muted"># filter_frames_by_change.py:221-232</span>
+if stats["largest_blob_area_px"] &gt;= min_change_area_px:   <span class="muted"># default 5000</span>
+    events.append({
+        "rank": rank,
+        "frame_index": ...,
+        "timestamp_sec": ...,
+        "frame_path": str(curr_path.resolve()),
+        "prev_frame_path": str(prev_path.resolve()),
+        **stats,
+    })
+    rank += 1</code></pre>
+
+  <p>
+    살아남은 프레임은 <code>change_events/</code> 폴더에 <code>000_frame_xxx.jpg</code>,
+    <code>001_frame_yyy.jpg</code> 식으로 rank 순서로 복사된다.
+    동시에 <code>change_events.json</code> + <code>summary.json</code> 이 기록된다.
+  </p>
+</div>
+
+<!-- =========================================================== -->
+<h2 id="tuning">9. 파라미터 튜닝 가이드</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>파라미터</th>
+      <th>기본값</th>
+      <th>환경변수</th>
+      <th>높이면</th>
+      <th>낮추면</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>min_change_area_px</code></td>
+      <td>5000</td>
+      <td><code>FILTER_MIN_CHANGE_AREA_PX</code></td>
+      <td>큰 팝업만 통과 (false positive ↓)</td>
+      <td>작은 텍스트 변화도 통과 (recall ↑)</td>
+    </tr>
+    <tr>
+      <td><code>diff_threshold</code></td>
+      <td>25</td>
+      <td><code>FILTER_DIFF_THRESHOLD</code></td>
+      <td>노이즈 더 잘 무시 (precision ↑)</td>
+      <td>희미한 변화도 감지 (false positive ↑)</td>
+    </tr>
+    <tr>
+      <td><code>diff_resize_width</code></td>
+      <td>1280</td>
+      <td><code>FILTER_DIFF_RESIZE_WIDTH</code></td>
+      <td>정확도 ↑, 속도 ↓</td>
+      <td>속도 ↑, 작은 변화 놓침</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="note">
+  <strong>경험칙:</strong> 1280px 폭에서 5000px = 약 71×71 픽셀 정사각형.
+  중간 크기 다이얼로그(예: "Are you sure?" 팝업)는 가뿐히 통과하고,
+  진행률 표시 같은 1–2글자 변화는 보통 걸러진다.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="caveats">10. 한계와 함정</h2>
+
+<ul>
+  <li>
+    <span class="danger">●</span> <strong>커서 움직임도 트리거된다:</strong>
+    마우스 커서가 큰 영역을 가로지르면 absdiff 가 굵은 흰 라인을 만들고,
+    팽창 후 5000px 을 넘기기 쉽다. 다음 단계인
+    <code>vlm_cursor_click_filter.py</code> 가 이걸 걸러내는 역할.
+  </li>
+  <li>
+    <span class="danger">●</span> <strong>SEM 이미지 갱신은 거의 항상 통과:</strong>
+    SEM 영상 자체가 통째로 바뀌면 면적이 수만 픽셀. 의도된 동작이지만,
+    Tool 화면에서 SEM 이미지 영역이 차지하는 비중이 큰 경우 recipe 진행과
+    무관한 이미지 갱신도 다 잡힌다.
+  </li>
+  <li>
+    <span class="danger">●</span> <strong>점진적 변화는 놓친다:</strong>
+    프레임 간격(500&nbsp;ms) 동안 매우 천천히 페이드인 되는 UI 는 인접 프레임 차이가
+    작아 통과하지 못할 수 있다. <code>diff_threshold</code> 를 낮춰도 노이즈가
+    같이 들어와 별로 안 풀리는 문제. 더 긴 간격(예: t vs t+5) 비교가 대안.
+  </li>
+  <li>
+    <span class="danger">●</span> <strong>전역 밝기 변화에 취약:</strong>
+    조명/감마 보정 같은 전역 변화는 화면 전체가 떠올라 거대한 블롭이 된다.
+    실제로는 &quot;사건&quot; 이 아닐 수 있음. 본 워크플로우는 Windows 캡처라
+    조명 이슈는 거의 없어 무시 가능.
+  </li>
+</ul>
+
+<!-- =========================================================== -->
+<h2>요약</h2>
+<div class="card">
+  <p>
+    <strong><code>filter_frames_by_change.py</code> = 매우 고전적이지만 검증된 5단계 OpenCV 파이프라인.</strong>
+    VLM 같은 무거운 도구를 모든 프레임에 돌리지 않기 위한 <em>저비용 prefilter</em> 로 설계되었다.
+  </p>
+  <p>
+    핵심 통찰은 두 가지:
+  </p>
+  <ol>
+    <li>
+      <strong>그레이스케일 + 다운샘플 + absdiff</strong> 만으로 &quot;뭔가 바뀐 곳&quot; 의
+      대략적 마스크는 거의 무료로 얻을 수 있다.
+    </li>
+    <li>
+      <strong>총 변화량이 아니라 가장 큰 블롭의 면적</strong> 을 보는 게 UI 이벤트 감지의 핵심.
+      집중된 큰 변화 = 사건, 흩어진 작은 변화 = 노이즈.
+    </li>
+  </ol>
+</div>
+
+</div>
+</body>
+</html>

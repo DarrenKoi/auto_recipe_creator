@@ -1,18 +1,17 @@
 """Excel 추출 핸들러 — xlwings로 시트별 인쇄 페이지 단위 추출.
 
 각 시트를 Excel의 ExportAsFixedFormat으로 PDF로 export 한 뒤,
-PyMuPDF로 페이지별 JPEG 렌더한다. 한 시트가 인쇄 시 여러 페이지로
-나뉘면 그대로 여러 JPEG가 생성된다.
+PyMuPDF로 페이지별 WebP(1MB 이하) 렌더한다. 한 시트가 인쇄 시 여러 페이지로
+나뉘면 그대로 여러 WebP가 생성된다.
 """
 
 import tempfile
 from pathlib import Path
 
-from side_projects.document_extraction.util.output_paths import render_pdf_to_jpegs
+from side_projects.document_extraction.util.output_paths import render_pdf_to_webps
 
 
 RENDER_DPI = 200
-JPEG_QUALITY = 92
 
 
 def _import_xlwings():
@@ -67,12 +66,11 @@ def extract(source: Path, out_dir: Path) -> int:
                         print(f"[WARNING]   - 시트 export 실패: {sheet.name}")
                         continue
                     before = page_index
-                    page_index = render_pdf_to_jpegs(
+                    page_index = render_pdf_to_webps(
                         tmp_pdf,
                         out_dir,
                         start_index=page_index,
                         dpi=RENDER_DPI,
-                        quality=JPEG_QUALITY,
                     )
                     print(
                         f"[INFO]   - 시트 처리: {sheet.name} "

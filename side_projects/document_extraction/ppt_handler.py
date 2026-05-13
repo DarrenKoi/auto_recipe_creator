@@ -15,11 +15,9 @@ from pathlib import Path
 from side_projects.document_extraction.util.output_paths import page_image_path
 from side_projects.document_extraction.util.screen_capture import (
     capture_primary_monitor,
-    save_jpeg,
+    save_webp_capped,
 )
 
-
-JPEG_QUALITY = 92
 
 # PowerPoint COM 상수
 PP_SHOW_TYPE_SPEAKER = 1            # ppShowTypeSpeaker
@@ -99,7 +97,7 @@ def extract(source: Path, out_dir: Path) -> int:
         for i in range(1, slide_count + 1):
             image = capture_primary_monitor()
             out_path = page_image_path(out_dir, i)
-            save_jpeg(image, out_path, quality=JPEG_QUALITY)
+            save_webp_capped(image, out_path)
             print(f"[INFO]   - 슬라이드 {i}/{slide_count} 캡처 → {out_path.name}")
 
             if i < slide_count:

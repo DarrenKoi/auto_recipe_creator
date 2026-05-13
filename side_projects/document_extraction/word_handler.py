@@ -1,4 +1,4 @@
-"""Word 추출 핸들러 — COM으로 PDF export 후 PyMuPDF로 페이지별 JPEG.
+"""Word 추출 핸들러 — COM으로 PDF export 후 PyMuPDF로 페이지별 WebP.
 
 Word에는 슬라이드쇼 같은 개념이 없으므로 PDF 변환 경유가 자연스럽다.
 ExportAsFixedFormat(ExportFormat=17 = wdExportFormatPDF) 사용.
@@ -7,11 +7,10 @@ ExportAsFixedFormat(ExportFormat=17 = wdExportFormatPDF) 사용.
 import tempfile
 from pathlib import Path
 
-from side_projects.document_extraction.util.output_paths import render_pdf_to_jpegs
+from side_projects.document_extraction.util.output_paths import render_pdf_to_webps
 
 
 RENDER_DPI = 200
-JPEG_QUALITY = 92
 
 WD_EXPORT_FORMAT_PDF = 17
 
@@ -28,7 +27,7 @@ def _import_com():
 
 
 def extract(source: Path, out_dir: Path) -> int:
-    """Word 문서를 PDF로 export 한 뒤 페이지별 JPEG로 저장."""
+    """Word 문서를 PDF로 export 한 뒤 페이지별 WebP(1MB 이하)로 저장."""
     if not source.exists():
         raise FileNotFoundError(f"Word 파일을 찾을 수 없다: {source}")
 
@@ -61,12 +60,11 @@ def extract(source: Path, out_dir: Path) -> int:
         if not tmp_pdf.exists():
             raise RuntimeError(f"Word PDF export 실패: {tmp_pdf}")
 
-        next_index = render_pdf_to_jpegs(
+        next_index = render_pdf_to_webps(
             tmp_pdf,
             out_dir,
             start_index=1,
             dpi=RENDER_DPI,
-            quality=JPEG_QUALITY,
         )
         page_count = next_index - 1
     finally:

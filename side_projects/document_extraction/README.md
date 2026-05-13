@@ -1,7 +1,7 @@
 # document_extraction — 문서 페이지 단위 이미지 추출
 
 폴더 안의 PPT / Excel / Word / PDF 파일을 순차적으로 열어,
-**파일명을 딴 하위 폴더에 페이지별 JPEG**로 떨궈주는 도구.
+**파일명을 딴 하위 폴더에 페이지별 WebP (1MB 이하)**로 떨궈주는 도구.
 
 기존 `side_projects/screenshot_document_extraction/`의 v2 — PowerPoint를
 COM `Slide.Export()` 대신 **실제 슬라이드쇼 모드를 띄워 화면 캡처**하여,
@@ -12,26 +12,36 @@ COM `Slide.Export()` 대신 **실제 슬라이드쇼 모드를 띄워 화면 캡
 ```
 <OUTPUT_DIR>/
 ├── presentation_A/
-│   ├── page_001.jpg
-│   ├── page_002.jpg
+│   ├── page_001.webp
+│   ├── page_002.webp
 │   └── ...
 ├── workbook_B/
-│   ├── page_001.jpg   # sheet1 page 1
-│   ├── page_002.jpg   # sheet1 page 2 (인쇄 시 분할)
-│   ├── page_003.jpg   # sheet2 page 1
+│   ├── page_001.webp   # sheet1 page 1
+│   ├── page_002.webp   # sheet1 page 2 (인쇄 시 분할)
+│   ├── page_003.webp   # sheet2 page 1
 │   └── ...
-└── report_C/          # PDF
-    └── page_001.jpg ...
+└── report_C/           # PDF
+    └── page_001.webp ...
 ```
 
 ## 핸들러별 동작
 
 | 확장자 | 핸들러 | 방식 |
 |---|---|---|
-| `.ppt / .pptx / .pptm` | `ppt_handler.py` | PowerPoint COM → `SlideShowSettings.Run()` (단일 모니터 강제) → primary 모니터 mss 캡처 → `View.Next()` |
-| `.xls / .xlsx / .xlsm` | `excel_handler.py` | xlwings로 워크북 열기 → 시트별 `ExportAsFixedFormat(0)` (xlTypePDF) → PyMuPDF 200 DPI 페이지 분할 |
-| `.doc / .docx / .docm` | `word_handler.py` | Word COM → `ExportAsFixedFormat(ExportFormat=17)` (wdExportFormatPDF) → PyMuPDF 200 DPI |
-| `.pdf` | `pdf_handler.py` | PyMuPDF 200 DPI 직접 렌더 (앱 안 열림) |
+| `.ppt / .pptx / .pptm` | `ppt_handler.py` | PowerPoint COM → `SlideShowSettings.Run()` (단일 모니터 강제) → primary 모니터 mss 캡처 → `View.Next()` → WebP 저장(1MB 캡) |
+| `.xls / .xlsx / .xlsm` | `excel_handler.py` | xlwings로 워크북 열기 → 시트별 `ExportAsFixedFormat(0)` (xlTypePDF) → PyMuPDF 200 DPI 페이지 분할 → WebP 저장(1MB 캡) |
+| `.doc / .docx / .docm` | `word_handler.py` | Word COM → `ExportAsFixedFormat(ExportFormat=17)` (wdExportFormatPDF) → PyMuPDF 200 DPI → WebP 저장(1MB 캡) |
+| `.pdf` | `pdf_handler.py` | PyMuPDF 200 DPI 직접 렌더 (앱 안 열림) → WebP 저장(1MB 캡) |
+
+### 1MB 캡 정책 (`util/screen_capture.save_webp_capped`)
+
+VLM 요청 1장당 1MB 한도를 보장하기 위해 모든 핸들러가 공유하는 인코딩 경로:
+
+1. **Quality 사다리** — 90 → 80 → 70 → 60 → 50 순으로 시도, 1MB 이하가 나오는 첫 quality 채택.
+2. **다운스케일 폴백** — 50까지 내려도 초과면 가로/세로를 0.9배씩 축소 후 quality 사다리 재시도.
+3. **안전 하한** — 짧은 변이 512px 미만이 되면 `RuntimeError`로 중단(가독성/VLM 인식 한계).
+
+매 페이지마다 `[INFO] page_NNN.webp: 1632x1224 q=80 scale=1.00 712KB` 형식으로 채택된 파라미터를 로그.
 
 ## 듀얼 모니터 처리 (PPT)
 

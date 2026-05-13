@@ -22,7 +22,7 @@ from poc.workflow_1 import LOG_DIR
 from poc.workflow_1.office_align_fail_alarm import filter_align_fail, get_cdsem_alarms
 from poc.workflow_1.util import env_flag, env_int
 
-POLL_INTERVAL_SEC = env_int("ALIGN_FAIL_POLL_SEC", 60)
+POLL_INTERVAL_SEC = env_int("ALIGN_FAIL_POLL_SEC", 30)
 POPUP_ENABLED_DEFAULT = True
 ALARM_LOG_PATH = LOG_DIR / "align_fail_alarms.txt"
 

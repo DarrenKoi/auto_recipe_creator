@@ -77,6 +77,11 @@ WF1_STEPS: list[Step] = [
 
 WF2_STEPS: list[Step] = [
     Step(
+        "Frame 변화 필터링 (CV)",
+        STATUS_DONE,
+        "cv2.absdiff·dilate·connectedComponents로 정적 프레임 제거, VLM 입력량 축소",
+    ),
+    Step(
         "SEM Monitor Box 인식",
         STATUS_DONE,
         "VLM이 live SEM 영역 bbox를 식별 (제어 패널 가림에도 정상 동작)",

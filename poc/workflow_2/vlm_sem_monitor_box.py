@@ -10,7 +10,7 @@
 `change_events.json` 의 events 에서 5개를 random sample 한다.
 
 실행:
-    uv run python poc/workflow_2/test_vlm_sem_monitor_box.py
+    uv run python poc/workflow_2/vlm_sem_monitor_box.py
 """
 
 import json

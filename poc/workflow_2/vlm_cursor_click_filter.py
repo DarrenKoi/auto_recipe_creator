@@ -16,7 +16,7 @@
   - 각 샘플마다 overlay JPEG (cursor bbox + ROI 박스) 를 저장한다.
 
 실행:
-    uv run python poc/workflow_2/test_vlm_cursor_click_filter.py
+    uv run python poc/workflow_2/vlm_cursor_click_filter.py
 """
 
 import json

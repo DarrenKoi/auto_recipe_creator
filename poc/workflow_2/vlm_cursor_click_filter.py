@@ -49,7 +49,7 @@ from poc.workflow_1.vlm_client import Workflow1VLMClient
 
 load_dotenv()
 
-LOG_NAME = "test_vlm_cursor_click_filter"
+LOG_NAME = "vlm_cursor_click_filter"
 WORKFLOW_2_RECORDING_DIR = WORKFLOW_2_DIR / "recordings"
 FILTER_OUTPUT_ROOT = WORKFLOW_2_RECORDING_DIR / "filter_frames_by_change"
 DEFAULT_OUTPUT_ROOT = WORKFLOW_2_RECORDING_DIR / LOG_NAME

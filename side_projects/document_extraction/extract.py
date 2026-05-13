@@ -3,14 +3,13 @@
 폴더를 지정하면 내부의 PPT/Excel/Word/PDF 파일을 순차적으로 열고,
 각 파일명을 딴 하위 폴더에 페이지별 JPEG로 저장한다.
 
-CLI 인자는 사용하지 않으며, 모듈 상단 기본값 또는 환경변수로 설정한다.
-    INPUT_DIR   - 입력 폴더 경로
-    OUTPUT_DIR  - 출력 폴더 경로
-    OVERWRITE   - "1"이면 이미 존재하는 출력 폴더를 덮어쓴다 (기본: 스킵)
-    RECURSIVE   - "1"이면 하위 폴더까지 재귀 탐색 (기본: 비재귀)
+CLI 인자는 사용하지 않는다. 매 실행마다 아래 모듈 상단 상수를 직접 수정해서 사용:
+    INPUT_DIR   - 입력 폴더 경로 (필수)
+    OUTPUT_DIR  - 출력 폴더 경로 (필수)
+    OVERWRITE   - True면 이미 존재하는 출력 폴더를 덮어쓴다 (기본: 스킵)
+    RECURSIVE   - True면 하위 폴더까지 재귀 탐색 (기본: 비재귀)
 """
 
-import os
 import shutil
 import sys
 import traceback
@@ -23,8 +22,12 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 
-DEFAULT_INPUT_DIR = Path(__file__).resolve().parent / "test_inputs"
-DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "test_outputs"
+# === 실행 전 매번 채워 넣을 것 =================================================
+INPUT_DIR: Path = Path("")   # 예: Path(r"C:\Users\me\Documents\문서더미")
+OUTPUT_DIR: Path = Path("")  # 예: Path(r"C:\Users\me\Documents\extracted")
+OVERWRITE: bool = False
+RECURSIVE: bool = False
+# ==============================================================================
 
 
 # 확장자 → 핸들러 모듈 경로(lazy import 위해 문자열로 둠)
@@ -109,37 +112,25 @@ def extract_folder(
     )
 
 
-def _resolve_dir(env_name: str, default: Path) -> Path:
-    raw = os.environ.get(env_name)
-    if raw:
-        return Path(raw).expanduser().resolve()
-    return default
-
-
-def _resolve_bool(env_name: str, default: bool = False) -> bool:
-    raw = os.environ.get(env_name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in ("1", "true", "yes", "on")
-
-
 def main() -> int:
-    input_dir = _resolve_dir("INPUT_DIR", DEFAULT_INPUT_DIR)
-    output_root = _resolve_dir("OUTPUT_DIR", DEFAULT_OUTPUT_DIR)
-    overwrite = _resolve_bool("OVERWRITE", default=False)
-    recursive = _resolve_bool("RECURSIVE", default=False)
+    if not str(INPUT_DIR) or not str(OUTPUT_DIR):
+        print("[ERROR] INPUT_DIR / OUTPUT_DIR 가 비어 있습니다. extract.py 상단을 수정해 경로를 지정하세요.")
+        return 1
+
+    input_dir = INPUT_DIR.expanduser().resolve()
+    output_root = OUTPUT_DIR.expanduser().resolve()
 
     print(f"[INFO] INPUT_DIR  = {input_dir}")
     print(f"[INFO] OUTPUT_DIR = {output_root}")
-    print(f"[INFO] OVERWRITE  = {overwrite}")
-    print(f"[INFO] RECURSIVE  = {recursive}")
+    print(f"[INFO] OVERWRITE  = {OVERWRITE}")
+    print(f"[INFO] RECURSIVE  = {RECURSIVE}")
 
     try:
         extract_folder(
             input_dir,
             output_root,
-            recursive=recursive,
-            overwrite=overwrite,
+            recursive=RECURSIVE,
+            overwrite=OVERWRITE,
         )
     except Exception as exc:
         print(f"[ERROR] 추출 중단: {exc}")

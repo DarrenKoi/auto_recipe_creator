@@ -46,21 +46,22 @@ PowerPoint는 듀얼 모니터 연결 시 발표자 보기 / 슬라이드쇼를 
 
 ## 실행
 
-CLI 인자는 사용하지 않는다. 환경변수 또는 모듈 상단 기본값으로 동작.
+CLI 인자도 환경변수도 사용하지 않는다. **매 실행 전 `extract.py` 상단의 상수를 직접 수정**:
+
+```python
+# === 실행 전 매번 채워 넣을 것 =================================================
+INPUT_DIR: Path = Path(r"C:\Users\me\Documents\문서더미")
+OUTPUT_DIR: Path = Path(r"C:\Users\me\Documents\extracted")
+OVERWRITE: bool = False   # True면 기존 출력 폴더 덮어쓰기 (기본: 스킵)
+RECURSIVE: bool = False   # True면 하위 폴더 재귀 탐색
+# ==============================================================================
+```
 
 ```bash
-# 가장 간단한 실행 (test_inputs/ → test_outputs/)
 uv run python side_projects/document_extraction/extract.py
-
-# 입출력 폴더 지정 (PowerShell)
-$env:INPUT_DIR  = "C:\Users\me\Documents\문서더미"
-$env:OUTPUT_DIR = "C:\Users\me\Documents\extracted"
-uv run python side_projects/document_extraction/extract.py
-
-# 옵션
-$env:OVERWRITE = "1"   # 이미 존재하는 출력 폴더 덮어쓰기 (기본: 스킵)
-$env:RECURSIVE = "1"   # 하위 폴더 재귀 탐색 (기본: 비재귀)
 ```
+
+`INPUT_DIR` 또는 `OUTPUT_DIR` 가 비어 있으면 실행 시 에러로 중단된다.
 
 ## 의존성
 

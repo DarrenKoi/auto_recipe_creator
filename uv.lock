@@ -63,6 +63,7 @@ dev = [
 ]
 windows = [
     { name = "pywin32", marker = "sys_platform == 'win32'" },
+    { name = "xlwings", marker = "sys_platform == 'win32'" },
 ]
 
 [package.metadata]
@@ -83,6 +84,7 @@ requires-dist = [
     { name = "python-pptx", specifier = ">=0.6.21" },
     { name = "pywin32", marker = "sys_platform == 'win32' and extra == 'windows'", specifier = ">=306" },
     { name = "requests", specifier = ">=2.31.0" },
+    { name = "xlwings", marker = "sys_platform == 'win32' and extra == 'windows'", specifier = ">=0.31.0" },
 ]
 provides-extras = ["dev", "windows"]
 
@@ -2076,6 +2078,23 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/46/2c/c06ef49dc36e7954e55b802a8b231770d286a9758b3d936bd1e04ce5ba88/xlsxwriter-3.2.9.tar.gz", hash = "sha256:254b1c37a368c444eac6e2f867405cc9e461b0ed97a3233b2ac1e574efb4140c", size = 215940, upload-time = "2025-09-16T00:16:21.63Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3a/0c/3662f4a66880196a590b202f0db82d919dd2f89e99a27fadef91c4a33d41/xlsxwriter-3.2.9-py3-none-any.whl", hash = "sha256:9a5db42bc5dff014806c58a20b9eae7322a134abb6fce3c92c181bfb275ec5b3", size = 175315, upload-time = "2025-09-16T00:16:20.108Z" },
+]
+
+[[package]]
+name = "xlwings"
+version = "0.35.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pywin32", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d3/62/70e2ebbe4de3141a925bb779c05aa41f6a733308f8ffbb969003617e1aed/xlwings-0.35.3.tar.gz", hash = "sha256:89a7b6eab5a97b6b45b56af5873332ce5ec55ea917aed88e70d22a1959c3f1d7", size = 2480739, upload-time = "2026-05-06T13:00:53.953Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/59/27/761c65d9c083f74ac846a6d292ea967ef456cb69f819c557d715ff1c0728/xlwings-0.35.3-cp310-cp310-win_amd64.whl", hash = "sha256:48cb85d1ba5aaee6c2b68f081ac543b1c087be7bd145160e949ec9c4b83f7fd4", size = 1556409, upload-time = "2026-05-06T13:01:03.285Z" },
+    { url = "https://files.pythonhosted.org/packages/30/b2/af647eb8e40d539002912ec97d3fe1ac591f8f468880bcebc4c1c3411d3a/xlwings-0.35.3-cp311-cp311-win_amd64.whl", hash = "sha256:c1fe6f1dddbcfc2558c2ab78a8d56e2e79d0e7c83837b6bf42257fe845296236", size = 1556135, upload-time = "2026-05-06T13:01:14.84Z" },
+    { url = "https://files.pythonhosted.org/packages/77/d1/bf050a5530ccaee01b0c61fea62b17dd81ee24fe26ecb2cd76aa5de84647/xlwings-0.35.3-cp312-cp312-win_amd64.whl", hash = "sha256:c36da657e85e09343bb5c9466f63fab6cc33488d0e9108a87f9ffe25ec45bc33", size = 1556159, upload-time = "2026-05-06T13:01:25.922Z" },
+    { url = "https://files.pythonhosted.org/packages/62/24/71cb9d6c8abb885dff6007aa949607923a6fd4def5dc471e2d4a11d01bef/xlwings-0.35.3-cp313-cp313-win_amd64.whl", hash = "sha256:8e368759df24238c3fe2019643672cca3ddfa5fe4ed6fd232067e06d818becda", size = 1555865, upload-time = "2026-05-06T13:01:36.945Z" },
+    { url = "https://files.pythonhosted.org/packages/b5/14/b71ea03ceb1d2ddb5f955d9b2ccc45c2db3fce481d399e6a1ffe142ab58d/xlwings-0.35.3-cp314-cp314-win_amd64.whl", hash = "sha256:e7efd32b76dce9c163d81f560b6f4cbc2a172c3535e4dea18da9718a5c63d5ba", size = 1578283, upload-time = "2026-05-06T13:01:48.065Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/bd/613a4a59981282102c754d26df21d1779fcb571c3f2392e03d8a595d9e41/xlwings-0.35.3-py3-none-any.whl", hash = "sha256:b7ac782414e393cc5e94b8ad3ecb4ebb01174fd7172f9b4586a215b53efd0de9", size = 689107, upload-time = "2026-05-06T13:01:49.384Z" },
 ]
 
 [[package]]

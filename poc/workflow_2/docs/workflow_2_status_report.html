@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Workflow 2 진행 상황 보고</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+    margin: 0; padding: 32px 48px; color: #212121; background: #FAFAFA;
+    line-height: 1.55;
+  }
+  h1 { font-size: 26px; margin: 0 0 4px 0; }
+  h2 { font-size: 18px; margin: 28px 0 12px 0; color: #455A64; border-bottom: 2px solid #CFD8DC; padding-bottom: 4px; }
+  .meta { color: #607D8B; font-size: 13px; margin-bottom: 12px; }
+  .summary { background: #fff; border-left: 4px solid #1976D2; padding: 12px 16px; margin: 8px 0 16px 0; font-size: 14px; }
+
+  /* WF1 압축 트랙 */
+  .wf1-label { font-size: 12px; color: #757575; margin-bottom: 6px; }
+  .wf1-track {
+    display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 14px;
+    background: #ECEFF1; border-radius: 8px; align-items: center;
+  }
+  .wf1-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; background: #fff; border: 1px solid #B0BEC5;
+    border-radius: 14px; font-size: 12px; color: #455A64;
+  }
+  .wf1-check { color: #2E7D32; font-weight: bold; }
+  .wf1-name { font-weight: 500; }
+
+  /* WF2 본 트랙 */
+  .wf2-track {
+    display: flex; align-items: stretch; gap: 6px; flex-wrap: nowrap;
+    overflow-x: auto; padding: 18px 4px 8px 4px;
+  }
+  .wf2-card {
+    flex: 1 1 0; min-width: 160px; position: relative;
+    border: 2px solid; border-radius: 10px; padding: 14px 12px;
+    background: #fff;
+  }
+  .wf2-status { font-size: 12px; font-weight: 600; margin-bottom: 6px; opacity: 0.85; }
+  .wf2-name { font-size: 14px; font-weight: 700; margin-bottom: 6px; line-height: 1.35; }
+  .wf2-desc { font-size: 12px; line-height: 1.4; opacity: 0.85; }
+  .pin {
+    position: absolute; top: -14px; left: 50%; transform: translateX(-50%);
+    background: #1565C0; color: #fff; font-size: 11px; font-weight: 700;
+    padding: 2px 10px; border-radius: 12px; white-space: nowrap;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  }
+  .wf2-arrow {
+    display: flex; align-items: center; color: #90A4AE;
+    font-size: 18px; padding: 0 2px;
+  }
+
+  /* Legend */
+  .legend { display: flex; gap: 16px; font-size: 12px; color: #455A64; margin-top: 8px; }
+  .legend-swatch {
+    display: inline-block; width: 14px; height: 14px; border: 1px solid;
+    border-radius: 3px; margin-right: 4px; vertical-align: middle;
+  }
+
+  /* Status table */
+  .status-table {
+    width: 100%; border-collapse: collapse; background: #fff;
+    font-size: 13px;
+  }
+  .status-table th, .status-table td {
+    border: 1px solid #E0E0E0; padding: 8px 10px; text-align: left; vertical-align: top;
+  }
+  .status-table th { background: #ECEFF1; font-weight: 600; color: #37474F; }
+  .status-table td.num { width: 36px; text-align: center; color: #757575; }
+  .status-table td.name { width: 220px; font-weight: 600; }
+  .status-table td.status { width: 110px; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border: 1px solid; border-radius: 12px;
+    font-size: 12px; font-weight: 600;
+  }
+  .row-pin { margin-left: 6px; }
+
+  /* Next steps */
+  .next ol { margin: 0; padding-left: 20px; }
+  .next li { margin-bottom: 6px; font-size: 13px; }
+
+  .footer { margin-top: 28px; font-size: 11px; color: #90A4AE; text-align: right; }
+</style>
+</head>
+<body>
+
+<h1>Workflow 2 진행 상황 보고</h1>
+<div class="meta">작성일: 2026-05-14 · 범위: poc/workflow_2/</div>
+
+<div class="summary">
+  Workflow 1 (RCS 로그인 → Align Fail Alarm)은 별도 보고로 완료된 베이스라인이며,
+  본 보고는 그 위에서 진행되는 <b>Workflow 2 (SEM Monitor 조작 + Align Key 검색)</b> 작업의 단계별 현황을 다룬다.
+</div>
+
+<h2>① Process Flow</h2>
+<div class="wf1-label">Workflow 1 (완료 · 별도 보고됨)</div>
+<div class="wf1-track"><div class="wf1-chip"><span class="wf1-check">✓</span><span class="wf1-name">RCS 로그인</span></div><div class="wf1-chip"><span class="wf1-check">✓</span><span class="wf1-name">Tool 선택</span></div><div class="wf1-chip"><span class="wf1-check">✓</span><span class="wf1-name">Window/Frame Capture</span></div><div class="wf1-chip"><span class="wf1-check">✓</span><span class="wf1-name">Popup/Cursor 감지</span></div><div class="wf1-chip"><span class="wf1-check">✓</span><span class="wf1-name">Align Fail Alarm</span></div></div>
+
+<div style="text-align:center; color:#90A4AE; margin: 10px 0; font-size: 16px;">▼</div>
+
+<div class="wf1-label">Workflow 2 (현재 작업 구간)</div>
+<div class="wf2-track"><div class="wf2-card" style="border-color:#2E7D32;background:#E8F5E9;color:#1B5E20;"><div class="wf2-status">✅ 완료</div><div class="wf2-name">SEM Monitor Box 인식</div><div class="wf2-desc">VLM이 live SEM 영역 bbox를 식별 (제어 패널 가림에도 정상 동작)</div></div><div class="wf2-arrow">▶</div><div class="wf2-card" style="border-color:#ED6C02;background:#FFF3E0;color:#B25500;"><div class="pin">📍 현재</div><div class="wf2-status">🔄 진행 중</div><div class="wf2-name">Cursor Click 감지</div><div class="wf2-desc">DVR / RCS / RCS-on-SEM-Monitor 3가지 cursor 변형 대응 중</div></div><div class="wf2-arrow">▶</div><div class="wf2-card" style="border-color:#ED6C02;background:#FFF3E0;color:#B25500;"><div class="pin">📍 현재</div><div class="wf2-status">🔄 진행 중</div><div class="wf2-name">Recipe Align Key 추출 → VLM</div><div class="wf2-desc">Recipe 파일에서 align key 패치 추출 후 매처/VLM 입력으로 공급</div></div><div class="wf2-arrow">▶</div><div class="wf2-card" style="border-color:#2E7D32;background:#E8F5E9;color:#1B5E20;"><div class="wf2-status">✅ 완료</div><div class="wf2-name">Align Key 매칭 (Chamfer + ORB)</div><div class="wf2-desc">합성 데이터 검증 통과, 실데이터 calibration 대기</div></div><div class="wf2-arrow">▶</div><div class="wf2-card" style="border-color:#757575;background:#F5F5F5;color:#424242;"><div class="wf2-status">⏳ 대기</div><div class="wf2-name">FOV Search Loop</div><div class="wf2-desc">매처 결과로 stage 이동·escalation, 실 SEM 환경 검증 필요</div></div></div>
+<div class="legend"><span class="legend-item"><span class="legend-swatch" style="background:#E8F5E9;border-color:#2E7D32;"></span>✅ 완료</span><span class="legend-item"><span class="legend-swatch" style="background:#FFF3E0;border-color:#ED6C02;"></span>🔄 진행 중</span><span class="legend-item"><span class="legend-swatch" style="background:#F5F5F5;border-color:#757575;"></span>⏳ 대기</span></div>
+
+<h2>② 진행 상황</h2>
+<table class="status-table"><thead><tr><th>#</th><th>단계</th><th>상태</th><th>설명</th></tr></thead><tbody><tr><td class="num">1</td><td class="name">SEM Monitor Box 인식</td><td class="status"><span class="badge" style="background:#E8F5E9;border-color:#2E7D32;color:#1B5E20;">✅ 완료</span></td><td class="desc">VLM이 live SEM 영역 bbox를 식별 (제어 패널 가림에도 정상 동작)</td></tr><tr><td class="num">2</td><td class="name">Cursor Click 감지<span class="row-pin">📍</span></td><td class="status"><span class="badge" style="background:#FFF3E0;border-color:#ED6C02;color:#B25500;">🔄 진행 중</span></td><td class="desc">DVR / RCS / RCS-on-SEM-Monitor 3가지 cursor 변형 대응 중</td></tr><tr><td class="num">3</td><td class="name">Recipe Align Key 추출 → VLM<span class="row-pin">📍</span></td><td class="status"><span class="badge" style="background:#FFF3E0;border-color:#ED6C02;color:#B25500;">🔄 진행 중</span></td><td class="desc">Recipe 파일에서 align key 패치 추출 후 매처/VLM 입력으로 공급</td></tr><tr><td class="num">4</td><td class="name">Align Key 매칭 (Chamfer + ORB)</td><td class="status"><span class="badge" style="background:#E8F5E9;border-color:#2E7D32;color:#1B5E20;">✅ 완료</span></td><td class="desc">합성 데이터 검증 통과, 실데이터 calibration 대기</td></tr><tr><td class="num">5</td><td class="name">FOV Search Loop</td><td class="status"><span class="badge" style="background:#F5F5F5;border-color:#757575;color:#424242;">⏳ 대기</span></td><td class="desc">매처 결과로 stage 이동·escalation, 실 SEM 환경 검증 필요</td></tr></tbody></table>
+
+<h2>③ Next Steps</h2>
+<div class="next">
+  <ol><li>실 SEM 환경 calibration 데이터 수집 (positive/negative 50+ pairs) → 매칭 임계값 검증</li><li>Cursor Click 감지의 환경/위치 변형 대응 마무리 후 실 RCS 회귀 테스트</li><li>Recipe Align Key 이미지 추출 파이프라인 코어 구현 및 VLM 입력 검증</li><li>FOV Search Loop 통합 → 매니저 라이브 데모 준비</li></ol>
+</div>
+
+<div class="footer">생성 스크립트: poc/workflow_2/docs/generate_status_report.py</div>
+
+</body>
+</html>

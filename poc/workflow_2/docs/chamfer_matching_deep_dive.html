@@ -1,0 +1,780 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Chamfer Matching 심화 — 거리 변환에서 매칭까지</title>
+<style>
+  :root {
+    --bg: #0e1117;
+    --panel: #161b22;
+    --panel2: #1c2230;
+    --border: #2a3140;
+    --text: #e6edf3;
+    --muted: #9aa4b2;
+    --accent: #58a6ff;
+    --accent2: #7ee787;
+    --warn: #f0b429;
+    --danger: #ff7b72;
+    --kbd: #30363d;
+    --code-bg: #0b0f14;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+    line-height: 1.65;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 40px 28px 80px; }
+  h1 { font-size: 30px; margin: 0 0 6px 0; letter-spacing: -0.02em; }
+  .subtitle { color: var(--muted); margin-bottom: 32px; font-size: 15px; }
+  h2 {
+    font-size: 22px; margin-top: 48px; margin-bottom: 12px;
+    padding-bottom: 8px; border-bottom: 1px solid var(--border);
+  }
+  h3 { font-size: 17px; margin-top: 24px; margin-bottom: 8px; color: var(--accent); }
+  h4 { font-size: 15px; margin-top: 18px; margin-bottom: 6px; color: var(--accent2); }
+  p { margin: 10px 0; }
+  code {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--accent2);
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  pre code { background: none; padding: 0; color: var(--text); }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin: 16px 0;
+  }
+  .why {
+    background: var(--panel2);
+    border-left: 3px solid var(--accent2);
+    padding: 10px 14px;
+    margin: 12px 0;
+    border-radius: 0 6px 6px 0;
+    font-size: 14px;
+  }
+  .why strong { color: var(--accent2); }
+  .note {
+    background: var(--panel2);
+    border-left: 3px solid var(--warn);
+    padding: 10px 14px;
+    margin: 12px 0;
+    border-radius: 0 6px 6px 0;
+    font-size: 14px;
+  }
+  .note strong { color: var(--warn); }
+  .danger-box {
+    background: var(--panel2);
+    border-left: 3px solid var(--danger);
+    padding: 10px 14px;
+    margin: 12px 0;
+    border-radius: 0 6px 6px 0;
+    font-size: 14px;
+  }
+
+  table {
+    width: 100%; border-collapse: collapse;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 12px 0;
+    font-size: 14px;
+  }
+  th, td {
+    padding: 10px 14px; text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  th { background: var(--panel2); color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+
+  .grid-svg {
+    display: block; margin: 18px auto;
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  .caption {
+    text-align: center; color: var(--muted);
+    font-size: 13px; margin-top: -6px; margin-bottom: 18px;
+    font-style: italic;
+  }
+
+  .formula {
+    background: var(--code-bg);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin: 12px 0;
+    text-align: center;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 14px;
+    color: var(--accent2);
+  }
+
+  .toc {
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 22px;
+    margin-bottom: 32px;
+  }
+  .toc ol { margin: 6px 0; padding-left: 20px; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+
+  .grid-table {
+    display: inline-grid;
+    border: 2px solid var(--border);
+    background: var(--code-bg);
+    margin: 12px 8px;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 12px;
+  }
+  .grid-table .cell {
+    width: 32px; height: 32px;
+    display: flex; align-items: center; justify-content: center;
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+  }
+  .grid-table .cell.edge { background: #ffffff; color: #000; font-weight: bold; }
+  .grid-table .cell.zero { color: var(--danger); font-weight: bold; }
+  .grid-table .cell.low { background: #1a3a3a; color: var(--accent2); }
+  .grid-table .cell.med { background: #2a3a4a; color: #aacbff; }
+  .grid-table .cell.high { background: #3a2a2a; color: var(--warn); }
+
+  .grid-row { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 6px; }
+  .grid-label { color: var(--muted); font-size: 12px; margin: 6px; text-align: center; }
+
+  .muted { color: var(--muted); }
+  .accent { color: var(--accent); }
+  .green  { color: var(--accent2); }
+  .warn   { color: var(--warn); }
+  .danger { color: var(--danger); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Chamfer Matching 심화</h1>
+<p class="subtitle">
+  거리 변환(Distance Transform) 의 수학적 기원부터 실제 SEM 이미지 매칭 적용까지 —
+  Borgefors (1988) 의 고전 알고리즘을 깊이 이해하기
+</p>
+
+<div class="toc">
+  <strong>목차</strong>
+  <ol>
+    <li><a href="#origin">기원: 왜 "Chamfer" 인가</a></li>
+    <li><a href="#dt-define">Distance Transform 의 정의</a></li>
+    <li><a href="#chamfer-dist">Chamfer Distance (3-4, 5-7-11)</a></li>
+    <li><a href="#two-pass">Two-pass 알고리즘</a></li>
+    <li><a href="#matching">Chamfer Matching 수식과 직관</a></li>
+    <li><a href="#variants">변종: Hierarchical, Truncated, Oriented</a></li>
+    <li><a href="#our-impl">우리 코드에서의 구현</a></li>
+    <li><a href="#weakness">약점과 실패 사례</a></li>
+    <li><a href="#references">참고 문헌</a></li>
+  </ol>
+</div>
+
+<!-- ================================================ -->
+<h2 id="origin">1. 기원: 왜 "Chamfer" 인가</h2>
+
+<p>
+  Chamfer 는 영어로 <strong>모서리를 비스듬히 깎은 면</strong>을 뜻한다.
+  가구 다리, 금속 가공에서 직각 모서리를 45° 사선으로 깎는 작업을 "chamfering" 이라고 한다.
+</p>
+
+<div class="card">
+  <h4>역사적 흐름</h4>
+  <table>
+    <thead>
+      <tr><th>연도</th><th>저자</th><th>기여</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1966</td>
+        <td>Rosenfeld &amp; Pfaltz</td>
+        <td>최초의 <strong>distance transform</strong> 알고리즘. 직각 격자에서 유클리드 거리를 정수 근사하는 방법 제안 → 이때 정수 비율로 모서리를 "깎는다"는 의미에서 <em>chamfer distance</em> 용어 등장.</td>
+      </tr>
+      <tr>
+        <td>1986</td>
+        <td>Borgefors</td>
+        <td>Distance transform 의 효율적 계산법 정리 ("Distance Transformations in Digital Images", CVGIP). 5-7-11 chamfer mask 도입.</td>
+      </tr>
+      <tr>
+        <td>1988</td>
+        <td>Borgefors</td>
+        <td><strong>Chamfer matching</strong> 정식 발표 ("Hierarchical chamfer matching: A parametric edge matching algorithm", IEEE PAMI). edge map 위에서 거리 평균을 최소화하는 매칭 프레임워크.</td>
+      </tr>
+      <tr>
+        <td>2007</td>
+        <td>Shotton et al.</td>
+        <td><strong>Oriented chamfer</strong> 도입. edge 방향 정보까지 활용하여 false positive 감소.</td>
+      </tr>
+      <tr>
+        <td>2010</td>
+        <td>Liu et al.</td>
+        <td><strong>Fast Directional Chamfer Matching (FDCM)</strong>. 방향별 거리 변환을 sub-linear 시간에 계산.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="why">
+  <strong>이름의 핵심 직관:</strong> 진짜 유클리드 거리는 √2 ≈ 1.414 같은 무리수가 필요하지만,
+  당시 컴퓨터는 정수 연산이 훨씬 빨랐다. 그래서 <code>가로/세로=3, 대각선=4</code> 처럼
+  정수 비율로 거리를 근사 — 정사각형의 직각 모서리를 사선으로 "깎아낸" 모양이 되어
+  <strong>chamfer distance</strong> 라고 부른 것.
+</div>
+
+<!-- ================================================ -->
+<h2 id="dt-define">2. Distance Transform 의 정의</h2>
+
+<p>
+  이진 이미지 <code>B</code> 에서 "object 픽셀 집합" <code>O</code> 가 주어졌을 때,
+  거리 변환 <code>DT</code> 는:
+</p>
+
+<div class="formula">
+  DT(p) = min { dist(p, q) | q ∈ O }
+</div>
+
+<p>
+  즉 <strong>각 픽셀에서 가장 가까운 object 픽셀까지의 거리</strong>. Chamfer matching 에서는
+  object 가 <strong>edge 픽셀</strong>이다. 직관적 예시를 보자.
+</p>
+
+<h3>3×7 격자 예시 (edge = 가운데 열)</h3>
+
+<div class="grid-row">
+  <div>
+    <div class="grid-label">Edge map (E)</div>
+    <div class="grid-table" style="grid-template-columns: repeat(7, 32px);">
+      <div class="cell">·</div><div class="cell">·</div><div class="cell">·</div><div class="cell edge">E</div><div class="cell">·</div><div class="cell">·</div><div class="cell">·</div>
+      <div class="cell">·</div><div class="cell">·</div><div class="cell">·</div><div class="cell edge">E</div><div class="cell">·</div><div class="cell">·</div><div class="cell">·</div>
+      <div class="cell">·</div><div class="cell">·</div><div class="cell">·</div><div class="cell edge">E</div><div class="cell">·</div><div class="cell">·</div><div class="cell">·</div>
+    </div>
+  </div>
+  <div style="font-size: 28px; color: var(--muted);">→</div>
+  <div>
+    <div class="grid-label">DT (Euclidean)</div>
+    <div class="grid-table" style="grid-template-columns: repeat(7, 32px);">
+      <div class="cell high">3</div><div class="cell med">2</div><div class="cell low">1</div><div class="cell zero">0</div><div class="cell low">1</div><div class="cell med">2</div><div class="cell high">3</div>
+      <div class="cell high">3</div><div class="cell med">2</div><div class="cell low">1</div><div class="cell zero">0</div><div class="cell low">1</div><div class="cell med">2</div><div class="cell high">3</div>
+      <div class="cell high">3</div><div class="cell med">2</div><div class="cell low">1</div><div class="cell zero">0</div><div class="cell low">1</div><div class="cell med">2</div><div class="cell high">3</div>
+    </div>
+  </div>
+</div>
+
+<p>
+  Edge 위의 픽셀은 <span class="danger">0</span>, 옆으로 멀어질수록 값이 증가한다.
+  <strong>edge 까지 가까운 곳일수록 작은 값</strong> — 이게 핵심이다.
+</p>
+
+<!-- ================================================ -->
+<h2 id="chamfer-dist">3. Chamfer Distance (3-4, 5-7-11)</h2>
+
+<p>
+  격자 위에서 정확한 유클리드 거리를 매번 계산하면 비싸다.
+  <strong>local mask</strong> 로 근사하자는 게 chamfer distance 의 아이디어.
+</p>
+
+<h3>3×3 mask: 3-4 chamfer</h3>
+
+<p>현재 픽셀에서 이웃 8개로 가는 비용을 다음과 같이 정의:</p>
+
+<div class="grid-row">
+  <div>
+    <div class="grid-label">3×3 chamfer mask</div>
+    <div class="grid-table" style="grid-template-columns: repeat(3, 48px);">
+      <div class="cell" style="width:48px;height:48px;background:#2a3a4a;color:#aacbff;">4</div>
+      <div class="cell" style="width:48px;height:48px;background:#1a3a3a;color:var(--accent2);">3</div>
+      <div class="cell" style="width:48px;height:48px;background:#2a3a4a;color:#aacbff;">4</div>
+      <div class="cell" style="width:48px;height:48px;background:#1a3a3a;color:var(--accent2);">3</div>
+      <div class="cell" style="width:48px;height:48px;background:#0b0f14;color:var(--danger);">●</div>
+      <div class="cell" style="width:48px;height:48px;background:#1a3a3a;color:var(--accent2);">3</div>
+      <div class="cell" style="width:48px;height:48px;background:#2a3a4a;color:#aacbff;">4</div>
+      <div class="cell" style="width:48px;height:48px;background:#1a3a3a;color:var(--accent2);">3</div>
+      <div class="cell" style="width:48px;height:48px;background:#2a3a4a;color:#aacbff;">4</div>
+    </div>
+  </div>
+</div>
+
+<ul>
+  <li><span class="green">상하좌우 이동</span> = <strong>3</strong> (실제 1 의 근사)</li>
+  <li><span class="accent">대각선 이동</span> = <strong>4</strong> (실제 √2 ≈ 1.414 의 근사)</li>
+</ul>
+
+<p>
+  비율 <code>4/3 ≈ 1.333</code> 는 √2 의 근사값. 모든 값을 3으로 나누면 실제 거리에 가까워진다.
+  더 정밀한 5×5 mask 도 있다:
+</p>
+
+<h3>5×5 mask: 5-7-11 chamfer (Borgefors 1986)</h3>
+
+<div class="card" style="text-align: center;">
+  <pre style="display: inline-block; text-align: left; margin: 0;"><code>┌────┬────┬────┬────┬────┐
+│ 14 │ 11 │ 10 │ 11 │ 14 │
+├────┼────┼────┼────┼────┤
+│ 11 │  7 │  5 │  7 │ 11 │
+├────┼────┼────┼────┼────┤
+│ 10 │  5 │  ● │  5 │ 10 │
+├────┼────┼────┼────┼────┤
+│ 11 │  7 │  5 │  7 │ 11 │
+├────┼────┼────┼────┼────┤
+│ 14 │ 11 │ 10 │ 11 │ 14 │
+└────┴────┴────┴────┴────┘</code></pre>
+</div>
+
+<p>5로 나누면 실제 거리에 매우 가깝다 (오차 &lt; 2%).</p>
+
+<table>
+  <thead>
+    <tr><th>마스크</th><th>오차 (% vs Euclidean)</th><th>속도</th><th>용도</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>City-block (1-only)</td><td>~41% (대각선)</td><td>매우 빠름</td><td>대략적인 거리</td></tr>
+    <tr><td>3-4 chamfer</td><td>~6%</td><td>빠름</td><td>실시간 응용</td></tr>
+    <tr><td>5-7-11 chamfer</td><td>~2%</td><td>중간</td><td>정밀 매칭</td></tr>
+    <tr><td>Exact Euclidean (Felzenszwalb)</td><td>0%</td><td>중간 (O(n))</td><td>OpenCV <code>DIST_L2</code>의 기본</td></tr>
+  </tbody>
+</table>
+
+<div class="note">
+  <strong>OpenCV 현재 동작:</strong> <code>cv2.distanceTransform(src, cv2.DIST_L2, maskSize=5)</code>
+  은 <strong>정확한 유클리드 거리</strong>를 Felzenszwalb-Huttenlocher 알고리즘으로 계산한다.
+  <code>maskSize=3</code> 일 때 3-4 chamfer 를 쓴다. 우리 코드는 maskSize=5 → 정확한 거리.
+  알고리즘 이름은 역사적으로 "chamfer matching" 으로 남았다.
+</div>
+
+<!-- ================================================ -->
+<h2 id="two-pass">4. Two-pass 알고리즘</h2>
+
+<p>
+  Chamfer distance 의 거리 변환은 <strong>이미지를 단 2번만 스캔해서</strong> 모든 픽셀의 거리를 계산할 수 있다.
+  이게 1980년대에 chamfer 가 인기였던 핵심 이유.
+</p>
+
+<h3>Forward pass (좌→우, 위→아래)</h3>
+
+<svg class="grid-svg" viewBox="0 0 880 200" width="100%" xmlns="http://www.w3.org/2000/svg">
+  <text x="100" y="22" text-anchor="middle" fill="#e6edf3" font-size="13" font-weight="bold">Forward mask (위·왼쪽 이웃)</text>
+  <g transform="translate(20, 40)">
+    <rect x="0" y="0" width="40" height="40" fill="#2a3a4a" stroke="#2a3140"/>
+    <text x="20" y="26" text-anchor="middle" fill="#aacbff" font-size="14">4</text>
+    <rect x="40" y="0" width="40" height="40" fill="#1a3a3a" stroke="#2a3140"/>
+    <text x="60" y="26" text-anchor="middle" fill="#7ee787" font-size="14">3</text>
+    <rect x="80" y="0" width="40" height="40" fill="#2a3a4a" stroke="#2a3140"/>
+    <text x="100" y="26" text-anchor="middle" fill="#aacbff" font-size="14">4</text>
+
+    <rect x="0" y="40" width="40" height="40" fill="#1a3a3a" stroke="#2a3140"/>
+    <text x="20" y="66" text-anchor="middle" fill="#7ee787" font-size="14">3</text>
+    <rect x="40" y="40" width="40" height="40" fill="#0b0f14" stroke="#ff7b72" stroke-width="2"/>
+    <text x="60" y="66" text-anchor="middle" fill="#ff7b72" font-size="14">●</text>
+    <rect x="80" y="40" width="40" height="40" fill="#1f2530" stroke="#2a3140" stroke-dasharray="3,2"/>
+    <text x="100" y="66" text-anchor="middle" fill="#9aa4b2" font-size="14">·</text>
+
+    <rect x="0" y="80" width="40" height="40" fill="#1f2530" stroke="#2a3140" stroke-dasharray="3,2"/>
+    <text x="20" y="106" text-anchor="middle" fill="#9aa4b2" font-size="14">·</text>
+    <rect x="40" y="80" width="40" height="40" fill="#1f2530" stroke="#2a3140" stroke-dasharray="3,2"/>
+    <text x="60" y="106" text-anchor="middle" fill="#9aa4b2" font-size="14">·</text>
+    <rect x="80" y="80" width="40" height="40" fill="#1f2530" stroke="#2a3140" stroke-dasharray="3,2"/>
+    <text x="100" y="106" text-anchor="middle" fill="#9aa4b2" font-size="14">·</text>
+  </g>
+
+  <text x="450" y="22" text-anchor="middle" fill="#e6edf3" font-size="13" font-weight="bold">Backward mask (아래·오른쪽 이웃)</text>
+  <g transform="translate(370, 40)">
+    <rect x="0" y="0" width="40" height="40" fill="#1f2530" stroke="#2a3140" stroke-dasharray="3,2"/>
+    <text x="20" y="26" text-anchor="middle" fill="#9aa4b2" font-size="14">·</text>
+    <rect x="40" y="0" width="40" height="40" fill="#1f2530" stroke="#2a3140" stroke-dasharray="3,2"/>
+    <text x="60" y="26" text-anchor="middle" fill="#9aa4b2" font-size="14">·</text>
+    <rect x="80" y="0" width="40" height="40" fill="#1f2530" stroke="#2a3140" stroke-dasharray="3,2"/>
+    <text x="100" y="26" text-anchor="middle" fill="#9aa4b2" font-size="14">·</text>
+
+    <rect x="0" y="40" width="40" height="40" fill="#1f2530" stroke="#2a3140" stroke-dasharray="3,2"/>
+    <text x="20" y="66" text-anchor="middle" fill="#9aa4b2" font-size="14">·</text>
+    <rect x="40" y="40" width="40" height="40" fill="#0b0f14" stroke="#ff7b72" stroke-width="2"/>
+    <text x="60" y="66" text-anchor="middle" fill="#ff7b72" font-size="14">●</text>
+    <rect x="80" y="40" width="40" height="40" fill="#1a3a3a" stroke="#2a3140"/>
+    <text x="100" y="66" text-anchor="middle" fill="#7ee787" font-size="14">3</text>
+
+    <rect x="0" y="80" width="40" height="40" fill="#2a3a4a" stroke="#2a3140"/>
+    <text x="20" y="106" text-anchor="middle" fill="#aacbff" font-size="14">4</text>
+    <rect x="40" y="80" width="40" height="40" fill="#1a3a3a" stroke="#2a3140"/>
+    <text x="60" y="106" text-anchor="middle" fill="#7ee787" font-size="14">3</text>
+    <rect x="80" y="80" width="40" height="40" fill="#2a3a4a" stroke="#2a3140"/>
+    <text x="100" y="106" text-anchor="middle" fill="#aacbff" font-size="14">4</text>
+  </g>
+
+  <foreignObject x="540" y="40" width="320" height="140">
+    <div xmlns="http://www.w3.org/1999/xhtml" style="color:#e6edf3; font-size:13px; line-height:1.7;">
+      <strong>알고리즘:</strong><br/>
+      1. 초기화: edge=0, 나머지=∞<br/>
+      2. Forward pass: 각 픽셀에서<br/>
+      &nbsp;&nbsp;<code style="background:#0b0f14; padding:2px 6px; color:#7ee787;">DT(p) = min(DT(p), DT(q)+w)</code><br/>
+      &nbsp;&nbsp;위·왼쪽 이웃 q 대해 가중치 w로<br/>
+      3. Backward pass: 같은 식, 아래·오른쪽 이웃에 대해<br/><br/>
+      <strong>복잡도:</strong> O(N×M) — 픽셀 수에 선형
+    </div>
+  </foreignObject>
+</svg>
+
+<pre><code># 의사 코드
+DT = where(edge, 0, infinity)
+
+# Forward pass
+for y in range(H):
+    for x in range(W):
+        for (dy, dx, w) in [(-1,-1,4), (-1,0,3), (-1,1,4), (0,-1,3)]:
+            ny, nx = y+dy, x+dx
+            if 0 &lt;= ny &lt; H and 0 &lt;= nx &lt; W:
+                DT[y, x] = min(DT[y, x], DT[ny, nx] + w)
+
+# Backward pass
+for y in reversed(range(H)):
+    for x in reversed(range(W)):
+        for (dy, dx, w) in [(0,1,3), (1,-1,4), (1,0,3), (1,1,4)]:
+            ny, nx = y+dy, x+dx
+            if 0 &lt;= ny &lt; H and 0 &lt;= nx &lt; W:
+                DT[y, x] = min(DT[y, x], DT[ny, nx] + w)
+</code></pre>
+
+<div class="why">
+  <strong>왜 2번이면 충분한가?</strong> Forward pass 가 끝나면 모든 픽셀은
+  "왼쪽 위 어딘가의 edge 까지의 최단 경로"를 갖는다. Backward pass 가
+  "오른쪽 아래 어딘가의 edge"까지를 채워준다. Edge 까지의 최단 경로는
+  반드시 이 두 방향 중 하나에 속하므로 2 pass 가 항상 정답.
+</div>
+
+<!-- ================================================ -->
+<h2 id="matching">5. Chamfer Matching 수식과 직관</h2>
+
+<p>
+  거리 변환은 도구일 뿐. <strong>매칭</strong>은 다음 한 줄로 정의된다:
+</p>
+
+<div class="formula">
+  d<sub>chamfer</sub>(T, F; x, y) = (1/|T|) · Σ<sub>p ∈ T</sub> DT<sub>F</sub>(p + (x, y))
+</div>
+
+<p>
+  여기서 <code>T</code> 는 템플릿의 edge 좌표 집합, <code>DT<sub>F</sub></code> 는 프레임의 거리 변환,
+  <code>(x, y)</code> 는 슬라이딩 오프셋. <strong>평균 거리</strong>를 모든 위치에서 계산해 최솟값을 찾는다.
+</p>
+
+<h3>왜 거리의 "합"이 아니라 "평균" 인가?</h3>
+
+<p>
+  템플릿마다 edge 픽셀 수가 다르므로, 합으로 비교하면 큰 템플릿이 항상 불리하다.
+  edge 개수 <code>|T|</code> 로 나눠 평균을 내면 <strong>"한 edge 픽셀당 frame edge 까지의 평균 거리"</strong>가 되어
+  서로 다른 템플릿 간 비교도 가능하다.
+</p>
+
+<h3>OpenCV 트릭: <code>matchTemplate(TM_CCORR)</code></h3>
+
+<p>
+  Python 루프로 모든 (x, y) 에서 합을 구하면 느리다. <code>matchTemplate</code> 으로
+  한 줄에 끝낼 수 있다 — 다만 입력을 살짝 바꿔야 한다:
+</p>
+
+<pre><code># 프레임의 distance transform 을 "이미지" 로,
+# 템플릿의 edge mask (0/1) 를 "템플릿" 으로.
+result = cv2.matchTemplate(frame_dt, template_mask, cv2.TM_CCORR)
+# result[y, x] = Σ frame_dt[y+i, x+j] * template_mask[i, j]
+#              = Σ_{edge pixels of T} frame_dt at offset (x, y)
+
+mean_dt = result.min() / edge_count_in_template
+score = exp(-mean_dt / tau)   # 0~1 점수
+</code></pre>
+
+<div class="why">
+  <strong>TM_CCORR 의 정체:</strong> "cross-correlation" 인데 두 입력의 곱의 합이다.
+  template 이 binary mask (0/1) 이면 곱셈은 "edge 위치만 고르기" 가 되어
+  실질적으로 <strong>edge 위치에서의 distance transform 값을 합산</strong>하는 효과.
+  영리한 트릭.
+</div>
+
+<h3>점수 정규화: <code>exp(-mean_dt / τ)</code></h3>
+
+<p>
+  raw <code>mean_dt</code> 는 픽셀 단위 거리 (범위가 열려 있음). 0~1 로 정규화하려고
+  지수 감쇠 사용. <code>τ</code> 는 "허용 오차" 의 단위:
+</p>
+
+<svg class="grid-svg" viewBox="0 0 600 240" width="100%" xmlns="http://www.w3.org/2000/svg">
+  <!-- axes -->
+  <line x1="60" y1="200" x2="560" y2="200" stroke="#9aa4b2"/>
+  <line x1="60" y1="20" x2="60" y2="200" stroke="#9aa4b2"/>
+  <text x="310" y="225" text-anchor="middle" fill="#9aa4b2" font-size="12">mean_dt (px)</text>
+  <text x="30" y="115" text-anchor="middle" fill="#9aa4b2" font-size="12" transform="rotate(-90, 30, 115)">score</text>
+
+  <!-- x ticks -->
+  <text x="60" y="215" text-anchor="middle" fill="#9aa4b2" font-size="11">0</text>
+  <text x="160" y="215" text-anchor="middle" fill="#9aa4b2" font-size="11">5</text>
+  <text x="260" y="215" text-anchor="middle" fill="#9aa4b2" font-size="11">10</text>
+  <text x="360" y="215" text-anchor="middle" fill="#9aa4b2" font-size="11">15</text>
+  <text x="460" y="215" text-anchor="middle" fill="#9aa4b2" font-size="11">20</text>
+  <text x="560" y="215" text-anchor="middle" fill="#9aa4b2" font-size="11">25</text>
+
+  <!-- y ticks -->
+  <text x="55" y="25" text-anchor="end" fill="#9aa4b2" font-size="11">1.0</text>
+  <text x="55" y="115" text-anchor="end" fill="#9aa4b2" font-size="11">0.5</text>
+  <text x="55" y="205" text-anchor="end" fill="#9aa4b2" font-size="11">0.0</text>
+
+  <!-- curve tau=10 -->
+  <path d="M 60,20
+           L 80,30 L 100,40 L 120,53 L 140,67 L 160,82
+           L 180,96 L 200,109 L 220,122 L 240,133 L 260,143
+           L 280,153 L 300,162 L 320,169 L 340,176 L 360,182
+           L 380,186 L 400,190 L 420,193 L 440,195 L 460,197
+           L 480,198 L 500,199 L 520,199 L 540,200 L 560,200"
+        fill="none" stroke="#58a6ff" stroke-width="2"/>
+  <text x="200" y="80" fill="#58a6ff" font-size="12">τ = 10 (현재 코드)</text>
+
+  <!-- markers -->
+  <circle cx="160" cy="82" r="3" fill="#7ee787"/>
+  <text x="170" y="76" fill="#7ee787" font-size="11">mean_dt=5 → 0.61</text>
+  <circle cx="260" cy="143" r="3" fill="#f0b429"/>
+  <text x="270" y="138" fill="#f0b429" font-size="11">mean_dt=10 → 0.37</text>
+  <circle cx="360" cy="182" r="3" fill="#ff7b72"/>
+  <text x="370" y="178" fill="#ff7b72" font-size="11">mean_dt=15 → 0.22</text>
+</svg>
+<p class="caption">τ 가 클수록 더 큰 거리에도 관대 — 우리는 τ=10 (DT_TAU_PX) 를 사용</p>
+
+<!-- ================================================ -->
+<h2 id="variants">6. 변종: Hierarchical, Truncated, Oriented</h2>
+
+<h3>Hierarchical Chamfer (Borgefors 1988 원논문)</h3>
+
+<p>
+  높은 해상도에서 전체 영역을 매칭하는 건 느리다.
+  Image pyramid 로 <strong>저해상도에서 대략적으로 찾고, 점점 정밀하게 좁히는</strong> 방식.
+</p>
+
+<svg class="grid-svg" viewBox="0 0 800 200" width="100%" xmlns="http://www.w3.org/2000/svg">
+  <!-- pyramid levels -->
+  <g transform="translate(60, 30)">
+    <rect x="0" y="0" width="60" height="60" fill="#1c2230" stroke="#58a6ff"/>
+    <text x="30" y="34" text-anchor="middle" fill="#58a6ff" font-size="11">1/8</text>
+    <text x="30" y="75" text-anchor="middle" fill="#9aa4b2" font-size="10">대략</text>
+  </g>
+  <text x="155" y="65" fill="#9aa4b2" font-size="20">→</text>
+
+  <g transform="translate(200, 20)">
+    <rect x="0" y="0" width="80" height="80" fill="#1c2230" stroke="#58a6ff"/>
+    <text x="40" y="44" text-anchor="middle" fill="#58a6ff" font-size="11">1/4</text>
+    <text x="40" y="95" text-anchor="middle" fill="#9aa4b2" font-size="10">중간 정밀</text>
+    <!-- candidate window -->
+    <rect x="10" y="15" width="30" height="25" fill="none" stroke="#7ee787" stroke-dasharray="2,2"/>
+  </g>
+  <text x="315" y="65" fill="#9aa4b2" font-size="20">→</text>
+
+  <g transform="translate(360, 10)">
+    <rect x="0" y="0" width="100" height="100" fill="#1c2230" stroke="#58a6ff"/>
+    <text x="50" y="55" text-anchor="middle" fill="#58a6ff" font-size="11">1/2</text>
+    <text x="50" y="115" text-anchor="middle" fill="#9aa4b2" font-size="10">정밀</text>
+    <rect x="20" y="20" width="35" height="30" fill="none" stroke="#7ee787" stroke-dasharray="2,2"/>
+  </g>
+  <text x="495" y="65" fill="#9aa4b2" font-size="20">→</text>
+
+  <g transform="translate(540, 0)">
+    <rect x="0" y="0" width="120" height="120" fill="#1c2230" stroke="#58a6ff"/>
+    <text x="60" y="66" text-anchor="middle" fill="#58a6ff" font-size="11">원본</text>
+    <text x="60" y="135" text-anchor="middle" fill="#9aa4b2" font-size="10">최종 sub-pixel</text>
+    <rect x="35" y="35" width="40" height="35" fill="none" stroke="#7ee787" stroke-width="2"/>
+  </g>
+</svg>
+
+<p>각 단계에서 후보가 좁아져 총 계산량이 <code>O(N²)</code> 에서 <code>O(N log N)</code> 수준으로 감소.</p>
+
+<h3>Truncated Chamfer — outlier robustness</h3>
+
+<p>
+  Edge 가 한두 개 크게 빗나가면 평균 거리가 망가진다. 해결: <strong>거리에 상한선</strong>을 두자.
+</p>
+
+<div class="formula">
+  DT'(p) = min(DT(p), threshold)
+</div>
+
+<p>
+  매칭하지 못한 edge 는 threshold 만큼만 페널티를 받는다.
+  이 변형은 occlusion (부분 가림) 에 매우 강해진다.
+</p>
+
+<h3>Oriented Chamfer Matching (Shotton 2007)</h3>
+
+<p>
+  단순 chamfer 는 <em>edge 의 위치</em>만 본다. 하지만 같은 위치라도 edge 방향이 다르면 다른 패턴.
+  Oriented chamfer 는 edge 방향(0~π)을 N 개 bin 으로 양자화하고, 각 방향별로 별도의 DT 를 만든다:
+</p>
+
+<div class="formula">
+  d<sub>oriented</sub>(T, F) = (1/|T|) · Σ<sub>p ∈ T</sub> DT<sub>F, θ(p)</sub>(p)
+</div>
+
+<p>방향이 일치하지 않으면 매칭이 깨지므로 false positive 가 크게 줄어든다.</p>
+
+<div class="note">
+  <strong>현재 우리 코드는 oriented chamfer 를 쓰지 않는다.</strong>
+  대신 ORB 가 keypoint 의 orientation 을 따로 검증하므로 같은 효과를 얻는다.
+  만약 ORB 를 쓸 수 없는 환경 (예: 저텍스처) 이라면 oriented chamfer 가 좋은 후속 카드.
+</div>
+
+<!-- ================================================ -->
+<h2 id="our-impl">7. 우리 코드에서의 구현</h2>
+
+<h3>전처리 (line 107-124)</h3>
+
+<pre><code>gray    = _to_grayscale(image)
+eq      = cv2.createCLAHE(2.0, (8,8)).apply(gray)   # 국소 대비 정규화
+blurred = cv2.GaussianBlur(eq, (0,0), sigmaX=1.0)   # 노이즈 제거
+edges   = cv2.Canny(blurred, 60, 160)               # edge 추출
+
+inverted = cv2.bitwise_not(edges)  # edge=0, background=255
+dt       = cv2.distanceTransform(inverted, cv2.DIST_L2, maskSize=5)
+</code></pre>
+
+<div class="why">
+  <strong>왜 invert 하나?</strong> <code>distanceTransform</code> 은 "값이 0 인 픽셀까지의 거리" 를 계산한다.
+  Canny 는 edge=255, background=0 으로 출력하므로 그대로 넣으면 background 까지의 거리가 나온다.
+  Invert 해서 <strong>edge=0</strong> 으로 만들면 우리가 원하는 "edge 까지의 거리" 가 된다.
+</div>
+
+<h3>Multi-scale 매칭 (line 201-219)</h3>
+
+<pre><code>for scale in (0.7, 0.85, 1.0, 1.2, 1.4):
+    # 1) 템플릿 edge map 을 scale 배율로 resize
+    edges_scaled = cv2.resize(template.edge_map, ..., INTER_NEAREST)
+    template_mask = (edges_scaled > 0).astype(np.float32)
+    edge_count = template_mask.sum()
+
+    # 2) CCORR 로 모든 (x, y) 에서 거리합 계산
+    result = cv2.matchTemplate(frame_dt, template_mask, cv2.TM_CCORR)
+    min_val, _, min_loc, _ = cv2.minMaxLoc(result)
+
+    # 3) 평균 → exp 정규화
+    mean_dt = min_val / edge_count
+    score = exp(-mean_dt / 10.0)
+
+    if score > best_score:
+        best_score = score
+        best_xy = (min_loc[0] + tw//2, min_loc[1] + th//2)
+        best_scale = scale
+</code></pre>
+
+<h3>전체 흐름 (compute_align_key_score, line 370+)</h3>
+
+<svg class="grid-svg" viewBox="0 0 900 220" width="100%" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#9aa4b2"/>
+    </marker>
+  </defs>
+
+  <rect x="20" y="30" width="140" height="60" rx="6" fill="#1c2230" stroke="#58a6ff"/>
+  <text x="90" y="55" text-anchor="middle" fill="#e6edf3" font-size="12">frame (raw)</text>
+  <text x="90" y="72" text-anchor="middle" fill="#9aa4b2" font-size="11">grayscale</text>
+
+  <rect x="190" y="30" width="140" height="60" rx="6" fill="#161b22" stroke="#2a3140"/>
+  <text x="260" y="55" text-anchor="middle" fill="#7ee787" font-size="12">edges</text>
+  <text x="260" y="72" text-anchor="middle" fill="#9aa4b2" font-size="11">Canny</text>
+
+  <rect x="360" y="30" width="140" height="60" rx="6" fill="#161b22" stroke="#2a3140"/>
+  <text x="430" y="55" text-anchor="middle" fill="#7ee787" font-size="12">frame_dt</text>
+  <text x="430" y="72" text-anchor="middle" fill="#9aa4b2" font-size="11">DistanceTransform</text>
+
+  <rect x="530" y="30" width="140" height="60" rx="6" fill="#161b22" stroke="#2a3140"/>
+  <text x="600" y="55" text-anchor="middle" fill="#f0b429" font-size="12">matchTemplate</text>
+  <text x="600" y="72" text-anchor="middle" fill="#9aa4b2" font-size="11">TM_CCORR, 5 scales</text>
+
+  <rect x="700" y="30" width="180" height="60" rx="6" fill="#0b0f14" stroke="#ff7b72"/>
+  <text x="790" y="50" text-anchor="middle" fill="#ff7b72" font-size="12" font-weight="bold">(score, cx, cy, scale)</text>
+  <text x="790" y="72" text-anchor="middle" fill="#9aa4b2" font-size="11">exp(-mean_dt / 10)</text>
+
+  <line x1="160" y1="60" x2="190" y2="60" stroke="#9aa4b2" marker-end="url(#arr2)"/>
+  <line x1="330" y1="60" x2="360" y2="60" stroke="#9aa4b2" marker-end="url(#arr2)"/>
+  <line x1="500" y1="60" x2="530" y2="60" stroke="#9aa4b2" marker-end="url(#arr2)"/>
+  <line x1="670" y1="60" x2="700" y2="60" stroke="#9aa4b2" marker-end="url(#arr2)"/>
+
+  <!-- template branch -->
+  <rect x="190" y="130" width="140" height="60" rx="6" fill="#1c2230" stroke="#58a6ff" stroke-dasharray="3,2"/>
+  <text x="260" y="155" text-anchor="middle" fill="#e6edf3" font-size="12">template edges</text>
+  <text x="260" y="172" text-anchor="middle" fill="#9aa4b2" font-size="11">(1회 전처리)</text>
+
+  <line x1="260" y1="130" x2="540" y2="95" stroke="#9aa4b2" stroke-dasharray="3,2" marker-end="url(#arr2)"/>
+</svg>
+
+<!-- ================================================ -->
+<h2 id="weakness">8. 약점과 실패 사례</h2>
+
+<div class="danger-box">
+  <strong>약점 1: 비슷한 윤곽이 많은 영역에서 false positive</strong><br/>
+  Chamfer 는 윤곽이 비슷한 곳이면 점수가 높게 나온다. 격자 형태가 반복되는 패턴 (예: SEM 의 die array)에서는
+  거의 모든 곳에서 점수가 비슷해진다 → ORB 검증이 필요한 이유.
+</div>
+
+<div class="danger-box">
+  <strong>약점 2: 회전에 약함</strong><br/>
+  Multi-scale 은 처리하지만 회전은 처리하지 않는다. 30° 회전된 frame 이면 매칭 실패.
+  필요시 회전 각도도 탐색에 포함시키거나 ORB 의 homography 로 보정.
+</div>
+
+<div class="danger-box">
+  <strong>약점 3: Edge 가 너무 적은 템플릿</strong><br/>
+  Edge 픽셀이 30개 이하이면 mean_dt 가 통계적으로 불안정. 1~2개 outlier 만으로 점수 급변.
+  Borgefors 의 원래 권장: edge_count ≥ 100.
+</div>
+
+<div class="danger-box">
+  <strong>약점 4: Edge map 자체의 품질에 의존</strong><br/>
+  Canny threshold (60, 160) 가 잘못되면 모든 게 무너진다.
+  Threshold 자동 추정 (Otsu, median-based) 을 검토할 가치.
+</div>
+
+<!-- ================================================ -->
+<h2 id="references">9. 참고 문헌</h2>
+
+<ul>
+  <li>Rosenfeld, A., &amp; Pfaltz, J. L. (1966). "Sequential operations in digital picture processing". <em>JACM</em>, 13(4).</li>
+  <li>Borgefors, G. (1986). "Distance transformations in digital images". <em>CVGIP</em>, 34(3).</li>
+  <li>Borgefors, G. (1988). "Hierarchical chamfer matching: A parametric edge matching algorithm". <em>IEEE PAMI</em>, 10(6).</li>
+  <li>Felzenszwalb &amp; Huttenlocher (2012). "Distance transforms of sampled functions". <em>Theory of Computing</em>, 8(19). — OpenCV 의 정확한 유클리드 DT 알고리즘.</li>
+  <li>Shotton, J. et al. (2007). "Multi-Scale Categorical Object Recognition Using Contour Fragments". <em>IEEE PAMI</em>, 30(7). — Oriented chamfer.</li>
+  <li>Liu, M.-Y. et al. (2010). "Fast Directional Chamfer Matching". <em>CVPR</em>.</li>
+</ul>
+
+<div class="card" style="border-left: 3px solid var(--accent2); margin-top: 32px;">
+  <p style="margin: 0; font-size: 15px;">
+    <strong class="green">한 줄 정리:</strong>
+    Chamfer matching 은 <em>edge 의 위치</em>를 <em>거리 변환</em>으로 부드럽게 비교해서,
+    픽셀 단위 미세 오차에 둔감한 매칭을 가능하게 한다.
+    1988년 Borgefors 의 알고리즘이 36년이 지난 지금도 산업 현장에서 살아남는 이유는
+    <strong>단순함, 속도, robustness</strong> 의 균형 때문.
+  </p>
+</div>
+
+</div>
+</body>
+</html>

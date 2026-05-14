@@ -1,0 +1,650 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Hamming Distance — ORB 매칭의 심장</title>
+<style>
+  :root {
+    --bg: #0e1117;
+    --panel: #161b22;
+    --panel2: #1c2230;
+    --border: #2a3140;
+    --text: #e6edf3;
+    --muted: #9aa4b2;
+    --accent: #58a6ff;
+    --accent2: #7ee787;
+    --warn: #f0b429;
+    --danger: #ff7b72;
+    --code-bg: #0b0f14;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+    line-height: 1.65;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 40px 28px 80px; }
+  h1 { font-size: 30px; margin: 0 0 6px 0; letter-spacing: -0.02em; }
+  .subtitle { color: var(--muted); margin-bottom: 32px; font-size: 15px; }
+  h2 {
+    font-size: 22px; margin-top: 48px; margin-bottom: 12px;
+    padding-bottom: 8px; border-bottom: 1px solid var(--border);
+  }
+  h3 { font-size: 17px; margin-top: 24px; margin-bottom: 8px; color: var(--accent); }
+  h4 { font-size: 15px; margin-top: 18px; margin-bottom: 6px; color: var(--accent2); }
+  p { margin: 10px 0; }
+  code {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--accent2);
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  pre code { background: none; padding: 0; color: var(--text); }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin: 16px 0;
+  }
+  .why {
+    background: var(--panel2);
+    border-left: 3px solid var(--accent2);
+    padding: 10px 14px;
+    margin: 12px 0;
+    border-radius: 0 6px 6px 0;
+    font-size: 14px;
+  }
+  .why strong { color: var(--accent2); }
+  .note {
+    background: var(--panel2);
+    border-left: 3px solid var(--warn);
+    padding: 10px 14px;
+    margin: 12px 0;
+    border-radius: 0 6px 6px 0;
+    font-size: 14px;
+  }
+  .note strong { color: var(--warn); }
+
+  table {
+    width: 100%; border-collapse: collapse;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 12px 0;
+    font-size: 14px;
+  }
+  th, td {
+    padding: 10px 14px; text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  th { background: var(--panel2); color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+
+  .svg-frame {
+    display: block; margin: 18px auto;
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  .caption {
+    text-align: center; color: var(--muted);
+    font-size: 13px; margin-top: -6px; margin-bottom: 18px;
+    font-style: italic;
+  }
+
+  .formula {
+    background: var(--code-bg);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin: 12px 0;
+    text-align: center;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 14px;
+    color: var(--accent2);
+  }
+
+  .toc {
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 22px;
+    margin-bottom: 32px;
+  }
+  .toc ol { margin: 6px 0; padding-left: 20px; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+
+  /* Bit row visualization */
+  .bit-row {
+    display: flex;
+    justify-content: center;
+    gap: 4px;
+    margin: 8px 0;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .bit-label {
+    color: var(--muted);
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 13px;
+    min-width: 80px;
+    text-align: right;
+    padding-right: 8px;
+  }
+  .bit {
+    width: 36px; height: 36px;
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--code-bg);
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .bit.zero { color: var(--muted); }
+  .bit.one  { color: var(--accent2); }
+  .bit.diff { background: #3a1a1a; border-color: var(--danger); color: var(--danger); }
+  .bit.same { background: #1a3a1a; border-color: var(--accent2); color: var(--accent2); }
+
+  .muted { color: var(--muted); }
+  .accent { color: var(--accent); }
+  .green  { color: var(--accent2); }
+  .warn   { color: var(--warn); }
+  .danger { color: var(--danger); }
+
+  .compare-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 22px;
+    margin: 16px 0;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Hamming Distance — ORB 매칭의 심장</h1>
+<p class="subtitle">
+  두 이진 문자열 사이 "서로 다른 비트의 개수" — 단순한 개념이 어떻게
+  <code>align_key_matcher.py</code> 의 ORB 매칭을 SIFT 보다 60배 빠르게 만드나
+</p>
+
+<div class="toc">
+  <strong>목차</strong>
+  <ol>
+    <li><a href="#define">정의: XOR 후 1 비트 세기</a></li>
+    <li><a href="#example">손으로 따라가는 예시</a></li>
+    <li><a href="#why-orb">왜 ORB 가 hamming 을 쓰나</a></li>
+    <li><a href="#cpu">CPU 명령어 2개로 끝나는 비결</a></li>
+    <li><a href="#sem-match">SEM 매칭에서의 의미</a></li>
+    <li><a href="#lowe">Lowe ratio 와의 연결</a></li>
+    <li><a href="#properties">수학적 성질 (metric)</a></li>
+    <li><a href="#applications">다른 응용 분야</a></li>
+    <li><a href="#history">역사: Richard Hamming 과 1950</a></li>
+  </ol>
+</div>
+
+<!-- ================================================ -->
+<h2 id="define">1. 정의: XOR 후 1 비트 세기</h2>
+
+<p>같은 길이의 두 비트 문자열 <code>A</code>, <code>B</code> 에 대해:</p>
+
+<div class="formula">
+  hamming(A, B) = popcount(A XOR B)
+</div>
+
+<p>
+  <strong>XOR</strong> 은 "같으면 0, 다르면 1" 이므로, XOR 결과에서 1 인 비트의 개수가
+  곧 <strong>다른 위치의 개수</strong>가 된다. <strong>popcount</strong> 는 "population count" 로,
+  1 비트 개수를 세는 연산.
+</p>
+
+<!-- ================================================ -->
+<h2 id="example">2. 손으로 따라가는 예시</h2>
+
+<p>8-bit 두 descriptor 를 비교해보자:</p>
+
+<div class="card">
+  <div class="bit-row">
+    <span class="bit-label">A =</span>
+    <span class="bit one">1</span><span class="bit zero">0</span><span class="bit one">1</span><span class="bit one">1</span>
+    <span class="bit zero">0</span><span class="bit one">1</span><span class="bit zero">0</span><span class="bit one">1</span>
+  </div>
+  <div class="bit-row">
+    <span class="bit-label">B =</span>
+    <span class="bit one">1</span><span class="bit zero">0</span><span class="bit zero">0</span><span class="bit one">1</span>
+    <span class="bit one">1</span><span class="bit one">1</span><span class="bit zero">0</span><span class="bit zero">0</span>
+  </div>
+  <div class="bit-row" style="margin-top: 12px;">
+    <span class="bit-label">XOR =</span>
+    <span class="bit same">0</span><span class="bit same">0</span><span class="bit diff">1</span><span class="bit same">0</span>
+    <span class="bit diff">1</span><span class="bit same">0</span><span class="bit same">0</span><span class="bit diff">1</span>
+  </div>
+  <p style="text-align: center; margin-top: 14px; font-size: 15px;">
+    <span class="danger">빨강(다름)</span> = <strong>3개</strong>
+    &nbsp;&nbsp;→&nbsp;&nbsp;
+    <code style="font-size: 14px;">hamming(A, B) = 3</code>
+  </p>
+</div>
+
+<p>
+  256-bit descriptor (ORB 의 실제 크기) 라면 hamming distance 범위는
+  <strong>0 (완전 동일) ~ 256 (모든 비트 반대)</strong>.
+</p>
+
+<h3>두 descriptor 의 hamming 분포</h3>
+
+<svg class="svg-frame" viewBox="0 0 700 280" width="100%" xmlns="http://www.w3.org/2000/svg">
+  <!-- axes -->
+  <line x1="60" y1="240" x2="660" y2="240" stroke="#9aa4b2"/>
+  <line x1="60" y1="40" x2="60" y2="240" stroke="#9aa4b2"/>
+  <text x="360" y="265" text-anchor="middle" fill="#9aa4b2" font-size="12">hamming distance (256-bit)</text>
+  <text x="30" y="140" text-anchor="middle" fill="#9aa4b2" font-size="12" transform="rotate(-90, 30, 140)">빈도</text>
+
+  <!-- ticks -->
+  <text x="60" y="255" text-anchor="middle" fill="#9aa4b2" font-size="11">0</text>
+  <text x="210" y="255" text-anchor="middle" fill="#9aa4b2" font-size="11">64</text>
+  <text x="360" y="255" text-anchor="middle" fill="#9aa4b2" font-size="11">128</text>
+  <text x="510" y="255" text-anchor="middle" fill="#9aa4b2" font-size="11">192</text>
+  <text x="660" y="255" text-anchor="middle" fill="#9aa4b2" font-size="11">256</text>
+
+  <!-- bell curve for random descriptors (centered at 128) -->
+  <path d="M 60,238 Q 100,237 150,232 T 250,180 T 360,60 T 470,180 T 570,232 T 660,238"
+        fill="none" stroke="#9aa4b2" stroke-width="2" stroke-dasharray="4,3"/>
+  <text x="380" y="80" fill="#9aa4b2" font-size="11">랜덤 두 descriptor</text>
+  <text x="380" y="96" fill="#9aa4b2" font-size="11">(평균 = 128)</text>
+
+  <!-- spike at low values for good matches -->
+  <path d="M 60,238 Q 80,140 100,160 Q 120,220 150,235 L 660,238"
+        fill="none" stroke="#7ee787" stroke-width="2.5"/>
+  <text x="120" y="135" fill="#7ee787" font-size="11" font-weight="bold">좋은 매칭</text>
+  <text x="120" y="151" fill="#7ee787" font-size="11">(0 ~ 40)</text>
+
+  <!-- thresholds -->
+  <line x1="155" y1="40" x2="155" y2="240" stroke="#f0b429" stroke-width="1" stroke-dasharray="3,2"/>
+  <text x="155" y="35" text-anchor="middle" fill="#f0b429" font-size="11">40</text>
+  <text x="155" y="50" text-anchor="middle" fill="#f0b429" font-size="10">good</text>
+
+  <line x1="260" y1="40" x2="260" y2="240" stroke="#ff7b72" stroke-width="1" stroke-dasharray="3,2"/>
+  <text x="260" y="35" text-anchor="middle" fill="#ff7b72" font-size="11">80</text>
+  <text x="260" y="50" text-anchor="middle" fill="#ff7b72" font-size="10">애매</text>
+</svg>
+<p class="caption">실제 매칭에서 hamming 분포 — 좋은 매칭은 좌측 (0~40) 에 몰리고 랜덤은 중앙 (128) 에 모임</p>
+
+<!-- ================================================ -->
+<h2 id="why-orb">3. 왜 ORB 가 hamming 을 쓰나</h2>
+
+<p>
+  거리를 재는 방법은 여러 가지가 있다. 이진 descriptor 에 대해 각 방식이 어떤 차이를 만드는지 보자:
+</p>
+
+<table>
+  <thead>
+    <tr><th>측정법</th><th>수식</th><th>이진 descriptor 적용 시</th><th>속도</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>L1 (Manhattan)</strong></td>
+      <td>Σ \|a<sub>i</sub> − b<sub>i</sub>\|</td>
+      <td>= hamming 과 정확히 같음 (float 연산)</td>
+      <td>느림</td>
+    </tr>
+    <tr>
+      <td><strong>L2 (Euclidean)</strong></td>
+      <td>√Σ (a<sub>i</sub> − b<sub>i</sub>)²</td>
+      <td>= √hamming (역시 float)</td>
+      <td>매우 느림</td>
+    </tr>
+    <tr>
+      <td><strong>Hamming</strong></td>
+      <td>popcount(A XOR B)</td>
+      <td><span class="green">정수 비트 연산 1회로 끝</span></td>
+      <td><span class="green">매우 빠름</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="why">
+  <strong>핵심 관찰:</strong> 이진 벡터에서는 L1, L2, hamming 이 <em>본질적으로 같은 정보</em>를 담는다.
+  단지 표현 방식과 계산 비용이 다를 뿐. 그래서 ORB 는 가장 빠른 hamming 을 선택했다.
+</div>
+
+<!-- ================================================ -->
+<h2 id="cpu">4. CPU 명령어 2개로 끝나는 비결</h2>
+
+<p>
+  현대 CPU 는 hamming distance 를 <strong>딱 2 cycle</strong> 에 계산할 수 있다:
+</p>
+
+<pre><code>uint64_t a = ...;          // descriptor A 의 64-bit chunk
+uint64_t b = ...;          // descriptor B 의 64-bit chunk
+int distance = __builtin_popcountll(a ^ b);
+//             └── POPCNT instruction (Intel/AMD CPU 내장)
+</code></pre>
+
+<svg class="svg-frame" viewBox="0 0 720 240" width="100%" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#9aa4b2"/>
+    </marker>
+  </defs>
+
+  <!-- A -->
+  <rect x="20" y="30" width="160" height="50" rx="6" fill="#1c2230" stroke="#58a6ff"/>
+  <text x="100" y="50" text-anchor="middle" fill="#e6edf3" font-size="13" font-weight="bold">A (64-bit)</text>
+  <text x="100" y="68" text-anchor="middle" fill="#9aa4b2" font-family="monospace" font-size="11">0xA5F3...</text>
+
+  <!-- B -->
+  <rect x="20" y="100" width="160" height="50" rx="6" fill="#1c2230" stroke="#58a6ff"/>
+  <text x="100" y="120" text-anchor="middle" fill="#e6edf3" font-size="13" font-weight="bold">B (64-bit)</text>
+  <text x="100" y="138" text-anchor="middle" fill="#9aa4b2" font-family="monospace" font-size="11">0xC1E2...</text>
+
+  <!-- XOR gate -->
+  <rect x="240" y="65" width="120" height="50" rx="6" fill="#161b22" stroke="#f0b429"/>
+  <text x="300" y="85" text-anchor="middle" fill="#f0b429" font-size="13" font-weight="bold">XOR</text>
+  <text x="300" y="103" text-anchor="middle" fill="#9aa4b2" font-size="11">1 cycle</text>
+
+  <line x1="180" y1="55" x2="240" y2="80" stroke="#9aa4b2" marker-end="url(#arr3)"/>
+  <line x1="180" y1="125" x2="240" y2="100" stroke="#9aa4b2" marker-end="url(#arr3)"/>
+
+  <!-- XOR output -->
+  <rect x="380" y="65" width="160" height="50" rx="6" fill="#161b22" stroke="#2a3140"/>
+  <text x="460" y="85" text-anchor="middle" fill="#e6edf3" font-size="12">A XOR B</text>
+  <text x="460" y="103" text-anchor="middle" fill="#9aa4b2" font-family="monospace" font-size="11">0x6411...</text>
+
+  <line x1="360" y1="90" x2="380" y2="90" stroke="#9aa4b2" marker-end="url(#arr3)"/>
+
+  <!-- POPCNT -->
+  <rect x="560" y="65" width="140" height="50" rx="6" fill="#161b22" stroke="#7ee787"/>
+  <text x="630" y="85" text-anchor="middle" fill="#7ee787" font-size="13" font-weight="bold">POPCNT</text>
+  <text x="630" y="103" text-anchor="middle" fill="#9aa4b2" font-size="11">1 cycle</text>
+
+  <line x1="540" y1="90" x2="560" y2="90" stroke="#9aa4b2" marker-end="url(#arr3)"/>
+
+  <!-- Result -->
+  <rect x="280" y="170" width="200" height="50" rx="6" fill="#0b0f14" stroke="#ff7b72" stroke-width="2"/>
+  <text x="380" y="190" text-anchor="middle" fill="#ff7b72" font-size="13" font-weight="bold">distance = N</text>
+  <text x="380" y="208" text-anchor="middle" fill="#9aa4b2" font-size="11">정수 (0 ~ 64)</text>
+
+  <line x1="630" y1="115" x2="480" y2="180" stroke="#9aa4b2" marker-end="url(#arr3)"/>
+</svg>
+
+<h3>256-bit descriptor 전체 계산</h3>
+
+<p>
+  ORB 는 descriptor 가 256 비트이므로 64-bit chunk 가 4개:
+</p>
+
+<pre><code>// 4 chunks × (XOR + POPCNT) = 8 cycles total
+int hamming256(const uint8_t* a, const uint8_t* b) {
+    int dist = 0;
+    for (int i = 0; i &lt; 4; i++) {
+        uint64_t* pa = (uint64_t*)(a + i * 8);
+        uint64_t* pb = (uint64_t*)(b + i * 8);
+        dist += __builtin_popcountll(*pa ^ *pb);
+    }
+    return dist;
+}
+</code></pre>
+
+<h3>SIFT (128-float L2) 와 속도 비교</h3>
+
+<table>
+  <thead>
+    <tr><th>알고리즘</th><th>한 쌍 비교 비용</th><th>이론적 cycle</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>SIFT (128 float L2)</td>
+      <td>128 × (sub + mul + add)</td>
+      <td>~512 cycles</td>
+    </tr>
+    <tr>
+      <td>ORB (256 bit hamming)</td>
+      <td>4 × (XOR + POPCNT)</td>
+      <td><span class="green">~8 cycles</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="why">
+  <strong>약 64배 빠르다.</strong> Template 200개 × frame 500개 = 10만번 매칭이지만,
+  hamming 덕분에 1ms 미만에 끝난다.
+</div>
+
+<!-- ================================================ -->
+<h2 id="sem-match">5. SEM 매칭에서의 의미</h2>
+
+<p>
+  <code>align_key_matcher.py:249</code> 의 한 줄:
+</p>
+
+<pre><code>bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+raw_matches = bf.knnMatch(des_t, des_f, k=2)
+</code></pre>
+
+<p>
+  <code>NORM_HAMMING</code> 플래그가 BFMatcher 에게 "이진 descriptor 다, hamming 으로 비교하라"
+  고 알려준다. 그 다음 <code>knnMatch(..., k=2)</code> 가 각 template descriptor 에 대해
+  hamming 이 가장 작은 frame descriptor <strong>2개</strong>를 반환한다.
+</p>
+
+<svg class="svg-frame" viewBox="0 0 760 280" width="100%" xmlns="http://www.w3.org/2000/svg">
+  <!-- Template descriptors -->
+  <text x="80" y="22" text-anchor="middle" fill="#e6edf3" font-size="13" font-weight="bold">Template (200개)</text>
+  <g>
+    <rect x="20" y="40" width="120" height="20" fill="#1c2230" stroke="#58a6ff"/>
+    <text x="80" y="55" text-anchor="middle" fill="#7ee787" font-family="monospace" font-size="10">des_t[0]</text>
+
+    <rect x="20" y="70" width="120" height="20" fill="#1c2230" stroke="#58a6ff"/>
+    <text x="80" y="85" text-anchor="middle" fill="#7ee787" font-family="monospace" font-size="10">des_t[1]</text>
+
+    <rect x="20" y="100" width="120" height="20" fill="#1c2230" stroke="#58a6ff"/>
+    <text x="80" y="115" text-anchor="middle" fill="#7ee787" font-family="monospace" font-size="10">des_t[2]</text>
+
+    <text x="80" y="138" text-anchor="middle" fill="#9aa4b2" font-size="11">⋮</text>
+
+    <rect x="20" y="150" width="120" height="20" fill="#1c2230" stroke="#58a6ff"/>
+    <text x="80" y="165" text-anchor="middle" fill="#7ee787" font-family="monospace" font-size="10">des_t[199]</text>
+  </g>
+
+  <!-- Frame descriptors -->
+  <text x="500" y="22" text-anchor="middle" fill="#e6edf3" font-size="13" font-weight="bold">Frame (500개)</text>
+  <g>
+    <rect x="380" y="40" width="120" height="20" fill="#1c2230" stroke="#f0b429"/>
+    <text x="440" y="55" text-anchor="middle" fill="#aacbff" font-family="monospace" font-size="10">des_f[0]</text>
+
+    <rect x="380" y="65" width="120" height="20" fill="#1c2230" stroke="#f0b429"/>
+    <text x="440" y="80" text-anchor="middle" fill="#aacbff" font-family="monospace" font-size="10">des_f[1]</text>
+
+    <rect x="380" y="90" width="120" height="20" fill="#1c2230" stroke="#f0b429"/>
+    <text x="440" y="105" text-anchor="middle" fill="#aacbff" font-family="monospace" font-size="10">des_f[2]</text>
+
+    <text x="440" y="130" text-anchor="middle" fill="#9aa4b2" font-size="11">⋮</text>
+
+    <rect x="380" y="135" width="120" height="20" fill="#1c2230" stroke="#f0b429"/>
+    <text x="440" y="150" text-anchor="middle" fill="#aacbff" font-family="monospace" font-size="10">des_f[k]</text>
+
+    <text x="440" y="175" text-anchor="middle" fill="#9aa4b2" font-size="11">⋮</text>
+
+    <rect x="380" y="180" width="120" height="20" fill="#1c2230" stroke="#f0b429"/>
+    <text x="440" y="195" text-anchor="middle" fill="#aacbff" font-family="monospace" font-size="10">des_f[499]</text>
+  </g>
+
+  <!-- best 2 matches arrows -->
+  <line x1="140" y1="50" x2="380" y2="145" stroke="#7ee787" stroke-width="2"/>
+  <text x="260" y="100" fill="#7ee787" font-size="11">hamming=18 (1st)</text>
+
+  <line x1="140" y1="50" x2="380" y2="100" stroke="#f0b429" stroke-width="1.2" stroke-dasharray="3,2"/>
+  <text x="260" y="78" fill="#f0b429" font-size="10">hamming=92 (2nd)</text>
+
+  <!-- Output -->
+  <rect x="600" y="80" width="140" height="100" rx="6" fill="#0b0f14" stroke="#ff7b72"/>
+  <text x="670" y="105" text-anchor="middle" fill="#ff7b72" font-size="12" font-weight="bold">raw_matches[0]</text>
+  <text x="670" y="125" text-anchor="middle" fill="#e6edf3" font-size="11">m.distance = 18</text>
+  <text x="670" y="143" text-anchor="middle" fill="#e6edf3" font-size="11">n.distance = 92</text>
+  <text x="670" y="165" text-anchor="middle" fill="#7ee787" font-size="11">ratio = 18/92 = 0.19</text>
+
+  <line x1="500" y1="100" x2="600" y2="110" stroke="#9aa4b2" stroke-dasharray="3,2"/>
+
+  <text x="380" y="230" text-anchor="middle" fill="#9aa4b2" font-size="11">
+    template 200개 × frame 500개 = 100,000번 hamming 계산
+  </text>
+  <text x="380" y="250" text-anchor="middle" fill="#7ee787" font-size="11" font-weight="bold">
+    총 시간: &lt; 1 ms
+  </text>
+</svg>
+
+<!-- ================================================ -->
+<h2 id="lowe">6. Lowe ratio 와의 연결</h2>
+
+<p>
+  <code>align_key_matcher.py:257</code> 의 Lowe ratio test 도 hamming distance 위에서 동작:
+</p>
+
+<pre><code>good = [m for m, n in raw_matches if m.distance &lt; 0.75 * n.distance]
+#                     └──┬──┘              └──┬──┘
+#                  1등 매칭의            2등 매칭의
+#                  hamming distance      hamming distance
+</code></pre>
+
+<div class="why">
+  <strong>해석:</strong> "1등이 2등보다 25% 이상 가까우면 채택".
+  hamming 단위가 정수라 직관적이다 — 예: m=18, n=92 → 18 &lt; 0.75 × 92 = 69 → 통과.
+  하지만 m=40, n=50 → 40 &lt; 0.75 × 50 = 37.5 → <strong>탈락</strong> (애매한 매칭).
+</div>
+
+<!-- ================================================ -->
+<h2 id="properties">7. 수학적 성질 (metric)</h2>
+
+<p>Hamming distance 는 <strong>진짜 거리 (metric)</strong> 의 네 조건을 모두 만족한다:</p>
+
+<table>
+  <thead>
+    <tr><th>조건</th><th>내용</th><th>Hamming 만족?</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>비음수성</td><td>d(x, y) ≥ 0</td><td><span class="green">✓ (count 는 0 이상)</span></td></tr>
+    <tr><td>동일성</td><td>d(x, x) = 0</td><td><span class="green">✓ (XOR=0)</span></td></tr>
+    <tr><td>대칭성</td><td>d(x, y) = d(y, x)</td><td><span class="green">✓ (XOR 은 대칭)</span></td></tr>
+    <tr><td>삼각부등식</td><td>d(x, z) ≤ d(x, y) + d(y, z)</td><td><span class="green">✓</span></td></tr>
+  </tbody>
+</table>
+
+<div class="why">
+  <strong>왜 중요한가?</strong> 거리 metric 이면 <em>k-NN, k-means, BallTree, KD-tree</em> 같은
+  공간 분할 자료구조를 그대로 쓸 수 있다. OpenCV 의 BFMatcher 가 단순 brute force 이지만,
+  더 큰 데이터셋에서는 LSH (Locality-Sensitive Hashing) 같은 인덱스가 hamming 위에서 잘 동작.
+</div>
+
+<!-- ================================================ -->
+<h2 id="applications">8. 다른 응용 분야</h2>
+
+<div class="card">
+  <h4 style="margin-top: 0;">오류 정정 코드 (Hamming code)</h4>
+  <p>
+    7-bit 코드 안에 4 데이터 + 3 패리티 비트를 배치해서 <strong>1 비트 오류 검출 및 정정</strong>.
+    수신된 코드와 모든 valid 코드 사이의 hamming 을 계산해 최소 거리의 코드로 복구.
+    이 알고리즘 (1950) 이 hamming distance 이름의 유래.
+  </p>
+</div>
+
+<div class="card">
+  <h4 style="margin-top: 0;">DNA 시퀀스 비교</h4>
+  <p>
+    A, T, G, C 네 글자를 2 비트 (00, 01, 10, 11) 로 인코딩하면 두 DNA 가닥의 차이를
+    hamming 으로 측정 가능 — 변이(SNP) 수 직접 계산. genomics 의 가장 기본 도구.
+  </p>
+</div>
+
+<div class="card">
+  <h4 style="margin-top: 0;">SimHash / 문서 중복 검출</h4>
+  <p>
+    Google 이 web 인덱싱에서 사용. 각 문서를 64-bit fingerprint 로 hash → hamming 이 3 이하면
+    "거의 같은 문서". 수십억 문서를 빠르게 dedup.
+  </p>
+</div>
+
+<div class="card">
+  <h4 style="margin-top: 0;">Perceptual hashing (pHash)</h4>
+  <p>
+    이미지를 64-bit hash 로 압축 → 비슷한 이미지는 hamming 이 작음.
+    "이 이미지가 데이터셋의 사진과 비슷한가?" 검색에 사용. ORB 와 유사한 발상.
+  </p>
+</div>
+
+<div class="card">
+  <h4 style="margin-top: 0;">Locality-Sensitive Hashing (LSH)</h4>
+  <p>
+    고차원 벡터를 비트로 quantize 후 hamming 으로 근사 nearest neighbor 검색.
+    이미지 검색, 추천 시스템, 음악 매칭에서 사용.
+  </p>
+</div>
+
+<!-- ================================================ -->
+<h2 id="history">9. 역사: Richard Hamming 과 1950</h2>
+
+<p>
+  <strong>Richard W. Hamming</strong> (1915-1998) 는 Bell Labs 에서 일하던 수학자.
+  1947년 어느 주말, 그가 천공 카드로 입력한 프로그램이 패리티 오류로 자동 abort 되어
+  주말 작업이 무산되었다. 그는 화가 나서 생각했다:
+</p>
+
+<div class="card" style="font-style: italic; border-left: 3px solid var(--accent2);">
+  "기계가 오류를 검출할 수 있다면, 왜 정정도 못하지?"
+</div>
+
+<p>
+  그 후 3년간 연구해 1950 년 발표한 논문 <em>"Error detecting and error correcting codes"</em>
+  (Bell System Technical Journal) 에서 hamming code 와 그 핵심 도구인 hamming distance 를 정의.
+</p>
+
+<p>
+  Hamming distance 가 단순 정수 카운트인데도 metric 이고, 비트 연산으로 빠르게 계산되며,
+  거리 기반 알고리즘에 그대로 적용된다는 점이 70년이 지난 지금도 ORB, SimHash 등에서
+  계속 활용되는 이유다.
+</p>
+
+<div class="note">
+  <strong>여담:</strong> POPCNT 명령어는 1960년대 IBM 7030 (Stretch) 에 처음 도입되었다.
+  NSA 가 암호 해독에서 비트 카운트를 자주 써서 하드웨어 가속을 요청했다는 일화가 있다.
+  현대 x86 (Intel Nehalem 2008+, AMD Barcelona 2007+) 에 표준 명령어로 들어왔고,
+  ARM 도 NEON SIMD 에 <code>vcnt</code> 로 포함. 70년 된 옛 아이디어가 SEM 매칭의 속도를 만든 셈.
+</div>
+
+<!-- ================================================ -->
+<h2 id="summary">10. 한 줄 요약</h2>
+
+<div class="card" style="border-left: 3px solid var(--accent2); margin-top: 20px;">
+  <p style="margin: 0; font-size: 15px;">
+    <strong class="green">Hamming distance = popcount(A XOR B).</strong>
+    두 이진 문자열의 다른 비트 개수를 세는 단순한 측정이, CPU 가 2 cycle 로 계산할 수 있는
+    비트 연산이라는 점에서 <strong>이진 descriptor 매칭의 표준</strong>이 되었다.
+    ORB 가 SIFT 보다 60배 빠른 이유의 절반 이상이 hamming 덕분.
+  </p>
+</div>
+
+</div>
+</body>
+</html>

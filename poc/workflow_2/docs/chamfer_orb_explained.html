@@ -1,0 +1,661 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Chamfer + ORB — align_key_matcher 시각 해설</title>
+<style>
+  :root {
+    --bg: #0e1117;
+    --panel: #161b22;
+    --panel2: #1c2230;
+    --border: #2a3140;
+    --text: #e6edf3;
+    --muted: #9aa4b2;
+    --accent: #58a6ff;
+    --accent2: #7ee787;
+    --warn: #f0b429;
+    --danger: #ff7b72;
+    --kbd: #30363d;
+    --code-bg: #0b0f14;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+    line-height: 1.65;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 40px 28px 80px; }
+  h1 { font-size: 30px; margin: 0 0 6px 0; letter-spacing: -0.02em; }
+  .subtitle { color: var(--muted); margin-bottom: 32px; font-size: 15px; }
+  h2 {
+    font-size: 22px; margin-top: 48px; margin-bottom: 12px;
+    padding-bottom: 8px; border-bottom: 1px solid var(--border);
+    letter-spacing: -0.01em;
+  }
+  h3 { font-size: 17px; margin-top: 24px; margin-bottom: 8px; color: var(--accent); }
+  p { margin: 10px 0; }
+  code, kbd {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+  }
+  code {
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--accent2);
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  pre code { background: none; padding: 0; color: var(--text); }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin: 16px 0;
+  }
+  .step-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin: 20px 0;
+  }
+  .step-header {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 6px;
+  }
+  .step-num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--accent); color: #0b0f14;
+    font-weight: 700; font-size: 14px;
+  }
+  .step-title { font-size: 18px; font-weight: 600; }
+  .why {
+    background: var(--panel2);
+    border-left: 3px solid var(--accent2);
+    padding: 8px 14px;
+    margin: 10px 0;
+    border-radius: 0 6px 6px 0;
+    font-size: 14px;
+  }
+  .why strong { color: var(--accent2); }
+  .note {
+    background: var(--panel2);
+    border-left: 3px solid var(--warn);
+    padding: 8px 14px;
+    margin: 10px 0;
+    border-radius: 0 6px 6px 0;
+    font-size: 14px;
+  }
+  .note strong { color: var(--warn); }
+
+  table {
+    width: 100%; border-collapse: collapse;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 12px 0;
+    font-size: 14px;
+  }
+  th, td {
+    padding: 10px 14px; text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  th { background: var(--panel2); color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+
+  .svg-frame {
+    display: block; margin: 18px auto;
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  .caption {
+    text-align: center; color: var(--muted);
+    font-size: 13px; margin-top: -6px; margin-bottom: 18px;
+    font-style: italic;
+  }
+
+  .toc {
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 22px;
+    margin-bottom: 32px;
+  }
+  .toc ol { margin: 6px 0; padding-left: 20px; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+
+  .formula {
+    background: var(--code-bg);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin: 12px 0;
+    text-align: center;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 14px;
+    color: var(--accent2);
+  }
+
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 16px 0;
+  }
+  @media (max-width: 760px) {
+    .two-col { grid-template-columns: 1fr; }
+  }
+
+  .muted { color: var(--muted); }
+  .accent { color: var(--accent); }
+  .green  { color: var(--accent2); }
+  .warn   { color: var(--warn); }
+  .danger { color: var(--danger); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Chamfer + ORB 매칭 해설</h1>
+<p class="subtitle">
+  <code>poc/workflow_2/align_key_matcher.py</code> 가 레시피 align-key 이미지와
+  실시간 SEM 프레임을 어떻게 매칭하는지 — 두 고전 CV 알고리즘의 직관과 합성 방법.
+</p>
+
+<div class="toc">
+  <strong>목차</strong>
+  <ol>
+    <li><a href="#why">왜 두 알고리즘을 합치는가</a></li>
+    <li><a href="#pipeline">파이프라인 전체 그림</a></li>
+    <li><a href="#preprocess">전처리: Edge map &amp; Distance Transform</a></li>
+    <li><a href="#chamfer">Chamfer 매칭 — 구조 수준 localizer</a></li>
+    <li><a href="#orb">ORB + RANSAC — 특징 수준 verifier</a></li>
+    <li><a href="#fusion">합성 점수 &amp; 결정 임계값</a></li>
+    <li><a href="#scales">스케일 처리: Case A vs Case B</a></li>
+    <li><a href="#summary">한 줄 요약</a></li>
+  </ol>
+</div>
+
+<!-- =========================================================== -->
+<h2 id="why">1. 왜 두 알고리즘을 합치는가</h2>
+
+<p>
+  SEM 으로 같은 align key 패턴을 다시 찍어도 <strong>픽셀이 완전히 같지는 않다</strong>.
+  공정 drift, 빔 조건 변화, focus/contrast 차이로 밝기와 디테일이 미묘하게 흔들린다.
+  즉 단순 NCC/SSIM 같은 <em>픽셀 동일성</em> 기반 매칭은 1차 지표로 쓸 수 없다.
+</p>
+
+<div class="card">
+  <p style="margin:0">
+    그래서 <strong>두 가지 다른 관점</strong>으로 매칭한다:
+  </p>
+  <table>
+    <thead>
+      <tr><th>관점</th><th>알고리즘</th><th>강점</th><th>약점</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="accent">구조 (shape)</span></td>
+        <td>Chamfer matching</td>
+        <td>밝기 변화에 강함, 어디 있는지 빠르게 찾음</td>
+        <td>비슷한 윤곽이면 잘못 붙을 수 있음</td>
+      </tr>
+      <tr>
+        <td><span class="green">특징 (local descriptor)</span></td>
+        <td>ORB + RANSAC</td>
+        <td>회전/스케일/부분 가림에 강함, 기하 검증</td>
+        <td>저-텍스처 영역에선 keypoint 부족</td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="muted" style="font-size: 13px; margin-bottom: 0;">
+    Chamfer 가 "여기 같다" 라고 가리키면, ORB 가 "정말 같은 패턴인가?" 검증한다.
+  </p>
+</div>
+
+<div class="why">
+  <strong>핵심 직관:</strong> Chamfer 는 <em>localizer</em> (어디?), ORB 는 <em>verifier</em> (정말 맞나?).
+  두 점수를 <code>0.6 × chamfer + 0.4 × orb</code> 로 가중합해 최종 score 를 만든다.
+  <code>align_key_matcher.py:47-48</code> 의 가중치 결정 근거.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="pipeline">2. 파이프라인 전체 그림</h2>
+
+<svg class="svg-frame" viewBox="0 0 1000 360" width="100%" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#9aa4b2"/>
+    </marker>
+  </defs>
+
+  <!-- Template branch -->
+  <rect x="20" y="20" width="170" height="60" rx="8" fill="#1c2230" stroke="#58a6ff" stroke-width="1.5"/>
+  <text x="105" y="45" text-anchor="middle" fill="#e6edf3" font-size="13" font-weight="bold">Recipe align-key</text>
+  <text x="105" y="65" text-anchor="middle" fill="#9aa4b2" font-size="11">(raw 이미지 1장)</text>
+
+  <rect x="220" y="20" width="200" height="60" rx="8" fill="#161b22" stroke="#2a3140"/>
+  <text x="320" y="44" text-anchor="middle" fill="#7ee787" font-size="12">전처리 (1회)</text>
+  <text x="320" y="62" text-anchor="middle" fill="#9aa4b2" font-size="11">CLAHE → Blur → Canny</text>
+
+  <rect x="450" y="20" width="160" height="60" rx="8" fill="#161b22" stroke="#2a3140"/>
+  <text x="530" y="44" text-anchor="middle" fill="#e6edf3" font-size="12">edge_map</text>
+  <text x="530" y="62" text-anchor="middle" fill="#9aa4b2" font-size="11">(템플릿 윤곽)</text>
+
+  <line x1="190" y1="50" x2="220" y2="50" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="420" y1="50" x2="450" y2="50" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Frame branch -->
+  <rect x="20" y="130" width="170" height="60" rx="8" fill="#1c2230" stroke="#f0b429" stroke-width="1.5"/>
+  <text x="105" y="155" text-anchor="middle" fill="#e6edf3" font-size="13" font-weight="bold">SEM frame</text>
+  <text x="105" y="175" text-anchor="middle" fill="#9aa4b2" font-size="11">(매 프레임마다)</text>
+
+  <rect x="220" y="130" width="200" height="60" rx="8" fill="#161b22" stroke="#2a3140"/>
+  <text x="320" y="154" text-anchor="middle" fill="#7ee787" font-size="12">전처리 + Distance Transform</text>
+  <text x="320" y="172" text-anchor="middle" fill="#9aa4b2" font-size="11">edge → DT(거리지도)</text>
+
+  <rect x="450" y="130" width="160" height="60" rx="8" fill="#161b22" stroke="#2a3140"/>
+  <text x="530" y="154" text-anchor="middle" fill="#e6edf3" font-size="12">frame_dt</text>
+  <text x="530" y="172" text-anchor="middle" fill="#9aa4b2" font-size="11">(edge 까지 거리)</text>
+
+  <line x1="190" y1="160" x2="220" y2="160" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="420" y1="160" x2="450" y2="160" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Chamfer box -->
+  <rect x="650" y="55" width="180" height="80" rx="8" fill="#1c2230" stroke="#58a6ff" stroke-width="2"/>
+  <text x="740" y="80" text-anchor="middle" fill="#58a6ff" font-size="13" font-weight="bold">Chamfer 매칭</text>
+  <text x="740" y="100" text-anchor="middle" fill="#9aa4b2" font-size="11">edge_map ⊗ frame_dt</text>
+  <text x="740" y="118" text-anchor="middle" fill="#e6edf3" font-size="11">→ best (cx,cy), score</text>
+
+  <line x1="610" y1="50" x2="650" y2="85" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="610" y1="160" x2="650" y2="115" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ORB box -->
+  <rect x="650" y="170" width="180" height="80" rx="8" fill="#1c2230" stroke="#7ee787" stroke-width="2"/>
+  <text x="740" y="195" text-anchor="middle" fill="#7ee787" font-size="13" font-weight="bold">ORB + RANSAC</text>
+  <text x="740" y="213" text-anchor="middle" fill="#9aa4b2" font-size="11">template vs crop@(cx,cy)</text>
+  <text x="740" y="231" text-anchor="middle" fill="#e6edf3" font-size="11">→ inlier_ratio</text>
+
+  <line x1="740" y1="135" x2="740" y2="170" stroke="#9aa4b2" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arr)"/>
+  <text x="780" y="155" fill="#9aa4b2" font-size="10">crop hint</text>
+
+  <!-- Fusion -->
+  <rect x="860" y="110" width="120" height="80" rx="8" fill="#161b22" stroke="#f0b429" stroke-width="2"/>
+  <text x="920" y="138" text-anchor="middle" fill="#f0b429" font-size="13" font-weight="bold">합성</text>
+  <text x="920" y="156" text-anchor="middle" fill="#9aa4b2" font-size="11">0.6·C + 0.4·O</text>
+  <text x="920" y="174" text-anchor="middle" fill="#e6edf3" font-size="11">→ decision</text>
+
+  <line x1="830" y1="95" x2="860" y2="135" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="830" y1="210" x2="860" y2="165" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Output -->
+  <rect x="380" y="280" width="240" height="50" rx="8" fill="#0b0f14" stroke="#ff7b72" stroke-width="1.5"/>
+  <text x="500" y="302" text-anchor="middle" fill="#ff7b72" font-size="13" font-weight="bold">AlignKeyMatchResult</text>
+  <text x="500" y="320" text-anchor="middle" fill="#9aa4b2" font-size="11">score · best_xy · decision · overlay</text>
+
+  <line x1="920" y1="190" x2="620" y2="305" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#arr)"/>
+</svg>
+<p class="caption">템플릿은 1회만 전처리, 프레임은 매번 전처리 → Chamfer → ORB → 합성</p>
+
+<!-- =========================================================== -->
+<h2 id="preprocess">3. 전처리: Edge map &amp; Distance Transform</h2>
+
+<p>
+  두 알고리즘 모두 <strong>edge</strong> 위에서 동작한다.
+  픽셀 밝기가 아니라 "어디에 윤곽선이 있나" 만 보기 때문에 brightness drift 에 둔감하다.
+</p>
+
+<pre><code># align_key_matcher.py:107-124
+def preprocess_for_matching(image):
+    gray    = _to_grayscale(image)
+    eq      = CLAHE.apply(gray)         # 국소 대비 정규화
+    blurred = GaussianBlur(eq, σ=1.0)   # 잔류 노이즈 제거
+    edges   = Canny(blurred, 60, 160)   # 윤곽선 추출
+
+    inverted = bitwise_not(edges)        # edge=0, 나머지=255
+    dt       = distanceTransform(inverted, L2)  # 각 픽셀에서
+                                                # 가장 가까운 edge 까지의 거리
+    return edges, dt
+</code></pre>
+
+<h3>Distance Transform 의 직관</h3>
+
+<svg class="svg-frame" viewBox="0 0 900 240" width="100%" xmlns="http://www.w3.org/2000/svg">
+  <!-- Left: edges -->
+  <text x="100" y="22" text-anchor="middle" fill="#e6edf3" font-size="13" font-weight="bold">Edge map</text>
+  <text x="100" y="40" text-anchor="middle" fill="#9aa4b2" font-size="11">(흰=edge, 검정=배경)</text>
+  <rect x="20" y="50" width="160" height="160" fill="#0b0f14" stroke="#2a3140"/>
+  <!-- a square shape edges -->
+  <path d="M 60,90 L 140,90 L 140,170 L 60,170 Z" fill="none" stroke="#ffffff" stroke-width="2"/>
+
+  <!-- Middle: invert -->
+  <text x="370" y="22" text-anchor="middle" fill="#e6edf3" font-size="13" font-weight="bold">Distance Transform</text>
+  <text x="370" y="40" text-anchor="middle" fill="#9aa4b2" font-size="11">(밝을수록 edge 에서 멂)</text>
+  <defs>
+    <radialGradient id="dtSquare" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffe57d"/>
+      <stop offset="100%" stop-color="#1a1f2a"/>
+    </radialGradient>
+  </defs>
+  <rect x="290" y="50" width="160" height="160" fill="#1a1f2a" stroke="#2a3140"/>
+  <!-- inside the square: gradient bright in center -->
+  <rect x="332" y="92" width="76" height="76" fill="url(#dtSquare)"/>
+  <!-- outside: also gradient -->
+  <rect x="290" y="50" width="160" height="40" fill="#1a1f2a" opacity="0.0"/>
+  <path d="M 330,90 L 410,90 L 410,170 L 330,170 Z" fill="none" stroke="#3a4253" stroke-width="2"/>
+  <!-- sample annotations -->
+  <circle cx="370" cy="130" r="3" fill="#7ee787"/>
+  <text x="378" y="134" fill="#7ee787" font-size="10">중심: DT 큼</text>
+  <circle cx="335" cy="92" r="3" fill="#ff7b72"/>
+  <text x="290" y="84" fill="#ff7b72" font-size="10">edge: DT=0</text>
+
+  <!-- Right: explanation -->
+  <text x="560" y="22" fill="#e6edf3" font-size="13" font-weight="bold">DT 가 왜 좋은가?</text>
+  <foreignObject x="560" y="40" width="320" height="180">
+    <div xmlns="http://www.w3.org/1999/xhtml" style="color:#e6edf3; font-size:12px; line-height:1.6;">
+      • Edge 위 픽셀 → 거리 <span style="color:#ff7b72">0</span><br/>
+      • Edge 근처 → 작은 값<br/>
+      • Edge 에서 멀수록 → 큰 값<br/><br/>
+      <span style="color:#7ee787">템플릿 edge mask</span> 를 frame_dt 위에 슬라이딩하면,
+      "템플릿 윤곽이 frame edge 와 얼마나 잘 맞는지" 가
+      <strong>거리의 합</strong> 으로 측정된다.
+      픽셀 1개 어긋나도 합이 천천히 증가 → <em>fuzzy 매칭</em>.
+    </div>
+  </foreignObject>
+</svg>
+<p class="caption">DT 는 각 픽셀에 "가장 가까운 edge 까지 거리" 를 기록한 부드러운 점수 지도</p>
+
+<div class="why">
+  <strong>왜 edge 끼리 직접 비교하지 않나?</strong>
+  Edge map 끼리 XOR 하면 1픽셀만 어긋나도 점수가 망가진다.
+  DT 위에서 합산하면 어긋남이 <em>거리의 비례</em>로 들어와 부드럽게 평가된다.
+  이게 Chamfer matching 의 본질.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="chamfer">4. Chamfer 매칭 — 구조 수준 localizer</h2>
+
+<p>
+  템플릿의 edge mask 를 frame_dt 위에서 슬라이딩한다.
+  각 위치 (x, y) 마다 다음을 계산:
+</p>
+
+<div class="formula">
+  mean_dt(x, y) = Σ template_edges(i, j) · frame_dt(x+i, y+j) / N_edges
+</div>
+
+<p>
+  여기서 <code>N_edges</code> 는 템플릿의 edge 픽셀 개수. <strong>이 값이 작을수록 매칭이 잘 된 것</strong>.
+  코드에서는 <code>cv2.matchTemplate(frame_dt, mask, TM_CCORR)</code> 한 줄로 모든 위치에 대해 동시에 계산.
+</p>
+
+<pre><code># align_key_matcher.py:155-198
+result  = cv2.matchTemplate(frame_dt, template_mask, cv2.TM_CCORR)
+min_val, _, min_loc, _ = cv2.minMaxLoc(result)
+mean_dt = min_val / edge_count
+score   = exp(-mean_dt / DT_TAU_PX)   # 0~1 로 변환
+</code></pre>
+
+<h3>슬라이딩 윈도우 시각화</h3>
+
+<svg class="svg-frame" viewBox="0 0 880 280" width="100%" xmlns="http://www.w3.org/2000/svg">
+  <!-- frame_dt as gradient background -->
+  <defs>
+    <radialGradient id="frameDtBg" cx="60%" cy="55%" r="40%">
+      <stop offset="0%" stop-color="#0b0f14"/>
+      <stop offset="100%" stop-color="#3a4253"/>
+    </radialGradient>
+  </defs>
+  <text x="200" y="22" text-anchor="middle" fill="#e6edf3" font-size="13" font-weight="bold">frame_dt (SEM 프레임)</text>
+  <rect x="40" y="40" width="380" height="220" fill="url(#frameDtBg)" stroke="#58a6ff"/>
+  <!-- pretend edges in the frame -->
+  <path d="M 220,110 L 320,110 L 320,200 L 220,200 Z" fill="none" stroke="#ffffff" stroke-width="1.5" opacity="0.85"/>
+  <path d="M 90,80 L 110,80 L 110,100 L 90,100 Z" fill="none" stroke="#ffffff" stroke-width="1.2" opacity="0.5"/>
+
+  <!-- Sliding windows: 2 candidate positions, 1 winning -->
+  <rect x="95" y="60" width="80" height="80" fill="none" stroke="#ff7b72" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <text x="135" y="155" text-anchor="middle" fill="#ff7b72" font-size="11">mean_dt 큼 (×)</text>
+
+  <rect x="225" y="115" width="90" height="90" fill="none" stroke="#7ee787" stroke-width="2.5"/>
+  <circle cx="270" cy="160" r="4" fill="#7ee787"/>
+  <text x="270" y="225" text-anchor="middle" fill="#7ee787" font-size="12" font-weight="bold">mean_dt 최소 ✓</text>
+
+  <!-- Template -->
+  <text x="600" y="22" text-anchor="middle" fill="#e6edf3" font-size="13" font-weight="bold">template edge_map</text>
+  <rect x="500" y="60" width="200" height="200" fill="#0b0f14" stroke="#2a3140"/>
+  <path d="M 540,90 L 660,90 L 660,210 L 540,210 Z" fill="none" stroke="#ffffff" stroke-width="2"/>
+
+  <text x="780" y="60" fill="#e6edf3" font-size="12" font-weight="bold">Multi-scale</text>
+  <foreignObject x="730" y="70" width="140" height="200">
+    <div xmlns="http://www.w3.org/1999/xhtml" style="color:#9aa4b2; font-size:11px; line-height:1.6;">
+      해상도(nm/px) 미상 시 5단계로 템플릿 크기 조정:<br/>
+      <code style="background:#0b0f14; color:#7ee787; padding:1px 4px; border-radius:3px;">0.7 · 0.85 · 1.0 · 1.2 · 1.4</code><br/><br/>
+      각 스케일에서 위 매칭을 돌리고 최고점 채택.
+    </div>
+  </foreignObject>
+</svg>
+<p class="caption">템플릿 edge 윤곽을 frame_dt 위에서 슬라이딩 → 거리합이 최소인 곳이 매칭 위치</p>
+
+<h3>점수화: <code>exp(-mean_dt / τ)</code></h3>
+<p>
+  raw <code>mean_dt</code> 는 픽셀 단위 거리라 해석이 어렵다. <code>τ=10</code> 으로 감쇠시켜 0~1 로 정규화:
+</p>
+<div class="card" style="font-size: 13px;">
+  <table style="margin: 0;">
+    <thead><tr><th>mean_dt (px)</th><th>score</th><th>해석</th></tr></thead>
+    <tbody>
+      <tr><td>0</td><td>1.00</td><td>완벽한 윤곽 일치</td></tr>
+      <tr><td>5</td><td>0.61</td><td>괜찮은 일치</td></tr>
+      <tr><td>10</td><td>0.37</td><td>모호함</td></tr>
+      <tr><td>20</td><td>0.13</td><td>거의 무관</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- =========================================================== -->
+<h2 id="orb">5. ORB + RANSAC — 특징 수준 verifier</h2>
+
+<p>
+  Chamfer 가 "윤곽이 비슷한 곳" 을 찾았다면, ORB 는 <strong>"국소적 특징점 패턴까지 진짜 같은가"</strong> 를 검증한다.
+  ORB(Oriented FAST + Rotated BRIEF) 는 두 단계로 동작:
+</p>
+
+<ol>
+  <li><strong>Keypoint 검출</strong> — corner/blob 같은 특징적인 픽셀을 찾는다 (FAST 알고리즘).</li>
+  <li><strong>Descriptor 계산</strong> — 각 keypoint 주변 패치를 256-bit 이진 벡터로 인코딩 (rotated BRIEF).</li>
+</ol>
+
+<svg class="svg-frame" viewBox="0 0 900 280" width="100%" xmlns="http://www.w3.org/2000/svg">
+  <!-- Template -->
+  <text x="120" y="22" text-anchor="middle" fill="#e6edf3" font-size="13" font-weight="bold">template (raw)</text>
+  <rect x="30" y="40" width="180" height="180" fill="#0b0f14" stroke="#2a3140"/>
+  <path d="M 70,70 L 170,70 L 170,170 L 70,170 Z M 90,90 L 110,90 M 130,130 L 150,150" fill="none" stroke="#cbd5e0" stroke-width="1.5"/>
+  <!-- keypoints with orientation -->
+  <g stroke="#7ee787" fill="none" stroke-width="1.3">
+    <circle cx="70"  cy="70"  r="6"/><line x1="70" y1="70" x2="76" y2="64"/>
+    <circle cx="170" cy="70"  r="6"/><line x1="170" y1="70" x2="176" y2="76"/>
+    <circle cx="170" cy="170" r="6"/><line x1="170" y1="170" x2="164" y2="176"/>
+    <circle cx="70"  cy="170" r="6"/><line x1="70" y1="170" x2="64" y2="164"/>
+    <circle cx="100" cy="90"  r="5"/><line x1="100" y1="90" x2="106" y2="86"/>
+    <circle cx="140" cy="140" r="5"/><line x1="140" y1="140" x2="146" y2="146"/>
+  </g>
+
+  <!-- Frame crop -->
+  <text x="450" y="22" text-anchor="middle" fill="#e6edf3" font-size="13" font-weight="bold">frame crop @ chamfer (cx,cy)</text>
+  <rect x="360" y="40" width="180" height="180" fill="#0b0f14" stroke="#2a3140"/>
+  <path d="M 395,85 L 510,82 L 512,180 L 392,178 Z M 410,100 M 470,140 L 488,158" fill="none" stroke="#cbd5e0" stroke-width="1.5"/>
+  <g stroke="#7ee787" fill="none" stroke-width="1.3">
+    <circle cx="395" cy="85"  r="6"/>
+    <circle cx="510" cy="82"  r="6"/>
+    <circle cx="512" cy="180" r="6"/>
+    <circle cx="392" cy="178" r="6"/>
+    <circle cx="425" cy="105" r="5"/>
+    <circle cx="478" cy="148" r="5"/>
+    <!-- 1 outlier -->
+    <circle cx="450" cy="200" r="5" stroke="#ff7b72"/>
+  </g>
+
+  <!-- matches -->
+  <g stroke="#58a6ff" stroke-width="1.2" stroke-dasharray="3,2">
+    <line x1="170" y1="70"  x2="510" y2="82"/>
+    <line x1="170" y1="170" x2="512" y2="180"/>
+    <line x1="70"  y1="170" x2="392" y2="178"/>
+    <line x1="70"  y1="70"  x2="395" y2="85"/>
+    <line x1="100" y1="90"  x2="425" y2="105"/>
+    <line x1="140" y1="140" x2="478" y2="148"/>
+  </g>
+  <!-- outlier match -->
+  <line x1="140" y1="140" x2="450" y2="200" stroke="#ff7b72" stroke-width="1.2" stroke-dasharray="3,2"/>
+
+  <!-- Right legend -->
+  <foreignObject x="580" y="40" width="300" height="220">
+    <div xmlns="http://www.w3.org/1999/xhtml" style="color:#e6edf3; font-size:12px; line-height:1.7;">
+      <strong style="color:#7ee787;">● Keypoint</strong> 와 <strong style="color:#58a6ff;">파란 선 = 매칭</strong><br/><br/>
+      1. BFMatcher(NORM_HAMMING) 으로<br/>
+         &nbsp;&nbsp;각 descriptor 의 최근접 2개 검색<br/>
+      2. <strong>Lowe ratio test</strong> (0.75)<br/>
+         &nbsp;&nbsp;d₁ &lt; 0.75 · d₂ 인 것만 통과<br/>
+      3. <strong>RANSAC homography</strong><br/>
+         &nbsp;&nbsp;기하적으로 일관된 inlier 만 남김<br/><br/>
+      <strong style="color:#ff7b72;">빨강</strong> = 잘못된 매칭(outlier),<br/>
+      RANSAC 이 제거함.<br/><br/>
+      <strong style="color:#f0b429;">inlier_ratio</strong> = inliers / lowe-good
+    </div>
+  </foreignObject>
+</svg>
+<p class="caption">RANSAC 은 잘못된 매칭을 걸러내고 기하적 일관성으로 "진짜 같은 패턴" 인지 점수화한다</p>
+
+<pre><code># align_key_matcher.py:227-274
+orb        = cv2.ORB_create(nfeatures=2000)
+kp_t, des_t = orb.detectAndCompute(template_gray, None)
+kp_f, des_f = orb.detectAndCompute(frame_gray, None)
+
+bf       = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+raw      = bf.knnMatch(des_t, des_f, k=2)
+good     = [m for m, n in raw if m.distance &lt; 0.75 * n.distance]   # Lowe
+
+_H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+inlier_ratio = mask.sum() / len(good)
+</code></pre>
+
+<div class="why">
+  <strong>왜 Chamfer 결과 주변만 ORB 로 검사하나?</strong>
+  ORB 를 풀 프레임에서 돌리면 (a) 2000개 keypoint 가 곳곳에 분산되어 노이즈가 늘고
+  (b) RANSAC 의 검색 공간이 커진다. Chamfer 의 best (cx, cy) 를 중심으로
+  <code>1.6× 템플릿 크기</code> 만 잘라서 ORB 에 넘기면 빠르고 정확하다 (<code>_crop_with_padding</code> at line 299).
+</div>
+
+<!-- =========================================================== -->
+<h2 id="fusion">6. 합성 점수 &amp; 결정 임계값</h2>
+
+<div class="formula">
+  score = 0.6 · chamfer_score + 0.4 · orb_inlier_ratio
+</div>
+
+<table>
+  <thead>
+    <tr><th>score 범위</th><th>decision</th><th>의미</th><th>VLM 처리</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="green">≥ 0.75</span></td>
+      <td><code>match</code></td>
+      <td>레시피 align-key 와 충분히 일치</td>
+      <td>VLM 호출 불필요</td>
+    </tr>
+    <tr>
+      <td><span class="warn">0.55 ~ 0.75</span></td>
+      <td><code>adjust</code></td>
+      <td>비슷하지만 미세 조정 필요</td>
+      <td>VLM 에게 위치 보정 요청</td>
+    </tr>
+    <tr>
+      <td><span class="danger">&lt; 0.55</span></td>
+      <td><code>low</code></td>
+      <td>매칭 실패 — 다른 위치/패턴</td>
+      <td>스파이럴 탐색 or align-fail 알림</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="why">
+  <strong>가중치 0.6 / 0.4 의 의미:</strong> Chamfer 가 더 안정적인 신호(공정 drift 견고)이므로 가중치를 더 줬다.
+  ORB 는 텍스처가 부족한 영역에서 0 으로 떨어질 수 있어 단독 신뢰는 위험.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="scales">7. 스케일 처리: Case A vs Case B</h2>
+
+<p>
+  레시피 align-key 이미지와 현재 SEM 프레임이 항상 같은 해상도(nm/pixel) 인 것은 아니다.
+  코드는 두 경로로 분기 (<code>align_key_matcher.py:386-401</code>):
+</p>
+
+<div class="two-col">
+  <div class="step-card">
+    <div class="step-header">
+      <div class="step-num">A</div>
+      <div class="step-title">해상도 메타 있음</div>
+    </div>
+    <p>양쪽 모두 <code>nm_per_pixel</code> 을 알면 단일 스케일로 정확히 매칭:</p>
+    <pre style="font-size: 12px;"><code>scale = template.nm_per_pixel
+        / frame.nm_per_pixel
+scales = (scale,)   # 한 번만</code></pre>
+    <p class="muted" style="font-size: 12px;">빠르고 정확함.</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-header">
+      <div class="step-num">B</div>
+      <div class="step-title">메타 없음 — Fallback</div>
+    </div>
+    <p>해상도 미상 시 5단계 multi-scale brute force:</p>
+    <pre style="font-size: 12px;"><code>scales = (0.7, 0.85, 1.0, 1.2, 1.4)
+# Chamfer 점수가 가장 높은 스케일 채택</code></pre>
+    <p class="muted" style="font-size: 12px;">느리지만 견고함.</p>
+  </div>
+</div>
+
+<!-- =========================================================== -->
+<h2 id="summary">8. 한 줄 요약</h2>
+
+<div class="card" style="border-left: 3px solid var(--accent2); font-size: 15px;">
+  <p style="margin: 0;">
+    <strong class="green">Chamfer</strong> 가 edge 분포로 "어디에 있나" 를 빠르게 찾고,
+    <strong class="green">ORB+RANSAC</strong> 이 keypoint 기하로 "정말 같은가" 를 검증한다.
+    둘을 <code>0.6 · C + 0.4 · O</code> 로 합친 점수가
+    <code>match / adjust / low</code> 의 결정 신호가 된다.
+  </p>
+</div>
+
+<div class="note" style="margin-top: 24px;">
+  <strong>관련 코드 위치</strong><br/>
+  • 전처리: <code>preprocess_for_matching</code> (line 107) <br/>
+  • Chamfer: <code>_chamfer_score_at_scale</code> (line 155), <code>compute_chamfer_score</code> (line 201) <br/>
+  • ORB: <code>compute_orb_inlier_ratio</code> (line 227) <br/>
+  • 메인 진입점: <code>compute_align_key_score</code> (line 370) <br/>
+  • 결정 임계값: <code>MATCH_THRESHOLD=0.75</code>, <code>ADJUST_THRESHOLD=0.55</code> (line 50-52)
+</div>
+
+</div>
+</body>
+</html>

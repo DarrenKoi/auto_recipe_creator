@@ -100,8 +100,8 @@ WF2_STEPS: list[Step] = [
     ),
     Step(
         "Align Key 매칭 (Chamfer + ORB)",
-        STATUS_DONE,
-        "합성 데이터 검증 통과, 실데이터 calibration 대기",
+        STATUS_PENDING,
+        "Recipe Align Key 추출 선행 필요, 합성 데이터 사전 검증만 완료된 상태",
     ),
     Step(
         "FOV Search Loop",
@@ -112,9 +112,9 @@ WF2_STEPS: list[Step] = [
 
 
 NEXT_STEPS = [
-    "실 SEM 환경 calibration 데이터 수집 (positive/negative 50+ pairs) → 매칭 임계값 검증",
     "Cursor Click 감지의 환경/위치 변형 대응 마무리 후 실 RCS 회귀 테스트",
     "Recipe Align Key 이미지 추출 파이프라인 코어 구현 및 VLM 입력 검증",
+    "추출 완료 이후 Align Key 매칭(Chamfer+ORB) 실데이터 calibration 진행 (positive/negative 50+ pairs로 임계값 검증)",
     "FOV Search Loop 통합 → 매니저 라이브 데모 준비",
 ]
 
@@ -288,12 +288,13 @@ def build_html() -> str:
 <div class="meta">작성일: {REPORT_DATE.isoformat()} · 범위: poc/workflow_2/</div>
 
 <div class="summary">
-  Workflow 1 (RCS 로그인 → Align Fail Alarm)은 별도 보고로 완료된 베이스라인이며,
-  본 보고는 그 위에서 진행되는 <b>Workflow 2 (SEM Monitor 조작 + Align Key 검색)</b> 작업의 단계별 현황을 다룬다.
+  Workflow 1 (RCS 로그인 → Align Fail Alarm)은 완성 단계에 있습니다.
+  이어지는 <b>Workflow 2</b>에서는 <b>SEM Monitor 조작</b>과 <b>Align Key 찾기</b>,
+  그리고 <b>Align Key를 정확히 선택할 수 있는지</b>를 평가 중이며, 본 보고는 그 단계별 현황을 정리한 것입니다.
 </div>
 
 <h2>① Process Flow</h2>
-<div class="wf1-label">Workflow 1 (완료 · 별도 보고됨)</div>
+<div class="wf1-label">Workflow 1 · 완성 단계 (별도 보고)</div>
 {wf1_chips}
 
 <div style="text-align:center; color:#90A4AE; margin: 10px 0; font-size: 16px;">▼</div>
@@ -441,16 +442,16 @@ def build_pptx() -> Presentation:
                   f"작성일 {REPORT_DATE.isoformat()}  ·  범위 poc/workflow_2/",
                   size=14, color="#78909C", align=PP_ALIGN.CENTER)
     _add_text_box(s1, Inches(0.8), Inches(6.0), Inches(11.7), Inches(0.4),
-                  "Workflow 1 (RCS 로그인 ~ Align Fail Alarm)은 별도 보고로 완료된 베이스라인",
+                  "Workflow 1 (RCS 로그인 ~ Align Fail Alarm)은 완성 단계에 있으며, 본 보고는 Workflow 2의 진행 현황입니다",
                   size=12, color="#90A4AE", align=PP_ALIGN.CENTER)
 
     # ── Slide 2: Process Flow ────────────────────────────────────────
     s2 = prs.slides.add_slide(blank)
-    _slide_title(s2, "① Process Flow", "Workflow 1 (완료) → Workflow 2 (현재 작업)")
+    _slide_title(s2, "① Process Flow", "Workflow 1 (완성 단계) → Workflow 2 (현재 작업)")
 
     # WF1 압축 트랙
     _add_text_box(s2, Inches(0.5), Inches(1.25), Inches(12.3), Inches(0.3),
-                  "Workflow 1 · 완료 (별도 보고됨)", size=11, color="#757575")
+                  "Workflow 1 · 완성 단계 (별도 보고)", size=11, color="#757575")
 
     wf1_left = Inches(0.5)
     wf1_top = Inches(1.6)
@@ -517,7 +518,7 @@ def build_pptx() -> Presentation:
 
     # ── Slide 3: 상태 표 ─────────────────────────────────────────────
     s3 = prs.slides.add_slide(blank)
-    _slide_title(s3, "② 진행 상황", "Workflow 2 5개 단계 상세")
+    _slide_title(s3, "② 진행 상황", f"Workflow 2 {len(WF2_STEPS)}개 단계 상세")
 
     headers = ["#", "단계", "상태", "설명"]
     n_rows = len(WF2_STEPS) + 1

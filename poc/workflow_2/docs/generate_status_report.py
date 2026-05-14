@@ -101,7 +101,7 @@ WF2_STEPS: list[Step] = [
     Step(
         "Align Key 매칭 (Chamfer + ORB)",
         STATUS_PENDING,
-        "Recipe Align Key 추출 선행 필요, 합성 데이터 사전 검증만 완료된 상태",
+        "Recipe Align Key 추출 선행 필요, 합성 데이터 사전 검증도 미진행 (알고리즘 구현만 완료)",
     ),
     Step(
         "FOV Search Loop",
@@ -114,7 +114,7 @@ WF2_STEPS: list[Step] = [
 NEXT_STEPS = [
     "Cursor Click 감지의 환경/위치 변형 대응 마무리 후 실 RCS 회귀 테스트",
     "Recipe Align Key 이미지 추출 파이프라인 코어 구현 및 VLM 입력 검증",
-    "추출 완료 이후 Align Key 매칭(Chamfer+ORB) 실데이터 calibration 진행 (positive/negative 50+ pairs로 임계값 검증)",
+    "Align Key 매칭(Chamfer+ORB) 합성 데이터 사전 검증부터 시작 → 실데이터 calibration (positive/negative 50+ pairs로 임계값 검증)",
     "FOV Search Loop 통합 → 매니저 라이브 데모 준비",
 ]
 

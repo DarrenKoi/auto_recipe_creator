@@ -20,8 +20,26 @@ import pandas as pd
 
 from poc.workflow_1 import LOG_DIR
 from poc.workflow_1.office_align_fail_alarm import filter_align_fail, get_cdsem_alarms
-from poc.workflow_1.rich_notify import send_rich_align_fail_notification
 from poc.workflow_1.util import env_flag, env_int
+
+# rich notify 는 선택 의존성. requests/PIL/ftplib 등 추가 의존성이 없거나
+# 모듈에 문제가 있어도 align_fail_alarm 본체는 계속 동작해야 한다.
+RICH_NOTIFY_AVAILABLE = False
+send_rich_align_fail_notification = None
+try:
+    from poc.workflow_1.rich_notify import (
+        send_rich_align_fail_notification,
+    )
+
+    RICH_NOTIFY_AVAILABLE = True
+except Exception as _rich_notify_import_exc:
+    try:
+        print(
+            f"[WARNING] rich_notify 모듈 로드 실패 - 텍스트 로그/팝업만 동작합니다: "
+            f"{_rich_notify_import_exc}"
+        )
+    except Exception:
+        pass
 
 POLL_INTERVAL_SEC = env_int("ALIGN_FAIL_POLL_SEC", 30)
 POPUP_ENABLED_DEFAULT = True
@@ -181,6 +199,8 @@ def _collapse_rows_by_tool(fails) -> dict[str, dict]:
 
 def _send_rich_notify_async(payload: dict) -> None:
     """rich notify 호출을 데몬 스레드로 비차단 실행한다."""
+    if not RICH_NOTIFY_AVAILABLE or send_rich_align_fail_notification is None:
+        return
 
     def _run():
         try:
@@ -272,7 +292,10 @@ def monitor_loop(popup_enabled: bool | None = None) -> None:
     """
     if popup_enabled is None:
         popup_enabled = env_flag("ALIGN_FAIL_POPUP", POPUP_ENABLED_DEFAULT)
-    rich_notify_enabled = env_flag("ALIGN_FAIL_RICH_NOTIFY", RICH_NOTIFY_ENABLED_DEFAULT)
+    rich_notify_requested = env_flag("ALIGN_FAIL_RICH_NOTIFY", RICH_NOTIFY_ENABLED_DEFAULT)
+    rich_notify_enabled = rich_notify_requested and RICH_NOTIFY_AVAILABLE
+    if rich_notify_requested and not RICH_NOTIFY_AVAILABLE:
+        print("[WARNING] ALIGN_FAIL_RICH_NOTIFY=on 이지만 rich_notify 모듈 로드 실패 - off 로 진행")
 
     active_tools: set[str] = set()
 

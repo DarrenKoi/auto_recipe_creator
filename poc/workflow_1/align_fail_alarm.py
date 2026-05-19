@@ -20,10 +20,12 @@ import pandas as pd
 
 from poc.workflow_1 import LOG_DIR
 from poc.workflow_1.office_align_fail_alarm import filter_align_fail, get_cdsem_alarms
+from poc.workflow_1.rich_notify import send_rich_align_fail_notification
 from poc.workflow_1.util import env_flag, env_int
 
 POLL_INTERVAL_SEC = env_int("ALIGN_FAIL_POLL_SEC", 30)
 POPUP_ENABLED_DEFAULT = True
+RICH_NOTIFY_ENABLED_DEFAULT = True
 ALARM_LOG_PATH = LOG_DIR / "align_fail_alarms.txt"
 
 
@@ -177,10 +179,23 @@ def _collapse_rows_by_tool(fails) -> dict[str, dict]:
     return by_tool
 
 
+def _send_rich_notify_async(payload: dict) -> None:
+    """rich notify 호출을 데몬 스레드로 비차단 실행한다."""
+
+    def _run():
+        try:
+            send_rich_align_fail_notification(**payload)
+        except Exception as exc:
+            print(f"[WARNING] rich notify 예외: {exc}")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def process_fail_rows(
     fails,
     active_tools: set[str],
     popup_enabled: bool = True,
+    rich_notify_enabled: bool = True,
 ) -> int:
     """EQP_ID 기준으로 edge-triggered 알림을 수행한다.
 
@@ -228,6 +243,18 @@ def process_fail_rows(
                 operation_desc=operation_desc,
                 lot_type_cd=lot_type_cd,
             )
+        if rich_notify_enabled:
+            _send_rich_notify_async(
+                {
+                    "eqp_id": eqp_id,
+                    "alarm_time": alarm_time,
+                    "alarm_name": alarm_name,
+                    "alid": alid,
+                    "recipe_id": recipe_id,
+                    "operation_desc": operation_desc,
+                    "lot_type_cd": lot_type_cd,
+                }
+            )
 
         active_tools.add(eqp_id)
         newly_handled += 1
@@ -245,10 +272,15 @@ def monitor_loop(popup_enabled: bool | None = None) -> None:
     """
     if popup_enabled is None:
         popup_enabled = env_flag("ALIGN_FAIL_POPUP", POPUP_ENABLED_DEFAULT)
+    rich_notify_enabled = env_flag("ALIGN_FAIL_RICH_NOTIFY", RICH_NOTIFY_ENABLED_DEFAULT)
 
     active_tools: set[str] = set()
 
-    print(f"[INFO] Align Fail 감지 시작 (주기={POLL_INTERVAL_SEC}s, 팝업={'on' if popup_enabled else 'off'})")
+    print(
+        f"[INFO] Align Fail 감지 시작 (주기={POLL_INTERVAL_SEC}s, "
+        f"팝업={'on' if popup_enabled else 'off'}, "
+        f"rich_notify={'on' if rich_notify_enabled else 'off'})"
+    )
     print(f"[INFO] 누적 로그 파일: {ALARM_LOG_PATH}")
     print("[INFO] 같은 EQP_ID 의 중복 알람은 한 번만 알립니다 (해제 후 재감지 시 재알림).")
 
@@ -265,7 +297,12 @@ def monitor_loop(popup_enabled: bool | None = None) -> None:
                     active_tools.clear()
                 print(f"[INFO] {datetime.now().strftime('%H:%M:%S')} — Align Fail 없음")
             else:
-                count = process_fail_rows(fails, active_tools, popup_enabled=popup_enabled)
+                count = process_fail_rows(
+                    fails,
+                    active_tools,
+                    popup_enabled=popup_enabled,
+                    rich_notify_enabled=rich_notify_enabled,
+                )
                 if count == 0:
                     print(
                         f"[INFO] {datetime.now().strftime('%H:%M:%S')} — "

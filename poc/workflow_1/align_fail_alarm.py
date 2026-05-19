@@ -22,24 +22,15 @@ from poc.workflow_1 import LOG_DIR
 from poc.workflow_1.office_align_fail_alarm import filter_align_fail, get_cdsem_alarms
 from poc.workflow_1.util import env_flag, env_int
 
-# rich notify 는 선택 의존성. requests/PIL/ftplib 등 추가 의존성이 없거나
-# 모듈에 문제가 있어도 align_fail_alarm 본체는 계속 동작해야 한다.
-RICH_NOTIFY_AVAILABLE = False
-send_rich_align_fail_notification = None
+# rich notify 는 선택 의존성. requests/PIL/ftplib 등이 빠져도 본체는 계속 동작해야 한다.
 try:
-    from poc.workflow_1.rich_notify import (
-        send_rich_align_fail_notification,
-    )
+    from poc.workflow_1.rich_notify import send_rich_align_fail_notification
 
     RICH_NOTIFY_AVAILABLE = True
 except Exception as _rich_notify_import_exc:
-    try:
-        print(
-            f"[WARNING] rich_notify 모듈 로드 실패 - 텍스트 로그/팝업만 동작합니다: "
-            f"{_rich_notify_import_exc}"
-        )
-    except Exception:
-        pass
+    send_rich_align_fail_notification = None
+    RICH_NOTIFY_AVAILABLE = False
+    print(f"[WARNING] rich_notify 모듈 로드 실패 - 텍스트 로그/팝업만 동작합니다: {_rich_notify_import_exc}")
 
 POLL_INTERVAL_SEC = env_int("ALIGN_FAIL_POLL_SEC", 30)
 POPUP_ENABLED_DEFAULT = True
@@ -197,9 +188,9 @@ def _collapse_rows_by_tool(fails) -> dict[str, dict]:
     return by_tool
 
 
-def _send_rich_notify_async(payload: dict) -> None:
+def _send_rich_notify_async(**payload) -> None:
     """rich notify 호출을 데몬 스레드로 비차단 실행한다."""
-    if not RICH_NOTIFY_AVAILABLE or send_rich_align_fail_notification is None:
+    if not RICH_NOTIFY_AVAILABLE:
         return
 
     def _run():
@@ -265,15 +256,13 @@ def process_fail_rows(
             )
         if rich_notify_enabled:
             _send_rich_notify_async(
-                {
-                    "eqp_id": eqp_id,
-                    "alarm_time": alarm_time,
-                    "alarm_name": alarm_name,
-                    "alid": alid,
-                    "recipe_id": recipe_id,
-                    "operation_desc": operation_desc,
-                    "lot_type_cd": lot_type_cd,
-                }
+                eqp_id=eqp_id,
+                alarm_time=alarm_time,
+                alarm_name=alarm_name,
+                alid=alid,
+                recipe_id=recipe_id,
+                operation_desc=operation_desc,
+                lot_type_cd=lot_type_cd,
             )
 
         active_tools.add(eqp_id)

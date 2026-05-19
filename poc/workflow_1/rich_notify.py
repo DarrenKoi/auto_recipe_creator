@@ -24,15 +24,16 @@
 import ftplib
 import os
 import socket
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from io import BytesIO
 from pathlib import Path
 
 import requests
 from PIL import Image
 
 from poc.workflow_1 import DEBUG_IMAGE_DIR, LOG_DIR
-from poc.workflow_1.util import env_int
+from poc.workflow_1.util import env_int, make_timestamp_tag
 
 
 RECIPE_IMAGE_CACHE_DIR = DEBUG_IMAGE_DIR / "rich_notify" / "recipe_image"
@@ -40,10 +41,6 @@ TOOL_CAPTURE_DIR = DEBUG_IMAGE_DIR / "rich_notify" / "tool_capture"
 ALARM_LOG_PATH = LOG_DIR / "align_fail_alarms.txt"
 
 APICUBE_TIMEOUT_SEC = 15
-
-
-def _timestamp_tag() -> str:
-    return datetime.now().strftime("%y%m%d_%H%M%S")
 
 
 def _safe_name(text: str) -> str:
@@ -82,7 +79,7 @@ def fetch_recipe_align_image(eqp_id: str, recipe_id: str) -> Path | None:
     RECIPE_IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     local_path = (
         RECIPE_IMAGE_CACHE_DIR
-        / f"{_timestamp_tag()}_{_safe_name(eqp_id)}_{_safe_name(recipe_id)}{suffix}"
+        / f"{make_timestamp_tag()}_{_safe_name(eqp_id)}_{_safe_name(recipe_id)}{suffix}"
     )
 
     print(f"[INFO] FTP 다운로드 시도: host={host}, path={remote_path}")
@@ -96,7 +93,7 @@ def fetch_recipe_align_image(eqp_id: str, recipe_id: str) -> Path | None:
         print(f"[WARNING] FTP 다운로드 실패: {exc}")
         try:
             local_path.unlink(missing_ok=True)
-        except Exception:
+        except OSError:
             pass
         return None
 
@@ -116,10 +113,10 @@ def _convert_to_jpeg_if_large(path: Path, threshold_bytes: int = 1_000_000) -> P
         if jpeg_path != path:
             try:
                 path.unlink(missing_ok=True)
-            except Exception:
+            except OSError:
                 pass
         return jpeg_path
-    except Exception as exc:
+    except (OSError, ValueError) as exc:
         print(f"[WARNING] JPEG 변환 실패 (원본 유지): {exc}")
         return path
 
@@ -157,7 +154,7 @@ def capture_tool_align_image(eqp_id: str) -> Path | None:
         return None
 
     TOOL_CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = TOOL_CAPTURE_DIR / f"{_timestamp_tag()}_{_safe_name(eqp_id)}.jpg"
+    out_path = TOOL_CAPTURE_DIR / f"{make_timestamp_tag()}_{_safe_name(eqp_id)}.jpg"
     try:
         rgb = image.convert("RGB") if image.mode != "RGB" else image
         rgb.save(out_path, format="JPEG", quality=90)
@@ -173,8 +170,11 @@ def capture_tool_align_image(eqp_id: str) -> Path | None:
 
 
 def collect_recipe_history(recipe_id: str, limit: int | None = None) -> list[str]:
-    """`align_fail_alarms.txt` 에서 같은 RECIPE_ID 의 최근 알람 라인을 반환한다."""
-    if not recipe_id or not ALARM_LOG_PATH.exists():
+    """`align_fail_alarms.txt` 에서 같은 RECIPE_ID 의 최근 알람 라인을 반환한다.
+
+    deque(maxlen) 로 last-N 만 메모리에 유지하여 로그가 커져도 안전.
+    """
+    if not recipe_id:
         return []
 
     if limit is None:
@@ -183,14 +183,19 @@ def collect_recipe_history(recipe_id: str, limit: int | None = None) -> list[str
         return []
 
     needle = f"RECIPE_ID={recipe_id}"
+    matched: deque[str] = deque(maxlen=limit)
     try:
         with ALARM_LOG_PATH.open("r", encoding="utf-8") as fp:
-            matched = [line.rstrip("\n") for line in fp if needle in line]
+            for line in fp:
+                if needle in line:
+                    matched.append(line.rstrip("\n"))
+    except FileNotFoundError:
+        return []
     except OSError as exc:
         print(f"[WARNING] 알람 로그 읽기 실패: {exc}")
         return []
 
-    return matched[-limit:]
+    return list(matched)
 
 
 # --------------------------------------------------------------- API Cube 송신
@@ -224,48 +229,36 @@ def _build_message_text(
     return "\n".join(lines)
 
 
+def _read_image_attachments(
+    image_paths: list[Path],
+) -> list[tuple[str, tuple[str, bytes, str]]]:
+    """첨부할 이미지를 한 번만 디스크에서 읽어 multipart files 리스트로 만든다."""
+    files: list[tuple[str, tuple[str, bytes, str]]] = []
+    for img_path in image_paths:
+        try:
+            with img_path.open("rb") as fp:
+                data = fp.read()
+        except OSError as exc:
+            print(f"[WARNING] 첨부 파일 읽기 실패: {img_path}, error={exc}")
+            continue
+        files.append(("files", (img_path.name, data, "image/jpeg")))
+    return files
+
+
 def _send_apicube_dm(
     user_id: str,
     text: str,
-    image_paths: list[Path],
+    files: list[tuple[str, tuple[str, bytes, str]]],
+    *,
+    url: str,
+    bot_token: str,
 ) -> bool:
     """API Cube 에 DM 1건 전송. 사내 REST 스펙은 환경변수 + 아래 페이로드 키로 조정한다."""
-    base_url = os.getenv("APICUBE_BASE_URL", "").strip().rstrip("/")
-    bot_token = os.getenv("APICUBE_BOT_TOKEN", "").strip()
-    if not base_url or not bot_token:
-        print("[INFO] API Cube 미설정 — 전송 skip")
-        return False
+    headers = {"Authorization": f"Bearer {bot_token}"}
+    data = {"recipient": user_id, "text": text}
 
-    message_path = os.getenv("APICUBE_MESSAGE_PATH", "/api/v1/messages").strip()
-    if not message_path.startswith("/"):
-        message_path = "/" + message_path
-    url = f"{base_url}{message_path}"
-
-    # 첨부 파일은 multipart 로 보낸다. 사내 API 가 다른 키를 요구하면 여기를 조정.
-    files: list[tuple[str, tuple[str, bytes, str]]] = []
-    open_handles = []
+    print(f"[INFO] API Cube DM 전송: url={url}, user={user_id}, files={len(files)}")
     try:
-        for img_path in image_paths:
-            try:
-                handle = img_path.open("rb")
-            except OSError as exc:
-                print(f"[WARNING] 첨부 파일 열기 실패: {img_path}, error={exc}")
-                continue
-            open_handles.append(handle)
-            files.append(
-                (
-                    "files",
-                    (img_path.name, handle.read(), "image/jpeg"),
-                )
-            )
-
-        data = {
-            "recipient": user_id,
-            "text": text,
-        }
-        headers = {"Authorization": f"Bearer {bot_token}"}
-
-        print(f"[INFO] API Cube DM 전송: url={url}, user={user_id}, files={len(files)}")
         response = requests.post(
             url,
             headers=headers,
@@ -273,23 +266,30 @@ def _send_apicube_dm(
             files=files or None,
             timeout=APICUBE_TIMEOUT_SEC,
         )
-        if response.status_code >= 400:
-            print(
-                f"[WARNING] API Cube 응답 오류: status={response.status_code}, "
-                f"body={response.text[:200]!r}"
-            )
-            return False
-        print(f"[INFO] API Cube DM 전송 완료: user={user_id}, status={response.status_code}")
-        return True
     except requests.RequestException as exc:
-        print(f"[WARNING] API Cube 전송 예외: {exc}")
+        print(f"[WARNING] API Cube 전송 예외: user={user_id}, error={exc}")
         return False
-    finally:
-        for handle in open_handles:
-            try:
-                handle.close()
-            except Exception:
-                pass
+
+    if response.status_code >= 400:
+        print(
+            f"[WARNING] API Cube 응답 오류: user={user_id}, "
+            f"status={response.status_code}, body={response.text[:200]!r}"
+        )
+        return False
+    print(f"[INFO] API Cube DM 전송 완료: user={user_id}, status={response.status_code}")
+    return True
+
+
+def _resolve_apicube_endpoint() -> tuple[str, str] | None:
+    """환경변수에서 API Cube 호출 URL 과 토큰을 한 번에 해석한다."""
+    base_url = os.getenv("APICUBE_BASE_URL", "").strip().rstrip("/")
+    bot_token = os.getenv("APICUBE_BOT_TOKEN", "").strip()
+    if not base_url or not bot_token:
+        return None
+    message_path = os.getenv("APICUBE_MESSAGE_PATH", "/api/v1/messages").strip()
+    if not message_path.startswith("/"):
+        message_path = "/" + message_path
+    return f"{base_url}{message_path}", bot_token
 
 
 # ------------------------------------------------------------------- 오케스트
@@ -311,13 +311,24 @@ def send_rich_align_fail_notification(
         print("[INFO] APICUBE_DM_USER_IDS 미설정 — rich notify skip")
         return
 
-    recipe_image_path = (
-        fetch_recipe_align_image(eqp_id, recipe_id) if recipe_id else None
-    )
-    tool_image_path = capture_tool_align_image(eqp_id)
-    history = collect_recipe_history(recipe_id) if recipe_id else []
+    endpoint = _resolve_apicube_endpoint()
+    if endpoint is None:
+        print("[INFO] API Cube 미설정 — 전송 skip")
+        return
+    url, bot_token = endpoint
+
+    # FTP / 창 캡처 / 로그 grep 은 서로 독립이므로 동시 실행해 wall-clock 을 줄인다.
+    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="rich-notify-fetch") as pool:
+        ftp_future = pool.submit(fetch_recipe_align_image, eqp_id, recipe_id) if recipe_id else None
+        capture_future = pool.submit(capture_tool_align_image, eqp_id)
+        history_future = pool.submit(collect_recipe_history, recipe_id) if recipe_id else None
+
+        recipe_image_path = ftp_future.result() if ftp_future is not None else None
+        tool_image_path = capture_future.result()
+        history = history_future.result() if history_future is not None else []
 
     image_paths = [p for p in (recipe_image_path, tool_image_path) if p is not None]
+    files = _read_image_attachments(image_paths)
     text = _build_message_text(
         eqp_id=eqp_id,
         recipe_id=recipe_id,
@@ -329,5 +340,13 @@ def send_rich_align_fail_notification(
         history=history,
     )
 
-    for user_id in user_ids:
-        _send_apicube_dm(user_id, text, image_paths)
+    if len(user_ids) == 1:
+        _send_apicube_dm(user_ids[0], text, files, url=url, bot_token=bot_token)
+        return
+
+    with ThreadPoolExecutor(
+        max_workers=min(5, len(user_ids)),
+        thread_name_prefix="rich-notify-send",
+    ) as pool:
+        for uid in user_ids:
+            pool.submit(_send_apicube_dm, uid, text, files, url=url, bot_token=bot_token)

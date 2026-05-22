@@ -35,6 +35,8 @@ except Exception as _rich_notify_import_exc:
 POLL_INTERVAL_SEC = env_int("ALIGN_FAIL_POLL_SEC", 30)
 POPUP_ENABLED_DEFAULT = True
 RICH_NOTIFY_ENABLED_DEFAULT = True
+# 팝업 자동 종료 시간(초). 0 이면 사용자가 닫을 때까지 유지. 기본 60초.
+POPUP_TIMEOUT_SEC = env_int("ALIGN_FAIL_POPUP_TIMEOUT_SEC", 60)
 ALARM_LOG_PATH = LOG_DIR / "align_fail_alarms.txt"
 
 
@@ -117,7 +119,12 @@ def append_alarm_record(
 
 
 def _show_popup_windows(title: str, message: str) -> None:
-    """Windows MessageBox 를 데몬 스레드에서 띄운다 (루프 비차단)."""
+    """Windows MessageBox 를 데몬 스레드에서 띄운다 (루프 비차단).
+
+    `POPUP_TIMEOUT_SEC` > 0 이면 해당 시간 후 팝업을 자동으로 닫는다.
+    자동 종료는 undocumented `MessageBoxTimeoutW` 를 사용하며,
+    없는 환경에서는 일반 `MessageBoxW`(수동 종료) 로 폴백한다.
+    """
     try:
         import ctypes
 
@@ -125,10 +132,19 @@ def _show_popup_windows(title: str, message: str) -> None:
         MB_SYSTEMMODAL = 0x00001000
         MB_SETFOREGROUND = 0x00010000
         flags = MB_ICONWARNING | MB_SYSTEMMODAL | MB_SETFOREGROUND
+        timeout_ms = max(0, POPUP_TIMEOUT_SEC) * 1000
 
         def _run():
             try:
-                ctypes.windll.user32.MessageBoxW(0, message, title, flags)
+                user32 = ctypes.windll.user32
+                box_timeout = getattr(user32, "MessageBoxTimeoutW", None)
+                if timeout_ms > 0 and box_timeout is not None:
+                    # MessageBoxTimeoutW(hWnd, text, caption, type, langId, timeout_ms)
+                    box_timeout(0, message, title, flags, 0, timeout_ms)
+                else:
+                    if timeout_ms > 0 and box_timeout is None:
+                        print("[WARNING] MessageBoxTimeoutW 미지원 — 자동 종료 없이 표시")
+                    user32.MessageBoxW(0, message, title, flags)
             except Exception as exc:
                 print(f"[WARNING] Windows 팝업 실패: {exc}")
 

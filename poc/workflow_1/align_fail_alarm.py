@@ -33,6 +33,8 @@ except Exception as _rich_notify_import_exc:
     print(f"[WARNING] office_rich_notify 모듈 로드 실패 - 텍스트 로그/팝업만 동작합니다: {_rich_notify_import_exc}")
 
 POLL_INTERVAL_SEC = env_int("ALIGN_FAIL_POLL_SEC", 10)
+# 감지 look-back 윈도우(초). poll 주기와 분리해, 알람 보고 지연이 있어도 놓치지 않게 한다.
+DETECTION_WINDOW_SEC = env_int("ALIGN_FAIL_WINDOW_SEC", 60)
 POPUP_ENABLED_DEFAULT = True
 RICH_NOTIFY_ENABLED_DEFAULT = True
 # 팝업 자동 종료 시간(초). 0 이면 사용자가 닫을 때까지 유지. 기본 60초.
@@ -298,6 +300,7 @@ def monitor_loop(popup_enabled: bool | None = None) -> None:
 
     print(
         f"[INFO] Align Fail 감지 시작 (주기={POLL_INTERVAL_SEC}s, "
+        f"윈도우={DETECTION_WINDOW_SEC}s, "
         f"팝업={'on' if popup_enabled else 'off'}, "
         f"rich_notify={'on' if rich_notify_enabled else 'off'})"
     )
@@ -308,7 +311,7 @@ def monitor_loop(popup_enabled: bool | None = None) -> None:
         try:
             alarms = get_cdsem_alarms()
             fails = filter_align_fail(alarms)
-            fails = filter_rows_within_window(fails, POLL_INTERVAL_SEC)
+            fails = filter_rows_within_window(fails, DETECTION_WINDOW_SEC)
 
             if _alarm_rows_empty(fails):
                 if active_tools:

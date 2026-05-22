@@ -24,13 +24,13 @@ from poc.workflow_1.util import env_flag, env_int
 
 # rich notify 는 선택 의존성. requests/PIL/ftplib 등이 빠져도 본체는 계속 동작해야 한다.
 try:
-    from poc.workflow_1.rich_notify import send_rich_align_fail_notification
+    from poc.workflow_1.office_rich_notify import send_cube_align_fail_info
 
     RICH_NOTIFY_AVAILABLE = True
 except Exception as _rich_notify_import_exc:
-    send_rich_align_fail_notification = None
+    send_cube_align_fail_info = None
     RICH_NOTIFY_AVAILABLE = False
-    print(f"[WARNING] rich_notify 모듈 로드 실패 - 텍스트 로그/팝업만 동작합니다: {_rich_notify_import_exc}")
+    print(f"[WARNING] office_rich_notify 모듈 로드 실패 - 텍스트 로그/팝업만 동작합니다: {_rich_notify_import_exc}")
 
 POLL_INTERVAL_SEC = env_int("ALIGN_FAIL_POLL_SEC", 30)
 POPUP_ENABLED_DEFAULT = True
@@ -188,16 +188,16 @@ def _collapse_rows_by_tool(fails) -> dict[str, dict]:
     return by_tool
 
 
-def _send_rich_notify_async(**payload) -> None:
-    """rich notify 호출을 데몬 스레드로 비차단 실행한다."""
+def _send_rich_notify_async(eqp_id: str, recipe_id: str) -> None:
+    """office rich notify 호출을 데몬 스레드로 비차단 실행한다."""
     if not RICH_NOTIFY_AVAILABLE:
         return
 
     def _run():
         try:
-            send_rich_align_fail_notification(**payload)
+            send_cube_align_fail_info(eqp_id, recipe_id)
         except Exception as exc:
-            print(f"[WARNING] rich notify 예외: {exc}")
+            print(f"[WARNING] office rich notify 예외: {exc}")
 
     threading.Thread(target=_run, daemon=True).start()
 
@@ -255,15 +255,7 @@ def process_fail_rows(
                 lot_type_cd=lot_type_cd,
             )
         if rich_notify_enabled:
-            _send_rich_notify_async(
-                eqp_id=eqp_id,
-                alarm_time=alarm_time,
-                alarm_name=alarm_name,
-                alid=alid,
-                recipe_id=recipe_id,
-                operation_desc=operation_desc,
-                lot_type_cd=lot_type_cd,
-            )
+            _send_rich_notify_async(eqp_id, recipe_id)
 
         active_tools.add(eqp_id)
         newly_handled += 1
@@ -284,7 +276,7 @@ def monitor_loop(popup_enabled: bool | None = None) -> None:
     rich_notify_requested = env_flag("ALIGN_FAIL_RICH_NOTIFY", RICH_NOTIFY_ENABLED_DEFAULT)
     rich_notify_enabled = rich_notify_requested and RICH_NOTIFY_AVAILABLE
     if rich_notify_requested and not RICH_NOTIFY_AVAILABLE:
-        print("[WARNING] ALIGN_FAIL_RICH_NOTIFY=on 이지만 rich_notify 모듈 로드 실패 - off 로 진행")
+        print("[WARNING] ALIGN_FAIL_RICH_NOTIFY=on 이지만 office_rich_notify 모듈 로드 실패 - off 로 진행")
 
     active_tools: set[str] = set()
 

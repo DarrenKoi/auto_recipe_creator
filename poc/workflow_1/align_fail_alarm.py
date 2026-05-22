@@ -32,7 +32,7 @@ except Exception as _rich_notify_import_exc:
     RICH_NOTIFY_AVAILABLE = False
     print(f"[WARNING] office_rich_notify 모듈 로드 실패 - 텍스트 로그/팝업만 동작합니다: {_rich_notify_import_exc}")
 
-POLL_INTERVAL_SEC = env_int("ALIGN_FAIL_POLL_SEC", 30)
+POLL_INTERVAL_SEC = env_int("ALIGN_FAIL_POLL_SEC", 10)
 POPUP_ENABLED_DEFAULT = True
 RICH_NOTIFY_ENABLED_DEFAULT = True
 # 팝업 자동 종료 시간(초). 0 이면 사용자가 닫을 때까지 유지. 기본 60초.

@@ -297,6 +297,7 @@ def monitor_loop(popup_enabled: bool | None = None) -> None:
         print("[WARNING] ALIGN_FAIL_RICH_NOTIFY=on 이지만 office_rich_notify 모듈 로드 실패 - off 로 진행")
 
     active_tools: set[str] = set()
+    idle_logged = False  # "Align Fail 없음" 은 idle 진입 시 한 번만 로깅 (poll 마다 X)
 
     print(
         f"[INFO] Align Fail 감지 시작 (주기={POLL_INTERVAL_SEC}s, "
@@ -318,8 +319,12 @@ def monitor_loop(popup_enabled: bool | None = None) -> None:
                     for eqp_id in sorted(active_tools):
                         print(f"[INFO] Align Fail 해제: EQP_ID={eqp_id}")
                     active_tools.clear()
-                print(f"[INFO] {datetime.now().strftime('%H:%M:%S')} — Align Fail 없음")
+                # idle 상태는 진입 시 한 번만 로깅 — poll 마다 찍지 않는다.
+                if not idle_logged:
+                    print(f"[INFO] {datetime.now().strftime('%H:%M:%S')} — Align Fail 없음")
+                    idle_logged = True
             else:
+                idle_logged = False
                 count = process_fail_rows(
                     fails,
                     active_tools,

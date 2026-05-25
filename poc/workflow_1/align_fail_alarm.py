@@ -19,12 +19,12 @@ from pathlib import Path
 import pandas as pd
 
 from poc.workflow_1 import LOG_DIR
-from poc.workflow_1.office_align_fail_alarm import filter_align_fail, get_cdsem_alarms
+from poc.workflow_1.office_align_fail_alarm import filter_align_fail, get_cdsem_alarms # pyright: ignore[reportMissingImports]
 from poc.workflow_1.util import env_flag, env_int
 
 # rich notify 는 선택 의존성. requests/PIL/ftplib 등이 빠져도 본체는 계속 동작해야 한다.
 try:
-    from poc.workflow_1.office_rich_notify import send_cube_align_fail_info
+    from poc.workflow_1.office_rich_notify import send_cube_align_fail_info # pyright: ignore[reportMissingImports]
 
     RICH_NOTIFY_AVAILABLE = True
 except Exception as _rich_notify_import_exc:

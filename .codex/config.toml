@@ -1,1 +1,6 @@
 # Project-local Codex config intentionally has no keys.
+
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+network_access = true

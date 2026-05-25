@@ -51,6 +51,12 @@ ORB_WEIGHT = 0.4
 MATCH_THRESHOLD = 0.75
 ADJUST_THRESHOLD = 0.55
 
+# 저배율(broad) 탐색용 scale 범위. recipe template 은 등록 시 고배율로 캡처되므로,
+# zoom-out 한 live FOV 안에서는 align key 가 "miniature" 로 보인다. 이를 잡으려면
+# template 을 크게 축소(0.15~0.5)해서 매칭해야 한다. DEFAULT_SCALES 와 분리해
+# 두어 기존 smoke test (scale 2.0 negative) 의 보장을 깨지 않는다.
+BROAD_SCALES = (0.15, 0.22, 0.3, 0.4, 0.5)
+
 
 # ------------------------------------------------------------------
 # §7.6 의 인터페이스 dataclass.
@@ -82,6 +88,36 @@ class AlignKeyMatchResult:
     best_scale: float
     decision: str
     debug_overlay: np.ndarray
+
+
+@dataclass(frozen=True)
+class MatchPolicy:
+    """합성 점수 가중치 + 결정 임계값 묶음.
+
+    Align fail 은 *대개 live key 가 등록 이미지와 다르게 보이기 때문에* 발생한다.
+    이 경우 픽셀/feature 동일성에 의존하는 ORB 보다, edge 구조에 견고한 Chamfer 에
+    더 무게를 둔 ``STRUCTURE_POLICY`` 가 적합하다. 기본값 ``DEFAULT_POLICY`` 는
+    기존 §7.3 임계값을 그대로 보존하여 합성 smoke test 의 보장을 유지한다.
+    """
+
+    chamfer_weight: float = CHAMFER_WEIGHT
+    orb_weight: float = ORB_WEIGHT
+    match_threshold: float = MATCH_THRESHOLD
+    adjust_threshold: float = ADJUST_THRESHOLD
+
+
+# 기본 정책 — 기존 동작과 동일 (smoke test 호환).
+DEFAULT_POLICY = MatchPolicy()
+
+# Drift 에 견고한 구조 위주 정책 — 정적 비교(step 3)와 live search(step 4~7)에서 사용.
+# Chamfer 비중을 높이고 임계값을 낮춰, 외형이 달라진 key 도 후보로 끌어올린다.
+# 실데이터 calibration 전까지의 cold-start 값.
+STRUCTURE_POLICY = MatchPolicy(
+    chamfer_weight=0.8,
+    orb_weight=0.2,
+    match_threshold=0.62,
+    adjust_threshold=0.40,
+)
 
 
 # ------------------------------------------------------------------
@@ -279,10 +315,10 @@ def compute_orb_inlier_ratio(
 # ------------------------------------------------------------------
 
 
-def _decision_for_score(score: float) -> str:
-    if score >= MATCH_THRESHOLD:
+def _decision_for_score(score: float, policy: MatchPolicy = DEFAULT_POLICY) -> str:
+    if score >= policy.match_threshold:
         return "match"
-    if score >= ADJUST_THRESHOLD:
+    if score >= policy.adjust_threshold:
         return "adjust"
     return "low"
 
@@ -373,6 +409,8 @@ def compute_align_key_score(
     *,
     frame_nm_per_pixel: float | None = None,
     roi_hint: tuple[int, int, int, int] | None = None,
+    scales: tuple[float, ...] | None = None,
+    policy: MatchPolicy = DEFAULT_POLICY,
 ) -> AlignKeyMatchResult:
     """매 SEM 프레임마다 호출되는 메인 매칭 함수.
 
@@ -380,11 +418,22 @@ def compute_align_key_score(
     그렇지 않으면 §7.2 Case B 의 multi-scale fallback 으로 동작.
     ``roi_hint`` 는 (x, y, w, h) — VLM 의 직전 이동 제안 영역에 한정해서
     탐색하고 싶을 때 사용한다 (현재 prototype 에서는 frame 자체를 잘라서 사용).
+
+    ``scales`` 를 명시하면 nm_per_pixel 기반 자동 결정을 무시하고 그 범위로만
+    매칭한다 (예: broad 탐색의 ``BROAD_SCALES``, confirm 단계의 좁은 범위).
+    ``policy`` 는 합성 점수 가중치/임계값. 기본은 기존 동작과 동일하며,
+    drift 에 견고한 매칭이 필요하면 ``STRUCTURE_POLICY`` 를 넘긴다.
     """
     gray_frame = _to_grayscale(frame)
 
     # 스케일 결정 — ROI 검증에서 최소 크롭 크기 산출에 필요하므로 먼저.
-    if (
+    if scales is not None:
+        if not scales:
+            raise ValueError("scales override must be a non-empty tuple")
+        if any(s <= 0 for s in scales):
+            raise ValueError(f"all scales must be positive, got {scales}")
+        scales = tuple(float(s) for s in scales)
+    elif (
         template.nm_per_pixel is not None
         and frame_nm_per_pixel is not None
         and frame_nm_per_pixel > 0
@@ -396,7 +445,7 @@ def compute_align_key_score(
                 f"(template.nm_per_pixel={template.nm_per_pixel}, "
                 f"frame_nm_per_pixel={frame_nm_per_pixel})"
             )
-        scales: tuple[float, ...] = (float(single_scale),)
+        scales = (float(single_scale),)
     else:
         scales = DEFAULT_SCALES
 
@@ -455,8 +504,8 @@ def compute_align_key_score(
     else:
         orb_ratio = 0.0
 
-    score = CHAMFER_WEIGHT * chamfer_score + ORB_WEIGHT * orb_ratio
-    decision = _decision_for_score(score)
+    score = policy.chamfer_weight * chamfer_score + policy.orb_weight * orb_ratio
+    decision = _decision_for_score(score, policy)
 
     abs_xy = (cx + roi_origin[0], cy + roi_origin[1])
 

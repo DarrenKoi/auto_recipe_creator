@@ -21,3 +21,16 @@ from pathlib import Path
 WORKFLOW_2_DIR = Path(__file__).resolve().parent
 DEBUG_IMAGE_DIR = WORKFLOW_2_DIR / "debug_images"
 LOG_DIR = WORKFLOW_2_DIR / "logs"
+
+# Align fail 발생 시 workflow_1 핸들러가 recipe 등록 이미지와 현재 실패 SEM 이미지를
+# 내려받는 "designated path". recipe_id 별 서브폴더에 아래 파일들이 들어온다고 가정:
+#   recipe_om.*   — recipe 등록 OM align key (주변 layout 포함)
+#   recipe_sem.*  — recipe 등록 SEM align key (주변 layout 포함)
+#   current_sem.* — fail 시점의 live SEM 모니터 이미지
+# 실제 오피스 경로가 다르면 각 스크립트 상단 OVERRIDE 상수로 바꾼다.
+ALIGN_FAIL_DOWNLOAD_DIR = WORKFLOW_2_DIR / "align_fail_downloads"
+
+# 내려받은 파일의 표준 stem 이름. 확장자는 자동 탐색(jpg/png/bmp/tif).
+RECIPE_OM_STEM = "recipe_om"
+RECIPE_SEM_STEM = "recipe_sem"
+CURRENT_SEM_STEM = "current_sem"

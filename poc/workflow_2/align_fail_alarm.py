@@ -1,13 +1,16 @@
 """Align Fail 알람 감지 전용 스크립트.
 
 1분 주기로 CD-SEM 알람을 조회하여 ALID=9006 (Align Fail) 이 감지되면:
-  1. 텍스트 파일(`poc/workflow_1/logs/align_fail_alarms.txt`) 에 누적 기록
+  1. 텍스트 파일(`poc/workflow_2/logs/align_fail_alarms.txt`) 에 누적 기록
   2. Windows 팝업(MessageBox) 으로 알림 표시
 
 CCTV/캡처/GUI 자동화 로직은 포함하지 않는다. 순수 감지 + 알림 전용.
 
+office_* 의존성(office_align_fail_alarm, office_rich_notify)은 gitignore 대상이라
+workflow_1 에 그대로 두고 공유 라이브러리로 import 한다. (다른 workflow_2 모듈도 동일)
+
 사용법:
-  uv run python poc/workflow_1/align_fail_alarm.py
+  uv run python poc/workflow_2/align_fail_alarm.py
 """
 
 import threading
@@ -18,7 +21,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from poc.workflow_1 import LOG_DIR
+from poc.workflow_2 import LOG_DIR
 from poc.workflow_1.office_align_fail_alarm import filter_align_fail, get_cdsem_alarms # pyright: ignore[reportMissingImports]
 from poc.workflow_1.util import env_flag, env_int
 

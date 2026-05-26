@@ -22,6 +22,7 @@ two-phase 탐색은 *아무것도 안 보일 때만* 도는 **fallback** 이다.
 """
 
 import time
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -29,6 +30,7 @@ from typing import Callable
 import cv2
 import numpy as np
 
+from poc.workflow_1.logger import log_work2_event
 from poc.workflow_2 import DEBUG_IMAGE_DIR
 from poc.workflow_2.align_fail_assets import AlignFailAssets, load_gray, resolve_assets_auto
 from poc.workflow_2.align_key_matcher import (
@@ -44,11 +46,14 @@ from poc.workflow_2.live_align_search import (
     MIN_CONFIRM_SCALE,
     LiveSearchConfig,
     LiveSearchOutcome,
+    NotifyFn,
     SEMMonitorController,
     clamp_to_fov,
     live_align_search,
     route_template,
 )
+
+LOG_COMPONENT = "align_fail_correct"
 
 # paused fail 화면은 *레시피 등록 배율* 에서 멈춘 것이므로, key 가 보인다면 거의
 # native(~1.0) 크기로 보인다. 따라서 broad(miniature) band 가 아니라 near-native band
@@ -80,12 +85,14 @@ class CorrectionConfig:
 class CorrectionOutcome:
     """보정 결과. 어느 경로로 끝났는지 + 좌표/decision 기록."""
 
-    status: str  # "corrected" | "fallback_<status>" | "escalated" | "no_assets"
+    # "corrected" | "fallback_<status>" | "escalated_no_ok" | "ok_detect_error" | "no_assets"
+    status: str
     path: str  # "primary" | "fallback"
     key_decision: str  # 가시성 게이트 판정에 쓰인 matcher decision.
     best_xy: tuple[int, int] | None  # reposition 한 FOV 좌표(clamp 후).
     ok_screen_xy: tuple[int, int] | None  # 클릭한 OK 버튼의 screen 좌표.
     fallback: LiveSearchOutcome | None  # fallback 으로 갔을 때의 live search 결과.
+    error: str | None = None  # OK 탐지 등에서 발생한 예외 요약(정상 not-found 와 구분).
     history: list[dict] = field(default_factory=list)
 
 
@@ -209,6 +216,7 @@ def correct_align_fail(
     ok_locator: OkLocator | None = None,
     config: CorrectionConfig = CorrectionConfig(),
     fallback_config: LiveSearchConfig = LiveSearchConfig(),
+    notify_fn: NotifyFn | None = None,
     dry_run: bool = True,
     debug_dir: Path | None = None,
 ) -> CorrectionOutcome:
@@ -225,6 +233,11 @@ def correct_align_fail(
     dry_run=True 면 좌표를 계산·로그·overlay 만 하고 실제 actuation(move/click)은 하지
     않는다(Mac-safe, procedure §5 Phase 3). ok_locator 를 직접 주입하면 VLM 없이도
     테스트할 수 있고, 미주입 시 vlm_client 로 locate_ok_button 을 래핑한다.
+
+    notify_fn 은 fallback(live_align_search) escalation 알림 콜백으로 그대로 전달된다.
+    모든 종료 분기는 console([INFO]/[ERROR]) + 파일 로그(log_work2_event)로 기록한다.
+    OK 탐지 *예외*는 정상 'OK 안 보임'(escalated_no_ok)과 구분해 ok_detect_error 로 surface
+    하며 error 필드에 예외 요약을 담는다(조용히 삼켜 escalate 로 위장하지 않는다).
     """
     if not templates:
         raise ValueError("templates 가 비어 있습니다 (OM/SEM 중 최소 하나 필요)")
@@ -268,9 +281,10 @@ def correct_align_fail(
             controller,
             templates,
             config=fallback_config,
+            notify_fn=notify_fn,
             debug_dir=(debug_dir / "fallback") if debug_dir is not None else None,
         )
-        return CorrectionOutcome(
+        result_outcome = CorrectionOutcome(
             status=f"fallback_{outcome.status}",
             path="fallback",
             key_decision=result.decision,
@@ -279,6 +293,15 @@ def correct_align_fail(
             fallback=outcome,
             history=history,
         )
+        log_work2_event(
+            component=LOG_COMPONENT,
+            message="fallback_delegated",
+            level="warning",
+            status=result_outcome.status,
+            key_decision=result.decision,
+            pan_count=outcome.pan_count,
+        )
+        return result_outcome
 
     # ---- PRIMARY: crosshair 를 best_xy 로 reposition. ----
     cx, cy = clamp_to_fov(result.best_xy[0], result.best_xy[1], fw, fh, config.click_margin_ratio)
@@ -296,20 +319,59 @@ def correct_align_fail(
         resolved_locator = lambda f: locate_ok_button(frame_bgr=f, client=vlm_client)  # noqa: E731
 
     ok_xy: tuple[int, int] | None = None
+    ok_error: str | None = None
     if resolved_locator is not None:
         screen = controller.capture_screen()
         try:
             ok_xy = resolved_locator(screen)
-        except Exception as exc:  # VLM 실패는 치명적이지 않게 escalate 로 흡수.
-            print(f"[ERROR] OK 버튼 탐지 실패: {exc}")
+        except Exception as exc:
+            # 예외는 '정상 not-found' 와 다르다. 조용히 삼키지 않고 정확히 로깅한 뒤
+            # ok_detect_error 로 surface 한다(console + 파일 로그 + 전체 traceback).
+            ok_error = f"{type(exc).__name__}: {exc}"
+            print(f"[ERROR] OK 버튼 탐지 중 예외: {ok_error}")
+            traceback.print_exc()
+            log_work2_event(
+                component=LOG_COMPONENT,
+                message="ok_detect_error",
+                level="error",
+                key_decision=result.decision,
+                best_xy=f"({cx},{cy})",
+                error=ok_error,
+            )
     else:
         print("[WARNING] OK locator 가 없습니다(vlm_client/ok_locator 미주입).")
+        log_work2_event(
+            component=LOG_COMPONENT,
+            message="ok_locator_missing",
+            level="warning",
+            key_decision=result.decision,
+        )
+
+    # OK 탐지 *예외* → 정상 escalate 와 구분해 surface(견고성: 실제 버그를 숨기지 않음).
+    if ok_error is not None:
+        return CorrectionOutcome(
+            status="ok_detect_error",
+            path="primary",
+            key_decision=result.decision,
+            best_xy=(cx, cy),
+            ok_screen_xy=None,
+            fallback=None,
+            error=ok_error,
+            history=history,
+        )
 
     if ok_xy is None:
         if config.require_ok_button:
-            print("[WARNING] OK 버튼을 찾지 못함 → 엔지니어 확인용 escalate")
+            print("[WARNING] OK 버튼을 찾지 못함(정상 not-found) → 엔지니어 확인용 escalate")
+            log_work2_event(
+                component=LOG_COMPONENT,
+                message="escalated_no_ok",
+                level="warning",
+                key_decision=result.decision,
+                best_xy=f"({cx},{cy})",
+            )
             return CorrectionOutcome(
-                status="escalated",
+                status="escalated_no_ok",
                 path="primary",
                 key_decision=result.decision,
                 best_xy=(cx, cy),
@@ -323,6 +385,15 @@ def correct_align_fail(
         if not dry_run:
             controller.click_screen(ok_xy[0], ok_xy[1])
 
+    log_work2_event(
+        component=LOG_COMPONENT,
+        message="corrected",
+        level="info",
+        key_decision=result.decision,
+        best_xy=f"({cx},{cy})",
+        ok_screen_xy=str(ok_xy),
+        dry_run=dry_run,
+    )
     return CorrectionOutcome(
         status="corrected",
         path="primary",
@@ -340,6 +411,7 @@ def correct_align_fail_auto(
     vlm_client=None,
     ok_locator: OkLocator | None = None,
     config: CorrectionConfig = CorrectionConfig(),
+    notify_fn: NotifyFn | None = None,
     dry_run: bool = True,
     debug_dir: Path | None = None,
 ) -> CorrectionOutcome:
@@ -347,17 +419,23 @@ def correct_align_fail_auto(
     assets = resolve_assets_auto()
     if assets is None:
         print("[ERROR] align fail recipe 폴더를 찾지 못했습니다.")
-        return CorrectionOutcome("no_assets", "primary", "low", None, None, None, [])
+        log_work2_event(component=LOG_COMPONENT, message="no_assets", level="error")
+        return CorrectionOutcome("no_assets", "primary", "low", None, None, None)
     templates = build_templates_from_assets(assets, crop_to_box=config.crop_template_to_box)
     if not templates:
         print(f"[ERROR] 등록 OM/SEM 이미지가 없습니다: {assets.recipe_dir}")
-        return CorrectionOutcome("no_assets", "primary", "low", None, None, None, [])
+        log_work2_event(
+            component=LOG_COMPONENT, message="no_assets", level="error",
+            recipe_dir=str(assets.recipe_dir),
+        )
+        return CorrectionOutcome("no_assets", "primary", "low", None, None, None)
     return correct_align_fail(
         controller,
         templates,
         vlm_client=vlm_client,
         ok_locator=ok_locator,
         config=config,
+        notify_fn=notify_fn,
         dry_run=dry_run,
         debug_dir=debug_dir,
     )
@@ -368,8 +446,14 @@ def correct_align_fail_auto(
 # ==================================================================
 
 
-def _make_primary_demo():
-    """key 가 화면 중앙 근처에 보이는 paused 프레임 + 그 key 의 등록 template 을 만든다."""
+def _make_primary_demo(key_in_view: bool = True):
+    """가상 wafer + mock 컨트롤러 + 등록 template 을 만든다.
+
+    key_in_view=True  → key 를 시작 FOV 중앙에 박아 PRIMARY 경로가 바로 fire.
+    key_in_view=False → key 를 wafer 에 두지 않아 paused 프레임이 featureless →
+      가시성 게이트 low → FALLBACK 위임. mock 은 stateful(pan 하면 capture 가 바뀜)이라
+      live_align_search 의 실제 pan/zoom 전이를 exercise 한다.
+    """
     from poc.workflow_2.live_align_search import _MockSEMMonitor
     from poc.workflow_2.test_align_key_match import make_synthetic_template, make_wafer_background
 
@@ -377,11 +461,14 @@ def _make_primary_demo():
     recipe_img = cv2.copyMakeBorder(pattern, 20, 20, 20, 20, cv2.BORDER_REPLICATE)
     template = build_template(recipe_img, recipe_id="DEMO-SEM-001", version="v0", key_type="sem")
 
-    # key 가 시작 FOV 안에 보이도록 시작 위치에 박아 둔다(=primary 경로가 바로 fire).
     wafer = make_wafer_background(frame_size=(2400, 3200))
     target_xy = (900, 1300)
-    th, tw = pattern.shape[:2]
-    wafer[target_xy[1] - th // 2 : target_xy[1] + th // 2, target_xy[0] - tw // 2 : target_xy[0] + tw // 2] = pattern
+    if key_in_view:
+        th, tw = pattern.shape[:2]
+        wafer[target_xy[1] - th // 2 : target_xy[1] + th // 2, target_xy[0] - tw // 2 : target_xy[0] + tw // 2] = pattern
+        start_xy = target_xy  # native 배율 + key 가 중앙 → 즉시 보임.
+    else:
+        start_xy = (700, 1400)  # key 없음 → 어디를 봐도 featureless.
 
     # 가상 전체 화면: 검은 배경에 흰 'OK' 사각형(stub locator 가 그 중심을 돌려줌).
     screen = np.zeros((600, 800), dtype=np.uint8)
@@ -390,7 +477,7 @@ def _make_primary_demo():
     monitor = _MockSEMMonitor(
         wafer,
         screen_size=(512, 768),
-        start_xy=target_xy,  # native 배율 + key 가 중앙 → 즉시 보임.
+        start_xy=start_xy,
         zoom_factors=(4.0, 3.0, 2.0, 1.4, 1.0),
         start_mag_index=4,  # native.
         mode="SEM",

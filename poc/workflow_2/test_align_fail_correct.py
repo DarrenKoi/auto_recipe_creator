@@ -15,7 +15,6 @@ from poc.workflow_2.align_fail_correct import (
 )
 from poc.workflow_2.align_key_matcher import AlignKeyMatchResult
 from poc.workflow_2.live_align_search import LiveSearchConfig
-from poc.workflow_2.test_align_key_match import make_wafer_background
 from poc.workflow_2.vlm_ok_button_box import locate_ok_button
 
 
@@ -106,28 +105,91 @@ def test_primary_path() -> bool:
 
 
 def test_fallback_path() -> bool:
-    """key 가 없는 featureless 프레임 → gate low → fallback(live_align_search) 위임."""
-    monitor, templates = _make_primary_demo()
-    featureless = make_wafer_background(frame_size=(512, 768))  # key 없음.
+    """key 없음 → gate low → fallback 위임. stateful mock 으로 실제 pan/zoom 전이를 exercise(#7)."""
+    # key_in_view=False → featureless. _MockSEMMonitor 는 stateful(pan 하면 capture 변화).
+    monitor, templates = _make_primary_demo(key_in_view=False)
+
+    outcome = correct_align_fail(
+        monitor,
+        templates,
+        ok_locator=lambda _s: (690, 560),
+        dry_run=False,
+        fallback_config=LiveSearchConfig(pan_budget=6, initial_zoom_out_steps=1),
+    )
+    ok = (
+        outcome.path == "fallback"
+        and outcome.status.startswith("fallback_")
+        and outcome.fallback is not None
+        and outcome.fallback.pan_count > 0  # 정지 프레임이 아니라 실제 pan 전이를 돌았다.
+        and len(monitor.screen_clicks) == 0  # fallback 에선 OK 클릭 없음.
+    )
+    print(
+        f"[{'PASS' if ok else 'FAIL'}] fallback: status={outcome.status} path={outcome.path} "
+        f"pan_count={outcome.fallback.pan_count if outcome.fallback else '-'} "
+        f"clicks={len(monitor.screen_clicks)}"
+    )
+    return ok
+
+
+def test_fallback_notify() -> bool:
+    """notify_fn 이 fallback escalation 으로 그대로 전달·발화되는지 검증(#6).
+
+    순수 검정(edge 없는) 프레임은 매 iteration score≈0(low)이라 low_streak 가 단조 증가 →
+    low_streak_limit 에서 escalation + notify 가 결정적으로 발생한다.
+    """
+    monitor, templates = _make_primary_demo(key_in_view=True)
+    black = np.zeros((512, 768), dtype=np.uint8)  # edge 없음 → 항상 low.
     screen = np.zeros((600, 800), dtype=np.uint8)
-    fake = _FakeController(featureless, screen, mode="SEM")
+    fake = _FakeController(black, screen, mode="SEM")
+
+    notified: list = []
 
     outcome = correct_align_fail(
         fake,
         templates,
         ok_locator=lambda _s: (690, 560),
         dry_run=False,
-        fallback_config=LiveSearchConfig(pan_budget=3, initial_zoom_out_steps=1),
+        notify_fn=lambda state, recent: notified.append(state),
+        fallback_config=LiveSearchConfig(
+            pan_budget=20, low_streak_limit=3, initial_zoom_out_steps=1
+        ),
     )
     ok = (
-        outcome.path == "fallback"
-        and outcome.status.startswith("fallback_")
-        and outcome.fallback is not None
-        and len(fake.screen_clicks) == 0  # fallback 에선 OK 클릭 없음.
+        outcome.status == "fallback_escalated"
+        and len(notified) >= 1  # notify_fn 이 escalation 으로 전달·발화됨.
+        and len(fake.screen_clicks) == 0
     )
     print(
-        f"[{'PASS' if ok else 'FAIL'}] fallback: status={outcome.status} path={outcome.path} "
-        f"clicks={len(fake.screen_clicks)}"
+        f"[{'PASS' if ok else 'FAIL'}] fallback_notify: status={outcome.status} "
+        f"notified={len(notified)}"
+    )
+    return ok
+
+
+def test_ok_detect_error() -> bool:
+    """OK locator 가 예외를 던지면 'ok_detect_error'(+error 기록)로 surface, escalate 와 구분(#4)."""
+    monitor, templates = _make_primary_demo(key_in_view=True)
+
+    def _boom(_screen):
+        raise RuntimeError("VLM 연결 실패")
+
+    outcome = correct_align_fail(
+        monitor,
+        templates,
+        ok_locator=_boom,
+        dry_run=False,
+    )
+    ok = (
+        outcome.status == "ok_detect_error"
+        and outcome.path == "primary"
+        and outcome.error is not None
+        and "RuntimeError" in outcome.error
+        and outcome.ok_screen_xy is None
+        and len(monitor.screen_clicks) == 0  # 에러면 OK 클릭 안 함.
+    )
+    print(
+        f"[{'PASS' if ok else 'FAIL'}] ok_detect_error: status={outcome.status} "
+        f"error={outcome.error!r}"
     )
     return ok
 
@@ -189,6 +251,8 @@ def main() -> int:
         test_gate(),
         test_primary_path(),
         test_fallback_path(),
+        test_fallback_notify(),
+        test_ok_detect_error(),
         test_ok_locator_mapping(),
     ]
     passed = sum(1 for r in results if r)

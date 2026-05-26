@@ -4,9 +4,9 @@
 "외형이 (특히 align fail 상황에서) 달라진 align key 를, VLM 이 자연어 설명만으로
 찾아 박스를 그릴 수 있는가?" 를 사람이 overlay 로 눈으로 평가하기 위한 증거 수집.
 
-대상 이미지(= ``ALIGN_FAIL_DOWNLOAD_DIR/<recipe_id>/`` 에 내려받은 것):
-  - step 1: recipe_om.*, recipe_sem.*  (recipe 등록 align key)
-  - step 2: current_sem.*              (현재 실패 SEM 이미지)
+대상 이미지(= `align_fail_assets.resolve_assets_auto()` 가 해석한 recipe):
+  - step 1: recipe_om(from_rcp/IMAP0001), recipe_sem(from_rcp/IMAP0002)  (등록 align key)
+  - step 2: current_sem(from_msr 최신 E*)                                (현재 실패 SEM)
 
 좌표를 신뢰해 매칭에 쓰지 않는다(그 일은 align_key_matcher 의 CV 가 한다). VLM 출력은
 detect 여부 / confidence / overlay 로만 기록한다.
@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 from PIL import Image
 
 from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_2.align_fail_assets import latest_recipe_dir, resolve_assets
+from poc.workflow_2.align_fail_assets import resolve_assets_auto
 from poc.workflow_1.debug_artifacts import save_debug_json, save_debug_text, save_marked_bboxes
 from poc.workflow_1.flask_vlm import UI_VENUS_MODEL_NAME
 from poc.workflow_1.util import format_elapsed_ms, make_timestamp_tag
@@ -44,8 +44,7 @@ LOG_NAME = "vlm_align_key_box"
 # ====================================================================
 # 모듈 설정 — CLAUDE.md 규칙상 argparse 미사용, 상수로만 조정.
 # ====================================================================
-# 비우면 다운로드 루트에서 가장 최근 align fail 폴더를 자동 선택.
-RECIPE_ID_OVERRIDE = r""
+# recipe 폴더 선택은 align_fail_assets 가 담당(환경변수 override 또는 최신 자동).
 
 DEFAULT_REQUEST_DELAY_SEC = float(os.getenv("TEST_VLM_REQUEST_DELAY_SEC", "1.0"))
 DEFAULT_SERVICE = os.getenv("TEST_VLM_SERVICE", "ui-venus").strip() or "ui-venus"
@@ -130,15 +129,15 @@ def _save_overlay(*, image_path: Path, key_bbox: dict, output_path: Path) -> str
 
 def run() -> str:
     started = time.time()
-    recipe_id = (RECIPE_ID_OVERRIDE or "").strip() or (latest_recipe_dir() or "")
-    if not recipe_id:
-        print("[ERROR] recipe_id 를 결정할 수 없습니다(다운로드 폴더 없음).")
+    assets = resolve_assets_auto()
+    if assets is None:
+        print("[ERROR] align fail recipe 폴더를 찾지 못했습니다.")
         return "no_recipe"
+    recipe_id = assets.recipe_id
 
-    assets = resolve_assets(recipe_id)
     targets = assets.available()
     if not targets:
-        print(f"[ERROR] 분석할 이미지가 없습니다: {assets.download_dir}")
+        print(f"[ERROR] 분석할 이미지가 없습니다: {assets.recipe_dir}")
         return "no_assets"
 
     tag = make_timestamp_tag()
@@ -213,7 +212,7 @@ def run() -> str:
 
     summary = {
         "recipe_id": recipe_id,
-        "download_dir": str(assets.download_dir),
+        "recipe_dir": str(assets.recipe_dir),
         "vlm_service": DEFAULT_SERVICE,
         "vlm_model_name": DEFAULT_MODEL,
         "targets": len(targets),

@@ -378,6 +378,8 @@ def monitor_loop(popup_enabled: bool | None = None) -> None:
 
     while True:
         try:
+            poll_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[INFO] {poll_time} — 알람 조회 (최근 {DETECTION_WINDOW_SEC}s 윈도우)")
             alarms = get_cdsem_alarms()
             fails = filter_align_fail(alarms)
             fails = filter_rows_within_window(fails, DETECTION_WINDOW_SEC)

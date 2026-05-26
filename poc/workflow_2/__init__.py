@@ -22,15 +22,18 @@ WORKFLOW_2_DIR = Path(__file__).resolve().parent
 DEBUG_IMAGE_DIR = WORKFLOW_2_DIR / "debug_images"
 LOG_DIR = WORKFLOW_2_DIR / "logs"
 
-# Align fail 발생 시 workflow_1 핸들러가 recipe 등록 이미지와 현재 실패 SEM 이미지를
-# 내려받는 "designated path". recipe_id 별 서브폴더에 아래 파일들이 들어온다고 가정:
-#   recipe_om.*   — recipe 등록 OM align key (주변 layout 포함)
-#   recipe_sem.*  — recipe 등록 SEM align key (주변 layout 포함)
-#   current_sem.* — fail 시점의 live SEM 모니터 이미지
-# 실제 오피스 경로가 다르면 각 스크립트 상단 OVERRIDE 상수로 바꾼다.
-ALIGN_FAIL_DOWNLOAD_DIR = WORKFLOW_2_DIR / "align_fail_downloads"
+# 오피스 MES 가 align fail 시 생성하는 이미지 루트 (우리 코드가 읽기만 하는 입력).
+# 실제 레이아웃:
+#   align_images/<eqp_id>/<class_name>/<recipe_name>/
+#     ├─ align_img_from_rcp/   IMAP0001.*(OM)  IMAP0002.*(SEM)   # recipe 등록 align key
+#     └─ align_img_from_msr/   S*/E*                             # 측정 궤적 (E 접두 = fail step)
+# 경로 해석은 `align_fail_assets.py` 가 단일 창구로 담당한다 (최신 자동 + override).
+ALIGN_IMAGES_ROOT = WORKFLOW_2_DIR.parent / "workflow_1" / "align_images"
 
-# 내려받은 파일의 표준 stem 이름. 확장자는 자동 탐색(jpg/png/bmp/tif).
-RECIPE_OM_STEM = "recipe_om"
-RECIPE_SEM_STEM = "recipe_sem"
-CURRENT_SEM_STEM = "current_sem"
+# from_rcp / from_msr 서브폴더명.
+FROM_RCP_DIRNAME = "align_img_from_rcp"
+FROM_MSR_DIRNAME = "align_img_from_msr"
+
+# from_rcp 안의 표준 stem (IMAP0001=OM, IMAP0002=SEM). 확장자는 자동 탐색.
+RCP_OM_STEM = "IMAP0001"
+RCP_SEM_STEM = "IMAP0002"

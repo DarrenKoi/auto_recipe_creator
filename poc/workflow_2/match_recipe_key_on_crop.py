@@ -19,12 +19,11 @@ office 이미지 레이아웃 (메모리 [[align-images-layout]]):
     uv run python poc/workflow_2/match_recipe_key_on_crop.py
 """
 
-import os
 import time
 from pathlib import Path
 
 from poc.workflow_2 import WORKFLOW_2_DIR
-from poc.workflow_2.align_fail_assets import load_gray
+from poc.workflow_2.align_fail_assets import load_gray, resolve_assets_auto
 from poc.workflow_2.align_key_matcher import (
     STRUCTURE_POLICY,
     build_template,
@@ -34,20 +33,9 @@ from poc.workflow_2.align_key_matcher import (
 from poc.workflow_1.debug_artifacts import save_debug_json, save_debug_text
 from poc.workflow_1.util import format_elapsed_ms, make_timestamp_tag
 
-# ====================================================================
-# office align key 이미지 위치. 사용자가 알려준 실제 경로가 기본값.
-# ====================================================================
-ALIGN_IMAGES_ROOT = Path(
-    os.getenv("ALIGN_IMAGES_ROOT", "")
-).expanduser() if os.getenv("ALIGN_IMAGES_ROOT") else (
-    Path(__file__).resolve().parent.parent / "workflow_1" / "align_images"
-)
-EQP_ID = os.getenv("ALIGN_EQP_ID", "MCD916").strip()
-CLASS_NAME = os.getenv("ALIGN_CLASS_NAME", "RJ1BXXX").strip()
-RECIPE_NAME = os.getenv("ALIGN_RECIPE_NAME", "Z_RJ1B_CBLHM2_FULL").strip()
-
-# from_rcp 안의 파일명 (IMAP0001=OM, IMAP0002=SEM — 메모리 규약, 필요시 override).
-RCP_SEM_FILE = os.getenv("ALIGN_RCP_SEM_FILE", "IMAP0002.jpeg").strip()
+# recipe 폴더(<eqp>/<class>/<recipe>) 선택은 align_fail_assets 가 담당한다:
+# 환경변수 ALIGN_EQP_ID/ALIGN_CLASS_NAME/ALIGN_RECIPE_NAME 가 모두 있으면 그 폴더,
+# 아니면 align_images 아래 최신 align fail 폴더를 자동 선택한다.
 
 # ====================================================================
 # scene(SEM crop) 후보. 비워두면 vlm_sem_monitor_box_realtime 의 가장 최신
@@ -58,25 +46,6 @@ QUERY_DIR_OVERRIDE = r""
 WORKFLOW_2_RECORDING_DIR = WORKFLOW_2_DIR / "recordings"
 REALTIME_ROOT = WORKFLOW_2_RECORDING_DIR / "vlm_sem_monitor_box_realtime"
 DEFAULT_OUTPUT_ROOT = WORKFLOW_2_RECORDING_DIR / "match_recipe_key_on_crop"
-
-
-def _recipe_dir() -> Path:
-    """from_rcp/from_msr 가 들어 있는 recipe 폴더."""
-    return ALIGN_IMAGES_ROOT / EQP_ID / CLASS_NAME / RECIPE_NAME
-
-
-def _resolve_template_path() -> Path | None:
-    """recipe 등록 SEM align key (template) 경로를 해석한다."""
-    from_rcp = _recipe_dir() / "align_img_from_rcp"
-    if not from_rcp.is_dir():
-        print(f"[ERROR] align_img_from_rcp 폴더가 없습니다: {from_rcp}")
-        return None
-    path = from_rcp / RCP_SEM_FILE
-    if path.is_file():
-        return path
-    print(f"[ERROR] recipe SEM align key 를 찾지 못했습니다: {path}")
-    print(f"[INFO]  from_rcp 내용: {[p.name for p in sorted(from_rcp.iterdir())]}")
-    return None
 
 
 def _resolve_query_crops() -> list[Path]:
@@ -112,9 +81,13 @@ def run_probe() -> str:
     """recipe SEM align key 를 각 SEM crop 에 매칭한다."""
     started_at = time.time()
 
-    template_path = _resolve_template_path()
-    if template_path is None:
+    assets = resolve_assets_auto()
+    if assets is None:
+        return "recipe_not_found"
+    if assets.recipe_sem is None:
+        print(f"[ERROR] recipe SEM align key(IMAP0002) 를 찾지 못했습니다: {assets.recipe_dir}")
         return "template_not_found"
+    template_path = assets.recipe_sem
 
     crops = _resolve_query_crops()
     if not crops:
@@ -123,7 +96,7 @@ def run_probe() -> str:
     template_gray = load_gray(template_path)
     template = build_template(
         template_gray,
-        recipe_id=RECIPE_NAME,
+        recipe_id=assets.recipe_id,
         version="from_rcp",
         nm_per_pixel=None,
         key_type="sem",
@@ -134,7 +107,7 @@ def run_probe() -> str:
     )
 
     tag = make_timestamp_tag()
-    output_dir = DEFAULT_OUTPUT_ROOT / f"{tag}_{RECIPE_NAME}"
+    output_dir = DEFAULT_OUTPUT_ROOT / f"{tag}_{assets.recipe_id}"
     overlays_dir = output_dir / "overlays"
     overlays_dir.mkdir(parents=True, exist_ok=True)
 
@@ -188,7 +161,7 @@ def run_probe() -> str:
 
     summary = {
         "template_path": str(template_path),
-        "recipe_dir": str(_recipe_dir()),
+        "recipe_dir": str(assets.recipe_dir),
         "policy": "STRUCTURE_POLICY",
         "crops_tested": len(results),
         "matched": matched,

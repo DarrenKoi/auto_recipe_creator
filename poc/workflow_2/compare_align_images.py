@@ -5,7 +5,8 @@ Align fail 은 *대개 live key 가 등록 이미지와 다르게 보여서* 발
 현재 이미지의 어디에 있을 법한지" 를 점수화한다. 최종 판정은 hard match 가
 아니라 best-candidate score + 사람이 확인할 overlay 다.
 
-입력: ``ALIGN_FAIL_DOWNLOAD_DIR/<recipe_id>/`` 의 recipe_sem.* 와 current_sem.*
+입력: `align_fail_assets.resolve_assets_auto()` 가 해석한 recipe 의
+recipe_sem(from_rcp/IMAP0002) 와 current_sem(from_msr 최신 E*).
 (없으면 합성 self-test 로 파이프라인만 점검).
 
 실행:
@@ -21,7 +22,7 @@ import cv2
 import numpy as np
 
 from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_2.align_fail_assets import latest_recipe_dir, load_gray, resolve_assets
+from poc.workflow_2.align_fail_assets import load_gray, resolve_assets_auto
 from poc.workflow_2.align_key_matcher import (
     STRUCTURE_POLICY,
     build_template,
@@ -32,8 +33,7 @@ from poc.workflow_2.align_key_matcher import (
 # ====================================================================
 # 모듈 설정 — CLAUDE.md 규칙상 argparse 미사용, 상수로만 조정.
 # ====================================================================
-# 비우면 다운로드 루트에서 가장 최근 align fail 폴더를 자동 선택한다.
-RECIPE_ID_OVERRIDE = r""
+# recipe 폴더 선택은 align_fail_assets 가 담당(환경변수 override 또는 최신 자동).
 
 # 실제 다운로드 자산이 없을 때 합성 데이터로 파이프라인을 점검할지 여부.
 RUN_SELFTEST_IF_NO_ASSETS = True
@@ -165,7 +165,8 @@ def _make_selftest_pair() -> tuple[np.ndarray, np.ndarray]:
 
 def run() -> str:
     started = time.time()
-    recipe_id = (RECIPE_ID_OVERRIDE or "").strip() or (latest_recipe_dir() or "")
+    assets = resolve_assets_auto()
+    recipe_id = assets.recipe_id if assets is not None else ""
 
     tag = time.strftime("%y%m%d_%H%M%S")
     out_dir = DEBUG_IMAGE_DIR / "compare_align_images" / f"{tag}_{recipe_id or 'selftest'}"
@@ -174,13 +175,11 @@ def run() -> str:
     recipe_sem = current_sem = None
     recipe_sem_path = current_sem_path = ""
 
-    if recipe_id:
-        assets = resolve_assets(recipe_id)
-        if assets.recipe_sem is not None and assets.current_sem is not None:
-            recipe_sem = load_gray(assets.recipe_sem)
-            current_sem = load_gray(assets.current_sem)
-            recipe_sem_path = str(assets.recipe_sem)
-            current_sem_path = str(assets.current_sem)
+    if assets is not None and assets.recipe_sem is not None and assets.current_sem is not None:
+        recipe_sem = load_gray(assets.recipe_sem)
+        current_sem = load_gray(assets.current_sem)
+        recipe_sem_path = str(assets.recipe_sem)
+        current_sem_path = str(assets.current_sem)
 
     if recipe_sem is None or current_sem is None:
         if not RUN_SELFTEST_IF_NO_ASSETS:

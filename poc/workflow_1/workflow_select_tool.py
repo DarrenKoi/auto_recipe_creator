@@ -1035,7 +1035,7 @@ def select_tool_from_main_window(
         exit_code=DETECT_SUCCESS if double_clicked else EXIT_TOOL_ROW_NOT_FOUND,
         target_tool_name=normalized_tool_name,
         matched_lines=matched_lines,
-        ocr_target_visible=selected_attempt["ocr_result"]["target_visible"],
+        ocr_target_visible=ocr_target_visible,
         list_crop_box=list_crop_box,
         tool_point_on_list_crop=list_crop_point,
         tool_point_on_full_image=full_image_point,

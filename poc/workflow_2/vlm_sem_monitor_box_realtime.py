@@ -135,8 +135,9 @@ def run_realtime() -> str:
     output_dir = _build_output_dir(window_title)
     frames_dir = output_dir / "frames"
     overlays_dir = output_dir / "overlays"
+    crops_dir = output_dir / "crops"
     results_dir = output_dir / "results"
-    for directory in (frames_dir, overlays_dir, results_dir):
+    for directory in (frames_dir, overlays_dir, crops_dir, results_dir):
         directory.mkdir(parents=True, exist_ok=True)
 
     # 창이 제대로 잡혔는지 눈으로 먼저 확인할 수 있도록 raw 캡처 1장 저장.
@@ -201,6 +202,7 @@ def run_realtime() -> str:
             vlm_calls += 1
 
         overlay_path = ""
+        crop_path = ""
         if panel_bbox is not None:
             panel_detected += 1
             try:
@@ -211,6 +213,20 @@ def run_realtime() -> str:
                 )
             except Exception as exc:
                 print(f"[ERROR] overlay 저장 실패 (iter={iteration}): {exc}")
+            try:
+                crop = image.crop(
+                    (
+                        panel_bbox["left"],
+                        panel_bbox["top"],
+                        panel_bbox["right"],
+                        panel_bbox["bottom"],
+                    )
+                )
+                crop_out = crops_dir / f"iter_{iteration:03d}_sem_crop.jpg"
+                save_debug_jpeg(crop, crop_out)
+                crop_path = str(crop_out)
+            except Exception as exc:
+                print(f"[ERROR] crop 저장 실패 (iter={iteration}): {exc}")
         else:
             print(f"[INFO] panel_visible=false (iter={iteration:03d})")
 
@@ -219,6 +235,7 @@ def run_realtime() -> str:
             "timestamp_sec": round(elapsed_sec, 3),
             "frame_path": str(frame_path),
             "overlay_path": overlay_path,
+            "crop_path": crop_path,
             "panel_payload": payload,
             "panel_bbox": panel_bbox or {},
             "panel_confidence": payload.get("confidence"),

@@ -22,7 +22,6 @@ import threading
 import time
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import pandas as pd
 
@@ -51,6 +50,18 @@ except Exception as _connect_tool_import_exc:
     CONNECT_TOOL_AVAILABLE = False
     print(f"[WARNING] workflow_select_tool 로드 실패 - 장비 자동 접속 비활성화: {_connect_tool_import_exc}")
 
+# Align fail 시 RCS tool 창을 1장 캡처해 captured_img_from_rcs 로 적재하는 코어는
+# rcs_screenshot 에 분리돼 있다(독립 실행/테스트 가능). 윈도우/캡처 의존성이 없는
+# 환경에서도 본체는 계속 동작해야 하므로 import 실패를 흡수한다.
+try:
+    from poc.workflow_1.rcs_screenshot import capture_and_close_rcs_window # pyright: ignore[reportMissingImports]
+
+    CAPTURE_RCS_AVAILABLE = True
+except Exception as _capture_rcs_import_exc:
+    capture_and_close_rcs_window = None
+    CAPTURE_RCS_AVAILABLE = False
+    print(f"[WARNING] rcs_screenshot 로드 실패 - 화면 캡처 비활성화: {_capture_rcs_import_exc}")
+
 POLL_INTERVAL_SEC = env_int("ALIGN_FAIL_POLL_SEC", 10)
 # 감지 look-back 윈도우(초). poll 주기와 분리해, 알람 보고 지연이 있어도 놓치지 않게 한다.
 DETECTION_WINDOW_SEC = env_int("ALIGN_FAIL_WINDOW_SEC", 60)
@@ -66,6 +77,9 @@ CONNECT_TOOL_WINDOW_TIMEOUT_SEC = env_int("ALIGN_FAIL_CONNECT_WINDOW_TIMEOUT_SEC
 # 팝업 자동 종료 시간(초). 0 이면 사용자가 닫을 때까지 유지. 기본 60초.
 POPUP_TIMEOUT_SEC = env_int("ALIGN_FAIL_POPUP_TIMEOUT_SEC", 60)
 ALARM_LOG_PATH = LOG_DIR / "align_fail_alarms.txt"
+
+# 접속 후 RCS tool 창을 1장 캡처할지. 기본 on. (캡처 코어는 rcs_screenshot 에 있음.)
+CAPTURE_RCS_ENABLED_DEFAULT = True
 
 
 def _alarm_rows_empty(rows) -> bool:
@@ -246,7 +260,7 @@ def _send_rich_notify_async(eqp_id: str, recipe_id: str) -> None:
     threading.Thread(target=_run, daemon=True).start()
 
 
-def _connect_to_tool_sync(eqp_id: str, action_enabled: bool = True) -> None:
+def _connect_to_tool_sync(eqp_id: str, action_enabled: bool = True):
     """감지된 EQP_ID 장비로 RCS 접속(tool 더블클릭) 을 동기·1회 시도한다.
 
     정책: 알람당 한 번만 느슨하게 시도하고, 실패하면 엔지니어가 직접 접속한다.
@@ -254,17 +268,21 @@ def _connect_to_tool_sync(eqp_id: str, action_enabled: bool = True) -> None:
     GUI 자동화는 직렬화되어야 하므로(동시에 두 tool 을 더블클릭할 수 없음) 비차단
     스레드가 아니라 poll 루프 안에서 순차로 수행하되, 메인 창 탐색 타임아웃을 짧게
     둬 실패 시 detection 루프를 오래 붙잡지 않는다. 예외는 삼켜 루프가 죽지 않게 한다.
+
+    ToolSelectionResult(또는 None) 을 반환해, 후속 캡처가 실제 더블클릭 성공 여부를
+    보고 진행할 수 있게 한다.
     """
     if not CONNECT_TOOL_AVAILABLE:
-        return
+        return None
     try:
-        connect_to_tool(
+        return connect_to_tool(
             eqp_id,
             action_enabled=action_enabled,
             main_window_timeout_sec=CONNECT_TOOL_WINDOW_TIMEOUT_SEC,
         )
     except Exception as exc:
         print(f"[WARNING] 장비 자동 접속 예외: EQP_ID={eqp_id}, error={exc}")
+        return None
 
 
 def process_fail_rows(
@@ -274,6 +292,7 @@ def process_fail_rows(
     rich_notify_enabled: bool = True,
     connect_enabled: bool = True,
     connect_action_enabled: bool = True,
+    capture_enabled: bool = True,
 ) -> int:
     """EQP_ID 기준으로 edge-triggered 알림을 수행한다.
 
@@ -328,7 +347,12 @@ def process_fail_rows(
         # 자동 접속하지 않고 엔지니어가 직접 접속한다.
         if connect_enabled:
             if recipe_id:
-                _connect_to_tool_sync(eqp_id, action_enabled=connect_action_enabled)
+                result = _connect_to_tool_sync(eqp_id, action_enabled=connect_action_enabled)
+                # 접속(더블클릭)이 실제로 수행됐고 캡처가 켜져 있으면 RCS 화면을 1장
+                # 박제하고 창을 닫는다. dry-run(클릭 생략) 이면 창이 안 떠 캡처도 생략.
+                double_clicked = bool(getattr(result, "double_clicked", False))
+                if capture_enabled and CAPTURE_RCS_AVAILABLE and double_clicked:
+                    capture_and_close_rcs_window(eqp_id, recipe_id)
             else:
                 print(
                     f"[INFO] RECIPE_ID 없음 — 자동 접속 생략, 엔지니어 직접 접속 필요 "
@@ -362,6 +386,11 @@ def monitor_loop(popup_enabled: bool | None = None) -> None:
     if connect_requested and not CONNECT_TOOL_AVAILABLE:
         print("[WARNING] ALIGN_FAIL_CONNECT_TOOL=on 이지만 workflow_select_tool 로드 실패 - off 로 진행")
 
+    capture_requested = env_flag("ALIGN_FAIL_CAPTURE_RCS", CAPTURE_RCS_ENABLED_DEFAULT)
+    capture_enabled = capture_requested and CAPTURE_RCS_AVAILABLE
+    if capture_requested and not CAPTURE_RCS_AVAILABLE:
+        print("[WARNING] ALIGN_FAIL_CAPTURE_RCS=on 이지만 rcs_screenshot 로드 실패 - off 로 진행")
+
     active_tools: set[str] = set()
     idle_logged = False  # "Align Fail 없음" 은 idle 진입 시 한 번만 로깅 (poll 마다 X)
 
@@ -371,7 +400,8 @@ def monitor_loop(popup_enabled: bool | None = None) -> None:
         f"팝업={'on' if popup_enabled else 'off'}, "
         f"rich_notify={'on' if rich_notify_enabled else 'off'}, "
         f"장비접속={'on' if connect_enabled else 'off'}"
-        f"{'(dry-run)' if connect_enabled and not connect_action_enabled else ''})"
+        f"{'(dry-run)' if connect_enabled and not connect_action_enabled else ''}, "
+        f"화면캡처={'on' if capture_enabled else 'off'})"
     )
     print(f"[INFO] 누적 로그 파일: {ALARM_LOG_PATH}")
     print("[INFO] 같은 EQP_ID 의 중복 알람은 한 번만 알립니다 (해제 후 재감지 시 재알림).")
@@ -402,6 +432,7 @@ def monitor_loop(popup_enabled: bool | None = None) -> None:
                     rich_notify_enabled=rich_notify_enabled,
                     connect_enabled=connect_enabled,
                     connect_action_enabled=connect_action_enabled,
+                    capture_enabled=capture_enabled,
                 )
                 if count == 0:
                     print(

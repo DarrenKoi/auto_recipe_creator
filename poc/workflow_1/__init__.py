@@ -15,6 +15,11 @@ DEBUG_IMAGE_DIR = WORKFLOW_1_DIR / "debug_images"
 LOG_DIR = WORKFLOW_1_DIR / "logs"
 RECORDING_DIR = WORKFLOW_1_DIR / "recordings"
 
+# 오피스 MES 가 align fail 시 생성하는 이미지 루트. align fail 핸들러는 여기에
+# captured_img_from_rcs 를 함께 적재하고, workflow_2 는 align_fail_assets 로 읽는다.
+#   align_images/<eqp_id>/<class>/<recipe>/{align_img_from_rcp, align_img_from_msr, captured_img_from_rcs}
+ALIGN_IMAGES_DIR = WORKFLOW_1_DIR / "align_images"
+
 _TIMESTAMP_PREFIX_PATTERN = re.compile(r"^\d{6}_\d{6}_")
 
 
@@ -78,6 +83,7 @@ def debug_image_path(
     )
 
 __all__ = [
+    "ALIGN_IMAGES_DIR",
     "DEBUG_IMAGE_DIR",
     "LOG_DIR",
     "RECORDING_DIR",

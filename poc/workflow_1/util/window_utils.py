@@ -304,6 +304,96 @@ def activate_window(
         return False
 
 
+def _window_alive(handle: int | None) -> bool:
+    """Win32 IsWindow 로 창이 아직 살아있는지 확인한다."""
+    if os.name != "nt" or handle is None:
+        return False
+    try:
+        return bool(ctypes.windll.user32.IsWindow(handle))
+    except Exception:
+        return False
+
+
+def close_window(
+    window,
+    *,
+    debug_label: str = "window",
+    settle_sec: float = 0.5,
+    try_red_x: bool = True,
+    red_x_offset: tuple[int, int] = (-18, 18),
+) -> bool:
+    """창을 닫는다. 전략 사다리로 시도하고 매 단계 닫힘 여부를 검증한다.
+
+    RCS 레거시 창은 window 객체 메서드(WM_CLOSE 계열)를 무시할 수 있어, 마지막에
+    우상단 빨간 X 버튼을 직접 클릭하는 GUI 폴백까지 둔다.
+
+    1) pywinauto ``close()``
+    2) WM_CLOSE PostMessage
+    3) WM_SYSCOMMAND/SC_CLOSE (타이틀바 우클릭→Close 의 프로그램적 등가)
+    4) 우상단 X 버튼 click_input (창 기준 상대 좌표; ``red_x_offset`` 로 보정)
+
+    ``red_x_offset`` = (오른쪽 모서리 기준 dx, 상단 기준 dy). 기본 (-18, 18) 은
+    표준 close 버튼 위치 근사값이며, RCS 스킨에 맞춰 호출부에서 보정한다.
+    """
+    handle = _extract_window_handle(window)
+
+    def _closed_after_attempt() -> bool:
+        # 핸들이 없으면 닫힘 검증 불가 → 시도 성공으로 간주(주로 비-Windows 경로).
+        if handle is None:
+            return True
+        time.sleep(settle_sec)
+        return not _window_alive(handle)
+
+    # 1) pywinauto close().
+    try:
+        window.close()
+        if _closed_after_attempt():
+            print(f"[INFO] 창 닫기 완료: {debug_label}, strategy=close")
+            return True
+        print(f"[INFO] close() 후에도 창 생존 — 다음 전략: {debug_label}")
+    except Exception as exc:
+        print(f"[INFO] pywinauto close 실패: {debug_label}, error={exc}")
+
+    if os.name == "nt" and handle is not None:
+        user32 = ctypes.windll.user32
+        # 2) WM_CLOSE.
+        try:
+            user32.PostMessageW(handle, 0x0010, 0, 0)  # WM_CLOSE.
+            if _closed_after_attempt():
+                print(f"[INFO] 창 닫기 완료: {debug_label}, strategy=WM_CLOSE")
+                return True
+        except Exception as exc:
+            print(f"[INFO] WM_CLOSE 실패: {debug_label}, error={exc}")
+        # 3) WM_SYSCOMMAND / SC_CLOSE.
+        try:
+            user32.PostMessageW(handle, 0x0112, 0xF060, 0)  # WM_SYSCOMMAND, SC_CLOSE.
+            if _closed_after_attempt():
+                print(f"[INFO] 창 닫기 완료: {debug_label}, strategy=SC_CLOSE")
+                return True
+        except Exception as exc:
+            print(f"[INFO] SC_CLOSE 실패: {debug_label}, error={exc}")
+
+    # 4) GUI 폴백 — 우상단 X 버튼 클릭.
+    if try_red_x:
+        try:
+            rect = window.rectangle()
+            rel_x = int((rect.right - rect.left) + red_x_offset[0])
+            rel_y = int(red_x_offset[1])
+            window.click_input(coords=(rel_x, rel_y))
+            if _closed_after_attempt():
+                print(
+                    f"[INFO] 창 닫기 완료: {debug_label}, strategy=red_x "
+                    f"coords=({rel_x},{rel_y})"
+                )
+                return True
+            print(f"[INFO] X 버튼 클릭 후에도 창 생존: {debug_label}")
+        except Exception as exc:
+            print(f"[INFO] X 버튼 클릭 실패: {debug_label}, error={exc}")
+
+    print(f"[WARNING] 창 닫기 모든 전략 실패: {debug_label}")
+    return False
+
+
 def _wrap_window_handle(handle: int, backend: str, desktops: dict[str, object]):
     """Win32 handle 을 pywinauto wrapper 로 변환한다."""
     desktop = desktops.get(backend)

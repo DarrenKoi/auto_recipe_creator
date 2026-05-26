@@ -28,7 +28,8 @@ LOG_DIR = WORKFLOW_2_DIR / "logs"
 #     ├─ align_img_from_rcp/   IMAP0001.*(OM)  IMAP0002.*(SEM)   # recipe 등록 align key
 #     └─ align_img_from_msr/   S*/E*                             # 측정 궤적 (E 접두 = fail step)
 # 경로 해석은 `align_fail_assets.py` 가 단일 창구로 담당한다 (최신 자동 + override).
-ALIGN_IMAGES_ROOT = WORKFLOW_2_DIR.parent / "workflow_1" / "align_images"
+# 루트 자체는 workflow_1 에 단일 정의되어 있다(저장 측이 workflow_1 이므로).
+from poc.workflow_1 import ALIGN_IMAGES_DIR as ALIGN_IMAGES_ROOT
 
 # from_rcp / from_msr 서브폴더명.
 FROM_RCP_DIRNAME = "align_img_from_rcp"

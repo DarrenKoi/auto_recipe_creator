@@ -4,6 +4,13 @@ output/
 **/node_modules/
 .codex/hooks/state/
 
+# office-only folders (used by office_* py files; do not create py files here)
+utils/
+minio_handler/
+ops_store/
+ops_index_mgmt/
+ftp_handler/
+
 # Python
 __pycache__/
 *.py[cod]

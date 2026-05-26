@@ -1,23 +1,20 @@
 """Align Fail 알람 감지 전용 스크립트.
 
 1분 주기로 CD-SEM 알람을 조회하여 ALID=9006 (Align Fail) 이 감지되면:
-  1. 텍스트 파일(`poc/workflow_2/logs/align_fail_alarms.txt`) 에 누적 기록
+  1. 텍스트 파일(`poc/workflow_1/logs/align_fail_alarms.txt`) 에 누적 기록
   2. Windows 팝업(MessageBox) 으로 알림 표시
   3. 해당 EQP_ID 장비로 RCS 접속(tool 더블클릭) — `workflow_select_tool` 위임 (기본 on)
 
 RCS 는 이미 로그인되어 있다고 가정한다. 장비 접속은 `ALIGN_FAIL_CONNECT_TOOL` 로
 on/off, `ALIGN_FAIL_CONNECT_ACTION=off` 로 클릭 없는 dry-run 전환이 가능하다.
 
-office_* 의존성(office_align_fail_alarm, office_rich_notify)은 gitignore 대상이며
-workflow_2 폴더 안의 버전을 import 한다. 사무실에서는 실제 office 구현을 같은
-폴더로 복사해 둔다. env helper 는 workflow_1 의존을 없애기 위해 본 파일에 인라인했다.
-무거운 GUI/VLM 머신(접속 로직)은 workflow_1 을 공유 라이브러리로 import 한다.
+workflow_1 경계: 감지 + 알림 + 장비 접속(=Tool 화면 진입)까지 책임진다. 이후
+align key CV 탐색은 workflow_2 가 다운로드된 이미지를 읽어 수행한다(파일로 디커플링).
 
 사용법:
-  uv run python poc/workflow_2/align_fail_alarm.py
+  uv run python poc/workflow_1/align_fail_alarm.py
 """
 
-import os
 import threading
 import time
 from collections.abc import Iterable, Mapping
@@ -26,35 +23,13 @@ from pathlib import Path
 
 import pandas as pd
 
-from poc.workflow_2.office_align_fail_alarm import filter_align_fail, get_cdsem_alarms # pyright: ignore[reportMissingImports]
-
-WORKFLOW_2_DIR = Path(__file__).resolve().parent
-LOG_DIR = WORKFLOW_2_DIR / "logs"
-
-
-def env_flag(name: str, default: bool = False) -> bool:
-    """bool 환경변수를 파싱한다."""
-    raw = os.environ.get(name, "").strip()
-    if not raw:
-        return default
-    return raw.lower() in {"1", "true", "yes", "on", "y"}
-
-
-def env_int(name: str, default: int) -> int:
-    """int 환경변수를 읽고 잘못된 값이면 default 를 사용한다."""
-    raw_value = os.getenv(name, "").strip()
-    if not raw_value:
-        return default
-    try:
-        return int(raw_value)
-    except ValueError:
-        print(f"[WARNING] {name} 값이 잘못되었습니다. default={default} 사용: {raw_value!r}")
-        return default
-
+from poc.workflow_1 import LOG_DIR
+from poc.workflow_1.office_align_fail_alarm import filter_align_fail, get_cdsem_alarms # pyright: ignore[reportMissingImports]
+from poc.workflow_1.util import env_flag, env_int
 
 # rich notify 는 선택 의존성. requests/PIL/ftplib 등이 빠져도 본체는 계속 동작해야 한다.
 try:
-    from poc.workflow_2.office_rich_notify import send_cube_align_fail_info # pyright: ignore[reportMissingImports]
+    from poc.workflow_1.office_rich_notify import send_cube_align_fail_info # pyright: ignore[reportMissingImports]
 
     RICH_NOTIFY_AVAILABLE = True
 except Exception as _rich_notify_import_exc:
@@ -65,7 +40,7 @@ except Exception as _rich_notify_import_exc:
 # 장비 자동 접속(tool 더블클릭)도 선택 의존성. pywinauto/VLM 머신이 없는 환경
 # (macOS 개발 등) 에서는 import 가 실패해도 감지/로그/팝업은 계속 동작해야 한다.
 try:
-    from poc.workflow_2.workflow_select_tool import connect_to_tool # pyright: ignore[reportMissingImports]
+    from poc.workflow_1.workflow_select_tool import connect_to_tool # pyright: ignore[reportMissingImports]
 
     CONNECT_TOOL_AVAILABLE = True
 except Exception as _connect_tool_import_exc:

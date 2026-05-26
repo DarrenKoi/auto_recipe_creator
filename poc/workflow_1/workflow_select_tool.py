@@ -887,6 +887,51 @@ def verify_tool_visible_in_list(
     )
 
 
+def connect_to_tool(
+    tool_name: str,
+    *,
+    action_enabled: bool = True,
+    debug_image_dir=None,
+    main_window_timeout_sec: float = 15.0,
+) -> ToolSelectionResult | None:
+    """지정 tool(EQP_ID)로 RCS 접속 — List 탭에서 찾아 더블클릭한다.
+
+    `main()` 은 환경변수/기본값으로 tool 이름을 정하지만, 본 함수는 호출부가 tool
+    이름을 동적으로 넘긴다 (align fail 알람의 EQP_ID 등). RCS 가 로그인되어 메인
+    창이 떠 있다고 가정한다. 메인 창을 못 찾으면 None 을 반환한다.
+    """
+    normalized = (tool_name or "").strip()
+    if not normalized:
+        print("[WARNING] connect_to_tool: tool_name 이 비어 있어 접속을 건너뜁니다.")
+        return None
+
+    started_at = time.time()
+    main_window, window_title, backend = wait_for_rcs_main_window(
+        timeout_sec=main_window_timeout_sec,
+    )
+    if main_window is None:
+        print(
+            f"[ERROR] connect_to_tool: 메인 RCS 창을 찾지 못해 접속 실패 "
+            f"(tool={normalized!r}). RCS 로그인 상태인지 확인하세요."
+        )
+        return None
+
+    result = select_tool_from_main_window(
+        main_window,
+        window_title,
+        backend,
+        normalized,
+        action_enabled=action_enabled,
+        debug_image_dir=debug_image_dir,
+    )
+    print(
+        f"[INFO] connect_to_tool 완료: tool={normalized!r}, "
+        f"result={result.exit_code}, double_clicked={result.double_clicked}, "
+        f"소요={format_elapsed_ms(started_at)}"
+    )
+    return result
+
+
 def main() -> str:
     """현재 List 탭에서 지정 Tool 이름을 찾아 더블클릭한다."""
     started_at = time.time()

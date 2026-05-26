@@ -28,6 +28,7 @@ from poc.workflow_1.util import (
     WINDOW_UTILS_AVAILABLE,
     capture_window,
     close_window,
+    env_float,
     env_int,
     make_timestamp_tag,
 )
@@ -48,7 +49,15 @@ CAPTURED_RCS_DIRNAME = "captured_img_from_rcs"
 # 접속 직후 tool 창이 뜰 때까지 대기 타임아웃(초).
 CAPTURE_RCS_WINDOW_TIMEOUT_SEC = env_int("ALIGN_FAIL_CAPTURE_WINDOW_TIMEOUT_SEC", 15)
 # 창이 뜬 뒤 SEM 영상이 렌더될 시간을 주는 settle 대기(초).
-CAPTURE_RCS_SETTLE_SEC = float(env_int("ALIGN_FAIL_CAPTURE_SETTLE_SEC", 2))
+CAPTURE_RCS_SETTLE_SEC = env_float("ALIGN_FAIL_CAPTURE_SETTLE_SEC", 2.0)
+# === 캡처 길이 설정 (평가 고도화 대비) =================================
+# 기본은 단일 캡처. DURATION 을 양수로 주면 그 시간 동안 INTERVAL 간격으로
+# 여러 프레임을 연속 캡처한다 (장비 정지 가정이 깨지는 케이스/시계열 평가용).
+#   ALIGN_FAIL_CAPTURE_DURATION_SEC <= 0  → 1장만 (현재 운영 기본)
+#   ALIGN_FAIL_CAPTURE_DURATION_SEC  > 0  → DURATION 동안 INTERVAL 마다 캡처
+CAPTURE_RCS_DURATION_SEC = env_float("ALIGN_FAIL_CAPTURE_DURATION_SEC", 0.0)
+CAPTURE_RCS_INTERVAL_SEC = env_float("ALIGN_FAIL_CAPTURE_INTERVAL_SEC", 0.5)
+# ======================================================================
 # 독립 실행 시 접속 단계의 메인 창 탐색 타임아웃(초).
 CONNECT_WINDOW_TIMEOUT_SEC = env_int("ALIGN_FAIL_CONNECT_WINDOW_TIMEOUT_SEC", 3)
 
@@ -70,18 +79,24 @@ def capture_and_close_rcs_window(
     *,
     window_timeout_sec: float = CAPTURE_RCS_WINDOW_TIMEOUT_SEC,
     settle_sec: float = CAPTURE_RCS_SETTLE_SEC,
-) -> Path | None:
-    """이미 열린 RCS tool 창을 찾아 1장 캡처·저장하고 창을 닫는다.
+    duration_sec: float = CAPTURE_RCS_DURATION_SEC,
+    interval_sec: float = CAPTURE_RCS_INTERVAL_SEC,
+) -> list[Path]:
+    """이미 열린 RCS tool 창을 찾아 캡처·저장하고 창을 닫는다.
 
-    접속(더블클릭)은 호출부 책임이다. 캡처 성공 시 저장 경로를, 실패/생략 시
-    None 을 반환한다. 예외는 삼켜 호출 루프가 죽지 않게 한다.
+    접속(더블클릭)은 호출부 책임이다. ``duration_sec <= 0`` 이면 1장만(현재 운영
+    기본), 양수이면 그 시간 동안 ``interval_sec`` 간격으로 여러 장 캡처한다.
+    저장된 파일 경로 목록을 반환하며, 실패/생략 시 빈 리스트를 반환한다.
+    예외는 삼켜 호출 루프가 죽지 않게 한다.
     """
     if not WINDOW_UTILS_AVAILABLE:
         print(
             f"[INFO] window_utils 비활성 — RCS 캡처 생략 (os={os.name}, "
             f"WINDOW_UTILS_AVAILABLE={WINDOW_UTILS_AVAILABLE})"
         )
-        return None
+        return []
+
+    saved: list[Path] = []
     try:
         tool_window, window_title, backend = wait_for_remote_monitoring_window(
             eqp_id,
@@ -89,26 +104,47 @@ def capture_and_close_rcs_window(
         )
         if tool_window is None:
             print(f"[WARNING] RCS tool 창을 찾지 못해 캡처 생략: EQP_ID={eqp_id}")
-            return None
+            return []
 
         if settle_sec > 0:
             time.sleep(settle_sec)
 
-        image = capture_window(tool_window)
         captured_dir = captured_dir_for(eqp_id, recipe_id)
         captured_dir.mkdir(parents=True, exist_ok=True)
-        out_path = captured_dir / f"{make_timestamp_tag()}_rcs.jpg"
-        save_debug_jpeg(image, out_path)
-        print(f"[INFO] RCS 캡처 저장: EQP_ID={eqp_id}, path={out_path}")
+        tag = make_timestamp_tag()
+        multi = duration_sec > 0
+        started_at = time.time()
+        frame_idx = 0
+
+        while True:
+            image = capture_window(tool_window)
+            if multi:
+                elapsed_ms = int((time.time() - started_at) * 1000)
+                out_path = captured_dir / f"{tag}_rcs_{frame_idx:03d}_{elapsed_ms:07d}ms.jpg"
+            else:
+                out_path = captured_dir / f"{tag}_rcs.jpg"
+            save_debug_jpeg(image, out_path)
+            saved.append(out_path)
+            frame_idx += 1
+
+            if not multi or (time.time() - started_at) >= duration_sec:
+                break
+            if interval_sec > 0:
+                time.sleep(interval_sec)
+
+        print(
+            f"[INFO] RCS 캡처 저장: EQP_ID={eqp_id}, frames={len(saved)}, "
+            f"dir={captured_dir}"
+        )
 
         close_window(
             tool_window,
             debug_label=f"rcs_tool title={window_title!r} backend={backend}",
         )
-        return out_path
+        return saved
     except Exception as exc:
         print(f"[WARNING] RCS 캡처 예외: EQP_ID={eqp_id}, error={exc}")
-        return None
+        return saved
 
 
 def connect_capture_close(
@@ -116,14 +152,17 @@ def connect_capture_close(
     recipe_id: str,
     *,
     action_enabled: bool = True,
-) -> Path | None:
-    """독립 실행용: 접속(더블클릭) → 캡처 → 닫기 를 한 번에 수행한다."""
+) -> list[Path]:
+    """독립 실행용: 접속(더블클릭) → 캡처 → 닫기 를 한 번에 수행한다.
+
+    저장된 프레임 경로 목록을 반환하며, 접속/캡처 실패 시 빈 리스트를 반환한다.
+    """
     if not CONNECT_TOOL_AVAILABLE:
         print("[ERROR] connect_to_tool 비활성 — 독립 실행 불가 (office Windows 에서 실행하세요).")
-        return None
+        return []
     if not eqp_id:
         print("[ERROR] EQP_ID 가 비어 있습니다 (ALIGN_CAPTURE_EQP_ID).")
-        return None
+        return []
 
     print(f"[INFO] RCS 접속 시도: EQP_ID={eqp_id}")
     result = connect_to_tool(
@@ -133,7 +172,7 @@ def connect_capture_close(
     )
     if result is None:
         print(f"[ERROR] 접속 실패 — 캡처 생략: EQP_ID={eqp_id}")
-        return None
+        return []
     if not getattr(result, "double_clicked", False):
         print(
             f"[WARNING] tool 더블클릭이 수행되지 않았습니다 "
@@ -147,8 +186,8 @@ def main() -> str:
     """ALIGN_CAPTURE_EQP_ID / ALIGN_CAPTURE_RECIPE_ID 로 접속→캡처→닫기 단독 실행."""
     eqp_id = os.getenv("ALIGN_CAPTURE_EQP_ID", "").strip()
     recipe_id = os.getenv("ALIGN_CAPTURE_RECIPE_ID", "").strip()
-    out_path = connect_capture_close(eqp_id, recipe_id)
-    return "success" if out_path is not None else "failed"
+    saved = connect_capture_close(eqp_id, recipe_id)
+    return "success" if saved else "failed"
 
 
 if __name__ == "__main__":

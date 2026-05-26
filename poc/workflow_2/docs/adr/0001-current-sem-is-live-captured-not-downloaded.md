@@ -1,8 +1,15 @@
 ---
-status: accepted
+status: superseded
 ---
 
 # fail 시점 current SEM 이미지는 다운로드가 아니라 workflow_2 가 라이브 캡처한다
+
+> **SUPERSEDED (2026-05-27):** 본 ADR 의 `align_recipe`/`current_sem` 폴더 + `align_fail_downloads`
+> 경로 + "라이브 캡처" 모델은 폐기되었다. 정본 자산 모델은 `align_images/<eqp>/<class>/<recipe>/`
+> 아래 **`align_img_from_rcp`**(IMAP0001=OM, IMAP0002=SEM) / **`align_img_from_msr`**(S*/E*) 이며,
+> align fail 순간 이미지는 `align_img_from_msr` 최신 `E*` 에서 확인한다(라이브 캡처가 아님). 단,
+> 여러 align 위치를 순차로 잡아야 하므로 *보정 과정*은 여전히 live SEM 에 의존한다. CONTEXT.md 및
+> `align_fail_assets.py` 가 정본. 아래 본문은 히스토리로만 보존.
 
 ## 결정
 

@@ -54,28 +54,25 @@ CD-SEM 장비 한 대의 식별자. 알람 row 의 `EQP_ID` 필드. 같은 recip
 ### recipe_name
 레시피 고유 이름. `RECIPE_ID` 의 슬래시 뒷부분.
 
-### align_recipe (folder)
-한 align fail 이벤트 폴더 아래 서브폴더. **다운로드된** 등록 align key step 이미지들의
-**시퀀스**(번호 순, 예: `XX_001_XX.jpeg`)를 담는다. align 은 OM 단계를 먼저, SEM 단계를
-나중에 수행하므로 이미지가 `OM, OM, SEM, SEM` 처럼 순차 저장되고 fail 단계에서 멈춘다.
-matcher 가 비교할 **등록 기준(reference) template** 의 출처. 한 시퀀스 안에서 OM/SEM 을
-구분하는 규칙(파일명 token vs 순서/개수)은 **오피스 실제 파일명 확인 후 확정**(미정).
+### align_img_from_rcp (folder)
+한 align fail 이벤트 폴더(`align_images/<eqp_id>/<class>/<recipe>/`) 아래 서브폴더. 오피스 MES 가
+생성하는 **레시피 등록 align key** 이미지: `IMAP0001.*`(OM), `IMAP0002.*`(SEM). matcher 가
+비교할 **등록 기준(reference) template** 의 출처. 엔지니어가 그린 박스(burned-in)가 여기 있다.
 
-### current_sem (folder)
-한 align fail 이벤트 폴더 아래 서브폴더. **다운로드가 아니라** workflow_2 가 align fail 로
-장비가 멈춘 뒤 SEM Monitor 를 **라이브 캡처해 저장**하는 출력 폴더. fail 시점의 live 이미지는
-장비가 파일로 남기지 않으므로 workflow_2 가 직접 캡처한다.
+### align_img_from_msr (folder)
+같은 이벤트 폴더 아래 서브폴더. 오피스 MES 가 생성하는 **측정 궤적** 이미지 시퀀스(`S*`=정상
+step, `E*`=fail step). **align fail 이 발생한 순간의 이미지는 여기서 확인할 수 있다**(최신 `E*`).
+`align_fail_assets` 의 `current_sem` 은 이 폴더의 최신 `E*` 다.
 
-> 이전 모델의 고정 stem `recipe_om`/`recipe_sem`/`current_sem` (각 1개 파일)은 폐기되었다.
-> 실제는 위 두 **폴더**(각각 이미지 시퀀스) 구조다.
+### live SEM 의존 (sequential align)
+`align_img_from_msr` 의 fail 이미지는 *그 순간 한 장*일 뿐이다. align fail 복구는 한 위치만이
+아니라 **여러 align 위치를 순차적으로 다시 잡아줘야 할 수 있어**, 정지된 파일이 아니라 진행 중인
+**live SEM 화면에 의존**하며 단계마다 매칭·reposition 을 반복한다. 그래서 workflow_2 는 정적
+비교(Step 3)만으로 끝나지 않고 live 보정(Step 4 PRIMARY) / live 탐색(Step 5~8 FALLBACK)을 둔다.
 
-> ⚠️ **드리프트 주의(2026-05-27 확인, 미해결):** 위 `align_recipe`/`current_sem` 폴더 모델과
-> `align_fail_downloads` 경로(ADR 0001)는 **현재 코드·CLAUDE.md 와 어긋난다.** 현 구현은
-> `align_images/<eqp>/<class>/<recipe>/` 아래 **`align_img_from_rcp`**(IMAP0001=OM, IMAP0002=SEM)
-> + **`align_img_from_msr`**(S*/E*, E=fail) 레이아웃을 쓰고(`align_fail_assets.py`,
-> `workflow_2/__init__.py`), `current_sem` 도 라이브 캡처가 아니라 `from_msr` 최신 E* 에서 읽는다.
-> 즉 ADR 0001 의 "라이브 캡처 + align_recipe/current_sem 폴더" 결정은 코드에 미반영. 어느 쪽을
-> 정본으로 할지(폴더 모델 복원 vs IMAP 모델 추인 + ADR 갱신)는 오피스 실파일 확인 후 사용자가 결정.
+> 정본(canonical) 자산 모델은 위 `align_img_from_rcp` / `align_img_from_msr` (IMAP) 레이아웃이다
+> (`align_fail_assets.py`, `workflow_2/__init__.py`, CLAUDE.md 와 일치). 과거의 고정 stem 3개 파일
+> 모델, 그리고 ADR 0001 의 `align_recipe`/`current_sem` 폴더 + 라이브 캡처 모델은 **폐기**되었다.
 
 ### OM / SEM (mode)
 SEM Monitor 의 두 관찰 모드. Optical(OM) vs 전자빔(SEM). template routing 이 mode 별로 갈린다.

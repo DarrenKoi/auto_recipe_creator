@@ -16,10 +16,9 @@ from PIL import Image
 
 from poc.workflow_1.util.image_utils import encode_image_webp
 from poc.workflow_1.util.json_utils import (
-    bbox_1000_to_pixels,
     bbox_center,
+    bbox_to_pixels,
     extract_json,
-    normalize_bbox_1000,
 )
 from poc.workflow_1.vlm_client import Workflow1VLMClient
 

@@ -88,6 +88,41 @@ align_images/<eqp_id>/<class_name>/<recipe_name>/
 - **tool model 마다 패널 레이아웃이 다름** → landmark 템플릿을 model 별로 준비.
 - crop 결과를 단계 3 매칭의 입력으로 남길 것.
 
+### 1D. landmark 란? & CV 정밀 추출 검증 절차
+
+> **landmark = 화면에서 변하지 않는 시각적 기준점(앵커).** 진짜 찾고 싶은 Live SEM
+> 박스는 영상 내용이 매 프레임 바뀌어 그 자체를 기준으로 못 찾는다. 그래서 박스 **바깥**의
+> 안 변하는 UI 조각(패널 타이틀바·코너 아이콘·고정 라벨)을 landmark 로 삼아, "landmark 를
+> 찾고 → 거기서 고정 거리(`panel_offset`)만큼 떨어진 곳이 SEM 박스" 로 역산한다.
+> 비유: *"빨간 우체통(landmark)을 찾아라. 거기서 오른쪽 3m·아래 1m 가 우리집 문(SEM 박스)이다."*
+
+좋은 landmark 조건: ① 고대비·distinctive(matchTemplate peak 또렷) ② **Live SEM 박스 바깥**
+(내부는 매 프레임 변해서 매칭 불가) ③ 모든 프레임에 항상 보임 ④ model 별로 따로 준비.
+
+검증은 **2단(코드 → 가설)** 으로 분리한다:
+
+- **Mac (코드 검증, 실데이터 0)** — `test_sem_panel_locator.py` (합성 self-test, 기대 5/5):
+  멀티-landmark argmax / `panel_offset` 산술 / frame 경계 clamp / confidence floor(없으면 None)
+  의 4개 분기가 의도대로 도는지만 박는다. 합성 프레임은 **SEM 박스 내부를 매 케이스 다른
+  random 텍스처로 채우고 landmark 는 박스 바깥에 둬서**, "라이브 영상은 변해도 바깥
+  landmark 는 안정적"이라는 운영 전제를 모사한다. ⚠️ PASS 해도 *가설* 증명은 아니다.
+- **오피스 (가설 검증, 실데이터)** — 실제로 Live SEM 이 landmark 에서 고정 offset 인지:
+  1. `capture_window_frames_tool.py` 로 Tool 창 프레임 캡처.
+  2. **landmark 제작(수작업 1회)**: 한 프레임에서 안 변하는 UI 조각을 오려
+     `templates/sem_panel_landmarks/<model_id>/landmark.jpg`, 그 조각→SEM 박스 거리를 재서
+     `meta.json` 의 `panel_offset:[dx,dy,w,h]` 기입.
+  3. `test_match_on_captured_frames.py` 실행(내부에서 `locate_panel` 호출).
+  4. **확인 2가지**: overlay 의 ROI 박스가 모든 프레임에서 Live SEM 에 정확히 얹히나 /
+     `confidence` 가 일관되게 ≥ `LANDMARK_CONF_MIN`(0.70)인가. 경계값이면 더 distinctive 한
+     landmark 로 교체. 창 리사이즈/DPI 변화에 약하면 ORB 기반 검출로 폴백 검토.
+
+> 스크린샷은 **오피스 머신(Claude Code 직접 실행) 안에서만** 쓰이므로 건물 밖으로 나가지 않는다 —
+> 보안 반출 금지와 충돌하지 않는다.
+
+| 파일 | 종류 | 명령 / 사용 |
+|---|---|---|
+| `test_sem_panel_locator.py` | 🆕 신규 (runnable, Mac) | `uv run python poc/workflow_2/test_sem_panel_locator.py` (기대 5/5) |
+
 ---
 
 ## 단계 2 — 마우스 클릭 위치 추출 (VLM + CV)
@@ -170,7 +205,7 @@ align_images/<eqp_id>/<class_name>/<recipe_name>/
 | 단계 | 핵심 파일 (기존✅ / 신규🆕) | 산출물 |
 |---|---|---|
 | 0 자산 준비 | `align_fail_assets.py`✅, `__init__.py`✅ | 표준 레이아웃 자산, 경로 해석 |
-| 1 SEM Box 추출 | `vlm_sem_monitor_box.py`✅, `sem_panel_locator.py`✅, `util/image_utils.py`✅ | Box bbox 마킹 이미지 + crop |
+| 1 SEM Box 추출 | `vlm_sem_monitor_box.py`✅, `sem_panel_locator.py`✅, `test_sem_panel_locator.py`🆕, `util/image_utils.py`✅ | Box bbox 마킹 이미지 + crop, locator self-test 5/5 |
 | 2A UI 클릭 | `prompts/*`✅, `json_utils.py`✅, `debug_image_utils.py`✅, `exp_click_locator.py`🆕 | 클릭 좌표 마킹 이미지 |
 | 2B recenter 클릭 | `align_key_matcher.py`✅, `match_recipe_key_on_crop.py`✅, `vlm_align_key_box.py`✅ | 더블클릭 목표점 + overlay |
 | 3 정적 매칭 | `compare_align_images.py`✅, `test_match_on_captured_frames.py`✅, `test_align_key_match.py`✅ | score/decision/overlay, 분포 |
@@ -198,6 +233,9 @@ align_images/<eqp_id>/<class_name>/<recipe_name>/
 ```bash
 # 단계 1A — VLM 이 SEM Monitor Box 를 그릴 수 있는지 (오피스: Flask VLM 필요)
 uv run python poc/workflow_2/vlm_sem_monitor_box.py
+
+# 단계 1B/1D — CV landmark locator 합성 self-test (Mac, 실데이터 불필요, 기대 5/5)
+uv run python poc/workflow_2/test_sem_panel_locator.py
 
 # 단계 3 — 등록 SEM ↔ 현재 SEM 정적 비교 (자산 없으면 합성 self-test)
 uv run python poc/workflow_2/compare_align_images.py

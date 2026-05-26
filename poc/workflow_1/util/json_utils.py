@@ -205,6 +205,54 @@ def bbox_center(bbox: dict) -> dict[str, int]:
     return {"x": center_x, "y": center_y}
 
 
+def _bbox_corners(raw_bbox):
+    """다양한 bbox 표현에서 (left, top, right, bottom) raw 값을 뽑는다(clamp/스케일 없음)."""
+    if isinstance(raw_bbox, dict):
+        if {"left", "top", "right", "bottom"} <= raw_bbox.keys():
+            return (
+                coerce_float(raw_bbox.get("left")),
+                coerce_float(raw_bbox.get("top")),
+                coerce_float(raw_bbox.get("right")),
+                coerce_float(raw_bbox.get("bottom")),
+            )
+        for wkey, hkey in (("width", "height"), ("w", "h")):
+            if {"x", "y", wkey, hkey} <= raw_bbox.keys():
+                left = coerce_float(raw_bbox.get("x"))
+                top = coerce_float(raw_bbox.get("y"))
+                width = coerce_float(raw_bbox.get(wkey))
+                height = coerce_float(raw_bbox.get(hkey))
+                if None in {left, top, width, height}:
+                    return None
+                return left, top, left + width, top + height
+        return None
+    if isinstance(raw_bbox, list) and len(raw_bbox) == 4:
+        return tuple(coerce_float(v) for v in raw_bbox)
+    return None
+
+
+def bbox_to_pixels(raw_bbox, img_w: int, img_h: int, coord_system=None) -> dict | None:
+    """모델 bbox 를 *coord_system 을 존중해* 픽셀 bbox 로 변환한다(없으면 None).
+
+    ``bbox_1000_to_pixels`` 는 항상 0-1000 정규화로 가정하므로, 모델이 pixel/relative_1/
+    percent 로 응답하면 잘못 스케일된다. 본 함수는 좌표값별로 ``_to_pixel_coordinate`` 를
+    써 coord_system(+크기 휴리스틱)을 반영한다. 결과 bbox 는 [0, axis-1] 로 clamp 되고
+    right>left, bottom>top 을 보장한다(아니면 None).
+    """
+    corners = _bbox_corners(raw_bbox)
+    if corners is None or None in corners:
+        return None
+    cs = _normalize_coord_system(coord_system)
+    left, _ = _to_pixel_coordinate(corners[0], img_w, cs)
+    top, _ = _to_pixel_coordinate(corners[1], img_h, cs)
+    right, _ = _to_pixel_coordinate(corners[2], img_w, cs)
+    bottom, _ = _to_pixel_coordinate(corners[3], img_h, cs)
+    if None in (left, top, right, bottom):
+        return None
+    if right <= left or bottom <= top:
+        return None
+    return {"left": left, "top": top, "right": right, "bottom": bottom}
+
+
 def _normalize_coord_system(value) -> str | None:
     """좌표계 문자열을 내부 표준값으로 정규화한다."""
     if value is None:

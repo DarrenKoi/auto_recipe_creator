@@ -137,12 +137,17 @@ align_images/<eqp_id>/<class>/<recipe>/   (오피스 MES 생성 + 우리 캡처)
 
 2. **(오피스, 최우선) 실장비 `SEMMonitorController` 구현**
    - 파일: 신규 `poc/workflow_2/rcs_sem_controller.py` (가칭)
-   - 할 일: `live_align_search.SEMMonitorController` Protocol 의 4개 메서드 구현
+   - 할 일: `live_align_search.SEMMonitorController` Protocol 의 **6개 메서드** 구현
      - `capture()` — RCS 창에서 SEM Monitor ROI 만 잘라 grayscale numpy 반환(`sem_panel_locator` 활용).
-     - `move_to_point(fov_x, fov_y)` — ROI 내부 좌표를 screen 좌표로 환산 후 더블클릭(recenter).
+     - `move_to_point(fov_x, fov_y)` — ROI 내부(FOV-local) 좌표를 screen 좌표로 환산 후 더블클릭(recenter).
      - `zoom(direction)` — wheel up/down 한 단계(FOV 중심 기준 discrete 배율).
      - `read_mode()` — monitor mode label(OM/SEM) 읽기(`vlm_sem_monitor_box` 결과 또는 OCR).
-   - 완료 기준: Phase 1~4(아래 §5) dry-run 통과.
+     - `capture_screen()` — **(Step 4 PRIMARY 필수)** SEM ROI 가 아니라 전체 화면(또는 RCS 창)을
+       반환. OK 같은 dialog 버튼이 ROI 밖에 있어 `vlm_ok_button_box` 가 이 프레임에서 OK 를 찾는다.
+     - `click_screen(screen_x, screen_y)` — **(Step 4 PRIMARY 필수)** screen 절대 좌표 single click.
+       `move_to_point`(FOV-local 더블클릭)과 좌표공간이 다르다. OK 버튼 클릭에 쓴다.
+   - 완료 기준: Phase 1~4(아래 §5) dry-run 통과. **`capture_screen`/`click_screen` 누락 시
+     `correct_align_fail` 이 reposition 후 OK 단계에서 AttributeError → 정렬 미완료.**
 
 3. **(최우선) Safety gate**
    - 파일: `live_align_search.py` + `rcs_sem_controller.py`

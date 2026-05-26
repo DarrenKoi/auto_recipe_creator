@@ -21,6 +21,14 @@ align key 와 같은 위치를 찾아내는 흐름**을 담는다.
   동일성이 아니라 **edge 구조(Chamfer 위주)** 로 매칭하고, hard match 를 강요하지 않으며,
   최종 책임 판정은 **best candidate 를 엔지니어에게 넘기는 것**으로 둔다.
 
+**보정 흐름의 핵심(2026-05-27 사용자 확정):** Align Fail 이 나면 SEM Monitor 는 paused live
+화면에 **crosshair(가로/세로 십자선)** 를 그려 *현재(=잘못된)* align 위치를 표시하고 멈춘다.
+엔지니어가 등록 이미지에 **그려 둔 박스의 중심(보통 정중앙)이 target point** 이고, 박스 *안의
+모양*이 live 에도 보여야 한다. 보정 = crosshair 를 recipe-matched 점으로 옮기고(더블클릭=recenter)
+**OK 버튼**을 눌러 진행. **align key 는 대개 잘못된 crosshair 근처에 이미 보이므로, 즉시
+reposition+OK 하는 것이 PRIMARY 경로**이고, pan/zoom two-phase 탐색(Step 5~8)은 *아무것도 안
+보일 때만* 도는 **FALLBACK** 이다. 둘을 가르는 단일 기준이 `key_visibility_gate` 다.
+
 ---
 
 ## 2. 트리거와 데이터 흐름
@@ -38,7 +46,10 @@ align_images/<eqp_id>/<class>/<recipe>/   (오피스 MES 생성 + 우리 캡처)
 [workflow_2]
   Step 1·2 : VLM probe       (정적 파일, throwaway 평가)
   Step 3   : CV 정적 비교      (정적 파일)
-  Step 4~7 : live two-phase 탐색 (실시간 SEM Monitor 조작)
+  Step 4   : PRIMARY 보정      (paused 프레임 매칭 → reposition + OK)
+      │  key 가 보이면(가시성 게이트) 여기서 끝.
+      ▼  안 보이면(low) ↓
+  Step 5~8 : FALLBACK live two-phase 탐색 (실시간 SEM Monitor pan/zoom)
 ```
 
 > 경로 해석은 `poc/workflow_2/align_fail_assets.py` 의 `resolve_assets_auto()` 가 단일
@@ -55,10 +66,11 @@ align_images/<eqp_id>/<class>/<recipe>/   (오피스 MES 생성 + 우리 캡처)
 | **Step 1** | 레시피 등록 이미지(OM·SEM)에서 VLM 이 align key 박스를 그릴 수 있는지 평가 | `vlm_align_key_box.py` | 🟡 코드 완성 / VLM 호출은 오피스 전용 |
 | **Step 2** | 현재(실패) SEM 이미지에서 VLM 이 align key 박스를 그릴 수 있는지 평가 | `vlm_align_key_box.py` (동일 스크립트) | 🟡 코드 완성 / VLM 호출은 오피스 전용 |
 | **Step 3** | 등록 SEM ↔ 현재 SEM 을 classical CV 로 정적 비교(구조 위주) | `compare_align_images.py`, `align_key_matcher.py` | ✅ Mac 검증 완료 |
-| **Step 4** | live SEM Monitor 를 더블클릭(recenter)으로 이동하며 탐색 | `live_align_search.py` | ✅ 로직 검증(mock) / 🔴 실장비 adapter 미구현 |
-| **Step 5** | 매 프레임 실시간 스코어링, match 또는 budget 까지 반복 | `live_align_search.py` + `align_key_matcher.py` | ✅ 로직 검증(mock) |
-| **Step 6** | 저배율 zoom-out → miniature 후보 탐색 → recenter → zoom-in 확정(two-phase) | `live_align_search.py` | ✅ 로직 검증(mock) |
-| **Step 7** | pan 10회 budget, 초과 시 best candidate 보고/escalation | `live_align_search.py` | ✅ 로직 검증(mock) |
+| **Step 4 (PRIMARY)** | paused 프레임을 near-native scale 로 매칭 → 가시성 게이트 → best_xy 를 더블클릭 recenter → VLM 으로 OK 버튼 찾아 screen 클릭 | `align_fail_correct.py`, `vlm_ok_button_box.py` | 🟡 로직 검증(Mac dry-run) / 실장비·VLM 오피스 전용 |
+| **Step 5 (FALLBACK)** | (게이트 low 일 때만) live SEM Monitor 를 더블클릭(recenter)으로 이동하며 탐색 | `live_align_search.py` | ✅ 로직 검증(mock) / 🔴 실장비 adapter 미구현 |
+| **Step 6 (FALLBACK)** | 매 프레임 실시간 스코어링, match 또는 budget 까지 반복 | `live_align_search.py` + `align_key_matcher.py` | ✅ 로직 검증(mock) |
+| **Step 7 (FALLBACK)** | 저배율 zoom-out → miniature 후보 탐색 → recenter → zoom-in 확정(two-phase) | `live_align_search.py` | ✅ 로직 검증(mock) |
+| **Step 8 (FALLBACK)** | pan 10회 budget, 초과 시 best candidate 보고/escalation | `live_align_search.py` | ✅ 로직 검증(mock) |
 
 범례: ✅ 구현·검증 완료 · 🟡 코드 완성(오피스에서만 실행) · 🔴 미구현 · 🟠 부분 구현
 
@@ -84,6 +96,24 @@ align_images/<eqp_id>/<class>/<recipe>/   (오피스 MES 생성 + 우리 캡처)
   - **terminal match 가드**: `best_scale ≥ MIN_CONFIRM_SCALE(0.6) AND orb_inlier_ratio > 0`
     → tiny-scale chamfer 단독 과신으로 인한 거짓 종료 방지.
   - 실장비 연결은 `SEMMonitorController` Protocol(아래)로만 분리. Mac 은 배율 시뮬 mock 으로 검증됨.
+- **`align_fail_correct.py` (Step 4 PRIMARY)** — paused 화면 즉시 보정 오케스트레이션.
+  - `key_visibility_gate(result)` — primary vs fallback 의 단일 분기. paused 프레임은 *레시피 등록
+    배율*에서 멈춘 것이므로 `PAUSED_SCALES`(=near-native `DEFAULT_SCALES`)로 매칭한다. broad
+    miniature band 를 쓰면 tiny-scale chamfer 과신으로 featureless 프레임도 거짓 가시가 된다.
+    게이트는 `best_scale>=MIN_CONFIRM_SCALE` 를 요구하고, 약한 `adjust` 는 `orb>0`(feature 보강)일
+    때만 가시로 인정해 배경 거짓양성을 차단(강한 `match` 는 edge 구조만으로 인정). cold-start.
+  - 게이트 True → `clamp_to_fov(best_xy)` → `move_to_point`(더블클릭 recenter) → `capture_screen()`
+    에서 OK 버튼 찾아 `click_screen`. False → `live_align_search` 위임.
+  - `build_templates_from_assets(assets, crop_to_box=False)` — `recipe_om`/`recipe_sem` → `{OM,SEM}`.
+    `extract_annotation_box()` 로 엔지니어 박스 내부만 crop 하는 옵션은 **미보정, 기본 off**(align key
+    자체가 box-in-box 일 수 있어 주석 사각형과 혼동 가능 → 오피스 실파일로 calibration 후 결정).
+  - `dry_run=True`(기본): best_xy·OK 좌표를 계산·로그·overlay 만 하고 actuation 안 함(§5 Phase 3).
+    Mac self-test `test_align_fail_correct.py` 4/4 통과(gate / primary / fallback 위임 / OK 매핑).
+- **`vlm_ok_button_box.py`** — paused 다이얼로그의 OK(확인) 버튼을 VLM 으로 찾아 *screen* 좌표 반환.
+  ROI crop 이 아니라 전체 화면 프레임을 받으며(`capture_screen()`), Cancel/닫기와 구분. 좌표 결정이
+  아니라 UI 버튼 *영역* 식별이므로 doc §8 의 CV/VLM 경계를 지킨다.
+  - **좌표공간 분리(중요)**: `move_to_point`(reposition)은 SEM ROI 내부 FOV-local 픽셀,
+    `click_screen`(OK)은 화면 절대 픽셀. 둘은 서로 다른 좌표계라 변환을 공유하지 않는다.
 
 ### 4.2 부분 구현(재사용 가능, 자산/튜닝 필요)
 
@@ -162,6 +192,10 @@ align_images/<eqp_id>/<class>/<recipe>/   (오피스 MES 생성 + 우리 캡처)
 ## 7. 실행 방법
 
 ```bash
+# Step 4 PRIMARY — paused 보정 데모(Mac: 합성 프레임 + mock, dry-run)
+uv run python poc/workflow_2/align_fail_correct.py
+uv run python poc/workflow_2/test_align_fail_correct.py   # gate/primary/fallback/OK 매핑 self-test (4/4)
+
 # Step 3 — 정적 비교(자산 없으면 합성 self-test)
 uv run python poc/workflow_2/compare_align_images.py
 
@@ -182,6 +216,7 @@ uv run python poc/workflow_2/test_align_key_match.py
 | 써도 되는 영역 | 피해야 할 영역 |
 |---|---|
 | SEM Monitor Box 식별 | 최종 align key 좌표 단독 결정 |
+| OK dialog 버튼 위치 식별(screen 좌표) | crosshair reposition 좌표(=best_xy) 결정 |
 | feature 없는 FOV 인지 설명 | VLM confidence 를 calibrated score 처럼 사용 |
 | adjust 구간 coarse 방향 힌트 / broad roi_hint(평가 후) | OpenCV 낮은 score 를 VLM 답변만으로 override |
 | engineer review 요약 생성 | 반복 가능성이 필요한 stage 이동 판정 |

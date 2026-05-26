@@ -92,6 +92,14 @@ class SEMMonitorController(Protocol):
     def read_mode(self) -> str:
         """monitor mode label 을 반환 ('OM' | 'SEM' | 'unknown')."""
 
+    def capture_screen(self) -> np.ndarray:
+        """전체 화면(또는 RCS 창) 을 반환한다 — SEM ROI 가 아니라 dialog 포함.
+
+        ``capture()`` 는 SEM Monitor ROI 만 자르지만, OK 같은 dialog 버튼은 ROI
+        밖에 있어 별도의 전체 프레임이 필요하다. 반환 좌표가 곧 screen 좌표가 되어
+        ``click_screen`` 으로 그대로 넘길 수 있다.
+        """
+
     def click_screen(self, screen_x: int, screen_y: int) -> None:
         """SCREEN(절대) 픽셀 (screen_x, screen_y) 을 단일 클릭한다.
 
@@ -398,6 +406,7 @@ class _MockSEMMonitor:
         zoom_factors: tuple[float, ...],
         start_mag_index: int,
         mode: str = "SEM",
+        screen_image: np.ndarray | None = None,
     ) -> None:
         self.wafer = wafer
         self.sh, self.sw = screen_size
@@ -405,6 +414,7 @@ class _MockSEMMonitor:
         self.zoom_factors = zoom_factors
         self.mag = int(start_mag_index)
         self.mode = mode
+        self.screen_image = screen_image  # capture_screen 용 가상 전체 화면(선택).
         self.screen_clicks: list[tuple[int, int]] = []  # click_screen 호출 기록(검증용).
 
     def _factor(self) -> float:
@@ -437,6 +447,12 @@ class _MockSEMMonitor:
 
     def read_mode(self) -> str:
         return self.mode
+
+    def capture_screen(self) -> np.ndarray:
+        # 가상 전체 화면. 미지정 시 ROI 캡처를 그대로 돌려준다(데모/테스트는 OK locator 를 stub).
+        if self.screen_image is not None:
+            return self.screen_image
+        return self.capture()
 
     def click_screen(self, screen_x: int, screen_y: int) -> None:
         # mock 은 화면 절대 클릭을 기록만 한다(가상 wafer 에는 영향 없음).

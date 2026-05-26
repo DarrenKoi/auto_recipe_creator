@@ -27,12 +27,13 @@ align key 와 같은 위치를 찾아내는 흐름**을 담는다.
 
 ```
 [workflow_1] ALID=9006(Align Fail) 감지
-      │   align_fail_alarm.py 가 알림 + (오피스) 레시피/현재 이미지 다운로드
+      │   align_fail_alarm.py 가 알림 + (RECIPE_ID 있으면) 장비 접속 후
+      │   RCS 화면 캡처(rcs_screenshot.py) → captured_img_from_rcs 적재
       ▼
-designated path:  align_fail_downloads/<recipe_id>/
-      ├─ recipe_om.*    (레시피 등록 OM align key, 주변 layout 포함)
-      ├─ recipe_sem.*   (레시피 등록 SEM align key, 주변 layout 포함)
-      └─ current_sem.*  (fail 시점 live SEM 이미지)
+align_images/<eqp_id>/<class>/<recipe>/   (오피스 MES 생성 + 우리 캡처)
+      ├─ align_img_from_rcp/  IMAP0001.*(OM)  IMAP0002.*(SEM)   (등록 align key)
+      ├─ align_img_from_msr/  S*/E*                              (측정 궤적, E=fail)
+      └─ captured_img_from_rcs/  <tag>_rcs.jpg                   (fail 시점 RCS 캡처)
       ▼
 [workflow_2]
   Step 1·2 : VLM probe       (정적 파일, throwaway 평가)
@@ -40,9 +41,10 @@ designated path:  align_fail_downloads/<recipe_id>/
   Step 4~7 : live two-phase 탐색 (실시간 SEM Monitor 조작)
 ```
 
-> 다운로드 경로/파일명 규약은 `poc/workflow_2/__init__.py` 의
-> `ALIGN_FAIL_DOWNLOAD_DIR`, `RECIPE_OM_STEM`, `RECIPE_SEM_STEM`, `CURRENT_SEM_STEM` 에서 정의.
-> **오피스의 실제 다운로드 파일명이 다르면 이 상수만 바꾸면 된다.**
+> 경로 해석은 `poc/workflow_2/align_fail_assets.py` 의 `resolve_assets_auto()` 가 단일
+> 창구로 담당한다(최신 폴더 자동 선택, 또는 `ALIGN_EQP_ID`/`ALIGN_CLASS_NAME`/`ALIGN_RECIPE_NAME`
+> 환경변수로 override). 루트는 `poc/workflow_1/__init__.py` 의 `ALIGN_IMAGES_DIR`.
+> **`recipe_om`(IMAP0001) / `recipe_sem`(IMAP0002) / `current_sem`(from_msr 최신 E*)** 로 노출된다.
 
 ---
 
@@ -71,7 +73,7 @@ designated path:  align_fail_downloads/<recipe_id>/
   - `compute_align_key_score(..., scales=, policy=)` — scale band·정책을 호출부에서 주입.
   - `BROAD_SCALES`(0.15~0.5) — 저배율 miniature 탐색용. `DEFAULT_SCALES` 는 불변(기존 negative 케이스 보장).
   - 합성 smoke test `test_align_key_match.py` **10/10 통과 유지**.
-- **`align_fail_assets.py`** — designated path 에서 `recipe_om/recipe_sem/current_sem` 해석·로딩 공용 헬퍼.
+- **`align_fail_assets.py`** — `align_images/<eqp>/<class>/<recipe>/` 에서 `recipe_om`(IMAP0001)/`recipe_sem`(IMAP0002)/`current_sem`(from_msr 최신 E*) 해석·로딩 공용 헬퍼(`resolve_assets_auto`).
 - **`compare_align_images.py` (Step 3)** — 등록 SEM 을 template, 현재 SEM 을 search 대상으로 비교.
   - 두 crop 이 비슷한 크기여도 매칭되도록 frame 에 replicate 여백(pad)을 둘러 template 이 항상 들어가게 함.
   - 결과: score/decision + overlay + 한 줄 verdict(`match`/`adjust`/`low`). 합성 self-test 로 파이프라인 검증됨.
@@ -96,11 +98,12 @@ designated path:  align_fail_downloads/<recipe_id>/
 
 > 아래 순서는 의존성과 위험도를 고려한 권장 순서다.
 
-1. **(오피스, 최우선) workflow_1 다운로드 핸들러**
-   - 파일: `poc/workflow_1/` (align fail 시 호출되는 다운로드 루틴; 신규 또는 `align_fail_alarm.py` 연계)
-   - 할 일: ALID=9006 시 레시피 등록 OM/SEM 이미지와 현재 SEM 이미지를
-     `align_fail_downloads/<recipe_id>/recipe_om.* · recipe_sem.* · current_sem.*` 로 저장.
-   - 완료 기준: Step 1~3 스크립트가 자산을 그대로 읽어 동작. **파일명 규약 확정**.
+1. **(오피스, 최우선) workflow_1 캡처 핸들러**
+   - 파일: `poc/workflow_1/rcs_screenshot.py` (align fail 시 `align_fail_alarm.py` 가 연계 호출; 단독 실행도 가능)
+   - 할 일: ALID=9006 + RECIPE_ID 시 장비 접속 → RCS 화면 캡처 →
+     `align_images/<eqp>/<class>/<recipe>/captured_img_from_rcs/<tag>_rcs.jpg` 로 적재 후 창 닫기.
+     레시피 등록 OM/SEM(align_img_from_rcp)·측정 궤적(align_img_from_msr)은 오피스 MES 가 생성.
+   - 완료 기준: Step 1~3 스크립트가 자산을 그대로 읽어 동작. **창 닫기 전략 확정**.
 
 2. **(오피스, 최우선) 실장비 `SEMMonitorController` 구현**
    - 파일: 신규 `poc/workflow_2/rcs_sem_controller.py` (가칭)

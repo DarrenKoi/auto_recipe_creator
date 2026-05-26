@@ -94,25 +94,50 @@ def _list_images(directory: Path) -> list[Path]:
     )
 
 
+def _safe_mtime(path: Path) -> float:
+    """st_mtime 을 안전하게 읽는다(접근 실패 시 0.0)."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def _pick_current_sem(from_msr_images: list[Path]) -> Path | None:
     """from_msr 궤적에서 '현재 실패 SEM' 에 해당하는 이미지를 고른다.
 
-    fail step 은 E 접두 파일이고 align 은 그 시점에서 멈춘다. 따라서 이름 순
-    마지막 E* 파일을 우선하고, E* 가 없으면 마지막 측정 이미지로 fallback.
+    fail step 은 E 접두 파일이고 align 은 그 시점에서 멈춘다. 따라서 E* 파일 중
+    가장 최근 수정 시각의 것을 고른다(E* 가 없으면 전체 중 최신). 파일명 시퀀스
+    문법(E<n>-A000X)이 사전식 정렬과 어긋날 수 있어, 이름 순이 아니라 mtime 으로
+    '최신 fail' 을 판단한다.
     """
     if not from_msr_images:
         return None
     e_files = [p for p in from_msr_images if p.name[:1].upper() == "E"]
-    if e_files:
-        return e_files[-1]
-    return from_msr_images[-1]
+    pool = e_files or from_msr_images
+    return max(pool, key=_safe_mtime)
+
+
+def _subtree_latest_mtime(leaf: Path) -> float:
+    """recipe leaf 하위 트리에서 가장 최근 파일 mtime 을 구한다.
+
+    새 align fail 이미지는 from_msr/ 등 *하위* 폴더에 떨어져 leaf 자체의 mtime 을
+    바꾸지 않는다(서브폴더가 이미 있으면). 따라서 leaf mtime 이 아니라 하위 트리의
+    최신 파일 시각으로 '가장 최근 fail' recipe 를 판단해야 한다.
+    """
+    latest = _safe_mtime(leaf)
+    for child in leaf.rglob("*"):
+        if child.is_file():
+            m = _safe_mtime(child)
+            if m > latest:
+                latest = m
+    return latest
 
 
 def iter_recipe_dirs(root: Path = ALIGN_IMAGES_ROOT) -> list[Path]:
     """``root`` 아래에서 align_img_from_rcp 를 가진 recipe leaf 폴더를 모은다.
 
-    레이아웃은 <eqp>/<class>/<recipe> 의 3단계라고 가정하되, from_rcp 폴더의
-    부모를 recipe leaf 로 본다(중간 단계 수가 달라져도 동작).
+    레이아웃은 <eqp>/<class>/<recipe> 의 3단계로 고정 가정한다. 하위 트리의 최신
+    파일 시각 기준 내림차순으로 정렬해 '가장 최근 fail' recipe 가 앞에 오게 한다.
     """
     if not root.is_dir():
         return []
@@ -120,7 +145,7 @@ def iter_recipe_dirs(root: Path = ALIGN_IMAGES_ROOT) -> list[Path]:
     for from_rcp in root.glob(f"*/*/*/{FROM_RCP_DIRNAME}"):
         if from_rcp.is_dir():
             leaves.append(from_rcp.parent)
-    return sorted(leaves, key=lambda p: p.stat().st_mtime, reverse=True)
+    return sorted(leaves, key=_subtree_latest_mtime, reverse=True)
 
 
 def resolve_assets(recipe_dir: Path) -> AlignFailAssets:
@@ -166,22 +191,42 @@ def resolve_assets_auto(
     recipe_name: str = "",
     root: Path = ALIGN_IMAGES_ROOT,
 ) -> AlignFailAssets | None:
-    """override(eqp/class/recipe) 가 모두 주어지면 그 경로를, 아니면 최신 폴더를 해석한다.
+    """완전한 override(eqp + class + recipe)면 그 경로를, 아니면 최신 폴더를 해석한다.
 
     override 우선순위: 인자 > 환경변수(ALIGN_EQP_ID/ALIGN_CLASS_NAME/ALIGN_RECIPE_NAME).
-    셋 중 하나라도 비면 최신 align fail 폴더를 자동 선택한다.
+    recipe_name 은 "<class>/<recipe>" 슬래시 형태(알람 RECIPE_ID 와 동일)로 줘도 되며,
+    class_name 과 합쳐 슬래시 단위로 분해한 뒤 eqp 아래에 join 한다. eqp_id 가 있고
+    class+recipe 2단계 이상이 모이면 완전 override 로 보고, 그 외 부분 지정은 무시하되
+    경고를 남기고 최신 폴더로 폴백한다(조용히 엉뚱한 recipe 를 분석하지 않도록).
     """
     eqp_id = (eqp_id or os.getenv("ALIGN_EQP_ID", "")).strip()
     class_name = (class_name or os.getenv("ALIGN_CLASS_NAME", "")).strip()
     recipe_name = (recipe_name or os.getenv("ALIGN_RECIPE_NAME", "")).strip()
 
-    if eqp_id and class_name and recipe_name:
-        recipe_dir = root / eqp_id / class_name / recipe_name
+    # class_name + recipe_name 을 슬래시 단위로 분해 (recipe_name="class/recipe" 도 허용).
+    rel_parts = [
+        part
+        for segment in (class_name, recipe_name)
+        for part in segment.replace("\\", "/").strip("/").split("/")
+        if part
+    ]
+    any_override = bool(eqp_id or rel_parts)
+    full_override = bool(eqp_id and len(rel_parts) >= 2)
+
+    if full_override:
+        recipe_dir = root.joinpath(eqp_id, *rel_parts)
         if not recipe_dir.is_dir():
             print(f"[ERROR] 지정한 recipe 폴더가 없습니다: {recipe_dir}")
             return None
         print(f"[INFO] override recipe 폴더 사용: {recipe_dir}")
         return resolve_assets(recipe_dir)
+
+    if any_override:
+        print(
+            f"[WARNING] override 가 불완전합니다(eqp_id={eqp_id!r}, class={class_name!r}, "
+            f"recipe={recipe_name!r}) — 무시하고 최신 align fail 폴더를 자동 선택합니다. "
+            f"고정하려면 eqp_id + class + recipe 를 모두 지정하세요."
+        )
 
     candidates = iter_recipe_dirs(root)
     if not candidates:

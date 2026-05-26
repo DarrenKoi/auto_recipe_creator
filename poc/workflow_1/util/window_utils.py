@@ -336,11 +336,14 @@ def close_window(
     표준 close 버튼 위치 근사값이며, RCS 스킨에 맞춰 호출부에서 보정한다.
     """
     handle = _extract_window_handle(window)
+    verifiable = handle is not None and os.name == "nt"
 
     def _closed_after_attempt() -> bool:
-        # 핸들이 없으면 닫힘 검증 불가 → 시도 성공으로 간주(주로 비-Windows 경로).
-        if handle is None:
-            return True
+        # 핸들이 없으면 닫힘을 검증할 수 없다 → 성공으로 단정하지 않고(False) 다음
+        # 전략(특히 GUI X 버튼 클릭)까지 모두 시도하게 한다. 잘못 닫힌 창을 닫혔다고
+        # 보고해 다음 fail 과 경합시키는 일을 막는다.
+        if not verifiable:
+            return False
         time.sleep(settle_sec)
         return not _window_alive(handle)
 
@@ -390,7 +393,13 @@ def close_window(
         except Exception as exc:
             print(f"[INFO] X 버튼 클릭 실패: {debug_label}, error={exc}")
 
-    print(f"[WARNING] 창 닫기 모든 전략 실패: {debug_label}")
+    if not verifiable:
+        print(
+            f"[WARNING] 창 닫힘을 검증할 수 없습니다(handle 없음) — 모든 전략을 시도했으나 "
+            f"결과 미확인: {debug_label}"
+        )
+    else:
+        print(f"[WARNING] 창 닫기 모든 전략 실패: {debug_label}")
     return False
 
 

@@ -15,4 +15,13 @@ def build_ocr_assist_prompt(
     return "", "OCR:"
 
 
-__all__ = ["build_ocr_assist_prompt"]
+def build_spotting_prompt() -> tuple[str, str]:
+    """PaddleOCR-VL `Spotting:` 태스크 프롬프트를 반환한다.
+
+    `OCR:` 가 평문 텍스트만 주는 것과 달리, `Spotting:` 은 검출 텍스트마다
+    bbox 좌표를 함께 돌려준다 (클릭 좌표 산출용).
+    """
+    return "", "Spotting:"
+
+
+__all__ = ["build_ocr_assist_prompt", "build_spotting_prompt"]

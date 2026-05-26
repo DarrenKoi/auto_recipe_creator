@@ -18,7 +18,9 @@ from poc.workflow_1.debug_artifacts import (
 )
 from poc.workflow_1.logger import log_work2_event
 from poc.workflow_1.login_rcs_common import RCS_MAIN_WINDOW_TITLE_PREFIX, wait_for_rcs_main_window
-from poc.workflow_1.prompts import build_ocr_assist_prompt
+from poc.workflow_1.ocr_spotting import parse_spotting_items
+from poc.workflow_1.prompts import build_ocr_assist_prompt, build_spotting_prompt
+from poc.workflow_1.tool_name_match import best_match
 from poc.workflow_1.ui_venus_mai_locator import (
     EXIT_SUCCESS as DETECT_SUCCESS,
     TargetConfig,
@@ -26,6 +28,7 @@ from poc.workflow_1.ui_venus_mai_locator import (
 )
 from poc.workflow_1.util import (
     activate_window,
+    bbox_center,
     capture_window,
     click_at_screen,
     crop_image,
@@ -302,6 +305,20 @@ def _build_list_crop_attempts(main_image) -> list[dict]:
             "right_ratio": LIST_REGION_RIGHT_RATIO,
             "bottom_ratio": LIST_REGION_BOTTOM_RATIO,
         },
+        {
+            "name": "wide",
+            "left_ratio": LIST_REGION_LEFT_RATIO,
+            "top_ratio": max(0.0, LIST_REGION_TOP_RATIO - 0.05),
+            "right_ratio": max(LIST_REGION_RIGHT_RATIO, 0.55),
+            "bottom_ratio": min(1.0, LIST_REGION_BOTTOM_RATIO + 0.02),
+        },
+        {
+            "name": "full",
+            "left_ratio": 0.0,
+            "top_ratio": 0.0,
+            "right_ratio": 1.0,
+            "bottom_ratio": 1.0,
+        },
     ]
 
     attempts: list[dict] = []
@@ -528,6 +545,160 @@ def _run_tool_list_ocr_attempts(
     return ocr_attempts, errors
 
 
+def _run_list_spotting(
+    list_image,
+    tool_name: str,
+    timestamp_tag: str,
+    window_title: str,
+    backend: str,
+    *,
+    debug_image_dir,
+    log_name: str,
+    artifact_label: str = "tool_list",
+) -> list[dict]:
+    """좌측 Tool List crop 에 PaddleOCR `Spotting:` 을 돌려 text+bbox 후보를 얻는다."""
+    client = Workflow1VLMClient(
+        service_slug=OCR_SERVICE_SLUG,
+        timeout_sec=120.0,
+        log_name=log_name,
+    )
+    system_message, user_text = build_spotting_prompt()
+
+    list_webp_path = debug_image_path(
+        debug_image_dir,
+        f"{artifact_label}_spotting_input.webp",
+        model_name=client.model_name,
+        timestamp_tag=timestamp_tag,
+    )
+    raw_response_path = debug_image_path(
+        debug_image_dir,
+        f"{artifact_label}_spotting_response.txt",
+        model_name=client.model_name,
+        timestamp_tag=timestamp_tag,
+    )
+    result_json_path = debug_image_path(
+        debug_image_dir,
+        f"{artifact_label}_spotting_result.json",
+        model_name=client.model_name,
+        timestamp_tag=timestamp_tag,
+    )
+
+    save_debug_webp(list_image, list_webp_path, quality=90)
+
+    response = client.chat_with_image_path(
+        image_path=list_webp_path,
+        system_message=system_message,
+        user_text=user_text,
+        image_mime="image/webp",
+        temperature=0.0,
+        max_tokens=OCR_MAX_TOKENS,
+    )
+
+    raw_text = response.text.strip()
+    items = parse_spotting_items(raw_text)
+
+    save_debug_text(raw_response_path, raw_text)
+    save_debug_json(
+        result_json_path,
+        {
+            "service_slug": response.service_slug,
+            "model_name": response.model_name,
+            "api_url": response.api_url,
+            "endpoint": client.endpoint,
+            "window_title": window_title,
+            "backend": backend,
+            "target_tool_name": tool_name,
+            "prompt_text": user_text,
+            "raw_text": raw_text,
+            "item_count": len(items),
+            "items": items,
+            "token_usage": response.token_usage,
+        },
+    )
+    return items
+
+
+def _locate_tool_via_spotting(
+    tool_name: str,
+    attempts: list[dict],
+    timestamp_tag: str,
+    window_title: str,
+    backend: str,
+    *,
+    debug_image_dir,
+    log_name: str,
+    component_name: str,
+) -> tuple[dict | None, list[dict]]:
+    """Spotting 결과에서 tool 이름을 직접 찾아 클릭 좌표(list crop 기준)를 만든다.
+
+    검출 텍스트의 bbox 중심이 클릭 좌표가 되므로, 텍스트 매칭과 클릭 좌표가
+    서로 다른 행을 가리킬 수 없다 (잘못된 행 클릭 방지).
+    """
+    spotting_attempts: list[dict] = []
+
+    for attempt in attempts:
+        try:
+            items = _run_list_spotting(
+                attempt["working_image"],
+                tool_name,
+                timestamp_tag,
+                window_title,
+                backend,
+                debug_image_dir=debug_image_dir,
+                log_name=log_name,
+                artifact_label=f"tool_list_{attempt['name']}",
+            )
+        except Exception as exc:
+            log_work2_event(
+                component=component_name,
+                message="spotting_request_failed",
+                level="error",
+                log_name=log_name,
+                target_tool_name=tool_name,
+                attempt_name=attempt["name"],
+                error=exc,
+            )
+            spotting_attempts.append(
+                {
+                    "attempt_name": attempt["name"],
+                    "crop_box": attempt["crop_box"],
+                    "resize_meta": attempt["resize_meta"],
+                    "error": str(exc),
+                }
+            )
+            continue
+
+        match = best_match(items, tool_name)
+        spotting_attempts.append(
+            {
+                "attempt_name": attempt["name"],
+                "crop_box": attempt["crop_box"],
+                "resize_meta": attempt["resize_meta"],
+                "spotting_item_count": len(items),
+                "matched_text": match["text"] if match is not None else None,
+                "matched_bbox_working": match["bbox"] if match is not None else None,
+            }
+        )
+
+        if match is not None:
+            center = bbox_center(match["bbox"])
+            mapped_point = _map_point_from_working_image(
+                center,
+                attempt["base_size"]["width"],
+                attempt["base_size"]["height"],
+                attempt["working_size"]["width"],
+                attempt["working_size"]["height"],
+            )
+            return {
+                "attempt": attempt,
+                "mapped_point": mapped_point,
+                "matched_text": match["text"],
+                "matched_bbox_working": match["bbox"],
+            }, spotting_attempts
+
+    return None, spotting_attempts
+
+
 def _locate_tool_on_attempts(
     main_window,
     window_title: str,
@@ -635,9 +806,11 @@ def select_tool_from_main_window(
     )
     save_debug_jpeg(main_image, full_capture_path)
 
-    ocr_attempts, ocr_errors = _run_tool_list_ocr_attempts(
-        main_image,
+    attempts = _build_list_crop_attempts(main_image)
+
+    spotting_located, spotting_attempts = _locate_tool_via_spotting(
         normalized_tool_name,
+        attempts,
         timestamp_tag,
         window_title,
         backend,
@@ -645,46 +818,71 @@ def select_tool_from_main_window(
         log_name=log_name,
         component_name=component_name,
     )
-    if not ocr_attempts and ocr_errors:
-        return ToolSelectionResult(
-            exit_code=EXIT_OCR_REQUEST_ERROR,
-            target_tool_name=normalized_tool_name,
-            list_crop_box=ocr_errors[0]["crop_box"] if ocr_errors else None,
+
+    ocr_attempts: list[dict] = []
+    ocr_errors: list[dict] = []
+    detection_attempts: list[dict] = []
+
+    if spotting_located is not None:
+        detection_source = "spotting"
+        selected_attempt = spotting_located["attempt"]
+        list_crop_box = selected_attempt["crop_box"]
+        list_crop_point = spotting_located["mapped_point"]
+        matched_lines = [spotting_located["matched_text"]]
+        ocr_target_visible = True
+    else:
+        detection_source = "vlm_grounding"
+        ocr_attempts, ocr_errors = _run_tool_list_ocr_attempts(
+            main_image,
+            normalized_tool_name,
+            timestamp_tag,
+            window_title,
+            backend,
+            debug_image_dir=resolved_debug_dir,
+            log_name=log_name,
+            component_name=component_name,
+        )
+        if not ocr_attempts and ocr_errors:
+            return ToolSelectionResult(
+                exit_code=EXIT_OCR_REQUEST_ERROR,
+                target_tool_name=normalized_tool_name,
+                list_crop_box=ocr_errors[0]["crop_box"] if ocr_errors else None,
+            )
+
+        located_attempt, detection_attempts = _locate_tool_on_attempts(
+            main_window,
+            window_title,
+            backend,
+            normalized_tool_name,
+            ocr_attempts,
+            debug_image_dir=resolved_debug_dir,
+            log_name=log_name,
+            component_name=component_name,
         )
 
-    located_attempt, detection_attempts = _locate_tool_on_attempts(
-        main_window,
-        window_title,
-        backend,
-        normalized_tool_name,
-        ocr_attempts,
-        debug_image_dir=resolved_debug_dir,
-        log_name=log_name,
-        component_name=component_name,
-    )
-
-    visible_attempts = [attempt for attempt in ocr_attempts if attempt["ocr_result"]["target_visible"]]
-    best_visible_attempt = visible_attempts[0] if visible_attempts else None
-    selected_attempt = located_attempt["attempt"] if located_attempt is not None else best_visible_attempt
-    list_crop_box = selected_attempt["crop_box"] if selected_attempt is not None else None
-    matched_lines = (
-        selected_attempt["ocr_result"]["matched_lines"]
-        if selected_attempt is not None
-        else []
-    )
-
-    if located_attempt is None:
-        return ToolSelectionResult(
-            exit_code=EXIT_TOOL_ROW_NOT_FOUND if best_visible_attempt is not None else EXIT_TOOL_NAME_NOT_VISIBLE,
-            target_tool_name=normalized_tool_name,
-            matched_lines=matched_lines,
-            ocr_target_visible=best_visible_attempt is not None,
-            list_crop_box=list_crop_box,
-            selected_attempt=selected_attempt["name"] if selected_attempt is not None else None,
+        visible_attempts = [attempt for attempt in ocr_attempts if attempt["ocr_result"]["target_visible"]]
+        best_visible_attempt = visible_attempts[0] if visible_attempts else None
+        selected_attempt = located_attempt["attempt"] if located_attempt is not None else best_visible_attempt
+        list_crop_box = selected_attempt["crop_box"] if selected_attempt is not None else None
+        matched_lines = (
+            selected_attempt["ocr_result"]["matched_lines"]
+            if selected_attempt is not None
+            else []
         )
 
-    tool_result = located_attempt["tool_result"]
-    list_crop_point = located_attempt["mapped_point"]
+        if located_attempt is None:
+            return ToolSelectionResult(
+                exit_code=EXIT_TOOL_ROW_NOT_FOUND if best_visible_attempt is not None else EXIT_TOOL_NAME_NOT_VISIBLE,
+                target_tool_name=normalized_tool_name,
+                matched_lines=matched_lines,
+                ocr_target_visible=best_visible_attempt is not None,
+                list_crop_box=list_crop_box,
+                selected_attempt=selected_attempt["name"] if selected_attempt is not None else None,
+            )
+
+        list_crop_point = located_attempt["mapped_point"]
+        ocr_target_visible = selected_attempt["ocr_result"]["target_visible"]
+
     full_image_point = {
         "x": list_crop_box["left"] + list_crop_point["x"],
         "y": list_crop_box["top"] + list_crop_point["y"],
@@ -703,7 +901,7 @@ def select_tool_from_main_window(
             exit_code=EXIT_CAPTURE_FAILED,
             target_tool_name=normalized_tool_name,
             matched_lines=matched_lines,
-            ocr_target_visible=selected_attempt["ocr_result"]["target_visible"],
+            ocr_target_visible=ocr_target_visible,
             list_crop_box=list_crop_box,
             tool_point_on_list_crop=list_crop_point,
             tool_point_on_full_image=full_image_point,
@@ -719,7 +917,7 @@ def select_tool_from_main_window(
             exit_code=EXIT_WINDOW_ACTIVATE_FAILED,
             target_tool_name=normalized_tool_name,
             matched_lines=matched_lines,
-            ocr_target_visible=selected_attempt["ocr_result"]["target_visible"],
+            ocr_target_visible=ocr_target_visible,
             list_crop_box=list_crop_box,
             tool_point_on_list_crop=list_crop_point,
             tool_point_on_full_image=full_image_point,
@@ -751,8 +949,10 @@ def select_tool_from_main_window(
             "list_crop_box": list_crop_box,
             "selected_attempt": selected_attempt["name"],
             "selected_attempt_resize_meta": selected_attempt["resize_meta"],
-            "ocr_target_visible": selected_attempt["ocr_result"]["target_visible"],
+            "detection_source": detection_source,
+            "ocr_target_visible": ocr_target_visible,
             "ocr_matched_lines": matched_lines,
+            "spotting_attempts": spotting_attempts,
             "ocr_attempts": [
                 {
                     "attempt_name": attempt["name"],
@@ -821,6 +1021,29 @@ def verify_tool_visible_in_list(
         return ToolListVisibilityResult(
             exit_code=EXIT_CAPTURE_FAILED,
             target_tool_name=normalized_tool_name,
+        )
+
+    attempts = _build_list_crop_attempts(main_image)
+    spotting_located, _ = _locate_tool_via_spotting(
+        normalized_tool_name,
+        attempts,
+        timestamp_tag,
+        window_title,
+        backend,
+        debug_image_dir=resolved_debug_dir,
+        log_name=log_name,
+        component_name=component_name,
+    )
+    if spotting_located is not None:
+        selected_attempt = spotting_located["attempt"]
+        return ToolListVisibilityResult(
+            exit_code=DETECT_SUCCESS,
+            target_tool_name=normalized_tool_name,
+            matched_lines=[spotting_located["matched_text"]],
+            target_visible=True,
+            list_crop_box=selected_attempt["crop_box"],
+            selected_attempt=selected_attempt["name"],
+            visibility_source="spotting",
         )
 
     ocr_attempts, ocr_errors = _run_tool_list_ocr_attempts(

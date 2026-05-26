@@ -126,8 +126,9 @@ def key_visibility_gate(result: AlignKeyMatchResult) -> bool:
 def extract_annotation_box(gray: np.ndarray) -> tuple[int, int, int, int] | None:
     """등록 이미지에 엔지니어가 그린 사각형 주석의 *내부* bbox 를 추정한다.
 
-    박스는 어두운 배경 위 밝은 얇은 사각형으로 그려져 있다(burned-in). 가장 큰
-    사각형 윤곽을 찾아 그 내부를 반환한다. 반환 (left, top, right, bottom) 또는 None.
+    엔지니어 박스(와 crosshair)는 **흰색**이고 SEM 은 grey 이미지라, 밝은 사각형으로
+    또렷이 그려져 있다(burned-in). 가장 큰 사각형 윤곽을 찾아 그 내부를 반환한다.
+    반환 (left, top, right, bottom) 또는 None.
 
     주의: **미보정(uncalibrated)** 추정이다. align key 자체가 box-in-box 모양일 수
     있어 주석 사각형과 혼동될 수 있으므로, 실제 오피스 파일로 검증하기 전까지는
@@ -153,12 +154,12 @@ def extract_annotation_box(gray: np.ndarray) -> tuple[int, int, int, int] | None
             best_area = area
             # 선 두께만큼 안쪽으로 살짝 들여 *내부* 만 남긴다.
             pad = max(2, int(round(0.01 * (bw + bh) / 2)))
-            best = (
-                bx + pad,
-                by + pad,
-                min(w, bx + bw - pad),
-                min(h, by + bh - pad),
-            )
+            left, top = bx + pad, by + pad
+            right, bottom = min(w, bx + bw - pad), min(h, by + bh - pad)
+            # 너무 얇은 박스는 pad 로 좌표가 뒤집힐 수 있다 → 그 땐 padding 없이 사용.
+            if right - left < 4 or bottom - top < 4:
+                left, top, right, bottom = bx, by, min(w, bx + bw), min(h, by + bh)
+            best = (left, top, right, bottom)
     return best
 
 

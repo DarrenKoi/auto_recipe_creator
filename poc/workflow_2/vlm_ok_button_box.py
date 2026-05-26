@@ -54,11 +54,22 @@ def _ok_button_user_prompt() -> str:
 
 
 def _frame_to_webp_b64(frame_bgr: np.ndarray) -> tuple[str, int, int]:
-    """grayscale/BGR numpy 프레임을 WebP base64 로 인코딩한다. 반환 (b64, w, h)."""
+    """grayscale/BGR/BGRA numpy 프레임을 WebP base64 로 인코딩한다. 반환 (b64, w, h).
+
+    실장비 capture_screen() 은 채널 수가 환경마다 다르다(mss 는 BGRA 4채널 등).
+    2(gray)/3(BGR)/4(BGRA) 를 모두 RGB 로 정규화해, 3채널만 가정하다 cv2.error 로
+    터지지 않게 한다.
+    """
     if frame_bgr.ndim == 2:
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_GRAY2RGB)
-    else:
+    elif frame_bgr.ndim == 3 and frame_bgr.shape[2] == 4:
+        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGRA2RGB)
+    elif frame_bgr.ndim == 3 and frame_bgr.shape[2] == 3:
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    elif frame_bgr.ndim == 3 and frame_bgr.shape[2] == 1:
+        rgb = cv2.cvtColor(frame_bgr[:, :, 0], cv2.COLOR_GRAY2RGB)
+    else:
+        raise ValueError(f"지원하지 않는 프레임 shape: {frame_bgr.shape}")
     image = Image.fromarray(rgb)
     return encode_image_webp(image, quality=90)
 
@@ -70,9 +81,10 @@ def locate_ok_button(
 ) -> tuple[int, int] | None:
     """전체 화면 프레임에서 OK 버튼 중심의 SCREEN 픽셀 좌표를 반환(없으면 None).
 
-    relative_1000 bbox → ``bbox_1000_to_pixels`` (프레임 w·h 기준) → ``bbox_center``.
-    여기서 프레임은 SEM ROI crop 이 아니라 *전체 화면* 이어야 하며, 그래서 반환 좌표가
-    그대로 screen 절대 좌표가 된다(`click_screen` 에 전달).
+    bbox → ``bbox_to_pixels`` (모델이 보고한 coord_system 존중) → ``bbox_center``.
+    프롬프트는 relative_1000 을 요청하지만 모델이 pixel/relative_1/percent 로 응답할 수
+    있어, coord_system(+크기 휴리스틱)을 반영해 변환한다. 프레임은 SEM ROI crop 이 아니라
+    *전체 화면* 이어야 하며, 그래서 반환 좌표가 그대로 screen 절대 좌표가 된다(`click_screen`).
     """
     image_b64, w, h = _frame_to_webp_b64(frame_bgr)
     response = client.chat_with_image_b64(
@@ -85,9 +97,8 @@ def locate_ok_button(
     parsed = extract_json(response.text)
     if parsed.get("ok_button_visible") is not True:
         return None
-    bbox_1000 = normalize_bbox_1000(parsed.get("ok_button_bbox"))
-    if bbox_1000 is None:
+    bbox_px = bbox_to_pixels(parsed.get("ok_button_bbox"), w, h, parsed.get("coord_system"))
+    if bbox_px is None:
         return None
-    bbox_px = bbox_1000_to_pixels(bbox_1000, w, h)
     center = bbox_center(bbox_px)
     return int(center["x"]), int(center["y"])

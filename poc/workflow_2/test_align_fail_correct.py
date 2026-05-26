@@ -6,7 +6,7 @@ CLAUDE.md 규칙: argparse 미사용, [PASS]/[FAIL] print, Mac 에서 그대로 
 
 import numpy as np
 
-from poc.workflow_1.util.json_utils import bbox_1000_to_pixels, bbox_center
+from poc.workflow_1.util.json_utils import bbox_center, bbox_to_pixels
 from poc.workflow_2.align_fail_correct import (
     CorrectionConfig,
     _make_primary_demo,
@@ -132,27 +132,54 @@ def test_fallback_path() -> bool:
     return ok
 
 
-def test_ok_locator_mapping() -> bool:
-    """fake client 의 relative_1000 bbox → 예상 screen 픽셀 중심으로 매핑."""
-    frame = np.zeros((600, 800), dtype=np.uint8)
-    bbox_1000 = {"left": 800, "top": 880, "right": 920, "bottom": 960}
-
+def _fake_client(payload_json: str):
     class _FakeResp:
-        text = (
-            '{"ok_button_visible": true, "coord_system": "relative_1000", '
-            '"ok_button_bbox": {"left": 800, "top": 880, "right": 920, "bottom": 960}, '
-            '"confidence": 0.9}'
-        )
+        text = payload_json
 
     class _FakeClient:
         def chat_with_image_b64(self, **_kwargs):
             return _FakeResp()
 
-    got = locate_ok_button(frame_bgr=frame, client=_FakeClient())
-    expected_center = bbox_center(bbox_1000_to_pixels(bbox_1000, 800, 600))
-    expected = (expected_center["x"], expected_center["y"])
-    ok = got == expected
-    print(f"[{'PASS' if ok else 'FAIL'}] ok_locator mapping: got={got} expected={expected}")
+    return _FakeClient()
+
+
+def test_ok_locator_mapping() -> bool:
+    """relative_1000 / pixel 두 coord_system 을 각각 올바른 screen 픽셀 중심으로 매핑."""
+    frame = np.zeros((600, 800), dtype=np.uint8)  # (h, w) = (600, 800)
+
+    # 1) relative_1000 — 정규화 좌표.
+    rel_bbox = {"left": 800, "top": 880, "right": 920, "bottom": 960}
+    got_rel = locate_ok_button(
+        frame_bgr=frame,
+        client=_fake_client(
+            '{"ok_button_visible": true, "coord_system": "relative_1000", '
+            '"ok_button_bbox": {"left": 800, "top": 880, "right": 920, "bottom": 960}, '
+            '"confidence": 0.9}'
+        ),
+    )
+    exp_rel = bbox_center(bbox_to_pixels(rel_bbox, 800, 600, "relative_1000"))
+    ok_rel = got_rel == (exp_rel["x"], exp_rel["y"])
+
+    # 2) pixel — 모델이 절대 픽셀로 응답(fix #2: /1000 로 잘못 스케일하지 않아야).
+    px_bbox = {"left": 640, "top": 540, "right": 740, "bottom": 580}
+    got_px = locate_ok_button(
+        frame_bgr=frame,
+        client=_fake_client(
+            '{"ok_button_visible": true, "coord_system": "pixel", '
+            '"ok_button_bbox": {"left": 640, "top": 540, "right": 740, "bottom": 580}, '
+            '"confidence": 0.9}'
+        ),
+    )
+    exp_px = bbox_center(bbox_to_pixels(px_bbox, 800, 600, "pixel"))
+    # pixel 경로는 ~(689, 559) 근처여야 한다(상단 1/10 이 아니라 실제 버튼 위치).
+    ok_px = got_px == (exp_px["x"], exp_px["y"]) and got_px[0] > 600 and got_px[1] > 500
+
+    ok = ok_rel and ok_px
+    print(
+        f"[{'PASS' if ok else 'FAIL'}] ok_locator mapping: "
+        f"rel got={got_rel} exp=({exp_rel['x']},{exp_rel['y']}) | "
+        f"pixel got={got_px} exp=({exp_px['x']},{exp_px['y']})"
+    )
     return ok
 
 

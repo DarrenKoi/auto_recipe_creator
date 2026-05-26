@@ -283,6 +283,50 @@ def _save_tool_click_overlay(
     return str(overlay_path)
 
 
+def _save_spotting_overlay(
+    working_image,
+    items: list[dict],
+    matched_bbox: dict | None,
+    *,
+    debug_image_dir,
+    timestamp_tag: str,
+    artifact_label: str,
+    model_name: str,
+) -> str:
+    """working crop 위에 Spotting 검출 박스를 그린다.
+
+    모든 검출 박스는 lime, 매칭된 행은 gold + 클릭 중심점으로 표시해서
+    어떤 텍스트 박스를 클릭하는지 한눈에 확인할 수 있게 한다.
+    """
+    elements: dict = {}
+    colors: dict = {}
+    matched_sig = (
+        (matched_bbox["left"], matched_bbox["top"], matched_bbox["right"], matched_bbox["bottom"])
+        if matched_bbox is not None
+        else None
+    )
+    for idx, item in enumerate(items, start=1):
+        bbox = item["bbox"]
+        sig = (bbox["left"], bbox["top"], bbox["right"], bbox["bottom"])
+        is_match = matched_sig is not None and sig == matched_sig
+        safe_text = "".join(ch for ch in str(item.get("text", "")) if ch.isalnum())[:16] or "text"
+        prefix = "match" if is_match else "spot"
+        key = f"{prefix}_{idx:02d}_{safe_text}"
+        elements[key] = {"bbox": bbox}
+        if is_match:
+            elements[key]["center"] = bbox_center(bbox)
+        colors[key] = "gold" if is_match else "lime"
+
+    overlay_path = debug_image_path(
+        debug_image_dir,
+        f"{artifact_label}_spotting_overlay.jpg",
+        model_name=model_name,
+        timestamp_tag=timestamp_tag,
+    )
+    save_marked_bboxes(working_image, elements, colors, overlay_path)
+    return str(overlay_path)
+
+
 def _build_list_crop_attempts(main_image) -> list[dict]:
     """Tool list 인식용 crop 시도 목록을 구성한다."""
     full_w, full_h = main_image.size
@@ -555,8 +599,11 @@ def _run_list_spotting(
     debug_image_dir,
     log_name: str,
     artifact_label: str = "tool_list",
-) -> list[dict]:
-    """좌측 Tool List crop 에 PaddleOCR `Spotting:` 을 돌려 text+bbox 후보를 얻는다."""
+) -> tuple[list[dict], str]:
+    """좌측 Tool List crop 에 PaddleOCR `Spotting:` 을 돌려 text+bbox 후보를 얻는다.
+
+    (검출 후보 리스트, 사용한 모델명) 을 반환한다.
+    """
     client = Workflow1VLMClient(
         service_slug=OCR_SERVICE_SLUG,
         timeout_sec=120.0,
@@ -615,7 +662,7 @@ def _run_list_spotting(
             "token_usage": response.token_usage,
         },
     )
-    return items
+    return items, client.model_name
 
 
 def _locate_tool_via_spotting(
@@ -638,7 +685,7 @@ def _locate_tool_via_spotting(
 
     for attempt in attempts:
         try:
-            items = _run_list_spotting(
+            items, model_name = _run_list_spotting(
                 attempt["working_image"],
                 tool_name,
                 timestamp_tag,
@@ -669,6 +716,15 @@ def _locate_tool_via_spotting(
             continue
 
         match = best_match(items, tool_name)
+        overlay_path = _save_spotting_overlay(
+            attempt["working_image"],
+            items,
+            match["bbox"] if match is not None else None,
+            debug_image_dir=debug_image_dir,
+            timestamp_tag=timestamp_tag,
+            artifact_label=f"tool_list_{attempt['name']}",
+            model_name=model_name,
+        )
         spotting_attempts.append(
             {
                 "attempt_name": attempt["name"],
@@ -677,6 +733,7 @@ def _locate_tool_via_spotting(
                 "spotting_item_count": len(items),
                 "matched_text": match["text"] if match is not None else None,
                 "matched_bbox_working": match["bbox"] if match is not None else None,
+                "spotting_overlay_path": overlay_path,
             }
         )
 

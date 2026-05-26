@@ -108,6 +108,27 @@ def test_best_match_smallest_bbox_tiebreak() -> bool:
     )
 
 
+def test_best_match_refuses_ambiguous_rows() -> bool:
+    """서로 다른 행에서 같은 canonical 이 2개 이상이면 매칭을 거부한다."""
+    # 가령 target 'CDS5' 와 다른 tool 'CD55' 가 둘 다 'CD55' 로 정규화되어
+    # 화면의 서로 다른 두 행에 등장 → 어느 행이 진짜인지 알 수 없으므로 거부.
+    items = [
+        {"text": "CDS5", "bbox": {"left": 10, "top": 20, "right": 110, "bottom": 50}},
+        {"text": "CD55", "bbox": {"left": 10, "top": 120, "right": 110, "bottom": 150}},
+    ]
+    return _check("best_match refuses two distinct rows", best_match(items, "CDS5") is None)
+
+
+def test_best_match_same_row_variants_ok() -> bool:
+    """같은 행을 OCR 이 다른 텍스트로 두 번 잡아도(세로 겹침) 거부하지 않는다."""
+    items = [
+        {"text": "MCD630", "bbox": {"left": 10, "top": 20, "right": 110, "bottom": 50}},
+        {"text": "MCD63O", "bbox": {"left": 12, "top": 22, "right": 108, "bottom": 48}},
+    ]
+    hit = best_match(items, "MCD630")
+    return _check("best_match keeps same-row variants", hit is not None)
+
+
 def main() -> int:
     """전체 케이스를 실행하고 통과 여부를 반환한다."""
     tests = [
@@ -118,6 +139,8 @@ def main() -> int:
         test_best_match_confusions,
         test_best_match_bundled_token,
         test_best_match_smallest_bbox_tiebreak,
+        test_best_match_refuses_ambiguous_rows,
+        test_best_match_same_row_variants_ok,
     ]
     results = [test() for test in tests]
     passed = sum(1 for r in results if r)

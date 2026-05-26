@@ -37,15 +37,36 @@ def _bbox_area(bbox: dict) -> int:
     return width * height
 
 
+def _distinct_row_count(items: list[dict]) -> int:
+    """후보 bbox 들이 세로로 몇 개의 행 그룹을 이루는지 센다.
+
+    같은 행을 OCR 이 여러 번(다른 텍스트로) 잡은 경우는 세로로 겹치므로 한 그룹.
+    서로 다른 행에서 잡힌 경우는 세로로 떨어져 있어 별도 그룹이 된다.
+    """
+    boxes = sorted((item["bbox"] for item in items), key=lambda b: b["top"])
+    clusters = 0
+    cluster_bottom: int | None = None
+    for bbox in boxes:
+        if cluster_bottom is None or bbox["top"] >= cluster_bottom:
+            clusters += 1
+            cluster_bottom = bbox["bottom"]
+        else:
+            cluster_bottom = max(cluster_bottom, bbox["bottom"])
+    return clusters
+
+
 def best_match(items: list[dict], target_name: str) -> dict | None:
     """canonicalize + exact 기준으로 가장 적합한 spotting item 을 고른다.
 
     - item 의 텍스트를 공백 토큰으로 나눠 각 토큰을 canonicalize 한 값이 target 의
       canonical 값과 정확히 같으면 후보.
     - 줄 전체 canonical 이 target 과 같은 경우도 후보 (단일 토큰 라인).
-    - 여러 후보면 bbox 가 가장 작은 것을 고른다 (한 행의 ID 텍스트가 가장 타이트).
+    - 후보가 서로 다른 행(세로로 분리)에 2개 이상 있으면 모호하므로 매칭을 거부한다
+      (혼동 문자 정규화로 인해 실제로 다른 tool 이 같은 canonical 이 된 경우).
+      이때 None 을 돌려주어 상위에서 VLM grounding 으로 fallback 하게 한다.
+    - 단일 행 안에서 여러 후보면 bbox 가 가장 작은 것을 고른다 (ID 텍스트가 가장 타이트).
 
-    매칭 없으면 None.
+    매칭 없거나 모호하면 None.
     """
     canonical_target = canonicalize(target_name)
     if not canonical_target:
@@ -64,6 +85,12 @@ def best_match(items: list[dict], target_name: str) -> dict | None:
             candidates.append(item)
 
     if not candidates:
+        return None
+    if _distinct_row_count(candidates) > 1:
+        print(
+            f"[WARNING] tool 이름 매칭 모호: target={target_name!r} 가 서로 다른 "
+            f"{_distinct_row_count(candidates)}개 행에서 검출됨 → 매칭 거부(VLM fallback)"
+        )
         return None
     return min(candidates, key=lambda it: _bbox_area(it["bbox"]))
 

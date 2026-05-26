@@ -121,6 +121,12 @@ LIST_REGION_RIGHT_RATIO = _env_float("SELECT_TOOL_LIST_RIGHT_RATIO", 0.42)
 LIST_REGION_BOTTOM_RATIO = _env_float("SELECT_TOOL_LIST_BOTTOM_RATIO", 0.98)
 LIST_OCR_MAX_UPSCALE = _env_float("SELECT_TOOL_LIST_OCR_MAX_UPSCALE", 3.0)
 
+# 전체 창(full) crop 으로 Spotting 할 때, list 그리드 밖(타이틀바/우측 패널 등)에서
+# 같은 tool 이름이 잡혀 엉뚱한 곳을 클릭하는 것을 막기 위한 허용 영역 비율.
+FULL_GUARD_RIGHT_RATIO = _env_float("SELECT_TOOL_FULL_GUARD_RIGHT_RATIO", 0.55)
+FULL_GUARD_TOP_RATIO = _env_float("SELECT_TOOL_FULL_GUARD_TOP_RATIO", 0.06)
+FULL_GUARD_BOTTOM_RATIO = _env_float("SELECT_TOOL_FULL_GUARD_BOTTOM_RATIO", 0.99)
+
 
 def load_target_tool_name(default: str = "") -> str:
     """환경변수에서 목표 Tool 이름을 읽는다."""
@@ -283,6 +289,20 @@ def _save_tool_click_overlay(
     return str(overlay_path)
 
 
+def _match_in_list_region(bbox: dict, working_size: dict) -> bool:
+    """매칭 bbox 중심이 list 그리드 허용 영역(좌측, 타이틀바 제외) 안인지 확인한다.
+
+    전체 창(full) crop 처럼 list 밖 영역까지 포함된 경우에만 사용한다.
+    """
+    center = bbox_center(bbox)
+    width = max(1, working_size["width"])
+    height = max(1, working_size["height"])
+    return (
+        center["x"] <= width * FULL_GUARD_RIGHT_RATIO
+        and height * FULL_GUARD_TOP_RATIO <= center["y"] <= height * FULL_GUARD_BOTTOM_RATIO
+    )
+
+
 def _save_spotting_overlay(
     working_image,
     items: list[dict],
@@ -362,6 +382,7 @@ def _build_list_crop_attempts(main_image) -> list[dict]:
             "top_ratio": 0.0,
             "right_ratio": 1.0,
             "bottom_ratio": 1.0,
+            "needs_region_guard": True,
         },
     ]
 
@@ -403,6 +424,7 @@ def _build_list_crop_attempts(main_image) -> list[dict]:
                     "height": working_image.size[1],
                 },
                 "resize_meta": resize_meta,
+                "needs_region_guard": spec.get("needs_region_guard", False),
             }
         )
     return attempts
@@ -716,6 +738,19 @@ def _locate_tool_via_spotting(
             continue
 
         match = best_match(items, tool_name)
+        region_rejected = False
+        if (
+            match is not None
+            and attempt.get("needs_region_guard")
+            and not _match_in_list_region(match["bbox"], attempt["working_size"])
+        ):
+            print(
+                f"[WARNING] Spotting 매칭이 list 영역 밖({attempt['name']}): "
+                f"bbox={match['bbox']} → 거부(타이틀바/우측 패널 오클릭 방지)"
+            )
+            region_rejected = True
+            match = None
+
         overlay_path = _save_spotting_overlay(
             attempt["working_image"],
             items,
@@ -733,6 +768,7 @@ def _locate_tool_via_spotting(
                 "spotting_item_count": len(items),
                 "matched_text": match["text"] if match is not None else None,
                 "matched_bbox_working": match["bbox"] if match is not None else None,
+                "region_rejected": region_rejected,
                 "spotting_overlay_path": overlay_path,
             }
         )

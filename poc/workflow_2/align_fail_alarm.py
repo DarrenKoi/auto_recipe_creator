@@ -3,12 +3,15 @@
 1분 주기로 CD-SEM 알람을 조회하여 ALID=9006 (Align Fail) 이 감지되면:
   1. 텍스트 파일(`poc/workflow_2/logs/align_fail_alarms.txt`) 에 누적 기록
   2. Windows 팝업(MessageBox) 으로 알림 표시
+  3. 해당 EQP_ID 장비로 RCS 접속(tool 더블클릭) — `workflow_select_tool` 위임 (기본 on)
 
-CCTV/캡처/GUI 자동화 로직은 포함하지 않는다. 순수 감지 + 알림 전용.
+RCS 는 이미 로그인되어 있다고 가정한다. 장비 접속은 `ALIGN_FAIL_CONNECT_TOOL` 로
+on/off, `ALIGN_FAIL_CONNECT_ACTION=off` 로 클릭 없는 dry-run 전환이 가능하다.
 
 office_* 의존성(office_align_fail_alarm, office_rich_notify)은 gitignore 대상이며
 workflow_2 폴더 안의 버전을 import 한다. 사무실에서는 실제 office 구현을 같은
 폴더로 복사해 둔다. env helper 는 workflow_1 의존을 없애기 위해 본 파일에 인라인했다.
+무거운 GUI/VLM 머신(접속 로직)은 workflow_1 을 공유 라이브러리로 import 한다.
 
 사용법:
   uv run python poc/workflow_2/align_fail_alarm.py
@@ -59,11 +62,26 @@ except Exception as _rich_notify_import_exc:
     RICH_NOTIFY_AVAILABLE = False
     print(f"[WARNING] office_rich_notify 모듈 로드 실패 - 텍스트 로그/팝업만 동작합니다: {_rich_notify_import_exc}")
 
+# 장비 자동 접속(tool 더블클릭)도 선택 의존성. pywinauto/VLM 머신이 없는 환경
+# (macOS 개발 등) 에서는 import 가 실패해도 감지/로그/팝업은 계속 동작해야 한다.
+try:
+    from poc.workflow_2.workflow_select_tool import connect_to_tool # pyright: ignore[reportMissingImports]
+
+    CONNECT_TOOL_AVAILABLE = True
+except Exception as _connect_tool_import_exc:
+    connect_to_tool = None
+    CONNECT_TOOL_AVAILABLE = False
+    print(f"[WARNING] workflow_select_tool 로드 실패 - 장비 자동 접속 비활성화: {_connect_tool_import_exc}")
+
 POLL_INTERVAL_SEC = env_int("ALIGN_FAIL_POLL_SEC", 10)
 # 감지 look-back 윈도우(초). poll 주기와 분리해, 알람 보고 지연이 있어도 놓치지 않게 한다.
 DETECTION_WINDOW_SEC = env_int("ALIGN_FAIL_WINDOW_SEC", 60)
 POPUP_ENABLED_DEFAULT = True
 RICH_NOTIFY_ENABLED_DEFAULT = True
+# Align Fail 감지 시 해당 EQP_ID 장비로 RCS 접속(tool 더블클릭) 을 시도할지. 기본 on.
+CONNECT_TOOL_ENABLED_DEFAULT = True
+# 접속 시 실제 더블클릭 수행 여부. off 면 인식/디버그 저장만 하고 클릭은 생략(dry-run).
+CONNECT_TOOL_ACTION_DEFAULT = True
 # 팝업 자동 종료 시간(초). 0 이면 사용자가 닫을 때까지 유지. 기본 60초.
 POPUP_TIMEOUT_SEC = env_int("ALIGN_FAIL_POPUP_TIMEOUT_SEC", 60)
 ALARM_LOG_PATH = LOG_DIR / "align_fail_alarms.txt"
@@ -247,11 +265,28 @@ def _send_rich_notify_async(eqp_id: str, recipe_id: str) -> None:
     threading.Thread(target=_run, daemon=True).start()
 
 
+def _connect_to_tool_sync(eqp_id: str, action_enabled: bool = True) -> None:
+    """감지된 EQP_ID 장비로 RCS 접속(tool 더블클릭) 을 동기 실행한다.
+
+    GUI 자동화는 직렬화되어야 하므로(동시에 두 tool 을 더블클릭할 수 없음) 비차단
+    스레드가 아니라 poll 루프 안에서 순차로 수행한다. 예외는 삼켜서 감지 루프가
+    죽지 않게 한다.
+    """
+    if not CONNECT_TOOL_AVAILABLE:
+        return
+    try:
+        connect_to_tool(eqp_id, action_enabled=action_enabled)
+    except Exception as exc:
+        print(f"[WARNING] 장비 자동 접속 예외: EQP_ID={eqp_id}, error={exc}")
+
+
 def process_fail_rows(
     fails,
     active_tools: set[str],
     popup_enabled: bool = True,
     rich_notify_enabled: bool = True,
+    connect_enabled: bool = True,
+    connect_action_enabled: bool = True,
 ) -> int:
     """EQP_ID 기준으로 edge-triggered 알림을 수행한다.
 
@@ -301,6 +336,8 @@ def process_fail_rows(
             )
         if rich_notify_enabled:
             _send_rich_notify_async(eqp_id, recipe_id)
+        if connect_enabled:
+            _connect_to_tool_sync(eqp_id, action_enabled=connect_action_enabled)
 
         active_tools.add(eqp_id)
         newly_handled += 1
@@ -323,6 +360,12 @@ def monitor_loop(popup_enabled: bool | None = None) -> None:
     if rich_notify_requested and not RICH_NOTIFY_AVAILABLE:
         print("[WARNING] ALIGN_FAIL_RICH_NOTIFY=on 이지만 office_rich_notify 모듈 로드 실패 - off 로 진행")
 
+    connect_requested = env_flag("ALIGN_FAIL_CONNECT_TOOL", CONNECT_TOOL_ENABLED_DEFAULT)
+    connect_enabled = connect_requested and CONNECT_TOOL_AVAILABLE
+    connect_action_enabled = env_flag("ALIGN_FAIL_CONNECT_ACTION", CONNECT_TOOL_ACTION_DEFAULT)
+    if connect_requested and not CONNECT_TOOL_AVAILABLE:
+        print("[WARNING] ALIGN_FAIL_CONNECT_TOOL=on 이지만 workflow_select_tool 로드 실패 - off 로 진행")
+
     active_tools: set[str] = set()
     idle_logged = False  # "Align Fail 없음" 은 idle 진입 시 한 번만 로깅 (poll 마다 X)
 
@@ -330,7 +373,9 @@ def monitor_loop(popup_enabled: bool | None = None) -> None:
         f"[INFO] Align Fail 감지 시작 (주기={POLL_INTERVAL_SEC}s, "
         f"윈도우={DETECTION_WINDOW_SEC}s, "
         f"팝업={'on' if popup_enabled else 'off'}, "
-        f"rich_notify={'on' if rich_notify_enabled else 'off'})"
+        f"rich_notify={'on' if rich_notify_enabled else 'off'}, "
+        f"장비접속={'on' if connect_enabled else 'off'}"
+        f"{'(dry-run)' if connect_enabled and not connect_action_enabled else ''})"
     )
     print(f"[INFO] 누적 로그 파일: {ALARM_LOG_PATH}")
     print("[INFO] 같은 EQP_ID 의 중복 알람은 한 번만 알립니다 (해제 후 재감지 시 재알림).")
@@ -357,6 +402,8 @@ def monitor_loop(popup_enabled: bool | None = None) -> None:
                     active_tools,
                     popup_enabled=popup_enabled,
                     rich_notify_enabled=rich_notify_enabled,
+                    connect_enabled=connect_enabled,
+                    connect_action_enabled=connect_action_enabled,
                 )
                 if count == 0:
                     print(

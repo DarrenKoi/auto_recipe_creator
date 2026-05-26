@@ -44,6 +44,14 @@ except Exception as _connect_tool_import_exc:
     CONNECT_TOOL_AVAILABLE = False
     print(f"[WARNING] workflow_select_tool 로드 실패 - 독립 실행 접속 비활성화: {_connect_tool_import_exc}")
 
+# ====================================================================
+# 독립 실행 테스트용 — 코드 안에서 직접 대상 지정 (env 보다 우선).
+# 비워두면 환경변수 ALIGN_CAPTURE_EQP_ID / ALIGN_CAPTURE_RECIPE_ID 를 사용한다.
+# recipe_id 는 "<class>/<recipe>" 형태 (예: "RJ1BXXX/Z_RJ1B_CBLHM2_FULL").
+# ====================================================================
+EQP_ID_OVERRIDE = r""
+RECIPE_ID_OVERRIDE = r""
+
 # 캡처 이미지를 적재할 sibling 폴더명 (align_img_from_rcp / align_img_from_msr 와 나란히).
 CAPTURED_RCS_DIRNAME = "captured_img_from_rcs"
 # 접속 직후 tool 창이 뜰 때까지 대기 타임아웃(초).
@@ -183,9 +191,13 @@ def connect_capture_close(
 
 
 def main() -> str:
-    """ALIGN_CAPTURE_EQP_ID / ALIGN_CAPTURE_RECIPE_ID 로 접속→캡처→닫기 단독 실행."""
-    eqp_id = os.getenv("ALIGN_CAPTURE_EQP_ID", "").strip()
-    recipe_id = os.getenv("ALIGN_CAPTURE_RECIPE_ID", "").strip()
+    """접속→캡처→닫기 단독 실행.
+
+    대상은 상단 EQP_ID_OVERRIDE / RECIPE_ID_OVERRIDE 를 우선 사용하고, 비어 있으면
+    환경변수 ALIGN_CAPTURE_EQP_ID / ALIGN_CAPTURE_RECIPE_ID 로 폴백한다.
+    """
+    eqp_id = (EQP_ID_OVERRIDE or "").strip() or os.getenv("ALIGN_CAPTURE_EQP_ID", "").strip()
+    recipe_id = (RECIPE_ID_OVERRIDE or "").strip() or os.getenv("ALIGN_CAPTURE_RECIPE_ID", "").strip()
     saved = connect_capture_close(eqp_id, recipe_id)
     return "success" if saved else "failed"
 

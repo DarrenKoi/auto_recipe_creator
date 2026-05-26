@@ -57,6 +57,9 @@ RICH_NOTIFY_ENABLED_DEFAULT = True
 CONNECT_TOOL_ENABLED_DEFAULT = True
 # 접속 시 실제 더블클릭 수행 여부. off 면 인식/디버그 저장만 하고 클릭은 생략(dry-run).
 CONNECT_TOOL_ACTION_DEFAULT = True
+# 접속 시 메인 RCS 창 탐색 타임아웃(초). 한 번만 느슨하게 시도하고 실패하면 엔지니어가
+# 직접 접속하는 정책이라 짧게 둔다(정상이면 즉시 발견, 실패 케이스에서만 루프 블록 단축).
+CONNECT_TOOL_WINDOW_TIMEOUT_SEC = env_int("ALIGN_FAIL_CONNECT_WINDOW_TIMEOUT_SEC", 3)
 # 팝업 자동 종료 시간(초). 0 이면 사용자가 닫을 때까지 유지. 기본 60초.
 POPUP_TIMEOUT_SEC = env_int("ALIGN_FAIL_POPUP_TIMEOUT_SEC", 60)
 ALARM_LOG_PATH = LOG_DIR / "align_fail_alarms.txt"
@@ -241,16 +244,22 @@ def _send_rich_notify_async(eqp_id: str, recipe_id: str) -> None:
 
 
 def _connect_to_tool_sync(eqp_id: str, action_enabled: bool = True) -> None:
-    """감지된 EQP_ID 장비로 RCS 접속(tool 더블클릭) 을 동기 실행한다.
+    """감지된 EQP_ID 장비로 RCS 접속(tool 더블클릭) 을 동기·1회 시도한다.
 
+    정책: 알람당 한 번만 느슨하게 시도하고, 실패하면 엔지니어가 직접 접속한다.
+    재시도/backoff 는 두지 않는다(접속 고도화는 추후 별도 작업).
     GUI 자동화는 직렬화되어야 하므로(동시에 두 tool 을 더블클릭할 수 없음) 비차단
-    스레드가 아니라 poll 루프 안에서 순차로 수행한다. 예외는 삼켜서 감지 루프가
-    죽지 않게 한다.
+    스레드가 아니라 poll 루프 안에서 순차로 수행하되, 메인 창 탐색 타임아웃을 짧게
+    둬 실패 시 detection 루프를 오래 붙잡지 않는다. 예외는 삼켜 루프가 죽지 않게 한다.
     """
     if not CONNECT_TOOL_AVAILABLE:
         return
     try:
-        connect_to_tool(eqp_id, action_enabled=action_enabled)
+        connect_to_tool(
+            eqp_id,
+            action_enabled=action_enabled,
+            main_window_timeout_sec=CONNECT_TOOL_WINDOW_TIMEOUT_SEC,
+        )
     except Exception as exc:
         print(f"[WARNING] 장비 자동 접속 예외: EQP_ID={eqp_id}, error={exc}")
 

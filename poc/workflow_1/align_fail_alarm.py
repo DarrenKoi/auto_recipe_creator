@@ -3,10 +3,12 @@
 1분 주기로 CD-SEM 알람을 조회하여 ALID=9006 (Align Fail) 이 감지되면:
   1. 텍스트 파일(`poc/workflow_1/logs/align_fail_alarms.txt`) 에 누적 기록
   2. Windows 팝업(MessageBox) 으로 알림 표시
-  3. 해당 EQP_ID 장비로 RCS 접속(tool 더블클릭) — `workflow_select_tool` 위임 (기본 on)
+  3. RECIPE_ID 가 없을 때만 해당 EQP_ID 장비로 RCS 접속(tool 더블클릭) — `workflow_select_tool` 위임 (기본 on)
 
-RCS 는 이미 로그인되어 있다고 가정한다. 장비 접속은 `ALIGN_FAIL_CONNECT_TOOL` 로
-on/off, `ALIGN_FAIL_CONNECT_ACTION=off` 로 클릭 없는 dry-run 전환이 가능하다.
+RECIPE_ID 가 있으면 등록 recipe 의 align 이미지가 자동 저장되므로 장비로 직접
+접속하지 않는다. RCS 는 이미 로그인되어 있다고 가정한다. 장비 접속은
+`ALIGN_FAIL_CONNECT_TOOL` 로 on/off, `ALIGN_FAIL_CONNECT_ACTION=off` 로 클릭 없는
+dry-run 전환이 가능하다.
 
 workflow_1 경계: 감지 + 알림 + 장비 접속(=Tool 화면 진입)까지 책임진다. 이후
 align key CV 탐색은 workflow_2 가 다운로드된 이미지를 읽어 수행한다(파일로 디커플링).
@@ -320,8 +322,16 @@ def process_fail_rows(
             )
         if rich_notify_enabled:
             _send_rich_notify_async(eqp_id, recipe_id)
+        # RECIPE_ID 가 있으면 등록 recipe 의 align 이미지가 자동 저장되므로 장비로
+        # 직접 접속하지 않는다. RECIPE_ID 가 없을 때만 엔지니어 대신 1회 접속 시도.
         if connect_enabled:
-            _connect_to_tool_sync(eqp_id, action_enabled=connect_action_enabled)
+            if recipe_id:
+                print(
+                    f"[INFO] RECIPE_ID={recipe_id} 존재 — 장비 자동 접속 건너뜀 "
+                    f"(EQP_ID={eqp_id})"
+                )
+            else:
+                _connect_to_tool_sync(eqp_id, action_enabled=connect_action_enabled)
 
         active_tools.add(eqp_id)
         newly_handled += 1

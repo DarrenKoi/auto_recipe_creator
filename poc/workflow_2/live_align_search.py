@@ -92,6 +92,15 @@ class SEMMonitorController(Protocol):
     def read_mode(self) -> str:
         """monitor mode label 을 반환 ('OM' | 'SEM' | 'unknown')."""
 
+    def click_screen(self, screen_x: int, screen_y: int) -> None:
+        """SCREEN(절대) 픽셀 (screen_x, screen_y) 을 단일 클릭한다.
+
+        OK 같은 dialog 버튼은 SEM ROI *밖* 에 있으므로 FOV-local 좌표를 쓰는
+        move_to_point(=ROI 내부 더블클릭 recenter) 와 달리 화면 절대 좌표로 누른다.
+        두 제스처의 좌표공간이 다르다는 점이 핵심. 실장비 구현은 SAFE_MODE 로
+        실제 마우스 출력을 막는다.
+        """
+
 
 # ------------------------------------------------------------------
 # 설정 / 상태 / 결과.
@@ -107,7 +116,7 @@ class LiveSearchConfig:
     max_zoom_in_steps: int = 4  # Phase B 에서 candidate 당 zoom-in 상한.
     low_streak_limit: int = 5  # 연속 low → 엔지니어 escalation.
     # pan 한 step 의 FOV 픽셀 이동량. 더블클릭은 최대 ~FOV 절반까지만 가능하므로
-    # FOV 폭의 절반보다 작게 둔다(아래 _clamp_click 으로 한 번 더 보정).
+    # FOV 폭의 절반보다 작게 둔다(아래 clamp_to_fov 으로 한 번 더 보정).
     pan_step_px: int = 220
     # Phase A→B 전이 임계: broad score 가 이 값 이상이면 후보로 보고 추격.
     candidate_score: float = STRUCTURE_POLICY.adjust_threshold
@@ -154,11 +163,12 @@ NotifyFn = Callable[[LiveSearchState, list[dict]], None]
 # ------------------------------------------------------------------
 
 
-def _clamp_click(fov_x: int, fov_y: int, w: int, h: int, margin_ratio: float) -> tuple[int, int]:
-    """더블클릭 좌표를 FOV 안쪽(여백 포함)으로 clamp.
+def clamp_to_fov(fov_x: int, fov_y: int, w: int, h: int, margin_ratio: float) -> tuple[int, int]:
+    """클릭 좌표를 FOV 안쪽(여백 포함)으로 clamp.
 
-    실장비 더블클릭은 FOV 밖을 클릭할 수 없고, 가장자리 클릭은 한 번에 최대치를
-    pan 한다. 안전 여백을 둔다.
+    실장비 클릭은 FOV 밖을 누를 수 없고, 가장자리 클릭은 한 번에 최대치를 pan 한다.
+    안전 여백을 둔다. live search 의 recenter 와 primary correction 의 reposition 이
+    공유하는 헬퍼다.
     """
     mx = int(w * margin_ratio)
     my = int(h * margin_ratio)
@@ -206,7 +216,7 @@ def live_align_search(
         frame = controller.capture()
         fh, fw = frame.shape[:2]
         mode = (controller.read_mode() or "").upper()
-        template = _route_template(templates, mode)
+        template = route_template(templates, mode)
 
         # 단일 wide band 로 매칭한다. phase 는 scale 이 아니라 *행동*(pan vs zoom-in)만 좌우.
         result = compute_align_key_score(
@@ -235,7 +245,7 @@ def live_align_search(
         if state.phase == "broad":
             if result.score >= config.candidate_score:
                 # 후보 발견 → recenter 하고 confirm phase 로. (pan budget 비포함)
-                cx, cy = _clamp_click(
+                cx, cy = clamp_to_fov(
                     result.best_xy[0], result.best_xy[1], fw, fh, config.click_margin_ratio
                 )
                 controller.move_to_point(cx, cy)
@@ -255,7 +265,7 @@ def live_align_search(
         else:  # confirm phase
             if result.score >= config.candidate_score and state.zoom_in_count < config.max_zoom_in_steps:
                 # 후보 유지 → 중심으로 미세 recenter 후 한 단계 zoom-in. (budget 비포함)
-                cx, cy = _clamp_click(
+                cx, cy = clamp_to_fov(
                     result.best_xy[0], result.best_xy[1], fw, fh, config.click_margin_ratio
                 )
                 controller.move_to_point(cx, cy)
@@ -277,8 +287,11 @@ def live_align_search(
         iter_idx += 1
 
 
-def _route_template(templates: dict[str, AlignKeyTemplate], mode: str) -> AlignKeyTemplate:
-    """monitor mode 로 OM/SEM template 을 고른다. 없으면 합리적 fallback."""
+def route_template(templates: dict[str, AlignKeyTemplate], mode: str) -> AlignKeyTemplate:
+    """monitor mode 로 OM/SEM template 을 고른다. 없으면 합리적 fallback.
+
+    live search 와 primary correction 이 동일 라우팅을 쓰도록 공유 헬퍼로 둔다.
+    """
     if mode in templates:
         return templates[mode]
     if "OM" in mode and "OM" in templates:
@@ -299,7 +312,7 @@ def _do_pan(
     state.spiral_idx += 1
     dx, dy = _square_spiral_step(state.spiral_idx, config.pan_step_px)
     # recenter-on-point: 중심에서 (dx,dy) 떨어진 점을 클릭하면 그 점이 새 중심이 된다.
-    target_x, target_y = _clamp_click(
+    target_x, target_y = clamp_to_fov(
         fw // 2 + dx, fh // 2 + dy, fw, fh, config.click_margin_ratio
     )
     controller.move_to_point(target_x, target_y)
@@ -392,6 +405,7 @@ class _MockSEMMonitor:
         self.zoom_factors = zoom_factors
         self.mag = int(start_mag_index)
         self.mode = mode
+        self.screen_clicks: list[tuple[int, int]] = []  # click_screen 호출 기록(검증용).
 
     def _factor(self) -> float:
         return self.zoom_factors[max(0, min(len(self.zoom_factors) - 1, self.mag))]
@@ -423,6 +437,10 @@ class _MockSEMMonitor:
 
     def read_mode(self) -> str:
         return self.mode
+
+    def click_screen(self, screen_x: int, screen_y: int) -> None:
+        # mock 은 화면 절대 클릭을 기록만 한다(가상 wafer 에는 영향 없음).
+        self.screen_clicks.append((int(screen_x), int(screen_y)))
 
 
 def _make_demo_template_and_wafer() -> tuple[AlignKeyTemplate, np.ndarray, tuple[int, int]]:

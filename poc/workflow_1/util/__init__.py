@@ -37,6 +37,8 @@ find_window_by_title_prefix = None
 foreground_window = None
 get_window_process_id = None
 image_point_to_screen = None
+is_window_maximized = None
+maximize_window = None
 read_foreground_window_info = None
 
 IMAGE_UTILS_AVAILABLE = True
@@ -59,6 +61,8 @@ try:
         foreground_window,
         get_window_process_id,
         image_point_to_screen,
+        is_window_maximized,
+        maximize_window,
         read_foreground_window_info,
     )
 

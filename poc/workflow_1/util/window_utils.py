@@ -13,6 +13,7 @@ from pywinauto import Desktop
 from .time_utils import format_elapsed_ms
 
 _SW_RESTORE = 9
+_SW_MAXIMIZE = 3
 _TITLE_BUF_SIZE = 512
 
 
@@ -302,6 +303,59 @@ def activate_window(
     except Exception:
         print(f"[INFO] 창 활성화 실패: {debug_label}")
         return False
+
+
+def is_window_maximized(window) -> bool:
+    """창이 최대화(maximize) 상태인지 확인한다 (Win32 IsZoomed)."""
+    if os.name != "nt":
+        return False
+    handle = _extract_window_handle(window)
+    if handle is None:
+        return False
+    try:
+        return bool(ctypes.windll.user32.IsZoomed(handle))
+    except Exception:
+        return False
+
+
+def maximize_window(
+    window,
+    *,
+    debug_label: str = "window",
+    settle_sec: float = 0.3,
+) -> bool:
+    """창을 최대화한다 (ShowWindow SW_MAXIMIZE, 실패 시 pywinauto fallback)."""
+    if os.name != "nt":
+        print(f"[INFO] 창 최대화 미지원 OS: {debug_label}")
+        return False
+
+    handle = _extract_window_handle(window)
+    if handle is None:
+        return False
+
+    try:
+        ctypes.windll.user32.ShowWindow(handle, _SW_MAXIMIZE)
+        time.sleep(settle_sec)
+    except Exception as exc:
+        print(f"[INFO] Win32 창 최대화 실패: {debug_label}, error={exc}")
+
+    if is_window_maximized(window):
+        print(f"[INFO] 창 최대화 완료: {debug_label}")
+        return True
+
+    try:
+        window.maximize()
+        time.sleep(settle_sec)
+    except Exception as exc:
+        print(f"[INFO] 창 최대화 미확인: {debug_label}, error={exc}")
+        return False
+
+    maximized = is_window_maximized(window)
+    if maximized:
+        print(f"[INFO] 창 최대화 완료(pywinauto): {debug_label}")
+    else:
+        print(f"[INFO] 창 최대화 미확인(pywinauto): {debug_label}")
+    return maximized
 
 
 def _window_alive(handle: int | None) -> bool:

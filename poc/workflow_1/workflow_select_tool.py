@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
+from PIL import ImageChops, ImageStat
 
 from poc.workflow_1 import DEBUG_IMAGE_DIR
 from poc.workflow_1.debug_artifacts import (
@@ -35,8 +36,11 @@ from poc.workflow_1.util import (
     foreground_window,
     format_elapsed_ms,
     image_point_to_screen,
+    is_window_maximized,
     make_timestamp_tag,
+    maximize_window,
     point_to_tiny_bbox,
+    scroll_at_screen,
 )
 from poc.workflow_1.vlm_client import Workflow1VLMClient
 
@@ -126,6 +130,34 @@ LIST_OCR_MAX_UPSCALE = _env_float("SELECT_TOOL_LIST_OCR_MAX_UPSCALE", 3.0)
 FULL_GUARD_RIGHT_RATIO = _env_float("SELECT_TOOL_FULL_GUARD_RIGHT_RATIO", 0.55)
 FULL_GUARD_TOP_RATIO = _env_float("SELECT_TOOL_FULL_GUARD_TOP_RATIO", 0.06)
 FULL_GUARD_BOTTOM_RATIO = _env_float("SELECT_TOOL_FULL_GUARD_BOTTOM_RATIO", 0.99)
+
+# tool 미발견 시: 창 최대화 후에도 안 보이면 list 를 아래로 스크롤하며 재탐색한다.
+# 스크롤해도 list 영역이 더 이상 바뀌지 않으면(스크롤바 사라짐 = 전체 표시) 중단.
+MAX_SCROLL_ITERS = int(_env_float("SELECT_TOOL_MAX_SCROLL_ITERS", 8))
+SCROLL_WHEEL_DY = int(_env_float("SELECT_TOOL_SCROLL_DY", -5))
+LIST_CHANGE_THRESHOLD = _env_float("SELECT_TOOL_LIST_CHANGE_THRESHOLD", 2.0)
+
+
+# 디버그 artifact 저장 순서를 파일명에 붙여 절차를 순서대로 볼 수 있게 하는 카운터.
+# 단일 스레드 디버그 용도이며 top-level 호출(select/verify) 시작 시 초기화한다.
+_step_counter = 0
+
+
+def _reset_step_counter() -> None:
+    """디버그 artifact 스텝 번호를 0 으로 초기화한다."""
+    global _step_counter
+    _step_counter = 0
+
+
+def _step_image_path(debug_dir, filename: str, **kwargs):
+    """저장 순서(stepNNN)를 파일명 앞에 붙인 디버그 경로를 만든다.
+
+    같은 run(동일 timestamp_tag) 안의 파일들이 알파벳순이 아니라 실제 실행
+    순서대로 정렬되도록 한다.
+    """
+    global _step_counter
+    _step_counter += 1
+    return debug_image_path(debug_dir, f"step{_step_counter:03d}_{filename}", **kwargs)
 
 
 def load_target_tool_name(default: str = "") -> str:
@@ -266,7 +298,7 @@ def _save_tool_click_overlay(
 ) -> str:
     """full main-window screenshot 위에 list crop 과 최종 click point 를 저장한다."""
     img_w, img_h = image.size
-    overlay_path = debug_image_path(
+    overlay_path = _step_image_path(
         debug_image_dir,
         filename,
         timestamp_tag=timestamp_tag,
@@ -337,7 +369,7 @@ def _save_spotting_overlay(
             elements[key]["center"] = bbox_center(bbox)
         colors[key] = "gold" if is_match else "lime"
 
-    overlay_path = debug_image_path(
+    overlay_path = _step_image_path(
         debug_image_dir,
         f"{artifact_label}_spotting_overlay.jpg",
         model_name=model_name,
@@ -428,6 +460,57 @@ def _build_list_crop_attempts(main_image) -> list[dict]:
             }
         )
     return attempts
+
+
+def _list_region_changed(prev_image, curr_image) -> bool:
+    """list 영역이 스크롤 전후로 바뀌었는지(=더 볼 내용이 있음) 판단한다.
+
+    바뀌지 않았다면 더 스크롤할 내용이 없다(스크롤바가 사라진 전체 표시 상태)는 뜻.
+    """
+    if prev_image.size != curr_image.size:
+        return True
+
+    width, height = curr_image.size
+    box = _build_relative_crop_box(
+        width,
+        height,
+        LIST_REGION_LEFT_RATIO,
+        LIST_REGION_TOP_RATIO,
+        LIST_REGION_RIGHT_RATIO,
+        LIST_REGION_BOTTOM_RATIO,
+    )
+    prev_crop = crop_image(prev_image, box).convert("L")
+    curr_crop = crop_image(curr_image, box).convert("L")
+    if prev_crop.size != curr_crop.size:
+        return True
+
+    diff = ImageChops.difference(prev_crop, curr_crop)
+    mean_diff = ImageStat.Stat(diff).mean[0]
+    return mean_diff > LIST_CHANGE_THRESHOLD
+
+
+def _scroll_list_region_down(
+    main_window,
+    main_image,
+    *,
+    action_enabled: bool,
+    step_index: int,
+) -> bool:
+    """list 영역 중앙에서 아래로 마우스 휠 스크롤한다."""
+    width, height = main_image.size
+    center_x = int(round(width * min(1.0, (LIST_REGION_LEFT_RATIO + LIST_REGION_RIGHT_RATIO) / 2)))
+    center_y = int(round(height * min(1.0, (LIST_REGION_TOP_RATIO + LIST_REGION_BOTTOM_RATIO) / 2)))
+    screen_point = image_point_to_screen(main_window, {"x": center_x, "y": center_y})
+    if screen_point is None:
+        print("[WARNING] list 스크롤 좌표 변환 실패 → 스크롤 생략")
+        return False
+    return scroll_at_screen(
+        screen_point,
+        SCROLL_WHEEL_DY,
+        phase="tool_list_scroll",
+        step_index=step_index,
+        action_enabled=action_enabled,
+    )
 
 
 def _capture_main_window(main_window, window_title: str, backend: str):
@@ -633,19 +716,19 @@ def _run_list_spotting(
     )
     system_message, user_text = build_spotting_prompt()
 
-    list_webp_path = debug_image_path(
+    list_webp_path = _step_image_path(
         debug_image_dir,
         f"{artifact_label}_spotting_input.webp",
         model_name=client.model_name,
         timestamp_tag=timestamp_tag,
     )
-    raw_response_path = debug_image_path(
+    raw_response_path = _step_image_path(
         debug_image_dir,
         f"{artifact_label}_spotting_response.txt",
         model_name=client.model_name,
         timestamp_tag=timestamp_tag,
     )
-    result_json_path = debug_image_path(
+    result_json_path = _step_image_path(
         debug_image_dir,
         f"{artifact_label}_spotting_result.json",
         model_name=client.model_name,
@@ -892,42 +975,17 @@ def select_tool_from_main_window(
             target_tool_name=normalized_tool_name,
         )
 
-    full_capture_path = debug_image_path(
-        resolved_debug_dir,
-        "main_window_capture.jpg",
-        timestamp_tag=timestamp_tag,
-    )
-    save_debug_jpeg(main_image, full_capture_path)
-
-    attempts = _build_list_crop_attempts(main_image)
-
-    spotting_located, spotting_attempts = _locate_tool_via_spotting(
-        normalized_tool_name,
-        attempts,
-        timestamp_tag,
-        window_title,
-        backend,
-        debug_image_dir=resolved_debug_dir,
-        log_name=log_name,
-        component_name=component_name,
+    _reset_step_counter()
+    save_debug_jpeg(
+        main_image,
+        _step_image_path(resolved_debug_dir, "main_window_capture.jpg", timestamp_tag=timestamp_tag),
     )
 
-    ocr_attempts: list[dict] = []
-    ocr_errors: list[dict] = []
-    detection_attempts: list[dict] = []
-
-    if spotting_located is not None:
-        detection_source = "spotting"
-        selected_attempt = spotting_located["attempt"]
-        list_crop_box = selected_attempt["crop_box"]
-        list_crop_point = spotting_located["mapped_point"]
-        matched_lines = [spotting_located["matched_text"]]
-        ocr_target_visible = True
-    else:
-        detection_source = "vlm_grounding"
-        ocr_attempts, ocr_errors = _run_tool_list_ocr_attempts(
-            main_image,
+    def _spotting_locate(current_image):
+        crop_attempts = _build_list_crop_attempts(current_image)
+        return _locate_tool_via_spotting(
             normalized_tool_name,
+            crop_attempts,
             timestamp_tag,
             window_title,
             backend,
@@ -935,46 +993,94 @@ def select_tool_from_main_window(
             log_name=log_name,
             component_name=component_name,
         )
-        if not ocr_attempts and ocr_errors:
-            return ToolSelectionResult(
-                exit_code=EXIT_OCR_REQUEST_ERROR,
-                target_tool_name=normalized_tool_name,
-                list_crop_box=ocr_errors[0]["crop_box"] if ocr_errors else None,
-            )
 
-        located_attempt, detection_attempts = _locate_tool_on_attempts(
+    spotting_located, spotting_attempts = _spotting_locate(main_image)
+
+    # 라이브 창을 직접 제어할 수 있을 때(=호출부가 image 를 넘기지 않은 경우)만
+    # 최대화/스크롤 재시도를 한다.
+    can_drive_window = image is None
+    maximized_for_retry = False
+    scroll_iters = 0
+
+    if spotting_located is None and can_drive_window and not is_window_maximized(main_window):
+        print(f"[INFO] tool 미발견 → 창 최대화 후 재시도: tool={normalized_tool_name!r}")
+        maximized_for_retry = maximize_window(
             main_window,
-            window_title,
-            backend,
-            normalized_tool_name,
-            ocr_attempts,
-            debug_image_dir=resolved_debug_dir,
-            log_name=log_name,
-            component_name=component_name,
+            debug_label=f"select_tool_maximize_{normalized_tool_name}",
         )
-
-        visible_attempts = [attempt for attempt in ocr_attempts if attempt["ocr_result"]["target_visible"]]
-        best_visible_attempt = visible_attempts[0] if visible_attempts else None
-        selected_attempt = located_attempt["attempt"] if located_attempt is not None else best_visible_attempt
-        list_crop_box = selected_attempt["crop_box"] if selected_attempt is not None else None
-        matched_lines = (
-            selected_attempt["ocr_result"]["matched_lines"]
-            if selected_attempt is not None
-            else []
-        )
-
-        if located_attempt is None:
-            return ToolSelectionResult(
-                exit_code=EXIT_TOOL_ROW_NOT_FOUND if best_visible_attempt is not None else EXIT_TOOL_NAME_NOT_VISIBLE,
-                target_tool_name=normalized_tool_name,
-                matched_lines=matched_lines,
-                ocr_target_visible=best_visible_attempt is not None,
-                list_crop_box=list_crop_box,
-                selected_attempt=selected_attempt["name"] if selected_attempt is not None else None,
+        retry_image = _capture_main_window(main_window, window_title, backend)
+        if retry_image is not None:
+            main_image = retry_image
+            save_debug_jpeg(
+                main_image,
+                _step_image_path(
+                    resolved_debug_dir,
+                    "main_window_capture_maximized.jpg",
+                    timestamp_tag=timestamp_tag,
+                ),
             )
+            retry_located, retry_attempts = _spotting_locate(main_image)
+            spotting_attempts.extend(retry_attempts)
+            spotting_located = retry_located
 
-        list_crop_point = located_attempt["mapped_point"]
-        ocr_target_visible = selected_attempt["ocr_result"]["target_visible"]
+    # 최대화 후에도 안 보이면, list 영역이 더 이상 바뀌지 않을 때까지(=스크롤바가
+    # 사라져 전체가 보일 때까지) 아래로 스크롤하며 재탐색한다. 추측 클릭은 하지 않는다.
+    while spotting_located is None and can_drive_window and scroll_iters < MAX_SCROLL_ITERS:
+        prev_image = main_image
+        _scroll_list_region_down(
+            main_window,
+            main_image,
+            action_enabled=action_enabled,
+            step_index=scroll_iters + 1,
+        )
+        scrolled_image = _capture_main_window(main_window, window_title, backend)
+        if scrolled_image is None:
+            print("[WARNING] 스크롤 후 캡처 실패 → 스크롤 탐색 중단")
+            break
+        main_image = scrolled_image
+        save_debug_jpeg(
+            main_image,
+            _step_image_path(
+                resolved_debug_dir,
+                f"main_window_capture_scroll{scroll_iters + 1:02d}.jpg",
+                timestamp_tag=timestamp_tag,
+            ),
+        )
+        if not _list_region_changed(prev_image, main_image):
+            print("[INFO] 스크롤해도 list 영역 변화 없음 → 전체 표시됨(스크롤바 없음), 탐색 중단")
+            break
+        scroll_located, scroll_attempts = _spotting_locate(main_image)
+        spotting_attempts.extend(scroll_attempts)
+        spotting_located = scroll_located
+        scroll_iters += 1
+
+    if spotting_located is None:
+        print(
+            f"[INFO] tool 미발견(최대화/스크롤 후에도): tool={normalized_tool_name!r} "
+            f"→ 추측하지 않고 종료(scroll_iters={scroll_iters}, maximized={maximized_for_retry})"
+        )
+        log_work2_event(
+            component=component_name,
+            message="tool_not_found_no_guess",
+            level="warning",
+            log_name=log_name,
+            target_tool_name=normalized_tool_name,
+            scroll_iters=scroll_iters,
+            maximized_for_retry=maximized_for_retry,
+        )
+        return ToolSelectionResult(
+            exit_code=EXIT_TOOL_NAME_NOT_VISIBLE,
+            target_tool_name=normalized_tool_name,
+            matched_lines=[],
+            ocr_target_visible=False,
+        )
+
+    detection_source = "spotting"
+    selected_attempt = spotting_located["attempt"]
+    list_crop_box = selected_attempt["crop_box"]
+    list_crop_point = spotting_located["mapped_point"]
+    matched_lines = [spotting_located["matched_text"]]
+    ocr_target_visible = True
 
     full_image_point = {
         "x": list_crop_box["left"] + list_crop_point["x"],
@@ -1028,7 +1134,7 @@ def select_tool_from_main_window(
     )
     time.sleep(max(0.0, post_double_click_settle_sec))
 
-    summary_path = debug_image_path(
+    summary_path = _step_image_path(
         resolved_debug_dir,
         "workflow_select_tool_summary.json",
         timestamp_tag=timestamp_tag,
@@ -1044,20 +1150,10 @@ def select_tool_from_main_window(
             "selected_attempt_resize_meta": selected_attempt["resize_meta"],
             "detection_source": detection_source,
             "ocr_target_visible": ocr_target_visible,
-            "ocr_matched_lines": matched_lines,
+            "matched_lines": matched_lines,
+            "maximized_for_retry": maximized_for_retry,
+            "scroll_iters": scroll_iters,
             "spotting_attempts": spotting_attempts,
-            "ocr_attempts": [
-                {
-                    "attempt_name": attempt["name"],
-                    "crop_box": attempt["crop_box"],
-                    "resize_meta": attempt["resize_meta"],
-                    "ocr_target_visible": attempt["ocr_result"]["target_visible"],
-                    "ocr_matched_lines": attempt["ocr_result"]["matched_lines"],
-                }
-                for attempt in ocr_attempts
-            ],
-            "ocr_errors": ocr_errors,
-            "detection_attempts": detection_attempts,
             "tool_point_on_list_crop": list_crop_point,
             "tool_point_on_full_image": full_image_point,
             "tool_point_on_screen": screen_point,
@@ -1116,6 +1212,7 @@ def verify_tool_visible_in_list(
             target_tool_name=normalized_tool_name,
         )
 
+    _reset_step_counter()
     attempts = _build_list_crop_attempts(main_image)
     spotting_located, _ = _locate_tool_via_spotting(
         normalized_tool_name,

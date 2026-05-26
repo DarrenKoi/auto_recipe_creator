@@ -21,12 +21,11 @@ import os
 import sys
 
 from poc.workflow_1.workflow_select_tool import (
+    EXIT_MAIN_WINDOW_NOT_FOUND,
     EXIT_SUCCESS,
     connect_to_tool,
     load_target_tool_name,
 )
-
-EXIT_MAIN_WINDOW_NOT_FOUND = "main_window_not_found"
 
 
 def _action_enabled() -> bool:

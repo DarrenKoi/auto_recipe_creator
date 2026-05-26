@@ -6,13 +6,15 @@
 
 CCTV/캡처/GUI 자동화 로직은 포함하지 않는다. 순수 감지 + 알림 전용.
 
-office_* 의존성(office_align_fail_alarm, office_rich_notify)은 gitignore 대상이라
-workflow_1 에 그대로 두고 공유 라이브러리로 import 한다. (다른 workflow_2 모듈도 동일)
+office_* 의존성(office_align_fail_alarm, office_rich_notify)은 gitignore 대상이며
+workflow_2 폴더 안의 버전을 import 한다. 사무실에서는 실제 office 구현을 같은
+폴더로 복사해 둔다. env helper 는 workflow_1 의존을 없애기 위해 본 파일에 인라인했다.
 
 사용법:
   uv run python poc/workflow_2/align_fail_alarm.py
 """
 
+import os
 import threading
 import time
 from collections.abc import Iterable, Mapping
@@ -21,13 +23,35 @@ from pathlib import Path
 
 import pandas as pd
 
-from poc.workflow_2 import LOG_DIR
-from poc.workflow_1.office_align_fail_alarm import filter_align_fail, get_cdsem_alarms # pyright: ignore[reportMissingImports]
-from poc.workflow_1.util import env_flag, env_int
+from poc.workflow_2.office_align_fail_alarm import filter_align_fail, get_cdsem_alarms # pyright: ignore[reportMissingImports]
+
+WORKFLOW_2_DIR = Path(__file__).resolve().parent
+LOG_DIR = WORKFLOW_2_DIR / "logs"
+
+
+def env_flag(name: str, default: bool = False) -> bool:
+    """bool 환경변수를 파싱한다."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    return raw.lower() in {"1", "true", "yes", "on", "y"}
+
+
+def env_int(name: str, default: int) -> int:
+    """int 환경변수를 읽고 잘못된 값이면 default 를 사용한다."""
+    raw_value = os.getenv(name, "").strip()
+    if not raw_value:
+        return default
+    try:
+        return int(raw_value)
+    except ValueError:
+        print(f"[WARNING] {name} 값이 잘못되었습니다. default={default} 사용: {raw_value!r}")
+        return default
+
 
 # rich notify 는 선택 의존성. requests/PIL/ftplib 등이 빠져도 본체는 계속 동작해야 한다.
 try:
-    from poc.workflow_1.office_rich_notify import send_cube_align_fail_info # pyright: ignore[reportMissingImports]
+    from poc.workflow_2.office_rich_notify import send_cube_align_fail_info # pyright: ignore[reportMissingImports]
 
     RICH_NOTIFY_AVAILABLE = True
 except Exception as _rich_notify_import_exc:

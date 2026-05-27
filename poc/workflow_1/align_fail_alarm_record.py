@@ -381,6 +381,10 @@ def _collapse_rows_by_tool(fails) -> dict[str, dict]:
         by_tool[eqp_id] = {
             "eqp_id": eqp_id,
             "alarm_time": _row_value(row, "TIMESTAMP", "timestamp", "UTC9", "utc9", "alarm_time"),
+            # 캡처 폴더 태그 전용 — 윈도우 필터(filter_rows_within_window)와 같은 UTC9
+            # 컬럼만 쓴다(알람 시스템 기준 시각). 로그/매니페스트의 alarm_time 과 분리해
+            # 폴더 태그를 알람 시각 한 가지로 일관되게 묶는다.
+            "utc9": str(_row_value(row, "UTC9", "utc9") or "").strip(),
             "alarm_name": str(
                 _row_value(row, "ALARM_NAME", "alarm_name", "DESCRIPTION")
                 or "Align Fail"
@@ -433,7 +437,7 @@ def run_record_cycle(
     recipe_id: str,
     *,
     connect_action_enabled: bool = True,
-    alarm_time: str = "",
+    utc9: str = "",
 ) -> list:
     """한 알람에 대한 record 사이클: ① 열기 → ② record → ③ tool 닫기 → ④ 알림 닫기.
 
@@ -463,8 +467,9 @@ def run_record_cycle(
     _close_alert_window()
 
     # ② tool 화면 record (캡처만, 창은 닫지 않음). 창 탐색은 RCS_WINDOW_MAX_TRIALS 로 제한.
-    # 캡처 폴더가 캡처 wall-clock 이 아니라 실제 align fail 이벤트 시각(UTC9)으로 묶이도록
-    # tag 를 넘긴다. 파싱 불가하면 None → record_rcs_window 가 캡처 시점으로 폴백.
+    # 캡처 폴더가 캡처 wall-clock 이 아니라 알람 시스템 기준 시각(UTC9)으로 묶이도록
+    # tag 를 넘긴다. UTC9 비어있거나 파싱 불가하면 None → record_rcs_window 가 캡처
+    # 시점으로 폴백.
     saved: list = []
     tool_window = None
     if RECORD_RCS_AVAILABLE:
@@ -472,7 +477,7 @@ def run_record_cycle(
             eqp_id,
             recipe_id,
             window_max_attempts=RCS_WINDOW_MAX_TRIALS,
-            tag=_alarm_time_to_tag(alarm_time),
+            tag=_alarm_time_to_tag(utc9),
         )
     else:
         print(f"[INFO] record 비활성 — 캡처 생략: EQP_ID={eqp_id}")
@@ -525,6 +530,7 @@ def process_fail_rows(
     for eqp_id in sorted(new_tools):
         info = by_tool[eqp_id]
         alarm_time = str(info["alarm_time"] or "")
+        utc9 = info["utc9"]
         alarm_name = info["alarm_name"]
         alid = info["alid"]
         recipe_id = info["recipe_id"]
@@ -561,7 +567,7 @@ def process_fail_rows(
                     eqp_id,
                     recipe_id,
                     connect_action_enabled=connect_action_enabled,
-                    alarm_time=alarm_time,
+                    utc9=utc9,
                 ) or []
             else:
                 print(

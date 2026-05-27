@@ -370,12 +370,18 @@ def wait_for_remote_monitoring_window(
     tool_name: str,
     timeout_sec: float = 6.0,
     poll_interval_sec: float = 0.5,
+    max_attempts: int | None = None,
 ) -> tuple[object | None, str, str]:
-    """툴 창이 나타날 때까지 폴링한다."""
+    """툴 창이 나타날 때까지 폴링한다.
+
+    `max_attempts` 가 주어지면 그 횟수만큼만 탐색하고 중단한다. RCS 가 다른
+    사용자에게 점유돼 'select'(공유/종료 선택) 팝업이 떠 tool 창이 안 열리는 경우
+    무한정 폴링 스팸을 막기 위한 안전 상한이다(timeout 보다 먼저 도달하면 중단).
+    """
     print(
         f"[INFO] Remote Monitoring System 창 대기 시작: "
         f"title_prefix={REMOTE_MONITORING_WINDOW_TITLE_PREFIX!r}, "
-        f"tool_name={tool_name!r}, timeout={timeout_sec}s"
+        f"tool_name={tool_name!r}, timeout={timeout_sec}s, max_attempts={max_attempts}"
     )
     deadline = time.time() + timeout_sec
     attempt = 0
@@ -389,6 +395,13 @@ def wait_for_remote_monitoring_window(
                 f"title={window_title!r}, backend={backend}"
             )
             return tool_window, window_title, backend
+
+        if max_attempts is not None and attempt >= max_attempts:
+            print(
+                f"[WARNING] Remote Monitoring System 창 미발견 — {max_attempts}회 시도 후 중단 "
+                f"(tool_name={tool_name!r}). RCS 가 다른 사용자에게 점유됐을 수 있음(select 팝업)."
+            )
+            return None, "", ""
 
         remaining_sec = deadline - time.time()
         if remaining_sec <= 0:

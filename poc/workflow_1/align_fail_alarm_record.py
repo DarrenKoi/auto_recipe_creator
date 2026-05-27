@@ -91,6 +91,10 @@ CONNECT_TOOL_WINDOW_TIMEOUT_SEC = env_int("ALIGN_FAIL_CONNECT_WINDOW_TIMEOUT_SEC
 POPUP_TIMEOUT_SEC = env_int("ALIGN_FAIL_POPUP_TIMEOUT_SEC", 60)
 # ④ 알림 창 닫기 탐색 타임아웃(초).
 ALERT_CLOSE_TIMEOUT_SEC = env_int("ALIGN_FAIL_ALERT_CLOSE_TIMEOUT_SEC", 3)
+# ② tool 창 탐색 최대 시도 횟수. RCS 가 다른 사용자에게 점유되면 tool 더블클릭 후
+# 'select'(공유/종료 선택) 팝업이 떠 tool 창이 안 열린다. 이때 무한 폴링하지 않고
+# 이 횟수만큼만 시도한 뒤 포기하고 다음 알람을 기다린다('select' 팝업은 건드리지 않음).
+RCS_WINDOW_MAX_TRIALS = env_int("ALIGN_FAIL_RCS_WINDOW_MAX_TRIALS", 10)
 ALARM_LOG_PATH = LOG_DIR / "align_fail_alarms.txt"
 
 # 알림 팝업 제목 — notify_align_fail 과 ④ 닫기에서 같은 값을 써야 창을 찾을 수 있다.
@@ -350,28 +354,47 @@ def run_record_cycle(
     """한 알람에 대한 record 사이클: ① 열기 → ② record → ③ tool 닫기 → ④ 알림 닫기.
 
     ①에서 더블클릭이 실제로 수행됐을 때만 ②③를 진행한다(dry-run/실패 시 창이 안
-    떠 캡처/닫기를 생략). ④ 알림 창 닫기는 사이클 끝에 항상 시도한다.
+    떠 캡처/닫기를 생략). RCS 가 다른 사용자에게 점유돼 'select' 팝업이 뜨면 tool
+    창이 안 열리므로, ②의 창 탐색을 RCS_WINDOW_MAX_TRIALS 회로 제한하고 그래도 못
+    찾으면 이번 알람은 건너뛰고 다음 알람을 기다린다('select' 팝업은 건드리지 않음).
+    ④ 알림 창 닫기는 사이클 끝에 항상 시도한다.
     """
     # ① tool 열기.
     result = _connect_to_tool_sync(eqp_id, action_enabled=connect_action_enabled)
     double_clicked = bool(getattr(result, "double_clicked", False))
 
-    if double_clicked:
-        # ② tool 화면 record (캡처만, 창은 닫지 않음).
-        if RECORD_RCS_AVAILABLE:
-            record_rcs_window(eqp_id, recipe_id)
-        else:
-            print(f"[INFO] record 비활성 — 캡처 생략: EQP_ID={eqp_id}")
+    if not double_clicked:
+        print(
+            f"[INFO] tool 더블클릭 미수행(dry-run/실패) — record/tool 닫기 생략: "
+            f"EQP_ID={eqp_id}"
+        )
+        _close_alert_window()  # ④
+        return
 
-        # ③ tool 창 닫기 (제목의 tool id 로 찾아 닫기).
+    # ② tool 화면 record (캡처만, 창은 닫지 않음). 창 탐색은 RCS_WINDOW_MAX_TRIALS 로 제한.
+    tool_window = None
+    if RECORD_RCS_AVAILABLE:
+        _saved, tool_window, _title, _backend = record_rcs_window(
+            eqp_id,
+            recipe_id,
+            window_max_attempts=RCS_WINDOW_MAX_TRIALS,
+        )
+    else:
+        print(f"[INFO] record 비활성 — 캡처 생략: EQP_ID={eqp_id}")
+
+    if tool_window is not None:
+        # ③ tool 창 닫기 (제목의 tool id 로 찾아 닫기). 창이 확인됐으니 빠르게 닫힌다.
         if CLOSE_TOOL_AVAILABLE:
             close_tool(eqp_id)
         else:
             print(f"[INFO] close_tool 비활성 — tool 창 닫기 생략: EQP_ID={eqp_id}")
-    else:
+    elif RECORD_RCS_AVAILABLE:
+        # 창을 못 찾음(RCS_WINDOW_MAX_TRIALS 회 시도) — RCS 점유(select 팝업) 가능성.
+        # 'select' 팝업은 건드리지 않고(공유/종료는 사람 판단), 이번 알람은 포기한다.
         print(
-            f"[INFO] tool 더블클릭 미수행(dry-run/실패) — record/tool 닫기 생략: "
-            f"EQP_ID={eqp_id}"
+            f"[WARNING] tool 창 미발견({RCS_WINDOW_MAX_TRIALS}회 시도) — RCS 가 다른 "
+            f"사용자에게 점유됐을 수 있음(select 공유/종료 팝업). 이번 알람은 건너뛰고 "
+            f"다음 알람을 기다립니다: EQP_ID={eqp_id}"
         )
 
     # ④ 알림(alert) 창 닫기.

@@ -86,6 +86,7 @@ def record_rcs_window(
     recipe_id: str,
     *,
     window_timeout_sec: float = CAPTURE_RCS_WINDOW_TIMEOUT_SEC,
+    window_max_attempts: int | None = None,
     settle_sec: float = CAPTURE_RCS_SETTLE_SEC,
     duration_sec: float = CAPTURE_RCS_DURATION_SEC,
     interval_sec: float = CAPTURE_RCS_INTERVAL_SEC,
@@ -94,9 +95,11 @@ def record_rcs_window(
 
     접속(더블클릭)은 호출부 책임이다. ``duration_sec <= 0`` 이면 1장만(현재 운영
     기본), 양수이면 그 시간 동안 ``interval_sec`` 간격으로 여러 장 캡처한다.
-    ``(saved_paths, tool_window, window_title, backend)`` 를 반환한다. 창을 닫는 것은
-    호출부가 정한다(닫기 코어는 `close_window` 또는 `workflow_close_tool.close_tool`).
-    실패/생략 시 ``([], None, "", "")``. 예외는 삼켜 호출 루프가 죽지 않게 한다.
+    ``window_max_attempts`` 가 주어지면 tool 창 탐색을 그 횟수로 제한한다(RCS 점유
+    select 팝업으로 창이 안 뜰 때 폴링 스팸 방지). ``(saved_paths, tool_window,
+    window_title, backend)`` 를 반환한다. 창을 닫는 것은 호출부가 정한다(닫기 코어는
+    `close_window` 또는 `workflow_close_tool.close_tool`). 실패/생략 시
+    ``([], None, "", "")``. 예외는 삼켜 호출 루프가 죽지 않게 한다.
     """
     if not WINDOW_UTILS_AVAILABLE:
         print(
@@ -110,6 +113,7 @@ def record_rcs_window(
         tool_window, window_title, backend = wait_for_remote_monitoring_window(
             eqp_id,
             timeout_sec=window_timeout_sec,
+            max_attempts=window_max_attempts,
         )
         if tool_window is None:
             print(f"[WARNING] RCS tool 창을 찾지 못해 캡처 생략: EQP_ID={eqp_id}")
@@ -156,6 +160,7 @@ def capture_and_close_rcs_window(
     recipe_id: str,
     *,
     window_timeout_sec: float = CAPTURE_RCS_WINDOW_TIMEOUT_SEC,
+    window_max_attempts: int | None = None,
     settle_sec: float = CAPTURE_RCS_SETTLE_SEC,
     duration_sec: float = CAPTURE_RCS_DURATION_SEC,
     interval_sec: float = CAPTURE_RCS_INTERVAL_SEC,
@@ -169,6 +174,7 @@ def capture_and_close_rcs_window(
         eqp_id,
         recipe_id,
         window_timeout_sec=window_timeout_sec,
+        window_max_attempts=window_max_attempts,
         settle_sec=settle_sec,
         duration_sec=duration_sec,
         interval_sec=interval_sec,

@@ -961,6 +961,84 @@ def _build_verify_strip(main_image, point: dict) -> dict[str, int]:
     return {"left": left, "top": top, "right": right, "bottom": bottom}
 
 
+def _spotting_verify_on_crop(
+    base_image,
+    crop_box: dict,
+    tool_name: str,
+    timestamp_tag: str,
+    window_title: str,
+    backend: str,
+    *,
+    debug_image_dir,
+    log_name: str,
+    component_name: str,
+    artifact_label: str,
+) -> tuple[dict | None, dict]:
+    """주어진 crop(base_image, crop_box) 에 Spotting 1회를 돌려 tool 이름을 검증한다.
+
+    매칭 성공 시 그 bbox 중심을 full image 좌표로 복원해 반환한다. (located | None,
+    debug_record) 형태. located 는 {"full_point", "matched_text"}.
+    """
+    work_image, _meta = _resize_tool_list_image(base_image)
+    items: list[dict] = []
+    model_name = None
+    try:
+        items, model_name = _run_list_spotting(
+            work_image,
+            tool_name,
+            timestamp_tag,
+            window_title,
+            backend,
+            debug_image_dir=debug_image_dir,
+            log_name=log_name,
+            artifact_label=artifact_label,
+        )
+    except Exception as exc:
+        log_work2_event(
+            component=component_name,
+            message="verify_spotting_failed",
+            level="warning",
+            log_name=log_name,
+            target_tool_name=tool_name,
+            artifact_label=artifact_label,
+            error=exc,
+        )
+
+    match = best_match(items, tool_name) if items else None
+    record: dict = {
+        "artifact_label": artifact_label,
+        "crop_box": crop_box,
+        "item_count": len(items),
+        "matched_text": match["text"] if match is not None else None,
+    }
+    if items:
+        record["overlay_path"] = _save_spotting_overlay(
+            work_image,
+            items,
+            match["bbox"] if match is not None else None,
+            debug_image_dir=debug_image_dir,
+            timestamp_tag=timestamp_tag,
+            artifact_label=artifact_label,
+            model_name=model_name or "spotting",
+        )
+    if match is None:
+        return None, record
+
+    center = bbox_center(match["bbox"])
+    crop_point = _map_point_from_working_image(
+        center,
+        base_image.size[0],
+        base_image.size[1],
+        work_image.size[0],
+        work_image.size[1],
+    )
+    full_point = {
+        "x": crop_box["left"] + crop_point["x"],
+        "y": crop_box["top"] + crop_point["y"],
+    }
+    return {"full_point": full_point, "matched_text": match["text"]}, record
+
+
 def _locate_tool_via_vlm_then_verify(
     main_window,
     window_title: str,
@@ -976,9 +1054,13 @@ def _locate_tool_via_vlm_then_verify(
     """VLM(ui-venus→mai-ui)으로 tool row 영역을 먼저 잡고, 그 좁은 strip 에 Spotting 을
     1회 돌려 tool 이름 텍스트를 검증한 좌표를 클릭점으로 만든다.
 
-    - 텍스트 매칭에 성공하면 그 bbox 중심이 클릭점이 된다(행 텍스트 검증됨).
-    - 매칭 실패 시 mai-ui refined point 로 fallback 한다(텍스트 미검증, best-effort).
-    - VLM 이 영역 자체를 못 잡으면 None 을 반환한다(상위에서 최대화/스크롤 재시도).
+    검증/검출 우선순위:
+    1. VLM hit → 한 행 strip Spotting 검증 (행 텍스트 검증, 가장 안전).
+    2. 위가 안 되면(=VLM 미검출 또는 strip miss) 왼쪽 region 전체에 Spotting 1회
+       fallback. VLM 이 refusal(예: 중간 행 MCD719 가 간헐적으로 [-1,-1]) 이어도
+       텍스트가 화면에 있으면 직접 잡는다. best_match 의 행 모호성 가드로 안전.
+    3. 그래도 안 되면 VLM point 가 있을 때만 mai-ui refined point 로 fallback
+       (텍스트 미검증, best-effort). VLM point 도 없으면 None → 상위 스크롤 재시도.
 
     (located | None, attempt_record) 를 반환한다.
     """
@@ -1014,89 +1096,80 @@ def _locate_tool_via_vlm_then_verify(
         "vlm_point_on_region": target_result.point,
         "region_box": region_box,
     }
-    if target_result.exit_code != DETECT_SUCCESS or target_result.point is None:
-        return None, attempt_record
 
-    # region crop 좌표 → full image 좌표 복원.
-    vlm_point = {
-        "x": region_box["left"] + target_result.point["x"],
-        "y": region_box["top"] + target_result.point["y"],
-    }
-    attempt_record["vlm_point"] = vlm_point
-    strip_box = _build_verify_strip(current_image, vlm_point)
-    strip_base = crop_image(current_image, strip_box)
-    strip_work, _strip_meta = _resize_tool_list_image(strip_base)
-    attempt_record["verify_strip_box"] = strip_box
+    vlm_point = None
+    if target_result.exit_code == DETECT_SUCCESS and target_result.point is not None:
+        # region crop 좌표 → full image 좌표 복원.
+        vlm_point = {
+            "x": region_box["left"] + target_result.point["x"],
+            "y": region_box["top"] + target_result.point["y"],
+        }
+        attempt_record["vlm_point"] = vlm_point
 
-    items: list[dict] = []
-    model_name = None
-    try:
-        items, model_name = _run_list_spotting(
-            strip_work,
+        # 1. VLM hit → 한 행 strip 텍스트 검증.
+        strip_box = _build_verify_strip(current_image, vlm_point)
+        strip_base = crop_image(current_image, strip_box)
+        attempt_record["verify_strip_box"] = strip_box
+        strip_located, strip_record = _spotting_verify_on_crop(
+            strip_base,
+            strip_box,
             tool_name,
             timestamp_tag,
             window_title,
             backend,
             debug_image_dir=debug_image_dir,
             log_name=log_name,
+            component_name=component_name,
             artifact_label=f"tool_verify_{normalized}",
         )
-    except Exception as exc:
-        log_work2_event(
-            component=component_name,
-            message="verify_spotting_failed",
-            level="warning",
-            log_name=log_name,
-            target_tool_name=tool_name,
-            error=exc,
-        )
+        attempt_record["strip_verify"] = strip_record
+        if strip_located is not None:
+            return {
+                "full_image_point": strip_located["full_point"],
+                "matched_text": strip_located["matched_text"],
+                "detection_source": "vlm_then_spotting",
+                "verify_crop_box": strip_box,
+                "vlm_point": vlm_point,
+            }, attempt_record
 
-    match = best_match(items, tool_name) if items else None
-    if items:
-        attempt_record["verify_overlay_path"] = _save_spotting_overlay(
-            strip_work,
-            items,
-            match["bbox"] if match is not None else None,
-            debug_image_dir=debug_image_dir,
-            timestamp_tag=timestamp_tag,
-            artifact_label=f"tool_verify_{normalized}",
-            model_name=model_name or "spotting",
-        )
-    attempt_record["verify_item_count"] = len(items)
-    attempt_record["verify_matched_text"] = match["text"] if match is not None else None
-
-    if match is not None:
-        center = bbox_center(match["bbox"])
-        strip_point = _map_point_from_working_image(
-            center,
-            strip_base.size[0],
-            strip_base.size[1],
-            strip_work.size[0],
-            strip_work.size[1],
-        )
-        full_point = {
-            "x": strip_box["left"] + strip_point["x"],
-            "y": strip_box["top"] + strip_point["y"],
-        }
+    # 2. region 전체 Spotting fallback (VLM 미검출/strip miss 공통 복구).
+    region_located, region_record = _spotting_verify_on_crop(
+        region_image,
+        region_box,
+        tool_name,
+        timestamp_tag,
+        window_title,
+        backend,
+        debug_image_dir=debug_image_dir,
+        log_name=log_name,
+        component_name=component_name,
+        artifact_label=f"tool_region_{normalized}",
+    )
+    attempt_record["region_verify"] = region_record
+    if region_located is not None:
         return {
-            "full_image_point": full_point,
-            "matched_text": match["text"],
-            "detection_source": "vlm_then_spotting",
-            "verify_crop_box": strip_box,
+            "full_image_point": region_located["full_point"],
+            "matched_text": region_located["matched_text"],
+            "detection_source": "region_spotting",
+            "verify_crop_box": region_box,
             "vlm_point": vlm_point,
         }, attempt_record
 
-    print(
-        f"[WARNING] Spotting 텍스트 검증 실패(strip 안에서 {tool_name!r} 미검출) "
-        f"→ mai-ui refined point 로 fallback (텍스트 미검증)"
-    )
-    return {
-        "full_image_point": vlm_point,
-        "matched_text": None,
-        "detection_source": "vlm_only",
-        "verify_crop_box": strip_box,
-        "vlm_point": vlm_point,
-    }, attempt_record
+    # 3. VLM point 가 있으면 텍스트 미검증 best-effort 클릭, 없으면 미검출.
+    if vlm_point is not None:
+        print(
+            f"[WARNING] Spotting 텍스트 검증 실패(strip/region 모두 {tool_name!r} 미검출) "
+            f"→ mai-ui refined point 로 fallback (텍스트 미검증)"
+        )
+        return {
+            "full_image_point": vlm_point,
+            "matched_text": None,
+            "detection_source": "vlm_only",
+            "verify_crop_box": region_box,
+            "vlm_point": vlm_point,
+        }, attempt_record
+
+    return None, attempt_record
 
 
 def select_tool_from_main_window(

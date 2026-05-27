@@ -62,6 +62,7 @@ class CompareReport:
     decision: str
     verdict: str
     overlay_path: str
+    side_by_side_path: str
 
 
 def _pad_frame(frame: np.ndarray, template_shape: tuple[int, int]) -> tuple[np.ndarray, int, int]:
@@ -76,6 +77,70 @@ def _pad_frame(frame: np.ndarray, template_shape: tuple[int, int]) -> tuple[np.n
         frame, pad_y, pad_y, pad_x, pad_x, borderType=cv2.BORDER_REPLICATE
     )
     return padded, pad_x, pad_y
+
+
+# 판정별 헤더 색상 (BGR). cv2 는 ASCII 만 그리므로 한글 verdict 는 이미지에 넣지 않는다.
+_DECISION_BGR = {
+    "match": (60, 170, 60),    # green
+    "adjust": (40, 170, 220),  # amber
+    "low": (60, 60, 200),      # red
+}
+
+
+def _label_panel(img_bgr: np.ndarray, text: str) -> np.ndarray:
+    """패널 좌상단에 반투명 라벨 바를 얹는다 (어느 쪽이 recipe/current 인지 표시)."""
+    out = img_bgr.copy()
+    bar_h = 26
+    cv2.rectangle(out, (0, 0), (out.shape[1], bar_h), (0, 0, 0), thickness=-1)
+    cv2.putText(
+        out, text, (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA
+    )
+    return out
+
+
+def _fit_height(img_bgr: np.ndarray, target_h: int) -> np.ndarray:
+    """종횡비를 유지하며 height 를 target_h 로 맞춘다 (side-by-side concat 전 정규화)."""
+    ih, iw = img_bgr.shape[:2]
+    scale = target_h / ih
+    new_w = max(1, int(round(iw * scale)))
+    interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+    return cv2.resize(img_bgr, (new_w, target_h), interpolation=interp)
+
+
+def _build_side_by_side(
+    recipe_gray: np.ndarray,
+    current_gray: np.ndarray,
+    *,
+    decision: str,
+    score: float,
+    chamfer: float,
+    orb: float,
+    best_scale: float,
+) -> np.ndarray:
+    """recipe(왼쪽) vs current(오른쪽) 를 같은 높이로 붙이고, 위에 점수 헤더를 얹는다."""
+    left = cv2.cvtColor(recipe_gray, cv2.COLOR_GRAY2BGR)
+    right = cv2.cvtColor(current_gray, cv2.COLOR_GRAY2BGR)
+
+    target_h = max(left.shape[0], right.shape[0])
+    left = _label_panel(_fit_height(left, target_h), "RECIPE (from_rcp)")
+    right = _label_panel(_fit_height(right, target_h), "CURRENT (from_msr)")
+
+    gap = np.full((target_h, 4, 3), (40, 40, 40), dtype=np.uint8)
+    body = np.hstack([left, gap, right])
+
+    # 점수 헤더 — 판정 색으로 채우고 ASCII 수치를 두 줄로.
+    header_h = 64
+    header_color = _DECISION_BGR.get(decision, (90, 90, 90))
+    header = np.full((header_h, body.shape[1], 3), header_color, dtype=np.uint8)
+    cv2.putText(
+        header, f"decision={decision.upper()}  score={score:.3f}",
+        (10, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA
+    )
+    cv2.putText(
+        header, f"chamfer={chamfer:.3f}  orb={orb:.3f}  scale={best_scale:.2f}",
+        (10, 52), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA
+    )
+    return np.vstack([header, body])
 
 
 def _verdict_for(decision: str, score: float) -> str:
@@ -120,6 +185,18 @@ def compare_pair(
     overlay_path = out_dir / "compare_overlay.jpg"
     save_overlay_jpeg(result.debug_overlay, overlay_path)
 
+    side_by_side = _build_side_by_side(
+        recipe_sem,
+        current_sem,
+        decision=result.decision,
+        score=result.score,
+        chamfer=result.chamfer_score,
+        orb=result.orb_inlier_ratio,
+        best_scale=result.best_scale,
+    )
+    side_by_side_path = out_dir / "compare_side_by_side.jpg"
+    cv2.imwrite(str(side_by_side_path), side_by_side)
+
     verdict = _verdict_for(result.decision, result.score)
     report = CompareReport(
         recipe_id=recipe_id,
@@ -133,6 +210,7 @@ def compare_pair(
         decision=result.decision,
         verdict=verdict,
         overlay_path=str(overlay_path),
+        side_by_side_path=str(side_by_side_path),
     )
     return report
 
@@ -211,6 +289,7 @@ def run() -> str:
     )
     print(f"[INFO] verdict: {report.verdict}")
     print(f"[INFO] overlay: {report.overlay_path}")
+    print(f"[INFO] side_by_side: {report.side_by_side_path}")
     print(f"[INFO] elapsed={time.time() - started:.2f}s, out_dir={out_dir}")
     return "success"
 

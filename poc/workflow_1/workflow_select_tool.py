@@ -944,105 +944,7 @@ def _locate_tool_on_attempts(
     return None, detection_attempts
 
 
-def _build_verify_strip(main_image, point: dict) -> dict[str, int]:
-    """mai-ui fine point 주변에 한 행 높이의 가로 strip crop box 를 만든다.
-
-    strip 이 fine point 중심 한 행 높이라서, 그 안에서 target 텍스트가 잡히면
-    fine point 가 올바른 행 위에 있다는 뜻이 된다(OCR 확인 게이트). 가로로는 왼쪽
-    MC ID 컬럼 전체를 덮어 행 텍스트가 좌/우 어디에 있어도 잡히게 한다.
-    """
-    width, height = main_image.size
-    pad_y = max(36, int(round(height * 0.022)))
-    right_limit = max(
-        int(round(point["x"] + width * 0.12)),
-        int(round(width * LIST_REGION_RIGHT_RATIO)),
-    )
-    left = 0
-    top = max(0, point["y"] - pad_y)
-    right = min(width, max(left + 1, right_limit))
-    bottom = min(height, point["y"] + pad_y)
-    return {"left": left, "top": top, "right": right, "bottom": bottom}
-
-
-def _spotting_verify_on_crop(
-    base_image,
-    crop_box: dict,
-    tool_name: str,
-    timestamp_tag: str,
-    window_title: str,
-    backend: str,
-    *,
-    debug_image_dir,
-    log_name: str,
-    component_name: str,
-    artifact_label: str,
-) -> tuple[dict | None, dict]:
-    """주어진 crop(base_image, crop_box) 에 Spotting 1회를 돌려 tool 이름을 검증한다.
-
-    매칭 성공 시 그 bbox 중심을 full image 좌표로 복원해 반환한다. (located | None,
-    debug_record) 형태. located 는 {"full_point", "matched_text"}.
-    """
-    work_image, _meta = _resize_tool_list_image(base_image)
-    items: list[dict] = []
-    model_name = None
-    try:
-        items, model_name = _run_list_spotting(
-            work_image,
-            tool_name,
-            timestamp_tag,
-            window_title,
-            backend,
-            debug_image_dir=debug_image_dir,
-            log_name=log_name,
-            artifact_label=artifact_label,
-        )
-    except Exception as exc:
-        log_work2_event(
-            component=component_name,
-            message="verify_spotting_failed",
-            level="warning",
-            log_name=log_name,
-            target_tool_name=tool_name,
-            artifact_label=artifact_label,
-            error=exc,
-        )
-
-    match = best_match(items, tool_name) if items else None
-    record: dict = {
-        "artifact_label": artifact_label,
-        "crop_box": crop_box,
-        "item_count": len(items),
-        "matched_text": match["text"] if match is not None else None,
-    }
-    if items:
-        record["overlay_path"] = _save_spotting_overlay(
-            work_image,
-            items,
-            match["bbox"] if match is not None else None,
-            debug_image_dir=debug_image_dir,
-            timestamp_tag=timestamp_tag,
-            artifact_label=artifact_label,
-            model_name=model_name or "spotting",
-        )
-    if match is None:
-        return None, record
-
-    center = bbox_center(match["bbox"])
-    crop_point = _map_point_from_working_image(
-        center,
-        base_image.size[0],
-        base_image.size[1],
-        work_image.size[0],
-        work_image.size[1],
-    )
-    full_point = {
-        "x": crop_box["left"] + crop_point["x"],
-        "y": crop_box["top"] + crop_point["y"],
-    }
-    return {"full_point": full_point, "matched_text": match["text"]}, record
-
-
-def _locate_tool_via_vlm_then_verify(
+def _locate_tool_via_vlm(
     main_window,
     window_title: str,
     backend: str,
@@ -1054,18 +956,12 @@ def _locate_tool_via_vlm_then_verify(
     component_name: str,
     timestamp_tag: str,
 ) -> tuple[dict | None, dict]:
-    """coarse(ui-venus)→fine(mai-ui)로 정밀 클릭점을 잡고, PaddleOCR Spotting 으로
-    그 점이 올바른 tool 행 위인지(텍스트 일치)만 확인한다.
+    """coarse(ui-venus)→fine(mai-ui)로 tool row 의 정밀 클릭점을 잡는다.
 
-    엔지니어링 장비를 제어하므로 정밀 제어가 필요하다. 따라서:
-    - 클릭 좌표는 항상 VLM coarse→fine(mai-ui fine point)이 만든다. OCR 은 좌표를
-      만들지 않는다.
-    - OCR(Spotting)은 fine point 한 행 strip 에 target 텍스트가 있는지 확인하는
-      게이트로만 쓴다(= 두 VLM 이 올바른 행 위에 있는지 확인).
-    - 확인되지 않으면 클릭하지 않는다(추측 클릭 금지).
-
-    VLM 추론의 run-to-run 변동을 흡수하기 위해 coarse→fine→confirm 을 같은
-    프레임에서 짧게 반복한다(OCR 게이트가 오클릭을 막아 반복이 안전함).
+    PaddleOCR 확인 게이트는 쓰지 않는다: 이 list UI 에서 Spotting 응답이 garbage 라
+    정상 검출을 막기만 했다. 두 VLM(coarse→fine)이 서로 독립적으로 같은 행에
+    동의하는 것을 신뢰하고 mai-ui fine point 를 클릭점으로 쓴다. VLM 이 refusal 하면
+    같은 프레임에서 짧게 재시도한다(run-to-run 변동 흡수).
 
     (located | None, attempt_record) 를 반환한다.
     """
@@ -1105,8 +1001,8 @@ def _locate_tool_via_vlm_then_verify(
             "vlm_exit_code": target_result.exit_code,
             "fine_point_on_region": target_result.point,
         }
+        attempt_record["iters"].append(iter_rec)
         if target_result.exit_code != DETECT_SUCCESS or target_result.point is None:
-            attempt_record["iters"].append(iter_rec)
             continue
 
         # region crop 좌표 → full image 좌표 복원.
@@ -1115,37 +1011,15 @@ def _locate_tool_via_vlm_then_verify(
             "y": region_box["top"] + target_result.point["y"],
         }
         iter_rec["fine_point"] = fine_point
+        return {
+            "full_image_point": fine_point,
+            "matched_text": None,
+            "detection_source": f"coarse_fine_it{iter_idx}",
+            "verify_crop_box": region_box,
+            "coarse_center": fine_point,
+        }, attempt_record
 
-        # confirm(OCR): fine point 한 행 strip 에 target 텍스트가 있는지 확인.
-        strip_box = _build_verify_strip(current_image, fine_point)
-        strip_base = crop_image(current_image, strip_box)
-        confirmed, confirm_record = _spotting_verify_on_crop(
-            strip_base,
-            strip_box,
-            tool_name,
-            timestamp_tag,
-            window_title,
-            backend,
-            debug_image_dir=debug_image_dir,
-            log_name=log_name,
-            component_name=component_name,
-            artifact_label=f"tool_confirm_{normalized}_it{iter_idx}",
-        )
-        iter_rec["strip_box"] = strip_box
-        iter_rec["confirm"] = confirm_record
-        attempt_record["iters"].append(iter_rec)
-
-        if confirmed is not None:
-            # OCR 이 fine point 행에서 target 텍스트 확인 → VLM fine point 를 클릭.
-            return {
-                "full_image_point": fine_point,
-                "matched_text": confirm_record.get("matched_text"),
-                "detection_source": f"coarse_fine_confirmed_it{iter_idx}",
-                "verify_crop_box": strip_box,
-                "coarse_center": fine_point,
-            }, attempt_record
-
-    # 확인 실패: 추측 클릭하지 않는다(상위에서 최대화/스크롤 재시도).
+    # VLM 미검출: 추측 클릭하지 않는다(상위에서 최대화/스크롤 재시도).
     return None, attempt_record
 
 
@@ -1193,7 +1067,7 @@ def select_tool_from_main_window(
     )
 
     def _locate(current_image):
-        return _locate_tool_via_vlm_then_verify(
+        return _locate_tool_via_vlm(
             main_window,
             window_title,
             backend,

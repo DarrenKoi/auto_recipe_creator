@@ -3,19 +3,20 @@
 `align_fail_alarm.py` 의 변형. 1분 주기로 CD-SEM 알람을 조회하여 ALID=9006
 (Align Fail) 이 감지되면, EQP_ID 단위로 아래 **iteration** 을 수행한다:
 
-  alarm(eqp_id) → ① tool 열기(더블클릭) → ② tool 화면 record(캡처)
-                → ③ tool 창 닫기 → ④ 알림(alert) 창 닫기
+  alarm(eqp_id) → ① tool 열기(더블클릭) → 알림(alert) 팝업 닫기
+                → ② tool 화면 record(캡처) → ③ tool 창 닫기
 
-원본과 달리, 캡처 후 tool 창과 알림 팝업까지 자동으로 닫아 한 사이클을 끝까지
-마무리한다(연속 align fail 에서 창/팝업이 쌓이지 않게). 캡처는 RECIPE_ID 가 있는
-등록 recipe 일 때만 수행한다(저장 경로가 <eqp>/<class>/<recipe> 라서 RECIPE_ID
-필요). RECIPE_ID 가 없으면 알림만 띄우고 엔지니어가 직접 처리한다.
+알림 팝업은 SYSTEMMODAL/최상위라 RCS 모니터 screenshot 에 겹쳐 찍히므로, ② record
+전에 먼저 닫는다. 캡처 후 tool 창도 닫아 한 사이클을 끝까지 마무리한다(연속 align
+fail 에서 창/팝업이 쌓이지 않게). 캡처는 RECIPE_ID 가 있는 등록 recipe 일 때만
+수행한다(저장 경로가 <eqp>/<class>/<recipe> 라서 RECIPE_ID 필요). RECIPE_ID 가
+없으면 알림만 띄우고 엔지니어가 직접 처리한다.
 
 각 단계 모듈:
   ① workflow_select_tool.connect_to_tool
-  ② rcs_screenshot.record_rcs_window  (캡처만, 닫지 않음)
-  ③ workflow_close_tool.close_tool     (제목의 tool id 로 창 찾아 닫기)
-  ④ FindWindowW + WM_CLOSE             (notify_align_fail 팝업 닫기)
+  알림 닫기: FindWindowW + WM_CLOSE        (notify_align_fail 팝업 — record 전에)
+  ② rcs_screenshot.record_rcs_window      (캡처만, 닫지 않음)
+  ③ workflow_close_tool.close_tool         (제목의 tool id 로 창 찾아 닫기)
 
 사용법:
   uv run python poc/workflow_1/align_fail_alarm_record.py
@@ -422,7 +423,7 @@ def run_record_cycle(
     떠 캡처/닫기를 생략). RCS 가 다른 사용자에게 점유돼 'select' 팝업이 뜨면 tool
     창이 안 열리므로, ②의 창 탐색을 RCS_WINDOW_MAX_TRIALS 회로 제한하고 그래도 못
     찾으면 이번 알람은 건너뛰고 다음 알람을 기다린다('select' 팝업은 건드리지 않음).
-    ④ 알림 창 닫기는 사이클 끝에 항상 시도한다.
+    알림 팝업은 screenshot 에 겹치지 않도록 ② record 전에 닫는다.
 
     저장된 캡처 이미지 경로 목록(list[Path])을 반환한다(캡처 없으면 빈 리스트).
     """
@@ -435,8 +436,13 @@ def run_record_cycle(
             f"[INFO] tool 더블클릭 미수행(dry-run/실패) — record/tool 닫기 생략: "
             f"EQP_ID={eqp_id}"
         )
-        _close_alert_window()  # ④
+        _close_alert_window()  # 팝업 정리
         return []
+
+    # 알림(alert) 팝업 닫기 — SYSTEMMODAL/최상위라 RCS 모니터 screenshot 에 겹쳐
+    # 찍히므로, ② record(캡처) 전에 화면에서 치운다. ① 열기에 수 초가 걸려 그 사이
+    # 팝업이 충분히 떠 있으므로 여기서 닫으면 누락 없이 닫힌다.
+    _close_alert_window()
 
     # ② tool 화면 record (캡처만, 창은 닫지 않음). 창 탐색은 RCS_WINDOW_MAX_TRIALS 로 제한.
     saved: list = []
@@ -465,8 +471,6 @@ def run_record_cycle(
             f"다음 알람을 기다립니다: EQP_ID={eqp_id}"
         )
 
-    # ④ 알림(alert) 창 닫기.
-    _close_alert_window()
     return saved
 
 
@@ -627,7 +631,7 @@ def monitor_loop(popup_enabled: bool | None = None) -> None:
         f"{'(dry-run)' if record_enabled and not connect_action_enabled else ''})"
     )
     print(f"[INFO] 누적 로그 파일: {ALARM_LOG_PATH}")
-    print("[INFO] 각 신규 Align Fail: 열기 → record → tool 닫기 → 알림 닫기. 중복 알람은 한 번만 처리.")
+    print("[INFO] 각 신규 Align Fail: 열기 → 알림닫기 → record → tool 닫기. 중복 알람은 한 번만 처리.")
 
     while True:
         try:

@@ -65,6 +65,7 @@ uv run python poc/workflow_1/login_rcs_ui_venus_mai.py    # 2-stage (ui-venus co
 uv run python poc/workflow_1/view_list_tab_rcs.py         # Locate + click the List tab
 uv run python poc/workflow_1/workflow_select_tool.py      # Find a tool in List tab and double-click it
 uv run python poc/workflow_1/connect_tool.py              # Manual: connect to an arbitrary tool (reuses select_tool)
+uv run python poc/workflow_1/workflow_close_tool.py       # Close the opened tool window (Remote Monitoring System) by tool id in title
 uv run python poc/workflow_1/align_fail_alarm.py          # Poll alarms; on ALID=9006 notify + capture RCS frame
 uv run python poc/workflow_1/monitor_align_fail.py        # Align-fail + open Tool DVR (CCTV) + capture CH4 frames
 uv run python poc/workflow_1/rcs_screenshot.py            # Capture tool window into captured_img_from_rcs, then close

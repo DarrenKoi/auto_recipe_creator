@@ -26,6 +26,7 @@ from poc.workflow_1.ui_venus_mai_locator import (
     EXIT_SUCCESS as DETECT_SUCCESS,
     TargetConfig,
     analyze_window_target,
+    locate_coarse_region,
 )
 from poc.workflow_1.util import (
     activate_window,
@@ -941,23 +942,30 @@ def _locate_tool_on_attempts(
     return None, detection_attempts
 
 
-def _build_verify_strip(main_image, point: dict) -> dict[str, int]:
-    """VLM 이 찾은 tool row point 주변에 한 행 높이의 가로 strip crop box 를 만든다.
+def _build_verify_strip(main_image, point: dict, bbox: dict | None = None) -> dict[str, int]:
+    """ui-venus 근사 위치 주변에 몇 행 높이의 가로 strip crop box 를 만든다.
 
-    strip 이 한 행 높이라서 Spotting best_match 가 자연히 같은 행 안으로만 제한된다
-    (서로 다른 행 오클릭 방지). 가로로는 list 컬럼 전체를 덮어 행 텍스트가 point 기준
-    좌/우 어디에 있어도 잡히게 한다.
+    bbox(ui-venus coarse bbox)가 주어지면 그 행 ±1행 정도를 덮어 coarse 위치 오차를
+    흡수한다. 없으면 point 기준 한 행 높이. 가로로는 왼쪽 MC ID 컬럼 전체를 덮는다.
+    고정 ID 는 strip 안에서 한 행에만 나타나므로 best_match 가 그 행을 정확히 고른다.
     """
     width, height = main_image.size
-    pad_y = max(36, int(round(height * 0.022)))
+    if bbox is not None:
+        row_h = max(1, bbox["bottom"] - bbox["top"])
+        top = max(0, bbox["top"] - row_h)
+        bottom = min(height, bbox["bottom"] + row_h)
+        center_x = (bbox["left"] + bbox["right"]) // 2
+    else:
+        pad_y = max(36, int(round(height * 0.022)))
+        top = max(0, point["y"] - pad_y)
+        bottom = min(height, point["y"] + pad_y)
+        center_x = point["x"]
     right_limit = max(
-        int(round(point["x"] + width * 0.12)),
+        int(round(center_x + width * 0.12)),
         int(round(width * LIST_REGION_RIGHT_RATIO)),
     )
     left = 0
-    top = max(0, point["y"] - pad_y)
     right = min(width, max(left + 1, right_limit))
-    bottom = min(height, point["y"] + pad_y)
     return {"left": left, "top": top, "right": right, "bottom": bottom}
 
 
@@ -1051,16 +1059,17 @@ def _locate_tool_via_vlm_then_verify(
     component_name: str,
     timestamp_tag: str,
 ) -> tuple[dict | None, dict]:
-    """VLM(ui-venus→mai-ui)으로 tool row 영역을 먼저 잡고, 그 좁은 strip 에 Spotting 을
-    1회 돌려 tool 이름 텍스트를 검증한 좌표를 클릭점으로 만든다.
+    """ui-venus 로 tool row 의 근사 위치만 잡고(positioning), 그 근사 영역 strip 에
+    Spotting 을 돌려 tool 이름 텍스트로 클릭점을 확정한다(selection).
 
-    검증/검출 우선순위:
-    1. VLM hit → 한 행 strip Spotting 검증 (행 텍스트 검증, 가장 안전).
-    2. 위가 안 되면(=VLM 미검출 또는 strip miss) 왼쪽 region 전체에 Spotting 1회
-       fallback. VLM 이 refusal(예: 중간 행 MCD719 가 간헐적으로 [-1,-1]) 이어도
-       텍스트가 화면에 있으면 직접 잡는다. best_match 의 행 모호성 가드로 안전.
-    3. 그래도 안 되면 VLM point 가 있을 때만 mai-ui refined point 로 fallback
-       (텍스트 미검증, best-effort). VLM point 도 없으면 None → 상위 스크롤 재시도.
+    mai-ui refine 은 쓰지 않는다: list 처럼 비슷한 행이 빽빽한 화면에서 정확한 행
+    선택은 OCR 텍스트 일치가 더 안정적이고, mai-ui refine 실패가 ui-venus 의 정확한
+    근사 위치까지 버리게 만들던 문제를 없앤다.
+
+    검출 우선순위:
+    1. ui-venus coarse hit → coarse bbox 기준 strip Spotting 검증 (행 텍스트 검증).
+    2. region 전체 Spotting fallback (coarse refusal/strip miss 공통 복구).
+    3. coarse 위치가 있으면 그 중심을 텍스트 미검증 best-effort 클릭. 없으면 None.
 
     (located | None, attempt_record) 를 반환한다.
     """
@@ -1079,35 +1088,36 @@ def _locate_tool_via_vlm_then_verify(
     )
     region_image = crop_image(current_image, region_box)
 
-    target_result = analyze_window_target(
-        main_window,
-        window_title,
-        backend,
+    coarse = locate_coarse_region(
+        region_image,
         _tool_row_target(tool_name),
-        debug_image_dir=debug_image_dir,
         log_name=log_name,
-        component_name=component_name,
-        artifact_prefix=f"workflow_select_tool_{normalized}_vlm",
-        result_mode="ui_venus_then_mai_ui_tool_list",
-        image=region_image,
     )
     attempt_record: dict = {
-        "vlm_exit_code": target_result.exit_code,
-        "vlm_point_on_region": target_result.point,
         "region_box": region_box,
+        "coarse_found": coarse is not None,
     }
 
-    vlm_point = None
-    if target_result.exit_code == DETECT_SUCCESS and target_result.point is not None:
+    coarse_center_full = None
+    coarse_bbox_full = None
+    if coarse is not None:
         # region crop 좌표 → full image 좌표 복원.
-        vlm_point = {
-            "x": region_box["left"] + target_result.point["x"],
-            "y": region_box["top"] + target_result.point["y"],
+        coarse_center_full = {
+            "x": region_box["left"] + coarse["center"]["x"],
+            "y": region_box["top"] + coarse["center"]["y"],
         }
-        attempt_record["vlm_point"] = vlm_point
+        cb = coarse["bbox_pixels"]
+        coarse_bbox_full = {
+            "left": region_box["left"] + cb["left"],
+            "top": region_box["top"] + cb["top"],
+            "right": region_box["left"] + cb["right"],
+            "bottom": region_box["top"] + cb["bottom"],
+        }
+        attempt_record["coarse_center"] = coarse_center_full
+        attempt_record["coarse_bbox"] = coarse_bbox_full
 
-        # 1. VLM hit → 한 행 strip 텍스트 검증.
-        strip_box = _build_verify_strip(current_image, vlm_point)
+        # 1. coarse 근사 영역 strip 에 Spotting → 텍스트로 행 확정.
+        strip_box = _build_verify_strip(current_image, coarse_center_full, coarse_bbox_full)
         strip_base = crop_image(current_image, strip_box)
         attempt_record["verify_strip_box"] = strip_box
         strip_located, strip_record = _spotting_verify_on_crop(
@@ -1127,12 +1137,12 @@ def _locate_tool_via_vlm_then_verify(
             return {
                 "full_image_point": strip_located["full_point"],
                 "matched_text": strip_located["matched_text"],
-                "detection_source": "vlm_then_spotting",
+                "detection_source": "uivenus_then_spotting",
                 "verify_crop_box": strip_box,
-                "vlm_point": vlm_point,
+                "coarse_center": coarse_center_full,
             }, attempt_record
 
-    # 2. region 전체 Spotting fallback (VLM 미검출/strip miss 공통 복구).
+    # 2. region 전체 Spotting fallback (coarse refusal/strip miss 공통 복구).
     region_located, region_record = _spotting_verify_on_crop(
         region_image,
         region_box,
@@ -1152,21 +1162,21 @@ def _locate_tool_via_vlm_then_verify(
             "matched_text": region_located["matched_text"],
             "detection_source": "region_spotting",
             "verify_crop_box": region_box,
-            "vlm_point": vlm_point,
+            "coarse_center": coarse_center_full,
         }, attempt_record
 
-    # 3. VLM point 가 있으면 텍스트 미검증 best-effort 클릭, 없으면 미검출.
-    if vlm_point is not None:
+    # 3. coarse 위치가 있으면 텍스트 미검증 best-effort 클릭, 없으면 미검출.
+    if coarse_center_full is not None:
         print(
             f"[WARNING] Spotting 텍스트 검증 실패(strip/region 모두 {tool_name!r} 미검출) "
-            f"→ mai-ui refined point 로 fallback (텍스트 미검증)"
+            f"→ ui-venus coarse 중심으로 fallback (텍스트 미검증)"
         )
         return {
-            "full_image_point": vlm_point,
+            "full_image_point": coarse_center_full,
             "matched_text": None,
-            "detection_source": "vlm_only",
-            "verify_crop_box": region_box,
-            "vlm_point": vlm_point,
+            "detection_source": "uivenus_only",
+            "verify_crop_box": coarse_bbox_full or region_box,
+            "coarse_center": coarse_center_full,
         }, attempt_record
 
     return None, attempt_record
@@ -1374,7 +1384,7 @@ def select_tool_from_main_window(
             "target_tool_name": normalized_tool_name,
             "detection_source": detection_source,
             "verify_crop_box": list_crop_box,
-            "vlm_point": located["vlm_point"],
+            "coarse_center": located.get("coarse_center"),
             "ocr_target_visible": ocr_target_visible,
             "matched_lines": matched_lines,
             "maximized_for_retry": maximized_for_retry,

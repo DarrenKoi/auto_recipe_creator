@@ -434,6 +434,35 @@ def _run_mai_ui_refinement(
     }
 
 
+def locate_coarse_region(
+    image: Image.Image,
+    target: TargetConfig,
+    *,
+    log_name: str,
+    coarse_service_slug: str = "ui-venus",
+) -> dict | None:
+    """ui-venus 로 image 안에서 target 의 coarse bbox(근사 위치)만 찾는다.
+
+    mai-ui refine 없이 ui-venus 의 강점인 '근사 위치 잡기'만 수행한다. bbox_pixels /
+    center 는 입력 image 좌표계 기준. 미검출(refusal 포함) 시 None.
+
+    list 처럼 비슷한 행이 빽빽한 화면에서, 정확한 클릭점은 상위에서 그 근사 영역에
+    OCR(Spotting)을 돌려 텍스트로 확정하는 편이 mai-ui refine 보다 안정적이다.
+    """
+    client = Workflow1VLMClient(service_slug=coarse_service_slug, log_name=log_name)
+    image_b64, img_w, img_h = encode_image_webp(image)
+    coarse = _run_ui_venus_coarse_bbox(client, image_b64, img_w, img_h, target)
+    if coarse is None or coarse["bbox_pixels"] is None:
+        return None
+    return {
+        "bbox_pixels": coarse["bbox_pixels"],
+        "center": coarse["center"],
+        "bbox_1000": coarse["bbox_1000"],
+        "model_name": client.model_name,
+        "response_text": coarse["response_text"],
+    }
+
+
 def analyze_window_target(
     window,
     window_title: str,
@@ -780,4 +809,5 @@ __all__ = [
     "TargetConfig",
     "TargetResult",
     "analyze_window_target",
+    "locate_coarse_region",
 ]

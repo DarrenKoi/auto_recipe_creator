@@ -577,12 +577,14 @@ def process_fail_rows(
 
         # 나중에 examine 하기 쉽도록 한 줄짜리 record manifest 에 누적(이미지 없으면
         # frame 0 으로 기록되어 align fail 발생 자체는 남는다).
+        # 매니페스트 alarm_time 은 캡처 폴더 태그와 같은 UTC9(알람 시스템 기준 시각)로
+        # 적어, manifest 한 줄과 captured_dir 경로의 시각이 끝까지 일치하게 한다.
         append_record_manifest(
             eqp_id,
             recipe_id,
             frames,
             alid=alid,
-            alarm_time=alarm_time,
+            alarm_time=utc9,
             alarm_name=alarm_name,
         )
 

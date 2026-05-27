@@ -178,6 +178,23 @@ def filter_rows_within_window(rows: "pd.DataFrame", window_sec: int) -> "pd.Data
     return rows[mask].reset_index(drop=True)
 
 
+def _alarm_time_to_tag(alarm_time: str) -> str | None:
+    """알람 UTC9 문자열을 캡처 폴더/파일명용 타임스탬프 태그로 변환한다.
+
+    캡처 폴더가 캡처 wall-clock 이 아니라 실제 align fail 이벤트 시각으로 묶이도록,
+    UTC9 를 파싱해 `make_timestamp_tag` 와 같은 `%y%m%d_%H%M%S` 형식으로 만든다.
+    UTC9 는 이미 KST(UTC+9) wall-clock 이므로 epoch 변환(timezone 가정) 없이 파싱된
+    값을 그대로 strftime 한다. 비어있거나 파싱 불가하면 None 을 반환해 호출부가 캡처
+    시점으로 폴백하게 한다.
+    """
+    if not alarm_time:
+        return None
+    ts = pd.to_datetime(alarm_time, errors="coerce")
+    if ts is None or pd.isna(ts):
+        return None
+    return ts.strftime("%y%m%d_%H%M%S")
+
+
 def append_alarm_record(
     eqp_id: str,
     alarm_time: str,
@@ -416,6 +433,7 @@ def run_record_cycle(
     recipe_id: str,
     *,
     connect_action_enabled: bool = True,
+    alarm_time: str = "",
 ) -> list:
     """한 알람에 대한 record 사이클: ① 열기 → ② record → ③ tool 닫기 → ④ 알림 닫기.
 
@@ -445,6 +463,8 @@ def run_record_cycle(
     _close_alert_window()
 
     # ② tool 화면 record (캡처만, 창은 닫지 않음). 창 탐색은 RCS_WINDOW_MAX_TRIALS 로 제한.
+    # 캡처 폴더가 캡처 wall-clock 이 아니라 실제 align fail 이벤트 시각(UTC9)으로 묶이도록
+    # tag 를 넘긴다. 파싱 불가하면 None → record_rcs_window 가 캡처 시점으로 폴백.
     saved: list = []
     tool_window = None
     if RECORD_RCS_AVAILABLE:
@@ -452,6 +472,7 @@ def run_record_cycle(
             eqp_id,
             recipe_id,
             window_max_attempts=RCS_WINDOW_MAX_TRIALS,
+            tag=_alarm_time_to_tag(alarm_time),
         )
     else:
         print(f"[INFO] record 비활성 — 캡처 생략: EQP_ID={eqp_id}")
@@ -540,6 +561,7 @@ def process_fail_rows(
                     eqp_id,
                     recipe_id,
                     connect_action_enabled=connect_action_enabled,
+                    alarm_time=alarm_time,
                 ) or []
             else:
                 print(

@@ -439,6 +439,7 @@ def run() -> str:
     print(
         f"[INFO] 완료: processed={len(reports)}/{len(paths)} "
         f"vlm_detected={summary['vlm_detected']} blurry={summary['blurry']} "
+        f"ok_button_detected={summary['ok_button_detected']} "
         f"elapsed={format_elapsed_ms(started)}"
     )
     print(f"[INFO] out_dir={out_dir}")

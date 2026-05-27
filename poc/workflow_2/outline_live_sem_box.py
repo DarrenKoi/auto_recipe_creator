@@ -12,6 +12,10 @@
      snap 해 픽셀 단위로 정렬한다.
   3. box 내부의 Laplacian 분산으로 sharpness 를 재서, 'total blur → 클릭 금지' 후보를
      overlay 에 표시한다(클릭 대신 zoom-out/이동 판단의 1차 근거).
+  4. (선택) align fail 시 뜨는 'Wait Input' 팝업의 OK 버튼을 VLM 으로 grounding 해서
+     클릭점을 같은 overlay 에 함께 표시한다. 우하단의 Retry/Environment/Reject 가 아니라
+     좌하단 OK 버튼만 골라야 하므로, "Wait Input 제목 + 좌하단 위치" 를 앵커로 쓴다.
+     RCS_OUTLINE_DETECT_OK_BUTTON=0 으로 끄면 SEM box 외곽선만 그린다.
 
 입력: ``ALIGN_IMAGES_ROOT/*/*/*/captured_img_from_rcs/<tag>/<tag>_rcs.jpg``
       (RCS_CAPTURE_DIR 환경변수로 임의 폴더를 줄 수도 있다.)

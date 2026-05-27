@@ -188,9 +188,12 @@ def _tool_row_target(tool_name: str) -> TargetConfig:
     return TargetConfig(
         key="tool_row",
         description=(
-            f"the tool row in the left-side RCS tool list whose visible tool name text is exactly "
-            f"'{tool_name}'. A small colored status square is immediately to the left of the text. "
-            f"Return a safe point on that same row where a user would double-click to open the tool."
+            f"the equipment ID '{tool_name}' in the left-most 'MC ID' column of the RCS tool list. "
+            f"Tool/equipment IDs are listed vertically down this left-most column. A small "
+            f"traffic-light status square (green = tool On, black = tool Off) sits immediately to "
+            f"the left of each ID text. Find the row whose MC ID text is exactly '{tool_name}' and "
+            f"return a safe point on that ID text where a user would double-click to open the tool. "
+            f"Ignore the right-side columns (RCS IP, Location, Model, Status, Count, DVR, Connection User)."
         ),
         left_pad_ratio=0.7,
         right_pad_ratio=1.8,
@@ -980,6 +983,20 @@ def _locate_tool_via_vlm_then_verify(
     (located | None, attempt_record) 를 반환한다.
     """
     normalized = _normalize_tool_text(tool_name).lower() or "tool"
+
+    # 장비 ID 는 화면 왼쪽 MC ID 컬럼에만 있으므로, VLM 입력을 왼쪽 list 영역으로
+    # 좁혀 오른쪽 컬럼(Connection User 등 ID 처럼 보이는 텍스트)에 헷갈리지 않게 한다.
+    full_w, full_h = current_image.size
+    region_box = _build_relative_crop_box(
+        full_w,
+        full_h,
+        LIST_REGION_LEFT_RATIO,
+        LIST_REGION_TOP_RATIO,
+        LIST_REGION_RIGHT_RATIO,
+        LIST_REGION_BOTTOM_RATIO,
+    )
+    region_image = crop_image(current_image, region_box)
+
     target_result = analyze_window_target(
         main_window,
         window_title,
@@ -990,16 +1007,22 @@ def _locate_tool_via_vlm_then_verify(
         component_name=component_name,
         artifact_prefix=f"workflow_select_tool_{normalized}_vlm",
         result_mode="ui_venus_then_mai_ui_tool_list",
-        image=current_image,
+        image=region_image,
     )
     attempt_record: dict = {
         "vlm_exit_code": target_result.exit_code,
-        "vlm_point": target_result.point,
+        "vlm_point_on_region": target_result.point,
+        "region_box": region_box,
     }
     if target_result.exit_code != DETECT_SUCCESS or target_result.point is None:
         return None, attempt_record
 
-    vlm_point = target_result.point
+    # region crop 좌표 → full image 좌표 복원.
+    vlm_point = {
+        "x": region_box["left"] + target_result.point["x"],
+        "y": region_box["top"] + target_result.point["y"],
+    }
+    attempt_record["vlm_point"] = vlm_point
     strip_box = _build_verify_strip(current_image, vlm_point)
     strip_base = crop_image(current_image, strip_box)
     strip_work, _strip_meta = _resize_tool_list_image(strip_base)

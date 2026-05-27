@@ -938,6 +938,144 @@ def _locate_tool_on_attempts(
     return None, detection_attempts
 
 
+def _build_verify_strip(main_image, point: dict) -> dict[str, int]:
+    """VLM 이 찾은 tool row point 주변에 한 행 높이의 가로 strip crop box 를 만든다.
+
+    strip 이 한 행 높이라서 Spotting best_match 가 자연히 같은 행 안으로만 제한된다
+    (서로 다른 행 오클릭 방지). 가로로는 list 컬럼 전체를 덮어 행 텍스트가 point 기준
+    좌/우 어디에 있어도 잡히게 한다.
+    """
+    width, height = main_image.size
+    pad_y = max(36, int(round(height * 0.022)))
+    right_limit = max(
+        int(round(point["x"] + width * 0.12)),
+        int(round(width * LIST_REGION_RIGHT_RATIO)),
+    )
+    left = 0
+    top = max(0, point["y"] - pad_y)
+    right = min(width, max(left + 1, right_limit))
+    bottom = min(height, point["y"] + pad_y)
+    return {"left": left, "top": top, "right": right, "bottom": bottom}
+
+
+def _locate_tool_via_vlm_then_verify(
+    main_window,
+    window_title: str,
+    backend: str,
+    tool_name: str,
+    current_image,
+    *,
+    debug_image_dir,
+    log_name: str,
+    component_name: str,
+    timestamp_tag: str,
+) -> tuple[dict | None, dict]:
+    """VLM(ui-venus→mai-ui)으로 tool row 영역을 먼저 잡고, 그 좁은 strip 에 Spotting 을
+    1회 돌려 tool 이름 텍스트를 검증한 좌표를 클릭점으로 만든다.
+
+    - 텍스트 매칭에 성공하면 그 bbox 중심이 클릭점이 된다(행 텍스트 검증됨).
+    - 매칭 실패 시 mai-ui refined point 로 fallback 한다(텍스트 미검증, best-effort).
+    - VLM 이 영역 자체를 못 잡으면 None 을 반환한다(상위에서 최대화/스크롤 재시도).
+
+    (located | None, attempt_record) 를 반환한다.
+    """
+    normalized = _normalize_tool_text(tool_name).lower() or "tool"
+    target_result = analyze_window_target(
+        main_window,
+        window_title,
+        backend,
+        _tool_row_target(tool_name),
+        debug_image_dir=debug_image_dir,
+        log_name=log_name,
+        component_name=component_name,
+        artifact_prefix=f"workflow_select_tool_{normalized}_vlm",
+        result_mode="ui_venus_then_mai_ui_tool_list",
+        image=current_image,
+    )
+    attempt_record: dict = {
+        "vlm_exit_code": target_result.exit_code,
+        "vlm_point": target_result.point,
+    }
+    if target_result.exit_code != DETECT_SUCCESS or target_result.point is None:
+        return None, attempt_record
+
+    vlm_point = target_result.point
+    strip_box = _build_verify_strip(current_image, vlm_point)
+    strip_base = crop_image(current_image, strip_box)
+    strip_work, _strip_meta = _resize_tool_list_image(strip_base)
+    attempt_record["verify_strip_box"] = strip_box
+
+    items: list[dict] = []
+    model_name = None
+    try:
+        items, model_name = _run_list_spotting(
+            strip_work,
+            tool_name,
+            timestamp_tag,
+            window_title,
+            backend,
+            debug_image_dir=debug_image_dir,
+            log_name=log_name,
+            artifact_label=f"tool_verify_{normalized}",
+        )
+    except Exception as exc:
+        log_work2_event(
+            component=component_name,
+            message="verify_spotting_failed",
+            level="warning",
+            log_name=log_name,
+            target_tool_name=tool_name,
+            error=exc,
+        )
+
+    match = best_match(items, tool_name) if items else None
+    if items:
+        attempt_record["verify_overlay_path"] = _save_spotting_overlay(
+            strip_work,
+            items,
+            match["bbox"] if match is not None else None,
+            debug_image_dir=debug_image_dir,
+            timestamp_tag=timestamp_tag,
+            artifact_label=f"tool_verify_{normalized}",
+            model_name=model_name or "spotting",
+        )
+    attempt_record["verify_item_count"] = len(items)
+    attempt_record["verify_matched_text"] = match["text"] if match is not None else None
+
+    if match is not None:
+        center = bbox_center(match["bbox"])
+        strip_point = _map_point_from_working_image(
+            center,
+            strip_base.size[0],
+            strip_base.size[1],
+            strip_work.size[0],
+            strip_work.size[1],
+        )
+        full_point = {
+            "x": strip_box["left"] + strip_point["x"],
+            "y": strip_box["top"] + strip_point["y"],
+        }
+        return {
+            "full_image_point": full_point,
+            "matched_text": match["text"],
+            "detection_source": "vlm_then_spotting",
+            "verify_crop_box": strip_box,
+            "vlm_point": vlm_point,
+        }, attempt_record
+
+    print(
+        f"[WARNING] Spotting 텍스트 검증 실패(strip 안에서 {tool_name!r} 미검출) "
+        f"→ mai-ui refined point 로 fallback (텍스트 미검증)"
+    )
+    return {
+        "full_image_point": vlm_point,
+        "matched_text": None,
+        "detection_source": "vlm_only",
+        "verify_crop_box": strip_box,
+        "vlm_point": vlm_point,
+    }, attempt_record
+
+
 def select_tool_from_main_window(
     main_window,
     window_title: str,
@@ -981,20 +1119,22 @@ def select_tool_from_main_window(
         _step_image_path(resolved_debug_dir, "main_window_capture.jpg", timestamp_tag=timestamp_tag),
     )
 
-    def _spotting_locate(current_image):
-        crop_attempts = _build_list_crop_attempts(current_image)
-        return _locate_tool_via_spotting(
-            normalized_tool_name,
-            crop_attempts,
-            timestamp_tag,
+    def _locate(current_image):
+        return _locate_tool_via_vlm_then_verify(
+            main_window,
             window_title,
             backend,
+            normalized_tool_name,
+            current_image,
             debug_image_dir=resolved_debug_dir,
             log_name=log_name,
             component_name=component_name,
+            timestamp_tag=timestamp_tag,
         )
 
-    spotting_located, spotting_attempts = _spotting_locate(main_image)
+    locate_attempts: list[dict] = []
+    located, attempt_record = _locate(main_image)
+    locate_attempts.append(attempt_record)
 
     # 라이브 창을 직접 제어할 수 있을 때(=호출부가 image 를 넘기지 않은 경우)만
     # 최대화/스크롤 재시도를 한다.
@@ -1002,7 +1142,7 @@ def select_tool_from_main_window(
     maximized_for_retry = False
     scroll_iters = 0
 
-    if spotting_located is None and can_drive_window and not is_window_maximized(main_window):
+    if located is None and can_drive_window and not is_window_maximized(main_window):
         print(f"[INFO] tool 미발견 → 창 최대화 후 재시도: tool={normalized_tool_name!r}")
         maximized_for_retry = maximize_window(
             main_window,
@@ -1019,13 +1159,12 @@ def select_tool_from_main_window(
                     timestamp_tag=timestamp_tag,
                 ),
             )
-            retry_located, retry_attempts = _spotting_locate(main_image)
-            spotting_attempts.extend(retry_attempts)
-            spotting_located = retry_located
+            located, attempt_record = _locate(main_image)
+            locate_attempts.append(attempt_record)
 
     # 최대화 후에도 안 보이면, list 영역이 더 이상 바뀌지 않을 때까지(=스크롤바가
     # 사라져 전체가 보일 때까지) 아래로 스크롤하며 재탐색한다. 추측 클릭은 하지 않는다.
-    while spotting_located is None and can_drive_window and scroll_iters < MAX_SCROLL_ITERS:
+    while located is None and can_drive_window and scroll_iters < MAX_SCROLL_ITERS:
         prev_image = main_image
         _scroll_list_region_down(
             main_window,
@@ -1049,12 +1188,11 @@ def select_tool_from_main_window(
         if not _list_region_changed(prev_image, main_image):
             print("[INFO] 스크롤해도 list 영역 변화 없음 → 전체 표시됨(스크롤바 없음), 탐색 중단")
             break
-        scroll_located, scroll_attempts = _spotting_locate(main_image)
-        spotting_attempts.extend(scroll_attempts)
-        spotting_located = scroll_located
+        located, attempt_record = _locate(main_image)
+        locate_attempts.append(attempt_record)
         scroll_iters += 1
 
-    if spotting_located is None:
+    if located is None:
         print(
             f"[INFO] tool 미발견(최대화/스크롤 후에도): tool={normalized_tool_name!r} "
             f"→ 추측하지 않고 종료(scroll_iters={scroll_iters}, maximized={maximized_for_retry})"
@@ -1075,17 +1213,12 @@ def select_tool_from_main_window(
             ocr_target_visible=False,
         )
 
-    detection_source = "spotting"
-    selected_attempt = spotting_located["attempt"]
-    list_crop_box = selected_attempt["crop_box"]
-    list_crop_point = spotting_located["mapped_point"]
-    matched_lines = [spotting_located["matched_text"]]
-    ocr_target_visible = True
+    detection_source = located["detection_source"]
+    full_image_point = located["full_image_point"]
+    list_crop_box = located["verify_crop_box"]
+    matched_lines = [located["matched_text"]] if located["matched_text"] else []
+    ocr_target_visible = located["matched_text"] is not None
 
-    full_image_point = {
-        "x": list_crop_box["left"] + list_crop_point["x"],
-        "y": list_crop_box["top"] + list_crop_point["y"],
-    }
     click_overlay_path = _save_tool_click_overlay(
         main_image,
         list_crop_box,
@@ -1102,9 +1235,8 @@ def select_tool_from_main_window(
             matched_lines=matched_lines,
             ocr_target_visible=ocr_target_visible,
             list_crop_box=list_crop_box,
-            tool_point_on_list_crop=list_crop_point,
             tool_point_on_full_image=full_image_point,
-            selected_attempt=selected_attempt["name"],
+            selected_attempt=detection_source,
             click_overlay_path=click_overlay_path,
         )
 
@@ -1118,10 +1250,9 @@ def select_tool_from_main_window(
             matched_lines=matched_lines,
             ocr_target_visible=ocr_target_visible,
             list_crop_box=list_crop_box,
-            tool_point_on_list_crop=list_crop_point,
             tool_point_on_full_image=full_image_point,
             tool_point_on_screen=screen_point,
-            selected_attempt=selected_attempt["name"],
+            selected_attempt=detection_source,
             click_overlay_path=click_overlay_path,
         )
 
@@ -1145,16 +1276,14 @@ def select_tool_from_main_window(
             "window_title": window_title,
             "backend": backend,
             "target_tool_name": normalized_tool_name,
-            "list_crop_box": list_crop_box,
-            "selected_attempt": selected_attempt["name"],
-            "selected_attempt_resize_meta": selected_attempt["resize_meta"],
             "detection_source": detection_source,
+            "verify_crop_box": list_crop_box,
+            "vlm_point": located["vlm_point"],
             "ocr_target_visible": ocr_target_visible,
             "matched_lines": matched_lines,
             "maximized_for_retry": maximized_for_retry,
             "scroll_iters": scroll_iters,
-            "spotting_attempts": spotting_attempts,
-            "tool_point_on_list_crop": list_crop_point,
+            "locate_attempts": locate_attempts,
             "tool_point_on_full_image": full_image_point,
             "tool_point_on_screen": screen_point,
             "click_overlay_path": click_overlay_path,
@@ -1169,11 +1298,10 @@ def select_tool_from_main_window(
         matched_lines=matched_lines,
         ocr_target_visible=ocr_target_visible,
         list_crop_box=list_crop_box,
-        tool_point_on_list_crop=list_crop_point,
         tool_point_on_full_image=full_image_point,
         tool_point_on_screen=screen_point,
         double_clicked=double_clicked,
-        selected_attempt=selected_attempt["name"],
+        selected_attempt=detection_source,
         click_overlay_path=click_overlay_path,
     )
 

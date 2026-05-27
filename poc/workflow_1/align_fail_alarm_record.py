@@ -21,6 +21,7 @@
   uv run python poc/workflow_1/align_fail_alarm_record.py
 """
 
+import csv
 import threading
 import time
 from collections.abc import Iterable, Mapping
@@ -96,12 +97,29 @@ ALERT_CLOSE_TIMEOUT_SEC = env_int("ALIGN_FAIL_ALERT_CLOSE_TIMEOUT_SEC", 3)
 # 이 횟수만큼만 시도한 뒤 포기하고 다음 알람을 기다린다('select' 팝업은 건드리지 않음).
 RCS_WINDOW_MAX_TRIALS = env_int("ALIGN_FAIL_RCS_WINDOW_MAX_TRIALS", 10)
 ALARM_LOG_PATH = LOG_DIR / "align_fail_alarms.txt"
+# 나중에 examine 하기 쉽도록 align fail 한 건마다 eqp_id/recipe_id + 저장된 캡처
+# 이미지 경로를 한 줄로 누적하는 CSV manifest.
+RECORD_MANIFEST_PATH = LOG_DIR / "align_fail_records.csv"
+RECORD_MANIFEST_COLUMNS = [
+    "detected_at",
+    "eqp_id",
+    "recipe_id",
+    "alid",
+    "alarm_time",
+    "alarm_name",
+    "frame_count",
+    "captured_dir",
+    "frames",
+]
 
 # 알림 팝업 제목 — notify_align_fail 과 ④ 닫기에서 같은 값을 써야 창을 찾을 수 있다.
 ALERT_POPUP_TITLE = "CD-SEM Align Fail 감지"
 
 # record 사이클(접속→캡처→닫기) 수행 여부. 기본 on.
 RECORD_CYCLE_ENABLED_DEFAULT = True
+# 실행 중 PC 절전/디스플레이 끄기를 막을지. 기본 on. 마우스/키보드를 건드리지 않고
+# Windows 전원 상태 API 로만 막으므로 RCS GUI 자동화와 충돌하지 않는다.
+KEEP_AWAKE_ENABLED_DEFAULT = True
 
 
 def _alarm_rows_empty(rows) -> bool:
@@ -180,6 +198,53 @@ def append_alarm_record(
     with ALARM_LOG_PATH.open("a", encoding="utf-8") as fp:
         fp.write(line)
     print(f"[INFO] 기록 완료 → {ALARM_LOG_PATH}")
+
+
+def append_record_manifest(
+    eqp_id: str,
+    recipe_id: str,
+    frames,
+    *,
+    alid: str = "",
+    alarm_time: str = "",
+    alarm_name: str = "",
+) -> None:
+    """align fail 한 건의 메타 + 저장된 캡처 이미지 경로를 CSV manifest 에 한 줄 누적한다.
+
+    eqp_id / recipe_id 와 이미지 경로를 함께 적어, 나중에 어떤 장비/recipe 의 어떤
+    이미지가 어디에 저장됐는지 examine 하기 쉽게 한다(Excel/grep). 파일이 없으면
+    헤더를 먼저 쓴다. 기록 실패는 삼켜 루프가 죽지 않게 한다.
+    """
+    frame_paths = [str(p) for p in (frames or [])]
+    captured_dir = str(frames[0].parent) if frames else ""
+    detected_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        RECORD_MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
+        write_header = (
+            not RECORD_MANIFEST_PATH.exists()
+            or RECORD_MANIFEST_PATH.stat().st_size == 0
+        )
+        with RECORD_MANIFEST_PATH.open("a", encoding="utf-8", newline="") as fp:
+            writer = csv.writer(fp)
+            if write_header:
+                writer.writerow(RECORD_MANIFEST_COLUMNS)
+            writer.writerow([
+                detected_at,
+                eqp_id,
+                recipe_id,
+                alid,
+                alarm_time,
+                alarm_name,
+                len(frame_paths),
+                captured_dir,
+                " | ".join(frame_paths),
+            ])
+        print(
+            f"[INFO] record manifest 기록 → {RECORD_MANIFEST_PATH} "
+            f"(EQP_ID={eqp_id}, frames={len(frame_paths)})"
+        )
+    except Exception as exc:
+        print(f"[WARNING] record manifest 기록 실패: {exc}")
 
 
 def _show_popup_windows(title: str, message: str) -> None:
@@ -350,7 +415,7 @@ def run_record_cycle(
     recipe_id: str,
     *,
     connect_action_enabled: bool = True,
-) -> None:
+) -> list:
     """한 알람에 대한 record 사이클: ① 열기 → ② record → ③ tool 닫기 → ④ 알림 닫기.
 
     ①에서 더블클릭이 실제로 수행됐을 때만 ②③를 진행한다(dry-run/실패 시 창이 안
@@ -358,6 +423,8 @@ def run_record_cycle(
     창이 안 열리므로, ②의 창 탐색을 RCS_WINDOW_MAX_TRIALS 회로 제한하고 그래도 못
     찾으면 이번 알람은 건너뛰고 다음 알람을 기다린다('select' 팝업은 건드리지 않음).
     ④ 알림 창 닫기는 사이클 끝에 항상 시도한다.
+
+    저장된 캡처 이미지 경로 목록(list[Path])을 반환한다(캡처 없으면 빈 리스트).
     """
     # ① tool 열기.
     result = _connect_to_tool_sync(eqp_id, action_enabled=connect_action_enabled)
@@ -369,12 +436,13 @@ def run_record_cycle(
             f"EQP_ID={eqp_id}"
         )
         _close_alert_window()  # ④
-        return
+        return []
 
     # ② tool 화면 record (캡처만, 창은 닫지 않음). 창 탐색은 RCS_WINDOW_MAX_TRIALS 로 제한.
+    saved: list = []
     tool_window = None
     if RECORD_RCS_AVAILABLE:
-        _saved, tool_window, _title, _backend = record_rcs_window(
+        saved, tool_window, _title, _backend = record_rcs_window(
             eqp_id,
             recipe_id,
             window_max_attempts=RCS_WINDOW_MAX_TRIALS,
@@ -399,6 +467,7 @@ def run_record_cycle(
 
     # ④ 알림(alert) 창 닫기.
     _close_alert_window()
+    return saved
 
 
 def process_fail_rows(
@@ -460,23 +529,64 @@ def process_fail_rows(
 
         # RECIPE_ID 가 있는 등록 recipe 일 때만 record 사이클(열기→record→닫기→알림닫기).
         # 저장 경로가 <eqp>/<class>/<recipe> 라 RECIPE_ID 가 있어야 한다.
+        frames: list = []
         if record_enabled:
             if recipe_id:
-                run_record_cycle(
+                frames = run_record_cycle(
                     eqp_id,
                     recipe_id,
                     connect_action_enabled=connect_action_enabled,
-                )
+                ) or []
             else:
                 print(
                     f"[INFO] RECIPE_ID 없음 — record 사이클 생략, 엔지니어 직접 처리 "
                     f"(EQP_ID={eqp_id})"
                 )
 
+        # 나중에 examine 하기 쉽도록 한 줄짜리 record manifest 에 누적(이미지 없으면
+        # frame 0 으로 기록되어 align fail 발생 자체는 남는다).
+        append_record_manifest(
+            eqp_id,
+            recipe_id,
+            frames,
+            alid=alid,
+            alarm_time=alarm_time,
+            alarm_name=alarm_name,
+        )
+
         active_tools.add(eqp_id)
         newly_handled += 1
 
     return newly_handled
+
+
+def _set_keep_awake(enable: bool) -> None:
+    """PC 절전/디스플레이 끄기를 막거나(enable=True) 원복(False)한다 (Windows 전용).
+
+    SetThreadExecutionState 로 시스템/디스플레이 활성 요구를 건다. 마우스/키보드를
+    전혀 건드리지 않으므로 RCS GUI 자동화(connect/close 클릭)와 충돌하지 않는다.
+    화면 캡처가 검게 나오지 않도록 디스플레이도 켜둔다(ES_DISPLAY_REQUIRED). 한 번
+    걸면 ES_CONTINUOUS 로 유지되며, 프로세스 종료 시 OS 가 자동 해제한다. 비Windows/
+    실패 시 조용히 무시.
+    """
+    try:
+        import ctypes
+    except Exception:
+        return
+
+    ES_CONTINUOUS = 0x80000000
+    ES_SYSTEM_REQUIRED = 0x00000001
+    ES_DISPLAY_REQUIRED = 0x00000002
+    flags = ES_CONTINUOUS | (ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED if enable else 0)
+    try:
+        ctypes.windll.kernel32.SetThreadExecutionState(flags)
+        print(f"[INFO] keep-awake {'ON (절전/화면 꺼짐 방지)' if enable else 'OFF (원복)'}")
+    except AttributeError:
+        # 비Windows — windll 없음.
+        if enable:
+            print("[INFO] 현재 OS 에서 keep-awake 미지원 — 생략")
+    except Exception as exc:
+        print(f"[WARNING] keep-awake 설정 실패: {exc}")
 
 
 def monitor_loop(popup_enabled: bool | None = None) -> None:
@@ -500,6 +610,10 @@ def monitor_loop(popup_enabled: bool | None = None) -> None:
     connect_action_enabled = env_flag("ALIGN_FAIL_CONNECT_ACTION", CONNECT_TOOL_ACTION_DEFAULT)
     if record_requested and not CONNECT_TOOL_AVAILABLE:
         print("[WARNING] ALIGN_FAIL_RECORD_CYCLE=on 이지만 workflow_select_tool 로드 실패 - off 로 진행")
+
+    keep_awake = env_flag("ALIGN_FAIL_KEEP_AWAKE", KEEP_AWAKE_ENABLED_DEFAULT)
+    if keep_awake:
+        _set_keep_awake(True)
 
     active_tools: set[str] = set()
     idle_logged = False  # "Align Fail 없음" 은 idle 진입 시 한 번만 로깅 (poll 마다 X)
@@ -559,6 +673,8 @@ def monitor_loop(popup_enabled: bool | None = None) -> None:
             print("\n[INFO] 감지 중단 (Ctrl+C)")
             break
 
+    if keep_awake:
+        _set_keep_awake(False)
     print("[INFO] 감지 종료")
 
 

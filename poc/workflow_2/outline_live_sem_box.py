@@ -36,6 +36,12 @@ from poc.workflow_2 import ALIGN_IMAGES_ROOT, DEBUG_IMAGE_DIR
 from poc.workflow_1.flask_vlm import UI_VENUS_MODEL_NAME
 from poc.workflow_1.util import env_int, format_elapsed_ms, make_timestamp_tag
 from poc.workflow_1.util.image_utils import encode_image_webp
+from poc.workflow_1.util.json_utils import (
+    bbox_1000_to_pixels,
+    bbox_center,
+    extract_json,
+    normalize_bbox_1000,
+)
 from poc.workflow_1.vlm_client import Workflow1VLMClient
 from poc.workflow_2.vlm_sem_monitor_box import _run_sem_box_detection
 
@@ -66,11 +72,17 @@ EDGE_SNAP_BAND_MIN_PX = 6
 # 실데이터로 보정 필요(콜드스타트 임계값).
 SHARPNESS_BLUR_THRESHOLD = 60.0
 
+# align fail 시 뜨는 'Wait Input' 팝업의 OK 버튼 클릭점도 함께 검증할지.
+# 0 이면 SEM box 외곽선만, 1 이면 OK 버튼 grounding 도 추가로 호출(이미지당 VLM 1회 더).
+DETECT_OK_BUTTON = env_int("RCS_OUTLINE_DETECT_OK_BUTTON", 1) == 1
+
 # overlay 색상 (BGR).
 _VLM_COLOR = (255, 0, 255)   # magenta — VLM coarse
 _CV_COLOR = (255, 255, 0)    # cyan — CV-snapped
 _OK_COLOR = (60, 200, 60)
 _BLUR_COLOR = (60, 60, 230)
+_OK_BTN_COLOR = (0, 165, 255)   # orange — 'Wait Input' 팝업 OK 버튼 box
+_CLICK_COLOR = (0, 0, 255)      # red — 실제 클릭점 마커
 
 
 @dataclass
@@ -87,6 +99,10 @@ class OutlineReport:
     vlm_confidence: float | None
     sharpness: float | None     # box 내부 Laplacian 분산.
     blurry: bool                # sharpness < 임계값 → 클릭 금지 후보.
+    ok_button_detected: bool    # 'Wait Input' 팝업 OK 버튼을 찾았는지.
+    ok_button_bbox: dict | None  # OK 버튼 box, 픽셀 좌표.
+    ok_click_point: dict | None  # OK 버튼 클릭점(center), 픽셀 좌표.
+    ok_button_confidence: float | None
     overlay_path: str
 
 
@@ -190,6 +206,74 @@ def _sharpness_in_box(gray: np.ndarray, bbox: dict) -> float:
 
 
 # ------------------------------------------------------------------
+# 'Wait Input' 팝업 OK 버튼 grounding — VLM 클릭점 검증.
+# ------------------------------------------------------------------
+
+
+def _ok_button_system_prompt() -> str:
+    """align fail 시 뜨는 'Wait Input' 팝업의 OK 버튼 탐지 시스템 프롬프트."""
+    return (
+        "You analyse a screenshot of a Windows CD-SEM Tool application. "
+        "Return strict JSON only. "
+        "A small modal dialog titled 'Wait Input' is shown on top of the tool screen "
+        "during wafer alignment. Its body text reads roughly: "
+        "\"Click [OK] button after setting cross cursor to alignment mark.\" "
+        "The dialog has buttons along its bottom edge:\n"
+        "  - a single 'OK' button at the BOTTOM-LEFT corner of the dialog;\n"
+        "  - a group of 'Retry', 'Environment', 'Reject' buttons at the BOTTOM-RIGHT.\n"
+        "Locate ONLY the 'OK' button (the bottom-left one). "
+        "Do NOT return 'Retry', 'Environment', or 'Reject'. "
+        "Use the dialog title 'Wait Input' and the bottom-LEFT position as your anchors. "
+        "If the 'Wait Input' dialog or its OK button is not clearly visible, say so "
+        "rather than guessing on some other button."
+    )
+
+
+def _ok_button_user_prompt() -> str:
+    """OK 버튼 탐지 사용자 프롬프트(0-1000 bbox)."""
+    return (
+        "Return JSON with this exact schema:\n"
+        "{\n"
+        '  "popup_visible": true,\n'
+        '  "coord_system": "relative_1000",\n'
+        '  "ok_bbox": {"left": 0, "top": 0, "right": 0, "bottom": 0},\n'
+        '  "button_text": "OK",\n'
+        '  "confidence": 0.0,\n'
+        '  "evidence": "short string explaining how you identified the OK button"\n'
+        "}\n"
+        "ok_bbox must tightly enclose the clickable rectangle of the 'OK' button at the "
+        "bottom-left of the 'Wait Input' dialog. "
+        "button_text is the text you actually read on that button (expected 'OK'). "
+        "If the 'Wait Input' popup / OK button is not clearly visible, set "
+        "popup_visible=false, ok_bbox=null."
+    )
+
+
+def _run_ok_button_detection(
+    *,
+    image_b64: str,
+    width: int,
+    height: int,
+    client: Workflow1VLMClient,
+) -> tuple[dict, dict | None]:
+    """'Wait Input' 팝업 OK 버튼 bbox 를 탐지한다. 반환 (payload, bbox_px|None)."""
+    response = client.chat_with_image_b64(
+        image_b64=image_b64,
+        system_message=_ok_button_system_prompt(),
+        user_text=_ok_button_user_prompt(),
+        image_mime="image/webp",
+        temperature=0.0,
+    )
+    parsed = extract_json(response.text)
+    if parsed.get("popup_visible") is not True:
+        return parsed, None
+    bbox_1000 = normalize_bbox_1000(parsed.get("ok_bbox"))
+    if bbox_1000 is None:
+        return parsed, None
+    return parsed, bbox_1000_to_pixels(bbox_1000, width, height)
+
+
+# ------------------------------------------------------------------
 # overlay 그리기.
 # ------------------------------------------------------------------
 
@@ -210,6 +294,8 @@ def _draw_overlay(
     cv_bbox: dict | None,
     sharpness: float | None,
     blurry: bool,
+    ok_bbox: dict | None = None,
+    ok_click: dict | None = None,
 ) -> np.ndarray:
     out = bgr.copy()
     if vlm_bbox is not None:
@@ -219,6 +305,14 @@ def _draw_overlay(
         cx = (cv_bbox["left"] + cv_bbox["right"]) // 2
         cy = (cv_bbox["top"] + cv_bbox["bottom"]) // 2
         cv2.drawMarker(out, (cx, cy), _CV_COLOR, cv2.MARKER_CROSS, 18, 2, cv2.LINE_AA)
+
+    # 'Wait Input' 팝업 OK 버튼 — box + 실제 클릭점 마커.
+    if ok_bbox is not None:
+        _draw_rect(out, ok_bbox, _OK_BTN_COLOR, "OK button")
+    if ok_click is not None:
+        pt = (int(ok_click["x"]), int(ok_click["y"]))
+        cv2.drawMarker(out, pt, _CLICK_COLOR, cv2.MARKER_TILTED_CROSS, 22, 2, cv2.LINE_AA)
+        cv2.circle(out, pt, 6, _CLICK_COLOR, 2, cv2.LINE_AA)
 
     # 상단 상태 배너 — sharpness 와 클릭 가능 여부.
     if sharpness is not None:
@@ -258,7 +352,19 @@ def _process_image(image_path: Path, client: Workflow1VLMClient, out_dir: Path) 
         sharpness = _sharpness_in_box(gray, cv_bbox)
         blurry = sharpness < SHARPNESS_BLUR_THRESHOLD
 
-    overlay = _draw_overlay(bgr, vlm_bbox, cv_bbox, sharpness, blurry)
+    # 'Wait Input' 팝업 OK 버튼 클릭점 grounding(별도 VLM 호출).
+    ok_bbox = None
+    ok_click = None
+    ok_confidence = None
+    if DETECT_OK_BUTTON:
+        ok_payload, ok_bbox = _run_ok_button_detection(
+            image_b64=image_b64, width=vlm_w, height=vlm_h, client=client
+        )
+        ok_confidence = ok_payload.get("confidence")
+        if ok_bbox is not None:
+            ok_click = bbox_center(ok_bbox)
+
+    overlay = _draw_overlay(bgr, vlm_bbox, cv_bbox, sharpness, blurry, ok_bbox, ok_click)
     overlay_path = out_dir / f"{image_path.stem}_outline.jpg"
     cv2.imwrite(str(overlay_path), overlay)
 
@@ -273,6 +379,10 @@ def _process_image(image_path: Path, client: Workflow1VLMClient, out_dir: Path) 
         vlm_confidence=payload.get("confidence"),
         sharpness=sharpness,
         blurry=blurry,
+        ok_button_detected=ok_bbox is not None,
+        ok_button_bbox=ok_bbox,
+        ok_click_point=ok_click,
+        ok_button_confidence=ok_confidence,
         overlay_path=str(overlay_path),
     )
 
@@ -307,7 +417,8 @@ def run() -> str:
             f"[INFO] {idx:02d} {path.name} vlm={'Y' if report.vlm_detected else 'N'} "
             f"mode={report.mode_label or '-'} "
             f"sharpness={report.sharpness if report.sharpness is None else round(report.sharpness, 1)} "
-            f"blurry={report.blurry} cv_bbox={report.cv_bbox}"
+            f"blurry={report.blurry} cv_bbox={report.cv_bbox} "
+            f"ok_btn={'Y' if report.ok_button_detected else 'N'} ok_click={report.ok_click_point}"
         )
 
     summary = {
@@ -316,6 +427,8 @@ def run() -> str:
         "processed": len(reports),
         "vlm_detected": sum(1 for r in reports if r.vlm_detected),
         "blurry": sum(1 for r in reports if r.blurry),
+        "ok_button_detected": sum(1 for r in reports if r.ok_button_detected),
+        "detect_ok_button": DETECT_OK_BUTTON,
         "sharpness_threshold": SHARPNESS_BLUR_THRESHOLD,
         "reports": [asdict(r) for r in reports],
     }

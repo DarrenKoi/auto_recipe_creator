@@ -8,8 +8,10 @@
 정적이라 단일 스크린샷으로 충분하다.
 
 저장 경로:
-    align_images/<eqp_id>/<class>/<recipe>/captured_img_from_rcs/<tag>_rcs.jpg
-    (recipe_id 가 "<class>/<recipe>" 형태라 eqp_id 와 합치면 3단계가 된다.)
+    align_images/<eqp_id>/<class>/<recipe>/captured_img_from_rcs/<tag>/<tag>_rcs.jpg
+    (recipe_id 가 "<class>/<recipe>" 형태라 eqp_id 와 합치면 3단계가 된다. 같은
+    tool+recipe 에서 align fail 이 반복돼도 캡처가 한 폴더에 쌓이지 않도록, 이벤트
+    타임스탬프 <tag> 하위 폴더에 적재한다.)
 
 독립 실행 (office, RCS 로그인 상태 가정):
     ALIGN_CAPTURE_EQP_ID=MCD916 \
@@ -71,10 +73,11 @@ CONNECT_WINDOW_TIMEOUT_SEC = env_int("ALIGN_FAIL_CONNECT_WINDOW_TIMEOUT_SEC", 3)
 
 
 def captured_dir_for(eqp_id: str, recipe_id: str) -> Path:
-    """captured_img_from_rcs 저장 폴더 경로를 만든다.
+    """captured_img_from_rcs 저장 폴더(이벤트 타임스탬프 하위 폴더의 부모)를 만든다.
 
     recipe_id 는 실제로 ``<class>/<recipe>`` 형태라, eqp_id 와 합치면 그대로
     ``align_images/<eqp>/<class>/<recipe>`` 3단계가 된다 (슬래시가 단계 구분).
+    실제 캡처는 호출부에서 이 아래 이벤트 타임스탬프 하위 폴더에 적재한다.
     """
     recipe_rel = recipe_id.replace("\\", "/").strip("/")
     recipe_parts = [part for part in recipe_rel.split("/") if part]
@@ -122,9 +125,12 @@ def record_rcs_window(
         if settle_sec > 0:
             time.sleep(settle_sec)
 
-        captured_dir = captured_dir_for(eqp_id, recipe_id)
-        captured_dir.mkdir(parents=True, exist_ok=True)
+        # 같은 tool+recipe 에서 align fail 이 반복되면 캡처가 한 폴더에 쌓이므로,
+        # 이벤트(=캡처 시점) 타임스탬프로 하위 폴더를 나눠 적재한다. eqp/class/recipe
+        # leaf 는 그대로라 workflow_2 의 자산 레이아웃과 충돌하지 않는다.
         tag = make_timestamp_tag()
+        captured_dir = captured_dir_for(eqp_id, recipe_id) / tag
+        captured_dir.mkdir(parents=True, exist_ok=True)
         multi = duration_sec > 0
         started_at = time.time()
         frame_idx = 0

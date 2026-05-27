@@ -81,7 +81,7 @@ def captured_dir_for(eqp_id: str, recipe_id: str) -> Path:
     return ALIGN_IMAGES_DIR.joinpath(eqp_id, *recipe_parts, CAPTURED_RCS_DIRNAME)
 
 
-def capture_and_close_rcs_window(
+def record_rcs_window(
     eqp_id: str,
     recipe_id: str,
     *,
@@ -89,20 +89,21 @@ def capture_and_close_rcs_window(
     settle_sec: float = CAPTURE_RCS_SETTLE_SEC,
     duration_sec: float = CAPTURE_RCS_DURATION_SEC,
     interval_sec: float = CAPTURE_RCS_INTERVAL_SEC,
-) -> list[Path]:
-    """이미 열린 RCS tool 창을 찾아 캡처·저장하고 창을 닫는다.
+) -> tuple[list[Path], object | None, str, str]:
+    """이미 열린 RCS tool 창을 찾아 캡처·저장한다(창은 닫지 않는다).
 
     접속(더블클릭)은 호출부 책임이다. ``duration_sec <= 0`` 이면 1장만(현재 운영
     기본), 양수이면 그 시간 동안 ``interval_sec`` 간격으로 여러 장 캡처한다.
-    저장된 파일 경로 목록을 반환하며, 실패/생략 시 빈 리스트를 반환한다.
-    예외는 삼켜 호출 루프가 죽지 않게 한다.
+    ``(saved_paths, tool_window, window_title, backend)`` 를 반환한다. 창을 닫는 것은
+    호출부가 정한다(닫기 코어는 `close_window` 또는 `workflow_close_tool.close_tool`).
+    실패/생략 시 ``([], None, "", "")``. 예외는 삼켜 호출 루프가 죽지 않게 한다.
     """
     if not WINDOW_UTILS_AVAILABLE:
         print(
             f"[INFO] window_utils 비활성 — RCS 캡처 생략 (os={os.name}, "
             f"WINDOW_UTILS_AVAILABLE={WINDOW_UTILS_AVAILABLE})"
         )
-        return []
+        return [], None, "", ""
 
     saved: list[Path] = []
     try:
@@ -112,7 +113,7 @@ def capture_and_close_rcs_window(
         )
         if tool_window is None:
             print(f"[WARNING] RCS tool 창을 찾지 못해 캡처 생략: EQP_ID={eqp_id}")
-            return []
+            return [], None, "", ""
 
         if settle_sec > 0:
             time.sleep(settle_sec)
@@ -144,15 +145,40 @@ def capture_and_close_rcs_window(
             f"[INFO] RCS 캡처 저장: EQP_ID={eqp_id}, frames={len(saved)}, "
             f"dir={captured_dir}"
         )
+        return saved, tool_window, window_title, backend
+    except Exception as exc:
+        print(f"[WARNING] RCS 캡처 예외: EQP_ID={eqp_id}, error={exc}")
+        return saved, None, "", ""
 
+
+def capture_and_close_rcs_window(
+    eqp_id: str,
+    recipe_id: str,
+    *,
+    window_timeout_sec: float = CAPTURE_RCS_WINDOW_TIMEOUT_SEC,
+    settle_sec: float = CAPTURE_RCS_SETTLE_SEC,
+    duration_sec: float = CAPTURE_RCS_DURATION_SEC,
+    interval_sec: float = CAPTURE_RCS_INTERVAL_SEC,
+) -> list[Path]:
+    """이미 열린 RCS tool 창을 찾아 캡처·저장하고 창을 닫는다(record + close).
+
+    `record_rcs_window` 로 캡처한 뒤 같은 창을 닫는 기존 동작. 저장된 파일 경로
+    목록을 반환한다.
+    """
+    saved, tool_window, window_title, backend = record_rcs_window(
+        eqp_id,
+        recipe_id,
+        window_timeout_sec=window_timeout_sec,
+        settle_sec=settle_sec,
+        duration_sec=duration_sec,
+        interval_sec=interval_sec,
+    )
+    if tool_window is not None:
         close_window(
             tool_window,
             debug_label=f"rcs_tool title={window_title!r} backend={backend}",
         )
-        return saved
-    except Exception as exc:
-        print(f"[WARNING] RCS 캡처 예외: EQP_ID={eqp_id}, error={exc}")
-        return saved
+    return saved
 
 
 def connect_capture_close(

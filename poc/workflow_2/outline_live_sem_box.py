@@ -51,8 +51,8 @@ CAPTURED_RCS_DIRNAME = "captured_img_from_rcs"
 # 임의 캡처 폴더 직접 지정(재귀적으로 *_rcs.jpg 수집). 비우면 ALIGN_IMAGES_ROOT 자동 탐색.
 RCS_CAPTURE_DIR_OVERRIDE = os.getenv("RCS_CAPTURE_DIR", "").strip()
 
-# 처리할 최대 캡처 장수(VLM 호출 비용 상한). mtime 최신순으로 자른다.
-SAMPLE_LIMIT = env_int("RCS_OUTLINE_SAMPLE_LIMIT", 8)
+# 처리할 최대 캡처 장수(VLM 호출 비용 상한). 0 이하면 전체 처리. mtime 최신순으로 자른다.
+SAMPLE_LIMIT = env_int("RCS_OUTLINE_SAMPLE_LIMIT", 0)
 
 DEFAULT_SERVICE = os.getenv("TEST_VLM_SERVICE", "ui-venus").strip() or "ui-venus"
 DEFAULT_MODEL = os.getenv("TEST_VLM_MODEL_NAME", UI_VENUS_MODEL_NAME).strip() or UI_VENUS_MODEL_NAME

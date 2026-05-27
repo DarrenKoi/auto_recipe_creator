@@ -10,6 +10,36 @@ import re
 import time
 from pathlib import Path
 
+
+def _enable_dpi_awareness() -> None:
+    """프로세스를 Per-Monitor DPI aware 로 설정한다(Windows 전용, 실패 시 무시).
+
+    pywinauto(rectangle)·mss(capture)·pynput(click)이 모두 물리 픽셀 좌표계로
+    일치하도록 만든다. 설정하지 않으면 DPI 배율(125/150%) 화면에서 캡처(물리)와
+    창 좌표(논리)가 어긋나 클릭이 빗나간다(검출 overlay 는 멀쩡해 보여도 클릭은
+    엉뚱한 위치). pywinauto 가 import 시 자체로 awareness 를 설정하므로, 그 전에
+    (=패키지 최초 import 시점) 호출해야 우리 설정이 적용된다.
+    """
+    import ctypes
+
+    try:  # PER_MONITOR_AWARE_V2 (Win10 1703+) — 가장 정확.
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+        return
+    except Exception:
+        pass
+    try:  # PROCESS_PER_MONITOR_DPI_AWARE (Win8.1+).
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        return
+    except Exception:
+        pass
+    try:  # System DPI aware (구형 폴백).
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+
+_enable_dpi_awareness()
+
 WORKFLOW_1_DIR = Path(__file__).resolve().parent
 DEBUG_IMAGE_DIR = WORKFLOW_1_DIR / "debug_images"
 LOG_DIR = WORKFLOW_1_DIR / "logs"

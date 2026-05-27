@@ -592,15 +592,40 @@ def find_window_by_title_prefix(
     )
 
 
-def image_point_to_screen(window, image_point: dict) -> dict[str, int] | None:
-    """윈도우 이미지 좌표를 스크린 절대 좌표로 변환한다."""
+def image_point_to_screen(
+    window,
+    image_point: dict,
+    image_size: tuple[int, int] | None = None,
+) -> dict[str, int] | None:
+    """윈도우 이미지 좌표를 스크린 절대 좌표로 변환한다.
+
+    캡처 이미지(mss, 물리 픽셀)와 window.rectangle()(DPI 배율 적용 시 논리 픽셀)의
+    크기가 다를 수 있다. image_size(=캡처 이미지 크기)가 주어지면 rect/image 비율로
+    보정해 DPI 배율 화면에서도 정확한 스크린 좌표를 만든다. 크기가 같으면 배율 1.0
+    이라 기존 동작과 동일하다(100% 배율 무영향).
+    """
     try:
         rect = window.rectangle()
     except Exception as exc:
         print(f"[ERROR] 창 rectangle 조회 실패: {exc}")
         return None
 
-    return {
-        "x": rect.left + image_point["x"],
-        "y": rect.top + image_point["y"],
-    }
+    rect_w = rect.right - rect.left
+    rect_h = rect.bottom - rect.top
+    scale_x = 1.0
+    scale_y = 1.0
+    if image_size is not None:
+        img_w, img_h = image_size
+        if img_w > 0 and img_h > 0:
+            scale_x = rect_w / img_w
+            scale_y = rect_h / img_h
+
+    screen_x = int(round(rect.left + image_point["x"] * scale_x))
+    screen_y = int(round(rect.top + image_point["y"] * scale_y))
+
+    print(
+        f"[INFO] image→screen: rect=({rect.left},{rect.top},{rect.right},{rect.bottom}) "
+        f"{rect_w}x{rect_h}, image_size={image_size}, scale=({scale_x:.3f},{scale_y:.3f}), "
+        f"image_point=({image_point['x']},{image_point['y']}) → screen=({screen_x},{screen_y})"
+    )
+    return {"x": screen_x, "y": screen_y}

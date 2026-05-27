@@ -506,7 +506,7 @@ def _scroll_list_region_down(
     width, height = main_image.size
     center_x = int(round(width * min(1.0, (LIST_REGION_LEFT_RATIO + LIST_REGION_RIGHT_RATIO) / 2)))
     center_y = int(round(height * min(1.0, (LIST_REGION_TOP_RATIO + LIST_REGION_BOTTOM_RATIO) / 2)))
-    screen_point = image_point_to_screen(main_window, {"x": center_x, "y": center_y})
+    screen_point = image_point_to_screen(main_window, {"x": center_x, "y": center_y}, image_size=main_image.size)
     if screen_point is None:
         print("[WARNING] list 스크롤 좌표 변환 실패 → 스크롤 생략")
         return False
@@ -1300,7 +1300,7 @@ def select_tool_from_main_window(
         timestamp_tag=timestamp_tag,
         filename=f"workflow_select_tool_{normalized_tool_name.lower()}_click_overlay.jpg",
     )
-    screen_point = image_point_to_screen(main_window, full_image_point)
+    screen_point = image_point_to_screen(main_window, full_image_point, image_size=main_image.size)
     if screen_point is None:
         return ToolSelectionResult(
             exit_code=EXIT_CAPTURE_FAILED,

@@ -132,6 +132,11 @@ RCP_BOX_MAX_ASPECT = 3.0
 # 이 px 만큼 가장자리에서 떨어져 있어야 정상 박스로 인정한다.
 RCP_BOX_EDGE_MARGIN_PX = 2
 
+# 박스 검출 실패시 fallback — 이미지 중심을 중심으로 *면적 기준 20%* 의 crop 을 template 으로 쓴다.
+# 각 변은 sqrt(0.20) ≈ 0.447 비율. 전체 이미지를 쓰는 것보다 매칭이 unique 영역 (= 이미지 중심부)
+# 에 집중되고, align_offset 은 (0,0) 그대로 유지되어 좌표 계산이 단순하다.
+RCP_FALLBACK_CENTER_CROP_AREA_RATIO = 0.20
+
 # 도구가 그린 crosshair 를 *공간 prior* 로 사용해 CV 매칭의 ambiguity 를 깬다.
 # free 검색 best 위치가 crosshair-derived 위치 (= crosshair - align_offset) 와 이만큼 떨어져 있으면
 # prior-제한 ROI 로 다시 매칭해서 두 결과를 비교한다 (S=success 이미지에서 일관성 회복).
@@ -417,14 +422,41 @@ def _draw_rcp_overlay(
             f"{label}: box {bw}x{bh}, align point=image_center ({image_center[0]},{image_center[1]}), "
             f"offset (template->align)=({dx},{dy})"
         )
+    elif bundle.inner_crop is not None:
+        # Fallback: centered ~20% area crop (no engineer box). 시안색 사각형으로 표시해
+        # box-detected 경로와 구분한다. align point 는 여전히 이미지 중심.
+        ix, iy, iw, ih = bundle.inner_crop
+        cv2.rectangle(canvas, (ix, iy), (ix + iw, iy + ih), (220, 200, 80), 1, cv2.LINE_AA)
+        _draw_crosshair(canvas, image_center, _BGR_BLUE, length=18, thickness=2)
+        note = (
+            f"{label}: white box NOT detected -> fallback {iw}x{ih} center crop "
+            f"(~{RCP_FALLBACK_CENTER_CROP_AREA_RATIO * 100:.0f}% area), align=image_center"
+        )
     else:
         _draw_crosshair(canvas, image_center, _BGR_BLUE, length=18, thickness=2)
-        note = f"{label}: white box NOT detected -> fallback (full image, center=align point)"
+        note = f"{label}: no template available"
 
     cv2.putText(canvas, note, (8, h - 10),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, _BGR_WHITE, 1, cv2.LINE_AA)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(out_path), canvas, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+
+
+def _centered_area_crop_bbox(gray: np.ndarray, area_ratio: float) -> tuple[int, int, int, int]:
+    """이미지 중심을 중심으로 하는 *면적 비율* 기반 crop bbox 를 (x, y, w, h) 로 돌려준다.
+
+    각 변은 sqrt(area_ratio) 비율 — aspect 유지. 너무 작아서 매칭 불가능한 케이스를
+    피하기 위해 변 길이의 하한을 32 px 로 둔다.
+    """
+    h, w = gray.shape[:2]
+    side_ratio = float(np.sqrt(max(0.0, min(1.0, area_ratio))))
+    cw = max(32, int(round(w * side_ratio)))
+    ch = max(32, int(round(h * side_ratio)))
+    cw = min(cw, w)
+    ch = min(ch, h)
+    x = max(0, (w - cw) // 2)
+    y = max(0, (h - ch) // 2)
+    return (x, y, cw, ch)
 
 
 def _build_rcp_template(
@@ -442,21 +474,30 @@ def _build_rcp_template(
     유일하게 식별 가능하다" 는 매칭 단서일 뿐. msr 에서 박스가 어디에 있는지 매칭으로
     찾으면 (= match center), 거기에 이 offset 을 더해야 msr 에서의 진짜 align point 가 된다.
 
-    박스 검출 실패시 전체 이미지를 template 으로 사용. 그 경우 template 중심 = 이미지
-    중심 = align point 이므로 offset = (0, 0).
+    박스 검출 실패시 전체 이미지 대신 *이미지 중심 기준 ~20% area 크롭* 을 template 으로
+    사용한다 — align point 가 이미지 중심이라는 사전 지식을 활용해 매칭이 의미 있는
+    영역에만 집중하게 한다. crop 이 이미지 중심에 centered 되어 있으므로 offset = (0, 0).
     """
     h, w = rcp_gray.shape[:2]
     image_center = (w // 2, h // 2)
 
     detected_box = _detect_white_box(rcp_gray)
     if detected_box is None:
-        print(f"[WARNING] {label}: 흰색 unique-area 박스 검출 실패 — 전체 이미지를 template 으로 사용합니다.")
-        template = build_template(rcp_gray, recipe_id=recipe_id, version=version, key_type=key_type)
+        fallback_bbox = _centered_area_crop_bbox(rcp_gray, RCP_FALLBACK_CENTER_CROP_AREA_RATIO)
+        fx, fy, fw, fh = fallback_bbox
+        fallback_gray = rcp_gray[fy:fy + fh, fx:fx + fw].copy()
+        print(
+            f"[WARNING] {label}: 흰색 unique-area 박스 검출 실패 — 이미지 중심 {fw}x{fh} "
+            f"(≈{RCP_FALLBACK_CENTER_CROP_AREA_RATIO * 100:.0f}% area) 크롭을 template 으로 사용합니다."
+        )
+        template = build_template(
+            fallback_gray, recipe_id=recipe_id, version=version, key_type=key_type,
+        )
         return _RcpTemplateBundle(
             template=template,
             align_offset_xy=(0, 0),
             detected_box=None,
-            inner_crop=None,
+            inner_crop=fallback_bbox,
         )
 
     inner_gray, inner_bbox = _inner_crop_for_box(rcp_gray, detected_box)

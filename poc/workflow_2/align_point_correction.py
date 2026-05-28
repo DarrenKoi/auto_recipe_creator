@@ -145,6 +145,12 @@ CROSSHAIR_PRIOR_DISAGREEMENT_PX = 30
 # (prior 가 free 보다 약간 낮아도, 도구의 crosshair 는 *측정* 이므로 약간의 양보 가능.)
 CROSSHAIR_PRIOR_SCORE_TOLERANCE = 0.10
 
+# 도구가 그린 crosshair 라인 마스크 반폭 — 매칭 전에 frame 에서 inpaint 로 지운다.
+# 실제 crosshair 두께가 1~3 px 이라 약 5 px 폭 mask (half=2 면 양쪽 합 5) 면 충분.
+# Crosshair 가 길고 밝은 직선이라 Chamfer matcher 가 이를 wafer feature 로 오인해 lock-on 하는
+# 사례를 막기 위함 — S 라벨에서 corrected_xy 가 엉뚱한 곳을 가리키던 원인.
+CROSSHAIR_INPAINT_HALF_THICKNESS_PX = 2
+
 # msr frame 의 Laplacian 분산 (focus measure). 이보다 낮으면 "전체 blur 라 정렬 위치 추정
 # 불가" 로 보고 매칭을 건너뛴다 — 호출자는 다음 행동(예: live 탐색)으로 이동한다.
 # sem_box_detect.SHARPNESS_BLUR_THRESHOLD 와 같은 의미의 임계값. 실데이터 칼리브레이션 전 cold-start.
@@ -624,6 +630,31 @@ def _detect_existing_crosshair(
 # ====================================================================
 
 
+def _inpaint_crosshair(
+    frame_gray: np.ndarray,
+    crosshair_xy: tuple[int, int],
+) -> np.ndarray:
+    """도구가 그린 crosshair 의 가로/세로 직선을 inpaint 로 지운 frame 을 돌려준다.
+
+    이 frame 은 CV 매칭 전용 — 시각화/JSONL 에 기록되는 원본은 변형하지 않는다.
+    crosshair 가 frame 을 가로지르는 *thin bright line* 이라 Chamfer matcher 가 가짜
+    edge 로 인식해 wrong-feature 에 lock-on 하는 경우를 방지한다 (특히 S 라벨에서
+    corrected_xy 가 엉뚱한 곳을 가리키는 원인).
+    """
+    h, w = frame_gray.shape[:2]
+    cx, cy = crosshair_xy
+    mask = np.zeros((h, w), dtype=np.uint8)
+    half = CROSSHAIR_INPAINT_HALF_THICKNESS_PX
+    y0 = max(0, cy - half)
+    y1 = min(h, cy + half + 1)
+    mask[y0:y1, :] = 255  # 가로선 전체 폭
+    x0 = max(0, cx - half)
+    x1 = min(w, cx + half + 1)
+    mask[:, x0:x1] = 255  # 세로선 전체 높이
+    # INPAINT_TELEA: 빠르고 SEM 의 부드러운 텍스처에 잘 맞는다 (NS 보다 결과가 자연스러움).
+    return cv2.inpaint(frame_gray, mask, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
+
+
 def _match_with_prior_roi(
     template: AlignKeyTemplate,
     padded: np.ndarray,
@@ -689,7 +720,10 @@ def _match_against(
     if bundle is None:
         return None
     template = bundle.template
-    padded, pad_x, pad_y = _pad_frame(frame_gray, template.raw_image.shape)
+    # Crosshair 가 검출된 경우 그 직선을 frame 에서 지운 뒤 매칭 — 도구의 그림은 측정 데이터가
+    # 아니라 annotation 이므로 matcher 가 봐서는 안 된다. 원본 frame_gray 는 변형하지 않는다.
+    match_frame = _inpaint_crosshair(frame_gray, crosshair_xy) if crosshair_xy is not None else frame_gray
+    padded, pad_x, pad_y = _pad_frame(match_frame, template.raw_image.shape)
     result_free: AlignKeyMatchResult = compute_align_key_score(
         template,
         padded,

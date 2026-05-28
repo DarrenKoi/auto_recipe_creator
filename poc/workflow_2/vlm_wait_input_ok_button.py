@@ -27,6 +27,7 @@ popup_visible 값을 신뢰하지 않고, **독립적인 OCR(paddleocr)** 로 �
     uv run python poc/workflow_2/vlm_wait_input_ok_button.py
 """
 
+import math
 import os
 import time
 from pathlib import Path
@@ -37,7 +38,8 @@ from PIL import Image
 from poc.workflow_2 import ALIGN_IMAGES_ROOT, DEBUG_IMAGE_DIR
 from poc.workflow_1.debug_artifacts import save_debug_json, save_debug_text, save_marked_bboxes
 from poc.workflow_1.flask_vlm import UI_VENUS_MODEL_NAME
-from poc.workflow_1.prompts import build_ocr_assist_prompt
+from poc.workflow_1.ocr_spotting import parse_spotting_items
+from poc.workflow_1.prompts import build_spotting_prompt
 from poc.workflow_1.util import env_int, format_elapsed_ms, make_timestamp_tag
 from poc.workflow_1.util.image_utils import encode_image_webp
 from poc.workflow_1.util.json_utils import (
@@ -67,8 +69,18 @@ DEFAULT_SERVICE = os.getenv("TEST_VLM_SERVICE", "ui-venus").strip() or "ui-venus
 DEFAULT_MODEL = os.getenv("TEST_VLM_MODEL_NAME", UI_VENUS_MODEL_NAME).strip() or UI_VENUS_MODEL_NAME
 
 # 팝업 존재 게이트용 OCR — grounding VLM 과 다른 독립 모델(paddleocr)로 텍스트를 읽는다.
+# Spotting 태스크로 서명 텍스트의 *좌표*까지 받아, OK 버튼이 그 팝업에 속하는지 공간 검증한다.
 OCR_SERVICE_SLUG = os.getenv("OK_BUTTON_OCR_SERVICE", "paddleocr-vl-1.5").strip() or "paddleocr-vl-1.5"
 OCR_MAX_TOKENS = 4096
+
+# OK 버튼 공간 게이트 — grounding 이 'OK' 라고 짚은 박스 중심이 팝업 서명 텍스트
+# 영역에서 (영역 스케일 × 이 배수)보다 멀면 '다른 패널의 버튼' 으로 보고 클릭을 막는다.
+# 거리는 사각형까지의 거리(영역 안이면 0). 콜드스타트값 — 실데이터로 보정.
+POPUP_OK_MAX_DIST_FRAC = float(os.getenv("OK_BUTTON_MAX_DIST_FRAC", "1.5"))
+
+# Spotting 텍스트를 팝업 서명으로 인정하는 정규화 토큰(소문자 영숫자).
+_POPUP_TITLE_TOKEN = "waitinput"
+_POPUP_BODY_TOKENS = ("crosscursor", "alignmentmark")
 
 
 # ------------------------------------------------------------------
@@ -171,18 +183,39 @@ def _normalize_ocr_text(text: str) -> str:
     return "".join(ch for ch in (text or "").lower() if ch.isalnum())
 
 
-def _verify_popup_present(
+def _union_bbox(bboxes: list[dict]) -> dict | None:
+    """여러 bbox 의 합집합(외접) 사각형."""
+    if not bboxes:
+        return None
+    return {
+        "left": min(b["left"] for b in bboxes),
+        "top": min(b["top"] for b in bboxes),
+        "right": max(b["right"] for b in bboxes),
+        "bottom": max(b["bottom"] for b in bboxes),
+    }
+
+
+def _point_to_rect_distance(point: dict, rect: dict) -> float:
+    """점에서 사각형까지의 최단 거리(사각형 안이면 0)."""
+    dx = max(rect["left"] - point["x"], 0, point["x"] - rect["right"])
+    dy = max(rect["top"] - point["y"], 0, point["y"] - rect["bottom"])
+    return math.hypot(dx, dy)
+
+
+def _locate_popup_region(
     *, image_b64: str, ocr_client: Workflow1VLMClient
-) -> tuple[str, str]:
-    """OCR 로 'Wait Input' 팝업 서명 텍스트가 실제 읽히는지 독립 검증.
+) -> tuple[str, dict | None, str]:
+    """Spotting 으로 'Wait Input' 팝업 서명 텍스트의 *위치* 까지 독립 검증한다.
 
     grounding VLM 의 confidence 를 신뢰하지 않고, 픽셀에서 직접 읽은 텍스트로만
     존재를 판정한다. 제목 'Wait Input' 이 보이거나, 본문의 'cross cursor' 와
-    'alignment mark' 가 둘 다 읽히면(부분 가림 대비) 존재로 본다.
+    'alignment mark' 가 둘 다 읽히면(부분 가림 대비) 존재로 본다. 매칭된 텍스트
+    bbox 들의 합집합을 팝업 영역으로 돌려주어, OK 버튼이 이 팝업에 속하는지
+    공간 검증에 쓴다. (OCR 좌표는 grounding 과 같은 webp 입력 기준이라 동일 좌표계.)
 
-    반환 (verdict, raw_ocr_text), verdict ∈ {'present', 'absent', 'ocr_error'}.
+    반환 (verdict, popup_region|None, raw_text), verdict ∈ {'present','absent','ocr_error'}.
     """
-    system_message, user_text = build_ocr_assist_prompt(width=0, height=0)
+    system_message, user_text = build_spotting_prompt()
     try:
         response = ocr_client.chat_with_image_b64(
             image_b64=image_b64,
@@ -194,13 +227,60 @@ def _verify_popup_present(
         )
     except Exception as exc:
         print(f"[ERROR] OCR 게이트 호출 실패: {exc}")
-        return "ocr_error", str(exc)
+        return "ocr_error", None, str(exc)
 
     raw = response.text or ""
-    norm = _normalize_ocr_text(raw)
-    has_title = "waitinput" in norm
-    has_desc = ("crosscursor" in norm) and ("alignmentmark" in norm)
-    return ("present" if (has_title or has_desc) else "absent"), raw
+    items = parse_spotting_items(raw)
+
+    has_title = False
+    body_hits: set[str] = set()
+    matched_boxes: list[dict] = []
+    for item in items:
+        norm = _normalize_ocr_text(item.get("text", ""))
+        hit = False
+        if _POPUP_TITLE_TOKEN in norm:
+            has_title = True
+            hit = True
+        for token in _POPUP_BODY_TOKENS:
+            if token in norm:
+                body_hits.add(token)
+                hit = True
+        if hit and isinstance(item.get("bbox"), dict):
+            matched_boxes.append(item["bbox"])
+
+    present = has_title or (set(_POPUP_BODY_TOKENS) <= body_hits)
+    if not present:
+        return "absent", None, raw
+    return "present", _union_bbox(matched_boxes), raw
+
+
+def _gate_ok_by_region(
+    *, ok_bbox: dict, popup_region: dict | None, name: str
+) -> tuple[str, float | None]:
+    """grounding 이 짚은 OK 박스가 팝업 텍스트 영역에 속하는지 거리로 판정한다.
+
+    OK 버튼은 'Wait Input' 다이얼로그의 일부이므로 서명 텍스트와 가까워야 한다.
+    중심점이 팝업 영역에서 (영역 스케일 × ``POPUP_OK_MAX_DIST_FRAC``)보다 멀면
+    다른 패널의 버튼을 헛짚은 것으로 보고 클릭을 막는다.
+
+    반환 (status, distance|None). status ∈ {'detected', 'ok_off_popup'}.
+    """
+    if popup_region is None:  # 텍스트는 확인됐으나 좌표가 없어 공간 검증 불가 → 통과(로그만).
+        print(f"[WARNING] 팝업 영역 좌표 없음 → 공간 검증 생략 ({name})")
+        return "detected", None
+
+    center = bbox_center(ok_bbox)
+    distance = _point_to_rect_distance(center, popup_region)
+    region_w = popup_region["right"] - popup_region["left"]
+    region_h = popup_region["bottom"] - popup_region["top"]
+    scale = max(region_w, region_h, 1)
+    limit = POPUP_OK_MAX_DIST_FRAC * scale
+    if distance > limit:
+        print(
+            f"[INFO] OK 박스가 팝업에서 {distance:.0f}px (한계 {limit:.0f}px) → 클릭 금지 ({name})"
+        )
+        return "ok_off_popup", distance
+    return "detected", distance
 
 
 def _save_overlay(*, image_path: Path, ok_bbox: dict, output_path: Path) -> str:
@@ -249,21 +329,23 @@ def run() -> str:
             print(f"[ERROR] WebP 인코딩 실패: {path.name}, error={exc}")
             continue
 
-        # 1) 독립 OCR 게이트로 팝업 존재부터 확인한다(grounding confidence 불신).
-        popup_verdict, ocr_raw = _verify_popup_present(
+        # 1) 독립 Spotting 게이트로 팝업 존재 + *위치* 부터 확인한다(grounding confidence 불신).
+        popup_verdict, popup_region, ocr_raw = _locate_popup_region(
             image_b64=image_b64, ocr_client=ocr_client
         )
 
         # status 종류:
-        #   detected            팝업 텍스트 확인 + OK 버튼 grounding 성공 → 클릭 허용.
+        #   detected            팝업 텍스트 확인 + OK 버튼이 팝업 영역 근처 → 클릭 허용.
         #   no_popup            팝업 텍스트 미검출 → 클릭 금지(오검출 방지의 핵심).
         #   text_present_no_box 텍스트는 있으나 OK 버튼을 못 잡음 → 클릭 금지.
+        #   ok_off_popup        OK 라고 짚었으나 팝업 영역에서 너무 멈(다른 패널) → 클릭 금지.
         #   ocr_error           OCR 호출 실패 → 불확실 → 안전하게 클릭 금지.
         #   error               grounding 호출/파싱 실패.
         payload: dict = {}
         ok_bbox: dict | None = None
         status = ""
         error_msg = ""
+        ok_distance: float | None = None
 
         if popup_verdict == "absent":
             status = "no_popup"
@@ -275,7 +357,15 @@ def run() -> str:
                 payload, ok_bbox = _detect_ok_button(
                     image_b64=image_b64, width=w, height=h, client=client
                 )
-                status = "detected" if ok_bbox is not None else "text_present_no_box"
+                if ok_bbox is None:
+                    status = "text_present_no_box"
+                else:
+                    # 2) 공간 게이트: OK 박스 중심이 팝업 텍스트 영역에 속해야 클릭 허용.
+                    status, ok_distance = _gate_ok_by_region(
+                        ok_bbox=ok_bbox, popup_region=popup_region, name=path.name
+                    )
+                    if status != "detected":
+                        ok_bbox = None  # 멀리 잡힌 박스는 버려 클릭/오버레이 금지.
             except Exception as exc:
                 status = "error"
                 error_msg = str(exc)
@@ -299,6 +389,8 @@ def run() -> str:
             "image_path": str(path),
             "status": status,
             "popup_verdict": popup_verdict,
+            "popup_region": popup_region or {},
+            "ok_distance": ok_distance,
             "error": error_msg,
             "overlay_path": overlay_path,
             "ok_bbox": ok_bbox or {},
@@ -313,7 +405,8 @@ def run() -> str:
         results.append(result)
         print(
             f"[INFO] {idx:02d} {path.name} popup={popup_verdict} status={status} "
-            f"ok_btn={'Y' if ok_bbox else 'N'} conf={payload.get('confidence')} click={click_point}"
+            f"ok_btn={'Y' if ok_bbox else 'N'} dist={ok_distance} "
+            f"conf={payload.get('confidence')} click={click_point}"
         )
 
     def _count(status: str) -> int:
@@ -321,6 +414,7 @@ def run() -> str:
 
     no_popup = _count("no_popup")
     text_present_no_box = _count("text_present_no_box")
+    ok_off_popup = _count("ok_off_popup")
     ocr_errors = _count("ocr_error")
     grounding_errors = _count("error")
     summary = {
@@ -330,6 +424,7 @@ def run() -> str:
         "ok_button_detected": detected,
         "no_popup": no_popup,
         "text_present_no_box": text_present_no_box,
+        "ok_off_popup": ok_off_popup,
         "ocr_errors": ocr_errors,
         "grounding_errors": grounding_errors,
         "vlm_service": DEFAULT_SERVICE,
@@ -356,7 +451,7 @@ def run() -> str:
     print(
         f"[INFO] 완료: processed={len(results)}/{len(paths)} "
         f"ok_button_detected={detected} no_popup={no_popup} "
-        f"text_present_no_box={text_present_no_box} "
+        f"text_present_no_box={text_present_no_box} ok_off_popup={ok_off_popup} "
         f"ocr_errors={ocr_errors} grounding_errors={grounding_errors} "
         f"elapsed={format_elapsed_ms(started)}"
     )

@@ -8,8 +8,8 @@
 파이프라인 (역할 분담은 workflow_2 설계 규칙과 동일 — VLM 은 영역만, CV 가 좌표를 확정):
   1. VLM(ui-venus) 이 SEM Monitor Box 를 coarse bbox 로 제안한다.
      (프롬프트는 ``vlm_sem_monitor_box`` 의 것을 재사용)
-  2. 그 bbox 네 변을 각각 band 안에서 가장 강한 직선 edge(Sobel projection peak)로
-     snap 해 픽셀 단위로 정렬한다.
+  2. 그 bbox 네 변을 각각 band 안에서 프레임 회색((170~190) 무채색) 의 '긴 직선 run'
+     으로 snap 한다. 프레임 색이 약하면 Sobel projection peak 로 폴백해 픽셀 단위로 정렬한다.
   3. box 내부의 Laplacian 분산으로 sharpness 를 재서, 'total blur → 클릭 금지' 후보를
      overlay 에 표시한다(클릭 대신 zoom-out/이동 판단의 1차 근거).
 
@@ -65,6 +65,14 @@ EDGE_SNAP_BAND_MIN_PX = 6
 # Laplacian 분산이 이 값 미만이면 'total blur → 클릭 금지' 후보로 표시.
 # 실데이터로 보정 필요(콜드스타트 임계값).
 SHARPNESS_BLUR_THRESHOLD = 60.0
+
+# SEM box 외곽 프레임 색(사용자 관측): (170~190) 부근의 무채색 회색.
+# edge-snap 시 이 색을 띤 '긴 직선 run' 을 1차 단서로 쓰고, band 안에 프레임 색이
+# 충분치 않으면 Sobel gradient peak 로 폴백한다. 모두 콜드스타트값(실데이터 보정 필요).
+GREY_FRAME_LO = 160          # 프레임 회색 밝기 하한.
+GREY_FRAME_HI = 200          # 프레임 회색 밝기 상한.
+GREY_FRAME_CHROMA_TOL = 20   # 채널 최대-최소 편차 허용치(무채색 판정).
+GREY_FRAME_MIN_FRAC = 0.5    # 프레임 회색이 변 길이의 이 비율 이상 이어져야 색 단서를 신뢰.
 
 # overlay 색상 (BGR).
 _VLM_COLOR = (255, 0, 255)   # magenta — VLM coarse
@@ -126,10 +134,32 @@ def _resolve_capture_paths() -> list[Path]:
 # ------------------------------------------------------------------
 
 
-def _snap_box_to_edges(gray: np.ndarray, bbox: dict) -> dict:
-    """``bbox`` 네 변을 각각 band 안에서 Sobel projection peak 로 옮긴다.
+def _grey_frame_mask(bgr: np.ndarray) -> np.ndarray:
+    """프레임으로 쓰이는 밝은 무채색 회색 픽셀 mask(uint8 0/1).
 
-    top/bottom 은 가로 edge(grad_y), left/right 는 세로 edge(grad_x) 를 본다.
+    SEM box 외곽 프레임은 (170~190) 부근의 회색이다(사용자 관측). 채널 간 편차가
+    작고(무채색) 밝기가 회색 band 안인 픽셀만 1 로 둔다. 컬러 텍스트/신호등 같은
+    유채색 UI 요소나 어두운 라이브 영상은 자연히 0 이 된다.
+    """
+    bgr_i = bgr.astype(np.int16)
+    lo = bgr_i.min(axis=2)
+    hi = bgr_i.max(axis=2)
+    chroma = hi - lo
+    mean = bgr_i.mean(axis=2)
+    mask = (
+        (chroma <= GREY_FRAME_CHROMA_TOL)
+        & (mean >= GREY_FRAME_LO)
+        & (mean <= GREY_FRAME_HI)
+    )
+    return mask.astype(np.uint8)
+
+
+def _snap_box_to_edges(gray: np.ndarray, grey_mask: np.ndarray, bbox: dict) -> dict:
+    """``bbox`` 네 변을 각각 band 안에서 프레임 회색 run(1차) 또는 Sobel peak(폴백)로 옮긴다.
+
+    프레임은 box 변을 가로지르는 '긴 회색 직선' 이므로, band 안에서 box 폭/높이에
+    걸친 회색 픽셀 수가 최대인 행/열을 우선 고른다. 이 색 단서가 약하면(겹친 컨트롤
+    패널·텍스처처럼 프레임이 안 보이면) 기존 Sobel gradient peak 로 폴백한다.
     band 밖으로는 나가지 않으므로 VLM 추정 근처에 머무른다.
     """
     h, w = gray.shape[:2]
@@ -146,12 +176,21 @@ def _snap_box_to_edges(gray: np.ndarray, bbox: dict) -> dict:
     grad_x = np.abs(cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3))
     grad_y = np.abs(cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3))
 
+    methods: list[str] = []
+
     def _snap_horizontal(edge_row: int) -> int:
         lo = max(0, edge_row - band_y)
         hi = min(h, edge_row + band_y + 1)
         if hi - lo < 2:
+            methods.append("none")
             return edge_row
-        # 각 후보 행에서 box 폭에 걸친 가로 edge 강도 합.
+        # 1차: box 폭에 걸친 프레임 회색 픽셀 수가 최대인 행.
+        grey_count = grey_mask[lo:hi, left:right].sum(axis=1)
+        if int(grey_count.max()) >= GREY_FRAME_MIN_FRAC * box_w:
+            methods.append("grey")
+            return lo + int(np.argmax(grey_count))
+        # 폴백: 가로 edge 강도 합.
+        methods.append("grad")
         strength = grad_y[lo:hi, left:right].sum(axis=1)
         return lo + int(np.argmax(strength))
 
@@ -159,7 +198,13 @@ def _snap_box_to_edges(gray: np.ndarray, bbox: dict) -> dict:
         lo = max(0, edge_col - band_x)
         hi = min(w, edge_col + band_x + 1)
         if hi - lo < 2:
+            methods.append("none")
             return edge_col
+        grey_count = grey_mask[top:bottom, lo:hi].sum(axis=0)
+        if int(grey_count.max()) >= GREY_FRAME_MIN_FRAC * box_h:
+            methods.append("grey")
+            return lo + int(np.argmax(grey_count))
+        methods.append("grad")
         strength = grad_x[top:bottom, lo:hi].sum(axis=0)
         return lo + int(np.argmax(strength))
 
@@ -174,6 +219,7 @@ def _snap_box_to_edges(gray: np.ndarray, bbox: dict) -> dict:
     if new_right <= new_left:
         new_left, new_right = left, right
 
+    print(f"[INFO] edge-snap 방법: T={methods[0]} B={methods[1]} L={methods[2]} R={methods[3]}")
     return {"left": new_left, "top": new_top, "right": new_right, "bottom": new_bottom}
 
 
@@ -254,7 +300,8 @@ def _process_image(image_path: Path, client: Workflow1VLMClient, out_dir: Path) 
     sharpness = None
     blurry = False
     if vlm_bbox is not None:
-        cv_bbox = _snap_box_to_edges(gray, vlm_bbox)
+        grey_mask = _grey_frame_mask(bgr)
+        cv_bbox = _snap_box_to_edges(gray, grey_mask, vlm_bbox)
         sharpness = _sharpness_in_box(gray, cv_bbox)
         blurry = sharpness < SHARPNESS_BLUR_THRESHOLD
 

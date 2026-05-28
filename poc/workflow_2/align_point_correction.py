@@ -114,8 +114,9 @@ MIN_PEAK_OVER_MEDIAN = 3.0
 RCP_BOX_INSET_PX = 3
 
 # rcp 박스 검출 시 후보 bbox 의 면적 하한/상한 (이미지 전체 면적 대비).
+# 정상 box 는 이미지 중앙 부근에 작게 그려진다. 절반 가까이 차지하면 엔지니어 실수로 보고 거른다.
 RCP_BOX_MIN_AREA_RATIO = 0.01
-RCP_BOX_MAX_AREA_RATIO = 0.70
+RCP_BOX_MAX_AREA_RATIO = 0.40
 
 # rcp 박스 검출 시 후보 bbox 의 가장 짧은 변 길이 하한 (이미지 짧은 변 대비).
 RCP_BOX_MIN_SIDE_RATIO = 0.05
@@ -126,6 +127,18 @@ RCP_BOX_MAX_FILL_RATIO = 0.40
 
 # rcp 박스 후보 bbox 의 가로:세로 종횡비 상한 — 너무 가는 띠 (스케일바, axis label 등) 거르기.
 RCP_BOX_MAX_ASPECT = 3.0
+
+# rcp 박스는 이미지 가장자리에 *닿으면 안 된다* — 닿는 경우는 엔지니어가 잘못 그린 케이스.
+# 이 px 만큼 가장자리에서 떨어져 있어야 정상 박스로 인정한다.
+RCP_BOX_EDGE_MARGIN_PX = 2
+
+# 도구가 그린 crosshair 를 *공간 prior* 로 사용해 CV 매칭의 ambiguity 를 깬다.
+# free 검색 best 위치가 crosshair-derived 위치 (= crosshair - align_offset) 와 이만큼 떨어져 있으면
+# prior-제한 ROI 로 다시 매칭해서 두 결과를 비교한다 (S=success 이미지에서 일관성 회복).
+CROSSHAIR_PRIOR_DISAGREEMENT_PX = 30
+# prior 결과를 prefer 하려면 prior 점수가 free 점수에서 이만큼 이내여야 한다.
+# (prior 가 free 보다 약간 낮아도, 도구의 crosshair 는 *측정* 이므로 약간의 양보 가능.)
+CROSSHAIR_PRIOR_SCORE_TOLERANCE = 0.10
 
 # msr frame 의 Laplacian 분산 (focus measure). 이보다 낮으면 "전체 blur 라 정렬 위치 추정
 # 불가" 로 보고 매칭을 건너뛴다 — 호출자는 다음 행동(예: live 탐색)으로 이동한다.
@@ -165,6 +178,11 @@ class _ModalityScore:
     `out_of_frame=True` 는 매칭 위치가 _pad_frame 의 replicate-border 안에 있어
     pad 를 빼고 나니 원본 프레임 밖이라는 신호 — 실제 픽셀이 아니라 가짜 padding
     내용을 매칭한 것이므로 좌표는 클리핑된 값이고 신뢰도는 낮다.
+
+    `used_crosshair_prior=True` 는 도구가 그린 crosshair 를 공간 prior 로 한 prior-ROI
+    재매칭 결과를 채택했다는 의미. free 검색이 wrong-feature 에 락된 경우 (특히 S 라벨
+    이미지) self-correct 하기 위한 메커니즘. `free_score`/`prior_score` 둘 다 기록해
+    audit 가능하게 함.
     """
 
     score: float
@@ -174,6 +192,10 @@ class _ModalityScore:
     best_scale: float
     decision: str
     out_of_frame: bool = False  # True 면 pad-border 매칭 — 좌표 신뢰 불가.
+    used_crosshair_prior: bool = False
+    free_score: float = 0.0
+    prior_score: float | None = None
+    prior_match_distance_px: float | None = None  # free 매치 중심에서 prior 까지의 거리 (px).
 
     def to_dict(self) -> dict:
         return {
@@ -184,7 +206,30 @@ class _ModalityScore:
             "best_scale": self.best_scale,
             "decision": self.decision,
             "out_of_frame": self.out_of_frame,
+            "used_crosshair_prior": self.used_crosshair_prior,
+            "free_score": self.free_score,
+            "prior_score": self.prior_score,
+            "prior_match_distance_px": self.prior_match_distance_px,
         }
+
+
+@dataclass
+class _RcpTemplateBundle:
+    """rcp template + 매칭 결과를 align point 로 환산할 때 더할 offset.
+
+    엔지니어가 그린 흰 박스는 *unique area* 의 매칭 단서일 뿐이고, 실제 recipe 에
+    기록된 align point 는 *이미지 중심* 이다. template (= 박스 안쪽 crop) 의 중심은
+    박스 중심에 해당하므로, msr 에서 match 가 잡힌 위치 (= msr 에서의 박스 중심) 에
+    `align_offset_xy` 를 더해야 msr 에서의 align point 좌표가 된다.
+
+    fallback (박스 검출 실패) 경로에서는 template 이 전체 이미지이고 그 중심 = 이미지
+    중심 = align point 이므로 align_offset_xy = (0, 0).
+    """
+
+    template: AlignKeyTemplate
+    align_offset_xy: tuple[int, int]
+    detected_box: tuple[int, int, int, int] | None
+    inner_crop: tuple[int, int, int, int] | None
 
 
 @dataclass
@@ -292,6 +337,10 @@ def _detect_white_box(gray: np.ndarray) -> tuple[int, int, int, int] | None:
             continue
         if min(bw, bh) < RCP_BOX_MIN_SIDE_RATIO * short_side:
             continue
+        # 가장자리 인접 거부 — 정상 box 는 항상 안쪽에 있어야 한다.
+        margin = RCP_BOX_EDGE_MARGIN_PX
+        if x < margin or y < margin or (x + bw) > (w - margin) or (y + bh) > (h - margin):
+            continue
         # 종횡비 — 너무 길쭉한 띠 (스케일바, 축라벨, 줄 무늬) 거르기.
         aspect = max(bw, bh) / max(min(bw, bh), 1)
         if aspect > RCP_BOX_MAX_ASPECT:
@@ -335,34 +384,42 @@ def _inner_crop_for_box(
 def _draw_rcp_overlay(
     gray: np.ndarray,
     *,
-    detected_box: tuple[int, int, int, int] | None,
-    inner_crop: tuple[int, int, int, int] | None,
+    bundle: _RcpTemplateBundle,
     out_path: Path,
     label: str,
 ) -> None:
-    """rcp 이미지에 검출된 흰색 박스와 그 중심 (align point) 를 표시한다.
+    """rcp 이미지에 검출된 흰색 박스, inner crop (template), 그리고 *진짜 align point*
+    (= 이미지 중심) 를 표시한다.
 
-    박스가 검출되지 않으면 이미지 정중앙에 crosshair 를 그려 "fallback (전체 이미지를
-    template 으로 사용)" 임을 명시한다.
+    파란 crosshair = 이미지 중심 = align point. 노란 박스 = 검출된 흰색 박스. 초록 박스
+    = template (박스 안쪽 crop). 박스 중심에서 align point 로 시안색 화살표를 그려
+    offset 을 시각화한다. 박스 미검출시에는 이미지 중심에 crosshair 만 (fallback 명시).
     """
     h, w = gray.shape[:2]
     canvas = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+    image_center = (w // 2, h // 2)
 
-    if detected_box is not None:
-        bx, by, bw, bh = detected_box
+    if bundle.detected_box is not None:
+        bx, by, bw, bh = bundle.detected_box
         cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), _BGR_YELLOW, 1, cv2.LINE_AA)
-        if inner_crop is not None:
-            ix, iy, iw, ih = inner_crop
+        if bundle.inner_crop is not None:
+            ix, iy, iw, ih = bundle.inner_crop
             cv2.rectangle(canvas, (ix, iy), (ix + iw, iy + ih), _BGR_GREEN, 1, cv2.LINE_AA)
-            cx, cy = ix + iw // 2, iy + ih // 2
+            tcx, tcy = ix + iw // 2, iy + ih // 2
         else:
-            cx, cy = bx + bw // 2, by + bh // 2
-        _draw_crosshair(canvas, (cx, cy), _BGR_BLUE, length=18, thickness=2)
-        note = f"{label}: unique-area box {bw}x{bh}, align point ({cx},{cy})"
+            tcx, tcy = bx + bw // 2, by + bh // 2
+        # 박스 중심 (template 중심) → align point (image center) 까지의 offset 시각화.
+        cv2.arrowedLine(canvas, (tcx, tcy), image_center, (220, 200, 80), 1,
+                        cv2.LINE_AA, tipLength=0.2)
+        _draw_crosshair(canvas, image_center, _BGR_BLUE, length=18, thickness=2)
+        dx, dy = bundle.align_offset_xy
+        note = (
+            f"{label}: box {bw}x{bh}, align point=image_center ({image_center[0]},{image_center[1]}), "
+            f"offset (template->align)=({dx},{dy})"
+        )
     else:
-        cx, cy = w // 2, h // 2
-        _draw_crosshair(canvas, (cx, cy), _BGR_BLUE, length=18, thickness=2)
-        note = f"{label}: white box NOT detected -> fallback (full image, center)"
+        _draw_crosshair(canvas, image_center, _BGR_BLUE, length=18, thickness=2)
+        note = f"{label}: white box NOT detected -> fallback (full image, center=align point)"
 
     cv2.putText(canvas, note, (8, h - 10),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, _BGR_WHITE, 1, cv2.LINE_AA)
@@ -377,23 +434,50 @@ def _build_rcp_template(
     version: str,
     key_type: str,
     label: str,
-) -> tuple[AlignKeyTemplate, tuple[int, int, int, int] | None, tuple[int, int, int, int] | None]:
-    """rcp 이미지에서 unique-area 박스를 검출해, 그 안쪽 crop 으로 template 을 만든다.
+) -> _RcpTemplateBundle:
+    """rcp 이미지에서 unique-area 박스를 검출해, 그 안쪽 crop 으로 template 을 만들고
+    align point (이미지 중심) 와 박스 중심 사이의 offset 을 함께 반환한다.
 
-    박스 검출 실패시 전체 이미지를 template 으로 사용 (image-center = align point
-    이라는 거친 가정). 둘 다 호출자에게 알리도록 (detected_box, inner_crop) 을
-    반환한다.
+    Align point 는 *이미지 중심* 이지 박스 중심이 아니다. 박스는 단지 "이 영역이
+    유일하게 식별 가능하다" 는 매칭 단서일 뿐. msr 에서 박스가 어디에 있는지 매칭으로
+    찾으면 (= match center), 거기에 이 offset 을 더해야 msr 에서의 진짜 align point 가 된다.
+
+    박스 검출 실패시 전체 이미지를 template 으로 사용. 그 경우 template 중심 = 이미지
+    중심 = align point 이므로 offset = (0, 0).
     """
+    h, w = rcp_gray.shape[:2]
+    image_center = (w // 2, h // 2)
+
     detected_box = _detect_white_box(rcp_gray)
     if detected_box is None:
         print(f"[WARNING] {label}: 흰색 unique-area 박스 검출 실패 — 전체 이미지를 template 으로 사용합니다.")
         template = build_template(rcp_gray, recipe_id=recipe_id, version=version, key_type=key_type)
-        return template, None, None
+        return _RcpTemplateBundle(
+            template=template,
+            align_offset_xy=(0, 0),
+            detected_box=None,
+            inner_crop=None,
+        )
 
     inner_gray, inner_bbox = _inner_crop_for_box(rcp_gray, detected_box)
-    print(f"[INFO] {label}: 박스 검출 bbox={detected_box} → inner crop {inner_bbox}")
+    # template (= inner crop) 의 중심은 inner_bbox 의 중심 — 매칭이 잡아내는 위치.
+    inner_x, inner_y, inner_w, inner_h = inner_bbox
+    template_center_in_rcp = (inner_x + inner_w // 2, inner_y + inner_h // 2)
+    align_offset_xy = (
+        image_center[0] - template_center_in_rcp[0],
+        image_center[1] - template_center_in_rcp[1],
+    )
+    print(
+        f"[INFO] {label}: 박스 bbox={detected_box} inner={inner_bbox} "
+        f"align_offset (template_center→image_center)={align_offset_xy}"
+    )
     template = build_template(inner_gray, recipe_id=recipe_id, version=version, key_type=key_type)
-    return template, detected_box, inner_bbox
+    return _RcpTemplateBundle(
+        template=template,
+        align_offset_xy=align_offset_xy,
+        detected_box=detected_box,
+        inner_crop=inner_bbox,
+    )
 
 
 # ====================================================================
@@ -499,55 +583,152 @@ def _detect_existing_crosshair(
 # ====================================================================
 
 
-def _match_against(
-    template: AlignKeyTemplate | None,
-    frame_gray: np.ndarray,
-) -> _ModalityScore | None:
-    """단일 template 으로 frame 을 매칭. template 이 없으면 None.
+def _match_with_prior_roi(
+    template: AlignKeyTemplate,
+    padded: np.ndarray,
+    prior_center_in_padded: tuple[int, int],
+) -> AlignKeyMatchResult | None:
+    """compute_align_key_score 를 prior 중심의 좁은 ROI 로 제한해 다시 돌린다.
 
-    pad-undo 한 좌표가 원본 frame 밖 (음수 또는 ≥w/h) 이면 replicate-border 안에서 매칭된
-    것이라 신뢰 불가 — out_of_frame=True 로 플래그하고 좌표는 frame 안으로 클리핑한다.
-    호출자는 이 플래그를 보고 status 를 low_match_both 로 다운그레이드한다.
+    ROI 폭/높이는 (smallest-scaled-template + 마진) 의 두 배 — 최소 매칭 가능 크기를
+    만족시키면서, free 검색 대비 *충분히* 작은 영역에 가둔다. 매칭이 불가한 ROI
+    (가장자리에 너무 가까워 잘렸을 때) 면 None.
     """
-    if template is None:
+    th, tw = template.raw_image.shape
+    min_scale = min(COMPARE_SCALES)
+    # ROI 한 변이 smallest-scaled-template 보다 *확실히* 커야 matcher 가 통과.
+    half_w = max(int(0.55 * tw) + 8, int(0.5 * min_scale * tw) + 12)
+    half_h = max(int(0.55 * th) + 8, int(0.5 * min_scale * th) + 12)
+    px, py = prior_center_in_padded
+    ph, pw = padded.shape[:2]
+    x0 = max(0, px - half_w)
+    y0 = max(0, py - half_h)
+    x1 = min(pw, px + half_w)
+    y1 = min(ph, py + half_h)
+    roi_w = x1 - x0
+    roi_h = y1 - y0
+    min_tw = max(8, int(round(tw * min_scale)))
+    min_th = max(8, int(round(th * min_scale)))
+    if roi_w <= min_tw or roi_h <= min_th:
         return None
+    try:
+        return compute_align_key_score(
+            template,
+            padded,
+            roi_hint=(x0, y0, roi_w, roi_h),
+            scales=COMPARE_SCALES,
+            policy=STRUCTURE_POLICY,
+        )
+    except Exception as exc:
+        print(f"[WARNING] prior-ROI 재매칭 실패 — free 검색 유지: {exc}")
+        return None
+
+
+def _match_against(
+    bundle: _RcpTemplateBundle | None,
+    frame_gray: np.ndarray,
+    *,
+    crosshair_xy: tuple[int, int] | None = None,
+) -> _ModalityScore | None:
+    """단일 rcp bundle 로 frame 을 매칭. bundle 이 없으면 None.
+
+    Pipeline:
+      1. free 검색: 매칭으로 frame 에서 template 중심 위치를 잡는다.
+      2. 도구가 그린 crosshair 가 있고, free 검색의 match 중심이 crosshair-derived 위치
+         (= crosshair - align_offset) 와 CROSSHAIR_PRIOR_DISAGREEMENT_PX 보다 멀면:
+         prior 위치 주변 좁은 ROI 로 재매칭. prior 점수가 합리적 (>= adjust_threshold) 이고
+         free 점수에서 CROSSHAIR_PRIOR_SCORE_TOLERANCE 안에 들면 prior 결과를 채택.
+      3. 채택된 match 중심에 align_offset 을 더해 frame 에서의 align point 좌표.
+      4. align point 가 frame 밖이면 out_of_frame=True 로 플래그하고 좌표를 클리핑.
+
+    S (success) 라벨 이미지에서 free 검색이 wrong-feature 에 락된 경우, prior 가
+    self-correct 시켜준다. E (fail) 라벨에서는 crosshair 자체가 틀린 위치이므로 prior
+    점수가 낮게 나와 자동으로 free 검색으로 폴백된다.
+    """
+    if bundle is None:
+        return None
+    template = bundle.template
     padded, pad_x, pad_y = _pad_frame(frame_gray, template.raw_image.shape)
-    result: AlignKeyMatchResult = compute_align_key_score(
+    result_free: AlignKeyMatchResult = compute_align_key_score(
         template,
         padded,
         scales=COMPARE_SCALES,
         policy=STRUCTURE_POLICY,
     )
-    bx, by = result.best_xy
-    raw_x = int(bx - pad_x)
-    raw_y = int(by - pad_y)
+    fbx, fby = result_free.best_xy
+    free_match_x = int(fbx - pad_x)
+    free_match_y = int(fby - pad_y)
+
+    dx_off, dy_off = bundle.align_offset_xy
+
+    used_prior = False
+    prior_score_val: float | None = None
+    prior_dist: float | None = None
+    chosen_result: AlignKeyMatchResult = result_free
+    chosen_match_x = free_match_x
+    chosen_match_y = free_match_y
+
+    if crosshair_xy is not None and bundle.detected_box is not None:
+        # 도구의 crosshair 가 align point 라면, template 은 (crosshair - align_offset) 에 있어야 한다.
+        prior_match_x = crosshair_xy[0] - dx_off
+        prior_match_y = crosshair_xy[1] - dy_off
+        prior_dist = float(np.hypot(free_match_x - prior_match_x, free_match_y - prior_match_y))
+        if prior_dist > CROSSHAIR_PRIOR_DISAGREEMENT_PX:
+            prior_result = _match_with_prior_roi(
+                template, padded,
+                (prior_match_x + pad_x, prior_match_y + pad_y),
+            )
+            if prior_result is not None:
+                prior_score_val = float(prior_result.score)
+                # prior 점수가 합리적이고 free 보다 너무 떨어지지 않으면 prior 채택.
+                if (
+                    prior_result.score >= STRUCTURE_POLICY.adjust_threshold
+                    and prior_result.score + CROSSHAIR_PRIOR_SCORE_TOLERANCE >= result_free.score
+                ):
+                    used_prior = True
+                    chosen_result = prior_result
+                    pbx, pby = prior_result.best_xy
+                    chosen_match_x = int(pbx - pad_x)
+                    chosen_match_y = int(pby - pad_y)
+
+    align_x = chosen_match_x + dx_off
+    align_y = chosen_match_y + dy_off
     fh, fw = frame_gray.shape[:2]
-    out_of_frame = (raw_x < 0 or raw_y < 0 or raw_x >= fw or raw_y >= fh)
-    clipped_x = max(0, min(fw - 1, raw_x))
-    clipped_y = max(0, min(fh - 1, raw_y))
+    out_of_frame = (align_x < 0 or align_y < 0 or align_x >= fw or align_y >= fh)
+    clipped_x = max(0, min(fw - 1, align_x))
+    clipped_y = max(0, min(fh - 1, align_y))
+
     return _ModalityScore(
-        score=float(result.score),
-        chamfer=float(result.chamfer_score),
-        orb=float(result.orb_inlier_ratio),
+        score=float(chosen_result.score),
+        chamfer=float(chosen_result.chamfer_score),
+        orb=float(chosen_result.orb_inlier_ratio),
         best_xy=(clipped_x, clipped_y),
-        best_scale=float(result.best_scale),
-        decision=result.decision,
+        best_scale=float(chosen_result.best_scale),
+        decision=chosen_result.decision,
         out_of_frame=out_of_frame,
+        used_crosshair_prior=used_prior,
+        free_score=float(result_free.score),
+        prior_score=prior_score_val,
+        prior_match_distance_px=prior_dist,
     )
 
 
 def _race_templates(
-    om_template: AlignKeyTemplate | None,
-    sem_template: AlignKeyTemplate | None,
+    om_bundle: _RcpTemplateBundle | None,
+    sem_bundle: _RcpTemplateBundle | None,
     frame_gray: np.ndarray,
+    *,
+    crosshair_xy: tuple[int, int] | None = None,
 ) -> RaceResult:
-    """OM/SEM template 을 모두 돌려 점수가 더 높은 쪽을 winner 로 채택한다.
+    """OM/SEM bundle 을 모두 돌려 점수가 더 높은 쪽을 winner 로 채택한다.
 
     scale bar OCR 을 쓰지 않고 점수 자체로 modality 를 결정한다 (계산은 두 배지만,
-    OCR 환각/엣지 케이스로부터 자유롭다).
+    OCR 환각/엣지 케이스로부터 자유롭다). _match_against 가 이미 align_offset 을
+    적용하므로 winner.best_xy 는 msr 에서의 align point 좌표다. crosshair_xy 가 주어지면
+    각 modality 에서 spatial prior 로 사용한다.
     """
-    om = _match_against(om_template, frame_gray)
-    sem = _match_against(sem_template, frame_gray)
+    om = _match_against(om_bundle, frame_gray, crosshair_xy=crosshair_xy)
+    sem = _match_against(sem_bundle, frame_gray, crosshair_xy=crosshair_xy)
 
     if om is None and sem is None:
         return RaceResult(winner="none", margin=0.0, om=None, sem=None)
@@ -762,8 +943,8 @@ def _ocr_scale_bar(
 def _process_msr_image(
     msr_path: Path,
     *,
-    om_template: AlignKeyTemplate | None,
-    sem_template: AlignKeyTemplate | None,
+    om_bundle: _RcpTemplateBundle | None,
+    sem_bundle: _RcpTemplateBundle | None,
     overlay_dir: Path,
     is_current_sem: bool,
     eqp_id: str,
@@ -842,7 +1023,7 @@ def _process_msr_image(
         }
 
     crosshair_xy, crosshair_conf, _crosshair_debug = _detect_existing_crosshair(frame_gray)
-    race = _race_templates(om_template, sem_template, frame_gray)
+    race = _race_templates(om_bundle, sem_bundle, frame_gray, crosshair_xy=crosshair_xy)
 
     # OCR — race 결과를 *덮어쓰지 않고* 보조 힌트로만 기록 (단, 비자신 status 에서는 tiebreak).
     scale_bar_text, scale_bar_um, scale_bar_hint = _ocr_scale_bar(
@@ -853,7 +1034,7 @@ def _process_msr_image(
     cv_winner_modality = race.winner
 
     # status / 보정 좌표 결정.
-    if om_template is None and sem_template is None:
+    if om_bundle is None and sem_bundle is None:
         status = "no_templates"
         corrected_xy = image_center
         magnitude_basis = "center"
@@ -1056,31 +1237,28 @@ def _process_recipe(
     overlay_dir = out_dir / "overlay"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # rcp template — 엔지니어가 그려둔 흰색 unique-area 박스를 검출, 그 안쪽 crop 으로 template 을 만든다.
-    om_template: AlignKeyTemplate | None = None
-    sem_template: AlignKeyTemplate | None = None
-    om_box: tuple[int, int, int, int] | None = None
-    sem_box: tuple[int, int, int, int] | None = None
-    om_inner: tuple[int, int, int, int] | None = None
-    sem_inner: tuple[int, int, int, int] | None = None
+    # rcp template — 엔지니어가 그려둔 흰색 unique-area 박스를 검출, 그 안쪽 crop 으로 template 을 만들고
+    # align_offset (image_center - template_center) 까지 묶어 bundle 로 들고 다닌다.
+    om_bundle: _RcpTemplateBundle | None = None
+    sem_bundle: _RcpTemplateBundle | None = None
     if assets.recipe_om is not None:
         om_gray = load_gray(assets.recipe_om)
-        om_template, om_box, om_inner = _build_rcp_template(
+        om_bundle = _build_rcp_template(
             om_gray, recipe_id=assets.recipe_id, version="rcp_om",
             key_type="om", label="OM (IMAP0001)",
         )
         _draw_rcp_overlay(
-            om_gray, detected_box=om_box, inner_crop=om_inner,
+            om_gray, bundle=om_bundle,
             out_path=out_dir / "rcp_om_box_overlay.jpg", label="IMAP0001 OM",
         )
     if assets.recipe_sem is not None:
         sem_gray = load_gray(assets.recipe_sem)
-        sem_template, sem_box, sem_inner = _build_rcp_template(
+        sem_bundle = _build_rcp_template(
             sem_gray, recipe_id=assets.recipe_id, version="rcp_sem",
             key_type="sem", label="SEM (IMAP0002)",
         )
         _draw_rcp_overlay(
-            sem_gray, detected_box=sem_box, inner_crop=sem_inner,
+            sem_gray, bundle=sem_bundle,
             out_path=out_dir / "rcp_sem_box_overlay.jpg", label="IMAP0002 SEM",
         )
 
@@ -1095,8 +1273,8 @@ def _process_recipe(
             try:
                 row = _process_msr_image(
                     msr_path,
-                    om_template=om_template,
-                    sem_template=sem_template,
+                    om_bundle=om_bundle,
+                    sem_bundle=sem_bundle,
                     overlay_dir=overlay_dir,
                     is_current_sem=(assets.current_sem is not None and msr_path == assets.current_sem),
                     eqp_id=assets.eqp_id,
@@ -1128,6 +1306,7 @@ def _process_recipe(
     disagreement_rows: list[dict] = []
     tiebreak_rows: list[dict] = []
     error_rows: list[dict] = []
+    crosshair_prior_rows: list[dict] = []
     for row in rows:
         status_counts[row["status"]] = status_counts.get(row["status"], 0) + 1
         modality_counts[row["winner_modality"]] = modality_counts.get(row["winner_modality"], 0) + 1
@@ -1175,6 +1354,21 @@ def _process_recipe(
                 "msr_image": row["msr_image"],
                 "processing_error": row.get("processing_error"),
             })
+        # winner side 에서 prior 가 free 검색을 교체했는지 — S-image self-correction 의 핵심 audit.
+        winner_modality = row.get("winner_modality")
+        winner_payload = row.get(winner_modality) if winner_modality in ("om", "sem") else None
+        if isinstance(winner_payload, dict) and winner_payload.get("used_crosshair_prior"):
+            crosshair_prior_rows.append({
+                "msr_image": row["msr_image"],
+                "tool_label": row.get("tool_label"),
+                "winner_modality": winner_modality,
+                "free_score": winner_payload.get("free_score"),
+                "prior_score": winner_payload.get("prior_score"),
+                "prior_match_distance_px": winner_payload.get("prior_match_distance_px"),
+                "corrected_xy": row.get("corrected_xy"),
+                "crosshair_xy": row.get("crosshair_xy"),
+                "overlay_path": row["overlay_path"],
+            })
         if row.get("tiebreak_applied"):
             tiebreak_rows.append({
                 "msr_image": row["msr_image"],
@@ -1191,12 +1385,14 @@ def _process_recipe(
         "recipe_id": assets.recipe_id,
         "recipe_dir": str(assets.recipe_dir),
         "rcp_box": {
-            "om_detected": om_box is not None,
-            "om_bbox": list(om_box) if om_box else None,
-            "om_inner_crop": list(om_inner) if om_inner else None,
-            "sem_detected": sem_box is not None,
-            "sem_bbox": list(sem_box) if sem_box else None,
-            "sem_inner_crop": list(sem_inner) if sem_inner else None,
+            "om_detected": om_bundle is not None and om_bundle.detected_box is not None,
+            "om_bbox": list(om_bundle.detected_box) if om_bundle and om_bundle.detected_box else None,
+            "om_inner_crop": list(om_bundle.inner_crop) if om_bundle and om_bundle.inner_crop else None,
+            "om_align_offset_xy": list(om_bundle.align_offset_xy) if om_bundle else None,
+            "sem_detected": sem_bundle is not None and sem_bundle.detected_box is not None,
+            "sem_bbox": list(sem_bundle.detected_box) if sem_bundle and sem_bundle.detected_box else None,
+            "sem_inner_crop": list(sem_bundle.inner_crop) if sem_bundle and sem_bundle.inner_crop else None,
+            "sem_align_offset_xy": list(sem_bundle.align_offset_xy) if sem_bundle else None,
         },
         "total_msr_images": len(rows),
         "status_counts": status_counts,
@@ -1221,6 +1417,7 @@ def _process_recipe(
         "modality_disagreement_images": disagreement_rows,
         "tiebreak_applied_images": tiebreak_rows,
         "processing_error_images": error_rows,
+        "crosshair_prior_applied_images": crosshair_prior_rows,
         "out_dir": str(out_dir),
     }
     (out_dir / "summary.json").write_text(
@@ -1244,6 +1441,8 @@ def _process_recipe(
         print(f"[INFO] modality 불일치 (CV race vs scale-bar OCR): {len(disagreement_rows)}")
     if error_rows:
         print(f"[INFO] processing errors (개별 장 실패, batch 계속): {len(error_rows)}")
+    if crosshair_prior_rows:
+        print(f"[INFO] crosshair prior 적용 (free 검색을 spatial prior 로 교체): {len(crosshair_prior_rows)}")
     return summary
 
 

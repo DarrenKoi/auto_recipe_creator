@@ -9,15 +9,22 @@
 하므로, 클릭점이 우하단 버튼들로 새지 않고 좌하단 OK 에 정확히 떨어지는지를
 사람이 overlay 로 먼저 눈으로 검증한다.
 
-팝업 존재 게이트(핵심): grounding VLM 은 'Wait Input' 팝업이 *없을 때도* 다른 패널의
-엉뚱한 버튼을 confidence 0.99 로 자신 있게 짚는다. 그래서 VLM 의 confidence/
-popup_visible 값을 신뢰하지 않고, **독립적인 OCR(paddleocr)** 로 팝업 서명 텍스트
-(제목 'Wait Input' 또는 본문 'cross cursor'+'alignment mark')가 화면에 실제로
-읽히는지 먼저 확인한다. 이 게이트를 통과할 때만 OK 버튼을 grounding/클릭한다.
-  - 완전히 없으면(텍스트 미검출) → 클릭 금지(no_popup).
-  - 다른 창에 가려 일부만 보여도 설명 텍스트가 읽히면 → 통과(존재로 인정).
-역할 분담은 workflow_2 규칙과 동일: VLM 은 'OK 버튼 영역' 만 짚고, 존재 판정과
-좌표 신뢰 여부는 OCR/사람이 결정한다(production loop 에 바로 넣지 않는 프로브).
+존재 게이트(핵심): grounding VLM 은 'Wait Input' 팝업이 *없을 때도* 다른 패널의
+엉뚱한 버튼을 confidence 0.99 로 자신 있게 짚는다. PaddleOCR-VL 로 화면 전체 텍스트를
+읽어 거르려 했으나, PaddleOCR-VL 은 문서 파서라 GUI 스크린샷 전체를 주면 환각 텍스트를
+대량 생성해 게이트로 쓸 수 없었다(2026-05-28 확인). 그래서 OCR 을 빼고, 화면이
+정지된다는 점(align fail 시 모니터 고정)과 팝업이 고정 모달이라는 점을 이용해
+**고전 CV 템플릿 매칭**으로 확인한다:
+  1. VLM(ui-venus) 이 OK 버튼 영역(coarse bbox)을 짚는다.
+  2. 그 영역을 미리 캡처해 둔 'OK' 글리프 템플릿과 ``cv2.matchTemplate`` 으로 대조한다.
+     점수가 임계값 이상이면 진짜 OK 버튼(detected) → 클릭 허용. 낮으면 다른 패널을
+     헛짚은 것(confirm_failed) → 클릭 금지.
+역할 분담은 workflow_2 규칙과 동일: VLM 은 'OK 버튼 영역' 만 짚고, 클릭 허용 여부는
+CV(템플릿 점수)/사람이 결정한다(production loop 에 바로 넣지 않는 프로브).
+
+템플릿 부트스트랩: 템플릿 파일(``OK_TEMPLATE_PATH``)이 없으면 확인 불가 →
+status=no_template(클릭 금지). 대신 VLM 이 짚은 OK crop 을 후보로 저장하니, 진짜
+OK 버튼인 프레임의 crop 을 골라 ``OK_TEMPLATE_PATH`` 로 복사하면 그 뒤부터 게이트가 켜진다.
 
 입력: ``ALIGN_IMAGES_ROOT/*/*/*/captured_img_from_rcs/<tag>/<tag>_rcs.jpg``
       (RCS_CAPTURE_DIR 환경변수로 임의 폴더를 직접 줄 수도 있다.)
@@ -27,19 +34,18 @@ popup_visible 값을 신뢰하지 않고, **독립적인 OCR(paddleocr)** 로 �
     uv run python poc/workflow_2/vlm_wait_input_ok_button.py
 """
 
-import math
 import os
 import time
 from pathlib import Path
 
+import cv2
+import numpy as np
 from dotenv import load_dotenv
 from PIL import Image
 
-from poc.workflow_2 import ALIGN_IMAGES_ROOT, DEBUG_IMAGE_DIR
-from poc.workflow_1.debug_artifacts import save_debug_json, save_debug_text, save_marked_bboxes
+from poc.workflow_2 import ALIGN_IMAGES_ROOT, DEBUG_IMAGE_DIR, WORKFLOW_2_DIR
+from poc.workflow_1.debug_artifacts import save_debug_json, save_debug_text
 from poc.workflow_1.flask_vlm import UI_VENUS_MODEL_NAME
-from poc.workflow_1.ocr_spotting import parse_spotting_items
-from poc.workflow_1.prompts import build_spotting_prompt
 from poc.workflow_1.util import env_int, format_elapsed_ms, make_timestamp_tag
 from poc.workflow_1.util.image_utils import encode_image_webp
 from poc.workflow_1.util.json_utils import (
@@ -68,19 +74,25 @@ SAMPLE_LIMIT = env_int("OK_BUTTON_SAMPLE_LIMIT", 0)
 DEFAULT_SERVICE = os.getenv("TEST_VLM_SERVICE", "ui-venus").strip() or "ui-venus"
 DEFAULT_MODEL = os.getenv("TEST_VLM_MODEL_NAME", UI_VENUS_MODEL_NAME).strip() or UI_VENUS_MODEL_NAME
 
-# 팝업 존재 게이트용 OCR — grounding VLM 과 다른 독립 모델(paddleocr)로 텍스트를 읽는다.
-# Spotting 태스크로 서명 텍스트의 *좌표*까지 받아, OK 버튼이 그 팝업에 속하는지 공간 검증한다.
-OCR_SERVICE_SLUG = os.getenv("OK_BUTTON_OCR_SERVICE", "paddleocr-vl-1.5").strip() or "paddleocr-vl-1.5"
-OCR_MAX_TOKENS = 4096
+# OK 글리프 템플릿 — VLM 이 짚은 영역이 진짜 OK 버튼인지 CV 로 확인하는 기준 이미지.
+# 없으면 게이트 비활성(클릭 금지) + 후보 crop 저장으로 부트스트랩 유도.
+OK_TEMPLATE_PATH = Path(
+    os.getenv("OK_TEMPLATE_PATH", str(WORKFLOW_2_DIR / "templates" / "wait_input_ok.png"))
+).expanduser()
 
-# OK 버튼 공간 게이트 — grounding 이 'OK' 라고 짚은 박스 중심이 팝업 서명 텍스트
-# 영역에서 (영역 스케일 × 이 배수)보다 멀면 '다른 패널의 버튼' 으로 보고 클릭을 막는다.
-# 거리는 사각형까지의 거리(영역 안이면 0). 콜드스타트값 — 실데이터로 보정.
-POPUP_OK_MAX_DIST_FRAC = float(os.getenv("OK_BUTTON_MAX_DIST_FRAC", "1.5"))
+# 템플릿 매칭(TM_CCOEFF_NORMED) 점수가 이 값 이상이면 OK 버튼으로 인정. 콜드스타트값 — 실데이터 보정.
+OK_TEMPLATE_MIN_SCORE = float(os.getenv("OK_TEMPLATE_MIN_SCORE", "0.55"))
 
-# Spotting 텍스트를 팝업 서명으로 인정하는 정규화 토큰(소문자 영숫자).
-_POPUP_TITLE_TOKEN = "waitinput"
-_POPUP_BODY_TOKENS = ("crosscursor", "alignmentmark")
+# VLM bbox 가 약간 어긋나도 템플릿이 미끄러질 여유를 주는 crop 패딩(bbox 크기 대비).
+OK_CONFIRM_PAD_FRAC = float(os.getenv("OK_CONFIRM_PAD_FRAC", "0.6"))
+
+# matchTemplate 은 스케일 불변이 아니라, DPI/크기 차를 흡수하려 여러 배율을 시도한다.
+OK_CONFIRM_SCALES = (0.85, 0.92, 1.0, 1.08, 1.15)
+
+# overlay 색상 (BGR).
+_VLM_COLOR = (255, 0, 255)    # magenta — VLM coarse
+_OK_COLOR = (60, 200, 60)     # green — CV-confirmed
+_REJECT_COLOR = (60, 60, 230)  # red — confirm 실패
 
 
 # ------------------------------------------------------------------
@@ -115,7 +127,7 @@ def _resolve_capture_paths() -> list[Path]:
 
 
 # ------------------------------------------------------------------
-# 'Wait Input' 팝업 OK 버튼 grounding.
+# 'Wait Input' 팝업 OK 버튼 grounding (VLM 은 영역만 제안).
 # ------------------------------------------------------------------
 
 
@@ -178,121 +190,122 @@ def _detect_ok_button(
     return parsed, bbox_1000_to_pixels(bbox_1000, width, height)
 
 
-def _normalize_ocr_text(text: str) -> str:
-    """OCR 텍스트를 소문자 영숫자만 남겨 붙인다(공백/기호 차이를 흡수)."""
-    return "".join(ch for ch in (text or "").lower() if ch.isalnum())
+# ------------------------------------------------------------------
+# CV 확인 — VLM 영역이 진짜 'OK' 글리프인지 템플릿 매칭으로 판정.
+# ------------------------------------------------------------------
 
 
-def _union_bbox(bboxes: list[dict]) -> dict | None:
-    """여러 bbox 의 합집합(외접) 사각형."""
-    if not bboxes:
+def _load_ok_template() -> np.ndarray | None:
+    """OK 글리프 템플릿(grayscale)을 로드한다. 없으면 None."""
+    if not OK_TEMPLATE_PATH.is_file():
         return None
+    tmpl = cv2.imread(str(OK_TEMPLATE_PATH), cv2.IMREAD_GRAYSCALE)
+    if tmpl is None or tmpl.size == 0:
+        print(f"[WARNING] OK 템플릿을 디코드하지 못했습니다: {OK_TEMPLATE_PATH}")
+        return None
+    return tmpl
+
+
+def _crop_padded(bbox: dict, w: int, h: int) -> dict:
+    """bbox 둘레를 ``OK_CONFIRM_PAD_FRAC`` 만큼 넓힌 crop 사각형(이미지 경계 clamp)."""
+    bw = bbox["right"] - bbox["left"]
+    bh = bbox["bottom"] - bbox["top"]
+    pad_x = int(round(bw * OK_CONFIRM_PAD_FRAC))
+    pad_y = int(round(bh * OK_CONFIRM_PAD_FRAC))
     return {
-        "left": min(b["left"] for b in bboxes),
-        "top": min(b["top"] for b in bboxes),
-        "right": max(b["right"] for b in bboxes),
-        "bottom": max(b["bottom"] for b in bboxes),
+        "left": max(0, bbox["left"] - pad_x),
+        "top": max(0, bbox["top"] - pad_y),
+        "right": min(w, bbox["right"] + pad_x),
+        "bottom": min(h, bbox["bottom"] + pad_y),
     }
 
 
-def _point_to_rect_distance(point: dict, rect: dict) -> float:
-    """점에서 사각형까지의 최단 거리(사각형 안이면 0)."""
-    dx = max(rect["left"] - point["x"], 0, point["x"] - rect["right"])
-    dy = max(rect["top"] - point["y"], 0, point["y"] - rect["bottom"])
-    return math.hypot(dx, dy)
+def _confirm_ok_glyph(
+    *, image_bgr: np.ndarray, ok_bbox: dict, template_gray: np.ndarray
+) -> tuple[float, dict | None]:
+    """VLM 이 짚은 OK 영역을 OK 글리프 템플릿과 매칭해 (최고점수, 매칭 bbox) 를 돌려준다.
 
-
-def _locate_popup_region(
-    *, image_b64: str, ocr_client: Workflow1VLMClient
-) -> tuple[str, dict | None, str]:
-    """Spotting 으로 'Wait Input' 팝업 서명 텍스트의 *위치* 까지 독립 검증한다.
-
-    grounding VLM 의 confidence 를 신뢰하지 않고, 픽셀에서 직접 읽은 텍스트로만
-    존재를 판정한다. 제목 'Wait Input' 이 보이거나, 본문의 'cross cursor' 와
-    'alignment mark' 가 둘 다 읽히면(부분 가림 대비) 존재로 본다. 매칭된 텍스트
-    bbox 들의 합집합을 팝업 영역으로 돌려주어, OK 버튼이 이 팝업에 속하는지
-    공간 검증에 쓴다. (OCR 좌표는 grounding 과 같은 webp 입력 기준이라 동일 좌표계.)
-
-    반환 (verdict, popup_region|None, raw_text), verdict ∈ {'present','absent','ocr_error'}.
+    팝업이 없을 때 VLM 이 다른 패널 버튼을 OK 라고 헛짚어도, 그 영역에는 'OK'
+    글리프가 없어 점수가 낮게 나와 걸러진다. matchTemplate 은 스케일 불변이
+    아니므로 여러 배율을 시도해 최대 점수를 쓴다(DPI/크기 차 흡수).
     """
-    system_message, user_text = build_spotting_prompt()
-    try:
-        response = ocr_client.chat_with_image_b64(
-            image_b64=image_b64,
-            system_message=system_message,
-            user_text=user_text,
-            image_mime="image/webp",
-            temperature=0.0,
-            max_tokens=OCR_MAX_TOKENS,
-        )
-    except Exception as exc:
-        print(f"[ERROR] OCR 게이트 호출 실패: {exc}")
-        return "ocr_error", None, str(exc)
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape[:2]
+    crop_box = _crop_padded(ok_bbox, w, h)
+    crop = gray[crop_box["top"]:crop_box["bottom"], crop_box["left"]:crop_box["right"]]
+    if crop.size == 0:
+        return 0.0, None
 
-    raw = response.text or ""
-    items = parse_spotting_items(raw)
-
-    has_title = False
-    body_hits: set[str] = set()
-    matched_boxes: list[dict] = []
-    for item in items:
-        norm = _normalize_ocr_text(item.get("text", ""))
-        hit = False
-        if _POPUP_TITLE_TOKEN in norm:
-            has_title = True
-            hit = True
-        for token in _POPUP_BODY_TOKENS:
-            if token in norm:
-                body_hits.add(token)
-                hit = True
-        if hit and isinstance(item.get("bbox"), dict):
-            matched_boxes.append(item["bbox"])
-
-    present = has_title or (set(_POPUP_BODY_TOKENS) <= body_hits)
-    if not present:
-        return "absent", None, raw
-    return "present", _union_bbox(matched_boxes), raw
+    th0, tw0 = template_gray.shape[:2]
+    best_score = -1.0
+    best_box: dict | None = None
+    for scale in OK_CONFIRM_SCALES:
+        tw = max(1, int(round(tw0 * scale)))
+        th = max(1, int(round(th0 * scale)))
+        if th > crop.shape[0] or tw > crop.shape[1]:
+            continue
+        tmpl = cv2.resize(template_gray, (tw, th), interpolation=cv2.INTER_AREA)
+        result = cv2.matchTemplate(crop, tmpl, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, max_loc = cv2.minMaxLoc(result)
+        if max_val > best_score:
+            best_score = float(max_val)
+            mx, my = max_loc
+            best_box = {
+                "left": crop_box["left"] + mx,
+                "top": crop_box["top"] + my,
+                "right": crop_box["left"] + mx + tw,
+                "bottom": crop_box["top"] + my + th,
+            }
+    return best_score, best_box
 
 
-def _gate_ok_by_region(
-    *, ok_bbox: dict, popup_region: dict | None, name: str
-) -> tuple[str, float | None]:
-    """grounding 이 짚은 OK 박스가 팝업 텍스트 영역에 속하는지 거리로 판정한다.
-
-    OK 버튼은 'Wait Input' 다이얼로그의 일부이므로 서명 텍스트와 가까워야 한다.
-    중심점이 팝업 영역에서 (영역 스케일 × ``POPUP_OK_MAX_DIST_FRAC``)보다 멀면
-    다른 패널의 버튼을 헛짚은 것으로 보고 클릭을 막는다.
-
-    반환 (status, distance|None). status ∈ {'detected', 'ok_off_popup'}.
-    """
-    if popup_region is None:  # 텍스트는 확인됐으나 좌표가 없어 공간 검증 불가 → 통과(로그만).
-        print(f"[WARNING] 팝업 영역 좌표 없음 → 공간 검증 생략 ({name})")
-        return "detected", None
-
-    center = bbox_center(ok_bbox)
-    distance = _point_to_rect_distance(center, popup_region)
-    region_w = popup_region["right"] - popup_region["left"]
-    region_h = popup_region["bottom"] - popup_region["top"]
-    scale = max(region_w, region_h, 1)
-    limit = POPUP_OK_MAX_DIST_FRAC * scale
-    if distance > limit:
-        print(
-            f"[INFO] OK 박스가 팝업에서 {distance:.0f}px (한계 {limit:.0f}px) → 클릭 금지 ({name})"
-        )
-        return "ok_off_popup", distance
-    return "detected", distance
+def _save_ok_crop(image_bgr: np.ndarray, ok_bbox: dict, out_path: Path) -> None:
+    """VLM 이 짚은 OK 영역 crop 을 저장한다(템플릿 부트스트랩 후보용)."""
+    h, w = image_bgr.shape[:2]
+    left = max(0, ok_bbox["left"])
+    top = max(0, ok_bbox["top"])
+    right = min(w, ok_bbox["right"])
+    bottom = min(h, ok_bbox["bottom"])
+    if right <= left or bottom <= top:
+        return
+    cv2.imwrite(str(out_path), image_bgr[top:bottom, left:right])
 
 
-def _save_overlay(*, image_path: Path, ok_bbox: dict, output_path: Path) -> str:
-    """원본 캡처 위에 OK 버튼 box + 클릭점(center) 을 마킹한다."""
-    with Image.open(image_path) as image:
-        elements = {"ok_button": {"bbox": ok_bbox, "center": bbox_center(ok_bbox)}}
-        save_marked_bboxes(
-            image.convert("RGB"),
-            elements=elements,
-            colors={"ok_button": "red"},
-            out_path=output_path,
-        )
+# ------------------------------------------------------------------
+# overlay 그리기.
+# ------------------------------------------------------------------
+
+
+def _draw_rect(img: np.ndarray, bbox: dict, color: tuple, label: str) -> None:
+    p1 = (int(bbox["left"]), int(bbox["top"]))
+    p2 = (int(bbox["right"]), int(bbox["bottom"]))
+    cv2.rectangle(img, p1, p2, color, 2, cv2.LINE_AA)
+    cv2.putText(
+        img, label, (p1[0] + 4, max(16, p1[1] - 6)),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2, cv2.LINE_AA
+    )
+
+
+def _save_overlay(
+    *,
+    image_bgr: np.ndarray,
+    vlm_bbox: dict | None,
+    matched_box: dict | None,
+    status: str,
+    score: float | None,
+    output_path: Path,
+) -> str:
+    """VLM coarse 영역 + CV 확인 결과를 한 이미지에 마킹한다."""
+    out = image_bgr.copy()
+    if vlm_bbox is not None:
+        _draw_rect(out, vlm_bbox, _VLM_COLOR, "VLM coarse")
+    if matched_box is not None:
+        color = _OK_COLOR if status == "detected" else _REJECT_COLOR
+        _draw_rect(out, matched_box, color, f"{status} {score:.2f}" if score is not None else status)
+        cx = (matched_box["left"] + matched_box["right"]) // 2
+        cy = (matched_box["top"] + matched_box["bottom"]) // 2
+        cv2.drawMarker(out, (cx, cy), color, cv2.MARKER_CROSS, 18, 2, cv2.LINE_AA)
+    cv2.imwrite(str(output_path), out)
     return str(output_path)
 
 
@@ -307,21 +320,32 @@ def run() -> str:
     out_dir = DEBUG_IMAGE_DIR / LOG_NAME / tag
     overlays_dir = out_dir / "overlays"
     results_dir = out_dir / "results"
+    candidates_dir = out_dir / "ok_template_candidates"
     for d in (overlays_dir, results_dir):
         d.mkdir(parents=True, exist_ok=True)
 
     client = Workflow1VLMClient(
         service_slug=DEFAULT_SERVICE, model_name=DEFAULT_MODEL, log_name=LOG_NAME
     )
-    ocr_client = Workflow1VLMClient(service_slug=OCR_SERVICE_SLUG, log_name=LOG_NAME)
+    template_gray = _load_ok_template()
+    if template_gray is None:
+        candidates_dir.mkdir(parents=True, exist_ok=True)
+        print(
+            f"[WARNING] OK 템플릿 없음({OK_TEMPLATE_PATH}) → CV 확인 비활성(클릭 금지). "
+            f"진짜 OK 버튼 프레임의 후보 crop 을 {candidates_dir} 에서 골라 위 경로로 복사하세요."
+        )
     print(
         f"[INFO] OK 버튼 클릭점 프로브 시작: grounding={DEFAULT_SERVICE}/{DEFAULT_MODEL}, "
-        f"ocr_gate={OCR_SERVICE_SLUG}, {len(paths)} 장"
+        f"cv_confirm={'on' if template_gray is not None else 'off(no template)'}, {len(paths)} 장"
     )
 
     results: list[dict] = []
     detected = 0
     for idx, path in enumerate(paths):
+        image_bgr = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        if image_bgr is None:
+            print(f"[ERROR] 이미지 디코드 실패: {path.name}")
+            continue
         try:
             with Image.open(path) as image:
                 image_b64, w, h = encode_image_webp(image.convert("RGB"), quality=90)
@@ -329,57 +353,59 @@ def run() -> str:
             print(f"[ERROR] WebP 인코딩 실패: {path.name}, error={exc}")
             continue
 
-        # 1) 독립 Spotting 게이트로 팝업 존재 + *위치* 부터 확인한다(grounding confidence 불신).
-        popup_verdict, popup_region, ocr_raw = _locate_popup_region(
-            image_b64=image_b64, ocr_client=ocr_client
-        )
-
         # status 종류:
-        #   detected            팝업 텍스트 확인 + OK 버튼이 팝업 영역 근처 → 클릭 허용.
-        #   no_popup            팝업 텍스트 미검출 → 클릭 금지(오검출 방지의 핵심).
-        #   text_present_no_box 텍스트는 있으나 OK 버튼을 못 잡음 → 클릭 금지.
-        #   ok_off_popup        OK 라고 짚었으나 팝업 영역에서 너무 멈(다른 패널) → 클릭 금지.
-        #   ocr_error           OCR 호출 실패 → 불확실 → 안전하게 클릭 금지.
-        #   error               grounding 호출/파싱 실패.
+        #   detected       VLM 영역이 OK 글리프 템플릿과 매칭(점수 ≥ 임계) → 클릭 허용.
+        #   no_popup       VLM 이 팝업/OK 미검출(popup_visible=false 또는 bbox 없음) → 클릭 금지.
+        #   confirm_failed VLM 은 OK 라고 짚었으나 템플릿 매칭 실패 → 다른 패널 헛짚음 → 클릭 금지.
+        #   no_template    OK 템플릿 파일이 없어 확인 불가 → 클릭 금지(부트스트랩 crop 저장).
+        #   error          grounding 호출/파싱 실패.
         payload: dict = {}
-        ok_bbox: dict | None = None
+        vlm_bbox: dict | None = None
+        matched_box: dict | None = None
         status = ""
         error_msg = ""
-        ok_distance: float | None = None
+        score: float | None = None
 
-        if popup_verdict == "absent":
-            status = "no_popup"
-            print(f"[INFO] Wait Input 텍스트 미검출 → 클릭 금지 ({path.name})")
-        elif popup_verdict == "ocr_error":
-            status = "ocr_error"
-        else:  # present → grounding 진행.
-            try:
-                payload, ok_bbox = _detect_ok_button(
-                    image_b64=image_b64, width=w, height=h, client=client
+        try:
+            payload, vlm_bbox = _detect_ok_button(
+                image_b64=image_b64, width=w, height=h, client=client
+            )
+        except Exception as exc:
+            status = "error"
+            error_msg = str(exc)
+            print(f"[ERROR] grounding 호출 실패: {path.name}, error={exc}")
+
+        if not error_msg:
+            if vlm_bbox is None:
+                status = "no_popup"
+                print(f"[INFO] VLM 팝업/OK 미검출 → 클릭 금지 ({path.name})")
+            elif template_gray is None:
+                status = "no_template"
+                _save_ok_crop(image_bgr, vlm_bbox, candidates_dir / f"{path.stem}_okcrop.png")
+            else:
+                score, matched_box = _confirm_ok_glyph(
+                    image_bgr=image_bgr, ok_bbox=vlm_bbox, template_gray=template_gray
                 )
-                if ok_bbox is None:
-                    status = "text_present_no_box"
-                else:
-                    # 2) 공간 게이트: OK 박스 중심이 팝업 텍스트 영역에 속해야 클릭 허용.
-                    status, ok_distance = _gate_ok_by_region(
-                        ok_bbox=ok_bbox, popup_region=popup_region, name=path.name
+                status = "detected" if score >= OK_TEMPLATE_MIN_SCORE else "confirm_failed"
+                if status == "confirm_failed":
+                    print(
+                        f"[INFO] OK 글리프 매칭 점수 {score:.2f} < {OK_TEMPLATE_MIN_SCORE} "
+                        f"→ 클릭 금지 ({path.name})"
                     )
-                    if status != "detected":
-                        ok_bbox = None  # 멀리 잡힌 박스는 버려 클릭/오버레이 금지.
-            except Exception as exc:
-                status = "error"
-                error_msg = str(exc)
-                print(f"[ERROR] grounding 호출 실패: {path.name}, error={exc}")
 
-        overlay_path = ""
         click_point = None
-        if ok_bbox is not None:
+        overlay_path = ""
+        if status == "detected" and matched_box is not None:
             detected += 1
-            click_point = bbox_center(ok_bbox)
+            click_point = bbox_center(matched_box)
+        if vlm_bbox is not None:
             try:
                 overlay_path = _save_overlay(
-                    image_path=path,
-                    ok_bbox=ok_bbox,
+                    image_bgr=image_bgr,
+                    vlm_bbox=vlm_bbox,
+                    matched_box=matched_box,
+                    status=status,
+                    score=score,
                     output_path=overlays_dir / f"{path.stem}_ok.jpg",
                 )
             except Exception as exc:
@@ -388,34 +414,31 @@ def run() -> str:
         result = {
             "image_path": str(path),
             "status": status,
-            "popup_verdict": popup_verdict,
-            "popup_region": popup_region or {},
-            "ok_distance": ok_distance,
             "error": error_msg,
             "overlay_path": overlay_path,
-            "ok_bbox": ok_bbox or {},
+            "vlm_bbox": vlm_bbox or {},
+            "matched_box": matched_box or {},
+            "match_score": score,
             "click_point": click_point or {},
             "button_text": payload.get("button_text"),
-            "confidence": payload.get("confidence"),
+            "vlm_confidence": payload.get("confidence"),
             "evidence": payload.get("evidence"),
-            "ocr_text": ocr_raw[:500],
             "raw_payload": payload,
         }
         save_debug_json(results_dir / f"{path.stem}.json", result)
         results.append(result)
         print(
-            f"[INFO] {idx:02d} {path.name} popup={popup_verdict} status={status} "
-            f"ok_btn={'Y' if ok_bbox else 'N'} dist={ok_distance} "
-            f"conf={payload.get('confidence')} click={click_point}"
+            f"[INFO] {idx:02d} {path.name} status={status} "
+            f"vlm_box={'Y' if vlm_bbox else 'N'} score={score} "
+            f"vlm_conf={payload.get('confidence')} click={click_point}"
         )
 
     def _count(status: str) -> int:
         return sum(1 for r in results if r["status"] == status)
 
     no_popup = _count("no_popup")
-    text_present_no_box = _count("text_present_no_box")
-    ok_off_popup = _count("ok_off_popup")
-    ocr_errors = _count("ocr_error")
+    confirm_failed = _count("confirm_failed")
+    no_template = _count("no_template")
     grounding_errors = _count("error")
     summary = {
         "tag": tag,
@@ -423,26 +446,26 @@ def run() -> str:
         "processed": len(results),
         "ok_button_detected": detected,
         "no_popup": no_popup,
-        "text_present_no_box": text_present_no_box,
-        "ok_off_popup": ok_off_popup,
-        "ocr_errors": ocr_errors,
+        "confirm_failed": confirm_failed,
+        "no_template": no_template,
         "grounding_errors": grounding_errors,
         "vlm_service": DEFAULT_SERVICE,
         "vlm_model_name": DEFAULT_MODEL,
-        "ocr_service": OCR_SERVICE_SLUG,
+        "ok_template_path": str(OK_TEMPLATE_PATH),
+        "ok_template_present": template_gray is not None,
+        "ok_template_min_score": OK_TEMPLATE_MIN_SCORE,
         "elapsed": format_elapsed_ms(started),
         "output_dir": str(out_dir),
-        "note": "throwaway click-point probe; OCR-gated popup presence + human overlay verify",
+        "note": "throwaway click-point probe; VLM region + CV OK-glyph template confirm",
     }
     save_debug_json(out_dir / "summary.json", summary)
     save_debug_text(
         out_dir / "timeline.txt",
         "\n".join(
             f"{Path(r['image_path']).name:<40} "
-            f"popup={r['popup_verdict']:<9} "
-            f"status={r['status']:<18} "
-            f"ok_btn={'Y' if r['ok_bbox'] else 'N'} "
-            f"conf={r['confidence']} click={r['click_point']}"
+            f"status={r['status']:<14} "
+            f"vlm_box={'Y' if r['vlm_bbox'] else 'N'} "
+            f"score={r['match_score']} click={r['click_point']}"
             for r in results
         )
         + "\n",
@@ -451,9 +474,8 @@ def run() -> str:
     print(
         f"[INFO] 완료: processed={len(results)}/{len(paths)} "
         f"ok_button_detected={detected} no_popup={no_popup} "
-        f"text_present_no_box={text_present_no_box} ok_off_popup={ok_off_popup} "
-        f"ocr_errors={ocr_errors} grounding_errors={grounding_errors} "
-        f"elapsed={format_elapsed_ms(started)}"
+        f"confirm_failed={confirm_failed} no_template={no_template} "
+        f"grounding_errors={grounding_errors} elapsed={format_elapsed_ms(started)}"
     )
     print(f"[INFO] out_dir={out_dir}")
     return "success" if results else "all_failed"

@@ -24,6 +24,7 @@
 import json
 import os
 import time
+from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -32,12 +33,16 @@ import numpy as np
 from dotenv import load_dotenv
 from PIL import Image
 
-from poc.workflow_2 import ALIGN_IMAGES_ROOT, DEBUG_IMAGE_DIR
+from poc.workflow_2 import ALIGN_IMAGES_ROOT, DEBUG_IMAGE_DIR, WORKFLOW_2_DIR
 from poc.workflow_1.flask_vlm import UI_VENUS_MODEL_NAME
 from poc.workflow_1.util import env_int, format_elapsed_ms, make_timestamp_tag
-from poc.workflow_1.util.image_utils import encode_image_webp
 from poc.workflow_1.vlm_client import Workflow1VLMClient
-from poc.workflow_2.vlm_sem_monitor_box import _run_sem_box_detection
+from poc.workflow_2.sem_box_detect import (
+    SHARPNESS_BLUR_THRESHOLD,
+    bbox_px_to_1000,
+    detect_sem_box,
+    grey_frame_mask,
+)
 
 load_dotenv()
 
@@ -57,26 +62,18 @@ SAMPLE_LIMIT = env_int("RCS_OUTLINE_SAMPLE_LIMIT", 0)
 DEFAULT_SERVICE = os.getenv("TEST_VLM_SERVICE", "ui-venus").strip() or "ui-venus"
 DEFAULT_MODEL = os.getenv("TEST_VLM_MODEL_NAME", UI_VENUS_MODEL_NAME).strip() or UI_VENUS_MODEL_NAME
 
-# edge-snap 탐색 band — box 한 변 길이 대비 비율. 이 band 안에서만 변을 옮기므로
-# VLM 이 크게 빗나가지 않는 한 엉뚱한 edge 로 도망가지 않는다.
-EDGE_SNAP_BAND_RATIO = 0.06
-EDGE_SNAP_BAND_MIN_PX = 6
-
-# Laplacian 분산이 이 값 미만이면 'total blur → 클릭 금지' 후보로 표시.
-# 실데이터로 보정 필요(콜드스타트 임계값).
-SHARPNESS_BLUR_THRESHOLD = 60.0
-
-# SEM box 외곽 프레임 색(사용자 관측): (170~190) 부근의 무채색 회색.
-# edge-snap 시 이 색을 띤 '긴 직선 run' 을 1차 단서로 쓰고, band 안에 프레임 색이
-# 충분치 않으면 Sobel gradient peak 로 폴백한다. 모두 콜드스타트값(실데이터 보정 필요).
-GREY_FRAME_LO = 160          # 프레임 회색 밝기 하한.
-GREY_FRAME_HI = 200          # 프레임 회색 밝기 상한.
-GREY_FRAME_CHROMA_TOL = 20   # 채널 최대-최소 편차 허용치(무채색 판정).
-GREY_FRAME_MIN_FRAC = 0.5    # 프레임 회색이 변 길이의 이 비율 이상 이어져야 색 단서를 신뢰.
+# 검출 파이프라인(VLM coarse → grey-snap → sharpness)과 튜닝 상수는 sem_box_detect 가
+# 단일 소스로 보유한다. 본 모듈은 그 위에 overlay·디버그·reference 저장만 얹는다.
 
 # 프레임 회색 mask 를 별도 디버그 이미지(<stem>_greymask.jpg)로 저장할지.
 # 색 band/임계값을 실데이터로 보정할 때 눈으로 확인하는 용도. 0 으로 끄면 생략.
 SAVE_GREY_MASK_DEBUG = env_int("RCS_OUTLINE_SAVE_GREY_MASK", 1) == 1
+
+# SEM box 위치 reference 저장 — production 모니터가 '박스가 옮겨졌나/닫혔나' 를
+# 이 reference(정상 위치)와 현재 검출 박스를 비교해 판정한다. 0 으로 끄면 생략.
+# align_images 는 읽기 전용 입력이라 거기 쓰지 않고, eqp_id 별로 여기 별도 보관한다.
+WRITE_SEM_BOX_REFERENCE = env_int("RCS_OUTLINE_WRITE_REFERENCE", 1) == 1
+SEM_BOX_REFERENCE_DIR = WORKFLOW_2_DIR / "sem_box_references"
 
 # overlay 색상 (BGR).
 _VLM_COLOR = (255, 0, 255)   # magenta — VLM coarse
@@ -134,28 +131,8 @@ def _resolve_capture_paths() -> list[Path]:
 
 
 # ------------------------------------------------------------------
-# CV edge-snap — VLM coarse bbox 의 네 변을 강한 직선 edge 로 정렬.
+# greymask 디버그 렌더 — 검출/snap 자체는 sem_box_detect 가 담당.
 # ------------------------------------------------------------------
-
-
-def _grey_frame_mask(bgr: np.ndarray) -> np.ndarray:
-    """프레임으로 쓰이는 밝은 무채색 회색 픽셀 mask(uint8 0/1).
-
-    SEM box 외곽 프레임은 (170~190) 부근의 회색이다(사용자 관측). 채널 간 편차가
-    작고(무채색) 밝기가 회색 band 안인 픽셀만 1 로 둔다. 컬러 텍스트/신호등 같은
-    유채색 UI 요소나 어두운 라이브 영상은 자연히 0 이 된다.
-    """
-    bgr_i = bgr.astype(np.int16)
-    lo = bgr_i.min(axis=2)
-    hi = bgr_i.max(axis=2)
-    chroma = hi - lo
-    mean = bgr_i.mean(axis=2)
-    mask = (
-        (chroma <= GREY_FRAME_CHROMA_TOL)
-        & (mean >= GREY_FRAME_LO)
-        & (mean <= GREY_FRAME_HI)
-    )
-    return mask.astype(np.uint8)
 
 
 def _render_grey_mask_debug(bgr: np.ndarray, grey_mask: np.ndarray) -> np.ndarray:
@@ -173,112 +150,107 @@ def _render_grey_mask_debug(bgr: np.ndarray, grey_mask: np.ndarray) -> np.ndarra
     return out
 
 
-def _longest_true_run(mask_1d: np.ndarray) -> int:
-    """1D 불리언 배열에서 연속 True 의 최대 길이.
+# ------------------------------------------------------------------
+# SEM box 위치 reference — production 모니터링(이동/닫힘 감지)의 기준값 저장/로드.
+# ------------------------------------------------------------------
 
-    프레임 한 변은 '끊김 없는 긴 회색 직선' 이다. 단순 합(sum)은 흩어진 회색
-    픽셀(내부 텍스처·인접 패널)도 높게 세지만, 최대 연속 run 은 진짜 직선만
-    크게 잡으므로 변 판정의 변별력이 훨씬 높다.
+
+def _eqp_id_for_capture(image_path: Path) -> str | None:
+    """캡처 경로에서 eqp_id 를 추출한다.
+
+    레이아웃: ``<eqp_id>/<class>/<recipe>/captured_img_from_rcs/<tag>/<file>`` →
+    captured_img_from_rcs 기준 3단계 위가 eqp_id. 경로로 못 구하면 ALIGN_EQP_ID
+    환경변수, 그것도 없으면 None.
     """
-    if not mask_1d.any():
-        return 0
-    padded = np.concatenate(([0], mask_1d.astype(np.int8), [0]))
-    diff = np.diff(padded)
-    starts = np.flatnonzero(diff == 1)
-    ends = np.flatnonzero(diff == -1)
-    return int((ends - starts).max())
+    parts = image_path.parts
+    if CAPTURED_RCS_DIRNAME in parts:
+        idx = parts.index(CAPTURED_RCS_DIRNAME)
+        if idx >= 3:
+            return parts[idx - 3]
+    return os.getenv("ALIGN_EQP_ID", "").strip() or None
 
 
-def _snap_box_to_edges(gray: np.ndarray, grey_mask: np.ndarray, bbox: dict) -> dict:
-    """``bbox`` 네 변을 각각 band 안에서 프레임 회색 run(1차) 또는 Sobel peak(폴백)로 옮긴다.
+def _build_reference(eqp_id: str, items: list["OutlineReport"], tag: str) -> dict:
+    """한 eqp 의 detected 박스들에서 robust(중앙값) 위치 reference 를 만든다.
 
-    프레임은 box 변을 가로지르는 '끊김 없는 긴 회색 직선' 이므로, band 안에서
-    box 폭/높이에 걸친 *연속 회색 run* 이 가장 긴 행/열을 우선 고른다. 동률이면
-    VLM 추정선에 가장 가까운 것을 골라 box 근처에 머무른다. 이 색 단서가
-    약하면(겹친 컨트롤 패널·텍스처처럼 프레임이 안 보이면) 기존 Sobel gradient
-    peak 로 폴백한다. band 밖으로는 나가지 않는다.
+    위치는 sharpness 와 무관(프레임 위치는 blur 여부와 별개)하므로 detected+cv_bbox
+    면 모두 표본으로 쓴다. 좌표별 중앙값으로 단일 프레임 오검출에 강건하게 만들고,
+    표본 간 범위(spread)를 함께 적어 reference 신뢰도를 사람이 가늠하게 한다.
     """
-    h, w = gray.shape[:2]
-    left = int(np.clip(bbox["left"], 0, w - 2))
-    top = int(np.clip(bbox["top"], 0, h - 2))
-    right = int(np.clip(bbox["right"], left + 1, w - 1))
-    bottom = int(np.clip(bbox["bottom"], top + 1, h - 1))
-
-    box_w = right - left
-    box_h = bottom - top
-    band_x = max(EDGE_SNAP_BAND_MIN_PX, int(round(box_w * EDGE_SNAP_BAND_RATIO)))
-    band_y = max(EDGE_SNAP_BAND_MIN_PX, int(round(box_h * EDGE_SNAP_BAND_RATIO)))
-
-    grad_x = np.abs(cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3))
-    grad_y = np.abs(cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3))
-
-    methods: list[str] = []
-
-    def _pick_closest(cands: np.ndarray, target: int) -> int:
-        """동률 후보(band 내 인덱스) 중 ``target`` 에 가장 가까운 것."""
-        return int(cands[int(np.argmin(np.abs(cands - target)))])
-
-    def _snap_horizontal(edge_row: int) -> int:
-        lo = max(0, edge_row - band_y)
-        hi = min(h, edge_row + band_y + 1)
-        if hi - lo < 2:
-            methods.append("none")
-            return edge_row
-        # 1차: box 폭에 걸친 연속 회색 run 이 가장 긴 행(동률이면 VLM 추정선에 근접한 행).
-        band = grey_mask[lo:hi, left:right].astype(bool)
-        runs = np.array([_longest_true_run(band[i]) for i in range(band.shape[0])])
-        best = int(runs.max())
-        if best >= GREY_FRAME_MIN_FRAC * box_w:
-            methods.append("grey")
-            cands = np.flatnonzero(runs == best)
-            return lo + _pick_closest(cands, edge_row - lo)
-        # 폴백: 가로 edge 강도 합.
-        methods.append("grad")
-        strength = grad_y[lo:hi, left:right].sum(axis=1)
-        return lo + int(np.argmax(strength))
-
-    def _snap_vertical(edge_col: int) -> int:
-        lo = max(0, edge_col - band_x)
-        hi = min(w, edge_col + band_x + 1)
-        if hi - lo < 2:
-            methods.append("none")
-            return edge_col
-        band = grey_mask[top:bottom, lo:hi].astype(bool)
-        runs = np.array([_longest_true_run(band[:, j]) for j in range(band.shape[1])])
-        best = int(runs.max())
-        if best >= GREY_FRAME_MIN_FRAC * box_h:
-            methods.append("grey")
-            cands = np.flatnonzero(runs == best)
-            return lo + _pick_closest(cands, edge_col - lo)
-        methods.append("grad")
-        strength = grad_x[top:bottom, lo:hi].sum(axis=0)
-        return lo + int(np.argmax(strength))
-
-    new_top = _snap_horizontal(top)
-    new_bottom = _snap_horizontal(bottom)
-    new_left = _snap_vertical(left)
-    new_right = _snap_vertical(right)
-
-    # 변이 교차하지 않도록 정렬.
-    if new_bottom <= new_top:
-        new_top, new_bottom = top, bottom
-    if new_right <= new_left:
-        new_left, new_right = left, right
-
-    print(f"[INFO] edge-snap 방법: T={methods[0]} B={methods[1]} L={methods[2]} R={methods[3]}")
-    return {"left": new_left, "top": new_top, "right": new_right, "bottom": new_bottom}
+    keys = ("left", "top", "right", "bottom")
+    norms = [bbox_px_to_1000(r.cv_bbox, r.width, r.height) for r in items]
+    median = {k: int(round(float(np.median([nb[k] for nb in norms])))) for k in keys}
+    spread = {k: int(max(nb[k] for nb in norms) - min(nb[k] for nb in norms)) for k in keys}
+    modes = [r.mode_label for r in items if r.mode_label]
+    sharps = [r.sharpness for r in items if r.sharpness is not None]
+    return {
+        "eqp_id": eqp_id,
+        "created_tag": tag,
+        "coord_system": "relative_1000",
+        "coord_note": "캡처된 tool 창 크기 기준 0-1000 정규화 (해상도/창 크기 달라도 비교 가능).",
+        "bbox_1000": median,
+        "spread_1000": spread,
+        "sample_count": len(items),
+        "ref_window_size": {
+            "width": int(np.median([r.width for r in items])),
+            "height": int(np.median([r.height for r in items])),
+        },
+        "mode_label": Counter(modes).most_common(1)[0][0] if modes else None,
+        "sharpness_median": round(float(np.median(sharps)), 1) if sharps else None,
+        "source_images": [Path(r.image_path).name for r in items],
+        "note": (
+            "outline_live_sem_box 가 생성한 SEM box 정상 위치. production 모니터가 "
+            "현재 검출 박스와 비교해 이동/닫힘을 판정한다."
+        ),
+    }
 
 
-def _sharpness_in_box(gray: np.ndarray, bbox: dict) -> float:
-    """box 내부의 Laplacian 분산(focus measure). 클수록 선명, 0 근처면 total blur."""
-    left = int(np.clip(bbox["left"], 0, gray.shape[1] - 1))
-    top = int(np.clip(bbox["top"], 0, gray.shape[0] - 1))
-    right = int(np.clip(bbox["right"], left + 1, gray.shape[1]))
-    bottom = int(np.clip(bbox["bottom"], top + 1, gray.shape[0]))
-    roi = gray[top:bottom, left:right]
-    if roi.size == 0:
-        return 0.0
-    return float(cv2.Laplacian(roi, cv2.CV_64F).var())
+def _write_sem_box_references(reports: list["OutlineReport"], out_dir: Path, tag: str) -> list[str]:
+    """detected 박스들을 eqp_id 별로 묶어 위치 reference JSON 을 저장한다."""
+    groups: dict[str, list["OutlineReport"]] = {}
+    for report in reports:
+        if not report.vlm_detected or not report.cv_bbox:
+            continue
+        eqp = _eqp_id_for_capture(Path(report.image_path)) or "unknown"
+        groups.setdefault(eqp, []).append(report)
+
+    if not groups:
+        print("[WARNING] detected 박스가 없어 SEM box reference 를 저장하지 않습니다.")
+        return []
+
+    written: list[str] = []
+    for eqp, items in groups.items():
+        reference = _build_reference(eqp, items, tag)
+        if eqp == "unknown":
+            target = out_dir / "sem_box_reference_unknown.json"
+            print(
+                f"[WARNING] eqp_id 를 경로/ALIGN_EQP_ID 에서 못 구함 → {target} 에만 저장"
+            )
+        else:
+            SEM_BOX_REFERENCE_DIR.mkdir(parents=True, exist_ok=True)
+            target = SEM_BOX_REFERENCE_DIR / f"{eqp}.json"
+        target.write_text(
+            json.dumps(reference, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        written.append(str(target))
+        print(
+            f"[INFO] SEM box reference 저장: eqp={eqp} samples={len(items)} "
+            f"bbox_1000={reference['bbox_1000']} spread_1000={reference['spread_1000']} "
+            f"-> {target}"
+        )
+    return written
+
+
+def load_sem_box_reference(eqp_id: str) -> dict | None:
+    """저장된 SEM box 위치 reference 를 로드한다(없으면 None).
+
+    production 모니터의 read 진입점. 현재 검출한 박스를 reference['bbox_1000'] 과
+    같은 0-1000 정규화로 바꿔 비교하면 이동/닫힘을 판정할 수 있다.
+    """
+    path = SEM_BOX_REFERENCE_DIR / f"{eqp_id}.json"
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 # ------------------------------------------------------------------
@@ -329,49 +301,36 @@ def _draw_overlay(
 
 
 def _process_image(image_path: Path, client: Workflow1VLMClient, out_dir: Path) -> OutlineReport:
-    bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
-    if bgr is None:
-        raise ValueError(f"이미지를 디코드하지 못했습니다: {image_path}")
-    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-    h, w = gray.shape[:2]
-
     with Image.open(image_path) as pil_image:
-        image_b64, vlm_w, vlm_h = encode_image_webp(pil_image.convert("RGB"), quality=90)
+        rgb = pil_image.convert("RGB")
 
-    payload, vlm_bbox = _run_sem_box_detection(
-        image_b64=image_b64, width=vlm_w, height=vlm_h, client=client
-    )
+    # 검출은 공유 detector(sem_box_detect)가 담당 — online RCS 방문 경로와 동일 로직.
+    detection = detect_sem_box(rgb, client)
 
-    grey_mask = _grey_frame_mask(bgr)
+    bgr = cv2.cvtColor(np.asarray(rgb), cv2.COLOR_RGB2BGR)
     if SAVE_GREY_MASK_DEBUG:
         cv2.imwrite(
             str(out_dir / f"{image_path.stem}_greymask.jpg"),
-            _render_grey_mask_debug(bgr, grey_mask),
+            _render_grey_mask_debug(bgr, grey_frame_mask(bgr)),
         )
 
-    cv_bbox = None
-    sharpness = None
-    blurry = False
-    if vlm_bbox is not None:
-        cv_bbox = _snap_box_to_edges(gray, grey_mask, vlm_bbox)
-        sharpness = _sharpness_in_box(gray, cv_bbox)
-        blurry = sharpness < SHARPNESS_BLUR_THRESHOLD
-
-    overlay = _draw_overlay(bgr, vlm_bbox, cv_bbox, sharpness, blurry)
+    overlay = _draw_overlay(
+        bgr, detection.vlm_bbox_px, detection.bbox_px, detection.sharpness, detection.blurry
+    )
     overlay_path = out_dir / f"{image_path.stem}_outline.jpg"
     cv2.imwrite(str(overlay_path), overlay)
 
     return OutlineReport(
         image_path=str(image_path),
-        width=w,
-        height=h,
-        vlm_detected=vlm_bbox is not None,
-        vlm_bbox=vlm_bbox,
-        cv_bbox=cv_bbox,
-        mode_label=payload.get("mode_label"),
-        vlm_confidence=payload.get("confidence"),
-        sharpness=sharpness,
-        blurry=blurry,
+        width=detection.width,
+        height=detection.height,
+        vlm_detected=detection.detected,
+        vlm_bbox=detection.vlm_bbox_px,
+        cv_bbox=detection.bbox_px,
+        mode_label=detection.mode_label,
+        vlm_confidence=detection.confidence,
+        sharpness=detection.sharpness,
+        blurry=detection.blurry,
         overlay_path=str(overlay_path),
     )
 
@@ -409,6 +368,10 @@ def run() -> str:
             f"blurry={report.blurry} cv_bbox={report.cv_bbox}"
         )
 
+    reference_files: list[str] = []
+    if WRITE_SEM_BOX_REFERENCE:
+        reference_files = _write_sem_box_references(reports, out_dir, tag)
+
     summary = {
         "tag": tag,
         "capture_count": len(paths),
@@ -416,6 +379,7 @@ def run() -> str:
         "vlm_detected": sum(1 for r in reports if r.vlm_detected),
         "blurry": sum(1 for r in reports if r.blurry),
         "sharpness_threshold": SHARPNESS_BLUR_THRESHOLD,
+        "reference_files": reference_files,
         "reports": [asdict(r) for r in reports],
     }
     (out_dir / "summary.json").write_text(
@@ -425,7 +389,7 @@ def run() -> str:
     print(
         f"[INFO] 완료: processed={len(reports)}/{len(paths)} "
         f"vlm_detected={summary['vlm_detected']} blurry={summary['blurry']} "
-        f"elapsed={format_elapsed_ms(started)}"
+        f"references={len(reference_files)} elapsed={format_elapsed_ms(started)}"
     )
     print(f"[INFO] out_dir={out_dir}")
     return "success" if reports else "all_failed"

@@ -26,10 +26,12 @@ Align fail 처리 트리 (각 msr 이미지에 대해):
        정렬 위치 추정 불가 — 호출자는 다음 행동 (live 탐색 등) 으로 이동.
     2. rcp template 부재 → status="no_templates".
     3. 양쪽 template 점수 모두 낮음 → status="low_match_both": OCR 힌트로 tiebreak 가능.
-    4. modality 점수차 작음 → status="ambiguous_modality": OCR 힌트로 tiebreak 가능.
-    5. crosshair 미검출 → status="no_crosshair_drawn": 도구가 포기. CV 좌표는 유효.
-    6. crosshair 검출 + 보정 거리 < 임계 → status="already_aligned".
-    7. 그 외 → status="ok".
+    4. winner 가 frame 안의 다른 위치들과 비슷한 점수 (not distinctive, 1회 retry 후에도) →
+       status="not_distinctive": 진짜 align 위치가 아닐 가능성 — live 탐색 필요.
+    5. modality 점수차 작음 → status="ambiguous_modality": OCR 힌트로 tiebreak 가능.
+    6. crosshair 미검출 → status="no_crosshair_drawn": 도구가 포기. CV 좌표는 유효.
+    7. crosshair 검출 + 보정 거리 < 임계 → status="already_aligned".
+    8. 그 외 → status="ok".
 
 산출물:
     poc/workflow_2/debug_images/align_correction/<eqp>__<class>__<recipe>__<ts>/
@@ -132,10 +134,11 @@ RCP_BOX_MAX_ASPECT = 3.0
 # 이 px 만큼 가장자리에서 떨어져 있어야 정상 박스로 인정한다.
 RCP_BOX_EDGE_MARGIN_PX = 2
 
-# 박스 검출 실패시 fallback — 이미지 중심을 중심으로 *면적 기준 20%* 의 crop 을 template 으로 쓴다.
-# 각 변은 sqrt(0.20) ≈ 0.447 비율. 전체 이미지를 쓰는 것보다 매칭이 unique 영역 (= 이미지 중심부)
-# 에 집중되고, align_offset 은 (0,0) 그대로 유지되어 좌표 계산이 단순하다.
-RCP_FALLBACK_CENTER_CROP_AREA_RATIO = 0.20
+# 박스 검출 실패시 fallback — 이미지 중심을 중심으로 *면적 기준 15%* 의 crop 을 template 으로 쓴다.
+# 각 변은 sqrt(0.15) ≈ 0.387 비율. 전체 이미지를 쓰는 것보다 매칭이 unique 영역 (= 이미지 중심부)
+# 에 집중되고, align_offset 은 (0,0) 그대로 유지되어 좌표 계산이 단순하다. 20% 는 여전히
+# 너무 커서 인접한 noise 까지 포함됐던 사용자 피드백 반영 (2026-05-28).
+RCP_FALLBACK_CENTER_CROP_AREA_RATIO = 0.15
 
 # 도구가 그린 crosshair 를 *공간 prior* 로 사용해 CV 매칭의 ambiguity 를 깬다.
 # free 검색 best 위치가 crosshair-derived 위치 (= crosshair - align_offset) 와 이만큼 떨어져 있으면
@@ -150,6 +153,15 @@ CROSSHAIR_PRIOR_SCORE_TOLERANCE = 0.10
 # Crosshair 가 길고 밝은 직선이라 Chamfer matcher 가 이를 wafer feature 로 오인해 lock-on 하는
 # 사례를 막기 위함 — S 라벨에서 corrected_xy 가 엉뚱한 곳을 가리키던 원인.
 CROSSHAIR_INPAINT_HALF_THICKNESS_PX = 2
+
+# Distinctiveness — winner 영역을 마스킹하고 매칭을 다시 돌려 *2nd-best peak* 의 점수를 측정한다.
+# distinctiveness_ratio = second_best.score / best.score.
+# 1.0 에 가까울수록 "다른 곳도 거의 같은 점수" → 진짜 align 위치가 아님 (Lowe's ratio test 의 template 버전).
+# 0.85 미만이면 distinctive — winner 채택.
+# 0.85 이상이면 winner reject 후 다음 attempt 의 결과를 새 winner 로 시도 (최대 MAX_ATTEMPTS).
+# attempt 마다 직전 winner 영역을 마스킹하여, "다른 곳"을 찾는 과정을 반복한다.
+DISTINCTIVENESS_RATIO_MAX = 0.85
+DISTINCTIVENESS_MAX_ATTEMPTS = 3  # 최대 3 candidates 평가 (ratio 계산은 인접 pair, 즉 2개 비교).
 
 # msr frame 의 Laplacian 분산 (focus measure). 이보다 낮으면 "전체 blur 라 정렬 위치 추정
 # 불가" 로 보고 매칭을 건너뛴다 — 호출자는 다음 행동(예: live 탐색)으로 이동한다.
@@ -207,6 +219,10 @@ class _ModalityScore:
     free_score: float = 0.0
     prior_score: float | None = None
     prior_match_distance_px: float | None = None  # free 매치 중심에서 prior 까지의 거리 (px).
+    # Distinctiveness — best 위치가 frame 안에서 얼마나 유일하게 잘 맞는지.
+    distinctive: bool = False
+    distinctiveness_ratio: float | None = None  # best_chamfer / mean_sample_chamfer. 낮을수록 distinct.
+    attempt_count: int = 1  # distinctiveness 실패 시 retry 횟수 (1 = 한 번에 성공, 2 = 1회 retry).
 
     def to_dict(self) -> dict:
         return {
@@ -221,6 +237,9 @@ class _ModalityScore:
             "free_score": self.free_score,
             "prior_score": self.prior_score,
             "prior_match_distance_px": self.prior_match_distance_px,
+            "distinctive": self.distinctive,
+            "distinctiveness_ratio": self.distinctiveness_ratio,
+            "attempt_count": self.attempt_count,
         }
 
 
@@ -630,6 +649,29 @@ def _detect_existing_crosshair(
 # ====================================================================
 
 
+def _mask_region(
+    frame_gray: np.ndarray,
+    center_xy: tuple[int, int],
+    half_w: int,
+    half_h: int,
+    fill_value: int = 128,
+) -> np.ndarray:
+    """frame 의 (center_xy 주변 half_w × half_h) 영역을 fill_value 로 덮은 사본 반환.
+
+    Chamfer matcher 가 이 영역에서 다시 winner 를 뽑지 않도록 edge content 를 지운다.
+    fill_value=128 (중간 회색) 은 CLAHE / Canny 통과 후 edge 가 거의 안 생긴다.
+    """
+    out = frame_gray.copy()
+    cx, cy = center_xy
+    fh, fw = out.shape[:2]
+    x0 = max(0, cx - half_w)
+    y0 = max(0, cy - half_h)
+    x1 = min(fw, cx + half_w + 1)
+    y1 = min(fh, cy + half_h + 1)
+    out[y0:y1, x0:x1] = np.uint8(fill_value)
+    return out
+
+
 def _inpaint_crosshair(
     frame_gray: np.ndarray,
     crosshair_xy: tuple[int, int],
@@ -723,68 +765,130 @@ def _match_against(
     # Crosshair 가 검출된 경우 그 직선을 frame 에서 지운 뒤 매칭 — 도구의 그림은 측정 데이터가
     # 아니라 annotation 이므로 matcher 가 봐서는 안 된다. 원본 frame_gray 는 변형하지 않는다.
     match_frame = _inpaint_crosshair(frame_gray, crosshair_xy) if crosshair_xy is not None else frame_gray
-    padded, pad_x, pad_y = _pad_frame(match_frame, template.raw_image.shape)
-    result_free: AlignKeyMatchResult = compute_align_key_score(
-        template,
-        padded,
-        scales=COMPARE_SCALES,
-        policy=STRUCTURE_POLICY,
-    )
-    fbx, fby = result_free.best_xy
-    free_match_x = int(fbx - pad_x)
-    free_match_y = int(fby - pad_y)
-
     dx_off, dy_off = bundle.align_offset_xy
+    fh, fw = frame_gray.shape[:2]
 
-    used_prior = False
-    prior_score_val: float | None = None
-    prior_dist: float | None = None
-    chosen_result: AlignKeyMatchResult = result_free
-    chosen_match_x = free_match_x
-    chosen_match_y = free_match_y
+    # 최대 DISTINCTIVENESS_MAX_ATTEMPTS 회 candidate 를 찾는다.
+    # 각 attempt 는 직전 winner 영역을 마스킹한 frame 에서 free 검색 (attempt 0 만 crosshair prior 옵션).
+    # 인접 두 attempt 의 점수비 = distinctiveness ratio:
+    #   ratio = attempts[i+1].score / attempts[i].score 가 < THRESHOLD 면 attempts[i] 가 distinctive.
+    # 처음으로 distinctive 한 attempt 를 채택. 모두 실패시 점수 최고 attempt 로 폴백 + distinctive=False.
+    attempts: list[dict] = []
+    current_frame = match_frame
 
-    if crosshair_xy is not None and bundle.detected_box is not None:
-        # 도구의 crosshair 가 align point 라면, template 은 (crosshair - align_offset) 에 있어야 한다.
-        prior_match_x = crosshair_xy[0] - dx_off
-        prior_match_y = crosshair_xy[1] - dy_off
-        prior_dist = float(np.hypot(free_match_x - prior_match_x, free_match_y - prior_match_y))
-        if prior_dist > CROSSHAIR_PRIOR_DISAGREEMENT_PX:
-            prior_result = _match_with_prior_roi(
-                template, padded,
-                (prior_match_x + pad_x, prior_match_y + pad_y),
+    for attempt_idx in range(DISTINCTIVENESS_MAX_ATTEMPTS):
+        padded, pad_x, pad_y = _pad_frame(current_frame, template.raw_image.shape)
+        result_free = compute_align_key_score(
+            template, padded, scales=COMPARE_SCALES, policy=STRUCTURE_POLICY,
+        )
+        fbx, fby = result_free.best_xy
+        free_match_x = int(fbx - pad_x)
+        free_match_y = int(fby - pad_y)
+
+        attempt_used_prior = False
+        attempt_prior_score: float | None = None
+        attempt_prior_dist: float | None = None
+        attempt_result = result_free
+        attempt_match_x = free_match_x
+        attempt_match_y = free_match_y
+
+        # Crosshair prior 는 attempt 0 에서만 — retry 는 다른 위치를 찾는 게 목적이라 prior 가 무의미.
+        if (
+            attempt_idx == 0
+            and crosshair_xy is not None
+            and bundle.detected_box is not None
+        ):
+            prior_match_x = crosshair_xy[0] - dx_off
+            prior_match_y = crosshair_xy[1] - dy_off
+            attempt_prior_dist = float(np.hypot(
+                free_match_x - prior_match_x, free_match_y - prior_match_y,
+            ))
+            if attempt_prior_dist > CROSSHAIR_PRIOR_DISAGREEMENT_PX:
+                prior_result = _match_with_prior_roi(
+                    template, padded,
+                    (prior_match_x + pad_x, prior_match_y + pad_y),
+                )
+                if prior_result is not None:
+                    attempt_prior_score = float(prior_result.score)
+                    if (
+                        prior_result.score >= STRUCTURE_POLICY.adjust_threshold
+                        and prior_result.score + CROSSHAIR_PRIOR_SCORE_TOLERANCE >= result_free.score
+                    ):
+                        attempt_used_prior = True
+                        attempt_result = prior_result
+                        pbx, pby = prior_result.best_xy
+                        attempt_match_x = int(pbx - pad_x)
+                        attempt_match_y = int(pby - pad_y)
+
+        attempts.append({
+            "result": attempt_result,
+            "free_score": float(result_free.score),
+            "match_xy": (attempt_match_x, attempt_match_y),
+            "score": float(attempt_result.score),
+            "used_prior": attempt_used_prior,
+            "prior_score": attempt_prior_score,
+            "prior_dist": attempt_prior_dist,
+        })
+
+        # 마스크는 *다음* attempt 를 위한 준비 — 마지막 attempt 후에는 필요 없음.
+        if attempt_idx < DISTINCTIVENESS_MAX_ATTEMPTS - 1:
+            th_t, tw_t = template.raw_image.shape
+            scale_for_mask = attempt_result.best_scale
+            half_w = max(int(tw_t * scale_for_mask / 2), 16) + 4
+            half_h = max(int(th_t * scale_for_mask / 2), 16) + 4
+            current_frame = _mask_region(
+                current_frame, (attempt_match_x, attempt_match_y), half_w, half_h,
             )
-            if prior_result is not None:
-                prior_score_val = float(prior_result.score)
-                # prior 점수가 합리적이고 free 보다 너무 떨어지지 않으면 prior 채택.
-                if (
-                    prior_result.score >= STRUCTURE_POLICY.adjust_threshold
-                    and prior_result.score + CROSSHAIR_PRIOR_SCORE_TOLERANCE >= result_free.score
-                ):
-                    used_prior = True
-                    chosen_result = prior_result
-                    pbx, pby = prior_result.best_xy
-                    chosen_match_x = int(pbx - pad_x)
-                    chosen_match_y = int(pby - pad_y)
+
+    # Distinctiveness 평가 — 인접 두 attempt 의 점수 비교.
+    chosen_idx = 0
+    chosen_distinct = False
+    chosen_ratio: float | None = None
+    for i in range(len(attempts) - 1):
+        next_score = attempts[i + 1]["score"]
+        cur_score = max(attempts[i]["score"], 1e-6)
+        ratio = next_score / cur_score
+        if ratio < DISTINCTIVENESS_RATIO_MAX:
+            chosen_idx = i
+            chosen_distinct = True
+            chosen_ratio = ratio
+            break
+    else:
+        # 어느 attempt 도 distinctive 하지 않음 — 점수 최고를 폴백으로 사용, not-distinctive 플래그.
+        chosen_idx = max(range(len(attempts)), key=lambda k: attempts[k]["score"])
+        chosen_distinct = False
+        if len(attempts) >= 2:
+            # 보고용 ratio: chosen vs 가장 가까운 비교 대상 (인덱스 + 1, 없으면 인덱스 - 1).
+            cmp_idx = chosen_idx + 1 if chosen_idx + 1 < len(attempts) else chosen_idx - 1
+            if 0 <= cmp_idx < len(attempts):
+                chosen_ratio = attempts[cmp_idx]["score"] / max(attempts[chosen_idx]["score"], 1e-6)
+
+    chosen = attempts[chosen_idx]
+    final_result: AlignKeyMatchResult = chosen["result"]
+    chosen_match_x, chosen_match_y = chosen["match_xy"]
+    first_attempt = attempts[0]
 
     align_x = chosen_match_x + dx_off
     align_y = chosen_match_y + dy_off
-    fh, fw = frame_gray.shape[:2]
     out_of_frame = (align_x < 0 or align_y < 0 or align_x >= fw or align_y >= fh)
     clipped_x = max(0, min(fw - 1, align_x))
     clipped_y = max(0, min(fh - 1, align_y))
 
     return _ModalityScore(
-        score=float(chosen_result.score),
-        chamfer=float(chosen_result.chamfer_score),
-        orb=float(chosen_result.orb_inlier_ratio),
+        score=float(final_result.score),
+        chamfer=float(final_result.chamfer_score),
+        orb=float(final_result.orb_inlier_ratio),
         best_xy=(clipped_x, clipped_y),
-        best_scale=float(chosen_result.best_scale),
-        decision=chosen_result.decision,
+        best_scale=float(final_result.best_scale),
+        decision=final_result.decision,
         out_of_frame=out_of_frame,
-        used_crosshair_prior=used_prior,
-        free_score=float(result_free.score),
-        prior_score=prior_score_val,
-        prior_match_distance_px=prior_dist,
+        used_crosshair_prior=bool(chosen["used_prior"]),
+        free_score=first_attempt["free_score"],
+        prior_score=first_attempt["prior_score"],
+        prior_match_distance_px=first_attempt["prior_dist"],
+        distinctive=chosen_distinct,
+        distinctiveness_ratio=chosen_ratio,
+        attempt_count=len(attempts),
     )
 
 
@@ -1133,9 +1237,14 @@ def _process_msr_image(
         # (점수가 둘 다 낮으면 margin 이 작은 건 당연하고, 그건 "둘 다 못 찾음" 이지 "어느 쪽인지 애매" 가 아니다.)
         winner_side = race.om if race.winner == "om" else race.sem
         winner_out_of_frame = bool(winner_side is not None and winner_side.out_of_frame)
+        winner_not_distinctive = bool(winner_side is not None and not winner_side.distinctive)
         if race.winner_score_value < STRUCTURE_POLICY.adjust_threshold or winner_out_of_frame:
             # pad-border 안에서 매칭된 경우 좌표 자체가 가짜이므로 점수와 무관하게 low_match_both.
             status = "low_match_both"
+        elif winner_not_distinctive:
+            # 점수는 있지만 frame 안의 다른 위치들과 비슷하게 잘 맞음 — 진짜 align 위치가 아님.
+            # 다음 행동: live 탐색이 필요. corrected_xy 는 best-guess 로 유지하지만 신뢰 표시는 낮춤.
+            status = "not_distinctive"
         elif (
             race.om is not None
             and race.sem is not None
@@ -1173,7 +1282,7 @@ def _process_msr_image(
     # crosshair-not-drawn 은 "도구가 포기" 의 강한 1차 신호 — CV 결정 status (ok/ambiguous_modality
     # /low_match_both) 보다 우선한다. msr_unrecognizable / no_templates / 이미 처리된 already_aligned
     # 는 더 강한 상태이므로 덮어쓰지 않는다.
-    if crosshair_xy is None and status in ("ok", "ambiguous_modality", "low_match_both"):
+    if crosshair_xy is None and status in ("ok", "ambiguous_modality", "low_match_both", "not_distinctive"):
         status = "no_crosshair_drawn"
 
     # already-aligned 는 crosshair 가 있고 거리 임계 이하인 경우에만.
@@ -1382,6 +1491,7 @@ def _process_recipe(
     tiebreak_rows: list[dict] = []
     error_rows: list[dict] = []
     crosshair_prior_rows: list[dict] = []
+    not_distinctive_rows: list[dict] = []
     for row in rows:
         status_counts[row["status"]] = status_counts.get(row["status"], 0) + 1
         modality_counts[row["winner_modality"]] = modality_counts.get(row["winner_modality"], 0) + 1
@@ -1444,6 +1554,20 @@ def _process_recipe(
                 "crosshair_xy": row.get("crosshair_xy"),
                 "overlay_path": row["overlay_path"],
             })
+        if row["status"] == "not_distinctive":
+            winner_modality_local = row.get("winner_modality")
+            winner_payload_local = row.get(winner_modality_local) if winner_modality_local in ("om", "sem") else None
+            not_distinctive_rows.append({
+                "msr_image": row["msr_image"],
+                "tool_label": row.get("tool_label"),
+                "winner_modality": winner_modality_local,
+                "distinctiveness_ratio": (winner_payload_local or {}).get("distinctiveness_ratio")
+                    if isinstance(winner_payload_local, dict) else None,
+                "attempt_count": (winner_payload_local or {}).get("attempt_count")
+                    if isinstance(winner_payload_local, dict) else None,
+                "corrected_xy": row.get("corrected_xy"),
+                "overlay_path": row["overlay_path"],
+            })
         if row.get("tiebreak_applied"):
             tiebreak_rows.append({
                 "msr_image": row["msr_image"],
@@ -1493,6 +1617,7 @@ def _process_recipe(
         "tiebreak_applied_images": tiebreak_rows,
         "processing_error_images": error_rows,
         "crosshair_prior_applied_images": crosshair_prior_rows,
+        "not_distinctive_images": not_distinctive_rows,
         "out_dir": str(out_dir),
     }
     (out_dir / "summary.json").write_text(
@@ -1518,6 +1643,8 @@ def _process_recipe(
         print(f"[INFO] processing errors (개별 장 실패, batch 계속): {len(error_rows)}")
     if crosshair_prior_rows:
         print(f"[INFO] crosshair prior 적용 (free 검색을 spatial prior 로 교체): {len(crosshair_prior_rows)}")
+    if not_distinctive_rows:
+        print(f"[INFO] not-distinctive 매치 (frame 의 다른 곳들과 비슷한 점수 — live 탐색 필요): {len(not_distinctive_rows)}")
     return summary
 
 

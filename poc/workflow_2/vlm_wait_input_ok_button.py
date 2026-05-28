@@ -199,13 +199,20 @@ def run() -> str:
             print(f"[ERROR] WebP 인코딩 실패: {path.name}, error={exc}")
             continue
 
+        # status 로 'VLM/파싱 에러' 와 '진짜 팝업 없음' 을 구분한다.
+        # (error → 재시도 대상, not_found → 캡처에 OK 버튼이 정말 없음.)
         payload: dict = {}
         ok_bbox: dict | None = None
+        status = ""
+        error_msg = ""
         try:
             payload, ok_bbox = _detect_ok_button(
                 image_b64=image_b64, width=w, height=h, client=client
             )
+            status = "detected" if ok_bbox is not None else "not_found"
         except Exception as exc:
+            status = "error"
+            error_msg = str(exc)
             print(f"[ERROR] VLM 호출 실패: {path.name}, error={exc}")
 
         overlay_path = ""
@@ -221,11 +228,13 @@ def run() -> str:
                 )
             except Exception as exc:
                 print(f"[ERROR] overlay 저장 실패: {path.name}, error={exc}")
-        else:
+        elif status == "not_found":
             print(f"[INFO] popup_visible=false ({path.name})")
 
         result = {
             "image_path": str(path),
+            "status": status,
+            "error": error_msg,
             "overlay_path": overlay_path,
             "ok_bbox": ok_bbox or {},
             "click_point": click_point or {},
@@ -237,15 +246,19 @@ def run() -> str:
         save_debug_json(results_dir / f"{path.stem}.json", result)
         results.append(result)
         print(
-            f"[INFO] {idx:02d} {path.name} ok_btn={'Y' if ok_bbox else 'N'} "
+            f"[INFO] {idx:02d} {path.name} status={status} ok_btn={'Y' if ok_bbox else 'N'} "
             f"conf={payload.get('confidence')} click={click_point}"
         )
 
+    not_found = sum(1 for r in results if r["status"] == "not_found")
+    errors = sum(1 for r in results if r["status"] == "error")
     summary = {
         "tag": tag,
         "capture_count": len(paths),
         "processed": len(results),
         "ok_button_detected": detected,
+        "popup_not_found": not_found,
+        "vlm_errors": errors,
         "vlm_service": DEFAULT_SERVICE,
         "vlm_model_name": DEFAULT_MODEL,
         "elapsed": format_elapsed_ms(started),
@@ -257,6 +270,7 @@ def run() -> str:
         out_dir / "timeline.txt",
         "\n".join(
             f"{Path(r['image_path']).name:<40} "
+            f"status={r['status']:<10} "
             f"ok_btn={'Y' if r['ok_bbox'] else 'N'} "
             f"conf={r['confidence']} click={r['click_point']}"
             for r in results
@@ -266,7 +280,8 @@ def run() -> str:
 
     print(
         f"[INFO] 완료: processed={len(results)}/{len(paths)} "
-        f"ok_button_detected={detected} elapsed={format_elapsed_ms(started)}"
+        f"ok_button_detected={detected} popup_not_found={not_found} "
+        f"vlm_errors={errors} elapsed={format_elapsed_ms(started)}"
     )
     print(f"[INFO] out_dir={out_dir}")
     return "success" if results else "all_failed"

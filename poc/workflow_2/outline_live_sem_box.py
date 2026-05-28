@@ -173,13 +173,30 @@ def _render_grey_mask_debug(bgr: np.ndarray, grey_mask: np.ndarray) -> np.ndarra
     return out
 
 
+def _longest_true_run(mask_1d: np.ndarray) -> int:
+    """1D 불리언 배열에서 연속 True 의 최대 길이.
+
+    프레임 한 변은 '끊김 없는 긴 회색 직선' 이다. 단순 합(sum)은 흩어진 회색
+    픽셀(내부 텍스처·인접 패널)도 높게 세지만, 최대 연속 run 은 진짜 직선만
+    크게 잡으므로 변 판정의 변별력이 훨씬 높다.
+    """
+    if not mask_1d.any():
+        return 0
+    padded = np.concatenate(([0], mask_1d.astype(np.int8), [0]))
+    diff = np.diff(padded)
+    starts = np.flatnonzero(diff == 1)
+    ends = np.flatnonzero(diff == -1)
+    return int((ends - starts).max())
+
+
 def _snap_box_to_edges(gray: np.ndarray, grey_mask: np.ndarray, bbox: dict) -> dict:
     """``bbox`` 네 변을 각각 band 안에서 프레임 회색 run(1차) 또는 Sobel peak(폴백)로 옮긴다.
 
-    프레임은 box 변을 가로지르는 '긴 회색 직선' 이므로, band 안에서 box 폭/높이에
-    걸친 회색 픽셀 수가 최대인 행/열을 우선 고른다. 이 색 단서가 약하면(겹친 컨트롤
-    패널·텍스처처럼 프레임이 안 보이면) 기존 Sobel gradient peak 로 폴백한다.
-    band 밖으로는 나가지 않으므로 VLM 추정 근처에 머무른다.
+    프레임은 box 변을 가로지르는 '끊김 없는 긴 회색 직선' 이므로, band 안에서
+    box 폭/높이에 걸친 *연속 회색 run* 이 가장 긴 행/열을 우선 고른다. 동률이면
+    VLM 추정선에 가장 가까운 것을 골라 box 근처에 머무른다. 이 색 단서가
+    약하면(겹친 컨트롤 패널·텍스처처럼 프레임이 안 보이면) 기존 Sobel gradient
+    peak 로 폴백한다. band 밖으로는 나가지 않는다.
     """
     h, w = gray.shape[:2]
     left = int(np.clip(bbox["left"], 0, w - 2))
@@ -197,17 +214,24 @@ def _snap_box_to_edges(gray: np.ndarray, grey_mask: np.ndarray, bbox: dict) -> d
 
     methods: list[str] = []
 
+    def _pick_closest(cands: np.ndarray, target: int) -> int:
+        """동률 후보(band 내 인덱스) 중 ``target`` 에 가장 가까운 것."""
+        return int(cands[int(np.argmin(np.abs(cands - target)))])
+
     def _snap_horizontal(edge_row: int) -> int:
         lo = max(0, edge_row - band_y)
         hi = min(h, edge_row + band_y + 1)
         if hi - lo < 2:
             methods.append("none")
             return edge_row
-        # 1차: box 폭에 걸친 프레임 회색 픽셀 수가 최대인 행.
-        grey_count = grey_mask[lo:hi, left:right].sum(axis=1)
-        if int(grey_count.max()) >= GREY_FRAME_MIN_FRAC * box_w:
+        # 1차: box 폭에 걸친 연속 회색 run 이 가장 긴 행(동률이면 VLM 추정선에 근접한 행).
+        band = grey_mask[lo:hi, left:right].astype(bool)
+        runs = np.array([_longest_true_run(band[i]) for i in range(band.shape[0])])
+        best = int(runs.max())
+        if best >= GREY_FRAME_MIN_FRAC * box_w:
             methods.append("grey")
-            return lo + int(np.argmax(grey_count))
+            cands = np.flatnonzero(runs == best)
+            return lo + _pick_closest(cands, edge_row - lo)
         # 폴백: 가로 edge 강도 합.
         methods.append("grad")
         strength = grad_y[lo:hi, left:right].sum(axis=1)
@@ -219,10 +243,13 @@ def _snap_box_to_edges(gray: np.ndarray, grey_mask: np.ndarray, bbox: dict) -> d
         if hi - lo < 2:
             methods.append("none")
             return edge_col
-        grey_count = grey_mask[top:bottom, lo:hi].sum(axis=0)
-        if int(grey_count.max()) >= GREY_FRAME_MIN_FRAC * box_h:
+        band = grey_mask[top:bottom, lo:hi].astype(bool)
+        runs = np.array([_longest_true_run(band[:, j]) for j in range(band.shape[1])])
+        best = int(runs.max())
+        if best >= GREY_FRAME_MIN_FRAC * box_h:
             methods.append("grey")
-            return lo + int(np.argmax(grey_count))
+            cands = np.flatnonzero(runs == best)
+            return lo + _pick_closest(cands, edge_col - lo)
         methods.append("grad")
         strength = grad_x[top:bottom, lo:hi].sum(axis=0)
         return lo + int(np.argmax(strength))

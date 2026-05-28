@@ -19,6 +19,7 @@ poc/workflow_1/align_images/<eqp_id>/<class_name>/<recipe_name>/
 """
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -102,19 +103,41 @@ def _safe_mtime(path: Path) -> float:
         return 0.0
 
 
+_VISIT_ORDER_RE = re.compile(r"A(\d+)", re.IGNORECASE)
+
+
+def _visit_order(path: Path) -> int:
+    """파일명에서 A000X 의 X 를 정수로 뽑는다. 없으면 사전식 정렬 뒤로 보낸다.
+
+    S/E 접두 뒤 두 자리는 의미가 없고, 매칭 순서를 결정하는 것은 A000X 뿐이다.
+    """
+    m = _VISIT_ORDER_RE.search(path.name)
+    return int(m.group(1)) if m else 10**9
+
+
+def iter_msr_images(assets: "AlignFailAssets") -> list[Path]:
+    """from_msr 의 모든 이미지를 A000X visit-order 오름차순으로 돌려준다.
+
+    파일명 접두 (S/E) 는 도구가 self-reported 한 라벨이라 항상 신뢰할 수 없다.
+    호출자가 라벨/순서를 직접 검사할 수 있도록 path 를 그대로 흘려보낸다.
+    """
+    return sorted(assets.from_msr, key=_visit_order)
+
+
 def _pick_current_sem(from_msr_images: list[Path]) -> Path | None:
     """from_msr 궤적에서 '현재 실패 SEM' 에 해당하는 이미지를 고른다.
 
-    fail step 은 E 접두 파일이고 align 은 그 시점에서 멈춘다. 따라서 E* 파일 중
-    가장 최근 수정 시각의 것을 고른다(E* 가 없으면 전체 중 최신). 파일명 시퀀스
-    문법(E<n>-A000X)이 사전식 정렬과 어긋날 수 있어, 이름 순이 아니라 mtime 으로
-    '최신 fail' 을 판단한다.
+    fail step 은 E 접두 파일이고 align 은 그 시점에서 멈춘다. E* 파일 중 visit-order
+    (A000X) 가 가장 큰 것을 고른다 (E* 가 없으면 전체 중 큰 것). 파일명에 측정 순서가
+    명시되어 있으므로 mtime (archive restore 로 뒤바뀔 수 있음) 보다 visit-order 가
+    더 신뢰 가능한 정렬 키다 — [[project_align_images_layout]] 의 시퀀스 약속.
+    iter_msr_images 도 같은 키를 사용해 두 호출자가 같은 '최신 fail' 을 가리키게 한다.
     """
     if not from_msr_images:
         return None
     e_files = [p for p in from_msr_images if p.name[:1].upper() == "E"]
     pool = e_files or from_msr_images
-    return max(pool, key=_safe_mtime)
+    return max(pool, key=_visit_order)
 
 
 def _subtree_latest_mtime(leaf: Path) -> float:

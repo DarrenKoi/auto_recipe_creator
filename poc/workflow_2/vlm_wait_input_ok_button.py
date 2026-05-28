@@ -143,6 +143,7 @@ def _ok_button_system_prompt() -> str:
         "The dialog has buttons along its bottom edge:\n"
         "  - a single 'OK' button at the BOTTOM-LEFT corner of the dialog;\n"
         "  - a group of 'Retry', 'Environment', 'Reject' buttons at the BOTTOM-RIGHT.\n"
+        "All four buttons are INSIDE the dialog, so ok_bbox must lie within dialog_bbox.\n"
         "Report TWO regions:\n"
         "  - dialog_bbox: the ENTIRE 'Wait Input' dialog (title bar, body text, and all buttons);\n"
         "  - ok_bbox: ONLY the 'OK' button (the bottom-left one), tightly.\n"
@@ -202,6 +203,23 @@ def _detect_dialog_and_ok(
 def _normalize_ocr_text(text: str) -> str:
     """OCR 텍스트를 소문자 영숫자만 남겨 붙인다(공백/기호 차이를 흡수)."""
     return "".join(ch for ch in (text or "").lower() if ch.isalnum())
+
+
+def _center_inside(inner: dict, outer: dict, pad_frac: float = 0.05) -> bool:
+    """inner bbox 중심이 outer bbox(약간 패딩) 안에 있는지.
+
+    OK 버튼은 다이얼로그 안에 있으므로 ok_bbox 중심은 dialog_bbox 안이어야 한다.
+    같은 VLM 호출에서 나온 두 박스의 내부 일관성 검사(다이얼로그는 맞다면서 OK 를
+    엉뚱한 패널에 찍는 경우를 잡는다). bbox 오차를 감안해 살짝 패딩한다.
+    """
+    cx = (inner["left"] + inner["right"]) / 2
+    cy = (inner["top"] + inner["bottom"]) / 2
+    pad_x = (outer["right"] - outer["left"]) * pad_frac
+    pad_y = (outer["bottom"] - outer["top"]) * pad_frac
+    return (
+        outer["left"] - pad_x <= cx <= outer["right"] + pad_x
+        and outer["top"] - pad_y <= cy <= outer["bottom"] + pad_y
+    )
 
 
 def _crop_for_ocr(image_bgr: np.ndarray, bbox: dict) -> np.ndarray | None:
@@ -344,6 +362,7 @@ def run() -> str:
         #   no_popup       VLM 이 다이얼로그 미검출(popup_visible=false 또는 dialog_bbox 없음) → 클릭 금지.
         #   confirm_failed 다이얼로그라 짚었으나 crop 에 서명 문구가 없음 → 다른 화면 헛짚음 → 클릭 금지.
         #   popup_no_ok    팝업은 확인됐으나 VLM 이 OK bbox 를 못 줌 → 클릭 좌표 없음 → 클릭 금지.
+        #   ok_outside_dialog 팝업 확인됐으나 OK bbox 가 다이얼로그 밖 → 좌표 모순 → 클릭 금지.
         #   ocr_error      OCR 확인 호출 실패 → 불확실 → 안전하게 클릭 금지.
         #   error          grounding 호출/파싱 실패.
         payload: dict = {}
@@ -376,7 +395,16 @@ def run() -> str:
                     if verdict == "ocr_error":
                         status = "ocr_error"
                     elif verdict == "present":
-                        status = "detected" if ok_bbox is not None else "popup_no_ok"
+                        if ok_bbox is None:
+                            status = "popup_no_ok"
+                        elif not _center_inside(ok_bbox, dialog_bbox):
+                            status = "ok_outside_dialog"
+                            print(
+                                f"[INFO] OK bbox 가 다이얼로그 밖 → 좌표 모순 "
+                                f"→ 클릭 금지 ({path.name})"
+                            )
+                        else:
+                            status = "detected"
                     else:
                         status = "confirm_failed"
                         print(
@@ -430,6 +458,7 @@ def run() -> str:
     no_popup = _count("no_popup")
     confirm_failed = _count("confirm_failed")
     popup_no_ok = _count("popup_no_ok")
+    ok_outside_dialog = _count("ok_outside_dialog")
     ocr_errors = _count("ocr_error")
     grounding_errors = _count("error")
     summary = {
@@ -440,6 +469,7 @@ def run() -> str:
         "no_popup": no_popup,
         "confirm_failed": confirm_failed,
         "popup_no_ok": popup_no_ok,
+        "ok_outside_dialog": ok_outside_dialog,
         "ocr_errors": ocr_errors,
         "grounding_errors": grounding_errors,
         "vlm_service": DEFAULT_SERVICE,
@@ -468,6 +498,7 @@ def run() -> str:
         f"[INFO] 완료: processed={len(results)}/{len(paths)} "
         f"ok_button_detected={detected} no_popup={no_popup} "
         f"confirm_failed={confirm_failed} popup_no_ok={popup_no_ok} "
+        f"ok_outside_dialog={ok_outside_dialog} "
         f"ocr_errors={ocr_errors} grounding_errors={grounding_errors} "
         f"elapsed={format_elapsed_ms(started)}"
     )

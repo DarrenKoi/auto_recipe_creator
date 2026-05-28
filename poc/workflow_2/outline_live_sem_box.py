@@ -74,6 +74,10 @@ GREY_FRAME_HI = 200          # 프레임 회색 밝기 상한.
 GREY_FRAME_CHROMA_TOL = 20   # 채널 최대-최소 편차 허용치(무채색 판정).
 GREY_FRAME_MIN_FRAC = 0.5    # 프레임 회색이 변 길이의 이 비율 이상 이어져야 색 단서를 신뢰.
 
+# 프레임 회색 mask 를 별도 디버그 이미지(<stem>_greymask.jpg)로 저장할지.
+# 색 band/임계값을 실데이터로 보정할 때 눈으로 확인하는 용도. 0 으로 끄면 생략.
+SAVE_GREY_MASK_DEBUG = env_int("RCS_OUTLINE_SAVE_GREY_MASK", 1) == 1
+
 # overlay 색상 (BGR).
 _VLM_COLOR = (255, 0, 255)   # magenta — VLM coarse
 _CV_COLOR = (255, 255, 0)    # cyan — CV-snapped
@@ -152,6 +156,21 @@ def _grey_frame_mask(bgr: np.ndarray) -> np.ndarray:
         & (mean <= GREY_FRAME_HI)
     )
     return mask.astype(np.uint8)
+
+
+def _render_grey_mask_debug(bgr: np.ndarray, grey_mask: np.ndarray) -> np.ndarray:
+    """프레임 회색으로 검출된 픽셀을 원본 위에 초록으로 덧칠한 디버그 이미지.
+
+    원본을 어둡게 깔고 mask=1 인 픽셀만 초록으로 강조한다. 색 band/임계값이
+    실제 프레임을 제대로 잡는지(또는 엉뚱한 UI 회색까지 잡는지) 눈으로 본다.
+    """
+    dim = (bgr * 0.4).astype(np.uint8)
+    green = np.zeros_like(bgr)
+    green[..., 1] = 255  # BGR 초록.
+    sel = grey_mask.astype(bool)
+    out = dim.copy()
+    out[sel] = green[sel]
+    return out
 
 
 def _snap_box_to_edges(gray: np.ndarray, grey_mask: np.ndarray, bbox: dict) -> dict:
@@ -296,11 +315,17 @@ def _process_image(image_path: Path, client: Workflow1VLMClient, out_dir: Path) 
         image_b64=image_b64, width=vlm_w, height=vlm_h, client=client
     )
 
+    grey_mask = _grey_frame_mask(bgr)
+    if SAVE_GREY_MASK_DEBUG:
+        cv2.imwrite(
+            str(out_dir / f"{image_path.stem}_greymask.jpg"),
+            _render_grey_mask_debug(bgr, grey_mask),
+        )
+
     cv_bbox = None
     sharpness = None
     blurry = False
     if vlm_bbox is not None:
-        grey_mask = _grey_frame_mask(bgr)
         cv_bbox = _snap_box_to_edges(gray, grey_mask, vlm_bbox)
         sharpness = _sharpness_in_box(gray, cv_bbox)
         blurry = sharpness < SHARPNESS_BLUR_THRESHOLD

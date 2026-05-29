@@ -50,9 +50,16 @@ COMPARE_SCALES = (0.6, 0.75, 0.85, 1.0)
 ROI_FACTOR = 1.8
 # 한 recipe 당 처리할 msr 상한 (None=전부). 빠른 시험용.
 LIMIT_PER_RECIPE = None
-# 참조 staleness 판정 — S-at-crosshair(ground truth) 대비 rcp-center 의 median matcher score 가
-# 이보다 낮으면 "rcp 참조가 현재 측정과 너무 달라 재등록 권장". STRUCTURE_POLICY.adjust_threshold(0.40)와 정렬.
-REFERENCE_STALE_SCORE = 0.40
+
+# --- 참조 staleness: *상대* 기준 (절대 점수의 confounder 회피) ---
+# rcp-center 가 S-consensus 에 맞는 정도(rcp_vs)를, S 들이 그 consensus 에 맞는 정도(s_internal)와
+# 비교한다. ratio = rcp_vs / median(s_internal). S 끼리 잘 뭉치는데 rcp 만 동떨어지면 ratio 가 낮다
+# → rcp outlier = stale. 같은 metric 으로 재므로 matcher 약함이 상쇄된다.
+# consensus 를 신뢰하려면 recipe 당 S 가 충분(>=MIN_S)하고, S 끼리도 일관(CV<=임계)해야 한다.
+# 모두 cold-start — golden 데이터셋(align_success_dataset_plan.md)으로 실측 calibration 예정.
+RELATIVE_STALE_RATIO = 0.6      # rcp_vs 가 S-internal median 의 60% 미만이면 stale 후보.
+MIN_S_FOR_CONSENSUS = 3         # consensus 산정 최소 S 장수. 미만이면 "판단 불가".
+S_INCONSISTENT_CV = 0.5         # S-internal 의 변동계수(std/mean) 가 이보다 크면 S 끼리도 안 뭉침 → CV 판단 불가.
 
 
 # ====================================================================
@@ -191,7 +198,7 @@ def _process_msr(msr_path, *, center_tpls, box_tpls):
     # 대표 template 크기 (center, 첫 modality) — ROI 산정용.
     any_center = next((t for t in center_tpls.values() if t is not None), None)
     if any_center is None:
-        return None
+        return None, None, None
     th, tw = any_center.raw_image.shape[:2]
 
     # 1) free best (center template race).
@@ -211,6 +218,8 @@ def _process_msr(msr_path, *, center_tpls, box_tpls):
     #    rcp-center vs 여기 = 참조 staleness 측정 → score(기하)+MI(정보)+NCC(pixel) 모두 기록.
     ch_res = detect_crosshair(gray)
     at_crosshair_score = mi_xhair = ncc_xhair = None
+    xhair_crop = None   # S-at-crosshair crop (consensus/staleness 용) — recipe 단위로 모은다.
+    xhair_mod = None
     if ch_res.xy is not None:
         ch_roi = _window_roi(gray.shape, ch_res.xy, tw, th)
         at_ch = _race(center_tpls, gray, roi=ch_roi)
@@ -218,10 +227,12 @@ def _process_msr(msr_path, *, center_tpls, box_tpls):
             at_crosshair_score = at_ch[1]
             ch_mod, _s, _c, _o, ch_xy, ch_scale = at_ch
             tpl = center_tpls[ch_mod]
-            crop = _matched_crop(gray, ch_xy, tpl.raw_image.shape[1], tpl.raw_image.shape[0], ch_scale)
-            if crop is not None:
-                mi_xhair = _mi(tpl.raw_image, crop)
-                ncc_xhair = _ncc(tpl.raw_image, crop)
+            xcrop = _matched_crop(gray, ch_xy, tpl.raw_image.shape[1], tpl.raw_image.shape[0], ch_scale)
+            if xcrop is not None:
+                mi_xhair = _mi(tpl.raw_image, xcrop)
+                ncc_xhair = _ncc(tpl.raw_image, xcrop)
+                xhair_crop = xcrop
+                xhair_mod = ch_mod
 
     # MI / NCC — center template (winner modality) vs free-best crop.
     mi_free = ncc_free = None
@@ -253,7 +264,7 @@ def _process_msr(msr_path, *, center_tpls, box_tpls):
         "mi_xhair": mi_xhair,
         "ncc_xhair": ncc_xhair,
         "free_best_box": free_best_box,
-    }
+    }, xhair_crop, xhair_mod
 
 
 # ====================================================================
@@ -300,28 +311,7 @@ def _summarize(rows: list[dict]) -> dict:
                    if r["free_best"] is not None and r["at_crosshair"] is not None
                    and r["free_best"] - r["at_crosshair"] > 0.1]
 
-    # 참조 staleness — recipe 별 rcp-center vs S-at-crosshair(ground truth). 낮으면 rcp 재등록 권장.
-    by_recipe: dict[str, list] = {}
-    for r in rows:
-        by_recipe.setdefault(r["recipe"], []).append(r)
-    ref_quality = []
-    for rec, rs in by_recipe.items():
-        s_ch = [x for x in rs if x["label"] == "S" and x["at_crosshair"] is not None]
-        if not s_ch:
-            continue
-        med_score = statistics.median([x["at_crosshair"] for x in s_ch])
-        mis = [x["mi_xhair"] for x in s_ch if isinstance(x["mi_xhair"], (int, float))]
-        nccs = [x["ncc_xhair"] for x in s_ch if isinstance(x["ncc_xhair"], (int, float))]
-        ref_quality.append({
-            "recipe": rec,
-            "n_S_with_crosshair": len(s_ch),
-            "median_score_at_crosshair": round(med_score, 4),
-            "median_mi": round(statistics.median(mis), 4) if mis else None,
-            "median_ncc": round(statistics.median(nccs), 4) if nccs else None,
-            "stale_recommend_replace": med_score < REFERENCE_STALE_SCORE,
-        })
-    ref_quality.sort(key=lambda d: d["median_score_at_crosshair"])  # worst-first.
-
+    # 참조 staleness(상대 기준)는 crop 이 필요해 analyze 에서 _reference_quality 로 채운다.
     return {
         "counts": {"S": len(by_label["S"]), "E": len(by_label["E"]),
                    "other": len(rows) - len(by_label["S"]) - len(by_label["E"]), "total": len(rows)},
@@ -331,11 +321,63 @@ def _summarize(rows: list[dict]) -> dict:
             "no_crosshair": len(e_no_ch),
             "recoverable_by_move(free>>at_crosshair)": len(recoverable),
         },
-        "reference_quality": ref_quality,
-        "n_recipes_stale": sum(1 for d in ref_quality if d["stale_recommend_replace"]),
-        "n_recipes_scored": len(ref_quality),
-        "reference_stale_threshold": REFERENCE_STALE_SCORE,
     }
+
+
+def _consensus(crops: list) -> np.ndarray:
+    """동일 크기 gray crop 들의 median 이미지 = '현재 align 영역의 대표 모습'."""
+    stack = np.stack([c.astype(np.float32) for c in crops])
+    return np.median(stack, axis=0).astype(np.uint8)
+
+
+def _reference_quality(crops_by_recipe: dict) -> list:
+    """recipe 별 *상대* staleness — rcp-center 가 S-consensus 에 맞는 정도를 S 들끼리의 일관성과 비교.
+
+    같은 metric(MI)으로 재므로 matcher 약함이 상쇄된다.
+      - S 끼리 잘 뭉치는데(낮은 CV) rcp 만 동떨어짐(낮은 ratio) → status=stale_replace.
+      - S 끼리도 안 뭉침(높은 CV) → consensus 불신 → status=S_inconsistent (CV 로 판단 불가).
+      - S 장수 부족 → insufficient_S.
+    반환: relative_ratio 오름차순(worst-first) 리스트.
+    """
+    out = []
+    for rec, data in crops_by_recipe.items():
+        s_crops = data.get("s_crops", {})
+        if not s_crops:
+            continue
+        mod = max(s_crops, key=lambda m: len(s_crops[m]))   # S 가 가장 많은 modality.
+        crops = s_crops[mod]
+        R = data.get("rcp", {}).get(mod)
+        entry = {"recipe": rec, "modality": mod, "n_S": len(crops)}
+        if R is None:
+            entry["status"] = "no_rcp"
+            out.append(entry)
+            continue
+        if len(crops) < MIN_S_FOR_CONSENSUS:
+            entry["status"] = "insufficient_S"
+            out.append(entry)
+            continue
+        consensus = _consensus(crops)
+        s_internal = [_mi(c, consensus) for c in crops]
+        s_med = statistics.median(s_internal)
+        s_mean = statistics.mean(s_internal)
+        s_cv = (statistics.pstdev(s_internal) / s_mean) if s_mean > 0 else 0.0
+        rcp_vs = _mi(R, consensus)
+        ratio = (rcp_vs / s_med) if s_med > 0 else 0.0
+        entry.update({
+            "s_internal_median_mi": round(s_med, 4),
+            "s_internal_cv": round(s_cv, 3),
+            "rcp_vs_consensus_mi": round(rcp_vs, 4),
+            "relative_ratio": round(ratio, 3),
+        })
+        if s_cv > S_INCONSISTENT_CV:
+            entry["status"] = "S_inconsistent"      # consensus 불신 → CV 단독 판단 불가.
+        elif ratio < RELATIVE_STALE_RATIO:
+            entry["status"] = "stale_replace"        # rcp 가 S cluster 의 outlier → 재등록 권장.
+        else:
+            entry["status"] = "ok"
+        out.append(entry)
+    out.sort(key=lambda d: d.get("relative_ratio", 9.99))
+    return out
 
 
 def _print_summary(summary: dict) -> None:
@@ -353,18 +395,21 @@ def _print_summary(summary: dict) -> None:
     print("  * at_crosshair 의 med_E 가 med_S 보다 확실히 낮으면 → 우리 유사도가 장비 fail(낮은 점수)을 재현 = 지표 자격 검증")
     print("  * free_best 는 S/E 둘 다 높을 수 있음(key 가 E 에도 존재) → at_crosshair 가 진짜 변별자")
 
-    # 참조 staleness — recipe 별 rcp-center vs S-at-crosshair. 낮은 recipe 는 rcp 재등록 권장.
+    # 참조 staleness(상대) — rcp 가 S-consensus 의 outlier 인지. status 로 판단 가능/불가 구분.
     rq = summary.get("reference_quality", [])
     if rq:
-        print(f"\n[INFO] 참조 품질 (rcp-center vs S-at-crosshair = ground truth). "
-              f"score<{summary['reference_stale_threshold']} 이면 rcp 재등록 권장.")
-        print(f"[INFO] stale recipes: {summary['n_recipes_stale']}/{summary['n_recipes_scored']} (worst-first, 상위 20개)")
-        print(f"  {'recipe':<42} {'score':>6} {'MI':>6} {'NCC':>6} {'nS':>4}  replace?")
-        for d in rq[:20]:
-            print(f"  {d['recipe'][:42]:<42} {d['median_score_at_crosshair']:>6.3f} "
-                  f"{str(d['median_mi']):>6} {str(d['median_ncc']):>6} {d['n_S_with_crosshair']:>4}  "
-                  f"{'YES' if d['stale_recommend_replace'] else ''}")
-        print("  * 이 목록이 곧 '교체(재등록)해야 할 rcp' 후보. MI/NCC 가 낮은데 score 만 높으면 외형 drift 큼(주의).")
+        n_stale = sum(1 for d in rq if d.get("status") == "stale_replace")
+        n_incon = sum(1 for d in rq if d.get("status") in ("S_inconsistent", "insufficient_S"))
+        n_ok = sum(1 for d in rq if d.get("status") == "ok")
+        print(f"\n[INFO] 참조 staleness(상대): rcp_vs_consensus / S내부일관성. ratio<{RELATIVE_STALE_RATIO} & S일관(CV<={S_INCONSISTENT_CV}) → 재등록 권장.")
+        print(f"[INFO] stale={n_stale}  ok={n_ok}  판단불가(S부족/불일치)={n_incon}  / scored={len(rq)} recipes")
+        print(f"  {'recipe':<38} {'nS':>3} {'ratio':>6} {'S_cv':>5} {'rcp_MI':>7} {'S_MI':>6}  status")
+        for d in rq[:25]:
+            print(f"  {d['recipe'][:38]:<38} {d.get('n_S','-'):>3} "
+                  f"{str(d.get('relative_ratio','-')):>6} {str(d.get('s_internal_cv','-')):>5} "
+                  f"{str(d.get('rcp_vs_consensus_mi','-')):>7} {str(d.get('s_internal_median_mi','-')):>6}  "
+                  f"{d.get('status')}")
+        print("  * stale_replace = S끼리 뭉치는데 rcp만 동떨어짐(재등록 권장). S_inconsistent = S끼리도 안 뭉침 → CV 단독 판단 불가(golden 필요).")
 
 
 # ====================================================================
@@ -389,6 +434,7 @@ def analyze(*, limit_per_recipe=LIMIT_PER_RECIPE) -> str:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     rows: list[dict] = []
+    crops_by_recipe: dict = {}   # {recipe: {"s_crops": {mod: [crop]}, "rcp": {mod: R_image}}}
     with (out_dir / "rows.jsonl").open("w", encoding="utf-8") as fp:
         for i, leaf in enumerate(leaves, 1):
             assets = resolve_assets(leaf)
@@ -400,13 +446,18 @@ def analyze(*, limit_per_recipe=LIMIT_PER_RECIPE) -> str:
                 print(f"[WARNING] template 빌드 실패 {leaf}: {exc}")
                 continue
             tag = f"{assets.eqp_id}/{assets.class_name}/{assets.recipe_id}"
+            crops_by_recipe[tag] = {
+                "s_crops": {},
+                "rcp": {m: t.raw_image for m, t in center_tpls.items() if t is not None},
+            }
             msr_images = iter_msr_images(assets)
             if limit_per_recipe:
                 msr_images = msr_images[:limit_per_recipe]
             print(f"[{i}/{len(leaves)}] {tag}  msr={len(msr_images)}")
             for msr_path in msr_images:
                 try:
-                    row = _process_msr(msr_path, center_tpls=center_tpls, box_tpls=box_tpls)
+                    row, xhair_crop, xhair_mod = _process_msr(
+                        msr_path, center_tpls=center_tpls, box_tpls=box_tpls)
                 except Exception as exc:
                     print(f"[WARNING] {msr_path.name}: {type(exc).__name__}: {exc}")
                     continue
@@ -415,8 +466,12 @@ def analyze(*, limit_per_recipe=LIMIT_PER_RECIPE) -> str:
                 row["recipe"] = tag
                 rows.append(row)
                 fp.write(json.dumps(row, ensure_ascii=False) + "\n")
+                # S-at-crosshair crop 누적 — recipe 단위 consensus/staleness 용.
+                if row["label"] == "S" and xhair_crop is not None and xhair_mod is not None:
+                    crops_by_recipe[tag]["s_crops"].setdefault(xhair_mod, []).append(xhair_crop)
 
     summary = _summarize(rows)
+    summary["reference_quality"] = _reference_quality(crops_by_recipe)
     (out_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     _print_summary(summary)
     print(f"\n[INFO] 저장: {out_dir}/summary.json , rows.jsonl")

@@ -183,6 +183,13 @@ def _edge_density(gray: np.ndarray) -> float:
     return float((e > 0).mean())
 
 
+def _lap_var(gray: np.ndarray) -> float:
+    """Laplacian 분산 — 선명도(sharpness) 지표. median consensus 가 blur 됐는지 확인용."""
+    if gray is None or gray.size == 0:
+        return 0.0
+    return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+
 def _diagnose_truth(
     *, truth_valid, wide_chamfer, wide_scale, scale_gain, tpl_ed, msr_ed,
 ) -> str:
@@ -771,9 +778,14 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None) -> 
         cons_dir.mkdir(parents=True, exist_ok=True)
 
     per_recipe = []
-    tot_n = tot_rcp = tot_cons = 0
-    s_guard: list[float] = []   # all-crops consensus free-best chamfer on S (generic 대조).
-    e_guard: list[float] = []   # 동일 consensus free-best chamfer on E (FP 가드).
+    tot_n = tot_rcp = tot_cons = tot_rcp_r1 = tot_cons_r1 = 0
+    s_guard: list[float] = []   # all-crops consensus free-best chamfer on S (참고용).
+    e_guard: list[float] = []   # 동일 consensus free-best chamfer on E (참고용).
+    # 선명도(blur) 비율 — consensus median 이 개별 S crop / rcp 대비 흐려졌는지 (per-recipe).
+    edge_ratio_s: list[float] = []
+    lap_ratio_s: list[float] = []
+    edge_ratio_rcp: list[float] = []
+    lap_ratio_rcp: list[float] = []
     for rec, data in by_recipe.items():
         frames = data.get("s_frames", [])
         if not frames:
@@ -791,7 +803,21 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None) -> 
                                       version="s_consensus_all", key_type=mod)
         if cons_dir is not None:
             cv2.imwrite(str(cons_dir / (rec.replace("/", "__") + f"_{mod}.png")), all_consensus)
-        n = rcp_hit = cons_hit = 0
+        # 선명도 비율: all-crops consensus vs 개별 S crop median / rcp raw (blur 확인).
+        c_ed, c_lap = _edge_density(all_consensus), _lap_var(all_consensus)
+        s_ed_med = statistics.median([_edge_density(c) for c in crops])
+        s_lap_med = statistics.median([_lap_var(c) for c in crops])
+        if s_ed_med > 0:
+            edge_ratio_s.append(c_ed / s_ed_med)
+        if s_lap_med > 0:
+            lap_ratio_s.append(c_lap / s_lap_med)
+        if rcp_tpl is not None:
+            r_ed, r_lap = _edge_density(rcp_tpl.raw_image), _lap_var(rcp_tpl.raw_image)
+            if r_ed > 0:
+                edge_ratio_rcp.append(c_ed / r_ed)
+            if r_lap > 0:
+                lap_ratio_rcp.append(c_lap / r_lap)
+        n = rcp_hit = cons_hit = rcp_r1 = cons_r1 = 0
         for i, f in enumerate(fm):
             others = [c for j, c in enumerate(crops) if j != i]
             if len(others) < 2:
@@ -808,11 +834,15 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None) -> 
             n += 1
             if gc["in_topk"]:
                 cons_hit += 1
+            if gc["topk_rank"] == 1:        # rank-1 = consensus 의 free-best 가 정답에 lock(distinctive).
+                cons_r1 += 1
             # rcp baseline — 같은 modality·frame·_gt_in_topk (apples-to-apples).
             if rcp_tpl is not None:
                 gr = _gt_in_topk(gray, tuple(f["xy"]), {mod: rcp_tpl})
                 if gr is not None and gr["in_topk"]:
                     rcp_hit += 1
+                    if gr["topk_rank"] == 1:
+                        rcp_r1 += 1
             # generic 가드 S: held-out frame 에 all-crops consensus free-best (E 와 동일 tpl).
             try:
                 _s, ch, _o, _xy, _sc = _score(all_cons_tpl, gray)
@@ -835,25 +865,47 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None) -> 
             "rcp_in_topk_rate": round(rcp_hit / n, 3),
             "cons_in_topk_rate": round(cons_hit / n, 3),
             "lift": round((cons_hit - rcp_hit) / n, 3),
+            "rcp_rank1_rate": round(rcp_r1 / n, 3),
+            "cons_rank1_rate": round(cons_r1 / n, 3),
         })
         tot_n += n
         tot_rcp += rcp_hit
         tot_cons += cons_hit
+        tot_rcp_r1 += rcp_r1
+        tot_cons_r1 += cons_r1
 
     if tot_n == 0:
         return None
     per_recipe.sort(key=lambda d: d["lift"], reverse=True)
+
+    def _med(vals):
+        return round(statistics.median(vals), 3) if vals else None
+
+    cons_r1_rate = tot_cons_r1 / tot_n
+    cons_topk_rate = tot_cons / tot_n
     return {
         "n_recipes": len(per_recipe),
         "n_S_loo": tot_n,
         "overall_rcp_in_topk_rate": round(tot_rcp / tot_n, 3),
-        "overall_cons_in_topk_rate": round(tot_cons / tot_n, 3),
+        "overall_cons_in_topk_rate": round(cons_topk_rate, 3),
         "overall_lift": round((tot_cons - tot_rcp) / tot_n, 3),
+        # rank-1(정밀도): free-best 가 정답에 lock. in_topk 높은데 rank1 낮으면 → reranker 필요.
+        "overall_rcp_rank1_rate": round(tot_rcp_r1 / tot_n, 3),
+        "overall_cons_rank1_rate": round(cons_r1_rate, 3),
+        "rank1_lift": round((tot_cons_r1 - tot_rcp_r1) / tot_n, 3),
+        "cons_topk_not_rank1_rate": round(cons_topk_rate - cons_r1_rate, 3),
+        # 선명도(blur) 비율: <0.70(edge) 또는 <0.50(lap) 이면 median blur 위험 → co-registration 고려.
+        "cons_edge_density_ratio_to_S_median": _med(edge_ratio_s),
+        "cons_lap_var_ratio_to_S_median": _med(lap_ratio_s),
+        "cons_edge_density_ratio_to_rcp": _med(edge_ratio_rcp),
+        "cons_lap_var_ratio_to_rcp": _med(lap_ratio_rcp),
+        # 참고용(이 도메인에선 변별 신호 아님 — E 에도 key 가 있을 수 있어 cons_E 높음이 정상일 수 있음).
         "median_cons_free_chamfer_S": round(statistics.median(s_guard), 4) if s_guard else None,
         "median_cons_free_chamfer_E": round(statistics.median(e_guard), 4) if e_guard else None,
         "per_recipe": per_recipe,
         "min_s": min_s,
-        "note": "lift>0 & cons_E NOT >= cons_S → 재등록 정당. rcp baseline = 동일 modality·frame (apples-to-apples).",
+        "note": ("lift = recall(후보에 truth) 개선; rank1_lift = precision(정답 lock) 개선. "
+                 "cons_S≈cons_E 는 blur 신호 아님(E 에도 key 존재 가능) → 선명도 비율로 blur 판정."),
     }
 
 
@@ -943,16 +995,25 @@ def _print_summary(summary: dict) -> None:
     if ab:
         print(f"\n[INFO] CONSENSUS A/B (leave-one-out, S>={ab['min_s']} recipe만, rcp 대신 S-consensus):")
         print(f"  recipes={ab['n_recipes']}  S(LOO)={ab['n_S_loo']}")
-        print(f"  in_topk_rate:  rcp={ab['overall_rcp_in_topk_rate']}  "
+        print(f"  recall  (in_topk):  rcp={ab['overall_rcp_in_topk_rate']}  "
               f"consensus={ab['overall_cons_in_topk_rate']}  lift={ab['overall_lift']:+}")
-        print(f"  consensus free_best chamfer median:  S={ab['median_cons_free_chamfer_S']}  "
-              f"E={ab['median_cons_free_chamfer_E']}  (E≈S 면 generic 템플릿 경고)")
+        print(f"  precision(rank1) :  rcp={ab['overall_rcp_rank1_rate']}  "
+              f"consensus={ab['overall_cons_rank1_rate']}  rank1_lift={ab['rank1_lift']:+}  "
+              f"topk_not_rank1={ab['cons_topk_not_rank1_rate']}")
+        print(f"  consensus 선명도 비율(blur): vs S개별 edge={ab['cons_edge_density_ratio_to_S_median']} "
+              f"lap={ab['cons_lap_var_ratio_to_S_median']}  | vs rcp edge={ab['cons_edge_density_ratio_to_rcp']} "
+              f"lap={ab['cons_lap_var_ratio_to_rcp']}")
+        print(f"  (참고) cons free_best chamfer median S={ab['median_cons_free_chamfer_S']} "
+              f"E={ab['median_cons_free_chamfer_E']}  ← 이 도메인선 변별 신호 아님")
         print("  per-recipe lift 상위:")
         for d in ab["per_recipe"][:12]:
-            print(f"    {d['recipe'][:40]:<40} nS={d['n_S_loo']:>2} "
-                  f"rcp={d['rcp_in_topk_rate']} → cons={d['cons_in_topk_rate']} (lift {d['lift']:+})")
+            print(f"    {d['recipe'][:36]:<36} nS={d['n_S_loo']:>2} "
+                  f"recall {d['rcp_in_topk_rate']}→{d['cons_in_topk_rate']} (lift {d['lift']:+})  "
+                  f"rank1 {d['rcp_rank1_rate']}→{d['cons_rank1_rate']}")
         print(f"  * {ab['note']}")
-        print("  * lift>0 크고 consensus_E < consensus_S → 재등록이 in_topk 를 실제로 끌어올림(=레버 확정).")
+        print("  * 판정: recall lift≥+0.10 & rank1 안 나빠짐 & 선명도비율 edge≥0.70·lap≥0.50 → 재등록만.")
+        print("           recall lift+ 인데 topk_not_rank1≥0.15(또는 rank1<0.8×in_topk) → 재등록 + MI/contour reranker.")
+        print("           선명도비율 edge<0.70 또는 lap<0.50 → median blur → co-registration(ECC) 후 재측정.")
         print("  * 검증된 consensus 는 <out_dir>/consensus/ 에 저장됨 → 재등록 시 그대로 새 rcp 로 사용.")
 
 

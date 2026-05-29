@@ -1,0 +1,18 @@
+for align_similarity.py — CONSENSUS A/B (post code-review-fixes, 신뢰 가능)
+
+recipes=15  S(LOO)=78
+in_topk_rate: rcp=0.436  consensus=0.718  lift=+0.282
+consensus free_best chamfer median: S=0.9348  E=0.934
+
+해석(Codex 합의):
+- recall lift +0.282 (0.436→0.718) = 명확한 win → rcp 대신 S-consensus 면 정답이
+  후보에 훨씬 잘 듦 → rcp staleness 실재, 재등록이 proposer 단계 레버임 확정.
+- cons_S(0.9348) ≈ cons_E(0.934) 는 이 도메인선 blur 신호 아님: align-fail E 는
+  key 가 FOV 에 있는데 lock 만 실패한 경우가 많아 cons_E 높음이 정상일 수 있음.
+  → 가드를 chamfer 크기에서 (a) rank-1 정밀도 + (b) 선명도 비율 로 교체.
+
+추가 측정(다음 run): rank1(precision), topk_not_rank1, 선명도 비율 4종.
+판정:
+- recall lift≥+0.10 & rank1 안 나빠짐 & edge비율≥0.70·lap≥0.50 → 재등록만.
+- recall+ 인데 topk_not_rank1≥0.15(또는 rank1<0.8×in_topk) → 재등록 + MI/contour reranker.
+- edge<0.70 또는 lap<0.50 → median blur → co-registration(ECC) 후 재측정.

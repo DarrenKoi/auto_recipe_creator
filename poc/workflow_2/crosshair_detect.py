@@ -42,10 +42,14 @@ from poc.workflow_2 import DEBUG_IMAGE_DIR
 # 튜닝 상수 — CLAUDE.md 규칙상 argparse 미사용. probe 덤프 보고 실데이터로 조정.
 # ====================================================================
 
-# crosshair 를 순백으로 보는 절대 임계. 낮추면 회색 crosshair 도 잡지만 noise 증가.
+# crosshair 를 순백으로 보는 절대 임계 (montage 표시/디버그용 대표값).
 SAT_THRESH = 235
-# 선으로 인정할 최소 span (프레임 한 변 대비). center gap 이 크면 낮춰야 한다.
-SPAN_RATIO = 0.35
+# 다중 임계 ladder — 밝은→어두운 순. full-span 선을 찾는 첫 임계를 채택(약간 어두운 crosshair 회수).
+SAT_THRESH_LADDER = (235, 215, 195)
+# 선으로 인정할 최소 span (프레임 한 변 대비). full-span 직선이라도 center gap 때문에 끊기므로 0.30.
+SPAN_RATIO = 0.30
+# center gap 등 선의 끊김을 메우는 close 커널 크기 (프레임 한 변 대비). opening 전에 적용.
+GAP_BRIDGE_RATIO = 0.08
 # 선 두께 상한(px) 근사 — coverage 가 이보다 두꺼운 band 면 blob 으로 의심(신뢰도 하락).
 MAX_THICKNESS_PX = 6
 # 배경 전체가 saturate 된 경우 — bright 비율이 이보다 크면 검출 모호(low conf).
@@ -111,53 +115,44 @@ def _line_from_opened(
     return sub, info
 
 
-def detect_crosshair(
-    gray: np.ndarray,
-    *,
-    sat_thresh: int = SAT_THRESH,
-    span_ratio: float = SPAN_RATIO,
-) -> CrosshairResult:
-    """기하 기반 crosshair 검출. 반환 CrosshairResult(xy, confidence, debug).
+def _detect_at_threshold(gray: np.ndarray, sat_thresh: int, span_ratio: float) -> tuple:
+    """단일 saturation 임계에서 full-span 십자 검출 → (xy|None, confidence, info).
 
-    xy=None 이면 미검출. debug.reason 으로 사유 구분:
-      - "too_bright": 배경 전체 saturate → 모호 (진짜 없음과 구분).
-      - "no_h_line" / "no_v_line": 한 축 선 없음.
-      - "ok".
+    opening 전에 *선 방향으로 close* 해서 center gap 등 끊김을 메운다 — full-span 직선이
+    중앙에서 끊겨 longest-run 이 span 미달로 탈락하던 케이스(S 45장)를 회수.
     """
     h, w = gray.shape[:2]
     bright = (gray >= sat_thresh).astype(np.uint8)
-
-    # 스케일바(하단)/축라벨(좌측) 영역은 선 검출에서 제외.
-    bright[int((1.0 - BOTTOM_SCALEBAR_RATIO) * h):, :] = 0
-    bright[:, : max(1, int(LEFT_AXIS_RATIO * w))] = 0
+    bright[int((1.0 - BOTTOM_SCALEBAR_RATIO) * h):, :] = 0  # 스케일바(하단) 제외.
+    bright[:, : max(1, int(LEFT_AXIS_RATIO * w))] = 0        # 축라벨(좌측) 제외.
 
     bright_frac = float(bright.mean())
-    debug: dict = {"bright_fraction": bright_frac, "sat_thresh": sat_thresh, "span_ratio": span_ratio}
-
+    info: dict = {"bright_fraction": bright_frac, "sat_thresh": sat_thresh}
     if bright_frac > MAX_BRIGHT_FRACTION:
-        debug["reason"] = "too_bright"
-        return CrosshairResult(None, 0.0, debug)
+        info["reason"] = "too_bright"
+        return None, 0.0, info
 
     lh = max(15, int(span_ratio * w))
     lv = max(15, int(span_ratio * h))
-    h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (lh, 1))
-    v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, lv))
-    h_mask = cv2.morphologyEx(bright, cv2.MORPH_OPEN, h_kernel)
-    v_mask = cv2.morphologyEx(bright, cv2.MORPH_OPEN, v_kernel)
+    gap_h = max(3, int(GAP_BRIDGE_RATIO * w))
+    gap_v = max(3, int(GAP_BRIDGE_RATIO * h))
+    # 가로선: 가로로 close(gap 메움) → 가로로 open(긴 얇은 런만).
+    bright_h = cv2.morphologyEx(bright, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (gap_h, 1)))
+    h_mask = cv2.morphologyEx(bright_h, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (lh, 1)))
+    bright_v = cv2.morphologyEx(bright, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (1, gap_v)))
+    v_mask = cv2.morphologyEx(bright_v, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, lv)))
 
     cy, h_info = _line_from_opened(h_mask, "h", span_ratio * w)
     cx, v_info = _line_from_opened(v_mask, "v", span_ratio * h)
-    debug["h_line"] = h_info
-    debug["v_line"] = v_info
-
+    info["h_line"] = h_info
+    info["v_line"] = v_info
     if cy is None:
-        debug["reason"] = "no_h_line"
-        return CrosshairResult(None, 0.0, debug)
+        info["reason"] = "no_h_line"
+        return None, 0.0, info
     if cx is None:
-        debug["reason"] = "no_v_line"
-        return CrosshairResult(None, 0.0, debug)
+        info["reason"] = "no_v_line"
+        return None, 0.0, info
 
-    # confidence: 두 선의 span 커버리지 평균 × thinness penalty.
     h_cov = h_info["peak"] / max(w, 1)
     v_cov = v_info["peak"] / max(h, 1)
     thin_penalty = 1.0
@@ -166,10 +161,35 @@ def detect_crosshair(
     if not v_info.get("thin_ok", True):
         thin_penalty *= 0.5
     confidence = float(min(1.0, 0.5 * (h_cov + v_cov)) * thin_penalty)
+    info["reason"] = "ok"
+    info["sub_pixel"] = [cx, cy]
+    return (int(round(cx)), int(round(cy))), confidence, info
 
-    debug["reason"] = "ok"
-    debug["sub_pixel"] = [cx, cy]
-    return CrosshairResult((int(round(cx)), int(round(cy))), confidence, debug)
+
+def detect_crosshair(
+    gray: np.ndarray,
+    *,
+    sat_thresh_ladder: tuple = SAT_THRESH_LADDER,
+    span_ratio: float = SPAN_RATIO,
+) -> CrosshairResult:
+    """기하 기반 full-span 십자 검출 — 다중 임계 ladder.
+
+    밝은→어두운 임계 순으로 시도하여, 양 축 full-span 선을 찾는 첫 임계를 채택한다
+    (약간 어두운 crosshair 회수). 어느 임계에서도 못 찾으면 미검출.
+    debug.reason: "ok" | "no_line_any_thresh" | (마지막 임계의 사유).
+    """
+    attempts = []
+    last_info: dict = {}
+    for sat in sat_thresh_ladder:
+        xy, conf, info = _detect_at_threshold(gray, sat, span_ratio)
+        attempts.append({"sat": sat, "reason": info.get("reason"), "conf": round(conf, 3)})
+        last_info = info
+        if xy is not None:
+            info["attempts"] = attempts
+            return CrosshairResult(xy, conf, info)
+    last_info["attempts"] = attempts
+    last_info.setdefault("reason", "no_line_any_thresh")
+    return CrosshairResult(None, 0.0, last_info)
 
 
 # ====================================================================
@@ -256,7 +276,11 @@ def probe(limit_per_recipe: int | None = None) -> str:
     out_root = DEBUG_IMAGE_DIR / "crosshair_probe" / ts
     out_root.mkdir(parents=True, exist_ok=True)
 
-    n_total = n_v2 = n_old = n_both = n_neither = 0
+    # 전역 카운트 + S/E 분리(라벨별). E 는 ground truth 상 crosshair 없음 →
+    # E 에서 검출되면 false positive. union = old∨v2 (ensemble ceiling).
+    from poc.workflow_2.align_point_correction import _tool_label
+    cnt = {lab: {"n": 0, "v2": 0, "old": 0, "union": 0} for lab in ("S", "E", "?")}
+    n_total = n_v2 = n_old = n_both = n_neither = n_union = 0
     reason_counts: dict[str, int] = {}
     safe = lambda s: (s or "_").replace("/", "_").replace("\\", "_")  # noqa: E731
 
@@ -276,12 +300,19 @@ def probe(limit_per_recipe: int | None = None) -> str:
                 print(f"[WARNING] {msr_path.name}: probe 실패 — {type(exc).__name__}: {exc}")
                 continue
             n_total += 1
+            lab = _tool_label(msr_path.name)
+            lab = lab if lab in ("S", "E") else "?"
             has_v2 = v2.xy is not None
             has_old = old_xy is not None
             n_v2 += int(has_v2)
             n_old += int(has_old)
             n_both += int(has_v2 and has_old)
             n_neither += int(not has_v2 and not has_old)
+            n_union += int(has_v2 or has_old)
+            cnt[lab]["n"] += 1
+            cnt[lab]["v2"] += int(has_v2)
+            cnt[lab]["old"] += int(has_old)
+            cnt[lab]["union"] += int(has_v2 or has_old)
             reason_counts[v2.debug.get("reason", "?")] = reason_counts.get(v2.debug.get("reason", "?"), 0) + 1
 
             recipe_dir.mkdir(parents=True, exist_ok=True)
@@ -291,21 +322,27 @@ def probe(limit_per_recipe: int | None = None) -> str:
 
     summary = {
         "ts": ts, "total": n_total,
-        "v2_detected": n_v2, "old_detected": n_old,
+        "v2_detected": n_v2, "old_detected": n_old, "union_detected": n_union,
         "both_detected": n_both, "neither_detected": n_neither,
         "v2_only": n_v2 - n_both, "old_only": n_old - n_both,
+        "by_label": cnt,
         "v2_reason_counts": reason_counts,
-        "params": {"SAT_THRESH": SAT_THRESH, "SPAN_RATIO": SPAN_RATIO,
+        "params": {"SAT_THRESH_LADDER": list(SAT_THRESH_LADDER), "SPAN_RATIO": SPAN_RATIO,
+                   "GAP_BRIDGE_RATIO": GAP_BRIDGE_RATIO,
                    "MAX_THICKNESS_PX": MAX_THICKNESS_PX, "MAX_BRIGHT_FRACTION": MAX_BRIGHT_FRACTION},
     }
     (out_root / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(f"[INFO] crosshair probe 완료 → {out_root}")
-    print(f"[INFO] total={n_total}  v2={n_v2}  old={n_old}  both={n_both}  "
-          f"v2_only={n_v2 - n_both}  old_only={n_old - n_both}  neither={n_neither}")
+    print(f"[INFO] total={n_total}  v2={n_v2}  old={n_old}  union(old∨v2)={n_union}  "
+          f"both={n_both}  v2_only={n_v2 - n_both}  old_only={n_old - n_both}  neither={n_neither}")
+    for lab in ("S", "E", "?"):
+        c = cnt[lab]
+        if c["n"]:
+            print(f"[INFO]   {lab}: n={c['n']}  v2={c['v2']}  old={c['old']}  union={c['union']}")
     print(f"[INFO] v2 reason counts: {reason_counts}")
+    print("[INFO] 기대: S 의 union 이 n 에 가까울수록(검출↑), E 의 v2/old 는 0 에 가까울수록(false positive↓) 좋다.")
     print("[INFO] montage 패널: [원본+old(red)/v2(green) | bright | h_mask | v_mask]")
-    print("[INFO] v2 검출이 늘고 old_only 가 0 에 가까우면 개선. 틀린 검출은 montage 로 확인해 SAT_THRESH/SPAN_RATIO 튜닝.")
     return "success"
 
 

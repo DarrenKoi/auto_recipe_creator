@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Align 평가 지표·용어 정리 (학습용)</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --card: #1a1d24;
+    --text: #e6e9ef;
+    --muted: #9aa3b2;
+    --accent: #5cc8ff;
+    --accent2: #ffd166;
+    --good: #7bd88f;
+    --bad: #ff6b6b;
+    --border: #2a2f3a;
+    --code-bg: #11141a;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    line-height: 1.7;
+    background: var(--bg);
+    color: var(--text);
+  }
+  /* layout: sticky TOC + content */
+  .layout { display: flex; gap: 32px; max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+  nav.toc {
+    position: sticky; top: 0; align-self: flex-start;
+    width: 250px; flex: 0 0 250px;
+    height: 100vh; overflow-y: auto;
+    padding: 28px 12px 28px 0;
+    border-right: 1px solid var(--border);
+    font-size: 0.86rem;
+  }
+  nav.toc .toc-title { color: var(--accent2); font-weight: 700; letter-spacing: .04em; font-size: .78rem; text-transform: uppercase; margin: 0 0 10px; }
+  nav.toc a { display: block; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; border-left: 2px solid transparent; }
+  nav.toc a:hover { color: var(--text); background: var(--card); }
+  nav.toc a.sub { padding-left: 22px; font-size: .82rem; }
+  main { flex: 1 1 auto; min-width: 0; padding: 36px 0 100px; max-width: 800px; }
+  h1 { font-size: 2rem; margin: 0 0 6px; line-height: 1.25; }
+  .subtitle { color: var(--muted); margin: 0 0 22px; font-size: .95rem; }
+  h2 { font-size: 1.4rem; margin: 52px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border); scroll-margin-top: 16px; }
+  h2 .num { color: var(--accent); font-variant-numeric: tabular-nums; margin-right: 8px; }
+  h3 { font-size: 1.08rem; margin: 28px 0 8px; color: var(--accent2); }
+  p, li { font-size: .96rem; }
+  a.ref { color: var(--accent); text-decoration: none; border-bottom: 1px dotted var(--accent); }
+  strong { color: #fff; }
+  .lead {
+    background: linear-gradient(180deg, rgba(92,200,255,.08), transparent);
+    border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; margin: 0 0 8px;
+  }
+  /* callouts */
+  .callout { border-radius: 10px; padding: 14px 18px; margin: 18px 0; border-left: 4px solid var(--accent); background: var(--card); }
+  .callout.warn { border-left-color: var(--accent2); }
+  .callout.bad  { border-left-color: var(--bad); }
+  .callout.good { border-left-color: var(--good); }
+  .callout.idea { border-left-color: var(--accent); }
+  .callout .tag { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; margin-bottom: 4px; color: var(--muted); }
+  /* code */
+  code { background: var(--code-bg); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; font-size: .85em; font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; color: var(--accent2); }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; overflow-x: auto; margin: 16px 0; }
+  pre code { background: none; border: none; padding: 0; color: var(--text); font-size: .82rem; line-height: 1.55; }
+  /* tables */
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: .88rem; }
+  th, td { border: 1px solid var(--border); padding: 7px 11px; text-align: left; vertical-align: top; }
+  th { background: #20242e; color: var(--accent); font-weight: 600; }
+  tbody tr:nth-child(even) { background: rgba(255,255,255,.018); }
+  td code { font-size: .82em; }
+  .muted { color: var(--muted); }
+  .good-t { color: var(--good); font-weight: 600; }
+  .bad-t  { color: var(--bad); font-weight: 600; }
+  /* decision flow */
+  .flow { background: var(--code-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin: 18px 0; }
+  .flow .step { padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; margin: 6px 0; background: var(--card); }
+  .flow .step b { color: var(--accent); }
+  .flow .arrow { text-align: center; color: var(--muted); margin: 2px 0; }
+  details { border: 1px solid var(--border); border-radius: 10px; margin: 14px 0; background: var(--card); }
+  details > summary { cursor: pointer; padding: 12px 16px; font-weight: 600; color: var(--accent2); list-style: none; }
+  details > summary::-webkit-details-marker { display: none; }
+  details > summary::before { content: "▸ "; color: var(--muted); }
+  details[open] > summary::before { content: "▾ "; }
+  details > div { padding: 0 16px 14px; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
+  .pill { display: inline-block; font-size: .72rem; padding: 2px 9px; border-radius: 20px; background: #20242e; border: 1px solid var(--border); color: var(--muted); margin-right: 6px; }
+  @media (max-width: 880px) {
+    nav.toc { display: none; }
+    .layout { padding: 0 18px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<nav class="toc">
+  <p class="toc-title">목차</p>
+  <a href="#s0">0 · 점수 아닌 진단 도구</a>
+  <a href="#s1">1 · ground truth & 세 위치</a>
+  <a href="#s2">2 · matcher / MI / NCC</a>
+  <a href="#s3">3 · 분리도 (bACC)</a>
+  <a href="#s4">4 · truth-forced sweep</a>
+  <a href="#s5">5 · gt-in-topK (recall)</a>
+  <a href="#s6">6 · staleness</a>
+  <a href="#s7">7 · point-biserial</a>
+  <a href="#s8">8 · 용어 사전</a>
+  <a href="#s9">9 · 의사결정 흐름</a>
+  <a href="#run">부록 · 직접 돌려보기</a>
+</nav>
+
+<main>
+  <h1>Align 평가 지표·용어 정리 <span class="muted" style="font-size:1rem;">(학습용)</span></h1>
+  <p class="subtitle">
+    대상 코드 <code>poc/workflow_2/align_similarity.py</code> ·
+    <code>in_topk</code> · <code>bACC</code> · <code>truth-forced</code> · <code>point_biserial</code> · <code>staleness</code> 콘솔 용어 한국어 정리
+  </p>
+  <div class="lead">
+    <span class="pill">관련</span>
+    <a class="ref" href="../../journals/260529/260529_align-point-correction-recovery-plan.md">recovery plan</a> ·
+    <a class="ref" href="../algorithms/match_algorithms_intro.md">match 알고리즘 intro</a> ·
+    <a class="ref" href="../algorithms/chamfer_orb_explained.html">Chamfer·ORB 설명(HTML)</a>
+    <br><span class="muted" style="font-size:.85rem;">※ markdown 원문: <code>align_evaluation_metrics_intro.md</code></span>
+  </div>
+
+  <!-- ===================== §0 ===================== -->
+  <h2 id="s0"><span class="num">0</span>이 지표들은 "성능 점수"가 아니라 "원인 분리(triage) 도구"다</h2>
+  <p>가장 흔한 오해부터. 아래 지표들은 <em>"우리 시스템이 몇 점이다"</em>를 매기는 게 아니라,
+     <strong>"매칭이 틀렸을 때 <em>어디가</em> 틀렸는지"를 좁히는 진단 도구</strong>다.</p>
+  <div class="callout idea">
+    <span class="tag">우리가 푸는 문제</span>
+    recipe 에 등록된 align key(rcp 이미지 정중앙 영역)를, 실제 측정 이미지(msr)에서 <strong>같은 물리 위치</strong>로
+    다시 찾아야 한다. 그런데 S(성공) 이미지에서조차 엉뚱한 위치가 green mark 로 찍힌다. <strong>왜?</strong>
+  </div>
+  <p>"왜"의 후보는 여러 개다 — key 가 안 유일하다 / matcher 가 약하다 / scale 을 놓쳤다 / reference(rcp)가 낡았다(stale)…
+     눈으로 못 가리니 <strong>각 가설을 숫자로 분리</strong>하려고 만든 게 이 지표들이다. 그래서 지표마다
+     "이 값이 이러면 → 원인은 저것"이라는 <strong>판정 규칙</strong>이 붙어 있다.</p>
+  <div class="callout bad">
+    <span class="tag">핵심 사실 (오피스 실측 432장)</span>
+    정답 위치(S-at-crosshair)에서조차 matcher median 점수가 0.62~0.74 수준이고,
+    free 검색(free_best)은 S(0.66)보다 <strong>E(0.70)에서 오히려 더 높다.</strong>
+    정답에서 이 정도면 free 검색이 다른 곳에서 우연히 더 높게 나와 green mark 가 틀린다.
+    = <strong>matcher 변별력(distinctiveness) 부족</strong>이 진짜 천장.
+  </div>
+  <p class="muted" style="font-size:.85rem;">⚠️ 이 문서의 콘솔 숫자는 오피스 실측(432장, 2026-05-29)을 텍스트로 회신받은 값이다.
+     일부는 손전사라 자릿수 noise 가 있을 수 있으나 추세는 분명하다.</p>
+
+  <!-- ===================== §1 ===================== -->
+  <h2 id="s1"><span class="num">1</span>모든 것의 기준: ground truth(S/E)와 "세 위치"</h2>
+
+  <h3>1.1 S/E 라벨 = ground truth</h3>
+  <p>장비(tool)는 측정 결과를 스스로 S(success) / E(fail)로 라벨링한다(파일명 <code>S*</code>/<code>E*</code>).
+     이걸 <strong>정답(ground truth)</strong>으로 쓴다.</p>
+  <ul>
+    <li><strong>S 이미지</strong>: 정렬 성공 → align key 가 제 위치(보통 crosshair 위치)에 있어야 한다.</li>
+    <li><strong>E 이미지</strong>: 정렬 실패 → key 를 못 찾았거나 엉뚱한 데 있다.</li>
+  </ul>
+  <div class="callout warn">
+    <span class="tag">주의</span>
+    S 라벨도 100% 믿진 않는다(<code>feedback_doubt_s_labels</code>). 도구의 self-report 라 false-positive 가능.
+    그래서 라벨은 <strong>통계의 기준</strong>으로만 쓰고, 개별 좌표 판정엔 CV 를 쓴다.
+  </div>
+
+  <h3>1.2 "세 위치"에서 유사도를 잰다</h3>
+  <p>한 장의 msr 이미지에서 rcp-center template 을 <strong>세 군데</strong>에 대고 점수를 잰다(<code>_process_msr</code>).</p>
+  <table>
+    <thead><tr><th>위치</th><th>뜻</th><th>S 기대</th><th>E 기대</th></tr></thead>
+    <tbody>
+      <tr><td><code>at_crosshair</code></td><td>도구가 "여기가 정답"이라 본 곳</td><td class="good-t">높음</td><td>(E 는 crosshair 거의 없음)</td></tr>
+      <tr><td><code>at_center</code></td><td>이미지 정중앙. 성공이면 key 가 여기 옴</td><td class="good-t">높음</td><td class="bad-t">낮음</td></tr>
+      <tr><td><code>free_best</code></td><td><strong>이미지 전체</strong> free 검색 best</td><td class="good-t">높음</td><td>이동 복구 가능하면 높음</td></tr>
+    </tbody>
+  </table>
+  <div class="callout idea">
+    <span class="tag">free_best 가 왜 중요한가</span>
+    <code>free_best</code> 가 <code>at_crosshair</code>(정답)보다 높으면, matcher 가 <strong>정답이 아닌 다른 곳에 lock-on</strong> 했다는
+    직접 증거다. 정답을 알려줘도 자유 검색이 더 높은 점수를 딴 곳을 찾아냈다는 뜻 → green mark 가 틀리는 메커니즘 그 자체.
+  </div>
+  <p class="muted" style="font-size:.88rem;">도메인 사실: E 이미지엔 crosshair 가 거의 없다(<code>project_e_images_no_crosshair</code>).
+     그래서 "E = crosshair 가 틀린 위치" 유형은 사실상 없고, E 는 순수 image-matching 으로 풀어야 한다.</p>
+
+  <!-- ===================== §2 ===================== -->
+  <h2 id="s2"><span class="num">2</span>어떤 "지표(metric)"로 재나 — matcher / MI / NCC</h2>
+  <p>같은 두 crop 의 닮음을 재는 방법이 여러 개다. 강점/약점이 달라 <strong>셋을 동시에</strong> 재서
+     "무엇이 S/E 를 가장 잘 가르나"를 비교한다.</p>
+  <table>
+    <thead><tr><th>지표</th><th>코드</th><th>무엇을 보나</th><th>drift(밝기/대비)에</th></tr></thead>
+    <tbody>
+      <tr><td><strong>matcher</strong> (Chamfer+ORB)</td><td><code>_score</code></td><td>edge 모양(기하) 일치</td><td>비교적 강건 (edge 빈약하면 약함)</td></tr>
+      <tr><td><strong>MI</strong> (mutual information)</td><td><code>_mi</code></td><td>두 밝기 분포의 상호정보량</td><td class="good-t">강건 (drift 에 둔감)</td></tr>
+      <tr><td><strong>NCC</strong> (정규화 상관)</td><td><code>_ncc</code></td><td>pixel 값 선형 상관</td><td class="bad-t">약함 (baseline 대조군)</td></tr>
+    </tbody>
+  </table>
+  <p><strong>MI</strong>: 두 이미지를 겹쳐 2D 히스토그램을 만들고 "한쪽을 알면 다른 쪽 불확실성이 얼마나 주나"를 잰다.
+     공정 변화로 픽셀값이 통째로 바뀌어도 <em>구조적 대응</em>이 남으면 높게 나온다 →
+     픽셀 동일성을 가정 못 하는(<code>project_align_key_matching_constraint</code>) SEM align 에 적합.
+     <strong>NCC</strong>는 일부러 약한 baseline ("픽셀만 봐도 풀리나?"의 대조군).</p>
+  <div class="callout">
+    <span class="tag">실측에서 확인</span>
+    matcher(chamfer)는 점수면이 평평해 변별력이 약했고, <strong>MI 만 약하게 변별</strong>(bACC 0.627).
+    그래서 recovery plan 의 Phase 3 에서 MI 를 <strong>reranker</strong>(후보 재정렬기)로 채택하는 방향이 나왔다.
+  </div>
+
+  <!-- ===================== §3 ===================== -->
+  <h2 id="s3"><span class="num">3</span>S/E 분리도 — <code>bACC</code>, <code>thr</code>, <code>med_S/med_E</code></h2>
+  <p>콘솔 첫 표(오피스 실측 432장). 답하는 질문: <strong>"이 지표는 S 와 E 를 가를 수 있는가?"</strong></p>
+<pre><code>[INFO] S/E 분리도 (med_S 높고 med_E 낮을수록, bACC 1.0 에 가까울수록 좋은 지표):
+  metric           med_S    med_E      thr   bACC  n(S/E)
+  free_best       0.6637   0.7038   0.408  0.549  234/198   ← med_E &gt; med_S (역전!)
+  at_crosshair    (S 높음)  (E 낮음)  ...    0.52   229/71    ← E 는 crosshair 거의 없음
+  mi_free         0.0749   0.0365   0.0477 0.627  234/198   ← 그나마 가장 높음
+  ncc_free        0.0203  -0.0006   0.0145 0.598  234/198
+  free_best_box   0.7007   0.7174   0.3602 0.61   210/161   ← box-crop 도 역전</code></pre>
+  <ul>
+    <li><strong>med_S / med_E</strong>: S/E 그룹 점수의 중앙값. 좋은 지표면 <em>med_S 높고 med_E 낮음</em>.</li>
+    <li><strong>thr</strong> (best_threshold): S/E 를 가장 잘 가르는 임계값. 모든 임계를 훑어 bACC 최대화하는 t 선택.</li>
+    <li><strong>bACC</strong> (balanced accuracy): 이 진단의 핵심 한 줄. ↓</li>
+  </ul>
+  <h3>bACC — 왜 "그냥 정확도"가 아니라 "균형" 정확도인가</h3>
+<pre><code>TPR (S 맞춘 비율) = (점수 &gt;= thr 인 S) / (전체 S)     # 민감도
+TNR (E 맞춘 비율) = (점수 &lt;  thr 인 E) / (전체 E)     # 특이도
+bACC = 0.5 * (TPR + TNR)                            # 코드: _separation</code></pre>
+  <p>그냥 정확도는 <strong>클래스 불균형에 속는다.</strong> E 가 90%면 "전부 E"라고 찍어도 90% — 쓸모없는데 점수만 높다.
+     bACC 는 S 정답률·E 정답률을 따로 평균하므로 한쪽만 잘 맞혀선 안 오른다.</p>
+  <table>
+    <thead><tr><th>bACC</th><th>해석</th></tr></thead>
+    <tbody>
+      <tr><td class="good-t">1.0</td><td>완벽 분리 (합성 self-test 값)</td></tr>
+      <tr><td>0.5</td><td><strong>동전 던지기.</strong> S/E 를 전혀 못 가름 (= 쓸모없음)</td></tr>
+      <tr><td class="bad-t">&lt; 0.5</td><td>역전. E 가 오히려 S 보다 점수 높음 (지표가 거꾸로)</td></tr>
+    </tbody>
+  </table>
+  <div class="callout bad">
+    <span class="tag">실측 결론</span>
+    <code>free_best</code> bACC = <strong>0.549</strong> — 거의 동전 던지기. 게다가 med_S(0.66) &lt; med_E(0.70)로
+    <strong>방향이 살짝 역전</strong>(매칭 점수가 실패 이미지에서 더 높음)돼 있다. "matcher 변별력 부족"의 가장 강한 증거.
+    MI(0.627)·box-crop(0.61)만 <em>약하게</em> 변별 → 단일 지표론 부족, 후보화+reranking 필요.
+  </div>
+
+  <!-- ===================== §4 ===================== -->
+  <h2 id="s4"><span class="num">4</span>truth-forced sweep — "정답 위치에서조차 약한가?" 병목 분리</h2>
+  <p>콘솔 둘째 블록(실측). 코드: <code>_truth_forced</code>, <code>_diagnose_truth</code>.</p>
+<pre><code>[INFO] TRUTH-FORCED (S+crosshair 정답 위치, wide scale 0.5~1.4):
+  valid/truth = 76/229  (wrong_local_peak=153)
+  median chamfer: wide=0.7409  compare(≤1.0)=0.7381  scale_gain=0.0252  orb=0.0
+  edge density median: tpl=0.0699  msr=0.0457
+  wide_best_scale hist: {'0.5': 46, '1.0': 26, '0.6': 4}
+  진단 counts: {'ok': 71, 'wrong_local_peak': 153, 'edge_problem_msr': 5}</code></pre>
+  <div class="callout idea">
+    <span class="tag">아이디어</span>
+    평소 매칭은 key 위치를 <em>모르고</em> 찾는다(free search) → 틀려도 원인 구분 불가.
+    truth-forced 는 <strong>S 이미지의 crosshair = 정답을 알고</strong>, 그 위치 ROI 에서만 넓은 scale(0.5~1.4)로 chamfer 를
+    강제 측정한다. "검색이 엉뚱한 데 갔다"는 변수를 제거하고 <strong>순수하게 "정답 위치에서 매칭이 되나?"</strong>만 본다.
+  </div>
+  <table>
+    <thead><tr><th>용어</th><th>뜻</th></tr></thead>
+    <tbody>
+      <tr><td><code>wide_chamfer</code></td><td>넓은 대역(0.5~1.4) best chamfer</td></tr>
+      <tr><td><code>compare_chamfer</code></td><td>생산이 쓰는 좁은 대역(0.6~1.0) best</td></tr>
+      <tr><td><code>scale_gain</code> = wide−compare</td><td>넓게 봤더니 점수가 얼마나 올랐나. 크면 <strong>scale 놓침(C4)</strong></td></tr>
+      <tr><td><code>wide_best_scale_hist</code></td><td>정답 잡은 best scale 분포. 1.2/1.4 쏠리면 msr 확대됨</td></tr>
+      <tr><td><code>wrong_local_peak</code></td><td>정답 ROI 안에서도 best 가 정답 좌표를 벗어남(err&gt;0.20) = 변별 실패</td></tr>
+    </tbody>
+  </table>
+  <h3>diagnosis 5종 — counts 가 어디 몰리느냐로 다음 액션이 갈린다</h3>
+  <table>
+    <thead><tr><th>diagnosis</th><th>뜻</th><th>처방</th></tr></thead>
+    <tbody>
+      <tr><td><code>wrong_local_peak</code></td><td>정답 위치에서도 best 가 벗어남</td><td>matcher 변별력 보강(top-N+reranker)</td></tr>
+      <tr><td><code>template_weak</code></td><td>rcp key edge 빈약</td><td><strong>rcp 재등록</strong></td></tr>
+      <tr><td><code>scale_band_problem</code></td><td>&gt;1.0 에서만 회복</td><td><strong>scale 대역 확장(C4)</strong></td></tr>
+      <tr><td><code>edge_problem_msr</code></td><td>msr crop edge 거의 없음</td><td>Canny/전처리 조정</td></tr>
+      <tr><td><code>metric_or_reference_problem</code></td><td>edge 는 있는데 chamfer 낮음</td><td>metric 교체(MI) 또는 reference drift</td></tr>
+    </tbody>
+  </table>
+  <div class="callout bad">
+    <span class="tag">실측 결론</span>
+    <code>wrong_local_peak</code> <strong>153/229 ≈ 67%.</strong> 정답을 알려줘도 매칭이 근처 다른 데로 샜다.
+    게다가 <code>scale_gain</code>≈0.025(거의 0)이고 best scale 도 0.5/1.0 에 퍼져 1.2/1.4 쏠림이 없다 →
+    <strong>scale 문제(C4)가 아니다.</strong> = 변별력 자체가 문제라는 강한 증거.
+    (<code>orb=0.0</code> → mark 류엔 keypoint 가 거의 안 잡힘. ORB 가 이 도메인에선 무력.)
+  </div>
+
+  <!-- ===================== §5 ===================== -->
+  <h2 id="s5"><span class="num">5</span>gt-in-topK (proposer recall) — <code>in_topk</code>, <code>rank1</code>, <code>miss</code></h2>
+  <p><strong>이 문서에서 제일 중요한 개념.</strong> 콘솔 셋째 블록(실측). 코드: <code>_gt_in_topk</code>.</p>
+<pre><code>[INFO] GT-IN-TOPK (S+crosshair, top-8 chamfer 후보의 proposer recall):
+  in_topk=105/229 (0.459)  rank1=60 (0.262)  miss=124  median_miss_dist_norm=0.426
+  rank_hist: {'1': 60, '2': 5, '3': 8, '4': 8, '5': 11, '6': 6, '7': 3, '8': 4}</code></pre>
+  <h3>왜 필요한가 — proposer vs reranker 갈림길</h3>
+<pre><code>1단계 proposer(후보 생성기): 이미지를 훑어 "여기 같은데?" 후보 top-N 개를 뽑는다.
+2단계 reranker(재정렬기):    그 후보들을 다시 채점해 1등을 고른다.</code></pre>
+  <div class="callout idea">
+    <span class="tag">고칠 수 있는 문제 vs 못 고치는 문제</span>
+    <ul style="margin:6px 0 0;">
+      <li>정답이 후보 top-N 안에 <strong>있는데 순위만 밀림</strong> (<code>in_topk=True, rank&gt;1</code>)
+          → <span class="good-t">reranker(MI)로 회복 가능</span>.</li>
+      <li>정답이 후보에 <strong>아예 없음</strong> (<code>in_topk=False</code> = miss)
+          → <span class="bad-t">reranker 무의미</span>. <strong>proposer 자체를 바꿔야</strong> 한다.</li>
+    </ul>
+  </div>
+  <p>이 갈림길을 모르면 헛수고한다 — 후보에 정답이 없는데(proposer 문제) MI reranker 를 붙이는 건 시간 낭비.
+     gt-in-topK 가 이 둘을 <strong>숫자로 가르는 계측</strong>이다.</p>
+  <table>
+    <thead><tr><th>용어</th><th>뜻</th></tr></thead>
+    <tbody>
+      <tr><td><code>in_topk</code></td><td>정답이 chamfer 후보 top-N(기본 8) 안에 들어왔나. 거리 ≤ 0.20×짧은변</td></tr>
+      <tr><td><code>topk_rank</code></td><td>정답이 몇 등으로 들어왔나. 1=chamfer 단독으로 1등, None=miss</td></tr>
+      <tr><td><code>rank1</code> / <code>miss</code></td><td>rank==1 수 / 후보에 없는 수</td></tr>
+      <tr><td><strong><code>in_topk_rate</code> = proposer recall</strong></td><td><strong>후보 생성기가 정답을 담는 비율 = 천장.</strong> 0.70 이면 reranker 완벽해도 최대 70%</td></tr>
+      <tr><td><code>rank1_rate</code></td><td>chamfer 단독 정확도 (reranker 없이 지금 맞히는 비율)</td></tr>
+      <tr><td><code>rank_hist</code></td><td>정답이 든 순위 히스토그램. 2·3등에 몰리면 reranker 여지 큼</td></tr>
+    </tbody>
+  </table>
+  <h3>읽는 법 (의사결정 규칙)</h3>
+<pre><code>in_topk_rate 높음(0.9+) + rank1_rate 낮음  →  proposer 잘함, chamfer 순위만 나쁨
+                                              ⇒ reranker(MI) 도입이 정답.
+in_topk_rate 낮음(0.5)                      →  proposer 가 정답을 못 담음
+                                              ⇒ reranker 무의미, proposer 교체.</code></pre>
+  <div class="callout bad">
+    <span class="tag">실측 결론 (뼈아픔)</span>
+    <strong>in_topk_rate = 0.459.</strong> 정답이 후보 top-8 에 <strong>절반도 못 든다.</strong>
+    MI reranker 를 <em>완벽하게</em> 만들어도 천장이 ~46%. rank_hist 상 든 것 중 60/105 는 이미 rank1,
+    나머지는 2~8 등에 얇게 퍼져(reranker 로 끌어올릴 여지 ~45건).
+    <strong>결론: proposer 자체가 약하다 → rcp 재등록·template 개선·proposer 교체가 reranker 보다 우선</strong>
+    (<code>project_matcher_flat_chamfer_distinctiveness</code>). reranker 는 그 위에 얹는 보조.
+  </div>
+
+  <!-- ===================== §6 ===================== -->
+  <h2 id="s6"><span class="num">6</span>참조 staleness(상대 기준) — rcp 가 낡았나?</h2>
+  <p>또 다른 실패 원인: <strong>rcp(등록 reference)가 낡아</strong> 현재 공정 모습과 다름. 그러면 matcher 가 약한 게 아니라
+     <em>기준이 틀린</em> 것. 코드: <code>_reference_quality</code>.</p>
+  <div class="callout idea">
+    <span class="tag">아이디어 — 절대 점수는 함정, 상대로 본다</span>
+    matcher 가 약하면 정답에서도 0.5 가 나오니 절대값은 못 믿는다. 그래서 상대 비교:
+  </div>
+<pre><code>1. recipe 의 S 이미지들로 "현재 대표 모습" = consensus(median 이미지)를 만든다.
+2. s_internal = 각 S 가 consensus 에 맞는 정도 (S 끼리 얼마나 뭉치나)   ← MI 로 측정
+3. rcp_vs     = rcp-center 가 consensus 에 맞는 정도
+4. relative_ratio = rcp_vs / median(s_internal)</code></pre>
+  <p>같은 metric(MI)으로 재므로 <strong>matcher 약함이 분자/분모에서 상쇄</strong>된다. S 끼리 뭉치는데(s_internal 높음)
+     rcp 만 동떨어지면(rcp_vs 낮음) → ratio 낮음 → <strong>rcp 가 outlier = stale</strong>.</p>
+  <table>
+    <thead><tr><th>status</th><th>뜻</th></tr></thead>
+    <tbody>
+      <tr><td class="bad-t"><code>stale_replace</code></td><td>S 끼리 뭉치는데 rcp 만 동떨어짐 → <strong>rcp 재등록 권장</strong></td></tr>
+      <tr><td><code>S_inconsistent</code></td><td>S 끼리도 안 뭉침(CV 큼) → consensus 불신, 판단 불가</td></tr>
+      <tr><td><code>low_texture_inconclusive</code></td><td>consensus 정보량 낮음(저텍스처) → 판단 불가</td></tr>
+      <tr><td><code>insufficient_S</code></td><td>S 장수 부족(&lt;3) → 판단 불가</td></tr>
+      <tr><td class="good-t"><code>ok</code></td><td>rcp 가 S cluster 안에 있음</td></tr>
+    </tbody>
+  </table>
+  <p class="muted" style="font-size:.88rem;"><code>relative_ratio</code> 낮을수록 stale 의심 · <code>s_internal_cv</code>(std/mean) 크면 S 끼리 안 뭉쳐 판단 불가.
+     임계는 cold-start(미보정) — golden 데이터셋으로 실측 calibration 예정.</p>
+
+  <!-- ===================== §7 ===================== -->
+  <h2 id="s7"><span class="num">7</span>staleness ↔ recall 잇기 — crosstab · tertile · point-biserial</h2>
+  <p>마지막 콘솔 블록. <strong>"staleness 가 정말 매칭 실패의 원인이냐, 아니면 무관한 혼동변수냐"</strong>를 가린다.
+     §5(gt-in-topK)와 §6(staleness)을 교차시킨다.</p>
+<pre><code>[INFO] GT-IN-TOPK × 참조 staleness/ratio (원인 분리):
+  status=stale_replace  n=...  in_topk_rate=...  median_ratio=...
+  status=ok             n=...  in_topk_rate=...
+  ratio tertiles:
+    low   ratio=[..,..]  in_topk_rate=...   ← stale 후보 구간
+    high  ratio=[..,..]  in_topk_rate=...   ← fresh 구간
+  point_biserial(in_topk, ratio): n=... r=...  (+면 staleness 가 원인, ~0 이면 무관)</code></pre>
+
+  <details open>
+    <summary>7.1 · 7.2 — status별 recall & ratio tertile</summary>
+    <div>
+      <p><strong>by_reference_status</strong>: 각 staleness status 그룹에서 recall(in_topk_rate)을 따로 본다.
+         <code>stale_replace</code> 그룹 recall 이 <code>ok</code>보다 확연히 낮으면 → "stale 하면 매칭도 못 한다" 연결이 보임.</p>
+      <p><strong>ratio tertile</strong>: <code>relative_ratio</code>(연속값)를 정렬해 low/mid/high 3등분하고 각 구간 recall 을 본다.
+         low(stale)에서 낮고 high(fresh)에서 높으면 → 단조 관계 = staleness 가 원인이라는 패턴.</p>
+      <p class="muted" style="font-size:.86rem;">왜 tertile 로 자르나: status 라벨(이산)은 임계에 민감.
+         연속값을 구간으로 직접 보면 임계와 무관하게 "ratio↑일수록 recall↑"의 추세를 본다.</p>
+    </div>
+  </details>
+
+  <h3>7.3 point-biserial correlation — 추세를 숫자 하나로</h3>
+  <ul>
+    <li><strong>point-biserial r</strong> = "한쪽 <strong>이진(binary)</strong>, 다른 쪽 <strong>연속(continuous)</strong>"인 두 변수의 상관계수.
+        여기선 <code>in_topk</code>(1/0) 와 <code>relative_ratio</code>(연속)의 상관.</li>
+    <li>사실 <strong>Pearson 상관계수와 수식이 똑같다</strong> — 한 변수가 0/1 일 때 Pearson r 을 부르는 이름일 뿐. 코드도 Pearson 공식:</li>
+  </ul>
+<pre><code>r = cov(x, y) / (std(x) * std(y))     # x=ratio(연속), y=in_topk(0/1)</code></pre>
+  <table>
+    <thead><tr><th>r (−1 ~ +1)</th><th>해석</th></tr></thead>
+    <tbody>
+      <tr><td class="good-t">+ (예 +0.42)</td><td>ratio↑일수록 in_topk↑ → <strong>staleness 가 recall 저하의 원인</strong> (rcp 재등록이 약)</td></tr>
+      <tr><td>≈ 0</td><td>무관 → staleness 는 혼동변수, 원인은 <strong>다른 데(matcher 변별력)</strong></td></tr>
+      <tr><td class="bad-t">−</td><td>역방향 (이론상 이상, 데이터 의심)</td></tr>
+    </tbody>
+  </table>
+  <div class="callout idea">
+    <span class="tag">왜 결정적이냐</span>
+    §5 에서 recall 이 낮다고 나와도, "rcp 가 낡아서"인지 "matcher 가 약해서"인지 모른다.
+    point-biserial 이 <strong>0 에 가까우면</strong> → staleness 핑계를 배제하고 "원인은 matcher 자체"라고 못박을 수 있다.
+    = <strong>혼동변수 제거용 한 줄 통계.</strong>
+  </div>
+  <div class="callout warn">
+    <span class="tag">주의</span>
+    상관 ≠ 인과. r 이 커도 "stale → low recall" 인과를 <em>증명</em>하진 않는다(둘 다 저텍스처 recipe 라 같이 움직였을 수도).
+    그래서 tertile·status·biserial 을 <strong>함께</strong> 보고 종합 판단한다.
+    실측에선 <code>scored=71</code> 중 stale=17·ok=4·판단불가=50 으로 표본이 적어, tertile/biserial 은 golden 데이터셋 후 재측정 예정.
+  </div>
+
+  <!-- ===================== §8 ===================== -->
+  <h2 id="s8"><span class="num">8</span>한눈에 보는 용어 사전</h2>
+  <table>
+    <thead><tr><th>용어</th><th>한 줄 정의</th><th>코드</th></tr></thead>
+    <tbody>
+      <tr><td>ground truth (S/E)</td><td>도구의 성공/실패 라벨 = 평가 기준</td><td>파일명 S*/E*</td></tr>
+      <tr><td>at_crosshair / at_center / free_best</td><td>정답위치 / 중앙 / 전체검색best 유사도</td><td><code>_process_msr</code></td></tr>
+      <tr><td>matcher / MI / NCC</td><td>기하 / 상호정보 / 픽셀상관</td><td><code>_score _mi _ncc</code></td></tr>
+      <tr><td>med_S / med_E</td><td>S/E 점수 중앙값 (떨어져야 좋음)</td><td><code>_separation</code></td></tr>
+      <tr><td>thr (best_threshold)</td><td>S/E 가장 잘 가르는 임계</td><td><code>_separation</code></td></tr>
+      <tr><td>TPR / TNR</td><td>S 맞춘 비율 / E 맞춘 비율</td><td><code>_separation</code></td></tr>
+      <tr><td><strong>bACC</strong></td><td>0.5*(TPR+TNR). 1=완벽, 0.5=동전</td><td><code>_separation</code></td></tr>
+      <tr><td><strong>truth-forced</strong></td><td>정답 위치에서 강제 측정</td><td><code>_truth_forced</code></td></tr>
+      <tr><td>wide / compare chamfer</td><td>넓은 / 좁은(생산) 대역 best</td><td><code>_truth_forced</code></td></tr>
+      <tr><td>scale_gain</td><td>wide−compare. 크면 scale 놓침(C4)</td><td><code>_truth_forced</code></td></tr>
+      <tr><td>wrong_local_peak</td><td>정답 위치에서도 best 가 벗어남</td><td><code>_diagnose_truth</code></td></tr>
+      <tr><td><strong>proposer / reranker</strong></td><td>후보 생성기 / 후보 재정렬기</td><td>(개념)</td></tr>
+      <tr><td><strong>in_topk</strong></td><td>정답이 후보 top-N 에 들어왔나</td><td><code>_gt_in_topk</code></td></tr>
+      <tr><td>topk_rank / rank1 / miss</td><td>정답 순위 / 1등 / 후보에 없음</td><td><code>_gt_in_topk</code></td></tr>
+      <tr><td><strong>in_topk_rate = proposer recall</strong></td><td>후보 생성기가 정답을 담는 비율 (= 천장)</td><td><code>_gt_in_topk</code></td></tr>
+      <tr><td>staleness / relative_ratio</td><td>rcp 가 S cluster outlier 인 정도(낮을수록 stale)</td><td><code>_reference_quality</code></td></tr>
+      <tr><td>consensus</td><td>S 이미지들의 median = 대표 모습</td><td><code>_consensus</code></td></tr>
+      <tr><td>CV (변동계수)</td><td>std/mean. S 끼리 일관성</td><td><code>_reference_quality</code></td></tr>
+      <tr><td>tertile</td><td>연속값 3등분 구간</td><td><code>_ratio_tertile</code></td></tr>
+      <tr><td><strong>point-biserial r</strong></td><td>이진×연속 상관(=Pearson). 혼동변수 제거</td><td><code>_point_biserial…</code></td></tr>
+    </tbody>
+  </table>
+
+  <!-- ===================== §9 ===================== -->
+  <h2 id="s9"><span class="num">9</span>전체를 하나의 의사결정 흐름으로</h2>
+  <div class="flow">
+    <div class="step"><b>① S/E 분리도 bACC</b><br>모든 metric bACC≈0.5? → 지표가 S/E 못 가름(matcher 약함 확정). MI 가 그나마 높음 → MI 를 reranker 후보로</div>
+    <div class="arrow">▼</div>
+    <div class="step"><b>② truth-forced diagnosis_counts</b><br>정답 알려주고도 약한가? wrong_local_peak 多 → 변별력(top-N+reranker) · scale_band 多 → C4 · template_weak 多 → rcp 재등록</div>
+    <div class="arrow">▼</div>
+    <div class="step"><b>③ gt-in-topK in_topk_rate</b> (= 천장)<br>높음+rank1 낮음 → reranker(MI) 회복 가능 ⇒ Phase 3 · 낮음 → proposer 교체(reranker 무의미)</div>
+    <div class="arrow">▼</div>
+    <div class="step"><b>④ staleness × recall: point-biserial r</b><br>r 큼(+) → staleness 가 원인 ⇒ rcp 재등록 우선 · r≈0 → staleness 무관 ⇒ matcher 보강 집중</div>
+  </div>
+  <div class="callout bad">
+    <span class="tag">실측 결론 (432장)</span>
+    free_best bACC 0.549(역전) + wrong_local_peak 67% + scale_gain≈0(C4 아님) +
+    <strong>proposer recall 0.459(낮음)</strong> + MI 만 약하게 변별(0.627) →
+    <strong>matcher 변별력이 진짜 병목이고, 후보 생성(proposer) 단계부터 정답을 절반밖에 못 담는다.</strong>
+    우선순위: ① rcp key 품질/재등록 + proposer 개선(top-N 후보화·distinctiveness gate),
+    ② 그 위에 MI reranker — 순 (recovery plan §5, Phase 2~3).
+  </div>
+
+  <h3>참고: align_point_correction status 분포 (실측 432장 / 121 recipes)</h3>
+<pre><code>suspect_success: 208   not_distinctive: 142   low_match_both: 32
+no_crosshair_draw: 244   ambiguous_modality: 4   already_aligned: 3   ok: 7</code></pre>
+  <p><code>ok</code> 가 7 건뿐 — 대부분 <code>not_distinctive</code>(변별 불가)·<code>suspect_success</code>(S 라벨인데 보정거리 큼)로 분류돼
+     "모르면 보류"(reject-state 우선) 원칙대로 동작 중. 즉 <strong>지표 진단과 보정 결과가 일치한다.</strong></p>
+
+  <hr>
+  <!-- ===================== 부록 ===================== -->
+  <h2 id="run">부록 · 직접 돌려보기</h2>
+<pre><code># 실데이터 있으면 분석, 없으면 합성 self-test (Mac 에서 동작)
+uv run python poc/workflow_2/align_similarity.py</code></pre>
+  <p>출력: stdout 요약(§3~§7 표) + <code>DEBUG_IMAGE_DIR/align_similarity/&lt;ts&gt;/{rows.jsonl, summary.json}</code>.
+     <code>rows.jsonl</code> 에 이미지 한 장당 모든 raw 값이 있어, 콘솔 요약이 어떻게 집계됐는지 역추적 가능.</p>
+
+  <p class="muted" style="font-size:.82rem; margin-top:40px; text-align:center;">
+    poc/workflow_2/docs/study/cv/align_evaluation_metrics_intro.html · 2026-05-29
+  </p>
+</main>
+</div>
+
+<script>
+  // active TOC highlight on scroll
+  const links = [...document.querySelectorAll('nav.toc a')];
+  const map = new Map(links.map(a => [a.getAttribute('href').slice(1), a]));
+  const obs = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(a => a.style.cssText = '');
+        const a = map.get(e.target.id);
+        if (a) { a.style.color = 'var(--accent)'; a.style.borderLeftColor = 'var(--accent)'; a.style.background = 'var(--card)'; }
+      }
+    });
+  }, { rootMargin: '-10% 0px -80% 0px' });
+  document.querySelectorAll('main h2[id]').forEach(h => obs.observe(h));
+</script>
+</body>
+</html>

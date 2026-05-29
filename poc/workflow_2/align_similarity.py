@@ -69,6 +69,13 @@ COMPARE_BEST_SCALES = (0.6, 0.75, 0.85, 1.0)   # 생산 경로 band — wide 와
 # truth_err 이 이 이하라야 "truth-locked"(정답에 실제로 lock). 넘으면 wrong_local_peak.
 TRUTH_ERR_NORM_MAX = 0.20      # template 짧은 변 대비 비율.
 
+# --- gt-in-topK (proposer recall): 정답이 chamfer top-N 후보에 들어오나 ---
+# 평평한 점수면에서 free_best(=rank1) 만 보면 "truth 가 후보엔 있는데 순위만 밀린 것"인지
+# "후보에 아예 없는 것"인지 구분 못 한다. 전자면 MI 리랭킹으로 고칠 수 있고(reranker),
+# 후자면 후보 생성기 자체를 바꿔야 한다(proposer). 그 갈림길을 재는 계측.
+TOPK_CANDIDATES = 8            # MatchPolicy.top_n 과 동일 계열.
+GT_TOL_NORM = TRUTH_ERR_NORM_MAX   # 후보가 정답으로 인정되는 거리(template 짧은 변 대비).
+
 
 # ====================================================================
 # 유사도 지표.
@@ -243,6 +250,47 @@ def _truth_forced(gray, crosshair_xy, center_tpls, xhair_crop):
     }
 
 
+def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales=COMPARE_SCALES):
+    """정답(crosshair) 위치가 free-search chamfer top-N 후보 안에 들어오는지 측정.
+
+    proposer(후보 생성)가 truth 를 surface 하는지 → 리랭킹(MI 등)으로 고칠 수 있는지 판정.
+      - in_topk=True, rank>1  → truth 가 후보엔 있는데 chamfer 순위만 밀림 ⇒ reranker 로 회복 가능.
+      - in_topk=False         → truth 가 후보에 아예 없음 ⇒ proposer 교체 필요(리랭킹 무의미).
+    반환 dict: {topk_rank(None=miss), in_topk, n_cand, best_cand_dist_norm} 또는 None.
+    """
+    from poc.workflow_2.align_key_matcher import (
+        compute_chamfer_candidates,
+        preprocess_for_matching,
+    )
+    _edges, frame_dt = preprocess_for_matching(gray)
+    cxh, cyh = crosshair_xy
+    combined = []  # (chamfer, dist_norm)
+    for tpl in center_tpls.values():
+        if tpl is None:
+            continue
+        th, tw = tpl.raw_image.shape[:2]
+        short = max(1, min(tw, th))
+        try:
+            cands = compute_chamfer_candidates(tpl, frame_dt, scales=scales, top_n=topk)
+        except Exception:
+            continue
+        for c in cands:
+            d = float(np.hypot(c.xy[0] - cxh, c.xy[1] - cyh)) / short
+            combined.append((float(c.chamfer_score), d))
+    if not combined:
+        return None
+    combined.sort(key=lambda t: t[0], reverse=True)   # chamfer 내림차순.
+    combined = combined[:topk]                          # modality 교차 global top-N.
+    rank = next((i for i, (_s, d) in enumerate(combined, 1) if d <= GT_TOL_NORM), None)
+    best_dist = min(d for _s, d in combined)
+    return {
+        "topk_rank": rank,
+        "in_topk": rank is not None,
+        "n_cand": len(combined),
+        "best_cand_dist_norm": round(best_dist, 3),
+    }
+
+
 # ====================================================================
 # 템플릿 빌드 (rcp 중앙 + 흰 box).
 # ====================================================================
@@ -351,9 +399,12 @@ def _process_msr(msr_path, *, center_tpls, box_tpls):
     free_best_box = box_free[1] if box_free else None
 
     # 4) truth-forced sweep — S + crosshair 일 때만 (정답 위치 알려짐). 병목(edge/scale/metric) 분리.
+    #    + gt-in-topK: 정답이 chamfer top-N 후보에 들어오나 (proposer recall = reranker 가능 여부).
     truth = None
+    gt_topk = None
     if label == "S" and ch_res.xy is not None:
         truth = _truth_forced(gray, ch_res.xy, center_tpls, xhair_crop)
+        gt_topk = _gt_in_topk(gray, ch_res.xy, center_tpls)
 
     return {
         "msr": msr_path.name,
@@ -373,6 +424,7 @@ def _process_msr(msr_path, *, center_tpls, box_tpls):
         "ncc_xhair": ncc_xhair,
         "free_best_box": free_best_box,
         "truth": truth,
+        "gt_topk": gt_topk,
     }, xhair_crop, xhair_mod
 
 
@@ -449,6 +501,28 @@ def _summarize(rows: list[dict]) -> dict:
             "diagnosis_counts": diag_counts,
         }
 
+    # gt-in-topK 집계 — proposer recall (truth 가 후보에 드는 비율 + 순위 분포).
+    gts = [r["gt_topk"] for r in rows if r.get("gt_topk") is not None]
+    topk_summary = None
+    if gts:
+        in_topk = [g for g in gts if g["in_topk"]]
+        rank1 = [g for g in in_topk if g["topk_rank"] == 1]
+        rank_hist: dict[str, int] = {}
+        for g in in_topk:
+            rank_hist[str(g["topk_rank"])] = rank_hist.get(str(g["topk_rank"]), 0) + 1
+        miss_dists = [g["best_cand_dist_norm"] for g in gts if not g["in_topk"]]
+        topk_summary = {
+            "n": len(gts),
+            "n_in_topk": len(in_topk),
+            "n_rank1": len(rank1),
+            "n_miss": len(gts) - len(in_topk),
+            "in_topk_rate": round(len(in_topk) / len(gts), 3),
+            "rank1_rate": round(len(rank1) / len(gts), 3),
+            "rank_hist": rank_hist,
+            "median_miss_dist_norm": round(statistics.median(miss_dists), 3) if miss_dists else None,
+            "topk": TOPK_CANDIDATES,
+        }
+
     # 참조 staleness(상대 기준)는 crop 이 필요해 analyze 에서 _reference_quality 로 채운다.
     return {
         "counts": {"S": len(by_label["S"]), "E": len(by_label["E"]),
@@ -460,6 +534,7 @@ def _summarize(rows: list[dict]) -> dict:
             "recoverable_by_move(free>>at_crosshair)": len(recoverable),
         },
         "truth_forced": truth_summary,
+        "gt_topk": topk_summary,
     }
 
 
@@ -546,6 +621,17 @@ def _print_summary(summary: dict) -> None:
         print(f"  진단 counts: {tf['diagnosis_counts']}")
         print("  * 해석: median wide_chamfer 가 낮음(<0.5) → edge/metric. best_scale 이 1.2/1.4 에 몰림 + scale_gain↑ → C4 scale-band.")
         print("           scale_gain≈0 인데 chamfer 낮고 orb 도 낮음 → reference drift(=재등록). orb 만 높으면 Canny/metric 문제.")
+
+    # gt-in-topK — 정답이 chamfer top-N 후보에 드는 비율 → 리랭킹(MI) vs proposer 교체 갈림길.
+    gk = summary.get("gt_topk")
+    if gk:
+        print(f"\n[INFO] GT-IN-TOPK (S+crosshair, top-{gk['topk']} chamfer 후보의 proposer recall):")
+        print(f"  in_topk={gk['n_in_topk']}/{gk['n']} ({gk['in_topk_rate']})  "
+              f"rank1={gk['n_rank1']} ({gk['rank1_rate']})  miss={gk['n_miss']}  "
+              f"median_miss_dist_norm={gk['median_miss_dist_norm']}")
+        print(f"  rank_hist(정답이 든 순위): {gk['rank_hist']}")
+        print("  * in_topk 높고 rank1 낮음 → truth 가 후보엔 있는데 순위만 밀림 ⇒ MI 리랭커로 회복 가능.")
+        print("  * in_topk 낮음 → truth 가 후보에 아예 없음 ⇒ proposer(후보 생성기) 교체 필요(리랭킹 무의미).")
 
     # 참조 staleness(상대) — rcp 가 S-consensus 의 outlier 인지. status 로 판단 가능/불가 구분.
     rq = summary.get("reference_quality", [])

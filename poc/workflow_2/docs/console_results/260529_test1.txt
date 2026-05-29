@@ -1,0 +1,43 @@
+for crosshair_detect.py
+total=432, v2=300, old=188, union(oldvV2)=305, both=183,
+v2_only=117, old_only=5, neither=127
+
+S: n=234 v2=229 old=172 union=229
+E: n=198, v2=71 old=16 union=76
+
+v2 reason counts : {'ok': 300, 'no_h_line':114, 'no_v_line':13, 'too_bright':5}
+
+========
+
+for align_similarity.py
+
+S=234, E=109, other=0, total=432
+
+metric  med_S   med_E   too_brightbACC  n(S/E)
+fee_best    0.6637  0.7038  0.408   0.549   234/198
+at_center   0.0226  nan     0.1149  0.503   234/198
+at_cross_hair   0.0446  0.7644  0.4875  0.52    229/71
+mi_free     0.0749  0.0365  0.0477  0.627   234/198
+ncc_free    0.0203  -0.0006 0.0145  0.598   234/198
+free_best_box   0.7007  0.7174  0.3602  0.61    210/161
+
+TRUTH-FORCED
+valid/truth = 76/229 (wrong_local_peak=153)
+
+median chamfer: wide=0.7409 compare=0.7381, scale_gain=0.0252 orb=0.0 mean_dt_px=3.0
+edge density median: tpl=0.0699, msr=0.0457
+wide best scale hit {"1.0": 26, "0.5":46, "0.6":4}
+진단 counts: {"ok": 71, "wrong_local_peak':153, "edge_problem_msr':5}
+
+====
+
+for align_point_correction
+
+121 recipes, 432 images
+- suspect_success: 208
+- not_distinctive: 142
+- low_match_both: 32
+- no_crosshair_draw: 244
+- ambiguous_modality: 4
+- already_aligned: 3
+- ok: 7

@@ -128,7 +128,12 @@ JSONL/summary 필드:
 
 **완료 기준:** 위 설명 가능성 + suspect index 생성 + golden(manual) overlay set 준비.
 
-#### Phase 1 review/triage 출력 레이아웃 (100+ recipe 디버깅용)
+#### Phase 1 review/triage 출력 레이아웃 (100+ recipe 디버깅용) — ✅ 구현됨
+
+> 구현: `poc/workflow_2/align_review.py` (`build_review`). `align_point_correction.run()` 끝에서
+> 자동 호출(실패해도 batch 무영향). 단독 실행 `uv run python poc/workflow_2/align_review.py`
+> (실데이터 없으면 합성 self-test). 기존 파이프라인 출력 경로는 건드리지 않는 독립 후처리 — recipe
+> 폴더(source of truth)는 그대로, review 뷰만 한 겹 얹는다.
 
 문제: test set 이 100+ 로 늘어 recipe 폴더를 하나씩 여는 게 불가능. 해결: 저장은 recipe 별(source of
 truth)로 두되, **review 뷰를 status 축으로 한 겹 더** 만든다 — "어떤 실패 유형인가" 가 디버깅 축이므로.

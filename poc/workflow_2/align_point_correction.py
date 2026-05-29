@@ -1757,6 +1757,15 @@ def run() -> str:
         f"processed={len(per_recipe_summaries)} failed={len(failed_recipes)}"
     )
     print(f"[INFO] batch summary: {batch_path}")
+
+    # status 축 review 뷰 (by_status/ + index.html) 자동 생성 — 100+ recipe 를 폴더별로
+    # 열지 않고 실패 유형별·worst-first 로 훑기 위함. review 실패가 batch 성공을 막지 않는다.
+    if per_recipe_summaries:
+        try:
+            from poc.workflow_2.align_review import build_review
+            build_review(out_root, batch_summary_path=batch_path)
+        except Exception as exc:
+            print(f"[WARNING] review 생성 실패 (batch 결과는 유효): {type(exc).__name__}: {exc}")
     if failed_recipes:
         for f in failed_recipes:
             print(f"        - FAILED {f['recipe_dir']}  reason={f['reason']}")

@@ -13,7 +13,7 @@
 합성 점수: ``score = 0.6 * chamfer + 0.4 * orb_inlier_ratio`` (§7.3).
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -78,8 +78,31 @@ class AlignKeyTemplate:
 
 
 @dataclass
+class AlignKeyCandidate:
+    """top-N 후보 한 개 — Chamfer score map 의 NMS peak.
+
+    score 는 후보 생성 시점의 Chamfer 점수. rerank 단계(Phase 3)에서 mi/contour 를 채워
+    combined 로 재정렬할 수 있다. xy 는 매칭된 *템플릿 중심* (roi-local; 호출부에서 origin 가산).
+    """
+
+    score: float
+    chamfer_score: float
+    xy: tuple[int, int]
+    scale: float
+    template_size: tuple[int, int]
+    orb_inlier_ratio: float = 0.0
+    mi_score: float | None = None
+    contour_score: float | None = None
+
+
+@dataclass
 class AlignKeyMatchResult:
-    """compute_align_key_score 결과 + 시각화 페이로드."""
+    """compute_align_key_score 결과 + 시각화 페이로드.
+
+    candidates 이하 필드는 top-N/distinctiveness 도입(2026-05-29)으로 추가된 *옵션* 필드.
+    기존 호출부 호환을 위해 기본값을 가지며, 기존 필드(best_xy/score/decision)의 의미는 불변.
+    reject_reason 은 현재 *advisory* — decision 을 바꾸지 않고 호출부가 참고/재판정에 쓴다.
+    """
 
     score: float
     chamfer_score: float
@@ -88,6 +111,12 @@ class AlignKeyMatchResult:
     best_scale: float
     decision: str
     debug_overlay: np.ndarray
+    candidates: list = field(default_factory=list)   # list[AlignKeyCandidate], score 내림차순.
+    second_score: float | None = None                # 2nd-best 후보의 chamfer.
+    score_gap: float | None = None                   # best.chamfer - second.chamfer.
+    second_ratio: float | None = None                # second.chamfer / best.chamfer (1.0 에 가까울수록 모호).
+    distinctive: bool = True                          # best 가 2nd 대비 충분히 유일한가.
+    reject_reason: str | None = None                  # "not_distinctive" | "no_candidates" | None.
 
 
 @dataclass(frozen=True)
@@ -104,6 +133,10 @@ class MatchPolicy:
     orb_weight: float = ORB_WEIGHT
     match_threshold: float = MATCH_THRESHOLD
     adjust_threshold: float = ADJUST_THRESHOLD
+    # top-N / distinctiveness (2026-05-29). best 가 2nd 대비 충분히 유일해야 distinctive.
+    top_n: int = 8                    # NMS 후보 최대 개수.
+    min_distinct_gap: float = 0.04    # best.chamfer - second.chamfer 가 이 미만이면 모호.
+    max_second_ratio: float = 0.94    # second/best 가 이보다 크면 모호 (Lowe-ratio 의 template 판).
 
 
 # 기본 정책 — 기존 동작과 동일 (smoke test 호환).
@@ -188,50 +221,131 @@ def build_template(
 # ------------------------------------------------------------------
 
 
+def _scaled_edges(template_edges: np.ndarray, scale: float) -> np.ndarray:
+    if abs(scale - 1.0) < 1e-6:
+        return template_edges
+    new_w = max(8, int(round(template_edges.shape[1] * scale)))
+    new_h = max(8, int(round(template_edges.shape[0] * scale)))
+    return cv2.resize(template_edges, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+
+
+def _chamfer_score_map_at_scale(
+    template_edges: np.ndarray,
+    frame_dt: np.ndarray,
+    scale: float,
+) -> tuple[np.ndarray | None, tuple[int, int]]:
+    """단일 스케일의 *전체 score map* 을 반환 (top-1 만이 아니라 후보 추출용).
+
+    score_map[y, x] = exp(-mean_dt / tau) — 템플릿 top-left 가 (x, y) 일 때의 0~1 점수.
+    매칭 불가(템플릿이 프레임보다 큼 / edge 없음) → (None, (tw, th)).
+    """
+    edges_scaled = _scaled_edges(template_edges, scale)
+    th, tw = edges_scaled.shape[:2]
+    fh, fw = frame_dt.shape[:2]
+    if th >= fh or tw >= fw:
+        return None, (tw, th)
+    template_mask = (edges_scaled > 0).astype(np.float32)
+    edge_count = float(template_mask.sum())
+    if edge_count <= 0:
+        return None, (tw, th)
+    # CCORR: result[y, x] = sum over (i, j) of frame_dt[y+i, x+j] * template_mask[i, j].
+    result = cv2.matchTemplate(frame_dt, template_mask, cv2.TM_CCORR)
+    mean_dt_map = result / edge_count           # 작을수록 좋다 (edge 까지 평균 거리).
+    score_map = np.exp(-mean_dt_map / DT_TAU_PX)
+    return score_map.astype(np.float32), (tw, th)
+
+
 def _chamfer_score_at_scale(
     template_edges: np.ndarray,
     frame_dt: np.ndarray,
     scale: float,
 ) -> tuple[float, tuple[int, int], tuple[int, int]]:
-    """단일 스케일에서 최적 위치와 점수를 계산.
+    """단일 스케일 최적 위치/점수 — _chamfer_score_map_at_scale 의 top-1 wrapper (기존 동작 보존).
 
-    구현: cv2.matchTemplate(frame_dt, template_mask, TM_CCORR) 결과는
-    각 offset 에서 sum(frame_dt * template_mask) 이다. edge 픽셀 수로
-    나누면 평균 거리가 되고, exp(-mean_dt / tau) 로 0~1 점수화한다.
-
-    반환: (score, (cx, cy), (tw, th))  — cx, cy 는 매칭된 템플릿 중심.
+    반환: (score, (cx, cy), (tw, th)) — cx, cy 는 매칭된 템플릿 중심.
     """
-    # 스케일 적용한 binary edge mask 만들기.
-    if abs(scale - 1.0) < 1e-6:
-        edges_scaled = template_edges
-    else:
-        new_w = max(8, int(round(template_edges.shape[1] * scale)))
-        new_h = max(8, int(round(template_edges.shape[0] * scale)))
-        edges_scaled = cv2.resize(
-            template_edges, (new_w, new_h), interpolation=cv2.INTER_NEAREST
-        )
-
-    th, tw = edges_scaled.shape[:2]
+    score_map, (tw, th) = _chamfer_score_map_at_scale(template_edges, frame_dt, scale)
     fh, fw = frame_dt.shape[:2]
-    if th >= fh or tw >= fw:
-        # 템플릿이 프레임보다 크면 매칭 불가.
+    if score_map is None:
         return 0.0, (fw // 2, fh // 2), (tw, th)
+    idx = int(np.argmax(score_map))
+    y, x = np.unravel_index(idx, score_map.shape)
+    score = float(score_map[y, x])
+    return score, (int(x) + tw // 2, int(y) + th // 2), (tw, th)
 
-    template_mask = (edges_scaled > 0).astype(np.float32)
-    edge_count = float(template_mask.sum())
-    if edge_count <= 0:
-        return 0.0, (fw // 2, fh // 2), (tw, th)
 
-    # CCORR: result[y, x] = sum over (i, j) of frame_dt[y+i, x+j] * template_mask[i, j].
-    result = cv2.matchTemplate(frame_dt, template_mask, cv2.TM_CCORR)
-    # 작을수록 좋다 (edge 까지 평균 거리).
-    min_val, _max_val, min_loc, _max_loc = cv2.minMaxLoc(result)
-    mean_dt = float(min_val) / edge_count
-    score = float(np.exp(-mean_dt / DT_TAU_PX))
+def _extract_peaks(
+    score_map: np.ndarray,
+    tw: int,
+    th: int,
+    *,
+    max_peaks: int,
+    min_score: float,
+    nms_radius: int,
+) -> list[tuple[float, int, int]]:
+    """score_map 에서 NMS 로 local maxima 를 뽑는다 → [(score, cx, cy)] (center 좌표).
 
-    cx = int(min_loc[0] + tw // 2)
-    cy = int(min_loc[1] + th // 2)
-    return score, (cx, cy), (tw, th)
+    global argmax → 기록 → 주변 nms_radius 억제 → 반복. K 가 작아 비용 무시 가능.
+    """
+    work = score_map.copy()
+    peaks: list[tuple[float, int, int]] = []
+    for _ in range(max_peaks):
+        idx = int(np.argmax(work))
+        y, x = np.unravel_index(idx, work.shape)
+        s = float(work[y, x])
+        if s < min_score:
+            break
+        peaks.append((s, int(x) + tw // 2, int(y) + th // 2))
+        y0 = max(0, y - nms_radius); y1 = min(work.shape[0], y + nms_radius + 1)
+        x0 = max(0, x - nms_radius); x1 = min(work.shape[1], x + nms_radius + 1)
+        work[y0:y1, x0:x1] = -1.0
+    return peaks
+
+
+def compute_chamfer_candidates(
+    template: AlignKeyTemplate,
+    frame_dt: np.ndarray,
+    *,
+    scales: tuple[float, ...] = DEFAULT_SCALES,
+    top_n: int = 8,
+    nms_radius_ratio: float = 0.5,
+    min_score: float = 0.0,
+) -> list["AlignKeyCandidate"]:
+    """multi-scale Chamfer score map → NMS top-N 후보 (chamfer 내림차순).
+
+    각 스케일에서 peak 를 뽑고, 스케일 간에는 center 거리 기반 global NMS 로 병합한다
+    (같은 물리 위치가 여러 스케일에서 중복 잡히는 것 방지, 더 높은 점수 유지).
+    """
+    collected: list[tuple[float, int, int, float, int, int]] = []  # (score, cx, cy, scale, tw, th)
+    for scale in scales:
+        score_map, (tw, th) = _chamfer_score_map_at_scale(template.edge_map, frame_dt, scale)
+        if score_map is None:
+            continue
+        nms_r = max(4, int(min(tw, th) * nms_radius_ratio))
+        for s, cx, cy in _extract_peaks(
+            score_map, tw, th, max_peaks=top_n, min_score=min_score, nms_radius=nms_r,
+        ):
+            collected.append((s, cx, cy, scale, tw, th))
+
+    collected.sort(key=lambda t: t[0], reverse=True)
+    # global NMS (스케일 교차) — center 거리가 가까우면 더 높은 점수만 남긴다.
+    kept: list[tuple[float, int, int, float, int, int]] = []
+    for item in collected:
+        s, cx, cy, scale, tw, th = item
+        merge_r = max(4, int(min(tw, th) * nms_radius_ratio))
+        if any((abs(cx - k[1]) <= merge_r and abs(cy - k[2]) <= merge_r) for k in kept):
+            continue
+        kept.append(item)
+        if len(kept) >= top_n:
+            break
+
+    return [
+        AlignKeyCandidate(
+            score=float(s), chamfer_score=float(s), xy=(cx, cy),
+            scale=float(scale), template_size=(tw, th),
+        )
+        for (s, cx, cy, scale, tw, th) in kept
+    ]
 
 
 def compute_chamfer_score(
@@ -491,11 +605,33 @@ def compute_align_key_score(
 
     _frame_edges, frame_dt = preprocess_for_matching(gray_frame)
 
-    chamfer_score, (cx, cy), best_scale, (tw, th) = compute_chamfer_score(
-        template, frame_dt, scales=scales
+    # top-N 후보 (NMS). best 후보 = candidates[0] 로, 기존 compute_chamfer_score 의 top-1 과 동일.
+    candidates = compute_chamfer_candidates(
+        template, frame_dt, scales=scales, top_n=policy.top_n,
     )
 
-    # ORB: Chamfer 의 best 위치를 중심으로 한 윈도우 vs 템플릿.
+    if not candidates:
+        # 매칭 불가 — 기존 동작(중앙, 점수 0)을 보존하고 reject_reason 만 남긴다.
+        fh, fw = frame_dt.shape[:2]
+        center = (fw // 2 + roi_origin[0], fh // 2 + roi_origin[1])
+        t_h, t_w = template.edge_map.shape[:2]
+        overlay = _render_overlay(
+            frame, cx=center[0], cy=center[1], tw=t_w, th=t_h,
+            decision="low", score=0.0, chamfer=0.0, orb=0.0, scale=1.0,
+        )
+        return AlignKeyMatchResult(
+            score=0.0, chamfer_score=0.0, orb_inlier_ratio=0.0,
+            best_xy=center, best_scale=1.0, decision="low", debug_overlay=overlay,
+            candidates=[], reject_reason="no_candidates", distinctive=False,
+        )
+
+    best = candidates[0]
+    cx, cy = best.xy
+    best_scale = best.scale
+    tw, th = best.template_size
+    chamfer_score = best.chamfer_score
+
+    # ORB: best 위치를 중심으로 한 윈도우 vs 템플릿 (Slice 1 은 best 만 검증; 후보 검증은 Phase 2~3).
     if chamfer_score > 0.0 and tw > 0 and th > 0:
         crop, _crop_origin = _crop_with_padding(gray_frame, cx, cy, tw, th, pad=1.6)
         orb_ratio, _n_inliers, _n_matches = compute_orb_inlier_ratio(
@@ -503,23 +639,36 @@ def compute_align_key_score(
         )
     else:
         orb_ratio = 0.0
+    best.orb_inlier_ratio = float(orb_ratio)
 
     score = policy.chamfer_weight * chamfer_score + policy.orb_weight * orb_ratio
     decision = _decision_for_score(score, policy)
 
+    # distinctiveness — best 가 2nd 대비 충분히 유일한가 (wrong top-1 자동 채택 방지의 핵심 신호).
+    second = candidates[1] if len(candidates) > 1 else None
+    second_score = float(second.chamfer_score) if second is not None else None
+    score_gap = float(chamfer_score - second.chamfer_score) if second is not None else None
+    second_ratio = (
+        float(second.chamfer_score / chamfer_score)
+        if second is not None and chamfer_score > 0 else None
+    )
+    distinctive = True
+    reject_reason: str | None = None
+    if second is not None:
+        if (score_gap is not None and score_gap < policy.min_distinct_gap) or (
+            second_ratio is not None and second_ratio > policy.max_second_ratio
+        ):
+            distinctive = False
+            reject_reason = "not_distinctive"
+
+    # 후보 좌표를 roi 절대 좌표로 환산 (best_xy 의미는 기존과 동일).
     abs_xy = (cx + roi_origin[0], cy + roi_origin[1])
+    for c in candidates:
+        c.xy = (c.xy[0] + roi_origin[0], c.xy[1] + roi_origin[1])
 
     overlay = _render_overlay(
-        frame,
-        cx=abs_xy[0],
-        cy=abs_xy[1],
-        tw=tw,
-        th=th,
-        decision=decision,
-        score=score,
-        chamfer=chamfer_score,
-        orb=orb_ratio,
-        scale=best_scale,
+        frame, cx=abs_xy[0], cy=abs_xy[1], tw=tw, th=th,
+        decision=decision, score=score, chamfer=chamfer_score, orb=orb_ratio, scale=best_scale,
     )
 
     return AlignKeyMatchResult(
@@ -530,6 +679,12 @@ def compute_align_key_score(
         best_scale=float(best_scale),
         decision=decision,
         debug_overlay=overlay,
+        candidates=candidates,
+        second_score=second_score,
+        score_gap=score_gap,
+        second_ratio=second_ratio,
+        distinctive=distinctive,
+        reject_reason=reject_reason,
     )
 
 

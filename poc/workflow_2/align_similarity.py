@@ -79,6 +79,15 @@ TRUTH_ERR_NORM_MAX = 0.20      # template 짧은 변 대비 비율.
 TOPK_CANDIDATES = 8            # MatchPolicy.top_n 과 동일 계열.
 GT_TOL_NORM = TRUTH_ERR_NORM_MAX   # 후보가 정답으로 인정되는 거리(template 짧은 변 대비).
 
+# --- S-consensus 템플릿 A/B (재등록 검증): rcp 대신 S-consensus 로 바꾸면 gt_in_topk 가 뛰나 ---
+# rcp 가 stale 하다는 가설을 *기존 S 데이터만으로* 검증한다. S crop 은 crosshair 검출 위치
+# (matcher 무관, ground truth)에서 떼므로 비순환. leave-one-out 으로 held-out S 의 full frame 에
+# consensus 템플릿을 매칭 → in_topk 가 rcp 대비 뛰면 재등록이 정당화되고 consensus 가 새 rcp 후보.
+# E false-positive 가드: consensus free_best chamfer 가 E 에서도 S 만큼 높으면 = 흐릿한 generic
+# 템플릿(가짜 회복)이므로 경고. (참조 [[project_matcher_flat_chamfer_distinctiveness]])
+AB_MIN_S = 4                   # LOO consensus 에 필요한 최소 S(crosshair) 장수.
+AB_E_SAMPLE = 8                # recipe 당 E false-positive 가드 표본 상한(비용 제한).
+
 
 # ====================================================================
 # 유사도 지표.
@@ -715,6 +724,95 @@ def _gt_topk_reference_crosstab(rows: list[dict], reference_quality: list[dict])
     }
 
 
+def _consensus_template_ab(by_recipe: dict, rcp_in_topk_by_name: dict, *, min_s=AB_MIN_S) -> dict | None:
+    """S-consensus 템플릿 A/B (leave-one-out) — rcp 대신 consensus 로 in_topk 가 뛰나.
+
+    by_recipe[rec] = {"s_frames": [{"path","xy","mod","crop"}], "e_paths": [Path]}.
+    rcp_in_topk_by_name = {msr_filename: bool}  (rows 의 rcp 기반 gt_topk; 동일 _gt_in_topk 입력).
+      - rcp 는 om+sem race 라 더 유리 → consensus 가 그래도 이기면 보수적으로 강한 결과.
+    반환: per-recipe + overall in_topk_rate(rcp vs consensus) + E false-positive 가드.
+    """
+    from poc.workflow_2.align_fail_assets import load_gray
+
+    per_recipe = []
+    tot_n = tot_rcp = tot_cons = 0
+    s_cons_free: list[float] = []   # consensus free_best chamfer on held-out S.
+    e_cons_free: list[float] = []   # consensus free_best chamfer on E (FP 가드).
+    for rec, data in by_recipe.items():
+        frames = data.get("s_frames", [])
+        if not frames:
+            continue
+        # consensus 일관성 위해 최다 modality 한 종류로 한정.
+        from collections import Counter
+        mod = Counter(f["mod"] for f in frames).most_common(1)[0][0]
+        fm = [f for f in frames if f["mod"] == mod]
+        if len(fm) < min_s:
+            continue
+        crops = [f["crop"] for f in fm]
+        n = rcp_hit = cons_hit = 0
+        for i, f in enumerate(fm):
+            others = [c for j, c in enumerate(crops) if j != i]
+            if len(others) < 2:
+                continue
+            consensus = _consensus(others)
+            cons_tpl = build_template(consensus, recipe_id=rec, version="s_consensus", key_type=mod)
+            try:
+                gray = load_gray(f["path"])
+            except Exception:
+                continue
+            g = _gt_in_topk(gray, tuple(f["xy"]), {mod: cons_tpl})
+            if g is None:
+                continue
+            n += 1
+            if g["in_topk"]:
+                cons_hit += 1
+            # consensus free_best chamfer (held-out S) — generic 여부 대조군.
+            try:
+                _s, ch, _o, _xy, _sc = _score(cons_tpl, gray)
+                s_cons_free.append(float(ch))
+            except Exception:
+                pass
+            if rcp_in_topk_by_name.get(f["path"].name):
+                rcp_hit += 1
+        if n == 0:
+            continue
+        # E false-positive 가드: consensus 를 E 에 free 검색 → chamfer 가 S 만큼 높으면 generic.
+        for ep in data.get("e_paths", [])[:AB_E_SAMPLE]:
+            try:
+                eg = load_gray(ep)
+                # 마지막 held-out 의 consensus 대신 전체 crops 의 consensus 로 1회.
+                _s, ch, _o, _xy, _sc = _score(
+                    build_template(_consensus(crops), recipe_id=rec, version="s_consensus_all", key_type=mod), eg)
+                e_cons_free.append(float(ch))
+            except Exception:
+                continue
+        per_recipe.append({
+            "recipe": rec, "modality": mod, "n_S_loo": n,
+            "rcp_in_topk_rate": round(rcp_hit / n, 3),
+            "cons_in_topk_rate": round(cons_hit / n, 3),
+            "lift": round((cons_hit - rcp_hit) / n, 3),
+        })
+        tot_n += n
+        tot_rcp += rcp_hit
+        tot_cons += cons_hit
+
+    if tot_n == 0:
+        return None
+    per_recipe.sort(key=lambda d: d["lift"], reverse=True)
+    return {
+        "n_recipes": len(per_recipe),
+        "n_S_loo": tot_n,
+        "overall_rcp_in_topk_rate": round(tot_rcp / tot_n, 3),
+        "overall_cons_in_topk_rate": round(tot_cons / tot_n, 3),
+        "overall_lift": round((tot_cons - tot_rcp) / tot_n, 3),
+        "median_cons_free_chamfer_S": round(statistics.median(s_cons_free), 4) if s_cons_free else None,
+        "median_cons_free_chamfer_E": round(statistics.median(e_cons_free), 4) if e_cons_free else None,
+        "per_recipe": per_recipe,
+        "min_s": min_s,
+        "note": "lift>0 & consensus_E NOT >= consensus_S → 재등록 정당. rcp 는 om+sem race 라 보수적 비교.",
+    }
+
+
 def _print_summary(summary: dict) -> None:
     c = summary["counts"]
     print(f"\n[INFO] images: S={c['S']} E={c['E']} other={c['other']} total={c['total']}")
@@ -797,6 +895,22 @@ def _print_summary(summary: dict) -> None:
                   f"{corr.get('note', '')}")
         print(f"  * {xt['note']}")
 
+    # S-consensus 템플릿 A/B — rcp 대신 consensus 로 in_topk 가 뛰나 (재등록 검증/프로토타입).
+    ab = summary.get("consensus_ab")
+    if ab:
+        print(f"\n[INFO] CONSENSUS A/B (leave-one-out, S>={ab['min_s']} recipe만, rcp 대신 S-consensus):")
+        print(f"  recipes={ab['n_recipes']}  S(LOO)={ab['n_S_loo']}")
+        print(f"  in_topk_rate:  rcp={ab['overall_rcp_in_topk_rate']}  "
+              f"consensus={ab['overall_cons_in_topk_rate']}  lift={ab['overall_lift']:+}")
+        print(f"  consensus free_best chamfer median:  S={ab['median_cons_free_chamfer_S']}  "
+              f"E={ab['median_cons_free_chamfer_E']}  (E≈S 면 generic 템플릿 경고)")
+        print("  per-recipe lift 상위:")
+        for d in ab["per_recipe"][:12]:
+            print(f"    {d['recipe'][:40]:<40} nS={d['n_S_loo']:>2} "
+                  f"rcp={d['rcp_in_topk_rate']} → cons={d['cons_in_topk_rate']} (lift {d['lift']:+})")
+        print(f"  * {ab['note']}")
+        print("  * lift>0 크고 consensus_E < consensus_S → 재등록이 in_topk 를 실제로 끌어올림(=레버 확정).")
+
 
 # ====================================================================
 # 엔트리.
@@ -835,6 +949,8 @@ def analyze(*, limit_per_recipe=LIMIT_PER_RECIPE) -> str:
             crops_by_recipe[tag] = {
                 "s_crops": {},
                 "rcp": {m: t.raw_image for m, t in center_tpls.items() if t is not None},
+                "s_frames": [],   # A/B LOO 용: {path, xy, mod, crop}.
+                "e_paths": [],    # A/B E false-positive 가드용.
             }
             msr_images = iter_msr_images(assets)
             if limit_per_recipe:
@@ -855,10 +971,22 @@ def analyze(*, limit_per_recipe=LIMIT_PER_RECIPE) -> str:
                 # S-at-crosshair crop 누적 — recipe 단위 consensus/staleness 용.
                 if row["label"] == "S" and xhair_crop is not None and xhair_mod is not None:
                     crops_by_recipe[tag]["s_crops"].setdefault(xhair_mod, []).append(xhair_crop)
+                    if row.get("crosshair_xy") is not None:
+                        crops_by_recipe[tag]["s_frames"].append({
+                            "path": msr_path, "xy": tuple(row["crosshair_xy"]),
+                            "mod": xhair_mod, "crop": xhair_crop,
+                        })
+                elif row["label"] == "E":
+                    crops_by_recipe[tag]["e_paths"].append(msr_path)
 
     summary = _summarize(rows)
     summary["reference_quality"] = _reference_quality(crops_by_recipe)
     summary["gt_topk_by_reference"] = _gt_topk_reference_crosstab(rows, summary["reference_quality"])
+    rcp_in_topk_by_name = {
+        r["msr"]: r["gt_topk"]["in_topk"]
+        for r in rows if r.get("gt_topk") is not None and r.get("msr")
+    }
+    summary["consensus_ab"] = _consensus_template_ab(crops_by_recipe, rcp_in_topk_by_name)
     (out_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     _print_summary(summary)
     print(f"\n[INFO] 저장: {out_dir}/summary.json , rows.jsonl")

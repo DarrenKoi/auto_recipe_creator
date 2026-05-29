@@ -2,8 +2,9 @@
 
 > 최종 갱신: 2026-05-25 · 범위: `poc/workflow_2/`
 > 본 문서는 기존 `sem_monitor_control_implementation_map.html` 을 대체·통합한 **단일 권위 문서**다.
-> (매니저 보고용 슬라이드는 `generate_status_report.py` → `workflow_2_status_report.{html,pptx}` 로 별도 유지.
-> Chamfer/ORB/Hamming/filter 알고리즘 해설 HTML 들은 참고용 교육 자료로 유지.)
+> (매니저 보고용 슬라이드는 `../../weekly_report/generate_status_report.py` →
+> `../../weekly_report/workflow_2_status_report.{html,pptx}` 로 별도 유지.
+> Chamfer/ORB/Hamming/filter 알고리즘 해설은 `../algorithms/`, `../cv/` 에 참고용 교육 자료로 유지.)
 
 ---
 

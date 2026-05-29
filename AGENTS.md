@@ -29,7 +29,7 @@ AI-powered automation system for CD-SEM/VeritySEM recipe setup. The project comb
 - Align-fail assets use an event folder model under `align_images/<eqp_id>/<class_name>/<recipe_name>/`.
 - Registered recipe align-key images live under `align_img_from_rcp/`.
 - Measurement/current-fail images live under `align_img_from_msr/` or are captured by workflow code, depending on the flow.
-- Current SEM images are not downloaded from MES. `workflow_2` captures SEM Monitor live when it needs current SEM evidence. See `poc/workflow_2/docs/adr/0001-current-sem-is-live-captured-not-downloaded.md`.
+- Current SEM images are not downloaded from MES. `workflow_2` captures SEM Monitor live when it needs current SEM evidence. See `poc/workflow_2/docs/study/adr/0001-current-sem-is-live-captured-not-downloaded.md`.
 - Prefer deterministic CV for align-key matching decisions. VLM probes can provide hints or feasibility checks, but clicks, movement, and match decisions need strict validation before use.
 
 ## Build, Test, and Development Commands

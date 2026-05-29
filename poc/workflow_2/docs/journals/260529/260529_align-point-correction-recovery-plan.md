@@ -8,6 +8,14 @@
 
 ---
 
+## 저널 요약
+
+- **이슈**: `align_img_from_rcp` 의 기준 align 위치가 `align_img_from_msr` 의 S/E 이미지에서 다른 위치로 매칭된다.
+- **진행**: 기존 방어 장치(white box crop, crosshair inpaint, prior ROI, ratio test, OCR tiebreak)를 확인하고, 실패 원인을 key 품질/매칭 강건성/crosshair 오염/scale miss 로 분해했다.
+- **해결 방향**: self-uniqueness 진단과 paired sanity check 를 먼저 수행한 뒤, score-map top-N/NMS, 후보 verifier, reject-state policy, VLM feasibility gate 순서로 좁힌다.
+
+---
+
 ## 1. 문제 정리
 
 기대 동작:
@@ -260,7 +268,54 @@ strict JSON contract:
 
 ---
 
-## 5. 테스트 / 검수
+## 5. 라이브 align-key 탐색 — **matcher 신뢰 확보가 선행조건** (현재 우선순위)
+
+> 추가일 2026-05-29. 실데이터 피드백으로 방향 확정: **지금은 matcher 신뢰도 확보에 집중한다.**
+> 라이브 설계 구체화는 "어떤 template·metric 으로 매칭이 신뢰되는가" 가 정해진 다음.
+
+### 5.1 정적(green-mark) vs 라이브(탐색) 분리
+
+| | 정적 — saved msr → green-mark 타깃 | 라이브 — 멈춘 SEM monitor 를 몰아 key 로 이동 |
+|---|---|---|
+| 무엇 | box/center crop → 기하 매칭 → offset → **타깃 좌표** | pan/zoom/recenter 로 실제 장비를 타깃까지 |
+| 코드 | `align_point_correction.py` (Phase 0~4 가 정확도↑) | `live_align_search.py` (Steps 4-7, scaffold) |
+| 상태 | 개선 중 | 실 `SEMMonitorController` 어댑터 **미구현**(Mac mock) |
+
+**순서 원칙: 정적 green-mark 가 신뢰되기 전에는 라이브를 구체화하지 않는다.** 타깃이 틀리면
+거기로 이동해봐야 무의미하기 때문. 즉 라이브 탐색은 matcher 신뢰도(아래)의 *downstream*.
+
+### 5.2 box-crop/crosshair 처리는 이미 있으나 *충분조건이 아님*
+
+사용자가 시도한 "rcp unique-box crop → msr 기하 유사 위치 탐색" 은 곧 현재 파이프라인이며,
+예상한 두 방해도 이미 처리돼 있다:
+- **box crop 실패** → 중앙 15% area crop fallback (`_centered_area_crop_bbox`) + Phase 0 box 품질 진단.
+- **crosshair 방해** → 매칭 전 `cv2.inpaint(TELEA)` 로 직선 제거 (`_inpaint_crosshair`).
+
+그러나 **정확한 green-mark 의 진짜 천장은 box-crop/crosshair 가 아니라 matcher 자체**다. 실데이터
+에서 정답 위치(S-at-crosshair)에서조차 matcher score median 0.62 (= match_threshold) — 정답에서
+이 정도면 free 검색이 다른 곳에서 우연히 더 높게 나와 green-mark 가 틀린다. box-clean/inpaint 는
+*필요조건*일 뿐.
+
+### 5.3 라이브에서 E 의 추가 현실 (key 가 FOV 밖일 수 있음)
+
+E(실 production 타깃)는 crosshair 가 없고, **align key 가 현재 FOV 에 아예 없을 수 있다.** 따라서
+라이브는 정적과 달리:
+- crosshair prior 없이 순수 매칭 (matcher 신뢰가 더 중요).
+- Phase A: 광역 zoom-out + 나선 pan 으로 key 를 FOV 안으로 끌어들임 → Phase B: recenter → zoom-in →
+  scale~1.0 + ORB 확인 (`live_align_search.py` 의 2-phase).
+- 매 스텝마다 새 라이브 프레임에 matcher 를 돌리므로, matcher 가 불안정하면 탐색이 발산한다.
+
+### 5.4 지금 해야 할 것 — matcher 신뢰도 확보
+
+라이브 이전에 **matcher 가 정답을 정답으로 집어내는지**부터 수치로 확정한다. 도구·산출은:
+- `align_similarity.py` — 어떤 **metric**(Chamfer/MI/NCC)·**template**(center vs box)이 S/E 를 가장
+  잘 가르는지 + 정답(at_crosshair) 대비 free_best 가 더 높은지(= 엉뚱한 데 lock-on 증거).
+- `crosshair_detect.py` (v2) — S ground-truth 확보율(현재 79%→) + S/E 분류.
+- 결과에 따라 Phase 3 의 **MI reranker** 채택 / template 선택을 확정 → 그때 라이브(5.1~5.3) 착수.
+
+---
+
+## 6. 테스트 / 검수
 
 ```bash
 uv run python poc/workflow_2/align_point_correction.py        # batch (uniqueness map + 보정)
@@ -288,7 +343,7 @@ acceptance criteria:
 
 ---
 
-## 6. 참고 자료
+## 7. 참고 자료
 
 - scikit-image registration / metrics: https://scikit-image.org/docs/stable/api/skimage.registration.html
 - Mutual information (multimodal registration) 개념: ITK/Insight, Mattes MI

@@ -163,5 +163,5 @@ memory 파일에 새 entry 가 필요한 항목은 사용자 확인 후 별도 �
 **관련 파일**
 - 모듈: `poc/workflow_2/align_point_correction.py`
 - 의존: `poc/workflow_2/align_fail_assets.py`, `poc/workflow_2/align_key_matcher.py`
-- 설계 문서: `poc/workflow_2/docs/workflow_2_procedure.md` (CV authority, VLM feasibility-only 규칙)
+- 설계 문서: `poc/workflow_2/docs/study/runbooks/workflow_2_procedure.md` (CV authority, VLM feasibility-only 규칙)
 - Plan 파일: `~/.claude/plans/we-have-successfully-tested-glowing-eclipse.md`

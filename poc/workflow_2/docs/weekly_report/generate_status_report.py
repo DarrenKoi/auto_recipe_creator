@@ -8,7 +8,7 @@
     - workflow_2_status_report.pptx (16:9, 4슬라이드)
 
 사용:
-    uv run python poc/workflow_2/docs/generate_status_report.py
+    uv run python poc/workflow_2/docs/weekly_report/generate_status_report.py
 """
 
 from dataclasses import dataclass
@@ -311,7 +311,7 @@ def build_html() -> str:
   <ol>{next_items}</ol>
 </div>
 
-<div class="footer">생성 스크립트: poc/workflow_2/docs/generate_status_report.py</div>
+<div class="footer">생성 스크립트: poc/workflow_2/docs/weekly_report/generate_status_report.py</div>
 
 </body>
 </html>

@@ -26,7 +26,7 @@ align_images/<eqp_id>/<class>/<recipe>/
 - `workflow_1`'s `rcs_screenshot.py` writes `captured_img_from_rcs/`.
 - `workflow_2`'s `align_fail_assets.resolve_assets_auto()` is the single reader, exposing `recipe_om` / `recipe_sem` / `current_sem` (override via `ALIGN_EQP_ID` / `ALIGN_CLASS_NAME` / `ALIGN_RECIPE_NAME`).
 
-**Authoritative workflow_2 design doc:** `poc/workflow_2/docs/workflow_2_procedure.md` (single source of truth for steps, file mapping, and implementation status). ADRs under `poc/workflow_2/docs/adr/`.
+**Authoritative workflow_2 design doc:** `poc/workflow_2/docs/study/runbooks/workflow_2_procedure.md` (single source of truth for steps, file mapping, and implementation status). ADRs under `poc/workflow_2/docs/study/adr/`.
 
 ## Repository Structure
 
@@ -35,7 +35,7 @@ poc/workflow_1/          # Stage 1: RCS login, tool select, align-fail alarm det
 poc/workflow_1/prompts/  # VLM prompt builders (ui-venus / mai-ui login locators, OCR assist)
 poc/workflow_1/util/     # env, image, json, mouse, time, window helpers
 poc/workflow_2/          # Stage 2: align-key search (CV match engine + live SEM Monitor search)
-poc/workflow_2/docs/     # workflow_2_procedure.md (authoritative), ADRs, algorithm explainers
+poc/workflow_2/docs/     # journals, weekly reports, and study docs for workflow_2
 flask_api/vlm_serve/     # Flask VLM proxy: service registry, health discovery, per-model blueprints
 deploy_vlms/             # VLM deployment configs, scripts, operational docs
 test/video_frame_parser/ # CLIP-based video frame extraction & analysis (GPU cluster)

@@ -1,0 +1,17 @@
+GT-IN-TOPK
+in_topk = 105/229 (0.459) rank1=60 (0.262) miss=124, median_miss_dist_norm=0.426
+
+rank_hist: {'1':60, '5':11, '6': 6, '2': 5, '3':8, '7':3 , '4':8, '8': 4}
+
+참조 stalenss(상대) : rcp_vs_consensus / S내부 일관성. ratio<0.6 & S일관(CV<=0.5) -> 재등록 권장.
+stale=17 ok=4 판단불가=50 / scored=71 recipes
+
+recipe  ns  ratioS_cv   rcp_MI  S_MI    status
+A   3   0.028   0.083   0.0134  0.04734 stale_replace
+B   3   0.048   0.325   0.0841  1.7592  stale_replace
+C   6   0.054   0.075   0.0147  0.2729  stale_raplace
+D   3   0.057   0.625   0.0753  1.3118  S_inconsistent
+E   3   0.069   0.577   0.0838  1.2224  S_inconsistent
+...
+...
+

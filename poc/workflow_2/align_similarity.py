@@ -61,6 +61,9 @@ LIMIT_PER_RECIPE = None
 RELATIVE_STALE_RATIO = 0.6      # rcp_vs 가 S-internal median 의 60% 미만이면 stale 후보.
 MIN_S_FOR_CONSENSUS = 3         # consensus 산정 최소 S 장수. 미만이면 "판단 불가".
 S_INCONSISTENT_CV = 0.5         # S-internal 의 변동계수(std/mean) 가 이보다 크면 S 끼리도 안 뭉침 → CV 판단 불가.
+# S-consensus 자체 정보량이 낮으면 MI ratio verdict 를 내리지 않는다. 저텍스처에서는 MI 가
+# 작은 절대값 주변에서 흔들려 stale/ok 판정이 과감해질 수 있으므로 office 재측정으로 보정한다.
+MIN_CONSENSUS_SELF_MI = 0.10
 
 # --- truth-forced sweep (병목 분리): 정답(S-crosshair)에서 wide scale band 로 chamfer 강제 측정 ---
 # COMPARE 상한(1.0)을 넘는 1.2/1.4 포함 — best scale 이 >1.0 에 몰리면 C4 scale-band 문제.
@@ -376,9 +379,11 @@ def _process_msr(msr_path, *, center_tpls, box_tpls):
         at_ch = _race(center_tpls, gray, roi=ch_roi)
         if at_ch:
             at_crosshair_score = at_ch[1]
-            ch_mod, _s, _c, _o, ch_xy, ch_scale = at_ch
+            ch_mod, _s, _c, _o, _ch_xy, _ch_scale = at_ch
             tpl = center_tpls[ch_mod]
-            xcrop = _matched_crop(gray, ch_xy, tpl.raw_image.shape[1], tpl.raw_image.shape[0], ch_scale)
+            # S 의 crosshair center 는 ground truth 이므로 consensus crop 은 matcher 위치가 아니라
+            # detector 위치에서 고정 scale=1.0 으로 자른다. modality 만 ROI race winner 를 따른다.
+            xcrop = _matched_crop(gray, ch_res.xy, tpl.raw_image.shape[1], tpl.raw_image.shape[0], 1.0)
             if xcrop is not None:
                 mi_xhair = _mi(tpl.raw_image, xcrop)
                 ncc_xhair = _ncc(tpl.raw_image, xcrop)
@@ -422,6 +427,8 @@ def _process_msr(msr_path, *, center_tpls, box_tpls):
         "ncc_free": ncc_free,
         "mi_xhair": mi_xhair,
         "ncc_xhair": ncc_xhair,
+        "xhair_crop_source": "detector_xy_scale1" if xhair_crop is not None else None,
+        "xhair_crop_modality": xhair_mod,
         "free_best_box": free_best_box,
         "truth": truth,
         "gt_topk": gt_topk,
@@ -549,6 +556,7 @@ def _reference_quality(crops_by_recipe: dict) -> list:
 
     같은 metric(MI)으로 재므로 matcher 약함이 상쇄된다.
       - S 끼리 잘 뭉치는데(낮은 CV) rcp 만 동떨어짐(낮은 ratio) → status=stale_replace.
+      - S-consensus 정보량 자체가 낮음 → status=low_texture_inconclusive.
       - S 끼리도 안 뭉침(높은 CV) → consensus 불신 → status=S_inconsistent (CV 로 판단 불가).
       - S 장수 부족 → insufficient_S.
     반환: relative_ratio 오름차순(worst-first) 리스트.
@@ -583,7 +591,9 @@ def _reference_quality(crops_by_recipe: dict) -> list:
             "rcp_vs_consensus_mi": round(rcp_vs, 4),
             "relative_ratio": round(ratio, 3),
         })
-        if s_cv > S_INCONSISTENT_CV:
+        if s_med < MIN_CONSENSUS_SELF_MI:
+            entry["status"] = "low_texture_inconclusive"
+        elif s_cv > S_INCONSISTENT_CV:
             entry["status"] = "S_inconsistent"      # consensus 불신 → CV 단독 판단 불가.
         elif ratio < RELATIVE_STALE_RATIO:
             entry["status"] = "stale_replace"        # rcp 가 S cluster 의 outlier → 재등록 권장.
@@ -592,6 +602,117 @@ def _reference_quality(crops_by_recipe: dict) -> list:
         out.append(entry)
     out.sort(key=lambda d: d.get("relative_ratio", 9.99))
     return out
+
+
+def _ratio_tertile(rows: list[dict]) -> dict | None:
+    """gt_topK 행을 relative_ratio tertile 로 나눠 row-weighted recall 을 본다."""
+    scored = []
+    for r in rows:
+        ratio = r.get("reference_relative_ratio")
+        gt = r.get("gt_topk") or {}
+        if isinstance(ratio, (int, float)) and "in_topk" in gt:
+            scored.append((float(ratio), bool(gt["in_topk"]), r.get("recipe")))
+    if len(scored) < 3:
+        return None
+    scored.sort(key=lambda t: t[0])
+    buckets = {"low": [], "mid": [], "high": []}
+    n = len(scored)
+    for i, item in enumerate(scored):
+        if i < n / 3:
+            buckets["low"].append(item)
+        elif i < 2 * n / 3:
+            buckets["mid"].append(item)
+        else:
+            buckets["high"].append(item)
+    out = {}
+    for name, items in buckets.items():
+        n_items = len(items)
+        n_in = sum(1 for _ratio, in_topk, _recipe in items if in_topk)
+        ratios = [ratio for ratio, _in_topk, _recipe in items]
+        out[name] = {
+            "n": n_items,
+            "n_recipes": len({recipe for _ratio, _in_topk, recipe in items}),
+            "n_in_topk": n_in,
+            "in_topk_rate": round(n_in / n_items, 3) if n_items else None,
+            "ratio_min": round(min(ratios), 3) if ratios else None,
+            "ratio_max": round(max(ratios), 3) if ratios else None,
+            "ratio_median": round(statistics.median(ratios), 3) if ratios else None,
+        }
+    return out
+
+
+def _point_biserial_in_topk_vs_ratio(rows: list[dict]) -> dict | None:
+    """binary in_topk 와 continuous relative_ratio 의 Pearson r (= point-biserial)."""
+    pairs = []
+    for r in rows:
+        ratio = r.get("reference_relative_ratio")
+        gt = r.get("gt_topk") or {}
+        if isinstance(ratio, (int, float)) and "in_topk" in gt:
+            pairs.append((float(ratio), 1.0 if gt["in_topk"] else 0.0))
+    if len(pairs) < 3:
+        return None
+    xs = [p[0] for p in pairs]
+    ys = [p[1] for p in pairs]
+    x_mean = statistics.mean(xs)
+    y_mean = statistics.mean(ys)
+    x_var = sum((x - x_mean) ** 2 for x in xs)
+    y_var = sum((y - y_mean) ** 2 for y in ys)
+    if x_var <= 0 or y_var <= 0:
+        return {"n": len(pairs), "r": None, "note": "zero variance"}
+    cov = sum((x - x_mean) * (y - y_mean) for x, y in pairs)
+    return {"n": len(pairs), "r": round(cov / (x_var * y_var) ** 0.5, 3)}
+
+
+def _gt_topk_reference_crosstab(rows: list[dict], reference_quality: list[dict]) -> dict | None:
+    """reference status/ratio 별 gt-in-topK recall. 원인 분리용 진단 출력."""
+    ref_by_recipe = {d.get("recipe"): d for d in reference_quality if d.get("recipe")}
+    gt_rows = [r for r in rows if r.get("gt_topk") is not None and r.get("recipe") in ref_by_recipe]
+    if not gt_rows:
+        return None
+    enriched = []
+    for r in gt_rows:
+        ref = ref_by_recipe[r["recipe"]]
+        item = dict(r)
+        item["reference_status"] = ref.get("status")
+        item["reference_relative_ratio"] = ref.get("relative_ratio")
+        enriched.append(item)
+
+    by_status = {}
+    for r in enriched:
+        status = r.get("reference_status") or "unknown"
+        bucket = by_status.setdefault(
+            status,
+            {"n": 0, "n_recipes": set(), "n_in_topk": 0, "ratios": []},
+        )
+        bucket["n"] += 1
+        bucket["n_recipes"].add(r.get("recipe"))
+        if r["gt_topk"]["in_topk"]:
+            bucket["n_in_topk"] += 1
+        ratio = r.get("reference_relative_ratio")
+        if isinstance(ratio, (int, float)):
+            bucket["ratios"].append(float(ratio))
+
+    by_status_out = {}
+    for status, bucket in sorted(by_status.items()):
+        n = bucket["n"]
+        ratios = bucket["ratios"]
+        by_status_out[status] = {
+            "n": n,
+            "n_recipes": len(bucket["n_recipes"]),
+            "n_in_topk": bucket["n_in_topk"],
+            "n_miss": n - bucket["n_in_topk"],
+            "in_topk_rate": round(bucket["n_in_topk"] / n, 3) if n else None,
+            "median_ratio": round(statistics.median(ratios), 3) if ratios else None,
+        }
+
+    return {
+        "n": len(enriched),
+        "n_recipes": len({r.get("recipe") for r in enriched}),
+        "by_status": by_status_out,
+        "ratio_tertiles": _ratio_tertile(enriched),
+        "point_biserial_in_topk_vs_ratio": _point_biserial_in_topk_vs_ratio(enriched),
+        "note": "row-weighted S+crosshair only; inspect n_recipes before interpreting small buckets",
+    }
 
 
 def _print_summary(summary: dict) -> None:
@@ -637,17 +758,44 @@ def _print_summary(summary: dict) -> None:
     rq = summary.get("reference_quality", [])
     if rq:
         n_stale = sum(1 for d in rq if d.get("status") == "stale_replace")
-        n_incon = sum(1 for d in rq if d.get("status") in ("S_inconsistent", "insufficient_S"))
+        incon_statuses = ("S_inconsistent", "insufficient_S", "low_texture_inconclusive")
+        n_incon = sum(1 for d in rq if d.get("status") in incon_statuses)
+        n_lowtex = sum(1 for d in rq if d.get("status") == "low_texture_inconclusive")
         n_ok = sum(1 for d in rq if d.get("status") == "ok")
-        print(f"\n[INFO] 참조 staleness(상대): rcp_vs_consensus / S내부일관성. ratio<{RELATIVE_STALE_RATIO} & S일관(CV<={S_INCONSISTENT_CV}) → 재등록 권장.")
-        print(f"[INFO] stale={n_stale}  ok={n_ok}  판단불가(S부족/불일치)={n_incon}  / scored={len(rq)} recipes")
+        print(f"\n[INFO] 참조 staleness(상대): rcp_vs_consensus / S내부일관성. "
+              f"S_MI>={MIN_CONSENSUS_SELF_MI} & ratio<{RELATIVE_STALE_RATIO} & "
+              f"S일관(CV<={S_INCONSISTENT_CV}) → 재등록 권장.")
+        print(f"[INFO] stale={n_stale}  ok={n_ok}  판단불가(S부족/불일치/저텍스처)={n_incon}  "
+              f"(low_texture={n_lowtex})  / scored={len(rq)} recipes")
         print(f"  {'recipe':<38} {'nS':>3} {'ratio':>6} {'S_cv':>5} {'rcp_MI':>7} {'S_MI':>6}  status")
         for d in rq[:25]:
             print(f"  {d['recipe'][:38]:<38} {d.get('n_S','-'):>3} "
                   f"{str(d.get('relative_ratio','-')):>6} {str(d.get('s_internal_cv','-')):>5} "
                   f"{str(d.get('rcp_vs_consensus_mi','-')):>7} {str(d.get('s_internal_median_mi','-')):>6}  "
                   f"{d.get('status')}")
-        print("  * stale_replace = S끼리 뭉치는데 rcp만 동떨어짐(재등록 권장). S_inconsistent = S끼리도 안 뭉침 → CV 단독 판단 불가(golden 필요).")
+        print("  * stale_replace = S끼리 뭉치는데 rcp만 동떨어짐(재등록 권장). "
+              "low_texture_inconclusive = S-consensus MI 자체가 낮아 ratio 판정 보류.")
+
+    xt = summary.get("gt_topk_by_reference")
+    if xt:
+        print("\n[INFO] GT-IN-TOPK × 참조 staleness/ratio (row-weighted S+crosshair):")
+        for status, d in xt["by_status"].items():
+            print(f"  status={status:<26} n={d['n']:>4} recipes={d['n_recipes']:>3} "
+                  f"in_topk={d['n_in_topk']:>4}/{d['n']} ({d['in_topk_rate']}) "
+                  f"miss={d['n_miss']:>4} median_ratio={d['median_ratio']}")
+        tertiles = xt.get("ratio_tertiles")
+        if tertiles:
+            print("  ratio tertiles:")
+            for name in ("low", "mid", "high"):
+                d = tertiles[name]
+                print(f"    {name:<4} ratio=[{d['ratio_min']}, {d['ratio_max']}] "
+                      f"median={d['ratio_median']} n={d['n']} recipes={d['n_recipes']} "
+                      f"in_topk={d['n_in_topk']}/{d['n']} ({d['in_topk_rate']})")
+        corr = xt.get("point_biserial_in_topk_vs_ratio")
+        if corr:
+            print(f"  point_biserial(in_topk, ratio): n={corr['n']} r={corr['r']} "
+                  f"{corr.get('note', '')}")
+        print(f"  * {xt['note']}")
 
 
 # ====================================================================
@@ -710,6 +858,7 @@ def analyze(*, limit_per_recipe=LIMIT_PER_RECIPE) -> str:
 
     summary = _summarize(rows)
     summary["reference_quality"] = _reference_quality(crops_by_recipe)
+    summary["gt_topk_by_reference"] = _gt_topk_reference_crosstab(rows, summary["reference_quality"])
     (out_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     _print_summary(summary)
     print(f"\n[INFO] 저장: {out_dir}/summary.json , rows.jsonl")

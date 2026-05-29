@@ -30,6 +30,7 @@ import json
 import statistics
 import tempfile
 import time
+from collections import Counter
 from pathlib import Path
 
 import cv2
@@ -47,8 +48,11 @@ from poc.workflow_2.align_key_matcher import (
 CENTER_AREA_RATIO = 0.15
 # 정적 비교 scale band (rcp/msr 거의 같은 배율 가정) — align_point_correction.COMPARE_SCALES 와 동일.
 COMPARE_SCALES = (0.6, 0.75, 0.85, 1.0)
-# at_center / at_crosshair ROI 한 변 = template 변 × 이 배수 (검색 여유).
+# at_center ROI 한 변 = template 변 × 이 배수 (검색 여유).
 ROI_FACTOR = 1.8
+# at_crosshair 는 detector 위치(정답)에 *고정*해 재야 mi_xhair 와 co-located 되고
+# recoverable_by_move 가 의미를 갖는다 → 매칭이 거의 못 움직이게 좁은 ROI.
+AT_CROSSHAIR_ROI_FACTOR = 1.2
 # 한 recipe 당 처리할 msr 상한 (None=전부). 빠른 시험용.
 LIMIT_PER_RECIPE = None
 
@@ -76,8 +80,11 @@ TRUTH_ERR_NORM_MAX = 0.20      # template 짧은 변 대비 비율.
 # 평평한 점수면에서 free_best(=rank1) 만 보면 "truth 가 후보엔 있는데 순위만 밀린 것"인지
 # "후보에 아예 없는 것"인지 구분 못 한다. 전자면 MI 리랭킹으로 고칠 수 있고(reranker),
 # 후자면 후보 생성기 자체를 바꿔야 한다(proposer). 그 갈림길을 재는 계측.
-TOPK_CANDIDATES = 8            # MatchPolicy.top_n 과 동일 계열.
-GT_TOL_NORM = TRUTH_ERR_NORM_MAX   # 후보가 정답으로 인정되는 거리(template 짧은 변 대비).
+# 생산 matcher 와 동일한 후보 수를 측정하도록 policy 에서 파생(literal 복사 금지 → drift 방지).
+TOPK_CANDIDATES = STRUCTURE_POLICY.top_n
+# 후보가 정답으로 인정되는 거리(template 짧은 변 대비). truth-forced 의 lock 판정과는 *독립* 임계라
+# 별도 값으로 둔다(한쪽을 조이면 다른 쪽이 따라 움직이는 것 방지).
+GT_TOL_NORM = 0.20
 
 # --- S-consensus 템플릿 A/B (재등록 검증): rcp 대신 S-consensus 로 바꾸면 gt_in_topk 가 뛰나 ---
 # rcp 가 stale 하다는 가설을 *기존 S 데이터만으로* 검증한다. S crop 은 crosshair 검출 위치
@@ -85,7 +92,8 @@ GT_TOL_NORM = TRUTH_ERR_NORM_MAX   # 후보가 정답으로 인정되는 거리(
 # consensus 템플릿을 매칭 → in_topk 가 rcp 대비 뛰면 재등록이 정당화되고 consensus 가 새 rcp 후보.
 # E false-positive 가드: consensus free_best chamfer 가 E 에서도 S 만큼 높으면 = 흐릿한 generic
 # 템플릿(가짜 회복)이므로 경고. (참조 [[project_matcher_flat_chamfer_distinctiveness]])
-AB_MIN_S = 4                   # LOO consensus 에 필요한 최소 S(crosshair) 장수.
+# LOO 는 held-out 1장을 빼고 consensus 를 만들어야 하므로 staleness 의 consensus 최소치보다 1 더.
+AB_MIN_S = MIN_S_FOR_CONSENSUS + 1   # LOO consensus 에 필요한 최소 S(crosshair) 장수.
 AB_E_SAMPLE = 8                # recipe 당 E false-positive 가드 표본 상한(비용 제한).
 
 
@@ -268,7 +276,11 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
     proposer(후보 생성)가 truth 를 surface 하는지 → 리랭킹(MI 등)으로 고칠 수 있는지 판정.
       - in_topk=True, rank>1  → truth 가 후보엔 있는데 chamfer 순위만 밀림 ⇒ reranker 로 회복 가능.
       - in_topk=False         → truth 가 후보에 아예 없음 ⇒ proposer 교체 필요(리랭킹 무의미).
-    반환 dict: {topk_rank(None=miss), in_topk, n_cand, best_cand_dist_norm} 또는 None.
+
+    modality 는 *race* (생산 matcher 와 동일): 각 modality 의 top-N 안에서 truth 순위를 보고
+    modality 끼리 best(최저 rank)를 채택한다. 후보를 pool 해 global truncate 하면 한 modality 의
+    잡음 peak 이 다른 modality 의 truth 후보를 밀어내 recall 을 과소평가하므로 금지.
+    반환 dict: {topk_rank(None=miss), in_topk, n_cand, best_cand_dist_norm, modality} 또는 None.
     """
     from poc.workflow_2.align_key_matcher import (
         compute_chamfer_candidates,
@@ -276,8 +288,9 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
     )
     _edges, frame_dt = preprocess_for_matching(gray)
     cxh, cyh = crosshair_xy
-    combined = []  # (chamfer, dist_norm)
-    for tpl in center_tpls.values():
+    best = None  # (rank|None, n_cand, best_dist, mod)
+    any_cand = False
+    for mod, tpl in center_tpls.items():
         if tpl is None:
             continue
         th, tw = tpl.raw_image.shape[:2]
@@ -286,20 +299,32 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
             cands = compute_chamfer_candidates(tpl, frame_dt, scales=scales, top_n=topk)
         except Exception:
             continue
-        for c in cands:
-            d = float(np.hypot(c.xy[0] - cxh, c.xy[1] - cyh)) / short
-            combined.append((float(c.chamfer_score), d))
-    if not combined:
+        if not cands:
+            continue
+        any_cand = True
+        dists = [float(np.hypot(c.xy[0] - cxh, c.xy[1] - cyh)) / short for c in cands]
+        rank = next((i for i, d in enumerate(dists, 1) if d <= GT_TOL_NORM), None)
+        cur = (rank, len(cands), min(dists), mod)
+        # race: in_topk(rank!=None) 우선 → 낮은 rank → 가까운 best_dist.
+        if best is None:
+            best = cur
+        else:
+            b_rank, _bn, b_dist, _bm = best
+            better = (
+                (rank is not None and (b_rank is None or rank < b_rank))
+                or (rank is None and b_rank is None and cur[2] < b_dist)
+            )
+            if better:
+                best = cur
+    if not any_cand:
         return None
-    combined.sort(key=lambda t: t[0], reverse=True)   # chamfer 내림차순.
-    combined = combined[:topk]                          # modality 교차 global top-N.
-    rank = next((i for i, (_s, d) in enumerate(combined, 1) if d <= GT_TOL_NORM), None)
-    best_dist = min(d for _s, d in combined)
+    rank, n_cand, best_dist, mod = best
     return {
         "topk_rank": rank,
         "in_topk": rank is not None,
-        "n_cand": len(combined),
+        "n_cand": n_cand,
         "best_cand_dist_norm": round(best_dist, 3),
+        "modality": mod,
     }
 
 
@@ -384,7 +409,9 @@ def _process_msr(msr_path, *, center_tpls, box_tpls):
     xhair_crop = None   # S-at-crosshair crop (consensus/staleness 용) — recipe 단위로 모은다.
     xhair_mod = None
     if ch_res.xy is not None:
-        ch_roi = _window_roi(gray.shape, ch_res.xy, tw, th)
+        # 좁은 ROI 로 detector 위치에 사실상 고정 → at_crosshair 가 ROI 내 다른 peak 으로
+        # 새지 않아 mi_xhair 와 같은 위치를 재고 recoverable_by_move 가 의미를 갖는다.
+        ch_roi = _window_roi(gray.shape, ch_res.xy, tw, th, factor=AT_CROSSHAIR_ROI_FACTOR)
         at_ch = _race(center_tpls, gray, roi=ch_roi)
         if at_ch:
             at_crosshair_score = at_ch[1]
@@ -572,7 +599,10 @@ def _reference_quality(crops_by_recipe: dict) -> list:
     """
     out = []
     for rec, data in crops_by_recipe.items():
-        s_crops = data.get("s_crops", {})
+        # s_frames(단일 원천)에서 modality 별 crop 으로 group — s_crops 중복 저장 제거.
+        s_crops: dict = {}
+        for f in data.get("s_frames", []):
+            s_crops.setdefault(f["mod"], []).append(f["crop"])
         if not s_crops:
             continue
         mod = max(s_crops, key=lambda m: len(s_crops[m]))   # S 가 가장 많은 modality.
@@ -600,10 +630,11 @@ def _reference_quality(crops_by_recipe: dict) -> list:
             "rcp_vs_consensus_mi": round(rcp_vs, 4),
             "relative_ratio": round(ratio, 3),
         })
-        if s_med < MIN_CONSENSUS_SELF_MI:
-            entry["status"] = "low_texture_inconclusive"
-        elif s_cv > S_INCONSISTENT_CV:
-            entry["status"] = "S_inconsistent"      # consensus 불신 → CV 단독 판단 불가.
+        # 우선순위: S 끼리 안 뭉치면(high CV) consensus 자체를 못 믿으므로 texture 보다 먼저 판정.
+        if s_cv > S_INCONSISTENT_CV:
+            entry["status"] = "S_inconsistent"      # consensus 불신 → CV 단독 판단 불가(golden 필요).
+        elif s_med < MIN_CONSENSUS_SELF_MI:
+            entry["status"] = "low_texture_inconclusive"   # MI 자체가 낮아 ratio 판정 보류.
         elif ratio < RELATIVE_STALE_RATIO:
             entry["status"] = "stale_replace"        # rcp 가 S cluster 의 outlier → 재등록 권장.
         else:
@@ -613,14 +644,20 @@ def _reference_quality(crops_by_recipe: dict) -> list:
     return out
 
 
-def _ratio_tertile(rows: list[dict]) -> dict | None:
-    """gt_topK 행을 relative_ratio tertile 로 나눠 row-weighted recall 을 본다."""
-    scored = []
+def _valid_ratio_in_topk_pairs(rows: list[dict]) -> list[tuple]:
+    """(relative_ratio, in_topk, recipe) 추출 — tertile/상관 공통 전처리(정의 중복 방지)."""
+    pairs = []
     for r in rows:
         ratio = r.get("reference_relative_ratio")
         gt = r.get("gt_topk") or {}
         if isinstance(ratio, (int, float)) and "in_topk" in gt:
-            scored.append((float(ratio), bool(gt["in_topk"]), r.get("recipe")))
+            pairs.append((float(ratio), bool(gt["in_topk"]), r.get("recipe")))
+    return pairs
+
+
+def _ratio_tertile(rows: list[dict]) -> dict | None:
+    """gt_topK 행을 relative_ratio tertile 로 나눠 row-weighted recall 을 본다."""
+    scored = _valid_ratio_in_topk_pairs(rows)
     if len(scored) < 3:
         return None
     scored.sort(key=lambda t: t[0])
@@ -651,25 +688,16 @@ def _ratio_tertile(rows: list[dict]) -> dict | None:
 
 
 def _point_biserial_in_topk_vs_ratio(rows: list[dict]) -> dict | None:
-    """binary in_topk 와 continuous relative_ratio 의 Pearson r (= point-biserial)."""
-    pairs = []
-    for r in rows:
-        ratio = r.get("reference_relative_ratio")
-        gt = r.get("gt_topk") or {}
-        if isinstance(ratio, (int, float)) and "in_topk" in gt:
-            pairs.append((float(ratio), 1.0 if gt["in_topk"] else 0.0))
+    """binary in_topk 와 continuous relative_ratio 의 Pearson r (= point-biserial), np.corrcoef."""
+    pairs = _valid_ratio_in_topk_pairs(rows)
     if len(pairs) < 3:
         return None
-    xs = [p[0] for p in pairs]
-    ys = [p[1] for p in pairs]
-    x_mean = statistics.mean(xs)
-    y_mean = statistics.mean(ys)
-    x_var = sum((x - x_mean) ** 2 for x in xs)
-    y_var = sum((y - y_mean) ** 2 for y in ys)
-    if x_var <= 0 or y_var <= 0:
+    xs = np.array([p[0] for p in pairs], dtype=np.float64)
+    ys = np.array([1.0 if p[1] else 0.0 for p in pairs], dtype=np.float64)
+    if xs.std() <= 0 or ys.std() <= 0:
         return {"n": len(pairs), "r": None, "note": "zero variance"}
-    cov = sum((x - x_mean) * (y - y_mean) for x, y in pairs)
-    return {"n": len(pairs), "r": round(cov / (x_var * y_var) ** 0.5, 3)}
+    r = float(np.corrcoef(xs, ys)[0, 1])
+    return {"n": len(pairs), "r": round(r, 3)}
 
 
 def _gt_topk_reference_crosstab(rows: list[dict], reference_quality: list[dict]) -> dict | None:
@@ -724,70 +752,86 @@ def _gt_topk_reference_crosstab(rows: list[dict], reference_quality: list[dict])
     }
 
 
-def _consensus_template_ab(by_recipe: dict, rcp_in_topk_by_name: dict, *, min_s=AB_MIN_S) -> dict | None:
+def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None) -> dict | None:
     """S-consensus 템플릿 A/B (leave-one-out) — rcp 대신 consensus 로 in_topk 가 뛰나.
 
-    by_recipe[rec] = {"s_frames": [{"path","xy","mod","crop"}], "e_paths": [Path]}.
-    rcp_in_topk_by_name = {msr_filename: bool}  (rows 의 rcp 기반 gt_topk; 동일 _gt_in_topk 입력).
-      - rcp 는 om+sem race 라 더 유리 → consensus 가 그래도 이기면 보수적으로 강한 결과.
-    반환: per-recipe + overall in_topk_rate(rcp vs consensus) + E false-positive 가드.
+    by_recipe[rec] = {"s_frames": [{path,xy,mod,crop}], "e_paths": [Path], "rcp_tpls": {mod: tpl}}.
+    재등록 검증 + 프로토타입. rcp baseline 을 *이 함수 안에서* 같은 modality·같은 frame·같은
+    _gt_in_topk 로 재계산해 apples-to-apples 로 비교한다(파일명 join / om+sem-vs-단일 비대칭 제거).
+    generic 가드: S·E 모두 *동일* all-crops consensus 의 free-best chamfer 로 재 비교 가능하게 한다
+    (cons_E >= cons_S 면 흐릿한 generic 템플릿 = 가짜 회복). 검증된 consensus 는 out_dir/consensus/
+    에 저장 → 재등록 도구가 같은 산출물을 그대로 쓰게 한다(별도 재계산 divergence 방지).
+    반환: per-recipe + overall in_topk_rate(rcp vs consensus) + lift + generic 가드.
     """
     from poc.workflow_2.align_fail_assets import load_gray
 
+    cons_dir = None
+    if out_dir is not None:
+        cons_dir = Path(out_dir) / "consensus"
+        cons_dir.mkdir(parents=True, exist_ok=True)
+
     per_recipe = []
     tot_n = tot_rcp = tot_cons = 0
-    s_cons_free: list[float] = []   # consensus free_best chamfer on held-out S.
-    e_cons_free: list[float] = []   # consensus free_best chamfer on E (FP 가드).
+    s_guard: list[float] = []   # all-crops consensus free-best chamfer on S (generic 대조).
+    e_guard: list[float] = []   # 동일 consensus free-best chamfer on E (FP 가드).
     for rec, data in by_recipe.items():
         frames = data.get("s_frames", [])
         if not frames:
             continue
         # consensus 일관성 위해 최다 modality 한 종류로 한정.
-        from collections import Counter
         mod = Counter(f["mod"] for f in frames).most_common(1)[0][0]
         fm = [f for f in frames if f["mod"] == mod]
         if len(fm) < min_s:
             continue
         crops = [f["crop"] for f in fm]
+        rcp_tpl = data.get("rcp_tpls", {}).get(mod)
+        # all-crops consensus 1회 빌드(루프 불변) — 가드 + 저장에 재사용.
+        all_consensus = _consensus(crops)
+        all_cons_tpl = build_template(all_consensus, recipe_id=rec,
+                                      version="s_consensus_all", key_type=mod)
+        if cons_dir is not None:
+            cv2.imwrite(str(cons_dir / (rec.replace("/", "__") + f"_{mod}.png")), all_consensus)
         n = rcp_hit = cons_hit = 0
         for i, f in enumerate(fm):
             others = [c for j, c in enumerate(crops) if j != i]
             if len(others) < 2:
                 continue
-            consensus = _consensus(others)
-            cons_tpl = build_template(consensus, recipe_id=rec, version="s_consensus", key_type=mod)
+            cons_tpl = build_template(_consensus(others), recipe_id=rec,
+                                      version="s_consensus", key_type=mod)
             try:
                 gray = load_gray(f["path"])
             except Exception:
                 continue
-            g = _gt_in_topk(gray, tuple(f["xy"]), {mod: cons_tpl})
-            if g is None:
+            gc = _gt_in_topk(gray, tuple(f["xy"]), {mod: cons_tpl})
+            if gc is None:
                 continue
             n += 1
-            if g["in_topk"]:
+            if gc["in_topk"]:
                 cons_hit += 1
-            # consensus free_best chamfer (held-out S) — generic 여부 대조군.
+            # rcp baseline — 같은 modality·frame·_gt_in_topk (apples-to-apples).
+            if rcp_tpl is not None:
+                gr = _gt_in_topk(gray, tuple(f["xy"]), {mod: rcp_tpl})
+                if gr is not None and gr["in_topk"]:
+                    rcp_hit += 1
+            # generic 가드 S: held-out frame 에 all-crops consensus free-best (E 와 동일 tpl).
             try:
-                _s, ch, _o, _xy, _sc = _score(cons_tpl, gray)
-                s_cons_free.append(float(ch))
+                _s, ch, _o, _xy, _sc = _score(all_cons_tpl, gray)
+                s_guard.append(float(ch))
             except Exception:
                 pass
-            if rcp_in_topk_by_name.get(f["path"].name):
-                rcp_hit += 1
         if n == 0:
             continue
-        # E false-positive 가드: consensus 를 E 에 free 검색 → chamfer 가 S 만큼 높으면 generic.
+        # generic 가드 E: 동일 all-crops consensus 로 free-best (S 와 비교 가능).
         for ep in data.get("e_paths", [])[:AB_E_SAMPLE]:
             try:
                 eg = load_gray(ep)
-                # 마지막 held-out 의 consensus 대신 전체 crops 의 consensus 로 1회.
-                _s, ch, _o, _xy, _sc = _score(
-                    build_template(_consensus(crops), recipe_id=rec, version="s_consensus_all", key_type=mod), eg)
-                e_cons_free.append(float(ch))
+                _s, ch, _o, _xy, _sc = _score(all_cons_tpl, eg)
+                e_guard.append(float(ch))
             except Exception:
                 continue
         per_recipe.append({
             "recipe": rec, "modality": mod, "n_S_loo": n,
+            "rcp_template": rcp_tpl is not None,
             "rcp_in_topk_rate": round(rcp_hit / n, 3),
             "cons_in_topk_rate": round(cons_hit / n, 3),
             "lift": round((cons_hit - rcp_hit) / n, 3),
@@ -805,11 +849,11 @@ def _consensus_template_ab(by_recipe: dict, rcp_in_topk_by_name: dict, *, min_s=
         "overall_rcp_in_topk_rate": round(tot_rcp / tot_n, 3),
         "overall_cons_in_topk_rate": round(tot_cons / tot_n, 3),
         "overall_lift": round((tot_cons - tot_rcp) / tot_n, 3),
-        "median_cons_free_chamfer_S": round(statistics.median(s_cons_free), 4) if s_cons_free else None,
-        "median_cons_free_chamfer_E": round(statistics.median(e_cons_free), 4) if e_cons_free else None,
+        "median_cons_free_chamfer_S": round(statistics.median(s_guard), 4) if s_guard else None,
+        "median_cons_free_chamfer_E": round(statistics.median(e_guard), 4) if e_guard else None,
         "per_recipe": per_recipe,
         "min_s": min_s,
-        "note": "lift>0 & consensus_E NOT >= consensus_S → 재등록 정당. rcp 는 om+sem race 라 보수적 비교.",
+        "note": "lift>0 & cons_E NOT >= cons_S → 재등록 정당. rcp baseline = 동일 modality·frame (apples-to-apples).",
     }
 
 
@@ -855,16 +899,15 @@ def _print_summary(summary: dict) -> None:
     # 참조 staleness(상대) — rcp 가 S-consensus 의 outlier 인지. status 로 판단 가능/불가 구분.
     rq = summary.get("reference_quality", [])
     if rq:
-        n_stale = sum(1 for d in rq if d.get("status") == "stale_replace")
+        sc = Counter(d.get("status") for d in rq)
         incon_statuses = ("S_inconsistent", "insufficient_S", "low_texture_inconclusive")
-        n_incon = sum(1 for d in rq if d.get("status") in incon_statuses)
-        n_lowtex = sum(1 for d in rq if d.get("status") == "low_texture_inconclusive")
-        n_ok = sum(1 for d in rq if d.get("status") == "ok")
+        n_incon = sum(sc[s] for s in incon_statuses)
         print(f"\n[INFO] 참조 staleness(상대): rcp_vs_consensus / S내부일관성. "
               f"S_MI>={MIN_CONSENSUS_SELF_MI} & ratio<{RELATIVE_STALE_RATIO} & "
               f"S일관(CV<={S_INCONSISTENT_CV}) → 재등록 권장.")
-        print(f"[INFO] stale={n_stale}  ok={n_ok}  판단불가(S부족/불일치/저텍스처)={n_incon}  "
-              f"(low_texture={n_lowtex})  / scored={len(rq)} recipes")
+        print(f"[INFO] stale={sc['stale_replace']}  ok={sc['ok']}  판단불가={n_incon}"
+              f"(S부족={sc['insufficient_S']} 불일치={sc['S_inconsistent']} 저텍스처={sc['low_texture_inconclusive']})"
+              f"  / scored={len(rq)} recipes")
         print(f"  {'recipe':<38} {'nS':>3} {'ratio':>6} {'S_cv':>5} {'rcp_MI':>7} {'S_MI':>6}  status")
         for d in rq[:25]:
             print(f"  {d['recipe'][:38]:<38} {d.get('n_S','-'):>3} "
@@ -910,6 +953,7 @@ def _print_summary(summary: dict) -> None:
                   f"rcp={d['rcp_in_topk_rate']} → cons={d['cons_in_topk_rate']} (lift {d['lift']:+})")
         print(f"  * {ab['note']}")
         print("  * lift>0 크고 consensus_E < consensus_S → 재등록이 in_topk 를 실제로 끌어올림(=레버 확정).")
+        print("  * 검증된 consensus 는 <out_dir>/consensus/ 에 저장됨 → 재등록 시 그대로 새 rcp 로 사용.")
 
 
 # ====================================================================
@@ -934,7 +978,8 @@ def analyze(*, limit_per_recipe=LIMIT_PER_RECIPE) -> str:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     rows: list[dict] = []
-    crops_by_recipe: dict = {}   # {recipe: {"s_crops": {mod: [crop]}, "rcp": {mod: R_image}}}
+    # {recipe: {"rcp": {mod: R_image}, "rcp_tpls": {mod: tpl}, "s_frames": [...], "e_paths": [...]}}
+    crops_by_recipe: dict = {}
     with (out_dir / "rows.jsonl").open("w", encoding="utf-8") as fp:
         for i, leaf in enumerate(leaves, 1):
             assets = resolve_assets(leaf)
@@ -947,9 +992,9 @@ def analyze(*, limit_per_recipe=LIMIT_PER_RECIPE) -> str:
                 continue
             tag = f"{assets.eqp_id}/{assets.class_name}/{assets.recipe_id}"
             crops_by_recipe[tag] = {
-                "s_crops": {},
                 "rcp": {m: t.raw_image for m, t in center_tpls.items() if t is not None},
-                "s_frames": [],   # A/B LOO 용: {path, xy, mod, crop}.
+                "rcp_tpls": {m: t for m, t in center_tpls.items() if t is not None},
+                "s_frames": [],   # A/B LOO + staleness 의 단일 원천: {path, xy, mod, crop}.
                 "e_paths": [],    # A/B E false-positive 가드용.
             }
             msr_images = iter_msr_images(assets)
@@ -968,25 +1013,20 @@ def analyze(*, limit_per_recipe=LIMIT_PER_RECIPE) -> str:
                 row["recipe"] = tag
                 rows.append(row)
                 fp.write(json.dumps(row, ensure_ascii=False) + "\n")
-                # S-at-crosshair crop 누적 — recipe 단위 consensus/staleness 용.
-                if row["label"] == "S" and xhair_crop is not None and xhair_mod is not None:
-                    crops_by_recipe[tag]["s_crops"].setdefault(xhair_mod, []).append(xhair_crop)
-                    if row.get("crosshair_xy") is not None:
-                        crops_by_recipe[tag]["s_frames"].append({
-                            "path": msr_path, "xy": tuple(row["crosshair_xy"]),
-                            "mod": xhair_mod, "crop": xhair_crop,
-                        })
+                # S-at-crosshair crop 누적 — s_frames 단일 원천(staleness 는 여기서 mod 로 group).
+                if (row["label"] == "S" and xhair_crop is not None
+                        and xhair_mod is not None and row.get("crosshair_xy") is not None):
+                    crops_by_recipe[tag]["s_frames"].append({
+                        "path": msr_path, "xy": tuple(row["crosshair_xy"]),
+                        "mod": xhair_mod, "crop": xhair_crop,
+                    })
                 elif row["label"] == "E":
                     crops_by_recipe[tag]["e_paths"].append(msr_path)
 
     summary = _summarize(rows)
     summary["reference_quality"] = _reference_quality(crops_by_recipe)
     summary["gt_topk_by_reference"] = _gt_topk_reference_crosstab(rows, summary["reference_quality"])
-    rcp_in_topk_by_name = {
-        r["msr"]: r["gt_topk"]["in_topk"]
-        for r in rows if r.get("gt_topk") is not None and r.get("msr")
-    }
-    summary["consensus_ab"] = _consensus_template_ab(crops_by_recipe, rcp_in_topk_by_name)
+    summary["consensus_ab"] = _consensus_template_ab(crops_by_recipe, out_dir=out_dir)
     (out_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     _print_summary(summary)
     print(f"\n[INFO] 저장: {out_dir}/summary.json , rows.jsonl")

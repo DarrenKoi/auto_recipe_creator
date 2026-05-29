@@ -37,6 +37,7 @@ import numpy as np
 
 from poc.workflow_2 import DEBUG_IMAGE_DIR
 from poc.workflow_2.align_key_matcher import (
+    DT_TAU_PX,
     STRUCTURE_POLICY,
     build_template,
     compute_align_key_score,
@@ -60,6 +61,13 @@ LIMIT_PER_RECIPE = None
 RELATIVE_STALE_RATIO = 0.6      # rcp_vs 가 S-internal median 의 60% 미만이면 stale 후보.
 MIN_S_FOR_CONSENSUS = 3         # consensus 산정 최소 S 장수. 미만이면 "판단 불가".
 S_INCONSISTENT_CV = 0.5         # S-internal 의 변동계수(std/mean) 가 이보다 크면 S 끼리도 안 뭉침 → CV 판단 불가.
+
+# --- truth-forced sweep (병목 분리): 정답(S-crosshair)에서 wide scale band 로 chamfer 강제 측정 ---
+# COMPARE 상한(1.0)을 넘는 1.2/1.4 포함 — best scale 이 >1.0 에 몰리면 C4 scale-band 문제.
+SWEEP_SCALES = (0.5, 0.6, 0.7, 0.75, 0.85, 1.0, 1.2, 1.4)
+COMPARE_BEST_SCALES = (0.6, 0.75, 0.85, 1.0)   # 생산 경로 band — wide 와 비교용.
+# truth_err 이 이 이하라야 "truth-locked"(정답에 실제로 lock). 넘으면 wrong_local_peak.
+TRUTH_ERR_NORM_MAX = 0.20      # template 짧은 변 대비 비율.
 
 
 # ====================================================================
@@ -116,28 +124,123 @@ def _window_roi(frame_shape, center_xy, tw: int, th: int, factor: float = ROI_FA
     return (x0, y0, rw, rh)
 
 
-def _score(template, frame, *, roi=None):
+def _score(template, frame, *, roi=None, scales=COMPARE_SCALES):
     """compute_align_key_score 래퍼 — (score, chamfer, orb, best_xy, best_scale)."""
     r = compute_align_key_score(
-        template, frame, roi_hint=roi, scales=COMPARE_SCALES, policy=STRUCTURE_POLICY,
+        template, frame, roi_hint=roi, scales=scales, policy=STRUCTURE_POLICY,
     )
     return r.score, r.chamfer_score, r.orb_inlier_ratio, r.best_xy, r.best_scale
 
 
-def _race(templates: dict, frame, *, roi=None):
+def _race(templates: dict, frame, *, roi=None, scales=COMPARE_SCALES):
     """OM/SEM template 중 점수 높은 쪽 채택. 반환 (modality, score, chamfer, orb, best_xy, best_scale)."""
     best = None
     for mod, tpl in templates.items():
         if tpl is None:
             continue
         try:
-            s, ch, orb, xy, sc = _score(tpl, frame, roi=roi)
+            s, ch, orb, xy, sc = _score(tpl, frame, roi=roi, scales=scales)
         except Exception as exc:
             print(f"[WARNING] score 실패 ({mod}): {exc}")
             continue
         if best is None or s > best[1]:
             best = (mod, s, ch, orb, xy, sc)
     return best  # None 가능.
+
+
+def _edge_density(gray: np.ndarray) -> float:
+    """Canny(60,160) edge 픽셀 비율 — matcher 전처리와 동일 임계."""
+    if gray is None or gray.size == 0:
+        return 0.0
+    e = cv2.Canny(gray, 60, 160)
+    return float((e > 0).mean())
+
+
+def _diagnose_truth(
+    *, truth_valid, wide_chamfer, wide_scale, scale_gain, tpl_ed, msr_ed,
+) -> str:
+    """병목 1줄 진단 (Codex cold-start 규칙)."""
+    if not truth_valid:
+        return "wrong_local_peak"          # truth ROI 안에서 best 가 정답을 벗어남.
+    if tpl_ed < 0.01:
+        return "template_weak"             # rcp key 자체 edge 빈약 — key 품질 문제.
+    if wide_scale > 1.0 and scale_gain >= 0.05:
+        return "scale_band_problem"        # >1.0 에서만 회복 → 생산 band(≤1.0) 가 놓침 (C4).
+    ratio = (msr_ed / tpl_ed) if tpl_ed > 0 else 0.0
+    if msr_ed < 0.5 * tpl_ed and msr_ed < 0.02 and wide_chamfer < 0.50:
+        return "edge_problem_msr"          # msr crop 에 edge 가 거의 없음.
+    if 0.5 <= ratio <= 2.0 and wide_chamfer < 0.50 and scale_gain < 0.03:
+        return "metric_or_reference_problem"  # edge 는 있는데 chamfer 낮음 → metric/Canny 또는 reference drift.
+    return "ok"
+
+
+def _truth_forced(gray, crosshair_xy, center_tpls, xhair_crop):
+    """정답(crosshair) 위치에서 wide scale band 로 chamfer 강제 측정 → 병목 분리 dict.
+
+    per-modality 로 truth ROI 안에서 scale 별 chamfer 를 재고, wide-best vs compare-best 를
+    비교한다. truth_err 이 크면(국소 wrong peak) truth_valid=False 로 분리한다.
+    """
+    cxh, cyh = crosshair_xy
+    best_overall = None  # (mod, chamfer, scale, xy, orb, per_scale, tw, th)
+    for mod, tpl in center_tpls.items():
+        if tpl is None:
+            continue
+        th, tw = tpl.raw_image.shape[:2]
+        max_s = max(SWEEP_SCALES)
+        slack = max(12, int(0.15 * min(tw, th)))
+        # ROI 는 sweep 최대 scale 의 template 을 수용하도록 (compare 의 ROI_FACTOR 대신 max_s 기준).
+        rw = min(gray.shape[1], int(round(tw * max_s)) + 2 * slack)
+        rh = min(gray.shape[0], int(round(th * max_s)) + 2 * slack)
+        H, W = gray.shape[:2]
+        rx = int(max(0, min(W - rw, cxh - rw // 2)))
+        ry = int(max(0, min(H - rh, cyh - rh // 2)))
+        roi = (rx, ry, rw, rh)
+        per_scale = {}
+        mod_best = None  # (chamfer, scale, xy, orb)
+        for s in SWEEP_SCALES:
+            try:
+                _sc, ch, orb, xy, _bs = _score(tpl, gray, roi=roi, scales=(s,))
+            except Exception:
+                continue
+            per_scale[s] = round(float(ch), 4)
+            if mod_best is None or ch > mod_best[0]:
+                mod_best = (float(ch), float(s), xy, float(orb))
+        if mod_best is None:
+            continue
+        if best_overall is None or mod_best[0] > best_overall[1]:
+            best_overall = (mod, mod_best[0], mod_best[1], mod_best[2], mod_best[3], per_scale, tw, th)
+
+    if best_overall is None:
+        return None
+    mod, wide_ch, wide_scale, wide_xy, wide_orb, per_scale, tw, th = best_overall
+    compare_ch = max((per_scale.get(s, 0.0) for s in COMPARE_BEST_SCALES), default=0.0)
+    scale_gain = wide_ch - compare_ch
+    err = float(np.hypot(wide_xy[0] - cxh, wide_xy[1] - cyh))
+    err_norm = err / max(1, min(tw, th))
+    truth_valid = err_norm <= TRUTH_ERR_NORM_MAX
+    tpl_ed = _edge_density(center_tpls[mod].raw_image)
+    msr_ed = _edge_density(xhair_crop) if xhair_crop is not None else None
+    mean_dt_px = float(-DT_TAU_PX * np.log(max(wide_ch, 1e-6)))
+    diagnosis = _diagnose_truth(
+        truth_valid=truth_valid, wide_chamfer=wide_ch, wide_scale=wide_scale,
+        scale_gain=scale_gain, tpl_ed=tpl_ed, msr_ed=(msr_ed if msr_ed is not None else 0.0),
+    )
+    return {
+        "modality": mod,
+        "valid": truth_valid,
+        "err_px": round(err, 1),
+        "err_norm": round(err_norm, 3),
+        "wide_chamfer": round(wide_ch, 4),
+        "wide_scale": wide_scale,
+        "wide_orb": round(wide_orb, 4),
+        "compare_chamfer": round(compare_ch, 4),
+        "scale_gain": round(scale_gain, 4),
+        "mean_dt_px": round(mean_dt_px, 2),
+        "tpl_edge_density": round(tpl_ed, 4),
+        "msr_edge_density": round(msr_ed, 4) if msr_ed is not None else None,
+        "per_scale_chamfer": per_scale,
+        "diagnosis": diagnosis,
+    }
 
 
 # ====================================================================
@@ -247,6 +350,11 @@ def _process_msr(msr_path, *, center_tpls, box_tpls):
     box_free = _race(box_tpls, gray) if any(v is not None for v in box_tpls.values()) else None
     free_best_box = box_free[1] if box_free else None
 
+    # 4) truth-forced sweep — S + crosshair 일 때만 (정답 위치 알려짐). 병목(edge/scale/metric) 분리.
+    truth = None
+    if label == "S" and ch_res.xy is not None:
+        truth = _truth_forced(gray, ch_res.xy, center_tpls, xhair_crop)
+
     return {
         "msr": msr_path.name,
         "label": label,
@@ -264,6 +372,7 @@ def _process_msr(msr_path, *, center_tpls, box_tpls):
         "mi_xhair": mi_xhair,
         "ncc_xhair": ncc_xhair,
         "free_best_box": free_best_box,
+        "truth": truth,
     }, xhair_crop, xhair_mod
 
 
@@ -311,6 +420,35 @@ def _summarize(rows: list[dict]) -> dict:
                    if r["free_best"] is not None and r["at_crosshair"] is not None
                    and r["free_best"] - r["at_crosshair"] > 0.1]
 
+    # truth-forced sweep 집계 — 병목(edge/scale/metric) 분리.
+    truths = [r["truth"] for r in rows if r.get("truth") is not None]
+    truth_summary = None
+    if truths:
+        valid = [t for t in truths if t["valid"]]
+        def _med(key, src):
+            vals = [t[key] for t in src if isinstance(t.get(key), (int, float))]
+            return round(statistics.median(vals), 4) if vals else None
+        scale_hist: dict[str, int] = {}
+        for t in valid:
+            scale_hist[str(t["wide_scale"])] = scale_hist.get(str(t["wide_scale"]), 0) + 1
+        diag_counts: dict[str, int] = {}
+        for t in truths:
+            diag_counts[t["diagnosis"]] = diag_counts.get(t["diagnosis"], 0) + 1
+        truth_summary = {
+            "n_truth": len(truths),
+            "n_valid": len(valid),
+            "n_wrong_local_peak": len(truths) - len(valid),
+            "median_wide_chamfer": _med("wide_chamfer", valid),
+            "median_compare_chamfer": _med("compare_chamfer", valid),
+            "median_scale_gain": _med("scale_gain", valid),
+            "median_wide_orb": _med("wide_orb", valid),
+            "median_mean_dt_px": _med("mean_dt_px", valid),
+            "median_tpl_edge_density": _med("tpl_edge_density", valid),
+            "median_msr_edge_density": _med("msr_edge_density", valid),
+            "wide_best_scale_hist": scale_hist,
+            "diagnosis_counts": diag_counts,
+        }
+
     # 참조 staleness(상대 기준)는 crop 이 필요해 analyze 에서 _reference_quality 로 채운다.
     return {
         "counts": {"S": len(by_label["S"]), "E": len(by_label["E"]),
@@ -321,6 +459,7 @@ def _summarize(rows: list[dict]) -> dict:
             "no_crosshair": len(e_no_ch),
             "recoverable_by_move(free>>at_crosshair)": len(recoverable),
         },
+        "truth_forced": truth_summary,
     }
 
 
@@ -394,6 +533,19 @@ def _print_summary(summary: dict) -> None:
           f"recoverable_by_move={eb['recoverable_by_move(free>>at_crosshair)']}")
     print("  * at_crosshair 의 med_E 가 med_S 보다 확실히 낮으면 → 우리 유사도가 장비 fail(낮은 점수)을 재현 = 지표 자격 검증")
     print("  * free_best 는 S/E 둘 다 높을 수 있음(key 가 E 에도 존재) → at_crosshair 가 진짜 변별자")
+
+    # truth-forced sweep — 정답 위치에서 wide scale 로 chamfer 강제 측정 → 병목 분리.
+    tf = summary.get("truth_forced")
+    if tf:
+        print(f"\n[INFO] TRUTH-FORCED (S+crosshair 정답 위치, wide scale {SWEEP_SCALES}):")
+        print(f"  valid/truth = {tf['n_valid']}/{tf['n_truth']}  (wrong_local_peak={tf['n_wrong_local_peak']})")
+        print(f"  median chamfer: wide={tf['median_wide_chamfer']}  compare(≤1.0)={tf['median_compare_chamfer']}  "
+              f"scale_gain={tf['median_scale_gain']}  orb={tf['median_wide_orb']}  mean_dt_px={tf['median_mean_dt_px']}")
+        print(f"  edge density median: tpl={tf['median_tpl_edge_density']}  msr={tf['median_msr_edge_density']}")
+        print(f"  wide_best_scale hist: {tf['wide_best_scale_hist']}")
+        print(f"  진단 counts: {tf['diagnosis_counts']}")
+        print("  * 해석: median wide_chamfer 가 낮음(<0.5) → edge/metric. best_scale 이 1.2/1.4 에 몰림 + scale_gain↑ → C4 scale-band.")
+        print("           scale_gain≈0 인데 chamfer 낮고 orb 도 낮음 → reference drift(=재등록). orb 만 높으면 Canny/metric 문제.")
 
     # 참조 staleness(상대) — rcp 가 S-consensus 의 outlier 인지. status 로 판단 가능/불가 구분.
     rq = summary.get("reference_quality", [])

@@ -50,6 +50,9 @@ COMPARE_SCALES = (0.6, 0.75, 0.85, 1.0)
 ROI_FACTOR = 1.8
 # 한 recipe 당 처리할 msr 상한 (None=전부). 빠른 시험용.
 LIMIT_PER_RECIPE = None
+# 참조 staleness 판정 — S-at-crosshair(ground truth) 대비 rcp-center 의 median matcher score 가
+# 이보다 낮으면 "rcp 참조가 현재 측정과 너무 달라 재등록 권장". STRUCTURE_POLICY.adjust_threshold(0.40)와 정렬.
+REFERENCE_STALE_SCORE = 0.40
 
 
 # ====================================================================
@@ -204,13 +207,21 @@ def _process_msr(msr_path, *, center_tpls, box_tpls):
     at_center = _race(center_tpls, gray, roi=center_roi)
     at_center_score = at_center[1] if at_center else None
 
-    # 3) at_crosshair (v2 검출 → ROI = crosshair window).
+    # 3) at_crosshair (v2 검출 → ROI = crosshair window). S 에서 이 위치가 ground-truth align 영역.
+    #    rcp-center vs 여기 = 참조 staleness 측정 → score(기하)+MI(정보)+NCC(pixel) 모두 기록.
     ch_res = detect_crosshair(gray)
-    at_crosshair_score = None
+    at_crosshair_score = mi_xhair = ncc_xhair = None
     if ch_res.xy is not None:
         ch_roi = _window_roi(gray.shape, ch_res.xy, tw, th)
         at_ch = _race(center_tpls, gray, roi=ch_roi)
-        at_crosshair_score = at_ch[1] if at_ch else None
+        if at_ch:
+            at_crosshair_score = at_ch[1]
+            ch_mod, _s, _c, _o, ch_xy, ch_scale = at_ch
+            tpl = center_tpls[ch_mod]
+            crop = _matched_crop(gray, ch_xy, tpl.raw_image.shape[1], tpl.raw_image.shape[0], ch_scale)
+            if crop is not None:
+                mi_xhair = _mi(tpl.raw_image, crop)
+                ncc_xhair = _ncc(tpl.raw_image, crop)
 
     # MI / NCC — center template (winner modality) vs free-best crop.
     mi_free = ncc_free = None
@@ -239,6 +250,8 @@ def _process_msr(msr_path, *, center_tpls, box_tpls):
         "at_crosshair": at_crosshair_score,
         "mi_free": mi_free,
         "ncc_free": ncc_free,
+        "mi_xhair": mi_xhair,
+        "ncc_xhair": ncc_xhair,
         "free_best_box": free_best_box,
     }
 
@@ -286,6 +299,29 @@ def _summarize(rows: list[dict]) -> dict:
     recoverable = [r for r in e_with_ch
                    if r["free_best"] is not None and r["at_crosshair"] is not None
                    and r["free_best"] - r["at_crosshair"] > 0.1]
+
+    # 참조 staleness — recipe 별 rcp-center vs S-at-crosshair(ground truth). 낮으면 rcp 재등록 권장.
+    by_recipe: dict[str, list] = {}
+    for r in rows:
+        by_recipe.setdefault(r["recipe"], []).append(r)
+    ref_quality = []
+    for rec, rs in by_recipe.items():
+        s_ch = [x for x in rs if x["label"] == "S" and x["at_crosshair"] is not None]
+        if not s_ch:
+            continue
+        med_score = statistics.median([x["at_crosshair"] for x in s_ch])
+        mis = [x["mi_xhair"] for x in s_ch if isinstance(x["mi_xhair"], (int, float))]
+        nccs = [x["ncc_xhair"] for x in s_ch if isinstance(x["ncc_xhair"], (int, float))]
+        ref_quality.append({
+            "recipe": rec,
+            "n_S_with_crosshair": len(s_ch),
+            "median_score_at_crosshair": round(med_score, 4),
+            "median_mi": round(statistics.median(mis), 4) if mis else None,
+            "median_ncc": round(statistics.median(nccs), 4) if nccs else None,
+            "stale_recommend_replace": med_score < REFERENCE_STALE_SCORE,
+        })
+    ref_quality.sort(key=lambda d: d["median_score_at_crosshair"])  # worst-first.
+
     return {
         "counts": {"S": len(by_label["S"]), "E": len(by_label["E"]),
                    "other": len(rows) - len(by_label["S"]) - len(by_label["E"]), "total": len(rows)},
@@ -295,6 +331,10 @@ def _summarize(rows: list[dict]) -> dict:
             "no_crosshair": len(e_no_ch),
             "recoverable_by_move(free>>at_crosshair)": len(recoverable),
         },
+        "reference_quality": ref_quality,
+        "n_recipes_stale": sum(1 for d in ref_quality if d["stale_recommend_replace"]),
+        "n_recipes_scored": len(ref_quality),
+        "reference_stale_threshold": REFERENCE_STALE_SCORE,
     }
 
 
@@ -312,6 +352,19 @@ def _print_summary(summary: dict) -> None:
           f"recoverable_by_move={eb['recoverable_by_move(free>>at_crosshair)']}")
     print("  * at_crosshair 의 med_E 가 med_S 보다 확실히 낮으면 → 우리 유사도가 장비 fail(낮은 점수)을 재현 = 지표 자격 검증")
     print("  * free_best 는 S/E 둘 다 높을 수 있음(key 가 E 에도 존재) → at_crosshair 가 진짜 변별자")
+
+    # 참조 staleness — recipe 별 rcp-center vs S-at-crosshair. 낮은 recipe 는 rcp 재등록 권장.
+    rq = summary.get("reference_quality", [])
+    if rq:
+        print(f"\n[INFO] 참조 품질 (rcp-center vs S-at-crosshair = ground truth). "
+              f"score<{summary['reference_stale_threshold']} 이면 rcp 재등록 권장.")
+        print(f"[INFO] stale recipes: {summary['n_recipes_stale']}/{summary['n_recipes_scored']} (worst-first, 상위 20개)")
+        print(f"  {'recipe':<42} {'score':>6} {'MI':>6} {'NCC':>6} {'nS':>4}  replace?")
+        for d in rq[:20]:
+            print(f"  {d['recipe'][:42]:<42} {d['median_score_at_crosshair']:>6.3f} "
+                  f"{str(d['median_mi']):>6} {str(d['median_ncc']):>6} {d['n_S_with_crosshair']:>4}  "
+                  f"{'YES' if d['stale_recommend_replace'] else ''}")
+        print("  * 이 목록이 곧 '교체(재등록)해야 할 rcp' 후보. MI/NCC 가 낮은데 score 만 높으면 외형 drift 큼(주의).")
 
 
 # ====================================================================

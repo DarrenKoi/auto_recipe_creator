@@ -219,10 +219,18 @@ class _ModalityScore:
     free_score: float = 0.0
     prior_score: float | None = None
     prior_match_distance_px: float | None = None  # free 매치 중심에서 prior 까지의 거리 (px).
-    # Distinctiveness — best 위치가 frame 안에서 얼마나 유일하게 잘 맞는지.
+    # Distinctiveness (attempt-masking 방식) — best 위치가 frame 안에서 얼마나 유일하게 잘 맞는지.
     distinctive: bool = False
     distinctiveness_ratio: float | None = None  # best_chamfer / mean_sample_chamfer. 낮을수록 distinct.
     attempt_count: int = 1  # distinctiveness 실패 시 retry 횟수 (1 = 한 번에 성공, 2 = 1회 retry).
+    # 엔진(top-N/NMS) distinctiveness — attempt-masking 과 *병렬 계측* (Item 2, A-safe).
+    # redundant 하지만 1-pass 라 싸고, 같은 score map 의 인접 peak 기반. status 에는 보수적으로만 OR.
+    engine_distinctive: bool = True
+    engine_reject_reason: str | None = None     # "not_distinctive" | "no_candidates" | None.
+    engine_second_ratio: float | None = None    # 2nd/best chamfer. 1.0 에 가까울수록 모호.
+    engine_score_gap: float | None = None        # best - 2nd chamfer.
+    engine_candidate_count: int = 0
+    engine_scope: str = "free_full_frame"        # free_full_frame | prior_roi | masked_retry.
 
     def to_dict(self) -> dict:
         return {
@@ -240,6 +248,12 @@ class _ModalityScore:
             "distinctive": self.distinctive,
             "distinctiveness_ratio": self.distinctiveness_ratio,
             "attempt_count": self.attempt_count,
+            "engine_distinctive": self.engine_distinctive,
+            "engine_reject_reason": self.engine_reject_reason,
+            "engine_second_ratio": self.engine_second_ratio,
+            "engine_score_gap": self.engine_score_gap,
+            "engine_candidate_count": self.engine_candidate_count,
+            "engine_scope": self.engine_scope,
         }
 
 
@@ -874,6 +888,15 @@ def _match_against(
     clipped_x = max(0, min(fw - 1, align_x))
     clipped_y = max(0, min(fh - 1, align_y))
 
+    # 엔진(top-N/NMS) distinctiveness — chosen attempt 의 AlignKeyMatchResult 에서 추출 (getattr 로
+    # 구버전 result 호환). scope: prior 채택이면 prior_roi(국소라 audit-only 권장), retry 면 masked_retry.
+    if bool(chosen["used_prior"]):
+        engine_scope = "prior_roi"
+    elif chosen_idx > 0:
+        engine_scope = "masked_retry"
+    else:
+        engine_scope = "free_full_frame"
+
     return _ModalityScore(
         score=float(final_result.score),
         chamfer=float(final_result.chamfer_score),
@@ -889,6 +912,12 @@ def _match_against(
         distinctive=chosen_distinct,
         distinctiveness_ratio=chosen_ratio,
         attempt_count=len(attempts),
+        engine_distinctive=bool(getattr(final_result, "distinctive", True)),
+        engine_reject_reason=getattr(final_result, "reject_reason", None),
+        engine_second_ratio=getattr(final_result, "second_ratio", None),
+        engine_score_gap=getattr(final_result, "score_gap", None),
+        engine_candidate_count=len(getattr(final_result, "candidates", []) or []),
+        engine_scope=engine_scope,
     )
 
 
@@ -1213,6 +1242,7 @@ def _process_msr_image(
     cv_winner_modality = race.winner
 
     # status / 보정 좌표 결정.
+    not_distinctive_source = None  # "attempt" | "engine" | "both" | None — not_distinctive 시 출처.
     if om_bundle is None and sem_bundle is None:
         status = "no_templates"
         corrected_xy = image_center
@@ -1237,14 +1267,25 @@ def _process_msr_image(
         # (점수가 둘 다 낮으면 margin 이 작은 건 당연하고, 그건 "둘 다 못 찾음" 이지 "어느 쪽인지 애매" 가 아니다.)
         winner_side = race.om if race.winner == "om" else race.sem
         winner_out_of_frame = bool(winner_side is not None and winner_side.out_of_frame)
-        winner_not_distinctive = bool(winner_side is not None and not winner_side.distinctive)
+        # attempt-masking distinctiveness (기존) OR 엔진 top-N distinctiveness (Item 2, A-safe).
+        # 엔진 신호는 reject_reason=="not_distinctive" 만, prior_roi scope 는 국소라 audit-only(제외).
+        winner_attempt_nd = bool(winner_side is not None and not winner_side.distinctive)
+        winner_engine_nd = bool(
+            winner_side is not None
+            and winner_side.engine_reject_reason == "not_distinctive"
+            and winner_side.engine_scope != "prior_roi"
+        )
         if race.winner_score_value < STRUCTURE_POLICY.adjust_threshold or winner_out_of_frame:
             # pad-border 안에서 매칭된 경우 좌표 자체가 가짜이므로 점수와 무관하게 low_match_both.
             status = "low_match_both"
-        elif winner_not_distinctive:
+        elif winner_attempt_nd or winner_engine_nd:
             # 점수는 있지만 frame 안의 다른 위치들과 비슷하게 잘 맞음 — 진짜 align 위치가 아님.
             # 다음 행동: live 탐색이 필요. corrected_xy 는 best-guess 로 유지하지만 신뢰 표시는 낮춤.
             status = "not_distinctive"
+            not_distinctive_source = (
+                "both" if (winner_attempt_nd and winner_engine_nd)
+                else ("attempt" if winner_attempt_nd else "engine")
+            )
         elif (
             race.om is not None
             and race.sem is not None
@@ -1346,6 +1387,7 @@ def _process_msr_image(
         "sem": race.sem.to_dict() if race.sem is not None else None,
         "tool_label_suspect": suspect,
         "status": status,
+        "not_distinctive_source": not_distinctive_source,
         "scale_bar_text": scale_bar_text or None,
         "scale_bar_um": scale_bar_um,
         "scale_bar_modality_hint": scale_bar_hint,
@@ -1557,14 +1599,18 @@ def _process_recipe(
         if row["status"] == "not_distinctive":
             winner_modality_local = row.get("winner_modality")
             winner_payload_local = row.get(winner_modality_local) if winner_modality_local in ("om", "sem") else None
+            wp = winner_payload_local if isinstance(winner_payload_local, dict) else {}
             not_distinctive_rows.append({
                 "msr_image": row["msr_image"],
                 "tool_label": row.get("tool_label"),
                 "winner_modality": winner_modality_local,
-                "distinctiveness_ratio": (winner_payload_local or {}).get("distinctiveness_ratio")
-                    if isinstance(winner_payload_local, dict) else None,
-                "attempt_count": (winner_payload_local or {}).get("attempt_count")
-                    if isinstance(winner_payload_local, dict) else None,
+                "not_distinctive_source": row.get("not_distinctive_source"),
+                "attempt_ratio": wp.get("distinctiveness_ratio"),
+                "attempt_count": wp.get("attempt_count"),
+                "engine_second_ratio": wp.get("engine_second_ratio"),
+                "engine_score_gap": wp.get("engine_score_gap"),
+                "engine_reject_reason": wp.get("engine_reject_reason"),
+                "engine_scope": wp.get("engine_scope"),
                 "corrected_xy": row.get("corrected_xy"),
                 "overlay_path": row["overlay_path"],
             })
@@ -1608,6 +1654,15 @@ def _process_recipe(
             "MIN_SHARPNESS_LAPVAR": MIN_SHARPNESS_LAPVAR,
             "SCALE_BAR_OM_THRESHOLD_UM": SCALE_BAR_OM_THRESHOLD_UM,
             "STRUCTURE_POLICY.adjust_threshold": STRUCTURE_POLICY.adjust_threshold,
+            "STRUCTURE_POLICY.max_second_ratio": STRUCTURE_POLICY.max_second_ratio,
+            "STRUCTURE_POLICY.min_distinct_gap": STRUCTURE_POLICY.min_distinct_gap,
+            "DISTINCTIVENESS_RATIO_MAX": DISTINCTIVENESS_RATIO_MAX,
+        },
+        # not_distinctive 의 출처 분해 (attempt-masking vs 엔진 top-N). 오피스 첫 batch 에서
+        # engine_only 가 튀면 status gate 를 재조정한다 (Item 2, A-safe 의 calibration 신호).
+        "not_distinctive_source_counts": {
+            src: sum(1 for r in not_distinctive_rows if r.get("not_distinctive_source") == src)
+            for src in ("attempt", "engine", "both")
         },
         "ocr_client_initialized": ocr_client is not None,
         "suspect_success_images": suspect_rows,

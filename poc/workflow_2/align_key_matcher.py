@@ -93,6 +93,7 @@ class AlignKeyCandidate:
     orb_inlier_ratio: float = 0.0
     mi_score: float | None = None
     contour_score: float | None = None
+    chamfer_rank: int | None = None   # MI rerank 전 원 chamfer 순위(0=chamfer-best). 재정렬돼도 보존.
 
 
 @dataclass
@@ -137,6 +138,11 @@ class MatchPolicy:
     top_n: int = 8                    # NMS 후보 최대 개수.
     min_distinct_gap: float = 0.04    # best.chamfer - second.chamfer 가 이 미만이면 모호.
     max_second_ratio: float = 0.94    # second/best 가 이보다 크면 모호 (Lowe-ratio 의 template 판).
+    # MI reranker (2026-06-01, opt-in). True 면 chamfer top-N 후보 *집합*은 그대로 두고(멤버십 게이트),
+    # 각 후보 crop 의 MI(template.raw_image) 로 *순서만* 재정렬해 best 를 고른다. chamfer 가 dense-edge
+    # distractor 에 1등을 뺏기는 topk_not_rank1 을 회복. DEFAULT/STRUCTURE 는 False(=기존 동작 보존).
+    # 진단 A/B(align_similarity.py)에서 rerank_rank1_lift≥+0.10 검증 후 활성화 예정.
+    mi_rerank: bool = False
 
 
 # 기본 정책 — 기존 동작과 동일 (smoke test 호환).
@@ -425,6 +431,70 @@ def compute_orb_inlier_ratio(
 
 
 # ------------------------------------------------------------------
+# MI reranker (chamfer = 멤버십 게이트, MI = 순서).
+# 진단 하네스(align_similarity.py)의 _mi / _matched_crop 과 *동일* 해야 office A/B 의
+# rerank_rank1_lift 수치가 production 동작과 일치한다. 변경 시 양쪽을 함께 맞춘다.
+# ------------------------------------------------------------------
+
+
+def _mutual_information(a: np.ndarray, b: np.ndarray, bins: int = 32) -> float:
+    """두 동일 크기 gray crop 의 mutual information (밝기/대비 drift 에 강건)."""
+    a = a.ravel()
+    b = b.ravel()
+    hist, _, _ = np.histogram2d(a, b, bins=bins)
+    pab = hist / max(hist.sum(), 1.0)
+    pa = pab.sum(axis=1)
+    pb = pab.sum(axis=0)
+    nz = pab > 0
+    pa_pb = pa[:, None] * pb[None, :]
+    return float((pab[nz] * np.log(pab[nz] / pa_pb[nz])).sum())
+
+
+def _match_crop_for_mi(
+    frame: np.ndarray, center_xy: tuple[int, int], tw: int, th: int, scale: float
+) -> np.ndarray | None:
+    """best 위치/스케일에서 frame crop 을 떼어 template 크기(tw, th)로 리사이즈 (MI 입력용).
+
+    footprint = (tw*scale, th*scale) — tw/th 는 template.raw_image 크기, scale 은 후보 스케일.
+    """
+    cw = max(1, int(round(tw * scale)))
+    ch = max(1, int(round(th * scale)))
+    cx, cy = center_xy
+    x0 = max(0, int(cx - cw // 2))
+    y0 = max(0, int(cy - ch // 2))
+    x1 = min(frame.shape[1], x0 + cw)
+    y1 = min(frame.shape[0], y0 + ch)
+    crop = frame[y0:y1, x0:x1]
+    if crop.size == 0 or crop.shape[0] < 4 or crop.shape[1] < 4:
+        return None
+    return cv2.resize(crop, (tw, th), interpolation=cv2.INTER_AREA)
+
+
+def rerank_candidates_by_mi(
+    template: AlignKeyTemplate,
+    frame_gray: np.ndarray,
+    candidates: list,
+) -> list:
+    """chamfer 후보 *집합*(멤버십)은 그대로, 각 후보 crop 의 MI 로 *순서만* 재정렬해 새 list 반환.
+
+    각 후보의 ``mi_score`` 를 in-place 로 채운다. ``frame_gray`` 와 ``candidate.xy`` 는 *같은*
+    좌표계여야 한다(compute_align_key_score 에서는 roi-local, abs 변환 *전*에 호출).
+    crop 실패 후보는 MI=-inf 로 가장 뒤로 보낸다.
+    """
+    th_raw, tw_raw = template.raw_image.shape[:2]
+    for c in candidates:
+        crop = _match_crop_for_mi(frame_gray, c.xy, tw_raw, th_raw, c.scale)
+        c.mi_score = (
+            _mutual_information(template.raw_image, crop) if crop is not None else float("-inf")
+        )
+    return sorted(
+        candidates,
+        key=lambda c: c.mi_score if c.mi_score is not None else float("-inf"),
+        reverse=True,
+    )
+
+
+# ------------------------------------------------------------------
 # 합성 점수 + 결정 + 시각화.
 # ------------------------------------------------------------------
 
@@ -625,13 +695,43 @@ def compute_align_key_score(
             candidates=[], reject_reason="no_candidates", distinctive=False,
         )
 
+    # distinctiveness 는 *chamfer 집합* 기준(= 가장 강한 chamfer peak 이 2nd 대비 유일한가). MI rerank 가
+    # best 를 바꿔도 이 신호는 chamfer 모호성 자체라 reorder 와 독립이어야 일관적이다(음수 gap 방지).
+    # 동시에 각 후보에 원 chamfer 순위(chamfer_rank)를 새겨 재정렬 후에도 보존한다.
+    chamfer_sorted = sorted(candidates, key=lambda c: c.chamfer_score, reverse=True)
+    for rank, c in enumerate(chamfer_sorted):
+        c.chamfer_rank = rank
+    ch_best = chamfer_sorted[0]
+    ch_second = chamfer_sorted[1] if len(chamfer_sorted) > 1 else None
+    second_score = float(ch_second.chamfer_score) if ch_second is not None else None
+    score_gap = (
+        float(ch_best.chamfer_score - ch_second.chamfer_score) if ch_second is not None else None
+    )
+    second_ratio = (
+        float(ch_second.chamfer_score / ch_best.chamfer_score)
+        if ch_second is not None and ch_best.chamfer_score > 0 else None
+    )
+    distinctive = True
+    reject_reason: str | None = None
+    if ch_second is not None:
+        if (score_gap is not None and score_gap < policy.min_distinct_gap) or (
+            second_ratio is not None and second_ratio > policy.max_second_ratio
+        ):
+            distinctive = False
+            reject_reason = "not_distinctive"
+
+    # MI rerank (opt-in): 멤버십 불변, *순서만*. best/ORB/score/decision/best_xy 가 MI-best 에서 파생.
+    # roi-local 좌표(abs 변환 전)에서 재정렬해야 crop 좌표계가 gray_frame 과 일치한다.
+    if policy.mi_rerank:
+        candidates = rerank_candidates_by_mi(template, gray_frame, candidates)
+
     best = candidates[0]
     cx, cy = best.xy
     best_scale = best.scale
     tw, th = best.template_size
     chamfer_score = best.chamfer_score
 
-    # ORB: best 위치를 중심으로 한 윈도우 vs 템플릿 (Slice 1 은 best 만 검증; 후보 검증은 Phase 2~3).
+    # ORB: best 위치를 중심으로 한 윈도우 vs 템플릿 (mi_rerank 시 best=MI-best 에 재실행).
     if chamfer_score > 0.0 and tw > 0 and th > 0:
         crop, _crop_origin = _crop_with_padding(gray_frame, cx, cy, tw, th, pad=1.6)
         orb_ratio, _n_inliers, _n_matches = compute_orb_inlier_ratio(
@@ -643,23 +743,6 @@ def compute_align_key_score(
 
     score = policy.chamfer_weight * chamfer_score + policy.orb_weight * orb_ratio
     decision = _decision_for_score(score, policy)
-
-    # distinctiveness — best 가 2nd 대비 충분히 유일한가 (wrong top-1 자동 채택 방지의 핵심 신호).
-    second = candidates[1] if len(candidates) > 1 else None
-    second_score = float(second.chamfer_score) if second is not None else None
-    score_gap = float(chamfer_score - second.chamfer_score) if second is not None else None
-    second_ratio = (
-        float(second.chamfer_score / chamfer_score)
-        if second is not None and chamfer_score > 0 else None
-    )
-    distinctive = True
-    reject_reason: str | None = None
-    if second is not None:
-        if (score_gap is not None and score_gap < policy.min_distinct_gap) or (
-            second_ratio is not None and second_ratio > policy.max_second_ratio
-        ):
-            distinctive = False
-            reject_reason = "not_distinctive"
 
     # 후보 좌표를 roi 절대 좌표로 환산 (best_xy 의미는 기존과 동일).
     abs_xy = (cx + roi_origin[0], cy + roi_origin[1])

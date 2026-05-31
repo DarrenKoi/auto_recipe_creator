@@ -87,6 +87,9 @@ reference(rcp)가 낡았다(stale) … 이걸 *눈으로* 가릴 수 없으니, 
 > 실데이터에서 확인된 것: matcher(chamfer)는 점수면이 평평해서 변별력이 약했고(med_S 0.62 vs
 > med_E 0.61, 거의 안 갈림), **MI 만 약하게 변별**(bACC 0.627)했다. 그래서 recovery plan 의
 > Phase 3 에서 MI 를 **reranker**(후보 재정렬기)로 채택하는 방향이 나왔다.
+>
+> 👉 MI reranker 가 *구체적으로 후보를 어떻게 재정렬하는지*(멤버십 불변·순서만 변경, 순환성,
+> `rerank_rank1_lift` 읽는 법)는 [MI reranker intro](mi_reranker_intro.md) 참고.
 
 ---
 

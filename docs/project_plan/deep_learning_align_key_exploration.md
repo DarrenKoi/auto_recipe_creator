@@ -105,3 +105,57 @@ box 가 있다. 이걸 **정밀 crop** 할 수 있으면 대규모 (template, �
 - 사용자가 더 고민 후 방향 결정 시.
 - 또는 (a) msr 대량 동반 확보 가능 여부 확인되거나, (b) box crop audit 검출률 수치가 나오면
   — 둘 중 하나만 채워져도 §3 표의 분기가 확정되어 논의를 진전시킬 수 있음.
+
+---
+
+## 7. (관련 아이디어) align key 위치 재배치 = 예방 (parked)
+
+> 2026-06-01 대화에서 파생. §1~6(DL)과 **같은 목표(align fail 감소)의 다른 층위**라 한 문서에 둔다.
+> 판단 보류. 착수 아님.
+
+### 7.1 핵심 구분 — 사후 회복 vs 사전 예방
+
+| | 현재 workstream (재등록·workflow_2) | **위치 재배치 (이 절)** |
+|---|---|---|
+| 성격 | 사후(reactive) — align fail 후 *우리* 파이프라인이 회복 | **사전(preventive)** — *Tool* 이 fail 을 덜 내게 |
+| 누구의 알고리즘 | workflow_2 의 CV 매처 | **장비(CD-SEM/VeritySEM)의 native align 알고리즘** |
+| 효과 | fail 당 복구 시간↓ | **fail 발생 건수 자체↓** |
+| 천장 | recall 0.718 (회복률) | 근본 원인 감소 (훨씬 높음) |
+
+- 아이디어: 이미지가 degrade/약간 변형돼도 **장비 알고리즘이 계속 찾아낼 수 있는 위치**(변별력 ×
+  degrade robustness × 시간 안정성)에 align key 를 두면 align fail 자체가 준다.
+- 문제 분류: **align key site selection / optimization** (현재는 엔지니어가 수동으로 box 선택).
+- **프로젝트 정합성:** CLAUDE.md 의 Project Purpose("CD-SEM recipe **setup** 자동화로 수동 recipe
+  생성 대체")와 더 가깝다. workflow_1/2(회복)는 현재 focus 일 뿐, 위치 재배치는 *명시된 목적*과 정합 →
+  곁가지가 아니라 본류일 수 있음.
+
+### 7.2 재등록과 다른 점 (혼동 주의)
+
+- **재등록(확정):** 같은 위치, template *외형*만 consensus 로 갱신. align point/box 안 바꿈. staleness 해결.
+- **위치 재배치(이 절):** align point 를 더 robust-unique 한 곳으로 *옮겨* 재등록. **장비가 실제 이동하는
+  물리 좌표 변경** = recipe re-teach. 전혀 다른 무게.
+- 코드의 distinctiveness gate(`test_align_key_distinctiveness.py`)는 모호 매칭을 **reject 만** 함 —
+  **더 나은 위치를 *제안*하진 않음**. 즉 site selection 은 미구현.
+
+### 7.3 냉정한 crux (진전 전 반드시 검토)
+
+1. **"Tool 알고리즘"은 벤더 black box.** 우리가 고르는 건 *위치*뿐, *알고리즘*은 모름. 우리 매처
+   distinctiveness 가 높아도 장비 알고리즘에 robust 한지는 별개 → **반드시 장비 실제 성공/실패로 검증**.
+   우리 점수는 proxy.
+   - **우회로:** 내부를 몰라도 **과거 fail 이력**으로 "어떤 위치/패턴이 자주 fail 하나"를 학습 →
+     알고리즘 무지 상태에서도 경험적 proxy 가능. ← §1~6 DL 의 실제 응용처가 여기.
+2. **후보 위치는 임의가 아님.** "가장 unique 한 픽셀"이 아니라 **모든 웨이퍼/die 에 재현되는 실제 물리
+   구조**여야 함. FOV 도달 영역 + 칩 레이아웃 제약. 변별력만 높고 공정변동에 흔들리면 오히려 더 fail.
+3. **재배치 = governed recipe re-teach.** reference 이미지 교체(재등록)와 달리 엔지니어 승인·재검증 수반
+   → 현실적 도구 형태는 "자동 재등록"보다 **"setup 시 더 나은 align site 추천"**일 가능성.
+
+### 7.4 DL 과의 합류점
+
+- 1만 recipe × **과거 fail/success 이력** → "align site 품질 점수기"(변별력 × degrade robustness ×
+  시간 안정성) 학습. → §1~6 의 데이터-엔진이 곧 이 절의 응용. 두 메모는 **같은 목표(예방)의 엔진과 응용**.
+
+### 7.5 진전 게이트 (답이 갈리는 두 질문)
+
+1. **과거 align fail 이력**(recipe/위치별 fail 빈도)을 받을 수 있나? → 있으면 알고리즘 무지에도 proxy
+   학습·검증 가능. 없으면 "추측한 robust 위치"를 검증할 길이 없어 막힘.
+2. 재배치 위치를 **실제 장비에 등록해 fail 률 before/after 측정**할 권한·절차가 있나? → 없으면 추천까지만.

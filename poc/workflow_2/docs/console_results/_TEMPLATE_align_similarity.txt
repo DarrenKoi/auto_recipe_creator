@@ -1,0 +1,51 @@
+# align_similarity.py 결과 채움 양식 (TEMPLATE)
+# 사용법: 이 파일을 YYMMDD_testN.txt 로 복사 → stdout 보고 ____ 자리에 *숫자만* 타이핑.
+#   - 라벨/정렬은 건드릴 필요 없음. ____ 만 채우면 됨.
+#   - ★ = 의사결정 핵심(꼭 채움). (opt) = 필요할 때만.
+#   - 안 나온 블록/지표는 그 줄 통째로 지워도 됨.
+# ──────────────────────────────────────────────
+
+images: S=____ E=____ other=____ total=____
+
+[S/E 분리도]   (med_S 높고 med_E 낮을수록, bACC 1.0 에 가까울수록 좋은 지표)
+metric         med_S    med_E    thr      bACC     n(S/E)
+free_best      ____     ____     ____     ____     ____/____
+at_center      ____     ____     ____     ____     ____/____
+at_crosshair   ____     ____     ____     ____     ____/____
+mi_free        ____     ____     ____     ____     ____/____
+ncc_free       ____     ____     ____     ____     ____/____
+free_best_box  ____     ____     ____     ____     ____/____
+E 유형: with_crosshair=____  no_crosshair=____  recoverable_by_move=____
+
+[TRUTH-FORCED]
+valid/truth = ____/____   (wrong_local_peak=____)
+median chamfer: wide=____  compare=____  scale_gain=____  orb=____  mean_dt_px=____
+edge density median: tpl=____  msr=____
+wide_best_scale hist: { ____ }
+진단 counts: { ____ }
+
+[GT-IN-TOPK]
+in_topk = ____/____ (____)   rank1=____   miss=____   median_miss_dist_norm=____
+MI rerank rank1 = ____ (____)   chamfer rank1 ____ -> MI ____ ;  in_topk ____ 천장
+rank_hist: { ____ }
+
+[참조 staleness (상대)]
+stale=____   ok=____   판단불가=____
+(opt) per-recipe:  recipe / nS / ratio / S_cv / rcp_MI / S_MI / status
+  ____
+
+[GT-IN-TOPK × staleness 교차표]  (opt)
+  ____
+point_biserial(in_topk, ratio): n=____  r=____
+
+★ [CONSENSUS A/B]   (재등록 검증 — 핵심 블록)
+recipes=____   S(LOO)=____
+★ recall  (in_topk): rcp=____  consensus=____  lift=____
+★ precision(rank1) : rcp=____  consensus=____  rank1_lift=____  topk_not_rank1=____
+★ +MI rerank rank1 : rcp=____  consensus=____  rerank_lift=____
+★ 선명도 비율(blur): vs S개별 edge=____ lap=____  | vs rcp edge=____ lap=____
+(opt) per-recipe lift 상위:
+  ____
+
+# ── 비고(자유 기재): 이상치, 경고(WARNING), 눈에 띈 점 ──
+#

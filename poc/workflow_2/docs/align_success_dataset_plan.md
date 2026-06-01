@@ -1,8 +1,15 @@
 # Align 성공(golden) 데이터셋 수집 플랜
 
-> 작성일: 2026-05-29
-> 착수 예정: 2026-06-01 주 (다음 주)
-> 관련: `align_similarity.py`(참조 staleness 진단), `align_point_correction_recovery_plan.md`
+> 작성일: 2026-05-29 · **갱신: 2026-06-02 (재조정)**
+> 관련: `align_similarity.py`(fail 진단·헬퍼 출처), 신규 `success_vs_fail_compare.py`(golden 처리·비교),
+>        분석 저널 `journals/260602/260602_075313_mi-reranker-ruled-out-contour-next.md`
+>
+> **2026-06-02 재조정 요약:** (1) fail 폴더의 S 로 템플릿을 만드는 **재등록은 보류** — fail 로 모은
+> 폴더의 S 는 표본이 적고(결국 실패한 run 의 성공 step) 편향. (2) golden 의 주 목적이 "재등록
+> 템플릿 만들기"에서 **success vs fail 의 rcp↔msr 차이 지표화 → 엔지니어 가이드라인**으로 이동.
+> (3) golden 처리는 align_similarity 를 직접 돌리지 않고 **전용 모듈 `success_vs_fail_compare.py`**
+> 가 한다(golden 은 E 가 없어 align_similarity 의 S/E 블록이 반쪽). (4) align-fail **런타임의 우선
+> workstream 은 별도** — contour reranker + VLM(영역)/CV(좌표) 가 msr 에서 align point 선택.
 
 ## 1. 왜 필요한가
 
@@ -18,14 +25,18 @@
 그 상대 기준의 **임계를 실측으로 calibration** 하려면 "정상" 분포가 필요하다. 그 정상 분포를
 제공하는 것이 **항상 성공하는(golden) 데이터셋**이다.
 
-## 2. golden 데이터셋의 역할 (3가지)
+## 2. golden 데이터셋의 역할
 
-1. **임계 calibration anchor** — 건강한 rcp-vs-S 유사도 분포를 알아야 stale 경계를
+1. **(주, 2026-06-02 신규) success vs fail 비교 → 엔지니어 가이드라인** — golden(성공)과 fail 의
+   **recipe-정규화된 rcp↔msr 차이**(상대 ratio) 분포를 나란히 비교해, align 성공/실패가 rcp
+   staleness 와 어떻게 연관되는지 지표화한다. 산출물 = "이 recipe 들의 key 가 drift 했으니 재등록
+   검토" 가이드 + 실측 임계.
+2. **임계 calibration anchor** — (유지) 건강한 rcp-vs-S 유사도 분포를 알아야 stale 경계를
    cold-start 추측이 아니라 실측 percentile 로 정한다.
-2. **recipe 별 consensus 참조** — 한 장의 S 가 아니라 *여러* 성공 측정의 합의로 "현재 align
-   영역의 대표 모습" 을 구성 → 교체 대상/교체할 이미지 선정이 robust.
-3. **파이프라인 control** — 우리 staleness 방법이 golden recipe 의 rcp 를 잘못 stale 로 찍으면
-   방법이 틀린 것. 거짓 양성률 검증용.
+3. **파이프라인 control (거짓 양성 0)** — (유지) staleness 방법이 golden recipe 의 rcp 를 잘못
+   stale 로 찍으면 방법이 틀린 것. 거짓 양성률 검증용.
+4. **(격하) recipe 별 consensus 참조** — 재등록(템플릿 교체) 보류로 후순위. 추후 재등록을 재개하면
+   golden 의 풍부한 S 가 fail 폴더 S 보다 나은 consensus 소스가 됨(현재는 사용 안 함).
 
 ## 3. 무엇을, 어떻게 수집하나
 
@@ -46,10 +57,21 @@
 - 저장 레이아웃은 기존 규약을 재사용:
   `align_images_golden/<eqp>/<class>/<recipe>/{align_img_from_rcp, align_img_from_msr}` (S 만).
 
-### 최소 규모 (cold-start 가이드)
+### 규모 가이드 (2026-06-02 갱신 — 임계 calibration 기준)
 
-- recipe 당 성공 측정 **≥ 5장** (consensus 신뢰 가능 최소치). 가능하면 10+.
-- recipe **≥ 10개** (분포를 보려면). modality(OM/SEM) 양쪽 포함.
+두 축이 *서로 다른 이유로* 작동한다:
+
+- **recipe당 S 장수** → per-recipe consensus·S-internal CV 의 신뢰도. median 은 ~5장부터 안정되지만
+  **CV 추정은 표본이 적으면 출렁인다** → **recipe당 ≥ 8~10장**, 그리고 **wafer/lot/시간에 분산**.
+  (한 wafer 에서 10장 ❌ — 정상 공정변동을 담아야 healthy 분포가 인위적으로 좁아지지 않는다.)
+- **recipe 개수** → healthy 분포 percentile(=임계)의 정밀도. 단계적으로:
+  - **부트스트랩 ~10 recipe** — 파이프라인 검증 + sanity. 임계는 *잠정*.
+  - **사용 가능 ~30 recipe** — 하위 percentile(p10) 임계가 안정. fail 의 판정가능 recipe(~26)와
+    균형 → success vs fail 비교 검정력 확보.
+  - **견고 50+ recipe** — per-modality(OM/SEM 각각) 임계까지. modality별 분포가 다르면 각 ≥ 20~30.
+- **균형 원칙:** golden recipe 수 ≥ fail 판정가능 수(~26) 여야 비교가 한쪽으로 안 기운다.
+- **단계 진행:** 10개로 끝까지 한 번 돌려(파이프라인·self-test) 확인 → 30+ 로 확장해 실제 임계 확정.
+  50 모일 때까지 착수를 막지 말 것.
 
 ## 4. golden set 으로 무엇을 정하나 (acceptance)
 
@@ -72,11 +94,38 @@ golden set 이전에도 **기존 S 217장으로 부트스트랩**한다.
 - **최종 교체 결정은 자동 단독으로 하지 않는다.** CV 는 후보를 거르고, 플래그된 것만
   엔지니어가 확인한다 (재등록 비용이 있으므로).
 
-## 6. 산출/체크리스트 (다음 주)
+## 6. 산출/체크리스트
 
-- [ ] 성공 recipe 후보 목록 선정 (≥10 recipe, recipe 당 ≥5 S)
-- [ ] `align_images_golden/` 수집 경로 확정 + 이미지 확보
-- [ ] golden set 에 `align_similarity.py` 실행 → healthy 분포 측정
+- [ ] 성공 recipe 후보 목록 선정 (부트스트랩 ~10 → 사용가능 ~30, recipe 당 ≥ 8~10 S, wafer/lot/시간 분산)
+- [ ] `align_images_golden/<eqp>/<class>/<recipe>/{align_img_from_rcp, align_img_from_msr}` 적재 (사용자 직접)
+- [ ] `success_vs_fail_compare.py` 구현 (+ Mac 합성 self-test)
+- [ ] golden 실행 → healthy 상대 ratio·S-internal CV 분포 측정
 - [ ] `RELATIVE_STALE_RATIO` / `S_INCONSISTENT_CV` 를 실측 percentile 로 확정
 - [ ] 거짓 양성 0 검증 (golden rcp 가 stale 로 안 찍히는지)
-- [ ] 확정 임계를 fail 데이터셋(217 S)에 적용 → 교체 후보 recipe 리스트 산출
+- [ ] 확정 임계를 fail 데이터셋에 적용 → success vs fail 분포 비교 + drift recipe 가이드라인(`guideline.md`)
+
+## 7. 처리 모듈 & 흐름 (2026-06-02 확정)
+
+**모듈:** `poc/workflow_2/success_vs_fail_compare.py` (standalone, `uv run python ...`, CLI args 없음).
+`align_similarity.py` 의 헬퍼(`_consensus`, `_mi`, `_edge_density`, `_lap_var`, 상대 staleness 로직)만
+import 하고 그 파일은 건드리지 않는다. golden 은 E 가 없어 align_similarity 의 S/E·truth-forced·
+gt-in-topk 블록이 반쪽이므로 직접 실행 대신 전용 모듈이 healthy 기준선+비교만 담당.
+
+**입력:** golden 루트 `align_images_golden/` (S 만) + 기존 fail 루트 `align_images/`. 둘 다
+`align_fail_assets` leaf 글로브로 순회(golden 용 루트 인자만 추가).
+
+**recipe별 지표(헬퍼 재사용):** S-at-crosshair crop → `_consensus`(median) → ① rcp_vs_consensus
+(matcher score + MI) ② S_internal CV(MI) ③ **상대 ratio = rcp_vs_consensus / S_internal_median**
+(recipe 정규화 — recipe 간 비교의 핵심) ④ sharpness(`_lap_var`).
+
+**흐름:** golden → healthy 분포 percentile → 임계 확정(거짓양성 0 검증) → fail 에 적용 →
+success vs fail 분포 나란히 비교 + drift recipe 플래그.
+
+**출력:** stdout 요약 + `DEBUG_IMAGE_DIR/success_vs_fail/<ts>/{golden_rows.jsonl, fail_rows.jsonl,
+compare_summary.json, guideline.md}`. `guideline.md` 는 한국어 — 엔지니어용 "재등록 검토 recipe" 가이드.
+
+**원칙:** 절대 차이 점수는 recipe 가 다르면 비교 불가 → 항상 상대 ratio 로 비교. 최종 재등록 판정은
+자동 단독 금지 — CV 는 후보를 거르고 플래그된 것만 엔지니어가 확인.
+
+> **별도(우선) workstream:** align-fail 런타임의 contour reranker + VLM/CV align-point 선택은 이 문서
+> 범위 밖. 근거·계획은 `journals/260602/260602_075313_mi-reranker-ruled-out-contour-next.md` 참조.

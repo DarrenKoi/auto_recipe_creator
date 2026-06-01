@@ -30,12 +30,14 @@
 ## 3. 무엇을, 어떻게 수집하나
 
 ### 수집 대상
+
 - **항상(또는 거의 항상) align 성공하는 recipe** 들.
 - recipe 당 **여러 장의 성공 측정** (정상 공정 변동을 포괄 — wafer/lot/시간 분산).
 - 각 측정에 대해: rcp 참조(IMAP0001 OM / IMAP0002 SEM, 흰 box 포함) + msr 성공 이미지
   (crosshair = ground-truth align point).
 
 ### 수집 경로 (주의: fail 기반과 다름)
+
 - 현재 `align_images/` 는 **align-fail 알람으로 트리거된** 수집이다. 항상 성공하는 recipe 는
   알람을 울리지 않아 이 데이터셋에 **없다.**
 - 따라서 golden set 은 **의도적 수집**이 필요하다. 후보 경로:
@@ -45,6 +47,7 @@
   `align_images_golden/<eqp>/<class>/<recipe>/{align_img_from_rcp, align_img_from_msr}` (S 만).
 
 ### 최소 규모 (cold-start 가이드)
+
 - recipe 당 성공 측정 **≥ 5장** (consensus 신뢰 가능 최소치). 가능하면 10+.
 - recipe **≥ 10개** (분포를 보려면). modality(OM/SEM) 양쪽 포함.
 

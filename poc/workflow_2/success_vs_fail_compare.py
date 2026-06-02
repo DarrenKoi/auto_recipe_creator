@@ -149,6 +149,11 @@ def _calibrate(golden_rows: list) -> dict | None:
     """golden healthy 분포 → 임계 후보 + 현재 임계의 거짓양성."""
     scor = _scorable(golden_rows)
     ratios = [r["relative_ratio"] for r in scor]
+    # cvs 는 _scorable 가 아니라 *CV 가 계산된 모든 golden 행*(S_inconsistent 포함)에서 뽑는다.
+    # 의도적 비대칭: S_INCONSISTENT_CV 임계 자체를 calibration 하려면 성공 recipe 의 전체 CV
+    # 분포가 필요하다(scorable 로 거르면 이미 CV≤cold-start 게이트를 통과한 행만 남아 임계를
+    # 더 풀어야 하는 경우를 발견 못 함). ratios 는 반대로 incoherent consensus 의 ratio 를
+    # 못 믿으므로 _scorable 로 거른다.
     cvs = [r["s_internal_cv"] for r in golden_rows
            if isinstance(r.get("s_internal_cv"), (int, float))]
     if not ratios:
@@ -236,7 +241,9 @@ def _print_comparison(cmp: dict) -> None:
         if sug:
             print(f"  @제안({sug['stale_ratio']}): {sug['n_flagged']}/{sug['n_scorable']} "
                   f"({sug['flagged_rate']})")
-        for r in (sug or cur)["flagged_recipes"][:20]:
+        shown = sug or cur
+        print(f"  (목록 = @{'제안' if sug else '현재'}({shown['stale_ratio']}) 기준 플래그 recipe)")
+        for r in shown["flagged_recipes"][:20]:
             print(f"    {str(r['recipe'])[:44]:<44} ratio={r['relative_ratio']} "
                   f"cv={r['s_internal_cv']} nS={r['n_S']}")
     print("  * golden 보다 fail 의 ratio 분포가 낮으면 → align fail 이 rcp staleness 와 연관.")

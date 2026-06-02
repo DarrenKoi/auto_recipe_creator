@@ -38,6 +38,7 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 import json
+import random
 import time
 from pathlib import Path
 
@@ -45,8 +46,12 @@ import cv2
 import numpy as np
 import requests
 
-from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_2.align_fail_assets import resolve_assets_auto
+from poc.workflow_2 import ALIGN_IMAGES_ROOT, DEBUG_IMAGE_DIR
+from poc.workflow_2.align_fail_assets import (
+    iter_recipe_dirs,
+    resolve_assets,
+    resolve_assets_auto,
+)
 from poc.workflow_2.align_key_matcher import build_template, compute_align_key_score
 from poc.workflow_2.probe_multi_image_vlm import (
     LARGE_VLM_API_BASE,
@@ -73,6 +78,14 @@ MAX_TOKENS = 512             # JSON 한 덩어리 + 여유.
 REQUEST_DELAY_SEC = 1.0
 LOG_NAME = "vlm_align_key_region"
 OUTPUT_ROOT = DEBUG_IMAGE_DIR / LOG_NAME
+
+# recipe 폴더 선택: "random"(무작위 샘플링) | "latest"(가장 최근). 환경변수로 변경.
+# full override(ALIGN_EQP_ID + CLASS + RECIPE)가 있으면 항상 그게 우선이며 모드를 무시한다
+# (특정 recipe 를 고정해 재현하고 싶을 때 사용).
+RECIPE_SELECT = os.getenv("PROBE_RECIPE_SELECT", "random").strip().lower()
+# reference modality: "both"(OM·SEM 둘 다 시험) | "sem"(IMAP0002) | "om"(IMAP0001) | "auto"(sem→om).
+# scene 은 항상 current_sem (from_msr 최신 E*). modality 메모: [[project_align_fail_modality_om_vs_sem]].
+REFERENCE_MODALITY = os.getenv("PROBE_REFERENCE", "both").strip().lower()
 
 SYSTEM_MESSAGE = (
     "You are a semiconductor metrology vision assistant. You are given TWO grayscale images.\n"
@@ -107,13 +120,50 @@ USER_MESSAGE = (
 # ====================================================================
 
 
-def _pick_reference(assets) -> tuple[str, Path] | None:
-    """reference 자산을 고른다: recipe_sem 우선, 없으면 recipe_om."""
-    if assets.recipe_sem is not None:
-        return "recipe_sem", assets.recipe_sem
-    if assets.recipe_om is not None:
-        return "recipe_om", assets.recipe_om
-    return None
+def _full_override_present() -> bool:
+    """ALIGN_EQP_ID + (class+recipe ≥ 2단계) 완전 override 가 잡혀 있는지.
+
+    resolve_assets_auto 의 판정과 동일하게 본다 — 완전 override 면 폴더 선택 모드를
+    무시하고 그 recipe 를 고정한다.
+    """
+    eqp = os.getenv("ALIGN_EQP_ID", "").strip()
+    cls = os.getenv("ALIGN_CLASS_NAME", "").strip()
+    rcp = os.getenv("ALIGN_RECIPE_NAME", "").strip()
+    rel = [p for seg in (cls, rcp)
+           for p in seg.replace("\\", "/").strip("/").split("/") if p]
+    return bool(eqp and len(rel) >= 2)
+
+
+def _select_assets():
+    """RECIPE_SELECT 에 따라 recipe 폴더를 고른다(override 우선)."""
+    if not _full_override_present() and RECIPE_SELECT == "random":
+        dirs = iter_recipe_dirs(ALIGN_IMAGES_ROOT)
+        if dirs:
+            chosen = random.choice(dirs)
+            print(f"[INFO] 무작위 recipe 선택 ({len(dirs)}개 중): {chosen}")
+            return resolve_assets(chosen)
+        print("[WARNING] recipe 폴더가 없어 latest 경로로 폴백합니다.")
+    return resolve_assets_auto()
+
+
+def _references_to_test(assets) -> list[tuple[str, Path]]:
+    """REFERENCE_MODALITY 에 따라 시험할 reference (label, path) 목록을 만든다.
+
+    scene 은 항상 SEM(current_sem)이라 SEM reference 가 동일 modality 매칭이고,
+    OM reference 는 cross-modality 라 더 어렵다 — "both" 면 둘 다 돌려 직접 비교한다.
+    """
+    sem = ("recipe_sem", assets.recipe_sem) if assets.recipe_sem is not None else None
+    om = ("recipe_om", assets.recipe_om) if assets.recipe_om is not None else None
+
+    if REFERENCE_MODALITY == "sem":
+        picks = [sem or om]
+    elif REFERENCE_MODALITY == "om":
+        picks = [om or sem]
+    elif REFERENCE_MODALITY == "both":
+        picks = [sem, om]
+    else:  # auto — sem 우선, 없으면 om.
+        picks = [sem or om]
+    return [p for p in picks if p is not None]
 
 
 # ====================================================================
@@ -264,45 +314,26 @@ def _save_region_overlay(scene_bgr: np.ndarray, region_px: dict | None,
 # ====================================================================
 
 
-def run() -> str:
-    started = time.time()
-    assets = resolve_assets_auto()
-    if assets is None:
-        print("[ERROR] align fail recipe 폴더를 찾지 못했습니다.")
-        return "no_recipe"
-    if assets.current_sem is None:
-        print(f"[ERROR] scene(current_sem) 이미지가 없습니다: {assets.recipe_dir}")
-        return "no_scene"
-    ref_pick = _pick_reference(assets)
-    if ref_pick is None:
-        print(f"[ERROR] reference(recipe_sem/recipe_om) 이미지가 없습니다: {assets.recipe_dir}")
-        return "no_reference"
-    ref_label, ref_path = ref_pick
-    scene_path = assets.current_sem
-    recipe_id = assets.recipe_id
-
-    tag = make_timestamp_tag()
-    out_dir = OUTPUT_ROOT / f"{tag}_{recipe_id}"
+def _probe_reference(ref_label: str, ref_path: Path, scene_bgr: np.ndarray,
+                     scene_gray: np.ndarray, scene_w: int, scene_h: int,
+                     recipe_id: str, out_dir: Path) -> dict:
+    """한 reference(OM 또는 SEM)에 대해 VLM region + CV 핸드오프를 수행한다."""
     out_dir.mkdir(parents=True, exist_ok=True)
-
     ref_bgr = cv2.imread(str(ref_path), cv2.IMREAD_COLOR)
-    scene_bgr = cv2.imread(str(scene_path), cv2.IMREAD_COLOR)
-    if ref_bgr is None or scene_bgr is None:
-        print(f"[ERROR] 이미지 디코드 실패: ref={ref_path}, scene={scene_path}")
-        return "decode_failed"
+    if ref_bgr is None:
+        print(f"[ERROR] reference 디코드 실패: {ref_path}")
+        return {"reference": {"label": ref_label, "path": str(ref_path)},
+                "error": "ref_decode_failed"}
     ref_gray = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY)
-    scene_gray = cv2.cvtColor(scene_bgr, cv2.COLOR_BGR2GRAY)
-    scene_h, scene_w = scene_gray.shape[:2]
 
-    print(f"[INFO] recipe_id={recipe_id}  reference={ref_label}({ref_path.name})  "
-          f"scene=current_sem({scene_path.name})  model={PERCEPTION_MODEL}")
+    print(f"[INFO] [{ref_label}] reference={ref_path.name}  model={PERCEPTION_MODEL}")
 
     # 1) VLM region.
     vlm = _ask_region(ref_bgr, scene_bgr)
     time.sleep(REQUEST_DELAY_SEC)
     region_px = _region_to_pixels(vlm.get("parsed", {}), scene_w, scene_h) if vlm["ok"] else None
     _save_region_overlay(scene_bgr, region_px, out_dir / "vlm_region_overlay.jpg")
-    print(f"[INFO] VLM ok={vlm['ok']} status={vlm.get('status')} "
+    print(f"[INFO] [{ref_label}] VLM ok={vlm['ok']} status={vlm.get('status')} "
           f"found={vlm.get('parsed', {}).get('found')} conf={vlm.get('parsed', {}).get('confidence')} "
           f"region_px={region_px} err={vlm.get('error', '')[:60]}")
 
@@ -314,17 +345,12 @@ def run() -> str:
                region_px["right"] - region_px["left"],
                region_px["bottom"] - region_px["top"])
     cv_roi = _run_cv(ref_gray, scene_gray, recipe_id, roi=roi, out_dir=out_dir) if roi else None
-    print(f"[INFO] CV full: {cv_full.get('summary') or cv_full.get('error')}")
+    print(f"[INFO] [{ref_label}] CV full: {cv_full.get('summary') or cv_full.get('error')}")
     if cv_roi is not None:
-        print(f"[INFO] CV roi : {cv_roi.get('summary') or cv_roi.get('error')}")
+        print(f"[INFO] [{ref_label}] CV roi : {cv_roi.get('summary') or cv_roi.get('error')}")
 
-    summary = {
-        "recipe_id": recipe_id,
-        "recipe_dir": str(assets.recipe_dir),
-        "model": PERCEPTION_MODEL,
+    return {
         "reference": {"label": ref_label, "path": str(ref_path)},
-        "scene": {"label": "current_sem", "path": str(scene_path),
-                  "width": scene_w, "height": scene_h},
         "vlm": {"ok": vlm["ok"], "status": vlm.get("status"),
                 "latency_s": vlm.get("latency_s"), "payload_kb": vlm.get("payload_kb"),
                 "found": vlm.get("parsed", {}).get("found"),
@@ -334,6 +360,54 @@ def run() -> str:
                 "error": vlm.get("error", "")},
         "cv_full": cv_full,
         "cv_roi": cv_roi,
+        "output_dir": str(out_dir),
+    }
+
+
+def run() -> str:
+    started = time.time()
+    assets = _select_assets()
+    if assets is None:
+        print("[ERROR] align fail recipe 폴더를 찾지 못했습니다.")
+        return "no_recipe"
+    if assets.current_sem is None:
+        print(f"[ERROR] scene(current_sem) 이미지가 없습니다: {assets.recipe_dir}")
+        return "no_scene"
+    references = _references_to_test(assets)
+    if not references:
+        print(f"[ERROR] reference(recipe_sem/recipe_om) 이미지가 없습니다: {assets.recipe_dir}")
+        return "no_reference"
+    scene_path = assets.current_sem
+    recipe_id = assets.recipe_id
+
+    scene_bgr = cv2.imread(str(scene_path), cv2.IMREAD_COLOR)
+    if scene_bgr is None:
+        print(f"[ERROR] scene 디코드 실패: {scene_path}")
+        return "decode_failed"
+    scene_gray = cv2.cvtColor(scene_bgr, cv2.COLOR_BGR2GRAY)
+    scene_h, scene_w = scene_gray.shape[:2]
+
+    tag = make_timestamp_tag()
+    out_dir = OUTPUT_ROOT / f"{tag}_{recipe_id}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    print(f"[INFO] recipe_id={recipe_id}  scene=current_sem({scene_path.name}) "
+          f"{scene_w}x{scene_h}  references={[r[0] for r in references]}")
+
+    ref_results = [
+        _probe_reference(ref_label, ref_path, scene_bgr, scene_gray,
+                         scene_w, scene_h, recipe_id, out_dir / ref_label)
+        for ref_label, ref_path in references
+    ]
+
+    summary = {
+        "recipe_id": recipe_id,
+        "recipe_dir": str(assets.recipe_dir),
+        "recipe_select": RECIPE_SELECT,
+        "reference_modality": REFERENCE_MODALITY,
+        "model": PERCEPTION_MODEL,
+        "scene": {"label": "current_sem", "path": str(scene_path),
+                  "width": scene_w, "height": scene_h},
+        "references": ref_results,
         "elapsed": format_elapsed_ms(started),
         "output_dir": str(out_dir),
         "note": "throwaway perception probe; VLM region NOT used as final coordinate (CV decides).",
@@ -365,21 +439,28 @@ def _decision_delta(cv_full: dict, cv_roi: dict | None) -> str:
 
 
 def _build_digest(summary: dict) -> str:
-    v = summary["vlm"]
     lines = ["", "=" * 72, "align key region perception probe 결과", "=" * 72,
-             f"recipe_id : {summary['recipe_id']}",
-             f"reference : {summary['reference']['label']} ({Path(summary['reference']['path']).name})",
+             f"recipe_id : {summary['recipe_id']}  (select={summary['recipe_select']})",
+             f"recipe_dir: {summary['recipe_dir']}",
              f"scene     : current_sem ({Path(summary['scene']['path']).name}) "
              f"{summary['scene']['width']}x{summary['scene']['height']}",
-             f"model     : {summary['model']}",
-             "-" * 72,
-             f"VLM   : ok={v['ok']} status={v['status']} found={v['found']} "
-             f"conf={v['confidence']} region_px={v['region_px']}",
-             f"        evidence={v['evidence']!r}" if v.get("evidence") else f"        err={v['error']!r}",
-             f"CV cmp: {_decision_delta(summary['cv_full'], summary['cv_roi'])}",
-             "-" * 72,
-             f"elapsed={summary['elapsed']}  out_dir={summary['output_dir']}",
-             "=" * 72]
+             f"model     : {summary['model']}  reference_modality={summary['reference_modality']}"]
+    for ref in summary["references"]:
+        label = ref["reference"]["label"]
+        lines.append("-" * 72)
+        if "error" in ref:
+            lines.append(f"[{label}] ({Path(ref['reference']['path']).name}) ERROR={ref['error']}")
+            continue
+        v = ref["vlm"]
+        lines.append(f"[{label}] ({Path(ref['reference']['path']).name})")
+        lines.append(f"  VLM   : ok={v['ok']} status={v['status']} found={v['found']} "
+                     f"conf={v['confidence']} region_px={v['region_px']}")
+        lines.append(f"          evidence={v['evidence']!r}" if v.get("evidence")
+                     else f"          err={v['error']!r}")
+        lines.append(f"  CV cmp: {_decision_delta(ref['cv_full'], ref['cv_roi'])}")
+    lines.append("-" * 72)
+    lines.append(f"elapsed={summary['elapsed']}  out_dir={summary['output_dir']}")
+    lines.append("=" * 72)
     return "\n".join(lines)
 
 

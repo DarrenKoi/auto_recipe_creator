@@ -1,0 +1,24 @@
+# success_vs_fail_compare.py 결과 채움 양식 (TEMPLATE)
+# 사용법: 이 파일을 YYMMDD_goldenN.txt 로 복사 → stdout 보고 ____ 자리에 *숫자만* 타이핑.
+#   - ★ = 핵심. (opt) = 필요할 때만. status={...} 는 {ok:__, stale_replace:__, ...} 형태로.
+#   - guideline.md / compare_summary.json 은 office 디스크에 자동 저장됨(필요시 별도 회신).
+# ──────────────────────────────────────────────
+
+[SUCCESS(golden) vs FAIL — 상대 ratio 비교]
+golden recipes=____  status={ ____ }
+fail   recipes=____  status={ ____ }
+★ golden ratio 분포: n=____ min=____ p5=____ p10=____ p25=____ median=____ max=____
+★ fail   ratio 분포: n=____ min=____ p5=____ p10=____ p25=____ median=____ max=____
+
+[CALIBRATION (golden healthy 기준)]
+★ 현재 임계 stale_ratio=0.6 → golden 거짓양성=____/____ (____)    # 0 이상적
+★ 제안 임계: stale_ratio=____ (healthy p10)   inconsistent_cv=____ (healthy p90)
+
+[FAIL 에 임계 적용 → drift(재등록 검토) recipe]
+★ @현재(0.6): ____/____ (____)
+★ @제안(____): ____/____ (____)
+(opt) 플래그 recipe (ratio 오름차순):  recipe / ratio / cv / nS
+  ____
+
+# ── 비고(자유 기재): 이상치, WARNING, 눈에 띈 점 ──
+#

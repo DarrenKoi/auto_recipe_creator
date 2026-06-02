@@ -27,6 +27,7 @@ wide_best_scale hist: { ____ }
 [GT-IN-TOPK]
 in_topk = ____/____ (____)   rank1=____   miss=____   median_miss_dist_norm=____
 MI rerank rank1 = ____ (____)   chamfer rank1 ____ -> MI ____ ;  in_topk ____ 천장
+★ contour rerank rank1 = ____ (____)   chamfer rank1 ____ -> contour ____
 rank_hist: { ____ }
 
 [참조 staleness (상대)]
@@ -43,6 +44,7 @@ recipes=____   S(LOO)=____
 ★ recall  (in_topk): rcp=____  consensus=____  lift=____
 ★ precision(rank1) : rcp=____  consensus=____  rank1_lift=____  topk_not_rank1=____
 ★ +MI rerank rank1 : rcp=____  consensus=____  rerank_lift=____
+★ +contour rerank  : rcp=____  consensus=____  rerank_lift=____   ← 이번 핵심(MI 대안 검증)
 ★ 선명도 비율(blur): vs S개별 edge=____ lap=____  | vs rcp edge=____ lap=____
 (opt) per-recipe lift 상위:
   ____

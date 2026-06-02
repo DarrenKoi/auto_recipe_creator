@@ -13,8 +13,11 @@ reference 와 같은 구조가 있는 region 을 cross-image 로 짚게 한다. 
 
 검증 방식
 ---------
-  reference = recipe_sem(IMAP0002 등록 SEM key); 없으면 recipe_om(IMAP0001 OM key).
-  scene     = current_sem(from_msr 최신 E* fail SEM).
+  modality 짝짓기 — reference 와 scene 의 modality 를 *반드시 일치*시킨다(cross-modality 금지):
+    from_msr 이미지를 scale-bar OCR 로 OM/SEM 분류 → SEM reference(IMAP0002)는 SEM scene 과만,
+    OM reference(IMAP0001)는 OM scene 과만 짝짓는다. ([[project_align_fail_modality_om_vs_sem]])
+    REFERENCE_MODALITY=both 면 두 짝을 모두 돌려 비교한다. scale-bar OCR 불가 시 current_sem 을
+    SEM 으로 가정하는 폴백만 허용(OM 은 분류 없이 시험하지 않음).
   1) VLM: scene-relative region bbox(relative_1000) + confidence + evidence (좌표는 *비권위*).
   2) CV: reference 로 template 을 만들어 compute_align_key_score 를 두 번 호출 —
          (a) full-frame, (b) roi_hint=VLM-region — 점수/판정 delta 를 비교.
@@ -48,7 +51,9 @@ import requests
 
 from poc.workflow_2 import ALIGN_IMAGES_ROOT, DEBUG_IMAGE_DIR
 from poc.workflow_2.align_fail_assets import (
+    iter_msr_images,
     iter_recipe_dirs,
+    load_gray,
     resolve_assets,
     resolve_assets_auto,
 )
@@ -85,11 +90,11 @@ OUTPUT_ROOT = DEBUG_IMAGE_DIR / LOG_NAME
 # full override(ALIGN_EQP_ID + CLASS + RECIPE)가 있으면 항상 그게 우선이며 모드를 무시한다
 # (특정 recipe 를 고정해 재현하고 싶을 때 사용).
 RECIPE_SELECT = os.getenv("PROBE_RECIPE_SELECT", "random").strip().lower()
-# reference modality: "both"(OM·SEM 둘 다 시험) | "sem"(IMAP0002) | "om"(IMAP0001) | "auto"(sem→om).
-# scene 은 항상 current_sem (from_msr 최신 E*). modality 메모: [[project_align_fail_modality_om_vs_sem]].
+# reference modality: "both"(OM·SEM 짝 모두) | "sem"(IMAP0002) | "om"(IMAP0001) | "auto"(scene modality).
+# 각 reference 는 same-modality scene 과만 짝지어진다. modality: [[project_align_fail_modality_om_vs_sem]].
 REFERENCE_MODALITY = os.getenv("PROBE_REFERENCE", "both").strip().lower()
-# scene scale-bar OCR 힌트(audit 전용) on/off. PaddleOCR-VL(Flask proxy) 필요 — Mac/오프라인이면
-# 자동으로 None 으로 흡수된다. *reference 선택을 바꾸지 않는다*; race(both)가 결정한다.
+# scale-bar OCR on/off. PaddleOCR-VL(Flask proxy) 필요. *scene modality 분류에 사용* — 끄면 OM scene 을
+# 분류할 수 없어 SEM(current_sem 폴백)만 시험된다. Mac/오프라인이면 자동으로 SEM 폴백.
 ENABLE_SCALE_BAR_HINT = os.getenv("PROBE_SCALE_BAR_OCR", "1").strip().lower() not in (
     "0", "false", "no", "off",
 )
@@ -153,47 +158,101 @@ def _select_assets():
     return resolve_assets_auto()
 
 
-def _references_to_test(assets) -> list[tuple[str, Path]]:
-    """REFERENCE_MODALITY 에 따라 시험할 reference (label, path) 목록을 만든다.
-
-    scene 은 항상 SEM(current_sem)이라 SEM reference 가 동일 modality 매칭이고,
-    OM reference 는 cross-modality 라 더 어렵다 — "both" 면 둘 다 돌려 직접 비교한다.
-    """
-    sem = ("recipe_sem", assets.recipe_sem) if assets.recipe_sem is not None else None
-    om = ("recipe_om", assets.recipe_om) if assets.recipe_om is not None else None
-
-    if REFERENCE_MODALITY == "sem":
-        picks = [sem or om]
-    elif REFERENCE_MODALITY == "om":
-        picks = [om or sem]
-    elif REFERENCE_MODALITY == "both":
-        picks = [sem, om]
-    else:  # auto — sem 우선, 없으면 om.
-        picks = [sem or om]
-    return [p for p in picks if p is not None]
-
-
-def _scene_scale_bar(scene_gray: np.ndarray) -> dict:
-    """scene 하단 scale bar 를 OCR 해 modality 힌트를 만든다 (best-effort, audit 전용).
-
-    PaddleOCR-VL(Flask proxy) 필요 — Mac/오프라인/비활성화면 modality_hint=None 으로
-    흡수한다. 이 힌트는 reference 선택을 바꾸지 않으며 race(both)가 여전히 결정한다.
-    `_ocr_scale_bar` 를 재사용해 OCR→파싱→100µm 임계 로직을 단일 소스로 유지한다.
-    """
+def _build_ocr_client():
+    """scale-bar OCR(PaddleOCR-VL) 클라이언트를 만든다(best-effort). 반환 (client|None, note)."""
     if not ENABLE_SCALE_BAR_HINT:
-        return {"raw_text": "", "um": None, "modality_hint": None, "note": "disabled"}
+        return None, "disabled"
     try:
-        ocr_client = Workflow1VLMClient(
-            service_slug=SCALE_BAR_OCR_SERVICE, log_name="scale_bar_ocr")
+        return Workflow1VLMClient(
+            service_slug=SCALE_BAR_OCR_SERVICE, log_name="scale_bar_ocr"), ""
     except Exception as exc:
-        return {"raw_text": "", "um": None, "modality_hint": None,
-                "note": f"client_failed: {str(exc)[:80]}"}
+        return None, f"client_failed: {str(exc)[:80]}"
+
+
+def _scene_scale_bar(scene_gray: np.ndarray, client) -> dict:
+    """한 scene 의 하단 scale bar 를 OCR 해 {raw_text, um, modality_hint, note} 반환.
+
+    `_ocr_scale_bar` 를 재사용해 OCR→파싱→100µm 임계 로직을 단일 소스로 유지한다.
+    client=None(=OCR 불가)이면 modality_hint=None.
+    """
+    if client is None:
+        return {"raw_text": "", "um": None, "modality_hint": None, "note": "no_ocr"}
     try:
-        raw_text, um, hint = _ocr_scale_bar(scene_gray, ocr_client=ocr_client)
+        raw_text, um, hint = _ocr_scale_bar(scene_gray, ocr_client=client)
     except Exception as exc:
         return {"raw_text": "", "um": None, "modality_hint": None,
                 "note": f"ocr_failed: {str(exc)[:80]}"}
     return {"raw_text": raw_text, "um": um, "modality_hint": hint, "note": ""}
+
+
+def _classify_scenes(assets, client) -> tuple[dict, bool]:
+    """from_msr 를 scale-bar modality 로 분류한다 → {modality: {path, scale_bar}}.
+
+    최신(visit-order 큰) 이미지부터 OCR 해 각 modality 의 *첫(=최신)* 이미지를 채택하고,
+    om·sem 둘 다 찾으면 멈춘다(OCR 호출 수 제한). 반환 (scene_map, ocr_ok).
+    ocr_ok=False 면 OCR 자체가 불가(client 없음) — 호출자가 폴백한다.
+    """
+    if client is None:
+        return {}, False
+    scene_map: dict[str, dict] = {}
+    for path in reversed(iter_msr_images(assets)):  # 최신 visit-order 부터.
+        try:
+            gray = load_gray(path)
+        except Exception as exc:
+            print(f"[WARNING] msr 로드 실패({path.name}): {exc}")
+            continue
+        sb = _scene_scale_bar(gray, client)
+        hint = sb["modality_hint"]
+        if hint and hint not in scene_map:
+            scene_map[hint] = {"path": path, "scale_bar": sb}
+            print(f"[INFO] scene modality 분류: {hint} ← {path.name} (um={sb['um']})")
+        if "om" in scene_map and "sem" in scene_map:
+            break
+    return scene_map, True
+
+
+def _pairs_to_test(assets, scene_map: dict, ocr_ok: bool) -> list[dict]:
+    """REFERENCE_MODALITY × 분류된 scene 으로 (reference, same-modality scene) 짝을 만든다.
+
+    OM reference 는 OM scene 과만, SEM reference 는 SEM scene 과만 짝지어 cross-modality
+    매칭을 막는다. OCR 자체가 불가하면(=분류 없음) current_sem 을 SEM scene 으로 가정하는
+    폴백만 허용하고(이름 규약), OM 은 분류 없이 시험하지 않는다.
+    """
+    scene_map = dict(scene_map)
+    # SEM 폴백: current_sem 이 *특정 modality 로 분류되지 않았을 때만* SEM 으로 가정한다
+    # (이름 규약). OCR 이 current_sem 을 OM 으로 분류했다면 폴백하지 않아 오라벨을 막는다.
+    classified_paths = {info["path"] for info in scene_map.values()}
+    if ("sem" not in scene_map and assets.current_sem is not None
+            and assets.current_sem not in classified_paths):
+        note = "assumed_sem(no_ocr)" if not ocr_ok else "assumed_sem(scale_bar_unread)"
+        scene_map["sem"] = {"path": assets.current_sem,
+                            "scale_bar": {"raw_text": "", "um": None,
+                                          "modality_hint": None, "note": note}}
+    refs = {"sem": assets.recipe_sem, "om": assets.recipe_om}
+
+    if REFERENCE_MODALITY in ("sem", "om"):
+        wanted = [REFERENCE_MODALITY]
+    elif REFERENCE_MODALITY == "both":
+        wanted = ["sem", "om"]
+    else:  # auto — current_sem 의 modality(분류 결과)만, 없으면 가용 첫.
+        wanted = next(
+            ([m] for m, info in scene_map.items() if info["path"] == assets.current_sem),
+            list(scene_map.keys())[:1],
+        )
+
+    pairs: list[dict] = []
+    for mod in wanted:
+        if refs.get(mod) is None:
+            print(f"[WARNING] {mod} reference(IMAP) 없음 — skip")
+            continue
+        if scene_map.get(mod) is None:
+            print(f"[WARNING] {mod} modality scene 을 from_msr 에서 찾지 못함 — skip "
+                  f"(OCR={'on' if ocr_ok else 'off'})")
+            continue
+        pairs.append({"modality": mod, "ref_label": f"recipe_{mod}",
+                      "ref_path": refs[mod], "scene_path": scene_map[mod]["path"],
+                      "scene_scale_bar": scene_map[mod]["scale_bar"]})
+    return pairs
 
 
 # ====================================================================
@@ -344,26 +403,31 @@ def _save_region_overlay(scene_bgr: np.ndarray, region_px: dict | None,
 # ====================================================================
 
 
-def _probe_reference(ref_label: str, ref_path: Path, scene_bgr: np.ndarray,
-                     scene_gray: np.ndarray, scene_w: int, scene_h: int,
-                     recipe_id: str, out_dir: Path) -> dict:
-    """한 reference(OM 또는 SEM)에 대해 VLM region + CV 핸드오프를 수행한다."""
+def _probe_pair(pair: dict, recipe_id: str, out_dir: Path) -> dict:
+    """한 (reference, same-modality scene) 짝에 대해 VLM region + CV 핸드오프를 수행한다."""
     out_dir.mkdir(parents=True, exist_ok=True)
+    mod = pair["modality"]
+    ref_label, ref_path, scene_path = pair["ref_label"], pair["ref_path"], pair["scene_path"]
     ref_bgr = cv2.imread(str(ref_path), cv2.IMREAD_COLOR)
-    if ref_bgr is None:
-        print(f"[ERROR] reference 디코드 실패: {ref_path}")
-        return {"reference": {"label": ref_label, "path": str(ref_path)},
-                "error": "ref_decode_failed"}
+    scene_bgr = cv2.imread(str(scene_path), cv2.IMREAD_COLOR)
+    base = {"modality": mod, "reference": {"label": ref_label, "path": str(ref_path)},
+            "scene": {"path": str(scene_path), "scale_bar": pair["scene_scale_bar"]}}
+    if ref_bgr is None or scene_bgr is None:
+        print(f"[ERROR] [{mod}] 디코드 실패: ref={ref_path}, scene={scene_path}")
+        return {**base, "error": "decode_failed"}
     ref_gray = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY)
+    scene_gray = cv2.cvtColor(scene_bgr, cv2.COLOR_BGR2GRAY)
+    scene_h, scene_w = scene_gray.shape[:2]
 
-    print(f"[INFO] [{ref_label}] reference={ref_path.name}  model={PERCEPTION_MODEL}")
+    print(f"[INFO] [{mod}] reference={ref_path.name}  scene={scene_path.name} "
+          f"{scene_w}x{scene_h}  model={PERCEPTION_MODEL}")
 
-    # 1) VLM region.
+    # 1) VLM region (same-modality reference + scene).
     vlm = _ask_region(ref_bgr, scene_bgr)
     time.sleep(REQUEST_DELAY_SEC)
     region_px = _region_to_pixels(vlm.get("parsed", {}), scene_w, scene_h) if vlm["ok"] else None
     _save_region_overlay(scene_bgr, region_px, out_dir / "vlm_region_overlay.jpg")
-    print(f"[INFO] [{ref_label}] VLM ok={vlm['ok']} status={vlm.get('status')} "
+    print(f"[INFO] [{mod}] VLM ok={vlm['ok']} status={vlm.get('status')} "
           f"found={vlm.get('parsed', {}).get('found')} conf={vlm.get('parsed', {}).get('confidence')} "
           f"region_px={region_px} err={vlm.get('error', '')[:60]}")
 
@@ -375,12 +439,13 @@ def _probe_reference(ref_label: str, ref_path: Path, scene_bgr: np.ndarray,
                region_px["right"] - region_px["left"],
                region_px["bottom"] - region_px["top"])
     cv_roi = _run_cv(ref_gray, scene_gray, recipe_id, roi=roi, out_dir=out_dir) if roi else None
-    print(f"[INFO] [{ref_label}] CV full: {cv_full.get('summary') or cv_full.get('error')}")
+    print(f"[INFO] [{mod}] CV full: {cv_full.get('summary') or cv_full.get('error')}")
     if cv_roi is not None:
-        print(f"[INFO] [{ref_label}] CV roi : {cv_roi.get('summary') or cv_roi.get('error')}")
+        print(f"[INFO] [{mod}] CV roi : {cv_roi.get('summary') or cv_roi.get('error')}")
 
+    base["scene"].update({"width": scene_w, "height": scene_h})
     return {
-        "reference": {"label": ref_label, "path": str(ref_path)},
+        **base,
         "vlm": {"ok": vlm["ok"], "status": vlm.get("status"),
                 "latency_s": vlm.get("latency_s"), "payload_kb": vlm.get("payload_kb"),
                 "found": vlm.get("parsed", {}).get("found"),
@@ -400,38 +465,26 @@ def run() -> str:
     if assets is None:
         print("[ERROR] align fail recipe 폴더를 찾지 못했습니다.")
         return "no_recipe"
-    if assets.current_sem is None:
-        print(f"[ERROR] scene(current_sem) 이미지가 없습니다: {assets.recipe_dir}")
-        return "no_scene"
-    references = _references_to_test(assets)
-    if not references:
-        print(f"[ERROR] reference(recipe_sem/recipe_om) 이미지가 없습니다: {assets.recipe_dir}")
-        return "no_reference"
-    scene_path = assets.current_sem
     recipe_id = assets.recipe_id
 
-    scene_bgr = cv2.imread(str(scene_path), cv2.IMREAD_COLOR)
-    if scene_bgr is None:
-        print(f"[ERROR] scene 디코드 실패: {scene_path}")
-        return "decode_failed"
-    scene_gray = cv2.cvtColor(scene_bgr, cv2.COLOR_BGR2GRAY)
-    scene_h, scene_w = scene_gray.shape[:2]
-
-    # scene scale-bar modality 힌트 (audit 전용, race 를 바꾸지 않음).
-    scale_bar = _scene_scale_bar(scene_gray)
-    print(f"[INFO] scene scale-bar: um={scale_bar['um']} hint={scale_bar['modality_hint']} "
-          f"note={scale_bar['note']!r}")
+    # from_msr 를 scale-bar modality 로 분류 → reference 를 same-modality scene 과만 짝짓는다.
+    client, client_note = _build_ocr_client()
+    if client is None:
+        print(f"[WARNING] scale-bar OCR client 없음({client_note}) — SEM 폴백만 가능, OM 분류 불가.")
+    scene_map, ocr_ok = _classify_scenes(assets, client)
+    pairs = _pairs_to_test(assets, scene_map, ocr_ok)
+    if not pairs:
+        print(f"[ERROR] 시험할 (reference, same-modality scene) 짝이 없습니다: {assets.recipe_dir}")
+        return "no_pairs"
 
     tag = make_timestamp_tag()
     out_dir = OUTPUT_ROOT / f"{tag}_{recipe_id}"
     out_dir.mkdir(parents=True, exist_ok=True)
-    print(f"[INFO] recipe_id={recipe_id}  scene=current_sem({scene_path.name}) "
-          f"{scene_w}x{scene_h}  references={[r[0] for r in references]}")
+    print(f"[INFO] recipe_id={recipe_id}  reference_modality={REFERENCE_MODALITY}  "
+          f"pairs={[(p['modality'], p['scene_path'].name) for p in pairs]}")
 
-    ref_results = [
-        _probe_reference(ref_label, ref_path, scene_bgr, scene_gray,
-                         scene_w, scene_h, recipe_id, out_dir / ref_label)
-        for ref_label, ref_path in references
+    pair_results = [
+        _probe_pair(pair, recipe_id, out_dir / pair["ref_label"]) for pair in pairs
     ]
 
     summary = {
@@ -440,12 +493,16 @@ def run() -> str:
         "recipe_select": RECIPE_SELECT,
         "reference_modality": REFERENCE_MODALITY,
         "model": PERCEPTION_MODEL,
-        "scene": {"label": "current_sem", "path": str(scene_path),
-                  "width": scene_w, "height": scene_h, "scale_bar": scale_bar},
-        "references": ref_results,
+        "ocr_ok": ocr_ok,
+        "scene_classification": {
+            mod: {"path": str(info["path"]), "scale_bar": info["scale_bar"]}
+            for mod, info in scene_map.items()
+        },
+        "pairs": pair_results,
         "elapsed": format_elapsed_ms(started),
         "output_dir": str(out_dir),
-        "note": "throwaway perception probe; VLM region NOT used as final coordinate (CV decides).",
+        "note": "perception probe; reference paired ONLY with same-modality scene; "
+                "VLM region NOT used as final coordinate (CV decides).",
     }
     (out_dir / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -485,23 +542,30 @@ def _build_digest(summary: dict) -> str:
     lines = ["", "=" * 72, "align key region perception probe 결과", "=" * 72,
              f"recipe_id : {summary['recipe_id']}  (select={summary['recipe_select']})",
              f"recipe_dir: {summary['recipe_dir']}",
-             f"scene     : current_sem ({Path(summary['scene']['path']).name}) "
-             f"{summary['scene']['width']}x{summary['scene']['height']}  "
-             f"{_scale_bar_str(summary['scene'])}",
-             f"model     : {summary['model']}  reference_modality={summary['reference_modality']}"]
-    for ref in summary["references"]:
-        label = ref["reference"]["label"]
+             f"model     : {summary['model']}  reference_modality={summary['reference_modality']}  "
+             f"ocr={'on' if summary['ocr_ok'] else 'off'}"]
+    cls = summary.get("scene_classification") or {}
+    if cls:
+        lines.append("scene 분류: " + "  ".join(
+            f"{mod}={Path(info['path']).name}({_scale_bar_str(info)})"
+            for mod, info in cls.items()))
+    else:
+        lines.append("scene 분류: (없음 — OCR 불가, SEM 폴백만)")
+    for pr in summary["pairs"]:
+        mod = pr["modality"]
         lines.append("-" * 72)
-        if "error" in ref:
-            lines.append(f"[{label}] ({Path(ref['reference']['path']).name}) ERROR={ref['error']}")
+        ref_name = Path(pr["reference"]["path"]).name
+        scene_name = Path(pr["scene"]["path"]).name
+        if "error" in pr:
+            lines.append(f"[{mod}] ref={ref_name} scene={scene_name} ERROR={pr['error']}")
             continue
-        v = ref["vlm"]
-        lines.append(f"[{label}] ({Path(ref['reference']['path']).name})")
+        v = pr["vlm"]
+        lines.append(f"[{mod}] ref={ref_name}  scene={scene_name}  {_scale_bar_str(pr['scene'])}")
         lines.append(f"  VLM   : ok={v['ok']} status={v['status']} found={v['found']} "
                      f"conf={v['confidence']} region_px={v['region_px']}")
         lines.append(f"          evidence={v['evidence']!r}" if v.get("evidence")
                      else f"          err={v['error']!r}")
-        lines.append(f"  CV cmp: {_decision_delta(ref['cv_full'], ref['cv_roi'])}")
+        lines.append(f"  CV cmp: {_decision_delta(pr['cv_full'], pr['cv_roi'])}")
     lines.append("-" * 72)
     lines.append(f"elapsed={summary['elapsed']}  out_dir={summary['output_dir']}")
     lines.append("=" * 72)

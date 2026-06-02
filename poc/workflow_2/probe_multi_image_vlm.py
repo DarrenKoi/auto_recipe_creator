@@ -30,6 +30,15 @@ OpenAI-compatible 이라도 다음에서 막힐 수 있다:
 JSON 으로 저장되어 그대로 피드백에 붙여넣을 수 있다.
 """
 
+import os
+
+# OpenBLAS/OMP 스레드 수 제한 — 반드시 numpy/cv2 import *이전*에 설정해야 한다.
+# Windows 다중코어 환경에서 OpenBLAS 가 스레드별 스크래치 버퍼 할당에 실패하며 내는
+# "Memory allocation failed after 10 retries, giving up" 를 막는다. numpy 가 한 번
+# import 된 뒤에는 효과가 없다. setdefault 라 외부에서 이미 지정했으면 존중한다.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+
 import json
 import re
 import time

@@ -53,11 +53,13 @@ from poc.workflow_2.align_fail_assets import (
     resolve_assets_auto,
 )
 from poc.workflow_2.align_key_matcher import build_template, compute_align_key_score
+from poc.workflow_2.align_point_correction import SCALE_BAR_OCR_SERVICE, _ocr_scale_bar
 from poc.workflow_2.probe_multi_image_vlm import (
     LARGE_VLM_API_BASE,
     LARGE_VLM_API_KEY,
     encode_under_limit,
 )
+from poc.workflow_1.vlm_client import Workflow1VLMClient
 from poc.workflow_1.util.json_utils import (
     bbox_1000_to_pixels,
     bbox_center,
@@ -86,6 +88,11 @@ RECIPE_SELECT = os.getenv("PROBE_RECIPE_SELECT", "random").strip().lower()
 # reference modality: "both"(OM·SEM 둘 다 시험) | "sem"(IMAP0002) | "om"(IMAP0001) | "auto"(sem→om).
 # scene 은 항상 current_sem (from_msr 최신 E*). modality 메모: [[project_align_fail_modality_om_vs_sem]].
 REFERENCE_MODALITY = os.getenv("PROBE_REFERENCE", "both").strip().lower()
+# scene scale-bar OCR 힌트(audit 전용) on/off. PaddleOCR-VL(Flask proxy) 필요 — Mac/오프라인이면
+# 자동으로 None 으로 흡수된다. *reference 선택을 바꾸지 않는다*; race(both)가 결정한다.
+ENABLE_SCALE_BAR_HINT = os.getenv("PROBE_SCALE_BAR_OCR", "1").strip().lower() not in (
+    "0", "false", "no", "off",
+)
 
 SYSTEM_MESSAGE = (
     "You are a semiconductor metrology vision assistant. You are given TWO grayscale images.\n"
@@ -164,6 +171,29 @@ def _references_to_test(assets) -> list[tuple[str, Path]]:
     else:  # auto — sem 우선, 없으면 om.
         picks = [sem or om]
     return [p for p in picks if p is not None]
+
+
+def _scene_scale_bar(scene_gray: np.ndarray) -> dict:
+    """scene 하단 scale bar 를 OCR 해 modality 힌트를 만든다 (best-effort, audit 전용).
+
+    PaddleOCR-VL(Flask proxy) 필요 — Mac/오프라인/비활성화면 modality_hint=None 으로
+    흡수한다. 이 힌트는 reference 선택을 바꾸지 않으며 race(both)가 여전히 결정한다.
+    `_ocr_scale_bar` 를 재사용해 OCR→파싱→100µm 임계 로직을 단일 소스로 유지한다.
+    """
+    if not ENABLE_SCALE_BAR_HINT:
+        return {"raw_text": "", "um": None, "modality_hint": None, "note": "disabled"}
+    try:
+        ocr_client = Workflow1VLMClient(
+            service_slug=SCALE_BAR_OCR_SERVICE, log_name="scale_bar_ocr")
+    except Exception as exc:
+        return {"raw_text": "", "um": None, "modality_hint": None,
+                "note": f"client_failed: {str(exc)[:80]}"}
+    try:
+        raw_text, um, hint = _ocr_scale_bar(scene_gray, ocr_client=ocr_client)
+    except Exception as exc:
+        return {"raw_text": "", "um": None, "modality_hint": None,
+                "note": f"ocr_failed: {str(exc)[:80]}"}
+    return {"raw_text": raw_text, "um": um, "modality_hint": hint, "note": ""}
 
 
 # ====================================================================
@@ -387,6 +417,11 @@ def run() -> str:
     scene_gray = cv2.cvtColor(scene_bgr, cv2.COLOR_BGR2GRAY)
     scene_h, scene_w = scene_gray.shape[:2]
 
+    # scene scale-bar modality 힌트 (audit 전용, race 를 바꾸지 않음).
+    scale_bar = _scene_scale_bar(scene_gray)
+    print(f"[INFO] scene scale-bar: um={scale_bar['um']} hint={scale_bar['modality_hint']} "
+          f"note={scale_bar['note']!r}")
+
     tag = make_timestamp_tag()
     out_dir = OUTPUT_ROOT / f"{tag}_{recipe_id}"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -406,7 +441,7 @@ def run() -> str:
         "reference_modality": REFERENCE_MODALITY,
         "model": PERCEPTION_MODEL,
         "scene": {"label": "current_sem", "path": str(scene_path),
-                  "width": scene_w, "height": scene_h},
+                  "width": scene_w, "height": scene_h, "scale_bar": scale_bar},
         "references": ref_results,
         "elapsed": format_elapsed_ms(started),
         "output_dir": str(out_dir),
@@ -438,12 +473,21 @@ def _decision_delta(cv_full: dict, cv_roi: dict | None) -> str:
             f"(Δscore {arrow}{d_score}; distinctive {full['distinctive']}→{roi['distinctive']})")
 
 
+def _scale_bar_str(scene: dict) -> str:
+    """scene scale-bar 힌트를 digest 한 토막으로 — audit 전용 라벨."""
+    sb = scene.get("scale_bar") or {}
+    if sb.get("modality_hint"):
+        return f"scale_bar={sb.get('um')}µm→{sb['modality_hint']}(audit)"
+    return f"scale_bar=?({sb.get('note') or 'n/a'})"
+
+
 def _build_digest(summary: dict) -> str:
     lines = ["", "=" * 72, "align key region perception probe 결과", "=" * 72,
              f"recipe_id : {summary['recipe_id']}  (select={summary['recipe_select']})",
              f"recipe_dir: {summary['recipe_dir']}",
              f"scene     : current_sem ({Path(summary['scene']['path']).name}) "
-             f"{summary['scene']['width']}x{summary['scene']['height']}",
+             f"{summary['scene']['width']}x{summary['scene']['height']}  "
+             f"{_scale_bar_str(summary['scene'])}",
              f"model     : {summary['model']}  reference_modality={summary['reference_modality']}"]
     for ref in summary["references"]:
         label = ref["reference"]["label"]

@@ -193,15 +193,17 @@ align_images/<eqp_id>/<class>/<recipe>/   (오피스 MES 생성 + 우리 캡처)
 - `STRUCTURE_POLICY` 의 임계값은 모두 **cold-start** 값이다. §4.3-4 의 실데이터 calibration 필요.
 - Mac 검증은 합성 데이터·배율 mock 한정이며 production accuracy 를 보장하지 않는다.
 
-### 6.1 matcher 정밀도 결정 (2026-06-02 실데이터 `align_similarity.py` test1)
+### 6.1 matcher 정밀도 결정 (2026-06-02 실데이터 test1·test2)
 
-> 출처: `console_results/260602_test1.txt`, 분석 저널 `journals/260602/260602_075313_mi-reranker-ruled-out-contour-next.md`.
+> 출처: `console_results/260602_test1.txt`(MI)·`260602_test2.txt`(contour), **분석 리포트**
+> `docs/study/reranker_ab_failure_analysis.md`, 저널 `journals/260602/`.
 
-- **rcp 재등록 = 확정.** consensus(S-LOO) 템플릿으로 recall(in_topk) 0.436→0.718(+0.282), rank1 0.269→0.538(+0.269). rcp staleness 실재. consensus 는 `<out_dir>/consensus/` 에 저장 → 그대로 새 rcp 로 사용.
+- **rcp 재등록 = 확정.** consensus(S-LOO) 템플릿으로 recall(in_topk) 0.436→0.718(+0.282), rank1 0.269→0.538(+0.269). rcp staleness 실재. 재등록 소스는 golden 데이터로(`align_success_dataset_plan.md`).
 - **co-registration(ECC) = 배제.** consensus vs S개별 선명도 비율 edge=0.979 / lap=0.959 ≥ 임계(0.70/0.50) → median blur 없음.
-- **reranker = 필요하나 MI 는 폐기.** in_topk(0.718) > rank1(0.538), topk_not_rank1=0.179 → 후보엔 있는데 1등이 아닌 ~18% 를 reranker 가 회복 가능. **그러나 MI reranker 는 실데이터로 폐기**: rerank_lift=−0.013(consensus), gt-topk 0.341→0.336 — 둘 다 음수. 이유: MI 는 *프레임 단위 S/E 분리*(present/absent)엔 강하나(bACC 0.627) 공간배치에 둔감한 전역 intensity 통계라 *한 프레임 내 위치 변별*(true peak vs decoy)엔 무력(같은 프레임 후보끼리 intensity 분포 공유).
-- **다음 reranker 후보 = contour(가설, A/B 검증 전).** key 의 기하/형상 변별(matchShapes/Hu moments)이 위치 reranking 에 맞고 §VLM/CV 경계·[[project_align_key_matching_constraint]] 의 "기하/구조 매칭" 원칙과 정합. 같은 A/B 하네스에서 `rerank_rank1_lift ≥ +0.10` 통과해야 production 승격. 실패 시 후보가 본질적으로 모호 → proposer 교체/live-search 분리로 escalation.
-- **matcher 천장은 구조적.** truth-forced wrong_local_peak 153/229(67%)·orb=0.0·scale_gain≈0.025 → scale 아닌 변별력 문제. gt-topk proposer recall 천장 in_topk=0.594. rank1>0.6 은 결국 2차 proposer 개선 필요.
+- **reranker 레버 = 사망 (MI·contour 둘 다 폐기).** in_topk(0.718) > rank1(0.538), topk_not_rank1=0.179 갭을 메우려 reranker 2종 검증 → 모두 실패: **MI** rerank_lift=−0.013, **contour**(Otsu+Hu) rerank_lift=−0.167(baseline 아래). 이유: chamfer 후보가 패치 단위로 본질 모호 — intensity(MI)·형상(Hu) 둘 다 *한 프레임 내 위치*를 못 가름. 상세는 분석 리포트.
+- **코드 정리 완료:** mi_rerank(matcher)·MI/contour rerank 컬럼(align_similarity)·`test_align_key_mi_rerank.py` 제거. `_mi` 는 staleness/separation 핵심이라 유지.
+- **정밀도 갭 escalation = VLM-region + CV.** CV 단독 reranking 죽음 → VLM 이 후보 영역(coarse box) 좁히고 CV 가 그 안 최종 좌표(경계 유지: VLM=영역, CV=좌표). 대안 proposer 교체는 후순위.
+- **matcher 천장은 구조적.** truth-forced wrong_local_peak 153/229(67%)·orb=0.0·scale_gain≈0.025 → scale 아닌 변별력 문제. gt-topk proposer recall 천장 in_topk=0.594.
 
 ---
 

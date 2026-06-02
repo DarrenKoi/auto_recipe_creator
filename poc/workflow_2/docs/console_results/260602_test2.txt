@@ -1,0 +1,53 @@
+# align_similarity.py 결과 채움 양식 (TEMPLATE)
+# 사용법: 이 파일을 YYMMDD_testN.txt 로 복사 → stdout 보고 ____ 자리에 *숫자만* 타이핑.
+#   - 라벨/정렬은 건드릴 필요 없음. ____ 만 채우면 됨.
+#   - ★ = 의사결정 핵심(꼭 채움). (opt) = 필요할 때만.
+#   - 안 나온 블록/지표는 그 줄 통째로 지워도 됨.
+# ──────────────────────────────────────────────
+
+images: S=234 E=198 other=0 total=432
+
+[S/E 분리도]   (med_S 높고 med_E 낮을수록, bACC 1.0 에 가까울수록 좋은 지표)
+metric         med_S    med_E    thr      bACC     n(S/E)
+free_best      0.6637   0.7038   0.408   0.579    234/198
+at_center      0.0226   nan      0.1149  0.503    234/198
+at_crosshair   0.6424   0.6921   0.1269  0.582    229/71
+mi_free        0.0749   0.0365   0.0477  0.627    234/198
+ncc_free       0.0203   -0.0006  0.0145  0.598    234/198
+free_best_box  0.7007   0.7174   0.3602  0.61     210/161
+E 유형: with_crosshair=71 no_crosshair=127 recoverable_by_move=10
+
+[TRUTH-FORCED]
+valid/truth = 76/229  (wrong_local_peak=153)
+median chamfer: wide=0.7409 compare=0.7381  scale_gain=0.0252 orb=0.0 mean_dt_px=3.0
+edge density median: tpl=0.0699 msr=0.0612
+wide_best_scale hist: { '1.0':26, '0.5': 46, '0.6':4 }
+진단 counts: { 'ok':76, 'wrong_local_peak':153 }
+
+[GT-IN-TOPK]
+in_topk = 136/229 (0.594)   rank1=78 (0.341)  miss=93   median_miss_dist_norm=0.376
+MI rerank rank1 = 77 (0.336)   chamfer rank1 0.341 -> MI 0.336;  in_topk 0.594가 천장
+★ contour rerank rank1 = 49 (0.214)   chamfer rank1 0.341 -> contour 0.214
+rank_hist: { '1':78, '3':11, '4':5, '2':19, '5':7, '6':5, '7':7, '8':4 }
+
+[참조 staleness (상대)]
+stale=17   ok=10  판단불가=44(Sㅜ족=33 불일치=11 저텍스처=0) / scored=71 recipes
+(opt) per-recipe:  recipe / nS / ratio / S_cv / rcp_MI / S_MI / status
+  ____
+
+[GT-IN-TOPK × staleness 교차표]  (opt)
+  ____
+point_biserial(in_topk, ratio): n=____  r=____
+
+★ [CONSENSUS A/B]   (재등록 검증 — 핵심 블록)
+recipes=15   S(LOO)=78
+★ recall  (in_topk): rcp=0.436 consensus=0.718 lift=+0.282
+★ precision(rank1) : rcp=0.269 consensus=0.538 rank1_lift=+0.269topk_not_rank1=0.179
+★ +MI rerank rank1 : rcp=0.308 consensus=0.526 rerank_lift=-0.013
+★ +contour rerank  : rcp=0.231 consensus=0.372 rerank_lift=-0.167  ← 이번 핵심(MI 대안 검증)
+★ 선명도 비율(blur): vs S개별 edge=0.979 lap=0.959  | vs rcp edge=0.826 lap=1.141
+(opt) per-recipe lift 상위:
+  ____
+
+# ── 비고(자유 기재): 이상치, 경고(WARNING), 눈에 띈 점 ──
+#

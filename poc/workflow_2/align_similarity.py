@@ -190,33 +190,6 @@ def _lap_var(gray: np.ndarray) -> float:
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
 
-def _hu_log(bin_img: np.ndarray) -> np.ndarray:
-    """이진 이미지의 log-변환 Hu moment 7-벡터 (형상 비교용, scale 강건). h=0 은 0 으로."""
-    hu = cv2.HuMoments(cv2.moments(bin_img, binaryImage=True)).flatten()
-    out = np.zeros(7, dtype=np.float64)
-    for i, h in enumerate(hu):
-        if h != 0:
-            out[i] = -np.sign(h) * np.log10(abs(h))
-    return out
-
-
-def _contour_sim(a: np.ndarray, b: np.ndarray) -> float:
-    """두 동일 크기 gray crop 의 *형상(shape)* 유사도 — 높을수록 유사(거리의 음수).
-
-    Otsu 이진화 후 log-Hu moment L1 거리. chamfer(매끄러운 거리장)·MI(전역 intensity)
-    가 못 가르는 *위치 변별*(true peak vs decoy)을 형상 위상으로 잡으려는 reranker 후보
-    ([[project_matcher_flat_chamfer_distinctiveness]] — MI rerank 실패 후 대안).
-    전경 없음/비교 불가 시 -inf(최악) → 정렬에서 뒤로 밀린다.
-    """
-    if a is None or b is None or a.size == 0 or b.size == 0:
-        return float("-inf")
-    _, ba = cv2.threshold(a, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    _, bb = cv2.threshold(b, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    if int(ba.sum()) == 0 or int(bb.sum()) == 0:   # 전경 없음 → 형상 비교 불가.
-        return float("-inf")
-    return -float(np.abs(_hu_log(ba) - _hu_log(bb)).sum())   # 거리↓=유사↑ → 음수(내림차순 정렬용).
-
-
 def _diagnose_truth(
     *, truth_valid, wide_chamfer, wide_scale, scale_gain, tpl_ed, msr_ed,
 ) -> str:
@@ -315,12 +288,8 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
     modality 끼리 best(최저 rank)를 채택한다. 후보를 pool 해 global truncate 하면 한 modality 의
     잡음 peak 이 다른 modality 의 truth 후보를 밀어내 recall 을 과소평가하므로 금지.
 
-    추가로 **MI rerank** 를 같이 잰다(Phase 3 reranker 검증용): chamfer 후보 집합은 그대로 두고
-    (chamfer = 멤버십 게이트) 각 후보의 msr crop 을 template 과 _mi 로 채점해 *순서만* 바꾼 뒤
-    truth 순위(topk_rank_reranked)를 다시 본다. 멤버십이 안 바뀌므로 in_topk 는 불변이고 rank 만
-    움직인다 → rank1 이 chamfer 대비 오르면 MI reranker 가 회복 여지를 실제로 메운다는 증거.
-    reranked rank 는 chamfer race 의 winner modality 것을 보고한다(apples-to-apples).
-    반환 dict: {topk_rank, topk_rank_reranked, in_topk, n_cand, best_cand_dist_norm, modality} 또는 None.
+    반환 dict: {topk_rank, in_topk, n_cand, best_cand_dist_norm, modality} 또는 None.
+    (rerank[MI·contour] 검증은 끝남 — 둘 다 폐기, `docs/study/reranker_ab_failure_analysis.md`.)
     """
     from poc.workflow_2.align_key_matcher import (
         compute_chamfer_candidates,
@@ -344,31 +313,12 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
         any_cand = True
         dists = [float(np.hypot(c.xy[0] - cxh, c.xy[1] - cyh)) / short for c in cands]
         rank = next((i for i, d in enumerate(dists, 1) if d <= GT_TOL_NORM), None)
-        # MI rerank: 후보 집합은 그대로(멤버십 게이트=chamfer), MI 로 *순서만* 재정렬.
-        # 각 후보의 msr crop 을 best scale 로 떼어 template 과 MI 채점 → 내림차순 재정렬.
-        th2, tw2 = tpl.raw_image.shape[:2]
-        mi_scores = []
-        ct_scores = []   # contour(형상) rerank 점수 — MI 가 못 메운 위치 변별 대안.
-        for c in cands:
-            crop = _matched_crop(gray, c.xy, tw2, th2, c.scale)
-            if crop is None:
-                mi_scores.append(float("-inf"))
-                ct_scores.append(float("-inf"))
-            else:
-                mi_scores.append(_mi(tpl.raw_image, crop))
-                ct_scores.append(_contour_sim(tpl.raw_image, crop))
-        order = sorted(range(len(cands)), key=lambda i: mi_scores[i], reverse=True)
-        rr_dists = [dists[i] for i in order]
-        rr_rank = next((i for i, d in enumerate(rr_dists, 1) if d <= GT_TOL_NORM), None)
-        order_ct = sorted(range(len(cands)), key=lambda i: ct_scores[i], reverse=True)
-        rr_dists_ct = [dists[i] for i in order_ct]
-        rr_rank_ct = next((i for i, d in enumerate(rr_dists_ct, 1) if d <= GT_TOL_NORM), None)
-        cur = (rank, len(cands), min(dists), mod, rr_rank, rr_rank_ct)
-        # race: in_topk(rank!=None) 우선 → 낮은 rank → 가까운 best_dist. (reranked rank 는 따라옴)
+        cur = (rank, len(cands), min(dists), mod)
+        # race: in_topk(rank!=None) 우선 → 낮은 rank → 가까운 best_dist.
         if best is None:
             best = cur
         else:
-            b_rank, _bn, b_dist, _bm, _brr, _brr_ct = best
+            b_rank, _bn, b_dist, _bm = best
             better = (
                 (rank is not None and (b_rank is None or rank < b_rank))
                 or (rank is None and b_rank is None and cur[2] < b_dist)
@@ -377,11 +327,9 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
                 best = cur
     if not any_cand:
         return None
-    rank, n_cand, best_dist, mod, rr_rank, rr_rank_ct = best
+    rank, n_cand, best_dist, mod = best
     return {
         "topk_rank": rank,
-        "topk_rank_reranked": rr_rank,   # MI 재정렬 후 truth 순위(멤버십 불변 → in_topk 동일).
-        "topk_rank_reranked_contour": rr_rank_ct,   # contour(형상) 재정렬 후 truth 순위.
         "in_topk": rank is not None,
         "n_cand": n_cand,
         "best_cand_dist_norm": round(best_dist, 3),
@@ -611,8 +559,6 @@ def _summarize(rows: list[dict]) -> dict:
     if gts:
         in_topk = [g for g in gts if g["in_topk"]]
         rank1 = [g for g in in_topk if g["topk_rank"] == 1]
-        rank1_rr = [g for g in in_topk if g.get("topk_rank_reranked") == 1]   # MI 재정렬 후 rank1.
-        rank1_rr_ct = [g for g in in_topk if g.get("topk_rank_reranked_contour") == 1]  # contour 후 rank1.
         rank_hist: dict[str, int] = {}
         for g in in_topk:
             rank_hist[str(g["topk_rank"])] = rank_hist.get(str(g["topk_rank"]), 0) + 1
@@ -621,13 +567,9 @@ def _summarize(rows: list[dict]) -> dict:
             "n": len(gts),
             "n_in_topk": len(in_topk),
             "n_rank1": len(rank1),
-            "n_rank1_reranked": len(rank1_rr),
-            "n_rank1_reranked_contour": len(rank1_rr_ct),
             "n_miss": len(gts) - len(in_topk),
             "in_topk_rate": round(len(in_topk) / len(gts), 3),
             "rank1_rate": round(len(rank1) / len(gts), 3),
-            "rank1_reranked_rate": round(len(rank1_rr) / len(gts), 3),   # MI rerank 후 정밀도.
-            "rank1_reranked_contour_rate": round(len(rank1_rr_ct) / len(gts), 3),  # contour rerank 후 정밀도.
             "rank_hist": rank_hist,
             "median_miss_dist_norm": round(statistics.median(miss_dists), 3) if miss_dists else None,
             "topk": TOPK_CANDIDATES,
@@ -839,8 +781,6 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None) -> 
 
     per_recipe = []
     tot_n = tot_rcp = tot_cons = tot_rcp_r1 = tot_cons_r1 = 0
-    tot_cons_r1_rr = tot_rcp_r1_rr = 0   # MI rerank 후 rank1 (consensus / rcp).
-    tot_cons_r1_rr_ct = tot_rcp_r1_rr_ct = 0   # contour rerank 후 rank1 (consensus / rcp).
     s_guard: list[float] = []   # all-crops consensus free-best chamfer on S (참고용).
     e_guard: list[float] = []   # 동일 consensus free-best chamfer on E (참고용).
     # 선명도(blur) 비율 — consensus median 이 개별 S crop / rcp 대비 흐려졌는지 (per-recipe).
@@ -880,8 +820,6 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None) -> 
             if r_lap > 0:
                 lap_ratio_rcp.append(c_lap / r_lap)
         n = rcp_hit = cons_hit = rcp_r1 = cons_r1 = 0
-        cons_r1_rr = rcp_r1_rr = 0   # MI rerank 후 rank1.
-        cons_r1_rr_ct = rcp_r1_rr_ct = 0   # contour rerank 후 rank1.
         for i, f in enumerate(fm):
             others = [c for j, c in enumerate(crops) if j != i]
             if len(others) < 2:
@@ -900,10 +838,6 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None) -> 
                 cons_hit += 1
             if gc["topk_rank"] == 1:        # rank-1 = consensus 의 free-best 가 정답에 lock(distinctive).
                 cons_r1 += 1
-            if gc["topk_rank_reranked"] == 1:   # MI 재정렬 후 rank-1 (reranker 효과).
-                cons_r1_rr += 1
-            if gc["topk_rank_reranked_contour"] == 1:   # contour 재정렬 후 rank-1.
-                cons_r1_rr_ct += 1
             # rcp baseline — 같은 modality·frame·_gt_in_topk (apples-to-apples).
             if rcp_tpl is not None:
                 gr = _gt_in_topk(gray, tuple(f["xy"]), {mod: rcp_tpl})
@@ -911,10 +845,6 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None) -> 
                     rcp_hit += 1
                     if gr["topk_rank"] == 1:
                         rcp_r1 += 1
-                    if gr["topk_rank_reranked"] == 1:
-                        rcp_r1_rr += 1
-                    if gr["topk_rank_reranked_contour"] == 1:
-                        rcp_r1_rr_ct += 1
             # generic 가드 S: held-out frame 에 all-crops consensus free-best (E 와 동일 tpl).
             try:
                 _s, ch, _o, _xy, _sc = _score(all_cons_tpl, gray)
@@ -939,22 +869,12 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None) -> 
             "lift": round((cons_hit - rcp_hit) / n, 3),
             "rcp_rank1_rate": round(rcp_r1 / n, 3),
             "cons_rank1_rate": round(cons_r1 / n, 3),
-            # MI rerank: consensus 후보를 MI 로 재정렬한 rank1 + chamfer 대비 향상.
-            "cons_rank1_rate_reranked": round(cons_r1_rr / n, 3),
-            "rerank_rank1_lift": round((cons_r1_rr - cons_r1) / n, 3),
-            # contour rerank: consensus 후보를 형상(Hu)으로 재정렬한 rank1 + chamfer 대비 향상.
-            "cons_rank1_rate_reranked_contour": round(cons_r1_rr_ct / n, 3),
-            "rerank_rank1_lift_contour": round((cons_r1_rr_ct - cons_r1) / n, 3),
         })
         tot_n += n
         tot_rcp += rcp_hit
         tot_cons += cons_hit
         tot_rcp_r1 += rcp_r1
         tot_cons_r1 += cons_r1
-        tot_cons_r1_rr += cons_r1_rr
-        tot_rcp_r1_rr += rcp_r1_rr
-        tot_cons_r1_rr_ct += cons_r1_rr_ct
-        tot_rcp_r1_rr_ct += rcp_r1_rr_ct
 
     if tot_n == 0:
         return None
@@ -971,20 +891,12 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None) -> 
         "overall_rcp_in_topk_rate": round(tot_rcp / tot_n, 3),
         "overall_cons_in_topk_rate": round(cons_topk_rate, 3),
         "overall_lift": round((tot_cons - tot_rcp) / tot_n, 3),
-        # rank-1(정밀도): free-best 가 정답에 lock. in_topk 높은데 rank1 낮으면 → reranker 필요.
+        # rank-1(정밀도): free-best 가 정답에 lock. in_topk 높은데 rank1 낮으면 → 정밀도 갭.
+        # (reranker[MI·contour]로 메우려 했으나 둘 다 폐기 — reranker_ab_failure_analysis.md.)
         "overall_rcp_rank1_rate": round(tot_rcp_r1 / tot_n, 3),
         "overall_cons_rank1_rate": round(cons_r1_rate, 3),
         "rank1_lift": round((tot_cons_r1 - tot_rcp_r1) / tot_n, 3),
         "cons_topk_not_rank1_rate": round(cons_topk_rate - cons_r1_rate, 3),
-        # MI rerank(Phase 3 검증): chamfer 후보를 MI 로 재정렬한 rank1. reranked − chamfer = rerank_rank1_lift.
-        # 기대: cons rank1 이 in_topk(천장) 쪽으로 상승 → topk_not_rank1 을 MI 가 메운다는 증거.
-        "overall_cons_rank1_reranked_rate": round(tot_cons_r1_rr / tot_n, 3),
-        "overall_rcp_rank1_reranked_rate": round(tot_rcp_r1_rr / tot_n, 3),
-        "rerank_rank1_lift": round((tot_cons_r1_rr - tot_cons_r1) / tot_n, 3),
-        # contour rerank(MI 대안): chamfer 후보를 형상(Hu)으로 재정렬한 rank1. reranked − chamfer = lift.
-        "overall_cons_rank1_reranked_contour_rate": round(tot_cons_r1_rr_ct / tot_n, 3),
-        "overall_rcp_rank1_reranked_contour_rate": round(tot_rcp_r1_rr_ct / tot_n, 3),
-        "rerank_rank1_lift_contour": round((tot_cons_r1_rr_ct - tot_cons_r1) / tot_n, 3),
         # 선명도(blur) 비율: <0.70(edge) 또는 <0.50(lap) 이면 median blur 위험 → co-registration 고려.
         "cons_edge_density_ratio_to_S_median": _med(edge_ratio_s),
         "cons_lap_var_ratio_to_S_median": _med(lap_ratio_s),
@@ -995,9 +907,9 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None) -> 
         "median_cons_free_chamfer_E": round(statistics.median(e_guard), 4) if e_guard else None,
         "per_recipe": per_recipe,
         "min_s": min_s,
-        "note": ("lift = recall(후보에 truth) 개선; rank1_lift = precision(정답 lock) 개선; "
-                 "rerank_rank1_lift = MI 재정렬이 chamfer rank1 위로 끌어올린 양(reranker 효과). "
-                 "cons_S≈cons_E 는 blur 신호 아님(E 에도 key 존재 가능) → 선명도 비율로 blur 판정."),
+        "note": ("lift = recall(후보에 truth) 개선; rank1_lift = precision(정답 lock) 개선. "
+                 "남은 정밀도 갭(topk_not_rank1)은 reranker 로 못 메움(MI·contour 폐기) → "
+                 "VLM-region+CV 로 escalation. cons_S≈cons_E 는 blur 신호 아님 → 선명도 비율로 판정."),
     }
 
 
@@ -1036,15 +948,10 @@ def _print_summary(summary: dict) -> None:
         print(f"  in_topk={gk['n_in_topk']}/{gk['n']} ({gk['in_topk_rate']})  "
               f"rank1={gk['n_rank1']} ({gk['rank1_rate']})  miss={gk['n_miss']}  "
               f"median_miss_dist_norm={gk['median_miss_dist_norm']}")
-        print(f"  MI rerank rank1={gk['n_rank1_reranked']} ({gk['rank1_reranked_rate']})  "
-              f"(chamfer rank1 {gk['rank1_rate']} → MI {gk['rank1_reranked_rate']}; "
-              f"in_topk {gk['in_topk_rate']} 가 천장)")
-        print(f"  contour rerank rank1={gk['n_rank1_reranked_contour']} ({gk['rank1_reranked_contour_rate']})  "
-              f"(chamfer rank1 {gk['rank1_rate']} → contour {gk['rank1_reranked_contour_rate']})")
         print(f"  rank_hist(정답이 든 순위): {gk['rank_hist']}")
-        print("  * in_topk 높고 rank1 낮음 → truth 가 후보엔 있는데 순위만 밀림 ⇒ MI 리랭커로 회복 가능.")
-        print("  * MI rank1 이 chamfer rank1 보다 높고 in_topk 에 가까울수록 → reranker 가 실제로 회복.")
-        print("  * in_topk 낮음 → truth 가 후보에 아예 없음 ⇒ proposer(후보 생성기) 교체 필요(리랭킹 무의미).")
+        print("  * in_topk 높고 rank1 낮음 = 정밀도 갭. reranker[MI·contour]로 메우려 했으나 둘 다 폐기")
+        print("    (reranker_ab_failure_analysis.md) → VLM-region+CV 로 escalation.")
+        print("  * in_topk 낮음 → truth 가 후보에 아예 없음 ⇒ proposer(후보 생성기) 교체 필요.")
 
     # 참조 staleness(상대) — rcp 가 S-consensus 의 outlier 인지. status 로 판단 가능/불가 구분.
     rq = summary.get("reference_quality", [])
@@ -1098,14 +1005,6 @@ def _print_summary(summary: dict) -> None:
         print(f"  precision(rank1) :  rcp={ab['overall_rcp_rank1_rate']}  "
               f"consensus={ab['overall_cons_rank1_rate']}  rank1_lift={ab['rank1_lift']:+}  "
               f"topk_not_rank1={ab['cons_topk_not_rank1_rate']}")
-        print(f"  +MI rerank rank1 :  rcp={ab['overall_rcp_rank1_reranked_rate']}  "
-              f"consensus={ab['overall_cons_rank1_reranked_rate']}  "
-              f"rerank_lift={ab['rerank_rank1_lift']:+}  "
-              f"(목표: cons rank1 {ab['overall_cons_rank1_rate']}→in_topk {ab['overall_cons_in_topk_rate']})")
-        print(f"  +contour rerank  :  rcp={ab['overall_rcp_rank1_reranked_contour_rate']}  "
-              f"consensus={ab['overall_cons_rank1_reranked_contour_rate']}  "
-              f"rerank_lift={ab['rerank_rank1_lift_contour']:+}  "
-              f"(MI 대안: 형상 Hu 로 후보 순서 재정렬)")
         print(f"  consensus 선명도 비율(blur): vs S개별 edge={ab['cons_edge_density_ratio_to_S_median']} "
               f"lap={ab['cons_lap_var_ratio_to_S_median']}  | vs rcp edge={ab['cons_edge_density_ratio_to_rcp']} "
               f"lap={ab['cons_lap_var_ratio_to_rcp']}")
@@ -1115,16 +1014,12 @@ def _print_summary(summary: dict) -> None:
         for d in ab["per_recipe"][:12]:
             print(f"    {d['recipe'][:36]:<36} nS={d['n_S_loo']:>2} "
                   f"recall {d['rcp_in_topk_rate']}→{d['cons_in_topk_rate']} (lift {d['lift']:+})  "
-                  f"rank1 {d['rcp_rank1_rate']}→{d['cons_rank1_rate']}"
-                  f"→{d['cons_rank1_rate_reranked']}(MI {d['rerank_rank1_lift']:+})"
-                  f"/{d['cons_rank1_rate_reranked_contour']}(ct {d['rerank_rank1_lift_contour']:+})")
+                  f"rank1 {d['rcp_rank1_rate']}→{d['cons_rank1_rate']}")
         print(f"  * {ab['note']}")
-        print("  * 판정: recall lift≥+0.10 & rank1 안 나빠짐 & 선명도비율 edge≥0.70·lap≥0.50 → 재등록만.")
-        print("           recall lift+ 인데 topk_not_rank1≥0.15(또는 rank1<0.8×in_topk) → 재등록 + reranker.")
+        print("  * 판정: recall lift≥+0.10 & rank1 안 나빠짐 & 선명도비율 edge≥0.70·lap≥0.50 → 재등록 OK.")
         print("           선명도비율 edge<0.70 또는 lap<0.50 → median blur → co-registration(ECC) 후 재측정.")
-        print("  * reranker 판정: rerank_lift≥+0.10 이면 해당 reranker production 승격 정당화(후보 순서 재정렬로 정밀도↑).")
-        print("    test1(260602): MI rerank_lift=−0.013 으로 폐기됨 → contour(형상 Hu) 가 topk_not_rank1 을 메우는지 본다.")
-        print("    contour 도 ≈0/음수면 → 후보가 본질적으로 모호 ⇒ reranker 아닌 proposer 교체/live-search 분리로 escalation.")
+        print("  * 정밀도 갭(topk_not_rank1): reranker[MI·contour] 둘 다 폐기(reranker_ab_failure_analysis.md)")
+        print("    → VLM-region+CV(검색공간 축소)로 escalation. 재등록 소스는 golden 데이터로(plan §7).")
         print("  * 검증된 consensus 는 <out_dir>/consensus/ 에 저장됨 → 재등록 시 그대로 새 rcp 로 사용.")
 
 
@@ -1253,26 +1148,14 @@ def _self_test() -> bool:
     if not ok:
         print("[ERROR] S 가 E 보다 높지 않음 — 유사도 변별 실패(합성).")
 
-    # gt-in-topK + MI rerank 경로 sanity — 정답(중앙 패턴 center)에서 후보/재정렬이 도는지.
+    # gt-in-topK 경로 sanity — 정답(중앙 패턴 center)에서 후보 생성/순위가 도는지.
     #   패턴은 cxy=(170,120) 에 60x60 으로 박혔으니 중심 = (200, 150).
     gt = _gt_in_topk(s_frame, (170 + 30, 120 + 30), {"om": rcp_center_tpl})
     if gt is not None:
-        assert "topk_rank_reranked" in gt, f"reranked key 누락: {gt}"
-        # 멤버십(in_topk)은 rerank 로 안 바뀐다 — rank 만 움직인다.
-        assert (gt["topk_rank_reranked"] is None) == (gt["topk_rank"] is None), \
-            f"rerank 가 멤버십을 바꿈(불변이어야): {gt}"
-        assert (gt["topk_rank_reranked_contour"] is None) == (gt["topk_rank"] is None), \
-            f"contour rerank 가 멤버십을 바꿈(불변이어야): {gt}"
-        print(f"[INFO] self-test gt_topk: in_topk={gt['in_topk']} "
-              f"rank={gt['topk_rank']} rerank={gt['topk_rank_reranked']}")
+        assert "topk_rank" in gt and "in_topk" in gt, f"gt_topk key 누락: {gt}"
+        print(f"[INFO] self-test gt_topk: in_topk={gt['in_topk']} rank={gt['topk_rank']}")
     else:
         print("[INFO] self-test gt_topk: 후보 없음(합성) — 경로만 무오류 확인")
-
-    # contour_sim 변별 sanity — 같은 패턴끼리가 다른 패턴보다 형상 유사도 높아야(reranker 자격).
-    self_sim = _contour_sim(align, align)
-    diff_sim = _contour_sim(align, other)
-    assert self_sim >= diff_sim, f"contour_sim 변별 실패: self={self_sim} diff={diff_sim}"
-    print(f"[INFO] self-test contour_sim: self={self_sim:.3f} >= diff={diff_sim:.3f}")
 
     # separation 함수 sanity.
     sep = _separation([0.8, 0.75, 0.9], [0.3, 0.4, 0.2])

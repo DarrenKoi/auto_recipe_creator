@@ -39,15 +39,24 @@ import cv2
 import numpy as np
 import requests
 
-from poc.workflow_1.flask_vlm import resolve_service_api_key, resolve_service_proxy_url
 from poc.workflow_2 import DEBUG_IMAGE_DIR
 
 # ====================================================================
 # 설정 (CLI 인자 없음 — 상수로만).
 # ====================================================================
 
-SERVICE_SLUG = "qwen3-vl-30b-instruct"   # direct 게이트웨이의 large VLM.
-MODEL_NAME = "Qwen3-VL-30B-Instruct"
+# large VLM 직접 연결 — 이 파일 안에서 standalone 으로 정의한다(flask_vlm 의존 제거).
+# api_base 는 /v1 까지 포함한다고 가정한다 → 엔드포인트는 {api_base}/chat/completions.
+# 오피스에서 실행 전 아래 두 값을 실제 게이트웨이 값으로 교체할 것.
+LARGE_VLM_API_BASE = "http://workplace-litellm.aipp02.skhynix.com/v1"   # /v1 포함.
+LARGE_VLM_API_KEY = ""                                                   # TODO: 새 api_key 로 교체.
+
+# LiteLLM 게이트웨이에 등록된 large VLM 들 — 각 모델에 대해 동일한 매트릭스를 돈다.
+# 모델명은 LiteLLM 의 alias 와 정확히 일치해야 한다(불일치 시 400 model_not_found).
+MODELS = [
+    "Qwen3-VL-30B-A3B-Instruct",
+    "Qwen2.5-VL-72B-Instruct",
+]
 
 # discriminative 합산용 두 정수. 한 자리 echo 와 헷갈리지 않게 두 자리 + 합도 두 자리.
 REF_NUMBER = 17
@@ -170,6 +179,7 @@ class ProbeResult:
     """단일 probe 요청의 결과 레코드."""
 
     name: str
+    model: str
     n_images: int
     fmt: str
     expected: int
@@ -189,17 +199,18 @@ class ProbeResult:
 
 
 def _endpoint_and_headers() -> tuple[str, dict]:
-    """direct 게이트웨이 endpoint URL 과 auth 헤더를 구성한다."""
-    base = resolve_service_proxy_url(SERVICE_SLUG).rstrip("/")
+    """large VLM 게이트웨이 endpoint URL 과 auth 헤더를 구성한다 (standalone 상수 기반)."""
+    base = LARGE_VLM_API_BASE.rstrip("/")
+    # api_base 가 /v1 포함 가정 — 혹시 빠졌으면 보정.
     endpoint = (
         f"{base}/chat/completions" if base.endswith("/v1") else f"{base}/v1/chat/completions"
     )
     headers = {"Content-Type": "application/json"}
-    key = resolve_service_api_key(SERVICE_SLUG)
+    key = LARGE_VLM_API_KEY.strip()
     if key:
         headers["Authorization"] = f"Bearer {key}"
     else:
-        print("[WARNING] direct 게이트웨이 API key 가 비어 있음 — 401 가능 (env 미설정).")
+        print("[WARNING] LARGE_VLM_API_KEY 가 비어 있음 — 401 가능 (파일 상단 상수 미설정).")
     return endpoint, headers
 
 
@@ -228,14 +239,14 @@ def _verdict(parsed: list[int], expected: int, name: str) -> str:
     return "FAIL"
 
 
-def run_probe(name: str, content_blocks: list[dict], n_images: int, fmt: str,
+def run_probe(name: str, model: str, content_blocks: list[dict], n_images: int, fmt: str,
               expected: int, img_b64_kb: list[float]) -> ProbeResult:
-    """content_blocks 를 direct 게이트웨이에 보내고 결과를 ProbeResult 로 반환한다."""
-    res = ProbeResult(name=name, n_images=n_images, fmt=fmt, expected=expected,
+    """content_blocks 를 large VLM 게이트웨이에 보내고 결과를 ProbeResult 로 반환한다."""
+    res = ProbeResult(name=name, model=model, n_images=n_images, fmt=fmt, expected=expected,
                       img_b64_kb=img_b64_kb)
     endpoint, headers = _endpoint_and_headers()
     payload = {
-        "model": MODEL_NAME,
+        "model": model,
         "messages": [
             {"role": "system", "content": SYSTEM_MESSAGE},
             {"role": "user", "content": content_blocks},
@@ -266,7 +277,7 @@ def run_probe(name: str, content_blocks: list[dict], n_images: int, fmt: str,
         res.status_code = status
         res.verdict = "ERROR"
     print(
-        f"[INFO] {name:<22s} fmt={fmt:<4s} imgs={n_images} "
+        f"[INFO] {model:<26s} {name:<14s} fmt={fmt:<4s} imgs={n_images} "
         f"status={res.status_code} verdict={res.verdict} "
         f"resp={res.response_text!r} err={res.error[:60]}"
     )
@@ -286,6 +297,56 @@ def _image_block(b64: str, mime: str) -> dict:
 # ====================================================================
 
 
+def _run_model_matrix(model: str, ref: np.ndarray, scene: np.ndarray,
+                      composite: np.ndarray) -> list[ProbeResult]:
+    """한 모델에 대해 (jpeg/webp) × (single/multi/composite) 매트릭스를 돈다."""
+    out: list[ProbeResult] = []
+    for fmt in ("jpeg", "webp"):
+        ref_enc = encode_under_limit(ref, fmt)
+        scene_enc = encode_under_limit(scene, fmt)
+        comp_enc = encode_under_limit(composite, fmt)
+        if ref_enc is None or scene_enc is None or comp_enc is None:
+            print(f"[WARNING] fmt={fmt}: 인코딩 실패(1MB 초과 또는 미지원) — 해당 포맷 SKIP")
+            for nm, ni in (("single", 1), ("multi_two", 2), ("composite", 1)):
+                out.append(ProbeResult(name=f"{nm}_{fmt}", model=model, n_images=ni, fmt=fmt,
+                                       expected=SCENE_NUMBER if nm == "single" else EXPECTED_SUM,
+                                       verdict="SKIP", error="encode_failed"))
+            continue
+
+        ref_b64, mime, ref_kb = ref_enc
+        scene_b64, _, scene_kb = scene_enc
+        comp_b64, _, comp_kb = comp_enc
+        ref_kb, scene_kb, comp_kb = round(ref_kb / 1024, 1), round(scene_kb / 1024, 1), round(comp_kb / 1024, 1)
+
+        # 1) 단일 이미지 (scene) — baseline: 단일 + 포맷.
+        out.append(run_probe(
+            f"single_{fmt}", model,
+            [_text_block("이 이미지에 적힌 정수 하나를 숫자로만 답하라."),
+             _image_block(scene_b64, mime)],
+            n_images=1, fmt=fmt, expected=SCENE_NUMBER, img_b64_kb=[scene_kb],
+        ))
+
+        # 2) 네이티브 멀티이미지 — discriminative 합산.
+        out.append(run_probe(
+            f"multi_two_{fmt}", model,
+            [_text_block("첫 번째 이미지(IMAGE-1)의 정수와 두 번째 이미지(IMAGE-2)의 정수를 "
+                         "더한 값을 숫자로만 답하라."),
+             _image_block(ref_b64, mime),
+             _image_block(scene_b64, mime)],
+            n_images=2, fmt=fmt, expected=EXPECTED_SUM, img_b64_kb=[ref_kb, scene_kb],
+        ))
+
+        # 3) composite fallback — 한 장으로 합산.
+        out.append(run_probe(
+            f"composite_{fmt}", model,
+            [_text_block("이 이미지의 왼쪽(image1) 정수와 오른쪽(image2) 정수를 더한 값을 "
+                         "숫자로만 답하라."),
+             _image_block(comp_b64, mime)],
+            n_images=1, fmt=fmt, expected=EXPECTED_SUM, img_b64_kb=[comp_kb],
+        ))
+    return out
+
+
 def main() -> str:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     ref = make_reference_panel()
@@ -298,66 +359,28 @@ def main() -> str:
     cv2.imwrite(str(OUTPUT_DIR / "panel_composite.jpg"), composite)
     print(f"[INFO] 테스트 이미지 저장: {OUTPUT_DIR}")
     print(f"[INFO] 기대값: 단일 scene={SCENE_NUMBER}, 합산={EXPECTED_SUM}")
+    print(f"[INFO] 대상 모델: {', '.join(MODELS)}")
 
     results: list[ProbeResult] = []
-
-    for fmt in ("jpeg", "webp"):
-        ref_enc = encode_under_limit(ref, fmt)
-        scene_enc = encode_under_limit(scene, fmt)
-        comp_enc = encode_under_limit(composite, fmt)
-        if ref_enc is None or scene_enc is None or comp_enc is None:
-            print(f"[WARNING] fmt={fmt}: 인코딩 실패(1MB 초과 또는 미지원) — 해당 포맷 SKIP")
-            for nm, ni in (("single", 1), ("multi_two", 2), ("composite", 1)):
-                results.append(ProbeResult(name=f"{nm}_{fmt}", n_images=ni, fmt=fmt,
-                                           expected=SCENE_NUMBER if nm == "single" else EXPECTED_SUM,
-                                           verdict="SKIP", error="encode_failed"))
-            continue
-
-        ref_b64, mime, ref_kb = ref_enc
-        scene_b64, _, scene_kb = scene_enc
-        comp_b64, _, comp_kb = comp_enc
-        ref_kb, scene_kb, comp_kb = round(ref_kb / 1024, 1), round(scene_kb / 1024, 1), round(comp_kb / 1024, 1)
-
-        # 1) 단일 이미지 (scene) — baseline: 단일 + 포맷.
-        results.append(run_probe(
-            f"single_{fmt}",
-            [_text_block("이 이미지에 적힌 정수 하나를 숫자로만 답하라."),
-             _image_block(scene_b64, mime)],
-            n_images=1, fmt=fmt, expected=SCENE_NUMBER, img_b64_kb=[scene_kb],
-        ))
-
-        # 2) 네이티브 멀티이미지 — discriminative 합산.
-        results.append(run_probe(
-            f"multi_two_{fmt}",
-            [_text_block("첫 번째 이미지(IMAGE-1)의 정수와 두 번째 이미지(IMAGE-2)의 정수를 "
-                         "더한 값을 숫자로만 답하라."),
-             _image_block(ref_b64, mime),
-             _image_block(scene_b64, mime)],
-            n_images=2, fmt=fmt, expected=EXPECTED_SUM, img_b64_kb=[ref_kb, scene_kb],
-        ))
-
-        # 3) composite fallback — 한 장으로 합산.
-        results.append(run_probe(
-            f"composite_{fmt}",
-            [_text_block("이 이미지의 왼쪽(image1) 정수와 오른쪽(image2) 정수를 더한 값을 "
-                         "숫자로만 답하라."),
-             _image_block(comp_b64, mime)],
-            n_images=1, fmt=fmt, expected=EXPECTED_SUM, img_b64_kb=[comp_kb],
-        ))
+    for model in MODELS:
+        print(f"\n[INFO] ===== model={model} =====")
+        results.extend(_run_model_matrix(model, ref, scene, composite))
 
     digest = _build_digest(results)
     print(digest)
 
+    recommendation = {model: _recommend([r for r in results if r.model == model])
+                      for model in MODELS}
     out_json = OUTPUT_DIR / "probe_result.json"
     out_json.write_text(
         json.dumps({"results": [r.to_dict() for r in results],
-                    "recommendation": _recommend(results)},
+                    "recommendation": recommendation},
                    ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     (OUTPUT_DIR / "probe_digest.txt").write_text(digest, encoding="utf-8")
     print(f"[INFO] 저장: {out_json}")
-    return _recommend(results)
+    return digest
 
 
 def _by_name(results: list[ProbeResult]) -> dict[str, ProbeResult]:
@@ -390,19 +413,23 @@ def _recommend(results: list[ProbeResult]) -> str:
 
 
 def _build_digest(results: list[ProbeResult]) -> str:
-    lines = ["", "=" * 72, "멀티이미지 capability probe 결과", "=" * 72,
-             f"{'test':<20s}{'fmt':<6s}{'imgs':<5s}{'status':<8s}"
-             f"{'verdict':<9s}{'payloadKB':<11s}resp",
-             "-" * 72]
-    for r in results:
-        lines.append(
-            f"{r.name:<20s}{r.fmt:<6s}{r.n_images:<5d}"
-            f"{str(r.status_code):<8s}{r.verdict:<9s}"
-            f"{str(r.payload_kb):<11s}{r.response_text or r.error[:40]!r}"
-        )
-    lines.append("-" * 72)
-    lines.append(f"권고: {_recommend(results)}")
-    lines.append("=" * 72)
+    lines = ["", "=" * 72, "멀티이미지 capability probe 결과", "=" * 72]
+    models = list(dict.fromkeys(r.model for r in results))  # 입력 순서 유지.
+    for model in models:
+        model_results = [r for r in results if r.model == model]
+        lines.append(f"■ model={model}")
+        lines.append(f"{'test':<20s}{'fmt':<6s}{'imgs':<5s}{'status':<8s}"
+                     f"{'verdict':<9s}{'payloadKB':<11s}resp")
+        lines.append("-" * 72)
+        for r in model_results:
+            lines.append(
+                f"{r.name:<20s}{r.fmt:<6s}{r.n_images:<5d}"
+                f"{str(r.status_code):<8s}{r.verdict:<9s}"
+                f"{str(r.payload_kb):<11s}{r.response_text or r.error[:40]!r}"
+            )
+        lines.append("-" * 72)
+        lines.append(f"권고: {_recommend(model_results)}")
+        lines.append("=" * 72)
     return "\n".join(lines)
 
 

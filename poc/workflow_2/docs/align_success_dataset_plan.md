@@ -98,7 +98,7 @@ golden set 이전에도 **기존 S 217장으로 부트스트랩**한다.
 
 - [ ] 성공 recipe 후보 목록 선정 (부트스트랩 ~10 → 사용가능 ~30, recipe 당 ≥ 8~10 S, wafer/lot/시간 분산)
 - [ ] `align_images_golden/<eqp>/<class>/<recipe>/{align_img_from_rcp, align_img_from_msr}` 적재 (사용자 직접)
-- [ ] `success_vs_fail_compare.py` 구현 (+ Mac 합성 self-test)
+- [x] `success_vs_fail_compare.py` 구현 (+ Mac 합성 self-test 통과, 2026-06-02)
 - [ ] golden 실행 → healthy 상대 ratio·S-internal CV 분포 측정
 - [ ] `RELATIVE_STALE_RATIO` / `S_INCONSISTENT_CV` 를 실측 percentile 로 확정
 - [ ] 거짓 양성 0 검증 (golden rcp 가 stale 로 안 찍히는지)

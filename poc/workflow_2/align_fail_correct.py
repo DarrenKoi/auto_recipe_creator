@@ -131,43 +131,31 @@ def key_visibility_gate(result: AlignKeyMatchResult) -> bool:
 
 
 def extract_annotation_box(gray: np.ndarray) -> tuple[int, int, int, int] | None:
-    """등록 이미지에 엔지니어가 그린 사각형 주석의 *내부* bbox 를 추정한다.
+    """등록 이미지에 엔지니어가 그린 흰색 unique-area 박스의 *inset 내부* bbox 를 추정한다.
 
-    엔지니어 박스(와 crosshair)는 **흰색**이고 SEM 은 grey 이미지라, 밝은 사각형으로
-    또렷이 그려져 있다(burned-in). 가장 큰 사각형 윤곽을 찾아 그 내부를 반환한다.
-    반환 (left, top, right, bottom) 또는 None.
+    검출/inset 로직은 ``align_point_correction`` 의 canonical 구현
+    (``_detect_white_box`` + ``_inner_crop_for_box``) 에 위임한다 — top-hat → Otsu →
+    hollowness/edge-margin/aspect gate 로 거른 뒤, 박스 stroke (보통 1~3 px) 두께만큼
+    안쪽으로 깎은 영역만 남긴다. 흰 박스 outline 픽셀이 template 에 새어들어 매칭이
+    흰색을 좇으며 점수가 떨어지는 것을 막는다. ``align_similarity`` 도 같은 경로를 쓴다.
 
-    주의: **미보정(uncalibrated)** 추정이다. align key 자체가 box-in-box 모양일 수
-    있어 주석 사각형과 혼동될 수 있으므로, 실제 오피스 파일로 검증하기 전까지는
+    이 모듈에 따로 있던 approxPolyDP 기반 복제 검출기를 제거하고 단일화한 것이다
+    (얇은 outline 에서 4-코너 근사가 자주 실패하던 약점을 canonical gate 가 보완).
+
+    반환: inset 적용된 내부 bbox ``(left, top, right, bottom)`` 또는 None.
+
+    주의: align key 자체가 box-in-box 모양이면 주석 박스와 혼동될 수 있어 여전히
+    **미보정(uncalibrated)** 이다. 실제 오피스 파일로 검증하기 전까지는
     ``CorrectionConfig.crop_template_to_box`` 기본값(off)으로 두고 전체 이미지를 쓴다.
     """
-    h, w = gray.shape[:2]
-    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    contours, _ = cv2.findContours(thresh, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-    best: tuple[int, int, int, int] | None = None
-    best_area = 0.0
-    img_area = float(w * h)
-    for cnt in contours:
-        peri = cv2.arcLength(cnt, True)
-        approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
-        if len(approx) != 4 or not cv2.isContourConvex(approx):
-            continue
-        bx, by, bw, bh = cv2.boundingRect(approx)
-        area = float(bw * bh)
-        # 전체 이미지 테두리(>90%)나 너무 작은(<2%) 사각형은 제외.
-        if area >= 0.90 * img_area or area <= 0.02 * img_area:
-            continue
-        if area > best_area:
-            best_area = area
-            # 선 두께만큼 안쪽으로 살짝 들여 *내부* 만 남긴다.
-            pad = max(2, int(round(0.01 * (bw + bh) / 2)))
-            left, top = bx + pad, by + pad
-            right, bottom = min(w, bx + bw - pad), min(h, by + bh - pad)
-            # 너무 얇은 박스는 pad 로 좌표가 뒤집힐 수 있다 → 그 땐 padding 없이 사용.
-            if right - left < 4 or bottom - top < 4:
-                left, top, right, bottom = bx, by, min(w, bx + bw), min(h, by + bh)
-            best = (left, top, right, bottom)
-    return best
+    # align_similarity 와 동일한 lazy import 패턴 — 모듈 로드 순서 의존 회피.
+    from poc.workflow_2.align_point_correction import _detect_white_box, _inner_crop_for_box
+
+    box = _detect_white_box(gray)
+    if box is None:
+        return None
+    _inner_gray, (ix, iy, iw, ih) = _inner_crop_for_box(gray, box)
+    return (int(ix), int(iy), int(ix + iw), int(iy + ih))
 
 
 def _load_template(path: Path, *, recipe_id: str, key_type: str, crop_to_box: bool) -> AlignKeyTemplate:

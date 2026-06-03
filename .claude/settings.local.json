@@ -36,7 +36,9 @@
       "Skill(codex:rescue)",
       "Skill(update-config)",
       "Bash(bash -n .claude/hooks/auto-commit-push.sh)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(node *)",
+      "Bash(git pull *)"
     ]
   },
   "prefersReducedMotion": true

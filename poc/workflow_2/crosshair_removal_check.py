@@ -42,6 +42,9 @@ MASK_MARGIN_PX = 4
 # band 추정이 없거나 비정상일 때 기본 반두께(px).
 DEFAULT_HALF_PX = 3
 INPAINT_RADIUS = 4
+# 강화 검증 — 제거 band 의 Canny edge 밀도가 인접 평행 band 대비 이 배 이하여야 깔끔(seam/ghost 탐지).
+# 잔존 밝은 픽셀 count 만으로는 어두운 이음새/고스트를 놓치므로, edge 밀도 비를 보조 지표로 쓴다.
+EDGE_BAND_RATIO_MAX = 1.8
 
 
 def _line_half_thickness(line_info: dict) -> int:
@@ -71,6 +74,34 @@ def _residual_along_lines(gray: np.ndarray, cx: int, cy: int, half: int, thr: in
     return int((band >= thr).sum())
 
 
+def _edge_band_ratio(img: np.ndarray, cx: int, cy: int, half_h: int, half_v: int) -> float:
+    """제거 band 의 Canny edge 밀도 ÷ 인접 평행 band 의 edge 밀도 (가로·세로 중 큰 값).
+
+    inpaint 가 깔끔하면 선 자리의 edge 밀도가 주변 텍스처와 비슷(비≈1). 이음새(seam)나
+    고스트가 남으면 그 자리만 edge 가 튀어 비가 커진다 — 밝은-잔존-픽셀 count 가 0 이어도
+    잡지 못하는 *어두운* 이음새를 보완하는 지표다.
+    """
+    edges = (cv2.Canny(img, 50, 150) > 0).astype(np.float32)
+    h, w = edges.shape[:2]
+
+    def density(y0: int, y1: int, x0: int, x1: int) -> float:
+        sub = edges[max(0, y0):min(h, y1), max(0, x0):min(w, x1)]
+        return float(sub.mean()) if sub.size else 0.0
+
+    eps = 1e-6
+    # 가로선: 제거 band vs 위/아래 평행 band.
+    off_h = max(6, 3 * half_h)
+    rem_h = density(cy - half_h, cy + half_h + 1, 0, w)
+    nb_h = 0.5 * (density(cy - half_h - off_h, cy + half_h + 1 - off_h, 0, w)
+                  + density(cy - half_h + off_h, cy + half_h + 1 + off_h, 0, w))
+    # 세로선: 제거 band vs 좌/우 평행 band.
+    off_v = max(6, 3 * half_v)
+    rem_v = density(0, h, cx - half_v, cx + half_v + 1)
+    nb_v = 0.5 * (density(0, h, cx - half_v - off_v, cx + half_v + 1 - off_v)
+                  + density(0, h, cx - half_v + off_v, cx + half_v + 1 + off_v))
+    return max(rem_h / (nb_h + eps), rem_v / (nb_v + eps))
+
+
 def _process(path: Path, out_dir: Path) -> dict:
     gray = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
     if gray is None:
@@ -97,14 +128,25 @@ def _process(path: Path, out_dir: Path) -> dict:
     mask = _build_cross_mask(gray.shape, cx, cy, half_h, half_v)
     inpainted = cv2.inpaint(gray, mask, INPAINT_RADIUS, cv2.INPAINT_TELEA)
 
-    # 검증 지표: inpaint 후 십자 자리의 밝은 잔존 픽셀(낮을수록 깔끔).
+    # 검증 지표 1: inpaint 후 십자 자리의 밝은 잔존 픽셀(낮을수록 깔끔).
     sat = res.debug.get("sat_thresh", 215)
     half = max(half_h, half_v)
     resid_before = _residual_along_lines(gray, cx, cy, half, sat)
     resid_after = _residual_along_lines(inpainted, cx, cy, half, sat)
+    clean_resid = resid_after <= max(5, int(0.05 * resid_before))
+
+    # 검증 지표 2 (Codex 강화): inpaint 후 *재검출* — 선이 남아 있으면 다시 검출된다.
+    re_res = detect_crosshair(inpainted)
+    redetected = re_res.xy is not None
+
+    # 검증 지표 3 (Codex 강화): 제거 band edge 밀도 / 인접 band — seam·ghost 탐지.
+    edge_ratio = _edge_band_ratio(inpainted, cx, cy, half_h, half_v)
+
+    removed_ok = clean_resid and (not redetected) and (edge_ratio <= EDGE_BAND_RATIO_MAX)
     rec.update({"half_h": half_h, "half_v": half_v,
                 "resid_before": resid_before, "resid_after": resid_after,
-                "removed_ok": resid_after <= max(5, int(0.05 * resid_before))})
+                "clean_resid": clean_resid, "redetected": redetected,
+                "edge_band_ratio": round(edge_ratio, 2), "removed_ok": removed_ok})
 
     # overlay: 검출된 full-span 선(초록).
     cv2.line(overlay, (0, cy), (w - 1, cy), (60, 220, 60), 1, cv2.LINE_AA)
@@ -116,7 +158,8 @@ def _process(path: Path, out_dir: Path) -> dict:
 
     verdict = "OK(제거됨)" if rec["removed_ok"] else "WARN(잔존)"
     print(f"[INFO] {path.name} {w}x{h}  xy=({cx},{cy}) conf={res.confidence:.2f}  "
-          f"half=(h{half_h},v{half_v})  resid {resid_before}→{resid_after} → {verdict}")
+          f"half=(h{half_h},v{half_v})  resid {resid_before}→{resid_after}  "
+          f"redetect={'Y' if redetected else 'N'}  edge_ratio={edge_ratio:.2f} → {verdict}")
     return rec
 
 

@@ -152,6 +152,19 @@ RCP_BOX_FRAME_MIN_RATIO = 0.55     # 밝은 픽셀 중 테두리 band 에 있는
 RCP_BOX_SIDE_MIN_COVERAGE = 0.5    # 네 변 각각 band 가 변 길이의 이 비율 이상 덮여야(닫힌 사각형).
 RCP_BOX_APPROX_MAX_VERTICES = 8    # approxPolyDP 꼭짓점 상한 — 사각형(~4)은 통과, wavy 는 다수.
 
+# rcp 박스 photometric(고정 채도값) 검출 — 1차 검출기 (실측 근거, 2026-06-03).
+# 소프트웨어가 그린 annotation overlay 는 *고정 디지털 값*(합성 샘플에선 정확히 255)으로 렌더되어
+# 물리적 SEM feature(연속·노이즈·비포화, 최댓값 ~239 이하)와 히스토그램상 *분리된 섬(island)* 을
+# 이룬다. 기존 adaptive(top-hat+Otsu)는 이 고정값 신호를 상대화로 버려 소자 라인을 mask 에 들여
+# 6장 중 1장만 검출했다. photometric 은 그 섬만 골라 6/6 검출(검증). 섬이 없으면 adaptive 폴백.
+# 실 office 이미지에서 overlay 가 255 가 아니거나 anti-alias/JPEG 로 252~255 클러스터가 되면
+# notch 가 그 클러스터를 통째로 잡으므로 그대로 동작한다 — office 에서 GAP/MASS 만 튜닝하면 된다.
+RCP_BOX_SAT_NOTCH_GAP = 8          # 최상단 밝기 클러스터가 그 아래 점유 bin 과 이 이상 떨어져야 'overlay 섬'.
+RCP_BOX_SAT_MIN_MASS = 0.0002      # overlay 클러스터 픽셀이 전체의 이 비율 이상이어야(미세 spec 거부).
+RCP_BOX_SAT_MAX_MASS = 0.02        # 이 비율 초과면 overlay 가 아닌 큰 포화 영역 — photometric 포기(→폴백).
+RCP_BOX_SAT_SCAN_FLOOR = 200       # 이 값 미만은 overlay 후보로 보지 않는다(SEM 내용과 구분되는 밝은 영역만).
+RCP_BOX_SAT_CLOSE_KERNEL = 5       # stroke anti-alias 끊김을 잇는 MORPH_CLOSE 커널 한 변(px).
+
 # 박스 검출 실패시 fallback — 이미지 중심을 중심으로 *면적 기준 15%* 의 crop 을 template 으로 쓴다.
 # 각 변은 sqrt(0.15) ≈ 0.387 비율. 전체 이미지를 쓰는 것보다 매칭이 unique 영역 (= 이미지 중심부)
 # 에 집중되고, align_offset 은 (0,0) 그대로 유지되어 좌표 계산이 단순하다. 20% 는 여전히
@@ -397,32 +410,18 @@ def _rect_frame_ok(binary: np.ndarray, contour: np.ndarray,
     return True
 
 
-def _detect_white_box(gray: np.ndarray) -> tuple[int, int, int, int] | None:
-    """rcp 이미지에서 엔지니어가 그려둔 흰색 unique-area 박스의 bbox 를 추정한다.
+def _select_box_from_mask(
+    binary: np.ndarray,
+    contours: list,
+    h: int,
+    w: int,
+) -> tuple[int, int, int, int] | None:
+    """이진 mask + 그 외곽 contour 들에서, 모든 박스 게이트를 통과한 가장 큰 bbox 를 고른다.
 
-    가정: 박스는 1~3 px 두께의 흰색 *축정렬 사각형* outline 이며 배경보다 밝다.
-    1. Top-hat 으로 자연 feature 를 죽이고 얇고 밝은 구조만 남긴다.
-    2. Otsu 이진화 → 짧은 dilation 으로 outline 의 모서리를 닫는다.
-    3. 면적/짧은 변/가장자리/종횡비/hollow 조건 + **직사각형 게이트**(`_rect_frame_ok`)를
-       모두 통과한 후보 중 가장 큰 것을 채택한다. 직사각형 게이트가 busy SEM 의 소자
-       패턴(구불구불한 밝은 선)을 박스로 오인하는 것을 막는 핵심이다.
-
-    반환: (x, y, w, h) bbox 또는 None.
+    photometric / adaptive 두 검출 경로가 *동일한* 기하 게이트(면적·짧은 변·가장자리·종횡비·
+    hollow·직사각형 frame)를 공유하도록 추출한 헬퍼. 게이트 자체는 mask 가 어떻게 만들어졌는지
+    와 무관하므로, front-end(어떻게 밝은 픽셀을 골랐나)만 갈아끼우면 된다.
     """
-    h, w = gray.shape[:2]
-    kernel = np.ones((TOPHAT_KERNEL, TOPHAT_KERNEL), np.uint8)
-    tophat = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, kernel)
-    if int(tophat.max()) == 0:
-        return None
-
-    _thr, mask = cv2.threshold(tophat, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-    mask = cv2.dilate(mask, np.ones((3, 3), np.uint8), iterations=1)
-    binary = (mask > 0).astype(np.uint8)
-
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return None
-
     total_area = float(h * w)
     short_side = min(h, w)
     best: tuple[int, int, int, int] | None = None
@@ -458,6 +457,111 @@ def _detect_white_box(gray: np.ndarray) -> tuple[int, int, int, int] | None:
             best_area = area
             best = (int(x), int(y), int(bw), int(bh))
     return best
+
+
+def _detect_overlay_saturation(gray: np.ndarray) -> int | None:
+    """히스토그램 상단에서 '고립된 밝은 섬'(=annotation overlay 의 고정 렌더값)의 하한을 찾는다.
+
+    소프트웨어가 그린 박스/십자선은 한 고정 디지털 값으로 칠해져, 연속적인 물리 SEM 명암
+    분포 위에 *gap 으로 분리된 작은 봉우리* 로 나타난다. 그 봉우리(섬)의 하한을 임계로 쓰면
+    소자 라인을 들이지 않고 overlay 만 골라낼 수 있다.
+
+    절차:
+      1. 상위 bin(255 → SCAN_FLOOR)을 훑어 가장 높은 점유 bin(top)을 찾는다.
+      2. top 아래로 인접 점유 bin 간 간격이 NOTCH_GAP 이하인 동안 한 클러스터로 묶는다
+         (anti-alias/JPEG 로 252~255 처럼 여러 값에 걸쳐도 통째로 포함).
+      3. 클러스터 바로 아래에 NOTCH_GAP 이상의 빈 구간(notch)이 있어야 '섬'으로 인정.
+      4. 클러스터 질량(픽셀 비율)이 stroke 수준(MIN~MAX_MASS)일 때만 클러스터 하한을 반환.
+
+    섬이 없거나(연속 분포) 질량이 범위 밖이면 None → 호출부가 adaptive 검출로 폴백한다.
+    """
+    total = float(gray.size)
+    hist = np.bincount(gray.ravel(), minlength=256)
+    # 1) 최상단 점유 bin.
+    occupied_top = [v for v in range(255, RCP_BOX_SAT_SCAN_FLOOR - 1, -1) if hist[v] > 0]
+    if not occupied_top:
+        return None
+    top = occupied_top[0]
+    # 2) top 아래로 작은 간격이면 같은 클러스터로 흡수.
+    cluster_low = top
+    mass = int(hist[top])
+    prev = top
+    for v in occupied_top[1:]:
+        if prev - v > RCP_BOX_SAT_NOTCH_GAP:
+            break
+        cluster_low = v
+        mass += int(hist[v])
+        prev = v
+    # 3) 클러스터 아래의 notch 확인 — 전체 범위에서 가장 가까운 점유 bin 까지의 간격.
+    below = next((v for v in range(cluster_low - 1, -1, -1) if hist[v] > 0), None)
+    if below is not None and (cluster_low - below) < RCP_BOX_SAT_NOTCH_GAP:
+        return None  # bulk 와 분리되지 않음 → overlay 섬이 아님.
+    # 4) 질량 게이트.
+    frac = mass / total
+    if frac < RCP_BOX_SAT_MIN_MASS or frac > RCP_BOX_SAT_MAX_MASS:
+        return None
+    return int(cluster_low)
+
+
+def _detect_white_box_photometric(gray: np.ndarray) -> tuple[int, int, int, int] | None:
+    """1차 검출기 — overlay 의 *고정 채도값* 섬만 골라 박스를 잡는다.
+
+    adaptive(top-hat+Otsu)가 상대 임계로 소자 라인을 들여 실패하던 문제를, "overlay 는
+    히스토그램상 분리된 고정값" 이라는 photometric 불변량으로 우회한다(2026-06-03 실측: 6/6).
+    섬이 없으면 None → `_detect_white_box` 가 adaptive 로 폴백.
+    """
+    sat_low = _detect_overlay_saturation(gray)
+    if sat_low is None:
+        return None
+    h, w = gray.shape[:2]
+    mask = cv2.inRange(gray, int(sat_low), 255)
+    k = RCP_BOX_SAT_CLOSE_KERNEL
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((k, k), np.uint8))
+    binary = (mask > 0).astype(np.uint8)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+    return _select_box_from_mask(binary, contours, h, w)
+
+
+def _detect_white_box_adaptive(gray: np.ndarray) -> tuple[int, int, int, int] | None:
+    """폴백 검출기 — top-hat + Otsu (상대 임계).
+
+    overlay 가 고정 채도 섬을 이루지 않는 경우(저대비·연속 분포)에 대비한 기존 경로.
+    busy SEM 에선 소자 라인을 들여 검출률이 낮지만(1/6), photometric 이 못 잡는 케이스의
+    안전망으로 유지한다.
+    """
+    h, w = gray.shape[:2]
+    kernel = np.ones((TOPHAT_KERNEL, TOPHAT_KERNEL), np.uint8)
+    tophat = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, kernel)
+    if int(tophat.max()) == 0:
+        return None
+
+    _thr, mask = cv2.threshold(tophat, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    mask = cv2.dilate(mask, np.ones((3, 3), np.uint8), iterations=1)
+    binary = (mask > 0).astype(np.uint8)
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+    return _select_box_from_mask(binary, contours, h, w)
+
+
+def _detect_white_box(gray: np.ndarray) -> tuple[int, int, int, int] | None:
+    """rcp 이미지에서 엔지니어가 그려둔 흰색 unique-area 박스의 bbox 를 추정한다.
+
+    가정: 박스는 1~3 px 두께의 흰색 *축정렬 사각형* outline 이며 배경보다 밝다.
+    검출은 2단계 — (1) photometric: overlay 의 고정 채도값 섬만 골라 잡는다(주 경로,
+    실측 6/6). 섬이 없으면 (2) adaptive: top-hat+Otsu 로 폴백한다(저대비/연속 분포 대비).
+    두 경로 모두 동일한 기하 게이트(`_select_box_from_mask`)를 통과한 가장 큰 bbox 를 채택해
+    busy SEM 의 소자 패턴 오검출을 막는다.
+
+    반환: (x, y, w, h) bbox 또는 None.
+    """
+    box = _detect_white_box_photometric(gray)
+    if box is not None:
+        return box
+    return _detect_white_box_adaptive(gray)
 
 
 def _stroke_threshold(region: np.ndarray) -> int:
@@ -1380,7 +1484,16 @@ def _process_msr_image(
             "overlay_path": str(overlay_path),
         }
 
-    crosshair_xy, crosshair_conf, _crosshair_debug = _detect_existing_crosshair(frame_gray)
+    # crosshair 검출은 검증된 v2(`detect_crosshair`: 절대 saturation ladder + 방향성
+    # morphology, 합성 6/6)를 쓴다. 구버전 `_detect_existing_crosshair`(top-hat+projection)는
+    # crosshair_detect.py 의 probe 비교용으로만 남겨 둔다. align_similarity 와 동일하게
+    # 로컬 import 로 순환참조를 피한다.
+    from poc.workflow_2.crosshair_detect import detect_crosshair
+
+    _crosshair_res = detect_crosshair(frame_gray)
+    crosshair_xy = _crosshair_res.xy
+    crosshair_conf = _crosshair_res.confidence
+    _crosshair_debug = _crosshair_res.debug
     race = _race_templates(om_bundle, sem_bundle, frame_gray, crosshair_xy=crosshair_xy)
 
     # OCR — race 결과를 *덮어쓰지 않고* 보조 힌트로만 기록 (단, 비자신 status 에서는 tiebreak).

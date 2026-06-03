@@ -76,16 +76,35 @@ photometric 의 전제는 "overlay 가 고정 디지털 값으로 렌더돼 히�
   A/B 에서 신규 검출이 우세하면, align_similarity 의 무거운 metric 탐색을 단순한 검출-기반 신뢰도로 대체하는 안 검토.
 - 폐기 이력 참고(반복 금지): reranker(MI·contour) A/B 실패 — `docs/study/reranker_ab_failure_analysis.md`.
 
-## 4. 다음 세션이 쓰면 좋은 스킬
+## 4. VLM+CV 백업 — escalation 설계 (계획 · 미구현, 사용자: "leave it as a plan")
+
+순수 CV(신규)가 실패하는 케이스의 안전망. **always-on 병렬이 아니라 gated escalation** 으로 둔다.
+구현은 **ablation 결과로 필요량을 가늠한 뒤** 결정(아래 "sizing"). 워크스트림 규칙 준수:
+*"VLM 이 영역, CV 가 좌표"* — VLM 은 영역/실행가능성만, **최종 좌표·반복 stage 전이는 CV** (2026-05-25 확정).
+
+- **왜 필요**: 순수 CV 가 못 지우는 실패 모드가 실재한다(align_similarity 진단이 입증) — photometric box 미검출
+  (저대비/anti-alias overlay), flat chamfer / not-distinctive(reranker A/B 실패로 MI·contour 로는 못 메움),
+  reference staleness, focus blur. 이때 *틀린 좌표를 내지 말고* escalate 해야 한다(좌표 권위 원칙).
+- **트리거(이미 존재하는 신호 재사용)**: 흰 box 미검출(center-crop 폴백) / status ∈ {`not_distinctive`,
+  `low_match_both`, `ambiguous_modality`} → escalate. score ≥ adjust_threshold & distinctive → CV 신뢰, VLM 미호출.
+- **동작**: ① VLM 이 msr FOV 에서 align-key 영역(또는 not-present/infeasible) 식별 → ROI narrow.
+  ② 기존 matcher 를 그 ROI 로 제한해 정밀 좌표 산출. VLM 답이 **낮은 CV 점수를 override 못 함**.
+- **기반 스캐폴딩**: `vlm_align_key_box.py`, `vlm_sem_monitor_box.py`(부분 구현, CLAUDE.md). Flask VLM proxy 필요 →
+  **office-only · 느림** → escalation 전용(default 아님).
+- **Sizing(언제·얼마나)**: §2.2 ablation 의 *잔여 실패율*(box+inpaint 에서도 at_crosshair bACC / gt-topK 낮은
+  recipe 비율)이 곧 필요량. 대부분 통과 → tail 안전망(lean). 다수 실패 → load-bearing(정식 구축).
+
+## 5. 다음 세션이 쓰면 좋은 스킬
 
 - **`tdd`** 또는 throwaway 우선: A/B 하니스는 throwaway 라 TDD 불필요하지만, production 교체 시점엔 회귀 테스트 추가.
 - **`codex:rescue`**: 실데이터 결과 해석 / 게이트 튜닝 2차 의견 (이번 세션에서 유효; 토큰 만료 시 `!codex login`).
 - 작업 마무리 시 **저널 작성**(이 폴더 규칙) + 메모리 갱신([[photometric-box-home-validated-only]] 를 office 결과로 업데이트).
 
-## 5. 시작 체크리스트 (다음 세션)
+## 6. 시작 체크리스트 (다음 세션)
 
 1. `git pull` 최신화. `align_images/` 트리 존재 확인(오피스만).
 2. §2.1 overlay 값 히스토그램 1회 확인 → photometric 전제 성립 여부 판단.
-3. §2.2 `office_method_ab_test.py` 구현 → 실행 → overlay 육안 + summary 판정.
+3. §2.2 `uv run python poc/workflow_2/align_index_ablation.py` 실행 → summary VERDICT(OLD vs NEW bACC) 확인.
 4. 우세하면: 정식 채택 + §3 align_similarity 교체 설계 + 메모리/저널 갱신.
    열세/혼조면: §2.3 게이트 스윕으로 캘리브레이션 후 재판정.
+5. 잔여 실패율로 §4 VLM 백업 필요량 판단(필요시에만 구축).

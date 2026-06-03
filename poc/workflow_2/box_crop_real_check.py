@@ -6,8 +6,9 @@
 있다 — 이 체커는 그 조건에서 검출/크롭이 버티는지(또는 어디서 깨지는지)를 사람이 overlay
 로 보게 한다.
 
-입력: poc/workflow_2/templates/created_by_myself/*.png  (인터넷 SEM + 인위 삽입 흰 box)
-출력: debug_images/box_crop_real_check/<timestamp>/<stem>/  overlay·crop·report
+입력: poc/workflow_2/templates/whitebox_samples/*.png  (인터넷 SEM + 인위 삽입 흰 box)
+출력: templates/box_crop_results/<timestamp>/  <stem>_overlay·_mask·_crop.jpg + report.json
+      (crosshair_removal_results 와 동일한 flat 레이아웃)
 
 실행
 ----
@@ -25,7 +26,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from poc.workflow_2 import DEBUG_IMAGE_DIR, WORKFLOW_2_DIR
+from poc.workflow_2 import WORKFLOW_2_DIR
 from poc.workflow_2.align_point_correction import (
     _detect_white_box,
     _inner_crop_for_box,
@@ -33,8 +34,8 @@ from poc.workflow_2.align_point_correction import (
 )
 from poc.workflow_1.util.time_utils import make_timestamp_tag
 
-INPUT_DIR = WORKFLOW_2_DIR / "templates" / "created_by_myself"
-OUTPUT_ROOT = DEBUG_IMAGE_DIR / "box_crop_real_check"
+INPUT_DIR = WORKFLOW_2_DIR / "templates" / "whitebox_samples"
+OUTPUT_ROOT = WORKFLOW_2_DIR / "templates" / "box_crop_results"
 
 _BGR_YELLOW = (40, 220, 220)   # 검출된 흰 box.
 _BGR_GREEN = (60, 200, 60)     # inner crop.
@@ -42,6 +43,21 @@ _BGR_GREEN = (60, 200, 60)     # inner crop.
 
 def _to_bgr(gray: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+
+
+def _build_box_mask(shape, box, inner) -> np.ndarray:
+    """검출된 흰 box 의 *stroke ring*(바깥 box − 안쪽 crop)을 255 로 채운 uint8 mask.
+
+    crosshair 의 full-span band mask 와 같은 역할(제거 대상 픽셀 표시)이지만, box 는
+    inpaint 가 아니라 crop 으로 제거하므로 mask 는 검증·시각화 용도다.
+    """
+    h, w = shape[:2]
+    mask = np.zeros((h, w), np.uint8)
+    bx, by, bw, bh = box
+    mask[by:by + bh, bx:bx + bw] = 255       # 바깥 box 채움.
+    ix, iy, iw, ih = inner
+    mask[iy:iy + ih, ix:ix + iw] = 0         # 안쪽 crop 영역을 빼 stroke ring 만 남김.
+    return mask
 
 
 def _save_jpeg(img: np.ndarray, path: Path) -> None:
@@ -88,6 +104,8 @@ def _process(path: Path, out_dir: Path) -> dict:
             "crop_max": crop_max,
             "white_line_removed": white_clean,
         })
+        mask = _build_box_mask(gray.shape, box, inner)
+        _save_jpeg(mask, out_dir / f"{path.stem}_mask.jpg")
         _save_jpeg(_to_bgr(crop), out_dir / f"{path.stem}_crop.jpg")
         verdict = "OK(흰 선 제거)" if white_clean else "WARN(흰 선 잔존)"
         print(f"[INFO] {path.name} {w}x{h}  box={box}  inner={inner}  "
@@ -113,7 +131,7 @@ def run() -> str:
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"[INFO] {len(images)}장 처리 → {out_dir}")
 
-    records = [_process(p, out_dir / p.stem) for p in images]
+    records = [_process(p, out_dir) for p in images]
     detected = sum(1 for r in records if r.get("detected_box"))
     clean = sum(1 for r in records if r.get("white_line_removed"))
     print(f"[INFO] 검출 {detected}/{len(images)}  |  흰선제거 OK {clean}/{detected if detected else 0}")

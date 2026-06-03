@@ -30,12 +30,12 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from poc.workflow_2 import DEBUG_IMAGE_DIR, WORKFLOW_2_DIR
+from poc.workflow_2 import WORKFLOW_2_DIR
 from poc.workflow_2.crosshair_detect import detect_crosshair
 from poc.workflow_1.util.time_utils import make_timestamp_tag
 
 INPUT_DIR = WORKFLOW_2_DIR / "templates" / "crosshair_samples"
-OUTPUT_ROOT = DEBUG_IMAGE_DIR / "crosshair_removal_check"
+OUTPUT_ROOT = WORKFLOW_2_DIR / "templates" / "crosshair_removal_results"
 
 # 선 두께(band) 위에 추가로 덮을 여유(px) — anti-alias 잔광 + 약간의 번짐 대비.
 MASK_MARGIN_PX = 4

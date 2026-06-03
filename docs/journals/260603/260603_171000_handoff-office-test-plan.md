@@ -34,26 +34,27 @@ photometric 의 전제는 "overlay 가 고정 디지털 값으로 렌더돼 히�
 - 있으면 photometric 그대로 동작(`_detect_overlay_saturation` 가 클러스터를 잡음). 없으면 adaptive 폴백.
 - 안 맞으면 `RCP_BOX_SAT_NOTCH_GAP`(기본 8, 범위 4~16) / `RCP_BOX_SAT_MIN_MASS`·`MAX_MASS` 만 조정.
 
-### 2.2 제안 — standalone old/new A/B 하니스 (다음 세션이 구현)
+### 2.2 BUILT — index ablation 하니스 `poc/workflow_2/align_index_ablation.py`
 
-> 이전 세션에서 작성 직전 사용자가 "나중에 테스트" 로 보류함. 아래 설계대로 만들면 된다.
-> 파일(제안): `poc/workflow_2/office_method_ab_test.py` (throwaway, no argparse, 상수 설정, Korean docstring).
+> 구현 완료(2026-06-03). 인자 없이 `uv run python poc/workflow_2/align_index_ablation.py`.
+> (파일명에 `office_` 접두 금지 — .gitignore `**/office_*` 가 잡아 untracked 됨.)
+> import/무데이터 graceful 종료까지 home 검증됨. **실데이터 path 는 오피스 첫 실행에서 확인.**
 
-- **자산 해석**: 완전 override env(`ALIGN_EQP_ID`+`ALIGN_CLASS_NAME`+`ALIGN_RECIPE_NAME`) 있으면 단일,
-  없으면 `iter_recipe_dirs()` 전체. `resolve_assets()` / `iter_msr_images()` / `load_gray()` 사용
-  (API 는 `poc/workflow_2/align_fail_assets.py` 참조).
-- **Box A/B** (rcp: `recipe_om`, `recipe_sem`): 이미지마다
-  `_detect_overlay_saturation`, `_detect_white_box_photometric`, `_detect_white_box_adaptive` 를 각각 돌려
-  기록: sat 값, photo bbox, adaptive bbox, production 선택(photo 우선), 둘 다 있으면 IoU.
-  overlay 저장(photo=초록, adaptive=빨강). 분류: both / photo_only(=신규 회복) / adaptive_only(=신규 회귀, ⚠️) / neither.
-- **Crosshair A/B** (msr 전체): 이미지마다 `detect_crosshair`(v2) 와 `_detect_existing_crosshair`(old) 둘 다 돌려
-  기록: v2_xy/conf/reason, old_xy/conf, 둘 다 있으면 center 거리, 파일 라벨(`_tool_label` S/E).
-  overlay 저장(v2=초록, old=빨강). 분류: both / v2_only / old_only / neither.
-- **출력**: `DEBUG_IMAGE_DIR/office_method_ab/<ts>/` 에 per-recipe overlay + `report.json` + `summary.json`,
-  stdout 에 verdict(검출 수 old vs new, 신규 회복/회귀 건수, S/E 별 분리).
-- **판정 기준**: box 는 photo_only > adaptive_only 이고 photo 검출수 ≥ adaptive 면 신규 우세.
-  crosshair 는 v2 검출수 ≥ old 이고 S 에서 검출, E 에서 과검출 없음이면 v2 우세.
-  **오크롭/오검출보다 no-detect(폴백) 선호** — CV 좌표 권위 원칙(틀린 template 은 downstream 전체 오염).
+핵심 아이디어 = **2×2 factorial ablation** 으로 "흰 box 제거 + crosshair 제거" 두 변수를 분리해, `align_similarity`
+와 **동일 지표**(S/E 분리 balanced accuracy + gt-in-topK recall)가 오르는지 같은 잣대로 잰다. 지표 함수
+(`_separation`, `_gt_in_topk`, `_race`, `_window_roi`, `_build_templates`)를 align_similarity 에서 그대로 import
+→ 정의 표류 없음.
+
+- 축: template = center(구) | box(신, photometric 깨끗 crop); frame = raw(crosshair 있음) | inpaint(crosshair 제거).
+  - `center__raw` = OLD baseline, `box__raw` = clean-tpl only, `center__inpaint` = crosshair-only, `box__inpaint` = NEW.
+- 셀마다 free / at_center / at_crosshair align score 의 S/E 분리 + gt-in-topK. **at_crosshair bACC** 가 주 변별자.
+- 자산: 완전 override env 면 단일 recipe, 아니면 `iter_recipe_dirs()` 전체.
+- 출력: `DEBUG_IMAGE_DIR/office_ablation/<ts>/{rows.jsonl, summary.json}` + stdout 표 + **VERDICT**
+  (OLD center+raw vs NEW box+inpaint 의 bACC delta).
+- 판정: NEW bACC > OLD 면 교체 근거. box 셀 비면 photometric 미검출(폴백) → §2.1 overlay 값 확인.
+
+> (선택) 검출-레벨 overlay A/B(photometric vs adaptive 박스, v2 vs old crosshair 그림 비교)는 보조 도구로
+> 추후 필요시. 위 index ablation 이 "지표가 오르나?" 라는 본 질문에 직접 답하므로 1순위.
 
 ### 2.3 Codex 검증 계획 (전체 파이프라인 캘리브레이션 — A/B 다음 단계)
 

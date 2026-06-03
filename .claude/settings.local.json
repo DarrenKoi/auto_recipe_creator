@@ -38,7 +38,8 @@
       "Bash(bash -n .claude/hooks/auto-commit-push.sh)",
       "Bash(git push *)",
       "Bash(node *)",
-      "Bash(git pull *)"
+      "Bash(git pull *)",
+      "Bash(git log *)"
     ]
   },
   "prefersReducedMotion": true

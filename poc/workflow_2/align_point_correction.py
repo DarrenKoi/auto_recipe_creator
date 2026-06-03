@@ -134,6 +134,24 @@ RCP_BOX_MAX_ASPECT = 3.0
 # 이 px 만큼 가장자리에서 떨어져 있어야 정상 박스로 인정한다.
 RCP_BOX_EDGE_MARGIN_PX = 2
 
+# rcp 흰 box 내부 crop 파라미터 — stroke(흰 선)를 단 1px도 남기지 않기 위한 값들.
+# 고정 inset(RCP_BOX_INSET_PX)만으로는 검출 bbox 가 Otsu+dilation 으로 stroke 바깥쪽까지
+# 부풀어 반대편 흰 선을 못 피하는 경우가 있다(합성 검증, 2026-06-03). 그래서 inner-hole
+# contour 로 ring 안쪽을 기하학적으로 잡고, bright-border trim 으로 잔존 흰 선을 보장 제거한다.
+RCP_BOX_STROKE_REL = 0.85          # box 영역 최댓값 대비 이 비율 이상이면 'stroke(흰 선)'.
+RCP_BOX_STROKE_MIN_LEVEL = 180     # stroke 임계 절대 하한 — 어두운 box 를 흰 선으로 오인 방지.
+RCP_BOX_SAFETY_PX = 1              # inner-hole/trim 후 anti-alias 잔광 대비 추가 여유.
+RCP_BOX_MIN_INNER_PX = 8           # 내부가 이보다 작아지면 trim 중단(과도 축소 방지).
+
+# rcp 박스 직사각형 게이트 — busy SEM 에서 소자 패턴(구불구불한 밝은 선)을 박스로 오인하지
+# 않도록, 후보 contour 가 *축정렬 사각형 frame* 인지 검사한다 (실제 SEM 검증, 2026-06-03).
+# 핵심 단서: 삽입/엔지니어 박스는 4변이 곧은 사각형이라 (1) 밝은 픽셀이 bbox 테두리 band 에
+# 몰려 있고(내부는 비어 있음), (2) 네 변이 모두 길게 이어진다. wavy 소자 덩어리는 둘 다 깨진다.
+RCP_BOX_FRAME_BAND_RATIO = 0.06    # 테두리 band 두께(짧은 변 대비) — 박스 선이 이 안에 들어와야.
+RCP_BOX_FRAME_MIN_RATIO = 0.55     # 밝은 픽셀 중 테두리 band 에 있는 비율 하한(내부 비어있음).
+RCP_BOX_SIDE_MIN_COVERAGE = 0.5    # 네 변 각각 band 가 변 길이의 이 비율 이상 덮여야(닫힌 사각형).
+RCP_BOX_APPROX_MAX_VERTICES = 8    # approxPolyDP 꼭짓점 상한 — 사각형(~4)은 통과, wavy 는 다수.
+
 # 박스 검출 실패시 fallback — 이미지 중심을 중심으로 *면적 기준 15%* 의 crop 을 template 으로 쓴다.
 # 각 변은 sqrt(0.15) ≈ 0.387 비율. 전체 이미지를 쓰는 것보다 매칭이 unique 영역 (= 이미지 중심부)
 # 에 집중되고, align_offset 은 (0,0) 그대로 유지되어 좌표 계산이 단순하다. 20% 는 여전히
@@ -343,14 +361,51 @@ def _pad_frame(frame: np.ndarray, template_shape: tuple[int, int]) -> tuple[np.n
 # ====================================================================
 
 
+def _rect_frame_ok(binary: np.ndarray, contour: np.ndarray,
+                   x: int, y: int, bw: int, bh: int) -> bool:
+    """후보 bbox 가 *축정렬 사각형 frame* 인지 검사한다 (busy SEM 소자 패턴 배제).
+
+    두 가지를 모두 만족해야 한다:
+      (1) frame_ratio — bbox 안 밝은 픽셀 중 테두리 band 에 있는 비율이 높다(내부 비어있음).
+      (2) side_coverage — 네 변 band 가 각각 변 길이의 일정 비율 이상 이어진다(닫힌 사각형).
+    추가로 approxPolyDP 꼭짓점 수가 사각형 수준(≤상한)인지 본다 — wavy 덩어리는 꼭짓점이 많다.
+    """
+    region = binary[y:y + bh, x:x + bw]
+    total = float(region.sum())
+    if total <= 0:
+        return False
+    band = max(2, int(round(RCP_BOX_FRAME_BAND_RATIO * min(bw, bh))))
+    if bh <= 2 * band or bw <= 2 * band:
+        return False
+    # (1) 테두리 band 에 몰린 밝은 픽셀 비율 — 내부(=band 안쪽 직사각형)를 빼서 구한다.
+    interior = region[band:bh - band, band:bw - band]
+    on_border = total - float(interior.sum())
+    if (on_border / total) < RCP_BOX_FRAME_MIN_RATIO:
+        return False
+    # (2) 네 변 각각의 coverage — band 안에서 변 방향으로 밝은 픽셀이 이어지는 비율.
+    top_cov = float(region[:band, :].any(axis=0).mean())
+    bottom_cov = float(region[bh - band:, :].any(axis=0).mean())
+    left_cov = float(region[:, :band].any(axis=1).mean())
+    right_cov = float(region[:, bw - band:].any(axis=1).mean())
+    if min(top_cov, bottom_cov, left_cov, right_cov) < RCP_BOX_SIDE_MIN_COVERAGE:
+        return False
+    # (3) 꼭짓점 수 — 사각형이면 approxPolyDP 가 ~4개. wavy contour 는 훨씬 많다.
+    peri = cv2.arcLength(contour, True)
+    approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
+    if len(approx) > RCP_BOX_APPROX_MAX_VERTICES:
+        return False
+    return True
+
+
 def _detect_white_box(gray: np.ndarray) -> tuple[int, int, int, int] | None:
     """rcp 이미지에서 엔지니어가 그려둔 흰색 unique-area 박스의 bbox 를 추정한다.
 
-    가정: 박스는 1~3 px 두께의 흰색 사각형 outline 이며 배경보다 확실히 밝다.
+    가정: 박스는 1~3 px 두께의 흰색 *축정렬 사각형* outline 이며 배경보다 밝다.
     1. Top-hat 으로 자연 feature 를 죽이고 얇고 밝은 구조만 남긴다.
     2. Otsu 이진화 → 짧은 dilation 으로 outline 의 모서리를 닫는다.
-    3. 외곽 contour 의 boundingRect 중, 면적/짧은 변 길이 조건을 만족하는 가장 큰 것을
-       채택한다 (scale bar 처럼 너무 작거나 프레임 전체에 가까운 후보는 거른다).
+    3. 면적/짧은 변/가장자리/종횡비/hollow 조건 + **직사각형 게이트**(`_rect_frame_ok`)를
+       모두 통과한 후보 중 가장 큰 것을 채택한다. 직사각형 게이트가 busy SEM 의 소자
+       패턴(구불구불한 밝은 선)을 박스로 오인하는 것을 막는 핵심이다.
 
     반환: (x, y, w, h) bbox 또는 None.
     """
@@ -396,10 +451,82 @@ def _detect_white_box(gray: np.ndarray) -> tuple[int, int, int, int] | None:
         fill_ratio = float(inside.mean()) if inside.size > 0 else 1.0
         if fill_ratio > RCP_BOX_MAX_FILL_RATIO:
             continue
+        # 직사각형 게이트 — 축정렬 사각형 frame 만 통과(소자 패턴 배제).
+        if not _rect_frame_ok(binary, c, x, y, bw, bh):
+            continue
         if area > best_area:
             best_area = area
             best = (int(x), int(y), int(bw), int(bh))
     return best
+
+
+def _stroke_threshold(region: np.ndarray) -> int:
+    """box 영역 안에서 '흰 stroke' 로 볼 밝기 임계값 — 최댓값 대비 상대 + 절대 하한.
+
+    stroke 는 box 안에서 가장 밝다. 상대 임계(최댓값×REL)로 잡되, 어두운 box(저대비)
+    에서 wafer 텍스처를 stroke 로 오인하지 않도록 절대 하한으로 바닥을 깐다.
+    """
+    return max(int(RCP_BOX_STROKE_REL * int(region.max())), RCP_BOX_STROKE_MIN_LEVEL)
+
+
+def _inner_hole_bbox(
+    region: np.ndarray, stroke_thr: int
+) -> tuple[int, int, int, int] | None:
+    """흰 ring 안쪽 '구멍'의 bbox 를 contour hierarchy 로 찾는다(region-local).
+
+    bright mask 의 끊김을 MORPH_CLOSE 로 메운 뒤 RETR_CCOMP 로 외곽(ring)과 자식(hole)
+    contour 를 분리, 부모가 있는(=hole) contour 중 가장 큰 것의 bbox 를 돌려준다. ring 이
+    닫히지 않아 hole 이 생기지 않으면 None(호출부가 고정 inset 으로 폴백).
+
+    fiducial 의 중첩 사각형은 *어두운* stroke 이라 bright mask 에 안 잡혀 hole 을 만들지
+    않는다 — 따라서 가장 큰 hole 은 흰 box 내부다.
+    """
+    mask = (region >= stroke_thr).astype(np.uint8) * 255
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    contours, hierarchy = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+    if hierarchy is None:
+        return None
+    best: tuple[int, int, int, int] | None = None
+    best_area = 0
+    for c, hinfo in zip(contours, hierarchy[0]):
+        if hinfo[3] == -1:          # 부모 없음 → 외곽(stroke 자체), hole 아님.
+            continue
+        x, y, bw, bh = cv2.boundingRect(c)
+        if bw * bh > best_area:
+            best_area, best = bw * bh, (int(x), int(y), int(bw), int(bh))
+    return best
+
+
+def _trim_bright_border(
+    region: np.ndarray, seed: tuple[int, int, int, int], stroke_thr: int
+) -> tuple[int, int, int, int]:
+    """seed bbox 네 변에서 stroke(≥thr) 픽셀이 사라질 때까지 한 줄씩 깎는다(region-local).
+
+    흰 선이 단 1px도 남지 않음을 *보장*하는 안전망. fiducial 은 어두워 trim 을 유발하지
+    않으므로 구조물은 보존된다. 반환: (x0, y0, x1, y1).
+    """
+    sx, sy, sw, sh = seed
+    x0, y0 = max(0, sx), max(0, sy)
+    x1, y1 = min(region.shape[1], sx + sw), min(region.shape[0], sy + sh)
+    for _ in range(max(region.shape[:2])):      # 수렴 안전 상한.
+        if x1 - x0 <= RCP_BOX_MIN_INNER_PX or y1 - y0 <= RCP_BOX_MIN_INNER_PX:
+            break
+        moved = False
+        if int(region[y0, x0:x1].max()) >= stroke_thr:
+            y0 += 1
+            moved = True
+        if int(region[y1 - 1, x0:x1].max()) >= stroke_thr:
+            y1 -= 1
+            moved = True
+        if int(region[y0:y1, x0].max()) >= stroke_thr:
+            x0 += 1
+            moved = True
+        if int(region[y0:y1, x1 - 1].max()) >= stroke_thr:
+            x1 -= 1
+            moved = True
+        if not moved:
+            break
+    return x0, y0, x1, y1
 
 
 def _inner_crop_for_box(
@@ -408,21 +535,44 @@ def _inner_crop_for_box(
     """흰색 박스 outline 픽셀을 피해, 박스 *안쪽* 영역만 잘라낸다.
 
     박스 stroke (보통 1~3 px) 자체가 template 에 들어가면 매칭이 흰색 픽셀을 찾으려
-    해서 점수가 떨어진다. inset 만큼 안쪽으로 깎아 wafer 본연의 unique 패턴만 남긴다.
+    해서 점수가 떨어지고, live scene 의 흰 crosshair 와 오매칭될 수 있다. 그래서:
+      1) inner-hole contour 로 ring 안쪽을 기하학적으로 잡고(stroke 두께·dilation 무관),
+      2) bright-border trim 으로 잔존 흰 선을 보장 제거,
+      3) anti-alias 잔광 대비 safety inset 을 한 번 더 깎는다.
+    ring 이 안 닫혀 hole 이 없으면 고정 inset(RCP_BOX_INSET_PX) seed 로 폴백하되 trim 은
+    동일하게 보장한다.
 
-    반환: (cropped_gray, inner_bbox).
+    반환: (cropped_gray, inner_bbox)  — inner_bbox 는 전체 이미지 좌표 (x0, y0, w, h).
     """
     h, w = gray.shape[:2]
     x, y, bw, bh = box
-    inset = RCP_BOX_INSET_PX
-    x0 = max(0, x + inset)
-    y0 = max(0, y + inset)
-    x1 = min(w, x + bw - inset)
-    y1 = min(h, y + bh - inset)
-    if x1 - x0 < 8 or y1 - y0 < 8:
-        # inset 으로 너무 작아지면 inset 없이 박스 통째로 사용.
-        x0, y0, x1, y1 = x, y, min(w, x + bw), min(h, y + bh)
-    return gray[y0:y1, x0:x1].copy(), (x0, y0, x1 - x0, y1 - y0)
+    rx0, ry0 = max(0, x), max(0, y)
+    rx1, ry1 = min(w, x + bw), min(h, y + bh)
+    region = gray[ry0:ry1, rx0:rx1]
+    rh, rw = region.shape[:2]
+    if rh < RCP_BOX_MIN_INNER_PX or rw < RCP_BOX_MIN_INNER_PX:
+        return region.copy(), (rx0, ry0, rw, rh)
+
+    stroke_thr = _stroke_threshold(region)
+
+    # 1) inner-hole contour seed (없으면 고정 inset seed).
+    hole = _inner_hole_bbox(region, stroke_thr)
+    if hole is None:
+        inset = RCP_BOX_INSET_PX
+        seed = (inset, inset, max(1, rw - 2 * inset), max(1, rh - 2 * inset))
+    else:
+        seed = hole
+
+    # 2) bright-border trim — 흰 선 잔존 0 보장.
+    tx0, ty0, tx1, ty1 = _trim_bright_border(region, seed, stroke_thr)
+
+    # 3) safety inset (가능할 때만 — 너무 작아지면 생략).
+    s = RCP_BOX_SAFETY_PX
+    if (tx1 - tx0) - 2 * s >= RCP_BOX_MIN_INNER_PX and (ty1 - ty0) - 2 * s >= RCP_BOX_MIN_INNER_PX:
+        tx0, ty0, tx1, ty1 = tx0 + s, ty0 + s, tx1 - s, ty1 - s
+
+    crop = region[ty0:ty1, tx0:tx1].copy()
+    return crop, (rx0 + tx0, ry0 + ty0, tx1 - tx0, ty1 - ty0)
 
 
 def _draw_rcp_overlay(

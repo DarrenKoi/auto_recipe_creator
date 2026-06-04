@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>주간 진행 보고 · 2026-06-04</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+    margin: 0; padding: 32px 48px; color: #212121; background: #FAFAFA;
+    line-height: 1.55;
+  }
+  h1 { font-size: 26px; margin: 0 0 4px 0; }
+  h2 { font-size: 18px; margin: 28px 0 12px 0; color: #455A64; border-bottom: 2px solid #CFD8DC; padding-bottom: 4px; }
+  .meta { color: #607D8B; font-size: 13px; margin-bottom: 12px; }
+  .summary { background: #fff; border-left: 4px solid #1976D2; padding: 12px 16px; margin: 8px 0 16px 0; font-size: 14px; }
+
+  /* 핵심 성과 카드 */
+  .highlights { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 8px; }
+  .hl-card {
+    background: #fff; border: 1px solid #CFD8DC; border-top: 3px solid #1976D2;
+    border-radius: 8px; padding: 14px 16px;
+  }
+  .hl-card.attn { border-top-color: #ED6C02; }
+  .hl-card.next { border-top-color: #6A1B9A; }
+  .hl-tag { font-size: 11px; font-weight: 700; color: #1565C0; letter-spacing: 0.4px; margin-bottom: 6px; }
+  .hl-card.attn .hl-tag { color: #B25500; }
+  .hl-card.next .hl-tag { color: #6A1B9A; }
+  .hl-title { font-size: 14px; font-weight: 700; margin-bottom: 8px; line-height: 1.35; }
+  .hl-body { font-size: 12.5px; line-height: 1.5; color: #455A64; }
+  .hl-body code { background: #ECEFF1; padding: 1px 4px; border-radius: 4px; font-size: 11.5px; }
+
+  /* 트랙 */
+  .track-label { font-size: 12px; color: #757575; margin: 6px 0; }
+  .note { font-size: 13px; color: #455A64; background:#fff; border:1px solid #E0E0E0; border-radius:6px; padding:10px 14px; margin:6px 0 4px 0; }
+
+  /* Status table */
+  .status-table {
+    width: 100%; border-collapse: collapse; background: #fff;
+    font-size: 13px; margin-bottom: 8px;
+  }
+  .status-table th, .status-table td {
+    border: 1px solid #E0E0E0; padding: 8px 10px; text-align: left; vertical-align: top;
+  }
+  .status-table th { background: #ECEFF1; font-weight: 600; color: #37474F; }
+  .status-table td.name { width: 230px; font-weight: 600; }
+  .status-table td.status { width: 96px; text-align: center; }
+  .status-table code { background: #F5F5F5; padding: 1px 4px; border-radius: 4px; font-size: 11.5px; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border: 1px solid; border-radius: 12px;
+    font-size: 11.5px; font-weight: 600; white-space: nowrap;
+  }
+  .b-done { background: #E8F5E9; border-color: #2E7D32; color: #1B5E20; }
+  .b-prog { background: #FFF3E0; border-color: #ED6C02; color: #B25500; }
+  .b-plan { background: #F3E5F5; border-color: #6A1B9A; color: #4A148C; }
+  .b-wait { background: #ECEFF1; border-color: #607D8B; color: #37474F; }
+
+  .legend { display: flex; gap: 16px; font-size: 12px; color: #455A64; margin: 6px 0 4px 0; flex-wrap: wrap; }
+
+  /* 2x2 표 */
+  .ablation { border-collapse: collapse; margin: 8px 0; font-size: 12.5px; background:#fff; }
+  .ablation th, .ablation td { border: 1px solid #CFD8DC; padding: 8px 12px; text-align: center; }
+  .ablation th { background: #ECEFF1; color:#37474F; }
+  .ablation .old { background:#FFF8E1; }
+  .ablation .new { background:#E8F5E9; font-weight:700; }
+
+  /* Next steps */
+  .next-ol ol { margin: 0; padding-left: 20px; }
+  .next-ol li { margin-bottom: 6px; font-size: 13px; }
+
+  .footer { margin-top: 28px; font-size: 11px; color: #90A4AE; text-align: right; }
+</style>
+</head>
+<body>
+
+<h1>주간 진행 보고</h1>
+<div class="meta">기간: 2026-05-29 ~ 2026-06-04 · 범위: <code>poc/workflow_2/</code> (Align Point 보정 — 정확도 진단)</div>
+
+<div class="summary">
+  지난주 핵심 난제로 식별한 <b>Align Point 보정 정확도</b>를 이번 주에 정면으로 다뤘습니다.
+  매처가 같은 위치를 못 잡는 두 가지 원인 — <b>① 등록 이미지의 흰 주석 박스</b>와
+  <b>② 측정 이미지의 십자(crosshair)</b> — 를 각각 제거하는 방법을 만들고,
+  <b>"이 두 정리가 실제로 지표를 올리는가"</b>를 같은 잣대로 재는 <b>2×2 비교 실험</b>을 구축했습니다.
+  나아가 분류 정확도(bACC)의 한계를 넘어 <b>"좌표를 진짜 맞히는가"를 거리로 직접 재는
+  S(성공) 전용 검증</b>을 준비했습니다. 모든 코드는 <b>합성 데이터로 동작 검증 완료</b>,
+  <b>실데이터(오피스) 판정은 다음 단계</b>입니다.
+</div>
+
+<h2>① 이번 주 핵심 성과</h2>
+<div class="highlights">
+  <div class="hl-card">
+    <div class="hl-tag">정리 1 · 완성(합성검증)</div>
+    <div class="hl-title">흰 주석 박스 제거 — 등록 이미지 쪽</div>
+    <div class="hl-body">
+      엔지니어가 align 위치를 표시한 <b>흰 박스가 template 에 섞여</b> 매처를 교란합니다.
+      소프트웨어가 그린 박스는 <b>항상 고정된 디지털 값(255)으로 찍힌다</b>는 점을 이용해
+      (히스토그램에서 분리된 섬) 박스를 정확히 찾고, <b>박스 안쪽만 깨끗이 잘라</b> template 으로 씁니다.
+      최악 샘플 검출률 <b>1/6 → 6/6</b>으로 개선. (<code>align_point_correction.py</code>)
+    </div>
+  </div>
+  <div class="hl-card">
+    <div class="hl-tag">정리 2 · 완성(합성검증)</div>
+    <div class="hl-title">십자(crosshair) 제거 — 측정 이미지 쪽</div>
+    <div class="hl-body">
+      측정 이미지의 십자는 <b>강한 직선 edge</b>라 매처가 거기에 "치팅" 고정됩니다.
+      게다가 실제 생산 화면엔 십자가 없으므로(우리가 찍을 위치를 <i>찾는</i> 중),
+      십자를 <b>지운(inpaint) 화면에서 매칭</b>하는 것이 생산에 더 충실합니다.
+      제거가 제대로 됐는지 <b>재검출 + edge 밀도 검사로 이중 검증</b>합니다. (<code>crosshair_removal_check.py</code>)
+    </div>
+  </div>
+  <div class="hl-card attn">
+    <div class="hl-tag">검증 도구 · 완성(합성검증)</div>
+    <div class="hl-title">2×2 비교 실험 — "정말 좋아지나"를 측정</div>
+    <div class="hl-body">
+      기능을 더 붙이기 전에 <b>두 정리가 실제로 지표를 올리는지</b> 같은 잣대로 검증합니다.
+      박스 정리·십자 정리를 각각 켜고 끈 <b>네 가지 조합</b>을 비교해, 개선 효과와
+      <b>어느 변수가 주범인지</b>까지 분해합니다. (<code>align_index_ablation.py</code>)
+    </div>
+  </div>
+  <div class="hl-card next">
+    <div class="hl-tag">정확도 검증 · 준비완료(오피스 대기)</div>
+    <div class="hl-title">S(성공) 전용 위치추정 검증 — 다음 테스트</div>
+    <div class="hl-body">
+      분류 정확도(있음/없음) 대신 <b>"좌표를 실제로 맞히는가"를 거리로 직접</b> 잽니다.
+      정답을 믿을 수 있는 <b>성공(S) 데이터에서, recipe 안의 자기 십자를 정답으로</b> 두고
+      <b>1발 명중률(rank-1 hit)</b>을 측정 — recipe별 편차에 휘둘리지 않는 깨끗한 판정입니다.
+      (<code>golden_localization_eval.py</code> · 오피스 데이터 수집 후 실행)
+    </div>
+  </div>
+</div>
+
+<h2>② 두 가지 정리, 한눈에 — 무엇을 왜 지우나</h2>
+<div class="note">
+  Align Point 보정은 <b>등록 이미지(레시피)</b>의 align 위치를 <b>측정 이미지(웨이퍼)</b>에서 다시 찾는
+  작업입니다. 두 이미지 모두에 <b>매칭을 방해하는 인공 표식</b>이 들어 있어, 매처가 진짜 패턴 대신
+  표식에 끌려가는 것이 정확도 저하의 핵심 원인이라는 가설을 세웠습니다.
+</div>
+<table class="status-table">
+  <thead><tr><th>표식</th><th>어느 이미지에</th><th>왜 문제</th><th>해결 방법</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="name">흰 주석 박스</td>
+      <td>등록 이미지(rcp template)</td>
+      <td>엔지니어가 unique area 를 표시한 흰 사각형이 template 에 섞여 매칭 단서를 오염</td>
+      <td><b>박스 안쪽만</b> 깨끗이 crop. 고정 디지털 값(히스토그램 섬)을 이용한 photometric 검출 → 안 되면 기존 방식으로 자동 폴백</td>
+    </tr>
+    <tr>
+      <td class="name">십자(crosshair)</td>
+      <td>측정 이미지(msr frame)</td>
+      <td>강한 직선 edge 라 매처가 lock-on. 생산 실화면엔 없는 표식이라 학습/매칭에 부적합</td>
+      <td>십자 검출 → <b>그 위치를 정답으로 기록</b> → inpaint 로 지운 화면에서 매칭. 제거 품질을 재검출+edge 밀도로 이중 검증</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>③ 2×2 비교 실험 — 두 정리의 효과를 분리 측정</h2>
+<div class="track-label">박스 정리(template)와 십자 정리(frame)를 각각 켜고 끈 네 조합을 같은 지표로 비교</div>
+<table class="ablation">
+  <tr><th></th><th>frame = raw (십자 있음, 구)</th><th>frame = inpaint (십자 제거, 신)</th></tr>
+  <tr><th>tpl = center (구)</th><td class="old">OLD 기준선</td><td>십자 정리만</td></tr>
+  <tr><th>tpl = box (신)</th><td>박스 정리만</td><td class="new">NEW (둘 다)</td></tr>
+</table>
+<div class="note">
+  <b>판정 = NEW − OLD 의 지표 상승폭.</b> 대각선의 두 셀(박스만 / 십자만)이 <b>어느 변수가 효과의 주범</b>인지
+  분해해 줍니다. 한 정리만 효과가 있다면 다른 하나에 자원을 낭비하지 않도록 합니다.
+  <br>두 가지 잣대를 봅니다 — (1) <b>align_index_ablation.py</b>: 성공/실패 분리도(bACC), 빠른 1차 스크리닝.
+  (2) <b>golden_localization_eval.py</b>: <b>실제 좌표 명중 거리</b>, 생산 과제에 직접 대응하는 본 판정.
+</div>
+
+<h2>④ Workflow 2 — 진행 현황</h2>
+<table class="status-table">
+  <thead><tr><th>항목</th><th>상태</th><th>설명</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="name">흰 박스 검출·제거 (photometric)<br><code>align_point_correction.py</code></td>
+      <td class="status"><span class="badge b-done">완성(합성검증)</span></td>
+      <td>고정 디지털 값 히스토그램 섬으로 박스 검출 → 안쪽만 crop. 최악 샘플 <b>1/6→6/6</b>.
+        검출 실패 시 기존 top-hat+Otsu 로 자동 폴백. 오피스 임계 튜닝 상수 노출.</td>
+    </tr>
+    <tr>
+      <td class="name">십자 제거·검증<br><code>crosshair_removal_check.py</code></td>
+      <td class="status"><span class="badge b-done">완성(합성검증)</span></td>
+      <td>검증된 십자 검출기(v2)를 본 파이프라인에 연결(이전엔 구버전 호출 중이던 것 수정).
+        제거 후 <b>재검출 = 무 + edge 밀도 비 &lt; 1.8</b>로 잔흔/그림자까지 확인.</td>
+    </tr>
+    <tr>
+      <td class="name">2×2 분리도 비교<br><code>align_index_ablation.py</code></td>
+      <td class="status"><span class="badge b-done">완성(합성검증)</span></td>
+      <td>네 조합의 S/E 분리도(bACC)+gt-in-topK 를 같은 함수로 측정. OLD vs NEW VERDICT 출력.
+        실데이터 1차 스크리닝용.</td>
+    </tr>
+    <tr>
+      <td class="name">S 전용 위치추정 검증<br><code>golden_localization_eval.py</code></td>
+      <td class="status"><span class="badge b-wait">오피스 대기</span></td>
+      <td>정답 신뢰 가능한 S 데이터에서 <b>좌표 명중 거리(rank-1 hit)</b>로 본 판정.
+        recipe 내 자기 십자를 정답으로 써 <b>recipe별 편차(confound)에 면역</b>.
+        align_offset 보정(template 중심 → align point 환산)까지 반영. <b>골든셋 수집 후 실행.</b></td>
+    </tr>
+    <tr>
+      <td class="name">VLM+CV 백업 (gated escalation)</td>
+      <td class="status"><span class="badge b-plan">계획(미구현)</span></td>
+      <td>순수 CV 실패 케이스의 안전망. <b>항상 켜는 병렬이 아니라</b> 저신뢰 신호(박스 미검출·
+        not_distinctive 등)에서만 발동. VLM 은 영역만, <b>좌표는 CV</b>(원칙 유지).
+        <b>필요량은 위 실험의 잔여 실패율로 결정</b> 후 구축.</td>
+    </tr>
+  </tbody>
+</table>
+<div class="legend">
+  <span><span class="badge b-done">완성(합성검증)</span> 코드+합성데이터 검증, 오피스 미검증</span>
+  <span><span class="badge b-wait">오피스 대기</span> 데이터 수집 후 실행</span>
+  <span><span class="badge b-plan">계획</span> 설계만, 미구현</span>
+</div>
+
+<h2>⑤ 방법론 — "측정 먼저, 기능은 그다음"</h2>
+<div class="note">
+  이번 주는 새 알고리즘을 무작정 붙이기보다 <b>가설을 세우고 같은 잣대로 검증</b>하는 데 집중했습니다.
+  그 과정에서 <b>효과 없는 방향(리랭커: MI·contour)을 A/B 로 명확히 기각</b>해 죽은 코드를 정리했고
+  (<code>reranker_ab_failure_analysis.md</code>), 반복하지 않도록 기록으로 남겼습니다.
+  <b>분류 지표(bACC)의 cross-recipe 편향</b>을 인지해, 생산 과제에 직접 대응하는
+  <b>위치추정 거리 지표</b>로 본 판정을 전환한 것이 이번 주의 가장 중요한 판단입니다.
+</div>
+<div class="next-ol">
+  <ol>
+    <li>(오피스) <b>골든셋 수집</b> — 성공(S) 측정 이미지를 recipe당 8~10장, 웨이퍼/lot/시간 분산해 수집.</li>
+    <li><b>정답 위생 먼저 확인</b> — 십자 검출률이 낮으면 그 위 수치는 신뢰 불가. 검출기부터 점검.</li>
+    <li><b>본 판정</b> — <code>golden_localization_eval.py</code> 로 NEW(박스+inpaint)의 <b>1발 명중률</b>을
+      OLD 대비 측정. 통과하면 정식 채택.</li>
+    <li><b>임계 캘리브레이션</b> — <code>success_vs_fail_compare.py</code> 로 거짓양성 0 검증 후 fail 데이터 적용.</li>
+    <li><b>잔여 실패율로 VLM 백업 필요량 판단</b> — 대부분 통과면 tail 안전망(가볍게), 다수 실패면 정식 구축.</li>
+  </ol>
+</div>
+
+<div class="footer">생성: 2026-06-04 · 참고: poc/workflow_2/docs/journals/260604/260604_063300_golden-localization-eval-built.md · poc/workflow_2/docs/study/reranker_ab_failure_analysis.md · poc/workflow_2/docs/align_success_dataset_plan.md</div>
+
+</body>
+</html>

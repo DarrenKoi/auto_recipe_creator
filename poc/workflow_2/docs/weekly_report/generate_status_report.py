@@ -25,7 +25,7 @@ from pptx.util import Inches, Pt, Emu
 DOCS_DIR = Path(__file__).resolve().parent
 HTML_PATH = DOCS_DIR / "workflow_2_status_report.html"
 PPTX_PATH = DOCS_DIR / "workflow_2_status_report.pptx"
-REPORT_DATE = date(2026, 5, 14)
+REPORT_DATE = date(2026, 6, 4)
 
 
 STATUS_DONE = "done"
@@ -77,45 +77,45 @@ WF1_STEPS: list[Step] = [
 
 WF2_STEPS: list[Step] = [
     Step(
-        "Frame 변화 필터링 (CV)",
+        "SEM 화면 영역 검출",
         STATUS_DONE,
-        "cv2.absdiff·dilate·connectedComponents로 정적 프레임 제거, VLM 입력량 축소",
+        "모든 탐색의 기준점인 live SEM 박스를 검출, 장비별 기준 위치 저장",
     ),
     Step(
-        "SEM Monitor Box 인식",
+        "OK 버튼 검출·클릭",
         STATUS_DONE,
-        "VLM이 live SEM 영역 bbox를 식별 (제어 패널 가림에도 정상 동작)",
+        "보정을 확정하는 마지막 동작, OCR 재확인으로 오클릭 차단",
     ),
     Step(
-        "Cursor Click 감지",
+        "흰 박스 제거 (template)",
+        STATUS_DONE,
+        "고정 디지털값(히스토그램 섬) photometric 검출로 박스 안쪽만 crop, 최악 샘플 1/6→6/6 (합성검증)",
+    ),
+    Step(
+        "십자(crosshair) 제거 (frame)",
+        STATUS_DONE,
+        "십자 검출→위치를 정답으로 기록→inpaint, 재검출+edge밀도로 제거 이중 검증 (합성검증)",
+    ),
+    Step(
+        "Align Point 정확도 검증",
         STATUS_IN_PROGRESS,
-        "DVR / RCS / RCS-on-SEM-Monitor 3가지 cursor 변형 대응 중",
+        "2×2 비교(박스·십자 정리 효과 분리) + S전용 위치추정 검증(1발 명중률), 오피스 데이터 대기",
         current=True,
     ),
     Step(
-        "Recipe Align Key 추출 → VLM",
-        STATUS_IN_PROGRESS,
-        "Recipe 파일에서 align key 패치 추출 후 매처/VLM 입력으로 공급",
-        current=True,
-    ),
-    Step(
-        "Align Key 매칭 (Chamfer + ORB)",
+        "실장비 FOV Search Loop",
         STATUS_PENDING,
-        "Recipe Align Key 추출 선행 필요, 합성 데이터 사전 검증도 미진행 (알고리즘 구현만 완료)",
-    ),
-    Step(
-        "FOV Search Loop",
-        STATUS_PENDING,
-        "매처 결과로 stage 이동·escalation, 실 SEM 환경 검증 필요",
+        "검증 통과 후 실 SEM 연결 어댑터·안전장치 구현 → 매처 결과로 stage 이동",
     ),
 ]
 
 
 NEXT_STEPS = [
-    "Cursor Click 감지의 환경/위치 변형 대응 마무리 후 실 RCS 회귀 테스트",
-    "Recipe Align Key 이미지 추출 파이프라인 코어 구현 및 VLM 입력 검증",
-    "Align Key 매칭(Chamfer+ORB) 합성 데이터 사전 검증부터 시작 → 실데이터 calibration (positive/negative 50+ pairs로 임계값 검증)",
-    "FOV Search Loop 통합 → 매니저 라이브 데모 준비",
+    "(오피스) 골든셋 수집 — 성공(S) 측정 이미지를 recipe당 8~10장, 웨이퍼/lot/시간 분산",
+    "정답 위생 먼저 확인 — 십자 검출률이 낮으면 그 위 수치 신뢰 불가, 검출기부터 점검",
+    "본 판정 — golden_localization_eval.py 로 NEW(박스+inpaint)의 1발 명중률을 OLD 대비 측정, 통과 시 정식 채택",
+    "임계 캘리브레이션 — success_vs_fail_compare.py 로 거짓양성 0 검증 후 fail 데이터 적용",
+    "잔여 실패율로 VLM+CV 백업(gated escalation) 필요량 판단 → 필요시에만 구축",
 ]
 
 
@@ -289,8 +289,10 @@ def build_html() -> str:
 
 <div class="summary">
   Workflow 1 (RCS 로그인 → Align Fail Alarm)은 완성 단계에 있습니다.
-  이어지는 <b>Workflow 2</b>에서는 <b>SEM Monitor 조작</b>과 <b>Align Key 찾기</b>,
-  그리고 <b>Align Key를 정확히 선택할 수 있는지</b>를 평가 중이고 단계별 현황을 정리했습니다.
+  이어지는 <b>Workflow 2</b>는 현재 핵심 난제인 <b>Align Point 보정 정확도</b>에 집중하고 있습니다.
+  매처를 교란하는 두 표식 — <b>등록 이미지의 흰 박스</b>·<b>측정 이미지의 십자</b> — 제거 방법을 만들었고
+  (합성 검증 완료), <b>"이 정리가 실제로 좌표 명중률을 올리는가"</b>를 같은 잣대로 재는 검증 단계에
+  진입했습니다. 실데이터(오피스) 판정이 다음 단계입니다.
 </div>
 
 <h2>① Process Flow</h2>
@@ -436,7 +438,7 @@ def build_pptx() -> Presentation:
                   "Workflow 2 진행 상황 보고", size=40, bold=True, color="#1A237E",
                   align=PP_ALIGN.CENTER)
     _add_text_box(s1, Inches(0.8), Inches(3.5), Inches(11.7), Inches(0.5),
-                  "SEM Monitor 조작 + Align Key 검색 자동화", size=20, color="#37474F",
+                  "Align Point 보정 정확도 — 표식 제거 + 검증", size=20, color="#37474F",
                   align=PP_ALIGN.CENTER)
     _add_text_box(s1, Inches(0.8), Inches(5.5), Inches(11.7), Inches(0.4),
                   f"작성일 {REPORT_DATE.isoformat()}  ·  범위 poc/workflow_2/",

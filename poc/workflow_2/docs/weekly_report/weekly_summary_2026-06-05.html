@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>주간 보고 요약 · 2026-06-05</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+    margin: 0; padding: 32px 48px; color: #212121; background: #FAFAFA;
+    line-height: 1.55;
+  }
+  h1 { font-size: 26px; margin: 0 0 4px 0; }
+  h2 { font-size: 18px; margin: 28px 0 12px 0; color: #455A64; border-bottom: 2px solid #CFD8DC; padding-bottom: 4px; }
+  .meta { color: #607D8B; font-size: 13px; margin-bottom: 12px; }
+
+  /* 30초 요약 (짧은 버전) */
+  .tldr {
+    background: #fff; border-left: 4px solid #1976D2; border-radius: 0 8px 8px 0;
+    padding: 14px 18px; margin: 8px 0 8px 0; font-size: 14px;
+  }
+  .tldr .tldr-tag { font-size: 11px; font-weight: 700; color: #1565C0; letter-spacing: 0.4px; margin-bottom: 8px; }
+  .tldr ul { margin: 0; padding-left: 18px; }
+  .tldr li { margin-bottom: 6px; }
+  .tldr code { background: #ECEFF1; padding: 1px 4px; border-radius: 4px; font-size: 12px; }
+
+  /* 3축 카드 */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 8px; }
+  .card {
+    background: #fff; border: 1px solid #CFD8DC; border-top: 3px solid #1976D2;
+    border-radius: 8px; padding: 16px 18px;
+  }
+  .card.problem { border-top-color: #ED6C02; }
+  .card.solve   { border-top-color: #6A1B9A; }
+  .card .c-tag { font-size: 11px; font-weight: 700; color: #1565C0; letter-spacing: 0.4px; margin-bottom: 10px; }
+  .card.problem .c-tag { color: #B25500; }
+  .card.solve   .c-tag { color: #6A1B9A; }
+  .card ol { margin: 0; padding-left: 20px; }
+  .card li { font-size: 13px; line-height: 1.5; margin-bottom: 10px; color: #37474F; }
+  .card li:last-child { margin-bottom: 0; }
+  .card code { background: #ECEFF1; padding: 1px 4px; border-radius: 4px; font-size: 11.5px; }
+  .card b { color: #212121; }
+
+  .footer { margin-top: 28px; font-size: 11px; color: #90A4AE; text-align: right; }
+</style>
+</head>
+<body>
+
+  <h1>주간 보고 요약</h1>
+  <div class="meta">기간: 2026-05-29 ~ 2026-06-05 · 범위: <code style="background:#ECEFF1;padding:1px 4px;border-radius:4px;">poc/workflow_2/</code> — Align Point 보정 정확도 진단</div>
+
+  <!-- 짧은 버전 -->
+  <div class="tldr">
+    <div class="tldr-tag">30초 요약</div>
+    <ul>
+      <li><b>진행:</b> 매처를 교란하는 두 인공 표식(등록 이미지의 <b>흰 박스</b>, 측정 이미지의 <b>십자</b>)을 각각 제거하는 전처리를 만들고, 효과를 같은 잣대로 재는 <b>2×2 비교 실험</b>을 구축.</li>
+      <li><b>문제:</b> 매처가 진짜 패턴 대신 표식에 lock-on해 정확도 저하. 기존 분류 지표(bACC)로는 "좌표를 실제로 맞히는가"를 못 잼. 실데이터 판정·임계 튜닝은 미완.</li>
+      <li><b>해결:</b> 흰 박스는 photometric 검출 후 안쪽만 crop(폴백 포함), 십자는 inpaint로 제거 후 매칭, <b>S(성공) 전용 위치추정 검증</b>으로 1발 명중률을 거리로 직접 측정. 다음은 오피스 실데이터 실행.</li>
+    </ul>
+  </div>
+
+  <h2>상세 — 진행 / 문제 / 해결 (10문장)</h2>
+  <div class="cards">
+
+    <!-- 진행 중인 일 -->
+    <div class="card">
+      <div class="c-tag">▶ 진행 중인 일</div>
+      <ol>
+        <li>웨이퍼 측정 이미지에서 레시피에 등록된 align 위치를 다시 찾아내는 <b>Align Point 보정의 좌표 정확도</b>를 이번 주 핵심 과제로 다루는 중.</li>
+        <li>매처를 교란하는 두 표식 — 등록 이미지의 <b>흰 주석 박스</b>, 측정 이미지의 <b>십자(crosshair)</b> — 를 각각 제거하는 전처리 구현(<code>align_point_correction.py</code>, <code>crosshair_removal_check.py</code>).</li>
+        <li>두 전처리가 실제로 지표를 올리는지 같은 잣대로 재는 <b>2×2 비교 실험</b>(on/off 4조합) 구축(<code>align_index_ablation.py</code>).</li>
+      </ol>
+    </div>
+
+    <!-- 겪고 있는 문제 -->
+    <div class="card problem">
+      <div class="c-tag">⚠ 겪고 있는 문제</div>
+      <ol start="4">
+        <li>매처가 진짜 패턴 대신 표식에 끌려가는 것이 정확도 저하의 핵심 원인 — 흰 박스는 template를 오염, 십자는 강한 직선 edge라 거기에 "치팅" 고정.</li>
+        <li>기존 분류 정확도(있음/없음, <b>bACC</b>)만으로는 <b>"좌표를 실제로 맞히는가"</b>를 판정 못 해 생산 과제와의 연결이 약함.</li>
+        <li>모든 코드는 합성 데이터로 동작은 검증했으나, <b>실데이터(오피스) 판정·임계값 튜닝</b>이 남아 효과의 실제 크기 미확정.</li>
+      </ol>
+    </div>
+
+    <!-- 해결을 위해 진행 중인 사항 -->
+    <div class="card solve">
+      <div class="c-tag">✔ 해결을 위해 진행 중</div>
+      <ol start="7">
+        <li>흰 박스는 고정 디지털 값(히스토그램 섬)으로 검출 후 안쪽만 crop, 실패 시 top-hat+Otsu로 자동 폴백(최악 샘플 1/6 → <b>6/6</b>).</li>
+        <li>십자는 검출 위치를 정답으로 기록 후 inpaint로 지운 화면에서 매칭(생산 실화면=십자 없음에 충실), 제거 품질은 재검출+edge 밀도로 이중 검증.</li>
+        <li>정답 신뢰 가능한 <b>S(성공) 전용 위치추정 검증</b>(<code>golden_localization_eval.py</code>)으로 1발 명중률(rank-1 hit)을 거리로 직접 측정.</li>
+        <li>다음 단계: 오피스 실데이터 수집 → 2×2 비교·S-전용 검증 실행 → 효과의 주범 분해 후 임계값 튜닝.</li>
+      </ol>
+    </div>
+
+  </div>
+
+  <div class="footer">poc/workflow_2 · 주간 요약 · 2026-06-05</div>
+
+</body>
+</html>

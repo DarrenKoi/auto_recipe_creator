@@ -36,6 +36,8 @@
   .card .c-tag { font-size: 11px; font-weight: 700; color: #1565C0; letter-spacing: 0.4px; margin-bottom: 10px; }
   .card.problem .c-tag { color: #B25500; }
   .card.solve   .c-tag { color: #6A1B9A; }
+  .card.past    { border-top-color: #607D8B; }
+  .card.past .c-tag { color: #455A64; }
   .card ol { margin: 0; padding-left: 20px; }
   .card li { font-size: 13px; line-height: 1.5; margin-bottom: 10px; color: #37474F; }
   .card li:last-child { margin-bottom: 0; }
@@ -60,7 +62,17 @@
     </ul>
   </div>
 
-  <h2>상세 — 진행 / 문제 / 해결 (10문장)</h2>
+  <h2>이전까지의 진행 (지난주, 배경)</h2>
+  <div class="card past" style="border-top-width:3px;">
+    <div class="c-tag">↩ 지난주까지 완료한 토대</div>
+    <ol>
+      <li><b>Workflow 1 (RCS 자동화)</b> — 로그인 → Tool 선택 → Align Fail 감지 → 화면 캡처까지 이미 완성. 이번 주 작업의 입력(실패 시점 캡처)을 안정적으로 공급하는 <b>기반</b>으로 활용.</li>
+      <li><b>Workflow 2 마지막 관문 완성</b> — 보정을 실제 적용하는 <code>OK 버튼 자동 클릭</code>(<code>vlm_wait_input_ok_button.py</code>)과 모든 탐색의 기준점인 <code>SEM 화면 영역(박스) 검출</code>(<code>outline_live_sem_box.py</code>) 완료.</li>
+      <li><b>Align Point 보정 착수(난항)</b> — 등록·측정 이미지가 공정·초점·배율 차이로 픽셀 단위로 같지 않아 같은 위치를 못 잡는 문제 확인 → "기능을 더 붙이기 전에 원인부터 계량"하는 <b>단계별 복구 계획</b> 수립. 이번 주 그 진단을 정면으로 실행.</li>
+    </ol>
+  </div>
+
+  <h2>이번 주 상세 — 진행 / 문제 / 해결 (10문장)</h2>
   <div class="cards">
 
     <!-- 진행 중인 일 -->

@@ -16,9 +16,11 @@ docs/
 │  ├─ 260528/
 │  └─ 260529/
 ├─ weekly_report/
-│  ├─ generate_status_report.py
-│  ├─ weekly_report_2026-05-28.html
-│  └─ workflow_2_status_report.{html,pptx}
+│  ├─ generate_status_report.py            # 누적 현황 status_report 생성 스크립트
+│  ├─ workflow_2_status_report.{html,pptx} # 누적 스냅샷(매번 덮어씀, 주차 무관)
+│  └─ <주 종료일>/                          # 주차별 보고서 (예: 2026-06-04/)
+│     ├─ weekly_report_<주 종료일>.html
+│     └─ weekly_summary_<날짜>.{html,md}
 └─ study/
    ├─ adr/
    ├─ algorithms/

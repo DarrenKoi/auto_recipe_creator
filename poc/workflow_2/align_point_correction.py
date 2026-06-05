@@ -415,13 +415,21 @@ def _select_box_from_mask(
     contours: list,
     h: int,
     w: int,
+    reject_log: dict | None = None,
 ) -> tuple[int, int, int, int] | None:
     """이진 mask + 그 외곽 contour 들에서, 모든 박스 게이트를 통과한 가장 큰 bbox 를 고른다.
 
     photometric / adaptive 두 검출 경로가 *동일한* 기하 게이트(면적·짧은 변·가장자리·종횡비·
     hollow·직사각형 frame)를 공유하도록 추출한 헬퍼. 게이트 자체는 mask 가 어떻게 만들어졌는지
     와 무관하므로, front-end(어떻게 밝은 픽셀을 골랐나)만 갈아끼우면 된다.
+
+    reject_log 가 주어지면 각 contour 가 어느 게이트에서 떨어졌는지 게이트명별로 카운트한다
+    (블라인드 튜닝 회피용 진단 — 어느 게이트가 실데이터 박스를 죽이는지 계량).
     """
+    def _rej(name: str) -> None:
+        if reject_log is not None:
+            reject_log[name] = reject_log.get(name, 0) + 1
+
     total_area = float(h * w)
     short_side = min(h, w)
     best: tuple[int, int, int, int] | None = None
@@ -430,29 +438,29 @@ def _select_box_from_mask(
         x, y, bw, bh = cv2.boundingRect(c)
         area = bw * bh
         if area < RCP_BOX_MIN_AREA_RATIO * total_area:
-            continue
+            _rej("area_min"); continue
         if area > RCP_BOX_MAX_AREA_RATIO * total_area:
-            continue
+            _rej("area_max"); continue
         if min(bw, bh) < RCP_BOX_MIN_SIDE_RATIO * short_side:
-            continue
+            _rej("side_min"); continue
         # 가장자리 인접 거부 — 정상 box 는 항상 안쪽에 있어야 한다.
         margin = RCP_BOX_EDGE_MARGIN_PX
         if x < margin or y < margin or (x + bw) > (w - margin) or (y + bh) > (h - margin):
-            continue
+            _rej("edge"); continue
         # 종횡비 — 너무 길쭉한 띠 (스케일바, 축라벨, 줄 무늬) 거르기.
         aspect = max(bw, bh) / max(min(bw, bh), 1)
         if aspect > RCP_BOX_MAX_ASPECT:
-            continue
+            _rej("aspect"); continue
         # Hollow-outline 검사 — 박스 *내부* 의 mask 충진율이 낮아야 한다 (1~3 px outline → 충진율 낮음).
         # findContours 의 boundingRect 는 외곽 walk 의 영역이라 contourArea/bbox 로는 hollowness 가 안 나옴.
         # 직접 binary 의 박스 영역을 보는 게 정확.
         inside = binary[y:y + bh, x:x + bw]
         fill_ratio = float(inside.mean()) if inside.size > 0 else 1.0
         if fill_ratio > RCP_BOX_MAX_FILL_RATIO:
-            continue
+            _rej("fill"); continue
         # 직사각형 게이트 — 축정렬 사각형 frame 만 통과(소자 패턴 배제).
         if not _rect_frame_ok(binary, c, x, y, bw, bh):
-            continue
+            _rej("rect_frame"); continue
         if area > best_area:
             best_area = area
             best = (int(x), int(y), int(bw), int(bh))
@@ -562,6 +570,56 @@ def _detect_white_box(gray: np.ndarray) -> tuple[int, int, int, int] | None:
     if box is not None:
         return box
     return _detect_white_box_adaptive(gray)
+
+
+def _detect_white_box_diagnose(gray: np.ndarray) -> tuple[tuple[int, int, int, int] | None, str]:
+    """`_detect_white_box` 와 같은 2단계 검출을 하되, 실패 시 *왜* 실패했는지 reason 을 같이 돌려준다.
+
+    오피스 실데이터에서 박스 검출이 약할 때 어느 게이트가 후보를 떨어뜨리는지 계량해
+    블라인드 튜닝을 피하기 위한 진단 미러(생산 경로 `_detect_white_box` 는 건드리지 않음).
+    reason 예: 'ok:photometric', 'ok:adaptive', 'no_island:rect_frame', 'island:area_max',
+    'no_island:no_contour', 'no_island:adaptive_flat'. 접두 island/no_island 는 photometric
+    섬(고정 채도값) 존재 여부 — 'no_island' 다발이면 overlay 가 포화섬을 못 이룸(SAT_* 튜닝 신호),
+    게이트명 다발이면 그 게이트 완화 신호.
+    """
+    h, w = gray.shape[:2]
+    sat_low = _detect_overlay_saturation(gray)
+    island = sat_low is not None
+    tag = "island" if island else "no_island"
+
+    photo_rej: dict = {}
+    if island:
+        mask = cv2.inRange(gray, int(sat_low), 255)
+        k = RCP_BOX_SAT_CLOSE_KERNEL
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((k, k), np.uint8))
+        binary = (mask > 0).astype(np.uint8)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if contours:
+            box = _select_box_from_mask(binary, contours, h, w, reject_log=photo_rej)
+            if box is not None:
+                return box, "ok:photometric"
+
+    adaptive_rej: dict = {}
+    kernel = np.ones((TOPHAT_KERNEL, TOPHAT_KERNEL), np.uint8)
+    tophat = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, kernel)
+    if int(tophat.max()) == 0:
+        return None, f"{tag}:adaptive_flat"
+    _thr, mask = cv2.threshold(tophat, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    mask = cv2.dilate(mask, np.ones((3, 3), np.uint8), iterations=1)
+    binary = (mask > 0).astype(np.uint8)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None, f"{tag}:no_contour"
+    box = _select_box_from_mask(binary, contours, h, w, reject_log=adaptive_rej)
+    if box is not None:
+        return box, "ok:adaptive"
+
+    merged: dict = {}
+    for d in (photo_rej, adaptive_rej):
+        for kk, vv in d.items():
+            merged[kk] = merged.get(kk, 0) + vv
+    primary = max(merged, key=merged.get) if merged else "no_pass"
+    return None, f"{tag}:{primary}"
 
 
 def _stroke_threshold(region: np.ndarray) -> int:
@@ -685,6 +743,8 @@ def _draw_rcp_overlay(
     bundle: _RcpTemplateBundle,
     out_path: Path,
     label: str,
+    fallback_color: tuple = (220, 200, 80),
+    fallback_thickness: int = 1,
 ) -> None:
     """rcp 이미지에 검출된 흰색 박스, inner crop (template), 그리고 *진짜 align point*
     (= 이미지 중심) 를 표시한다.
@@ -719,7 +779,8 @@ def _draw_rcp_overlay(
         # Fallback: centered ~20% area crop (no engineer box). 시안색 사각형으로 표시해
         # box-detected 경로와 구분한다. align point 는 여전히 이미지 중심.
         ix, iy, iw, ih = bundle.inner_crop
-        cv2.rectangle(canvas, (ix, iy), (ix + iw, iy + ih), (220, 200, 80), 1, cv2.LINE_AA)
+        cv2.rectangle(canvas, (ix, iy), (ix + iw, iy + ih), fallback_color,
+                      fallback_thickness, cv2.LINE_AA)
         _draw_crosshair(canvas, image_center, _BGR_BLUE, length=18, thickness=2)
         note = (
             f"{label}: white box NOT detected -> fallback {iw}x{ih} center crop "

@@ -88,7 +88,7 @@ from poc.workflow_2.align_key_matcher import (
 from poc.workflow_2.align_point_correction import (
     _RcpTemplateBundle,
     _centered_area_crop_bbox,
-    _detect_white_box,
+    _detect_white_box_diagnose,
     _draw_rcp_overlay,
     _inner_crop_for_box,
     _inpaint_crosshair,
@@ -136,7 +136,9 @@ _CELL_MEANING = {
 # crop 중심 = 이미지 중심이라 offset (0,0); box 는 box 가 off-center 면 offset != 0 이다.
 
 
-def _build_offset_templates(assets, *, rcp_overlay_dir: Path | None = None) -> tuple[dict, dict]:
+def _build_offset_templates(
+    assets, *, rcp_overlay_dir: Path | None = None, box_reasons: dict | None = None,
+) -> tuple[dict, dict]:
     """rcp 에서 center / box template + align_offset 을 modality 별로 만든다.
 
     반환: (center, box). 각 값은 ``(AlignKeyTemplate, (dx, dy))`` 또는 None.
@@ -169,7 +171,9 @@ def _build_offset_templates(assets, *, rcp_overlay_dir: Path | None = None) -> t
             (0, 0),  # center crop 중심 = 이미지 중심 = align point.
         )
 
-        det = _detect_white_box(gray)
+        det, box_reason = _detect_white_box_diagnose(gray)
+        if box_reasons is not None:
+            box_reasons[box_reason] = box_reasons.get(box_reason, 0) + 1
         if det is not None:
             inner, inner_bbox = _inner_crop_for_box(gray, det)
             ix, iy, iw, ih = inner_bbox
@@ -198,6 +202,8 @@ def _build_offset_templates(assets, *, rcp_overlay_dir: Path | None = None) -> t
                 gray, bundle=bundle,
                 out_path=rcp_overlay_dir / f"{assets.recipe_id}_{mod}_rcp.jpg",
                 label=f"{assets.recipe_id}/{mod}",
+                fallback_color=(0, 0, 255),   # box 미검출 fallback crop = 빨강(눈에 띄게).
+                fallback_thickness=2,
             )
     return center, box
 
@@ -617,6 +623,7 @@ def run() -> str:
 
     all_rows: list[dict] = []
     n_skip_no_msr = 0  # from_msr 가 비어(이미지가 도구에서 삭제됨) 채점 불가로 건너뛴 recipe 수.
+    box_reasons: dict = {}  # rcp 박스 검출 결과/실패사유 히스토그램 (modality 단위 집계).
     try:
         with rows_path.open("w", encoding="utf-8") as rf:
             for assets in recipes:
@@ -633,7 +640,7 @@ def run() -> str:
                     continue
                 try:
                     center_tpls, box_tpls = _build_offset_templates(
-                        assets, rcp_overlay_dir=rcp_overlay_dir,
+                        assets, rcp_overlay_dir=rcp_overlay_dir, box_reasons=box_reasons,
                     )
                 except Exception as exc:
                     print(f"[WARNING] template 빌드 실패 {assets.recipe_id}: {exc}")
@@ -663,6 +670,16 @@ def run() -> str:
     if n_skip_no_msr:
         print(f"\n[INFO] from_msr 이미지 없어 건너뛴 recipe: {n_skip_no_msr}개 "
               f"(도구에서 측정 이미지 삭제된 케이스 — 정상 skip).")
+
+    if box_reasons:
+        total = sum(box_reasons.values())
+        ok = sum(v for k, v in box_reasons.items() if k.startswith("ok:"))
+        print("\n[INFO] === rcp 박스 검출 진단 (modality 단위; 왜 box 가 안 잡히나) ===")
+        print(f"  검출 성공 {ok}/{total} (rate={ok / total:.3f})")
+        for reason, n in sorted(box_reasons.items(), key=lambda kv: -kv[1]):
+            print(f"    {reason:<24} {n:>4}")
+        print("  * no_island:* = overlay 가 포화섬을 못 이룸(SAT_* 튜닝). "
+              "<gate>:* = 그 게이트 완화 신호(edge/area_max/rect_frame 등).")
 
     if not all_rows:
         print("[ERROR] 처리된 msr 행이 없습니다."

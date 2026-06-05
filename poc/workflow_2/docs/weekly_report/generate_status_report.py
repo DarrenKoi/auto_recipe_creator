@@ -25,7 +25,9 @@ from pptx.util import Inches, Pt, Emu
 DOCS_DIR = Path(__file__).resolve().parent
 HTML_PATH = DOCS_DIR / "workflow_2_status_report.html"
 PPTX_PATH = DOCS_DIR / "workflow_2_status_report.pptx"
-REPORT_DATE = date(2026, 6, 4)
+# 작성일 = 스크립트 실행일(누적 현황 스냅샷이라 "오늘"이 곧 보고 시점).
+# 과거 보고를 그 시점 날짜로 재생성하려면 date(2026, 6, 4)처럼 고정값으로 바꾼다.
+REPORT_DATE = date.today()
 
 
 STATUS_DONE = "done"
@@ -603,6 +605,8 @@ def build_pptx() -> Presentation:
 
 
 def main() -> None:
+    print(f"[INFO] 작성일(REPORT_DATE): {REPORT_DATE.isoformat()}")
+
     html = build_html()
     HTML_PATH.write_text(html, encoding="utf-8")
     print(f"[INFO] HTML 생성: {HTML_PATH}")

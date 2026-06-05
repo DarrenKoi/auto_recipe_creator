@@ -467,17 +467,36 @@ def _print_summary(summary: dict) -> None:
               f"{s['topk_not_rank1_rate']:>8} {str(s['median_dist_norm']):>9} "
               f"{str(s['p90_dist_norm']):>9}")
 
-    old = summary["cells"].get("center__raw", {})
-    new = summary["cells"].get("box__inpaint", {})
-    print("\n[INFO] === VERDICT: NEW(box+inpaint) vs OLD(center+raw) ===")
-    if old.get("n", 0) == 0 or new.get("n", 0) == 0:
-        print("  비교 불가 — 한쪽 셀에 표본이 없음(box 미검출 가능). 위 표/위생 확인.")
-        return
-    for key, label in (("rank1_hit_rate", "rank1_hit"), ("gt_in_topk_rate", "gt_in_topk")):
-        d = round(new[key] - old[key], 3)
-        verdict = "NEW better (교체 근거)" if d > 0 else ("동률" if d == 0 else "NEW worse [!]")
-        print(f"  {label:<12} OLD={old[key]}  NEW={new[key]}  delta={d:+}  => {verdict}")
-    print("  * rank1_hit 가 주 판정(생산 1발 명중). gt_in_topk 는 proposer recall 보조.")
+    cells = summary["cells"]
+
+    def _contrast(title: str, a_cell: str, b_cell: str, *, note: str = "") -> None:
+        """b - a 를 rank1/gt_topk 로 출력. a=기준(baseline), b=변경. 한쪽 표본 0 이면 skip."""
+        a, b = cells.get(a_cell, {}), cells.get(b_cell, {})
+        print(f"\n  [{title}]  {b_cell} − {a_cell}" + (f"   ({note})" if note else ""))
+        if a.get("n", 0) == 0 or b.get("n", 0) == 0:
+            print(f"    비교 불가 — 표본 없음 (n: {a_cell}={a.get('n',0)}, {b_cell}={b.get('n',0)}).")
+            return
+        if a["n"] != b["n"]:
+            print(f"    [!] 비-쌍대(unpaired): n {a_cell}={a['n']} vs {b_cell}={b['n']} — "
+                  f"box 셀은 box 검출된 recipe 만 → 같은 프레임 집합 아님. delta 해석 주의.")
+        for key, label in (("rank1_hit_rate", "rank1_hit"), ("gt_in_topk_rate", "gt_in_topk")):
+            d = round(b[key] - a[key], 3)
+            mark = "better" if d > 0 else ("동률" if d == 0 else "worse [!]")
+            print(f"    {label:<12} base={a[key]}  new={b[key]}  delta={d:+}  => {mark}")
+
+    print("\n[INFO] === 분해 판정 (raw 프레임엔 정답 crosshair 가 그려져 있어 *cheat* 가능 →"
+          " 생산 A/B 는 inpaint 끼리 비교) ===")
+    # 1) frame 효과: raw→inpaint. raw 가 crosshair(=정답)로 부풀려진 정도. inpaint 가 낮으면 정상.
+    _contrast("frame: inpaint 효과(center)", "center__raw", "center__inpaint",
+              note="raw 가 crosshair 로 cheat 한 양 (떨어지는 게 정상)")
+    # 2) 생산 A/B (主판정): 둘 다 crosshair 제거된 honest 프레임에서 box vs center 템플릿.
+    _contrast("主판정: box 효과(inpaint, 생산 충실)", "center__inpaint", "box__inpaint",
+              note="이게 진짜 채택 근거 — 둘 다 honest")
+    # 3) 보조: raw 프레임에서의 box 효과 (cheat 포함이라 참고용).
+    _contrast("보조: box 효과(raw)", "center__raw", "box__raw", note="raw=cheat 포함, 참고만")
+    print("\n  * 主판정 = box__inpaint vs center__inpaint (rank1_hit). "
+          "center__raw vs box__inpaint(구 verdict)는 frame+template 를 한꺼번에 바꿔 혼동 — 폐기.")
+    print("  * box 셀 n < center 셀 n 이면 box 검출 실패분만큼 비-쌍대 — 위 박스 검출 진단 참고.")
 
 
 # ------------------------------------------------------------------

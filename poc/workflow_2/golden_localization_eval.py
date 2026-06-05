@@ -104,9 +104,11 @@ from poc.workflow_1.util.time_utils import make_timestamp_tag
 # golden 루트 — fail 트리(align_images)와 형제 폴더. env 로 override 가능.
 GOLDEN_ROOT = ALIGN_IMAGES_ROOT.parent / "align_images_golden"
 
-# 박스 검출기 선택 — env ALIGN_BOX_DETECTOR=legacy(기존 2단계) | ensemble(5-검출기 앙상블).
-# 오피스에서 두 번 돌려(legacy/ensemble) 박스 검출 진단 히스토그램으로 A/B 한다.
-_BOX_DETECTOR = os.getenv("ALIGN_BOX_DETECTOR", "legacy").strip().lower()
+# 박스 검출기 선택 — **코드 상수로 직접 전환**(오피스가 set/env 를 못 쓰므로). A/B 하려면 아래
+# 기본값 "ensemble" ↔ "legacy" 만 바꿔 두 번 돌린다(env ALIGN_BOX_DETECTOR 가 있으면 그게 우선).
+#   "ensemble" = 6-검출기 앙상블(photometric/adaptive/morphology/projection/hough/lsd) + 통합 scorer
+#   "legacy"   = 기존 2단계(photometric → adaptive)
+_BOX_DETECTOR = os.getenv("ALIGN_BOX_DETECTOR", "ensemble").strip().lower()
 
 
 def _detect_box(gray):

@@ -86,8 +86,10 @@ from poc.workflow_2.align_key_matcher import (
     compute_align_key_score,
 )
 from poc.workflow_2.align_point_correction import (
+    _RcpTemplateBundle,
     _centered_area_crop_bbox,
     _detect_white_box,
+    _draw_rcp_overlay,
     _inner_crop_for_box,
     _inpaint_crosshair,
     _tool_label,
@@ -134,13 +136,17 @@ _CELL_MEANING = {
 # crop 중심 = 이미지 중심이라 offset (0,0); box 는 box 가 off-center 면 offset != 0 이다.
 
 
-def _build_offset_templates(assets) -> tuple[dict, dict]:
+def _build_offset_templates(assets, *, rcp_overlay_dir: Path | None = None) -> tuple[dict, dict]:
     """rcp 에서 center / box template + align_offset 을 modality 별로 만든다.
 
     반환: (center, box). 각 값은 ``(AlignKeyTemplate, (dx, dy))`` 또는 None.
     center = 정중앙 면적 crop(offset (0,0)); box = 흰 unique-area box 안쪽 crop
     (offset = image_center - inner_center). box 미검출 modality 는 None.
     offset 규약은 `_build_rcp_template` 와 동일 — match 중심 + offset = align point.
+
+    rcp_overlay_dir 가 주어지면 modality 마다 rcp 위에 [검출 box(노랑)·inner crop
+    template(초록)·align point=이미지중심(파랑)·offset 화살표(시안)] 를 그린 JPEG 을
+    저장한다 — "흰 box 안쪽 crop 이 제대로 잡혔나" 를 눈으로 검증하는 용도.
     """
     from poc.workflow_2.align_fail_assets import load_gray
 
@@ -175,6 +181,24 @@ def _build_offset_templates(assets) -> tuple[dict, dict]:
             )
         else:
             box[mod] = None
+
+        # rcp box-crop 검증 overlay (box 검출 성공/실패 둘 다 — 실패는 fallback crop 으로 표시).
+        if rcp_overlay_dir is not None:
+            if det is not None:
+                bundle = _RcpTemplateBundle(
+                    template=box[mod][0], align_offset_xy=offset,
+                    detected_box=det, inner_crop=inner_bbox,
+                )
+            else:
+                bundle = _RcpTemplateBundle(
+                    template=center[mod][0], align_offset_xy=(0, 0),
+                    detected_box=None, inner_crop=(cx, cy, cw, ch),
+                )
+            _draw_rcp_overlay(
+                gray, bundle=bundle,
+                out_path=rcp_overlay_dir / f"{assets.recipe_id}_{mod}_rcp.jpg",
+                label=f"{assets.recipe_id}/{mod}",
+            )
     return center, box
 
 
@@ -585,6 +609,9 @@ def run() -> str:
     out_dir.mkdir(parents=True, exist_ok=True)
     rows_path = out_dir / "rows.jsonl"
     overlay_dir = (out_dir / "overlays") if SAVE_OVERLAYS else None
+    rcp_overlay_dir = (out_dir / "rcp_templates") if SAVE_OVERLAYS else None
+    if rcp_overlay_dir is not None:
+        rcp_overlay_dir.mkdir(parents=True, exist_ok=True)
     print(f"[INFO] recipe {len(recipes)}개 처리 → {out_dir}"
           + ("  (SELF-TEST)" if selftest else ""))
 
@@ -605,7 +632,9 @@ def run() -> str:
                     print(f"[INFO] {assets.recipe_id}: from_msr 이미지 없음(도구에서 삭제 가능) → 건너뜀(skip)")
                     continue
                 try:
-                    center_tpls, box_tpls = _build_offset_templates(assets)
+                    center_tpls, box_tpls = _build_offset_templates(
+                        assets, rcp_overlay_dir=rcp_overlay_dir,
+                    )
                 except Exception as exc:
                     print(f"[WARNING] template 빌드 실패 {assets.recipe_id}: {exc}")
                     continue
@@ -649,6 +678,10 @@ def run() -> str:
     if overlay_dir is not None and overlay_dir.is_dir():
         n_ovl = sum(1 for r in all_rows if r.get("overlay"))
         print(f"\n[INFO] overlay {n_ovl}장 저장 (GT vs 예측 align point): {overlay_dir}")
+    if rcp_overlay_dir is not None and rcp_overlay_dir.is_dir():
+        n_rcp = len(list(rcp_overlay_dir.glob("*_rcp.jpg")))
+        print(f"[INFO] rcp template overlay {n_rcp}장 저장 "
+              f"(노랑=검출 box, 초록=inner crop, 파랑=align point, 시안 화살표=offset): {rcp_overlay_dir}")
     print(f"\n[INFO] 완료: {out_dir}")
     return "success"
 

@@ -86,6 +86,7 @@ from poc.workflow_2.align_key_matcher import (
     compute_align_key_score,
 )
 from poc.workflow_2.align_point_correction import (
+    RCP_FALLBACK_CENTER_CROP_AREA_RATIO,
     _RcpTemplateBundle,
     _centered_area_crop_bbox,
     _detect_white_box_diagnose,
@@ -95,12 +96,25 @@ from poc.workflow_2.align_point_correction import (
     _tool_label,
 )
 from poc.workflow_2.crosshair_detect import detect_crosshair
+from poc.workflow_2.white_box_detectors import detect_white_box_ensemble_diagnose
 # align_similarity 의 crop 비율·scale band·허용오차 상수만 재사용(정의 중복/표류 방지).
 from poc.workflow_2.align_similarity import CENTER_AREA_RATIO, COMPARE_SCALES, GT_TOL_NORM
 from poc.workflow_1.util.time_utils import make_timestamp_tag
 
 # golden 루트 — fail 트리(align_images)와 형제 폴더. env 로 override 가능.
 GOLDEN_ROOT = ALIGN_IMAGES_ROOT.parent / "align_images_golden"
+
+# 박스 검출기 선택 — env ALIGN_BOX_DETECTOR=legacy(기존 2단계) | ensemble(5-검출기 앙상블).
+# 오피스에서 두 번 돌려(legacy/ensemble) 박스 검출 진단 히스토그램으로 A/B 한다.
+_BOX_DETECTOR = os.getenv("ALIGN_BOX_DETECTOR", "legacy").strip().lower()
+
+
+def _detect_box(gray):
+    """선택된 검출기로 (bbox|None, reason) 반환. legacy/ensemble 신호를 한 인터페이스로 통일."""
+    if _BOX_DETECTOR == "ensemble":
+        box, reason, _src = detect_white_box_ensemble_diagnose(gray)
+        return box, reason
+    return _detect_white_box_diagnose(gray)
 OUTPUT_ROOT = DEBUG_IMAGE_DIR / "golden_localization_eval"
 
 # golden 데이터가 없을 때 합성 self-test 로 파이프라인만 점검할지.
@@ -171,7 +185,7 @@ def _build_offset_templates(
             (0, 0),  # center crop 중심 = 이미지 중심 = align point.
         )
 
-        det, box_reason = _detect_white_box_diagnose(gray)
+        det, box_reason = _detect_box(gray)
         if box_reasons is not None:
             box_reasons[box_reason] = box_reasons.get(box_reason, 0) + 1
         if det is not None:
@@ -194,9 +208,11 @@ def _build_offset_templates(
                     detected_box=det, inner_crop=inner_bbox,
                 )
             else:
+                # box 미검출 → 생산이 실제로 쓰는 fallback crop(10% area)을 빨강으로 표시.
+                fb_bbox = _centered_area_crop_bbox(gray, RCP_FALLBACK_CENTER_CROP_AREA_RATIO)
                 bundle = _RcpTemplateBundle(
                     template=center[mod][0], align_offset_xy=(0, 0),
-                    detected_box=None, inner_crop=(cx, cy, cw, ch),
+                    detected_box=None, inner_crop=fb_bbox,
                 )
             _draw_rcp_overlay(
                 gray, bundle=bundle,
@@ -693,7 +709,7 @@ def run() -> str:
     if box_reasons:
         total = sum(box_reasons.values())
         ok = sum(v for k, v in box_reasons.items() if k.startswith("ok:"))
-        print("\n[INFO] === rcp 박스 검출 진단 (modality 단위; 왜 box 가 안 잡히나) ===")
+        print(f"\n[INFO] === rcp 박스 검출 진단 (detector={_BOX_DETECTOR}; modality 단위; 왜 box 가 안 잡히나) ===")
         print(f"  검출 성공 {ok}/{total} (rate={ok / total:.3f})")
         for reason, n in sorted(box_reasons.items(), key=lambda kv: -kv[1]):
             print(f"    {reason:<24} {n:>4}")

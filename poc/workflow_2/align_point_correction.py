@@ -165,11 +165,12 @@ RCP_BOX_SAT_MAX_MASS = 0.02        # 이 비율 초과면 overlay 가 아닌 큰
 RCP_BOX_SAT_SCAN_FLOOR = 200       # 이 값 미만은 overlay 후보로 보지 않는다(SEM 내용과 구분되는 밝은 영역만).
 RCP_BOX_SAT_CLOSE_KERNEL = 5       # stroke anti-alias 끊김을 잇는 MORPH_CLOSE 커널 한 변(px).
 
-# 박스 검출 실패시 fallback — 이미지 중심을 중심으로 *면적 기준 15%* 의 crop 을 template 으로 쓴다.
-# 각 변은 sqrt(0.15) ≈ 0.387 비율. 전체 이미지를 쓰는 것보다 매칭이 unique 영역 (= 이미지 중심부)
-# 에 집중되고, align_offset 은 (0,0) 그대로 유지되어 좌표 계산이 단순하다. 20% 는 여전히
-# 너무 커서 인접한 noise 까지 포함됐던 사용자 피드백 반영 (2026-05-28).
-RCP_FALLBACK_CENTER_CROP_AREA_RATIO = 0.15
+# 박스 검출 실패시 fallback — 이미지 중심을 중심으로 *면적 기준 10%* 의 crop 을 template 으로 쓴다.
+# 각 변은 sqrt(0.10) ≈ 0.316 비율. 전체 이미지를 쓰는 것보다 매칭이 unique 영역 (= 이미지 중심부)
+# 에 집중되고, align_offset 은 (0,0) 그대로 유지되어 좌표 계산이 단순하다. 20%→15%→10% 로 축소:
+# 15% 도 (검출 안 된) 흰 box stroke 를 자주 물어 template 을 오염시킨다는 실데이터 피드백 반영
+# (2026-06-05). 더 줄이면 unique 패턴까지 잘릴 수 있어 10% 를 하한 기준으로 둔다.
+RCP_FALLBACK_CENTER_CROP_AREA_RATIO = 0.10
 
 # 도구가 그린 crosshair 를 *공간 prior* 로 사용해 CV 매칭의 ambiguity 를 깬다.
 # free 검색 best 위치가 crosshair-derived 위치 (= crosshair - align_offset) 와 이만큼 떨어져 있으면

@@ -589,10 +589,20 @@ def run() -> str:
           + ("  (SELF-TEST)" if selftest else ""))
 
     all_rows: list[dict] = []
+    n_skip_no_msr = 0  # from_msr 가 비어(이미지가 도구에서 삭제됨) 채점 불가로 건너뛴 recipe 수.
     try:
         with rows_path.open("w", encoding="utf-8") as rf:
             for assets in recipes:
                 if assets is None:
+                    continue
+                # 가드레일: from_msr 폴더가 없거나 비었으면(도구에서 측정 이미지 삭제 등) 정답
+                # 프레임 자체가 없어 위치추정 불가 → template 빌드 전에 명시적으로 건너뛴다.
+                # iter_recipe_dirs 는 from_rcp 만 보고 recipe 를 모으므로 msr 없는 leaf 도
+                # 여기까지 들어온다. 조용히 0행이 되지 않게 skip 을 로그+카운트로 드러낸다.
+                msr_imgs = iter_msr_images(assets)
+                if not msr_imgs:
+                    n_skip_no_msr += 1
+                    print(f"[INFO] {assets.recipe_id}: from_msr 이미지 없음(도구에서 삭제 가능) → 건너뜀(skip)")
                     continue
                 try:
                     center_tpls, box_tpls = _build_offset_templates(assets)
@@ -603,7 +613,6 @@ def run() -> str:
                     print(f"[WARNING] {assets.recipe_id}: center template 없음 — 건너뜀.")
                     continue
                 box_ok = any(v is not None for v in box_tpls.values())
-                msr_imgs = iter_msr_images(assets)
                 if MAX_S_PER_RECIPE is not None:
                     msr_imgs = msr_imgs[:MAX_S_PER_RECIPE]
                 print(f"[INFO] {assets.recipe_id}: msr {len(msr_imgs)}장  "
@@ -622,8 +631,14 @@ def run() -> str:
         if tmp_dir is not None:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
+    if n_skip_no_msr:
+        print(f"\n[INFO] from_msr 이미지 없어 건너뛴 recipe: {n_skip_no_msr}개 "
+              f"(도구에서 측정 이미지 삭제된 케이스 — 정상 skip).")
+
     if not all_rows:
-        print("[ERROR] 처리된 msr 행이 없습니다.")
+        print("[ERROR] 처리된 msr 행이 없습니다."
+              + (f" 수집 recipe 전부가 from_msr 비어있음(skip {n_skip_no_msr}개)."
+                 if n_skip_no_msr else ""))
         return "no_rows"
 
     summary = _summarize(all_rows)

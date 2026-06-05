@@ -496,6 +496,8 @@ def detect_white_box_ensemble_diagnose(gray: np.ndarray):
     """
     best = None  # (score, bbox, source, parts)
     per_source = {}
+    reject_tally: dict = {}  # 기하 탈락 후보의 사유 카운트(area_out/flat/edge/...).
+    n_cand = 0
     for name in ENABLED_DETECTORS:
         fn = DETECTOR_REGISTRY[name]
         try:
@@ -505,17 +507,27 @@ def detect_white_box_ensemble_diagnose(gray: np.ndarray):
             bboxes = []
         src_best = 0.0
         for bb in bboxes:
+            n_cand += 1
             s, parts = score_box_quality(gray, bb)
+            if "reject" in parts:
+                reject_tally[parts["reject"]] = reject_tally.get(parts["reject"], 0) + 1
             src_best = max(src_best, s)
             if best is None or s > best[0]:
                 best = (s, bb, name, parts)
         per_source[name] = round(src_best, 3)
 
-    if best is None or best[0] < ENSEMBLE_ACCEPT_SCORE:
-        bs = round(best[0], 3) if best else 0.0
-        src = best[2] if best else "none"
-        return None, f"reject:best={bs}:{src}", per_source
-    return best[1], f"ok:{best[2]}({best[0]:.2f})", per_source
+    if best is not None and best[0] >= ENSEMBLE_ACCEPT_SCORE:
+        return best[1], f"ok:{best[2]}({best[0]:.2f})", per_source
+
+    # 실패 — 왜인지 분해해 다음 튜닝 타깃을 가리킨다.
+    if n_cand == 0:
+        tail = "no_candidate"                       # 어떤 검출기도 후보 못 냄 → front-end 튜닝.
+    elif best is None or best[0] <= 0.0:
+        dom = max(reject_tally, key=reject_tally.get) if reject_tally else "unknown"
+        tail = f"geom:{dom}"                         # 후보는 있으나 기하 게이트 탈락(area_out 다발=박스 작음→gate↓).
+    else:
+        tail = f"low_score={round(best[0], 2)}:{best[2]}"  # 기하 통과·점수 미달(threshold/scorer).
+    return None, f"reject:{tail}", per_source
 
 
 def detect_white_box_ensemble(gray: np.ndarray):

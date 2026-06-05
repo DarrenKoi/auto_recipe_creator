@@ -70,6 +70,17 @@ HOUGH_MIN_LINE = 12
 HOUGH_MAX_GAP = 8
 HOUGH_ANGLE_TOL_DEG = 8.0
 
+# lsd: gradient 기반 line-segment 검출(FastLineDetector/LSD) — threshold 가 아니라 gradient 라
+# faint/anti-alias/JPEG stroke 도 살아남는다(Codex #1 권고). 검출 후 축정렬 선만 골라 벽
+# 위치를 클러스터링하고, 벽 쌍 조합으로 후보 사각형 *여러 개* 를 만들어 scorer 가 고르게 한다.
+LSD_ANGLE_TOL_DEG = 8.0
+LSD_MIN_LEN_FRAC = 0.04        # 이 미만 길이 선분은 무시(짧은 소자 파편 제거).
+LSD_WALL_CLUSTER_TOL_FRAC = 0.012  # 같은 벽으로 묶을 위치 허용오차(이미지 변 대비).
+LSD_MAX_WALLS = 6              # 축당 가장 강한 벽 후보 수 상한(조합 폭발 방지).
+
+# 통합 품질 점수에서 네 변 닫힘 — best-3 평균 가중치(나머지는 최약변).
+SIDE_BEST3_W = 0.7
+
 # 후보 contour 에서 면적 상위 몇 개까지 scorer 에 넘길지(나머지는 어차피 저점).
 CAND_TOP_K = 6
 
@@ -154,12 +165,17 @@ def score_box_quality(gray: np.ndarray, bbox: tuple) -> tuple:
     on_border = total - float(interior.sum())
     frame_ratio = on_border / total
 
-    # (2) 네 변 닫힘 — 각 변 band 가 변 길이의 얼마나 이어지나(가장 약한 변 채택).
+    # (2) 네 변 닫힘 — 각 변 band 가 변 길이의 얼마나 이어지나.
+    # 과거 min(4변) 은 한 변만 소자라인에 끊겨도 box 전체를 0점화(Codex 지적). → best-3 평균 +
+    # 최약변 soft penalty 로 바꿔, 3변이 튼튼하고 1변이 끊긴 box 도 살린다(닫힘 보존, 0점 회피).
     top_cov = float(bright[:band, :].any(axis=0).mean())
     bot_cov = float(bright[bh - band:, :].any(axis=0).mean())
     left_cov = float(bright[:, :band].any(axis=1).mean())
     right_cov = float(bright[:, bw - band:].any(axis=1).mean())
-    side_cov = min(top_cov, bot_cov, left_cov, right_cov)
+    sides_sorted = sorted([top_cov, bot_cov, left_cov, right_cov])
+    worst = sides_sorted[0]
+    best3 = sum(sides_sorted[1:]) / 3.0
+    side_cov = SIDE_BEST3_W * best3 + (1.0 - SIDE_BEST3_W) * worst
 
     # (3) stroke 대비 — border 밝기 vs 내부 밝기.
     border_mask = np.ones((bh, bw), bool)
@@ -172,8 +188,10 @@ def score_box_quality(gray: np.ndarray, bbox: tuple) -> tuple:
     parts = {
         "score": round(float(score), 3),
         "frame_ratio": round(frame_ratio, 3),
-        "side_cov_min": round(side_cov, 3),
-        "side_cov": [round(top_cov, 2), round(bot_cov, 2), round(left_cov, 2), round(right_cov, 2)],
+        "side_cov": round(side_cov, 3),
+        "side_best3": round(best3, 3),
+        "side_worst": round(worst, 3),
+        "sides": [round(top_cov, 2), round(bot_cov, 2), round(left_cov, 2), round(right_cov, 2)],
         "contrast": round(contrast, 3),
         "area_ratio": round(area_ratio, 4),
         "aspect": round(aspect, 2),
@@ -229,6 +247,76 @@ def _profile_wall_centers(profile: np.ndarray, rel: float) -> list:
         else:
             i += 1
     return centers
+
+
+# line-segment 검출기 초기화 — FastLineDetector(ximgproc) 우선, 없으면 LSD, 둘 다 없으면 비활성.
+# 오피스 PC 에 opencv-contrib(ximgproc) 가 없을 수 있어 가드한다(없으면 detect_lsd_lines→[]).
+_LINE_DETECTOR = None
+_LINE_DETECTOR_NAME = None
+try:
+    _LINE_DETECTOR = cv2.ximgproc.createFastLineDetector()
+    _LINE_DETECTOR_NAME = "fast_line"
+except Exception:
+    try:
+        _LINE_DETECTOR = cv2.createLineSegmentDetector()
+        _LINE_DETECTOR_NAME = "lsd"
+    except Exception:
+        _LINE_DETECTOR = None
+        print("[WARNING] FastLineDetector/LSD 둘 다 사용 불가 — lsd 검출기는 빈 결과를 낸다.")
+
+
+def _cluster_positions(positions: list, weights: list, tol: float, keep: int) -> list:
+    """1D 위치들을 tol 이내로 묶어 가중 평균 중심을 구하고, 총가중치 상위 keep 개 반환.
+
+    line-segment 의 y(수평선)/x(수직선) 위치를 '벽'으로 묶는 용도. weight 는 선분 길이 —
+    길고 많은 선분이 모인 위치일수록 진짜 벽일 확률이 높다.
+    """
+    if not positions:
+        return []
+    order = sorted(range(len(positions)), key=lambda i: positions[i])
+    clusters = []  # 각 [sum(pos*w), sum(w), last_pos].
+    for i in order:
+        p, wgt = float(positions[i]), float(weights[i])
+        if clusters and (p - clusters[-1][2]) <= tol:
+            c = clusters[-1]
+            c[0] += p * wgt
+            c[1] += wgt
+            c[2] = p
+        else:
+            clusters.append([p * wgt, wgt, p])
+    centers = [(c[0] / c[1], c[1]) for c in clusters if c[1] > 0]
+    centers.sort(key=lambda cw: -cw[1])
+    return [int(round(c)) for c, _w in centers[:keep]]
+
+
+def _rectangles_from_walls(xs: list, ys: list, h: int, w: int, top_k: int = CAND_TOP_K) -> list:
+    """수직벽 x 후보 × 수평벽 y 후보의 *모든 쌍 조합* 으로 후보 사각형을 만든다(면적/종횡비 sanity).
+
+    최외곽 한 쌍만 쓰던 projection/hough 의 취약점(박스 밖 밝은 구조에 끌려감)을 피하려고,
+    여러 벽 쌍을 후보로 내고 통합 scorer 가 진짜 box 를 고르게 한다(Codex Q4 권고).
+    """
+    xs = sorted(set(int(v) for v in xs))
+    ys = sorted(set(int(v) for v in ys))
+    total = float(h * w)
+    out = []
+    for i in range(len(xs)):
+        for j in range(i + 1, len(xs)):
+            bw = xs[j] - xs[i]
+            if bw < 8:
+                continue
+            for a in range(len(ys)):
+                for b in range(a + 1, len(ys)):
+                    bh = ys[b] - ys[a]
+                    if bh < 8:
+                        continue
+                    ar = (bw * bh) / total
+                    if ar < RCP_BOX_MIN_AREA_RATIO or ar > RCP_BOX_MAX_AREA_RATIO:
+                        continue
+                    if max(bw, bh) / max(1, min(bw, bh)) > RCP_BOX_MAX_ASPECT:
+                        continue
+                    out.append((xs[i], ys[a], bw, bh))
+    out.sort(key=lambda b: -(b[2] * b[3]))
+    return out[:top_k]
 
 
 # ------------------------------------------------------------------
@@ -321,6 +409,51 @@ def detect_hough(gray: np.ndarray) -> list:
     return [(x0, y0, x1 - x0, y1 - y0)]
 
 
+def detect_lsd_lines(gray: np.ndarray) -> list:
+    """gradient 기반 line-segment(FastLineDetector/LSD) → 축정렬 벽 클러스터 → 벽 쌍 후보 사각형.
+
+    Canny+Hough 와 달리 gradient 정렬 픽셀을 직접 묶어 faint/anti-alias/JPEG stroke 에 강하다
+    (Codex #1). 선분의 *끝점·길이* 를 보존해, 수평선은 y·길이, 수직선은 x·길이로 벽을 가중
+    클러스터링하고, `_rectangles_from_walls` 로 여러 후보를 내 scorer 가 고르게 한다(최외곽
+    한 쌍 고정의 취약점 회피).
+    """
+    if _LINE_DETECTOR is None:
+        return []
+    try:
+        res = _LINE_DETECTOR.detect(gray)
+    except Exception:
+        return []
+    segs = res[0] if isinstance(res, tuple) else res
+    if segs is None:
+        return []
+    segs = np.asarray(segs, dtype=np.float32).reshape(-1, 4)
+    if segs.shape[0] == 0:
+        return []
+
+    h, w = gray.shape[:2]
+    min_len = max(HOUGH_MIN_LINE, LSD_MIN_LEN_FRAC * min(h, w))
+    xs_pos, xs_wt, ys_pos, ys_wt = [], [], [], []
+    for x1, y1, x2, y2 in segs:
+        dx, dy = x2 - x1, y2 - y1
+        length = float(np.hypot(dx, dy))
+        if length < min_len:
+            continue
+        ang = abs(np.degrees(np.arctan2(dy, dx)))
+        if ang < LSD_ANGLE_TOL_DEG or ang > 180.0 - LSD_ANGLE_TOL_DEG:
+            ys_pos.append((y1 + y2) / 2.0)   # 수평선 → y 벽, 길이 가중.
+            ys_wt.append(length)
+        elif abs(ang - 90.0) < LSD_ANGLE_TOL_DEG:
+            xs_pos.append((x1 + x2) / 2.0)   # 수직선 → x 벽.
+            xs_wt.append(length)
+
+    tol = max(3.0, LSD_WALL_CLUSTER_TOL_FRAC * max(h, w))
+    xs = _cluster_positions(xs_pos, xs_wt, tol, LSD_MAX_WALLS)
+    ys = _cluster_positions(ys_pos, ys_wt, tol, LSD_MAX_WALLS)
+    if len(xs) < 2 or len(ys) < 2:
+        return []
+    return _rectangles_from_walls(xs, ys, h, w)
+
+
 # ------------------------------------------------------------------
 # 검출기 레지스트리 — 모듈식. 불필요한 방법은 ENABLED_DETECTORS 에서 한 줄 지우면 빠진다.
 # ------------------------------------------------------------------
@@ -336,6 +469,7 @@ DETECTOR_REGISTRY = {
     "morphology": detect_morphology_lines,  # 가로/세로 선 커널 → wavy 소자 제거 (主력).
     "projection": detect_projection,     # 행/열 합 peak → 축정렬 벽 (no_island·faint).
     "hough": detect_hough,               # Canny+HoughLinesP → 최외곽 선 사각형 (occlusion robust).
+    "lsd": detect_lsd_lines,             # gradient line-segment → 벽 클러스터 쌍 (faint/anti-alias, multi-cand).
 }
 
 ENABLED_DETECTORS = [
@@ -344,6 +478,7 @@ ENABLED_DETECTORS = [
     "morphology",
     "projection",
     "hough",
+    "lsd",
 ]
 
 
@@ -394,11 +529,13 @@ def detect_white_box_ensemble(gray: np.ndarray):
 # ------------------------------------------------------------------
 
 
-def _synth_box_image(*, faint: bool = False, wavy: bool = False, touch: bool = False) -> tuple:
+def _synth_box_image(*, faint: bool = False, wavy: bool = False, touch: bool = False,
+                     broken: bool = False) -> tuple:
     """흰 box 1개를 담은 합성 rcp 를 만든다. 반환: (gray, gt_bbox).
 
     faint=stroke 를 어둡게(저대비), wavy=배경에 구불구불 소자 라인(distractor) 추가,
-    touch=box 를 가장자리 가깝게(예외 케이스). 검출기 강건성 회귀 가드용.
+    touch=box 를 가장자리 가깝게, broken=한 변을 끊고 박스를 가로지르는 밝은 소자 라인 추가
+    (occlusion/JPEG 끊김 모사 — best-3 닫힘·LSD multi-candidate 의 회귀 가드). 강건성 회귀용.
     """
     H, W = 320, 360
     bg = np.full((H, W), 70, np.uint8)
@@ -416,6 +553,10 @@ def _synth_box_image(*, faint: bool = False, wavy: bool = False, touch: bool = F
     cv2.rectangle(bg, (bx, by), (bx + bw, by + bh), int(stroke), 2)
     # box 안쪽에 unique 패턴(저밝기) — 내부가 비어있지 않게.
     cv2.circle(bg, (bx + bw // 2, by + bh // 2), 18, 120, 1)
+    if broken:
+        gx0 = bx + bw // 3
+        bg[by - 1:by + 2, gx0:gx0 + bw // 3] = 70                       # 윗변 가운데를 끊는다.
+        cv2.line(bg, (bx - 30, by + bh // 2), (bx + bw + 30, by + bh // 2), 210, 1)  # 가로지르는 distractor.
     return bg, (bx, by, bw, bh)
 
 
@@ -436,6 +577,8 @@ def _run_selftest() -> int:
         ("faint", dict(faint=True)),
         ("wavy_distractor", dict(wavy=True)),
         ("faint+wavy", dict(faint=True, wavy=True)),
+        ("broken_side", dict(broken=True)),
+        ("broken+faint", dict(broken=True, faint=True)),
     ]
     print("[INFO] === white_box ensemble self-test (합성 hard cases) ===")
     ok = 0

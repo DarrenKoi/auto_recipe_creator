@@ -104,6 +104,61 @@ def make_synthetic_template(size: int = TEMPLATE_SIZE, key_type: str = "cross") 
     return img
 
 
+def make_synthetic_cluster(
+    size: int = TEMPLATE_SIZE, *, spread: float = 1.0, with_inner_cross: bool = False,
+) -> tuple[np.ndarray, tuple[int, int]]:
+    """공간적으로 분산된 3~4 박스 클러스터 + 꼭지점(align point) 좌표를 만든다.
+
+    실제 CD-SEM align key 형태에 더 충실하다: 박스 3~4개가 서로 **떨어져** 배치되고
+    (동심 nested 아님), 그 중 **좌하단(3사분면) 박스**를 align point 꼭지점으로 지정한다.
+    꼭지점은 클러스터 무게중심과 의도적으로 떨어져 있어, ``align_offset``(=이미지중심−
+    템플릿중심) 보정 경로를 실질적으로 검증할 수 있게 한다(꼭지점=중심인 합성은 offset
+    경로를 못 건드림).
+
+    인자:
+      spread: 박스 분산 정도. 클수록 꼭지점-무게중심 거리↑ → align_offset↑.
+      with_inner_cross: True 면 일부 박스 안에 작은 십자(박스 내부에 갇힌 짧은 선,
+        full-span 아님)를 그린다 — detect_crosshair 가 이를 측정 십자로 오인하지 않는지
+        검증하는 용도.
+    반환: (image, vertex_xy). vertex_xy = 좌하단 박스 중심(패턴 좌표계) = align point.
+    """
+    img = np.full((size, size), 120, dtype=np.uint8)
+    cx, cy = size // 2, size // 2
+    dark = 40
+    # (dx_ratio, dy_ratio, half_ratio) — 캔버스 중심 기준, y 는 아래 방향.
+    # [0] 좌하단 = align point 꼭지점(나머지보다 크고 nested 로 distinctive).
+    boxes = [
+        (-0.22, 0.26, 0.12),   # 좌하단(3사분면) = 꼭지점.
+        (-0.22, -0.18, 0.09),  # 좌상단.
+        (0.24, -0.18, 0.08),   # 우상단.
+        (0.24, 0.10, 0.06),    # 우중(비대칭 4번째).
+    ]
+    centers = []
+    for i, (dxr, dyr, hr) in enumerate(boxes):
+        bx = int(round(cx + spread * dxr * size))
+        by = int(round(cy + spread * dyr * size))
+        h = max(4, int(round(hr * size)))
+        cv2.rectangle(img, (bx - h, by - h), (bx + h, by + h), dark, 3 if i == 0 else 2)
+        if i == 0:  # 꼭지점 박스는 이중 outline 으로 더 distinctive.
+            h2 = max(2, h // 2)
+            cv2.rectangle(img, (bx - h2, by - h2), (bx + h2, by + h2), dark, 2)
+        centers.append((bx, by, h))
+        if with_inner_cross and i in (0, 1):
+            # 박스 안에만 갇힌 짧은 십자(span « frame) — 측정 crosshair 와 구분되어야.
+            a = max(2, h - 3)
+            cv2.line(img, (bx - a, by), (bx + a, by), dark, 1)
+            cv2.line(img, (bx, by - a), (bx, by + a), dark, 1)
+    # 회전 대칭 깨기용 비대칭 dot — 꼭지점 박스 옆(ORB anchor).
+    vbx, vby, vh = centers[0]
+    for ddx, ddy in ((vh + 6, 0), (vh + 6, 5)):
+        cv2.circle(img, (vbx + ddx, vby + ddy), 2, dark, -1)
+
+    img = cv2.GaussianBlur(img, (0, 0), 0.6)
+    noise = RNG.normal(0, 4, img.shape)
+    img = np.clip(img.astype(np.float32) + noise, 0, 255).astype(np.uint8)
+    return img, (centers[0][0], centers[0][1])
+
+
 # ------------------------------------------------------------------
 # 합성 SEM 프레임 생성기.
 # ------------------------------------------------------------------

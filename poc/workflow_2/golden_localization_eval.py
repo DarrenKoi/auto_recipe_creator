@@ -57,6 +57,7 @@ except Exception:
     pass
 
 import json
+import math
 import shutil
 import statistics
 import tempfile
@@ -154,6 +155,7 @@ _CELL_MEANING = {
 
 def _build_offset_templates(
     assets, *, rcp_overlay_dir: Path | None = None, box_reasons: dict | None = None,
+    offset_records: list | None = None,
 ) -> tuple[dict, dict]:
     """rcp 에서 center / box template + align_offset 을 modality 별로 만든다.
 
@@ -199,6 +201,15 @@ def _build_offset_templates(
                                version=version + "_box", key_type=key_type),
                 offset,
             )
+            # 가정 진단: |align_offset| 를 template 짧은 변으로 정규화해 기록한다.
+            # 이 값이 GT_TOL_NORM 보다 크면, rcp 가 align point 중심으로 안 찍혔을 때
+            # 그만큼 빗나간다는 뜻 → offset 보정이 load-bearing 임을 정량화.
+            if offset_records is not None:
+                short = max(1, min(iw, ih))
+                onorm = float(np.hypot(offset[0], offset[1]) / short)
+                offset_records.append(
+                    {"recipe": assets.recipe_id, "mod": mod, "offset_norm": round(onorm, 4)}
+                )
         else:
             box[mod] = None
 
@@ -458,6 +469,59 @@ def _summarize(rows: list[dict]) -> dict:
     return {"hygiene": hygiene, "cells": cells}
 
 
+def _offset_diag(records: list) -> dict:
+    """align-offset 진단 — load-bearing 가정(rcp 중심 == align point)의 정량 리스크.
+
+    box 검출된 modality 의 정규화 offset 분포 + GT_TOL_NORM 초과("가정 민감") recipe 집계.
+    offset 이 크다는 건 흰 box 가 align point(이미지 중심)에서 멀다는 뜻이고, 그만큼 offset
+    보정이 정확도에 결정적임을 보여준다.
+    """
+    if not records:
+        return {"n": 0}
+    norms = sorted(r["offset_norm"] for r in records)
+    sensitive = [r for r in records if r["offset_norm"] > GT_TOL_NORM]
+    return {
+        "n": len(norms),
+        "tol": GT_TOL_NORM,
+        "median_offset_norm": _percentile(norms, 0.5),
+        "p90_offset_norm": _percentile(norms, 0.9),
+        "n_assumption_sensitive": len(sensitive),
+        "sensitive": [
+            {"recipe": r["recipe"], "mod": r["mod"], "offset_norm": r["offset_norm"]}
+            for r in sensitive
+        ],
+    }
+
+
+def _offset_ablation(box_tpls: dict, msr_imgs: list) -> tuple[int, int, int]:
+    """offset 적용 vs offset=0 의 inpaint rank1_hit 비교 (self-test 회귀 가드).
+
+    offset 경로가 load-bearing 임을(그리고 본 테스트가 실제로 그걸 가드함을) 보인다.
+    같은 box template 을 offset 만 0 으로 바꿔 재채점한다. 반환: (hit_with, hit_zero, n).
+    """
+    zero = {m: ((v[0], (0, 0)) if v is not None else None) for m, v in box_tpls.items()}
+    hit_with = hit_zero = n = 0
+    for p in msr_imgs:
+        try:
+            g = load_gray(p)
+        except Exception:
+            continue
+        if _tool_label(p.name) != "S":
+            continue
+        ch = detect_crosshair(g)
+        if ch.xy is None:
+            continue
+        gi = _inpaint_crosshair(g, ch.xy)
+        rw = _localize(box_tpls, gi, ch.xy)
+        rz = _localize(zero, gi, ch.xy)
+        if rw is None or rz is None:
+            continue
+        n += 1
+        hit_with += int(rw["hit"])
+        hit_zero += int(rz["hit"])
+    return hit_with, hit_zero, n
+
+
 def _print_summary(summary: dict) -> None:
     h = summary["hygiene"]
     print("\n[INFO] === GT 위생 (위치추정의 정답 신뢰도 게이트) ===")
@@ -539,49 +603,95 @@ def _collect_recipes(root: Path) -> list:
 # ------------------------------------------------------------------
 
 
-def _make_rcp_with_box(pattern: np.ndarray, box_shift: tuple[int, int] = (0, 0)) -> np.ndarray:
-    """패턴 + 흰 unique-area box(밝은 사각 outline)로 rcp 이미지를 합성한다.
+def _make_rcp_with_box(
+    pattern: np.ndarray, vertex_xy: tuple[int, int], *, canvas_size: int = 512,
+) -> np.ndarray:
+    """클러스터 패턴을 흰 unique-area box 로 감싸 rcp 이미지를 합성한다(실데이터 규약 충실).
 
-    `_detect_white_box` 의 게이트에 맞춘다: box 면적 ~19%(<40% 상한), 가장자리 비접촉,
-    얇은 outline(hollow), box 만 255 의 photometric 섬이 되도록 패턴을 <200 으로 눌러둔다.
-    ``box_shift`` 로 box(=패턴) 를 이미지 중심에서 (sx, sy) 만큼 옮기면 align_offset 이
-    (-sx, -sy) 가 되어 offset 보정 경로를 점검할 수 있다(0,0 이면 종전과 동일 중앙).
+    실제 rcp 등록 이미지 규약(사용자 확인 2026-06-07): 512×512(또는 1024) 원본의 **이미지
+    중심점이 곧 unique align point** 이고, 엔지니어가 그 주위에 흰 box 를 그려 "이 영역이
+    유일하다"고 표시한다. **box 중심 ≠ 이미지 중심**(엔지니어가 임의로 지정) 이므로
+    align_offset(=이미지중심−box안쪽중심) 가 자연히 0 이 아니다.
+
+    그래서 여기서는 ``vertex_xy``(=align point)를 **캔버스 정중앙**에 놓고, 흰 box 는
+    클러스터의 dark bbox 주위에 그린다 — 꼭지점이 클러스터의 코너라 box 는 off-center 가
+    되어 위 규약을 그대로 재현한다. `_detect_white_box` 게이트(얇은 hollow outline, 가장자리
+    비접촉, <40% fill)에 맞춰 패턴은 <190 으로 눌러 box outline 만 255 photometric 섬이 되게 한다.
     """
-    sx, sy = box_shift
-    # 패턴을 200 미만으로 눌러 유일한 255 island 가 box outline 이 되게 한다.
+    ph, pw = pattern.shape[:2]
+    vx, vy = int(vertex_xy[0]), int(vertex_xy[1])
+    # 패턴을 190 미만으로 눌러 box outline(255)만 유일한 photometric 섬이 되게 한다.
     p = np.clip(pattern.astype(np.float32) * 0.7 + 20.0, 0, 190).astype(np.uint8)
-    ph, pw = p.shape[:2]
-    box_pad = 10  # 패턴과 box outline 사이 여백.
-    iw, ih = pw + 2 * box_pad, ph + 2 * box_pad  # box 한 변(가로, 세로).
-    margin = int(round(max(iw, ih) * 0.65))       # 배경 여백 → box 면적 ≈ (1/2.3)^2 ≈ 0.19.
-    # shift 만큼 캔버스를 키워 box 가 가장자리에 닿지 않게 한다.
-    canvas_w = iw + 2 * margin + 2 * abs(sx)
-    canvas_h = ih + 2 * margin + 2 * abs(sy)
-    canvas = np.full((canvas_h, canvas_w), 90, dtype=np.uint8)
-    # box 중심 = 이미지 중심 + shift → box top-left.
-    box_cx, box_cy = canvas_w // 2 + sx, canvas_h // 2 + sy
-    bx0, by0 = box_cx - iw // 2, box_cy - ih // 2
-    canvas[by0 + box_pad:by0 + box_pad + ph, bx0 + box_pad:bx0 + box_pad + pw] = p
-    cv2.rectangle(canvas, (bx0, by0), (bx0 + iw - 1, by0 + ih - 1), 255, 2)
+    m = 8     # box outline 과 dark 클러스터 사이 여백.
+    pad = 60  # box outline 과 캔버스 가장자리 사이 최소 여백(검출 비접촉 게이트).
+    # vertex 를 정중앙에 두고 패턴+box 가 *항상* 캔버스 안에 들어가도록 크기를 산정한다
+    # (vertex 가 패턴의 어느 코너든 ox/oy 가 음수가 되거나 broadcast 오류가 나지 않게).
+    need = 2 * max(vx, pw - vx, vy, ph - vy) + 2 * (m + pad)
+    c = max(canvas_size, need)
+    canvas = np.full((c, c), 90, dtype=np.uint8)
+    cc = c // 2  # 이미지 중심 = align point.
+    ox, oy = cc - vx, cc - vy  # 패턴 배치 → vertex 가 정확히 캔버스 중심(ox,oy>=0 보장).
+    canvas[oy:oy + ph, ox:ox + pw] = p
+    # 클러스터 dark bbox(원본 패턴 기준) → 캔버스 좌표로 옮겨 흰 box outline 을 그린다.
+    ys, xs = np.where(pattern < 80)
+    if xs.size:
+        bx0, by0 = int(xs.min()) + ox, int(ys.min()) + oy
+        bx1, by1 = int(xs.max()) + ox, int(ys.max()) + oy
+    else:
+        bx0, by0, bx1, by1 = ox, oy, ox + pw - 1, oy + ph - 1
+    cv2.rectangle(canvas, (bx0 - m, by0 - m), (bx1 + m, by1 + m), 255, 2)
     return canvas
 
 
-def _make_msr_frame(pattern: np.ndarray, seed: int, align_shift: tuple[int, int] = (0, 0)) -> np.ndarray:
-    """wafer 배경에 패턴을 drift 시켜 박고, *align point* 위치에 full-span 십자를 그린다.
+def _embed_point(
+    orig_xy: tuple[int, int], pattern_shape, center_xy: tuple[int, int], *,
+    rotation_deg: float, scale: float,
+) -> tuple[int, int]:
+    """embed_pattern 의 (resize → 중심 회전 → 배치) 변환을 패턴 좌표 한 점에 적용해 frame 좌표 반환.
 
-    매칭은 패턴(=box 안쪽)을 그 embed 중심에서 잡고, align point = 중심 + align_offset 이다.
-    self-test 가 일관되려면 crosshair(GT)를 패턴 중심이 아니라 (중심 + align_shift) 에 둔다
-    (``align_shift`` = rcp 의 align_offset = -box_shift).
+    embed_pattern 은 패턴을 ``scale`` resize 후 중심 기준 ``rotation_deg`` 회전하고, 그 중심을
+    frame 의 ``center_xy`` 에 둔다. 그래서 꼭지점 같은 임의 점의 frame 좌표를 동일 변환으로 구한다.
+    정확성을 위해 (1) 명목 scale 이 아니라 **실현 resize 비율**(new/old, 픽셀 중심 규약),
+    (2) embed_pattern 의 배치 floor( ``cx - new_w//2`` ) 로 생기는 0.5px 오프셋까지 반영한다
+    (cv2.getRotationMatrix2D 부호 규약: dx'=cosθ·dx+sinθ·dy, dy'=-sinθ·dx+cosθ·dy).
+    """
+    ph0, pw0 = pattern_shape[:2]
+    new_w = max(8, int(round(pw0 * scale)))
+    new_h = max(8, int(round(ph0 * scale)))
+    # cv2.resize 픽셀 중심 매핑 — 명목 scale 이 아닌 실현 비율(new/old).
+    sx = (orig_xy[0] + 0.5) * (new_w / pw0) - 0.5
+    sy = (orig_xy[1] + 0.5) * (new_h / ph0) - 0.5
+    dx = sx - new_w / 2.0
+    dy = sy - new_h / 2.0
+    th = math.radians(rotation_deg)
+    cos, sin = math.cos(th), math.sin(th)
+    rx = cos * dx + sin * dy
+    ry = -sin * dx + cos * dy
+    # embed_pattern 배치: tile 중심은 연속 new/2 이지만 좌상단은 cx - new//2 → 0.5px 보정.
+    fx = center_xy[0] + rx + (new_w / 2.0 - new_w // 2)
+    fy = center_xy[1] + ry + (new_h / 2.0 - new_h // 2)
+    return int(round(fx)), int(round(fy))
+
+
+def _make_msr_frame(pattern: np.ndarray, seed: int, vertex_xy: tuple[int, int]) -> np.ndarray:
+    """wafer 배경에 클러스터 패턴을 drift 시켜 박고, *vertex(align point)* 위치에 full-span 십자를 그린다.
+
+    매칭은 클러스터(=box 안쪽)를 그 embed 중심에서 잡고, align point = 중심 + align_offset 이다.
+    self-test 일관성을 위해 GT 십자를 패턴 중심이 아니라 **embed 된 vertex 좌표**에 둔다.
+    offset 은 생산처럼 *un-rotated* 로 가산되므로 회전(2°)만큼 작은 잔차가 남지만, 이는 실제
+    drift 와 동형이라 GT_TOL 내에서 통과해야 정상이다.
     """
     from poc.workflow_2.test_align_key_match import embed_pattern, make_wafer_background
 
+    rot, scale = 2.0, 0.95
     bg = make_wafer_background()
     frame, (cx, cy), _w, _h = embed_pattern(
-        bg, pattern, rotation_deg=2.0, scale=0.95, brightness=-8, contrast=0.85, rng_seed=seed,
+        bg, pattern, rotation_deg=rot, scale=scale, brightness=-8, contrast=0.85, rng_seed=seed,
     )
+    gx, gy = _embed_point(vertex_xy, pattern.shape, (cx, cy), rotation_deg=rot, scale=scale)
     fh, fw = frame.shape[:2]
-    gx = int(np.clip(cx + align_shift[0], 1, fw - 2))
-    gy = int(np.clip(cy + align_shift[1], 1, fh - 2))
+    gx = int(np.clip(gx, 1, fw - 2))
+    gy = int(np.clip(gy, 1, fh - 2))
     # detect_crosshair 가 잡도록 full-span(>SPAN_RATIO) 밝은(>SAT ladder 235) 십자.
     cv2.line(frame, (0, gy), (fw - 1, gy), 255, 1)
     cv2.line(frame, (gx, 0), (gx, fh - 1), 255, 1)
@@ -589,23 +699,35 @@ def _make_msr_frame(pattern: np.ndarray, seed: int, align_shift: tuple[int, int]
 
 
 def _build_selftest_golden(root: Path) -> None:
-    """임시 golden 트리(S-only)를 합성한다 — reader/template/crosshair/offset/위치추정 경로 점검.
+    """임시 golden 트리(S-only)를 합성한다 — reader/template/crosshair/offset/위치추정 + 가정 진단.
 
-    RCP_A = 중앙 box(offset 0), RCP_B = off-center box(offset != 0)로 두어, offset 보정이
-    빠지면 RCP_B 의 box 셀 rank1_hit 가 떨어지도록 회귀 가드를 만든다.
+    실데이터 규약(이미지 중심 = align point, 흰 box 는 그 주위 off-center)을 반영한 스펙트럼:
+      RCP_A = 동심 nested 박스, 꼭지점=중심 → align_offset≈0 (baseline).
+      RCP_B = 공간 분산 클러스터(꼭지점=좌하단), 중간 spread → align_offset 중간.
+      RCP_C = 공간 분산 클러스터, 최대 spread → align_offset 큼(강한 offset 회귀 가드 + ablation).
+      RCP_D = 박스 내부 십자 포함 클러스터 → detect_crosshair 가 full-span 측정 십자만 GT 로 잡나.
+    offset 보정이 빠지면 RCP_B/C 의 box 셀 rank1_hit 가 무너지도록 설계.
     """
-    from poc.workflow_2.test_align_key_match import make_synthetic_template
+    from poc.workflow_2.test_align_key_match import (
+        make_synthetic_cluster,
+        make_synthetic_template,
+    )
 
-    pattern = make_synthetic_template(key_type="box")
-    # (eqp, class, recipe, seed, box_shift) — box_shift 가 0 이 아니면 off-center.
+    concentric = make_synthetic_template(key_type="box")
+    csz = concentric.shape[0]
+    cl_b, v_b = make_synthetic_cluster(spread=0.7)
+    cl_c, v_c = make_synthetic_cluster(spread=1.0)
+    cl_d, v_d = make_synthetic_cluster(spread=1.0, with_inner_cross=True)
+    # (eqp, class, recipe, seed, pattern, vertex_xy)
     recipes = [
-        ("EQPSELF", "CLSA", "RCP_A", 11, (0, 0)),
-        ("EQPSELF", "CLSA", "RCP_B", 22, (24, 16)),
+        ("EQPSELF", "CLSA", "RCP_A", 11, concentric, (csz // 2, csz // 2)),
+        ("EQPSELF", "CLSA", "RCP_B", 22, cl_b, v_b),
+        ("EQPSELF", "CLSA", "RCP_C", 33, cl_c, v_c),
+        ("EQPSELF", "CLSA", "RCP_D", 44, cl_d, v_d),
     ]
     jpg = [int(cv2.IMWRITE_JPEG_QUALITY), 95]
-    for eqp, cls, rcp_name, base_seed, box_shift in recipes:
-        rcp = _make_rcp_with_box(pattern, box_shift=box_shift)
-        align_shift = (-box_shift[0], -box_shift[1])  # align_offset = -box_shift.
+    for eqp, cls, rcp_name, base_seed, pattern, vertex_xy in recipes:
+        rcp = _make_rcp_with_box(pattern, vertex_xy)
         leaf = root / eqp / cls / rcp_name
         rcp_dir = leaf / FROM_RCP_DIRNAME
         msr_dir = leaf / FROM_MSR_DIRNAME
@@ -614,7 +736,7 @@ def _build_selftest_golden(root: Path) -> None:
         cv2.imwrite(str(rcp_dir / f"{RCP_OM_STEM}.jpg"), rcp, jpg)
         cv2.imwrite(str(rcp_dir / f"{RCP_SEM_STEM}.jpg"), rcp, jpg)
         for k in range(4):
-            frame = _make_msr_frame(pattern, base_seed + k, align_shift=align_shift)
+            frame = _make_msr_frame(pattern, base_seed + k, vertex_xy)
             cv2.imwrite(str(msr_dir / f"S01A{k + 1:04d}.jpg"), frame, jpg)
 
 
@@ -661,6 +783,8 @@ def run() -> str:
     all_rows: list[dict] = []
     n_skip_no_msr = 0  # from_msr 가 비어(이미지가 도구에서 삭제됨) 채점 불가로 건너뛴 recipe 수.
     box_reasons: dict = {}  # rcp 박스 검출 결과/실패사유 히스토그램 (modality 단위 집계).
+    offset_records: list = []  # 가정 진단: box modality 별 정규화 align_offset.
+    ablation: tuple | None = None  # self-test 한정 offset-ablation (RCP_C): (hit_with, hit_zero, n).
     try:
         with rows_path.open("w", encoding="utf-8") as rf:
             for assets in recipes:
@@ -678,6 +802,7 @@ def run() -> str:
                 try:
                     center_tpls, box_tpls = _build_offset_templates(
                         assets, rcp_overlay_dir=rcp_overlay_dir, box_reasons=box_reasons,
+                        offset_records=offset_records,
                     )
                 except Exception as exc:
                     print(f"[WARNING] template 빌드 실패 {assets.recipe_id}: {exc}")
@@ -700,6 +825,10 @@ def run() -> str:
                     row["recipe"] = assets.recipe_id
                     all_rows.append(row)
                     rf.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+                # self-test 회귀 가드: offset 큰 RCP_C 에서 offset=0 이면 명중이 무너지는지.
+                if selftest and box_ok and assets.recipe_id.endswith("RCP_C"):
+                    ablation = _offset_ablation(box_tpls, msr_imgs)
     finally:
         if tmp_dir is not None:
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -725,10 +854,37 @@ def run() -> str:
         return "no_rows"
 
     summary = _summarize(all_rows)
+    summary["align_offset_diag"] = _offset_diag(offset_records)
     (out_dir / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     _print_summary(summary)
+
+    diag = summary["align_offset_diag"]
+    print("\n[INFO] === align-offset 진단 (load-bearing 가정: rcp 이미지 중심 == align point) ===")
+    if diag.get("n", 0) == 0:
+        print("  box 검출된 modality 없음 — 진단 불가.")
+    else:
+        print(f"  box offset(정규화 |offset|/template단변): "
+              f"median={diag['median_offset_norm']}  p90={diag['p90_offset_norm']}  (n={diag['n']})")
+        print(f"  '가정 민감' modality(=offset_norm > GT_TOL={diag['tol']}): "
+              f"{diag['n_assumption_sensitive']}개")
+        print("    → 흰 box 가 align point(이미지 중심)에서 그만큼 떨어져 있어, offset 보정이 "
+              "없으면 최소 이만큼 빗나간다(보정 경로가 정확도에 결정적).")
+        for s in diag["sensitive"][:8]:
+            print(f"      {s['recipe']:<10} {s['mod']:<4} offset_norm={s['offset_norm']}")
+
+    if ablation is not None:
+        hw, hz, na = ablation
+        print("\n[INFO] === offset-ablation 회귀 가드 (self-test RCP_C; offset 경로 load-bearing 확인) ===")
+        if na == 0:
+            print("  채점 표본 없음 — 가드 미실행.")
+        else:
+            rate_w, rate_z = hw / na, hz / na
+            verdict = "OK (offset 적용이 명중을 끌어올림)" if rate_w > rate_z else \
+                "[!] offset 효과 없음 — 합성/임계 점검 필요"
+            print(f"  rank1_hit: offset 적용={rate_w:.2f} ({hw}/{na})  vs  offset=0={rate_z:.2f} "
+                  f"({hz}/{na})  => {verdict}")
     if overlay_dir is not None and overlay_dir.is_dir():
         n_ovl = sum(1 for r in all_rows if r.get("overlay"))
         print(f"\n[INFO] overlay {n_ovl}장 저장 (GT vs 예측 align point): {overlay_dir}")

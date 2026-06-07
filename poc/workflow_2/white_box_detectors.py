@@ -81,8 +81,13 @@ LSD_MAX_WALLS = 6              # 축당 가장 강한 벽 후보 수 상한(조�
 # 통합 품질 점수에서 네 변 닫힘 — best-3 평균 가중치(나머지는 최약변).
 SIDE_BEST3_W = 0.7
 
-# 후보 contour 에서 면적 상위 몇 개까지 scorer 에 넘길지(나머지는 어차피 저점).
-CAND_TOP_K = 6
+# 후보 contour 에서 scorer 에 넘기기 전에 유지할 후보 수 상한.
+# CAND_KEEP_K: 면적 pruning 전에 일단 이 수만큼 보존(NMS 전).
+# CAND_TOP_K: NMS 후 최종 전달 상한 — 작은 진짜 box 가 큰 후보에 묻히지 않도록
+#   area-first 하드 cut 대신 NMS+keep-more 로 바꿈(Codex 권고 2 구현).
+CAND_KEEP_K = 20    # 면적 pruning 전 중간 보존 수(클러터 환경에서 작은 box 보호).
+CAND_TOP_K = 6      # NMS 후 최종 전달 상한.
+CAND_NMS_IOU = 0.40  # NMS IoU 임계 — 이 이상 겹치면 작은 쪽 제거.
 
 # 통합 품질 점수 가중치 (합=1.0). frame=border 집중도, side=네 변 닫힘, contrast=stroke 대비.
 W_FRAME = 0.40
@@ -214,8 +219,41 @@ def _tophat_binary(gray: np.ndarray) -> "np.ndarray | None":
     return mask
 
 
+def _bbox_iou(a: tuple, b: tuple) -> float:
+    """두 bbox (x,y,w,h) 의 IoU — NMS 내부 전용."""
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    x0, y0 = max(ax, bx), max(ay, by)
+    x1, y1 = min(ax + aw, bx + bw), min(ay + ah, by + bh)
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+    inter = (x1 - x0) * (y1 - y0)
+    return inter / float(aw * ah + bw * bh - inter)
+
+
+def _nms_bboxes(bboxes: list, iou_thr: float = CAND_NMS_IOU, keep: int = CAND_TOP_K) -> list:
+    """면적 내림차순 NMS — iou_thr 이상 겹치는 작은 bbox 를 억제하고 keep 개 반환.
+
+    area-first hard top_k 대신 NMS 를 쓰면, 큰 잡음 contour 에 묻혀 있던 작은 진짜
+    box 후보가 살아남아 scorer 에 전달된다(Codex 권고 2 구현).
+    """
+    bboxes = sorted(bboxes, key=lambda b: -(b[2] * b[3]))
+    kept = []
+    for b in bboxes:
+        if all(_bbox_iou(b, k) < iou_thr for k in kept):
+            kept.append(b)
+            if len(kept) >= keep:
+                break
+    return kept
+
+
 def _bboxes_from_contours(contours: list, h: int, w: int, top_k: int = CAND_TOP_K) -> list:
-    """contour 들에서 면적 sanity(min~max ratio) 통과한 bbox 를 면적순 상위 top_k 개."""
+    """contour 들에서 면적 sanity(min~max ratio) 통과한 bbox 를 NMS 후 top_k 개.
+
+    기존 area-first top_k hard cut 은 큰 잡음 contour 에 묻힌 작은 진짜 box 를
+    놓쳤다. CAND_KEEP_K 만큼 먼저 모아 두고 NMS 로 중복 제거한 뒤 top_k 개를
+    반환한다(Codex 권고 2).
+    """
     total_area = float(h * w)
     out = []
     for c in contours:
@@ -225,17 +263,23 @@ def _bboxes_from_contours(contours: list, h: int, w: int, top_k: int = CAND_TOP_
             continue
         out.append((int(x), int(y), int(bw), int(bh)))
     out.sort(key=lambda b: -(b[2] * b[3]))
-    return out[:top_k]
+    out = out[:CAND_KEEP_K]   # 중간 보존 — NMS 전 후보 풀.
+    return _nms_bboxes(out, iou_thr=CAND_NMS_IOU, keep=top_k)
 
 
-def _profile_wall_centers(profile: np.ndarray, rel: float) -> list:
-    """1D profile 에서 rel*max 이상 구간(벽 후보)의 중심 좌표 리스트(좌→우/상→하)."""
+def _profile_wall_centers(profile: np.ndarray, rel: float) -> tuple:
+    """1D profile 에서 rel*max 이상 구간(벽 후보)의 중심 좌표 + 강도(=구간 합)를 반환.
+
+    반환: (centers, weights) 평행 리스트(좌→우/상→하). weight 는 그 구간의 profile 합 —
+    길고 진한 벽일수록 큰 값. detect_projection 이 이 weight 로 가장 강한 벽
+    LSD_MAX_WALLS 개만 골라(_cluster_positions) 조합 폭발을 막는다.
+    """
     peak = float(profile.max())
     if peak <= 0:
-        return []
+        return [], []
     thr = max(1.0, rel * peak)
     on = profile >= thr
-    centers = []
+    centers, weights = [], []
     i, n = 0, len(on)
     while i < n:
         if on[i]:
@@ -243,10 +287,11 @@ def _profile_wall_centers(profile: np.ndarray, rel: float) -> list:
             while j < n and on[j]:
                 j += 1
             centers.append((i + j - 1) // 2)
+            weights.append(float(profile[i:j].sum()))
             i = j
         else:
             i += 1
-    return centers
+    return centers, weights
 
 
 # line-segment 검출기 초기화 — FastLineDetector(ximgproc) 우선, 없으면 LSD, 둘 다 없으면 비활성.
@@ -360,31 +405,40 @@ def detect_morphology_lines(gray: np.ndarray) -> list:
 
 
 def detect_projection(gray: np.ndarray) -> list:
-    """밝은 mask 의 행/열 합 profile 에서 축정렬 '벽' peak 2쌍 → bbox.
+    """밝은 mask 의 행/열 합 profile 에서 축정렬 '벽' peak → 강한 벽 쌍 후보 사각형.
 
-    축정렬 box 는 좌/우 벽이 열 합에 키 큰 좁은 peak 2개, 상/하 벽이 행 합에 2개로 나온다.
-    최외곽 peak 쌍을 box 경계로 제안(여러 peak 면 scorer 가 옳은 조합을 가려냄).
+    기존에는 최외곽 peak 쌍 하나만 반환했는데, 박스 바깥 밝은 구조(소자라인 등)에
+    peak 가 더 바깥쪽에 생기면 진짜 box 경계를 놓쳤다. 이제 peak 들을 강도순으로
+    추려 _rectangles_from_walls 에 넘겨 여러 후보를 내고 scorer 가 가려낸다(Codex 권고 1).
+
+    단, busy SEM 은 peak 가 수십 개 나올 수 있어 모든 peak 를 그대로 쌍지으면 조합이
+    O(P²·Q²) 로 폭발한다. detect_hough 와 동일하게 _cluster_positions 로 강도 상위
+    LSD_MAX_WALLS 개만 남겨 조합을 C(6,2)²≈225 로 묶는다(uncapped 회귀 방지).
     """
     mask = _tophat_binary(gray)
     if mask is None:
         return []
     h, w = gray.shape[:2]
     b = (mask > 0).astype(np.int32)
-    xs = _profile_wall_centers(b.sum(axis=0), PROJ_PEAK_REL)
-    ys = _profile_wall_centers(b.sum(axis=1), PROJ_PEAK_REL)
+    xs_pos, xs_wt = _profile_wall_centers(b.sum(axis=0), PROJ_PEAK_REL)
+    ys_pos, ys_wt = _profile_wall_centers(b.sum(axis=1), PROJ_PEAK_REL)
+    if len(xs_pos) < 2 or len(ys_pos) < 2:
+        return []
+    tol = max(3.0, LSD_WALL_CLUSTER_TOL_FRAC * max(h, w))
+    xs = _cluster_positions(xs_pos, xs_wt, tol, LSD_MAX_WALLS)
+    ys = _cluster_positions(ys_pos, ys_wt, tol, LSD_MAX_WALLS)
     if len(xs) < 2 or len(ys) < 2:
         return []
-    x0, x1, y0, y1 = xs[0], xs[-1], ys[0], ys[-1]
-    if (x1 - x0) < 8 or (y1 - y0) < 8:
-        return []
-    return [(x0, y0, x1 - x0, y1 - y0)]
+    return _rectangles_from_walls(xs, ys, h, w)
 
 
 def detect_hough(gray: np.ndarray) -> list:
-    """Canny + HoughLinesP 로 수평/수직 선 검출 → 최외곽 선으로 사각형 조립.
+    """Canny + HoughLinesP 로 수평/수직 선 검출 → 클러스터 벽 쌍 모두 후보 사각형.
 
     얇은/끊긴/저대비 stroke 도 edge 로는 살아남아 선분으로 검출되는 경우가 많다(occlusion
-    robust). 축정렬(±각도허용) 선만 골라 최외곽 수평 2 + 수직 2 의 bounding box 를 제안.
+    robust). 기존에는 최외곽 단일 쌍만 조립했는데, 박스 바깥 강한 에지가 있으면 진짜
+    box 벽을 건너뛰었다. 이제 y 위치들을 클러스터링하고 _rectangles_from_walls 에 넘겨
+    모든 벽 쌍을 후보로 내 scorer 가 가려낸다(Codex 권고 1).
     """
     h, w = gray.shape[:2]
     edges = cv2.Canny(gray, HOUGH_CANNY_LO, HOUGH_CANNY_HI)
@@ -393,20 +447,24 @@ def detect_hough(gray: np.ndarray) -> list:
                             minLineLength=min_len, maxLineGap=HOUGH_MAX_GAP)
     if lines is None:
         return []
-    xs_v, ys_h = [], []
-    for x1, y1, x2, y2 in lines[:, 0, :]:
-        ang = abs(np.degrees(np.arctan2(float(y2 - y1), float(x2 - x1))))
+    xs_v_pos, xs_v_wt, ys_h_pos, ys_h_wt = [], [], [], []
+    for x1_, y1_, x2_, y2_ in lines[:, 0, :]:
+        length = float(np.hypot(x2_ - x1_, y2_ - y1_))
+        ang = abs(np.degrees(np.arctan2(float(y2_ - y1_), float(x2_ - x1_))))
         if ang < HOUGH_ANGLE_TOL_DEG or ang > 180.0 - HOUGH_ANGLE_TOL_DEG:
-            ys_h.append((y1 + y2) / 2.0)        # 수평선 — y 위치.
+            ys_h_pos.append((y1_ + y2_) / 2.0)   # 수평선 — y 위치, 길이 가중.
+            ys_h_wt.append(length)
         elif abs(ang - 90.0) < HOUGH_ANGLE_TOL_DEG:
-            xs_v.append((x1 + x2) / 2.0)        # 수직선 — x 위치.
-    if len(xs_v) < 2 or len(ys_h) < 2:
+            xs_v_pos.append((x1_ + x2_) / 2.0)   # 수직선 — x 위치.
+            xs_v_wt.append(length)
+    if len(xs_v_pos) < 2 or len(ys_h_pos) < 2:
         return []
-    x0, x1 = int(min(xs_v)), int(max(xs_v))
-    y0, y1 = int(min(ys_h)), int(max(ys_h))
-    if (x1 - x0) < 8 or (y1 - y0) < 8:
+    tol = max(3.0, LSD_WALL_CLUSTER_TOL_FRAC * max(h, w))
+    xs = _cluster_positions(xs_v_pos, xs_v_wt, tol, LSD_MAX_WALLS)
+    ys = _cluster_positions(ys_h_pos, ys_h_wt, tol, LSD_MAX_WALLS)
+    if len(xs) < 2 or len(ys) < 2:
         return []
-    return [(x0, y0, x1 - x0, y1 - y0)]
+    return _rectangles_from_walls(xs, ys, h, w)
 
 
 def detect_lsd_lines(gray: np.ndarray) -> list:

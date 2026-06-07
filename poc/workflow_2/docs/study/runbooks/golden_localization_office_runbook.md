@@ -94,6 +94,13 @@ stdout 의 아래 세 블록을 **그대로 복사**해 전달한다. 이미지 
 
 ## 4. 결과 읽는 법 (해석 가이드)
 
+> CV/평가 용어가 처음이면 먼저 입문 시리즈를 읽으면 이 절이 한 줄도 빠짐없이 이해된다:
+> [eval_guide_00 개요·용어](eval_guide_00_overview_glossary_ko.md) →
+> [01 분류 vs 위치추정](eval_guide_01_classification_vs_localization_ko.md) →
+> [02 지표 낱낱이](eval_guide_02_localization_metrics_ko.md) →
+> [03 실험 설계(2×2·leakage)](eval_guide_03_experiment_design_ko.md).
+
+
 - **주 판정 = `rank1_hit_rate`** (생산의 "1발 명중"). `box__inpaint`(NEW) 가 `center__raw`(OLD)보다
   높으면 box+inpaint 전처리 교체 근거.
 - **`gt_in_topk_rate`** = proposer recall. NEW 가 여기서만 높고 rank1 은 안 오르면 → 정답이 후보엔

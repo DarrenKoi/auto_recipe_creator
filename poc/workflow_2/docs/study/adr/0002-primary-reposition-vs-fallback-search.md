@@ -21,8 +21,8 @@ key 가 인식되지 않을 때(`key_visibility_gate` 가 low)만 진입한다.
 ## 맥락 / 이유
 
 기존 설계는 "wafer 에서 key 를 *찾아야* 한다"는 가정 위에 pan/zoom 탐색 루프를 main flow 로 두었다.
-그러나 사용자 확정(2026-05-27): 엔지니어가 박스로 표시한 key 는 **대개 잘못된 crosshair 근처에 이미
-보인다.** 따라서 흔한 경우에 hunt-first 는 불필요하고, 과도한 pan 으로 오히려 위험하다.
+그러나 사용자가 확정한 바(2026-05-27), 엔지니어가 박스로 표시한 key 는 **대개 잘못된 crosshair 근처에 이미
+보인다.** 따라서 흔한 경우에는 hunt-first 가 불필요할 뿐 아니라, 과도한 pan 때문에 오히려 위험하다.
 
 또한 paused 프레임을 broad(miniature) scale band 로 매칭하면, tiny-scale chamfer 가 feature 없는
 배경에서도 높게 나와 거짓 가시(false visible)로 잡힌다 — `live_align_search` 의 terminal 가드가

@@ -2,9 +2,9 @@
 
 ## 1. 목적 / 배경
 
-White box(align-key box)를 CV(Chamfer/ORB)로 검출하는 게 잘 안 되는 상황에서,
+White box(align-key box)를 CV(Chamfer/ORB)로 검출하기 어려운 상황에서,
 대안으로 **장비 레시피 raw data를 직접 뒤져 box의 위치·크기 숫자**를 찾으려고 한다.
-레시피 raw는 숫자가 매우 많기 때문에, white box가 가진 **물리적 제약**
+레시피 raw에는 숫자가 매우 많은데, white box가 가진 **물리적 제약**
 ( 중앙 위치 · 정사각형 · 전체 면적의 약 10% )이 만드는 **고유한 숫자 지문(signature)**을
 미리 정리해 두면, grep / 시각 검사로 후보 숫자를 빠르게 좁힐 수 있다.
 
@@ -74,7 +74,7 @@ White box(align-key box)를 CV(Chamfer/ORB)로 검출하는 게 잘 안 되는 �
 ## 4. 물리 단위(nm)로 저장된 경우 — SEM 레시피에서 흔함
 
 레시피는 픽셀이 아니라 **stage / FOV 기준 물리 단위(nm·µm) + 배율**로 저장하는 경우가 많다.
-픽셀 환산 키는 코드의 `nm_per_pixel` (`align_key_matcher.py:75`, `sem_panel_locator.py:15`).
+픽셀 환산의 키가 되는 값은 코드의 `nm_per_pixel` (`align_key_matcher.py:75`, `sem_panel_locator.py:15`) 이다.
 
 - **중앙** → 패턴/FOV 중심 대비 **offset = (0, 0)** 로 나타남 ← 매우 강한 단서
 - box 크기 → **nm 단위 width / height** 로 저장

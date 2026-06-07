@@ -31,7 +31,7 @@
 | consensus | **0.718** | 0.538 |
 
 그런데 **recall 0.718 vs rank1 0.538** 사이에 **0.18 의 틈**이 남는다(`topk_not_rank1`).
-= "정답이 후보엔 있는데(top-8 안), chamfer 점수로는 1등이 못 된" 경우가 18% 다.
+= "정답이 후보엔 있는데(top-8 안), chamfer 점수로는 1등이 되지 못한" 경우가 18% 다.
 이 18% 가 바로 **reranker 가 노리는 회복 구간**이다 — 후보를 다시 채점해 1등으로 올리면 된다.
 
 > 핵심 직관: chamfer 는 **후보를 만드는 데는 충분**(recall 0.718)하지만 **순서를 매기는 데는
@@ -76,7 +76,7 @@ rerank_rank1_lift = (MI 재정렬 후 rank1 비율) − (chamfer rank1 비율)
 ```
 
 recall(천장)은 reranker 와 무관하게 고정이므로, 이 lift 는 순수하게 "MI 가 순위 오류를 얼마나
-고쳤나"만 잰다. confounder 가 없다.
+고쳤나"만 잰다. 즉 confounder 가 없다.
 
 ---
 
@@ -136,15 +136,15 @@ scale 을 **그대로** 쓴다. 후보별로 ±1 band 미세조정(local refine)
 ## 5. 순환성(circularity) 체크 — "같은 consensus 로 만들고 같은 consensus 로 채점"이 반칙 아닌가?
 
 A/B(`_consensus_template_ab`)는 S-consensus 템플릿으로 **후보를 만들고**, *같은* consensus 템플릿으로
-**MI 재채점**한다. 자기가 만든 답을 자기가 채점하는 것처럼 보여 의심스럽다. 결론: **건전하다.**
+**MI 재채점**한다. 자기가 만든 답을 자기가 채점하는 것처럼 보여 의심스러울 수 있다. 결론: **건전하다.**
 
 - **leave-one-out(LOO):** held-out 프레임 `i` 는 consensus 만들 때 *제외*된다(`others = i 빼고`).
   그래서 "어떤 crop 을 그 crop 자신으로 채점"하는 진짜 순환은 없다.
 - **MI 가 비교하는 대상:** held-out msr 의 *후보 위치 픽셀* ↔ *템플릿*. 위치/외형 비교지
   "consensus vs consensus" 가 아니다.
 - **남는 편향 한 가지:** MI 가 "consensus 처럼 생긴" crop 을 전반적으로 선호할 수 있다. 그런데
-  그게 바로 *검증하려는 production 동작*이다(consensus 가 새 등록 템플릿이 됨). 그래서 진단용으로
-  **rcp 기준 reranked 컬럼도 병렬로** 같이 찍는다(`overall_rcp_rank1_reranked_rate`).
+  그게 바로 *검증하려는 production 동작*이다(consensus 가 새 등록 템플릿이 되기 때문). 그래서 진단용으로
+  **rcp 기준 reranked 컬럼도 병렬로** 함께 찍는다(`overall_rcp_rank1_reranked_rate`).
 
 > ⚠️ 절대 금지: held-out 의 `xhair_crop`(정답 위치 crop) *자체*를 MI reference 로 쓰는 것 —
 > 그건 진짜 순환이다. 반드시 held-out 을 뺀 consensus(또는 rcp)를 reference 로 쓴다.
@@ -186,7 +186,7 @@ A/B(`_consensus_template_ab`)는 S-consensus 템플릿으로 **후보를 만들�
 
 - **위치:** `compute_align_key_score` *내부*에 opt-in 으로 MI reorder. 호출부에서 나중에 재정렬하면
   `best_xy` 와 distinctiveness 필드(`second_score`/`score_gap`/`reject_reason`, 모두 `candidates[0/1]`
-  파생)가 어긋나 coherence 버그.
+  파생)가 어긋나 coherence 버그가 난다.
 - **DEFAULT_POLICY 불변:** 합성 smoke test 보장을 위해 기본 경로는 chamfer 순서 유지. MI reorder 는
   `STRUCTURE_POLICY`/명시 플래그에서만 활성.
 - **재정렬 후 재계산:** `second_score`/`score_gap` 은 현재 chamfer #1/#2 를 가리키므로 MI reorder 후

@@ -19,14 +19,14 @@ Align fail 이벤트 자산은 이벤트별 폴더 `align_fail_downloads/<YYYYMM
 - `align_recipe/` — **다운로드**되는 등록 align key step 이미지 시퀀스(번호 순, 예: `XX_001_XX.jpeg`).
   align 은 OM 단계를 먼저, SEM 단계를 나중에 수행하므로 `OM, OM, SEM, SEM` 처럼 순차 저장되고
   fail 단계에서 멈춘다. matcher 가 비교할 **등록 기준(reference) template** 의 출처.
-- `current_sem/` — **다운로드가 아니라** workflow_2 가 align fail 로 장비가 멈춘 뒤 SEM Monitor 를
+- `current_sem/` — **다운로드가 아니라**, align fail 로 장비가 멈춘 뒤 workflow_2 가 SEM Monitor 를
   **라이브 캡처해 저장**하는 출력 폴더.
 
 ## 맥락 / 이유
 
-장비는 fail 시점의 live 화면을 **파일로 남기지 않는다.** align fail 로 구동이 멈추는 순간부터는
+장비는 fail 시점의 live 화면을 **파일로 남기지 않는다.** align fail 로 구동이 멈춘 뒤부터는
 SEM Monitor 의 실시간 캡처에 의존할 수밖에 없다. 따라서 "현재(실패) 이미지"는 다운로드 자산이 될 수
-없고, workflow_2 의 `rcs_sem_controller.capture()` 가 직접 만들어내는 산출물이다.
+없으며, workflow_2 의 `rcs_sem_controller.capture()` 가 직접 만들어내는 산출물이다.
 
 ## 결과 (Consequences)
 

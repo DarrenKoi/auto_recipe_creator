@@ -8,7 +8,7 @@
 
 ## 0. 한 줄 요약
 
-RCS tool monitor 화면 안의 **live SEM box** 위치를 매번 새로 검출하고, 그 좌표를 **장비(eqp_id)별 기준값(reference)** 으로 저장한다. production 에서는 tool monitor 에 들어갈 때마다 다시 검출해 기준값과 비교함으로써 **box 가 옮겨졌거나(moved) 닫혔는지(closed)** 를 감지해, 잘못된 위치에 클릭하는 사고를 막는다.
+RCS tool monitor 화면 안의 **live SEM box** 위치를 매번 새로 검출해, 그 좌표를 **장비(eqp_id)별 기준값(reference)** 으로 저장한다. production 에서는 tool monitor 에 들어갈 때마다 다시 검출해 기준값과 비교하고, 이를 통해 **box 가 옮겨졌거나(moved) 닫혔는지(closed)** 를 감지해 잘못된 위치를 클릭하는 사고를 막는다.
 
 ---
 
@@ -24,7 +24,7 @@ RCS tool monitor 화면 안의 **live SEM box** 위치를 매번 새로 검출�
 
 ## 2. 검출 코어 — `sem_box_detect.detect_sem_box()`
 
-검출 로직은 **단일 소스**(`sem_box_detect.py`)에 모았다. offline 캡처 분석(`outline_live_sem_box.py`)과 online RCS 방문 경로가 **같은 함수**를 호출하므로, 임계값을 한 곳에서 튜닝하면 양쪽에 동시에 반영된다.
+검출 로직은 **단일 소스**(`sem_box_detect.py`)에 모았다. offline 캡처 분석(`outline_live_sem_box.py`)과 online RCS 방문 경로가 **같은 함수**를 호출하므로, 임계값을 한 곳에서만 튜닝해도 양쪽에 동시에 반영된다.
 
 ```python
 from poc.workflow_2.sem_box_detect import detect_sem_box
@@ -54,7 +54,7 @@ detection = detect_sem_box(pil_image, client)   # pil_image: capture_window() �
 | `confidence` | VLM coarse confidence (기록용, 좌표 신뢰엔 미사용) |
 | `vlm_bbox_px` | snap 전 VLM coarse 박스 (디버그/overlay 용) |
 
-`bbox_1000` 이 **비교의 공용 단위**다. 픽셀 좌표는 창 크기에 묶이지만, 0–1000 정규화는 해상도·DPI 차이를 흡수하므로 저장된 reference 와 현재 검출을 맞대볼 수 있다.
+`bbox_1000` 이 **비교의 공용 단위**다. 픽셀 좌표는 창 크기에 묶이지만 0–1000 정규화는 해상도·DPI 차이를 흡수하므로, 저장된 reference 와 현재 검출을 맞대볼 수 있다.
 
 ---
 
@@ -88,7 +88,7 @@ uv run python poc/workflow_2/outline_live_sem_box.py
 
 ### robust 한 기준값 만들기
 
-한 장만 쓰면 몇 px 흔들릴 수 있으므로, **detected 된 여러 캡처의 좌표별 중앙값(median)** 으로 기준 박스를 만든다. 표본 간 **범위(spread)** 도 함께 적어 신뢰도를 사람이 가늠하게 한다.
+한 장만 쓰면 몇 px 흔들릴 수 있으므로, **detected 된 여러 캡처의 좌표별 중앙값(median)** 으로 기준 박스를 만든다. 표본 간 **범위(spread)** 도 함께 적어, 사람이 신뢰도를 가늠할 수 있게 한다.
 
 > 위치는 sharpness 와 무관하다(프레임은 흐릿해도 그 자리에 있다). 그래서 `blurry` 여부와 상관없이 `detected + bbox` 면 표본으로 쓴다. 중앙값이라 한두 장의 오검출은 자연히 눌린다.
 
@@ -116,7 +116,7 @@ uv run python poc/workflow_2/outline_live_sem_box.py
 
 ### 운영 메모 — reference 는 "의도적 보정 데이터"
 
-같은 장비라면 누가 캡처해도 정규화 좌표는 비슷하게 나와야 한다(정규화가 해상도 차이를 지우므로). 따라서 reference 는 **공유 1개/장비** 가 맞고, **알려진 정상 화면에서 의도적으로 갱신**한다. 박스가 이미 옮겨진 화면으로 무심코 재생성하면 "비정상"을 "정상"으로 굳혀버려 감지가 깨진다.
+정규화가 해상도 차이를 지우므로, 같은 장비라면 누가 캡처해도 정규화 좌표는 비슷하게 나와야 한다. 따라서 reference 는 **장비당 공유 1개** 가 맞고, **알려진 정상 화면에서 의도적으로 갱신**한다. 박스가 이미 옮겨진 화면으로 무심코 재생성하면 "비정상"을 "정상"으로 굳혀버려 감지가 깨진다.
 
 ---
 
@@ -145,7 +145,7 @@ detection.bbox_1000  vs  reference["bbox_1000"]  비교
         └── tolerance 밖 ───────────────────────────────────────► box 이동 → 정지/경고
 ```
 
-판정 기준 비교는 **정규화 좌표(`bbox_1000`)** 끼리 한다(해상도 무관). tolerance 는 `spread_1000` 을 참고해 정한다 — 표본이 잘 모인 장비는 빡빡하게, 흔들리는 장비는 느슨하게.
+판정을 위한 비교는 해상도와 무관하도록 **정규화 좌표(`bbox_1000`)** 끼리 한다. tolerance 는 `spread_1000` 을 참고해 정한다 — 표본이 잘 모인 장비는 빡빡하게, 흔들리는 장비는 느슨하게.
 
 | detection 상태 | 해석 | 조치 |
 |----------------|------|------|

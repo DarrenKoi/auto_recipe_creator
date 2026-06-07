@@ -13,17 +13,17 @@
 
 ## 1. 왜 필요한가
 
-"rcp 참조를 교체(재등록)할지" 를 **CV 유사도만으로** 판단하는 것은 단독으로는 부족하다.
-현재 staleness 점수는 세 요인에 오염된다.
+"rcp 참조를 교체(재등록)할지" 를 **CV 유사도만으로** 판단하기에는 그것만으로는 부족하다.
+현재 staleness 점수는 다음 세 요인에 오염되어 있다.
 
 1. **matcher 자체가 약함** — 정답(S-at-crosshair)에서도 median score 0.62. 낮은 점수가
    "rcp stale" 인지 "matcher 약함" 인지 절대값만으로는 구분 불가.
 2. **crosshair 검출 정확도(현재 S 79%)** — ROI 가 어긋나면 점수 하락.
 3. **S 라벨 신뢰** — false-positive S 면 비교 기준 자체가 틀림.
 
-→ 절대 임계 대신 **상대 기준**(rcp-vs-S 를 S-vs-S 일관성과 비교)으로 1·2 를 상쇄할 수 있으나,
-그 상대 기준의 **임계를 실측으로 calibration** 하려면 "정상" 분포가 필요하다. 그 정상 분포를
-제공하는 것이 **항상 성공하는(golden) 데이터셋**이다.
+→ 절대 임계 대신 **상대 기준**(rcp-vs-S 를 S-vs-S 일관성과 비교)을 쓰면 1·2 를 상쇄할 수 있다.
+다만 그 상대 기준의 **임계를 실측으로 calibration** 하려면 "정상" 분포가 필요하고, 그 정상 분포를
+제공하는 것이 바로 **항상 성공하는(golden) 데이터셋**이다.
 
 ## 2. golden 데이터셋의 역할
 
@@ -49,9 +49,9 @@
 
 ### 수집 경로 (주의: fail 기반과 다름)
 
-- 현재 `align_images/` 는 **align-fail 알람으로 트리거된** 수집이다. 항상 성공하는 recipe 는
-  알람을 울리지 않아 이 데이터셋에 **없다.**
-- 따라서 golden set 은 **의도적 수집**이 필요하다. 후보 경로:
+- 현재 `align_images/` 는 **align-fail 알람으로 트리거되어** 수집된다. 항상 성공하는 recipe 는
+  알람을 울리지 않으므로 이 데이터셋에 **없다.**
+- 따라서 golden set 은 **의도적으로 수집**해야 한다. 후보 경로:
   - MES/이력에서 선정한 "성공 recipe" 의 과거 성공 측정 이미지를 직접 받아온다.
   - 또는 정상 운영 중 성공 케이스를 별도로 캡처/저장한다.
 - 저장 레이아웃은 기존 규약을 재사용:
@@ -83,7 +83,7 @@
 
 ## 5. 단기(이번 주) 작업과의 관계
 
-golden set 이전에도 **기존 S 217장으로 부트스트랩**한다.
+golden set 을 모으기 전에도 **기존 S 217장으로 부트스트랩**한다.
 
 - `align_similarity.py` 의 staleness 를 **절대 점수 → 상대 기준**으로 교체:
   recipe 별 rcp-vs-S(consensus) 를 **S-vs-S 일관성**과 비교.
@@ -108,8 +108,8 @@ golden set 이전에도 **기존 S 217장으로 부트스트랩**한다.
 
 **모듈:** `poc/workflow_2/success_vs_fail_compare.py` (standalone, `uv run python ...`, CLI args 없음).
 `align_similarity.py` 의 헬퍼(`_consensus`, `_mi`, `_edge_density`, `_lap_var`, 상대 staleness 로직)만
-import 하고 그 파일은 건드리지 않는다. golden 은 E 가 없어 align_similarity 의 S/E·truth-forced·
-gt-in-topk 블록이 반쪽이므로 직접 실행 대신 전용 모듈이 healthy 기준선+비교만 담당.
+import 하고 그 파일 자체는 건드리지 않는다. golden 은 E 가 없어 align_similarity 의 S/E·truth-forced·
+gt-in-topk 블록이 반쪽이므로, 이를 직접 실행하는 대신 전용 모듈이 healthy 기준선+비교만 담당한다.
 
 **입력:** golden 루트 `align_images_golden/` (S 만) + 기존 fail 루트 `align_images/`. 둘 다
 `align_fail_assets` leaf 글로브로 순회(golden 용 루트 인자만 추가).

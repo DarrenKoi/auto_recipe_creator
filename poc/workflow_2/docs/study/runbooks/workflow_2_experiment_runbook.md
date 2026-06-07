@@ -63,7 +63,7 @@ align_images/<eqp_id>/<class_name>/<recipe_name>/
 ### 1A. VLM probe — VLM 이 Box 를 그릴 수 있는가
 - VLM 에게 **오버레이 컨트롤 패널(‘Optics’, ‘Function’, ‘AMP’ …)에 가려진 영역까지 포함한
   라이브 SEM 영상 전체 사각형**을 하나의 bbox 로 반환하게 한다. 오버레이만 잡거나 가려지지
-  않은 일부만 잡으면 오답.
+  않은 일부만 잡으면 오답이다.
 - 박스 상단의 모드 라벨(예: ‘OM’, ‘Optics’)이 1차 앵커.
 
 ### 1B. CV landmark crop — 정밀 영역 추출
@@ -91,7 +91,7 @@ align_images/<eqp_id>/<class_name>/<recipe_name>/
 ### 1D. landmark 란? & CV 정밀 추출 검증 절차
 
 > **landmark = 화면에서 변하지 않는 시각적 기준점(앵커).** 진짜 찾고 싶은 Live SEM
-> 박스는 영상 내용이 매 프레임 바뀌어 그 자체를 기준으로 못 찾는다. 그래서 박스 **바깥**의
+> 박스는 영상 내용이 매 프레임 바뀌므로 그 자체를 기준으로는 찾을 수 없다. 그래서 박스 **바깥**의
 > 안 변하는 UI 조각(패널 타이틀바·코너 아이콘·고정 라벨)을 landmark 로 삼아, "landmark 를
 > 찾고 → 거기서 고정 거리(`panel_offset`)만큼 떨어진 곳이 SEM 박스" 로 역산한다.
 > 비유: *"빨간 우체통(landmark)을 찾아라. 거기서 오른쪽 3m·아래 1m 가 우리집 문(SEM 박스)이다."*
@@ -103,8 +103,8 @@ align_images/<eqp_id>/<class_name>/<recipe_name>/
 
 - **Mac (코드 검증, 실데이터 0)** — `test_sem_panel_locator.py` (합성 self-test, 기대 5/5):
   멀티-landmark argmax / `panel_offset` 산술 / frame 경계 clamp / confidence floor(없으면 None)
-  의 4개 분기가 의도대로 도는지만 박는다. 합성 프레임은 **SEM 박스 내부를 매 케이스 다른
-  random 텍스처로 채우고 landmark 는 박스 바깥에 둬서**, "라이브 영상은 변해도 바깥
+  의 4개 분기가 의도대로 도는지만 못 박아 둔다. 합성 프레임은 **SEM 박스 내부를 매 케이스 다른
+  random 텍스처로 채우고 landmark 는 박스 바깥에 두어서**, "라이브 영상은 변해도 바깥
   landmark 는 안정적"이라는 운영 전제를 모사한다. ⚠️ PASS 해도 *가설* 증명은 아니다.
 - **오피스 (가설 검증, 실데이터)** — 실제로 Live SEM 이 landmark 에서 고정 offset 인지:
   1. `capture_window_frames_tool.py` 로 Tool 창 프레임 캡처.
@@ -112,9 +112,9 @@ align_images/<eqp_id>/<class_name>/<recipe_name>/
      `templates/sem_panel_landmarks/<model_id>/landmark.jpg`, 그 조각→SEM 박스 거리를 재서
      `meta.json` 의 `panel_offset:[dx,dy,w,h]` 기입.
   3. `test_match_on_captured_frames.py` 실행(내부에서 `locate_panel` 호출).
-  4. **확인 2가지**: overlay 의 ROI 박스가 모든 프레임에서 Live SEM 에 정확히 얹히나 /
+  4. **확인 2가지**: overlay 의 ROI 박스가 모든 프레임에서 Live SEM 에 정확히 얹히는가 /
      `confidence` 가 일관되게 ≥ `LANDMARK_CONF_MIN`(0.70)인가. 경계값이면 더 distinctive 한
-     landmark 로 교체. 창 리사이즈/DPI 변화에 약하면 ORB 기반 검출로 폴백 검토.
+     landmark 로 교체한다. 창 리사이즈/DPI 변화에 약하면 ORB 기반 검출로의 폴백을 검토한다.
 
 > 스크린샷은 **오피스 머신(Claude Code 직접 실행) 안에서만** 쓰이므로 건물 밖으로 나가지 않는다 —
 > 보안 반출 금지와 충돌하지 않는다.
@@ -159,7 +159,7 @@ align_images/<eqp_id>/<class_name>/<recipe_name>/
 
 **놓치지 말 것**
 - 더블클릭 = recenter, wheel = FOV 중심 discrete 배율 (물리 규약 고정).
-- actuation(`util/mouse_utils.py`)은 SAFE_MODE dry-run 기본. 본 실험에서 실제 클릭 금지.
+- actuation(`util/mouse_utils.py`)은 SAFE_MODE dry-run 이 기본이다. 본 실험에서 실제 클릭은 금지.
 - VLM confidence 를 calibrated score 처럼 쓰지 말 것 (정량 score 는 CV).
 
 ---
@@ -181,8 +181,8 @@ align_images/<eqp_id>/<class_name>/<recipe_name>/
 | `test_align_key_match.py` | ✅ 기존 | `uv run python poc/workflow_2/test_align_key_match.py` |
 
 **놓치지 말 것**
-- 픽셀 동일성이 아니라 **edge 구조(Chamfer 위주)** 매칭 — align fail 은 live key 가 등록과
-  "다르게" 보이기 때문에 발생.
+- 픽셀 동일성이 아니라 **edge 구조(Chamfer 위주)** 로 매칭한다 — align fail 자체가 live key 가 등록과
+  "다르게" 보여서 발생하기 때문이다.
 - 저배율 miniature 는 변별력 낮음 → broad 는 후보 제안, 확정은 zoom-in + scale~1.0 + ORB.
 - `STRUCTURE_POLICY` 임계값은 cold-start → 실데이터로 반드시 calibration.
 

@@ -37,7 +37,8 @@ Chamfer(+ORB) 로 top-K 후보를 생성하고 best 를 좌표로 쓴다. 그런
 
 → "정답은 후보 *집합*엔 있는데 chamfer 가 1등으로 못 뽑는다." 이 갭을 메우는 자연스러운 도구가
 **reranker**다: chamfer 후보 *집합*(=멤버십)은 그대로 두고, 다른 신호로 *순서만* 바꿔 정답을
-1등으로 끌어올린다. 멤버십 불변이라 recall(in_topk)은 그대로, rank1(정밀도)만 오르는 게 기대.
+1등으로 끌어올리는 것이다. 멤버십이 불변이므로 recall(in_topk)은 그대로 두면서 rank1(정밀도)만
+끌어올리는 것이 기대 효과였다.
 
 ---
 
@@ -48,8 +49,8 @@ Chamfer(+ORB) 로 top-K 후보를 생성하고 best 를 좌표로 쓴다. 그런
 | **MI** (mutual information) | 후보 crop 과 template 의 MI 가 true vs decoy 를 가른다 | intensity drift 에 강건, S/E 분리도에서 **bACC 0.627 로 전 지표 1위**(약하지만 유일하게 방향 정상) |
 | **contour** (Otsu+Hu) | key 의 *기하/형상* 위상이 위치를 가른다 | MI 실패 후 대안. chamfer(매끄러운 거리장)·MI(전역 intensity)가 못 보는 *공간 형상* 을 잡을 것. 도메인 원칙([[project_align_key_matching_constraint]]: 픽셀 동일성 금지, 기하/구조 매칭)과 정합 |
 
-핵심 주의: **S/E 분리(present/absent)와 위치 reranking(true vs decoy)은 다른 작업**이다. MI 가
-전자에서 1위였다고 후자에서 통한다는 보장이 없다 — 이 구분이 결국 실패의 핵심이 된다(§5).
+핵심 주의: **S/E 분리(present/absent)와 위치 reranking(true vs decoy)은 서로 다른 작업**이다. MI 가
+전자에서 1위였다고 해서 후자에서도 통한다는 보장은 없다 — 이 구분이 결국 실패의 핵심이 된다(§5).
 
 ---
 
@@ -94,16 +95,17 @@ MI 는 **프레임 단위 분리**(이 프레임에 key 가 있나/없나)엔 �
 
 ### 5-2. contour — 더 나쁜 두 가지 이유
 1. **Otsu 이진화가 contrast 에 불안정.** 이 도메인의 전제 자체가 "rcp ↔ live/msr 은 밝기·대비가
-   다르다"(그래서 STRUCTURE_POLICY 가 픽셀 아닌 엣지를 쓴다). crop 마다 Otsu 임계가 달라지면
-   정답 crop 의 binary mask 가 template 과 어긋나고, 엉뚱한 decoy 가 우연히 비슷하게 이진화된다.
+   다르다"는 것이다(그래서 STRUCTURE_POLICY 가 픽셀 아닌 엣지를 쓴다). crop 마다 Otsu 임계가
+   달라지면 정답 crop 의 binary mask 가 template 과 어긋나고, 엉뚱한 decoy 가 우연히 비슷하게
+   이진화된다.
 2. **Hu moment 가 너무 전역적 + 불변.** crop 을 7개 숫자(gross 형상)로 뭉개고 평행이동·스케일·회전
    *불변* → 정답을 가르는 바로 그 *미세 공간 정합* 정보를 버린다. MI(전체 joint 히스토그램)보다도
    위치 변별이 약하다. 결과적으로 noise 를 주입한 셈이 되어 rank1 이 baseline 아래로 떨어졌다.
 
 ### 5-3. 통합 결론 — 후보가 본질적으로 모호
-intensity(MI)로도 형상(Hu)으로도 정답을 못 가른다는 것은, **chamfer 가 surface 하는 후보 집합이
+intensity(MI)로도 형상(Hu)으로도 정답을 가르지 못한다는 것은, **chamfer 가 surface 하는 후보 집합이
 패치 단위에서 본질적으로 모호**하다는 뜻이다. 이는 데이터 성질(공정 drift + 반복적 SEM 구조)의
-문제지, reranker 지표 선택의 문제가 아니다. → **다른 reranker 를 더 찾는 건 무의미.**
+문제이지, reranker 지표 선택의 문제가 아니다. → **다른 reranker 를 더 찾는 것은 무의미하다.**
 
 ---
 

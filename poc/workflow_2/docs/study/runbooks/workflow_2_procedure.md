@@ -20,13 +20,13 @@ align key 와 같은 위치를 찾아내는 흐름**을 담는다.
   최종 align key 좌표를 단독으로 결정하지 않는다.
 - **Align fail 은 대개 live key 가 등록 이미지와 "다르게" 보이기 때문에 발생**한다. 따라서 픽셀
   동일성이 아니라 **edge 구조(Chamfer 위주)** 로 매칭하고, hard match 를 강요하지 않으며,
-  최종 책임 판정은 **best candidate 를 엔지니어에게 넘기는 것**으로 둔다.
+  최종 책임 판정은 **best candidate 를 엔지니어에게 넘기는 것**으로 남겨 둔다.
 
 **보정 흐름의 핵심(2026-05-27 사용자 확정):** Align Fail 이 나면 SEM Monitor 는 paused live
 화면에 **crosshair(가로/세로 십자선)** 를 그려 *현재(=잘못된)* align 위치를 표시하고 멈춘다.
 엔지니어가 등록 이미지에 **그려 둔 박스의 중심(보통 정중앙)이 target point** 이고, 박스 *안의
-모양*이 live 에도 보여야 한다. 보정 = crosshair 를 recipe-matched 점으로 옮기고(더블클릭=recenter)
-**OK 버튼**을 눌러 진행. **align key 는 대개 잘못된 crosshair 근처에 이미 보이므로, 즉시
+모양*이 live 에도 보여야 한다. 보정이란 crosshair 를 recipe-matched 점으로 옮긴(더블클릭=recenter)
+뒤 **OK 버튼**을 눌러 진행하는 것이다. **align key 는 대개 잘못된 crosshair 근처에 이미 보이므로, 즉시
 reposition+OK 하는 것이 PRIMARY 경로**이고, pan/zoom two-phase 탐색(Step 5~8)은 *아무것도 안
 보일 때만* 도는 **FALLBACK** 이다. 둘을 가르는 단일 기준이 `key_visibility_gate` 다.
 
@@ -100,7 +100,7 @@ align_images/<eqp_id>/<class>/<recipe>/   (오피스 MES 생성 + 우리 캡처)
 - **`align_fail_correct.py` (Step 4 PRIMARY)** — paused 화면 즉시 보정 오케스트레이션.
   - `key_visibility_gate(result)` — primary vs fallback 의 단일 분기. paused 프레임은 *레시피 등록
     배율*에서 멈춘 것이므로 `PAUSED_SCALES`(=near-native `DEFAULT_SCALES`)로 매칭한다. broad
-    miniature band 를 쓰면 tiny-scale chamfer 과신으로 featureless 프레임도 거짓 가시가 된다.
+    miniature band 를 쓰면 tiny-scale chamfer 과신 탓에 featureless 프레임마저 거짓 가시로 잡힌다.
     게이트는 `best_scale>=MIN_CONFIRM_SCALE` 를 요구하고, 약한 `adjust` 는 `orb>0`(feature 보강)일
     때만 가시로 인정해 배경 거짓양성을 차단(강한 `match` 는 edge 구조만으로 인정). cold-start.
   - 게이트 True → `clamp_to_fov(best_xy)` → `move_to_point`(더블클릭 recenter) → `capture_screen()`
@@ -111,7 +111,7 @@ align_images/<eqp_id>/<class>/<recipe>/   (오피스 MES 생성 + 우리 캡처)
   - `dry_run=True`(기본): best_xy·OK 좌표를 계산·로그·overlay 만 하고 actuation 안 함(§5 Phase 3).
     Mac self-test `test_align_fail_correct.py` 4/4 통과(gate / primary / fallback 위임 / OK 매핑).
 - **`vlm_ok_button_box.py`** — paused 다이얼로그의 OK(확인) 버튼을 VLM 으로 찾아 *screen* 좌표 반환.
-  ROI crop 이 아니라 전체 화면 프레임을 받으며(`capture_screen()`), Cancel/닫기와 구분. 좌표 결정이
+  ROI crop 이 아니라 전체 화면 프레임을 받으며(`capture_screen()`), Cancel/닫기와 구분한다. 좌표 결정이
   아니라 UI 버튼 *영역* 식별이므로 doc §8 의 CV/VLM 경계를 지킨다.
   - **좌표공간 분리(중요)**: `move_to_point`(reposition)은 SEM ROI 내부 FOV-local 픽셀,
     `click_screen`(OK)은 화면 절대 픽셀. 둘은 서로 다른 좌표계라 변환을 공유하지 않는다.
@@ -186,7 +186,7 @@ align_images/<eqp_id>/<class>/<recipe>/   (오피스 MES 생성 + 우리 캡처)
 ## 6. 알려진 한계 (중요)
 
 - **저배율 miniature 단계의 CV 변별력은 낮다.** template 을 크게 축소(~0.15~0.3)하면 edge 픽셀이
-  적어 feature 없는 배경에서도 chamfer 가 높게 나올 수 있고, ORB 도 그 스케일에선 무력하다.
+  적어져 feature 없는 배경에서도 chamfer 가 높게 나올 수 있고, ORB 도 그 스케일에선 무력하다.
   → broad 단계는 *후보 제안* 수준이며, 진짜 판정은 confirm 단계(zoom-in 후 scale~1.0 + ORB)로 미룬다.
   → "miniature 가 정말 align key 인가"를 저배율에서 직접 판단하는 일은 CV 만으로 신뢰도가 낮으며,
   **이것이 Step 1·2 의 VLM probe 로 평가하려는 바로 그 능력**이다(§4.3-6 참조).

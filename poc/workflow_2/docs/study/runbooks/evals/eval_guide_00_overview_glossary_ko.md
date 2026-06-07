@@ -2,7 +2,7 @@
 
 > 대상 독자: CV/영상처리를 처음 접하는 사람.
 > 목적: `golden_localization_eval.py` 가 쓰는 평가 용어를 **밑바닥부터** 설명한다.
-> 이 시리즈를 읽고 나면 [golden_localization_office_runbook](golden_localization_office_runbook.md)
+> 이 시리즈를 읽고 나면 [golden_localization_office_runbook](../golden_localization_office_runbook.md)
 > 의 stdout 표를 혼자 해석할 수 있다.
 
 이 문서는 시리즈의 0번(지도)이다. 순서대로 읽기를 권한다:

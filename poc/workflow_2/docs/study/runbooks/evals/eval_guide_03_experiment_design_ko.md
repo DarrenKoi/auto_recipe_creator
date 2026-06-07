@@ -213,5 +213,5 @@ confound        : 위치추정 지표라 recipe 간 교란에서 자유로움(bA
 - 2 [localization metrics](eval_guide_02_localization_metrics_ko.md) — 지표 낱낱이
 - 3 (이 문서) — 실험 설계
 
-이제 [golden_localization_office_runbook](golden_localization_office_runbook.md) 의 §4 "결과 읽는 법"이
+이제 [golden_localization_office_runbook](../golden_localization_office_runbook.md) 의 §4 "결과 읽는 법"이
 한 줄도 빠짐없이 이해될 것이다. 거기서 막히면 이 시리즈의 해당 절로 돌아오면 된다.

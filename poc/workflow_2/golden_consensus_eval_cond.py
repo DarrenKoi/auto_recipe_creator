@@ -117,35 +117,6 @@ def _cond_consensus_crop(gray, cond, size_wh):
     return _matched_crop(cleaned, xy, w, h, 1.0)
 
 
-def _scope_label(cond):
-    """cond.scope → 충실 분류 'om' | 'omdf' | 'sem' | None (진단·가시성용).
-
-    'OM' 부분일치로 'OMDF' 를 삼키지 않도록 OMDF 를 먼저 검사. Scope 없음/미상은 None.
-    """
-    if cond is None or not cond.scope:
-        return None
-    s = cond.scope.upper()
-    if "SEM" in s:
-        return "sem"
-    if "OMDF" in s:
-        return "omdf"
-    if "OM" in s:
-        return "om"
-    return None
-
-
-def _modality_of(cond):
-    """매칭 routing modality 'om' | 'sem' | None.
-
-    OMDF 는 OM 의 한 종류(OM + darkfield 오버레이)이므로 routing 은 OM 으로 묶는다
-    (darkfield 외형 차이로 인한 분리는 추후 과제). SEM 만 별도. 미상은 None(침묵 om 금지).
-    """
-    lbl = _scope_label(cond)
-    if lbl in ("om", "omdf"):
-        return "om"
-    return lbl   # 'sem' | None
-
-
 # msr cond 는 Scope 가 없다(사용자 확인 2026-06-08). 대신 키/배율로 modality 를 가른다:
 # OM = !OM_Brightness 키 + Magnification<200, SEM = Accelerating_voltage 키 + Magnification>500.
 # 키 존재가 1순위(확정), Magnification 보조([[project_align_cond_files_and_coords]]).
@@ -178,13 +149,13 @@ def _msr_modality(cond):
 
 
 def _resolve_mod(cond, recipe_mod):
-    """msr 프레임 routing modality. 우선순위: rcp-style Scope → msr 키/배율 → recipe rcp modality.
+    """msr 프레임 routing modality. 우선순위: msr 키/배율 추론 → recipe rcp modality 폴백.
 
-    msr cond 엔 Scope 가 없어(_modality_of None) 거의 항상 _msr_modality(키/배율)로 결정된다.
-    그래도 미상이면 recipe 의 단일 rcp modality 로 폴백, 그것도 없으면 None(skip).
+    msr cond 엔 Scope 가 없으므로(사용자 확인) Scope 는 보지 않는다 — _msr_modality(키/배율)로
+    결정하고, 미상이면 recipe 의 단일 rcp modality 로 폴백, 그것도 없으면 None(skip).
     이 단계가 과거 missing_modality 대량 누락(dual-rcp recipe + Scope 부재)을 해소한다.
     """
-    return _modality_of(cond) or _msr_modality(cond) or recipe_mod
+    return _msr_modality(cond) or recipe_mod
 
 
 def _precrop_drop_reason(cond, xy, mod, has_tpl):
@@ -214,11 +185,10 @@ def _build_cond_by_recipe(assets, center_tpls):
         "rcp_tpls": {m: t for m, (t, _off) in center_tpls.items() if t is not None},
         "s_frames": [],
         "e_paths": [],
-        "scope_counts": Counter(),   # cond.txt Scope 분포(msr 는 보통 전부 missing — Scope 없음).
         "mod_counts": Counter(),     # *해결된* modality 분포(om/sem/unresolved) — 키/배율 추론 결과.
         "drop_counts": Counter(),    # S 프레임 누락 사유(coverage 손실 가시화, code-review [4]/[5]).
     }
-    # recipe 의 rcp modality (단일이면 그것, om/sem 둘 다면 모호 → None). msr scope 부재 시 폴백.
+    # recipe 의 rcp modality (단일이면 그것, om/sem 둘 다면 모호 → None). msr modality 미상 시 폴백.
     rcp_mods = [m for m, v in center_tpls.items() if v is not None]
     recipe_mod = rcp_mods[0] if len(rcp_mods) == 1 else None
     for p in iter_msr_images(assets):
@@ -229,8 +199,7 @@ def _build_cond_by_recipe(assets, center_tpls):
         if label != "S":
             continue
         cond = load_cond(p)
-        entry["scope_counts"][_scope_label(cond) or "missing"] += 1   # 충실 Scope(msr 는 대개 missing).
-        mod = _resolve_mod(cond, recipe_mod)                           # scope → msr 키/배율 → recipe 폴백.
+        mod = _resolve_mod(cond, recipe_mod)                           # msr 키/배율 → recipe 폴백(Scope 없음).
         entry["mod_counts"][mod or "unresolved"] += 1                  # 해결된 modality 분포.
         xy = _cond_crosshair_xy(cond)
         # 같은 modality center tpl 로 sizing(없으면 첫 가용 tpl) — omdf 등 drop 방지.
@@ -282,7 +251,6 @@ def run() -> str:
           f"(env CONSENSUS_COREGISTER=0 으로 끄고 A/B 비교 가능)")
 
     by_recipe = {}
-    scope_total = Counter()
     mod_total = Counter()
     drop_total = Counter()
     for assets in recipes:
@@ -296,7 +264,6 @@ def run() -> str:
         if not any(v is not None for v in center_tpls.values()):
             continue
         entry = _build_cond_by_recipe(assets, center_tpls)
-        scope_total.update(entry["scope_counts"])
         mod_total.update(entry["mod_counts"])
         drop_total.update(entry["drop_counts"])
         n_s = len(entry["s_frames"])
@@ -306,12 +273,8 @@ def run() -> str:
         print(f"[INFO] {assets.recipe_id}: S(crosshair) {n_s}장, E {len(entry['e_paths'])}장"
               + (f"  [누락 {n_drop}: {dict(entry['drop_counts'])}]" if n_drop else ""))
 
-    # msr 는 Scope 가 없어 대개 전부 missing(정상). 실제 쓰는 건 키/배율로 *해결된* modality.
-    print(f"\n[INFO] === msr S Scope 분포(원문) === "
-          f"om={scope_total.get('om', 0)} omdf={scope_total.get('omdf', 0)} "
-          f"sem={scope_total.get('sem', 0)} missing={scope_total.get('missing', 0)} "
-          f"(msr 엔 Scope 없음 → missing 정상)")
-    print(f"[INFO] === msr S 해결된 modality(키/배율) === "
+    # msr cond 엔 Scope 가 없어 키/배율로 modality 를 가른다(Scope 분포는 더 이상 추적 안 함).
+    print(f"\n[INFO] === msr S 해결된 modality(키/배율) === "
           f"om={mod_total.get('om', 0)} sem={mod_total.get('sem', 0)} "
           f"unresolved={mod_total.get('unresolved', 0)} "
           f"(OM=!OM_Brightness/Mag<200, SEM=Accelerating_voltage/Mag>500)")
@@ -323,7 +286,7 @@ def run() -> str:
         print(f"[WARNING] === S 프레임 누락 {n_dropped}장 (채택 {n_kept}장) === "
               f"{dict(drop_total.most_common())}")
         print("    missing_cond=sidecar 없음 · missing_crosshair=cond 에 crosshair 없음 · "
-              "missing_modality=scope/recipe 둘 다 미상 · no_template=center tpl 없음 · "
+              "missing_modality=키/배율·recipe 둘 다 미상 · no_template=center tpl 없음 · "
               "crop_failed=OOB/너무작음 · load_failed=이미지 로드 실패")
     else:
         print(f"[INFO] S 프레임 누락 없음 (채택 {n_kept}장).")
@@ -334,7 +297,6 @@ def run() -> str:
         return "no_ab"
 
     res["coregister"] = COREGISTER
-    res["scope_distribution"] = dict(scope_total)
     res["modality_distribution"] = dict(mod_total)
     res["drop_distribution"] = dict(drop_total)
     (out_dir / "summary.json").write_text(

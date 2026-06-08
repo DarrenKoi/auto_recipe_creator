@@ -113,35 +113,7 @@ def test_coregister_passthrough_when_too_few():
     assert len(out) == 1 and out[0] is c[0]
 
 
-# --- scope label(충실 3분류) vs routing modality(OMDF→OM) ---
-
-def test_scope_label_faithful_three_way():
-    assert gce._scope_label(_cond((1, 1), scope="SEM")) == "sem"
-    assert gce._scope_label(_cond((1, 1), scope="OM")) == "om"
-    # "OM" 부분일치로 OMDF 를 삼키지 않아야(진단 가시성).
-    assert gce._scope_label(_cond((1, 1), scope="OMDF")) == "omdf"
-    assert gce._scope_label(_cond((1, 1), scope=None)) is None
-    assert gce._scope_label(None) is None
-
-
-def test_modality_routes_omdf_into_om():
-    # OMDF 는 OM 의 한 종류(OM+darkfield) → routing 은 om. SEM 만 별도.
-    assert gce._modality_of(_cond((1, 1), scope="OMDF")) == "om"
-    assert gce._modality_of(_cond((1, 1), scope="OM")) == "om"
-    assert gce._modality_of(_cond((1, 1), scope="SEM")) == "sem"
-
-
-def test_modality_missing_is_none_not_om():
-    # Scope 없으면 침묵 om 금지 → None (호출부가 skip/카운트).
-    assert gce._modality_of(_cond((1, 1), scope=None)) is None
-    assert gce._modality_of(None) is None
-
-
-# --- _resolve_mod: msr scope 우선, 없으면 recipe rcp modality 폴백 ---
-
-def test_resolve_mod_prefers_cond_scope():
-    assert gce._resolve_mod(_cond((1, 1), scope="SEM"), "om") == "sem"
-
+# --- _resolve_mod: msr 키/배율 추론, 없으면 recipe rcp modality 폴백 (Scope 안 봄) ---
 
 def test_resolve_mod_falls_back_to_recipe_when_scope_missing():
     # msr cond 에 Scope 없으면 recipe 의 rcp modality 로 frame 을 살린다(과거처럼 drop X).

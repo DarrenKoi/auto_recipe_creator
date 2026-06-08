@@ -40,6 +40,15 @@ def test_mask_marks_crosshair_full_lines():
     assert mask[100, 100] == 0, "선에서 먼 곳은 마스크 안 됨"
 
 
+def test_dilate_widens_mask_to_cover_halo():
+    # crosshair (2560,2560)/10 → 세로선 x=256. thickness 코어 밖(259) 픽셀은
+    # dilate 없을 땐 미마스크, dilate 주면 마스크돼야(=halo 흡수).
+    m0 = build_removal_mask((512, 512), crosshair_xy=(2560, 2560), dilate=0)
+    m1 = build_removal_mask((512, 512), crosshair_xy=(2560, 2560), dilate=3)
+    assert m1.sum() > m0.sum(), "dilate 가 마스크를 넓혀야 함"
+    assert m0[100, 259] == 0 and m1[100, 259] > 0, "코어 밖 halo 영역"
+
+
 def test_clean_image_changes_only_masked_pixels():
     rng = np.random.default_rng(0)
     img = rng.integers(0, 255, (512, 512), dtype=np.uint8)

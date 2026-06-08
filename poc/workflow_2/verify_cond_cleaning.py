@@ -23,13 +23,21 @@ import numpy as np
 from poc.workflow_1 import WORKFLOW_1_DIR
 from poc.workflow_2 import DEBUG_IMAGE_DIR
 from poc.workflow_2.align_fail_assets import SUPPORTED_EXTS
-from poc.workflow_2.clean_align_image import build_removal_mask, clean_image
+from poc.workflow_2.clean_align_image import (
+    DEFAULT_DILATE,
+    DEFAULT_THICKNESS,
+    build_removal_mask,
+    clean_image,
+)
 from poc.workflow_2.cond_file import cond_path_for, load_cond
 
 # 검증 대상 루트 (오피스 다운로드 폴더). 환경변수로 덮어쓸 수 있음.
 GOLDEN_ROOT = Path(
     os.getenv("ALIGN_GOLDEN_ROOT", str(WORKFLOW_1_DIR / "align_images_golden"))
 )
+# 마스크 선 두께 / halo 여유 — 잔상이 남으면 env 로 키워 재실행하며 맞춘다.
+THICKNESS = int(os.getenv("CLEAN_THICKNESS", str(DEFAULT_THICKNESS)))
+DILATE = int(os.getenv("CLEAN_DILATE", str(DEFAULT_DILATE)))
 
 
 def _iter_images(root: Path):
@@ -50,17 +58,20 @@ def _comparison(image, cond):
     """before | mask(빨강) | after 가로 결합 이미지를 만든다(시각 검증용)."""
     bgr = image if image.ndim == 3 else cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
     mask = build_removal_mask(
-        bgr.shape[:2], box_ltrb=cond.box_ltrb, crosshair_xy=cond.crosshair_xy
+        bgr.shape[:2], box_ltrb=cond.box_ltrb, crosshair_xy=cond.crosshair_xy,
+        thickness=THICKNESS, dilate=DILATE,
     )
     overlay = bgr.copy()
     overlay[mask > 0] = (0, 0, 255)
-    after = clean_image(bgr, cond)
+    after = clean_image(bgr, cond, thickness=THICKNESS, dilate=DILATE)
     return np.hstack([bgr, overlay, after])
 
 
 def main():
     out_dir = DEBUG_IMAGE_DIR / "cond_clean" / time.strftime("%y%m%d_%H%M%S")
     print(f"[INFO] golden root: {GOLDEN_ROOT}")
+    print(f"[INFO] mask thickness={THICKNESS} dilate={DILATE} "
+          f"(잔상 남으면 CLEAN_THICKNESS / CLEAN_DILATE env 로 키워 재실행)")
     if not GOLDEN_ROOT.is_dir():
         print(f"[ERROR] 루트 폴더가 없습니다. 다운로드 위치를 확인하거나 "
               f"ALIGN_GOLDEN_ROOT 로 지정하세요: {GOLDEN_ROOT}")

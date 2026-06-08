@@ -27,8 +27,11 @@ from poc.workflow_2.cond_file import CondInfo
 
 # cursor 좌표 → 이미지 px 축소 비율 (cursor frame = Pixel × OVERSAMPLE).
 OVERSAMPLE = 10
-# 그려진 주석 선의 반폭(px). 실제 선 두께에 맞춰 오피스에서 조정.
+# 그려진 주석 선의 두께(px). 실제 선 두께에 맞춰 오피스에서 조정.
 DEFAULT_THICKNESS = 3
+# 선 코어 밖으로 마스크를 넓히는 여유(px). anti-aliasing + JPEG halo(흐려진
+# 그림자 선)를 흡수해 inpaint 후 잔상이 남지 않게 한다. 흐릿하면 키운다.
+DEFAULT_DILATE = 2
 # inpaint 반경(px).
 DEFAULT_INPAINT_RADIUS = 3
 
@@ -46,11 +49,13 @@ def build_removal_mask(
     crosshair_xy=None,
     oversample=OVERSAMPLE,
     thickness=DEFAULT_THICKNESS,
+    dilate=DEFAULT_DILATE,
 ):
     """지울 선(박스 테두리 + crosshair)만 255 로 칠한 uint8 마스크를 만든다.
 
     ``shape_hw`` 는 (height, width). box/crosshair 는 cursor 프레임 raw 좌표이며
-    내부에서 oversample 로 나눠 이미지 px 로 변환한다.
+    내부에서 oversample 로 나눠 이미지 px 로 변환한다. ``dilate`` 로 선 코어 밖을
+    넓혀 anti-aliasing·JPEG halo 까지 덮는다(잔상 방지).
     """
     h, w = shape_hw[:2]
     mask = np.zeros((h, w), dtype=np.uint8)
@@ -68,6 +73,11 @@ def build_removal_mask(
         cv2.line(mask, (cxi, 0), (cxi, h - 1), 255, t)     # 세로선 (높이 전체)
         cv2.line(mask, (0, cyi), (w - 1, cyi), 255, t)     # 가로선 (폭 전체)
 
+    if dilate and dilate > 0:
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
+                                      (2 * int(dilate) + 1, 2 * int(dilate) + 1))
+        mask = cv2.dilate(mask, k)
+
     return mask
 
 
@@ -77,6 +87,7 @@ def clean_image(
     *,
     oversample=OVERSAMPLE,
     thickness=DEFAULT_THICKNESS,
+    dilate=DEFAULT_DILATE,
     inpaint_radius=DEFAULT_INPAINT_RADIUS,
 ):
     """CondInfo 의 box/crosshair 선을 inpaint 로 지운 이미지를 돌려준다.
@@ -89,6 +100,7 @@ def clean_image(
         crosshair_xy=cond.crosshair_xy,
         oversample=oversample,
         thickness=thickness,
+        dilate=dilate,
     )
     if not mask.any():
         return image
@@ -96,27 +108,31 @@ def clean_image(
 
 
 def main():
-    """합성 데모: crosshair·box 를 그린 뒤 cond 좌표로 지워 before/after 저장."""
+    """합성 데모: anti-aliasing + JPEG halo 가 있는 주석을 dilate 유무로 비교.
+
+    before | after(dilate=0, 잔상) | after(default, 잔상 제거) 를 가로로 저장한다.
+    """
     import os
 
     out_dir = os.path.dirname(__file__)
-    img = np.full((512, 512), 110, dtype=np.uint8)
     rng = np.random.default_rng(0)
-    img = cv2.add(img, rng.integers(-15, 15, img.shape, dtype=np.int16).astype(np.int16).clip(0).astype(np.uint8))
-    # 합성 주석: box 테두리 + crosshair 를 흰색으로 그려 둔다.
-    cv2.rectangle(img, (160, 160), (352, 352), 255, 3)
-    cv2.line(img, (210, 0), (210, 511), 255, 3)
-    cv2.line(img, (0, 256), (511, 256), 255, 3)
+    base = np.clip(110 + rng.integers(-12, 12, (512, 512)), 0, 255).astype(np.uint8)
+    # 주석을 anti-aliased(LINE_AA) 로 그려 부드러운 shoulder 를 만든다.
+    cv2.rectangle(base, (160, 160), (352, 352), 255, 2, cv2.LINE_AA)
+    cv2.line(base, (210, 0), (210, 511), 255, 2, cv2.LINE_AA)
+    cv2.line(base, (0, 256), (511, 256), 255, 2, cv2.LINE_AA)
+    # JPEG 왕복으로 edge ringing/halo 추가 (실제 다운로드 이미지 흉내).
+    ok, buf = cv2.imencode(".jpg", base, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    img = cv2.imdecode(buf, cv2.IMREAD_GRAYSCALE) if ok else base
 
     cond = CondInfo(scope="OM", pixel=(512, 512),
                     box_ltrb=(1600, 1600, 3520, 3520), crosshair_xy=(2100, 2560))
-    cleaned = clean_image(img, cond)
-    before = os.path.join(out_dir, "clean_align_before.jpg")
-    after = os.path.join(out_dir, "clean_align_after.jpg")
-    cv2.imwrite(before, img)
-    cv2.imwrite(after, cleaned)
-    print(f"[INFO] before: {before}")
-    print(f"[INFO] after : {after}")
+    no_dilate = clean_image(img, cond, dilate=0)
+    with_dilate = clean_image(img, cond)             # DEFAULT_DILATE
+    panel = np.hstack([img, no_dilate, with_dilate])
+    dst = os.path.join(out_dir, "clean_align_dilate_demo.jpg")
+    cv2.imwrite(dst, panel)
+    print(f"[INFO] before | after(dilate=0) | after(dilate={DEFAULT_DILATE}): {dst}")
 
 
 if __name__ == "__main__":

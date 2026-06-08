@@ -1,11 +1,12 @@
-"""golden 트리에서 align_img_from_rcp 폴더의 실제 깊이를 진단한다.
+"""golden 트리 recipe 수집 진단 — glob/rglob/_collect_recipes 를 한 프로세스에서 대조.
 
 왜
 --
-iter_recipe_dirs 가 `*/*/*/align_img_from_rcp` (고정 3단계)로 glob 하는데 recipe 가
-1개만 잡힌다. golden 트리의 실제 깊이가 다르면(2단계/4단계) 대부분이 안 잡힌다.
-이 스크립트는 깊이 무관(rglob)으로 모든 from_rcp 를 찾아 깊이 분포를 보여줘
-glob 패턴을 정확히 몇 단계로 고쳐야 하는지 알려준다.
+이전에 `recipes found = 1` 인데 깊이 probe 는 align_img_from_rcp 298개(전부 depth 4)를
+찾았다. depth 4 면 현재 glob `*/*/*/align_img_from_rcp` 가 *정상이면* 298 을 잡아야 한다
+(pathlib glob 시맨틱 검증 완료). 두 수가 다르면 (a) 측정 사이 데이터가 늘었거나
+(b) 수집기 경로/정렬에 버그. 이 스크립트가 같은 프로세스·같은 root 로 세 수를 나란히
+찍어 어느 쪽인지 확정한다.
 
 실행 (오피스, 인자 없음):
     uv run python poc/workflow_2/probe_golden_depth.py
@@ -18,25 +19,40 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 from collections import Counter
 
 from poc.workflow_2 import FROM_RCP_DIRNAME
+from poc.workflow_2.align_fail_assets import iter_recipe_dirs
 from poc.workflow_2 import golden_localization_eval_cond as glec
+from poc.workflow_2.golden_localization_eval import _collect_recipes
 
 
 def main():
     root = glec.GOLDEN_ROOT
     print(f"[INFO] GOLDEN_ROOT = {root}")
+    print(f"[INFO] ALIGN_GOLDEN_ROOT env = {os.getenv('ALIGN_GOLDEN_ROOT')!r}")
     if not root.is_dir():
         print(f"[ERROR] 루트 없음: {root}")
         raise SystemExit(1)
 
-    hits = [p for p in root.rglob(FROM_RCP_DIRNAME) if p.is_dir()]
-    print(f"[INFO] align_img_from_rcp 폴더(깊이 무관) = {len(hits)}개")
+    g = [p for p in root.glob(f"*/*/*/{FROM_RCP_DIRNAME}") if p.is_dir()]
+    rg = [p for p in root.rglob(FROM_RCP_DIRNAME) if p.is_dir()]
+    leaves = iter_recipe_dirs(root)
+    recipes = [a for a in _collect_recipes(root) if a is not None]
 
-    # depth = root 기준 상대 parts 수 (from_rcp 이름 포함). <eqp>/<class>/<recipe>/from_rcp = 4.
-    depths = Counter(len(p.relative_to(root).parts) for p in hits)
-    print(f"[INFO] 깊이 분포(parts, from_rcp 포함): {dict(sorted(depths.items()))}")
-    print("[INFO] (현재 glob 은 4 parts = */*/*/align_img_from_rcp 만 매칭)")
-    print("--- 표본 상대경로(앞 8개) ---")
-    for p in hits[:8]:
+    print(f"[INFO] glob   '*/*/*/{FROM_RCP_DIRNAME}' = {len(g)}개")
+    print(f"[INFO] rglob  '{FROM_RCP_DIRNAME}'       = {len(rg)}개")
+    print(f"[INFO] iter_recipe_dirs(root)            = {len(leaves)}개")
+    print(f"[INFO] _collect_recipes(root)            = {len(recipes)}개")
+
+    depths = Counter(len(p.relative_to(root).parts) for p in rg)
+    print(f"[INFO] rglob 깊이 분포(parts, from_rcp 포함): {dict(sorted(depths.items()))}")
+
+    # glob 이 못 잡는(=depth!=4) 폴더가 있으면 rglob 로 바꿔야 한다 — 그 차집합을 보여준다.
+    missed = sorted(set(rg) - set(g))
+    if missed:
+        print(f"[WARNING] glob 이 놓친 {len(missed)}개(depth≠4) 표본:")
+        for p in missed[:8]:
+            print(f"    {p.relative_to(root)}")
+    print("--- rglob 표본 상대경로(앞 5개) ---")
+    for p in rg[:5]:
         print(f"  {p.relative_to(root)}")
 
 

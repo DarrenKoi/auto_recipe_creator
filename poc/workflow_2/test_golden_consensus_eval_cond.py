@@ -130,3 +130,18 @@ def test_modality_missing_is_none_not_om():
     # Scope 없으면 침묵 om 금지 → None (호출부가 skip/카운트).
     assert gce._modality_of(_cond((1, 1), scope=None)) is None
     assert gce._modality_of(None) is None
+
+
+# --- _resolve_mod: msr scope 우선, 없으면 recipe rcp modality 폴백 ---
+
+def test_resolve_mod_prefers_cond_scope():
+    assert gce._resolve_mod(_cond((1, 1), scope="SEM"), "om") == "sem"
+
+
+def test_resolve_mod_falls_back_to_recipe_when_scope_missing():
+    # msr cond 에 Scope 없으면 recipe 의 rcp modality 로 frame 을 살린다(과거처럼 drop X).
+    assert gce._resolve_mod(_cond((1, 1), scope=None), "om") == "om"
+
+
+def test_resolve_mod_none_when_no_info_anywhere():
+    assert gce._resolve_mod(_cond((1, 1), scope=None), None) is None

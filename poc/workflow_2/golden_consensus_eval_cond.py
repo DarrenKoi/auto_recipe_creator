@@ -146,6 +146,17 @@ def _modality_of(cond):
     return lbl   # 'sem' | None
 
 
+def _resolve_mod(cond, recipe_mod):
+    """msr 프레임 routing modality: cond.scope 우선, 없으면 recipe 의 rcp modality 폴백.
+
+    실데이터의 msr cond 에는 Scope 가 없을 수 있다(신뢰 type 은 rcp cond 에 있음). 그러나
+    그 msr frame 의 align step modality 는 recipe 의 rcp(IMAP0001=om/IMAP0002=sem)로
+    결정되므로, scope 부재 시 recipe_mod 로 폴백해 frame 을 살린다. 과거의 blanket 'om'
+    기본값과 달리 recipe 근거라 안전하고, 둘 다 없을 때만 None(skip).
+    """
+    return _modality_of(cond) or recipe_mod
+
+
 def _build_cond_by_recipe(assets, center_tpls):
     """한 recipe → `_consensus_template_ab` 입력 항목.
 
@@ -158,6 +169,9 @@ def _build_cond_by_recipe(assets, center_tpls):
         "e_paths": [],
         "scope_counts": Counter(),   # cond.txt Scope 분포(om/omdf/sem/missing) — 진단용.
     }
+    # recipe 의 rcp modality (단일이면 그것, om/sem 둘 다면 모호 → None). msr scope 부재 시 폴백.
+    rcp_mods = [m for m, v in center_tpls.items() if v is not None]
+    recipe_mod = rcp_mods[0] if len(rcp_mods) == 1 else None
     for p in iter_msr_images(assets):
         label = _tool_label(p.name)
         if label == "E":
@@ -167,7 +181,7 @@ def _build_cond_by_recipe(assets, center_tpls):
             continue
         cond = load_cond(p)
         entry["scope_counts"][_scope_label(cond) or "missing"] += 1   # 충실 type 집계(om/omdf/sem).
-        mod = _modality_of(cond)                                       # routing(omdf→om).
+        mod = _resolve_mod(cond, recipe_mod)                           # scope 우선, 없으면 recipe 폴백.
         xy = _cond_crosshair_xy(cond)
         if xy is None or mod is None:
             continue

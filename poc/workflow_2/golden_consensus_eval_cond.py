@@ -157,6 +157,23 @@ def _resolve_mod(cond, recipe_mod):
     return _modality_of(cond) or recipe_mod
 
 
+def _precrop_drop_reason(cond, xy, mod, has_tpl):
+    """S 프레임이 crop 이전 단계에서 빠지는 사유(없으면 None=채택). coverage 손실 가시화.
+
+    조용히 continue 하던 지점들(코드리뷰 [4])을 사유별로 분류해 집계·경고하기 위함.
+    우선순위: 근본 원인부터(cond 부재 → crosshair 부재 → modality 미상 → template 없음).
+    """
+    if cond is None:
+        return "missing_cond"
+    if xy is None:
+        return "missing_crosshair"
+    if mod is None:
+        return "missing_modality"
+    if not has_tpl:
+        return "no_template"
+    return None
+
+
 def _build_cond_by_recipe(assets, center_tpls):
     """한 recipe → `_consensus_template_ab` 입력 항목.
 
@@ -168,6 +185,7 @@ def _build_cond_by_recipe(assets, center_tpls):
         "s_frames": [],
         "e_paths": [],
         "scope_counts": Counter(),   # cond.txt Scope 분포(om/omdf/sem/missing) — 진단용.
+        "drop_counts": Counter(),    # S 프레임 누락 사유(coverage 손실 가시화, code-review [4]/[5]).
     }
     # recipe 의 rcp modality (단일이면 그것, om/sem 둘 다면 모호 → None). msr scope 부재 시 폴백.
     rcp_mods = [m for m, v in center_tpls.items() if v is not None]
@@ -183,12 +201,12 @@ def _build_cond_by_recipe(assets, center_tpls):
         entry["scope_counts"][_scope_label(cond) or "missing"] += 1   # 충실 type 집계(om/omdf/sem).
         mod = _resolve_mod(cond, recipe_mod)                           # scope 우선, 없으면 recipe 폴백.
         xy = _cond_crosshair_xy(cond)
-        if xy is None or mod is None:
-            continue
         # 같은 modality center tpl 로 sizing(없으면 첫 가용 tpl) — omdf 등 drop 방지.
         tpl_item = center_tpls.get(mod) or next(
             (t for t in center_tpls.values() if t is not None), None)
-        if tpl_item is None:
+        reason = _precrop_drop_reason(cond, xy, mod, tpl_item is not None)
+        if reason:
+            entry["drop_counts"][reason] += 1     # 조용히 버리지 않고 사유별 집계.
             continue
         tpl = tpl_item[0]
         size_wh = (tpl.raw_image.shape[1], tpl.raw_image.shape[0])
@@ -196,9 +214,11 @@ def _build_cond_by_recipe(assets, center_tpls):
             gray = load_gray(p)
         except Exception as exc:
             print(f"[WARNING] msr 로드 실패 {p.name}: {exc}")
+            entry["drop_counts"]["load_failed"] += 1
             continue
         crop = _cond_consensus_crop(gray, cond, size_wh)
-        if crop is None:
+        if crop is None:                          # OOB/너무 작음 — code-review [5].
+            entry["drop_counts"]["crop_failed"] += 1
             continue
         entry["s_frames"].append({"path": p, "xy": xy, "mod": mod, "crop": crop})
 
@@ -231,6 +251,7 @@ def run() -> str:
 
     by_recipe = {}
     scope_total = Counter()
+    drop_total = Counter()
     for assets in recipes:
         if assets is None:
             continue
@@ -243,16 +264,31 @@ def run() -> str:
             continue
         entry = _build_cond_by_recipe(assets, center_tpls)
         scope_total.update(entry["scope_counts"])
+        drop_total.update(entry["drop_counts"])
         n_s = len(entry["s_frames"])
+        n_drop = sum(entry["drop_counts"].values())
         if n_s:
             by_recipe[assets.recipe_id] = entry
-        print(f"[INFO] {assets.recipe_id}: S(crosshair) {n_s}장, E {len(entry['e_paths'])}장")
+        print(f"[INFO] {assets.recipe_id}: S(crosshair) {n_s}장, E {len(entry['e_paths'])}장"
+              + (f"  [누락 {n_drop}: {dict(entry['drop_counts'])}]" if n_drop else ""))
 
     # cond.txt Scope 분포(충실): om/omdf/sem/missing — routing 은 omdf→om 으로 묶임.
     print(f"\n[INFO] === msr S Scope 분포(cond.txt) === "
           f"om={scope_total.get('om', 0)} omdf={scope_total.get('omdf', 0)} "
           f"sem={scope_total.get('sem', 0)} missing={scope_total.get('missing', 0)} "
           f"(routing: om+omdf→om, sem→sem)")
+
+    # S 프레임 누락 집계(coverage 손실 가시화) — 조용한 skip 추방(code-review [4]/[5]).
+    n_kept = sum(len(e["s_frames"]) for e in by_recipe.values())
+    n_dropped = sum(drop_total.values())
+    if n_dropped:
+        print(f"[WARNING] === S 프레임 누락 {n_dropped}장 (채택 {n_kept}장) === "
+              f"{dict(drop_total.most_common())}")
+        print("    missing_cond=sidecar 없음 · missing_crosshair=cond 에 crosshair 없음 · "
+              "missing_modality=scope/recipe 둘 다 미상 · no_template=center tpl 없음 · "
+              "crop_failed=OOB/너무작음 · load_failed=이미지 로드 실패")
+    else:
+        print(f"[INFO] S 프레임 누락 없음 (채택 {n_kept}장).")
 
     res = _consensus_template_ab(by_recipe, out_dir=out_dir)
     if res is None:
@@ -261,6 +297,7 @@ def run() -> str:
 
     res["coregister"] = COREGISTER
     res["scope_distribution"] = dict(scope_total)
+    res["drop_distribution"] = dict(drop_total)
     (out_dir / "summary.json").write_text(
         json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")
 

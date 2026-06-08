@@ -145,3 +145,25 @@ def test_resolve_mod_falls_back_to_recipe_when_scope_missing():
 
 def test_resolve_mod_none_when_no_info_anywhere():
     assert gce._resolve_mod(_cond((1, 1), scope=None), None) is None
+
+
+# --- _precrop_drop_reason: 누락 사유 분류(coverage 손실 가시화, code-review [4]/[5]) ---
+
+def test_drop_reason_missing_cond():
+    assert gce._precrop_drop_reason(None, (1, 1), "om", True) == "missing_cond"
+
+
+def test_drop_reason_missing_crosshair():
+    assert gce._precrop_drop_reason(_cond(None), None, "om", True) == "missing_crosshair"
+
+
+def test_drop_reason_missing_modality():
+    assert gce._precrop_drop_reason(_cond((1, 1)), (1, 1), None, True) == "missing_modality"
+
+
+def test_drop_reason_no_template():
+    assert gce._precrop_drop_reason(_cond((1, 1)), (1, 1), "om", False) == "no_template"
+
+
+def test_drop_reason_kept_is_none():
+    assert gce._precrop_drop_reason(_cond((1, 1)), (1, 1), "om", True) is None

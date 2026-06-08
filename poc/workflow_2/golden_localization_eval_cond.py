@@ -49,7 +49,6 @@ from poc.workflow_2.align_point_correction import (
     _RcpTemplateBundle,
     _centered_area_crop_bbox,
     _draw_rcp_overlay,
-    _inner_crop_for_box,
     _inpaint_crosshair,
     _tool_label,
 )
@@ -75,13 +74,98 @@ def _cond_box_to_xywh(box_ltrb):
     return (int(round(l)), int(round(t)), int(round(r - l)), int(round(b - t)))
 
 
+# --- cond box → template/offset (검출 무관, cond.txt 만으로 결정) -----------------
+# 원본 eval 은 box 의 *내용 검출* inner-crop 중심에서 offset 을 뽑아, crop 오류가
+# offset(전체 eval 의 load-bearing 값)을 오염시켰다. cond.txt 가 정확한 corner 를
+# 주므로 (1) offset = image_center − box_center 를 crop 과 분리해 기하로만 계산하고,
+# (2) template 은 stroke 를 inpaint 로 지운 뒤 box 내부를 *대칭* inset 해 만든다
+# (crop 중심 == box 중심 → offset 과 일관). Codex 검토 반영([[project_align_cond_files_and_coords]]).
+CROP_INSET_PX = 2       # inpaint 후 edge-smear 가 template 에 안 들어오게 하는 대칭 inset.
+MIN_INNER_PX = 16       # 대칭 inset 후 box 내부 하한(미만이면 skip — 매칭 신호 불안정).
+WARN_INNER_PX = 24      # 작은 box 경고 임계(skip 아님).
+OFFSET_WARN = 0.25      # offset_norm(÷대각선) 경고 임계(box 가 중심에서 멂).
+OFFSET_SKIP = 0.38      # offset_norm 하드 skip(=box≠center 가정 붕괴, 엔지니어 검토 필요).
+
+
+def _cond_box_center(box_ltrb):
+    """cond.box_ltrb → 이미지 px box 중심 (cx, cy) (정수 반올림 전 float)."""
+    l, t = cursor_to_image(box_ltrb[:2], OVERSAMPLE)
+    r, b = cursor_to_image(box_ltrb[2:], OVERSAMPLE)
+    return (l + r) / 2.0, (t + b) / 2.0
+
+
+def cond_align_offset(box_ltrb, shape_hw):
+    """align point(이미지 중심) − box 중심. cond.txt 만으로 결정 → crop 과 분리(decoupled).
+
+    crop 을 어떻게 잡든 align point 의 기하는 안 변한다. 이 분리가 원본의 (B) 결함
+    — 내용검출 inner-crop 의 off-center 가 offset 을 오염시키던 경로 — 를 통째로 없앤다.
+    """
+    h, w = shape_hw[:2]
+    bcx, bcy = _cond_box_center(box_ltrb)
+    return (int(round(w / 2.0 - bcx)), int(round(h / 2.0 - bcy)))
+
+
+def cond_offset_norm(box_ltrb, shape_hw):
+    """|offset| 를 이미지 *대각선* 으로 정규화(crop 무관 척도)."""
+    h, w = shape_hw[:2]
+    dx, dy = cond_align_offset(box_ltrb, shape_hw)
+    diag = float(np.hypot(w, h)) or 1.0
+    return float(np.hypot(dx, dy) / diag)
+
+
+def check_cond_box(box_ltrb, shape_hw):
+    """cond box 가 template 으로 쓸만한지 가드. 반환 (status, reason, offset_norm).
+
+    status: 'ok' | 'warn' | 'skip'. inner = min(box변) − 2·CROP_INSET_PX(대칭 inset 후).
+    skip 우선순위: degenerate → out_of_bounds → too_small → offset_too_far.
+    """
+    h, w = shape_hw[:2]
+    x, y, bw, bh = _cond_box_to_xywh(box_ltrb)
+    onorm = cond_offset_norm(box_ltrb, shape_hw)
+    if bw <= 0 or bh <= 0:
+        return "skip", "box:degenerate", onorm
+    if x < 0 or y < 0 or x + bw > w or y + bh > h:
+        return "skip", "box:out_of_bounds", onorm
+    inner = min(bw, bh) - 2 * CROP_INSET_PX
+    if inner < MIN_INNER_PX:
+        return "skip", "box:too_small", onorm
+    if onorm > OFFSET_SKIP:
+        return "skip", "offset:too_far", onorm
+    if onorm > OFFSET_WARN:
+        return "warn", "offset:far", onorm
+    if inner < WARN_INNER_PX:
+        return "warn", "box:small", onorm
+    return "ok", "ok", onorm
+
+
+def cond_template_crop(gray, cond, *, inset=CROP_INSET_PX):
+    """cond box stroke 를 inpaint 로 지운 뒤 box 내부를 *대칭* inset 해 template crop.
+
+    대칭 inset → crop 중심 == box 중심 → cond_align_offset 과 정확히 일관.
+    inset 후 너무 작아지면 inset 을 생략(작은 box 보호). 반환 (crop, (x0,y0,w,h)).
+    """
+    cleaned = clean_image(gray, cond)            # 튜닝된 1/1/2 로 알려진 stroke 제거.
+    x, y, bw, bh = _cond_box_to_xywh(cond.box_ltrb)
+    h, w = gray.shape[:2]
+    x0, y0 = max(0, x + inset), max(0, y + inset)
+    x1, y1 = min(w, x + bw - inset), min(h, y + bh - inset)
+    if x1 - x0 < MIN_INNER_PX or y1 - y0 < MIN_INNER_PX:
+        x0, y0 = max(0, x), max(0, y)
+        x1, y1 = min(w, x + bw), min(h, y + bh)
+    return cleaned[y0:y1, x0:x1].copy(), (x0, y0, x1 - x0, y1 - y0)
+
+
 def _build_offset_templates_cond(
     assets, *, rcp_overlay_dir=None, box_reasons=None, offset_records=None,
 ):
     """rcp 에서 center / box template 을 만든다 — box 는 cond.box_ltrb 에서(검출 아님).
 
-    center = 정중앙 면적 crop(offset (0,0)). box = cond 흰 box 안쪽 crop
-    (offset = image_center - inner_center). cond 에 box 없으면 box[mod]=None.
+    center = 정중앙 면적 crop(offset (0,0)).
+    box = cond box stroke 를 inpaint 로 지운 뒤 box 내부를 *대칭* inset 한 crop.
+      - offset 은 crop 과 **분리**: cond_align_offset = image_center − box_center
+        (검출 inner-crop 중심이 아니라 cond 기하로만 → off-center 오염 없음).
+      - 대칭 inset 이라 crop 중심 == box 중심 → offset 과 정확히 일관.
+    check_cond_box 가 skip(너무 작음/경계 밖/offset 과도) 판정한 box 는 None 처리.
     원본 _build_offset_templates 와 동일 규약 — match 중심 + offset = align point.
     """
     center, box = {}, {}
@@ -104,35 +188,39 @@ def _build_offset_templates_cond(
 
         cond = load_cond(path)
         box_ltrb = cond.box_ltrb if cond else None
+        status, reason = ("absent", "cond:absent")
         if box_ltrb is not None:
-            det = _cond_box_to_xywh(box_ltrb)
-            inner, inner_bbox = _inner_crop_for_box(gray, det)
-            ix, iy, iw, ih = inner_bbox
-            offset = (img_cx - (ix + iw // 2), img_cy - (iy + ih // 2))
+            status, reason, onorm = check_cond_box(box_ltrb, gray.shape)
+        if box_ltrb is not None and status != "skip":
+            # offset 은 crop 과 분리 — cond box 중심으로만 결정(검출 오염 없음).
+            offset = cond_align_offset(box_ltrb, gray.shape)
+            inner, inner_bbox = cond_template_crop(gray, cond)
             box[mod] = (
                 build_template(inner, recipe_id=assets.recipe_id,
                                version=version + "_box", key_type=key_type),
                 offset,
             )
             if box_reasons is not None:
-                box_reasons["ok:cond"] = box_reasons.get("ok:cond", 0) + 1
+                tag = f"ok:cond:{status}"        # ok:cond:ok / ok:cond:warn
+                box_reasons[tag] = box_reasons.get(tag, 0) + 1
             if offset_records is not None:
-                short = max(1, min(iw, ih))
-                onorm = float(np.hypot(offset[0], offset[1]) / short)
                 offset_records.append(
-                    {"recipe": assets.recipe_id, "mod": mod, "offset_norm": round(onorm, 4)})
+                    {"recipe": assets.recipe_id, "mod": mod,
+                     "offset_norm": round(onorm, 4), "status": status})
             if rcp_overlay_dir is not None:
+                det = _cond_box_to_xywh(box_ltrb)   # 노란 box = 정확한 cond box.
                 bundle = _RcpTemplateBundle(
                     template=box[mod][0], align_offset_xy=offset,
-                    detected_box=det, inner_crop=inner_bbox)
+                    detected_box=det, inner_crop=inner_bbox)   # 초록 = inpaint+inset template.
                 _draw_rcp_overlay(
                     gray, bundle=bundle,
                     out_path=rcp_overlay_dir / f"{assets.recipe_id}_{mod}_rcp.jpg",
-                    label=f"{assets.recipe_id}/{mod}")
+                    label=f"{assets.recipe_id}/{mod} [{status}]")
         else:
             box[mod] = None
             if box_reasons is not None:
-                box_reasons["cond:absent"] = box_reasons.get("cond:absent", 0) + 1
+                tag = reason if box_ltrb is not None else "cond:absent"
+                box_reasons[tag] = box_reasons.get(tag, 0) + 1
             if rcp_overlay_dir is not None:
                 fb_bbox = _centered_area_crop_bbox(gray, RCP_FALLBACK_CENTER_CROP_AREA_RATIO)
                 bundle = _RcpTemplateBundle(
@@ -141,7 +229,7 @@ def _build_offset_templates_cond(
                 _draw_rcp_overlay(
                     gray, bundle=bundle,
                     out_path=rcp_overlay_dir / f"{assets.recipe_id}_{mod}_rcp.jpg",
-                    label=f"{assets.recipe_id}/{mod}",
+                    label=f"{assets.recipe_id}/{mod} [{reason}]",
                     fallback_color=(0, 0, 255), fallback_thickness=2)
     return center, box
 
@@ -198,6 +286,51 @@ def _process_msr_cond(msr_path, center_tpls, box_tpls, *, recipe_id="", overlay_
             gray_inp, crosshair_xy, row["cells"],
             recipe=recipe_id or "recipe", msr_name=msr_path.name, out_dir=overlay_dir)
     return row
+
+
+# --- measure-first 결정 게이트 ---------------------------------------------------
+# 2026-06-02 실데이터(흰box/crosshair 제거 *전*) 기준선: proposer recall(gt_in_topk)
+# 천장 0.594, rerank(MI/contour) 둘 다 음수 lift 로 폐기됨. 이유: 진실이 후보(top-N)에
+# 없으면 재정렬은 무력. cond 정제(inpaint+decoupled offset) *후* 어느 레버가 살아있는지
+# 이 게이트가 box__inpaint 셀로 직접 판정한다([[project_matcher_flat_chamfer_distinctiveness]]).
+OLD_PROPOSER_CEILING = 0.594   # 정제 전 gt_in_topk 천장(이걸 넘었나 = 정제가 membership 을 올렸나).
+PROPOSER_WALL = 0.62           # gt_in_topk 이 이 이하면 진실이 후보에 자주 없음 → proposer 가 벽.
+RERANKER_MIN_HEADROOM = 0.08   # topk_not_rank1 이 이 이상이면 재정렬로 건질 여지 있음.
+
+
+def lever_verdict(cell_stats, *, proposer_ceiling=OLD_PROPOSER_CEILING):
+    """box__inpaint 셀 통계 → 다음에 어떤 ensemble 레버를 당길지 판정.
+
+    반환 {verdict, gt_in_topk, topk_not_rank1, rank1, improved_vs_old, recommendation}.
+    verdict: no_data | proposer_wall | reranker_alive | near_ceiling.
+    - proposer_wall  : gt_in_topk ≤ PROPOSER_WALL → 진실이 후보에 없음. ensemble *proposer*
+                       (후보 합집합) + consensus 재등록. 재정렬은 여전히 무력.
+    - reranker_alive : gt_in_topk 높고 topk_not_rank1 ≥ 여유 → 진실이 후보에 있는데 rank1 이
+                       아님 → ensemble *reranker* 가 비로소 유효.
+    - near_ceiling   : gt_in_topk 높지만 격차 작음 → 남은 미스는 proposer 몫, reranker 여지 작음.
+    """
+    n = cell_stats.get("n", 0)
+    if not n:
+        return {"verdict": "no_data",
+                "recommendation": "box__inpaint 표본 없음 — cond box 있는 recipe 가 필요."}
+    gt = cell_stats.get("gt_in_topk_rate", 0.0)
+    gap = cell_stats.get("topk_not_rank1_rate", 0.0)
+    r1 = cell_stats.get("rank1_hit_rate", 0.0)
+    improved = gt > proposer_ceiling
+    if gt <= PROPOSER_WALL:
+        verdict = "proposer_wall"
+        rec = ("진실이 후보에 자주 없음 → ensemble PROPOSER(Chamfer+NCC/region+edge-orient 후보 "
+               "합집합) + consensus 재등록 우선. 재정렬(rerank)은 아직 무력.")
+    elif gap >= RERANKER_MIN_HEADROOM:
+        verdict = "reranker_alive"
+        rec = ("진실이 후보에 있고 rank1 격차 있음 → ensemble RERANKER(정제된 입력에서 2차 "
+               "점수 융합) 가 비로소 유효. 후보 pool 키운 뒤 재정렬.")
+    else:
+        verdict = "near_ceiling"
+        rec = ("후보 안에선 거의 rank1 → 남은 미스는 proposer membership(gt<1.0) 몫. "
+               "reranker 여지 작음, proposer/재등록에 집중.")
+    return {"verdict": verdict, "gt_in_topk": gt, "topk_not_rank1": gap, "rank1": r1,
+            "improved_vs_old": improved, "recommendation": rec}
 
 
 def run() -> str:
@@ -259,10 +392,11 @@ def run() -> str:
         print(f"\n[INFO] from_msr 비어 건너뛴 recipe: {n_skip_no_msr}개.")
     if box_reasons:
         total = sum(box_reasons.values())
-        ok = box_reasons.get("ok:cond", 0)
-        print(f"\n[INFO] === rcp box (cond) === 있음 {ok}/{total} (rate={ok / total:.3f})")
+        ok = sum(n for k, n in box_reasons.items() if k.startswith("ok:cond"))
+        print(f"\n[INFO] === rcp box (cond) === 사용 {ok}/{total} (rate={ok / total:.3f})  "
+              f"(skip/absent 는 box template 제외)")
         for reason, n in sorted(box_reasons.items(), key=lambda kv: -kv[1]):
-            print(f"    {reason:<16} {n:>4}")
+            print(f"    {reason:<18} {n:>4}")
 
     if not all_rows:
         print("[ERROR] 처리된 msr 행이 없습니다.")
@@ -278,8 +412,6 @@ def run() -> str:
     summary["align_offset_diag"] = gle._offset_diag(offset_records)
     summary["gt_source"] = {"n_S": len(s_rows), "n_cond": n_cond,
                             "n_detect_fallback": len(s_rows) - n_cond}
-    (out_dir / "summary.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     gle._print_summary(summary)
 
     diag = summary["align_offset_diag"]
@@ -290,6 +422,23 @@ def run() -> str:
         print(f"  offset_norm: median={diag['median_offset_norm']} "
               f"p90={diag['p90_offset_norm']} (n={diag['n']}) · "
               f"가정민감(>{diag['tol']})={diag['n_assumption_sensitive']}개")
+
+    # === 다음 레버 판정 (이 한 줄만 보고하면 다음 계획 결정 가능) ===
+    lv = lever_verdict(summary["cells"].get("box__inpaint", {"n": 0}))
+    summary["lever_verdict"] = lv
+    (out_dir / "summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    print("\n" + "=" * 64)
+    print("[INFO] === 다음 레버 판정 (box__inpaint 셀; 이 블록만 읽어주면 됨) ===")
+    if lv["verdict"] == "no_data":
+        print(f"  판정: NO_DATA — {lv['recommendation']}")
+    else:
+        improved = "↑정제효과 있음" if lv["improved_vs_old"] else "≈정제 전과 비슷"
+        print(f"  gt_in_topk={lv['gt_in_topk']}  rank1={lv['rank1']}  "
+              f"topk!=1={lv['topk_not_rank1']}  (옛 천장 {OLD_PROPOSER_CEILING}, {improved})")
+        print(f"  >>> 판정: {lv['verdict'].upper()}")
+        print(f"  >>> 다음: {lv['recommendation']}")
+    print("=" * 64)
     print(f"\n[INFO] 완료: {out_dir}")
     return "success"
 

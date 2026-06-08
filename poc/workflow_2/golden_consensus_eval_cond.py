@@ -117,11 +117,33 @@ def _cond_consensus_crop(gray, cond, size_wh):
     return _matched_crop(cleaned, xy, w, h, 1.0)
 
 
-def _modality_of(cond):
-    """cond.scope → center_tpls 키('sem'|'om'). 알 수 없으면 'om'."""
-    if cond is not None and cond.is_sem:
+def _scope_label(cond):
+    """cond.scope → 충실 분류 'om' | 'omdf' | 'sem' | None (진단·가시성용).
+
+    'OM' 부분일치로 'OMDF' 를 삼키지 않도록 OMDF 를 먼저 검사. Scope 없음/미상은 None.
+    """
+    if cond is None or not cond.scope:
+        return None
+    s = cond.scope.upper()
+    if "SEM" in s:
         return "sem"
-    return "om"
+    if "OMDF" in s:
+        return "omdf"
+    if "OM" in s:
+        return "om"
+    return None
+
+
+def _modality_of(cond):
+    """매칭 routing modality 'om' | 'sem' | None.
+
+    OMDF 는 OM 의 한 종류(OM + darkfield 오버레이)이므로 routing 은 OM 으로 묶는다
+    (darkfield 외형 차이로 인한 분리는 추후 과제). SEM 만 별도. 미상은 None(침묵 om 금지).
+    """
+    lbl = _scope_label(cond)
+    if lbl in ("om", "omdf"):
+        return "om"
+    return lbl   # 'sem' | None
 
 
 def _build_cond_by_recipe(assets, center_tpls):
@@ -134,6 +156,7 @@ def _build_cond_by_recipe(assets, center_tpls):
         "rcp_tpls": {m: t for m, (t, _off) in center_tpls.items() if t is not None},
         "s_frames": [],
         "e_paths": [],
+        "scope_counts": Counter(),   # cond.txt Scope 분포(om/omdf/sem/missing) — 진단용.
     }
     for p in iter_msr_images(assets):
         label = _tool_label(p.name)
@@ -143,11 +166,14 @@ def _build_cond_by_recipe(assets, center_tpls):
         if label != "S":
             continue
         cond = load_cond(p)
+        entry["scope_counts"][_scope_label(cond) or "missing"] += 1   # 충실 type 집계(om/omdf/sem).
+        mod = _modality_of(cond)                                       # routing(omdf→om).
         xy = _cond_crosshair_xy(cond)
-        if xy is None:
+        if xy is None or mod is None:
             continue
-        mod = _modality_of(cond)
-        tpl_item = center_tpls.get(mod)
+        # 같은 modality center tpl 로 sizing(없으면 첫 가용 tpl) — omdf 등 drop 방지.
+        tpl_item = center_tpls.get(mod) or next(
+            (t for t in center_tpls.values() if t is not None), None)
         if tpl_item is None:
             continue
         tpl = tpl_item[0]
@@ -190,6 +216,7 @@ def run() -> str:
           f"(env CONSENSUS_COREGISTER=0 으로 끄고 A/B 비교 가능)")
 
     by_recipe = {}
+    scope_total = Counter()
     for assets in recipes:
         if assets is None:
             continue
@@ -201,10 +228,17 @@ def run() -> str:
         if not any(v is not None for v in center_tpls.values()):
             continue
         entry = _build_cond_by_recipe(assets, center_tpls)
+        scope_total.update(entry["scope_counts"])
         n_s = len(entry["s_frames"])
         if n_s:
             by_recipe[assets.recipe_id] = entry
         print(f"[INFO] {assets.recipe_id}: S(crosshair) {n_s}장, E {len(entry['e_paths'])}장")
+
+    # cond.txt Scope 분포(충실): om/omdf/sem/missing — routing 은 omdf→om 으로 묶임.
+    print(f"\n[INFO] === msr S Scope 분포(cond.txt) === "
+          f"om={scope_total.get('om', 0)} omdf={scope_total.get('omdf', 0)} "
+          f"sem={scope_total.get('sem', 0)} missing={scope_total.get('missing', 0)} "
+          f"(routing: om+omdf→om, sem→sem)")
 
     res = _consensus_template_ab(by_recipe, out_dir=out_dir)
     if res is None:
@@ -212,6 +246,7 @@ def run() -> str:
         return "no_ab"
 
     res["coregister"] = COREGISTER
+    res["scope_distribution"] = dict(scope_total)
     (out_dir / "summary.json").write_text(
         json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")
 

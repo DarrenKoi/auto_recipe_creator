@@ -106,3 +106,27 @@ def test_coregister_passthrough_when_too_few():
     c = [np.zeros((8, 8), np.uint8)]
     out = gce.coregister_crops(c)
     assert len(out) == 1 and out[0] is c[0]
+
+
+# --- scope label(충실 3분류) vs routing modality(OMDF→OM) ---
+
+def test_scope_label_faithful_three_way():
+    assert gce._scope_label(_cond((1, 1), scope="SEM")) == "sem"
+    assert gce._scope_label(_cond((1, 1), scope="OM")) == "om"
+    # "OM" 부분일치로 OMDF 를 삼키지 않아야(진단 가시성).
+    assert gce._scope_label(_cond((1, 1), scope="OMDF")) == "omdf"
+    assert gce._scope_label(_cond((1, 1), scope=None)) is None
+    assert gce._scope_label(None) is None
+
+
+def test_modality_routes_omdf_into_om():
+    # OMDF 는 OM 의 한 종류(OM+darkfield) → routing 은 om. SEM 만 별도.
+    assert gce._modality_of(_cond((1, 1), scope="OMDF")) == "om"
+    assert gce._modality_of(_cond((1, 1), scope="OM")) == "om"
+    assert gce._modality_of(_cond((1, 1), scope="SEM")) == "sem"
+
+
+def test_modality_missing_is_none_not_om():
+    # Scope 없으면 침묵 om 금지 → None (호출부가 skip/카운트).
+    assert gce._modality_of(_cond((1, 1), scope=None)) is None
+    assert gce._modality_of(None) is None

@@ -85,7 +85,8 @@ def parse_cond(text: str) -> CondInfo:
     if len(px) >= 2 and _to_int(px[0]) is not None and _to_int(px[1]) is not None:
         pixel = (_to_int(px[0]), _to_int(px[1]))
 
-    cur = raw.get("cursor_info", [])
+    # 실데이터 키는 "!Cursor_inf"(끝 o 없음)·"!Cursor_info" 등 흔들린다 → 접두 매칭.
+    cur = next((v for k, v in raw.items() if k.startswith("cursor_inf")), [])
     box_ltrb = None
     if _present(cur, _BOX_IDX):
         box_ltrb = tuple(_to_int(cur[i]) for i in _BOX_IDX)

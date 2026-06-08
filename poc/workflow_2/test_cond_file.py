@@ -47,6 +47,13 @@ NEITHER = (
     "!Cursor_info\t-1,-1,-1,-1,-1,-1,-1,-1,-1,-1\n"
 )
 
+# 실제 golden 파일의 키는 끝 'o' 없는 "!Cursor_inf" (오피스 확인 2026-06-08).
+REAL_KEY_SPELLING = (
+    "Scope\tSEM\n"
+    "Pixel\t512,512\n"
+    "!Cursor_inf\t-1,-1,-1,-1,-1,-1,1770,1770,3380,3330,-1,-1\n"
+)
+
 
 def test_parse_box_only():
     info = parse_cond(RCP_BOX)
@@ -74,6 +81,12 @@ def test_parse_both_present():
 def test_parse_neither_present():
     info = parse_cond(NEITHER)
     assert info.box_ltrb is None and info.crosshair_xy is None
+
+
+def test_parse_real_cursor_inf_key_spelling():
+    """실제 키 '!Cursor_inf'(끝 o 없음)도 box/crosshair 를 뽑아야 한다."""
+    info = parse_cond(REAL_KEY_SPELLING)
+    assert info.box_ltrb == (1770, 1770, 3380, 3330), info.box_ltrb
 
 
 def test_cond_path_for_keeps_exact_filename():

@@ -42,7 +42,7 @@ except Exception:
     pass
 
 import json
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import cv2

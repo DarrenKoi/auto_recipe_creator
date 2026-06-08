@@ -1,0 +1,8 @@
+# Observation condition
+Scope                   OM
+Magnification           104
+Digital_Zoom            1.0
+Chip_number             -5,-1
+!Mag_high_res           104000
+Pixel                   512,512
+!Cursor_info            -1,-1,-1,-1,-1,-1,1770,1770,3380,3330,-1,-1,-1,-1,"",-1,-1,-1,-1,...."".

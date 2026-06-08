@@ -33,6 +33,7 @@ from poc.workflow_2 import (
     RCP_OM_STEM,
     RCP_SEM_STEM,
 )
+from poc.workflow_2.cond_file import CondInfo, load_cond
 
 # 읽기 허용 확장자 (우선순위 순).
 SUPPORTED_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp")
@@ -68,6 +69,12 @@ class AlignFailAssets:
             ("current_sem", self.current_sem),
         )
         return [(label, path) for label, path in items if path is not None]
+
+    def cond_for(self, path: Path | None) -> CondInfo | None:
+        """이미지 경로에 딸린 cond.txt 를 읽어 CondInfo 로 돌려준다 (없으면 None)."""
+        if path is None:
+            return None
+        return load_cond(path)
 
 
 def _find_by_stem(directory: Path, stem: str) -> Path | None:

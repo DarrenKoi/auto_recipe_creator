@@ -93,13 +93,23 @@ def _find_by_stem(directory: Path, stem: str) -> Path | None:
 
 
 def _list_images(directory: Path) -> list[Path]:
-    """``directory`` 의 지원 이미지들을 이름 순으로 모은다."""
+    """``directory`` 하위(서브폴더 포함)의 지원 이미지들을 경로 순으로 모은다.
+
+    msr 궤적은 평면 파일(S*/E* 접두)일 수도, S*/E* 서브폴더 안일 수도 있어 recursive 로
+    훑는다(코드리뷰 [1]: iterdir 만 쓰면 서브폴더 이미지를 통째로 놓쳤다). 단, cond.txt
+    sidecar 가 든 *숨김* dot-folder(``.<파일명>/``) 내부는 제외한다 — 그 안의 파일은
+    주석/조건이지 측정 이미지가 아니다([[project_align_cond_files_and_coords]]).
+    """
     if not directory.is_dir():
         return []
-    return sorted(
-        p for p in directory.iterdir()
-        if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS
-    )
+    out: list[Path] = []
+    for p in directory.rglob("*"):
+        if not (p.is_file() and p.suffix.lower() in SUPPORTED_EXTS):
+            continue
+        if any(part.startswith(".") for part in p.relative_to(directory).parts):
+            continue   # 숨김 dot-folder 내부(cond sidecar 등) 제외.
+        out.append(p)
+    return sorted(out)
 
 
 def _safe_mtime(path: Path) -> float:

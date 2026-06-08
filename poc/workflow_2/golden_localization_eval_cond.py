@@ -35,6 +35,7 @@ except Exception:
 import json
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from poc.workflow_2 import ALIGN_IMAGES_ROOT, DEBUG_IMAGE_DIR
@@ -65,6 +66,51 @@ OUTPUT_ROOT = DEBUG_IMAGE_DIR / "golden_localization_eval_cond"
 SAVE_OVERLAYS = gle.SAVE_OVERLAYS
 TEMPLATES = gle.TEMPLATES
 FRAMES = gle.FRAMES
+
+# 결합 패널(rcp | msr) 시각 상수.
+_PANEL_HEADER_PX = 22          # 각 패널 위 라벨 띠 높이.
+_PANEL_SEP_PX = 6              # 좌/우 패널 사이 구분선 너비.
+_PANEL_SEP_BGR = (40, 40, 40)  # 구분선 색(어두운 회색).
+_PANEL_HEADER_BGR = (30, 30, 30)
+
+
+def _with_header(canvas, text):
+    """패널 위에 라벨 띠(_PANEL_HEADER_PX)를 붙인다 — 너비는 보존, 높이만 늘어남."""
+    _, w = canvas.shape[:2]
+    band = np.full((_PANEL_HEADER_PX, w, 3), _PANEL_HEADER_BGR, dtype=np.uint8)
+    cv2.putText(band, text, (6, _PANEL_HEADER_PX - 7),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+    return cv2.vconcat([band, canvas])
+
+
+def _resize_to_height(canvas, target_h):
+    """aspect 유지하며 target_h 로 리사이즈(이미 같으면 그대로)."""
+    h, w = canvas.shape[:2]
+    if h == target_h:
+        return canvas
+    scale = target_h / float(h)
+    new_w = max(1, int(round(w * scale)))
+    interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+    return cv2.resize(canvas, (new_w, target_h), interpolation=interp)
+
+
+def _combine_2up(rcp_canvas, msr_canvas, *, rcp_label, msr_label):
+    """rcp(좌) | msr(우) 를 같은 높이로 맞춰 가로 결합한 BGR canvas 를 돌려준다.
+
+    추출(rcp box template) → 매칭 → align point 찍기를 한 장에서 추적하려는 용도.
+    각 패널 위에 라벨 띠를 붙이고, 높이가 다르면 더 큰 쪽에 맞춰 aspect 유지 리사이즈한 뒤
+    사이에 구분선을 둔다. ``rcp_canvas`` 가 None(해당 modality box template 부재)이면
+    msr 패널만 라벨 붙여 돌려준다(너비 보존).
+    """
+    msr = _with_header(msr_canvas, msr_label)
+    if rcp_canvas is None:
+        return msr
+    rcp = _with_header(rcp_canvas, rcp_label)
+    target_h = max(rcp.shape[0], msr.shape[0])
+    rcp = _resize_to_height(rcp, target_h)
+    msr = _resize_to_height(msr, target_h)
+    sep = np.full((target_h, _PANEL_SEP_PX, 3), _PANEL_SEP_BGR, dtype=np.uint8)
+    return cv2.hconcat([rcp, sep, msr])
 
 
 def _cond_box_to_xywh(box_ltrb):
@@ -185,6 +231,7 @@ def _offset_diag_cond(records, *, tol=OFFSET_WARN):
 
 def _build_offset_templates_cond(
     assets, *, rcp_overlay_dir=None, box_reasons=None, offset_records=None,
+    rcp_canvases=None,
 ):
     """rcp 에서 center / box template 을 만든다 — box 는 cond.box_ltrb 에서(검출 아님).
 
@@ -235,37 +282,55 @@ def _build_offset_templates_cond(
                 offset_records.append(
                     {"recipe": assets.recipe_id, "mod": mod,
                      "offset_norm": round(onorm, 4), "status": status})
-            if rcp_overlay_dir is not None:
+            if rcp_overlay_dir is not None or rcp_canvases is not None:
                 det = _cond_box_to_xywh(box_ltrb)   # 노란 box = 정확한 cond box.
                 bundle = _RcpTemplateBundle(
                     template=box[mod][0], align_offset_xy=offset,
                     detected_box=det, inner_crop=inner_bbox)   # 초록 = inpaint+inset template.
-                _draw_rcp_overlay(
-                    gray, bundle=bundle,
-                    out_path=rcp_overlay_dir / f"{assets.recipe_id}_{mod}_rcp.jpg",
+                out_path = (rcp_overlay_dir / f"{assets.recipe_id}_{mod}_rcp.jpg"
+                            if rcp_overlay_dir is not None else None)
+                canvas = _draw_rcp_overlay(
+                    gray, bundle=bundle, out_path=out_path,
                     label=f"{assets.recipe_id}/{mod} [{status}]")
+                if rcp_canvases is not None:
+                    rcp_canvases[mod] = canvas
         else:
             box[mod] = None
             if box_reasons is not None:
                 tag = reason if box_ltrb is not None else "cond:absent"
                 box_reasons[tag] = box_reasons.get(tag, 0) + 1
-            if rcp_overlay_dir is not None:
+            if rcp_overlay_dir is not None or rcp_canvases is not None:
                 fb_bbox = _centered_area_crop_bbox(gray, RCP_FALLBACK_CENTER_CROP_AREA_RATIO)
                 bundle = _RcpTemplateBundle(
                     template=center[mod][0], align_offset_xy=(0, 0),
                     detected_box=None, inner_crop=fb_bbox)
-                _draw_rcp_overlay(
-                    gray, bundle=bundle,
-                    out_path=rcp_overlay_dir / f"{assets.recipe_id}_{mod}_rcp.jpg",
+                out_path = (rcp_overlay_dir / f"{assets.recipe_id}_{mod}_rcp.jpg"
+                            if rcp_overlay_dir is not None else None)
+                canvas = _draw_rcp_overlay(
+                    gray, bundle=bundle, out_path=out_path,
                     label=f"{assets.recipe_id}/{mod} [{reason}]",
                     fallback_color=(0, 0, 255), fallback_thickness=2)
+                if rcp_canvases is not None:
+                    rcp_canvases[mod] = canvas
     return center, box
 
 
-def _process_msr_cond(msr_path, center_tpls, box_tpls, *, recipe_id="", overlay_dir=None):
+def _winning_mod(cells):
+    """결합 패널에 함께 보일 rcp 의 modality — 주판정(box__inpaint) 우선, 없으면 차순위."""
+    for key in ("box__inpaint", "center__inpaint", "box__raw", "center__raw"):
+        res = cells.get(key)
+        if res:
+            return res.get("mod")
+    return None
+
+
+def _process_msr_cond(msr_path, center_tpls, box_tpls, *, recipe_id="",
+                      overlay_dir=None, rcp_canvases=None, combined_dir=None):
     """golden msr 한 장 → 2×2 위치추정. GT crosshair 는 cond.crosshair_xy(없으면 검출 폴백).
 
     frame 의 crosshair 제거는 cond 가 있으면 clean_image(cond 구동), 없으면 검출+_inpaint.
+    combined_dir 이 주어지면 [rcp(승자 modality) | msr(crosshair 제거+GT+예측)] 결합 패널을
+    combined/<recipe>/<msr>.jpg 로 저장한다(추출→매칭→찍기 한눈 추적).
     """
     try:
         gray_raw = load_gray(msr_path)
@@ -313,6 +378,22 @@ def _process_msr_cond(msr_path, center_tpls, box_tpls, *, recipe_id="", overlay_
         row["overlay"] = gle._save_overlay(
             gray_inp, crosshair_xy, row["cells"],
             recipe=recipe_id or "recipe", msr_name=msr_path.name, out_dir=overlay_dir)
+
+    if SAVE_OVERLAYS and combined_dir is not None and row["cells"]:
+        msr_canvas = gle._render_overlay_canvas(
+            gray_inp, crosshair_xy, row["cells"],
+            recipe=recipe_id or "recipe", msr_name=msr_path.name)
+        mod = _winning_mod(row["cells"])
+        rcp_canvas = rcp_canvases.get(mod) if rcp_canvases else None
+        panel = _combine_2up(
+            rcp_canvas, msr_canvas,
+            rcp_label=f"RCP {(mod or '?').upper()} (yellow=cond box, green=template)",
+            msr_label=f"MSR {msr_path.name} (green=GT, orange=box pred)")
+        sub = combined_dir / (recipe_id or "recipe")
+        sub.mkdir(parents=True, exist_ok=True)
+        cpath = sub / f"{msr_path.stem}_combined.jpg"
+        cv2.imwrite(str(cpath), panel, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+        row["combined"] = str(cpath)
     return row
 
 
@@ -374,10 +455,8 @@ def run() -> str:
     out_dir = OUTPUT_ROOT / make_timestamp_tag()
     out_dir.mkdir(parents=True, exist_ok=True)
     rows_path = out_dir / "rows.jsonl"
-    overlay_dir = (out_dir / "overlays") if SAVE_OVERLAYS else None
-    rcp_overlay_dir = (out_dir / "rcp_templates") if SAVE_OVERLAYS else None
-    if rcp_overlay_dir is not None:
-        rcp_overlay_dir.mkdir(parents=True, exist_ok=True)
+    # 결합본(rcp | msr)만 저장 — 분리 파일(rcp_templates/·overlays/)은 끔.
+    combined_dir = (out_dir / "combined") if SAVE_OVERLAYS else None
     print(f"[INFO] (cond GT) recipe {len(recipes)}개 처리 → {out_dir}")
 
     all_rows, n_skip_no_msr = [], 0
@@ -391,10 +470,11 @@ def run() -> str:
                 n_skip_no_msr += 1
                 print(f"[INFO] {assets.recipe_id}: from_msr 이미지 없음 → 건너뜀(skip)")
                 continue
+            rcp_canvases = {}
             try:
                 center_tpls, box_tpls = _build_offset_templates_cond(
-                    assets, rcp_overlay_dir=rcp_overlay_dir,
-                    box_reasons=box_reasons, offset_records=offset_records)
+                    assets, box_reasons=box_reasons, offset_records=offset_records,
+                    rcp_canvases=rcp_canvases)
             except Exception as exc:
                 print(f"[WARNING] template 빌드 실패 {assets.recipe_id}: {exc}")
                 continue
@@ -409,7 +489,8 @@ def run() -> str:
             for p in msr_imgs:
                 row = _process_msr_cond(
                     p, center_tpls, box_tpls,
-                    recipe_id=assets.recipe_id, overlay_dir=overlay_dir)
+                    recipe_id=assets.recipe_id,
+                    rcp_canvases=rcp_canvases, combined_dir=combined_dir)
                 if row is None:
                     continue
                 row["recipe"] = assets.recipe_id

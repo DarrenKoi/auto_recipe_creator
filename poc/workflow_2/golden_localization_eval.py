@@ -305,20 +305,20 @@ _OVL_GT = (0, 200, 0)
 _OVL_CELL = {"box__inpaint": (0, 170, 255), "center__inpaint": (220, 180, 0)}
 
 
-def _save_overlay(
+def _render_overlay_canvas(
     frame_gray: np.ndarray,
     crosshair_xy: tuple[int, int],
     cells: dict,
     *,
     recipe: str,
     msr_name: str,
-    out_dir: Path,
-) -> str | None:
-    """inpaint frame 위에 GT(crosshair) 와 예측 align point 를 그려 JPEG 로 저장.
+) -> np.ndarray:
+    """inpaint frame 위에 GT(crosshair) 와 예측 align point 를 그린 BGR canvas 를 돌려준다.
 
     숫자(점수)뿐 아니라 *어디를 align point 로 찍었는지* 를 눈으로 확인하려는 용도.
     GT 와 각 예측을 선으로 이어 거리(=정오)를 직관적으로 본다. inpaint frame 기준의
-    셀(center__inpaint, box__inpaint)만 그린다(raw 는 표로만).
+    셀(center__inpaint, box__inpaint)만 그린다(raw 는 표로만). 저장은 호출측 책임 —
+    _save_overlay(파일) / 결합 패널(in-memory) 양쪽에서 재사용한다.
     """
     canvas = cv2.cvtColor(frame_gray, cv2.COLOR_GRAY2BGR)
     h, w = canvas.shape[:2]
@@ -344,7 +344,21 @@ def _save_overlay(
     for i, (text, col) in enumerate(legend):
         cv2.putText(canvas, text, (6, 38 + i * 16),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, col, 1, cv2.LINE_AA)
+    return canvas
 
+
+def _save_overlay(
+    frame_gray: np.ndarray,
+    crosshair_xy: tuple[int, int],
+    cells: dict,
+    *,
+    recipe: str,
+    msr_name: str,
+    out_dir: Path,
+) -> str | None:
+    """_render_overlay_canvas 를 그려 out_dir/<recipe>/<msr>_overlay.jpg 로 저장(경로 반환)."""
+    canvas = _render_overlay_canvas(
+        frame_gray, crosshair_xy, cells, recipe=recipe, msr_name=msr_name)
     sub = out_dir / recipe
     sub.mkdir(parents=True, exist_ok=True)
     path = sub / f"{Path(msr_name).stem}_overlay.jpg"

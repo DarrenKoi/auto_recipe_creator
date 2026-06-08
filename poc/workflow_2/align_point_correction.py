@@ -742,17 +742,19 @@ def _draw_rcp_overlay(
     gray: np.ndarray,
     *,
     bundle: _RcpTemplateBundle,
-    out_path: Path,
+    out_path: Path | None = None,
     label: str,
     fallback_color: tuple = (220, 200, 80),
     fallback_thickness: int = 1,
-) -> None:
+) -> np.ndarray:
     """rcp 이미지에 검출된 흰색 박스, inner crop (template), 그리고 *진짜 align point*
-    (= 이미지 중심) 를 표시한다.
+    (= 이미지 중심) 를 표시한 BGR canvas 를 돌려준다.
 
     파란 crosshair = 이미지 중심 = align point. 노란 박스 = 검출된 흰색 박스. 초록 박스
     = template (박스 안쪽 crop). 박스 중심에서 align point 로 시안색 화살표를 그려
     offset 을 시각화한다. 박스 미검출시에는 이미지 중심에 crosshair 만 (fallback 명시).
+    ``out_path`` 가 주어지면 JPEG 로 저장하고, None 이면 저장 없이 canvas 만 돌려준다
+    (결합 패널에서 in-memory 로 재사용).
     """
     h, w = gray.shape[:2]
     canvas = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
@@ -793,8 +795,10 @@ def _draw_rcp_overlay(
 
     cv2.putText(canvas, note, (8, h - 10),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, _BGR_WHITE, 1, cv2.LINE_AA)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(out_path), canvas, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+    if out_path is not None:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(out_path), canvas, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+    return canvas
 
 
 def _centered_area_crop_bbox(gray: np.ndarray, area_ratio: float) -> tuple[int, int, int, int]:

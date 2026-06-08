@@ -180,3 +180,42 @@ def test_lever_verdict_near_ceiling_when_topk_high_but_no_gap():
     v = glec.lever_verdict(
         {"n": 100, "rank1_hit_rate": 0.82, "gt_in_topk_rate": 0.85, "topk_not_rank1_rate": 0.03})
     assert v["verdict"] == "near_ceiling"
+
+
+# --- _combine_2up (rcp | msr 한 장 결합 패널; 눈으로 추출→매칭→찍기 추적용) ---
+
+def _bgr(h, w, val=100):
+    return np.full((h, w, 3), val, dtype=np.uint8)
+
+
+def test_combine_2up_returns_bgr_uint8():
+    out = glec._combine_2up(_bgr(120, 200), _bgr(120, 200),
+                            rcp_label="RCP", msr_label="MSR")
+    assert out.ndim == 3 and out.shape[2] == 3
+    assert out.dtype == np.uint8
+
+
+def test_combine_2up_height_is_common_and_width_holds_both():
+    # 높이 다른 두 패널 → 공통 높이로 맞추고 가로로 붙임(둘 다 들어갈 너비).
+    rcp, msr = _bgr(100, 160), _bgr(140, 220)
+    out = glec._combine_2up(rcp, msr, rcp_label="RCP", msr_label="MSR")
+    # 헤더 band 가 위에 붙으므로 공통 높이는 더 큰 패널(헤더 포함) 기준.
+    assert out.shape[0] == max(100, 140) + glec._PANEL_HEADER_PX
+    # 좌(rcp)+구분선+우(msr) → 각 입력 너비 합 이상.
+    assert out.shape[1] >= 160 + 220
+
+
+def test_combine_2up_rcp_none_returns_msr_only_width():
+    # rcp 가 없으면(해당 modality box template 부재) msr 패널만, 너비 보존.
+    msr = _bgr(120, 240)
+    out = glec._combine_2up(None, msr, rcp_label="RCP", msr_label="MSR")
+    assert out.shape[1] == 240   # 헤더는 높이만 늘리고 너비는 보존.
+    assert out.shape[0] == 120 + glec._PANEL_HEADER_PX
+
+
+def test_combine_2up_has_separator_column():
+    # 두 패널 사이 구분선(어두운 띠)이 한 번 들어간다 → 너비에 sep 만큼 더해짐.
+    rcp, msr = _bgr(120, 100), _bgr(120, 100)
+    out = glec._combine_2up(rcp, msr, rcp_label="R", msr_label="M")
+    # 같은 높이(헤더 동일) → resize 없이 100+sep+100.
+    assert out.shape[1] == 100 + glec._PANEL_SEP_PX + 100

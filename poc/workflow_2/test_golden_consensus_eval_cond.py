@@ -59,3 +59,50 @@ def test_consensus_crop_removes_crosshair():
 def test_consensus_crop_none_without_crosshair():
     gray = np.full((512, 512), 110, np.uint8)
     assert gce._cond_consensus_crop(gray, _cond(None), (64, 64)) is None
+
+
+# --- co-registration (sub-pixel 정렬로 median blur 감소) ---
+
+def test_align_to_ref_undoes_known_shift():
+    rng = np.random.default_rng(1)
+    ref = np.clip(110 + rng.integers(-30, 30, (64, 64)), 0, 255).astype(np.uint8)
+    shifted = cv2.warpAffine(ref, np.float32([[1, 0, 3], [0, 1, 2]]), (64, 64),
+                             borderMode=cv2.BORDER_REPLICATE)
+    aligned = gce._align_to_ref(shifted, ref)
+    inner = (slice(8, 56), slice(8, 56))
+    err_aligned = np.mean(np.abs(aligned[inner].astype(int) - ref[inner].astype(int)))
+    err_shifted = np.mean(np.abs(shifted[inner].astype(int) - ref[inner].astype(int)))
+    assert err_aligned < err_shifted   # 정렬 후 ref 와 더 가까워야.
+
+
+def test_coregister_aligns_crops_so_median_matches_truth():
+    # jitter 준 crop 들을 정렬하면 (1) 서로 겹쳐 cross-crop std 가 급감하고
+    # (2) median 이 원본(base, 정답 template)에 더 가까워진다(=consensus 또렷).
+    rng = np.random.default_rng(2)
+    base = np.full((64, 64), 110, np.uint8)
+    cv2.rectangle(base, (20, 20), (44, 44), 230, 2)
+    cv2.circle(base, (32, 32), 6, 40, -1)
+    crops = []
+    for _ in range(6):
+        dx, dy = int(rng.integers(-3, 4)), int(rng.integers(-3, 4))
+        crops.append(cv2.warpAffine(base, np.float32([[1, 0, dx], [0, 1, dy]]),
+                                    (64, 64), borderMode=cv2.BORDER_REPLICATE))
+    aligned = gce.coregister_crops(crops)
+    inner = (slice(10, 54), slice(10, 54))
+
+    raw_std = float(np.std(np.stack(crops).astype(np.float32), 0)[inner].mean())
+    al_std = float(np.std(np.stack(aligned).astype(np.float32), 0)[inner].mean())
+    assert al_std < raw_std * 0.5          # 정렬로 crop 들이 겹친다(불일치 급감).
+
+    raw_med = np.median(np.stack(crops), 0).astype(np.uint8)
+    al_med = np.median(np.stack(aligned), 0).astype(np.uint8)
+    b = base[inner].astype(int)
+    mse_raw = float(np.mean((raw_med[inner].astype(int) - b) ** 2))
+    mse_al = float(np.mean((al_med[inner].astype(int) - b) ** 2))
+    assert mse_al < mse_raw                 # 정렬 median 이 정답 template 에 더 가깝다.
+
+
+def test_coregister_passthrough_when_too_few():
+    c = [np.zeros((8, 8), np.uint8)]
+    out = gce.coregister_crops(c)
+    assert len(out) == 1 and out[0] is c[0]

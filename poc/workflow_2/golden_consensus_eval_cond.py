@@ -42,7 +42,11 @@ except Exception:
     pass
 
 import json
+from collections import defaultdict
 from pathlib import Path
+
+import cv2
+import numpy as np
 
 from poc.workflow_2 import DEBUG_IMAGE_DIR
 from poc.workflow_2.align_fail_assets import iter_msr_images, load_gray
@@ -55,6 +59,40 @@ import poc.workflow_2.golden_localization_eval_cond as glec
 from poc.workflow_1.util.time_utils import make_timestamp_tag
 
 OUTPUT_ROOT = DEBUG_IMAGE_DIR / "golden_consensus_eval_cond"
+
+# co-registration: integer-crosshair 정렬이 남긴 sub-pixel 잔차를 phase-correlation 으로
+# 마저 맞춰 median blur(edge_ratio<0.70 경고)를 줄인다 → consensus 가 또렷해져 membership·
+# rank1 둘 다 개선 기대. env CONSENSUS_COREGISTER=0 으로 끄면 A/B 비교 가능.
+COREGISTER = os.getenv("CONSENSUS_COREGISTER", "1") != "0"
+COREG_ITERS = 2                 # ref median 을 다듬으며 원본 crop 을 재정렬(보간 누적 방지).
+COREG_MAX_SHIFT_FRAC = 0.3      # 추정 shift 가 crop 변의 이 비율 초과면 spurious → 정렬 생략.
+
+
+def _align_to_ref(img, ref):
+    """img 를 ref 에 sub-pixel 평행이동 정렬(phase correlation). 과도 shift 면 원본 반환."""
+    h, w = ref.shape[:2]
+    win = cv2.createHanningWindow((w, h), cv2.CV_32F)
+    (dx, dy), _resp = cv2.phaseCorrelate(img.astype(np.float32), ref.astype(np.float32), win)
+    if abs(dx) > COREG_MAX_SHIFT_FRAC * w or abs(dy) > COREG_MAX_SHIFT_FRAC * h:
+        return img
+    m = np.float32([[1, 0, dx], [0, 1, dy]])
+    return cv2.warpAffine(img, m, (w, h), flags=cv2.INTER_LINEAR,
+                          borderMode=cv2.BORDER_REPLICATE)
+
+
+def coregister_crops(crops):
+    """crop 들을 공통 reference(다듬어진 median)에 sub-pixel 정렬해 median 을 또렷하게.
+
+    매 iter 마다 ref=median(현재 정렬본) 으로 갱신하되, 정렬은 항상 *원본* 에서 한 번만
+    적용해 보간 blur 누적을 막는다. crop 2장 미만이면 그대로 반환.
+    """
+    if len(crops) < 2:
+        return crops
+    aligned = list(crops)
+    for _ in range(COREG_ITERS):
+        ref = np.median(np.stack([a.astype(np.float32) for a in aligned]), 0).astype(np.uint8)
+        aligned = [_align_to_ref(c, ref) for c in crops]
+    return aligned
 
 
 def _cond_crosshair_xy(cond):
@@ -123,6 +161,16 @@ def _build_cond_by_recipe(assets, center_tpls):
         if crop is None:
             continue
         entry["s_frames"].append({"path": p, "xy": xy, "mod": mod, "crop": crop})
+
+    # co-registration: modality 별로(외형이 달라 섞으면 안 됨) crop 들을 sub-pixel 정렬해
+    # median blur 를 줄인다. 정렬은 crop 내용만 바꾸고 crosshair GT(xy)·full-frame 은 불변.
+    if COREGISTER and entry["s_frames"]:
+        by_mod = defaultdict(list)
+        for f in entry["s_frames"]:
+            by_mod[f["mod"]].append(f)
+        for fs in by_mod.values():
+            for f, aligned in zip(fs, coregister_crops([f["crop"] for f in fs])):
+                f["crop"] = aligned
     return entry
 
 
@@ -138,6 +186,8 @@ def run() -> str:
     out_dir = OUTPUT_ROOT / make_timestamp_tag()
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"[INFO] (consensus cond A/B) recipe {len(recipes)}개 → {out_dir}")
+    print(f"[INFO] co-registration: {'ON' if COREGISTER else 'OFF'} "
+          f"(env CONSENSUS_COREGISTER=0 으로 끄고 A/B 비교 가능)")
 
     by_recipe = {}
     for assets in recipes:
@@ -161,6 +211,7 @@ def run() -> str:
         print("[ERROR] consensus A/B 불가 — LOO 가능한(≥AB_MIN_S) recipe 가 없음.")
         return "no_ab"
 
+    res["coregister"] = COREGISTER
     (out_dir / "summary.json").write_text(
         json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -169,7 +220,8 @@ def run() -> str:
     lift = res["overall_lift"]
     print("\n" + "=" * 64)
     print("[INFO] === consensus 재등록 A/B (cond, LOO; 이 블록만 읽어주면 됨) ===")
-    print(f"  recipes={res['n_recipes']}  S_loo={res['n_S_loo']}  (baseline=center tpl, offset0)")
+    print(f"  recipes={res['n_recipes']}  S_loo={res['n_S_loo']}  "
+          f"(baseline=center tpl, offset0, co-reg={'ON' if COREGISTER else 'OFF'})")
     print(f"  in_topk:  rcp(center)={rcp}  →  consensus={cons}   lift={lift:+}")
     print(f"  rank1:    rcp(center)={res['overall_rcp_rank1_rate']}  →  "
           f"consensus={res['overall_cons_rank1_rate']}   lift={res['rank1_lift']:+}")

@@ -67,6 +67,13 @@ COREGISTER = os.getenv("CONSENSUS_COREGISTER", "1") != "0"
 COREG_ITERS = 2                 # ref median 을 다듬으며 원본 crop 을 재정렬(보간 누적 방지).
 COREG_MAX_SHIFT_FRAC = 0.3      # 추정 shift 가 crop 변의 이 비율 초과면 spurious → 정렬 생략.
 
+# LOO consensus 최소 S(같은 modality) 장수. align_similarity.AB_MIN_S 기본 4 지만, 이 golden
+# set 은 S 가 희박하다(probe 2026-06-08: 298 recipe 중 ≥4 는 1개뿐, 135개가 정확히 3장).
+# 4 면 recipe 1개만 통과해 A/B 가 무의미 → 3 으로 낮춰 ~136 recipe(~411 LOO)를 살린다.
+# 단, S=3 recipe 는 LOO consensus 가 2장(others)으로 빌드돼 약하다 — blur 가드/lift 로 판정.
+# (len(others)>=2 가드 때문에 S=2 recipe 는 min_s 를 낮춰도 못 산다 — fm>=3 필요.)
+CONSENSUS_MIN_S = int(os.getenv("CONSENSUS_MIN_S", "3"))
+
 
 def _align_to_ref(img, ref):
     """img 를 ref 에 sub-pixel 평행이동 정렬(phase correlation). 과도 shift 면 원본 반환."""
@@ -156,6 +163,14 @@ def _resolve_mod(cond, recipe_mod):
     이 단계가 과거 missing_modality 대량 누락(dual-rcp recipe + Scope 부재)을 해소한다.
     """
     return _msr_modality(cond) or recipe_mod
+
+
+def _recipe_key(assets):
+    """by_recipe dict 의 *고유* 키. assets.recipe_id 는 recipe_name(leaf)만이라 eqp/class 가
+    달라도 leaf 이름이 같으면 dict 에서 덮어써져 데이터가 유실된다(probe: 298 dir → 276 고유).
+    eqp/class/recipe 조합으로 고유화한다(라벨로도 읽기 좋음 — '/' 는 파일명에서 '__' 치환됨).
+    """
+    return f"{assets.eqp_id}/{assets.class_name}/{assets.recipe_id}"
 
 
 def _precrop_drop_reason(cond, xy, mod, has_tpl):
@@ -268,9 +283,10 @@ def run() -> str:
         drop_total.update(entry["drop_counts"])
         n_s = len(entry["s_frames"])
         n_drop = sum(entry["drop_counts"].values())
+        rec_key = _recipe_key(assets)          # eqp/class/recipe 고유 키 — leaf 충돌 방지.
         if n_s:
-            by_recipe[assets.recipe_id] = entry
-        print(f"[INFO] {assets.recipe_id}: S(crosshair) {n_s}장, E {len(entry['e_paths'])}장"
+            by_recipe[rec_key] = entry
+        print(f"[INFO] {rec_key}: S(crosshair) {n_s}장, E {len(entry['e_paths'])}장"
               + (f"  [누락 {n_drop}: {dict(entry['drop_counts'])}]" if n_drop else ""))
 
     # msr cond 엔 Scope 가 없어 키/배율로 modality 를 가른다(Scope 분포는 더 이상 추적 안 함).
@@ -291,12 +307,13 @@ def run() -> str:
     else:
         print(f"[INFO] S 프레임 누락 없음 (채택 {n_kept}장).")
 
-    res = _consensus_template_ab(by_recipe, out_dir=out_dir)
+    res = _consensus_template_ab(by_recipe, min_s=CONSENSUS_MIN_S, out_dir=out_dir)
     if res is None:
-        print("[ERROR] consensus A/B 불가 — LOO 가능한(≥AB_MIN_S) recipe 가 없음.")
+        print(f"[ERROR] consensus A/B 불가 — LOO 가능한(같은 modality ≥{CONSENSUS_MIN_S}) recipe 가 없음.")
         return "no_ab"
 
     res["coregister"] = COREGISTER
+    res["min_s"] = CONSENSUS_MIN_S
     res["modality_distribution"] = dict(mod_total)
     res["drop_distribution"] = dict(drop_total)
     (out_dir / "summary.json").write_text(
@@ -307,8 +324,12 @@ def run() -> str:
     lift = res["overall_lift"]
     print("\n" + "=" * 64)
     print("[INFO] === consensus 재등록 A/B (cond, LOO; 이 블록만 읽어주면 됨) ===")
-    print(f"  recipes={res['n_recipes']}  S_loo={res['n_S_loo']}  "
+    print(f"  recipes={res['n_recipes']}  S_loo={res['n_S_loo']}  min_s={CONSENSUS_MIN_S}  "
           f"(baseline=center tpl, offset0, co-reg={'ON' if COREGISTER else 'OFF'})")
+    if CONSENSUS_MIN_S < 4:
+        print(f"  ⚠ min_s={CONSENSUS_MIN_S}: S={CONSENSUS_MIN_S} recipe 의 LOO consensus 는 "
+              f"{CONSENSUS_MIN_S - 1}장으로 빌드돼 약함 — lift 가 양수여도 blur 가드 함께 확인 "
+              f"(env CONSENSUS_MIN_S=4 로 강한판 비교 가능).")
     print(f"  in_topk:  rcp(center)={rcp}  →  consensus={cons}   lift={lift:+}")
     print(f"  rank1:    rcp(center)={res['overall_rcp_rank1_rate']}  →  "
           f"consensus={res['overall_cons_rank1_rate']}   lift={res['rank1_lift']:+}")

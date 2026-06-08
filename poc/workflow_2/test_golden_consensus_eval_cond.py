@@ -6,6 +6,8 @@
   - cond 로 crosshair 를 *지운 뒤* crop → 중앙 distractor 없는 깨끗한 consensus 재료.
 """
 
+from types import SimpleNamespace
+
 import cv2
 import numpy as np
 
@@ -21,6 +23,20 @@ def _cond(crosshair_xy, box_ltrb=None, scope="OM", raw=None):
 def _msr_cond(raw):
     """msr cond 모사: Scope 없음(=None), crosshair 있음, raw 키로 modality 구분."""
     return CondInfo(scope=None, pixel=(512, 512), crosshair_xy=(2000, 2560), raw=raw)
+
+
+# --- _recipe_key: by_recipe dict 고유 키 (recipe_id=leaf 만이면 충돌→데이터 유실) ---
+
+def test_recipe_key_unique_across_eqp_class():
+    # recipe_id(leaf)가 같아도 eqp/class 가 다르면 키가 달라야(probe: 298 dir→276 고유, 충돌).
+    a = SimpleNamespace(eqp_id="EQP1", class_name="CLS", recipe_id="RCP")
+    b = SimpleNamespace(eqp_id="EQP2", class_name="CLS", recipe_id="RCP")
+    assert gce._recipe_key(a) != gce._recipe_key(b)
+
+
+def test_recipe_key_includes_eqp_class_recipe():
+    a = SimpleNamespace(eqp_id="E", class_name="C", recipe_id="R")
+    assert gce._recipe_key(a) == "E/C/R"
 
 
 # --- _cond_crosshair_xy ---

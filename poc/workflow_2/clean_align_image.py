@@ -27,13 +27,13 @@ from poc.workflow_2.cond_file import CondInfo
 
 # cursor 좌표 → 이미지 px 축소 비율 (cursor frame = Pixel × OVERSAMPLE).
 OVERSAMPLE = 10
-# 그려진 주석 선의 두께(px). 실제 선 두께에 맞춰 오피스에서 조정.
-DEFAULT_THICKNESS = 3
+# 그려진 주석 선의 두께(px). 실선 코어는 얇으므로 1, halo 는 dilate 로 덮는다.
+DEFAULT_THICKNESS = 1
 # 선 코어 밖으로 마스크를 넓히는 여유(px). anti-aliasing + JPEG halo(흐려진
 # 그림자 선)를 흡수해 inpaint 후 잔상이 남지 않게 한다. 흐릿하면 키운다.
-DEFAULT_DILATE = 2
+DEFAULT_DILATE = 3
 # inpaint 반경(px).
-DEFAULT_INPAINT_RADIUS = 3
+DEFAULT_INPAINT_RADIUS = 2
 
 
 def cursor_to_image(xy, oversample=OVERSAMPLE):

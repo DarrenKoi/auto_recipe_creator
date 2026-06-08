@@ -128,6 +128,32 @@ def test_crop_excludes_bright_stroke():
     assert int(crop.max()) < 200   # 순수 배경(110±) 만 남음.
 
 
+def test_crop_does_not_inpaint_crosshair_in_rcp_template():
+    # rcp box template 은 box stroke 만 지운다. crosshair 가 cond 에 있어도 box 내부의
+    # *실제 내용*(crosshair 선이 가로지르는 픽셀)을 inpaint 로 지우면 안 된다(매칭 신호 보존).
+    box_ltrb = (1560, 1560, 3560, 3560)              # box (156,156,200,200)
+    gray = _gray_with_box_stroke((156, 156, 200, 200), bg=110, stroke=255)
+    cv2.line(gray, (160, 256), (352, 256), 200, 1)   # 내부 가로 줄(=실제 내용 대용) 밝기 200
+    cond = _cond(box_ltrb, crosshair_xy=(2560, 2560))  # 중심(256,256) crosshair 존재
+    crop, _ = glec.cond_template_crop(gray, cond)
+    assert int(crop.max()) >= 190   # 줄이 보존됨(=crosshair 제거 안 함).
+
+
+# --- _offset_diag_cond (대각선 정규화 척도로 자체 진단; gle._offset_diag 의 0.20 short-side 와 분리) ---
+
+def test_offset_diag_cond_uses_diagonal_tol():
+    recs = [{"recipe": "a", "mod": "om", "offset_norm": 0.30},
+            {"recipe": "b", "mod": "sem", "offset_norm": 0.10}]
+    d = glec._offset_diag_cond(recs)
+    assert d["tol"] == glec.OFFSET_WARN
+    assert d["n_assumption_sensitive"] == 1   # 0.30 > 0.25 만 민감, 0.10 은 아님.
+
+
+def test_offset_diag_cond_empty():
+    d = glec._offset_diag_cond([])
+    assert d["n"] == 0
+
+
 # --- lever_verdict (measure-first 결정: proposer-wall vs reranker-alive) ---
 
 def test_lever_verdict_no_data():

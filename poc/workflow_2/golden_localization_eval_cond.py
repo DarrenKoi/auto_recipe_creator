@@ -54,7 +54,7 @@ from poc.workflow_2.align_point_correction import (
 )
 from poc.workflow_2.align_similarity import CENTER_AREA_RATIO
 from poc.workflow_2.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
-from poc.workflow_2.cond_file import load_cond
+from poc.workflow_2.cond_file import CondInfo, load_cond
 from poc.workflow_2.crosshair_detect import detect_crosshair
 # 원본의 cond-독립 부품 재사용(중복/표류 방지).
 from poc.workflow_2 import golden_localization_eval as gle
@@ -143,8 +143,14 @@ def cond_template_crop(gray, cond, *, inset=CROP_INSET_PX):
 
     대칭 inset → crop 중심 == box 중심 → cond_align_offset 과 정확히 일관.
     inset 후 너무 작아지면 inset 을 생략(작은 box 보호). 반환 (crop, (x0,y0,w,h)).
+
+    **box stroke 만 지운다.** rcp cond 에 crosshair 가 있어도 그건 box 내부를 가로지르는
+    *실제 내용* 이므로 inpaint 하면 매칭 신호가 깎인다 → crosshair_xy=None 으로 마스킹해
+    box 테두리만 제거한다(msr 프레임의 crosshair 제거는 별개 — 거기선 distractor 라 지움).
     """
-    cleaned = clean_image(gray, cond)            # 튜닝된 1/1/2 로 알려진 stroke 제거.
+    box_only = CondInfo(scope=cond.scope, pixel=cond.pixel,
+                        box_ltrb=cond.box_ltrb, crosshair_xy=None)
+    cleaned = clean_image(gray, box_only)        # 튜닝된 1/1/2 로 box stroke 만 제거.
     x, y, bw, bh = _cond_box_to_xywh(cond.box_ltrb)
     h, w = gray.shape[:2]
     x0, y0 = max(0, x + inset), max(0, y + inset)
@@ -153,6 +159,28 @@ def cond_template_crop(gray, cond, *, inset=CROP_INSET_PX):
         x0, y0 = max(0, x), max(0, y)
         x1, y1 = min(w, x + bw), min(h, y + bh)
     return cleaned[y0:y1, x0:x1].copy(), (x0, y0, x1 - x0, y1 - y0)
+
+
+def _offset_diag_cond(records, *, tol=OFFSET_WARN):
+    """align-offset 진단 — *대각선 정규화* 척도 전용(cond_offset_norm 과 동일).
+
+    gle._offset_diag 는 GT_TOL_NORM=0.20 *short-side* 기준이라, 대각선 정규화 값을 그대로
+    넣으면 척도가 어긋나 '가정민감' 을 과소계상한다. 그래서 cond 판은 OFFSET_WARN(대각선)
+    기준으로 자체 집계한다([[project_align_cond_files_and_coords]]).
+    """
+    if not records:
+        return {"n": 0, "tol": tol}
+    norms = sorted(r["offset_norm"] for r in records)
+    sensitive = [r for r in records if r["offset_norm"] > tol]
+    return {
+        "n": len(norms),
+        "tol": tol,
+        "median_offset_norm": gle._percentile(norms, 0.5),
+        "p90_offset_norm": gle._percentile(norms, 0.9),
+        "n_assumption_sensitive": len(sensitive),
+        "sensitive": [{"recipe": r["recipe"], "mod": r["mod"],
+                       "offset_norm": r["offset_norm"]} for r in sensitive],
+    }
 
 
 def _build_offset_templates_cond(
@@ -409,13 +437,18 @@ def run() -> str:
           f"detect-폴백={len(s_rows) - n_cond}")
 
     summary = gle._summarize(all_rows)
-    summary["align_offset_diag"] = gle._offset_diag(offset_records)
+    summary["align_offset_diag"] = _offset_diag_cond(offset_records)   # 대각선 척도 자체 진단.
     summary["gt_source"] = {"n_S": len(s_rows), "n_cond": n_cond,
                             "n_detect_fallback": len(s_rows) - n_cond}
+    lv = lever_verdict(summary["cells"].get("box__inpaint", {"n": 0}))
+    summary["lever_verdict"] = lv
+    # summary.json 은 *출력 전에* 먼저 쓴다 — 프린트 단계에서 죽어도 산출물은 남게.
+    (out_dir / "summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     gle._print_summary(summary)
 
     diag = summary["align_offset_diag"]
-    print("\n[INFO] === align-offset 진단 (cond box) ===")
+    print("\n[INFO] === align-offset 진단 (cond box, 대각선 정규화) ===")
     if diag.get("n", 0) == 0:
         print("  cond box 있는 modality 없음 — 진단 불가.")
     else:
@@ -424,10 +457,6 @@ def run() -> str:
               f"가정민감(>{diag['tol']})={diag['n_assumption_sensitive']}개")
 
     # === 다음 레버 판정 (이 한 줄만 보고하면 다음 계획 결정 가능) ===
-    lv = lever_verdict(summary["cells"].get("box__inpaint", {"n": 0}))
-    summary["lever_verdict"] = lv
-    (out_dir / "summary.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     print("\n" + "=" * 64)
     print("[INFO] === 다음 레버 판정 (box__inpaint 셀; 이 블록만 읽어주면 됨) ===")
     if lv["verdict"] == "no_data":

@@ -29,9 +29,10 @@ from poc.workflow_2.cond_file import CondInfo
 OVERSAMPLE = 10
 # 그려진 주석 선의 두께(px). 실선 코어는 얇으므로 1, halo 는 dilate 로 덮는다.
 DEFAULT_THICKNESS = 1
-# 선 코어 밖으로 마스크를 넓히는 여유(px). anti-aliasing + JPEG halo(흐려진
-# 그림자 선)를 흡수해 inpaint 후 잔상이 남지 않게 한다. 흐릿하면 키운다.
-DEFAULT_DILATE = 3
+# 선 코어 밖으로 마스크를 넓히는 여유(px). halo 를 덮되, 너무 키우면 inpaint 가
+# 실제 texture 를 번지게(smear) 하니 작게 둔다. 실데이터 눈검증 결과 1 이 최적
+# (3 은 over-inpaint 번짐). 흐릿하면 CLEAN_DILATE env 로 일시 상향.
+DEFAULT_DILATE = 1
 # inpaint 반경(px).
 DEFAULT_INPAINT_RADIUS = 2
 

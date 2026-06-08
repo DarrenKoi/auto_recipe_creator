@@ -71,8 +71,20 @@ COREG_MAX_SHIFT_FRAC = 0.3      # 추정 shift 가 crop 변의 이 비율 초과
 # set 은 S 가 희박하다(probe 2026-06-08: 298 recipe 중 ≥4 는 1개뿐, 135개가 정확히 3장).
 # 4 면 recipe 1개만 통과해 A/B 가 무의미 → 3 으로 낮춰 ~136 recipe(~411 LOO)를 살린다.
 # 단, S=3 recipe 는 LOO consensus 가 2장(others)으로 빌드돼 약하다 — blur 가드/lift 로 판정.
-# (len(others)>=2 가드 때문에 S=2 recipe 는 min_s 를 낮춰도 못 산다 — fm>=3 필요.)
-CONSENSUS_MIN_S = int(os.getenv("CONSENSUS_MIN_S", "3"))
+MIN_S_FLOOR = 3   # LOO 바닥: len(others)>=2 가드상 fm>=3 이어야 점이 하나라도 난다 → 2 이하는 무의미.
+_MIN_S_ENV = int(os.getenv("CONSENSUS_MIN_S", "3"))
+
+
+def _floor_min_s(value):
+    """min_s 를 바닥 MIN_S_FLOOR(3)로 보정한다.
+
+    align_similarity LOO 는 `len(others)>=2` 를 요구하므로 같은 modality fm>=3 이어야 LOO 점이
+    하나라도 난다. 2 이하를 줘도 결과가 동일(=조용한 no-op)하므로 3 으로 올려 knob 을 정직하게.
+    """
+    return max(MIN_S_FLOOR, value)
+
+
+CONSENSUS_MIN_S = _floor_min_s(_MIN_S_ENV)
 
 
 def _align_to_ref(img, ref):
@@ -265,6 +277,10 @@ def run() -> str:
     print(f"[INFO] co-registration: {'ON' if COREGISTER else 'OFF'} "
           f"(env CONSENSUS_COREGISTER=0 으로 끄고 A/B 비교 가능)")
 
+    if _MIN_S_ENV < CONSENSUS_MIN_S:   # 2 이하는 LOO 가 못 나와 무의미 → 바닥 3 으로 보정됨.
+        print(f"[WARNING] CONSENSUS_MIN_S={_MIN_S_ENV} 는 무의미(LOO 바닥 fm>=3) → "
+              f"{CONSENSUS_MIN_S} 로 보정합니다.")
+
     by_recipe = {}
     mod_total = Counter()
     drop_total = Counter()
@@ -312,8 +328,7 @@ def run() -> str:
         print(f"[ERROR] consensus A/B 불가 — LOO 가능한(같은 modality ≥{CONSENSUS_MIN_S}) recipe 가 없음.")
         return "no_ab"
 
-    res["coregister"] = COREGISTER
-    res["min_s"] = CONSENSUS_MIN_S
+    res["coregister"] = COREGISTER      # min_s 는 _consensus_template_ab 가 이미 반환에 넣는다.
     res["modality_distribution"] = dict(mod_total)
     res["drop_distribution"] = dict(drop_total)
     (out_dir / "summary.json").write_text(

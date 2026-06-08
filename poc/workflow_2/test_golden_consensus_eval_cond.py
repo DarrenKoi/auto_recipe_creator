@@ -39,6 +39,21 @@ def test_recipe_key_includes_eqp_class_recipe():
     assert gce._recipe_key(a) == "E/C/R"
 
 
+# --- _floor_min_s: LOO 바닥 3 보정 (len(others)>=2 가드상 fm>=3 이어야 점이 난다) ---
+
+def test_floor_min_s_raises_below_three():
+    # 2 이하는 무의미(같은 결과) → 3 으로 올린다(조용한 no-op 방지).
+    assert gce._floor_min_s(2) == 3
+    assert gce._floor_min_s(1) == 3
+    assert gce._floor_min_s(0) == 3
+
+
+def test_floor_min_s_keeps_three_and_above():
+    assert gce._floor_min_s(3) == 3
+    assert gce._floor_min_s(4) == 4
+    assert gce._floor_min_s(10) == 10
+
+
 # --- _cond_crosshair_xy ---
 
 def test_crosshair_xy_converts_cursor_to_image_px():

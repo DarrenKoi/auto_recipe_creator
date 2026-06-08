@@ -33,6 +33,7 @@ except Exception:
     pass
 
 import json
+from collections import Counter
 from pathlib import Path
 
 import cv2
@@ -55,7 +56,7 @@ from poc.workflow_2.align_point_correction import (
 )
 from poc.workflow_2.align_similarity import CENTER_AREA_RATIO
 from poc.workflow_2.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
-from poc.workflow_2.cond_file import CondInfo, load_cond
+from poc.workflow_2.cond_file import CondInfo, load_cond, msr_modality
 from poc.workflow_2.crosshair_detect import detect_crosshair
 # 원본의 cond-독립 부품 재사용(중복/표류 방지).
 from poc.workflow_2 import golden_localization_eval as gle
@@ -315,6 +316,26 @@ def _build_offset_templates_cond(
     return center, box
 
 
+def _route_modality(cond, available_mods):
+    """msr frame 을 어느 modality rcp template 으로 매칭할지 결정 ('om'|'sem'|None).
+
+    과거 `_localize` 는 om·sem 둘 다 매칭 후 최고 score 채택(_race)이었는데, chamfer
+    점수면이 평평([[project_matcher_flat_chamfer_distinctiveness]])해 **틀린 modality
+    whitebox 가 이겨** 지표를 오염시켰다(2026-06-09 오피스 결합 패널에서 발각). 그래서
+    msr 의 실제 modality 로 라우팅한다:
+      - msr 키/배율 추론(`msr_modality`)이 확정되면 그 modality(단, 해당 rcp 가 있을 때).
+      - 미상이면 recipe 가 단일 modality 면 그걸로 폴백.
+      - 미상 + dual-rcp, 또는 추론 modality 의 rcp 부재 → None(skip; 틀린-modality 측정 차단).
+    ``available_mods`` 는 이 recipe 에서 template 이 있는 modality 집합.
+    """
+    inferred = msr_modality(cond)
+    if inferred is not None:
+        return inferred if inferred in available_mods else None
+    if len(available_mods) == 1:
+        return next(iter(available_mods))
+    return None
+
+
 def _winning_mod(cells):
     """결합 패널에 함께 보일 rcp 의 modality — 주판정(box__inpaint) 우선, 없으면 차순위."""
     for key in ("box__inpaint", "center__inpaint", "box__raw", "center__raw"):
@@ -353,9 +374,18 @@ def _process_msr_cond(msr_path, center_tpls, box_tpls, *, recipe_id="",
         "msr": msr_path.name, "label": label,
         "crosshair_xy": list(crosshair_xy) if crosshair_xy is not None else None,
         "crosshair_conf": ch_conf, "crosshair_source": ch_source,
+        "modality": None, "modality_skip": None,
         "cells": {}, "overlay": None,
     }
     if label != "S" or crosshair_xy is None:
+        return row
+
+    # msr modality 로 라우팅 — om·sem race 금지. 미상/dual 모호 → skip(틀린-modality 측정 차단).
+    available_mods = {m for m, v in center_tpls.items() if v is not None}
+    routed = _route_modality(cond, available_mods)
+    row["modality"] = routed
+    if routed is None:
+        row["modality_skip"] = "missing_modality"
         return row
 
     if cond and cond.crosshair_xy is not None:
@@ -366,11 +396,12 @@ def _process_msr_cond(msr_path, center_tpls, box_tpls, *, recipe_id="",
     tpl_sets = {"center": center_tpls, "box": box_tpls}
 
     for tname in TEMPLATES:
-        tpls = tpl_sets[tname]
-        if all(v is None for v in tpls.values()):
+        routed_tpl = tpl_sets[tname].get(routed)
+        if routed_tpl is None:        # 이 modality 의 box template 부재(center 는 항상 있음).
             continue
+        one = {routed: routed_tpl}    # 해결된 modality 1개만 매칭(race 제거).
         for fname in FRAMES:
-            res = gle._localize(tpls, frames[fname], crosshair_xy)
+            res = gle._localize(one, frames[fname], crosshair_xy)
             if res is not None:
                 row["cells"][f"{tname}__{fname}"] = res
 
@@ -517,10 +548,20 @@ def run() -> str:
     print(f"\n[INFO] === GT 출처 (S {len(s_rows)}장) === cond={n_cond}  "
           f"detect-폴백={len(s_rows) - n_cond}")
 
+    # modality 라우팅 집계(om/sem/skip) — race 제거 후 어디로 라우팅됐나.
+    mod_counts = Counter(r.get("modality") or "skip" for r in s_rows)
+    n_mskip = sum(1 for r in s_rows if r.get("modality_skip"))
+    print(f"[INFO] === modality 라우팅 (S {len(s_rows)}장) === "
+          f"om={mod_counts.get('om', 0)}  sem={mod_counts.get('sem', 0)}  "
+          f"skip(missing_modality)={n_mskip}")
+
     summary = gle._summarize(all_rows)
     summary["align_offset_diag"] = _offset_diag_cond(offset_records)   # 대각선 척도 자체 진단.
     summary["gt_source"] = {"n_S": len(s_rows), "n_cond": n_cond,
                             "n_detect_fallback": len(s_rows) - n_cond}
+    summary["modality_routing"] = {"om": mod_counts.get("om", 0),
+                                   "sem": mod_counts.get("sem", 0),
+                                   "skip": n_mskip}
     lv = lever_verdict(summary["cells"].get("box__inpaint", {"n": 0}))
     summary["lever_verdict"] = lv
     # summary.json 은 *출력 전에* 먼저 쓴다 — 프린트 단계에서 죽어도 산출물은 남게.

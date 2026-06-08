@@ -115,3 +115,38 @@ def load_cond(image_path) -> CondInfo | None:
     if not path.is_file():
         return None
     return parse_cond(path.read_text(encoding="utf-8", errors="replace"))
+
+
+# --- modality 추론 (공유) ---------------------------------------------------
+# msr cond 에는 Scope 가 없다(2026-06-08 사용자 확인) → 키/배율로 modality 를 가른다.
+# OM = !OM_Brightness 키 + Magnification<200, SEM = Accelerating_voltage 키 + Magnification>500.
+# 키 존재가 1순위(확정), Magnification 보조([[project_align_cond_files_and_coords]]).
+# rcp cond 는 Scope(OM/OMDF/SEM)를 가지므로 그쪽은 CondInfo.is_om/is_sem 을 쓴다.
+# 두 eval(consensus·localization)이 같은 추론을 써야 해서 여기(공유 모듈)에 둔다 —
+# consensus eval 이 localization eval 을 import 하므로 역방향 import 는 순환이 된다.
+MSR_OM_MAG_MAX = 200     # Magnification < 이값 → OM (보조 신호).
+MSR_SEM_MAG_MIN = 500    # Magnification > 이값 → SEM (보조 신호).
+
+
+def msr_modality(cond: "CondInfo | None") -> str | None:
+    """msr cond 의 modality 추론 'om' | 'sem' | None (Scope 없음 → 키/배율).
+
+    ``!OM_Brightness`` 키 → om, ``Accelerating_voltage`` 키 → sem (키 존재가 확정,
+    1순위). 키가 없으면 Magnification 보조: <MSR_OM_MAG_MAX → om, >MSR_SEM_MAG_MIN →
+    sem, 그 사이(또는 미상)는 None(모호). raw 키는 parse 시 '!'·소문자화됨.
+    """
+    if cond is None:
+        return None
+    raw = cond.raw or {}
+    if "accelerating_voltage" in raw:
+        return "sem"
+    if "om_brightness" in raw:
+        return "om"
+    mag_tokens = raw.get("magnification") or []
+    mag = _to_int(mag_tokens[0]) if mag_tokens else None
+    if mag is not None:
+        if mag < MSR_OM_MAG_MAX:
+            return "om"
+        if mag > MSR_SEM_MAG_MIN:
+            return "sem"
+    return None

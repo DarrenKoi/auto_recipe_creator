@@ -182,6 +182,46 @@ def test_lever_verdict_near_ceiling_when_topk_high_but_no_gap():
     assert v["verdict"] == "near_ceiling"
 
 
+# --- _route_modality (msr frame 을 어느 modality rcp 로 매칭할지; race 제거의 핵심) ---
+
+def _mcond(text):
+    from poc.workflow_2.cond_file import parse_cond
+    return parse_cond(text)
+
+
+def test_route_uses_msr_om_key_when_both_available():
+    cond = _mcond("!OM_Brightness\t128\nMagnification\t104\n")
+    assert glec._route_modality(cond, {"om", "sem"}) == "om"
+
+
+def test_route_uses_msr_sem_key_when_both_available():
+    cond = _mcond("Accelerating_voltage\t1000\nMagnification\t50000\n")
+    assert glec._route_modality(cond, {"om", "sem"}) == "sem"
+
+
+def test_route_falls_back_to_single_recipe_modality_when_msr_unknown():
+    # msr 미상(모호 배율) + recipe 가 om rcp 만 보유 → om 으로 폴백.
+    cond = _mcond("Magnification\t300\n")
+    assert glec._route_modality(cond, {"om"}) == "om"
+
+
+def test_route_none_when_msr_unknown_and_recipe_dual():
+    # msr 미상 + recipe 가 om·sem 둘 다 → 모호 → None(skip, 틀린-modality 측정 차단).
+    cond = _mcond("Magnification\t300\n")
+    assert glec._route_modality(cond, {"om", "sem"}) is None
+
+
+def test_route_none_when_inferred_modality_has_no_rcp():
+    # msr 는 sem 인데 recipe 에 sem rcp template 이 없음 → 틀린 om 으로 매칭 금지 → None.
+    cond = _mcond("Accelerating_voltage\t1000\n")
+    assert glec._route_modality(cond, {"om"}) is None
+
+
+def test_route_single_modality_when_cond_none():
+    # cond 자체가 None 이어도 recipe 가 단일 modality 면 그걸로 폴백.
+    assert glec._route_modality(None, {"sem"}) == "sem"
+
+
 # --- _combine_2up (rcp | msr 한 장 결합 패널; 눈으로 추출→매칭→찍기 추적용) ---
 
 def _bgr(h, w, val=100):

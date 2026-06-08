@@ -53,7 +53,10 @@ from poc.workflow_2.align_fail_assets import iter_msr_images, load_gray
 from poc.workflow_2.align_similarity import _consensus_template_ab, _matched_crop
 from poc.workflow_2.align_point_correction import _tool_label
 from poc.workflow_2.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
-from poc.workflow_2.cond_file import _to_int, load_cond
+from poc.workflow_2.cond_file import (
+    MSR_OM_MAG_MAX, MSR_SEM_MAG_MIN, _to_int, load_cond,
+    msr_modality as _msr_modality,
+)
 from poc.workflow_2 import golden_localization_eval as gle
 import poc.workflow_2.golden_localization_eval_cond as glec
 from poc.workflow_1.util.time_utils import make_timestamp_tag
@@ -136,35 +139,8 @@ def _cond_consensus_crop(gray, cond, size_wh):
     return _matched_crop(cleaned, xy, w, h, 1.0)
 
 
-# msr cond 는 Scope 가 없다(사용자 확인 2026-06-08). 대신 키/배율로 modality 를 가른다:
-# OM = !OM_Brightness 키 + Magnification<200, SEM = Accelerating_voltage 키 + Magnification>500.
-# 키 존재가 1순위(확정), Magnification 보조([[project_align_cond_files_and_coords]]).
-MSR_OM_MAG_MAX = 200     # Magnification < 이값 → OM (보조 신호).
-MSR_SEM_MAG_MIN = 500    # Magnification > 이값 → SEM (보조 신호).
-
-
-def _msr_modality(cond):
-    """msr cond 의 modality 추론 'om' | 'sem' | None (Scope 없음 → 키/배율).
-
-    msr cond.txt 엔 Scope 가 없다. OM 은 ``!OM_Brightness`` 키 + Magnification<200,
-    SEM 은 ``Accelerating_voltage`` 키 + Magnification>500. 키 존재가 확정 신호라 1순위,
-    Magnification 은 보조(200~500 사이는 모호 → None). raw 키는 _norm_key 로 '!'·소문자화됨.
-    """
-    if cond is None:
-        return None
-    raw = cond.raw or {}
-    if "accelerating_voltage" in raw:
-        return "sem"
-    if "om_brightness" in raw:
-        return "om"
-    mag_tokens = raw.get("magnification") or []
-    mag = _to_int(mag_tokens[0]) if mag_tokens else None
-    if mag is not None:
-        if mag < MSR_OM_MAG_MAX:
-            return "om"
-        if mag > MSR_SEM_MAG_MIN:
-            return "sem"
-    return None
+# msr modality 추론(_msr_modality)·MAG 상수는 cond_file 공유 모듈로 이동(단일 출처).
+# 여기서는 alias import 로 기존 이름(_msr_modality)을 보존한다.
 
 
 def _resolve_mod(cond, recipe_mod):

@@ -15,7 +15,9 @@ from pathlib import Path
 
 from poc.workflow_2 import WORKFLOW_2_DIR
 from poc.workflow_2.align_fail_assets import resolve_assets
-from poc.workflow_2.cond_file import CondInfo, cond_path_for, load_cond, parse_cond
+from poc.workflow_2.cond_file import (
+    CondInfo, cond_path_for, load_cond, msr_modality, parse_cond,
+)
 
 # 오피스에서 받아온 실제 cond.txt 샘플 (회귀 anchor).
 REAL_SAMPLE = WORKFLOW_2_DIR / "docs" / "journals" / "260608" / "cond_sample.txt"
@@ -149,6 +151,40 @@ def test_assets_cond_for_pairs_image_and_cond():
         assert info is not None and info.is_sem
         assert info.box_ltrb == (1770, 1770, 3380, 3330), info.box_ltrb
         assert assets.cond_for(None) is None
+
+
+# --- msr_modality (Scope 없는 msr cond → 키/배율로 modality 추론; 공유 함수) ---
+
+def test_msr_modality_accel_voltage_key_is_sem():
+    cond = parse_cond("Accelerating_voltage\t1000\nMagnification\t50000\n")
+    assert msr_modality(cond) == "sem"
+
+
+def test_msr_modality_om_brightness_key_is_om():
+    cond = parse_cond("!OM_Brightness\t128\nMagnification\t104\n")
+    assert msr_modality(cond) == "om"
+
+
+def test_msr_modality_low_mag_is_om():
+    assert msr_modality(parse_cond("Magnification\t150\n")) == "om"
+
+
+def test_msr_modality_high_mag_is_sem():
+    assert msr_modality(parse_cond("Magnification\t20000\n")) == "sem"
+
+
+def test_msr_modality_ambiguous_mag_is_none():
+    assert msr_modality(parse_cond("Magnification\t300\n")) is None
+
+
+def test_msr_modality_key_beats_magnification():
+    # om_brightness 키 + 높은 배율 → 키가 1순위라 om.
+    cond = parse_cond("!OM_Brightness\t128\nMagnification\t9000\n")
+    assert msr_modality(cond) == "om"
+
+
+def test_msr_modality_none_cond_is_none():
+    assert msr_modality(None) is None
 
 
 def main():

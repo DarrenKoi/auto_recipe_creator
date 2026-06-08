@@ -53,7 +53,7 @@ from poc.workflow_2.align_fail_assets import iter_msr_images, load_gray
 from poc.workflow_2.align_similarity import _consensus_template_ab, _matched_crop
 from poc.workflow_2.align_point_correction import _tool_label
 from poc.workflow_2.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
-from poc.workflow_2.cond_file import load_cond
+from poc.workflow_2.cond_file import _to_int, load_cond
 from poc.workflow_2 import golden_localization_eval as gle
 import poc.workflow_2.golden_localization_eval_cond as glec
 from poc.workflow_1.util.time_utils import make_timestamp_tag
@@ -146,15 +146,45 @@ def _modality_of(cond):
     return lbl   # 'sem' | None
 
 
-def _resolve_mod(cond, recipe_mod):
-    """msr 프레임 routing modality: cond.scope 우선, 없으면 recipe 의 rcp modality 폴백.
+# msr cond 는 Scope 가 없다(사용자 확인 2026-06-08). 대신 키/배율로 modality 를 가른다:
+# OM = !OM_Brightness 키 + Magnification<200, SEM = Accelerating_voltage 키 + Magnification>500.
+# 키 존재가 1순위(확정), Magnification 보조([[project_align_cond_files_and_coords]]).
+MSR_OM_MAG_MAX = 200     # Magnification < 이값 → OM (보조 신호).
+MSR_SEM_MAG_MIN = 500    # Magnification > 이값 → SEM (보조 신호).
 
-    실데이터의 msr cond 에는 Scope 가 없을 수 있다(신뢰 type 은 rcp cond 에 있음). 그러나
-    그 msr frame 의 align step modality 는 recipe 의 rcp(IMAP0001=om/IMAP0002=sem)로
-    결정되므로, scope 부재 시 recipe_mod 로 폴백해 frame 을 살린다. 과거의 blanket 'om'
-    기본값과 달리 recipe 근거라 안전하고, 둘 다 없을 때만 None(skip).
+
+def _msr_modality(cond):
+    """msr cond 의 modality 추론 'om' | 'sem' | None (Scope 없음 → 키/배율).
+
+    msr cond.txt 엔 Scope 가 없다. OM 은 ``!OM_Brightness`` 키 + Magnification<200,
+    SEM 은 ``Accelerating_voltage`` 키 + Magnification>500. 키 존재가 확정 신호라 1순위,
+    Magnification 은 보조(200~500 사이는 모호 → None). raw 키는 _norm_key 로 '!'·소문자화됨.
     """
-    return _modality_of(cond) or recipe_mod
+    if cond is None:
+        return None
+    raw = cond.raw or {}
+    if "accelerating_voltage" in raw:
+        return "sem"
+    if "om_brightness" in raw:
+        return "om"
+    mag_tokens = raw.get("magnification") or []
+    mag = _to_int(mag_tokens[0]) if mag_tokens else None
+    if mag is not None:
+        if mag < MSR_OM_MAG_MAX:
+            return "om"
+        if mag > MSR_SEM_MAG_MIN:
+            return "sem"
+    return None
+
+
+def _resolve_mod(cond, recipe_mod):
+    """msr 프레임 routing modality. 우선순위: rcp-style Scope → msr 키/배율 → recipe rcp modality.
+
+    msr cond 엔 Scope 가 없어(_modality_of None) 거의 항상 _msr_modality(키/배율)로 결정된다.
+    그래도 미상이면 recipe 의 단일 rcp modality 로 폴백, 그것도 없으면 None(skip).
+    이 단계가 과거 missing_modality 대량 누락(dual-rcp recipe + Scope 부재)을 해소한다.
+    """
+    return _modality_of(cond) or _msr_modality(cond) or recipe_mod
 
 
 def _precrop_drop_reason(cond, xy, mod, has_tpl):
@@ -184,7 +214,8 @@ def _build_cond_by_recipe(assets, center_tpls):
         "rcp_tpls": {m: t for m, (t, _off) in center_tpls.items() if t is not None},
         "s_frames": [],
         "e_paths": [],
-        "scope_counts": Counter(),   # cond.txt Scope 분포(om/omdf/sem/missing) — 진단용.
+        "scope_counts": Counter(),   # cond.txt Scope 분포(msr 는 보통 전부 missing — Scope 없음).
+        "mod_counts": Counter(),     # *해결된* modality 분포(om/sem/unresolved) — 키/배율 추론 결과.
         "drop_counts": Counter(),    # S 프레임 누락 사유(coverage 손실 가시화, code-review [4]/[5]).
     }
     # recipe 의 rcp modality (단일이면 그것, om/sem 둘 다면 모호 → None). msr scope 부재 시 폴백.
@@ -198,8 +229,9 @@ def _build_cond_by_recipe(assets, center_tpls):
         if label != "S":
             continue
         cond = load_cond(p)
-        entry["scope_counts"][_scope_label(cond) or "missing"] += 1   # 충실 type 집계(om/omdf/sem).
-        mod = _resolve_mod(cond, recipe_mod)                           # scope 우선, 없으면 recipe 폴백.
+        entry["scope_counts"][_scope_label(cond) or "missing"] += 1   # 충실 Scope(msr 는 대개 missing).
+        mod = _resolve_mod(cond, recipe_mod)                           # scope → msr 키/배율 → recipe 폴백.
+        entry["mod_counts"][mod or "unresolved"] += 1                  # 해결된 modality 분포.
         xy = _cond_crosshair_xy(cond)
         # 같은 modality center tpl 로 sizing(없으면 첫 가용 tpl) — omdf 등 drop 방지.
         tpl_item = center_tpls.get(mod) or next(
@@ -251,6 +283,7 @@ def run() -> str:
 
     by_recipe = {}
     scope_total = Counter()
+    mod_total = Counter()
     drop_total = Counter()
     for assets in recipes:
         if assets is None:
@@ -264,6 +297,7 @@ def run() -> str:
             continue
         entry = _build_cond_by_recipe(assets, center_tpls)
         scope_total.update(entry["scope_counts"])
+        mod_total.update(entry["mod_counts"])
         drop_total.update(entry["drop_counts"])
         n_s = len(entry["s_frames"])
         n_drop = sum(entry["drop_counts"].values())
@@ -272,11 +306,15 @@ def run() -> str:
         print(f"[INFO] {assets.recipe_id}: S(crosshair) {n_s}장, E {len(entry['e_paths'])}장"
               + (f"  [누락 {n_drop}: {dict(entry['drop_counts'])}]" if n_drop else ""))
 
-    # cond.txt Scope 분포(충실): om/omdf/sem/missing — routing 은 omdf→om 으로 묶임.
-    print(f"\n[INFO] === msr S Scope 분포(cond.txt) === "
+    # msr 는 Scope 가 없어 대개 전부 missing(정상). 실제 쓰는 건 키/배율로 *해결된* modality.
+    print(f"\n[INFO] === msr S Scope 분포(원문) === "
           f"om={scope_total.get('om', 0)} omdf={scope_total.get('omdf', 0)} "
           f"sem={scope_total.get('sem', 0)} missing={scope_total.get('missing', 0)} "
-          f"(routing: om+omdf→om, sem→sem)")
+          f"(msr 엔 Scope 없음 → missing 정상)")
+    print(f"[INFO] === msr S 해결된 modality(키/배율) === "
+          f"om={mod_total.get('om', 0)} sem={mod_total.get('sem', 0)} "
+          f"unresolved={mod_total.get('unresolved', 0)} "
+          f"(OM=!OM_Brightness/Mag<200, SEM=Accelerating_voltage/Mag>500)")
 
     # S 프레임 누락 집계(coverage 손실 가시화) — 조용한 skip 추방(code-review [4]/[5]).
     n_kept = sum(len(e["s_frames"]) for e in by_recipe.values())
@@ -297,6 +335,7 @@ def run() -> str:
 
     res["coregister"] = COREGISTER
     res["scope_distribution"] = dict(scope_total)
+    res["modality_distribution"] = dict(mod_total)
     res["drop_distribution"] = dict(drop_total)
     (out_dir / "summary.json").write_text(
         json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")

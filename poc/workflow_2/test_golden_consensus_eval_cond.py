@@ -13,9 +13,14 @@ from poc.workflow_2.cond_file import CondInfo
 import poc.workflow_2.golden_consensus_eval_cond as gce
 
 
-def _cond(crosshair_xy, box_ltrb=None, scope="OM"):
+def _cond(crosshair_xy, box_ltrb=None, scope="OM", raw=None):
     return CondInfo(scope=scope, pixel=(512, 512),
-                    box_ltrb=box_ltrb, crosshair_xy=crosshair_xy)
+                    box_ltrb=box_ltrb, crosshair_xy=crosshair_xy, raw=raw or {})
+
+
+def _msr_cond(raw):
+    """msr cond 모사: Scope 없음(=None), crosshair 있음, raw 키로 modality 구분."""
+    return CondInfo(scope=None, pixel=(512, 512), crosshair_xy=(2000, 2560), raw=raw)
 
 
 # --- _cond_crosshair_xy ---
@@ -144,7 +149,52 @@ def test_resolve_mod_falls_back_to_recipe_when_scope_missing():
 
 
 def test_resolve_mod_none_when_no_info_anywhere():
-    assert gce._resolve_mod(_cond((1, 1), scope=None), None) is None
+    assert gce._resolve_mod(_msr_cond({}), None) is None
+
+
+# --- _msr_modality: msr cond 엔 Scope 없음 → 키/배율로 추론 (사용자 규칙 2026-06-08) ---
+
+def test_msr_modality_om_brightness_key():
+    assert gce._msr_modality(_msr_cond({"om_brightness": [""], "magnification": ["104"]})) == "om"
+
+
+def test_msr_modality_accel_voltage_key():
+    assert gce._msr_modality(
+        _msr_cond({"accelerating_voltage": ["1000"], "magnification": ["20000"]})) == "sem"
+
+
+def test_msr_modality_low_mag_is_om():
+    assert gce._msr_modality(_msr_cond({"magnification": ["150"]})) == "om"
+
+
+def test_msr_modality_high_mag_is_sem():
+    assert gce._msr_modality(_msr_cond({"magnification": ["20000"]})) == "sem"
+
+
+def test_msr_modality_ambiguous_mag_is_none():
+    assert gce._msr_modality(_msr_cond({"magnification": ["300"]})) is None
+
+
+def test_msr_modality_key_beats_magnification():
+    # 키 존재가 1순위 — OM_Brightness 면 mag 가 SEM-range 여도 om.
+    assert gce._msr_modality(
+        _msr_cond({"om_brightness": [""], "magnification": ["20000"]})) == "om"
+
+
+def test_resolve_mod_uses_msr_inference_when_scope_absent():
+    # Scope 없고 recipe_mod 도 None(om+sem 둘 다 있는 recipe)이어도 msr 키로 해결 → frame 산다.
+    assert gce._resolve_mod(_msr_cond({"accelerating_voltage": ["1"]}), None) == "sem"
+    assert gce._resolve_mod(_msr_cond({"om_brightness": [""]}), None) == "om"
+
+
+def test_msr_modality_from_parsed_real_like_cond():
+    from poc.workflow_2.cond_file import parse_cond
+    text = ("# Observation condition\nMagnification           104000\n"
+            "Accelerating_voltage    1000\nPixel                   512,512\n"
+            "!Cursor_info            -1,-1,-1,-1,2097,2561,-1,-1,-1,-1\n")
+    cond = parse_cond(text)
+    assert cond.scope is None and cond.crosshair_xy == (2097, 2561)
+    assert gce._msr_modality(cond) == "sem"
 
 
 # --- _precrop_drop_reason: 누락 사유 분류(coverage 손실 가시화, code-review [4]/[5]) ---

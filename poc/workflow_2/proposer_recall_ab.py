@@ -19,8 +19,6 @@ import json
 import math
 from pathlib import Path
 
-import numpy as np
-
 from poc.workflow_2 import DEBUG_IMAGE_DIR
 from poc.workflow_2.align_fail_assets import iter_msr_images, load_gray
 from poc.workflow_2.align_key_matcher import (

@@ -540,30 +540,22 @@ def _render_overlay(
     return canvas
 
 
-def compute_align_key_score(
+def _prepare_match_inputs(
     template: AlignKeyTemplate,
     frame: np.ndarray,
     *,
-    frame_nm_per_pixel: float | None = None,
-    roi_hint: tuple[int, int, int, int] | None = None,
-    scales: tuple[float, ...] | None = None,
-    policy: MatchPolicy = DEFAULT_POLICY,
-) -> AlignKeyMatchResult:
-    """매 SEM 프레임마다 호출되는 메인 매칭 함수.
+    frame_nm_per_pixel: float | None,
+    roi_hint: tuple[int, int, int, int] | None,
+    scales: tuple[float, ...] | None,
+) -> tuple[np.ndarray, np.ndarray, tuple[float, ...], tuple[int, int]]:
+    """매칭 전처리 — gray + scale 해석 + ROI crop + frame_dt.
 
-    ``frame_nm_per_pixel`` 이 양쪽 모두 주어지면 §7.2 Case A 단일 스케일로,
-    그렇지 않으면 §7.2 Case B 의 multi-scale fallback 으로 동작.
-    ``roi_hint`` 는 (x, y, w, h) — VLM 의 직전 이동 제안 영역에 한정해서
-    탐색하고 싶을 때 사용한다 (현재 prototype 에서는 frame 자체를 잘라서 사용).
-
-    ``scales`` 를 명시하면 nm_per_pixel 기반 자동 결정을 무시하고 그 범위로만
-    매칭한다 (예: broad 탐색의 ``BROAD_SCALES``, confirm 단계의 좁은 범위).
-    ``policy`` 는 합성 점수 가중치/임계값. 기본은 기존 동작과 동일하며,
-    drift 에 견고한 매칭이 필요하면 ``STRUCTURE_POLICY`` 를 넘긴다.
+    반환 (gray_frame, frame_dt, scales, roi_origin). compute_align_key_score 와
+    compute_align_key_score_ensemble 가 공유한다. 추출 전 동작과 동일.
     """
     gray_frame = _to_grayscale(frame)
 
-    # 스케일 결정 — ROI 검증에서 최소 크롭 크기 산출에 필요하므로 먼저.
+    # 스케일 결정 — ROI 검증의 최소 크롭 크기 산출에 필요하므로 먼저.
     if scales is not None:
         if not scales:
             raise ValueError("scales override must be a non-empty tuple")
@@ -586,14 +578,12 @@ def compute_align_key_score(
     else:
         scales = DEFAULT_SCALES
 
-    # 가능한 최소 템플릿 크기 (모든 스케일 중 최소). Chamfer 가 매칭하려면
-    # 프레임/크롭이 이보다는 커야 한다.
+    # 가능한 최소 템플릿 크기 (모든 스케일 중 최소).
     th0, tw0 = template.edge_map.shape[:2]
     min_scale = min(scales)
     min_th = max(8, int(round(th0 * min_scale)))
     min_tw = max(8, int(round(tw0 * min_scale)))
 
-    # ROI hint 가 있으면 그 영역만 잘라서 그 안에서 매칭한다.
     roi_origin = (0, 0)
     if roi_hint is not None:
         if not (isinstance(roi_hint, tuple) and len(roi_hint) == 4):
@@ -627,6 +617,37 @@ def compute_align_key_score(
         roi_origin = (x0, y0)
 
     _frame_edges, frame_dt = preprocess_for_matching(gray_frame)
+    return gray_frame, frame_dt, scales, roi_origin
+
+
+def compute_align_key_score(
+    template: AlignKeyTemplate,
+    frame: np.ndarray,
+    *,
+    frame_nm_per_pixel: float | None = None,
+    roi_hint: tuple[int, int, int, int] | None = None,
+    scales: tuple[float, ...] | None = None,
+    policy: MatchPolicy = DEFAULT_POLICY,
+) -> AlignKeyMatchResult:
+    """매 SEM 프레임마다 호출되는 메인 매칭 함수.
+
+    ``frame_nm_per_pixel`` 이 양쪽 모두 주어지면 §7.2 Case A 단일 스케일로,
+    그렇지 않으면 §7.2 Case B 의 multi-scale fallback 으로 동작.
+    ``roi_hint`` 는 (x, y, w, h) — VLM 의 직전 이동 제안 영역에 한정해서
+    탐색하고 싶을 때 사용한다 (현재 prototype 에서는 frame 자체를 잘라서 사용).
+
+    ``scales`` 를 명시하면 nm_per_pixel 기반 자동 결정을 무시하고 그 범위로만
+    매칭한다 (예: broad 탐색의 ``BROAD_SCALES``, confirm 단계의 좁은 범위).
+    ``policy`` 는 합성 점수 가중치/임계값. 기본은 기존 동작과 동일하며,
+    drift 에 견고한 매칭이 필요하면 ``STRUCTURE_POLICY`` 를 넘긴다.
+    """
+    gray_frame, frame_dt, scales, roi_origin = _prepare_match_inputs(
+        template,
+        frame,
+        frame_nm_per_pixel=frame_nm_per_pixel,
+        roi_hint=roi_hint,
+        scales=scales,
+    )
 
     # top-N 후보 (NMS). best 후보 = candidates[0] 로, 기존 compute_chamfer_score 의 top-1 과 동일.
     candidates = compute_chamfer_candidates(

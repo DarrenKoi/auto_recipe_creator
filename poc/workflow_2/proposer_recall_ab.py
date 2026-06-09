@@ -19,6 +19,8 @@ import json
 import math
 from pathlib import Path
 
+import cv2
+
 from poc.workflow_2 import DEBUG_IMAGE_DIR
 from poc.workflow_2.align_fail_assets import iter_msr_images, load_gray
 from poc.workflow_2.align_key_matcher import (
@@ -74,11 +76,17 @@ def run():
         return "no_data"
     out_dir = OUTPUT_ROOT / make_timestamp_tag()
     out_dir.mkdir(parents=True, exist_ok=True)
+    n_rec = len(recipes)
+    # 선택적 해상도 캡 — frame 최대변이 이 px 초과면 frame·template 을 동일 비율로 축소(속도).
+    # GT_TOL_NORM 은 short-side 상대값이라 recall 보존(env PROPOSER_MAX_DIM, 0=끔). 기본 끔(측정 순수).
+    max_dim = int(os.getenv("PROPOSER_MAX_DIM", "0") or "0")
+    print(f"[INFO] proposer recall A/B 시작 — recipe {n_rec}개"
+          + (f", 해상도 캡 {max_dim}px" if max_dim > 0 else " (해상도 캡 끔)"))
     base_ranks, ens_ranks = [], []
     solo_ranks = {"canny": [], "scharr": [], "orient": []}
     # 누락 사유 카운트 — 오피스에서 "S 데이터 희박" vs "라우팅/cond 가 frame 버림" 구분용.
     drop = {"no_box_tpl": 0, "non_S": 0, "routing_miss": 0, "no_crosshair": 0, "load_failed": 0}
-    for assets in recipes:
+    for ri, assets in enumerate(recipes, 1):
         if assets is None:
             continue
         try:
@@ -112,14 +120,26 @@ def run():
                 continue
             frame = clean_image(gray_raw, cond)        # crosshair 제거(box__inpaint 경로와 동일).
             t_gray = tpl.raw_image
+            gxy, off = gt_xy, (dx, dy)
+            if max_dim > 0 and max(frame.shape[:2]) > max_dim:
+                # frame·template·GT·offset 을 동일 비율로 축소 — baseline·ensemble 양쪽 동일 입력.
+                s = max_dim / float(max(frame.shape[:2]))
+                frame = cv2.resize(frame, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
+                t_gray = cv2.resize(t_gray, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
+                gxy = (gt_xy[0] * s, gt_xy[1] * s)
+                off = (dx * s, dy * s)
             short = max(1, min(t_gray.shape[0], t_gray.shape[1]))
             base = _baseline_candidates(t_gray, frame)
             # ensemble 도 baseline 과 동일 scale 밴드(COMPARE_SCALES) — 차이는 오직 C2·C3 추가.
             ens = compute_ensemble_candidates(t_gray, frame, scales=COMPARE_SCALES)
-            base_ranks.append(_gt_rank(base, gt_xy=gt_xy, offset=(dx, dy), short=short, tol=GT_TOL_NORM))
-            ens_ranks.append(_gt_rank(ens.fused, gt_xy=gt_xy, offset=(dx, dy), short=short, tol=GT_TOL_NORM))
+            base_ranks.append(_gt_rank(base, gt_xy=gxy, offset=off, short=short, tol=GT_TOL_NORM))
+            ens_ranks.append(_gt_rank(ens.fused, gt_xy=gxy, offset=off, short=short, tol=GT_TOL_NORM))
             for ch, lst in ens.solo.items():
-                solo_ranks[ch].append(_gt_rank(lst, gt_xy=gt_xy, offset=(dx, dy), short=short, tol=GT_TOL_NORM))
+                solo_ranks[ch].append(_gt_rank(lst, gt_xy=gxy, offset=off, short=short, tol=GT_TOL_NORM))
+            # 진행 heartbeat — slow≠hang 구분(25 프레임마다).
+            done = len(base_ranks)
+            if done % 25 == 0:
+                print(f"[INFO] 진행 {done} S frames (recipe {ri}/{n_rec}, frame {frame.shape[1]}x{frame.shape[0]})")
 
     n = len(base_ranks)
     if not n:
@@ -127,7 +147,7 @@ def run():
         return "no_data"
     print(f"[INFO] S 채택 {n}장 | 누락 {drop} "
           f"(non_S=E/?·routing_miss=modality 미상/dual·no_crosshair=cond 십자 없음)")
-    summary = {"n": n, "GT_TOL_NORM": GT_TOL_NORM, "drop": drop,
+    summary = {"n": n, "GT_TOL_NORM": GT_TOL_NORM, "max_dim": max_dim, "drop": drop,
                "baseline": {f"recall@{k}": _recall_at(base_ranks, k) for k in RECALL_NS},
                "ensemble": {f"recall@{k}": _recall_at(ens_ranks, k) for k in RECALL_NS},
                "solo": {ch: {f"recall@{k}": _recall_at(r, k) for k in RECALL_NS}

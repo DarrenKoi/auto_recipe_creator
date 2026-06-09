@@ -76,6 +76,8 @@ def run():
     out_dir.mkdir(parents=True, exist_ok=True)
     base_ranks, ens_ranks = [], []
     solo_ranks = {"canny": [], "scharr": [], "orient": []}
+    # 누락 사유 카운트 — 오피스에서 "S 데이터 희박" vs "라우팅/cond 가 frame 버림" 구분용.
+    drop = {"no_box_tpl": 0, "non_S": 0, "routing_miss": 0, "no_crosshair": 0, "load_failed": 0}
     for assets in recipes:
         if assets is None:
             continue
@@ -86,22 +88,27 @@ def run():
             continue
         available = {m for m, v in box_tpls.items() if v is not None}
         if not available:
+            drop["no_box_tpl"] += 1
             continue
         for p in iter_msr_images(assets):
             if _tool_label(p.name) != "S":
+                drop["non_S"] += 1
                 continue
             cond = load_cond(p)
             routed = glec._route_modality(cond, available)
             if routed is None or box_tpls.get(routed) is None:
+                drop["routing_miss"] += 1
                 continue
             tpl, (dx, dy) = box_tpls[routed]
             if not (cond and cond.crosshair_xy is not None):
+                drop["no_crosshair"] += 1
                 continue
             gx, gy = cursor_to_image(cond.crosshair_xy, OVERSAMPLE)
             gt_xy = (int(round(gx)), int(round(gy)))
             try:
                 gray_raw = load_gray(p)
             except Exception:
+                drop["load_failed"] += 1
                 continue
             frame = clean_image(gray_raw, cond)        # crosshair 제거(box__inpaint 경로와 동일).
             t_gray = tpl.raw_image
@@ -116,9 +123,11 @@ def run():
 
     n = len(base_ranks)
     if not n:
-        print("[ERROR] 처리된 S 프레임 없음.")
+        print(f"[ERROR] 처리된 S 프레임 없음. (누락 {drop})")
         return "no_data"
-    summary = {"n": n, "GT_TOL_NORM": GT_TOL_NORM,
+    print(f"[INFO] S 채택 {n}장 | 누락 {drop} "
+          f"(non_S=E/?·routing_miss=modality 미상/dual·no_crosshair=cond 십자 없음)")
+    summary = {"n": n, "GT_TOL_NORM": GT_TOL_NORM, "drop": drop,
                "baseline": {f"recall@{k}": _recall_at(base_ranks, k) for k in RECALL_NS},
                "ensemble": {f"recall@{k}": _recall_at(ens_ranks, k) for k in RECALL_NS},
                "solo": {ch: {f"recall@{k}": _recall_at(r, k) for k in RECALL_NS}

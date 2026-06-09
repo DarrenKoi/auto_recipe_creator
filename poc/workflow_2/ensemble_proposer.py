@@ -132,6 +132,8 @@ def _channel_solo_candidates(template_gray, frame_gray, channel, *, scales=DEFAU
             t_edges, _ = preprocess_for_matching(g)
             _, f_dt = preprocess_for_matching(f)
         else:
+            # density 기준은 frame 의 Canny 밀도 — template·frame 둘 다 같은 r 로 맞춰
+            # 채널 간 mean_dt 스케일 일관(매칭쌍은 밀도 유사해 무영향; cross-modality 시만 비대칭).
             r_c1 = float((preprocess_for_matching(f)[0] > 0).mean())
             t_edges = _scharr_edges(g, r_c1)
             f_edges = _scharr_edges(f, r_c1)
@@ -182,6 +184,10 @@ def compute_ensemble_candidates(template_gray, frame_gray, *, top_n=8, shadow_n=
 
     각 채널 solo top-K → RRF 융합(shadow_n 까지) + per-channel solo 보존(attribution).
     fused 의 앞 top_n 이 KPI 후보, 나머지는 shadow(진단). match/NMS 반경은 template 짧은 변 비례.
+
+    ⚠️ scales 기본은 DEFAULT_SCALES(형제 API compute_chamfer_candidates 와 일관). 특정
+    baseline 과 A/B 하려면 그 baseline 과 **동일 scale 밴드**를 명시로 넘겨야 한다 — 예:
+    box__inpaint(COMPARE_SCALES) 비교 시 scales=COMPARE_SCALES. 안 맞추면 scale 교란.
     """
     th, tw = _to_grayscale(template_gray).shape[:2]
     short = max(1, min(tw, th))

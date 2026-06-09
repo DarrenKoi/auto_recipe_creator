@@ -7,7 +7,7 @@ import json
 import sys
 
 from poc.workflow_3.vlm.ocr_spotting import parse_spotting_items
-from poc.workflow_1.tool_name_match import best_match, canonicalize
+from poc.workflow_3.rcs.tool_name_match import best_match, canonicalize
 
 
 def _check(name: str, condition: bool) -> bool:

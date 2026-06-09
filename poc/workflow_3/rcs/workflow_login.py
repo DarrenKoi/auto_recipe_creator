@@ -7,7 +7,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from poc.workflow_1.login_rcs_common import (
+from poc.workflow_3.rcs.login_rcs_common import (
     RCS_MAIN_WINDOW_TITLE_PREFIX,
     REMOTE_MONITORING_WINDOW_TITLE_PREFIX,
     RCS_UPDATER_WINDOW_TITLE_PREFIX,
@@ -21,13 +21,13 @@ from poc.workflow_1.login_rcs_common import (
 )
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
 from poc.workflow_3.logger import log_work2_event
-from poc.workflow_1.workflow_select_tool import (
+from poc.workflow_3.rcs.workflow_select_tool import (
     EXIT_SUCCESS as SELECT_TOOL_SUCCESS,
     load_target_tool_name,
     select_tool_from_main_window,
     verify_tool_visible_in_list,
 )
-from poc.workflow_1.view_list_tab_rcs import (
+from poc.workflow_3.rcs.view_list_tab_rcs import (
     EXIT_SUCCESS as LIST_TAB_SUCCESS,
     click_list_tab_in_main_window,
 )
@@ -78,7 +78,7 @@ EXIT_WORKFLOW_ABORTED = "workflow_aborted"
 
 def _load_login_targets():
     """login target 정의와 분석 함수를 지연 import 한다."""
-    from poc.workflow_1.login_rcs_ui_venus_mai import (
+    from poc.workflow_3.rcs.login_rcs_ui_venus_mai import (
         EXIT_SUCCESS as DETECT_SUCCESS,
         PREDEFINED_TARGETS,
         analyze_login_target,

@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from dotenv import load_dotenv
 
 from poc.workflow_1 import DEBUG_IMAGE_DIR
-from poc.workflow_1 import workflow_select_tool as base_select_tool
+from poc.workflow_3.rcs import workflow_select_tool as base_select_tool
 from poc.workflow_3.debug_artifacts import (
     debug_image_path,
     save_debug_jpeg,
@@ -16,7 +16,7 @@ from poc.workflow_3.debug_artifacts import (
     save_marked_bboxes,
 )
 from poc.workflow_3.logger import log_work2_event
-from poc.workflow_1.login_rcs_common import wait_for_rcs_main_window
+from poc.workflow_3.rcs.login_rcs_common import wait_for_rcs_main_window
 from poc.workflow_3.vlm.ui_venus_mai_locator import (
     EXIT_SUCCESS as DETECT_SUCCESS,
     TargetConfig,

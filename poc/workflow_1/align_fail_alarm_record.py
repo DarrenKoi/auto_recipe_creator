@@ -47,7 +47,7 @@ except Exception as _rich_notify_import_exc:
 # 장비 자동 접속(tool 더블클릭). pywinauto/VLM 머신이 없는 환경(macOS 개발 등)에서는
 # import 가 실패해도 감지/로그/팝업은 계속 동작해야 한다.
 try:
-    from poc.workflow_1.workflow_select_tool import connect_to_tool # pyright: ignore[reportMissingImports]
+    from poc.workflow_3.rcs.workflow_select_tool import connect_to_tool # pyright: ignore[reportMissingImports]
 
     CONNECT_TOOL_AVAILABLE = True
 except Exception as _connect_tool_import_exc:
@@ -58,7 +58,7 @@ except Exception as _connect_tool_import_exc:
 # tool 화면 record(캡처만, 닫지 않음). 윈도우/캡처 의존성이 없는 환경에서도 본체는
 # 계속 동작해야 하므로 import 실패를 흡수한다.
 try:
-    from poc.workflow_1.rcs_screenshot import record_rcs_window # pyright: ignore[reportMissingImports]
+    from poc.workflow_3.rcs.rcs_screenshot import record_rcs_window # pyright: ignore[reportMissingImports]
 
     RECORD_RCS_AVAILABLE = True
 except Exception as _record_rcs_import_exc:
@@ -68,7 +68,7 @@ except Exception as _record_rcs_import_exc:
 
 # tool 창 닫기(제목의 tool id 매칭). 선택 의존성.
 try:
-    from poc.workflow_1.workflow_close_tool import close_tool # pyright: ignore[reportMissingImports]
+    from poc.workflow_3.rcs.workflow_close_tool import close_tool # pyright: ignore[reportMissingImports]
 
     CLOSE_TOOL_AVAILABLE = True
 except Exception as _close_tool_import_exc:

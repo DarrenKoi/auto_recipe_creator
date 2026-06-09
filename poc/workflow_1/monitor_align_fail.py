@@ -28,7 +28,7 @@ POLL_INTERVAL_SEC = env_int("ALIGN_FAIL_POLL_SEC", 120)
 
 def open_cctv_for_tool(eqp_id: str) -> bool:
     """현재 RCS 메인 창에서 대상 Tool 의 CCTV(DVR) 창을 연다."""
-    from poc.workflow_1.login_rcs_common import wait_for_rcs_main_window
+    from poc.workflow_3.rcs.login_rcs_common import wait_for_rcs_main_window
     from poc.workflow_1.workflow_select_tool_cctv import (
         DEFAULT_ACTION_ENABLED,
         EXIT_SUCCESS,
@@ -69,7 +69,7 @@ def open_cctv_for_tool(eqp_id: str) -> bool:
 
 def _find_tool_list_window():
     """현재 열려 있는 RCS Tool List 메인 창을 반환한다."""
-    from poc.workflow_1.login_rcs_common import wait_for_rcs_main_window
+    from poc.workflow_3.rcs.login_rcs_common import wait_for_rcs_main_window
 
     return wait_for_rcs_main_window()
 

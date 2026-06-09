@@ -33,7 +33,7 @@ from poc.workflow_2.vlm_sem_monitor_box import (
 )
 from poc.workflow_3.debug_artifacts import save_debug_jpeg, save_debug_json, save_debug_text
 from poc.workflow_3.vlm.flask_vlm import UI_VENUS_MODEL_NAME
-from poc.workflow_1.login_rcs_common import (
+from poc.workflow_3.rcs.login_rcs_common import (
     REMOTE_MONITORING_WINDOW_TITLE_PREFIX,
     wait_for_remote_monitoring_window,
 )

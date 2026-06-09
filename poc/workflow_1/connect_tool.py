@@ -20,7 +20,7 @@ dry-run: CONNECT_TOOL_DRY_RUN=on 이면 인식/디버그 저장만 하고 실제
 import os
 import sys
 
-from poc.workflow_1.workflow_select_tool import (
+from poc.workflow_3.rcs.workflow_select_tool import (
     EXIT_MAIN_WINDOW_NOT_FOUND,
     EXIT_SUCCESS,
     connect_to_tool,

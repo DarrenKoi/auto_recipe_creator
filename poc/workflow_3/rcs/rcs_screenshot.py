@@ -23,9 +23,9 @@ import os
 import time
 from pathlib import Path
 
-from poc.workflow_1 import ALIGN_IMAGES_DIR
+from poc.workflow_3 import ALIGN_IMAGES_DIR
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
-from poc.workflow_1.login_rcs_common import wait_for_remote_monitoring_window # pyright: ignore[reportMissingImports]
+from poc.workflow_3.rcs.login_rcs_common import wait_for_remote_monitoring_window # pyright: ignore[reportMissingImports]
 from poc.workflow_3.util import (
     WINDOW_UTILS_AVAILABLE,
     capture_window,
@@ -38,7 +38,7 @@ from poc.workflow_3.util import (
 # 접속(tool 더블클릭)은 선택 의존성 — standalone 실행에서만 필요하고, align_fail_alarm
 # 은 자체적으로 접속한 뒤 capture 코어만 호출하므로 여기서 import 실패해도 무방하다.
 try:
-    from poc.workflow_1.workflow_select_tool import connect_to_tool # pyright: ignore[reportMissingImports]
+    from poc.workflow_3.rcs.workflow_select_tool import connect_to_tool # pyright: ignore[reportMissingImports]
 
     CONNECT_TOOL_AVAILABLE = True
 except Exception as _connect_tool_import_exc:

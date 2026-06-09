@@ -112,8 +112,9 @@ def debug_image_path(
         / relative_path.with_name(resolved_name)
     )
 
-# 공유 인프라(util/prompts/logger/vlm_client 등)는 poc.workflow_3 로 이전됨.
-# 여기 남은 항목은 legacy(CCTV/실험 스크립트)가 쓰는 wf1 고유 모듈/상수뿐이다.
+# RCS 자동화/공유 인프라(util/prompts/logger/vlm_client/rcs 모듈군)는
+# poc.workflow_3 로 이전됨. 여기 남은 것은 legacy(CCTV/실험 스크립트)가 쓰는
+# wf1 고유 상수/헬퍼뿐이다.
 __all__ = [
     "ALIGN_IMAGES_DIR",
     "DEBUG_IMAGE_DIR",
@@ -122,9 +123,5 @@ __all__ = [
     "WORKFLOW_1_DIR",
     "debug_image_dir",
     "debug_image_path",
-    "login_rcs_common",
-    "login_rcs_ui_venus_mai",
-    "open_rcs",
     "resolve_debug_model_name",
-    "view_list_tab_rcs",
 ]

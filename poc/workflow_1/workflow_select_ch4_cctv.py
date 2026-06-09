@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from dotenv import load_dotenv
 
 from poc.workflow_1 import DEBUG_IMAGE_DIR
-from poc.workflow_1 import workflow_select_tool as base_select_tool
+from poc.workflow_3.rcs import workflow_select_tool as base_select_tool
 from poc.workflow_1 import workflow_select_tool_cctv as cctv_workflow
 from poc.workflow_3.debug_artifacts import (
     debug_image_path,

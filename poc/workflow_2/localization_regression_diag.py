@@ -110,10 +110,15 @@ def _ensemble_pool(tpl, frame, frame_dt, offset, gt_xy, short, policy):
     """
     ens = compute_ensemble_candidates(
         tpl.raw_image, frame, scales=COMPARE_SCALES, top_n=policy.top_n)
+    # production(compute_align_key_score_ensemble)과 정합: ens.fused 를 top_n 으로 먼저 cap.
+    # pool 은 어차피 cands[:top_n] 이라 출력 동일(rescore 순서 보존), shadow rescore 비용만 절약.
+    # 주: production 은 top_n 전부 chamfer 0 이면 no_candidates 로 종료하나 여기선 그대로 pool 을
+    # 만든다 — calib 에선 그 프레임이 sel≈0.5·ncc(<match) 의 true-negative 로 들어가 threshold 에
+    # 무해하므로 별도 guard 는 두지 않는다.
     cands = _rescore_positions_to_candidates(
-        tpl, frame_dt, [(c.xy, c.scale) for c in ens.fused])
+        tpl, frame_dt, [(c.xy, c.scale) for c in ens.fused[:policy.top_n]])
     pool = []
-    for c in cands[:policy.top_n]:
+    for c in cands:
         cx, cy = c.xy
         tw, th = c.template_size
         ch = c.chamfer_score
@@ -123,8 +128,10 @@ def _ensemble_pool(tpl, frame, frame_dt, offset, gt_xy, short, policy):
             orb, _i, _m = compute_orb_inlier_ratio(tpl.raw_image, crop)
         combined = policy.chamfer_weight * ch + policy.orb_weight * orb
         err = _err_norm((cx + offset[0], cy + offset[1]), gt_xy, short)
+        # chamfer 는 6 자리 — reranker_rule_ab 캘리브가 c["chamfer"] 로 sel 을 재산출하므로
+        # production full-precision chamfer 에 가깝게 둬야 sel 분포가 일치(4 자리는 컷을 흔들 수 있음).
         pool.append({"xy": [int(cx), int(cy)], "scale": round(float(c.scale), 3),
-                     "chamfer": round(float(ch), 4), "orb": round(float(orb), 4),
+                     "chamfer": round(float(ch), 6), "orb": round(float(orb), 4),
                      "combined": round(float(combined), 4), "err": round(float(err), 4)})
     picked_idx = max(range(len(pool)), key=lambda i: pool[i]["combined"]) if pool else -1
     return pool, picked_idx

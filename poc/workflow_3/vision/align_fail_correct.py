@@ -31,9 +31,9 @@ import cv2
 import numpy as np
 
 from poc.workflow_3.logger import log_work2_event
-from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_2.align_fail_assets import AlignFailAssets, load_gray, resolve_assets_auto
-from poc.workflow_2.align_key_matcher import (
+from poc.workflow_3 import DEBUG_IMAGE_DIR
+from poc.workflow_3.vision.align_fail_assets import AlignFailAssets, load_gray, resolve_assets_auto
+from poc.workflow_3.vision.align_key_matcher import (
     DEFAULT_SCALES,
     STRUCTURE_POLICY,
     AlignKeyMatchResult,
@@ -42,7 +42,7 @@ from poc.workflow_2.align_key_matcher import (
     compute_align_key_score_ensemble,
     save_overlay_jpeg,
 )
-from poc.workflow_2.live_align_search import (
+from poc.workflow_3.vision.live_align_search import (
     MIN_CONFIRM_SCALE,
     LiveSearchConfig,
     LiveSearchOutcome,
@@ -150,7 +150,7 @@ def extract_annotation_box(gray: np.ndarray) -> tuple[int, int, int, int] | None
     ``CorrectionConfig.crop_template_to_box`` 기본값(off)으로 두고 전체 이미지를 쓴다.
     """
     # align_similarity 와 동일한 lazy import 패턴 — 모듈 로드 순서 의존 회피.
-    from poc.workflow_2.align_point_correction import _detect_white_box, _inner_crop_for_box
+    from poc.workflow_3.vision.align_point_correction import _detect_white_box, _inner_crop_for_box
 
     box = _detect_white_box(gray)
     if box is None:
@@ -305,7 +305,7 @@ def correct_align_fail(
     # ---- OK 버튼 위치 확인(screen 좌표) 후 single click. ----
     resolved_locator = ok_locator
     if resolved_locator is None and vlm_client is not None:
-        from poc.workflow_2.vlm_ok_button_box import locate_ok_button
+        from poc.workflow_3.vision.vlm_ok_button_box import locate_ok_button
 
         resolved_locator = lambda f: locate_ok_button(frame_bgr=f, client=vlm_client)  # noqa: E731
 
@@ -445,8 +445,8 @@ def _make_primary_demo(key_in_view: bool = True):
       가시성 게이트 low → FALLBACK 위임. mock 은 stateful(pan 하면 capture 가 바뀜)이라
       live_align_search 의 실제 pan/zoom 전이를 exercise 한다.
     """
-    from poc.workflow_2.live_align_search import _MockSEMMonitor
-    from poc.workflow_2.test_align_key_match import make_synthetic_template, make_wafer_background
+    from poc.workflow_3.vision.live_align_search import _MockSEMMonitor
+    from poc.workflow_3.vision.test_align_key_match import make_synthetic_template, make_wafer_background
 
     pattern = make_synthetic_template(key_type="box")  # 128px native.
     recipe_img = cv2.copyMakeBorder(pattern, 20, 20, 20, 20, cv2.BORDER_REPLICATE)

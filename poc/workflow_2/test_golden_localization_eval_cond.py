@@ -11,7 +11,7 @@
 import cv2
 import numpy as np
 
-from poc.workflow_2.cond_file import CondInfo
+from poc.workflow_3.vision.cond_file import CondInfo
 import poc.workflow_2.golden_localization_eval_cond as glec
 
 
@@ -185,7 +185,7 @@ def test_lever_verdict_near_ceiling_when_topk_high_but_no_gap():
 # --- _route_modality (msr frame 을 어느 modality rcp 로 매칭할지; race 제거의 핵심) ---
 
 def _mcond(text):
-    from poc.workflow_2.cond_file import parse_cond
+    from poc.workflow_3.vision.cond_file import parse_cond
     return parse_cond(text)
 
 

@@ -21,9 +21,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_2.align_fail_assets import load_gray, resolve_assets_auto
-from poc.workflow_2.align_key_matcher import (
+from poc.workflow_3 import DEBUG_IMAGE_DIR
+from poc.workflow_3.vision.align_fail_assets import load_gray, resolve_assets_auto
+from poc.workflow_3.vision.align_key_matcher import (
     STRUCTURE_POLICY,
     build_template,
     compute_align_key_score_ensemble,
@@ -225,7 +225,7 @@ def compare_pair(
 
 def _make_selftest_pair() -> tuple[np.ndarray, np.ndarray]:
     """등록 key(template) 와, 그 key 가 drift+노이즈된 current 이미지를 만든다."""
-    from poc.workflow_2.test_align_key_match import (  # 재사용: 합성 패턴/배경 생성기.
+    from poc.workflow_3.vision.test_align_key_match import (  # 재사용: 합성 패턴/배경 생성기.
         embed_pattern,
         make_synthetic_template,
         make_wafer_background,

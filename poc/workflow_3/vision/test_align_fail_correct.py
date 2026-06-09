@@ -7,15 +7,15 @@ CLAUDE.md 규칙: argparse 미사용, [PASS]/[FAIL] print, Mac 에서 그대로 
 import numpy as np
 
 from poc.workflow_3.util.json_utils import bbox_center, bbox_to_pixels
-from poc.workflow_2.align_fail_correct import (
+from poc.workflow_3.vision.align_fail_correct import (
     CorrectionConfig,
     _make_primary_demo,
     correct_align_fail,
     key_visibility_gate,
 )
-from poc.workflow_2.align_key_matcher import AlignKeyMatchResult
-from poc.workflow_2.live_align_search import LiveSearchConfig
-from poc.workflow_2.vlm_ok_button_box import locate_ok_button
+from poc.workflow_3.vision.align_key_matcher import AlignKeyMatchResult
+from poc.workflow_3.vision.live_align_search import LiveSearchConfig
+from poc.workflow_3.vision.vlm_ok_button_box import locate_ok_button
 
 
 class _FakeController:

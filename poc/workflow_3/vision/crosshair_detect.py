@@ -36,7 +36,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from poc.workflow_2 import DEBUG_IMAGE_DIR
+from poc.workflow_3 import DEBUG_IMAGE_DIR
 
 # ====================================================================
 # 튜닝 상수 — CLAUDE.md 규칙상 argparse 미사용. probe 덤프 보고 실데이터로 조정.
@@ -257,7 +257,7 @@ def probe(limit_per_recipe: int | None = None) -> str:
 
     출력: DEBUG_IMAGE_DIR/crosshair_probe/<ts>/<recipe_tag>/<msr>_probe.jpg + summary.txt
     """
-    from poc.workflow_2.align_fail_assets import (
+    from poc.workflow_3.vision.align_fail_assets import (
         iter_msr_images,
         iter_recipe_dirs,
         load_gray,
@@ -265,7 +265,7 @@ def probe(limit_per_recipe: int | None = None) -> str:
     )
     # 기존 검출기 — 비교 baseline (lazy import: align_point_correction 가 VLM client 등을 끌어옴).
     from poc.workflow_3.util import image_utils  # noqa: F401  (import 경로 sanity)
-    from poc.workflow_2.align_point_correction import _detect_existing_crosshair
+    from poc.workflow_3.vision.align_point_correction import _detect_existing_crosshair
 
     leaves = iter_recipe_dirs()
     if not leaves:
@@ -278,7 +278,7 @@ def probe(limit_per_recipe: int | None = None) -> str:
 
     # 전역 카운트 + S/E 분리(라벨별). E 는 ground truth 상 crosshair 없음 →
     # E 에서 검출되면 false positive. union = old∨v2 (ensemble ceiling).
-    from poc.workflow_2.align_point_correction import _tool_label
+    from poc.workflow_3.vision.align_point_correction import _tool_label
     cnt = {lab: {"n": 0, "v2": 0, "old": 0, "union": 0} for lab in ("S", "E", "?")}
     n_total = n_v2 = n_old = n_both = n_neither = n_union = 0
     reason_counts: dict[str, int] = {}
@@ -402,7 +402,7 @@ def _self_test() -> bool:
 def run() -> str:
     # align_images 가 있으면(오피스) probe, 없으면(Mac) self-test.
     try:
-        from poc.workflow_2.align_fail_assets import iter_recipe_dirs
+        from poc.workflow_3.vision.align_fail_assets import iter_recipe_dirs
         has_data = bool(iter_recipe_dirs())
     except Exception:
         has_data = False

@@ -37,7 +37,7 @@ import cv2
 import numpy as np
 
 from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_2.align_key_matcher import (
+from poc.workflow_3.vision.align_key_matcher import (
     DT_TAU_PX,
     STRUCTURE_POLICY,
     build_template,
@@ -291,7 +291,7 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
     반환 dict: {topk_rank, in_topk, n_cand, best_cand_dist_norm, modality} 또는 None.
     (rerank[MI·contour] 검증은 끝남 — 둘 다 폐기, `docs/study/reranker_ab_failure_analysis.md`.)
     """
-    from poc.workflow_2.align_key_matcher import (
+    from poc.workflow_3.vision.align_key_matcher import (
         compute_chamfer_candidates,
         preprocess_for_matching,
     )
@@ -348,8 +348,8 @@ def _build_templates(assets):
     반환: (center_templates: dict[mod->tpl], box_templates: dict[mod->tpl|None])
     center 는 정중앙 면적 crop(= align 영역), box 는 흰 unique-area box 안쪽 crop.
     """
-    from poc.workflow_2.align_fail_assets import load_gray
-    from poc.workflow_2.align_point_correction import (
+    from poc.workflow_3.vision.align_fail_assets import load_gray
+    from poc.workflow_3.vision.align_point_correction import (
         _centered_area_crop_bbox,
         _detect_white_box,
         _inner_crop_for_box,
@@ -383,9 +383,9 @@ def _build_templates(assets):
 
 
 def _process_msr(msr_path, *, center_tpls, box_tpls):
-    from poc.workflow_2.align_fail_assets import load_gray
-    from poc.workflow_2.align_point_correction import _tool_label
-    from poc.workflow_2.crosshair_detect import detect_crosshair
+    from poc.workflow_3.vision.align_fail_assets import load_gray
+    from poc.workflow_3.vision.align_point_correction import _tool_label
+    from poc.workflow_3.vision.crosshair_detect import detect_crosshair
 
     gray = load_gray(msr_path)
     h, w = gray.shape[:2]
@@ -802,7 +802,7 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None) -> 
     에 저장 → 재등록 도구가 같은 산출물을 그대로 쓰게 한다(별도 재계산 divergence 방지).
     반환: per-recipe + overall in_topk_rate(rcp vs consensus) + lift + generic 가드.
     """
-    from poc.workflow_2.align_fail_assets import load_gray
+    from poc.workflow_3.vision.align_fail_assets import load_gray
 
     cons_dir = None
     if out_dir is not None:
@@ -1070,7 +1070,7 @@ def _print_summary(summary: dict) -> None:
 
 
 def analyze(*, limit_per_recipe=LIMIT_PER_RECIPE) -> str:
-    from poc.workflow_2.align_fail_assets import (
+    from poc.workflow_3.vision.align_fail_assets import (
         iter_msr_images,
         iter_recipe_dirs,
         resolve_assets,
@@ -1170,7 +1170,7 @@ def _frame_with(pattern, *, at, canvas=(300, 400), bg=50) -> np.ndarray:
 
 def _self_test() -> bool:
     """rcp 중앙 패턴이 S frame 중앙엔 있고 E frame 엔 없을 때, 유사도가 S>E 로 갈리는지."""
-    from poc.workflow_2.align_key_matcher import build_template as _bt
+    from poc.workflow_3.vision.align_key_matcher import build_template as _bt
 
     align = _patterned(1)
     other = _patterned(99)
@@ -1209,7 +1209,7 @@ def _self_test() -> bool:
 
 def run() -> str:
     try:
-        from poc.workflow_2.align_fail_assets import iter_recipe_dirs
+        from poc.workflow_3.vision.align_fail_assets import iter_recipe_dirs
         has_data = bool(iter_recipe_dirs())
     except Exception:
         has_data = False

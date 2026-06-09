@@ -60,7 +60,7 @@ def _gather_crops_by_recipe(root: Path, *, limit_per_recipe=None) -> dict:
     `_process_msr` 로 S-at-crosshair crop 을 모은다(align_similarity.analyze 와 동일).
     golden 은 전부 S 라 e_paths 는 보통 빈다.
     """
-    from poc.workflow_2.align_fail_assets import (
+    from poc.workflow_3.vision.align_fail_assets import (
         iter_msr_images,
         iter_recipe_dirs,
         resolve_assets,
@@ -372,7 +372,7 @@ def _self_test() -> bool:
 
 def run() -> str:
     try:
-        from poc.workflow_2.align_fail_assets import iter_recipe_dirs
+        from poc.workflow_3.vision.align_fail_assets import iter_recipe_dirs
         has_golden = bool(iter_recipe_dirs(ALIGN_GOLDEN_ROOT))
         has_fail = bool(iter_recipe_dirs(ALIGN_IMAGES_ROOT))
     except Exception:

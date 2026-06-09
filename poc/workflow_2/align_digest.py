@@ -28,7 +28,7 @@ import tempfile
 from pathlib import Path
 
 from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_2.align_review import (
+from poc.workflow_3.vision.align_review import (
     STATUS_ORDER,
     _all_recipe_dirs,
     _iter_rows,
@@ -246,7 +246,7 @@ def build_digest(out_root: Path, *, batch_summary_path: Path | None = None) -> s
 
 def _self_test() -> bool:
     """align_review 합성 fixture 로 digest 가 예외 없이 돌고 핵심 섹션이 나오는지 검증."""
-    from poc.workflow_2.align_review import _build_synthetic_fixture
+    from poc.workflow_3.vision.align_review import _build_synthetic_fixture
     tmp = Path(tempfile.mkdtemp(prefix="align_digest_selftest_"))
     try:
         out_root = tmp / "align_correction"

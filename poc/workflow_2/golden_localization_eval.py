@@ -74,20 +74,20 @@ from poc.workflow_2 import (
     RCP_SEM_STEM,
 )
 from poc.workflow_2 import ALIGN_IMAGES_ROOT
-from poc.workflow_2.align_fail_assets import (
+from poc.workflow_3.vision.align_fail_assets import (
     iter_msr_images,
     iter_recipe_dirs,
     load_gray,
     resolve_assets,
     resolve_assets_auto,
 )
-from poc.workflow_2.align_key_matcher import (
+from poc.workflow_3.vision.align_key_matcher import (
     STRUCTURE_POLICY,
     build_template,
     compute_align_key_score,
     compute_align_key_score_ensemble,
 )
-from poc.workflow_2.align_point_correction import (
+from poc.workflow_3.vision.align_point_correction import (
     RCP_FALLBACK_CENTER_CROP_AREA_RATIO,
     _RcpTemplateBundle,
     _centered_area_crop_bbox,
@@ -97,7 +97,7 @@ from poc.workflow_2.align_point_correction import (
     _inpaint_crosshair,
     _tool_label,
 )
-from poc.workflow_2.crosshair_detect import detect_crosshair
+from poc.workflow_3.vision.crosshair_detect import detect_crosshair
 from poc.workflow_2.white_box_detectors import detect_white_box_ensemble_diagnose
 # align_similarity 의 crop 비율·scale band·허용오차 상수만 재사용(정의 중복/표류 방지).
 from poc.workflow_2.align_similarity import CENTER_AREA_RATIO, COMPARE_SCALES, GT_TOL_NORM
@@ -169,7 +169,7 @@ def _build_offset_templates(
     template(초록)·align point=이미지중심(파랑)·offset 화살표(시안)] 를 그린 JPEG 을
     저장한다 — "흰 box 안쪽 crop 이 제대로 잡혔나" 를 눈으로 검증하는 용도.
     """
-    from poc.workflow_2.align_fail_assets import load_gray
+    from poc.workflow_3.vision.align_fail_assets import load_gray
 
     center: dict = {}
     box: dict = {}
@@ -708,7 +708,7 @@ def _make_msr_frame(pattern: np.ndarray, seed: int, vertex_xy: tuple[int, int]) 
     offset 은 생산처럼 *un-rotated* 로 가산되므로 회전(2°)만큼 작은 잔차가 남지만, 이는 실제
     drift 와 동형이라 GT_TOL 내에서 통과해야 정상이다.
     """
-    from poc.workflow_2.test_align_key_match import embed_pattern, make_wafer_background
+    from poc.workflow_3.vision.test_align_key_match import embed_pattern, make_wafer_background
 
     rot, scale = 2.0, 0.95
     bg = make_wafer_background()
@@ -735,7 +735,7 @@ def _build_selftest_golden(root: Path) -> None:
       RCP_D = 박스 내부 십자 포함 클러스터 → detect_crosshair 가 full-span 측정 십자만 GT 로 잡나.
     offset 보정이 빠지면 RCP_B/C 의 box 셀 rank1_hit 가 무너지도록 설계.
     """
-    from poc.workflow_2.test_align_key_match import (
+    from poc.workflow_3.vision.test_align_key_match import (
         make_synthetic_cluster,
         make_synthetic_template,
     )

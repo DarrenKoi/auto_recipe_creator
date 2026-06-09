@@ -9,11 +9,14 @@ crop* 들을 미리 받아두고, 매 프레임마다 cv2.matchTemplate (TM_CCOE
 레이아웃:
 
 ```
-poc/workflow_2/templates/sem_panel_landmarks/
+poc/workflow_3/templates/sem_panel_landmarks/
 └── <model_id>/
     ├── landmark.jpg     # UI 일부 (panel title bar, corner icon 등)
     └── meta.json        # {"panel_offset": [dx, dy, w, h], "nm_per_pixel": <float|null>}
 ```
+
+(landmark crop 은 오피스에서 tool model 별로 캘리브레이션해 채운다.
+legacy 샘플은 poc/workflow_2/templates/sem_panel_landmarks/ 에 남아 있을 수 있다.)
 
 `panel_offset` 은 landmark 의 *top-left* 기준 상대 좌표/크기.
 실제 frame 위 절대 좌표는 ``landmark_xy + (dx, dy)`` 다.

@@ -13,7 +13,7 @@ footprint 가 더 밝아 점수가 커진다. 정답(주석 없는 원본)이 �
 import cv2
 import numpy as np
 
-from poc.workflow_2.clean_align_image import OVERSAMPLE, build_removal_mask
+from poc.workflow_3.vision.clean_align_image import OVERSAMPLE, build_removal_mask
 
 # 평가용(파라미터 독립) 고정 마진. 실제 청소 마스크와 분리한다.
 EVAL_CORE = 1        # 선 코어 두께

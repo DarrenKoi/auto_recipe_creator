@@ -37,8 +37,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_2.sem_panel_locator import (
+from poc.workflow_3 import DEBUG_IMAGE_DIR
+from poc.workflow_3.vision.sem_panel_locator import (
     LANDMARK_CONF_MIN,
     load_landmarks,
     locate_panel,

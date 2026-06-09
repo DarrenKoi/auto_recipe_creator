@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 from dataclasses import dataclass, field
 
-from poc.workflow_2.align_key_matcher import (
+from poc.workflow_3.vision.align_key_matcher import (
     DT_TAU_PX, _scaled_edges, _to_grayscale, preprocess_for_matching,
     _collect_candidates, _extract_peaks, DEFAULT_SCALES,
 )

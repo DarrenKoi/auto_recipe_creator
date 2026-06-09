@@ -41,7 +41,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from poc.workflow_2 import DEBUG_IMAGE_DIR
+from poc.workflow_3 import DEBUG_IMAGE_DIR
 
 # ====================================================================
 # 설정 — CLAUDE.md 규칙상 argparse 미사용, 상수로만 조정.

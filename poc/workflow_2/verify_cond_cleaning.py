@@ -22,14 +22,14 @@ import numpy as np
 
 from poc.workflow_1 import WORKFLOW_1_DIR
 from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_2.align_fail_assets import SUPPORTED_EXTS
-from poc.workflow_2.clean_align_image import (
+from poc.workflow_3.vision.align_fail_assets import SUPPORTED_EXTS
+from poc.workflow_3.vision.clean_align_image import (
     DEFAULT_DILATE,
     DEFAULT_THICKNESS,
     build_removal_mask,
     clean_image,
 )
-from poc.workflow_2.cond_file import cond_path_for, load_cond
+from poc.workflow_3.vision.cond_file import cond_path_for, load_cond
 
 # 검증 대상 루트 (오피스 다운로드 폴더). 환경변수로 덮어쓸 수 있음.
 GOLDEN_ROOT = Path(

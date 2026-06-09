@@ -10,12 +10,12 @@ white box '안쪽'은 실제 웨이퍼 내용이므로 절대 마스크하지 �
 
 import numpy as np
 
-from poc.workflow_2.clean_align_image import (
+from poc.workflow_3.vision.clean_align_image import (
     build_removal_mask,
     clean_image,
     cursor_to_image,
 )
-from poc.workflow_2.cond_file import CondInfo
+from poc.workflow_3.vision.cond_file import CondInfo
 
 
 def test_cursor_to_image_divides_by_oversample():

@@ -1,8 +1,8 @@
 """compute_align_key_score_ensemble + rescore/rerank 단위테스트 (합성 데이터, Mac)."""
 import numpy as np
 
-from poc.workflow_2 import align_key_matcher as akm
-from poc.workflow_2.align_key_matcher import (
+from poc.workflow_3.vision import align_key_matcher as akm
+from poc.workflow_3.vision.align_key_matcher import (
     AlignKeyCandidate,
     DEFAULT_POLICY,
     _chamfer_score_map_at_scale,
@@ -112,7 +112,7 @@ def test_ensemble_selection_prefers_ncc_favored(monkeypatch):
 
     monkeypatch.setattr(akm, "_candidate_ncc", _fake_ncc)
 
-    from poc.workflow_2.align_key_matcher import MatchPolicy
+    from poc.workflow_3.vision.align_key_matcher import MatchPolicy
     policy = MatchPolicy(rerank_chamfer_w=0.5, rerank_ncc_w=0.5)
     result = compute_align_key_score_ensemble(template, frame, scales=(1.0,), policy=policy)
     # sel: pos_a=0.5*0.9+0.5*0=0.45, pos_b=0.5*0.5+0.5*0.9=0.70 → pos_b 승.

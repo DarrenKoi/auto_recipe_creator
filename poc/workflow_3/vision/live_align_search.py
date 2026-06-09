@@ -47,8 +47,8 @@ from typing import Callable, Protocol
 import cv2
 import numpy as np
 
-from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_2.align_key_matcher import (
+from poc.workflow_3 import DEBUG_IMAGE_DIR
+from poc.workflow_3.vision.align_key_matcher import (
     BROAD_SCALES,
     STRUCTURE_POLICY,
     AlignKeyMatchResult,
@@ -57,7 +57,7 @@ from poc.workflow_2.align_key_matcher import (
     compute_align_key_score,
     save_overlay_jpeg,
 )
-from poc.workflow_2.search_align_key import _square_spiral_step
+from poc.workflow_3.vision.search_align_key import _square_spiral_step
 
 
 # 두 phase 모두에서 쓰는 단일 wide scale band. zoom-in 으로 key 가 miniature(작은
@@ -461,7 +461,7 @@ class _MockSEMMonitor:
 
 def _make_demo_template_and_wafer() -> tuple[AlignKeyTemplate, np.ndarray, tuple[int, int]]:
     """등록 SEM template(고배율 native) 과, 그 key 가 한 곳에 박힌 큰 wafer 를 만든다."""
-    from poc.workflow_2.test_align_key_match import (
+    from poc.workflow_3.vision.test_align_key_match import (
         make_synthetic_template,
         make_wafer_background,
     )

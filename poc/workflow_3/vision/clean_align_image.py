@@ -23,7 +23,7 @@ cond.txt 의 cursor 좌표는 Pixel 의 **10배 oversample** 프레임이다 →
 import cv2
 import numpy as np
 
-from poc.workflow_2.cond_file import CondInfo
+from poc.workflow_3.vision.cond_file import CondInfo
 
 # cursor 좌표 → 이미지 px 축소 비율 (cursor frame = Pixel × OVERSAMPLE).
 OVERSAMPLE = 10

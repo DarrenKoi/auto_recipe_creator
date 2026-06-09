@@ -33,8 +33,8 @@ from typing import Callable
 import cv2
 import numpy as np
 
-from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_2.align_key_matcher import (
+from poc.workflow_3 import DEBUG_IMAGE_DIR
+from poc.workflow_3.vision.align_key_matcher import (
     AlignKeyMatchResult,
     AlignKeyTemplate,
     build_template,

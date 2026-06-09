@@ -14,7 +14,7 @@ template=None 을 돌려주고(예외 아님), 호출부는 그 신호로 rcp ce
 import numpy as np
 import pytest
 
-from poc.workflow_2.align_key_matcher import build_template
+from poc.workflow_3.vision.align_key_matcher import build_template
 from poc.workflow_2.consensus_template import (
     DEFAULT_CONSENSUS_POLICY,
     build_consensus_template,

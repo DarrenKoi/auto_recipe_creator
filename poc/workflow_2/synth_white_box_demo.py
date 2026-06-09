@@ -43,8 +43,8 @@ import cv2
 import numpy as np
 
 from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_2.align_point_correction import _detect_white_box, _inner_crop_for_box
-from poc.workflow_2.test_align_key_match import (
+from poc.workflow_3.vision.align_point_correction import _detect_white_box, _inner_crop_for_box
+from poc.workflow_3.vision.test_align_key_match import (
     add_charging_gradient,
     add_random_blobs,
     make_synthetic_template,

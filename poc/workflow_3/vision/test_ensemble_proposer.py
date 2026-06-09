@@ -2,7 +2,7 @@
 import numpy as np
 import cv2
 
-from poc.workflow_2 import ensemble_proposer as ep
+from poc.workflow_3.vision import ensemble_proposer as ep
 
 
 def _square_img(size=200, box=(70, 70, 60, 60), bg=110, edge=230):
@@ -101,7 +101,7 @@ def _reference_directional(template_gray, frame_gray, scale, n_bins=8):
     """원본(중복 연산판) directional chamfer 의 인라인 재현 — 리팩터 동치(점수 불변) 가드."""
     import cv2 as _cv2
     import numpy as _np
-    from poc.workflow_2.align_key_matcher import _scaled_edges, DT_TAU_PX
+    from poc.workflow_3.vision.align_key_matcher import _scaled_edges, DT_TAU_PX
     t_bins = ep._orientation_bin_edges(template_gray, n_bins)
     f_bins = ep._orientation_bin_edges(frame_gray, n_bins)
     num, den, out_size = None, 0.0, None

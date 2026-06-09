@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 
 from poc.workflow_1 import WORKFLOW_1_DIR
-from poc.workflow_2.cond_file import parse_cond
+from poc.workflow_3.vision.cond_file import parse_cond
 
 GOLDEN_ROOT = Path(
     os.getenv("ALIGN_GOLDEN_ROOT", str(WORKFLOW_1_DIR / "align_images_golden"))

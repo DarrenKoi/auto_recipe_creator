@@ -31,9 +31,9 @@ except Exception:
 from pathlib import Path
 
 from poc.workflow_2 import ALIGN_IMAGES_ROOT
-from poc.workflow_2.align_fail_assets import iter_msr_images, resolve_assets
-from poc.workflow_2.align_point_correction import _tool_label
-from poc.workflow_2.cond_file import cond_path_for, load_cond, parse_cond
+from poc.workflow_3.vision.align_fail_assets import iter_msr_images, resolve_assets
+from poc.workflow_3.vision.align_point_correction import _tool_label
+from poc.workflow_3.vision.cond_file import cond_path_for, load_cond, parse_cond
 from poc.workflow_2 import golden_localization_eval as gle
 
 GOLDEN_ROOT = ALIGN_IMAGES_ROOT.parent / "align_images_golden"

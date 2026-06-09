@@ -65,8 +65,8 @@ from PIL import Image
 from poc.workflow_3.vlm.prompts import build_ocr_assist_prompt
 from poc.workflow_3.util.image_utils import encode_image_webp
 from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
-from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_2.align_fail_assets import (
+from poc.workflow_3 import DEBUG_IMAGE_DIR
+from poc.workflow_3.vision.align_fail_assets import (
     AlignFailAssets,
     iter_msr_images,
     iter_recipe_dirs,
@@ -74,7 +74,7 @@ from poc.workflow_2.align_fail_assets import (
     resolve_assets,
     resolve_assets_auto,
 )
-from poc.workflow_2.align_key_matcher import (
+from poc.workflow_3.vision.align_key_matcher import (
     STRUCTURE_POLICY,
     AlignKeyMatchResult,
     AlignKeyTemplate,
@@ -1556,7 +1556,7 @@ def _process_msr_image(
     # morphology, 합성 6/6)를 쓴다. 구버전 `_detect_existing_crosshair`(top-hat+projection)는
     # crosshair_detect.py 의 probe 비교용으로만 남겨 둔다. align_similarity 와 동일하게
     # 로컬 import 로 순환참조를 피한다.
-    from poc.workflow_2.crosshair_detect import detect_crosshair
+    from poc.workflow_3.vision.crosshair_detect import detect_crosshair
 
     _crosshair_res = detect_crosshair(frame_gray)
     crosshair_xy = _crosshair_res.xy
@@ -2151,7 +2151,7 @@ def run() -> str:
     # 열지 않고 실패 유형별·worst-first 로 훑기 위함. review 실패가 batch 성공을 막지 않는다.
     if per_recipe_summaries:
         try:
-            from poc.workflow_2.align_review import build_review
+            from poc.workflow_3.vision.align_review import build_review
             build_review(out_root, batch_summary_path=batch_path)
         except Exception as exc:
             print(f"[WARNING] review 생성 실패 (batch 결과는 유효): {type(exc).__name__}: {exc}")

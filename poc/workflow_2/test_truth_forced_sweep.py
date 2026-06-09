@@ -10,7 +10,7 @@
 import cv2
 import numpy as np
 
-from poc.workflow_2.align_key_matcher import build_template
+from poc.workflow_3.vision.align_key_matcher import build_template
 from poc.workflow_2.align_similarity import _truth_forced
 
 

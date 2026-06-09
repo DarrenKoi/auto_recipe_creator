@@ -876,7 +876,7 @@ def compute_align_key_score_ensemble(
     """
     global compute_ensemble_candidates
     if compute_ensemble_candidates is None:   # lazy 바인딩(순환 import 회피). 패치 시엔 None 아님→스킵.
-        from poc.workflow_2.ensemble_proposer import (
+        from poc.workflow_3.vision.ensemble_proposer import (
             compute_ensemble_candidates as _cec,
         )
         compute_ensemble_candidates = _cec

@@ -26,14 +26,14 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from poc.workflow_2 import (
+from poc.workflow_3.vision import (
     ALIGN_IMAGES_ROOT,
     FROM_MSR_DIRNAME,
     FROM_RCP_DIRNAME,
     RCP_OM_STEM,
     RCP_SEM_STEM,
 )
-from poc.workflow_2.cond_file import CondInfo, load_cond
+from poc.workflow_3.vision.cond_file import CondInfo, load_cond
 
 # 읽기 허용 확장자 (우선순위 순).
 SUPPORTED_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp")

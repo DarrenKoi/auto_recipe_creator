@@ -22,17 +22,17 @@ from pathlib import Path
 import cv2
 
 from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_2.align_fail_assets import iter_msr_images, load_gray
-from poc.workflow_2.align_key_matcher import (
+from poc.workflow_3.vision.align_fail_assets import iter_msr_images, load_gray
+from poc.workflow_3.vision.align_key_matcher import (
     _collect_candidates, _to_grayscale, preprocess_for_matching,
 )
 from poc.workflow_2.align_similarity import COMPARE_SCALES, GT_TOL_NORM
-from poc.workflow_2.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
-from poc.workflow_2.cond_file import load_cond
-from poc.workflow_2.ensemble_proposer import _Cand, compute_ensemble_candidates
+from poc.workflow_3.vision.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
+from poc.workflow_3.vision.cond_file import load_cond
+from poc.workflow_3.vision.ensemble_proposer import _Cand, compute_ensemble_candidates
 from poc.workflow_2 import golden_localization_eval as gle
 import poc.workflow_2.golden_localization_eval_cond as glec
-from poc.workflow_2.align_point_correction import _tool_label
+from poc.workflow_3.vision.align_point_correction import _tool_label
 from poc.workflow_3.util.time_utils import make_timestamp_tag
 
 OUTPUT_ROOT = DEBUG_IMAGE_DIR / "proposer_recall_ab"

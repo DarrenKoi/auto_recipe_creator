@@ -25,8 +25,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_2.align_key_matcher import (
+from poc.workflow_3 import DEBUG_IMAGE_DIR
+from poc.workflow_3.vision.align_key_matcher import (
     AlignKeyMatchResult,
     build_template,
     compute_align_key_score,

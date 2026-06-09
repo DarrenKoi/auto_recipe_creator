@@ -7,7 +7,7 @@ msr 궤적 이미지는 평면(S*/E* 접두 파일)일 수도, S*/E* 서브폴�
 
 from pathlib import Path
 
-from poc.workflow_2.align_fail_assets import _list_images
+from poc.workflow_3.vision.align_fail_assets import _list_images
 
 
 def _touch(p: Path):

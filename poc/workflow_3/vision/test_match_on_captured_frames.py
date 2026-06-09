@@ -30,14 +30,14 @@ from pathlib import Path
 
 import cv2
 
-from poc.workflow_2 import DEBUG_IMAGE_DIR, WORKFLOW_2_DIR
-from poc.workflow_2.align_key_matcher import (
+from poc.workflow_3 import DEBUG_IMAGE_DIR, WORKFLOW_3_DIR
+from poc.workflow_3.vision.align_key_matcher import (
     AlignKeyMatchResult,
     build_template,
     compute_align_key_score,
     save_overlay_jpeg,
 )
-from poc.workflow_2.sem_panel_locator import (
+from poc.workflow_3.vision.sem_panel_locator import (
     LANDMARK_CONF_MIN,
     SEMPanelMatch,
     load_landmarks,
@@ -49,8 +49,11 @@ from poc.workflow_2.sem_panel_locator import (
 # 모듈 설정 — CLAUDE.md 규칙상 argparse 미사용, 상수로만 조정.
 # ------------------------------------------------------------------
 
-DEFAULT_RECORDINGS_DIR = WORKFLOW_2_DIR / "recordings"
-DEFAULT_TEMPLATES_DIR = WORKFLOW_2_DIR / "templates"
+# fixture(녹화 프레임/landmark 샘플)는 legacy workflow_2 폴더에 남아 있다 —
+# 코드 import 없이 경로만 참조한다.
+_LEGACY_WORKFLOW_2_DIR = WORKFLOW_3_DIR.parent / "workflow_2"
+DEFAULT_RECORDINGS_DIR = _LEGACY_WORKFLOW_2_DIR / "recordings"
+DEFAULT_TEMPLATES_DIR = _LEGACY_WORKFLOW_2_DIR / "templates"
 DEFAULT_LANDMARKS_DIR = DEFAULT_TEMPLATES_DIR / "sem_panel_landmarks"
 
 # None → recordings/ 아래에서 가장 최신 서브폴더를 자동 선택.

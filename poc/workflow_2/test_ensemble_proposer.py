@@ -65,6 +65,27 @@ def test_rrf_fuse_is_scale_free_rank_based():
     assert fused2[0].xy == (10, 10)   # 점수 스케일 바뀌어도 순위 동일.
 
 
+def test_rrf_fuse_preserves_source_scale():
+    # 융합 대표 후보는 source 후보의 scale 을 보존해야 — production rescore/ORB 가 scale 사용.
+    A = [ep._Cand(xy=(10, 10), score=900.0, scale=0.6),
+         ep._Cand(xy=(50, 50), score=100.0, scale=0.85)]
+    B = [ep._Cand(xy=(80, 80), score=9.0, scale=1.2)]
+    fused = ep._rrf_fuse([A, B], k0=10, match_radius=5, top_n=3)
+    by_xy = {c.xy: c.scale for c in fused}
+    assert by_xy[(10, 10)] == 0.6
+    assert by_xy[(50, 50)] == 0.85
+    assert by_xy[(80, 80)] == 1.2
+
+
+def test_rrf_fuse_representative_scale_follows_best_member():
+    # 같은 위치를 두 채널이 다른 scale·chamfer 로 제안 → 대표는 더 높은 chamfer 의 scale·xy.
+    A = [ep._Cand(xy=(10, 10), score=5.0, scale=0.6)]
+    B = [ep._Cand(xy=(12, 12), score=9.0, scale=1.2)]   # match_radius 안, chamfer 더 높음
+    fused = ep._rrf_fuse([A, B], k0=10, match_radius=5, top_n=1)
+    assert fused[0].xy == (12, 12)
+    assert fused[0].scale == 1.2
+
+
 def test_ensemble_candidates_returns_topn_and_shadow():
     frame = _square_img(size=240, box=(120, 90, 60, 60))
     tpl = _square_img(size=80, box=(10, 10, 60, 60))

@@ -181,7 +181,7 @@ def _rrf_fuse(channel_lists, *, k0=RRF_K0, match_radius=8, top_n=SHADOW_N):
     거리는 Chebyshev(L-inf, 축정렬 박스) — proposer 라 약간의 과병합 허용(의도된 단순화).
     반환 list[_Cand] (fused score 내림차순, top_n 까지). 스케일 무관(순위 기반).
     """
-    clusters = []  # {"xy", "score"(대표 chamfer), "rrf"}
+    clusters = []  # {"xy", "score"(대표 chamfer), "scale"(대표 scale), "rrf"}
     for ch_list in channel_lists:
         ranked = sorted(ch_list, key=lambda c: c.score, reverse=True)
         for rank, cand in enumerate(ranked, 1):
@@ -190,13 +190,16 @@ def _rrf_fuse(channel_lists, *, k0=RRF_K0, match_radius=8, top_n=SHADOW_N):
                         and abs(cl["xy"][1] - cand.xy[1]) <= match_radius), None)
             contrib = 1.0 / (k0 + rank)
             if hit is None:
-                clusters.append({"xy": cand.xy, "score": cand.score, "rrf": contrib})
+                clusters.append({"xy": cand.xy, "score": cand.score,
+                                 "scale": cand.scale, "rrf": contrib})
             else:
                 hit["rrf"] += contrib
                 if cand.score > hit["score"]:
-                    hit["xy"], hit["score"] = cand.xy, cand.score
+                    # 대표(xy·score·scale)는 더 높은 chamfer member 를 따른다.
+                    # scale 보존 필수 — 다운스트림 rescore/ORB(compute_align_key_score_ensemble)가 사용.
+                    hit["xy"], hit["score"], hit["scale"] = cand.xy, cand.score, cand.scale
     clusters.sort(key=lambda cl: cl["rrf"], reverse=True)
-    return [_Cand(xy=cl["xy"], score=cl["rrf"]) for cl in clusters[:top_n]]
+    return [_Cand(xy=cl["xy"], score=cl["rrf"], scale=cl["scale"]) for cl in clusters[:top_n]]
 
 
 def compute_ensemble_candidates(template_gray, frame_gray, *, top_n=8, shadow_n=SHADOW_N,

@@ -68,6 +68,15 @@ ALIGN_IMAGES_DIR = (
     else WORKFLOW_3_DIR.parent / "workflow_1" / "align_images"
 )
 
+# consensus S-image gather 캐시 루트. MES 산출물(align_images)이 아니라 우리가 만드는
+# 파생 캐시라 위치 자유 — workflow_3 아래 둔다. env 로 override 가능.
+_consensus_cache_env = os.environ.get("ALIGN_CONSENSUS_CACHE_DIR", "").strip()
+ALIGN_CONSENSUS_CACHE_DIR = (
+    Path(_consensus_cache_env)
+    if _consensus_cache_env
+    else WORKFLOW_3_DIR / "align_consensus_cache"
+)
+
 _TIMESTAMP_PREFIX_PATTERN = re.compile(r"^\d{6}_\d{6}_")
 
 
@@ -132,6 +141,7 @@ def debug_image_path(
 
 
 __all__ = [
+    "ALIGN_CONSENSUS_CACHE_DIR",
     "ALIGN_IMAGES_DIR",
     "DEBUG_IMAGE_DIR",
     "LOG_DIR",

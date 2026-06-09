@@ -60,7 +60,7 @@ from poc.workflow_2.cond_file import CondInfo, load_cond, msr_modality
 from poc.workflow_2.crosshair_detect import detect_crosshair
 # 원본의 cond-독립 부품 재사용(중복/표류 방지).
 from poc.workflow_2 import golden_localization_eval as gle
-from poc.workflow_1.util.time_utils import make_timestamp_tag
+from poc.workflow_3.util.time_utils import make_timestamp_tag
 
 GOLDEN_ROOT = ALIGN_IMAGES_ROOT.parent / "align_images_golden"
 OUTPUT_ROOT = DEBUG_IMAGE_DIR / "golden_localization_eval_cond"

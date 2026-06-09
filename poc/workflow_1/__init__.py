@@ -72,7 +72,7 @@ def _slugify_model_name(model_name: str) -> str:
 
 def resolve_debug_model_name(model_name: str | None = None) -> str:
     """디버그 이미지 저장에 사용할 모델명을 결정한다."""
-    from poc.workflow_1.flask_vlm import DEFAULT_SCREEN_ANALYSIS_MODEL_NAME
+    from poc.workflow_3.vlm.flask_vlm import DEFAULT_SCREEN_ANALYSIS_MODEL_NAME
 
     resolved = (
         (model_name or "").strip()
@@ -112,6 +112,8 @@ def debug_image_path(
         / relative_path.with_name(resolved_name)
     )
 
+# 공유 인프라(util/prompts/logger/vlm_client 등)는 poc.workflow_3 로 이전됨.
+# 여기 남은 항목은 legacy(CCTV/실험 스크립트)가 쓰는 wf1 고유 모듈/상수뿐이다.
 __all__ = [
     "ALIGN_IMAGES_DIR",
     "DEBUG_IMAGE_DIR",
@@ -120,18 +122,9 @@ __all__ = [
     "WORKFLOW_1_DIR",
     "debug_image_dir",
     "debug_image_path",
-    "logger",
     "login_rcs_common",
     "login_rcs_ui_venus_mai",
     "open_rcs",
-    "prompts",
     "resolve_debug_model_name",
-    "util",
     "view_list_tab_rcs",
-    "vlm_client",
-    "workflow_select_tool",
-    "workflow_config",
-    "workflow_login",
-    "workflow_runner",
-    "workflow_types",
 ]

@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from PIL import ImageChops, ImageStat
 
 from poc.workflow_1 import DEBUG_IMAGE_DIR
-from poc.workflow_1.debug_artifacts import (
+from poc.workflow_3.debug_artifacts import (
     debug_image_path,
     save_debug_jpeg,
     save_debug_json,
@@ -17,17 +17,17 @@ from poc.workflow_1.debug_artifacts import (
     save_debug_webp,
     save_marked_bboxes,
 )
-from poc.workflow_1.logger import log_work2_event
+from poc.workflow_3.logger import log_work2_event
 from poc.workflow_1.login_rcs_common import RCS_MAIN_WINDOW_TITLE_PREFIX, wait_for_rcs_main_window
-from poc.workflow_1.ocr_spotting import parse_spotting_items
-from poc.workflow_1.prompts import build_ocr_assist_prompt, build_spotting_prompt
+from poc.workflow_3.vlm.ocr_spotting import parse_spotting_items
+from poc.workflow_3.vlm.prompts import build_ocr_assist_prompt, build_spotting_prompt
 from poc.workflow_1.tool_name_match import best_match
-from poc.workflow_1.ui_venus_mai_locator import (
+from poc.workflow_3.vlm.ui_venus_mai_locator import (
     EXIT_SUCCESS as DETECT_SUCCESS,
     TargetConfig,
     analyze_window_target,
 )
-from poc.workflow_1.util import (
+from poc.workflow_3.util import (
     activate_window,
     bbox_center,
     capture_window,
@@ -42,7 +42,7 @@ from poc.workflow_1.util import (
     point_to_tiny_bbox,
     scroll_at_screen,
 )
-from poc.workflow_1.vlm_client import Workflow1VLMClient
+from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
 
 load_dotenv()
 

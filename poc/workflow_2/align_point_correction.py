@@ -62,9 +62,9 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from poc.workflow_1.prompts import build_ocr_assist_prompt
-from poc.workflow_1.util.image_utils import encode_image_webp
-from poc.workflow_1.vlm_client import Workflow1VLMClient
+from poc.workflow_3.vlm.prompts import build_ocr_assist_prompt
+from poc.workflow_3.util.image_utils import encode_image_webp
+from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
 from poc.workflow_2 import DEBUG_IMAGE_DIR
 from poc.workflow_2.align_fail_assets import (
     AlignFailAssets,

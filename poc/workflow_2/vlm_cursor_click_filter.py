@@ -31,17 +31,17 @@ from dotenv import load_dotenv
 from PIL import Image
 
 from poc.workflow_2 import WORKFLOW_2_DIR
-from poc.workflow_1.debug_artifacts import save_debug_json, save_debug_text, save_marked_bboxes
-from poc.workflow_1.flask_vlm import UI_VENUS_MODEL_NAME
-from poc.workflow_1.util import env_float, env_int, format_elapsed_ms, make_timestamp_tag
-from poc.workflow_1.util.image_utils import encode_image_webp
-from poc.workflow_1.util.json_utils import (
+from poc.workflow_3.debug_artifacts import save_debug_json, save_debug_text, save_marked_bboxes
+from poc.workflow_3.vlm.flask_vlm import UI_VENUS_MODEL_NAME
+from poc.workflow_3.util import env_float, env_int, format_elapsed_ms, make_timestamp_tag
+from poc.workflow_3.util.image_utils import encode_image_webp
+from poc.workflow_3.util.json_utils import (
     bbox_1000_to_pixels,
     bbox_center,
     extract_json,
     normalize_bbox_1000,
 )
-from poc.workflow_1.vlm_client import Workflow1VLMClient
+from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
 
 load_dotenv()
 

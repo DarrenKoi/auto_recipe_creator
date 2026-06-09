@@ -16,7 +16,7 @@ except ImportError:
     PSUTIL_AVAILABLE = False
 
 from poc.workflow_1 import LOG_DIR
-from poc.workflow_1 import util as workflow_1_util
+from poc.workflow_3 import util as workflow_1_util
 
 
 WINDOW_TITLE_PREFIX = "Remote Control System"

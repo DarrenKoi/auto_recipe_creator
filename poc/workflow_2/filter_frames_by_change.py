@@ -28,8 +28,8 @@ import cv2
 
 from poc.workflow_2 import WORKFLOW_2_DIR
 from poc.workflow_1 import RECORDING_DIR as WORKFLOW_1_RECORDING_DIR
-from poc.workflow_1.debug_artifacts import save_debug_json
-from poc.workflow_1.util import env_int, format_elapsed_ms, make_timestamp_tag
+from poc.workflow_3.debug_artifacts import save_debug_json
+from poc.workflow_3.util import env_int, format_elapsed_ms, make_timestamp_tag
 
 LOG_NAME = "filter_frames_by_change"
 WORKFLOW_2_RECORDING_DIR = WORKFLOW_2_DIR / "recordings"

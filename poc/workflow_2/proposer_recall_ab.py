@@ -33,7 +33,7 @@ from poc.workflow_2.ensemble_proposer import _Cand, compute_ensemble_candidates
 from poc.workflow_2 import golden_localization_eval as gle
 import poc.workflow_2.golden_localization_eval_cond as glec
 from poc.workflow_2.align_point_correction import _tool_label
-from poc.workflow_1.util.time_utils import make_timestamp_tag
+from poc.workflow_3.util.time_utils import make_timestamp_tag
 
 OUTPUT_ROOT = DEBUG_IMAGE_DIR / "proposer_recall_ab"
 

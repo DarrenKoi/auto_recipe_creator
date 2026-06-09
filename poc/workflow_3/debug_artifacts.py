@@ -1,4 +1,4 @@
-"""workflow_1 전용 디버그 artifact 저장 유틸리티.
+"""workflow_3 전용 디버그 artifact 저장 유틸리티.
 
 파일은 그대로 저장하되, 콘솔에는 저장 경로를 매번 출력하지 않는다.
 """
@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from poc.workflow_1 import debug_image_path as resolve_debug_image_path
+from poc.workflow_3 import debug_image_path as resolve_debug_image_path
 
 
 def debug_image_path(

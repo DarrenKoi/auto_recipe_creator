@@ -40,7 +40,7 @@ import poc.workflow_2.golden_localization_eval_cond as glec
 from poc.workflow_2.localization_regression_diag import (
     OUTPUT_ROOT as DIAG_ROOT, _classify_regression, _ensemble_pool,
 )
-from poc.workflow_1.util.time_utils import make_timestamp_tag
+from poc.workflow_3.util.time_utils import make_timestamp_tag
 
 OUTPUT_ROOT = DEBUG_IMAGE_DIR / "reranker_signal_probe"
 

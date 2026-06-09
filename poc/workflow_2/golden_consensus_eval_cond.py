@@ -59,7 +59,7 @@ from poc.workflow_2.cond_file import (
 )
 from poc.workflow_2 import golden_localization_eval as gle
 import poc.workflow_2.golden_localization_eval_cond as glec
-from poc.workflow_1.util.time_utils import make_timestamp_tag
+from poc.workflow_3.util.time_utils import make_timestamp_tag
 
 OUTPUT_ROOT = DEBUG_IMAGE_DIR / "golden_consensus_eval_cond"
 

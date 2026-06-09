@@ -23,9 +23,9 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from poc.workflow_1.util import env_int
-from poc.workflow_1.util.image_utils import encode_image_webp
-from poc.workflow_1.vlm_client import Workflow1VLMClient
+from poc.workflow_3.util import env_int
+from poc.workflow_3.util.image_utils import encode_image_webp
+from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
 from poc.workflow_2.vlm_sem_monitor_box import _run_sem_box_detection
 
 # ====================================================================

@@ -1,9 +1,9 @@
-"""workflow_1 파일 로거.
+"""workflow_3 파일 로거.
 
 VLM 호출 및 일반 이벤트를 파일에 기록한다.
 기본 로그 파일:
-- VLM 호출: poc/workflow_1/logs/vlm_calls.log
-- 일반 이벤트: poc/workflow_1/logs/work2.log
+- VLM 호출: poc/workflow_3/logs/vlm_calls.log
+- 일반 이벤트: poc/workflow_3/logs/work2.log
 """
 
 import logging
@@ -11,12 +11,12 @@ import os
 import re
 from logging.handlers import RotatingFileHandler
 
-from poc.workflow_1 import LOG_DIR
+from poc.workflow_3 import LOG_DIR
 
 _LOG_DIR = LOG_DIR
 _MAX_BYTES = 10 * 1024 * 1024  # 10MB
 _BACKUP_COUNT = 5
-_HANDLER_MARKER = "_workflow_1_vlm_logger"
+_HANDLER_MARKER = "_workflow_3_vlm_logger"
 
 _loggers: dict[str, logging.Logger] = {}
 
@@ -34,7 +34,7 @@ def _get_logger(log_name: str) -> logging.Logger:
     if existing is not None:
         return existing
 
-    logger = logging.getLogger(f"poc.workflow_1.{safe_name}")
+    logger = logging.getLogger(f"poc.workflow_3.{safe_name}")
     level_name = os.environ.get("WORK2_LOG_LEVEL", "INFO").strip().upper()
     logger.setLevel(getattr(logging, level_name, logging.INFO))
     logger.propagate = False

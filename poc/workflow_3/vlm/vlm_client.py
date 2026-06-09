@@ -8,13 +8,13 @@ from pathlib import Path
 
 import requests
 
-from poc.workflow_1.flask_vlm import (
+from poc.workflow_3.vlm.flask_vlm import (
     ALL_VLM_SERVICES,
     get_service_by_slug,
     resolve_service_api_key,
     resolve_service_proxy_url,
 )
-from poc.workflow_1.logger import log_vlm_call
+from poc.workflow_3.logger import log_vlm_call
 
 
 DEFAULT_MAX_TOKENS = 4096

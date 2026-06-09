@@ -16,8 +16,8 @@ from datetime import datetime
 from pathlib import Path
 
 from poc.workflow_1.office_align_fail_alarm import filter_align_fail, get_cdsem_alarms
-from poc.workflow_1.logger import log_work2_event
-from poc.workflow_1.util import env_int
+from poc.workflow_3.logger import log_work2_event
+from poc.workflow_3.util import env_int
 
 LOG_NAME = Path(__file__).stem
 COMPONENT_NAME = LOG_NAME
@@ -141,7 +141,7 @@ def close_dvr_and_return_to_tool_list(
     tool_list_title: str,
 ) -> bool:
     """DVR 창을 닫고 Tool List 창으로 포커스를 되돌린다."""
-    from poc.workflow_1.util import activate_window
+    from poc.workflow_3.util import activate_window
     from poc.workflow_1.workflow_select_ch4_cctv import _find_player_window
 
     player_window, player_title, _backend, process_name = _find_player_window()

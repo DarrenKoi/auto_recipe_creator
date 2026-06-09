@@ -6,7 +6,7 @@ CLAUDE.md 규칙: argparse 미사용, [PASS]/[FAIL] print, Mac 에서 그대로 
 
 import numpy as np
 
-from poc.workflow_1.util.json_utils import bbox_center, bbox_to_pixels
+from poc.workflow_3.util.json_utils import bbox_center, bbox_to_pixels
 from poc.workflow_2.align_fail_correct import (
     CorrectionConfig,
     _make_primary_demo,

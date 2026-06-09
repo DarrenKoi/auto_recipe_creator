@@ -64,14 +64,14 @@ from poc.workflow_2.probe_multi_image_vlm import (
     LARGE_VLM_API_KEY,
     encode_under_limit,
 )
-from poc.workflow_1.vlm_client import Workflow1VLMClient
-from poc.workflow_1.util.json_utils import (
+from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
+from poc.workflow_3.util.json_utils import (
     bbox_1000_to_pixels,
     bbox_center,
     extract_json,
     normalize_bbox_1000,
 )
-from poc.workflow_1.util.time_utils import format_elapsed_ms, make_timestamp_tag
+from poc.workflow_3.util.time_utils import format_elapsed_ms, make_timestamp_tag
 
 # ====================================================================
 # 설정 (CLI 인자 없음 — 상수로만).

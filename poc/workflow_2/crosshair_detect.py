@@ -264,7 +264,7 @@ def probe(limit_per_recipe: int | None = None) -> str:
         resolve_assets,
     )
     # 기존 검출기 — 비교 baseline (lazy import: align_point_correction 가 VLM client 등을 끌어옴).
-    from poc.workflow_1.util import image_utils  # noqa: F401  (import 경로 sanity)
+    from poc.workflow_3.util import image_utils  # noqa: F401  (import 경로 sanity)
     from poc.workflow_2.align_point_correction import _detect_existing_crosshair
 
     leaves = iter_recipe_dirs()

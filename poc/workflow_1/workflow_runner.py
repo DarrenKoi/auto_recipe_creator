@@ -5,8 +5,8 @@ import time
 from pathlib import Path
 
 from poc.workflow_1 import LOG_DIR
-from poc.workflow_1.logger import log_work2_event
-from poc.workflow_1.util import make_timestamp_tag
+from poc.workflow_3.logger import log_work2_event
+from poc.workflow_3.util import make_timestamp_tag
 from poc.workflow_1.workflow_config import WorkflowSettings
 from poc.workflow_1.workflow_types import (
     ConditionGroup,

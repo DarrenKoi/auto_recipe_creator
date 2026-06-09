@@ -101,7 +101,7 @@ from poc.workflow_2.crosshair_detect import detect_crosshair
 from poc.workflow_2.white_box_detectors import detect_white_box_ensemble_diagnose
 # align_similarity 의 crop 비율·scale band·허용오차 상수만 재사용(정의 중복/표류 방지).
 from poc.workflow_2.align_similarity import CENTER_AREA_RATIO, COMPARE_SCALES, GT_TOL_NORM
-from poc.workflow_1.util.time_utils import make_timestamp_tag
+from poc.workflow_3.util.time_utils import make_timestamp_tag
 
 # golden 루트 — fail 트리(align_images)와 형제 폴더. env 로 override 가능.
 GOLDEN_ROOT = ALIGN_IMAGES_ROOT.parent / "align_images_golden"

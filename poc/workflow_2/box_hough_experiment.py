@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 
 from poc.workflow_2 import DEBUG_IMAGE_DIR, WORKFLOW_2_DIR
-from poc.workflow_1.util.time_utils import make_timestamp_tag
+from poc.workflow_3.util.time_utils import make_timestamp_tag
 
 INPUT_DIR = WORKFLOW_2_DIR / "templates" / "created_by_myself"
 OUTPUT_ROOT = DEBUG_IMAGE_DIR / "box_hough_experiment"

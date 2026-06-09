@@ -19,8 +19,8 @@ from poc.workflow_1.login_rcs_common import (
     wait_for_rcs_main_window,
     wait_for_remote_monitoring_window,
 )
-from poc.workflow_1.debug_artifacts import save_debug_jpeg
-from poc.workflow_1.logger import log_work2_event
+from poc.workflow_3.debug_artifacts import save_debug_jpeg
+from poc.workflow_3.logger import log_work2_event
 from poc.workflow_1.workflow_select_tool import (
     EXIT_SUCCESS as SELECT_TOOL_SUCCESS,
     load_target_tool_name,
@@ -31,7 +31,7 @@ from poc.workflow_1.view_list_tab_rcs import (
     EXIT_SUCCESS as LIST_TAB_SUCCESS,
     click_list_tab_in_main_window,
 )
-from poc.workflow_1.util import (
+from poc.workflow_3.util import (
     activate_window,
     capture_window,
     click_at_screen,
@@ -61,7 +61,7 @@ except ImportError:
     print("[WARNING] pynput.keyboard 미설치 — 타이핑 동작은 로그만 출력됩니다.")
 
 try:
-    from poc.workflow_1.util.mouse_utils import PYNPUT_MOUSE_AVAILABLE
+    from poc.workflow_3.util.mouse_utils import PYNPUT_MOUSE_AVAILABLE
 except ImportError:
     PYNPUT_MOUSE_AVAILABLE = False
 

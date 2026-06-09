@@ -32,7 +32,7 @@ from poc.workflow_2.align_point_correction import (
     _inner_crop_for_box,
     _stroke_threshold,
 )
-from poc.workflow_1.util.time_utils import make_timestamp_tag
+from poc.workflow_3.util.time_utils import make_timestamp_tag
 
 INPUT_DIR = WORKFLOW_2_DIR / "templates" / "whitebox_samples"
 OUTPUT_ROOT = WORKFLOW_2_DIR / "templates" / "box_crop_results"

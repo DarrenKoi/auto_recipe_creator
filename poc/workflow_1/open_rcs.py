@@ -30,7 +30,7 @@ except ImportError:
     PSUTIL_AVAILABLE = False
 
 from poc.workflow_1 import LOG_DIR
-from poc.workflow_1.logger import log_work2_event
+from poc.workflow_3.logger import log_work2_event
 
 if DOTENV_AVAILABLE:
     load_dotenv()

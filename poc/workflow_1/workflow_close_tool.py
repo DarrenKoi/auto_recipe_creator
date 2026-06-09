@@ -30,8 +30,8 @@ from poc.workflow_1.login_rcs_common import (
     REMOTE_MONITORING_WINDOW_TITLE_PREFIX,
     wait_for_remote_monitoring_window,
 )
-from poc.workflow_1.logger import log_work2_event
-from poc.workflow_1.util import close_window, format_elapsed_ms
+from poc.workflow_3.logger import log_work2_event
+from poc.workflow_3.util import close_window, format_elapsed_ms
 from poc.workflow_1.workflow_select_tool import load_target_tool_name
 
 LOG_NAME = "workflow_close_tool"

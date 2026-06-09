@@ -13,8 +13,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from poc.workflow_1 import RECORDING_DIR
-from poc.workflow_1.debug_artifacts import save_debug_jpeg, save_debug_json, save_debug_text
-from poc.workflow_1.util import WINDOW_UTILS_AVAILABLE, capture_window, env_float, env_int, format_elapsed_ms
+from poc.workflow_3.debug_artifacts import save_debug_jpeg, save_debug_json, save_debug_text
+from poc.workflow_3.util import WINDOW_UTILS_AVAILABLE, capture_window, env_float, env_int, format_elapsed_ms
 from poc.workflow_1.workflow_select_ch4_cctv import _find_player_window
 
 load_dotenv()

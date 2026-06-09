@@ -6,19 +6,19 @@ from pathlib import Path
 
 from PIL import Image
 
-from poc.workflow_1.debug_artifacts import (
+from poc.workflow_3.debug_artifacts import (
     debug_image_path,
     save_debug_jpeg,
     save_debug_json,
     save_debug_text,
     save_marked_bboxes,
 )
-from poc.workflow_1.logger import log_work2_event
-from poc.workflow_1.prompts.prompt_login_rcs_mai_ui import build_mai_ui_zoom_prompt
-from poc.workflow_1.prompts.prompt_login_rcs_ui_venus import (
+from poc.workflow_3.logger import log_work2_event
+from poc.workflow_3.vlm.prompts.prompt_login_rcs_mai_ui import build_mai_ui_zoom_prompt
+from poc.workflow_3.vlm.prompts.prompt_login_rcs_ui_venus import (
     build_ui_venus_single_element_bbox_prompt,
 )
-from poc.workflow_1.util import (
+from poc.workflow_3.util import (
     activate_window,
     bbox_1000_to_pixels,
     bbox_center,
@@ -33,8 +33,8 @@ from poc.workflow_1.util import (
     parse_coords,
     point_to_tiny_bbox,
 )
-from poc.workflow_1.util.json_utils import extract_json
-from poc.workflow_1.vlm_client import Workflow1VLMClient
+from poc.workflow_3.util.json_utils import extract_json
+from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
 
 
 @dataclass

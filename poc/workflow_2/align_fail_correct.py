@@ -30,7 +30,7 @@ from typing import Callable
 import cv2
 import numpy as np
 
-from poc.workflow_1.logger import log_work2_event
+from poc.workflow_3.logger import log_work2_event
 from poc.workflow_2 import DEBUG_IMAGE_DIR
 from poc.workflow_2.align_fail_assets import AlignFailAssets, load_gray, resolve_assets_auto
 from poc.workflow_2.align_key_matcher import (

@@ -31,13 +31,13 @@ from poc.workflow_2.vlm_sem_monitor_box import (
     _run_sem_box_detection,
     _save_overlay,
 )
-from poc.workflow_1.debug_artifacts import save_debug_jpeg, save_debug_json, save_debug_text
-from poc.workflow_1.flask_vlm import UI_VENUS_MODEL_NAME
+from poc.workflow_3.debug_artifacts import save_debug_jpeg, save_debug_json, save_debug_text
+from poc.workflow_3.vlm.flask_vlm import UI_VENUS_MODEL_NAME
 from poc.workflow_1.login_rcs_common import (
     REMOTE_MONITORING_WINDOW_TITLE_PREFIX,
     wait_for_remote_monitoring_window,
 )
-from poc.workflow_1.util import (
+from poc.workflow_3.util import (
     WINDOW_UTILS_AVAILABLE,
     capture_window,
     env_float,
@@ -45,8 +45,8 @@ from poc.workflow_1.util import (
     format_elapsed_ms,
     make_timestamp_tag,
 )
-from poc.workflow_1.util.image_utils import encode_image_webp
-from poc.workflow_1.vlm_client import Workflow1VLMClient
+from poc.workflow_3.util.image_utils import encode_image_webp
+from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
 
 load_dotenv()
 

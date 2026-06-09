@@ -67,7 +67,7 @@ from poc.workflow_2.align_similarity import (
     _separation,
     _window_roi,
 )
-from poc.workflow_1.util.time_utils import make_timestamp_tag
+from poc.workflow_3.util.time_utils import make_timestamp_tag
 
 OUTPUT_ROOT = DEBUG_IMAGE_DIR / "align_index_ablation"
 

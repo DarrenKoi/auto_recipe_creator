@@ -30,8 +30,8 @@ from poc.workflow_2.align_key_matcher import (
     compute_align_key_score_ensemble,
     save_overlay_jpeg,
 )
-from poc.workflow_1.debug_artifacts import save_debug_json, save_debug_text
-from poc.workflow_1.util import format_elapsed_ms, make_timestamp_tag
+from poc.workflow_3.debug_artifacts import save_debug_json, save_debug_text
+from poc.workflow_3.util import format_elapsed_ms, make_timestamp_tag
 
 # recipe 폴더(<eqp>/<class>/<recipe>) 선택은 align_fail_assets 가 담당한다:
 # 환경변수 ALIGN_EQP_ID/ALIGN_CLASS_NAME/ALIGN_RECIPE_NAME 가 모두 있으면 그 폴더,

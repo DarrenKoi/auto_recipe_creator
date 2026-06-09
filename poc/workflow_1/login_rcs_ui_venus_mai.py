@@ -20,15 +20,15 @@ from dotenv import load_dotenv
 
 from poc.workflow_1 import DEBUG_IMAGE_DIR
 from poc.workflow_1.login_rcs_common import WINDOW_TITLE_PREFIX, find_login_window
-from poc.workflow_1.logger import log_work2_event
-from poc.workflow_1.ui_venus_mai_locator import (
+from poc.workflow_3.logger import log_work2_event
+from poc.workflow_3.vlm.ui_venus_mai_locator import (
     EXIT_SUCCESS,
     EXIT_WINDOW_ACTIVATE_FAILED,
     TargetConfig,
     TargetResult,
     analyze_window_target,
 )
-from poc.workflow_1.util import format_elapsed_ms
+from poc.workflow_3.util import format_elapsed_ms
 
 load_dotenv()
 

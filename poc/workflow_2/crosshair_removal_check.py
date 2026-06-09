@@ -32,7 +32,7 @@ import numpy as np
 
 from poc.workflow_2 import WORKFLOW_2_DIR
 from poc.workflow_2.crosshair_detect import detect_crosshair
-from poc.workflow_1.util.time_utils import make_timestamp_tag
+from poc.workflow_3.util.time_utils import make_timestamp_tag
 
 INPUT_DIR = WORKFLOW_2_DIR / "templates" / "crosshair_samples"
 OUTPUT_ROOT = WORKFLOW_2_DIR / "templates" / "crosshair_removal_results"

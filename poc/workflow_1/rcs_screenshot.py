@@ -24,9 +24,9 @@ import time
 from pathlib import Path
 
 from poc.workflow_1 import ALIGN_IMAGES_DIR
-from poc.workflow_1.debug_artifacts import save_debug_jpeg
+from poc.workflow_3.debug_artifacts import save_debug_jpeg
 from poc.workflow_1.login_rcs_common import wait_for_remote_monitoring_window # pyright: ignore[reportMissingImports]
-from poc.workflow_1.util import (
+from poc.workflow_3.util import (
     WINDOW_UTILS_AVAILABLE,
     capture_window,
     close_window,

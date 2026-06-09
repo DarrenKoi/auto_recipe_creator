@@ -10,18 +10,18 @@ from dotenv import load_dotenv
 from poc.workflow_1 import DEBUG_IMAGE_DIR
 from poc.workflow_1 import workflow_select_tool as base_select_tool
 from poc.workflow_1 import workflow_select_tool_cctv as cctv_workflow
-from poc.workflow_1.debug_artifacts import (
+from poc.workflow_3.debug_artifacts import (
     debug_image_path,
     save_debug_jpeg,
     save_debug_json,
 )
-from poc.workflow_1.logger import log_work2_event
-from poc.workflow_1.ui_venus_mai_locator import (
+from poc.workflow_3.logger import log_work2_event
+from poc.workflow_3.vlm.ui_venus_mai_locator import (
     EXIT_SUCCESS as DETECT_SUCCESS,
     TargetConfig,
     analyze_window_target,
 )
-from poc.workflow_1.util import (
+from poc.workflow_3.util import (
     WINDOW_UTILS_AVAILABLE,
     click_at_screen,
     foreground_window,
@@ -115,7 +115,7 @@ def _find_player_window() -> tuple[object | None, str, str, str]:
     if not WINDOW_UTILS_AVAILABLE or not PSUTIL_AVAILABLE:
         return None, "", "", ""
 
-    from poc.workflow_1.util import collect_window_rows
+    from poc.workflow_3.util import collect_window_rows
 
     process_name_by_pid: dict[int, str] = {}
     for proc in psutil.process_iter(["pid", "name"]):
@@ -184,7 +184,7 @@ def select_ch4_from_player_window(
     started_at = time.time()
     timestamp_tag = make_timestamp_tag(started_at)
 
-    from poc.workflow_1.util import capture_window
+    from poc.workflow_3.util import capture_window
 
     if not foreground_window(
         player_window,

@@ -6,7 +6,7 @@ Mac 에서 `uv run python poc/workflow_1/test_tool_name_match.py` 로 실행한�
 import json
 import sys
 
-from poc.workflow_1.ocr_spotting import parse_spotting_items
+from poc.workflow_3.vlm.ocr_spotting import parse_spotting_items
 from poc.workflow_1.tool_name_match import best_match, canonicalize
 
 

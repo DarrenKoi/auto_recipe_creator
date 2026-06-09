@@ -34,9 +34,9 @@ from dotenv import load_dotenv
 from PIL import Image
 
 from poc.workflow_2 import ALIGN_IMAGES_ROOT, DEBUG_IMAGE_DIR, WORKFLOW_2_DIR
-from poc.workflow_1.flask_vlm import UI_VENUS_MODEL_NAME
-from poc.workflow_1.util import env_int, format_elapsed_ms, make_timestamp_tag
-from poc.workflow_1.vlm_client import Workflow1VLMClient
+from poc.workflow_3.vlm.flask_vlm import UI_VENUS_MODEL_NAME
+from poc.workflow_3.util import env_int, format_elapsed_ms, make_timestamp_tag
+from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
 from poc.workflow_2.sem_box_detect import (
     SHARPNESS_BLUR_THRESHOLD,
     bbox_px_to_1000,

@@ -14,13 +14,13 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from poc.workflow_1.util.image_utils import encode_image_webp
-from poc.workflow_1.util.json_utils import (
+from poc.workflow_3.util.image_utils import encode_image_webp
+from poc.workflow_3.util.json_utils import (
     bbox_center,
     bbox_to_pixels,
     extract_json,
 )
-from poc.workflow_1.vlm_client import Workflow1VLMClient
+from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
 
 
 def _ok_button_system_prompt() -> str:

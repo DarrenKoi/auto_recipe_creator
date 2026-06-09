@@ -44,7 +44,7 @@ from poc.workflow_2.align_point_correction import _tool_label
 from poc.workflow_2.localization_ab_ensemble import _err_norm, _predicted_align_point
 from poc.workflow_2.localization_regression_diag import _ensemble_pool
 from poc.workflow_2.reranker_signal_probe import _candidate_signals
-from poc.workflow_1.util.time_utils import make_timestamp_tag
+from poc.workflow_3.util.time_utils import make_timestamp_tag
 
 OUTPUT_ROOT = DEBUG_IMAGE_DIR / "reranker_rule_ab"
 

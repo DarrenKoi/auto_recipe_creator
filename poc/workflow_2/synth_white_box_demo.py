@@ -50,7 +50,7 @@ from poc.workflow_2.test_align_key_match import (
     make_synthetic_template,
     make_wafer_background,
 )
-from poc.workflow_1.util.time_utils import make_timestamp_tag
+from poc.workflow_3.util.time_utils import make_timestamp_tag
 
 # ====================================================================
 # 설정 (CLI 인자 없음 — 상수로만).

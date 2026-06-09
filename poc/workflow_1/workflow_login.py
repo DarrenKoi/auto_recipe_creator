@@ -39,9 +39,9 @@ from poc.workflow_3.util import (
     format_elapsed_ms,
     image_point_to_screen,
 )
-from poc.workflow_1.workflow_config import WorkflowSettings, load_workflow_settings
-from poc.workflow_1.workflow_runner import WorkflowRunner
-from poc.workflow_1.workflow_types import (
+from poc.workflow_3.runner.workflow_config import WorkflowSettings, load_workflow_settings
+from poc.workflow_3.runner.workflow_runner import WorkflowRunner
+from poc.workflow_3.runner.workflow_types import (
     ConditionGroup,
     ConditionGroupType,
     ConditionType,

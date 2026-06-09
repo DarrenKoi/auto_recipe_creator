@@ -155,6 +155,7 @@ def _rrf_fuse(channel_lists, *, k0=RRF_K0, match_radius=8, top_n=SHADOW_N):
     """채널별 후보 리스트를 RRF 로 융합. fused(c) = Σ_채널 1/(k0 + rank).
 
     채널 간 후보는 center 거리 <= match_radius 면 동일 후보로 묶는다(가장 높은 score member 가 대표).
+    거리는 Chebyshev(L-inf, 축정렬 박스) — proposer 라 약간의 과병합 허용(의도된 단순화).
     반환 list[_Cand] (fused score 내림차순, top_n 까지). 스케일 무관(순위 기반).
     """
     clusters = []  # {"xy", "score"(대표 chamfer), "rrf"}

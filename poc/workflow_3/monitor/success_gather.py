@@ -106,8 +106,10 @@ def gather_success_async(eqp_id, recipe_id, settings: Workflow3Settings):
 
         thread = threading.Thread(target=_run, daemon=True)
         _IN_FLIGHT[key] = thread
+        # start 도 lock 안에서: 등록-시작 사이 틈에 다른 호출자의 prune 이
+        # 미시작 thread(is_alive()=False)를 지우고 중복 fire 하는 창을 닫는다.
+        thread.start()
 
-    thread.start()
     return thread
 
 

@@ -1,0 +1,174 @@
+"""consensus_gather 합성 self-test — office/실장비 없이 stage/replace/error 경로 검증.
+
+CLAUDE.md 규칙: argparse 미사용, [PASS]/[FAIL] print, Mac 에서 그대로 실행.
+    uv run python poc/workflow_3/vision/test_consensus_gather.py
+"""
+
+import shutil
+import tempfile
+from pathlib import Path
+
+from poc.workflow_3.vision.consensus_gather import (
+    StagedEvent,
+    gather_success_images,
+)
+
+
+class _FakeDownloader:
+    """dest_dir 에 합성 S*.jpg + S*.txt 를 쓰고 StagedEvent 를 돌려주는 테스트용 다운로더.
+
+    events_spec: list[(event_id, n_images)]. raise_exc=True 면 예외를 던진다.
+    """
+
+    def __init__(self, events_spec, *, raise_exc=False):
+        self.events_spec = events_spec
+        self.raise_exc = raise_exc
+        self.calls = []
+
+    def download_recent_successes(self, recipe_id, *, max_events, dest_dir):
+        self.calls.append((recipe_id, max_events, Path(dest_dir)))
+        if self.raise_exc:
+            raise RuntimeError("DB 연결 실패")
+        staged = []
+        for event_id, n_images in self.events_spec[:max_events]:
+            ev_dir = Path(dest_dir) / event_id
+            ev_dir.mkdir(parents=True, exist_ok=True)
+            imgs, conds = [], []
+            for i in range(n_images):
+                img = ev_dir / f"S{i + 1:04d}.jpg"
+                cond = ev_dir / f"S{i + 1:04d}.txt"
+                img.write_bytes(b"\xff\xd8\xff\xd9")
+                cond.write_text("crosshair_x=10\ncrosshair_y=20\n", encoding="utf-8")
+                imgs.append(img)
+                conds.append(cond)
+            staged.append(StagedEvent(event_id=event_id, image_paths=imgs, cond_paths=conds))
+        return staged
+
+
+def _staged_files(events_dir):
+    """events_dir 아래 모든 파일의 상대경로 set (검증용)."""
+    if not events_dir.exists():
+        return set()
+    return {p.relative_to(events_dir).as_posix() for p in events_dir.rglob("*") if p.is_file()}
+
+
+def test_stage_basic():
+    root = Path(tempfile.mkdtemp())
+    try:
+        dl = _FakeDownloader([("EV1", 2), ("EV2", 2)])
+        res = gather_success_images("EQP1", "CLS/RCP", downloader=dl, cache_root=root)
+        files = _staged_files(res.events_dir)
+        ok = (
+            res.reason == "ok"
+            and res.n_events == 2
+            and res.n_images == 4
+            and "EV1/S0001.jpg" in files
+            and "EV1/S0001.txt" in files
+            and "EV2/S0002.jpg" in files
+        )
+        print(f"[{'PASS' if ok else 'FAIL'}] stage_basic: reason={res.reason} "
+              f"events={res.n_events} images={res.n_images} files={len(files)}")
+        return ok
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_layout_nested():
+    root = Path(tempfile.mkdtemp())
+    try:
+        dl = _FakeDownloader([("EV1", 1)])
+        res = gather_success_images("EQP1", "CLS/RCP", downloader=dl, cache_root=root)
+        expected = root / "EQP1" / "CLS" / "RCP" / "events"
+        ok = res.events_dir == expected and (expected / "EV1" / "S0001.jpg").exists()
+        print(f"[{'PASS' if ok else 'FAIL'}] layout_nested: events_dir={res.events_dir}")
+        return ok
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_replace_swaps_to_latest():
+    root = Path(tempfile.mkdtemp())
+    try:
+        gather_success_images("EQP1", "CLS/RCP",
+                              downloader=_FakeDownloader([("OLD_A", 1), ("OLD_B", 1)]),
+                              cache_root=root)
+        res = gather_success_images("EQP1", "CLS/RCP",
+                                    downloader=_FakeDownloader([("NEW_C", 1)]),
+                                    cache_root=root)
+        event_dirs = {f.split("/")[0] for f in _staged_files(res.events_dir)}
+        ok = res.reason == "ok" and event_dirs == {"NEW_C"}  # 옛 set 사라짐.
+        print(f"[{'PASS' if ok else 'FAIL'}] replace_swaps: event_dirs={event_dirs}")
+        return ok
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_empty_preserves_existing():
+    root = Path(tempfile.mkdtemp())
+    try:
+        gather_success_images("EQP1", "CLS/RCP",
+                              downloader=_FakeDownloader([("KEEP_A", 1)]),
+                              cache_root=root)
+        res = gather_success_images("EQP1", "CLS/RCP",
+                                    downloader=_FakeDownloader([]),  # 빈 fetch.
+                                    cache_root=root)
+        event_dirs = {f.split("/")[0] for f in _staged_files(res.events_dir)}
+        ok = res.reason == "empty" and event_dirs == {"KEEP_A"}  # 기존 보존.
+        print(f"[{'PASS' if ok else 'FAIL'}] empty_preserves: reason={res.reason} dirs={event_dirs}")
+        return ok
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_downloader_raises():
+    root = Path(tempfile.mkdtemp())
+    try:
+        gather_success_images("EQP1", "CLS/RCP",
+                              downloader=_FakeDownloader([("KEEP_A", 1)]),
+                              cache_root=root)
+        res = gather_success_images("EQP1", "CLS/RCP",
+                                    downloader=_FakeDownloader([], raise_exc=True),
+                                    cache_root=root)
+        event_dirs = {f.split("/")[0] for f in _staged_files(res.events_dir)}
+        staging = root / "EQP1" / "CLS" / "RCP" / ".events_staging"
+        ok = (
+            res.reason.startswith("error:")
+            and event_dirs == {"KEEP_A"}        # 기존 set 보존.
+            and not staging.exists()            # staging 정리됨.
+        )
+        print(f"[{'PASS' if ok else 'FAIL'}] downloader_raises: reason={res.reason!r} "
+              f"staging_exists={staging.exists()}")
+        return ok
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_skipped_no_recipe():
+    root = Path(tempfile.mkdtemp())
+    try:
+        dl = _FakeDownloader([("EV1", 1)])
+        res = gather_success_images("EQP1", "", downloader=dl, cache_root=root)
+        ok = res.reason == "skipped" and res.n_events == 0 and len(dl.calls) == 0
+        print(f"[{'PASS' if ok else 'FAIL'}] skipped_no_recipe: reason={res.reason} calls={len(dl.calls)}")
+        return ok
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def main():
+    print("[INFO] consensus_gather self-test 시작")
+    results = [
+        test_stage_basic(),
+        test_layout_nested(),
+        test_replace_swaps_to_latest(),
+        test_empty_preserves_existing(),
+        test_downloader_raises(),
+        test_skipped_no_recipe(),
+    ]
+    passed = sum(1 for r in results if r)
+    print(f"[INFO] {passed}/{len(results)} cases passed")
+    return 0 if passed == len(results) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,35 @@
+# proposer_recall_ab.py 결과 채움 양식 (TEMPLATE)
+# 사용법: 이 파일을 YYMMDD_proposerN.txt 로 복사 → stdout 보고 ____ 자리에 *숫자만* 타이핑.
+#   - 라벨/정렬은 건드릴 필요 없음. ____ 만 채우면 됨.
+#   - ★ = 의사결정 핵심(꼭 채움). (opt) = 필요할 때만. 안 나온 줄은 통째로 지워도 됨.
+#   - 실행: uv run python poc/workflow_2/proposer_recall_ab.py  (오피스, golden 데이터 필요)
+#   - KPI = ensemble 의 budgeted recall@8 이 single-box fallback 천장(0.557)을 넘나.
+#   - summary.json 은 DEBUG_IMAGE_DIR/proposer_recall_ab/<ts>/ 에 자동 저장(필요시 별도 회신).
+# ──────────────────────────────────────────────
+
+[데이터 위생]   ([INFO] S 채택 … | 누락 … 줄)
+S 채택 = ____
+누락: no_box_tpl=____  non_S=____  routing_miss=____  no_crosshair=____  load_failed=____
+GT_TOL_NORM = ____     (기본 0.2)
+# non_S=E/? · routing_miss=modality 미상/dual · no_crosshair=cond 십자 없음
+
+★ [PROPOSER RECALL A/B]   (baseline C1 vs ensemble, 둘 다 COMPARE_SCALES — 차이는 오직 C2·C3)
+variant         recall@8   recall@16   recall@24
+baseline(C1)    ____       ____        ____
+ensemble        ____       ____        ____
+solo:canny      ____       ____        ____      # baseline 과 ≈ 여야 정상(회귀 가드)
+solo:scharr     ____       ____        ____
+solo:orient     ____       ____        ____
+
+★ lift:  budgeted recall@8 = ____      shadow recall@24 = ____
+
+[판정]   (해당 칸에 ✓)
+__ @24↑ · @8↑   = ensemble 효과 → 채택
+__ @24↑ · @8≈   = 채널은 진실 찾음, fusion 부족 → RRF k0/매칭반경 sweep
+__ @24≈         = 채널 무효 → 다른 axis(template bank 등) 재검토
+★ ensemble recall@8 vs 0.557(fallback 천장):  ____   → ( 넘음 / 못넘음 )
+(opt) 최강 기여 채널(solo recall@24 최고): ____   (scharr / orient / canny)
+
+# ── 비고(자유 기재): 실행 시간(분), WARNING(template 빌드 실패 등), 이상치, 눈에 띈 점 ──
+# 실행 시간 ≈ ____ 분   (느리면 C3 orient 비용 — 진행 출력으로 hang 아님 확인)
+#

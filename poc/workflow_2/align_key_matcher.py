@@ -772,6 +772,13 @@ def compute_align_key_score_ensemble(
     경우, distinctive 는 best_xy 자체의 유일성이 아니라 chamfer-top 의 유일성을 가리킨다. 따라서
     distinctive 는 soft advisory 신호로만 쓰고 hard gate 로 쓰지 말 것.
     """
+    global compute_ensemble_candidates
+    if compute_ensemble_candidates is None:   # lazy 바인딩(순환 import 회피). 패치 시엔 None 아님→스킵.
+        from poc.workflow_2.ensemble_proposer import (
+            compute_ensemble_candidates as _cec,
+        )
+        compute_ensemble_candidates = _cec
+
     gray_frame, frame_dt, scales, roi_origin = _prepare_match_inputs(
         template,
         frame,
@@ -889,13 +896,12 @@ def save_overlay_jpeg(overlay_bgr: np.ndarray, out_path: Path) -> None:
 
 
 # ------------------------------------------------------------------
-# ensemble_proposer 임포트 — 순환 참조 방지를 위해 모듈 말단에 배치.
+# ensemble_proposer 는 *lazy* 로 로드한다 — 순환 참조 회피 + import 순서 무관.
 #
-# ensemble_proposer 가 이 모듈(align_key_matcher)에서 여러 심볼을 임포트하므로,
-# 이 파일 상단에 역방향 임포트를 두면 순환 임포트 에러가 발생한다.
-# 모듈 말단에 두면 Python 이 이 파일을 sys.modules 에 등록(부분 완성 상태)한 뒤
-# ensemble_proposer 를 로드하므로, ensemble_proposer 가 이미 완성된 심볼들을 정상적으로
-# 가져갈 수 있다. compute_ensemble_candidates 는 모듈 전역 이름으로 노출되어,
-# 테스트의 monkeypatch.setattr(akm, "compute_ensemble_candidates", ...) 가 동작한다.
+# ensemble_proposer 가 이 모듈(align_key_matcher)에서 여러 심볼을 임포트하므로 상호 의존이다.
+# 모듈 말단 import 로 두면 align_key_matcher 가 먼저 로드될 때만 동작하고, ensemble_proposer 가
+# 먼저 import 되면(예: test_ensemble_proposer 단독 실행) 부분 초기화 순환 import 로 깨진다.
+# 따라서 모듈 전역 placeholder(None)로 두고 compute_align_key_score_ensemble 첫 호출 시 채운다.
+# 모듈 전역 이름이라 테스트의 monkeypatch.setattr(akm, "compute_ensemble_candidates", ...) 도 동작.
 # ------------------------------------------------------------------
-from poc.workflow_2.ensemble_proposer import compute_ensemble_candidates  # noqa: E402
+compute_ensemble_candidates = None  # lazy: 최초 호출 시 ensemble_proposer 에서 바인딩.

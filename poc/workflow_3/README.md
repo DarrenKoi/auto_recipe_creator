@@ -72,11 +72,47 @@ replay CSV 컬럼: `EQP_ID,ALID,ALARM_NAME,UTC9,RECIPE_ID,OPERATION_DESC,LOT_TYP
 - step journal: `poc/workflow_3/logs/workflow_runs/<run_id>_align_fail_cycle_<eqp>/`
 - 녹화 프레임: `align_images/<eqp>/<class>/<recipe>/captured_img_from_rcs/<utc9_tag>/recording/`
   (RECIPE_ID 없으면 `align_images/<eqp>/_unregistered/<tag>/recording/`)
-- `ALIGN_IMAGES_DIR` 물리 경로는 **기존 `poc/workflow_1/align_images` 그대로**
-  (오피스 MES 도구가 직접 타겟). 옮길 때는 env `ALIGN_IMAGES_DIR` 한 줄로 전환.
+- `ALIGN_IMAGES_DIR` 물리 경로는 **현재 `poc/workflow_1/align_images`** (오피스 MES 도구가
+  직접 타겟). → `poc/workflow_3/align_images` 로 이전 예정: 아래 **align_images 루트 이전
+  체크리스트** 참조. (옮기는 동안은 env `ALIGN_IMAGES_DIR` 한 줄로 검증/전환.)
 - consensus gather 캐시: `align_consensus_cache/<eqp>/<class>/<recipe>/events/<event_id>/`
   — fail 알람 시 최근 성공 S 이미지+cond 를 stage(consensus 빌드 재료). replace-if-non-empty:
   새 event ≥1 건이면 기존 set 교체, 0건/실패면 기존 보존.
+
+## align_images 루트 이전 체크리스트 (workflow_1 → workflow_3)
+
+production(workflow_3)이 legacy 폴더에 쓰지 않게, MES 산출물 루트를
+`poc/workflow_1/align_images` → `poc/workflow_3/align_images` 로 이전한다. recipe 별 입력
+(from_rcp/from_msr + cond.txt)과 우리 산출물(captured_img_from_rcs/녹화)이 한 트리에 모인다.
+cond.txt 는 localization·consensus eval 에서 white box/crosshair 제거용으로 읽기만 한다
+(workflow_3 는 cond.txt 를 쓰지 않음 — 장비 다운로더가 이미지 옆에 함께 받아온다).
+
+> **순서 중요** — MES 출력 경로를 먼저 안 옮기고 코드 default 만 바꾸면, vision 은 새(빈)
+> 트리를 읽고 MES 는 옛 트리에 계속 써서 매칭이 통째로 빈다.
+
+1. **gitignore 가드 (이전 전 필수, 완료)** — `poc/workflow_3/align_images/` 가 .gitignore 에
+   있는지 확인. fab 이미지 + cond.txt(`.txt` 는 전역 `*.jpg` 무시에 안 걸림)가 절대 커밋되지 않게.
+2. **office MES 출력 경로 재설정** — from_rcp/from_msr **및 cond.txt 다운로더**가
+   `poc\workflow_3\align_images\<eqp>\<class>\<recipe>\...` 에 쓰도록 office 도구 설정 변경.
+   (office_success_downloader 는 `ALIGN_IMAGES_DIR` 로 읽으므로 env/default 만 맞으면 자동 추종.)
+3. **기존 데이터 이동** — 숨김 사이드카(`.<image>/cond.txt`)까지 통째로:
+   ```
+   robocopy poc\workflow_1\align_images poc\workflow_3\align_images /E /MOVE
+   ```
+   (`/E` 중첩·숨김 폴더 포함, `/MOVE` 이동 후 원본 삭제. `move` 는 중첩 숨김폴더를 빠뜨릴 수 있어 robocopy 권장.)
+4. **env 로 먼저 검증** (default 안 건드림):
+   ```
+   set ALIGN_IMAGES_DIR=<repo>\poc\workflow_3\align_images
+   uv run python -c "from poc.workflow_3 import ALIGN_IMAGES_DIR as d; print(d, 'exists=', d.exists()); print(list(d.glob('*/*/*'))[:3])"
+   ```
+   새 트리에서 eqp/class/recipe 가 보이는지 확인.
+5. **녹화/캡처 경로 확인** — `ALIGN_IMAGES_DIR` 유지한 채 SAFE_MODE=1 dry-run 알람 1회 →
+   `captured_img_from_rcs/<tag>/recording/` 이 새 루트 아래 생기는지.
+6. **default 상수 교체** — 검증 끝나면 `poc/workflow_3/__init__.py` 의 `ALIGN_IMAGES_DIR`
+   default 를 `WORKFLOW_3_DIR.parent / "workflow_1" / "align_images"` →
+   `WORKFLOW_3_DIR / "align_images"` 로. 이후 env 불필요. 본 README 산출물 경로 +
+   CLAUDE.md 의 "물리 경로 workflow_1 그대로" 문구도 함께 갱신.
+7. **legacy 정리** — `poc\workflow_1\align_images` 잔여 빈 디렉터리 제거.
 
 ## 오피스 PC 이전 체크리스트 (단계별 활성화)
 

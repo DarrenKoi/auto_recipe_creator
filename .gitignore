@@ -69,6 +69,7 @@ poc/workflow_2/logs/*
 poc/workflow_3/logs/*
 !poc/workflow_3/logs/.gitkeep
 poc/workflow_3/align_consensus_cache/   # staged S 이미지+cond(fab 측정 메타) — *.jpg 는 전역 무시, *.txt 별도 추가
+poc/workflow_3/align_images/            # MES 산출물(from_rcp/from_msr/cond.txt) + 녹화 루트 이전처 — fab 데이터 전부 git 제외(cond.txt 는 *.txt 라 전역 무시 안 됨)
 !side_projects/screenshot_document_extraction/logs/
 side_projects/screenshot_document_extraction/logs/*
 !side_projects/screenshot_document_extraction/logs/.gitkeep

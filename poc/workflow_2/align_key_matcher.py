@@ -749,6 +749,66 @@ def _finalize_match(
     )
 
 
+def compute_align_key_score_ensemble(
+    template: AlignKeyTemplate,
+    frame: np.ndarray,
+    *,
+    frame_nm_per_pixel: float | None = None,
+    roi_hint: tuple[int, int, int, int] | None = None,
+    scales: tuple[float, ...] | None = None,
+    policy: MatchPolicy = DEFAULT_POLICY,
+) -> AlignKeyMatchResult:
+    """ensemble proposer 기반 매칭 — compute_align_key_score 와 동일 시그니처/결과 형태.
+
+    proposer(3채널 RRF, recall 향상) → chamfer rescore → ORB pool-rerank → 공유 finalize.
+    A/B 가 잰 recall@N(진실이 후보 집합에 듦)을 최종 픽으로 전환하려면 pool 전체를 verifier
+    (chamfer+ORB)로 rerank 해야 한다(설계: docs/specs/2026-06-09-ensemble-proposer-
+    production-integration-design.md). 프레임당 비용↑(ORB×top_n + ensemble ~1s) 이므로
+    fallback/static-compare 경로 전용 — live broad-scan 은 compute_align_key_score 유지.
+    """
+    gray_frame, frame_dt, scales, roi_origin = _prepare_match_inputs(
+        template,
+        frame,
+        frame_nm_per_pixel=frame_nm_per_pixel,
+        roi_hint=roi_hint,
+        scales=scales,
+    )
+
+    ens = compute_ensemble_candidates(
+        template.raw_image, gray_frame, scales=scales, top_n=policy.top_n
+    )
+    positions = [(c.xy, c.scale) for c in ens.fused]
+    candidates = _rescore_positions_to_candidates(template, frame_dt, positions)
+    if not candidates:
+        return _no_candidate_result(frame, frame_dt, template, roi_origin)
+
+    # verifier-rerank: top_n 후보에 ORB → combined = chamfer_w*chamfer + orb_w*orb → argmax.
+    # 이 단계가 proposer recall 을 최종 픽으로 전환한다(RRF-top 단독 채택 금지).
+    best_cand = candidates[0]
+    best_combined = -1.0
+    best_orb = 0.0
+    for cand in candidates[:policy.top_n]:
+        cx, cy = cand.xy
+        tw, th = cand.template_size
+        chamfer = cand.chamfer_score
+        orb = 0.0
+        if chamfer > 0.0 and tw > 0 and th > 0:
+            crop, _crop_origin = _crop_with_padding(gray_frame, cx, cy, tw, th, pad=1.6)
+            orb, _n_inliers, _n_matches = compute_orb_inlier_ratio(template.raw_image, crop)
+        combined = policy.chamfer_weight * chamfer + policy.orb_weight * orb
+        if combined > best_combined:
+            best_combined = combined
+            best_cand = cand
+            best_orb = orb
+
+    # 반환 candidates 는 chamfer 내림차순(AlignKeyCandidate.score 계약). best 는 별도 추적.
+    candidates_sorted = sorted(candidates, key=lambda c: c.chamfer_score, reverse=True)
+    return _finalize_match(
+        best_cand, candidates_sorted, frame, template, policy, roi_origin,
+        chamfer_score=best_cand.chamfer_score, orb_ratio=best_orb,
+    )
+
+
 def compute_align_key_score(
     template: AlignKeyTemplate,
     frame: np.ndarray,
@@ -814,3 +874,16 @@ def save_overlay_jpeg(overlay_bgr: np.ndarray, out_path: Path) -> None:
     """compute_align_key_score 의 debug_overlay 를 JPEG 로 저장."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(out_path), overlay_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+
+
+# ------------------------------------------------------------------
+# ensemble_proposer 임포트 — 순환 참조 방지를 위해 모듈 말단에 배치.
+#
+# ensemble_proposer 가 이 모듈(align_key_matcher)에서 여러 심볼을 임포트하므로,
+# 이 파일 상단에 역방향 임포트를 두면 순환 임포트 에러가 발생한다.
+# 모듈 말단에 두면 Python 이 이 파일을 sys.modules 에 등록(부분 완성 상태)한 뒤
+# ensemble_proposer 를 로드하므로, ensemble_proposer 가 이미 완성된 심볼들을 정상적으로
+# 가져갈 수 있다. compute_ensemble_candidates 는 모듈 전역 이름으로 노출되어,
+# 테스트의 monkeypatch.setattr(akm, "compute_ensemble_candidates", ...) 가 동작한다.
+# ------------------------------------------------------------------
+from poc.workflow_2.ensemble_proposer import compute_ensemble_candidates  # noqa: E402

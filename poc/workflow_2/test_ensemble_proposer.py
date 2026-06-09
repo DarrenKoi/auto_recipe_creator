@@ -51,3 +51,26 @@ def test_directional_chamfer_peak_at_true_location():
     cx, cy = x + tw // 2, y + th // 2
     # true 중심 ≈ (120+30, 90+30) = (150,120). 허용 8px.
     assert abs(cx - 150) <= 8 and abs(cy - 120) <= 8, (cx, cy)
+
+
+def test_rrf_fuse_is_scale_free_rank_based():
+    # 채널 A 점수 스케일이 100배 커도 RRF 는 순위만 보므로 결과가 스케일에 불변.
+    A = [ep._Cand(xy=(10, 10), score=900.0), ep._Cand(xy=(50, 50), score=100.0)]
+    B = [ep._Cand(xy=(10, 10), score=9.0), ep._Cand(xy=(80, 80), score=1.0)]
+    fused = ep._rrf_fuse([A, B], k0=10, match_radius=5, top_n=3)
+    # (10,10) 은 두 채널 모두 rank1 → 최상위.
+    assert fused[0].xy == (10, 10)
+    A2 = [ep._Cand(xy=(10, 10), score=9.0), ep._Cand(xy=(50, 50), score=1.0)]
+    fused2 = ep._rrf_fuse([A2, B], k0=10, match_radius=5, top_n=3)
+    assert fused2[0].xy == (10, 10)   # 점수 스케일 바뀌어도 순위 동일.
+
+
+def test_ensemble_candidates_returns_topn_and_shadow():
+    frame = _square_img(size=240, box=(120, 90, 60, 60))
+    tpl = _square_img(size=80, box=(10, 10, 60, 60))
+    res = ep.compute_ensemble_candidates(tpl, frame, top_n=8, shadow_n=24)
+    assert len(res.fused) <= 24 and len(res.fused) >= 1
+    assert res.top_n_count == 8
+    assert set(res.solo.keys()) == {"canny", "scharr", "orient"}
+    # 진짜 위치(≈150,120)가 fused 후보 중에 있다.
+    assert any(abs(c.xy[0] - 150) <= 8 and abs(c.xy[1] - 120) <= 8 for c in res.fused)

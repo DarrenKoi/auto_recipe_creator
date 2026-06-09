@@ -57,7 +57,9 @@ import numpy as np
 
 from poc.workflow_2 import DEBUG_IMAGE_DIR
 from poc.workflow_3.vision.align_fail_assets import iter_msr_images, load_gray
-from poc.workflow_2.align_similarity import GT_TOL_NORM, _consensus_template_ab, _matched_crop
+from poc.workflow_2.align_similarity import (
+    GT_TOL_NORM, USE_ENSEMBLE_PROPOSER, _consensus_template_ab, _matched_crop,
+)
 from poc.workflow_3.vision.align_point_correction import _tool_label
 from poc.workflow_3.vision.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
 from poc.workflow_3.vision.cond_file import (
@@ -378,6 +380,8 @@ def run() -> str:
           f"(env CONSENSUS_COREGISTER=0 으로 끄고 A/B 비교 가능)")
     print(f"[INFO] 매칭 프레임: {'CLEAN(crosshair 제거)' if CLEAN_FRAME else 'RAW(crosshair 잔존)'} "
           f"(env CONSENSUS_CLEAN_FRAME=0 이면 raw — crosshair 가짜 lock A/B 용)")
+    print(f"[INFO] proposer: {'ENSEMBLE (C1 canny + C2 scharr + C3 orient, RRF)' if USE_ENSEMBLE_PROPOSER else 'C1 (canny chamfer)'} "
+          f"(env CONSENSUS_USE_ENSEMBLE=1 이면 ensemble — 기본 0=C1; in_topk A/B 용)")
 
     if _MIN_S_ENV < CONSENSUS_MIN_S:   # 2 이하는 LOO 가 못 나와 무의미 → 바닥 3 으로 보정됨.
         print(f"[WARNING] CONSENSUS_MIN_S={_MIN_S_ENV} 는 무의미(LOO 바닥 fm>=3) → "
@@ -443,6 +447,7 @@ def run() -> str:
 
     res["coregister"] = COREGISTER      # min_s 는 _consensus_template_ab 가 이미 반환에 넣는다.
     res["clean_frame"] = CLEAN_FRAME    # 매칭 프레임 정제 여부 — raw 판과 lift 비교 키.
+    res["proposer"] = "ensemble" if USE_ENSEMBLE_PROPOSER else "c1"   # C1 vs ensemble A/B 키.
     res["modality_distribution"] = dict(mod_total)
     res["drop_distribution"] = dict(drop_total)
     (out_dir / "summary.json").write_text(
@@ -455,7 +460,8 @@ def run() -> str:
     print("[INFO] === consensus 재등록 A/B (cond, LOO; 이 블록만 읽어주면 됨) ===")
     print(f"  recipes={res['n_recipes']}  S_loo={res['n_S_loo']}  min_s={CONSENSUS_MIN_S}  "
           f"(baseline=center tpl, offset0, co-reg={'ON' if COREGISTER else 'OFF'}, "
-          f"frame={'CLEAN' if CLEAN_FRAME else 'RAW'})")
+          f"frame={'CLEAN' if CLEAN_FRAME else 'RAW'}, "
+          f"proposer={'ENSEMBLE' if USE_ENSEMBLE_PROPOSER else 'C1'})")
     if CLEAN_FRAME:
         print("  * frame=CLEAN: crosshair 가짜 lock 차단판. raw(CONSENSUS_CLEAN_FRAME=0) 대비 "
               "lift 유지=진짜 / 급락=과거 lift 는 crosshair artifact.")

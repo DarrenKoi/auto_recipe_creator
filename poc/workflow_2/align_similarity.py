@@ -27,6 +27,7 @@ S/E 분리 통계를 텍스트로 회신받아 임계/지표를 정한다([[feed
 """
 
 import json
+import os
 import statistics
 import tempfile
 import time
@@ -85,6 +86,14 @@ TOPK_CANDIDATES = STRUCTURE_POLICY.top_n
 # 후보가 정답으로 인정되는 거리(template 짧은 변 대비). truth-forced 의 lock 판정과는 *독립* 임계라
 # 별도 값으로 둔다(한쪽을 조이면 다른 쪽이 따라 움직이는 것 방지).
 GT_TOL_NORM = 0.20
+
+# consensus proposer A/B 토글 — 기본 C1(canny chamfer). env CONSENSUS_USE_ENSEMBLE=1 이면 후보
+# 생성기(_gt_in_topk)를 3채널 RRF ensemble(C1 canny + C2 scharr + C3 orient)로 바꿔, 같은 LOO
+# harness 에서 in_topk(proposer recall) 이 뛰나 측정한다. 두 경로 모두 후보 xy = template-center·
+# frame px (동일 계약) → apples-to-apples. 게다가 ensemble.solo['canny'] 가 곧 C1 이므로 ON==OFF
+# 면 C2/C3/RRF 가 무효(= 잔여 miss 가 구조적 천장)라는 직접 증거가 된다. 비용: ensemble 은 채널
+# 3배(~1s/frame)라 오피스 A/B 전용. (참조 [[project_ensemble_on_consensus_rejected]])
+USE_ENSEMBLE_PROPOSER = os.getenv("CONSENSUS_USE_ENSEMBLE", "0") != "0"
 
 # --- S-consensus 템플릿 A/B (재등록 검증): rcp 대신 S-consensus 로 바꾸면 gt_in_topk 가 뛰나 ---
 # rcp 가 stale 하다는 가설을 *기존 S 데이터만으로* 검증한다. S crop 은 crosshair 검출 위치
@@ -277,8 +286,25 @@ def _truth_forced(gray, crosshair_xy, center_tpls, xhair_crop):
     }
 
 
+def _propose_topk(tpl, gray, frame_dt, *, scales, topk):
+    """consensus localization 후보 top-N (xy = template-center·frame px, score 내림차순).
+
+    CONSENSUS_USE_ENSEMBLE 로 C1(canny chamfer) ↔ 3채널 RRF ensemble 을 전환한다. 두 경로의 후보
+    좌표 계약이 동일(template-center, frame px)해 _gt_in_topk 의 in_topk A/B 가 apples-to-apples.
+    ensemble 은 raw gray 에서 자체 전처리하므로 frame_dt 가 필요 없다 — frame_dt 는 C1 전용.
+    """
+    if USE_ENSEMBLE_PROPOSER:
+        from poc.workflow_3.vision.ensemble_proposer import compute_ensemble_candidates
+        ens = compute_ensemble_candidates(tpl.raw_image, gray, scales=scales, top_n=topk)
+        return list(ens.fused[:topk])   # RRF 내림차순; in_topk 은 집합 멤버십이라 rerank 무관.
+    from poc.workflow_3.vision.align_key_matcher import compute_chamfer_candidates
+    return compute_chamfer_candidates(tpl, frame_dt, scales=scales, top_n=topk)
+
+
 def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales=COMPARE_SCALES):
-    """정답(crosshair) 위치가 free-search chamfer top-N 후보 안에 들어오는지 측정.
+    """정답(crosshair) 위치가 free-search 후보 top-N 안에 들어오는지 측정 (proposer recall).
+
+    후보 생성기는 CONSENSUS_USE_ENSEMBLE 토글(C1 canny vs 3채널 RRF ensemble) — _propose_topk 참조.
 
     proposer(후보 생성)가 truth 를 surface 하는지 → 리랭킹(MI 등)으로 고칠 수 있는지 판정.
       - in_topk=True, rank>1  → truth 가 후보엔 있는데 chamfer 순위만 밀림 ⇒ reranker 로 회복 가능.
@@ -292,11 +318,9 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
     cand_xys 는 채택된 modality 의 top-N 후보 좌표(score 내림차순) — 결합 패널 시각화용.
     (rerank[MI·contour] 검증은 끝남 — 둘 다 폐기, `docs/study/reranker_ab_failure_analysis.md`.)
     """
-    from poc.workflow_3.vision.align_key_matcher import (
-        compute_chamfer_candidates,
-        preprocess_for_matching,
-    )
-    _edges, frame_dt = preprocess_for_matching(gray)
+    from poc.workflow_3.vision.align_key_matcher import preprocess_for_matching
+    # C1 경로만 frame distance-transform 이 필요 — ensemble 은 raw gray 로 자체 전처리(중복 회피).
+    frame_dt = None if USE_ENSEMBLE_PROPOSER else preprocess_for_matching(gray)[1]
     cxh, cyh = crosshair_xy
     best = None  # (rank|None, n_cand, best_dist, mod, cand_xys)
     any_cand = False
@@ -306,7 +330,7 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
         th, tw = tpl.raw_image.shape[:2]
         short = max(1, min(tw, th))
         try:
-            cands = compute_chamfer_candidates(tpl, frame_dt, scales=scales, top_n=topk)
+            cands = _propose_topk(tpl, gray, frame_dt, scales=scales, topk=topk)
         except Exception:
             continue
         if not cands:

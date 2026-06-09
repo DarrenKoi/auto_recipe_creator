@@ -28,6 +28,9 @@ template(offset 0) — consensus 도 crosshair 정렬이라 offset 0, 동일 척
 실행 (오피스, 인자 없음):
     uv run python poc/workflow_2/golden_consensus_eval_cond.py
   golden 루트: 기본 align_images_golden/, env ALIGN_GOLDEN_ROOT 로 override.
+  매칭 프레임: 기본 CLEAN(cond 구동 crosshair 제거 — consensus 중앙 inpaint 잔상과
+  프레임 GT crosshair 의 가짜 lock 차단). env CONSENSUS_CLEAN_FRAME=0 이면 raw 판
+  (과거 측정과 동일) — 두 판의 lift 를 비교해 consensus lift 가 진짜인지 판정한다.
 출력: stdout + DEBUG_IMAGE_DIR/golden_consensus_eval_cond/<ts>/{summary.json, consensus/*.png,
   combined/<recipe>/*_combined.jpg}
   combined 는 localization cond 판과 같은 "한 장 추적" 패널 — [좌: rcp center(baseline) +
@@ -71,6 +74,15 @@ OUTPUT_ROOT = DEBUG_IMAGE_DIR / "golden_consensus_eval_cond"
 # 마저 맞춰 median blur(edge_ratio<0.70 경고)를 줄인다 → consensus 가 또렷해져 membership·
 # rank1 둘 다 개선 기대. env CONSENSUS_COREGISTER=0 으로 끄면 A/B 비교 가능.
 COREGISTER = os.getenv("CONSENSUS_COREGISTER", "1") != "0"
+
+# LOO 매칭 프레임 정제: raw 프레임은 GT 위치에 진짜 crosshair 가 남아 있고, consensus 템플릿
+# 중앙에는 inpaint 잔상 십자가 코히런트하게 쌓여 있어(모든 S crop 이 crosshair 중심 정렬 +
+# median 은 공통 신호 보존) chamfer 가 crosshair↔crosshair 로 lock 하면 in_topk 가 *가짜로*
+# 부풀 수 있다(rcp baseline 은 이 이득이 없어 A/B 비대칭). 2026-06-10 오피스 관찰: score
+# 0.6~0.8 인데 실제 실패율 높음 — 직선 매칭이 점수만 올린 정황. 그래서 기본 ON 으로 매칭
+# 프레임도 cond 구동 clean_image 로 지우고, env CONSENSUS_CLEAN_FRAME=0(raw)과 lift 를 비교:
+# 정제 후에도 lift 유지 → 진짜 / 무너짐 → crosshair artifact.
+CLEAN_FRAME = os.getenv("CONSENSUS_CLEAN_FRAME", "1") != "0"
 COREG_ITERS = 2                 # ref median 을 다듬으며 원본 crop 을 재정렬(보간 누적 방지).
 COREG_MAX_SHIFT_FRAC = 0.3      # 추정 shift 가 crop 변의 이 비율 초과면 spurious → 정렬 생략.
 
@@ -119,6 +131,17 @@ def coregister_crops(crops):
         ref = np.median(np.stack([a.astype(np.float32) for a in aligned]), 0).astype(np.uint8)
         aligned = [_align_to_ref(c, ref) for c in crops]
     return aligned
+
+
+def _cleaned_frame_loader(f):
+    """LOO 매칭 프레임 로더 — cond 구동 clean_image 로 crosshair(+box)를 지운 프레임.
+
+    `_consensus_template_ab(frame_loader=...)` 주입용. s_frames 는 `_precrop_drop_reason`
+    가드를 통과한 것만 오므로 cond 는 항상 있지만, 방어적으로 없으면 raw 를 돌려준다.
+    """
+    gray = load_gray(f["path"])
+    cond = load_cond(f["path"])
+    return clean_image(gray, cond) if cond is not None else gray
 
 
 def _cond_crosshair_xy(cond):
@@ -314,16 +337,18 @@ def _render_msr_canvas(gray, xy, gc, gr, *, recipe, msr_name):
     return canvas
 
 
-def _make_combined_renderer(combined_dir):
+def _make_combined_renderer(combined_dir, *, frame_tag="raw"):
     """`_consensus_template_ab` 의 combined_renderer 훅 — LOO 한 점당 결합 패널 1장 저장.
 
     [좌: 템플릿 스택 | 우: msr 후보 overlay] 를 같은 높이로 붙여
     combined/<recipe('/'→'__')>/<msr>_<mod>_combined.jpg 로 쓴다(consensus/ PNG 와 동일 키).
+    ctx["gray"] 는 측정에 실제로 쓴 프레임이므로 CLEAN_FRAME 판에선 정제 프레임이 그려진다
+    — frame_tag(raw/clean)를 제목에 박아 어느 판인지 그림만 봐도 알게 한다.
     """
     def _render(ctx):
         msr = _render_msr_canvas(
             ctx["gray"], ctx["xy"], ctx["gc"], ctx["gr"],
-            recipe=ctx["recipe"], msr_name=ctx["path"].name)
+            recipe=ctx["recipe"], msr_name=f"{ctx['path'].name} [{frame_tag}]")
         left = _tpl_stack(ctx["cons_tpl"], ctx["rcp_tpl"], mod=ctx["mod"])
         target_h = max(left.shape[0], msr.shape[0])
         left = glec._resize_to_height(left, target_h)
@@ -351,6 +376,8 @@ def run() -> str:
     print(f"[INFO] (consensus cond A/B) recipe {len(recipes)}개 → {out_dir}")
     print(f"[INFO] co-registration: {'ON' if COREGISTER else 'OFF'} "
           f"(env CONSENSUS_COREGISTER=0 으로 끄고 A/B 비교 가능)")
+    print(f"[INFO] 매칭 프레임: {'CLEAN(crosshair 제거)' if CLEAN_FRAME else 'RAW(crosshair 잔존)'} "
+          f"(env CONSENSUS_CLEAN_FRAME=0 이면 raw — crosshair 가짜 lock A/B 용)")
 
     if _MIN_S_ENV < CONSENSUS_MIN_S:   # 2 이하는 LOO 가 못 나와 무의미 → 바닥 3 으로 보정됨.
         print(f"[WARNING] CONSENSUS_MIN_S={_MIN_S_ENV} 는 무의미(LOO 바닥 fm>=3) → "
@@ -403,15 +430,19 @@ def run() -> str:
     renderer = None
     if combined_dir is not None:
         combined_dir.mkdir(parents=True, exist_ok=True)
-        renderer = _make_combined_renderer(combined_dir)
+        renderer = _make_combined_renderer(
+            combined_dir, frame_tag="clean" if CLEAN_FRAME else "raw")
 
-    res = _consensus_template_ab(by_recipe, min_s=CONSENSUS_MIN_S, out_dir=out_dir,
-                                 combined_renderer=renderer)
+    res = _consensus_template_ab(
+        by_recipe, min_s=CONSENSUS_MIN_S, out_dir=out_dir,
+        combined_renderer=renderer,
+        frame_loader=_cleaned_frame_loader if CLEAN_FRAME else None)
     if res is None:
         print(f"[ERROR] consensus A/B 불가 — LOO 가능한(같은 modality ≥{CONSENSUS_MIN_S}) recipe 가 없음.")
         return "no_ab"
 
     res["coregister"] = COREGISTER      # min_s 는 _consensus_template_ab 가 이미 반환에 넣는다.
+    res["clean_frame"] = CLEAN_FRAME    # 매칭 프레임 정제 여부 — raw 판과 lift 비교 키.
     res["modality_distribution"] = dict(mod_total)
     res["drop_distribution"] = dict(drop_total)
     (out_dir / "summary.json").write_text(
@@ -423,7 +454,11 @@ def run() -> str:
     print("\n" + "=" * 64)
     print("[INFO] === consensus 재등록 A/B (cond, LOO; 이 블록만 읽어주면 됨) ===")
     print(f"  recipes={res['n_recipes']}  S_loo={res['n_S_loo']}  min_s={CONSENSUS_MIN_S}  "
-          f"(baseline=center tpl, offset0, co-reg={'ON' if COREGISTER else 'OFF'})")
+          f"(baseline=center tpl, offset0, co-reg={'ON' if COREGISTER else 'OFF'}, "
+          f"frame={'CLEAN' if CLEAN_FRAME else 'RAW'})")
+    if CLEAN_FRAME:
+        print("  * frame=CLEAN: crosshair 가짜 lock 차단판. raw(CONSENSUS_CLEAN_FRAME=0) 대비 "
+              "lift 유지=진짜 / 급락=과거 lift 는 crosshair artifact.")
     if CONSENSUS_MIN_S < 4:
         print(f"  ⚠ min_s={CONSENSUS_MIN_S}: S={CONSENSUS_MIN_S} recipe 의 LOO consensus 는 "
               f"{CONSENSUS_MIN_S - 1}장으로 빌드돼 약함 — lift 가 양수여도 blur 가드 함께 확인 "

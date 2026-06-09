@@ -795,7 +795,7 @@ def _miss_dist_distribution(dists, *, tol=GT_TOL_NORM):
 
 
 def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None,
-                           combined_renderer=None) -> dict | None:
+                           combined_renderer=None, frame_loader=None) -> dict | None:
     """S-consensus 템플릿 A/B (leave-one-out) — rcp 대신 consensus 로 in_topk 가 뛰나.
 
     by_recipe[rec] = {"s_frames": [{path,xy,mod,crop}], "e_paths": [Path], "rcp_tpls": {mod: tpl}}.
@@ -807,6 +807,10 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None,
     combined_renderer: LOO 한 점마다 호출되는 시각화 훅(없으면 무시). ctx dict
       {recipe, mod, path, gray, xy, cons_tpl, rcp_tpl, gc, gr} 를 받는다 — 측정은 여기(단일
       출처)서 하고 그림은 호출측이 그리게 분리(매칭 재실행/표류 방지). 렌더 예외는 삼킨다.
+    frame_loader: LOO 매칭 프레임 로더 f(s_frame dict)->gray|None (기본 load_gray(path) raw).
+      cond 판이 crosshair 정제 프레임을 주입하는 자리 — consensus 중앙의 inpaint 잔상이
+      프레임 GT crosshair 와 가짜 lock 하는 비대칭(consensus 만 유리)을 끊는 A/B 용.
+      None 반환/예외 = 그 프레임 skip. cons/rcp/가드 S 모두 같은 프레임으로 측정(공정 비교).
     반환: per-recipe + overall in_topk_rate(rcp vs consensus) + lift + generic 가드.
     """
     from poc.workflow_3.vision.align_fail_assets import load_gray
@@ -867,8 +871,10 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None,
             cons_tpl = build_template(_consensus(others), recipe_id=rec,
                                       version="s_consensus", key_type=mod)
             try:
-                gray = load_gray(f["path"])
+                gray = frame_loader(f) if frame_loader is not None else load_gray(f["path"])
             except Exception:
+                continue
+            if gray is None:
                 continue
             gc = _gt_in_topk(gray, tuple(f["xy"]), {mod: cons_tpl})
             if gc is None:

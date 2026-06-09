@@ -801,8 +801,11 @@ def compute_align_key_score_ensemble(
             best_cand = cand
             best_orb = orb
 
+    # distinctiveness·반환 후보는 *선택 풀과 동일*해야 한다 — best 는 candidates[:top_n]
+    # 에서 ORB-rerank 로 골랐으므로 shadow(>top_n) 를 빼고 같은 풀로 마감(거짓 not_distinctive 방지).
     # 반환 candidates 는 chamfer 내림차순(AlignKeyCandidate.score 계약). best 는 별도 추적.
-    candidates_sorted = sorted(candidates, key=lambda c: c.chamfer_score, reverse=True)
+    pool = candidates[:policy.top_n]
+    candidates_sorted = sorted(pool, key=lambda c: c.chamfer_score, reverse=True)
     return _finalize_match(
         best_cand, candidates_sorted, frame, template, policy, roi_origin,
         chamfer_score=best_cand.chamfer_score, orb_ratio=best_orb,

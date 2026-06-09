@@ -64,7 +64,7 @@ class Workflow3Settings(WorkflowSettings):
 
     # --- consensus S-image gather ---
     gather_enabled: bool = True
-    gather_max_events: int = 5
+    gather_max_events: int = 5  # vision/consensus_gather.py 의 GATHER_MAX_EVENTS 와 동일 값 유지.
 
     # --- CV 보정 ---
     correction_enabled: bool = True

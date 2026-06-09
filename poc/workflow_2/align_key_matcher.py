@@ -765,6 +765,12 @@ def compute_align_key_score_ensemble(
     (chamfer+ORB)로 rerank 해야 한다(설계: docs/specs/2026-06-09-ensemble-proposer-
     production-integration-design.md). 프레임당 비용↑(ORB×top_n + ensemble ~1s) 이므로
     fallback/static-compare 경로 전용 — live broad-scan 은 compute_align_key_score 유지.
+
+    주의(distinctiveness 의미): 반환 result.distinctive / reject_reason("not_distinctive")
+    의 유일성 판정은 공유 _finalize_match 가 *chamfer 집합* 기준으로 계산한다(가장 강한 chamfer
+    peak 이 2nd 대비 유일한가). ORB pool-rerank 가 best_xy 를 chamfer-top 이 아닌 후보로 뒤집은
+    경우, distinctive 는 best_xy 자체의 유일성이 아니라 chamfer-top 의 유일성을 가리킨다. 따라서
+    distinctive 는 soft advisory 신호로만 쓰고 hard gate 로 쓰지 말 것.
     """
     gray_frame, frame_dt, scales, roi_origin = _prepare_match_inputs(
         template,
@@ -779,7 +785,10 @@ def compute_align_key_score_ensemble(
     )
     positions = [(c.xy, c.scale) for c in ens.fused]
     candidates = _rescore_positions_to_candidates(template, frame_dt, positions)
-    if not candidates:
+    # rescore 는 위치마다 1개를 항상 반환(맵 밖=0.0)하므로, ens.fused 가 비었거나 모든 후보
+    # chamfer 가 0(구조 일치 전무)이면 no_candidates 로 통일 — compute_align_key_score 의
+    # reject_reason 계약과 맞춰 두 진입점을 drop-in 호환으로 유지한다.
+    if not candidates or all(c.chamfer_score <= 0.0 for c in candidates):
         return _no_candidate_result(frame, frame_dt, template, roi_origin)
 
     # verifier-rerank: top_n 후보에 ORB → combined = chamfer_w*chamfer + orb_w*orb → argmax.

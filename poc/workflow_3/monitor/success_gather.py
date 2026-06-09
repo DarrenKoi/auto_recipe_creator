@@ -4,6 +4,10 @@ vision.consensus_gather 의 순수 orchestration 을 office 다운로더 해석(
 daemon thread 로 감싼다. office 모듈 부재(개발 PC)·예외 시 조용히 skip 해 모니터 루프를
 죽이지 않는다(alarm_source/notify 와 동일 철학).
 
+동일 (eqp_id, recipe_id) 조합에 대해 gather 가 이미 진행 중이면 skip 한다.
+고정 .events_staging 경로를 두 스레드가 동시에 쓰면 partial promote 경쟁이 발생하므로
+_IN_FLIGHT 레지스트리로 in-flight dedupe 를 보장한다.
+
 (설계: poc/workflow_2/docs/superpowers/specs/2026-06-10-consensus-gather-in-loop-design.md §3-A)
 """
 
@@ -15,6 +19,11 @@ from poc.workflow_3.logger import log_work2_event
 from poc.workflow_3.vision.consensus_gather import gather_success_images
 
 LOG_COMPONENT = "consensus_gather"
+
+# 동일 recipe 동시 gather 의 staging 경쟁 방지.
+# (eqp_id, recipe_id) -> Thread. 살아있는 Thread 가 있으면 새 gather 는 skip.
+_IN_FLIGHT_LOCK = threading.Lock()
+_IN_FLIGHT: dict = {}  # (eqp_id, recipe_id) -> Thread. 같은 recipe 동시 gather 의 staging 경쟁 방지.
 
 
 def _load_office_downloader():
@@ -56,32 +65,48 @@ def gather_success_async(eqp_id, recipe_id, settings: Workflow3Settings):
 
     gather_enabled off / recipe_id 없음 / downloader 부재면 아무것도 안 하고 None.
     실제 fire 하면 시작된 Thread 를 반환한다(테스트 join 용). 예외는 thread 안에서 삼킨다.
+
+    같은 (eqp_id, recipe_id) 에 대해 gather thread 가 이미 살아있으면 skip(None 반환).
+    고정 .events_staging 경로 공유로 인한 동시 쓰기/부분 promote 경쟁을 _IN_FLIGHT 레지스트리로 차단.
     """
     if not settings.gather_enabled or not recipe_id or not DOWNLOADER_AVAILABLE:
         return None
 
-    def _run():
-        try:
-            result = gather_success_images(
-                eqp_id, recipe_id,
-                downloader=_DOWNLOADER,
-                max_events=settings.gather_max_events,
-            )
-            print(f"[INFO] consensus gather: EQP_ID={eqp_id} recipe={recipe_id} "
-                  f"reason={result.reason} events={result.n_events} images={result.n_images}")
-            log_work2_event(
-                component=LOG_COMPONENT, message="gather_done",
-                eqp_id=eqp_id, recipe_id=recipe_id, reason=result.reason,
-                n_events=result.n_events, n_images=result.n_images,
-            )
-        except Exception as exc:
-            print(f"[WARNING] consensus gather 예외: EQP_ID={eqp_id}, error={exc}")
-            log_work2_event(
-                component=LOG_COMPONENT, message="gather_error", level="warning",
-                eqp_id=eqp_id, recipe_id=recipe_id, error=str(exc),
-            )
+    key = (eqp_id, recipe_id)
+    with _IN_FLIGHT_LOCK:
+        # 죽은 entry 정리 (dict 를 소형으로 유지).
+        dead = [k for k, t in _IN_FLIGHT.items() if not t.is_alive()]
+        for k in dead:
+            del _IN_FLIGHT[k]
 
-    thread = threading.Thread(target=_run, daemon=True)
+        if key in _IN_FLIGHT and _IN_FLIGHT[key].is_alive():
+            print(f"[INFO] consensus gather 이미 진행 중(skip): EQP_ID={eqp_id} recipe={recipe_id}")
+            return None
+
+        def _run():
+            try:
+                result = gather_success_images(
+                    eqp_id, recipe_id,
+                    downloader=_DOWNLOADER,
+                    max_events=settings.gather_max_events,
+                )
+                print(f"[INFO] consensus gather: EQP_ID={eqp_id} recipe={recipe_id} "
+                      f"reason={result.reason} events={result.n_events} images={result.n_images}")
+                log_work2_event(
+                    component=LOG_COMPONENT, message="gather_done",
+                    eqp_id=eqp_id, recipe_id=recipe_id, reason=result.reason,
+                    n_events=result.n_events, n_images=result.n_images,
+                )
+            except Exception as exc:
+                print(f"[WARNING] consensus gather 예외: EQP_ID={eqp_id}, error={exc}")
+                log_work2_event(
+                    component=LOG_COMPONENT, message="gather_error", level="warning",
+                    eqp_id=eqp_id, recipe_id=recipe_id, error=str(exc),
+                )
+
+        thread = threading.Thread(target=_run, daemon=True)
+        _IN_FLIGHT[key] = thread
+
     thread.start()
     return thread
 

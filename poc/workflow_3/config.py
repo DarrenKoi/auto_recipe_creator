@@ -62,6 +62,10 @@ class Workflow3Settings(WorkflowSettings):
     recording_max_sec: float = 900.0
     engineer_watch_sec: float = 600.0
 
+    # --- consensus S-image gather ---
+    gather_enabled: bool = True
+    gather_max_events: int = 5
+
     # --- CV 보정 ---
     correction_enabled: bool = True
     correction_dry_run: bool = True  # False 는 SAFE_MODE off + env 명시(0)일 때만.
@@ -99,6 +103,8 @@ def load_workflow3_settings() -> Workflow3Settings:
         recording_change_min_px=env_int("ALIGN_FAIL_RECORDING_CHANGE_MIN_PX", 4),
         recording_max_sec=env_float("ALIGN_FAIL_RECORDING_MAX_SEC", 900.0),
         engineer_watch_sec=env_float("ALIGN_FAIL_ENGINEER_WATCH_SEC", 600.0),
+        gather_enabled=env_flag("ALIGN_FAIL_GATHER_SUCCESS", default=True),
+        gather_max_events=env_int("ALIGN_FAIL_GATHER_MAX_EVENTS", 5),
         correction_enabled=env_flag("ALIGN_FAIL_CORRECTION", default=True),
         correction_dry_run=correction_dry_run,
         ok_button_vlm_service=_env_str("ALIGN_OK_BUTTON_VLM_SERVICE", "ui-venus-1.5-8b"),

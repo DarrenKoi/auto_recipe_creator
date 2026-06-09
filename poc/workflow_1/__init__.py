@@ -1,8 +1,13 @@
 """
-Workflow 1 package.
+Workflow 1 package — RCS 자동화 초기 실험 (legacy).
 
-`poc/work2` 에서 분리한 workflow 관련 모듈과
-독립 실행에 필요한 최소 공용 유틸리티를 함께 모아 둔 패키지.
+production 경로(RCS 로그인/tool 선택·종료/캡처/알람 루프 + 공용 유틸/VLM
+클라이언트)는 `poc.workflow_3` 로 전면 이전되었다. 본 패키지에는 CCTV/DVR
+경로(monitor_align_fail, *_cctv, capture_window_frames_*)와 초기 실험
+스크립트만 남으며, 공용 코드는 workflow_3 에서 import 한다.
+
+align_images/ 데이터 루트는 오피스 MES 도구가 이 물리 경로를 직접 타겟하므로
+여기 남는다 (workflow_3 의 ALIGN_IMAGES_DIR 이 같은 경로를 가리킨다).
 """
 
 import os

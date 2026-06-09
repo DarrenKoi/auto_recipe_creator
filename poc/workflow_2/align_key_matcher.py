@@ -497,11 +497,16 @@ def compute_orb_inlier_ratio(
 
 
 def _resize_template(raw_gray: np.ndarray, scale: float) -> np.ndarray:
-    """box template raw 를 scale 로 리사이즈한 grayscale (candidate scale 패치 비교용)."""
+    """box template raw 를 scale 로 리사이즈한 grayscale (candidate scale 패치 비교용).
+
+    축소(scale<1)는 INTER_AREA(moiré 억제), 확대(scale≥1)는 INTER_LINEAR — INTER_AREA 확대는
+    nearest 유사라 blocky 해져 NCC 가 deflate 됨(scale 1.2/1.4 후보 부당 과소평가 방지).
+    """
     th, tw = raw_gray.shape[:2]
     nw = max(1, int(round(tw * scale)))
     nh = max(1, int(round(th * scale)))
-    return cv2.resize(raw_gray, (nw, nh), interpolation=cv2.INTER_AREA)
+    interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+    return cv2.resize(raw_gray, (nw, nh), interpolation=interp)
 
 
 def _frame_patch(frame: np.ndarray, cx: int, cy: int, tw: int, th: int):
@@ -825,6 +830,12 @@ def compute_align_key_score_ensemble(
     peak 이 2nd 대비 유일한가). NCC reranker 가 best_xy 를 chamfer-top 이 아닌 후보로 골랐을
     경우, distinctive 는 best_xy 자체의 유일성이 아니라 chamfer-top 의 유일성을 가리킨다. 따라서
     distinctive 는 soft advisory 신호로만 쓰고 hard gate 로 쓰지 말 것.
+
+    주의(score/decision 의미): result.score/decision 도 기존 chamfer+ORB 로 계산하므로, NCC 가
+    *낮은 chamfer* 의 정답 후보를 골랐을 때(chamfer_miss 케이스가 정확히 이것) score 가 낮아
+    decision="low" 가 될 수 있다 — best_xy 는 맞아도. 호출자 전환 시 decision/score 를 hard gate
+    로 쓰면 정답 좌표가 버려질 수 있으니, 그 단계에서 score 를 chamfer+NCC 로 재구성하거나
+    threshold 를 재캘리브레이션할 것. 현재는 best_xy(좌표)만 신뢰.
     """
     global compute_ensemble_candidates
     if compute_ensemble_candidates is None:   # lazy 바인딩(순환 import 회피). 패치 시엔 None 아님→스킵.
@@ -875,7 +886,7 @@ def compute_align_key_score_ensemble(
         best_orb, _n_inliers, _n_matches = compute_orb_inlier_ratio(template.raw_image, crop)
 
     # distinctiveness·반환 후보는 *선택 풀과 동일*해야 한다 — best 는 candidates[:top_n]
-    # 에서 ORB-rerank 로 골랐으므로 shadow(>top_n) 를 빼고 같은 풀로 마감(거짓 not_distinctive 방지).
+    # 에서 NCC reranker 로 골랐으므로 shadow(>top_n) 를 빼고 같은 풀로 마감(거짓 not_distinctive 방지).
     # 반환 candidates 는 chamfer 내림차순(AlignKeyCandidate.score 계약). best 는 별도 추적.
     pool = candidates[:policy.top_n]
     candidates_sorted = sorted(pool, key=lambda c: c.chamfer_score, reverse=True)

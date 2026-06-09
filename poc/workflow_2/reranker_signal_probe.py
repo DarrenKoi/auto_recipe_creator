@@ -25,7 +25,6 @@ except Exception:
 import json
 from pathlib import Path
 
-import cv2
 import numpy as np
 
 from poc.workflow_2 import DEBUG_IMAGE_DIR

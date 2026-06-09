@@ -1,6 +1,10 @@
 """회귀 프레임 진단 — localization e2e A/B 의 only_base(baseline hit·ensemble miss) 프레임을
 ensemble 내부 pool 까지 까서 *왜 reranker 가 진실을 못 골랐나*를 분류한다.
 
+주의: 이 진단은 *ORB-selection 시절* ensemble 회귀 분류용이다(orb_flip 카테고리). production 은
+2026-06-09 부터 NCC reranker selection — _ensemble_pool 은 ORB-selection 을 재현하므로
+(reranker_rule_ab 의 ens_orb 비교 기준과 동일) 현재 production 픽이 아니라 ORB-시절 픽을 분류한다.
+
 배경: e2e A/B(localization_ab_ensemble)에서 ensemble proposer recall@8=0.698 인데 최종 hit 는
 0.407(baseline 0.422 보다 낮음). 진실이 pool 에 70% 있는데 못 고름 → 병목이 reranker. 이 러너는
 각 회귀(only_base) 프레임에서 ensemble 후보 pool 의 per-candidate (chamfer, orb, combined, GT거리)를

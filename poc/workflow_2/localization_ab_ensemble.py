@@ -6,7 +6,8 @@ proposer_recall_ab 가 proposer recall(후보 집합 membership)만 쟀다면, �
 
 두 arm 은 동일 입력·동일 config(scales=COMPARE_SCALES, policy=STRUCTURE_POLICY — 생산 fallback/
 static-compare 경로와 동일). 차이는 오직 proposer 단계: baseline=C1 chamfer 단일, ensemble=3채널
-RRF + chamfer rescore + ORB pool-rerank. modality 라우팅·box template·cond GT 는
+RRF + chamfer rescore + reranker selection(2026-06-09 이후 production=NCC; 그 전엔 ORB).
+modality 라우팅·box template·cond GT 는
 golden_localization_eval_cond 재사용. 설계: docs/specs/2026-06-09-ensemble-proposer-
 production-integration-design.md.
 

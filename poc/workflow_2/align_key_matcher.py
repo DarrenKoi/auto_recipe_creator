@@ -227,15 +227,14 @@ def _scaled_edges(template_edges: np.ndarray, scale: float) -> np.ndarray:
     return cv2.resize(template_edges, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
 
 
-def _chamfer_score_map_at_scale(
+def _mean_dt_map_at_scale(
     template_edges: np.ndarray,
     frame_dt: np.ndarray,
     scale: float,
 ) -> tuple[np.ndarray | None, tuple[int, int]]:
-    """단일 스케일의 *전체 score map* 을 반환 (top-1 만이 아니라 후보 추출용).
+    """단일 스케일의 *mean_dt map* (exp 적용 전). 작을수록 좋음.
 
-    score_map[y, x] = exp(-mean_dt / tau) — 템플릿 top-left 가 (x, y) 일 때의 0~1 점수.
-    매칭 불가(템플릿이 프레임보다 큼 / edge 없음) → (None, (tw, th)).
+    반환 (mean_dt_map | None, (tw, th)). 매칭 불가(템플릿이 프레임보다 큼 / edge 없음) → (None, ...).
     """
     edges_scaled = _scaled_edges(template_edges, scale)
     th, tw = edges_scaled.shape[:2]
@@ -248,9 +247,19 @@ def _chamfer_score_map_at_scale(
         return None, (tw, th)
     # CCORR: result[y, x] = sum over (i, j) of frame_dt[y+i, x+j] * template_mask[i, j].
     result = cv2.matchTemplate(frame_dt, template_mask, cv2.TM_CCORR)
-    mean_dt_map = result / edge_count           # 작을수록 좋다 (edge 까지 평균 거리).
-    score_map = np.exp(-mean_dt_map / DT_TAU_PX)
-    return score_map.astype(np.float32), (tw, th)
+    return (result / edge_count).astype(np.float32), (tw, th)
+
+
+def _chamfer_score_map_at_scale(
+    template_edges: np.ndarray,
+    frame_dt: np.ndarray,
+    scale: float,
+) -> tuple[np.ndarray | None, tuple[int, int]]:
+    """단일 스케일 score map = exp(-mean_dt/DT_TAU_PX). (mean_dt map wrapper — 동작 보존)."""
+    mean_dt_map, (tw, th) = _mean_dt_map_at_scale(template_edges, frame_dt, scale)
+    if mean_dt_map is None:
+        return None, (tw, th)
+    return np.exp(-mean_dt_map / DT_TAU_PX).astype(np.float32), (tw, th)
 
 
 def _chamfer_score_at_scale(
@@ -300,8 +309,8 @@ def _extract_peaks(
     return peaks
 
 
-def compute_chamfer_candidates(
-    template: AlignKeyTemplate,
+def _collect_candidates(
+    template_edges: np.ndarray,
     frame_dt: np.ndarray,
     *,
     scales: tuple[float, ...] = DEFAULT_SCALES,
@@ -309,14 +318,13 @@ def compute_chamfer_candidates(
     nms_radius_ratio: float = 0.5,
     min_score: float = 0.0,
 ) -> list["AlignKeyCandidate"]:
-    """multi-scale Chamfer score map → NMS top-N 후보 (chamfer 내림차순).
+    """edge map + frame_dt → multi-scale chamfer NMS top-N 후보 (chamfer 내림차순).
 
-    각 스케일에서 peak 를 뽑고, 스케일 간에는 center 거리 기반 global NMS 로 병합한다
-    (같은 물리 위치가 여러 스케일에서 중복 잡히는 것 방지, 더 높은 점수 유지).
+    채널 무관 — C1(canny)/C2(scharr) 가 같은 본체를 edge map 만 바꿔 호출한다.
     """
     collected: list[tuple[float, int, int, float, int, int]] = []  # (score, cx, cy, scale, tw, th)
     for scale in scales:
-        score_map, (tw, th) = _chamfer_score_map_at_scale(template.edge_map, frame_dt, scale)
+        score_map, (tw, th) = _chamfer_score_map_at_scale(template_edges, frame_dt, scale)
         if score_map is None:
             continue
         nms_r = max(4, int(min(tw, th) * nms_radius_ratio))
@@ -344,6 +352,22 @@ def compute_chamfer_candidates(
         )
         for (s, cx, cy, scale, tw, th) in kept
     ]
+
+
+def compute_chamfer_candidates(
+    template: AlignKeyTemplate,
+    frame_dt: np.ndarray,
+    *,
+    scales: tuple[float, ...] = DEFAULT_SCALES,
+    top_n: int = 8,
+    nms_radius_ratio: float = 0.5,
+    min_score: float = 0.0,
+) -> list["AlignKeyCandidate"]:
+    """multi-scale Chamfer NMS top-N 후보 (C1 = canny edge map). _collect_candidates wrapper."""
+    return _collect_candidates(
+        template.edge_map, frame_dt, scales=scales, top_n=top_n,
+        nms_radius_ratio=nms_radius_ratio, min_score=min_score,
+    )
 
 
 def compute_chamfer_score(

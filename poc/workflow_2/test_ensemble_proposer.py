@@ -74,3 +74,54 @@ def test_ensemble_candidates_returns_topn_and_shadow():
     assert set(res.solo.keys()) == {"canny", "scharr", "orient"}
     # 진짜 위치(≈150,120)가 fused 후보 중에 있다.
     assert any(abs(c.xy[0] - 150) <= 8 and abs(c.xy[1] - 120) <= 8 for c in res.fused)
+
+
+def _reference_directional(template_gray, frame_gray, scale, n_bins=8):
+    """원본(중복 연산판) directional chamfer 의 인라인 재현 — 리팩터 동치(점수 불변) 가드."""
+    import cv2 as _cv2
+    import numpy as _np
+    from poc.workflow_2.align_key_matcher import _scaled_edges, DT_TAU_PX
+    t_bins = ep._orientation_bin_edges(template_gray, n_bins)
+    f_bins = ep._orientation_bin_edges(frame_gray, n_bins)
+    num, den, out_size = None, 0.0, None
+    for tb, fb in zip(t_bins, f_bins):
+        tb_s = _scaled_edges(tb, scale)
+        th, tw = tb_s.shape[:2]
+        fh, fw = fb.shape[:2]
+        if th >= fh or tw >= fw:
+            return None, (tw, th)
+        mask = (tb_s > 0).astype(_np.float32)
+        cnt = float(mask.sum())
+        if cnt <= 0:
+            continue
+        f_dt = _cv2.distanceTransform(_cv2.bitwise_not(fb), _cv2.DIST_L2, 5).astype(_np.float32)
+        mean_dt = _cv2.matchTemplate(f_dt, mask, _cv2.TM_CCORR) / cnt
+        num = mean_dt * cnt if num is None else num + mean_dt * cnt
+        den += cnt
+        out_size = (tw, th)
+    if num is None or den <= 0:
+        return None, (out_size or (0, 0))
+    return _np.exp(-(num / den) / DT_TAU_PX).astype(_np.float32), out_size
+
+
+def test_directional_refactor_preserves_score_map():
+    # 리팩터(중복 DT 제거)가 원본과 *수치 동일* 한 score map 을 내는지 — 여러 scale 에서.
+    import numpy as np
+    frame = _square_img(size=240, box=(120, 90, 60, 60))
+    tpl = _square_img(size=80, box=(10, 10, 60, 60))
+    for scale in (0.6, 0.85, 1.0):
+        ref, ref_sz = _reference_directional(tpl, frame, scale)
+        new, new_sz = ep._directional_chamfer_score_map(tpl, frame, scale=scale)
+        assert (ref is None) == (new is None)
+        if ref is not None:
+            assert ref_sz == new_sz
+            assert np.allclose(ref, new, atol=1e-6), scale
+
+
+def test_directional_context_shapes():
+    frame = _square_img(size=240, box=(120, 90, 60, 60))
+    tpl = _square_img(size=80, box=(10, 10, 60, 60))
+    t_bins, f_dts = ep._directional_context(tpl, frame, n_bins=8)
+    assert len(t_bins) == 8 and len(f_dts) == 8
+    # frame DT 들은 frame 크기, float32.
+    assert all(d.shape == frame.shape and d.dtype == np.dtype("float32") for d in f_dts)

@@ -67,29 +67,39 @@ def _orientation_bin_edges(image, n_bins=N_ORIENT_BINS, r_c1=None):
     return out
 
 
-def _directional_chamfer_score_map(template_gray, frame_gray, *, scale, n_bins=N_ORIENT_BINS):
-    """방향 분할 chamfer score map = exp(-weighted_mean_dt/DT_TAU_PX).
+def _directional_context(template_gray, frame_gray, n_bins=N_ORIENT_BINS):
+    """directional chamfer 의 scale-불변 준비물: (template 방향 bin 리스트, frame bin 별 DT 리스트).
 
-    bin 별: same-bin frame edge 의 DT 위에 same-bin template edge 를 슬라이드한 mean_dt.
-    bin 들을 template bin edge-count 가중 평균(weighted mean) → exp. min/sum 대신 weighted
-    mean: 한 방향만 맞아도 과대평가(min)·edge 많은 bin 지배(sum) 회피, 기존 평균거리 규약 일관.
+    frame 방향 bin 과 그 distance transform 은 scale 과 무관하므로 scale 루프 *밖에서 1회*
+    계산해 재사용한다(과거엔 scale 마다 8개 DT 를 재계산 → orient 채널이 비용의 ~78%, 대량
+    프레임에서 hang 처럼 보였음). 점수는 불변 — _directional_score_at_scale 가 같은 가중평균.
     """
     t_bins = _orientation_bin_edges(template_gray, n_bins)
     f_bins = _orientation_bin_edges(frame_gray, n_bins)
+    f_dts = [cv2.distanceTransform(cv2.bitwise_not(fb), cv2.DIST_L2, 5).astype(np.float32)
+             for fb in f_bins]
+    return t_bins, f_dts
+
+
+def _directional_score_at_scale(t_bins, f_dts, scale):
+    """미리 만든 (t_bins, f_dts)[=_directional_context] 로 단일 scale directional chamfer score map.
+
+    scale-의존부만 수행: template bin 축소(_scaled_edges) + same-bin frame DT 위 matchTemplate.
+    bin edge-count 가중 평균 → exp(-weighted_mean_dt/DT_TAU_PX). 반환 (score_map|None, (tw,th)).
+    """
     num = None        # Σ_bin (edge_count_b * mean_dt_map_b)
     den = 0.0         # Σ_bin edge_count_b
     out_size = None
-    for tb, fb in zip(t_bins, f_bins):
+    for tb, f_dt in zip(t_bins, f_dts):
         tb_s = _scaled_edges(tb, scale)
         th, tw = tb_s.shape[:2]
-        fh, fw = fb.shape[:2]
+        fh, fw = f_dt.shape[:2]
         if th >= fh or tw >= fw:
             return None, (tw, th)
         mask = (tb_s > 0).astype(np.float32)
         cnt = float(mask.sum())
         if cnt <= 0:
             continue
-        f_dt = cv2.distanceTransform(cv2.bitwise_not(fb), cv2.DIST_L2, 5).astype(np.float32)
         mean_dt = cv2.matchTemplate(f_dt, mask, cv2.TM_CCORR) / cnt
         num = mean_dt * cnt if num is None else num + mean_dt * cnt
         den += cnt
@@ -98,6 +108,16 @@ def _directional_chamfer_score_map(template_gray, frame_gray, *, scale, n_bins=N
         return None, (out_size or (0, 0))
     weighted_mean_dt = num / den
     return np.exp(-weighted_mean_dt / DT_TAU_PX).astype(np.float32), out_size
+
+
+def _directional_chamfer_score_map(template_gray, frame_gray, *, scale, n_bins=N_ORIENT_BINS):
+    """방향 분할 chamfer score map = exp(-weighted_mean_dt/DT_TAU_PX). (단일 scale 편의 wrapper)
+
+    context 1회 + 1 scale. multi-scale 호출은 _directional_context 를 한 번 만들고
+    _directional_score_at_scale 를 scale 마다 부르는 편이 빠르다(_channel_solo_candidates 가 그렇게 함).
+    """
+    t_bins, f_dts = _directional_context(template_gray, frame_gray, n_bins)
+    return _directional_score_at_scale(t_bins, f_dts, scale)
 
 
 @dataclass
@@ -140,10 +160,11 @@ def _channel_solo_candidates(template_gray, frame_gray, channel, *, scales=DEFAU
             f_dt = cv2.distanceTransform(cv2.bitwise_not(f_edges), cv2.DIST_L2, 5).astype(np.float32)
         cands = _collect_candidates(t_edges, f_dt, scales=scales, top_n=top_k)
         return [_Cand(xy=c.xy, score=c.chamfer_score, scale=c.scale) for c in cands]
-    # orient: per-scale directional score map → peaks.
+    # orient: scale-불변 context(frame DT 8개) 1회 → scale 마다 score map → peaks.
     collected = []
+    t_bins, f_dts = _directional_context(g, f)        # frame DT 재사용(중복 제거).
     for scale in scales:
-        smap, (tw, th) = _directional_chamfer_score_map(g, f, scale=scale)
+        smap, (tw, th) = _directional_score_at_scale(t_bins, f_dts, scale)
         if smap is None:
             continue
         nms_r = max(4, int(min(tw, th) * 0.5))

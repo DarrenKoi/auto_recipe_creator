@@ -39,6 +39,9 @@ class ConditionType(Enum):
     TEXT_APPEARED = "text_appeared"
     TEXT_ALREADY_PRESENT = "text_already_present"
     MASKED_TEXT_PRESENT = "masked_text_present"
+    # context[target_key] 가 None 이 아니면 충족 — executor 가 context 에 심은
+    # 산출물(창 핸들, controller 등)의 존재를 success_criteria 로 검증할 때 쓴다.
+    CONTEXT_KEY_SET = "context_key_set"
 
 
 class ConditionGroupType(Enum):

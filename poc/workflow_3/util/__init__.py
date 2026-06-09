@@ -1,4 +1,4 @@
-"""workflow_1 전용 경량 유틸리티 묶음."""
+"""workflow_3 공용 경량 유틸리티 묶음 (env/image/json/time + 선택적 mouse/window)."""
 
 from .env_utils import env_flag, env_float, env_int
 from .image_utils import (

@@ -35,6 +35,7 @@ class ConditionChecker:
             ConditionType.TEXT_APPEARED: self._check_text_appeared,
             ConditionType.TEXT_ALREADY_PRESENT: self._check_text_appeared,
             ConditionType.MASKED_TEXT_PRESENT: self._check_masked_text_present,
+            ConditionType.CONTEXT_KEY_SET: self._check_context_key_set,
         }
 
     def bind_context(self, context: dict) -> None:
@@ -141,6 +142,10 @@ class ConditionChecker:
             return False
         typed_values = self.context.get("typed_values", {})
         return bool(str(typed_values.get(target_key, "") or ""))
+
+    def _check_context_key_set(self, condition: StepCondition) -> bool:
+        target_key = condition.target_key or ""
+        return bool(target_key) and self.context.get(target_key) is not None
 
 
 class WorkflowRunner:

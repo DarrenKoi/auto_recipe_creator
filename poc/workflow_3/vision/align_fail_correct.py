@@ -405,9 +405,19 @@ def correct_align_fail_auto(
     notify_fn: NotifyFn | None = None,
     dry_run: bool = True,
     debug_dir: Path | None = None,
+    eqp_id: str = "",
+    class_name: str = "",
+    recipe_name: str = "",
 ) -> CorrectionOutcome:
-    """자산을 자동 해석(resolve_assets_auto)해 template 을 만들고 correct_align_fail 실행."""
-    assets = resolve_assets_auto()
+    """자산을 자동 해석(resolve_assets_auto)해 template 을 만들고 correct_align_fail 실행.
+
+    eqp_id/class_name/recipe_name 을 주면 resolve_assets_auto 의 override 로 전달된다
+    (알람 RECIPE_ID 가 "<class>/<recipe>" 형태면 recipe_name 에 그대로 줘도 된다).
+    미지정 시 기존처럼 최신 align fail 폴더를 자동 선택한다.
+    """
+    assets = resolve_assets_auto(
+        eqp_id=eqp_id, class_name=class_name, recipe_name=recipe_name
+    )
     if assets is None:
         print("[ERROR] align fail recipe 폴더를 찾지 못했습니다.")
         log_work2_event(component=LOG_COMPONENT, message="no_assets", level="error")

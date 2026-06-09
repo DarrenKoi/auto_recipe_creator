@@ -288,7 +288,8 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
     modality 끼리 best(최저 rank)를 채택한다. 후보를 pool 해 global truncate 하면 한 modality 의
     잡음 peak 이 다른 modality 의 truth 후보를 밀어내 recall 을 과소평가하므로 금지.
 
-    반환 dict: {topk_rank, in_topk, n_cand, best_cand_dist_norm, modality} 또는 None.
+    반환 dict: {topk_rank, in_topk, n_cand, best_cand_dist_norm, modality, cand_xys} 또는 None.
+    cand_xys 는 채택된 modality 의 top-N 후보 좌표(score 내림차순) — 결합 패널 시각화용.
     (rerank[MI·contour] 검증은 끝남 — 둘 다 폐기, `docs/study/reranker_ab_failure_analysis.md`.)
     """
     from poc.workflow_3.vision.align_key_matcher import (
@@ -297,7 +298,7 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
     )
     _edges, frame_dt = preprocess_for_matching(gray)
     cxh, cyh = crosshair_xy
-    best = None  # (rank|None, n_cand, best_dist, mod)
+    best = None  # (rank|None, n_cand, best_dist, mod, cand_xys)
     any_cand = False
     for mod, tpl in center_tpls.items():
         if tpl is None:
@@ -313,12 +314,13 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
         any_cand = True
         dists = [float(np.hypot(c.xy[0] - cxh, c.xy[1] - cyh)) / short for c in cands]
         rank = next((i for i, d in enumerate(dists, 1) if d <= GT_TOL_NORM), None)
-        cur = (rank, len(cands), min(dists), mod)
+        cur = (rank, len(cands), min(dists), mod,
+               [[int(c.xy[0]), int(c.xy[1])] for c in cands])
         # race: in_topk(rank!=None) 우선 → 낮은 rank → 가까운 best_dist.
         if best is None:
             best = cur
         else:
-            b_rank, _bn, b_dist, _bm = best
+            b_rank, _bn, b_dist, _bm, _bc = best
             better = (
                 (rank is not None and (b_rank is None or rank < b_rank))
                 or (rank is None and b_rank is None and cur[2] < b_dist)
@@ -327,13 +329,14 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
                 best = cur
     if not any_cand:
         return None
-    rank, n_cand, best_dist, mod = best
+    rank, n_cand, best_dist, mod, cand_xys = best
     return {
         "topk_rank": rank,
         "in_topk": rank is not None,
         "n_cand": n_cand,
         "best_cand_dist_norm": round(best_dist, 3),
         "modality": mod,
+        "cand_xys": cand_xys,
     }
 
 
@@ -791,7 +794,8 @@ def _miss_dist_distribution(dists, *, tol=GT_TOL_NORM):
             "p25": _q(0.25), "p75": _q(0.75), "max": round(s[-1], 3), "bins": bins}
 
 
-def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None) -> dict | None:
+def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None,
+                           combined_renderer=None) -> dict | None:
     """S-consensus 템플릿 A/B (leave-one-out) — rcp 대신 consensus 로 in_topk 가 뛰나.
 
     by_recipe[rec] = {"s_frames": [{path,xy,mod,crop}], "e_paths": [Path], "rcp_tpls": {mod: tpl}}.
@@ -800,6 +804,9 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None) -> 
     generic 가드: S·E 모두 *동일* all-crops consensus 의 free-best chamfer 로 재 비교 가능하게 한다
     (cons_E >= cons_S 면 흐릿한 generic 템플릿 = 가짜 회복). 검증된 consensus 는 out_dir/consensus/
     에 저장 → 재등록 도구가 같은 산출물을 그대로 쓰게 한다(별도 재계산 divergence 방지).
+    combined_renderer: LOO 한 점마다 호출되는 시각화 훅(없으면 무시). ctx dict
+      {recipe, mod, path, gray, xy, cons_tpl, rcp_tpl, gc, gr} 를 받는다 — 측정은 여기(단일
+      출처)서 하고 그림은 호출측이 그리게 분리(매칭 재실행/표류 방지). 렌더 예외는 삼킨다.
     반환: per-recipe + overall in_topk_rate(rcp vs consensus) + lift + generic 가드.
     """
     from poc.workflow_3.vision.align_fail_assets import load_gray
@@ -874,6 +881,7 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None) -> 
             if gc["topk_rank"] == 1:        # rank-1 = consensus 의 free-best 가 정답에 lock(distinctive).
                 cons_r1 += 1
             # rcp baseline — 같은 modality·frame·_gt_in_topk (apples-to-apples).
+            gr = None
             if rcp_tpl is not None:
                 gr = _gt_in_topk(gray, tuple(f["xy"]), {mod: rcp_tpl})
                 if gr is not None:
@@ -883,6 +891,18 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None) -> 
                             rcp_r1 += 1
                     elif gr.get("best_cand_dist_norm") is not None:
                         rcp_miss_dists.append(gr["best_cand_dist_norm"])
+            # 결합 패널 훅 — 측정에 쓴 것과 동일한 frame/template/후보로 그리게 컨텍스트 전달.
+            # 렌더 실패가 A/B 측정을 깨면 안 되므로 예외는 경고만 남기고 계속.
+            if combined_renderer is not None:
+                try:
+                    combined_renderer({
+                        "recipe": rec, "mod": mod, "path": f["path"],
+                        "gray": gray, "xy": tuple(f["xy"]),
+                        "cons_tpl": cons_tpl, "rcp_tpl": rcp_tpl,
+                        "gc": gc, "gr": gr,
+                    })
+                except Exception as exc:
+                    print(f"[WARNING] combined 렌더 실패 {rec}/{f['path'].name}: {exc}")
             # generic 가드 S: held-out frame 에 all-crops consensus free-best (E 와 동일 tpl).
             try:
                 _s, ch, _o, _xy, _sc = _score(all_cons_tpl, gray)

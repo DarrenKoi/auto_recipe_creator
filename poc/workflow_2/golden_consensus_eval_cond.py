@@ -28,7 +28,11 @@ template(offset 0) — consensus 도 crosshair 정렬이라 offset 0, 동일 척
 실행 (오피스, 인자 없음):
     uv run python poc/workflow_2/golden_consensus_eval_cond.py
   golden 루트: 기본 align_images_golden/, env ALIGN_GOLDEN_ROOT 로 override.
-출력: stdout + DEBUG_IMAGE_DIR/golden_consensus_eval_cond/<ts>/{summary.json, consensus/*.png}
+출력: stdout + DEBUG_IMAGE_DIR/golden_consensus_eval_cond/<ts>/{summary.json, consensus/*.png,
+  combined/<recipe>/*_combined.jpg}
+  combined 는 localization cond 판과 같은 "한 장 추적" 패널 — [좌: rcp center(baseline) +
+  LOO consensus 템플릿 스택 | 우: msr 프레임 + GT(crosshair) + 양쪽 top-N 후보].
+  consensus 가 align point 를 잘 잡는지(후보가 GT 에 모이는지)를 눈으로 확인한다.
 """
 
 import os
@@ -238,6 +242,101 @@ def _build_cond_by_recipe(assets, center_tpls):
     return entry
 
 
+# --- 결합 패널(combined) — localization cond 판과 같은 "한 장 추적" 시각화 ----------
+# 좌: [RCP center(baseline) / LOO consensus] 템플릿 세로 스택(외형·blur 비교),
+# 우: msr 프레임 + GT(crosshair) + 양쪽 top-N 후보(주황=consensus, 시안=rcp).
+# 색은 localization cond 판과 동일 톤(BGR): GT=초록, consensus 예측=주황, rcp 예측=시안.
+_CMB_GT = (0, 200, 0)
+_CMB_CONS = (0, 170, 255)
+_CMB_RCP = (220, 180, 0)
+
+
+def _resize_to_width(canvas, target_w):
+    """aspect 유지하며 target_w 로 리사이즈(세로 스택용 — 이미 같으면 그대로)."""
+    h, w = canvas.shape[:2]
+    if w == target_w:
+        return canvas
+    scale = target_w / float(w)
+    new_h = max(1, int(round(h * scale)))
+    interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+    return cv2.resize(canvas, (target_w, new_h), interpolation=interp)
+
+
+def _tpl_stack(cons_tpl, rcp_tpl, *, mod):
+    """좌측 패널: rcp center(baseline) 위 + LOO consensus 아래 세로 스택(BGR, 라벨 띠 포함).
+
+    같은 크기 crop 이지만(consensus sizing 이 center tpl 기준) 방어적으로 너비를 맞춘다.
+    consensus 가 baseline 보다 또렷한지(blur 가드의 시각판)를 한눈에 비교하는 용도.
+    """
+    panels = []
+    if rcp_tpl is not None:
+        panels.append(glec._with_header(
+            cv2.cvtColor(rcp_tpl.raw_image, cv2.COLOR_GRAY2BGR),
+            f"RCP center {mod.upper()} (baseline)"))
+    panels.append(glec._with_header(
+        cv2.cvtColor(cons_tpl.raw_image, cv2.COLOR_GRAY2BGR),
+        f"CONSENSUS LOO {mod.upper()}"))
+    target_w = max(p.shape[1] for p in panels)
+    return cv2.vconcat([_resize_to_width(p, target_w) for p in panels])
+
+
+def _render_msr_canvas(gray, xy, gc, gr, *, recipe, msr_name):
+    """msr 프레임 위에 GT(crosshair) + consensus/rcp top-N 후보를 그린 BGR canvas.
+
+    rank-1 후보(=matcher 가 실제로 찍을 점)는 큰 마커 + GT 연결선, 나머지 후보는 작은 원.
+    legend 에 in_topk rank / truth↔최근접 후보 거리(best_cand_dist_norm)를 함께 적는다.
+    """
+    canvas = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+    h, w = canvas.shape[:2]
+    cx, cy = int(xy[0]), int(xy[1])
+    cv2.drawMarker(canvas, (cx, cy), _CMB_GT, cv2.MARKER_CROSS, 22, 2)
+    cv2.circle(canvas, (cx, cy), 10, _CMB_GT, 1, cv2.LINE_AA)
+    cv2.putText(canvas, f"{recipe}/{msr_name}", (6, 18),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+
+    legend = [("GT (crosshair)", _CMB_GT)]
+    for name, res, col in (("cons", gc, _CMB_CONS), ("rcp", gr, _CMB_RCP)):
+        if not res or not res.get("cand_xys"):
+            continue
+        xs = [(int(np.clip(x, 0, w - 1)), int(np.clip(y, 0, h - 1)))
+              for x, y in res["cand_xys"]]
+        for px, py in xs[1:]:
+            cv2.circle(canvas, (px, py), 4, col, 1, cv2.LINE_AA)
+        ax, ay = xs[0]
+        cv2.line(canvas, (cx, cy), (ax, ay), col, 1, cv2.LINE_AA)
+        cv2.drawMarker(canvas, (ax, ay), col, cv2.MARKER_TILTED_CROSS, 18, 2)
+        rank = res.get("topk_rank")
+        legend.append((f"{name} top{len(xs)} rank={rank if rank is not None else 'MISS'} "
+                       f"d={res['best_cand_dist_norm']}", col))
+    for i, (text, col) in enumerate(legend):
+        cv2.putText(canvas, text, (6, 38 + i * 16),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, col, 1, cv2.LINE_AA)
+    return canvas
+
+
+def _make_combined_renderer(combined_dir):
+    """`_consensus_template_ab` 의 combined_renderer 훅 — LOO 한 점당 결합 패널 1장 저장.
+
+    [좌: 템플릿 스택 | 우: msr 후보 overlay] 를 같은 높이로 붙여
+    combined/<recipe('/'→'__')>/<msr>_<mod>_combined.jpg 로 쓴다(consensus/ PNG 와 동일 키).
+    """
+    def _render(ctx):
+        msr = _render_msr_canvas(
+            ctx["gray"], ctx["xy"], ctx["gc"], ctx["gr"],
+            recipe=ctx["recipe"], msr_name=ctx["path"].name)
+        left = _tpl_stack(ctx["cons_tpl"], ctx["rcp_tpl"], mod=ctx["mod"])
+        target_h = max(left.shape[0], msr.shape[0])
+        left = glec._resize_to_height(left, target_h)
+        msr = glec._resize_to_height(msr, target_h)
+        sep = np.full((target_h, glec._PANEL_SEP_PX, 3), glec._PANEL_SEP_BGR, dtype=np.uint8)
+        panel = cv2.hconcat([left, sep, msr])
+        sub = combined_dir / ctx["recipe"].replace("/", "__")
+        sub.mkdir(parents=True, exist_ok=True)
+        out = sub / f"{ctx['path'].stem}_{ctx['mod']}_combined.jpg"
+        cv2.imwrite(str(out), panel, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+    return _render
+
+
 def run() -> str:
     """consensus(cond) A/B 실행 (인자 없음). 반환: success | no_data | no_ab."""
     root_env = os.getenv("ALIGN_GOLDEN_ROOT")
@@ -299,7 +398,15 @@ def run() -> str:
     else:
         print(f"[INFO] S 프레임 누락 없음 (채택 {n_kept}장).")
 
-    res = _consensus_template_ab(by_recipe, min_s=CONSENSUS_MIN_S, out_dir=out_dir)
+    # 결합 패널(rcp/consensus 템플릿 | msr 후보) — localization cond 판과 동일한 "한 장 추적".
+    combined_dir = (out_dir / "combined") if glec.SAVE_OVERLAYS else None
+    renderer = None
+    if combined_dir is not None:
+        combined_dir.mkdir(parents=True, exist_ok=True)
+        renderer = _make_combined_renderer(combined_dir)
+
+    res = _consensus_template_ab(by_recipe, min_s=CONSENSUS_MIN_S, out_dir=out_dir,
+                                 combined_renderer=renderer)
     if res is None:
         print(f"[ERROR] consensus A/B 불가 — LOO 가능한(같은 modality ≥{CONSENSUS_MIN_S}) recipe 가 없음.")
         return "no_ab"
@@ -340,7 +447,9 @@ def run() -> str:
                else "효과 미미/음수 — proposer ensemble 또는 VLM-region 로 전환 검토")
     print(f"  >>> 판정: {verdict}")
     print("=" * 64)
-    print(f"\n[INFO] 완료: {out_dir}  (consensus 템플릿: {out_dir}/consensus/)")
+    print(f"\n[INFO] 완료: {out_dir}  (consensus 템플릿: {out_dir}/consensus/"
+          + (f", 결합 패널: {combined_dir}/" if combined_dir is not None else "")
+          + ")")
     return "success"
 
 

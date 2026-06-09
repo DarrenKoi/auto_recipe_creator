@@ -27,7 +27,7 @@ from poc.workflow_2.align_fail_assets import load_gray, resolve_assets_auto
 from poc.workflow_2.align_key_matcher import (
     STRUCTURE_POLICY,
     build_template,
-    compute_align_key_score,
+    compute_align_key_score_ensemble,
     save_overlay_jpeg,
 )
 from poc.workflow_1.debug_artifacts import save_debug_json, save_debug_text
@@ -130,7 +130,10 @@ def run_probe() -> str:
             )
 
         try:
-            result = compute_align_key_score(template, scene, policy=STRUCTURE_POLICY)
+            # ensemble 경로(decision/score 정비): decision/score 는 chamfer+NCC sel 기준,
+            # orb_inlier_ratio 는 항상 0(ORB 폐지). decision="match" 게이트는 calibrated 임계로
+            # 내부 재판정되므로 그대로 안전.
+            result = compute_align_key_score_ensemble(template, scene, policy=STRUCTURE_POLICY)
         except Exception as exc:
             print(f"[ERROR] 매칭 실패: {crop_path.name} ({exc})")
             continue

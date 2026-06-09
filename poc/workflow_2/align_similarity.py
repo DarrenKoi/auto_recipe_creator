@@ -761,6 +761,36 @@ def _gt_topk_reference_crosstab(rows: list[dict], reference_quality: list[dict])
     }
 
 
+def _miss_dist_distribution(dists, *, tol=GT_TOL_NORM):
+    """miss(in_topk=False) 의 '진실↔최근접 후보' 거리 분포 — ensemble 적용 여지 진단.
+
+    miss 는 정의상 best_cand_dist_norm > tol. 그 초과분이 tol 바로 밖(near)에 몰리면 후보가
+    가까이는 왔으나 허용오차를 못 넘은 것 → ensemble 이 후보를 더/다르게 내 끌어들일 여지(recall
+    압력). far/veryfar 로 퍼지면 어떤 후보도 진실 근처에 없는 것 → 구조적 모호성(ensemble 무력,
+    다른 축 필요). 거리는 short-side 상대값(GT_TOL_NORM=tol 와 동일 척도).
+
+    반환: {n, median, p25, p75, max, bins{near/mid/far/veryfar}} (비면 n=0).
+    """
+    if not dists:
+        return {"n": 0, "median": None, "p25": None, "p75": None, "max": None, "bins": None}
+    s = sorted(float(d) for d in dists)
+    n = len(s)
+    # 경계를 3자리로 반올림 — best_cand_dist_norm 도 round(_,3) 이라 부동소수점 경계 오분류 방지.
+    e1, e2, e3 = round(1.5 * tol, 3), round(2 * tol, 3), round(3 * tol, 3)
+
+    def _q(frac):
+        return round(s[min(n - 1, int(frac * n))], 3)
+
+    bins = {
+        f"near[{tol:.2f}-{e1:.2f})": sum(1 for d in s if d < e1),
+        f"mid[{e1:.2f}-{e2:.2f})": sum(1 for d in s if e1 <= d < e2),
+        f"far[{e2:.2f}-{e3:.2f})": sum(1 for d in s if e2 <= d < e3),
+        f"veryfar[>={e3:.2f}]": sum(1 for d in s if d >= e3),
+    }
+    return {"n": n, "median": round(statistics.median(s), 3),
+            "p25": _q(0.25), "p75": _q(0.75), "max": round(s[-1], 3), "bins": bins}
+
+
 def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None) -> dict | None:
     """S-consensus 템플릿 A/B (leave-one-out) — rcp 대신 consensus 로 in_topk 가 뛰나.
 
@@ -788,6 +818,9 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None) -> 
     lap_ratio_s: list[float] = []
     edge_ratio_rcp: list[float] = []
     lap_ratio_rcp: list[float] = []
+    # miss(in_topk=False) 의 '진실↔최근접 후보' 거리 — ensemble 적용 여지 진단(버려지던 값 수집).
+    cons_miss_dists: list[float] = []
+    rcp_miss_dists: list[float] = []
     for rec, data in by_recipe.items():
         frames = data.get("s_frames", [])
         if not frames:
@@ -836,15 +869,20 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None) -> 
             n += 1
             if gc["in_topk"]:
                 cons_hit += 1
+            elif gc.get("best_cand_dist_norm") is not None:
+                cons_miss_dists.append(gc["best_cand_dist_norm"])   # miss 거리(ensemble 여지 진단).
             if gc["topk_rank"] == 1:        # rank-1 = consensus 의 free-best 가 정답에 lock(distinctive).
                 cons_r1 += 1
             # rcp baseline — 같은 modality·frame·_gt_in_topk (apples-to-apples).
             if rcp_tpl is not None:
                 gr = _gt_in_topk(gray, tuple(f["xy"]), {mod: rcp_tpl})
-                if gr is not None and gr["in_topk"]:
-                    rcp_hit += 1
-                    if gr["topk_rank"] == 1:
-                        rcp_r1 += 1
+                if gr is not None:
+                    if gr["in_topk"]:
+                        rcp_hit += 1
+                        if gr["topk_rank"] == 1:
+                            rcp_r1 += 1
+                    elif gr.get("best_cand_dist_norm") is not None:
+                        rcp_miss_dists.append(gr["best_cand_dist_norm"])
             # generic 가드 S: held-out frame 에 all-crops consensus free-best (E 와 동일 tpl).
             try:
                 _s, ch, _o, _xy, _sc = _score(all_cons_tpl, gray)
@@ -902,6 +940,9 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None) -> 
         "cons_lap_var_ratio_to_S_median": _med(lap_ratio_s),
         "cons_edge_density_ratio_to_rcp": _med(edge_ratio_rcp),
         "cons_lap_var_ratio_to_rcp": _med(lap_ratio_rcp),
+        # miss(in_topk=False) 거리 분포 — near 多=ensemble recall 여지 / far 多=구조적 모호성(ensemble 무력).
+        "cons_miss_dist_distribution": _miss_dist_distribution(cons_miss_dists),
+        "rcp_miss_dist_distribution": _miss_dist_distribution(rcp_miss_dists),
         # 참고용(이 도메인에선 변별 신호 아님 — E 에도 key 가 있을 수 있어 cons_E 높음이 정상일 수 있음).
         "median_cons_free_chamfer_S": round(statistics.median(s_guard), 4) if s_guard else None,
         "median_cons_free_chamfer_E": round(statistics.median(e_guard), 4) if e_guard else None,

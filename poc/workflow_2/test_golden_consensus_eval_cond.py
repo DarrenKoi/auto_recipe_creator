@@ -220,3 +220,36 @@ def test_drop_reason_no_template():
 
 def test_drop_reason_kept_is_none():
     assert gce._precrop_drop_reason(_cond((1, 1)), (1, 1), "om", True) is None
+
+
+# --- _miss_dist_distribution: consensus miss 거리 분포(ensemble 적용 여지 진단) ---
+from poc.workflow_2.align_similarity import _miss_dist_distribution as _mdd
+
+
+def test_miss_dist_empty():
+    d = _mdd([])
+    assert d["n"] == 0 and d["bins"] is None and d["median"] is None
+
+
+def test_miss_dist_bin_boundaries_left_closed():
+    # tol=0.2 → near[0.20-0.30) mid[0.30-0.40) far[0.40-0.60) veryfar[>=0.60].
+    # 경계값(0.30/0.40/0.60)은 *상위* bin 으로(left-closed) — 부동소수점 오분류 없어야.
+    b = _mdd([0.30, 0.40, 0.60])["bins"]
+    assert b["near[0.20-0.30)"] == 0
+    assert b["mid[0.30-0.40)"] == 1
+    assert b["far[0.40-0.60)"] == 1
+    assert b["veryfar[>=0.60]"] == 1
+
+
+def test_miss_dist_just_inside_boundaries():
+    b = _mdd([0.299, 0.399, 0.599])["bins"]
+    assert b["near[0.20-0.30)"] == 1 and b["mid[0.30-0.40)"] == 1 and b["far[0.40-0.60)"] == 1
+
+
+def test_miss_dist_counts_and_stats():
+    d = _mdd([0.21, 0.25, 0.29, 0.33, 0.45, 0.70, 0.95])
+    assert d["n"] == 7
+    assert d["bins"]["near[0.20-0.30)"] == 3      # 0.21, 0.25, 0.29
+    assert d["bins"]["veryfar[>=0.60]"] == 2      # 0.70, 0.95
+    assert sum(d["bins"].values()) == 7           # 모든 miss 가 정확히 한 bin
+    assert d["max"] == 0.95 and d["median"] == 0.33

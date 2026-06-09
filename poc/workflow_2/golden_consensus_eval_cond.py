@@ -50,7 +50,7 @@ import numpy as np
 
 from poc.workflow_2 import DEBUG_IMAGE_DIR
 from poc.workflow_2.align_fail_assets import iter_msr_images, load_gray
-from poc.workflow_2.align_similarity import _consensus_template_ab, _matched_crop
+from poc.workflow_2.align_similarity import GT_TOL_NORM, _consensus_template_ab, _matched_crop
 from poc.workflow_2.align_point_correction import _tool_label
 from poc.workflow_2.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
 from poc.workflow_2.cond_file import (
@@ -327,6 +327,15 @@ def run() -> str:
     print(f"  blur 가드(낮으면 median 흐림): edge_ratio_to_S="
           f"{res['cons_edge_density_ratio_to_S_median']}  lap_ratio_to_S="
           f"{res['cons_lap_var_ratio_to_S_median']}")
+    # consensus 잔여 miss 분포 — "ensemble 을 consensus 에 얹으면 더 오르나" 의 사전 진단.
+    md = res.get("cons_miss_dist_distribution")
+    if md and md.get("n"):
+        print(f"  consensus miss 거리(truth↔최근접 후보, short-side 상대; tol={GT_TOL_NORM}):")
+        print(f"    n_miss={md['n']}  median={md['median']}  p25={md['p25']}  "
+              f"p75={md['p75']}  max={md['max']}")
+        print(f"    bins={md['bins']}")
+        print("    * near 多 → ensemble 후보 recall 로 끌어들일 여지(시도 가치) / "
+              "far·veryfar 多 → 구조적 모호성(ensemble 무력, 다른 축 필요)")
     verdict = ("CONSENSUS 채택 권장(lift≥+0.05)" if lift >= 0.05
                else "효과 미미/음수 — proposer ensemble 또는 VLM-region 로 전환 검토")
     print(f"  >>> 판정: {verdict}")

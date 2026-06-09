@@ -68,6 +68,7 @@ poc/workflow_2/logs/*
 !poc/workflow_2/logs/.gitkeep
 poc/workflow_3/logs/*
 !poc/workflow_3/logs/.gitkeep
+poc/workflow_3/align_consensus_cache/   # staged S 이미지+cond(fab 측정 메타) — *.jpg 는 전역 무시, *.txt 별도 추가
 !side_projects/screenshot_document_extraction/logs/
 side_projects/screenshot_document_extraction/logs/*
 !side_projects/screenshot_document_extraction/logs/.gitkeep

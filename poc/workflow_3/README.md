@@ -9,6 +9,11 @@ workflow_1(RCS GUI 자동화) + workflow_2(CV align-key 보정)의 production �
 → tool 닫기 → 다음 장비 대기
 ```
 
+popup 직후, `run_alarm_cycle` 과 **겹쳐** daemon thread 로 consensus gather 가 실행된다:
+해당 recipe 의 최근 성공 S 이미지+cond 를 `align_consensus_cache/` 에 stage 해
+consensus 빌드 재료를 확보한다(`ALIGN_FAIL_GATHER_SUCCESS` 게이트 — 기본 on).
+office 모듈(`office_success_downloader.py`)이 없으면 자동 비활성(루프 응답성·기존 동작 불변).
+
 ## 패키지 구조
 
 | 서브패키지 | 내용 |
@@ -56,6 +61,9 @@ replay CSV 컬럼: `EQP_ID,ALID,ALARM_NAME,UTC9,RECIPE_ID,OPERATION_DESC,LOT_TYP
 | `ALIGN_FAIL_ENGINEER_WATCH_SEC` | 600 | 미보정 시 엔지니어 조작 녹화 대기 상한 |
 | `ALIGN_FAIL_ALARM_SOURCE` | office | `office` \| `replay` |
 | `ALIGN_SEM_MODE_OVERRIDE` | (없음) | read_mode v0 강제값 (`OM`/`SEM`) |
+| `ALIGN_FAIL_GATHER_SUCCESS` | 1 | consensus gather 활성(최근 S 이미지 stage) — 0 으로 끄면 gather 전체 skip |
+| `ALIGN_FAIL_GATHER_MAX_EVENTS` | 5 | 한 알람당 stage 할 최근 성공 event 수 (이미지 수 아님) |
+| `ALIGN_CONSENSUS_CACHE_DIR` | `poc/workflow_3/align_consensus_cache` | staged S 이미지 캐시 루트 override |
 
 ## 산출물 경로
 
@@ -66,6 +74,9 @@ replay CSV 컬럼: `EQP_ID,ALID,ALARM_NAME,UTC9,RECIPE_ID,OPERATION_DESC,LOT_TYP
   (RECIPE_ID 없으면 `align_images/<eqp>/_unregistered/<tag>/recording/`)
 - `ALIGN_IMAGES_DIR` 물리 경로는 **기존 `poc/workflow_1/align_images` 그대로**
   (오피스 MES 도구가 직접 타겟). 옮길 때는 env `ALIGN_IMAGES_DIR` 한 줄로 전환.
+- consensus gather 캐시: `align_consensus_cache/<eqp>/<class>/<recipe>/events/<event_id>/`
+  — fail 알람 시 최근 성공 S 이미지+cond 를 stage(consensus 빌드 재료). replace-if-non-empty:
+  새 event ≥1 건이면 기존 set 교체, 0건/실패면 기존 보존.
 
 ## 오피스 PC 이전 체크리스트 (단계별 활성화)
 
@@ -75,6 +86,13 @@ replay CSV 컬럼: `EQP_ID,ALID,ALARM_NAME,UTC9,RECIPE_ID,OPERATION_DESC,LOT_TYP
    copy poc\workflow_1\office_rich_notify.py      poc\workflow_3\monitor\
    ```
    (원본은 legacy 스크립트용으로 유지. 복사 전에도 legacy 위치 fallback 으로 동작하지만 경고가 뜬다.)
+
+   **`office_success_downloader.py`** — `poc/workflow_3/monitor/` 에 신규 작성(사용자 담당,
+   gitignore). `make_success_downloader()` 팩토리를 노출해 `SuccessDownloader` Protocol 을
+   구현한다. 스켈레톤은 plan 문서
+   (`poc/workflow_2/docs/superpowers/plans/2026-06-10-consensus-gather-in-loop.md` Task 6) 참조.
+   검증: 알람 1회 후 콘솔에 `consensus gather: ... reason=ok` 로그 + `align_consensus_cache/`
+   하위 events/ 디렉터리 생성 확인.
    권장: `office_rich_notify.send_cube_align_fail_info` 에 optional `summary: str = ""`
    파라미터를 추가하면 cube 메시지에 보정 결과 요약(status/best_xy/녹화 경로)이 실린다.
 2. **import sweep** — `uv run python -c "import poc.workflow_3.monitor.align_fail_monitor"`

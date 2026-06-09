@@ -36,7 +36,7 @@ class GatherResult:
     events_dir: Path
     n_events: int
     n_images: int
-    reason: str               # "ok" | "empty" | "skipped" | "error:<msg>"
+    reason: str               # "ok" | "empty" | "skipped" | "error:<msg>" | "error:swap:<msg>"
 
 
 class SuccessDownloader(Protocol):
@@ -47,7 +47,16 @@ class SuccessDownloader(Protocol):
         S*.jpg + S*.txt(cond)로 쓰고 list[StagedEvent] 를 반환한다(align fail 측정 제외).
 
         dest_dir 는 호출부가 넘기는 *임시 staging dir* (최종 events/ 아님). 성공 측정이
-        없으면 빈 리스트를 반환한다(호출부가 기존 캐시를 보존)."""
+        없으면 빈 리스트를 반환한다(호출부가 기존 캐시를 보존).
+
+        --- cond 파일 계약 (deferred consensus build 이 추가 변환 없이 소비하는 조건) ---
+
+        - cond(S*.txt) 내용은 `vision/cond_file.py` 의 `parse_cond()` 로 파싱 가능한 형식이어야
+          한다(최소 `Scope` 와 `!Cursor_info`(crosshair 좌표) 포함).
+        - modality(OM/SEM)는 cond(`Scope`) 또는 파일명으로 구분 가능해야 한다(build 가
+          modality 별로 묶는다).
+        - 레이아웃은 평탄(flat): dest_dir/<event_id>/S0001.jpg 옆에 S0001.txt.
+          align_images/ 의 `.<파일명>/cond.txt` 숨김폴더 규약과 *다름*에 주의."""
         ...
 
 

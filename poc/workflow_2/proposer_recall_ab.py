@@ -109,7 +109,8 @@ def run():
             t_gray = tpl.raw_image
             short = max(1, min(t_gray.shape[0], t_gray.shape[1]))
             base = _baseline_candidates(t_gray, frame)
-            ens = compute_ensemble_candidates(t_gray, frame)
+            # ensemble 도 baseline 과 동일 scale 밴드(COMPARE_SCALES) — 차이는 오직 C2·C3 추가.
+            ens = compute_ensemble_candidates(t_gray, frame, scales=COMPARE_SCALES)
             base_ranks.append(_gt_rank(base, gt_xy=gt_xy, offset=(dx, dy), short=short, tol=GT_TOL_NORM))
             ens_ranks.append(_gt_rank(ens.fused, gt_xy=gt_xy, offset=(dx, dy), short=short, tol=GT_TOL_NORM))
             for ch, lst in ens.solo.items():

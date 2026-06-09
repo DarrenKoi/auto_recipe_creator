@@ -183,14 +183,21 @@ C4 는 **탐색 채널**이다. 더 강하거나 싼 레버가 먼저 검증되�
 - `τ_p`(periodicity), `r_excl`, `τ_c`(chamfer 생존), per-channel weight 곡선은
   cold-start → 오피스 sweep 으로 보정(상수는 합성에서만 검증).
 
-## 10. 변경 파일
+## 10. 개발 위치 & 변경 파일
 
-- `poc/workflow_3/vision/ensemble_proposer.py` — `_rrf_fuse` 대표/weight(§5),
-  `'context'` 채널 + periodicity pre-score(§6), `channels` 파라미터.
-- `poc/workflow_3/vision/align_key_matcher.py` — C4-only chamfer 생존 게이트 훅(§6.3)
-  (또는 ensemble_proposer 내 처리), 기존 `_candidate_ncc`/chamfer rescore 재사용.
-- `poc/workflow_2/align_similarity.py` — `_propose_topk`/`_gt_in_topk` 가 C4-only
-  hit 을 bin 별로 집계(§7).
-- `poc/workflow_2/golden_consensus_eval_cond.py` — `ENSEMBLE_CHANNELS` 노출,
-  ablation/계측 출력 + summary.json 키(§7).
-- 테스트: `test_ensemble_proposer.py` 확장(§8).
+**개발 위치 규약 (2026-06-10 사용자 확정)**: ensemble 개선은 **workflow_2 에서**
+실험·측정한다(drivers: `golden_localization_eval_cond.py`,
+`golden_consensus_eval_cond.py`). 검증된 개선만 **workflow_3/vision(production
+엔진)으로 포팅**한다. 따라서 실험 단계에서는 workflow_3 을 건드리지 않는다.
+
+- **실험 코드(workflow_2)** — `poc/workflow_2/ensemble_lab.py`(신규): 실험용 융합
+  (`rrf_fuse` rescore 대표·§5), `template_periodicity`(§6.2), [Phase 2] `'context'`
+  C4 채널·chamfer 생존 게이트(§6.3). 채널 solo·primitive 는 workflow_3 에서 import 재사용.
+- **드라이버(workflow_2)** — `golden_consensus_eval_cond.py`/`golden_localization_eval_cond.py`:
+  `ENSEMBLE_CHANNELS` 노출, ablation/계측·`template_periodic_rate`(§7). `align_similarity.py`
+  `_propose_topk`/`_gt_in_topk` 가 lab 융합 호출 + C4-only hit bin 집계(§7).
+- **테스트(workflow_2)** — `poc/workflow_2/test_ensemble_lab.py`(신규).
+- **포팅 대상(workflow_3, 검증 후 별도 작업)** — `vision/ensemble_proposer.py`
+  (`_rrf_fuse` rescore·`'context'` 채널·`template_periodicity`),
+  `vision/align_key_matcher.py`(C4-only chamfer 게이트). production 매칭 경로
+  (`align_fail_correct`)에 기본 on 전환은 그 다음 단계.

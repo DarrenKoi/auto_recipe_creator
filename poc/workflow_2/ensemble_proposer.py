@@ -7,7 +7,7 @@ RRF(순위 기반, 스케일 무관)로 채널 후보를 융합해 top-N + shado
 import cv2
 import numpy as np
 
-from poc.workflow_2.align_key_matcher import _to_grayscale
+from poc.workflow_2.align_key_matcher import _to_grayscale, preprocess_for_matching, DT_TAU_PX
 
 # C2: gradient magnitude foreground 밀도를 C1 에 맞춘다(3~15% clamp).
 SCHARR_R_MIN = 0.03
@@ -36,3 +36,62 @@ def _scharr_edges(image: np.ndarray, r_c1: float) -> np.ndarray:
     thr = float(np.percentile(mag_j, 100.0 * (1.0 - r)))
     edges = (mag_j > thr).astype(np.uint8) * 255
     return edges
+
+
+N_ORIENT_BINS = 8
+
+
+def _orientation_bin_edges(image, n_bins=N_ORIENT_BINS, r_c1=None):
+    """edge 픽셀을 gradient 방향(0~180° half-angle) n_bins 로 나눈 binary map 리스트.
+
+    edge 위치는 C2 와 동일 밀도 매칭(_scharr_edges). 각 edge 픽셀을 unsigned gradient
+    각도(0~180)로 bin 분류 → bin 별 0/255 map. polarity 불변(SEM/OM 밝기 반전 강건).
+    """
+    gray = _to_grayscale(image)
+    if r_c1 is None:
+        canny = preprocess_for_matching(gray)[0]
+        r_c1 = float((canny > 0).mean())
+    edges = _scharr_edges(gray, r_c1) > 0
+    gx = cv2.Scharr(gray, cv2.CV_32F, 1, 0)
+    gy = cv2.Scharr(gray, cv2.CV_32F, 0, 1)
+    ang = np.rad2deg(np.arctan2(gy, gx)) % 180.0          # 0~180 half-angle.
+    bin_idx = np.minimum((ang / (180.0 / n_bins)).astype(np.int32), n_bins - 1)
+    out = []
+    for b in range(n_bins):
+        m = (edges & (bin_idx == b)).astype(np.uint8) * 255
+        out.append(m)
+    return out
+
+
+def _directional_chamfer_score_map(template_gray, frame_gray, *, scale, n_bins=N_ORIENT_BINS):
+    """방향 분할 chamfer score map = exp(-weighted_mean_dt/DT_TAU_PX).
+
+    bin 별: same-bin frame edge 의 DT 위에 same-bin template edge 를 슬라이드한 mean_dt.
+    bin 들을 template bin edge-count 가중 평균(weighted mean) → exp. min/sum 대신 weighted
+    mean: 한 방향만 맞아도 과대평가(min)·edge 많은 bin 지배(sum) 회피, 기존 평균거리 규약 일관.
+    """
+    from poc.workflow_2.align_key_matcher import _scaled_edges
+    t_bins = _orientation_bin_edges(template_gray, n_bins)
+    f_bins = _orientation_bin_edges(frame_gray, n_bins)
+    num = None        # Σ_bin (edge_count_b * mean_dt_map_b)
+    den = 0.0         # Σ_bin edge_count_b
+    out_size = None
+    for tb, fb in zip(t_bins, f_bins):
+        tb_s = _scaled_edges(tb, scale)
+        th, tw = tb_s.shape[:2]
+        fh, fw = fb.shape[:2]
+        if th >= fh or tw >= fw:
+            return None, (tw, th)
+        mask = (tb_s > 0).astype(np.float32)
+        cnt = float(mask.sum())
+        if cnt <= 0:
+            continue
+        f_dt = cv2.distanceTransform(cv2.bitwise_not(fb), cv2.DIST_L2, 5).astype(np.float32)
+        mean_dt = cv2.matchTemplate(f_dt, mask, cv2.TM_CCORR) / cnt
+        num = mean_dt * cnt if num is None else num + mean_dt * cnt
+        den += cnt
+        out_size = (tw, th)
+    if num is None or den <= 0:
+        return None, (out_size or (0, 0))
+    weighted_mean_dt = num / den
+    return np.exp(-weighted_mean_dt / DT_TAU_PX).astype(np.float32), out_size

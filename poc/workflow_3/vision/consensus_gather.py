@@ -1,6 +1,6 @@
 """consensus S-image gather — 최근 성공(S) 측정 이미지를 stage 하는 순수 orchestration.
 
-(설계: docs/superpowers/specs/2026-06-10-consensus-gather-in-loop-design.md)
+(설계: poc/workflow_2/docs/superpowers/specs/2026-06-10-consensus-gather-in-loop-design.md)
 
 이 모듈은 *disk layout 의 주인*이다: cache root 아래 events_dir 를 정하고, 임시 dir 에
 다운로더로 stage 한 뒤 ≥1 event 면 events/ 로 교체(replace-if-non-empty)한다. DB 조회와
@@ -63,6 +63,7 @@ def gather_success_images(eqp_id, recipe_id, *, downloader,
 
     절차: 임시 staging dir 에 downloader 로 받기 → ≥1 event 면 기존 events/ 제거 후 swap,
     0건/예외면 기존 events/ 보존. 어떤 경로든 staging 잔재는 정리한다.
+    다운로드 예외 → reason="error:<Type>: <msg>", swap/count 예외 → reason="error:swap:<Type>: <msg>".
     """
     events_dir = _events_dir_for(eqp_id, recipe_id, cache_root)
     if not recipe_id:
@@ -82,20 +83,25 @@ def gather_success_images(eqp_id, recipe_id, *, downloader,
         return GatherResult(eqp_id, recipe_id, events_dir, 0, 0,
                             f"error:{type(exc).__name__}: {exc}")
 
-    staged = staged or []
-    n_events = len(staged)
-    n_images = sum(len(ev.image_paths) for ev in staged)
+    try:
+        staged = staged or []
+        n_events = len(staged)
+        n_images = sum(len(ev.image_paths) for ev in staged)
 
-    if n_events == 0:
-        # 빈 fetch — 기존 events/ 보존(replace-if-non-empty).
+        if n_events == 0:
+            # 빈 fetch — 기존 events/ 보존(replace-if-non-empty).
+            shutil.rmtree(staging_dir, ignore_errors=True)
+            return GatherResult(eqp_id, recipe_id, events_dir, 0, 0, "empty")
+
+        # swap: 기존 events/ 제거 후 staging → events (os.replace, 같은 볼륨 rename).
+        if events_dir.exists():
+            shutil.rmtree(events_dir, ignore_errors=True)
+        events_dir.parent.mkdir(parents=True, exist_ok=True)
+        staging_dir.replace(events_dir)
+    except Exception as exc:
         shutil.rmtree(staging_dir, ignore_errors=True)
-        return GatherResult(eqp_id, recipe_id, events_dir, 0, 0, "empty")
-
-    # swap: 기존 events/ 제거 후 staging → events (os.replace, 같은 볼륨 rename).
-    if events_dir.exists():
-        shutil.rmtree(events_dir, ignore_errors=True)
-    events_dir.parent.mkdir(parents=True, exist_ok=True)
-    staging_dir.replace(events_dir)
+        return GatherResult(eqp_id, recipe_id, events_dir, 0, 0,
+                            f"error:swap:{type(exc).__name__}: {exc}")
 
     return GatherResult(eqp_id, recipe_id, events_dir, n_events, n_images, "ok")
 

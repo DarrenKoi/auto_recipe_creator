@@ -155,6 +155,59 @@ def test_skipped_no_recipe():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def test_malformed_event_reports_error():
+    """malformed StagedEvent(image_paths=None) 이 TypeError 를 유발해도 GatherResult 로 보고."""
+    root = Path(tempfile.mkdtemp())
+    try:
+        # 기존 캐시 seed
+        gather_success_images("EQP1", "CLS/RCP",
+                              downloader=_FakeDownloader([("KEEP_A", 1)]),
+                              cache_root=root)
+
+        class _MalformedDownloader:
+            """StagedEvent(image_paths=None) 을 반환하는 불량 다운로더."""
+            calls = []
+
+            def download_recent_successes(self, recipe_id, *, max_events, dest_dir):
+                self.calls.append((recipe_id, max_events, Path(dest_dir)))
+                # image_paths=None 으로 malformed StagedEvent 반환
+                from poc.workflow_3.vision.consensus_gather import StagedEvent
+                return [StagedEvent(event_id="BAD", image_paths=None, cond_paths=[])]
+
+        dl = _MalformedDownloader()
+        res = gather_success_images("EQP1", "CLS/RCP", downloader=dl, cache_root=root)
+        event_dirs = {f.split("/")[0] for f in _staged_files(res.events_dir)}
+        staging = root / "EQP1" / "CLS" / "RCP" / ".events_staging"
+        ok = (
+            res.reason.startswith("error:swap:")   # swap/count 예외 경로
+            and event_dirs == {"KEEP_A"}            # 기존 캐시 보존
+            and not staging.exists()               # staging 정리됨
+        )
+        print(f"[{'PASS' if ok else 'FAIL'}] malformed_event_reports_error: "
+              f"reason={res.reason!r} dirs={event_dirs} staging_exists={staging.exists()}")
+        return ok
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_max_events_passthrough():
+    """max_events 가 다운로더에게 그대로 전달되고 결과도 그에 맞게 잘린다."""
+    root = Path(tempfile.mkdtemp())
+    try:
+        dl = _FakeDownloader([("EV1", 1), ("EV2", 1), ("EV3", 1), ("EV4", 1), ("EV5", 1)])
+        res = gather_success_images("EQP1", "CLS/RCP", downloader=dl,
+                                    max_events=3, cache_root=root)
+        ok = (
+            dl.calls[0][1] == 3    # max_events=3 이 다운로더에 전달됨
+            and res.n_events == 3  # 결과도 3건
+        )
+        print(f"[{'PASS' if ok else 'FAIL'}] max_events_passthrough: "
+              f"dl_max={dl.calls[0][1]} n_events={res.n_events}")
+        return ok
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def main():
     print("[INFO] consensus_gather self-test 시작")
     results = [
@@ -164,6 +217,8 @@ def main():
         test_empty_preserves_existing(),
         test_downloader_raises(),
         test_skipped_no_recipe(),
+        test_malformed_event_reports_error(),
+        test_max_events_passthrough(),
     ]
     passed = sum(1 for r in results if r)
     print(f"[INFO] {passed}/{len(results)} cases passed")

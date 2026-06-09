@@ -259,3 +259,18 @@ def test_combine_2up_has_separator_column():
     out = glec._combine_2up(rcp, msr, rcp_label="R", msr_label="M")
     # 같은 높이(헤더 동일) → resize 없이 100+sep+100.
     assert out.shape[1] == 100 + glec._PANEL_SEP_PX + 100
+
+
+def test_matcher_for_eval_toggle(monkeypatch):
+    """ALIGN_USE_ENSEMBLE 토글: 참이면 ensemble 매처, 아니면 baseline(eval 전용)."""
+    import poc.workflow_2.golden_localization_eval as gle
+    from poc.workflow_2 import align_key_matcher as akm
+
+    monkeypatch.delenv("ALIGN_USE_ENSEMBLE", raising=False)
+    assert gle._matcher_for_eval() is akm.compute_align_key_score        # 기본 baseline.
+    monkeypatch.setenv("ALIGN_USE_ENSEMBLE", "1")
+    assert gle._matcher_for_eval() is akm.compute_align_key_score_ensemble
+    monkeypatch.setenv("ALIGN_USE_ENSEMBLE", "true")
+    assert gle._matcher_for_eval() is akm.compute_align_key_score_ensemble
+    monkeypatch.setenv("ALIGN_USE_ENSEMBLE", "0")
+    assert gle._matcher_for_eval() is akm.compute_align_key_score         # off → baseline.

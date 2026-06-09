@@ -85,6 +85,7 @@ from poc.workflow_2.align_key_matcher import (
     STRUCTURE_POLICY,
     build_template,
     compute_align_key_score,
+    compute_align_key_score_ensemble,
 )
 from poc.workflow_2.align_point_correction import (
     RCP_FALLBACK_CENTER_CROP_AREA_RATIO,
@@ -242,11 +243,22 @@ def _build_offset_templates(
 # ------------------------------------------------------------------
 
 
+def _matcher_for_eval():
+    """eval 매처 선택 — env ``ALIGN_USE_ENSEMBLE`` 가 참이면 ensemble, 아니면 baseline.
+
+    golden eval 은 기본 baseline(compute_align_key_score)으로 측정한다. decision/score 정비된
+    ensemble 경로의 개선(hit/decision)을 같은 golden 셋·오버레이로 확인하려면
+    ``ALIGN_USE_ENSEMBLE=1`` 로 실행한다(No-CLI-arg 규약상 env 토글). 둘 다 동일 시그니처.
+    """
+    use_ens = os.getenv("ALIGN_USE_ENSEMBLE", "").strip().lower() in ("1", "true", "yes", "on")
+    return compute_align_key_score_ensemble if use_ens else compute_align_key_score
+
+
 def _localize(templates: dict, frame: np.ndarray, crosshair_xy: tuple[int, int]) -> dict | None:
     """offset-aware template 집합으로 frame 을 free 검색 → align point 가 crosshair(GT)에
     떨어지나 채점.
 
-    각 modality 를 1회 매칭(compute_align_key_score)하고, match 중심·top-N 후보 좌표에
+    각 modality 를 1회 매칭(_matcher_for_eval: baseline 또는 ensemble)하고, match 중심·top-N 후보 좌표에
     그 modality 의 align_offset 을 더해 *align point* 로 환산한 뒤 crosshair 와 비교한다.
     modality 간에는 생산 free-best 와 동일하게 **최고 score** modality 를 채택(_race 규약).
     rank1_hit/dist 와 topk_rank 를 같은 후보 집합에서 일관되게 뽑는다(과거 _race+_gt_in_topk
@@ -256,6 +268,7 @@ def _localize(templates: dict, frame: np.ndarray, crosshair_xy: tuple[int, int])
     dist_norm 은 승자 modality template 짧은 변 대비 거리(GT_TOL_NORM 과 동일 척도).
     """
     best = None  # (score, dist_norm, hit, rank, align_xy, mod)
+    matcher = _matcher_for_eval()
     for mod, item in templates.items():
         if item is None:
             continue
@@ -263,7 +276,7 @@ def _localize(templates: dict, frame: np.ndarray, crosshair_xy: tuple[int, int])
         th, tw = tpl.raw_image.shape[:2]
         short = max(1, min(tw, th))
         try:
-            r = compute_align_key_score(
+            r = matcher(
                 tpl, frame, scales=COMPARE_SCALES, policy=STRUCTURE_POLICY,
             )
         except Exception as exc:

@@ -488,7 +488,11 @@ def run() -> str:
     rows_path = out_dir / "rows.jsonl"
     # 결합본(rcp | msr)만 저장 — 분리 파일(rcp_templates/·overlays/)은 끔.
     combined_dir = (out_dir / "combined") if SAVE_OVERLAYS else None
-    print(f"[INFO] (cond GT) recipe {len(recipes)}개 처리 → {out_dir}")
+    # _localize 가 쓰는 매처 모드(env ALIGN_USE_ENSEMBLE) — baseline/ensemble 실행 구분용.
+    matcher_mode = gle._matcher_for_eval().__name__
+    print(f"[INFO] (cond GT) recipe {len(recipes)}개 처리 → {out_dir}  [matcher={matcher_mode}]")
+    if matcher_mode == "compute_align_key_score":
+        print("[INFO] baseline 매처. ensemble 개선을 보려면 ALIGN_USE_ENSEMBLE=1 로 재실행.")
 
     all_rows, n_skip_no_msr = [], 0
     box_reasons, offset_records = {}, []
@@ -556,6 +560,7 @@ def run() -> str:
           f"skip(missing_modality)={n_mskip}")
 
     summary = gle._summarize(all_rows)
+    summary["matcher"] = matcher_mode   # baseline/ensemble 실행 구분(ALIGN_USE_ENSEMBLE).
     summary["align_offset_diag"] = _offset_diag_cond(offset_records)   # 대각선 척도 자체 진단.
     summary["gt_source"] = {"n_S": len(s_rows), "n_cond": n_cond,
                             "n_detect_fallback": len(s_rows) - n_cond}

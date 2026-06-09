@@ -79,7 +79,7 @@ from poc.workflow_2.align_key_matcher import (
     AlignKeyMatchResult,
     AlignKeyTemplate,
     build_template,
-    compute_align_key_score,
+    compute_align_key_score_ensemble,
 )
 
 # ====================================================================
@@ -228,7 +228,7 @@ _BGR_BLACK = (0, 0, 0)
 
 @dataclass
 class _ModalityScore:
-    """compute_align_key_score 결과를 JSON 직렬화 가능한 평탄 dict 로 풀어둔다.
+    """compute_align_key_score_ensemble 결과를 JSON 직렬화 가능한 평탄 dict 로 풀어둔다.
 
     `out_of_frame=True` 는 매칭 위치가 _pad_frame 의 replicate-border 안에 있어
     pad 를 빼고 나니 원본 프레임 밖이라는 신호 — 실제 픽셀이 아니라 가짜 padding
@@ -1036,7 +1036,7 @@ def _match_with_prior_roi(
     padded: np.ndarray,
     prior_center_in_padded: tuple[int, int],
 ) -> AlignKeyMatchResult | None:
-    """compute_align_key_score 를 prior 중심의 좁은 ROI 로 제한해 다시 돌린다.
+    """compute_align_key_score_ensemble 를 prior 중심의 좁은 ROI 로 제한해 다시 돌린다.
 
     ROI 폭/높이는 (smallest-scaled-template + 마진) 의 두 배 — 최소 매칭 가능 크기를
     만족시키면서, free 검색 대비 *충분히* 작은 영역에 가둔다. 매칭이 불가한 ROI
@@ -1060,7 +1060,7 @@ def _match_with_prior_roi(
     if roi_w <= min_tw or roi_h <= min_th:
         return None
     try:
-        return compute_align_key_score(
+        return compute_align_key_score_ensemble(
             template,
             padded,
             roi_hint=(x0, y0, roi_w, roi_h),
@@ -1084,8 +1084,8 @@ def _match_against(
       1. free 검색: 매칭으로 frame 에서 template 중심 위치를 잡는다.
       2. 도구가 그린 crosshair 가 있고, free 검색의 match 중심이 crosshair-derived 위치
          (= crosshair - align_offset) 와 CROSSHAIR_PRIOR_DISAGREEMENT_PX 보다 멀면:
-         prior 위치 주변 좁은 ROI 로 재매칭. prior 점수가 합리적 (>= adjust_threshold) 이고
-         free 점수에서 CROSSHAIR_PRIOR_SCORE_TOLERANCE 안에 들면 prior 결과를 채택.
+         prior 위치 주변 좁은 ROI 로 재매칭. prior 점수가 합리적 (>= ensemble_adjust_threshold)
+         이고 free 점수에서 CROSSHAIR_PRIOR_SCORE_TOLERANCE 안에 들면 prior 결과를 채택.
       3. 채택된 match 중심에 align_offset 을 더해 frame 에서의 align point 좌표.
       4. align point 가 frame 밖이면 out_of_frame=True 로 플래그하고 좌표를 클리핑.
 
@@ -1112,7 +1112,7 @@ def _match_against(
 
     for attempt_idx in range(DISTINCTIVENESS_MAX_ATTEMPTS):
         padded, pad_x, pad_y = _pad_frame(current_frame, template.raw_image.shape)
-        result_free = compute_align_key_score(
+        result_free = compute_align_key_score_ensemble(
             template, padded, scales=COMPARE_SCALES, policy=STRUCTURE_POLICY,
         )
         fbx, fby = result_free.best_xy
@@ -1144,8 +1144,10 @@ def _match_against(
                 )
                 if prior_result is not None:
                     attempt_prior_score = float(prior_result.score)
+                    # ensemble result.score 는 sel 스케일이라 절대 컷은 ensemble_adjust_threshold
+                    # (0.4727, baseline 0.40 아님). 두 번째 항은 free 대비 상대 비교라 스케일 무관.
                     if (
-                        prior_result.score >= STRUCTURE_POLICY.adjust_threshold
+                        prior_result.score >= STRUCTURE_POLICY.ensemble_adjust_threshold
                         and prior_result.score + CROSSHAIR_PRIOR_SCORE_TOLERANCE >= result_free.score
                     ):
                         attempt_used_prior = True
@@ -1604,7 +1606,8 @@ def _process_msr_image(
             and winner_side.engine_reject_reason == "not_distinctive"
             and winner_side.engine_scope != "prior_roi"
         )
-        if race.winner_score_value < STRUCTURE_POLICY.adjust_threshold or winner_out_of_frame:
+        # ensemble result.score 는 sel 스케일 → 절대 컷은 ensemble_adjust_threshold(0.4727).
+        if race.winner_score_value < STRUCTURE_POLICY.ensemble_adjust_threshold or winner_out_of_frame:
             # pad-border 안에서 매칭된 경우 좌표 자체가 가짜이므로 점수와 무관하게 low_match_both.
             status = "low_match_both"
         elif winner_attempt_nd or winner_engine_nd:
@@ -1983,6 +1986,8 @@ def _process_recipe(
             "MIN_SHARPNESS_LAPVAR": MIN_SHARPNESS_LAPVAR,
             "SCALE_BAR_OM_THRESHOLD_UM": SCALE_BAR_OM_THRESHOLD_UM,
             "STRUCTURE_POLICY.adjust_threshold": STRUCTURE_POLICY.adjust_threshold,
+            "STRUCTURE_POLICY.ensemble_adjust_threshold": STRUCTURE_POLICY.ensemble_adjust_threshold,
+            "STRUCTURE_POLICY.ensemble_match_threshold": STRUCTURE_POLICY.ensemble_match_threshold,
             "STRUCTURE_POLICY.max_second_ratio": STRUCTURE_POLICY.max_second_ratio,
             "STRUCTURE_POLICY.min_distinct_gap": STRUCTURE_POLICY.min_distinct_gap,
             "DISTINCTIVENESS_RATIO_MAX": DISTINCTIVENESS_RATIO_MAX,

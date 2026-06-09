@@ -157,6 +157,39 @@ def test_finalize_match_score_override():
     assert r1.decision == "match"
 
 
+def test_ensemble_guard_uses_topn_scope_not_shadow(monkeypatch):
+    """no_candidates guard 는 selection 과 동일 범위(top_n)여야 — shadow 슬롯의 양 chamfer 가
+    guard 를 통과시키면서 selection 은 zero-chamfer top_n 에서 고르는 불일치 방지."""
+    template, frame, _ = _synthetic_template_and_frame()
+
+    # top_n(8) 개의 zero-chamfer 위치 + 1 개의 양 chamfer shadow(9번째).
+    top_positions = [(10 + i, 10 + i) for i in range(8)]
+    shadow_pos = (200, 150)
+
+    class _Cand:
+        def __init__(self, xy):
+            self.xy = xy
+            self.scale = 1.0
+
+    class _Ens:
+        fused = [_Cand(xy) for xy in top_positions] + [_Cand(shadow_pos)]
+
+    monkeypatch.setattr(akm, "compute_ensemble_candidates", lambda *a, **k: _Ens())
+
+    def _fake_rescore(tpl, fdt, positions):
+        out = []
+        for (cx, cy), scale in positions:
+            ch = 0.5 if (cx, cy) == shadow_pos else 0.0   # 오직 shadow 만 양 chamfer.
+            out.append(akm.AlignKeyCandidate(
+                score=ch, chamfer_score=ch, xy=(cx, cy), scale=1.0, template_size=(40, 40)))
+        return out
+
+    monkeypatch.setattr(akm, "_rescore_positions_to_candidates", _fake_rescore)
+    # top_n=8 로 cap 되면 shadow 는 rescore 에 안 들어가고 top-8 전부 zero → no_candidates.
+    result = compute_align_key_score_ensemble(template, frame, scales=(1.0,))
+    assert result.reject_reason == "no_candidates"
+
+
 def test_ensemble_rejects_invalid_scales():
     template, frame, _ = _synthetic_template_and_frame()
     try:

@@ -141,8 +141,10 @@ class MatchPolicy:
     rerank_ncc_w: float = 0.5         # ensemble NCC reranker selection: NCC 가중(max(0,ncc)).
     # ensemble 결정 score(=selection sel) 의 decision 임계 — baseline(chamfer+ORB) 과 분포가
     # 달라 별도 캘리브(Youden J/고-recall). 산출: reranker_rule_ab.py, S=756(n_pos462/n_neg294),
-    # 2026-06-09. at_match: prec0.894 recall0.838 fpr0.157. sel 가중(0.5/0.5)이 동일하므로
-    # DEFAULT/STRUCTURE 가 같은 분포 → 두 정책 공통값.
+    # 2026-06-09. at_match: prec0.894 recall0.838 fpr0.157. sel 은 rerank_chamfer_w/rerank_ncc_w
+    # 만 쓰고 chamfer_weight/orb_weight 와 무관하므로 DEFAULT/STRUCTURE 가 같은 sel 분포 → 공통값.
+    # ⚠️ 이 두 임계는 rerank_chamfer_w=rerank_ncc_w=0.5 분포에 묶여 있다. rerank 가중을 바꾸면
+    #    sel 분포가 이동하므로 reranker_rule_ab.py 로 반드시 재캘리브 후 이 값을 갱신할 것.
     ensemble_match_threshold: float = 0.6053    # Youden J 점(균형).
     ensemble_adjust_threshold: float = 0.4727   # recall_target 0.95(고-recall).
 
@@ -890,9 +892,13 @@ def compute_align_key_score_ensemble(
     ens = compute_ensemble_candidates(
         template.raw_image, gray_frame, scales=scales, top_n=policy.top_n
     )
-    positions = [(c.xy, c.scale) for c in ens.fused]
+    # ens.fused 는 shadow_n(24)까지 담지만 이 경로는 top_n 만 selection/pool 에 쓴다. guard·
+    # selection·pool 범위를 일치시키려 top_n 으로 먼저 cap 한다 — 안 하면 shadow(>top_n)에만
+    # 양 chamfer 가 있을 때 guard 는 통과하나 selection 은 zero-chamfer top_n 에서 골라 정답을
+    # 버린다. cap 으로 shadow rescore 비용(최대 16회)도 절약. selection 출력은 불변(top_n 동일).
+    positions = [(c.xy, c.scale) for c in ens.fused[:policy.top_n]]
     candidates = _rescore_positions_to_candidates(template, frame_dt, positions)
-    # rescore 는 위치마다 1개를 항상 반환(맵 밖=0.0)하므로, ens.fused 가 비었거나 모든 후보
+    # rescore 는 위치마다 1개를 항상 반환(맵 밖=0.0)하므로, top_n 후보가 비었거나 모두
     # chamfer 가 0(구조 일치 전무)이면 no_candidates 로 통일 — compute_align_key_score 의
     # reject_reason 계약과 맞춰 두 진입점을 drop-in 호환으로 유지한다.
     if not candidates or all(c.chamfer_score <= 0.0 for c in candidates):
@@ -904,7 +910,7 @@ def compute_align_key_score_ensemble(
     # 폐기(orb_flip 27% 유발). 결정 score/decision 은 아래에서 기존 chamfer+ORB 로 보존.
     best_cand = candidates[0]
     best_sel = -1.0e18
-    for cand in candidates[:policy.top_n]:
+    for cand in candidates:                       # candidates 는 위에서 top_n 으로 cap 됨.
         ncc = _candidate_ncc(template.raw_image, gray_frame, cand.xy, cand.scale)
         ncc_pos = max(0.0, ncc) if ncc is not None else 0.0
         sel = policy.rerank_chamfer_w * cand.chamfer_score + policy.rerank_ncc_w * ncc_pos
@@ -917,11 +923,9 @@ def compute_align_key_score_ensemble(
     # chamfer+ORB score 가 낮아 decision="low" 오판을 냈다. score_override=best_sel + ensemble
     # 전용 임계(Youden 캘리브)로 선택 신뢰도와 decision 신뢰도를 일치시킨다. orb=0 고정(계산 폐지).
 
-    # distinctiveness·반환 후보는 *선택 풀과 동일*해야 한다 — best 는 candidates[:top_n]
-    # 에서 NCC reranker 로 골랐으므로 shadow(>top_n) 를 빼고 같은 풀로 마감(거짓 not_distinctive 방지).
-    # 반환 candidates 는 chamfer 내림차순(AlignKeyCandidate.score 계약). best 는 별도 추적.
-    pool = candidates[:policy.top_n]
-    candidates_sorted = sorted(pool, key=lambda c: c.chamfer_score, reverse=True)
+    # 반환 candidates 는 chamfer 내림차순(AlignKeyCandidate.score 계약). distinctiveness 는
+    # selection 과 동일 풀(=cap 된 candidates) 기준 — best 는 별도 추적.
+    candidates_sorted = sorted(candidates, key=lambda c: c.chamfer_score, reverse=True)
     return _finalize_match(
         best_cand, candidates_sorted, frame, template, policy, roi_origin,
         chamfer_score=best_cand.chamfer_score, orb_ratio=0.0,

@@ -53,6 +53,16 @@ ENS_RULES = ("ens_orb", "ens_ncc", "ens_ncc_only")
 ALL_RULES = ("baseline",) + ENS_RULES
 
 
+def _ens_ncc_sel(c, chamfer_w, ncc_w):
+    """ens_ncc 결정 score = chamfer_w·chamfer + ncc_w·max(0,ncc) (음의 NCC 는 0 클램프).
+
+    production 매처(align_key_matcher.compute_align_key_score_ensemble 의 selection sel)와
+    동일한 식 — 이 한 정의를 _rule_picks(랭킹)와 캘리브(threshold 산출) 양쪽이 공유해야
+    덤프한 sel 분포가 실제 production 결정 score 와 일치한다(공식 drift 방지).
+    """
+    return chamfer_w * c["chamfer"] + ncc_w * max(0.0, c["ncc"])
+
+
 def _rule_picks(pool, *, chamfer_w, ncc_w):
     """NCC 기반 rerank 규칙별 picked_idx. pool[i] 는 chamfer·ncc 키를 가진다.
 
@@ -62,7 +72,7 @@ def _rule_picks(pool, *, chamfer_w, ncc_w):
     def _amax(key):
         return max(range(len(pool)), key=lambda i: key(pool[i]))
     return {
-        "ens_ncc": _amax(lambda c: chamfer_w * c["chamfer"] + ncc_w * max(0.0, c["ncc"])),
+        "ens_ncc": _amax(lambda c: _ens_ncc_sel(c, chamfer_w, ncc_w)),
         "ens_ncc_only": _amax(lambda c: c["ncc"]),
     }
 
@@ -106,7 +116,9 @@ def _calibrate_thresholds(pairs, recall_target=0.95):
         if sum(1 for s in pos if s >= t) / n_pos >= recall_target:
             adjust_t = t
     adjust_t = min(adjust_t, best_t)
-    return {"match": round(best_t, 4), "adjust": round(adjust_t, 4),
+    # threshold 는 관측 sel 값이라 production(score >= mt)이 캘리브 분할을 정확히 재현하도록
+    # 6 자리까지 보존(4 자리 반올림은 컷을 관측값 아래로 내려 경계 프레임 분류를 뒤집을 수 있음).
+    return {"match": round(best_t, 6), "adjust": round(adjust_t, 6),
             "youden_j": round(best_j, 4), "n_pos": n_pos, "n_neg": n_neg,
             "at_match": best_stats, "recall_target": recall_target}
 
@@ -206,8 +218,7 @@ def run():
                 hits[r].append(rule_hit[r])
             # ens_ncc 픽의 결정 score(=sel) + hit → threshold 캘리브. ensemble production
             # 결정 score 가 될 값이라(decision/score 정비 §2) 이 분포로 컷을 정한다.
-            ens_c = pool[picks["ens_ncc"]]
-            ens_ncc_sel = chamfer_w * ens_c["chamfer"] + ncc_w * max(0.0, ens_c["ncc"])
+            ens_ncc_sel = _ens_ncc_sel(pool[picks["ens_ncc"]], chamfer_w, ncc_w)
             calib_pairs.append((ens_ncc_sel, bool(rule_hit["ens_ncc"])))
             rows.append({"recipe": assets.recipe_id, "msr": p.name,
                          "ens_ncc_sel": round(ens_ncc_sel, 4),
@@ -256,6 +267,9 @@ def run():
         print(f"  >>> ensemble_adjust_threshold = {calib['adjust']}  "
               f"(recall_target={calib['recall_target']})")
         print(f"  (n_pos={calib['n_pos']} n_neg={calib['n_neg']}) — 이 두 값을 MatchPolicy 에 하드코딩.")
+        if calib["adjust"] >= calib["match"]:
+            print("  [WARNING] adjust == match — 'adjust' gray-zone 소멸(clamp). 모든 결정이 "
+                  "match/low 로만 갈림. 데이터 분리가 깨끗하면 발생 가능.")
     else:
         print("\n[WARNING] 캘리브 불가(한쪽 클래스만) — threshold 산출 실패.")
     print(f"[INFO] 완료: {out_dir}")

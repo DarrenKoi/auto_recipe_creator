@@ -48,7 +48,8 @@ class _FakeController:
         self.screen_clicks.append((int(screen_x), int(screen_y)))
 
 
-def _dummy_result(decision: str, *, orb: float = 0.0, scale: float = 1.0) -> AlignKeyMatchResult:
+def _dummy_result(decision: str, *, orb: float = 0.0, scale: float = 1.0,
+                  distinctive: bool = True) -> AlignKeyMatchResult:
     overlay = np.zeros((4, 4, 3), dtype=np.uint8)
     return AlignKeyMatchResult(
         score=0.5,
@@ -58,15 +59,16 @@ def _dummy_result(decision: str, *, orb: float = 0.0, scale: float = 1.0) -> Ali
         best_scale=scale,
         decision=decision,
         debug_overlay=overlay,
+        distinctive=distinctive,
     )
 
 
 def test_gate() -> bool:
-    """match→True; adjust→orb 보강 있을 때만 True; low/tiny-scale→False."""
+    """match→True; adjust→distinctive 일 때만 True(ensemble: orb 폐지); low/tiny-scale→False."""
     checks = {
-        "match(orb=0)": key_visibility_gate(_dummy_result("match")) is True,
-        "adjust(orb>0)": key_visibility_gate(_dummy_result("adjust", orb=0.3)) is True,
-        "adjust(orb=0)": key_visibility_gate(_dummy_result("adjust", orb=0.0)) is False,
+        "match": key_visibility_gate(_dummy_result("match")) is True,
+        "adjust(distinctive)": key_visibility_gate(_dummy_result("adjust", distinctive=True)) is True,
+        "adjust(not distinctive)": key_visibility_gate(_dummy_result("adjust", distinctive=False)) is False,
         "low": key_visibility_gate(_dummy_result("low")) is False,
         "match(tiny-scale)": key_visibility_gate(_dummy_result("match", scale=0.3)) is False,
     }

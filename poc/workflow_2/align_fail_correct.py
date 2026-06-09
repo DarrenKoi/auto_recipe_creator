@@ -39,7 +39,7 @@ from poc.workflow_2.align_key_matcher import (
     AlignKeyMatchResult,
     AlignKeyTemplate,
     build_template,
-    compute_align_key_score,
+    compute_align_key_score_ensemble,
     save_overlay_jpeg,
 )
 from poc.workflow_2.live_align_search import (
@@ -104,14 +104,15 @@ class CorrectionOutcome:
 def key_visibility_gate(result: AlignKeyMatchResult) -> bool:
     """paused frame 에서 recipe key 가 '지금 여기' 인식되는가 — primary vs fallback 분기.
 
-    "키가 이 전체 프레임에 있는가"(존재/부재) 판정이라, 이미 localize 된 상태의 drift
-    허용을 위해 임계를 낮춘 ``STRUCTURE_POLICY`` 를 그대로 쓰면 featureless 배경도
-    adjust 로 새어 들어온다(chamfer 단독 ~0.4~0.6, orb=0). 그래서:
+    "키가 이 전체 프레임에 있는가"(존재/부재) 판정. ensemble 경로(decision/score 정비)에서
+    decision 은 calibrated sel 임계(match 0.6053/adjust 0.4727)로 재판정되므로, featureless
+    배경(chamfer~0.4~0.6·NCC 낮음 → sel~0.25)은 대개 decision="low" 로 1차 차단된다. 그래서:
 
     * ``best_scale`` 가 충분(>=MIN_CONFIRM_SCALE)해야 한다 — tiny-scale chamfer 과신 차단.
     * 강한 ``match`` 는 edge 구조만으로 인정.
-    * 약한 ``adjust`` 는 **feature 보강(orb>0)** 이 있을 때만 가시로 인정 — 배경 거짓양성
-      차단. align fail 의 drift 된 진짜 key 는 같은 fab 패턴이라 보통 일부 ORB 가 살아있다.
+    * 약한 ``adjust`` 는 **구조 유일성(distinctive)** 이 있을 때만 가시로 인정 — 배경 거짓양성
+      2차 차단(과거 orb>0 의 대체; ORB 폐지). distinctive 는 chamfer-pool 의 best peak 이
+      2nd 대비 유일한가 = "key 구조가 실제로 존재하는가" presence 신호. 불확실하면 fallback.
 
     True → primary reposition+OK, False → live_align_search fallback(아무것도 안 보임).
     임계/조건은 cold-start 이며 실데이터 calibration 대상.
@@ -121,7 +122,7 @@ def key_visibility_gate(result: AlignKeyMatchResult) -> bool:
     if result.decision == "match":
         return True
     if result.decision == "adjust":
-        return result.orb_inlier_ratio > 0.0
+        return result.distinctive
     return False
 
 
@@ -212,7 +213,7 @@ def correct_align_fail(
 
     1) capture() 로 paused SEM ROI 프레임 캡처.
     2) read_mode() 로 OM/SEM template 라우팅(route_template).
-    3) compute_align_key_score(scales=PAUSED_SCALES, policy=STRUCTURE_POLICY).
+    3) compute_align_key_score_ensemble(scales=PAUSED_SCALES, policy=STRUCTURE_POLICY).
     4) key_visibility_gate:
        - True  → clamp_to_fov(best_xy) → move_to_point(=더블클릭 recenter) →
                  capture_screen() 에서 OK 버튼을 찾아 click_screen(OK).
@@ -239,7 +240,9 @@ def correct_align_fail(
     mode = (controller.read_mode() or "").upper()
     template = route_template(templates, mode)
 
-    result = compute_align_key_score(
+    # ensemble 경로(decision/score 정비): decision 은 calibrated sel 임계 재판정, orb=0(폐지).
+    # key_visibility_gate 의 adjust 분기는 orb>0 → distinctive 로 대체(위 게이트 참조).
+    result = compute_align_key_score_ensemble(
         template, frame, scales=PAUSED_SCALES, policy=STRUCTURE_POLICY
     )
     history.append(

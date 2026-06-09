@@ -37,6 +37,7 @@ from poc.workflow_3.monitor.notify import (
     ALARM_LOG_PATH,
     notify_align_fail_popup,
 )
+from poc.workflow_3.monitor.success_gather import gather_success_async
 
 LOG_COMPONENT = "align_fail_monitor"
 
@@ -321,6 +322,10 @@ def process_fail_rows(
                 lot_type_cd=info["lot_type_cd"],
                 timeout_sec=settings.popup_timeout_sec,
             )
+
+        # consensus 재료 수집 — recipe 최근 성공(S) 이미지 stage (비차단 best-effort).
+        # 게이트(gather_enabled/recipe_id/downloader)는 gather_success_async 내부에서 판정.
+        gather_success_async(eqp_id, info["recipe_id"], settings)
 
         # 알람별 사이클 — RECIPE_ID 유무와 무관하게 접속+녹화는 수행(보정만 RECIPE_ID 필요).
         # cube 알림(처리 실패 시)은 사이클 내부에서 outcome 기반으로 발송된다.

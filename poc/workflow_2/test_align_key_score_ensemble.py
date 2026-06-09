@@ -4,7 +4,9 @@ import numpy as np
 from poc.workflow_2 import align_key_matcher as akm
 from poc.workflow_2.align_key_matcher import (
     AlignKeyCandidate,
+    DEFAULT_POLICY,
     _chamfer_score_map_at_scale,
+    _decision_for_score,
     _rescore_positions_to_candidates,
     build_template,
     compute_align_key_score_ensemble,
@@ -115,6 +117,44 @@ def test_ensemble_selection_prefers_ncc_favored(monkeypatch):
     result = compute_align_key_score_ensemble(template, frame, scales=(1.0,), policy=policy)
     # sel: pos_a=0.5*0.9+0.5*0=0.45, pos_b=0.5*0.5+0.5*0.9=0.70 → pos_b 승.
     assert result.best_xy == pos_b
+    # decision/score 정비: result.score == best_sel(=chamfer+NCC), ORB 제거(orb=0).
+    assert abs(result.score - 0.70) < 1e-9
+    assert result.orb_inlier_ratio == 0.0
+    # 0.70 >= ensemble_match_threshold(0.6053) → match.
+    assert result.decision == "match"
+
+
+def test_decision_for_score_threshold_override():
+    """_decision_for_score: threshold override 가 policy 보다 우선, 미지정 시 policy."""
+    # override 우선 — policy 기본 임계와 무관하게 전달값으로 판정.
+    assert _decision_for_score(0.5, match_threshold=0.4, adjust_threshold=0.3) == "match"
+    assert _decision_for_score(0.35, match_threshold=0.4, adjust_threshold=0.3) == "adjust"
+    assert _decision_for_score(0.2, match_threshold=0.4, adjust_threshold=0.3) == "low"
+    # override 미지정 → policy.match/adjust_threshold (기존 동작 불변).
+    p = DEFAULT_POLICY
+    assert _decision_for_score(p.match_threshold, p) == "match"
+    assert _decision_for_score(p.adjust_threshold, p) == "adjust"
+    assert _decision_for_score(p.adjust_threshold - 1e-6, p) == "low"
+
+
+def test_finalize_match_score_override():
+    """_finalize_match: score_override 미지정 → chamfer+ORB(baseline 불변), 지정 → 그 값+전달 threshold."""
+    template, frame, _ = _synthetic_template_and_frame()
+    cand = AlignKeyCandidate(
+        score=0.5, chamfer_score=0.5, xy=(160, 120), scale=1.0, template_size=(40, 40))
+    # 기본(override 없음) → policy.chamfer_weight·chamfer + orb_weight·orb (baseline 경로).
+    r0 = akm._finalize_match(
+        cand, [cand], frame, template, DEFAULT_POLICY, (0, 0),
+        chamfer_score=0.5, orb_ratio=0.2)
+    expected = DEFAULT_POLICY.chamfer_weight * 0.5 + DEFAULT_POLICY.orb_weight * 0.2
+    assert abs(r0.score - expected) < 1e-9
+    # override → 그 값 그대로, decision 은 전달 threshold 로(0.71 >= 0.7 → match).
+    r1 = akm._finalize_match(
+        cand, [cand], frame, template, DEFAULT_POLICY, (0, 0),
+        chamfer_score=0.5, orb_ratio=0.2,
+        score_override=0.71, decision_thresholds=(0.7, 0.4))
+    assert abs(r1.score - 0.71) < 1e-9
+    assert r1.decision == "match"
 
 
 def test_ensemble_rejects_invalid_scales():

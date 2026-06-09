@@ -139,6 +139,12 @@ class MatchPolicy:
     # 검증: ens_ncc hit 0.607 vs baseline 0.422 vs ORB-selection 0.407 (n=756, p≪0.0001).
     rerank_chamfer_w: float = 0.5     # ensemble NCC reranker selection: chamfer 가중.
     rerank_ncc_w: float = 0.5         # ensemble NCC reranker selection: NCC 가중(max(0,ncc)).
+    # ensemble 결정 score(=selection sel) 의 decision 임계 — baseline(chamfer+ORB) 과 분포가
+    # 달라 별도 캘리브(Youden J/고-recall). 산출: reranker_rule_ab.py, S=756(n_pos462/n_neg294),
+    # 2026-06-09. at_match: prec0.894 recall0.838 fpr0.157. sel 가중(0.5/0.5)이 동일하므로
+    # DEFAULT/STRUCTURE 가 같은 분포 → 두 정책 공통값.
+    ensemble_match_threshold: float = 0.6053    # Youden J 점(균형).
+    ensemble_adjust_threshold: float = 0.4727   # recall_target 0.95(고-recall).
 
 
 # 기본 정책 — 기존 동작과 동일 (smoke test 호환).
@@ -550,10 +556,19 @@ def _candidate_ncc(template_raw: np.ndarray, frame: np.ndarray, xy, scale: float
 # ------------------------------------------------------------------
 
 
-def _decision_for_score(score: float, policy: MatchPolicy = DEFAULT_POLICY) -> str:
-    if score >= policy.match_threshold:
+def _decision_for_score(score: float, policy: MatchPolicy = DEFAULT_POLICY, *,
+                        match_threshold: float | None = None,
+                        adjust_threshold: float | None = None) -> str:
+    """score → decision. match/adjust_threshold 를 주면 policy 대신 그 값을 쓴다.
+
+    ensemble 경로는 결정 score 분포가 baseline(chamfer+ORB)과 달라 별도 캘리브된
+    임계(ensemble_match/adjust_threshold)를 전달한다(decision/score 정비 §2.1).
+    """
+    mt = match_threshold if match_threshold is not None else policy.match_threshold
+    at = adjust_threshold if adjust_threshold is not None else policy.adjust_threshold
+    if score >= mt:
         return "match"
-    if score >= policy.adjust_threshold:
+    if score >= at:
         return "adjust"
     return "low"
 
@@ -749,11 +764,19 @@ def _finalize_match(
     *,
     chamfer_score: float,
     orb_ratio: float,
+    score_override: float | None = None,
+    decision_thresholds: tuple[float, float] | None = None,
 ) -> AlignKeyMatchResult:
     """best 선택 이후 공유 마감 — distinctiveness + score/decision + overlay + result.
 
     distinctiveness 는 *chamfer 집합* 기준(가장 강한 chamfer peak 이 2nd 대비 유일한가).
     candidates 의 xy 는 roi-local 이며 여기서 roi_origin 을 가산해 절대좌표로 만든다.
+
+    ``score_override`` 가 None 이면 기존 baseline 식 ``chamfer_weight·chamfer + orb_weight·orb``
+    로 score 를 계산한다(compute_align_key_score 무변경 보존). 주어지면 그 값을 결정 score 로
+    쓴다 — ensemble 은 selection sel(=chamfer+NCC)을 넘겨 selection 과 decision 신호를 일치시킨다.
+    ``decision_thresholds=(match, adjust)`` 를 주면 그 임계로, 없으면 policy 임계로 판정한다
+    (decision/score 정비 §2).
     """
     chamfer_sorted = sorted(candidates, key=lambda c: c.chamfer_score, reverse=True)
     ch_best = chamfer_sorted[0]
@@ -780,8 +803,16 @@ def _finalize_match(
     tw, th = best_cand.template_size
     best_cand.orb_inlier_ratio = float(orb_ratio)
 
-    score = policy.chamfer_weight * chamfer_score + policy.orb_weight * orb_ratio
-    decision = _decision_for_score(score, policy)
+    if score_override is not None:
+        score = float(score_override)
+    else:
+        score = policy.chamfer_weight * chamfer_score + policy.orb_weight * orb_ratio
+    if decision_thresholds is not None:
+        decision = _decision_for_score(
+            score, match_threshold=decision_thresholds[0],
+            adjust_threshold=decision_thresholds[1])
+    else:
+        decision = _decision_for_score(score, policy)
 
     # 후보 좌표를 roi 절대 좌표로 환산 (best_xy 의미는 기존과 동일).
     abs_xy = (cx + roi_origin[0], cy + roi_origin[1])
@@ -825,21 +856,21 @@ def compute_align_key_score_ensemble(
     A/B 가 잰 recall@N(진실이 후보 집합에 듦)을 최종 픽으로 전환하려면 pool 을 chamfer-직교 신호로
     rerank 해야 한다 — selection = rerank_chamfer_w·chamfer + rerank_ncc_w·max(0,ncc). 검증:
     ens_ncc hit 0.607 vs baseline 0.422 vs ORB-selection 0.407 (n=756, p≪0.0001). NCC 는
-    reranker(구조-제안 소수 후보 판별)로만 — primary matcher 금지는 별개. 결정 score/decision 은
-    기존 chamfer+ORB 보존(선택된 best 1개에만 ORB). 프레임당 비용↑(ensemble ~1s + NCC×top_n)
-    이므로 fallback/static-compare 경로 전용 — live broad-scan 은 compute_align_key_score 유지.
+    reranker(구조-제안 소수 후보 판별)로만 — primary matcher 금지는 별개. 프레임당 비용↑
+    (ensemble ~1s + NCC×top_n)이므로 fallback/static-compare 경로 전용 — live broad-scan 은
+    compute_align_key_score 유지.
+
+    결정 score/decision(decision/score 정비 2026-06-09): result.score = selection sel
+    (=rerank_chamfer_w·chamfer + rerank_ncc_w·max(0,ncc))로 selection 과 일치시킨다 — NCC 가
+    저-chamfer 정답을 골라도 그 신뢰도가 그대로 decision 에 반영된다(과거 chamfer+ORB 식의
+    decision="low" 오판 해소). decision 은 ensemble 전용 임계(policy.ensemble_match/adjust_threshold,
+    Youden 캘리브)로 판정. ORB 는 결정에서 제거(orb_inlier_ratio=0 고정, 계산 폐지).
 
     주의(distinctiveness 의미): 반환 result.distinctive / reject_reason("not_distinctive")
     의 유일성 판정은 공유 _finalize_match 가 *chamfer 집합* 기준으로 계산한다(가장 강한 chamfer
     peak 이 2nd 대비 유일한가). NCC reranker 가 best_xy 를 chamfer-top 이 아닌 후보로 골랐을
     경우, distinctive 는 best_xy 자체의 유일성이 아니라 chamfer-top 의 유일성을 가리킨다. 따라서
     distinctive 는 soft advisory 신호로만 쓰고 hard gate 로 쓰지 말 것.
-
-    주의(score/decision 의미): result.score/decision 도 기존 chamfer+ORB 로 계산하므로, NCC 가
-    *낮은 chamfer* 의 정답 후보를 골랐을 때(chamfer_miss 케이스가 정확히 이것) score 가 낮아
-    decision="low" 가 될 수 있다 — best_xy 는 맞아도. 호출자 전환 시 decision/score 를 hard gate
-    로 쓰면 정답 좌표가 버려질 수 있으니, 그 단계에서 score 를 chamfer+NCC 로 재구성하거나
-    threshold 를 재캘리브레이션할 것. 현재는 best_xy(좌표)만 신뢰.
     """
     global compute_ensemble_candidates
     if compute_ensemble_candidates is None:   # lazy 바인딩(순환 import 회피). 패치 시엔 None 아님→스킵.
@@ -881,13 +912,10 @@ def compute_align_key_score_ensemble(
             best_sel = sel
             best_cand = cand
 
-    # 결정 score/decision 은 기존 chamfer+ORB 유지(threshold 보존) — 선택된 best 1개에만 ORB.
-    bx, by = best_cand.xy
-    btw, bth = best_cand.template_size
-    best_orb = 0.0
-    if best_cand.chamfer_score > 0.0 and btw > 0 and bth > 0:
-        crop, _crop_origin = _crop_with_padding(gray_frame, bx, by, btw, bth, pad=1.6)
-        best_orb, _n_inliers, _n_matches = compute_orb_inlier_ratio(template.raw_image, crop)
+    # 결정 score/decision = selection sel(=chamfer+NCC)로 일원화(decision/score 정비). ORB 제거:
+    # selection 이 NCC 라 ORB 는 결정에 무익(orb_flip 27% 유발)하고, 저-chamfer 정답을 고를 때
+    # chamfer+ORB score 가 낮아 decision="low" 오판을 냈다. score_override=best_sel + ensemble
+    # 전용 임계(Youden 캘리브)로 선택 신뢰도와 decision 신뢰도를 일치시킨다. orb=0 고정(계산 폐지).
 
     # distinctiveness·반환 후보는 *선택 풀과 동일*해야 한다 — best 는 candidates[:top_n]
     # 에서 NCC reranker 로 골랐으므로 shadow(>top_n) 를 빼고 같은 풀로 마감(거짓 not_distinctive 방지).
@@ -896,7 +924,9 @@ def compute_align_key_score_ensemble(
     candidates_sorted = sorted(pool, key=lambda c: c.chamfer_score, reverse=True)
     return _finalize_match(
         best_cand, candidates_sorted, frame, template, policy, roi_origin,
-        chamfer_score=best_cand.chamfer_score, orb_ratio=best_orb,
+        chamfer_score=best_cand.chamfer_score, orb_ratio=0.0,
+        score_override=best_sel,
+        decision_thresholds=(policy.ensemble_match_threshold, policy.ensemble_adjust_threshold),
     )
 
 

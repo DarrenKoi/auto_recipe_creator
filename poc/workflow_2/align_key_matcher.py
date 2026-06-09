@@ -371,6 +371,43 @@ def compute_chamfer_candidates(
     )
 
 
+def _rescore_positions_to_candidates(
+    template: AlignKeyTemplate,
+    frame_dt: np.ndarray,
+    positions: list,
+) -> list:
+    """ensemble 위치 [(center_xy, scale)] → chamfer rescore 된 AlignKeyCandidate 리스트.
+
+    scale 별 chamfer score map 을 1회 계산(캐시)하고, 각 center 를 top-left 로 환산해
+    score_map 룩업한다. 맵 밖/매칭 불가 → chamfer_score=0.0. 입력 순서(=RRF 순위) 보존.
+    """
+    score_map_cache: dict = {}
+    out: list = []
+    for (cx, cy), scale in positions:
+        scale = float(scale)
+        if scale not in score_map_cache:
+            score_map_cache[scale] = _chamfer_score_map_at_scale(
+                template.edge_map, frame_dt, scale
+            )
+        score_map, (tw, th) = score_map_cache[scale]
+        chamfer = 0.0
+        if score_map is not None:
+            x0 = int(cx) - tw // 2
+            y0 = int(cy) - th // 2
+            if 0 <= y0 < score_map.shape[0] and 0 <= x0 < score_map.shape[1]:
+                chamfer = float(score_map[y0, x0])
+        out.append(
+            AlignKeyCandidate(
+                score=chamfer,
+                chamfer_score=chamfer,
+                xy=(int(cx), int(cy)),
+                scale=scale,
+                template_size=(tw, th),
+            )
+        )
+    return out
+
+
 def compute_chamfer_score(
     template: AlignKeyTemplate,
     frame_dt: np.ndarray,

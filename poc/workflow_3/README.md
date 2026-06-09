@@ -13,7 +13,7 @@ workflow_1(RCS GUI 자동화) + workflow_2(CV align-key 보정)의 production �
 
 | 서브패키지 | 내용 |
 |---|---|
-| `monitor/` | 루프 본체 — 알람 폴링(`align_fail_monitor.py` 진입점), 알람별 사이클(`cycle.py`), 상시 녹화(`recording.py`), 알림(`notify.py`), 실장비 adapter(`sem_controller.py`), 알람 소스(`alarm_source.py`) |
+| `monitor/` | 루프 본체 — 알람 폴링(`align_fail_monitor.py` 진입점), 알람별 사이클(`cycle.py`), 상시 녹화(`recording.py`, 변화 감지 적응 캡처 — RCS 원격 화면이라 장비측 커서가 프레임에 찍힘), 알림(`notify.py`), 실장비 adapter(`sem_controller.py`), 알람 소스(`alarm_source.py`) |
 | `rcs/` | RCS GUI 자동화 — 실행/로그인/tool 선택·종료/캡처 |
 | `vision/` | CV 엔진 — 매칭(ensemble)/자산 해석/보정(`align_fail_correct`)/라이브 탐색 |
 | `vlm/` | VLM 클라이언트/서비스 레지스트리/프롬프트 |
@@ -49,7 +49,10 @@ replay CSV 컬럼: `EQP_ID,ALID,ALARM_NAME,UTC9,RECIPE_ID,OPERATION_DESC,LOT_TYP
 | `ALIGN_FAIL_CORRECTION_DRY_RUN` | 1 | 보정의 move/click 차단. 실 클릭은 SAFE_MODE=0 **그리고** 이 값=0 일 때만 |
 | `ALIGN_FAIL_RCS_RECOVERY` | 0 | RCS 메인 창 부재 시 재실행+재로그인 복구 |
 | `ALIGN_FAIL_POLL_SEC` / `ALIGN_FAIL_WINDOW_SEC` | 10 / 60 | 폴링 주기 / 감지 look-back |
-| `ALIGN_FAIL_RECORDING_INTERVAL_SEC` / `_MAX_SEC` | 2.0 / 900 | 녹화 간격 / 상한 |
+| `ALIGN_FAIL_RECORDING_POLL_SEC` | 0.3 | 녹화 샘플링 간격 (변화 감지용 빠른 폴링) |
+| `ALIGN_FAIL_RECORDING_HEARTBEAT_SEC` | 5.0 | 변화 없어도 이 간격마다 1장 저장 |
+| `ALIGN_FAIL_RECORDING_CHANGE_MIN_PX` | 4 | 변화 판정: delta>15 인 다운샘플 픽셀 최소 개수 (커서 이동도 감지) |
+| `ALIGN_FAIL_RECORDING_MAX_SEC` | 900 | 녹화 상한 |
 | `ALIGN_FAIL_ENGINEER_WATCH_SEC` | 600 | 미보정 시 엔지니어 조작 녹화 대기 상한 |
 | `ALIGN_FAIL_ALARM_SOURCE` | office | `office` \| `replay` |
 | `ALIGN_SEM_MODE_OVERRIDE` | (없음) | read_mode v0 강제값 (`OM`/`SEM`) |

@@ -1,16 +1,30 @@
-"""RCS tool 창 상시 녹화 — 알람별 사이클 동안 주기 캡처(엔지니어 수동 조작 포함).
+"""RCS tool 창 상시 녹화 — 변화 감지 기반 적응 캡처(엔지니어 수동 조작 추적).
 
 모든 align fail 에서 녹화한다(성공/실패 무관). 자동 보정이 실패해 엔지니어가
 직접 장비를 조작하는 동안에도 같은 세션이 계속 캡처하므로, 이 프레임들이 다음
 개선(모방 학습/절차 분석)의 원천 데이터가 된다.
 
+RCS 는 원격 접속 프로그램이라 장비 측 마우스 커서/움직임이 화면 콘텐츠로서
+프레임에 그대로 찍힌다. 따라서 커서 궤적을 따라가는 관건은 캡처 *간격* 인데,
+고정 간격은 조작 구간에선 너무 성기고 idle 구간에선 낭비라, DVR CH4 캡처와
+``filter_frames_by_change`` 의 선례를 따라 **빠른 샘플링 + 변화 감지 저장** 으로
+동작한다:
+
+  * ``poll_sec``(기본 0.3s) 간격으로 캡처해 직전 저장 프레임과 비교한다.
+    지표는 1/4 다운샘플 grayscale 에서 **변화 폭이 노이즈 바닥(픽셀 delta>15)을
+    넘는 픽셀의 개수** — 평균 차이는 작은 커서 이동에 둔감해서 쓰지 않는다.
+  * 변화 픽셀이 ``change_min_px``(기본 4) 이상이면 저장 — 조작 중에는 ~3fps 로
+    커서 움직임/메뉴/다이얼로그 전이를 촘촘히 따라간다.
+  * 변화가 없으면 ``heartbeat_sec``(기본 5s)마다 1장만 저장 — idle 구간의
+    디스크 낭비를 막으면서 "이 구간엔 아무 일도 없었다"는 증거를 남긴다.
+
 계약:
   * 저장 경로(out_dir)는 호출부가 정한다 — 보통
     align_images/<eqp>/<class>/<recipe>/captured_img_from_rcs/<tag>/recording/
     (RECIPE_ID 없으면 align_images/<eqp>/_unregistered/<tag>/recording/)
-  * interval_sec 간격 JPEG, 파일명 <tag>_rcs_<seq:04d>_<elapsed_ms>ms.jpg
-  * 자동 중지: 연속 캡처 실패 5회(창 닫힘으로 간주) 또는 max_sec 초과
-  * 종료 시 recording_manifest.json (시작/종료/프레임수/중지사유) 기록
+  * 파일명 <tag>_rcs_<seq:04d>_<elapsed_ms>ms.jpg (elapsed 로 시간축 복원)
+  * 자동 중지: 연속 캡처 실패 ``FAILURE_WINDOW_SEC`` 지속(창 닫힘 간주) 또는 max_sec
+  * 종료 시 recording_manifest.json (샘플/저장 수, 파라미터, 중지사유) 기록
 """
 
 import json
@@ -18,18 +32,47 @@ import threading
 import time
 from pathlib import Path
 
+import numpy as np
+
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
 from poc.workflow_3.logger import log_work2_event
 from poc.workflow_3.util import capture_window
 
 LOG_COMPONENT = "align_fail_recording"
 
-# 연속 캡처 실패 허용 횟수 — 초과 시 창이 닫힌 것으로 보고 세션을 끝낸다.
-MAX_CONSECUTIVE_FAILURES = 5
+# 캡처 실패가 이 시간 동안 연속되면 창이 닫힌 것으로 보고 세션을 끝낸다.
+FAILURE_WINDOW_SEC = 5.0
+# 변화 비교용 다운샘플 간격 (양 축 1/4 → 픽셀 1/16, 커서 이동도 충분히 감지됨).
+_DIFF_DOWNSAMPLE = 4
+# 픽셀 변화로 인정하는 최소 delta — RCS 스트림/JPEG 압축 노이즈 바닥값 위.
+_PIXEL_DELTA_MIN = 15.0
+
+
+def _to_diff_gray(image) -> np.ndarray:
+    """캡처 이미지를 변화 비교용 저해상 grayscale float 배열로 변환한다."""
+    array = np.asarray(image.convert("L") if hasattr(image, "convert") else image)
+    if array.ndim == 3:
+        array = array.mean(axis=2)
+    return array[::_DIFF_DOWNSAMPLE, ::_DIFF_DOWNSAMPLE].astype(np.float32)
+
+
+def _frame_changed(prev: np.ndarray | None, current: np.ndarray, min_changed_px: int) -> bool:
+    """직전 저장 프레임 대비 '확실히 변한' 다운샘플 픽셀 수가 임계 이상인지.
+
+    평균 절대차는 작은 커서(화면의 수백분의 일)가 움직여도 임계를 못 넘는다.
+    개수 기반은 커서 한 칸 이동(이전 위치 복원 + 새 위치 등장 = 수 픽셀, delta 큼)
+    도 잡고, 압축 노이즈(넓지만 delta 작음)는 _PIXEL_DELTA_MIN 으로 걸러진다.
+    """
+    if prev is None:
+        return True
+    if prev.shape != current.shape:
+        return True  # 창 리사이즈 등 — 변화로 간주.
+    changed_px = int((np.abs(current - prev) > _PIXEL_DELTA_MIN).sum())
+    return changed_px >= min_changed_px
 
 
 class RecordingSession:
-    """tool 창을 주기 캡처하는 데몬 스레드 세션 (context manager 지원)."""
+    """tool 창을 변화 감지로 적응 캡처하는 데몬 스레드 세션 (context manager 지원)."""
 
     def __init__(
         self,
@@ -37,15 +80,23 @@ class RecordingSession:
         out_dir: Path,
         *,
         tag: str,
-        interval_sec: float = 2.0,
+        poll_sec: float = 0.3,
+        heartbeat_sec: float = 5.0,
+        change_min_px: int = 4,
         max_sec: float = 900.0,
+        capture_fn=None,
     ):
         self.tool_window = tool_window
         self.out_dir = Path(out_dir)
         self.tag = tag
-        self.interval_sec = max(0.2, float(interval_sec))
+        self.poll_sec = max(0.1, float(poll_sec))
+        self.heartbeat_sec = max(self.poll_sec, float(heartbeat_sec))
+        self.change_min_px = max(1, int(change_min_px))
         self.max_sec = float(max_sec)
+        # 테스트 주입점 — 기본은 실제 창 캡처.
+        self._capture_fn = capture_fn or (lambda: capture_window(self.tool_window))
         self.frames: list[Path] = []
+        self.sampled_count = 0
         self.stop_reason: str = ""
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -62,18 +113,19 @@ class RecordingSession:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
         print(
-            f"[INFO] 녹화 시작: dir={self.out_dir}, interval={self.interval_sec}s, "
+            f"[INFO] 녹화 시작: dir={self.out_dir}, poll={self.poll_sec}s, "
+            f"heartbeat={self.heartbeat_sec}s, change_min_px={self.change_min_px}, "
             f"max={self.max_sec}s"
         )
         return self
 
     def stop(self, reason: str = "stopped") -> list[Path]:
-        """녹화를 멈추고 manifest 를 기록한 뒤 프레임 목록을 반환한다."""
+        """녹화를 멈추고 manifest 를 기록한 뒤 저장된 프레임 목록을 반환한다."""
         if not self.stop_reason:
             self.stop_reason = reason
         self._stop_event.set()
         if self._thread is not None:
-            self._thread.join(timeout=self.interval_sec + 5.0)
+            self._thread.join(timeout=self.poll_sec + 5.0)
         self._write_manifest()
         return self.frames
 
@@ -90,31 +142,43 @@ class RecordingSession:
     # ---- 내부 ----
 
     def _run(self) -> None:
-        consecutive_failures = 0
         seq = 0
         started = self._started_at or time.time()
+        first_failure_at: float | None = None
+        prev_gray: np.ndarray | None = None
+        last_saved_at = 0.0
+
         while not self._stop_event.is_set():
-            elapsed = time.time() - started
+            now = time.time()
+            elapsed = now - started
             if self.max_sec > 0 and elapsed >= self.max_sec:
                 self.stop_reason = "max_sec"
                 break
             try:
-                image = capture_window(self.tool_window)
-                elapsed_ms = int(elapsed * 1000)
-                out_path = self.out_dir / f"{self.tag}_rcs_{seq:04d}_{elapsed_ms:08d}ms.jpg"
-                save_debug_jpeg(image, out_path)
-                self.frames.append(out_path)
-                seq += 1
-                consecutive_failures = 0
+                image = self._capture_fn()
+                first_failure_at = None
+                self.sampled_count += 1
+
+                gray = _to_diff_gray(image)
+                changed = _frame_changed(prev_gray, gray, self.change_min_px)
+                heartbeat_due = (now - last_saved_at) >= self.heartbeat_sec
+                if changed or heartbeat_due:
+                    elapsed_ms = int(elapsed * 1000)
+                    out_path = self.out_dir / f"{self.tag}_rcs_{seq:04d}_{elapsed_ms:08d}ms.jpg"
+                    save_debug_jpeg(image, out_path)
+                    self.frames.append(out_path)
+                    seq += 1
+                    prev_gray = gray
+                    last_saved_at = now
             except Exception as exc:
-                consecutive_failures += 1
-                if consecutive_failures == 1:
-                    print(f"[WARNING] 녹화 캡처 실패(1회차, 창 닫힘?): {exc}")
-                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                if first_failure_at is None:
+                    first_failure_at = now
+                    print(f"[WARNING] 녹화 캡처 실패(창 닫힘?): {exc}")
+                elif now - first_failure_at >= FAILURE_WINDOW_SEC:
                     # 창이 닫힌 것으로 간주 — 엔지니어/close_tool 이 창을 닫은 정상 종료.
                     self.stop_reason = "window_gone"
                     break
-            self._stop_event.wait(self.interval_sec)
+            self._stop_event.wait(self.poll_sec)
 
         if not self.stop_reason:
             self.stop_reason = "stopped"
@@ -128,7 +192,10 @@ class RecordingSession:
             ),
             "stopped_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
             "frame_count": len(self.frames),
-            "interval_sec": self.interval_sec,
+            "sampled_count": self.sampled_count,
+            "poll_sec": self.poll_sec,
+            "heartbeat_sec": self.heartbeat_sec,
+            "change_min_px": self.change_min_px,
             "stop_reason": self.stop_reason,
         }
         try:
@@ -139,16 +206,17 @@ class RecordingSession:
         except Exception as exc:
             print(f"[WARNING] recording manifest 기록 실패: {exc}")
         print(
-            f"[INFO] 녹화 종료: frames={len(self.frames)}, reason={self.stop_reason}, "
-            f"dir={self.out_dir}"
+            f"[INFO] 녹화 종료: saved={len(self.frames)}/{self.sampled_count} sampled, "
+            f"reason={self.stop_reason}, dir={self.out_dir}"
         )
         log_work2_event(
             component=LOG_COMPONENT,
             message="recording_finished",
             frame_count=len(self.frames),
+            sampled_count=self.sampled_count,
             stop_reason=self.stop_reason,
             out_dir=str(self.out_dir),
         )
 
 
-__all__ = ["RecordingSession", "MAX_CONSECUTIVE_FAILURES"]
+__all__ = ["RecordingSession", "FAILURE_WINDOW_SEC"]

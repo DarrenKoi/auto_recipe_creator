@@ -300,7 +300,9 @@ def _exec_start_recording(step, context, settings: Workflow3Settings) -> StepRes
             context["tool_window"],
             out_dir,
             tag=context["tag"],
-            interval_sec=settings.recording_interval_sec,
+            poll_sec=settings.recording_poll_sec,
+            heartbeat_sec=settings.recording_heartbeat_sec,
+            change_min_px=settings.recording_change_min_px,
             max_sec=settings.recording_max_sec,
         ).start()
         context["recording"] = session

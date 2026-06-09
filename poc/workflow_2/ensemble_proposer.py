@@ -22,6 +22,8 @@ def _scharr_edges(image: np.ndarray, r_c1: float) -> np.ndarray:
 
     타이 브레이킹: 균일 이미지(magnitude=0) 에서도 clamp 하한으로 edge 가 생기도록
     미세 jitter(< 1e-6)를 더해 percentile 계산. 재현성을 위해 고정 시드 사용.
+    실데이터에선 float32 정밀도가 jitter 를 흡수해 무영향(magnitude≈0 영역에서만 작동);
+    실구조 밀도 < clamp 하한일 때만 부족분이 노이즈 픽셀로 채워진다(실 SEM 프레임엔 비발생).
     """
     gray = _to_grayscale(image)
     gx = cv2.Scharr(gray, cv2.CV_32F, 1, 0)

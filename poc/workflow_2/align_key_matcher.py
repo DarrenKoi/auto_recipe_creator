@@ -247,6 +247,7 @@ def _mean_dt_map_at_scale(
         return None, (tw, th)
     # CCORR: result[y, x] = sum over (i, j) of frame_dt[y+i, x+j] * template_mask[i, j].
     result = cv2.matchTemplate(frame_dt, template_mask, cv2.TM_CCORR)
+    # result / edge_count = 템플릿 edge 픽셀까지의 평균 거리 (작을수록 구조적 일치).
     return (result / edge_count).astype(np.float32), (tw, th)
 
 
@@ -255,7 +256,7 @@ def _chamfer_score_map_at_scale(
     frame_dt: np.ndarray,
     scale: float,
 ) -> tuple[np.ndarray | None, tuple[int, int]]:
-    """단일 스케일 score map = exp(-mean_dt/DT_TAU_PX). (mean_dt map wrapper — 동작 보존)."""
+    """단일 스케일 score map = exp(-mean_dt/DT_TAU_PX). (_mean_dt_map_at_scale 위에 exp — 동작 보존)."""
     mean_dt_map, (tw, th) = _mean_dt_map_at_scale(template_edges, frame_dt, scale)
     if mean_dt_map is None:
         return None, (tw, th)

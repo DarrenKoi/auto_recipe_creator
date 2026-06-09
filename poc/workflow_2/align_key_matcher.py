@@ -510,9 +510,13 @@ def _resize_template(raw_gray: np.ndarray, scale: float) -> np.ndarray:
 
 
 def _frame_patch(frame: np.ndarray, cx: int, cy: int, tw: int, th: int):
-    """(cx,cy) 중심·(tw,th) 크기 프레임 패치. 경계 밖이면 None."""
-    x0 = int(round(cx - tw / 2.0))
-    y0 = int(round(cy - th / 2.0))
+    """(cx,cy) 중심·(tw,th) 크기 프레임 패치. 경계 밖이면 None.
+
+    center→top-left 은 cx - tw//2 — _extract_peaks(center=topleft+tw//2)·_rescore 규약과 동일
+    (홀수 tw 에서 round 기반은 banker's rounding 으로 ±1px 어긋남).
+    """
+    x0 = int(cx) - tw // 2
+    y0 = int(cy) - th // 2
     if x0 < 0 or y0 < 0 or x0 + tw > frame.shape[1] or y0 + th > frame.shape[0]:
         return None
     return frame[y0:y0 + th, x0:x0 + tw]

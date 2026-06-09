@@ -620,6 +620,98 @@ def _prepare_match_inputs(
     return gray_frame, frame_dt, scales, roi_origin
 
 
+def _no_candidate_result(
+    frame: np.ndarray,
+    frame_dt: np.ndarray,
+    template: AlignKeyTemplate,
+    roi_origin: tuple[int, int],
+) -> AlignKeyMatchResult:
+    """후보 0개 — 기존 동작(중앙, 점수 0, reject_reason='no_candidates')을 보존."""
+    fh, fw = frame_dt.shape[:2]
+    center = (fw // 2 + roi_origin[0], fh // 2 + roi_origin[1])
+    t_h, t_w = template.edge_map.shape[:2]
+    overlay = _render_overlay(
+        frame, cx=center[0], cy=center[1], tw=t_w, th=t_h,
+        decision="low", score=0.0, chamfer=0.0, orb=0.0, scale=1.0,
+    )
+    return AlignKeyMatchResult(
+        score=0.0, chamfer_score=0.0, orb_inlier_ratio=0.0,
+        best_xy=center, best_scale=1.0, decision="low", debug_overlay=overlay,
+        candidates=[], reject_reason="no_candidates", distinctive=False,
+    )
+
+
+def _finalize_match(
+    best_cand: AlignKeyCandidate,
+    candidates: list,
+    frame: np.ndarray,
+    template: AlignKeyTemplate,
+    policy: MatchPolicy,
+    roi_origin: tuple[int, int],
+    *,
+    chamfer_score: float,
+    orb_ratio: float,
+) -> AlignKeyMatchResult:
+    """best 선택 이후 공유 마감 — distinctiveness + score/decision + overlay + result.
+
+    distinctiveness 는 *chamfer 집합* 기준(가장 강한 chamfer peak 이 2nd 대비 유일한가).
+    candidates 의 xy 는 roi-local 이며 여기서 roi_origin 을 가산해 절대좌표로 만든다.
+    """
+    chamfer_sorted = sorted(candidates, key=lambda c: c.chamfer_score, reverse=True)
+    ch_best = chamfer_sorted[0]
+    ch_second = chamfer_sorted[1] if len(chamfer_sorted) > 1 else None
+    second_score = float(ch_second.chamfer_score) if ch_second is not None else None
+    score_gap = (
+        float(ch_best.chamfer_score - ch_second.chamfer_score) if ch_second is not None else None
+    )
+    second_ratio = (
+        float(ch_second.chamfer_score / ch_best.chamfer_score)
+        if ch_second is not None and ch_best.chamfer_score > 0 else None
+    )
+    distinctive = True
+    reject_reason: str | None = None
+    if ch_second is not None:
+        if (score_gap is not None and score_gap < policy.min_distinct_gap) or (
+            second_ratio is not None and second_ratio > policy.max_second_ratio
+        ):
+            distinctive = False
+            reject_reason = "not_distinctive"
+
+    cx, cy = best_cand.xy
+    best_scale = best_cand.scale
+    tw, th = best_cand.template_size
+    best_cand.orb_inlier_ratio = float(orb_ratio)
+
+    score = policy.chamfer_weight * chamfer_score + policy.orb_weight * orb_ratio
+    decision = _decision_for_score(score, policy)
+
+    # 후보 좌표를 roi 절대 좌표로 환산 (best_xy 의미는 기존과 동일).
+    abs_xy = (cx + roi_origin[0], cy + roi_origin[1])
+    for c in candidates:
+        c.xy = (c.xy[0] + roi_origin[0], c.xy[1] + roi_origin[1])
+
+    overlay = _render_overlay(
+        frame, cx=abs_xy[0], cy=abs_xy[1], tw=tw, th=th,
+        decision=decision, score=score, chamfer=chamfer_score, orb=orb_ratio, scale=best_scale,
+    )
+
+    return AlignKeyMatchResult(
+        score=float(score),
+        chamfer_score=float(chamfer_score),
+        orb_inlier_ratio=float(orb_ratio),
+        best_xy=abs_xy,
+        best_scale=float(best_scale),
+        decision=decision,
+        debug_overlay=overlay,
+        candidates=candidates,
+        second_score=second_score,
+        score_gap=score_gap,
+        second_ratio=second_ratio,
+        distinctive=distinctive,
+        reject_reason=reject_reason,
+    )
+
+
 def compute_align_key_score(
     template: AlignKeyTemplate,
     frame: np.ndarray,
@@ -655,84 +747,24 @@ def compute_align_key_score(
     )
 
     if not candidates:
-        # 매칭 불가 — 기존 동작(중앙, 점수 0)을 보존하고 reject_reason 만 남긴다.
-        fh, fw = frame_dt.shape[:2]
-        center = (fw // 2 + roi_origin[0], fh // 2 + roi_origin[1])
-        t_h, t_w = template.edge_map.shape[:2]
-        overlay = _render_overlay(
-            frame, cx=center[0], cy=center[1], tw=t_w, th=t_h,
-            decision="low", score=0.0, chamfer=0.0, orb=0.0, scale=1.0,
-        )
-        return AlignKeyMatchResult(
-            score=0.0, chamfer_score=0.0, orb_inlier_ratio=0.0,
-            best_xy=center, best_scale=1.0, decision="low", debug_overlay=overlay,
-            candidates=[], reject_reason="no_candidates", distinctive=False,
-        )
-
-    # distinctiveness 는 *chamfer 집합* 기준(= 가장 강한 chamfer peak 이 2nd 대비 유일한가).
-    chamfer_sorted = sorted(candidates, key=lambda c: c.chamfer_score, reverse=True)
-    ch_best = chamfer_sorted[0]
-    ch_second = chamfer_sorted[1] if len(chamfer_sorted) > 1 else None
-    second_score = float(ch_second.chamfer_score) if ch_second is not None else None
-    score_gap = (
-        float(ch_best.chamfer_score - ch_second.chamfer_score) if ch_second is not None else None
-    )
-    second_ratio = (
-        float(ch_second.chamfer_score / ch_best.chamfer_score)
-        if ch_second is not None and ch_best.chamfer_score > 0 else None
-    )
-    distinctive = True
-    reject_reason: str | None = None
-    if ch_second is not None:
-        if (score_gap is not None and score_gap < policy.min_distinct_gap) or (
-            second_ratio is not None and second_ratio > policy.max_second_ratio
-        ):
-            distinctive = False
-            reject_reason = "not_distinctive"
+        return _no_candidate_result(frame, frame_dt, template, roi_origin)
 
     best = candidates[0]
     cx, cy = best.xy
-    best_scale = best.scale
     tw, th = best.template_size
     chamfer_score = best.chamfer_score
 
     # ORB: best 위치를 중심으로 한 윈도우 vs 템플릿.
+    orb_ratio = 0.0
     if chamfer_score > 0.0 and tw > 0 and th > 0:
         crop, _crop_origin = _crop_with_padding(gray_frame, cx, cy, tw, th, pad=1.6)
         orb_ratio, _n_inliers, _n_matches = compute_orb_inlier_ratio(
             template.raw_image, crop
         )
-    else:
-        orb_ratio = 0.0
-    best.orb_inlier_ratio = float(orb_ratio)
 
-    score = policy.chamfer_weight * chamfer_score + policy.orb_weight * orb_ratio
-    decision = _decision_for_score(score, policy)
-
-    # 후보 좌표를 roi 절대 좌표로 환산 (best_xy 의미는 기존과 동일).
-    abs_xy = (cx + roi_origin[0], cy + roi_origin[1])
-    for c in candidates:
-        c.xy = (c.xy[0] + roi_origin[0], c.xy[1] + roi_origin[1])
-
-    overlay = _render_overlay(
-        frame, cx=abs_xy[0], cy=abs_xy[1], tw=tw, th=th,
-        decision=decision, score=score, chamfer=chamfer_score, orb=orb_ratio, scale=best_scale,
-    )
-
-    return AlignKeyMatchResult(
-        score=float(score),
-        chamfer_score=float(chamfer_score),
-        orb_inlier_ratio=float(orb_ratio),
-        best_xy=abs_xy,
-        best_scale=float(best_scale),
-        decision=decision,
-        debug_overlay=overlay,
-        candidates=candidates,
-        second_score=second_score,
-        score_gap=score_gap,
-        second_ratio=second_ratio,
-        distinctive=distinctive,
-        reject_reason=reject_reason,
+    return _finalize_match(
+        best, candidates, frame, template, policy, roi_origin,
+        chamfer_score=chamfer_score, orb_ratio=orb_ratio,
     )
 
 

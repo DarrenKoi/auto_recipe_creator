@@ -77,12 +77,12 @@ def test_ensemble_no_candidates_returns_reject(monkeypatch):
     assert result.score == 0.0
 
 
-def test_ensemble_pool_rerank_prefers_orb_favored(monkeypatch):
-    """ORB 가 chamfer-비최상 후보를 우세하게 만들면 best_xy 가 그 후보가 되어야."""
+def test_ensemble_selection_prefers_ncc_favored(monkeypatch):
+    """NCC 가 chamfer-비최상 후보를 우세하게 만들면 best_xy 가 그 후보가 되어야(NCC selection)."""
     template, frame, _ = _synthetic_template_and_frame()
 
-    pos_a = (80, 70)
-    pos_b = (200, 150)
+    pos_a = (80, 70)    # chamfer 높음, NCC 낮음 (decoy)
+    pos_b = (200, 150)  # chamfer 낮음, NCC 높음 (truth)
 
     class _Cand:
         def __init__(self, xy):
@@ -104,20 +104,16 @@ def test_ensemble_pool_rerank_prefers_orb_favored(monkeypatch):
 
     monkeypatch.setattr(akm, "_rescore_positions_to_candidates", _fake_rescore)
 
+    # NCC 가 pos_b(truth)만 높게 — selection 이 chamfer-top(pos_a)을 누르고 pos_b 를 골라야.
+    def _fake_ncc(template_raw, frame_img, xy, scale):
+        return 0.9 if tuple(xy) == pos_b else 0.0
+
+    monkeypatch.setattr(akm, "_candidate_ncc", _fake_ncc)
+
     from poc.workflow_2.align_key_matcher import MatchPolicy
-    policy = MatchPolicy(chamfer_weight=0.2, orb_weight=0.8)
-
-    def _fake_crop(frame_img, cx, cy, tw, th, *, pad=1.5):
-        return np.full((4, 4), 1 if (cx, cy) == pos_b else 0, dtype=np.uint8), (0, 0)
-
-    def _orb_by_tag(tmpl_img, crop, **k):
-        return (1.0, 10, 10) if int(crop[0, 0]) == 1 else (0.0, 0, 0)
-
-    monkeypatch.setattr(akm, "_crop_with_padding", _fake_crop)
-    monkeypatch.setattr(akm, "compute_orb_inlier_ratio", _orb_by_tag)
-
+    policy = MatchPolicy(rerank_chamfer_w=0.5, rerank_ncc_w=0.5)
     result = compute_align_key_score_ensemble(template, frame, scales=(1.0,), policy=policy)
-    # combined: pos_a=0.2*0.9+0.8*0=0.18, pos_b=0.2*0.5+0.8*1.0=0.90 → pos_b 승.
+    # sel: pos_a=0.5*0.9+0.5*0=0.45, pos_b=0.5*0.5+0.5*0.9=0.70 → pos_b 승.
     assert result.best_xy == pos_b
 
 

@@ -30,7 +30,9 @@ import numpy as np
 
 from poc.workflow_2 import DEBUG_IMAGE_DIR
 from poc.workflow_2.align_fail_assets import iter_msr_images, load_gray
-from poc.workflow_2.align_key_matcher import STRUCTURE_POLICY, preprocess_for_matching
+from poc.workflow_2.align_key_matcher import (
+    STRUCTURE_POLICY, _frame_patch, _ncc, _resize_template, preprocess_for_matching,
+)
 from poc.workflow_2.align_similarity import COMPARE_SCALES, GT_TOL_NORM
 from poc.workflow_2.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
 from poc.workflow_2.cond_file import load_cond
@@ -44,19 +46,6 @@ from poc.workflow_1.util.time_utils import make_timestamp_tag
 OUTPUT_ROOT = DEBUG_IMAGE_DIR / "reranker_signal_probe"
 
 SIGNALS = ("mi", "ncc")
-
-
-def _ncc(a, b):
-    """두 동일 크기 패치의 정규화 상호상관 [-1,1]. 분산 0(평탄) → 0.0."""
-    a = a.astype(np.float64)
-    b = b.astype(np.float64)
-    a = a - a.mean()
-    b = b - b.mean()
-    da = float(np.sqrt((a * a).sum()))
-    db = float(np.sqrt((b * b).sum()))
-    if da < 1e-9 or db < 1e-9:
-        return 0.0
-    return float((a * b).sum() / (da * db))
 
 
 def _mi(a, b, bins=32):
@@ -73,23 +62,6 @@ def _mi(a, b, bins=32):
     nz = pxy > 0
     px_py = px[:, None] * py[None, :]
     return float((pxy[nz] * np.log(pxy[nz] / px_py[nz])).sum())
-
-
-def _resize_template(raw_gray, scale):
-    """box template raw 를 scale 로 리사이즈한 grayscale (candidate scale 패치 비교용)."""
-    th, tw = raw_gray.shape[:2]
-    nw = max(1, int(round(tw * scale)))
-    nh = max(1, int(round(th * scale)))
-    return cv2.resize(raw_gray, (nw, nh), interpolation=cv2.INTER_AREA)
-
-
-def _frame_patch(frame, cx, cy, tw, th):
-    """(cx,cy) 중심·(tw,th) 크기 프레임 패치. 경계 밖이면 None."""
-    x0 = int(round(cx - tw / 2.0))
-    y0 = int(round(cy - th / 2.0))
-    if x0 < 0 or y0 < 0 or x0 + tw > frame.shape[1] or y0 + th > frame.shape[0]:
-        return None
-    return frame[y0:y0 + th, x0:x0 + tw]
 
 
 def _candidate_signals(tpl_raw, frame, cand):

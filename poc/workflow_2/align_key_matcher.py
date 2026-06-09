@@ -135,6 +135,10 @@ class MatchPolicy:
     top_n: int = 8                    # NMS 후보 최대 개수.
     min_distinct_gap: float = 0.04    # best.chamfer - second.chamfer 가 이 미만이면 모호.
     max_second_ratio: float = 0.94    # second/best 가 이보다 크면 모호 (Lowe-ratio 의 template 판).
+    # ensemble NCC reranker (2026-06-09). 후보 selection = chamfer_w·chamfer + ncc_w·max(0,ncc).
+    # 검증: ens_ncc hit 0.607 vs baseline 0.422 vs ORB-selection 0.407 (n=756, p≪0.0001).
+    rerank_chamfer_w: float = 0.5     # ensemble NCC reranker selection: chamfer 가중.
+    rerank_ncc_w: float = 0.5         # ensemble NCC reranker selection: NCC 가중(max(0,ncc)).
 
 
 # 기본 정책 — 기존 동작과 동일 (smoke test 호환).
@@ -485,6 +489,54 @@ def compute_orb_inlier_ratio(
 
 
 # ------------------------------------------------------------------
+# NCC reranker 신호 — ensemble 후보(구조-제안된 소수) 중 진짜 키를 판별.
+# primary matcher 로서의 NCC 금지(공정 변화로 전체 스캔 시 락온)는 별개:
+# 후보가 좁혀진 상태의 *국소 판별*은 진짜 위치가 decoy 보다 상관이 높아 잘 됨
+# (검증: chamfer_miss 11/11 분리, 전체 ens_ncc hit 0.607 vs baseline 0.422).
+# ------------------------------------------------------------------
+
+
+def _resize_template(raw_gray: np.ndarray, scale: float) -> np.ndarray:
+    """box template raw 를 scale 로 리사이즈한 grayscale (candidate scale 패치 비교용)."""
+    th, tw = raw_gray.shape[:2]
+    nw = max(1, int(round(tw * scale)))
+    nh = max(1, int(round(th * scale)))
+    return cv2.resize(raw_gray, (nw, nh), interpolation=cv2.INTER_AREA)
+
+
+def _frame_patch(frame: np.ndarray, cx: int, cy: int, tw: int, th: int):
+    """(cx,cy) 중심·(tw,th) 크기 프레임 패치. 경계 밖이면 None."""
+    x0 = int(round(cx - tw / 2.0))
+    y0 = int(round(cy - th / 2.0))
+    if x0 < 0 or y0 < 0 or x0 + tw > frame.shape[1] or y0 + th > frame.shape[0]:
+        return None
+    return frame[y0:y0 + th, x0:x0 + tw]
+
+
+def _ncc(a: np.ndarray, b: np.ndarray) -> float:
+    """두 동일 크기 패치의 정규화 상호상관 [-1,1]. 분산 0(평탄) → 0.0."""
+    a = a.astype(np.float64)
+    b = b.astype(np.float64)
+    a = a - a.mean()
+    b = b - b.mean()
+    da = float(np.sqrt((a * a).sum()))
+    db = float(np.sqrt((b * b).sum()))
+    if da < 1e-9 or db < 1e-9:
+        return 0.0
+    return float((a * b).sum() / (da * db))
+
+
+def _candidate_ncc(template_raw: np.ndarray, frame: np.ndarray, xy, scale: float):
+    """후보(xy 중심, scale)의 chamfer-직교 NCC reranker 신호. 패치 추출 불가 시 None."""
+    tpl_r = _resize_template(template_raw, scale)
+    th, tw = tpl_r.shape[:2]
+    patch = _frame_patch(frame, xy[0], xy[1], tw, th)
+    if patch is None or patch.shape != tpl_r.shape:
+        return None
+    return _ncc(tpl_r, patch)
+
+
+# ------------------------------------------------------------------
 # 합성 점수 + 결정 + 시각화.
 # ------------------------------------------------------------------
 
@@ -760,15 +812,17 @@ def compute_align_key_score_ensemble(
 ) -> AlignKeyMatchResult:
     """ensemble proposer 기반 매칭 — compute_align_key_score 와 동일 시그니처/결과 형태.
 
-    proposer(3채널 RRF, recall 향상) → chamfer rescore → ORB pool-rerank → 공유 finalize.
-    A/B 가 잰 recall@N(진실이 후보 집합에 듦)을 최종 픽으로 전환하려면 pool 전체를 verifier
-    (chamfer+ORB)로 rerank 해야 한다(설계: docs/specs/2026-06-09-ensemble-proposer-
-    production-integration-design.md). 프레임당 비용↑(ORB×top_n + ensemble ~1s) 이므로
-    fallback/static-compare 경로 전용 — live broad-scan 은 compute_align_key_score 유지.
+    proposer(3채널 RRF, recall 향상) → chamfer rescore → NCC reranker selection → 공유 finalize.
+    A/B 가 잰 recall@N(진실이 후보 집합에 듦)을 최종 픽으로 전환하려면 pool 을 chamfer-직교 신호로
+    rerank 해야 한다 — selection = rerank_chamfer_w·chamfer + rerank_ncc_w·max(0,ncc). 검증:
+    ens_ncc hit 0.607 vs baseline 0.422 vs ORB-selection 0.407 (n=756, p≪0.0001). NCC 는
+    reranker(구조-제안 소수 후보 판별)로만 — primary matcher 금지는 별개. 결정 score/decision 은
+    기존 chamfer+ORB 보존(선택된 best 1개에만 ORB). 프레임당 비용↑(ensemble ~1s + NCC×top_n)
+    이므로 fallback/static-compare 경로 전용 — live broad-scan 은 compute_align_key_score 유지.
 
     주의(distinctiveness 의미): 반환 result.distinctive / reject_reason("not_distinctive")
     의 유일성 판정은 공유 _finalize_match 가 *chamfer 집합* 기준으로 계산한다(가장 강한 chamfer
-    peak 이 2nd 대비 유일한가). ORB pool-rerank 가 best_xy 를 chamfer-top 이 아닌 후보로 뒤집은
+    peak 이 2nd 대비 유일한가). NCC reranker 가 best_xy 를 chamfer-top 이 아닌 후보로 골랐을
     경우, distinctive 는 best_xy 자체의 유일성이 아니라 chamfer-top 의 유일성을 가리킨다. 따라서
     distinctive 는 soft advisory 신호로만 쓰고 hard gate 로 쓰지 말 것.
     """
@@ -798,24 +852,27 @@ def compute_align_key_score_ensemble(
     if not candidates or all(c.chamfer_score <= 0.0 for c in candidates):
         return _no_candidate_result(frame, frame_dt, template, roi_origin)
 
-    # verifier-rerank: top_n 후보에 ORB → combined = chamfer_w*chamfer + orb_w*orb → argmax.
-    # 이 단계가 proposer recall 을 최종 픽으로 전환한다(RRF-top 단독 채택 금지).
+    # NCC reranker selection: top_n 후보를 chamfer+NCC 로 골라 proposer recall 을 최종 픽으로
+    # 전환한다(검증: ens_ncc hit 0.607 vs baseline 0.422 vs ORB-selection 0.407). NCC 는
+    # reranker(구조-제안 소수 후보 판별)로만 — primary matcher 금지와 별개. ORB selection 은
+    # 폐기(orb_flip 27% 유발). 결정 score/decision 은 아래에서 기존 chamfer+ORB 로 보존.
     best_cand = candidates[0]
-    best_combined = -1.0
-    best_orb = 0.0
+    best_sel = -1.0e18
     for cand in candidates[:policy.top_n]:
-        cx, cy = cand.xy
-        tw, th = cand.template_size
-        chamfer = cand.chamfer_score
-        orb = 0.0
-        if chamfer > 0.0 and tw > 0 and th > 0:
-            crop, _crop_origin = _crop_with_padding(gray_frame, cx, cy, tw, th, pad=1.6)
-            orb, _n_inliers, _n_matches = compute_orb_inlier_ratio(template.raw_image, crop)
-        combined = policy.chamfer_weight * chamfer + policy.orb_weight * orb
-        if combined > best_combined:
-            best_combined = combined
+        ncc = _candidate_ncc(template.raw_image, gray_frame, cand.xy, cand.scale)
+        ncc_pos = max(0.0, ncc) if ncc is not None else 0.0
+        sel = policy.rerank_chamfer_w * cand.chamfer_score + policy.rerank_ncc_w * ncc_pos
+        if sel > best_sel:
+            best_sel = sel
             best_cand = cand
-            best_orb = orb
+
+    # 결정 score/decision 은 기존 chamfer+ORB 유지(threshold 보존) — 선택된 best 1개에만 ORB.
+    bx, by = best_cand.xy
+    btw, bth = best_cand.template_size
+    best_orb = 0.0
+    if best_cand.chamfer_score > 0.0 and btw > 0 and bth > 0:
+        crop, _crop_origin = _crop_with_padding(gray_frame, bx, by, btw, bth, pad=1.6)
+        best_orb, _n_inliers, _n_matches = compute_orb_inlier_ratio(template.raw_image, crop)
 
     # distinctiveness·반환 후보는 *선택 풀과 동일*해야 한다 — best 는 candidates[:top_n]
     # 에서 ORB-rerank 로 골랐으므로 shadow(>top_n) 를 빼고 같은 풀로 마감(거짓 not_distinctive 방지).

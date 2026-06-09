@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proposer Recall A/B 입문 — recall@K · canny/scharr/orient · RRF</title>
+<style>
+  :root {
+    --bg: #0e1117;
+    --panel: #161b22;
+    --panel2: #1c2230;
+    --border: #2a3140;
+    --text: #e6edf3;
+    --muted: #9aa4b2;
+    --accent: #58a6ff;
+    --accent2: #7ee787;
+    --warn: #f0b429;
+    --danger: #ff7b72;
+    --c1: #58a6ff;
+    --c2: #7ee787;
+    --c3: #f0b429;
+    --code-bg: #0b0f14;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+    line-height: 1.65;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 40px 28px 80px; }
+  h1 { font-size: 30px; margin: 0 0 6px 0; letter-spacing: -0.02em; }
+  .subtitle { color: var(--muted); margin-bottom: 32px; font-size: 15px; }
+  h2 {
+    font-size: 22px; margin-top: 48px; margin-bottom: 12px;
+    padding-bottom: 8px; border-bottom: 1px solid var(--border);
+  }
+  h3 { font-size: 17px; margin-top: 24px; margin-bottom: 8px; color: var(--accent); }
+  h4 { font-size: 15px; margin-top: 18px; margin-bottom: 6px; color: var(--accent2); }
+  p { margin: 10px 0; }
+  code {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--accent2);
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  pre code { background: none; padding: 0; color: var(--text); }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin: 16px 0;
+  }
+  .why, .note, .danger-box {
+    background: var(--panel2);
+    padding: 10px 14px; margin: 12px 0;
+    border-radius: 0 6px 6px 0; font-size: 14px;
+  }
+  .why { border-left: 3px solid var(--accent2); }
+  .why strong { color: var(--accent2); }
+  .note { border-left: 3px solid var(--warn); }
+  .note strong { color: var(--warn); }
+  .danger-box { border-left: 3px solid var(--danger); }
+  .danger-box strong { color: var(--danger); }
+
+  table {
+    width: 100%; border-collapse: collapse;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px; overflow: hidden;
+    margin: 12px 0; font-size: 14px;
+  }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { background: var(--panel2); color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  td code { font-size: 12px; }
+
+  .caption {
+    text-align: center; color: var(--muted);
+    font-size: 13px; margin-top: -2px; margin-bottom: 18px; font-style: italic;
+  }
+  .figure { text-align: center; margin: 20px 0; }
+  .figure svg { max-width: 100%; height: auto; }
+
+  .formula {
+    background: var(--code-bg);
+    border: 1px dashed var(--border);
+    border-radius: 8px; padding: 14px 18px; margin: 12px 0;
+    text-align: center;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 15px; color: var(--accent2);
+  }
+
+  .toc {
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 22px; margin-bottom: 32px;
+  }
+  .toc ol { margin: 6px 0; padding-left: 20px; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+
+  .pill {
+    display: inline-block; padding: 1px 9px; border-radius: 20px;
+    font-size: 12px; font-weight: 600; font-family: "SF Mono", Menlo, monospace;
+  }
+  .pill.c1 { background: rgba(88,166,255,.16); color: var(--c1); border: 1px solid var(--c1); }
+  .pill.c2 { background: rgba(126,231,135,.16); color: var(--c2); border: 1px solid var(--c2); }
+  .pill.c3 { background: rgba(240,180,41,.16); color: var(--c3); border: 1px solid var(--c3); }
+
+  .muted { color: var(--muted); }
+  .accent { color: var(--accent); }
+  .green  { color: var(--accent2); }
+  .warn   { color: var(--warn); }
+  .danger { color: var(--danger); }
+  .c1t { color: var(--c1); } .c2t { color: var(--c2); } .c3t { color: var(--c3); }
+
+  .kv { display: grid; grid-template-columns: 130px 1fr; gap: 6px 14px; font-size: 14px; margin: 10px 0; }
+  .kv .k { color: var(--muted); font-family: "SF Mono", Menlo, monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Proposer Recall A/B 입문</h1>
+<p class="subtitle">
+  <code>poc/workflow_2/proposer_recall_ab.py</code> 가 측정하는 것 —
+  recall@K 의 의미, canny/scharr/orient 세 채널의 차이, 그리고 RRF 융합을 시각적으로 이해하기
+</p>
+
+<div class="toc">
+  <strong>목차</strong>
+  <ol>
+    <li><a href="#big">한 눈에 — 무엇을 재는 스크립트인가</a></li>
+    <li><a href="#proposer">proposer vs reranker — 왜 recall 만 재나</a></li>
+    <li><a href="#recall">recall@8 / @16 / @24 의 의미</a></li>
+    <li><a href="#chamfer">공통 본체 — Chamfer matching</a></li>
+    <li><a href="#channels">세 채널 — canny · scharr · orient</a></li>
+    <li><a href="#rrf">fusion — RRF (Reciprocal Rank Fusion)</a></li>
+    <li><a href="#gt">정답 판정과 누락(drop) 사유</a></li>
+    <li><a href="#run">실행과 결과 읽기</a></li>
+  </ol>
+</div>
+
+<!-- ================================================ -->
+<h2 id="big">1. 한 눈에</h2>
+<p>
+  이 스크립트는 align key 탐색의 <strong>첫 단계(proposer)만 격리해서</strong>,
+  "정답을 후보 바구니 안에 담는 능력"을 두 방식으로 A/B 비교합니다.
+</p>
+<div class="figure">
+<svg viewBox="0 0 720 150" xmlns="http://www.w3.org/2000/svg" font-family="SF Mono, Menlo, monospace" font-size="13">
+  <!-- baseline -->
+  <rect x="10" y="20" width="150" height="44" rx="8" fill="#161b22" stroke="#58a6ff"/>
+  <text x="85" y="40" fill="#58a6ff" text-anchor="middle" font-weight="bold">baseline</text>
+  <text x="85" y="56" fill="#9aa4b2" text-anchor="middle" font-size="11">canny 1채널 (C1)</text>
+  <!-- ensemble -->
+  <rect x="10" y="86" width="150" height="44" rx="8" fill="#161b22" stroke="#7ee787"/>
+  <text x="85" y="106" fill="#7ee787" text-anchor="middle" font-weight="bold">ensemble</text>
+  <text x="85" y="122" fill="#9aa4b2" text-anchor="middle" font-size="11">canny+scharr+orient</text>
+  <!-- arrows -->
+  <line x1="160" y1="42" x2="250" y2="62" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#ah)"/>
+  <line x1="160" y1="108" x2="250" y2="78" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#ah)"/>
+  <!-- candidates -->
+  <rect x="255" y="48" width="180" height="44" rx="8" fill="#1c2230" stroke="#2a3140"/>
+  <text x="345" y="68" fill="#e6edf3" text-anchor="middle">후보 K개 (xy 리스트)</text>
+  <text x="345" y="84" fill="#9aa4b2" text-anchor="middle" font-size="11">proposer 출력</text>
+  <line x1="435" y1="70" x2="500" y2="70" stroke="#9aa4b2" stroke-width="1.5" marker-end="url(#ah)"/>
+  <!-- recall -->
+  <rect x="505" y="44" width="200" height="52" rx="8" fill="#161b22" stroke="#f0b429"/>
+  <text x="605" y="66" fill="#f0b429" text-anchor="middle" font-weight="bold">recall@8/16/24</text>
+  <text x="605" y="83" fill="#9aa4b2" text-anchor="middle" font-size="11">정답이 그 안에 있었나?</text>
+  <defs>
+    <marker id="ah" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#9aa4b2"/>
+    </marker>
+  </defs>
+</svg>
+</div>
+<p class="caption">맞췄는지(accuracy)가 아니라 <b>담았는지(recall)</b>만 잰다 — 두 방식 동일 입력, 차이는 채널뿐.</p>
+
+<div class="card">
+<strong>생소한 용어의 정체 — 한 줄씩</strong>
+<div class="kv" style="margin-top:10px">
+  <span class="k">recall@8/16/24</span><span>정답이 상위 8/16/24 후보 안에 들어있던 비율 (proposer 의 KPI)</span>
+  <span class="k c1t">canny (C1)</span><span>밝기 엣지 기반 채널 = baseline (기존 매칭 엔진)</span>
+  <span class="k c2t">scharr (C2)</span><span>그래디언트 '세기' 기반 채널 (밀도 맞춘 이진화)</span>
+  <span class="k c3t">orient (C3)</span><span>엣지 '방향' 8분할 directional chamfer (polarity 불변)</span>
+  <span class="k">fusion (RRF)</span><span>세 채널의 '순위'를 합산해 최종 후보 리스트 만들기</span>
+  <span class="k">scales</span><span>template 을 여러 배율로 매칭 (magnification 차이 흡수)</span>
+</div>
+</div>
+
+<!-- ================================================ -->
+<h2 id="proposer">2. proposer vs reranker — 왜 recall 만 재나</h2>
+<p>align key 탐색은 두 단계입니다.</p>
+<pre><code>① PROPOSER  → 후보 K개를 던진다     (정답을 K개 안에 넣기만 하면 성공, 1등 아니어도 됨)
+② RERANKER  → 그 K개를 재점수해 1개  (진짜를 1등으로 끌어올리기)</code></pre>
+<p>
+  둘을 한꺼번에 평가하면 실패 원인이 안 보입니다 — "proposer 가 정답을 아예 안 줬나,
+  reranker 가 순위를 못 올렸나?" 그래서 이 스크립트는 proposer 만 떼어,
+  <strong>reranker 재정렬을 금지</strong>하고 순수하게 "후보 안에 정답이 있나"만 봅니다.
+</p>
+<div class="why">
+  <strong>설계 배경:</strong> 실데이터에서 chamfer 점수면이 평평해(변별력 부족) reranker 가
+  약합니다. 그러면 "proposer recall 부터 끌어올리고 rerank vs proposer 우선순위를 정하자"는
+  전략이 나오고, 그 recall 측정 도구가 바로 이 파일입니다.
+  (메모리 <code>matcher_flat_chamfer_distinctiveness</code>)
+</div>
+
+<!-- ================================================ -->
+<h2 id="recall">3. recall@8 / @16 / @24 의 의미</h2>
+<p><b>Recall@N</b> = "정답이 상위 N개 후보 안에 들어있던 frame 의 비율". 측정 코드의 핵심:</p>
+<pre><code class="language-python"># _gt_rank: 후보 리스트에서 정답이 처음 나타난 1-base rank (없으면 None=miss)
+ax, ay = c.xy[0] + dx, c.xy[1] + dy          # 후보 중심 + align_offset
+if math.hypot(ax - gt_x, ay - gt_y) &lt;= tol * short:
+    return i                                  # i번째 후보가 정답권
+
+# _recall_at: rank &lt;= n 인 비율
+sum(1 for r in ranks if r is not None and r &lt;= n) / len(ranks)</code></pre>
+
+<div class="figure">
+<svg viewBox="0 0 720 200" xmlns="http://www.w3.org/2000/svg" font-family="SF Mono, Menlo, monospace" font-size="12">
+  <text x="10" y="20" fill="#9aa4b2">후보 리스트 (RRF 순위 내림차순) — 정답이 11번째에 있는 예시</text>
+  <!-- 24 slots -->
+  <g>
+    <!-- helper: draw slots -->
+    <!-- slots 1..24 -->
+    <!-- generated manually -->
+    <!-- row -->
+    <!-- We'll draw 24 boxes -->
+    <!-- box width 26, gap 2, start x 12, y 40 -->
+    <!-- group @8 1-8, @16 9-16, @24 17-24 -->
+    <rect x="12"  y="40" width="216" height="34" rx="5" fill="rgba(88,166,255,.10)" stroke="#58a6ff" stroke-dasharray="4 3"/>
+    <rect x="236" y="40" width="216" height="34" rx="5" fill="rgba(126,231,135,.08)" stroke="#7ee787" stroke-dasharray="4 3"/>
+    <rect x="460" y="40" width="216" height="34" rx="5" fill="rgba(240,180,41,.06)" stroke="#f0b429" stroke-dasharray="4 3"/>
+    <text x="120" y="92" fill="#58a6ff" text-anchor="middle">@8 (budgeted)</text>
+    <text x="344" y="92" fill="#7ee787" text-anchor="middle">@16</text>
+    <text x="568" y="92" fill="#f0b429" text-anchor="middle">@24 (shadow)</text>
+  </g>
+  <!-- individual rank ticks (just markers at 8/16/24 and the hit at 11) -->
+  <g font-size="11">
+    <circle cx="44" cy="57" r="5" fill="#30363d"/>
+    <text x="44" y="61" fill="#9aa4b2" text-anchor="middle" font-size="9">1</text>
+    <circle cx="212" cy="57" r="5" fill="#30363d"/>
+    <text x="212" y="61" fill="#9aa4b2" text-anchor="middle" font-size="9">8</text>
+    <!-- hit at 11 -> in the @16 band -->
+    <circle cx="290" cy="57" r="7" fill="#7ee787"/>
+    <text x="290" y="61" fill="#0e1117" text-anchor="middle" font-size="9" font-weight="bold">11</text>
+    <circle cx="436" cy="57" r="5" fill="#30363d"/>
+    <text x="436" y="61" fill="#9aa4b2" text-anchor="middle" font-size="9">16</text>
+    <circle cx="660" cy="57" r="5" fill="#30363d"/>
+    <text x="660" y="61" fill="#9aa4b2" text-anchor="middle" font-size="9">24</text>
+  </g>
+  <text x="290" y="118" fill="#7ee787" text-anchor="middle" font-size="12">정답 = rank 11</text>
+  <text x="360" y="150" fill="#e6edf3" text-anchor="middle" font-size="13">
+    이 frame 은 <tspan fill="#f0b429">@24 ✓</tspan>, <tspan fill="#7ee787">@16 ✓</tspan>, 그러나 <tspan fill="#58a6ff">@8 ✗</tspan>
+  </text>
+  <text x="360" y="172" fill="#9aa4b2" text-anchor="middle" font-size="12">
+    → "후보엔 있지만 상위 8 안엔 못 들었다" → fusion 이 더 끌어올려야 함
+  </text>
+</svg>
+</div>
+
+<p>세 N값은 각각 다른 질문에 답합니다.</p>
+<table>
+  <tr><th>N</th><th>별명</th><th>질문</th></tr>
+  <tr><td><b>@8</b></td><td>budgeted</td><td>reranker 에 실제 넘길 예산이 8개일 때 정답이 그 안에 있나? → <b>실전 KPI</b></td></tr>
+  <tr><td><b>@16</b></td><td>중간</td><td>예산을 2배로 늘리면 얼마나 더 건지나?</td></tr>
+  <tr><td><b>@24</b></td><td>shadow</td><td>후보를 최대(<code>SHADOW_N=24</code>)로 풀면 이론 상한은? → <b>proposer 잠재력</b></td></tr>
+</table>
+
+<h3>결과표 읽는 법</h3>
+<table>
+  <tr><th>패턴</th><th>해석</th></tr>
+  <tr><td><span class="green">@24↑ &amp; @8↑</span></td><td>ensemble 진짜 효과 — 정답을 새로 발견 + 상위로 끌어올림</td></tr>
+  <tr><td><span class="warn">@24↑ &amp; @8≈</span></td><td>정답은 찾는데 fusion 이 상위로 못 올림 → RRF 튜닝 문제</td></tr>
+  <tr><td><span class="danger">@24≈</span></td><td>채널 무효 — 정답을 아예 새로 못 찾음</td></tr>
+</table>
+
+<!-- ================================================ -->
+<h2 id="chamfer">4. 공통 본체 — Chamfer matching</h2>
+<p>
+  canny/scharr/orient 의 차이를 이해하려면 먼저 셋이 <strong>공유하는</strong> 매칭 본체를
+  알아야 합니다. 핵심은 4단계.
+  (깊은 수학은 <a href="chamfer_matching_deep_dive.html" style="color:var(--accent)">chamfer_matching_deep_dive.html</a> 참고)
+</p>
+<div class="figure">
+<svg viewBox="0 0 720 230" xmlns="http://www.w3.org/2000/svg" font-family="SF Mono, Menlo, monospace" font-size="12">
+  <!-- template path -->
+  <rect x="10" y="20" width="120" height="40" rx="6" fill="#161b22" stroke="#2a3140"/>
+  <text x="70" y="44" fill="#e6edf3" text-anchor="middle">template</text>
+  <line x1="130" y1="40" x2="175" y2="40" stroke="#9aa4b2" marker-end="url(#a2)"/>
+  <rect x="178" y="20" width="120" height="40" rx="6" fill="#161b22" stroke="#58a6ff"/>
+  <text x="238" y="40" fill="#58a6ff" text-anchor="middle" font-size="11">edge map</text>
+  <text x="238" y="53" fill="#9aa4b2" text-anchor="middle" font-size="9">윤곽선 0/255</text>
+  <!-- frame path -->
+  <rect x="10" y="90" width="120" height="40" rx="6" fill="#161b22" stroke="#2a3140"/>
+  <text x="70" y="114" fill="#e6edf3" text-anchor="middle">frame</text>
+  <line x1="130" y1="110" x2="175" y2="110" stroke="#9aa4b2" marker-end="url(#a2)"/>
+  <rect x="178" y="90" width="120" height="40" rx="6" fill="#161b22" stroke="#58a6ff"/>
+  <text x="238" y="110" fill="#58a6ff" text-anchor="middle" font-size="11">edge map</text>
+  <line x1="298" y1="110" x2="343" y2="110" stroke="#9aa4b2" marker-end="url(#a2)"/>
+  <rect x="346" y="90" width="150" height="40" rx="6" fill="#161b22" stroke="#7ee787"/>
+  <text x="421" y="108" fill="#7ee787" text-anchor="middle" font-size="11">distance transform</text>
+  <text x="421" y="121" fill="#9aa4b2" text-anchor="middle" font-size="9">엣지=0, 빈곳=큰값</text>
+  <!-- merge into match -->
+  <line x1="298" y1="40" x2="540" y2="40" stroke="#9aa4b2"/>
+  <line x1="540" y1="40" x2="540" y2="150" stroke="#9aa4b2"/>
+  <line x1="496" y1="110" x2="540" y2="110" stroke="#9aa4b2"/>
+  <line x1="540" y1="150" x2="560" y2="150" stroke="#9aa4b2" marker-end="url(#a2)"/>
+  <rect x="563" y="128" width="147" height="46" rx="6" fill="#1c2230" stroke="#f0b429"/>
+  <text x="636" y="148" fill="#f0b429" text-anchor="middle" font-size="11">슬라이딩 매칭</text>
+  <text x="636" y="163" fill="#9aa4b2" text-anchor="middle" font-size="9">template 엣지 ↔ DT</text>
+  <!-- formula -->
+  <text x="360" y="205" fill="#7ee787" text-anchor="middle" font-size="14">score = exp( −mean_dt / DT_TAU_PX )   (DT_TAU_PX = 10, 0~1 클수록 좋음)</text>
+  <defs>
+    <marker id="a2" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#9aa4b2"/>
+    </marker>
+  </defs>
+</svg>
+</div>
+<p>
+  <b>매칭 직관:</b> template 엣지를 frame 의 distance transform 위에서 슬라이딩하며, 각 위치에서
+  "template 엣지들이 깔고 앉은 DT 값의 평균(mean_dt)"을 구합니다. 평균이 작다 = 윤곽이 잘
+  포개진다 = 좋은 매칭.
+</p>
+<div class="why">
+  <strong>왜 distance transform 인가?</strong> 두 엣지 맵을 직접 XOR 하면 1픽셀만 어긋나도 0점이라
+  너무 깐깐합니다. DT 는 "거의 맞으면 거의 좋은 점수"라는 부드러운 거리를 줘서, SEM 공정 변화로
+  윤곽이 살짝 흔들려도 견딥니다 — 메모리 <code>align_key_matching_constraint</code> 의
+  "픽셀 동일성 가정 불가" 구현.
+</div>
+<div class="why">
+  <strong>왜 <code>matchTemplate(TM_CCORR)</code> 인가?</strong> template mask(엣지=1)를 frame DT 와
+  correlation 하면 <code>Σ DT[엣지 위치]</code> 가 한 번에 나옵니다(엣지 수로 나누면 평균).
+  FFT 기반이라 모든 위치를 동시에 계산 — 픽셀 루프보다 수백 배 빠릅니다.
+</div>
+
+<h3>scales — 여러 배율로 매칭</h3>
+<p>
+  template 과 frame 의 magnification 이 정확히 같지 않을 수 있어, template 을 여러 크기로
+  줄였다 늘렸다 하며 각각 매칭합니다.
+</p>
+<table>
+  <tr><th>밴드</th><th>값</th><th>용도</th></tr>
+  <tr><td><code>DEFAULT_SCALES</code></td><td>0.7, 0.85, 1.0, 1.2, 1.4</td><td>일반 검색</td></tr>
+  <tr><td><code>COMPARE_SCALES</code></td><td>0.6, 0.75, 0.85, 1.0</td><td>정적 비교 ← <b>이 A/B 가 사용</b></td></tr>
+  <tr><td><code>BROAD_SCALES</code></td><td>0.15 ~ 0.5</td><td>저배율 미니어처 검색</td></tr>
+</table>
+<div class="note">
+  <strong>A/B 의 결정적 디테일:</strong> baseline 과 ensemble 이 <em>같은 scale 밴드</em>를 써야
+  공정합니다. 안 그러면 "채널 차이"가 아니라 "scale 차이"를 재게 됩니다. 그래서 두 호출 모두
+  <code>COMPARE_SCALES</code> 를 명시로 넘깁니다.
+</div>
+
+<!-- ================================================ -->
+<h2 id="channels">5. 세 채널 — 같은 본체, 다른 눈</h2>
+<p>
+  canny/scharr/orient 의 차이는 결국 <strong>"엣지 맵을 어떻게 만드느냐"</strong> 단 하나입니다.
+  같은 chamfer 본체(<code>_collect_candidates</code>)에 다른 엣지 맵을 끼웁니다.
+</p>
+
+<h3><span class="pill c1">C1</span> &nbsp; canny — 밝기 엣지 (baseline)</h3>
+<p>
+  <code>cv2.Canny(blurred, 60, 160)</code>. 밝기가 급변하는 곳을 0/255 윤곽선으로. 표준적·빠름.
+  <strong>A/B 의 baseline</strong> 이며 <code>_baseline_candidates()</code> 가 이것만 씁니다.
+</p>
+<p class="muted">한계: 임계값에 민감하고, 대비가 흐릿하거나 밝기가 반전되면 윤곽을 놓치거나 끊깁니다.</p>
+
+<h3><span class="pill c2">C2</span> &nbsp; scharr — 그래디언트 세기</h3>
+<p>
+  <code>cv2.Scharr</code> 로 x/y 그래디언트 → magnitude <code>√(gx²+gy²)</code>. "엣지냐 아니냐"의
+  이진 판정 대신 <strong>그래디언트 세기</strong>를 봅니다. 핵심 트릭은
+  <strong>density matching binarization</strong>: Otsu 같은 자동 임계값 대신 "상위 r% 픽셀만
+  엣지"로 자르고, 이 <code>r</code> 을 <strong>Canny 가 만든 엣지 밀도에 맞춥니다</strong> (3~15% clamp).
+</p>
+<div class="why">
+  <strong>왜 밀도를 맞추나?</strong> chamfer 점수 <code>exp(−mean_dt/τ)</code> 는 엣지 개수에
+  민감합니다. C1 이 엣지 5%, C2 가 30% 면 mean_dt 스케일이 달라 채널 비교가 불공정해집니다.
+  밀도를 똑같이 맞추면 세 채널 점수가 같은 잣대 위에 놓입니다. (Scharr 는 Sobel 보다 회전
+  대칭성이 좋아 방향 정확도가 높아, C3 의 방향 계산에도 재사용됩니다.)
+</div>
+
+<h3><span class="pill c3">C3</span> &nbsp; orient — 방향 8분할 directional chamfer</h3>
+<p>
+  가장 정교한 채널. 엣지를 <strong>그래디언트 방향</strong>에 따라 8개 bin 으로 쪼갭니다
+  (0–180° 를 8등분, 각 엣지 픽셀을 자기 각도 bin 에 배정 → bin 별 엣지 맵 8장). 매칭할 때
+  <strong>같은 방향 bin 끼리만</strong> chamfer 를 재고(가로는 가로끼리, 세로는 세로끼리)
+  엣지 개수로 가중평균합니다.
+</p>
+<div class="figure">
+<svg viewBox="0 0 720 170" xmlns="http://www.w3.org/2000/svg" font-family="SF Mono, Menlo, monospace" font-size="11">
+  <text x="10" y="18" fill="#9aa4b2">엣지 픽셀을 그래디언트 방향으로 8개 bin 분류 (0~180° half-angle)</text>
+  <!-- all edges -->
+  <rect x="10" y="35" width="90" height="90" rx="6" fill="#0b0f14" stroke="#2a3140"/>
+  <text x="55" y="30" fill="#e6edf3" text-anchor="middle" font-size="10">all edges</text>
+  <line x1="25" y1="55" x2="85" y2="55" stroke="#e6edf3" stroke-width="2"/>
+  <line x1="55" y1="45" x2="55" y2="115" stroke="#e6edf3" stroke-width="2"/>
+  <line x1="28" y1="110" x2="82" y2="60" stroke="#e6edf3" stroke-width="2"/>
+  <text x="130" y="85" fill="#9aa4b2" font-size="20">→</text>
+  <!-- 3 representative bins -->
+  <g>
+    <rect x="165" y="35" width="90" height="90" rx="6" fill="#0b0f14" stroke="#f0b429"/>
+    <text x="210" y="30" fill="#f0b429" text-anchor="middle" font-size="10">bin 0° (가로)</text>
+    <line x1="180" y1="80" x2="240" y2="80" stroke="#f0b429" stroke-width="2"/>
+  </g>
+  <g>
+    <rect x="280" y="35" width="90" height="90" rx="6" fill="#0b0f14" stroke="#7ee787"/>
+    <text x="325" y="30" fill="#7ee787" text-anchor="middle" font-size="10">bin 90° (세로)</text>
+    <line x1="325" y1="45" x2="325" y2="115" stroke="#7ee787" stroke-width="2"/>
+  </g>
+  <g>
+    <rect x="395" y="35" width="90" height="90" rx="6" fill="#0b0f14" stroke="#58a6ff"/>
+    <text x="440" y="30" fill="#58a6ff" text-anchor="middle" font-size="10">bin 135° (대각)</text>
+    <line x1="413" y1="110" x2="467" y2="60" stroke="#58a6ff" stroke-width="2"/>
+  </g>
+  <text x="500" y="80" fill="#9aa4b2" font-size="20">…</text>
+  <text x="525" y="76" fill="#9aa4b2" font-size="11">8개 bin 각각</text>
+  <text x="525" y="92" fill="#9aa4b2" font-size="11">같은 bin 끼리만</text>
+  <text x="525" y="108" fill="#9aa4b2" font-size="11">chamfer → 가중평균</text>
+  <text x="10" y="155" fill="#7ee787" font-size="12">
+    같은 방향 구조가 같은 위치에 있어야만 점수 → 일반 chamfer 보다 구조적으로 까다롭고 정확
+  </text>
+</svg>
+</div>
+<div class="why">
+  <strong>왜 방향을 나누나?</strong> 일반 chamfer 는 "근처에 아무 엣지나 있으면" 점수를 줍니다
+  (가로선이 세로선에 우연히 가까워도 매칭). 방향을 분리하면 같은 방향 구조가 같은 위치에 있어야만
+  점수가 나와 훨씬 정확합니다.
+</div>
+<div class="why">
+  <strong>0–180° half-angle (% 180):</strong> 방향만 보고 부호(밝→어두 vs 어두→밝)는 버립니다.
+  SEM/OM 은 밝기 반전이 잦은데(메모리 <code>align_fail_modality_om_vs_sem</code>), 이렇게 하면
+  <strong>polarity 불변</strong> — 반전돼도 같은 구조로 인식합니다.
+</div>
+<div class="danger-box">
+  <strong>성능 함정의 역사:</strong> 과거엔 scale 루프 <em>안에서</em> frame 의 8개 DT 를 매번
+  재계산해, orient 가 비용의 ~78% 를 먹고 대량 프레임에서 hang 처럼 보였습니다. 지금은 frame DT 가
+  scale 과 무관하다는 점을 이용해 루프 <em>밖에서 1회</em>만 계산(<code>_directional_context</code>) —
+  커밋 <code>deb76aa</code>/<code>2a924aa</code> 의 핵심.
+</div>
+
+<!-- ================================================ -->
+<h2 id="rrf">6. fusion = RRF (Reciprocal Rank Fusion)</h2>
+<p>
+  세 채널이 각자 후보 24개를 냈습니다. 점수를 그냥 더하면 안 됩니다 — C1 의 0.8 과 C3 의 0.8 은
+  스케일이 달라 의미가 다르니까요. <strong>RRF 는 점수 대신 순위만 씁니다.</strong>
+</p>
+<div class="formula">fused(후보) = Σ<sub>채널</sub> &nbsp; 1 / (k0 + rank) &nbsp;&nbsp; (k0 = 10)</div>
+
+<div class="figure">
+<svg viewBox="0 0 720 250" xmlns="http://www.w3.org/2000/svg" font-family="SF Mono, Menlo, monospace" font-size="12">
+  <!-- three channel columns -->
+  <text x="80"  y="20" fill="#58a6ff" text-anchor="middle" font-weight="bold">canny</text>
+  <text x="80"  y="36" fill="#9aa4b2" text-anchor="middle" font-size="10">순위</text>
+  <text x="260" y="20" fill="#7ee787" text-anchor="middle" font-weight="bold">scharr</text>
+  <text x="440" y="20" fill="#f0b429" text-anchor="middle" font-weight="bold">orient</text>
+
+  <!-- candidate A appears in all three near top -->
+  <g font-size="11">
+    <!-- canny -->
+    <rect x="30" y="44"  width="100" height="22" rx="4" fill="rgba(88,166,255,.18)" stroke="#58a6ff"/><text x="80" y="59" fill="#e6edf3" text-anchor="middle">A · rank 1</text>
+    <rect x="30" y="70"  width="100" height="22" rx="4" fill="#161b22" stroke="#2a3140"/><text x="80" y="85" fill="#9aa4b2" text-anchor="middle">B · rank 2</text>
+    <rect x="30" y="96"  width="100" height="22" rx="4" fill="#161b22" stroke="#2a3140"/><text x="80" y="111" fill="#9aa4b2" text-anchor="middle">C · rank 3</text>
+    <!-- scharr -->
+    <rect x="210" y="44" width="100" height="22" rx="4" fill="#161b22" stroke="#2a3140"/><text x="260" y="59" fill="#9aa4b2" text-anchor="middle">D · rank 1</text>
+    <rect x="210" y="70" width="100" height="22" rx="4" fill="rgba(88,166,255,.18)" stroke="#58a6ff"/><text x="260" y="85" fill="#e6edf3" text-anchor="middle">A · rank 2</text>
+    <rect x="210" y="96" width="100" height="22" rx="4" fill="#161b22" stroke="#2a3140"/><text x="260" y="111" fill="#9aa4b2" text-anchor="middle">B · rank 3</text>
+    <!-- orient -->
+    <rect x="390" y="44" width="100" height="22" rx="4" fill="rgba(88,166,255,.18)" stroke="#58a6ff"/><text x="440" y="59" fill="#e6edf3" text-anchor="middle">A · rank 1</text>
+    <rect x="390" y="70" width="100" height="22" rx="4" fill="#161b22" stroke="#2a3140"/><text x="440" y="85" fill="#9aa4b2" text-anchor="middle">E · rank 2</text>
+    <rect x="390" y="96" width="100" height="22" rx="4" fill="#161b22" stroke="#2a3140"/><text x="440" y="111" fill="#9aa4b2" text-anchor="middle">D · rank 3</text>
+  </g>
+
+  <!-- arrows to fused -->
+  <line x1="130" y1="55"  x2="560" y2="80" stroke="#58a6ff" stroke-width="1" opacity=".6"/>
+  <line x1="310" y1="81"  x2="560" y2="90" stroke="#58a6ff" stroke-width="1" opacity=".6"/>
+  <line x1="490" y1="55"  x2="560" y2="100" stroke="#58a6ff" stroke-width="1" opacity=".6"/>
+
+  <!-- fused result -->
+  <rect x="560" y="60" width="150" height="120" rx="8" fill="#1c2230" stroke="#f0b429"/>
+  <text x="635" y="80" fill="#f0b429" text-anchor="middle" font-weight="bold">fused (RRF)</text>
+  <text x="635" y="104" fill="#7ee787" text-anchor="middle" font-size="11">A: 1/11+1/12+1/11</text>
+  <text x="635" y="120" fill="#7ee787" text-anchor="middle" font-size="13" font-weight="bold">= 0.265 (1위)</text>
+  <text x="635" y="142" fill="#9aa4b2" text-anchor="middle" font-size="11">D: 1/11+1/13 = 0.168</text>
+  <text x="635" y="160" fill="#9aa4b2" text-anchor="middle" font-size="11">B: 1/12+1/13 = 0.160</text>
+
+  <text x="360" y="220" fill="#e6edf3" text-anchor="middle" font-size="13">
+    A 는 어느 채널서도 압도적 점수가 아니지만 <tspan fill="#7ee787">세 채널 모두 상위</tspan>라 1위 →
+  </text>
+  <text x="360" y="240" fill="#9aa4b2" text-anchor="middle" font-size="12">
+    "여러 눈이 공통으로 지목한 곳"이 이긴다 (한 채널의 과한 점수가 결과를 독점 못 함)
+  </text>
+</svg>
+</div>
+<p>
+  같은 위치를 가리키는 후보(center 거리 ≤ match_radius, Chebyshev/L∞)는 한 클러스터로 묶고,
+  대표는 가장 높은 chamfer score 멤버입니다.
+</p>
+<div class="why">
+  <strong>왜 점수가 아니라 순위?</strong> RRF 는 스케일 제각각인 점수들을 정규화 없이 합치는
+  견고한 방법(정보검색에서 검증). 한 채널이 비정상적으로 큰 점수를 내도 순위로 환산되니 결과를
+  독점하지 못합니다 — 메모리 <code>ensemble_proposer_and_consensus_race</code> 의
+  recall@8 <b>0.557 → 0.698</b> 도약이 이 융합 덕입니다.
+</div>
+<h3>solo vs fused — attribution</h3>
+<p>
+  스크립트는 fused 뿐 아니라 채널별 <b>solo</b> recall 도 따로 잽니다. "어느 채널이 정답을
+  단독으로 잡았나"를 보기 위함 — <code>solo:orient</code> 가 <code>ensemble</code> 만큼 좋으면
+  나머지 두 채널은 비용만 먹는 셈이고, 거꾸로 fused 가 모든 solo 보다 높으면 융합이 실제로 가치를
+  더한 것입니다.
+</p>
+
+<!-- ================================================ -->
+<h2 id="gt">7. 정답 판정과 누락(drop) 사유</h2>
+<p>"정답을 담았다"의 정의:</p>
+<pre><code class="language-python">ax, ay = 후보_xy + (dx, dy)                  # align_offset 보정
+정답 = hypot(ax-gt_x, ay-gt_y) &lt;= GT_TOL_NORM * short   # GT_TOL_NORM = 0.20</code></pre>
+<div class="kv">
+  <span class="k">GT</span><span><code>cond.txt</code> 의 crosshair 좌표 = 엔지니어가 표시한 진짜 align point (메모리 <code>align_cond_files_and_coords</code>)</span>
+  <span class="k">align_offset</span><span>template 흰 박스 중심 ≠ align point 라 보정 필요 (메모리 <code>rcp_white_box_unique_area</code>)</span>
+  <span class="k">GT_TOL_NORM</span><span>template 짧은 변의 20% 이내면 정답. 픽셀 절대값이 아니라 <b>상대값</b>이라 해상도가 바뀌어도 일관 → <code>PROPOSER_MAX_DIM</code> 으로 줄여도 recall 보존</span>
+</div>
+
+<h3>drop 카운터 — "왜 frame 이 빠졌나"</h3>
+<p>오피스에서 "S 데이터가 희박해서"인지 "라우팅/cond 가 frame 을 버려서"인지 구분하는 진단용입니다.</p>
+<table>
+  <tr><th>사유</th><th>의미</th></tr>
+  <tr><td><code>no_box_tpl</code></td><td>template 빌드 실패(박스 못 만듦)</td></tr>
+  <tr><td><code>non_S</code></td><td>tool 라벨이 S(success)가 아님 — E/? 프레임 제외 (메모리 <code>e_images_no_crosshair</code>)</td></tr>
+  <tr><td><code>routing_miss</code></td><td>modality(OM/SEM) 라우팅 실패 (메모리 <code>align_fail_modality_om_vs_sem</code>)</td></tr>
+  <tr><td><code>no_crosshair</code></td><td>cond 에 십자(GT) 없음</td></tr>
+  <tr><td><code>load_failed</code></td><td>이미지 로드 실패</td></tr>
+</table>
+<div class="note">
+  <strong>S 프레임만 쓰는 이유:</strong> E(fail) 프레임은 crosshair(=GT)가 없어 정답을 매길 수
+  없습니다. 단, S 라벨도 도구의 self-report 라 의심 대상(메모리 <code>doubt_s_labels</code>) —
+  tool_label 은 metadata 일 뿐 CV 입력에 넣지 않습니다.
+</div>
+
+<!-- ================================================ -->
+<h2 id="run">8. 실행과 결과 읽기</h2>
+<pre><code># 오피스(golden 데이터 필요)
+uv run python poc/workflow_2/proposer_recall_ab.py
+
+# 옵션 (환경변수)
+ALIGN_GOLDEN_ROOT=&lt;경로&gt;   # golden 데이터 루트 override
+PROPOSER_MAX_DIM=2000      # frame 최대변 캡(속도↑, recall 보존). 0=끔(기본, 측정 순수)</code></pre>
+<p>
+  결과는 <code>DEBUG_IMAGE_DIR/proposer_recall_ab/&lt;timestamp&gt;/summary.json</code> + 콘솔 표.
+  진행 heartbeat(25 frame 마다)로 "느린 것"과 "hang"을 구분합니다.
+</p>
+
+<div class="card">
+  <strong>코드 지도</strong>
+  <table style="margin-top:10px">
+    <tr><th>개념</th><th>위치</th></tr>
+    <tr><td>recall 측정 · drop · A/B 루프</td><td><code>proposer_recall_ab.py</code></td></tr>
+    <tr><td>baseline(canny only) 후보</td><td><code>proposer_recall_ab.py:_baseline_candidates</code></td></tr>
+    <tr><td>chamfer 본체</td><td><code>align_key_matcher.py:preprocess_for_matching</code>, <code>_chamfer_score_map_at_scale</code></td></tr>
+    <tr><td>멀티스케일 NMS 후보 수집</td><td><code>align_key_matcher.py:_collect_candidates</code>, <code>_extract_peaks</code></td></tr>
+    <tr><td>scharr + 밀도 매칭 이진화</td><td><code>ensemble_proposer.py:_scharr_edges</code></td></tr>
+    <tr><td>orient (8-bin directional)</td><td><code>ensemble_proposer.py:_orientation_bin_edges</code>, <code>_directional_score_at_scale</code></td></tr>
+    <tr><td>RRF 융합</td><td><code>ensemble_proposer.py:_rrf_fuse</code></td></tr>
+    <tr><td>3채널 엔트리포인트</td><td><code>ensemble_proposer.py:compute_ensemble_candidates</code></td></tr>
+    <tr><td>scale 밴드 / 허용오차 상수</td><td><code>align_similarity.py:COMPARE_SCALES</code>, <code>GT_TOL_NORM</code></td></tr>
+  </table>
+</div>
+
+<p class="muted" style="margin-top:40px; text-align:center; font-size:13px">
+  대응 마크다운: <code>proposer_recall_ab_explained.md</code> · 선행 문서:
+  <a href="match_algorithms_intro.md" style="color:var(--accent)">match_algorithms_intro.md</a> ·
+  작성일 2026-06-09
+</p>
+
+</div>
+</body>
+</html>

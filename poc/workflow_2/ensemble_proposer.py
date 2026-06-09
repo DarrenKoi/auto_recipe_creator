@@ -7,7 +7,9 @@ RRF(순위 기반, 스케일 무관)로 채널 후보를 융합해 top-N + shado
 import cv2
 import numpy as np
 
-from poc.workflow_2.align_key_matcher import _to_grayscale, preprocess_for_matching, DT_TAU_PX
+from poc.workflow_2.align_key_matcher import (
+    DT_TAU_PX, _scaled_edges, _to_grayscale, preprocess_for_matching,
+)
 
 # C2: gradient magnitude foreground 밀도를 C1 에 맞춘다(3~15% clamp).
 SCHARR_R_MIN = 0.03
@@ -70,7 +72,6 @@ def _directional_chamfer_score_map(template_gray, frame_gray, *, scale, n_bins=N
     bin 들을 template bin edge-count 가중 평균(weighted mean) → exp. min/sum 대신 weighted
     mean: 한 방향만 맞아도 과대평가(min)·edge 많은 bin 지배(sum) 회피, 기존 평균거리 규약 일관.
     """
-    from poc.workflow_2.align_key_matcher import _scaled_edges
     t_bins = _orientation_bin_edges(template_gray, n_bins)
     f_bins = _orientation_bin_edges(frame_gray, n_bins)
     num = None        # Σ_bin (edge_count_b * mean_dt_map_b)

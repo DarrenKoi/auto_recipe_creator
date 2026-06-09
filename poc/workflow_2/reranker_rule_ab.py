@@ -12,7 +12,11 @@ ensemble pool(chamfer/orb/err)을 프레임당 1회 만들고 후보별 NCC 를 
 NCC 는 *reranker*(구조-제안된 소수 후보 중 판별)로만 쓴다 — primary matcher 로서의 NCC 금지
 ([[project_align_key_matching_constraint]])는 별개. 가중치는 env(RERANK_CHAMFER_W/RERANK_NCC_W).
 
-입력: golden 데이터. 출력: rule_ab/<ts>/{summary.json, rows.jsonl}.
+또한 ens_ncc 픽의 결정 score(sel = chamfer_w·chamfer + ncc_w·max(0,ncc)) + GT hit 분포로
+decision threshold(match/adjust)를 ROC 캘리브해 콘솔·summary 에 출력한다(decision/score 정비 §4).
+오피스 1회 실행이면 ensemble_match/adjust_threshold 숫자가 바로 찍혀 jsonl 반입이 불필요하다.
+
+입력: golden 데이터. 출력: rule_ab/<ts>/{summary.json(+calibration), rows.jsonl(+ens_ncc_sel)}.
 실행(오피스): uv run python poc/workflow_2/reranker_rule_ab.py
 """
 import os
@@ -63,6 +67,50 @@ def _rule_picks(pool, *, chamfer_w, ncc_w):
     }
 
 
+def _calibrate_thresholds(pairs, recall_target=0.95):
+    """ens_ncc 의 (sel 점수, GT hit) 쌍에서 decision threshold 2개를 데이터로 산출.
+
+    decision/score 정비(spec 2026-06-09-ensemble-decision-score)의 §4 캘리브:
+    ensemble 결정 score = sel = rerank_chamfer_w·chamfer + rerank_ncc_w·max(0,ncc) 의
+    분포에서 hit/miss 를 가르는 컷을 정한다. 가중치가 baseline(chamfer+ORB)과 달라
+    기존 0.62/0.40 임계를 그대로 못 쓰므로 ROC 로 재캘리브.
+
+    - match  = Youden J(=TPR−FPR) 최대점의 sel 컷(균형). 동률이면 더 낮은 컷 채택.
+    - adjust = recall(TPR) ≥ ``recall_target`` 인 가장 큰 sel 컷(고-recall, hit 대부분 포착).
+               항상 match 이하로 클램프(adjust 는 더 느슨한 게이트).
+    sel 컷 후보는 *관측된 sel 값*만 쓴다(분포에 실재하는 경계). 한쪽 클래스만이면 None.
+
+    pairs: list[(float sel, bool hit)]. 반환 dict 또는 None.
+    """
+    pos = [s for s, h in pairs if h]
+    neg = [s for s, h in pairs if not h]
+    n_pos, n_neg = len(pos), len(neg)
+    if n_pos == 0 or n_neg == 0:
+        return None
+    cands = sorted({s for s, _ in pairs})   # 오름차순 — 관측 sel 경계.
+    best_t, best_j, best_stats = cands[0], -1.0, None
+    for t in cands:
+        tp = sum(1 for s in pos if s >= t)
+        fp = sum(1 for s in neg if s >= t)
+        tpr = tp / n_pos
+        fpr = fp / n_neg
+        j = tpr - fpr
+        if j > best_j:   # strict → 동률 시 더 낮은(=먼저 만난) 컷 유지.
+            best_j, best_t = j, t
+            prec = tp / (tp + fp) if (tp + fp) else 0.0
+            best_stats = {"tpr": round(tpr, 4), "fpr": round(fpr, 4),
+                          "precision": round(prec, 4), "recall": round(tpr, 4)}
+    # adjust: TPR 은 t 에 단조 비증가 → 조건 만족하는 마지막(가장 큰) 컷.
+    adjust_t = cands[0]
+    for t in cands:
+        if sum(1 for s in pos if s >= t) / n_pos >= recall_target:
+            adjust_t = t
+    adjust_t = min(adjust_t, best_t)
+    return {"match": round(best_t, 4), "adjust": round(adjust_t, 4),
+            "youden_j": round(best_j, 4), "n_pos": n_pos, "n_neg": n_neg,
+            "at_match": best_stats, "recall_target": recall_target}
+
+
 def _confusion(hit_a, hit_b):
     """두 hit 불리언 리스트의 confusion (a 기준 gain/regress)."""
     conf = {"both_hit": 0, "only_a": 0, "only_b": 0, "both_miss": 0}
@@ -97,6 +145,7 @@ def run():
 
     hits = {r: [] for r in ALL_RULES}
     rows = []
+    calib_pairs = []   # ens_ncc (sel 점수, GT hit) — decision threshold 캘리브용(§4).
     drop = {"no_box_tpl": 0, "non_S": 0, "routing_miss": 0, "no_crosshair": 0,
             "load_failed": 0, "no_pool": 0}
     n = 0
@@ -155,7 +204,13 @@ def run():
                 rule_hit[r] = pool[picks[r]]["err"] <= GT_TOL_NORM
             for r in ALL_RULES:
                 hits[r].append(rule_hit[r])
+            # ens_ncc 픽의 결정 score(=sel) + hit → threshold 캘리브. ensemble production
+            # 결정 score 가 될 값이라(decision/score 정비 §2) 이 분포로 컷을 정한다.
+            ens_c = pool[picks["ens_ncc"]]
+            ens_ncc_sel = chamfer_w * ens_c["chamfer"] + ncc_w * max(0.0, ens_c["ncc"])
+            calib_pairs.append((ens_ncc_sel, bool(rule_hit["ens_ncc"])))
             rows.append({"recipe": assets.recipe_id, "msr": p.name,
+                         "ens_ncc_sel": round(ens_ncc_sel, 4),
                          **{r: bool(rule_hit[r]) for r in ALL_RULES}})
             n += 1
             if n % 25 == 0:
@@ -169,11 +224,13 @@ def run():
     # 최강 ensemble 규칙 vs baseline confusion(both_hit 깨짐/이득 확인).
     best_rule = max(ENS_RULES, key=lambda r: hit_rate[r])
     conf = _confusion(hits[best_rule], hits["baseline"])
+    calib = _calibrate_thresholds(calib_pairs)   # ens_ncc sel 분포 → match/adjust threshold(§4).
     summary = {"n": n, "GT_TOL_NORM": GT_TOL_NORM, "chamfer_w": chamfer_w, "ncc_w": ncc_w,
                "drop": drop, "hit_rate": hit_rate, "best_ens_rule": best_rule,
                "best_vs_baseline": {"both_hit": conf["both_hit"], "only_best_gain": conf["only_a"],
                                     "only_baseline_regress": conf["only_b"], "both_miss": conf["both_miss"],
-                                    "net": round((conf["only_a"] - conf["only_b"]) / n, 3)}}
+                                    "net": round((conf["only_a"] - conf["only_b"]) / n, 3)},
+               "calibration": calib}
     (out_dir / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     with (out_dir / "rows.jsonl").open("w", encoding="utf-8") as fh:
@@ -191,6 +248,16 @@ def run():
     print(f"  {best_rule} vs baseline: both_hit={conf['both_hit']} "
           f"gain={conf['only_a']} regress={conf['only_b']} both_miss={conf['both_miss']}")
     print("  해석: best > baseline & regress 작음 → NCC reranker 가 이득 전환(production 후보).")
+    if calib is not None:
+        print(f"\n[INFO] === ens_ncc threshold 캘리브 (sel = {chamfer_w}·chamfer + {ncc_w}·max(0,ncc)) ===")
+        print(f"  >>> ensemble_match_threshold  = {calib['match']}  (Youden J={calib['youden_j']}, "
+              f"at_match: prec={calib['at_match']['precision']} recall={calib['at_match']['recall']} "
+              f"fpr={calib['at_match']['fpr']})")
+        print(f"  >>> ensemble_adjust_threshold = {calib['adjust']}  "
+              f"(recall_target={calib['recall_target']})")
+        print(f"  (n_pos={calib['n_pos']} n_neg={calib['n_neg']}) — 이 두 값을 MatchPolicy 에 하드코딩.")
+    else:
+        print("\n[WARNING] 캘리브 불가(한쪽 클래스만) — threshold 산출 실패.")
     print(f"[INFO] 완료: {out_dir}")
     return "success"
 

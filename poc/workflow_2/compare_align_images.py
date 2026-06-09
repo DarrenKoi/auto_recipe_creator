@@ -26,7 +26,7 @@ from poc.workflow_2.align_fail_assets import load_gray, resolve_assets_auto
 from poc.workflow_2.align_key_matcher import (
     STRUCTURE_POLICY,
     build_template,
-    compute_align_key_score,
+    compute_align_key_score_ensemble,
     save_overlay_jpeg,
 )
 
@@ -171,7 +171,10 @@ def compare_pair(
     )
 
     padded, pad_x, pad_y = _pad_frame(current_sem, template.raw_image.shape)
-    result = compute_align_key_score(
+    # ensemble 경로(decision/score 정비): decision/score 는 chamfer+NCC sel 기준, orb=0(폐지).
+    # _verdict_for 는 decision 만 분기하고 ensemble decision 은 calibrated 임계로 재판정되므로
+    # 정적 비교 verdict 는 그대로 안전. orb_inlier_ratio 표시·report 필드는 0(무의미해짐).
+    result = compute_align_key_score_ensemble(
         template,
         padded,
         scales=COMPARE_SCALES,

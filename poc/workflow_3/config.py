@@ -74,6 +74,12 @@ class Workflow3Settings(WorkflowSettings):
     sem_controller_settle_sec: float = 0.5
     zoom_scroll_dy: int = 1
 
+    # --- 모호 키 재등록 알림 ---
+    # second_ratio(2nd/best chamfer)가 이보다 크면 만성적으로 모호한 align key 로 보고
+    # 엔지니어에게 재등록을 권고한다. tau*(S-LOO golden 보정, AUC 0.91) 유래의 시작점이며
+    # fail-frame 재보정 대상 · matcher 의 0.94 visibility 게이트(max_second_ratio)와는 별개.
+    reregister_second_ratio_threshold: float = 0.98
+
 
 def load_workflow3_settings() -> Workflow3Settings:
     """env 오버라이드를 적용해 Workflow3Settings 를 생성한다."""
@@ -111,6 +117,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         sem_mode_default=_env_str("ALIGN_SEM_MODE_DEFAULT", "SEM"),
         sem_controller_settle_sec=env_float("ALIGN_SEM_SETTLE_SEC", 0.5),
         zoom_scroll_dy=env_int("ALIGN_SEM_ZOOM_SCROLL_DY", 1),
+        reregister_second_ratio_threshold=env_float("ALIGN_FAIL_REREGISTER_RATIO", 0.98),
     )
 
 

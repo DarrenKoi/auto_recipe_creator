@@ -49,6 +49,11 @@ class SuccessDownloader(Protocol):
         dest_dir 는 호출부가 넘기는 *임시 staging dir* (최종 events/ 아님). 성공 측정이
         없으면 빈 리스트를 반환한다(호출부가 기존 캐시를 보존).
 
+        event_id 는 msr 측정이력의 유니크 string 을 그대로 쓴다(결정 2026-06-10):
+        `yyyymmdd_hhmmss_<recipe_name>_<lot_id>` 형태 — 시각 prefix 라 이름 정렬 = 시간
+        정렬이고, 같은 측정 재수집 시 같은 id 가 나온다. Windows 디렉토리명 금지 문자
+        (콜론/슬래시/공백)가 들어오면 office 구현이 치환해야 한다.
+
         --- cond 파일 계약 (deferred consensus build 이 추가 변환 없이 소비하는 조건) ---
 
         - cond(S*.txt) 내용은 `vision/cond_file.py` 의 `parse_cond()` 로 파싱 가능한 형식이어야

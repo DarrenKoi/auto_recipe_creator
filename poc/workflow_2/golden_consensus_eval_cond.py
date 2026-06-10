@@ -60,7 +60,9 @@ from poc.workflow_3.vision.align_fail_assets import iter_msr_images, load_gray
 from poc.workflow_2.align_similarity import (
     GT_TOL_NORM, USE_ENSEMBLE_PROPOSER, _consensus_template_ab, _matched_crop,
 )
-from poc.workflow_2.ensemble_lab import PERIODICITY_TAU, template_periodicity
+from poc.workflow_2.ensemble_lab import (
+    PERIODICITY_TAU, miss_predictor_stats, template_periodicity,
+)
 from poc.workflow_3.vision.align_point_correction import _tool_label
 from poc.workflow_3.vision.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
 from poc.workflow_3.vision.cond_file import (
@@ -469,6 +471,19 @@ def run() -> str:
     res["template_periodicities"] = dict(periodicities)        # recipe 별 모호성(재등록 우선순위).
     res["modality_distribution"] = dict(mod_total)
     res["drop_distribution"] = dict(drop_total)
+    # Phase1 보정: per-recipe periodicity ↔ per-point miss(in_topk=False) 결합 → 예측력(AUC)/Youden tau.
+    # per_recipe 의 cons_in_topk_rate·n_S_loo 로 hit/miss 를 복원(같은 recipe 점들은 periodicity 동일).
+    _per_period = dict(periodicities)
+    _cal_scores, _cal_missed = [], []
+    for pr in res.get("per_recipe", []):
+        p = _per_period.get(pr["recipe"])
+        if p is None:
+            continue
+        n = pr["n_S_loo"]
+        n_miss = max(0, min(n, int(round(n * (1.0 - pr["cons_in_topk_rate"])))))
+        _cal_scores.extend([p] * n)
+        _cal_missed.extend([True] * n_miss + [False] * (n - n_miss))
+    res["periodicity_miss_calibration"] = miss_predictor_stats(_cal_scores, _cal_missed)
     (out_dir / "summary.json").write_text(
         json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -506,6 +521,18 @@ def run() -> str:
     verdict = ("CONSENSUS 채택 권장(lift≥+0.05)" if lift >= 0.05
                else "효과 미미/음수 — proposer ensemble 또는 VLM-region 로 전환 검토")
     print(f"  >>> 판정: {verdict}")
+    print("=" * 64)
+    # Phase1 보정 — periodicity 가 miss 를 예측하나 (재등록 신호 검증 + tau 보정).
+    cal = res.get("periodicity_miss_calibration") or {}
+    print("\n[INFO] === Phase1 보정: periodicity → miss 예측력 (per-point) ===")
+    print(f"  n={cal.get('n')}  miss={cal.get('n_miss')}  hit={cal.get('n_hit')}")
+    print(f"  mean periodicity: miss={cal.get('mean_miss')}  hit={cal.get('mean_hit')}  (miss>hit 여야 신호)")
+    print(f"  AUC={cal.get('auc')}  (0.5=무신호, >=0.7 쓸만, >=0.8 강함)")
+    print(f"  Youden tau*={cal.get('best_tau')}  (TPR={cal.get('tpr')} FPR={cal.get('fpr')})  vs 현재 tau={PERIODICITY_TAU}")
+    if cal.get("auc") is not None:
+        _v = ("쓸만함 → tau* 로 재등록 후보 보정 가능" if cal["auc"] >= 0.7
+              else "약함/무신호 → periodicity metric 재설계 필요(제외반경/매칭영역 한정 등)")
+        print(f"  >>> 판정: AUC {cal['auc']} → {_v}")
     print("=" * 64)
     print(f"\n[INFO] 완료: {out_dir}  (consensus 템플릿: {out_dir}/consensus/"
           + (f", 결합 패널: {combined_dir}/" if combined_dir is not None else "")

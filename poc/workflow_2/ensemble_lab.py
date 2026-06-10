@@ -8,6 +8,8 @@ drivers: golden_localization_eval_cond.py, golden_consensus_eval_cond.py.
 
 실행 (인자 없음): uv run pytest poc/workflow_2/test_ensemble_lab.py
 """
+import statistics
+
 import numpy as np
 
 from poc.workflow_3.vision.ensemble_proposer import (
@@ -47,6 +49,51 @@ def template_periodicity(template_gray):
     if not outside.any():
         return 0.0
     return float(np.clip(ac[outside].max(), 0.0, 1.0))
+
+
+def miss_predictor_stats(scores, missed):
+    """predictor(score)가 miss(=True)를 예측하나 진단 (Phase1 보정: periodicity↔miss).
+
+    scores[i]=예측값(periodicity 등), missed[i]=bool(정답이 top-k 밖). 같은 길이.
+    반환 dict:
+      n / n_miss / n_hit,
+      mean_miss·mean_hit·median_miss·median_hit (그룹별 score; 빈 그룹은 None),
+      auc = P(score_miss > score_hit) (동점 0.5; 0.5=무신호, 1.0=완전 분리) — Mann-Whitney,
+      best_tau / youden_j / tpr / fpr : "score > tau 면 miss 예측" 의 Youden J=TPR-FPR 최대 tau.
+    miss 또는 hit 그룹이 비면 분류가 정의되지 않으므로 auc/best_tau/youden_j/tpr/fpr = None.
+    """
+    miss_s = [s for s, m in zip(scores, missed) if m]
+    hit_s = [s for s, m in zip(scores, missed) if not m]
+    n_miss, n_hit = len(miss_s), len(hit_s)
+    out = {
+        "n": len(scores), "n_miss": n_miss, "n_hit": n_hit,
+        "mean_miss": round(sum(miss_s) / n_miss, 4) if n_miss else None,
+        "mean_hit": round(sum(hit_s) / n_hit, 4) if n_hit else None,
+        "median_miss": round(statistics.median(miss_s), 4) if n_miss else None,
+        "median_hit": round(statistics.median(hit_s), 4) if n_hit else None,
+        "auc": None, "best_tau": None, "youden_j": None, "tpr": None, "fpr": None,
+    }
+    if not n_miss or not n_hit:
+        return out
+    # AUC = P(score_miss > score_hit), 동점은 0.5 (Mann-Whitney). 0.5=무신호.
+    wins = 0.0
+    for m in miss_s:
+        for h in hit_s:
+            wins += 1.0 if m > h else (0.5 if m == h else 0.0)
+    out["auc"] = round(wins / (n_miss * n_hit), 4)
+    # Youden tau sweep: "score > tau 면 miss" 의 J=TPR-FPR 최대. 후보 tau=고유 score 값.
+    best = None  # (J, tau, tpr, fpr)
+    for tau in sorted(set(scores)):
+        tpr = sum(1 for s in miss_s if s > tau) / n_miss
+        fpr = sum(1 for s in hit_s if s > tau) / n_hit
+        j = tpr - fpr
+        if best is None or j > best[0]:
+            best = (j, tau, tpr, fpr)
+    out["youden_j"] = round(best[0], 4)
+    out["best_tau"] = round(best[1], 4)
+    out["tpr"] = round(best[2], 4)
+    out["fpr"] = round(best[3], 4)
+    return out
 
 
 def rrf_fuse(channel_lists, *, k0=RRF_K0, match_radius=8, top_n=SHADOW_N, rescore_fn=None):

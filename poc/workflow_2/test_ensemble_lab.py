@@ -81,3 +81,38 @@ def test_template_periodicity_high_on_symmetric_pair():
 def test_template_periodicity_zero_on_flat():
     f = np.full((100, 100), 128, np.uint8)        # 무특징 grey
     assert lab.template_periodicity(f) == 0.0
+
+
+def test_miss_predictor_strong_signal():
+    # miss 가 일관되게 높은 score → 완전 분리: AUC 1.0, Youden J 1.0 (TPR 1·FPR 0).
+    scores = [0.8, 0.9, 0.85, 0.95, 0.1, 0.2, 0.15, 0.05]
+    missed = [True, True, True, True, False, False, False, False]
+    r = lab.miss_predictor_stats(scores, missed)
+    assert r["n"] == 8 and r["n_miss"] == 4 and r["n_hit"] == 4
+    assert r["auc"] == 1.0
+    assert r["mean_miss"] > r["mean_hit"]
+    assert r["youden_j"] == 1.0 and r["tpr"] == 1.0 and r["fpr"] == 0.0
+
+
+def test_miss_predictor_no_signal():
+    # 두 그룹 분포 동일 → AUC 0.5, Youden J 0 (예측력 없음).
+    scores = [0.1, 0.9, 0.1, 0.9]
+    missed = [True, True, False, False]
+    r = lab.miss_predictor_stats(scores, missed)
+    assert r["auc"] == 0.5
+    assert r["youden_j"] == 0.0
+
+
+def test_miss_predictor_reverse_signal_auc_below_half():
+    # miss 가 오히려 낮은 score → AUC < 0.5 (역상관).
+    scores = [0.1, 0.05, 0.9, 0.8]
+    missed = [True, True, False, False]
+    r = lab.miss_predictor_stats(scores, missed)
+    assert r["auc"] < 0.5
+
+
+def test_miss_predictor_empty_miss_group_returns_none():
+    # miss 없음 → 분류 정의 불가 → auc/best_tau None.
+    r = lab.miss_predictor_stats([0.2, 0.3], [False, False])
+    assert r["n_miss"] == 0
+    assert r["auc"] is None and r["best_tau"] is None

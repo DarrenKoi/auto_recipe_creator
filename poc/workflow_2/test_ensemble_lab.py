@@ -135,6 +135,23 @@ def test_peak_isolation_ratio_single_or_empty_zero():
     assert lab.peak_isolation_ratio([ep._Cand(xy=(10, 10), score=0.7, scale=1.0)]) == 0.0
 
 
+def test_peak_isolation_variants_directions():
+    # ambiguous(평평) vs distinctive(top1 독주) — 모든 변형이 ambiguous 를 더 miss-like 로.
+    amb = lab.peak_isolation_variants([0.61, 0.60, 0.59], ncc=[0.90, 0.88, 0.50])
+    dist = lab.peak_isolation_variants([0.90, 0.20, 0.10], ncc=[0.95, 0.30, 0.10])
+    assert amb["ratio_top2"] > dist["ratio_top2"]
+    assert amb["ratio_median_rest"] > dist["ratio_median_rest"]
+    assert amb["count_near"] >= dist["count_near"]
+    assert amb["margin_abs"] > dist["margin_abs"]          # 음수 margin: 모호할수록 0 에 가까움.
+    assert amb["ncc_ratio_top2"] > dist["ncc_ratio_top2"]
+
+
+def test_peak_isolation_variants_edges():
+    assert lab.peak_isolation_variants([])["ratio_top2"] is None        # n==0 → 전부 None
+    assert lab.peak_isolation_variants([0.7])["ratio_top2"] == 0.0      # 단일 → 0.0(경쟁 없음)
+    assert lab.peak_isolation_variants([0.7])["ncc_ratio_top2"] is None  # ncc 미제공 → None
+
+
 def test_miss_predictor_strong_signal():
     # miss 가 일관되게 높은 score → 완전 분리: AUC 1.0, Youden J 1.0 (TPR 1·FPR 0).
     scores = [0.8, 0.9, 0.85, 0.95, 0.1, 0.2, 0.15, 0.05]

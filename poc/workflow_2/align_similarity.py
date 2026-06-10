@@ -348,12 +348,12 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
         rank = next((i for i, d in enumerate(dists, 1) if d <= GT_TOL_NORM), None)
         cur = (rank, len(cands), min(dists), mod,
                [[int(c.xy[0]), int(c.xy[1])] for c in cands],
-               peak_isolation_ratio(cands))   # (B) match-time 모호도(top2/top1).
+               peak_isolation_ratio(cands), list(cands))   # (B) 모호도 + 변형 ablation 용 cands.
         # race: in_topk(rank!=None) 우선 → 낮은 rank → 가까운 best_dist.
         if best is None:
             best = cur
         else:
-            b_rank, _bn, b_dist, _bm, _bc, _bp = best
+            b_rank, _bn, b_dist, _bm, _bc, _bp, _bcands = best
             better = (
                 (rank is not None and (b_rank is None or rank < b_rank))
                 or (rank is None and b_rank is None and cur[2] < b_dist)
@@ -362,7 +362,18 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
                 best = cur
     if not any_cand:
         return None
-    rank, n_cand, best_dist, mod, cand_xys, peak_ratio = best
+    rank, n_cand, best_dist, mod, cand_xys, peak_ratio, adopted_cands = best
+    # (B) 변형 ablation 재료: 채택 modality 후보의 chamfer 점수 + NCC 재점수(같은 후보 순서).
+    cand_scores = [round(float(c.score), 5) for c in adopted_cands]
+    cand_ncc = None
+    tpl_adopted = center_tpls.get(mod)
+    if tpl_adopted is not None:
+        th2, tw2 = tpl_adopted.raw_image.shape[:2]
+        cand_ncc = []
+        for c in adopted_cands:
+            crop = _matched_crop(gray, c.xy, tw2, th2, getattr(c, "scale", 1.0) or 1.0)
+            cand_ncc.append(round(float(_ncc(tpl_adopted.raw_image, crop)), 5)
+                            if crop is not None else None)
     return {
         "topk_rank": rank,
         "in_topk": rank is not None,
@@ -371,6 +382,8 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
         "modality": mod,
         "cand_xys": cand_xys,
         "peak_ratio": round(peak_ratio, 4),   # (B) match-time 모호도: top2/top1, 높을수록 miss-like.
+        "cand_scores": cand_scores,           # 변형 ablation: proposer 점수(내림차순).
+        "cand_ncc": cand_ncc,                 # 변형 ablation: 후보별 NCC 재점수(C4 form 검증).
     }
 
 
@@ -917,7 +930,9 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None,
                 continue
             n += 1
             cons_points.append({"recipe": rec, "missed": not gc["in_topk"],
-                                "peak_ratio": gc.get("peak_ratio")})   # (B) 점 단위 모호도↔miss.
+                                "peak_ratio": gc.get("peak_ratio"),
+                                "cand_scores": gc.get("cand_scores"),
+                                "cand_ncc": gc.get("cand_ncc")})   # (B) 점 단위 모호도↔miss + 변형 재료.
             if gc["in_topk"]:
                 cons_hit += 1
             elif gc.get("best_cand_dist_norm") is not None:

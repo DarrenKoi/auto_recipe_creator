@@ -113,6 +113,43 @@ def peak_isolation_ratio(cands):
     return float(np.clip(s1 / s0, 0.0, 1.0))
 
 
+PEAK_ISO_VARIANTS = ("ratio_top2", "ratio_median_rest", "count_near", "margin_abs", "ncc_ratio_top2")
+
+
+def peak_isolation_variants(scores, *, ncc=None):
+    """후보 점수에서 peak-isolation(ambiguity) 변형들 — 전부 '높을수록 miss-like'. 포팅 전 robust 비교용.
+
+    scores: proposer 점수(내림차순; C1=chamfer, ensemble=RRF). ncc: 같은 후보 순서의 NCC 재점수(옵션).
+    반환 dict(계산 불가 변형은 None):
+      ratio_top2        = s1/s0            (현재 production primitive, scale-free)
+      ratio_median_rest = median(s1..)/s0  (경쟁 peak 분포 전체 반영, outlier 강건)
+      count_near        = #{si >= 0.95 s0} (top1 의 강한 경쟁자 수; 이산)
+      margin_abs        = -(s0 - s1)       (절대 margin; scale-free 아님 → 보통 약함, 대조군)
+      ncc_ratio_top2    = NCC 재정렬 top2/top1 (C4 production form; proposer 점수 무관 — drift 약함 검증)
+    n==0 이면 전부 None. <2개면 ratio/count/margin=0.0(경쟁 peak 없음=distinctive).
+    """
+    out = {k: None for k in PEAK_ISO_VARIANTS}
+    n = len(scores)
+    if n == 0:
+        return out
+    s0 = float(scores[0])
+    rest = [float(x) for x in scores[1:]]
+    if n < 2 or s0 <= 0:
+        out.update(ratio_top2=0.0, ratio_median_rest=0.0, count_near=0.0, margin_abs=0.0)
+    else:
+        out["ratio_top2"] = float(np.clip(rest[0] / s0, 0.0, 1.0))
+        out["ratio_median_rest"] = float(np.clip(statistics.median(rest) / s0, 0.0, 1.0))
+        out["count_near"] = float(sum(1 for x in rest if x >= 0.95 * s0))
+        out["margin_abs"] = float(-(s0 - rest[0]))   # 높을수록(0 에 가까울수록) miss-like.
+    if ncc is not None:
+        nv = sorted((float(x) for x in ncc if x is not None), reverse=True)
+        if len(nv) >= 2:
+            out["ncc_ratio_top2"] = float(np.clip(nv[1] / nv[0], 0.0, 1.0)) if nv[0] > 0 else 1.0
+        elif nv:
+            out["ncc_ratio_top2"] = 0.0
+    return out
+
+
 def miss_predictor_stats(scores, missed):
     """predictor(score)가 miss(=True)를 예측하나 진단 (Phase1 보정: periodicity↔miss).
 

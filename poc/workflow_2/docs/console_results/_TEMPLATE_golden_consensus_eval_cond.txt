@@ -57,6 +57,20 @@ Youden tau* = ____    (TPR = ____   FPR = ____ )
 # <0.7 → match-time 신호도 약함 → 재등록은 직접 miss 라벨 / per-case escalation.
 # vs periodicity: 0.61 대비 크게↑면 "match-time 이 옳은 축"(template 고유는 죽음) 확증.
 
+★ [B-robust — peak-isolation 형태별 AUC]   (C1·ensemble 두 번; "=== (B) 변형 robust ..." 블록)
+#   포팅할 가장 강/안정적 형태 고르기. RUN C1: 그대로 실행. RUN ENSEMBLE: CONSENSUS_USE_ENSEMBLE=1.
+#   각 형태 AUC 만. 배너의 proposer=C1/ENSEMBLE 로 어느 run 인지 확인.
+                     AUC(C1)    AUC(ENSEMBLE)
+ratio_top2        =  ____        ____      # 현재 primitive(scale-free)
+ratio_median_rest =  ____        ____      # 경쟁 peak 분포 전체
+count_near        =  ____        ____      # 0.95·top1 이상 경쟁자 수
+margin_abs        =  ____        ____      # 절대 margin(대조군; 보통 약함 예상)
+ncc_ratio_top2    =  ____        ____      # C4 form, proposer 무관 → 양쪽서 유지되면 robust
+best 형태(C1) = ____________  AUC = ____   /  best 형태(ENSEMBLE) = ____________  AUC = ____
+# 고르는 법: 두 proposer 에서 AUC 가 가장 높고 *함께 유지*되는 형태 = 포팅 대상.
+# ncc_ratio_top2 가 C1≈ENSEMBLE 면 proposer 무관 robust(권장). ratio_top2 가 ENSEMBLE 서 급락하면
+# RRF rank 점수라 그런 것 — production matcher 점수 종류에 맞춰 형태 선택.
+
 ──────────────────────────────────────────────
 ★ [A/B — RUN1 : C1]   proposer = C1
 #   "=== consensus 재등록 A/B (cond, LOO; 이 블록만 읽어주면 됨) ===" 블록

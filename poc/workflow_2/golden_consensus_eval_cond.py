@@ -61,7 +61,8 @@ from poc.workflow_2.align_similarity import (
     GT_TOL_NORM, USE_ENSEMBLE_PROPOSER, _consensus_template_ab, _matched_crop,
 )
 from poc.workflow_2.ensemble_lab import (
-    PERIODICITY_TAU, miss_predictor_stats, template_periodicity,
+    PEAK_ISO_VARIANTS, PERIODICITY_TAU, miss_predictor_stats,
+    peak_isolation_variants, template_periodicity,
 )
 from poc.workflow_3.vision.align_point_correction import _tool_label
 from poc.workflow_3.vision.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
@@ -528,6 +529,22 @@ def run() -> str:
     _iso = [(p["peak_ratio"], p["missed"]) for p in _pts if p.get("peak_ratio") is not None]
     res["peak_isolation_calibration"] = miss_predictor_stats(
         [s for s, _m in _iso], [m for _s, m in _iso])
+    # (B) 변형 robust ablation — 어떤 peak-isolation 형태가 가장 강/안정적인가(포팅 형태 선택).
+    _vs = {name: [] for name in PEAK_ISO_VARIANTS}
+    _vm = {name: [] for name in PEAK_ISO_VARIANTS}
+    for p in _pts:
+        for name, v in peak_isolation_variants(p.get("cand_scores") or [],
+                                               ncc=p.get("cand_ncc")).items():
+            if v is None:
+                continue
+            _vs[name].append(v)
+            _vm[name].append(p["missed"])
+    var_cal = []
+    for name in PEAK_ISO_VARIANTS:
+        st = miss_predictor_stats(_vs[name], _vm[name])
+        var_cal.append({"variant": name, **{k: st.get(k) for k in
+            ("auc", "n", "n_miss", "n_hit", "mean_miss", "mean_hit", "best_tau", "tpr", "fpr")}})
+    res["peak_isolation_variants"] = var_cal
     (out_dir / "summary.json").write_text(
         json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -608,6 +625,19 @@ def run() -> str:
         _b = ("쓸만함 → production fail-time 모호 플래그 + C4 distinctiveness 포팅" if iso["auc"] >= 0.7
               else "여전히 약함 → match-time 모호도도 부족 → 재등록은 직접 miss 라벨 / per-case escalation")
         print(f"  >>> 판정: AUC {iso['auc']} → {_b}")
+    print("=" * 64)
+    # (B) 변형 robust — 포팅할 가장 강/안정적 peak-isolation 형태 고르기(C1·ensemble 양쪽 비교).
+    print("\n[INFO] === (B) 변형 robust (peak-isolation 형태별 AUC; proposer="
+          + ("ENSEMBLE" if USE_ENSEMBLE_PROPOSER else "C1") + ") ===")
+    print("  variant            AUC      n(miss/hit)    mean(miss/hit)")
+    for v in res.get("peak_isolation_variants", []):
+        print(f"  {v['variant']:<17} {v['auc']}   {v['n']}({v['n_miss']}/{v['n_hit']})    "
+              f"{v['mean_miss']}/{v['mean_hit']}")
+    _vv = [v for v in res.get("peak_isolation_variants", []) if v.get("auc") is not None]
+    if _vv:
+        _bv = max(_vv, key=lambda v: v["auc"])
+        print(f"  >>> best 형태: {_bv['variant']}  AUC={_bv['auc']}  → 이 형태로 workflow_3 포팅 후보")
+        print("      ncc_ratio_top2 는 proposer 점수 무관(C4 form) — C1/ensemble 양쪽서 AUC 유지되면 가장 robust")
     print("=" * 64)
     print(f"\n[INFO] 완료: {out_dir}  (consensus 템플릿: {out_dir}/consensus/"
           + (f", 결합 패널: {combined_dir}/" if combined_dir is not None else "")

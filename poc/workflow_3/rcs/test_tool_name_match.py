@@ -1,6 +1,6 @@
 """ocr_spotting 파서 + tool_name_match 매처 오프라인 검증 (RCS 불필요).
 
-Mac 에서 `uv run python poc/workflow_1/test_tool_name_match.py` 로 실행한다.
+Mac 에서 `uv run python poc/workflow_3/rcs/test_tool_name_match.py` 로 실행한다.
 """
 
 import json

@@ -23,7 +23,9 @@ Subpackages (dependency direction `monitor → {rcs, vision, runner, vlm, util}`
 - **`vision/`** — CV engine: `align_key_matcher` (ensemble), `align_fail_assets`, `align_fail_correct` (primary entry: `correct_align_fail_auto(controller, ...) -> CorrectionOutcome`), `live_align_search` (fallback + `SEMMonitorController` Protocol + Mac mock).
 - **`vlm/`** — Flask VLM client/config/prompts. **`runner/`** — WorkflowRunner/step types/settings. **`util/`** — shared helpers.
 
-**Legacy (frozen):** `poc/workflow_1/` keeps only the CCTV/DVR path and early experiments; `poc/workflow_2/` keeps only eval/AB/tuning harnesses (they import the engine from `poc.workflow_3.vision`).
+**Frozen:** `poc/workflow_1/` keeps only the CCTV/DVR path + early experiments (no active work; still the `align_images` data root).
+
+**Active offline CV bench:** `poc/workflow_2/` is *not* frozen — it is the eval / A-B / tuning harness where matching, ensemble, threshold, and consensus changes are validated against golden sets, then ported into `workflow_3/vision`. It imports the engine from `poc.workflow_3.vision` (never the reverse) and forks it bit-parity for experiments via `ensemble_lab.py`; golden drivers are `golden_localization_eval_cond.py` / `golden_consensus_eval_cond.py`. **Current transition:** prove a CV change in workflow_2 → port only the verified change into workflow_3; primary build focus is workflow_3 (the real-time loop).
 
 The filesystem contract (office MES writes, vision reads):
 
@@ -50,8 +52,8 @@ poc/workflow_3/vision/   #   CV engine (matcher/ensemble/assets/correct/live sea
 poc/workflow_3/vlm/      #   Flask VLM client, service registry, prompt builders
 poc/workflow_3/runner/   #   WorkflowRunner, step/condition types, WorkflowSettings
 poc/workflow_3/util/     #   env, image, json, time + optional mouse/window helpers
-poc/workflow_1/          # legacy: CCTV/DVR path + early experiments + align_images data root
-poc/workflow_2/          # legacy: eval/AB/tuning harnesses + docs (journals, ADRs, runbooks)
+poc/workflow_1/          # frozen: CCTV/DVR path + early experiments + align_images data root
+poc/workflow_2/          # active offline CV bench: eval/AB/tuning + ensemble_lab (bit-parity fork) + golden drivers + docs
 flask_api/vlm_serve/     # Flask VLM proxy: service registry, health discovery, per-model blueprints
 deploy_vlms/             # VLM deployment configs, scripts, operational docs
 test/video_frame_parser/ # CLIP-based video frame extraction & analysis (GPU cluster)

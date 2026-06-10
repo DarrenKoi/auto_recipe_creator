@@ -133,6 +133,37 @@ WARN_INNER_PX = 24      # 작은 box 경고 임계(skip 아님).
 OFFSET_WARN = 0.25      # offset_norm(÷대각선) 경고 임계(box 가 중심에서 멂).
 OFFSET_SKIP = 0.38      # offset_norm 하드 skip(=box≠center 가정 붕괴, 엔지니어 검토 필요).
 
+# --- Tier 1.1 검증: miss-distance bin 층화 (리포팅 전용; 경계는 1차 결과 후 재조정 가능) ---
+# A: GT 가 frame 중심에서 떨어진 정도(frame 짧은변 비율) = 구조적 displacement.
+DISP_BINS = ((0.10, "near"), (0.20, "mid"), (0.35, "far"))   # 그 외 → "veryfar".
+# B: center-crop arm 이 GT 에서 빗나간 거리(GT_TOL_NORM 배수) = rescue framing.
+RESCUE_MULT = ((1.0, "hit"), (2.0, "near"), (4.0, "far"))    # 그 외 → "veryfar".
+BIN_FRAME = "inpaint"   # 층화는 clean(inpaint) cell 로 — lever_verdict(box__inpaint)와 일관.
+
+
+def _bin_label(value, edges, over_label):
+    """value 를 오름차순 (경계, 라벨) edges 로 분류. 어느 경계도 안 넘으면 over_label."""
+    for edge, label in edges:
+        if value < edge:
+            return label
+    return over_label
+
+
+def displacement_bin(gt_xy, frame_hw):
+    """GT(정렬점)가 frame 중심에서 얼마나 떨어졌나 → near/mid/far/veryfar.
+
+    norm = |GT - frame_center| / frame 짧은변. '구조적 displacement' 의 직접 척도.
+    """
+    h, w = frame_hw
+    short = max(1, min(int(w), int(h)))
+    norm = float(np.hypot(gt_xy[0] - w / 2.0, gt_xy[1] - h / 2.0) / short)
+    return _bin_label(norm, DISP_BINS, "veryfar")
+
+
+def rescue_bin(center_dist_norm):
+    """center-crop arm 이 GT 에서 얼마나 빗나갔나 → hit/near/far/veryfar (GT_TOL_NORM 배수)."""
+    return _bin_label(float(center_dist_norm) / gle.GT_TOL_NORM, RESCUE_MULT, "veryfar")
+
 
 def _cond_box_center(box_ltrb):
     """cond.box_ltrb → 이미지 px box 중심 (cx, cy) (정수 반올림 전 float)."""

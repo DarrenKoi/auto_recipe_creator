@@ -274,3 +274,22 @@ def test_matcher_for_eval_toggle(monkeypatch):
     assert gle._matcher_for_eval() is akm.compute_align_key_score_ensemble
     monkeypatch.setenv("ALIGN_USE_ENSEMBLE", "0")
     assert gle._matcher_for_eval() is akm.compute_align_key_score         # off → baseline.
+
+
+# --- Tier 1.1: miss-distance bin 분류 (순수) ---
+
+def test_displacement_bin_boundaries():
+    # frame 512x512 → center (256,256), short=512. norm = |GT-center|/512.
+    fhw = (512, 512)
+    assert glec.displacement_bin((296, 256), fhw) == "near"      # 40/512=0.078
+    assert glec.displacement_bin((333, 256), fhw) == "mid"       # 77/512=0.150
+    assert glec.displacement_bin((386, 256), fhw) == "far"       # 130/512=0.254
+    assert glec.displacement_bin((456, 256), fhw) == "veryfar"   # 200/512=0.391
+
+
+def test_rescue_bin_boundaries():
+    tol = glec.gle.GT_TOL_NORM   # center dist_norm 을 tol 배수로 줘 경계 검증.
+    assert glec.rescue_bin(0.5 * tol) == "hit"
+    assert glec.rescue_bin(1.5 * tol) == "near"
+    assert glec.rescue_bin(3.0 * tol) == "far"
+    assert glec.rescue_bin(5.0 * tol) == "veryfar"

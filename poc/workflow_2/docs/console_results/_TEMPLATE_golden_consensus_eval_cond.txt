@@ -30,6 +30,22 @@ Youden tau* = ____    (TPR = ____   FPR = ____ )     현재 tau = 0.5
 # AUC = periodicity 가 재등록 대상(miss 키)을 가려내는 힘.  tau* = 0.5 대신 쓸 보정 임계.
 # AUC≈0.5 면 metric 재설계,  AUC≥0.7 이면 tau* 로 재등록 후보 리스트 확정.
 
+★ [PHASE 1-A — periodicity 날카롭게 ablation]   (한 번만; "=== Phase1-A: ..." 블록)
+#   선형 자기상관 + (window x min-lag) 변형별 AUC. 첫 행=선형 baseline(순환판 0.636 과 비교).
+#   각 행의 AUC 만 적으면 됨(miss/hit·tau* 는 opt). variant 라벨은 그대로.
+variant            AUC      (miss/hit  tau* — opt)
+whole  lag0.10 =  ____      ( ____ / ____   ____ )   # 선형 baseline (순환 0.636 → 선형 ?)
+whole  lag0.20 =  ____
+whole  lag0.30 =  ____
+win0.6 lag0.10 =  ____
+win0.6 lag0.20 =  ____
+win0.6 lag0.30 =  ____
+win0.4 lag0.20 =  ____
+best: variant = ____________   AUC = ____    (Δ vs baseline = ____ )
+판정: ________________________________________   (">>> ... →" 뒤 문장)
+# best AUC≥0.7 → 그 (win,lag) workflow_3 포팅.  <0.7 → (B) match-aware(2nd-best decoy ratio).
+# 읽는 법: win 축↑효과 = align point 주변 한정이 먹힘 / lag 축↑효과 = tolerance 안 무해 lag 가 노이즈였음.
+
 ──────────────────────────────────────────────
 ★ [A/B — RUN1 : C1]   proposer = C1
 #   "=== consensus 재등록 A/B (cond, LOO; 이 블록만 읽어주면 됨) ===" 블록

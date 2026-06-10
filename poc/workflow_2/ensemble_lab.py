@@ -19,36 +19,79 @@ from poc.workflow_3.vision.align_key_matcher import DEFAULT_SCALES, _to_grayscal
 
 
 # Phase 1: template 내재 주기성(autocorrelation off-center peak). cold-start, 오피스 보정 예정.
-PERIODICITY_EXCL_FRAC = 0.10   # zero-lag 제외 중심 반경 = min(h,w) 의 이 비율.
-PERIODICITY_TAU = 0.5          # 이 값 초과면 template_periodic(=재등록 후보). 비교는 strict >. 합성 검증으로 선택.
+PERIODICITY_EXCL_FRAC = 0.10      # zero-lag 제외 중심 반경 = min(h,w) 의 이 비율(=min_lag_frac 기본).
+PERIODICITY_MAX_LAG_FRAC = 0.8    # 상한 lag 반경 = min(h,w) 의 이 비율. overlap→0 극단 lag 잡음 차단.
+PERIODICITY_TAU = 0.5             # 이 값 초과면 template_periodic(=재등록 후보). 비교는 strict >. 합성 검증으로 선택.
 
 
-def template_periodicity(template_gray):
-    """template 의 자기상관 기반 모호성 점수 [0,1] — 원형 autocorrelation 의 off-center peak 높이.
+def _norm_autocorr(g):
+    """zero-mean g 의 *선형*(비순환) 자기상관 — overlap 정규화, 중심 lag0. 반환 (2h-1, 2w-1).
 
-    높을수록 "유일하게 localize 되는 지점이 없음" → align key 모호(재등록 후보). 원형 자기상관은
+    순환 FFT 자기상관은 wrap-around 로 고립 특징/작은 window 에서 가짜 peak 를 만든다(decoy 는
+    frame 상의 *선형* shift 라 순환이 아님). zero-pad 로 선형 상관을 구하고 각 lag 에서 겹친
+    픽셀 수로 나눠(편향 제거) 멀리 떨어진 대칭 쌍도 제대로 본다. peak0 정규화는 호출부에서.
+    """
+    h, w = g.shape
+    H, W = h + h, w + w
+    Fg = np.fft.rfft2(g, s=(H, W))
+    corr = np.fft.irfft2(Fg * np.conj(Fg), s=(H, W))           # 선형 자기상관(lag0 at [0,0]).
+    ones = np.ones((h, w), dtype=np.float32)
+    Fo = np.fft.rfft2(ones, s=(H, W))
+    ovl = np.fft.irfft2(Fo * np.conj(Fo), s=(H, W))            # lag 별 겹친 픽셀 수.
+    nac = corr / np.maximum(ovl, 1.0)                          # overlap 정규화(편향 제거).
+    return np.fft.fftshift(nac)[1:H, 1:W]                      # lag0 → 중심(h-1, w-1).
+
+
+def template_periodicity(template_gray, *, center_xy=None, win_frac=None,
+                         min_lag_frac=PERIODICITY_EXCL_FRAC,
+                         max_lag_frac=PERIODICITY_MAX_LAG_FRAC):
+    """template 의 자기상관 기반 모호성 점수 [0,1] — 선형 autocorrelation 의 off-center peak 높이.
+
+    높을수록 "유일하게 localize 되는 지점이 없음" → align key 모호(재등록 후보). 자기상관은
     *주기성*(grating/array)뿐 아니라 *대칭성*(반복/반사로 같은 모습이 또 나타남)도 감지한다 —
     둘 다 matcher 가 어느 지점인지 못 가리는 케이스라 함께 높게 나오는 것이 올바른 동작이다.
     0=유일/무특징. scale 무관(상대 비율). NCC-isolation 이 못 보는 모호성을 보강(Codex 리뷰 #1).
+
+    Phase1-A 날카롭게(sharpen) — 전체 template·전체 lag·순환 자기상관은 무해한/가짜 자기유사성에
+    희석돼 miss 예측력이 약했다(office 순환판 AUC 0.636). 세 가지로 실패 유발 조건에 집중한다:
+      - 선형 overlap-정규화 자기상관(_norm_autocorr): wrap 가짜 peak 제거(decoy 는 선형 shift).
+      - center_xy / win_frac: align point(center 템플릿은 기하 중심) 주변 정사각 window 로
+        한정해 무관한 배경 자기유사성을 배제. win_frac=None 이면 전체 template.
+      - min_lag_frac / max_lag_frac: zero-lag 부근(=tolerance 안이라 decoy 가 떠도 무해)과
+        overlap→0 극단 lag(잡음)를 제외하는 환형(annulus) lag 영역만 본다.
     """
-    g = _to_grayscale(template_gray).astype(np.float32)
+    g = _to_grayscale(template_gray)
+    if win_frac is not None:                         # align point 주변 정사각 window 로 한정.
+        h0, w0 = g.shape[:2]
+        cx0 = (w0 // 2) if center_xy is None else int(center_xy[0])
+        cy0 = (h0 // 2) if center_xy is None else int(center_xy[1])
+        half = max(4, int(0.5 * win_frac * min(h0, w0)))
+        g = g[max(0, cy0 - half):min(h0, cy0 + half),
+              max(0, cx0 - half):min(w0, cx0 + half)]
+    g = g.astype(np.float32)
+    if g.size == 0:
+        return 0.0
     g = g - g.mean()
     if g.std() < 1e-6:
         return 0.0                                   # 무특징 grey → 주기성 정의 안 됨.
-    F = np.fft.fft2(g)
-    ac = np.fft.fftshift(np.real(np.fft.ifft2(F * np.conj(F))))   # 2D 원형 자기상관(패딩 없음) — 주기성+대칭성 감지.
-    h, w = ac.shape
-    cy, cx = h // 2, w // 2
-    peak0 = ac[cy, cx]
+    nac = _norm_autocorr(g)
+    h, w = nac.shape
+    cy, cx = h // 2, w // 2                           # = (orig_h-1, orig_w-1) = lag0.
+    peak0 = nac[cy, cx]
     if peak0 <= 0:
         return 0.0
-    ac = ac / peak0                                  # zero-lag = 1.0 정규화.
-    r = max(1, int(PERIODICITY_EXCL_FRAC * min(h, w)))
+    nac = nac / peak0                                 # zero-lag = 1.0 정규화.
+    short = min(g.shape)                              # lag 반경 척도 = (windowed) 짧은 변.
+    r_in = max(1, int(min_lag_frac * short))
     yy, xx = np.ogrid[:h, :w]
-    outside = (yy - cy) ** 2 + (xx - cx) ** 2 > r * r
-    if not outside.any():
+    d2 = (yy - cy) ** 2 + (xx - cx) ** 2
+    annulus = d2 > r_in * r_in                       # tolerance 안 lag 제외.
+    if max_lag_frac is not None:
+        r_out = max(r_in + 1, int(max_lag_frac * short))
+        annulus &= d2 <= r_out * r_out               # overlap→0 극단 lag 제외.
+    if not annulus.any():
         return 0.0
-    return float(np.clip(ac[outside].max(), 0.0, 1.0))
+    return float(np.clip(nac[annulus].max(), 0.0, 1.0))
 
 
 def miss_predictor_stats(scores, missed):

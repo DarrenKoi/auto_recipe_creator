@@ -110,6 +110,38 @@ def _floor_min_s(value):
 
 CONSENSUS_MIN_S = _floor_min_s(_MIN_S_ENV)
 
+# Phase1-A: periodicity 날카롭게 — (win_frac, min_lag_frac) ablation. max_lag 는 기본(0.8) 고정.
+# 첫 행(whole, lag0.10)=선형 자기상관 baseline → office 순환판 AUC 0.636 과 비교(선형 전환 효과).
+# win 축=align point window 로 한정(무관 배경 배제), lag 축=tolerance 안 무해 lag 제외.
+# 한 번 실행으로 변형별 AUC 를 모아 0.7 을 넘는 (win,lag) 가 있나 본다(있으면 workflow_3 포팅).
+PERIODICITY_ABLATION_GRID = [
+    ("whole  lag0.10", None, 0.10),
+    ("whole  lag0.20", None, 0.20),
+    ("whole  lag0.30", None, 0.30),
+    ("win0.6 lag0.10", 0.6, 0.10),
+    ("win0.6 lag0.20", 0.6, 0.20),
+    ("win0.6 lag0.30", 0.6, 0.30),
+    ("win0.4 lag0.20", 0.4, 0.20),
+]
+
+
+def _calibrate_periodicity(score_by_recipe, per_recipe):
+    """recipe별 periodicity 점수 + per_recipe in_topk 율 → per-point miss_predictor_stats.
+
+    같은 recipe 의 LOO 점들은 periodicity 가 동일하므로, n_S_loo·cons_in_topk_rate 로
+    miss(in_topk=False) 개수를 복원해 점 단위 (score, missed) 를 만든 뒤 통계(AUC/Youden)를 낸다.
+    """
+    scores, missed = [], []
+    for pr in per_recipe:
+        p = score_by_recipe.get(pr["recipe"])
+        if p is None:
+            continue
+        n = pr["n_S_loo"]
+        n_miss = max(0, min(n, int(round(n * (1.0 - pr["cons_in_topk_rate"])))))
+        scores.extend([p] * n)
+        missed.extend([True] * n_miss + [False] * (n - n_miss))
+    return miss_predictor_stats(scores, missed)
+
 
 def _align_to_ref(img, ref):
     """img 를 ref 에 sub-pixel 평행이동 정렬(phase correlation). 과도 shift 면 원본 반환."""
@@ -394,6 +426,7 @@ def run() -> str:
     mod_total = Counter()
     drop_total = Counter()
     periodicities = []   # [(rec_key, periodicity)] — Phase 1 재등록 후보 신호.
+    ablation_scores = {label: {} for label, _w, _l in PERIODICITY_ABLATION_GRID}  # Phase1-A: 변형별 rec_key→score.
     for assets in recipes:
         if assets is None:
             continue
@@ -416,6 +449,11 @@ def run() -> str:
             (template_periodicity(t.raw_image) for t, _off in center_tpls.values()
              if t is not None), default=0.0)
         periodicities.append((rec_key, round(rec_periodicity, 3)))
+        # Phase1-A: 같은 center 템플릿에 (win,lag) 변형별 periodicity (modality max). 비용 무시할 만함.
+        for _label, _win, _lag in PERIODICITY_ABLATION_GRID:
+            _v = max((template_periodicity(t.raw_image, win_frac=_win, min_lag_frac=_lag)
+                      for t, _off in center_tpls.values() if t is not None), default=0.0)
+            ablation_scores[_label][rec_key] = round(_v, 3)
         if n_s:
             by_recipe[rec_key] = entry
         print(f"[INFO] {rec_key}: S(crosshair) {n_s}장, E {len(entry['e_paths'])}장"
@@ -472,18 +510,18 @@ def run() -> str:
     res["modality_distribution"] = dict(mod_total)
     res["drop_distribution"] = dict(drop_total)
     # Phase1 보정: per-recipe periodicity ↔ per-point miss(in_topk=False) 결합 → 예측력(AUC)/Youden tau.
-    # per_recipe 의 cons_in_topk_rate·n_S_loo 로 hit/miss 를 복원(같은 recipe 점들은 periodicity 동일).
-    _per_period = dict(periodicities)
-    _cal_scores, _cal_missed = [], []
-    for pr in res.get("per_recipe", []):
-        p = _per_period.get(pr["recipe"])
-        if p is None:
-            continue
-        n = pr["n_S_loo"]
-        n_miss = max(0, min(n, int(round(n * (1.0 - pr["cons_in_topk_rate"])))))
-        _cal_scores.extend([p] * n)
-        _cal_missed.extend([True] * n_miss + [False] * (n - n_miss))
-    res["periodicity_miss_calibration"] = miss_predictor_stats(_cal_scores, _cal_missed)
+    _per_recipe = res.get("per_recipe", [])
+    res["periodicity_miss_calibration"] = _calibrate_periodicity(dict(periodicities), _per_recipe)
+    # Phase1-A: (win,lag) 변형별 AUC ablation — 어떤 sharpen 이 miss 예측력을 올리나(>=0.7 이면 포팅).
+    ablation = []
+    for label, win, lag in PERIODICITY_ABLATION_GRID:
+        cal = _calibrate_periodicity(ablation_scores.get(label, {}), _per_recipe)
+        ablation.append({
+            "label": label, "win_frac": win, "min_lag_frac": lag,
+            **{k: cal.get(k) for k in
+               ("auc", "n_miss", "n_hit", "mean_miss", "mean_hit", "best_tau", "tpr", "fpr")},
+        })
+    res["periodicity_ablation"] = ablation
     (out_dir / "summary.json").write_text(
         json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -533,6 +571,24 @@ def run() -> str:
         _v = ("쓸만함 → tau* 로 재등록 후보 보정 가능" if cal["auc"] >= 0.7
               else "약함/무신호 → periodicity metric 재설계 필요(제외반경/매칭영역 한정 등)")
         print(f"  >>> 판정: AUC {cal['auc']} → {_v}")
+    print("=" * 64)
+    # Phase1-A 날카롭게 — 선형 자기상관 + (window x min-lag) ablation 으로 AUC 최대화 변형 탐색.
+    ablation = res.get("periodicity_ablation") or []
+    print("\n[INFO] === Phase1-A: periodicity 날카롭게 (선형 자기상관, window x min-lag) ===")
+    print("  variant           AUC      miss/hit    mean(miss/hit)       tau*")
+    for a in ablation:
+        print(f"  {a['label']:<16} {a['auc']}   {a['n_miss']}/{a['n_hit']}    "
+              f"{a['mean_miss']}/{a['mean_hit']}     {a['best_tau']}")
+    _valid = [a for a in ablation if a.get("auc") is not None]
+    if _valid:
+        base = ablation[0]["auc"]
+        best = max(_valid, key=lambda a: a["auc"])
+        _delta = f" (Δ {best['auc'] - base:+.4f})" if base is not None else ""
+        print(f"  >>> baseline(선형 whole lag0.10) AUC={base}  vs  best {best['label']} "
+              f"AUC={best['auc']}{_delta}")
+        _w = ("쓸만함 → 그 (win,lag) 로 workflow_3 포팅" if best["auc"] >= 0.7
+              else "여전히 약함 → (B) match-aware 신호(2nd-best decoy ratio)로 전환")
+        print(f"      best AUC {best['auc']} → {_w}")
     print("=" * 64)
     print(f"\n[INFO] 완료: {out_dir}  (consensus 템플릿: {out_dir}/consensus/"
           + (f", 결합 패널: {combined_dir}/" if combined_dir is not None else "")

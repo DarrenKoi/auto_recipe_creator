@@ -83,6 +83,38 @@ def test_template_periodicity_zero_on_flat():
     assert lab.template_periodicity(f) == 0.0
 
 
+def test_template_periodicity_window_excludes_edge_repeats():
+    # 중심엔 유일한 작은 점, 외곽엔 대칭 쌍(반복). 전체는 대칭성으로 높지만, align point 주변
+    # window 로 한정하면 중심 점만 남아 낮아진다(무관 배경 자기유사성 배제).
+    img = np.full((120, 120), 110, np.uint8)
+    cv2.circle(img, (60, 60), 2, 200, -1)         # 중심 유일한 작은 점(반복 없음)
+    cv2.circle(img, (30, 30), 8, 230, -1)
+    cv2.circle(img, (90, 90), 8, 230, -1)         # 대칭 쌍, 선형 lag ~85 (<0.8 상한)
+    whole = lab.template_periodicity(img)
+    win = lab.template_periodicity(img, win_frac=0.35)
+    assert whole > win
+
+
+def test_template_periodicity_min_lag_excludes_near_peak():
+    # 선형 lag 24px(=0.20*120) 의 반복 한 쌍. min_lag 가 그 lag 아래면 포함(높음)·위면 제외(낮음).
+    img = np.full((120, 120), 110, np.uint8)
+    cv2.circle(img, (48, 60), 8, 230, -1)
+    cv2.circle(img, (72, 60), 8, 230, -1)         # 선형 24px 간격 → autocorr peak @lag 24
+    inc = lab.template_periodicity(img, min_lag_frac=0.10)   # r_in=12 < 24 → 포함
+    exc = lab.template_periodicity(img, min_lag_frac=0.25)   # r_in=30 > 24 → 제외
+    assert inc > exc
+
+
+def test_template_periodicity_max_lag_caps_far_peak():
+    # 선형 lag 72px(=0.60*120) 의 먼 반복. 기본 상한(0.8→r_out=96)은 포함, 0.40(r_out=48)은 제외.
+    img = np.full((120, 120), 110, np.uint8)
+    cv2.circle(img, (24, 60), 8, 230, -1)
+    cv2.circle(img, (96, 60), 8, 230, -1)         # 선형 72px 간격 → autocorr peak @lag 72
+    wide = lab.template_periodicity(img, min_lag_frac=0.10)                       # 기본 상한 0.8 → 포함
+    capped = lab.template_periodicity(img, min_lag_frac=0.10, max_lag_frac=0.40)  # r_out=48 < 72 → 제외
+    assert wide > capped
+
+
 def test_miss_predictor_strong_signal():
     # miss 가 일관되게 높은 score → 완전 분리: AUC 1.0, Youden J 1.0 (TPR 1·FPR 0).
     scores = [0.8, 0.9, 0.85, 0.95, 0.1, 0.2, 0.15, 0.05]

@@ -165,6 +165,64 @@ def rescue_bin(center_dist_norm):
     return _bin_label(float(center_dist_norm) / gle.GT_TOL_NORM, RESCUE_MULT, "veryfar")
 
 
+def _arm_rates(vals):
+    """_localize 결과 표본 → {n, gt_in_topk, rank1}. _cell_stats 의 bin 표용 부분집합."""
+    n = len(vals)
+    if n == 0:
+        return {"n": 0, "gt_in_topk": None, "rank1": None}
+    return {
+        "n": n,
+        "gt_in_topk": round(sum(1 for v in vals if v["in_topk"]) / n, 3),
+        "rank1": round(sum(1 for v in vals if v["hit"]) / n, 3),
+    }
+
+
+def _binned_localization_report(all_rows):
+    """S row 들을 두 방식으로 층화 → bin × arm(center/box) 의 gt_in_topk/rank1 집계.
+
+    A by_displacement: GT-from-frame-center(구조적 displacement). frame_hw 필요.
+    B by_center_miss : center-crop arm 의 dist_norm(rescue; box 가 center 실패를 건지나).
+    둘 다 inpaint cell 기준. matcher 재실행 없이 row 후처리만. frame_hw 결손 행은
+    A 에서 제외하고 경고 카운트만 올린다(조용한 누락 방지).
+    """
+    cc, bc = f"center__{BIN_FRAME}", f"box__{BIN_FRAME}"
+    disp = {b: {"center": [], "box": []} for b in ("near", "mid", "far", "veryfar")}
+    resc = {b: {"center": [], "box": []} for b in ("hit", "near", "far", "veryfar")}
+    n_no_frame = 0
+    for r in all_rows:
+        if r.get("label") != "S":
+            continue
+        cells = r.get("cells", {})
+        center, box = cells.get(cc), cells.get(bc)
+        gt, fhw = r.get("crosshair_xy"), r.get("frame_hw")
+        # A: displacement (GT + frame 크기).
+        if gt is not None and fhw is not None:
+            b = displacement_bin(gt, fhw)
+            if center is not None:
+                disp[b]["center"].append(center)
+            if box is not None:
+                disp[b]["box"].append(box)
+        elif gt is not None and center is not None:
+            n_no_frame += 1
+        # B: rescue (center cell 의 dist_norm).
+        if center is not None:
+            b = rescue_bin(center["dist_norm"])
+            resc[b]["center"].append(center)
+            if box is not None:
+                resc[b]["box"].append(box)
+
+    def _roll(binmap, order):
+        return {b: {arm: _arm_rates(binmap[b][arm]) for arm in ("center", "box")}
+                for b in order}
+
+    return {
+        "frame": BIN_FRAME,
+        "n_no_frame_hw": n_no_frame,
+        "by_displacement": _roll(disp, ("near", "mid", "far", "veryfar")),
+        "by_center_miss": _roll(resc, ("hit", "near", "far", "veryfar")),
+    }
+
+
 def _cond_box_center(box_ltrb):
     """cond.box_ltrb → 이미지 px box 중심 (cx, cy) (정수 반올림 전 float)."""
     l, t = cursor_to_image(box_ltrb[:2], OVERSAMPLE)

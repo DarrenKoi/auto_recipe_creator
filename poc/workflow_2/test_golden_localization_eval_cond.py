@@ -293,3 +293,55 @@ def test_rescue_bin_boundaries():
     assert glec.rescue_bin(1.5 * tol) == "near"
     assert glec.rescue_bin(3.0 * tol) == "far"
     assert glec.rescue_bin(5.0 * tol) == "veryfar"
+
+
+# --- Tier 1.1: bin × arm 집계 ---
+
+def _loc(in_topk, hit, dist_norm=0.0):
+    """합성 _localize 결과(집계가 쓰는 키만)."""
+    return {"in_topk": in_topk, "hit": hit, "dist_norm": dist_norm,
+            "topk_rank": 1 if hit else (2 if in_topk else None),
+            "align_xy": (0, 0), "mod": "om", "score": 0.5}
+
+
+def _row(center, box, gt_xy, frame_hw, label="S"):
+    cells = {}
+    if center is not None:
+        cells["center__inpaint"] = center
+    if box is not None:
+        cells["box__inpaint"] = box
+    return {"label": label, "crosshair_xy": gt_xy, "frame_hw": frame_hw, "cells": cells}
+
+
+def test_binned_report_displacement_aggregates():
+    fhw = (512, 512)   # 두 행 모두 near (norm<0.10).
+    rows = [
+        _row(_loc(in_topk=True, hit=True),  _loc(in_topk=True, hit=False), (296, 256), fhw),
+        _row(_loc(in_topk=False, hit=False), _loc(in_topk=True, hit=True),  (300, 256), fhw),
+    ]
+    near = glec._binned_localization_report(rows)["by_displacement"]["near"]
+    assert near["center"] == {"n": 2, "gt_in_topk": 0.5, "rank1": 0.5}
+    assert near["box"] == {"n": 2, "gt_in_topk": 1.0, "rank1": 0.5}
+
+
+def test_binned_report_rescue_uses_center_distnorm():
+    tol = glec.gle.GT_TOL_NORM
+    fhw = (512, 512)
+    rows = [
+        _row(_loc(True, True, dist_norm=0.5 * tol), _loc(True, False), (256, 256), fhw),  # hit bin
+        _row(_loc(False, False, dist_norm=3.0 * tol), _loc(True, True), (256, 256), fhw), # far bin
+    ]
+    by_miss = glec._binned_localization_report(rows)["by_center_miss"]
+    assert by_miss["hit"]["box"] == {"n": 1, "gt_in_topk": 1.0, "rank1": 0.0}
+    assert by_miss["far"]["box"] == {"n": 1, "gt_in_topk": 1.0, "rank1": 1.0}
+
+
+def test_binned_report_skips_missing_box_and_nonS():
+    fhw = (512, 512)
+    rows = [
+        _row(_loc(True, True), None, (296, 256), fhw),            # box 결손 → box 분모서 제외.
+        _row(_loc(True, True), _loc(True, True), (296, 256), fhw, label="E"),  # 비-S → 무시.
+    ]
+    near = glec._binned_localization_report(rows)["by_displacement"]["near"]
+    assert near["center"]["n"] == 1
+    assert near["box"] == {"n": 0, "gt_in_topk": None, "rank1": None}

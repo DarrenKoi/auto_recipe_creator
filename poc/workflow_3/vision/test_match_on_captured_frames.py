@@ -21,7 +21,7 @@ poc/workflow_1/capture_window_frames_tool.py
 "다음 구현 제안" 1번 — Real-data evaluation output (JSONL).
 
 실행:
-    uv run python poc/workflow_2/test_match_on_captured_frames.py
+    uv run python poc/workflow_3/vision/test_match_on_captured_frames.py
 """
 
 import json

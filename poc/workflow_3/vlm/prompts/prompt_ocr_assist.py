@@ -1,4 +1,4 @@
-"""workflow_1 용 OCR assist 프롬프트 빌더."""
+"""workflow_3 용 OCR assist 프롬프트 빌더."""
 
 from typing import Iterable
 

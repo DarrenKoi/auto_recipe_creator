@@ -4,10 +4,10 @@ Mac 에서도 실행 가능. 실제 SEM 데이터 없이도 매칭 알고리즘�
 positive/negative 점수가 깔끔히 분리되는지를 확인한다.
 
 실행:
-    uv run python poc/workflow_2/test_align_key_match.py
+    uv run python poc/workflow_3/vision/test_align_key_match.py
 
 산출물:
-    poc/workflow_2/debug_images/align_search/<YYMMDD_HHMMSS>/
+    poc/workflow_3/debug_images/align_search/<YYMMDD_HHMMSS>/
         case_<id>_<label>_overlay.jpg
         case_<id>_<label>_frame.jpg
         case_<id>_<label>_template.jpg

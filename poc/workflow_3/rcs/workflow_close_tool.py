@@ -16,9 +16,9 @@ dry-run: CLOSE_TOOL_DRY_RUN=on 이면 창을 찾아 보고만 하고 실제로 �
 (어떤 창을 닫을지 안전하게 먼저 확인할 때 사용).
 
 사용법:
-  uv run python poc/workflow_1/workflow_close_tool.py                        # 대화형
-  ACTION_TARGET_TOOL_NAME=MCD630 uv run python poc/workflow_1/workflow_close_tool.py   # 비대화 1회
-  CLOSE_TOOL_DRY_RUN=on ACTION_TARGET_TOOL_NAME=MCD630 uv run python poc/workflow_1/workflow_close_tool.py
+  uv run python poc/workflow_3/rcs/workflow_close_tool.py                        # 대화형
+  ACTION_TARGET_TOOL_NAME=MCD630 uv run python poc/workflow_3/rcs/workflow_close_tool.py   # 비대화 1회
+  CLOSE_TOOL_DRY_RUN=on ACTION_TARGET_TOOL_NAME=MCD630 uv run python poc/workflow_3/rcs/workflow_close_tool.py
 """
 
 import os

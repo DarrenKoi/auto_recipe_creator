@@ -34,7 +34,7 @@ Align fail 처리 트리 (각 msr 이미지에 대해):
     8. 그 외 → status="ok".
 
 산출물:
-    poc/workflow_2/debug_images/align_correction/<eqp>__<class>__<recipe>__<ts>/
+    poc/workflow_3/debug_images/align_correction/<eqp>__<class>__<recipe>__<ts>/
       ├─ rcp_om_box_overlay.jpg
       ├─ rcp_sem_box_overlay.jpg
       ├─ overlay/<msr basename>_overlay.jpg
@@ -48,7 +48,7 @@ Align fail 처리 트리 (각 msr 이미지에 대해):
       설정되면 그 한 recipe 만 처리.
 
 실행:
-    uv run python poc/workflow_2/align_point_correction.py
+    uv run python poc/workflow_3/vision/align_point_correction.py
 """
 
 import json

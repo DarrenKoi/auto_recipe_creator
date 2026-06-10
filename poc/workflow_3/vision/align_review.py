@@ -28,7 +28,7 @@
   - 데이터 부재 (Mac dev): 합성 fixture 로 self-test (compare_align_images 패턴).
 
 실행:
-    uv run python poc/workflow_2/align_review.py
+    uv run python poc/workflow_3/vision/align_review.py
 """
 
 import json

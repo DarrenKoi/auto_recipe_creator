@@ -8,8 +8,8 @@ TargetConfig 를 교체하면 userid_input, password_input, login_button 등
 임의의 GUI 요소를 동일한 파이프라인으로 찾을 수 있다.
 
 사용법:
-  1. uv run python poc/workflow_1/open_rcs.py
-  2. uv run python poc/workflow_1/login_rcs_ui_venus_mai.py
+  1. uv run python poc/workflow_3/rcs/open_rcs.py
+  2. uv run python poc/workflow_3/rcs/login_rcs_ui_venus_mai.py
 """
 
 import sys

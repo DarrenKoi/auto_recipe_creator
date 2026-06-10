@@ -36,7 +36,7 @@ Mac 에서 배율을 흉내내는 가상 wafer mock 으로 two-phase 흐름을 �
   최종 책임 판정은 best-candidate 를 엔지니어에게 넘기는 것으로 둔다.
 
 실행(Mac 데모):
-    uv run python poc/workflow_2/live_align_search.py
+    uv run python poc/workflow_3/vision/live_align_search.py
 """
 
 import time

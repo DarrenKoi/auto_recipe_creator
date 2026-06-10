@@ -4,7 +4,7 @@
 모델/버전에 따라 제각각이다 (dict bbox, [x1,y1,x2,y2], polygon, 중첩 wrapper 등).
 이 모듈은 그 다양한 형태를 공통 `{"text", "bbox"}` 로 best-effort 정규화한다.
 
-`poc/work2/tool_screen_spotting.py` 의 검증된 파서를 workflow_1 로 자립 이식한 것.
+`poc/work2/tool_screen_spotting.py` 의 검증된 파서를 workflow_3 로 자립 이식한 것.
 """
 
 import ast

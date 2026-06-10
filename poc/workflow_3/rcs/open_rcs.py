@@ -4,7 +4,7 @@
 로그인 창 탐색이나 후속 자동화 단계는 여기서 처리하지 않는다.
 
 사용법:
-  uv run python poc/workflow_1/open_rcs.py
+  uv run python poc/workflow_3/rcs/open_rcs.py
 """
 
 import os

@@ -22,7 +22,7 @@
 wafer) 양쪽에서 그대로 돌릴 수 있다.
 
 Mac 데모 실행:
-    uv run python poc/workflow_2/search_align_key.py
+    uv run python poc/workflow_3/vision/search_align_key.py
 """
 
 import time

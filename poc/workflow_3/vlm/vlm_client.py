@@ -1,4 +1,4 @@
-"""workflow_1 용 간단한 Flask proxy VLM 클라이언트."""
+"""workflow_3 용 간단한 Flask proxy VLM 클라이언트."""
 
 import base64
 import json as _json
@@ -306,7 +306,7 @@ def _detect_image_mime(image_bytes: bytes, fallback: str = "image/webp") -> str:
 
 
 def list_supported_services() -> list[dict[str, str]]:
-    """workflow_1 에 하드코딩된 서비스 목록을 반환한다."""
+    """workflow_3 에 하드코딩된 서비스 목록을 반환한다."""
     return [
         {
             "service": service.route_slug,

@@ -24,7 +24,7 @@ _loggers: dict[str, logging.Logger] = {}
 def _sanitize_log_name(log_name: str) -> str:
     """로그 파일명에 안전한 식별자로 정규화한다."""
     name = re.sub(r"[^A-Za-z0-9._-]+", "-", (log_name or "").strip()).strip("-._")
-    return name or "workflow_1"
+    return name or "workflow_3"
 
 
 def _get_logger(log_name: str) -> logging.Logger:
@@ -59,7 +59,7 @@ def _get_logger(log_name: str) -> logging.Logger:
         )
         logger.addHandler(file_handler)
     except OSError as exc:
-        print(f"[WARNING] workflow_1 로거 초기화 실패: {exc}")
+        print(f"[WARNING] workflow_3 로거 초기화 실패: {exc}")
 
     _loggers[safe_name] = logger
     return logger

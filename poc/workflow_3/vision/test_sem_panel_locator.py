@@ -20,10 +20,10 @@ Mac 에서도 실행 가능. 실제 Tool 창 스크린샷(보안상 반출 금�
 로만 검증된다. 여기서 검증하는 건 `locate_panel` 의 **코드/산술** 뿐이다.
 
 실행:
-    uv run python poc/workflow_2/test_sem_panel_locator.py
+    uv run python poc/workflow_3/vision/test_sem_panel_locator.py
 
 산출물:
-    poc/workflow_2/debug_images/sem_panel_locator/<YYMMDD_HHMMSS>/
+    poc/workflow_3/debug_images/sem_panel_locator/<YYMMDD_HHMMSS>/
         case_<id>_<label>_overlay.jpg   # 반환된 panel_roi 를 그린 프레임
         summary.json
 """

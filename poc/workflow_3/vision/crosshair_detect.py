@@ -23,7 +23,7 @@ v2 아이디어 — *밝기 대비* 가 아니라 *모양* 으로 찾는다:
 JPEG 으로 덤프하고, 그걸 보고 SAT_THRESH / SPAN_RATIO 등을 튜닝한다.
 
 실행:
-    uv run python poc/workflow_2/crosshair_detect.py     # 실데이터 있으면 probe, 없으면 self-test
+    uv run python poc/workflow_3/vision/crosshair_detect.py     # 실데이터 있으면 probe, 없으면 self-test
 """
 
 import json

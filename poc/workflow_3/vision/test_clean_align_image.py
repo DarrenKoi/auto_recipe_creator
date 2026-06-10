@@ -5,7 +5,7 @@ cursor 좌표(Pixel 의 10배 oversample) → 이미지 px 변환, 그리고 whi
 white box '안쪽'은 실제 웨이퍼 내용이므로 절대 마스크하지 않는다.
 
 실행:
-    uv run python poc/workflow_2/test_clean_align_image.py
+    uv run python poc/workflow_3/vision/test_clean_align_image.py
 """
 
 import numpy as np

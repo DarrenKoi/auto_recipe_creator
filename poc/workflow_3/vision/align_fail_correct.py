@@ -18,7 +18,7 @@
 two-phase 탐색은 *아무것도 안 보일 때만* 도는 **fallback** 이다. 둘을 가르는 단일
 기준이 ``key_visibility_gate`` 다.
 
-실행(Mac 데모): uv run python poc/workflow_2/align_fail_correct.py
+실행(Mac 데모): uv run python poc/workflow_3/vision/align_fail_correct.py
 """
 
 import time

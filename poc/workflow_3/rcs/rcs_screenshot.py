@@ -16,7 +16,7 @@
 독립 실행 (office, RCS 로그인 상태 가정):
     ALIGN_CAPTURE_EQP_ID=MCD916 \
     ALIGN_CAPTURE_RECIPE_ID="RJ1BXXX/Z_RJ1B_CBLHM2_FULL" \
-      uv run python poc/workflow_1/rcs_screenshot.py
+      uv run python poc/workflow_3/rcs/rcs_screenshot.py
 """
 
 import os

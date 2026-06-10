@@ -10,7 +10,7 @@ recipe_sem(from_rcp/IMAP0002) 와 current_sem(from_msr 최신 E*).
 (없으면 합성 self-test 로 파이프라인만 점검).
 
 실행:
-    uv run python poc/workflow_2/compare_align_images.py
+    uv run python poc/workflow_3/vision/compare_align_images.py
 """
 
 import json

@@ -1,7 +1,7 @@
 """align_fail_correct 합성 self-test — VLM/실장비 없이 primary/fallback 경로 검증.
 
 CLAUDE.md 규칙: argparse 미사용, [PASS]/[FAIL] print, Mac 에서 그대로 실행.
-    uv run python poc/workflow_2/test_align_fail_correct.py
+    uv run python poc/workflow_3/vision/test_align_fail_correct.py
 """
 
 import numpy as np

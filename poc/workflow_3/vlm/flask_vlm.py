@@ -1,4 +1,4 @@
-"""workflow_1 에서 공용으로 사용하는 VLM 설정 유틸리티."""
+"""workflow_3 에서 공용으로 사용하는 VLM 설정 유틸리티."""
 
 import os
 from dataclasses import dataclass
@@ -12,17 +12,17 @@ except ImportError:
     DOTENV_AVAILABLE = False
 
 
-WORKFLOW_1_DIR = Path(__file__).resolve().parent
-WORKFLOW_1_DOTENV_PATH = WORKFLOW_1_DIR / ".env"
+WORKFLOW_3_VLM_DIR = Path(__file__).resolve().parent
+WORKFLOW_3_VLM_DOTENV_PATH = WORKFLOW_3_VLM_DIR / ".env"
 COMMON_LLM_API_KEY_ENV = "COMMON_LLM_API_KEY"
 
-if DOTENV_AVAILABLE and WORKFLOW_1_DOTENV_PATH.is_file():
-    load_dotenv(WORKFLOW_1_DOTENV_PATH)
+if DOTENV_AVAILABLE and WORKFLOW_3_VLM_DOTENV_PATH.is_file():
+    load_dotenv(WORKFLOW_3_VLM_DOTENV_PATH)
 
 
 @dataclass(frozen=True)
 class VLMServiceEntry:
-    """workflow_1 전용 고정 VLM 서비스 정의."""
+    """workflow_3 전용 고정 VLM 서비스 정의."""
 
     route_slug: str
     display_name: str

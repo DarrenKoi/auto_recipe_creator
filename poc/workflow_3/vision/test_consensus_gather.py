@@ -15,8 +15,9 @@ from poc.workflow_3.vision.consensus_gather import (
 
 
 class _FakeDownloader:
-    """dest_dir 에 합성 S*.jpg + S*.txt 를 쓰고 StagedEvent 를 돌려주는 테스트용 다운로더.
+    """dest_dir 에 합성 S*.jpeg + .<이미지명>/cond.txt 를 쓰는 테스트용 다운로더.
 
+    실제 office 규약(숨김폴더 cond, 결정 2026-06-10)을 모델링한다.
     events_spec: list[(event_id, n_images)]. raise_exc=True 면 예외를 던진다.
     """
 
@@ -35,10 +36,12 @@ class _FakeDownloader:
             ev_dir.mkdir(parents=True, exist_ok=True)
             imgs, conds = [], []
             for i in range(n_images):
-                img = ev_dir / f"S{i + 1:04d}.jpg"
-                cond = ev_dir / f"S{i + 1:04d}.txt"
+                img = ev_dir / f"S{i + 1:04d}.jpeg"
+                cond_dir = ev_dir / f".S{i + 1:04d}.jpeg"
+                cond_dir.mkdir(parents=True, exist_ok=True)
+                cond = cond_dir / "cond.txt"
                 img.write_bytes(b"\xff\xd8\xff\xd9")
-                cond.write_text("crosshair_x=10\ncrosshair_y=20\n", encoding="utf-8")
+                cond.write_text("!Cursor_info 10,20\n", encoding="utf-8")
                 imgs.append(img)
                 conds.append(cond)
             staged.append(StagedEvent(event_id=event_id, image_paths=imgs, cond_paths=conds))
@@ -62,9 +65,9 @@ def test_stage_basic():
             res.reason == "ok"
             and res.n_events == 2
             and res.n_images == 4
-            and "EV1/S0001.jpg" in files
-            and "EV1/S0001.txt" in files
-            and "EV2/S0002.jpg" in files
+            and "EV1/S0001.jpeg" in files
+            and "EV1/.S0001.jpeg/cond.txt" in files
+            and "EV2/S0002.jpeg" in files
         )
         print(f"[{'PASS' if ok else 'FAIL'}] stage_basic: reason={res.reason} "
               f"events={res.n_events} images={res.n_images} files={len(files)}")
@@ -79,7 +82,7 @@ def test_layout_nested():
         dl = _FakeDownloader([("EV1", 1)])
         res = gather_success_images("EQP1", "CLS/RCP", downloader=dl, cache_root=root)
         expected = root / "EQP1" / "CLS" / "RCP" / "events"
-        ok = res.events_dir == expected and (expected / "EV1" / "S0001.jpg").exists()
+        ok = res.events_dir == expected and (expected / "EV1" / "S0001.jpeg").exists()
         print(f"[{'PASS' if ok else 'FAIL'}] layout_nested: events_dir={res.events_dir}")
         return ok
     finally:

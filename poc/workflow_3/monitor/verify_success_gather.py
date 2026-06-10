@@ -6,15 +6,15 @@ assets 해석과 같은 env 규약으로 지정하고, CLI 인자는 쓰지 않�
     ALIGN_EQP_ID=<eqp> ALIGN_CLASS_NAME=<class> ALIGN_RECIPE_NAME=<recipe> \\
       uv run python poc/workflow_3/monitor/verify_success_gather.py
 
-확인 항목: reason=ok / event 디렉토리별 S*.jpg+S*.txt 짝 / cond 파싱(crosshair 좌표,
-modality 추론 — msr cond 는 Scope 가 없어 msr_modality() 키로 가른다) / staging 정리.
-통과하면 events/ 는 그대로 캐시로 남는다(추가 정리 불필요).
+확인 항목: reason=ok / event 디렉토리별 S*.jpeg + 숨김폴더 cond(.<이미지명>/cond.txt) 짝 /
+cond 파싱(crosshair 좌표, modality 추론 — msr cond 는 Scope 가 없어 msr_modality() 키로
+가른다) / staging 정리. 통과하면 events/ 는 그대로 캐시로 남는다(추가 정리 불필요).
 """
 
 import os
 
 from poc.workflow_3.monitor.success_gather import DOWNLOADER_AVAILABLE, _DOWNLOADER
-from poc.workflow_3.vision.cond_file import msr_modality, parse_cond
+from poc.workflow_3.vision.cond_file import load_cond, msr_modality
 from poc.workflow_3.vision.consensus_gather import gather_success_images
 
 
@@ -42,19 +42,22 @@ def main():
 
     problems = 0
     for ev_dir in sorted(p for p in res.events_dir.iterdir() if p.is_dir()):
-        jpgs = sorted(ev_dir.glob("S*.jpg"))
-        txts = sorted(ev_dir.glob("S*.txt"))
-        pair_ok = len(jpgs) > 0 and len(jpgs) == len(txts)
+        images = sorted(ev_dir.glob("S*.jpeg")) + sorted(ev_dir.glob("S*.jpg"))
+        pair_ok = len(images) > 0
         if not pair_ok:
             problems += 1
-        print(f"[{'INFO' if pair_ok else 'ERROR'}] {ev_dir.name}: jpg={len(jpgs)} txt={len(txts)}")
-        for txt in txts:
-            cond = parse_cond(txt.read_text(encoding="utf-8", errors="replace"))
+        print(f"[{'INFO' if pair_ok else 'ERROR'}] {ev_dir.name}: images={len(images)}")
+        for img in images:
+            cond = load_cond(img)  # .<이미지명>/cond.txt 를 해석.
+            if cond is None:
+                problems += 1
+                print(f"[ERROR]   {img.name}: cond 없음 (.{img.name}/cond.txt 미존재)")
+                continue
             modality = cond.scope or msr_modality(cond)
             cond_ok = cond.crosshair_xy is not None and modality is not None
             if not cond_ok:
                 problems += 1
-            print(f"[{'INFO' if cond_ok else 'ERROR'}]   {txt.name}: "
+            print(f"[{'INFO' if cond_ok else 'ERROR'}]   {img.name}: "
                   f"crosshair={cond.crosshair_xy} modality={modality}")
 
     staging = res.events_dir.parent / ".events_staging"

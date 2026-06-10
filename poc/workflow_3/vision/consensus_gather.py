@@ -23,8 +23,8 @@ class StagedEvent:
     """다운로더가 한 measurement event 를 stage 한 결과(쓰여진 파일 경로)."""
 
     event_id: str
-    image_paths: list[Path]   # 쓰여진 S*.jpg
-    cond_paths: list[Path]    # 쓰여진 S*.txt(cond, crosshair 좌표)
+    image_paths: list[Path]   # 쓰여진 S*.jpeg
+    cond_paths: list[Path]    # 쓰여진 .<이미지명>/cond.txt (crosshair 좌표 등)
 
 
 @dataclass
@@ -44,7 +44,7 @@ class SuccessDownloader(Protocol):
 
     def download_recent_successes(self, recipe_id, *, max_events, dest_dir) -> list:
         """recipe_id('<class>/<recipe>')의 최근 성공 측정 max_events 건을 dest_dir/<event_id>/ 에
-        S*.jpg + S*.txt(cond)로 쓰고 list[StagedEvent] 를 반환한다(align fail 측정 제외).
+        S*.jpeg + cond 로 쓰고 list[StagedEvent] 를 반환한다(align fail 측정 제외).
 
         dest_dir 는 호출부가 넘기는 *임시 staging dir* (최종 events/ 아님). 성공 측정이
         없으면 빈 리스트를 반환한다(호출부가 기존 캐시를 보존).
@@ -56,13 +56,15 @@ class SuccessDownloader(Protocol):
 
         --- cond 파일 계약 (deferred consensus build 이 추가 변환 없이 소비하는 조건) ---
 
-        - cond(S*.txt) 내용은 `vision/cond_file.py` 의 `parse_cond()` 로 파싱 가능한 형식이어야
+        - 레이아웃은 align_images/ 와 동일한 숨김폴더 규약(결정 2026-06-10, office MES
+          원형 유지): 이미지는 dest_dir/<event_id>/S*.jpeg, cond 는
+          dest_dir/<event_id>/.<이미지파일명>/cond.txt — `cond_file.load_cond(이미지경로)`
+          가 그대로 읽는 위치다.
+        - cond 내용은 `vision/cond_file.py` 의 `parse_cond()` 로 파싱 가능한 형식이어야
           한다(최소 `!Cursor_info`(crosshair 좌표) 포함).
         - modality(OM/SEM)는 구분 가능해야 한다(build 가 modality 별로 묶는다). msr 원문
           cond 에는 `Scope` 가 없으므로(2026-06-08 확인) `cond_file.msr_modality()` 가
-          추론에 쓰는 키(`!OM_Brightness`/`Accelerating_voltage`/`Magnification`)를 보존할 것.
-        - 레이아웃은 평탄(flat): dest_dir/<event_id>/S0001.jpg 옆에 S0001.txt.
-          align_images/ 의 `.<파일명>/cond.txt` 숨김폴더 규약과 *다름*에 주의."""
+          추론에 쓰는 키(`!OM_Brightness`/`Accelerating_voltage`/`Magnification`)를 보존할 것."""
         ...
 
 

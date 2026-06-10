@@ -6,6 +6,11 @@
 import sys
 
 from poc.workflow_3.config import Workflow3Settings
+from poc.workflow_3.monitor.engineer_done import (
+    extract_numerator,
+    parse_point_1000,
+    point_to_roi_ratios,
+)
 from poc.workflow_3.vlm.prompts.prompt_recipe_monitor_counter import (
     RECIPE_MONITOR_NUMERATOR_INSTRUCTION,
     build_recipe_monitor_counter_prompt,
@@ -46,11 +51,48 @@ def test_counter_prompt() -> bool:
     return ok
 
 
+def test_parse_point_1000() -> bool:
+    """ui-venus [x,y] 응답 파싱 — 거부/범위밖/없음은 None."""
+    ok = True
+    ok &= _check("valid point", parse_point_1000("[525, 550]") == (525, 550))
+    ok &= _check("point in prose", parse_point_1000("the point is [10,20].") == (10, 20))
+    ok &= _check("refusal -> None", parse_point_1000("[-1,-1]") is None)
+    ok &= _check("out of range -> None", parse_point_1000("[1500, 200]") is None)
+    ok &= _check("no point -> None", parse_point_1000("cannot find it") is None)
+    ok &= _check("empty -> None", parse_point_1000("") is None)
+    return ok
+
+
+def test_point_to_roi_ratios() -> bool:
+    """grounding 점(0-1000) -> 상대비율 ROI 확장 + 경계 clamp."""
+    ok = True
+    roi = point_to_roi_ratios(500, 500, 0.05, 0.05)
+    ok &= _check("center roi", roi is not None and all(abs(a - b) < 1e-9 for a, b in zip(roi, (0.45, 0.45, 0.55, 0.55))))
+    roi = point_to_roi_ratios(0, 0, 0.05, 0.05)
+    ok &= _check("corner clamped", roi is not None and roi[0] == 0.0 and roi[1] == 0.0)
+    ok &= _check("corner still has span", roi is not None and roi[2] > 0.0 and roi[3] > 0.0)
+    return ok
+
+
+def test_extract_numerator() -> bool:
+    """OCR 텍스트에서 분자 정수 추출 (첫 연속 숫자열)."""
+    ok = True
+    ok &= _check("'2/350' -> 2", extract_numerator("2/350") == 2)
+    ok &= _check("' 13 / 350 ' -> 13", extract_numerator(" 13 / 350 ") == 13)
+    ok &= _check("bare '7' -> 7", extract_numerator("7") == 7)
+    ok &= _check("no digits -> None", extract_numerator("abc") is None)
+    ok &= _check("empty -> None", extract_numerator("") is None)
+    return ok
+
+
 def main() -> int:
     """전체 케이스를 실행하고 통과 여부를 반환한다."""
     tests = [
         test_settings_defaults,
         test_counter_prompt,
+        test_parse_point_1000,
+        test_point_to_roi_ratios,
+        test_extract_numerator,
     ]
     results = [test() for test in tests]
     passed = sum(1 for r in results if r)

@@ -5,8 +5,12 @@
 
 import sys
 
+import numpy as np
+from PIL import Image
+
 from poc.workflow_3.config import Workflow3Settings
 from poc.workflow_3.monitor.engineer_done import (
+    EngineerDoneDetector,
     extract_numerator,
     parse_point_1000,
     point_to_roi_ratios,
@@ -85,6 +89,130 @@ def test_extract_numerator() -> bool:
     return ok
 
 
+def _frame(counter_value: int) -> Image.Image:
+    """카운터 영역 픽셀이 counter_value 에 따라 달라지는 합성 tool 창 프레임.
+
+    창 400x200. 카운터 셀은 x 190..230, y 100..120 부근 — grounding 점
+    (525, 550) + pad (0.05, 0.05) 의 ROI 와 일치시킨다.
+    """
+    arr = np.zeros((200, 400, 3), dtype=np.uint8)
+    arr[100:120, 190:190 + 4 * (counter_value + 1)] = 255
+    return Image.fromarray(arr)
+
+
+class _SeqCapture:
+    """호출마다 프레임 시퀀스를 차례로 반환한다 (끝나면 마지막 프레임 반복)."""
+
+    def __init__(self, frames):
+        self.frames = list(frames)
+        self.calls = 0
+
+    def __call__(self):
+        frame = self.frames[min(self.calls, len(self.frames) - 1)]
+        self.calls += 1
+        return frame
+
+
+class _CountingFn:
+    """반환값 시퀀스를 차례로 내놓으며 호출 횟수를 기록한다."""
+
+    def __init__(self, values):
+        self.values = list(values)
+        self.calls = 0
+
+    def __call__(self, *args):
+        value = self.values[min(self.calls, len(self.values) - 1)]
+        self.calls += 1
+        return value
+
+
+def _settings():
+    """테스트용 설정 — ROI pad 를 합성 프레임 카운터 셀에 맞춘다."""
+    return Workflow3Settings(
+        engineer_done_detect_enabled=True,
+        engineer_done_roi_pad_x=0.05,
+        engineer_done_roi_pad_y=0.05,
+        engineer_done_min_count=2,
+        engineer_done_relocalize_after_miss=3,
+    )
+
+
+def test_detector_static_no_ocr() -> bool:
+    """정적 프레임(첫 샘플 포함)에서는 OCR 을 호출하지 않는다."""
+    # grounding 1회 캡처 + 정적 crop 3회.
+    capture = _SeqCapture([_frame(1), _frame(1), _frame(1), _frame(1)])
+    ground = _CountingFn([(525, 550)])
+    ocr = _CountingFn(["2/350"])
+    detector = EngineerDoneDetector(None, _settings(), capture_fn=capture, ground_fn=ground, ocr_fn=ocr)
+    results = [detector(), detector(), detector()]
+    ok = True
+    ok &= _check("all False on static", results == [False, False, False])
+    ok &= _check("ground called once", ground.calls == 1)
+    ok &= _check("ocr never called", ocr.calls == 0)
+    return ok
+
+
+def test_detector_two_read_confirm() -> bool:
+    """변화 + OCR 2 -> 3: 첫 읽기는 확인 대기(False), 두 번째에 done."""
+    capture = _SeqCapture([
+        _frame(1),            # grounding 캡처
+        _frame(1),            # baseline (첫 샘플, OCR 안 함)
+        _frame(2),            # 변화 1 -> OCR '2' (last 없음 -> 확인 대기)
+        _frame(3),            # 변화 2 -> OCR '3' (3>=2, 3>=2 -> done)
+    ])
+    ground = _CountingFn([(525, 550)])
+    ocr = _CountingFn(["2/350", "3/350"])
+    detector = EngineerDoneDetector(None, _settings(), capture_fn=capture, ground_fn=ground, ocr_fn=ocr)
+    results = [detector(), detector(), detector()]
+    ok = True
+    ok &= _check("baseline False", results[0] is False)
+    ok &= _check("first read waits", results[1] is False)
+    ok &= _check("second read done", results[2] is True)
+    ok &= _check("ocr called twice", ocr.calls == 2)
+    return ok
+
+
+def test_detector_below_min_not_done() -> bool:
+    """N < min_count 면 변화가 있어도 done 아님."""
+    capture = _SeqCapture([_frame(0), _frame(0), _frame(1), _frame(2)])
+    ground = _CountingFn([(525, 550)])
+    ocr = _CountingFn(["1/350", "1/350"])
+    detector = EngineerDoneDetector(None, _settings(), capture_fn=capture, ground_fn=ground, ocr_fn=ocr)
+    results = [detector(), detector(), detector()]
+    return _check("below min stays False", results == [False, False, False])
+
+
+def test_detector_ground_refusal() -> bool:
+    """grounding 거부(None) -> 항상 False, 재시도 안 함."""
+    capture = _SeqCapture([_frame(1), _frame(2), _frame(3)])
+    ground = _CountingFn([None])
+    ocr = _CountingFn(["2/350"])
+    detector = EngineerDoneDetector(None, _settings(), capture_fn=capture, ground_fn=ground, ocr_fn=ocr)
+    results = [detector(), detector(), detector()]
+    ok = True
+    ok &= _check("refusal -> all False", results == [False, False, False])
+    ok &= _check("ground called once only", ground.calls == 1)
+    ok &= _check("ocr never called", ocr.calls == 0)
+    return ok
+
+
+def test_detector_relocalize_after_miss() -> bool:
+    """변화 후 OCR 연속 미검출이 임계에 닿으면 1회 재grounding 한다."""
+    # 매 호출 프레임이 달라(계속 변화) OCR 이 그때마다 불리지만 빈 텍스트.
+    capture = _SeqCapture([
+        _frame(0),                       # grounding 1 캡처
+        _frame(0), _frame(1), _frame(2), _frame(3),  # baseline + 변화 3회 (miss 3)
+        _frame(4),                       # 재grounding 캡처
+        _frame(4), _frame(5),            # 새 baseline + 변화
+    ])
+    ground = _CountingFn([(525, 550), (525, 550)])
+    ocr = _CountingFn(["", "", "", "2/350"])
+    detector = EngineerDoneDetector(None, _settings(), capture_fn=capture, ground_fn=ground, ocr_fn=ocr)
+    for _ in range(6):
+        detector()
+    return _check("ground called twice (relocalize)", ground.calls == 2)
+
+
 def main() -> int:
     """전체 케이스를 실행하고 통과 여부를 반환한다."""
     tests = [
@@ -93,6 +221,11 @@ def main() -> int:
         test_parse_point_1000,
         test_point_to_roi_ratios,
         test_extract_numerator,
+        test_detector_static_no_ocr,
+        test_detector_two_read_confirm,
+        test_detector_below_min_not_done,
+        test_detector_ground_refusal,
+        test_detector_relocalize_after_miss,
     ]
     results = [test() for test in tests]
     passed = sum(1 for r in results if r)

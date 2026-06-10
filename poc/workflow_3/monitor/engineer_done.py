@@ -27,6 +27,9 @@ engineer_watch_sec cap 이 안전망. (CLAUDE.md 규칙: VLM 은 위치만, 전�
 
 import re
 
+from poc.workflow_3.monitor.recording import _frame_changed, _to_diff_gray
+from poc.workflow_3.util import capture_window
+
 _POINT_RE = re.compile(r"\[\s*(-?\d+)\s*,\s*(-?\d+)\s*\]")
 _INT_RE = re.compile(r"\d+")
 
@@ -65,3 +68,160 @@ def extract_numerator(text: str) -> int | None:
     if match is None:
         return None
     return int(match.group(0))
+
+
+class EngineerDoneDetector:
+    """Recipe Monitor 분자 기반 측정-시작 감지기 (watch iteration 마다 호출).
+
+    capture_fn/ground_fn/ocr_fn 은 테스트 주입점 (RecordingSession 의 capture_fn
+    패턴). 실배선은 build_engineer_done_detector 가 담당한다.
+
+      capture_fn() -> PIL.Image          (기본: util.capture_window(tool_window))
+      ground_fn(image) -> (x,y) 0-1000 | None   (VLM grounding, 거부 시 None)
+      ocr_fn(crop_image) -> str          (분자 crop OCR 텍스트)
+    """
+
+    def __init__(
+        self,
+        tool_window,
+        settings,
+        *,
+        capture_fn=None,
+        ground_fn=None,
+        ocr_fn=None,
+        debug_dir=None,
+    ):
+        self.tool_window = tool_window
+        self.s = settings
+        self._capture_fn = capture_fn or (lambda: capture_window(self.tool_window))
+        self._ground_fn = ground_fn
+        self._ocr_fn = ocr_fn
+        self.debug_dir = debug_dir
+        self._roi_ratios: tuple[float, float, float, float] | None = None
+        self._localize_tried = False
+        self._prev_gray = None
+        self._last_n: int | None = None
+        self._ocr_miss_streak = 0
+        self._debug_seq = 0
+        self.last_debug: dict = {}
+
+    def __call__(self) -> bool:
+        """측정 시작이 확인되면 True. 모든 실패/미확정은 False (cap 이 안전망)."""
+        self.last_debug = {}
+        if self._roi_ratios is None and not self._localize_tried:
+            self._localize_tried = True
+            self._roi_ratios = self._localize()
+        if self._roi_ratios is None:
+            return False
+
+        crop = self._crop_numerator()
+        if crop is None:
+            return False
+
+        gray = _to_diff_gray(crop)
+        first_sample = self._prev_gray is None
+        changed = (not first_sample) and _frame_changed(
+            self._prev_gray, gray, self.s.engineer_done_change_min_px
+        )
+        self._prev_gray = gray
+        self.last_debug.update({"changed": changed, "first_sample": first_sample})
+        if not changed:
+            return False
+
+        self._save_debug_crop(crop)
+        n = self._read_numerator(crop)
+        if n is None:
+            self._ocr_miss_streak += 1
+            self.last_debug["ocr_miss_streak"] = self._ocr_miss_streak
+            if self._ocr_miss_streak >= self.s.engineer_done_relocalize_after_miss:
+                print("[INFO] OCR 연속 미검출 - ROI 재grounding 예약(패널 이동 가능성)")
+                self._roi_ratios = None
+                self._localize_tried = False
+                self._ocr_miss_streak = 0
+                self._prev_gray = None
+            return False
+
+        self._ocr_miss_streak = 0
+        # 연속 2회 확인: 직전 읽기가 있어야 하고 비감소 + min_count 이상.
+        is_done = (
+            n >= self.s.engineer_done_min_count
+            and self._last_n is not None
+            and n >= self._last_n
+        )
+        self.last_debug["n"] = n
+        self._last_n = n
+        if is_done:
+            print(
+                f"[INFO] 측정 카운터 확인: N={n} "
+                f"(>= {self.s.engineer_done_min_count}, 연속 2회) - 측정 시작 판정"
+            )
+        return is_done
+
+    # ---- 내부 ----
+
+    def _localize(self):
+        """VLM grounding 1회 - 분자 위치를 상대비율 ROI 로. 실패/거부 시 None."""
+        if self._ground_fn is None:
+            print("[WARNING] engineer-done grounding fn 없음 - 감지 비활성(cap 대기)")
+            return None
+        try:
+            image = self._capture_fn()
+            point = self._ground_fn(image)
+        except Exception as exc:
+            print(f"[WARNING] engineer-done grounding 실패: {exc}")
+            return None
+        if point is None:
+            print("[INFO] engineer-done grounding 거부/미발견 - 감지 비활성(cap 대기)")
+            return None
+        ratios = point_to_roi_ratios(
+            point[0], point[1],
+            self.s.engineer_done_roi_pad_x, self.s.engineer_done_roi_pad_y,
+        )
+        if ratios is None:
+            print(f"[WARNING] engineer-done ROI 생성 실패: point={point}")
+            return None
+        print(
+            f"[INFO] engineer-done ROI 캐시: point={point}, "
+            f"ratios=({ratios[0]:.3f},{ratios[1]:.3f},{ratios[2]:.3f},{ratios[3]:.3f})"
+        )
+        return ratios
+
+    def _crop_numerator(self):
+        """tool 창 재캡처 후 캐시된 상대비율 ROI 로 분자 셀을 crop 한다."""
+        try:
+            image = self._capture_fn()
+        except Exception as exc:
+            print(f"[WARNING] engineer-done 캡처 실패(회차 skip): {exc}")
+            return None
+        left, top, right, bottom = self._roi_ratios
+        width, height = image.size
+        box = (
+            int(left * width),
+            int(top * height),
+            max(int(left * width) + 1, int(right * width)),
+            max(int(top * height) + 1, int(bottom * height)),
+        )
+        return image.crop(box)
+
+    def _read_numerator(self, crop) -> int | None:
+        """분자 crop 을 OCR 해 정수 N 을 얻는다. 실패는 None."""
+        if self._ocr_fn is None:
+            return None
+        try:
+            text = self._ocr_fn(crop)
+        except Exception as exc:
+            print(f"[WARNING] engineer-done OCR 실패(회차 미판정): {exc}")
+            return None
+        return extract_numerator(text)
+
+    def _save_debug_crop(self, crop) -> None:
+        """debug_dir 설정 시 변화-발화 crop 을 저장한다 (실패 무시)."""
+        if self.debug_dir is None:
+            return
+        try:
+            from poc.workflow_3.debug_artifacts import save_debug_jpeg
+
+            self._debug_seq += 1
+            save_debug_jpeg(crop, self.debug_dir / f"numerator_{self._debug_seq:03d}.jpg")
+        except Exception:
+            pass

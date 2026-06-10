@@ -93,7 +93,14 @@ GT_TOL_NORM = 0.20
 # frame px (동일 계약) → apples-to-apples. 게다가 ensemble.solo['canny'] 가 곧 C1 이므로 ON==OFF
 # 면 C2/C3/RRF 가 무효(= 잔여 miss 가 구조적 천장)라는 직접 증거가 된다. 비용: ensemble 은 채널
 # 3배(~1s/frame)라 오피스 A/B 전용. (참조 [[project_ensemble_on_consensus_rejected]])
-USE_ENSEMBLE_PROPOSER = os.getenv("CONSENSUS_USE_ENSEMBLE", "0") != "0"
+#
+# A/B 스위치 (둘 중 편한 방법):
+#   1) 코드로: 아래 _USE_ENSEMBLE_DEFAULT 를 False(C1) / True(ensemble) 로 직접 바꿔 두 번 실행.
+#      env 안 건드려도 되고 세션 잔존(persist) 함정도 없다 — 단, 바꾼 줄을 commit 하지 않도록 주의.
+#   2) env 로: CONSENSUS_USE_ENSEMBLE=1/0 (설정돼 있으면 코드 기본값을 덮어쓴다). tree 깨끗·스크립트용.
+_USE_ENSEMBLE_DEFAULT = False
+_use_ens_env = os.getenv("CONSENSUS_USE_ENSEMBLE")
+USE_ENSEMBLE_PROPOSER = (_use_ens_env != "0") if _use_ens_env is not None else _USE_ENSEMBLE_DEFAULT
 
 # --- S-consensus 템플릿 A/B (재등록 검증): rcp 대신 S-consensus 로 바꾸면 gt_in_topk 가 뛰나 ---
 # rcp 가 stale 하다는 가설을 *기존 S 데이터만으로* 검증한다. S crop 은 crosshair 검출 위치

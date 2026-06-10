@@ -41,6 +41,7 @@ from poc.workflow_3.util import (
     maximize_window,
     point_to_tiny_bbox,
     scroll_at_screen,
+    window_rect_size,
 )
 from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
 
@@ -139,6 +140,8 @@ COARSE_FINE_MAX_ITERS = int(_env_float("SELECT_TOOL_COARSE_FINE_MAX_ITERS", 2))
 MAX_SCROLL_ITERS = int(_env_float("SELECT_TOOL_MAX_SCROLL_ITERS", 8))
 SCROLL_WHEEL_DY = int(_env_float("SELECT_TOOL_SCROLL_DY", -5))
 LIST_CHANGE_THRESHOLD = _env_float("SELECT_TOOL_LIST_CHANGE_THRESHOLD", 2.0)
+# 캡처~클릭 사이 창 크기 드리프트 허용 오차(논리 px). 초과 시 좌표 무효로 중단.
+RECT_DRIFT_TOL_PX = 2
 
 
 # 디버그 artifact 저장 순서를 파일명에 붙여 절차를 순서대로 볼 수 있게 하는 카운터.
@@ -1059,6 +1062,8 @@ def select_tool_from_main_window(
             exit_code=EXIT_CAPTURE_FAILED,
             target_tool_name=normalized_tool_name,
         )
+    # 캡처 시점의 창 rect 크기 — 클릭 직전 리사이즈 드리프트 감지 기준값.
+    capture_rect_size = window_rect_size(main_window) if callable(window_rect_size) else None
 
     _reset_step_counter()
     save_debug_jpeg(
@@ -1098,6 +1103,7 @@ def select_tool_from_main_window(
         retry_image = _capture_main_window(main_window, window_title, backend)
         if retry_image is not None:
             main_image = retry_image
+            capture_rect_size = window_rect_size(main_window) if callable(window_rect_size) else None
             save_debug_jpeg(
                 main_image,
                 _step_image_path(
@@ -1124,6 +1130,7 @@ def select_tool_from_main_window(
             print("[WARNING] 스크롤 후 캡처 실패 → 스크롤 탐색 중단")
             break
         main_image = scrolled_image
+        capture_rect_size = window_rect_size(main_window) if callable(window_rect_size) else None
         save_debug_jpeg(
             main_image,
             _step_image_path(
@@ -1174,6 +1181,56 @@ def select_tool_from_main_window(
         timestamp_tag=timestamp_tag,
         filename=f"workflow_select_tool_{normalized_tool_name.lower()}_click_overlay.jpg",
     )
+    if not foreground_window(
+        main_window,
+        debug_label=f"pre_double_click_{normalized_tool_name}",
+    ):
+        return ToolSelectionResult(
+            exit_code=EXIT_WINDOW_ACTIVATE_FAILED,
+            target_tool_name=normalized_tool_name,
+            matched_lines=matched_lines,
+            ocr_target_visible=ocr_target_visible,
+            list_crop_box=list_crop_box,
+            tool_point_on_full_image=full_image_point,
+            selected_attempt=detection_source,
+            click_overlay_path=click_overlay_path,
+        )
+
+    time.sleep(max(0.0, pre_click_settle_sec))
+
+    # 캡처 후 창 리사이즈 감지 — 내용 reflow 로 이미지 좌표가 무효라 추측 클릭 금지
+    # 원칙대로 실패 종료한다. (위치 이동은 아래 변환이 live rect 로 흡수한다.)
+    if capture_rect_size is not None and callable(window_rect_size):
+        current_rect_size = window_rect_size(main_window)
+        if current_rect_size is not None and (
+            abs(current_rect_size[0] - capture_rect_size[0]) > RECT_DRIFT_TOL_PX
+            or abs(current_rect_size[1] - capture_rect_size[1]) > RECT_DRIFT_TOL_PX
+        ):
+            print(
+                f"[WARNING] 캡처 후 메인 창 크기 변경 감지: {capture_rect_size}->"
+                f"{current_rect_size} → 좌표 무효, 클릭하지 않고 종료"
+            )
+            log_work2_event(
+                component=component_name,
+                message="window_geometry_changed",
+                level="warning",
+                log_name=log_name,
+                target_tool_name=normalized_tool_name,
+                capture_rect_size=str(capture_rect_size),
+                current_rect_size=str(current_rect_size),
+            )
+            return ToolSelectionResult(
+                exit_code=EXIT_CAPTURE_FAILED,
+                target_tool_name=normalized_tool_name,
+                matched_lines=matched_lines,
+                ocr_target_visible=ocr_target_visible,
+                list_crop_box=list_crop_box,
+                tool_point_on_full_image=full_image_point,
+                selected_attempt=detection_source,
+                click_overlay_path=click_overlay_path,
+            )
+
+    # 변환은 클릭 직전에 — foreground/settle 동안의 창 이동까지 fresh rect 로 반영.
     screen_point = image_point_to_screen(main_window, full_image_point, image_size=main_image.size)
     if screen_point is None:
         return ToolSelectionResult(
@@ -1187,23 +1244,6 @@ def select_tool_from_main_window(
             click_overlay_path=click_overlay_path,
         )
 
-    if not foreground_window(
-        main_window,
-        debug_label=f"pre_double_click_{normalized_tool_name}",
-    ):
-        return ToolSelectionResult(
-            exit_code=EXIT_WINDOW_ACTIVATE_FAILED,
-            target_tool_name=normalized_tool_name,
-            matched_lines=matched_lines,
-            ocr_target_visible=ocr_target_visible,
-            list_crop_box=list_crop_box,
-            tool_point_on_full_image=full_image_point,
-            tool_point_on_screen=screen_point,
-            selected_attempt=detection_source,
-            click_overlay_path=click_overlay_path,
-        )
-
-    time.sleep(max(0.0, pre_click_settle_sec))
     double_clicked = click_at_screen(
         screen_point,
         normalized_tool_name,

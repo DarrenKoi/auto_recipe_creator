@@ -305,6 +305,20 @@ def activate_window(
         return False
 
 
+def window_rect_size(window) -> tuple[int, int] | None:
+    """창 rect 의 (width, height) 논리 px. 조회 실패 시 None.
+
+    캡처 시점과 클릭 시점 사이의 창 크기 드리프트(사용자 리사이즈) 감지용.
+    위치 이동은 image_point_to_screen 이 live rect 로 흡수하지만, 크기 변화는
+    내용물 reflow 라 좌표 보정이 불가능해 호출부가 중단/재캡처해야 한다.
+    """
+    try:
+        rect = window.rectangle()
+    except Exception:
+        return None
+    return (rect.right - rect.left, rect.bottom - rect.top)
+
+
 def is_window_maximized(window) -> bool:
     """창이 최대화(maximize) 상태인지 확인한다 (Win32 IsZoomed)."""
     if os.name != "nt":

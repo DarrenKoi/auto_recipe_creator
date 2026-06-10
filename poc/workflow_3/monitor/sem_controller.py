@@ -38,8 +38,10 @@ from poc.workflow_3.logger import log_work2_event
 from poc.workflow_3.util import (
     capture_window,
     click_at_screen,
+    foreground_window,
     image_point_to_screen,
     scroll_at_screen,
+    window_rect_size,
 )
 from poc.workflow_3.vision.sem_panel_locator import (
     SEMPanelMatch,
@@ -50,6 +52,9 @@ from poc.workflow_3.vision.sem_panel_locator import (
 LOG_COMPONENT = "rcs_sem_controller"
 
 DEFAULT_LANDMARKS_DIR = TEMPLATES_DIR / "sem_panel_landmarks"
+
+# 캡처~제스처 사이 창 크기 드리프트 허용 오차(논리 px). 초과 시 좌표 무효로 중단.
+RECT_DRIFT_TOL_PX = 2
 
 
 def _to_gray(image) -> np.ndarray:
@@ -85,11 +90,13 @@ class RCSSEMMonitor:
         self.mode_default = mode_default
         # image_point_to_screen 의 DPI 보정에 쓰는 캡처 프레임 크기 (w, h).
         self._last_frame_size: tuple[int, int] | None = None
+        # 캡처 시점의 창 rect 크기(논리 px) — 제스처 직전 리사이즈 드리프트 감지용.
+        self._last_rect_size: tuple[int, int] | None = None
         self._mode_warned = False
         if action_enabled:
             print(
                 "[WARNING] RCSSEMMonitor: 좌표/배율 캘리브레이션 미완료 상태에서 "
-                "action_enabled=True — 단일 장비 pilot 외 사용 비권장(dry-run 권장)."
+                "action_enabled=True, 단일 장비 pilot 외 사용 비권장(dry-run 권장)."
             )
 
     # ---- 캡처 ----
@@ -100,6 +107,8 @@ class RCSSEMMonitor:
         gray = _to_gray(image)
         h, w = gray.shape[:2]
         self._last_frame_size = (w, h)
+        if callable(window_rect_size):
+            self._last_rect_size = window_rect_size(self.tool_window)
         return gray
 
     def capture(self) -> np.ndarray:
@@ -131,8 +140,35 @@ class RCSSEMMonitor:
 
     # ---- 제스처 ----
 
+    def _ensure_actionable(self, gesture: str) -> None:
+        """클릭/스크롤 직전 게이트: foreground 재확보 + 창 크기 드리프트 검사.
+
+        action_enabled 일 때만 강제한다(dry-run 은 좌표 로그만 남기므로 무해).
+        foreground 를 못 잡으면 클릭이 사용자 창에 떨어질 수 있고, 캡처 후 창이
+        리사이즈됐으면 내용 reflow 로 프레임 좌표가 무효다. 둘 다 잘못 클릭하느니
+        RuntimeError 로 크게 실패한다(기존 변환 실패와 동일한 에러 모델 — 보정
+        실패 경로가 알림으로 이어진다). 위치 이동은 변환이 live rect 로 흡수.
+        """
+        if not self.action_enabled:
+            return
+        if callable(foreground_window) and not foreground_window(
+            self.tool_window, debug_label=f"sem_{gesture}"
+        ):
+            raise RuntimeError(f"{gesture}: tool 창 foreground 재확보 실패 (사용자 조작 중?)")
+        if callable(window_rect_size) and self._last_rect_size is not None:
+            current = window_rect_size(self.tool_window)
+            if current is not None and (
+                abs(current[0] - self._last_rect_size[0]) > RECT_DRIFT_TOL_PX
+                or abs(current[1] - self._last_rect_size[1]) > RECT_DRIFT_TOL_PX
+            ):
+                raise RuntimeError(
+                    f"{gesture}: 캡처 후 tool 창 크기 변경 감지 "
+                    f"{self._last_rect_size}->{current} (좌표 무효, 재캡처 필요)"
+                )
+
     def move_to_point(self, fov_x: int, fov_y: int) -> None:
         """FOV-local 픽셀을 더블클릭해 그 점을 중심으로 recenter 한다."""
+        self._ensure_actionable("move_to_point")
         px, py = self.panel.panel_roi[0] + int(fov_x), self.panel.panel_roi[1] + int(fov_y)
         screen_point = self._frame_point_to_screen(px, py)
         if screen_point is None:
@@ -150,6 +186,7 @@ class RCSSEMMonitor:
 
     def click_screen(self, screen_x: int, screen_y: int) -> None:
         """capture_screen 프레임 좌표를 single click 한다 (OK 버튼 등)."""
+        self._ensure_actionable("click_screen")
         screen_point = self._frame_point_to_screen(screen_x, screen_y)
         if screen_point is None:
             raise RuntimeError("click_screen: 창 좌표→스크린 변환 실패")
@@ -170,6 +207,7 @@ class RCSSEMMonitor:
         TODO(캘리브레이션): wheel 1단계당 배율 변화율을 오피스에서 측정해
         zoom_scroll_dy 와 live search 의 zoom step 모델을 맞춘다.
         """
+        self._ensure_actionable("zoom")
         x, y, w, h = self.panel.panel_roi
         screen_point = self._frame_point_to_screen(x + w // 2, y + h // 2)
         if screen_point is None:

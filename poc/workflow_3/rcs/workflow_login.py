@@ -1274,6 +1274,40 @@ def execute_login_step(
                 window_title_before=window_title,
             )
 
+        # 클릭 직전 foreground 재확보 + 좌표 재변환 — VLM 탐지 동안 사용자가
+        # 포커스를 가져갔거나 창을 옮겼을 수 있다(탈취 상태로 클릭/타이핑하면
+        # 입력이 다른 창으로 샌다).
+        if callable(foreground_window) and not foreground_window(
+            login_window, debug_label=f"pre_type_{target_key}"
+        ):
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="failed",
+                failure_class="act_failed",
+                error_message=f"클릭 직전 foreground 재확보 실패: {target_key}",
+                detected_point=detection.point,
+                screen_point=screen_point,
+                before_screenshot=before_screenshot,
+                window_title_before=window_title,
+            )
+        fresh_point = image_point_to_screen(login_window, detection.point)
+        if fresh_point is None:
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="failed",
+                failure_class="act_failed",
+                error_message=f"클릭 직전 좌표 재변환 실패: {target_key}",
+                detected_point=detection.point,
+                screen_point=screen_point,
+                before_screenshot=before_screenshot,
+                window_title_before=window_title,
+            )
+        screen_point = fresh_point
+
         click_at_screen(
             screen_point,
             target_key,
@@ -1288,6 +1322,25 @@ def execute_login_step(
             action_enabled=settings.action_enabled,
         )
         time.sleep(settings.pre_type_double_click_settle_sec)
+
+        # 타이핑 직전 한 번 더 — 필드 선택 클릭과 settle 동안 포커스를 뺏겼으면
+        # 되찾는다(창이 foreground 로 복귀하면 caret 은 마지막 포커스 컨트롤로
+        # 돌아온다). 못 찾으면 잘못된 창에 타이핑하느니 step 실패.
+        if callable(foreground_window) and not foreground_window(
+            login_window, debug_label=f"pre_type_focus_{target_key}"
+        ):
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="failed",
+                failure_class="act_failed",
+                error_message=f"타이핑 직전 foreground 재확보 실패: {target_key}",
+                detected_point=detection.point,
+                screen_point=screen_point,
+                before_screenshot=before_screenshot,
+                window_title_before=window_title,
+            )
         typed_ok = _clear_and_type(step.input_text or "", target_key, settings)
         if not typed_ok:
             return _build_base_result(
@@ -1352,7 +1405,38 @@ def execute_login_step(
                 window_title_before=window_title,
             )
 
+        # 클릭 직전 foreground 재확보 + 좌표 재변환 (type 분기와 동일한 이유).
+        if callable(foreground_window) and not foreground_window(
+            login_window, debug_label=f"pre_click_{target_key}"
+        ):
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="failed",
+                failure_class="act_failed",
+                error_message=f"클릭 직전 foreground 재확보 실패: {target_key}",
+                detected_point=detection.point,
+                screen_point=screen_point,
+                before_screenshot=before_screenshot,
+                window_title_before=window_title,
+            )
         time.sleep(settings.pre_click_settle_sec)
+        fresh_point = image_point_to_screen(login_window, detection.point)
+        if fresh_point is None:
+            return _build_base_result(
+                step,
+                started_at,
+                settings,
+                status="failed",
+                failure_class="act_failed",
+                error_message=f"클릭 직전 좌표 재변환 실패: {target_key}",
+                detected_point=detection.point,
+                screen_point=screen_point,
+                before_screenshot=before_screenshot,
+                window_title_before=window_title,
+            )
+        screen_point = fresh_point
         click_at_screen(
             screen_point,
             target_key,

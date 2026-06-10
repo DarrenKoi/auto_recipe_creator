@@ -40,6 +40,7 @@ image_point_to_screen = None
 is_window_maximized = None
 maximize_window = None
 read_foreground_window_info = None
+window_rect_size = None
 
 IMAGE_UTILS_AVAILABLE = True
 
@@ -64,6 +65,7 @@ try:
         is_window_maximized,
         maximize_window,
         read_foreground_window_info,
+        window_rect_size,
     )
 
     WINDOW_UTILS_AVAILABLE = True

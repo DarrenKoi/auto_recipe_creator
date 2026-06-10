@@ -45,3 +45,39 @@ def test_lab_rrf_fuse_default_representative_unchanged():
     B = [ep._Cand(xy=(22, 22), score=1.0, scale=1.2)]
     fused = lab.rrf_fuse([A, B], k0=10, match_radius=5, top_n=1)
     assert fused[0].xy == (20, 20) and fused[0].scale == 0.6
+
+
+def test_template_periodicity_high_on_grating():
+    g = np.zeros((120, 120), np.uint8)
+    g[:, ::20] = 255                      # 주기 20px 수직 줄무늬
+    g = cv2.GaussianBlur(g, (0, 0), 2.0)
+    assert lab.template_periodicity(g) > lab.PERIODICITY_TAU
+
+
+def test_template_periodicity_high_on_contact_array():
+    a = np.full((120, 120), 110, np.uint8)
+    for yy in range(12, 120, 24):
+        for xx in range(12, 120, 24):
+            cv2.circle(a, (xx, yy), 5, 230, -1)   # 주기 24px dot 격자
+    assert lab.template_periodicity(a) > lab.PERIODICITY_TAU
+
+
+def test_template_periodicity_low_on_unique_blob():
+    b = np.full((120, 120), 110, np.uint8)
+    cv2.circle(b, (60, 60), 12, 230, -1)          # 단일 유일 블롭
+    # 단일 유일 블롭은 ~0.36 (tau=0.5 와 여유 약 0.14; 오피스 보정 시 재확인).
+    assert lab.template_periodicity(b) < lab.PERIODICITY_TAU
+
+
+def test_template_periodicity_high_on_symmetric_pair():
+    # 동일한 두 블롭(반사/병진 대칭) → 자기상관 off-center peak 높음. matcher 가 둘을 구분 못 하므로
+    # "유일 위치 없음"으로 높게 나오는 것이 올바른 동작(주기성 아닌 대칭성도 모호성 신호).
+    s = np.full((120, 120), 110, np.uint8)
+    cv2.circle(s, (30, 30), 12, 230, -1)
+    cv2.circle(s, (90, 90), 12, 230, -1)
+    assert lab.template_periodicity(s) > lab.PERIODICITY_TAU
+
+
+def test_template_periodicity_zero_on_flat():
+    f = np.full((100, 100), 128, np.uint8)        # 무특징 grey
+    assert lab.template_periodicity(f) == 0.0

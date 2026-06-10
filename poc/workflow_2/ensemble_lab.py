@@ -8,10 +8,45 @@ drivers: golden_localization_eval_cond.py, golden_consensus_eval_cond.py.
 
 실행 (인자 없음): uv run pytest poc/workflow_2/test_ensemble_lab.py
 """
+import numpy as np
+
 from poc.workflow_3.vision.ensemble_proposer import (
     EnsembleResult, RRF_K0, SHADOW_N, _Cand, _channel_solo_candidates,
 )
 from poc.workflow_3.vision.align_key_matcher import DEFAULT_SCALES, _to_grayscale
+
+
+# Phase 1: template 내재 주기성(autocorrelation off-center peak). cold-start, 오피스 보정 예정.
+PERIODICITY_EXCL_FRAC = 0.10   # zero-lag 제외 중심 반경 = min(h,w) 의 이 비율.
+PERIODICITY_TAU = 0.5          # 이 이상이면 template_periodic(=재등록 후보). 합성 검증으로 선택.
+
+
+def template_periodicity(template_gray):
+    """template 의 자기상관 기반 모호성 점수 [0,1] — 원형 autocorrelation 의 off-center peak 높이.
+
+    높을수록 "유일하게 localize 되는 지점이 없음" → align key 모호(재등록 후보). 원형 자기상관은
+    *주기성*(grating/array)뿐 아니라 *대칭성*(반복/반사로 같은 모습이 또 나타남)도 감지한다 —
+    둘 다 matcher 가 어느 지점인지 못 가리는 케이스라 함께 높게 나오는 것이 올바른 동작이다.
+    0=유일/무특징. scale 무관(상대 비율). NCC-isolation 이 못 보는 모호성을 보강(Codex 리뷰 #1).
+    """
+    g = _to_grayscale(template_gray).astype(np.float32)
+    g = g - g.mean()
+    if g.std() < 1e-6:
+        return 0.0                                   # 무특징 grey → 주기성 정의 안 됨.
+    F = np.fft.fft2(g)
+    ac = np.fft.fftshift(np.real(np.fft.ifft2(F * np.conj(F))))   # 2D 원형 자기상관(패딩 없음) — 주기성+대칭성 감지.
+    h, w = ac.shape
+    cy, cx = h // 2, w // 2
+    peak0 = ac[cy, cx]
+    if peak0 <= 0:
+        return 0.0
+    ac = ac / peak0                                  # zero-lag = 1.0 정규화.
+    r = max(1, int(PERIODICITY_EXCL_FRAC * min(h, w)))
+    yy, xx = np.ogrid[:h, :w]
+    outside = (yy - cy) ** 2 + (xx - cx) ** 2 > r * r
+    if not outside.any():
+        return 0.0
+    return float(np.clip(ac[outside].max(), 0.0, 1.0))
 
 
 def rrf_fuse(channel_lists, *, k0=RRF_K0, match_radius=8, top_n=SHADOW_N, rescore_fn=None):

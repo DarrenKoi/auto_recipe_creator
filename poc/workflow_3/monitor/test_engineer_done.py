@@ -11,6 +11,7 @@ from PIL import Image
 from poc.workflow_3.config import Workflow3Settings
 from poc.workflow_3.monitor.engineer_done import (
     EngineerDoneDetector,
+    build_engineer_done_detector,
     extract_numerator,
     parse_point_1000,
     point_to_roi_ratios,
@@ -179,7 +180,10 @@ def test_detector_below_min_not_done() -> bool:
     ocr = _CountingFn(["1/350", "1/350"])
     detector = EngineerDoneDetector(None, _settings(), capture_fn=capture, ground_fn=ground, ocr_fn=ocr)
     results = [detector(), detector(), detector()]
-    return _check("below min stays False", results == [False, False, False])
+    ok = True
+    ok &= _check("below min stays False", results == [False, False, False])
+    ok &= _check("ocr called for each change", ocr.calls == 2)
+    return ok
 
 
 def test_detector_ground_refusal() -> bool:
@@ -213,6 +217,16 @@ def test_detector_relocalize_after_miss() -> bool:
     return _check("ground called twice (relocalize)", ground.calls == 2)
 
 
+def test_builder_gates() -> bool:
+    """설정 off / tool_window 없음 -> None (고정 timeout 폴백)."""
+    ok = True
+    off = Workflow3Settings(engineer_done_detect_enabled=False)
+    ok &= _check("disabled -> None", build_engineer_done_detector(object(), off) is None)
+    on = _settings()
+    ok &= _check("no window -> None", build_engineer_done_detector(None, on) is None)
+    return ok
+
+
 def main() -> int:
     """전체 케이스를 실행하고 통과 여부를 반환한다."""
     tests = [
@@ -226,6 +240,7 @@ def main() -> int:
         test_detector_below_min_not_done,
         test_detector_ground_refusal,
         test_detector_relocalize_after_miss,
+        test_builder_gates,
     ]
     results = [test() for test in tests]
     passed = sum(1 for r in results if r)

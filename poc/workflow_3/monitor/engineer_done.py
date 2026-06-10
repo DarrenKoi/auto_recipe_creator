@@ -25,8 +25,12 @@ engineer_watch_sec cap 이 안전망. (CLAUDE.md 규칙: VLM 은 위치만, 전�
   uv run python poc/workflow_3/monitor/engineer_done.py
 """
 
+import os
 import re
+import time
+from dataclasses import replace
 
+from poc.workflow_3.debug_artifacts import save_debug_jpeg
 from poc.workflow_3.monitor.recording import _frame_changed, _to_diff_gray
 from poc.workflow_3.util import capture_window
 
@@ -219,9 +223,161 @@ class EngineerDoneDetector:
         if self.debug_dir is None:
             return
         try:
-            from poc.workflow_3.debug_artifacts import save_debug_jpeg
-
             self._debug_seq += 1
             save_debug_jpeg(crop, self.debug_dir / f"numerator_{self._debug_seq:03d}.jpg")
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[WARNING] engineer-done debug crop 저장 실패: {exc}")
+
+
+# ------------------------------------------------------------------
+# 실배선 builder.
+# ------------------------------------------------------------------
+
+
+def _make_ground_fn(settings, vlm_client=None):
+    """grounding closure - ui-venus 단일요소 프롬프트 + [x,y] 파싱."""
+    from poc.workflow_3.vlm.prompts.prompt_recipe_monitor_counter import (
+        build_recipe_monitor_counter_prompt,
+    )
+    from poc.workflow_3.util import encode_image_webp
+
+    client = vlm_client
+    if client is None or getattr(client, "service_slug", "") != settings.engineer_done_vlm_service:
+        from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
+
+        client = Workflow1VLMClient(settings.engineer_done_vlm_service)
+
+    def ground(image):
+        system_message, user_text = build_recipe_monitor_counter_prompt()
+        image_b64, _, _ = encode_image_webp(image)
+        response = client.chat_with_image_b64(
+            image_b64=image_b64, system_message=system_message, user_text=user_text
+        )
+        return parse_point_1000(response.text)
+
+    return ground
+
+
+def _make_ocr_fn(settings):
+    """분자 crop OCR closure - paddleocr `OCR:` 태스크 (tight crop 만, 환각 회피)."""
+    from poc.workflow_3.vlm.prompts.prompt_ocr_assist import build_ocr_assist_prompt
+    from poc.workflow_3.util import encode_image_webp
+    from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
+
+    client = Workflow1VLMClient(settings.engineer_done_ocr_service)
+
+    def ocr(crop):
+        system_message, user_text = build_ocr_assist_prompt(crop.size[0], crop.size[1])
+        image_b64, _, _ = encode_image_webp(crop)
+        response = client.chat_with_image_b64(
+            image_b64=image_b64, system_message=system_message, user_text=user_text
+        )
+        return response.text
+
+    return ocr
+
+
+def build_engineer_done_detector(tool_window, settings, *, vlm_client=None, debug_dir=None):
+    """설정 게이트 확인 후 실 VLM/OCR 배선된 detector 를 만든다.
+
+    비활성/창 없음/클라이언트 생성 실패 -> None (호출부는 고정 timeout 폴백).
+    cycle 의 OK-버튼용 vlm_client 가 같은 서비스면 재사용한다.
+    """
+    if not settings.engineer_done_detect_enabled:
+        return None
+    if tool_window is None:
+        return None
+    try:
+        ground_fn = _make_ground_fn(settings, vlm_client=vlm_client)
+        ocr_fn = _make_ocr_fn(settings)
+    except Exception as exc:
+        print(f"[WARNING] engineer-done 클라이언트 생성 실패(고정 timeout 폴백): {exc}")
+        return None
+    return EngineerDoneDetector(
+        tool_window, settings, ground_fn=ground_fn, ocr_fn=ocr_fn, debug_dir=debug_dir
+    )
+
+
+# ------------------------------------------------------------------
+# 오피스 캘리브레이션 단독 실행.
+# ------------------------------------------------------------------
+
+# 비우면 env ALIGN_DONE_CALIB_EQP_ID 폴백 (그것도 비면 아무 Remote Monitoring 창).
+EQP_ID_OVERRIDE = ""
+
+
+def run_calibration() -> bool:
+    """지금 측정 중인 tool 창에 대해 grounding/gate/OCR 전 체인을 즉시 검증한다.
+
+    측정 중에는 분자가 실제로 증가하므로, align fail 을 기다리지 않고 done 감지
+    성공까지의 전 경로(위치 grounding 정확성 포함)를 확인할 수 있다.
+    Remote Monitoring 창은 미리 열어 둔다 (직접 또는 workflow_select_tool).
+    """
+    try:
+        from poc.workflow_3.rcs.login_rcs_common import find_remote_monitoring_window
+    except Exception as exc:
+        print(f"[ERROR] RCS 모듈 로드 실패 - 캘리브레이션은 office Windows 전용: {exc}")
+        return False
+
+    from poc.workflow_3 import DEBUG_IMAGE_DIR
+    from poc.workflow_3.config import load_workflow3_settings
+
+    eqp_id = (EQP_ID_OVERRIDE or "").strip() or os.getenv("ALIGN_DONE_CALIB_EQP_ID", "").strip()
+    duration_sec = float(os.getenv("ALIGN_DONE_CALIB_SEC", "120"))
+
+    settings = load_workflow3_settings()
+    if not settings.engineer_done_detect_enabled:
+        # 캘리브레이션은 게이트를 무시하고 강제 활성(검증이 목적이므로).
+        settings = replace(settings, engineer_done_detect_enabled=True)
+
+    window, title, _backend = find_remote_monitoring_window(eqp_id)
+    if window is None:
+        print(f"[ERROR] Remote Monitoring 창 없음 (eqp_id={eqp_id!r}) - 먼저 tool 을 여세요.")
+        return False
+    print(f"[INFO] 캘리브레이션 대상 창: {title!r}")
+
+    debug_dir = DEBUG_IMAGE_DIR / "engineer_done_calib"
+    detector = build_engineer_done_detector(window, settings, debug_dir=debug_dir)
+    if detector is None:
+        print("[ERROR] detector 생성 실패 - VLM 서비스 설정을 확인하세요.")
+        return False
+
+    print(
+        f"[INFO] 캘리브레이션 시작: 최대 {duration_sec:.0f}s, "
+        f"poll={settings.engineer_done_poll_sec}s, min_count={settings.engineer_done_min_count}, "
+        f"debug={debug_dir}"
+    )
+    deadline = time.time() + duration_sec
+    tick = 0
+    while time.time() < deadline:
+        tick += 1
+        done = detector()
+        dbg = detector.last_debug
+        print(
+            f"[INFO] tick {tick}: changed={dbg.get('changed')}, "
+            f"n={dbg.get('n')}, miss={dbg.get('ocr_miss_streak', 0)}, done={done}"
+        )
+        if done:
+            print("[INFO] 캘리브레이션 성공: 측정 중 tool 에서 done 감지 체인 검증 완료")
+            print("[INFO] 운영 활성화: ALIGN_FAIL_ENGINEER_DONE_DETECT=1")
+            return True
+        time.sleep(settings.engineer_done_poll_sec)
+
+    print(
+        "[WARNING] duration 내 done 미감지 - debug crop 으로 ROI 를 확인하고 "
+        "grounding 문구(RECIPE_MONITOR_NUMERATOR_INSTRUCTION)/ROI pad 를 조정하세요."
+    )
+    return False
+
+
+if __name__ == "__main__":
+    raise SystemExit(0 if run_calibration() else 1)
+
+
+__all__ = [
+    "EngineerDoneDetector",
+    "build_engineer_done_detector",
+    "extract_numerator",
+    "parse_point_1000",
+    "point_to_roi_ratios",
+]

@@ -48,6 +48,7 @@ _DIFF_DOWNSAMPLE = 4
 _PIXEL_DELTA_MIN = 15.0
 
 
+# 아래 두 함수는 monitor/engineer_done.py 의 분자 변화 감지에서도 재사용된다.
 def _to_diff_gray(image) -> np.ndarray:
     """캡처 이미지를 변화 비교용 저해상 grayscale float 배열로 변환한다."""
     array = np.asarray(image.convert("L") if hasattr(image, "convert") else image)
@@ -56,6 +57,7 @@ def _to_diff_gray(image) -> np.ndarray:
     return array[::_DIFF_DOWNSAMPLE, ::_DIFF_DOWNSAMPLE].astype(np.float32)
 
 
+# engineer_done.py 의 CV gate 에서도 호출됨 (인트라-패키지 결합).
 def _frame_changed(prev: np.ndarray | None, current: np.ndarray, min_changed_px: int) -> bool:
     """직전 저장 프레임 대비 '확실히 변한' 다운샘플 픽셀 수가 임계 이상인지.
 

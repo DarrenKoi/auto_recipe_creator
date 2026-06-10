@@ -8,13 +8,20 @@ import numpy as np
 
 from poc.workflow_3.util.json_utils import bbox_center, bbox_to_pixels
 from poc.workflow_3.vision.align_fail_correct import (
+    PAUSED_SCALES,
     CorrectionConfig,
+    CorrectionOutcome,
     _make_primary_demo,
+    _with_key_ambiguity,
     correct_align_fail,
     key_visibility_gate,
 )
-from poc.workflow_3.vision.align_key_matcher import AlignKeyMatchResult
-from poc.workflow_3.vision.live_align_search import LiveSearchConfig
+from poc.workflow_3.vision.align_key_matcher import (
+    STRUCTURE_POLICY,
+    AlignKeyMatchResult,
+    compute_align_key_score_ensemble,
+)
+from poc.workflow_3.vision.live_align_search import LiveSearchConfig, route_template
 from poc.workflow_3.vision.vlm_ok_button_box import locate_ok_button
 
 
@@ -247,6 +254,74 @@ def test_ok_locator_mapping() -> bool:
     return ok
 
 
+def test_outcome_ambiguity_defaults() -> bool:
+    """신규 모호도 필드는 전부 기본값 보유 → 기존 positional 생성부(no_assets 등) 무변경 통과."""
+    o = CorrectionOutcome("no_assets", "primary", "low", None, None, None)
+    ok = o.second_ratio is None and o.score_gap is None and o.distinctive is True
+    print(
+        f"[{'PASS' if ok else 'FAIL'}] outcome_ambiguity_defaults: "
+        f"second_ratio={o.second_ratio} score_gap={o.score_gap} distinctive={o.distinctive}"
+    )
+    return ok
+
+
+def test_with_key_ambiguity_stamps() -> bool:
+    """_with_key_ambiguity 가 result 의 second_ratio/score_gap/distinctive 를 stamp(기존 필드 보존)."""
+    base = CorrectionOutcome("corrected", "primary", "match", (1, 2), (3, 4), None)
+    result = _dummy_result("match", distinctive=False)
+    result.second_ratio = 0.991
+    result.score_gap = 0.005
+    stamped = _with_key_ambiguity(base, result)
+    ok = (
+        stamped.second_ratio == 0.991
+        and stamped.score_gap == 0.005
+        and stamped.distinctive is False
+        # 기존 필드 보존.
+        and stamped.status == "corrected"
+        and stamped.best_xy == (1, 2)
+        and stamped.ok_screen_xy == (3, 4)
+    )
+    print(
+        f"[{'PASS' if ok else 'FAIL'}] with_key_ambiguity_stamps: "
+        f"second_ratio={stamped.second_ratio} distinctive={stamped.distinctive} status={stamped.status}"
+    )
+    return ok
+
+
+def test_primary_path_stamps_ambiguity() -> bool:
+    """primary 경로 outcome 이 matcher 가 실제로 낸 모호도 값을 그대로 싣는다(독립 재계산과 일치)."""
+    monitor, templates = _make_primary_demo()
+    frame = monitor.capture()
+    screen = monitor.capture_screen()
+    fake = _FakeController(frame, screen, mode="SEM")
+
+    # 동일 입력으로 matcher 를 독립 재계산해 기대값을 얻는다(ensemble 은 결정적).
+    template = route_template(templates, "SEM")
+    expected = compute_align_key_score_ensemble(
+        template, frame, scales=PAUSED_SCALES, policy=STRUCTURE_POLICY
+    )
+
+    outcome = correct_align_fail(
+        fake,
+        templates,
+        ok_locator=lambda _s: (690, 560),
+        dry_run=False,
+        config=CorrectionConfig(require_ok_button=True),
+    )
+    ok = (
+        outcome.status == "corrected"
+        and outcome.second_ratio == expected.second_ratio  # None==None 또는 float 정확 일치.
+        and outcome.score_gap == expected.score_gap
+        and outcome.distinctive == expected.distinctive
+    )
+    print(
+        f"[{'PASS' if ok else 'FAIL'}] primary_stamps_ambiguity: "
+        f"second_ratio={outcome.second_ratio} (exp={expected.second_ratio}) "
+        f"distinctive={outcome.distinctive}"
+    )
+    return ok
+
+
 def main() -> int:
     print("[INFO] align_fail_correct self-test 시작")
     results = [
@@ -256,6 +331,9 @@ def main() -> int:
         test_fallback_notify(),
         test_ok_detect_error(),
         test_ok_locator_mapping(),
+        test_outcome_ambiguity_defaults(),
+        test_with_key_ambiguity_stamps(),
+        test_primary_path_stamps_ambiguity(),
     ]
     passed = sum(1 for r in results if r)
     print(f"[INFO] {passed}/{len(results)} cases passed")

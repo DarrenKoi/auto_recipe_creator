@@ -23,7 +23,7 @@ two-phase 탐색은 *아무것도 안 보일 때만* 도는 **fallback** 이다.
 
 import time
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable
 
@@ -94,6 +94,27 @@ class CorrectionOutcome:
     fallback: LiveSearchOutcome | None  # fallback 으로 갔을 때의 live search 결과.
     error: str | None = None  # OK 탐지 등에서 발생한 예외 요약(정상 not-found 와 구분).
     history: list[dict] = field(default_factory=list)
+    # --- 매칭 모호도(read-only surface; notify 재등록 판정용, 보정 동작에는 영향 없음) ---
+    second_ratio: float | None = None  # matcher 2nd/best chamfer(1.0 에 가까울수록 모호).
+    score_gap: float | None = None  # best - 2nd chamfer.
+    distinctive: bool = True  # best 가 2nd 대비 유일한가(데이터 결손 시 True → false-flag 방지).
+
+
+def _with_key_ambiguity(
+    outcome: CorrectionOutcome, result: AlignKeyMatchResult
+) -> CorrectionOutcome:
+    """matcher result 의 모호도 신호(second_ratio/score_gap/distinctive)를 outcome 에 stamp.
+
+    이미 fail 시점에 계산되어 버려지던 값을 notify 경로로 끌어올리기 위한 read-only surface.
+    보정 동작/visibility 게이트(max_second_ratio=0.94)와 무관하며 기존 필드는 보존한다.
+    match 이전 반환(no_assets 등)은 호출하지 않아 기본값(None/None/True)을 유지한다.
+    """
+    return replace(
+        outcome,
+        second_ratio=result.second_ratio,
+        score_gap=result.score_gap,
+        distinctive=result.distinctive,
+    )
 
 
 # ------------------------------------------------------------------
@@ -292,7 +313,7 @@ def correct_align_fail(
             key_decision=result.decision,
             pan_count=outcome.pan_count,
         )
-        return result_outcome
+        return _with_key_ambiguity(result_outcome, result)
 
     # ---- PRIMARY: crosshair 를 best_xy 로 reposition. ----
     cx, cy = clamp_to_fov(result.best_xy[0], result.best_xy[1], fw, fh, config.click_margin_ratio)
@@ -340,15 +361,18 @@ def correct_align_fail(
 
     # OK 탐지 *예외* → 정상 escalate 와 구분해 surface(견고성: 실제 버그를 숨기지 않음).
     if ok_error is not None:
-        return CorrectionOutcome(
-            status="ok_detect_error",
-            path="primary",
-            key_decision=result.decision,
-            best_xy=(cx, cy),
-            ok_screen_xy=None,
-            fallback=None,
-            error=ok_error,
-            history=history,
+        return _with_key_ambiguity(
+            CorrectionOutcome(
+                status="ok_detect_error",
+                path="primary",
+                key_decision=result.decision,
+                best_xy=(cx, cy),
+                ok_screen_xy=None,
+                fallback=None,
+                error=ok_error,
+                history=history,
+            ),
+            result,
         )
 
     if ok_xy is None:
@@ -361,14 +385,17 @@ def correct_align_fail(
                 key_decision=result.decision,
                 best_xy=f"({cx},{cy})",
             )
-            return CorrectionOutcome(
-                status="escalated_no_ok",
-                path="primary",
-                key_decision=result.decision,
-                best_xy=(cx, cy),
-                ok_screen_xy=None,
-                fallback=None,
-                history=history,
+            return _with_key_ambiguity(
+                CorrectionOutcome(
+                    status="escalated_no_ok",
+                    path="primary",
+                    key_decision=result.decision,
+                    best_xy=(cx, cy),
+                    ok_screen_xy=None,
+                    fallback=None,
+                    history=history,
+                ),
+                result,
             )
         print("[INFO] OK 버튼 생략(require_ok_button=false), reposition 까지만 수행")
     else:
@@ -385,14 +412,17 @@ def correct_align_fail(
         ok_screen_xy=str(ok_xy),
         dry_run=dry_run,
     )
-    return CorrectionOutcome(
-        status="corrected",
-        path="primary",
-        key_decision=result.decision,
-        best_xy=(cx, cy),
-        ok_screen_xy=ok_xy,
-        fallback=None,
-        history=history,
+    return _with_key_ambiguity(
+        CorrectionOutcome(
+            status="corrected",
+            path="primary",
+            key_decision=result.decision,
+            best_xy=(cx, cy),
+            ok_screen_xy=ok_xy,
+            fallback=None,
+            history=history,
+        ),
+        result,
     )
 
 

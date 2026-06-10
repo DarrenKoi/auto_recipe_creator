@@ -1,5 +1,14 @@
 # peak-isolation 모호 키 → 엔지니어 재등록 알림 (workflow_3 포팅 spec)
 
+> **상태: ✅ 구현 완료 — 2026-06-11, commits `456f65c`..`5dcdaca` (origin/main).**
+> A(CorrectionOutcome 모호도 surface + `_with_key_ambiguity` stamp) · B(`Workflow3Settings.
+> reregister_second_ratio_threshold` 0.98 + env `ALIGN_FAIL_REREGISTER_RATIO`) ·
+> C(`notify` 재등록 권고 + `corrected_but_ambiguous` audit) · D(`cycle` 배선) 전부 랜딩.
+> 회귀 green: notify 7/7 · align_fail_correct 9/9 · align_key_match 10/10 ·
+> consensus_gather 8/8 · success_gather 6/6. 보정 동작·0.94 visibility 게이트 불변(read-only).
+> 미구현(의도된 범위 밖, §2·§8): fail-frame τ 재보정(consensus-gather fail 데이터 축적 후) ·
+> act/abstain 3-way 결정(상위 production-trust plan).
+
 날짜: 2026-06-10
 대상: lab 검증된 **match-time peak-isolation 모호도**(`second_ratio`)를 workflow_3 의 실시간
 보정 경로에 노출해, 만성적으로 모호한 align key 를 엔지니어가 **재등록**하도록 알린다.

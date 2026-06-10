@@ -426,7 +426,7 @@ def run() -> str:
     worst = sorted(periodicities, key=lambda kp: kp[1], reverse=True)
     print(f"\n[INFO] === template 모호성(재등록 후보, tau={PERIODICITY_TAU}) === "
           f"periodic {n_periodic}/{n_tpl} (rate={periodic_rate}) — 상위: "
-          + ", ".join(f"{k}={p}" for k, p in worst[:5]))
+          + (", ".join(f"{k}={p}" for k, p in worst[:5]) or "(없음)"))
 
     # msr cond 엔 Scope 가 없어 키/배율로 modality 를 가른다(Scope 분포는 더 이상 추적 안 함).
     print(f"\n[INFO] === msr S 해결된 modality(키/배율) === "

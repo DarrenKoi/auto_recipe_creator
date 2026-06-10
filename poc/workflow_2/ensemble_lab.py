@@ -18,7 +18,7 @@ from poc.workflow_3.vision.align_key_matcher import DEFAULT_SCALES, _to_grayscal
 
 # Phase 1: template 내재 주기성(autocorrelation off-center peak). cold-start, 오피스 보정 예정.
 PERIODICITY_EXCL_FRAC = 0.10   # zero-lag 제외 중심 반경 = min(h,w) 의 이 비율.
-PERIODICITY_TAU = 0.5          # 이 이상이면 template_periodic(=재등록 후보). 합성 검증으로 선택.
+PERIODICITY_TAU = 0.5          # 이 값 초과면 template_periodic(=재등록 후보). 비교는 strict >. 합성 검증으로 선택.
 
 
 def template_periodicity(template_gray):

@@ -60,6 +60,7 @@ from poc.workflow_3.vision.align_fail_assets import iter_msr_images, load_gray
 from poc.workflow_2.align_similarity import (
     GT_TOL_NORM, USE_ENSEMBLE_PROPOSER, _consensus_template_ab, _matched_crop,
 )
+from poc.workflow_2.ensemble_lab import PERIODICITY_TAU, template_periodicity
 from poc.workflow_3.vision.align_point_correction import _tool_label
 from poc.workflow_3.vision.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
 from poc.workflow_3.vision.cond_file import (
@@ -390,6 +391,7 @@ def run() -> str:
     by_recipe = {}
     mod_total = Counter()
     drop_total = Counter()
+    periodicities = []   # [(rec_key, periodicity)] — Phase 1 재등록 후보 신호.
     for assets in recipes:
         if assets is None:
             continue
@@ -406,10 +408,25 @@ def run() -> str:
         n_s = len(entry["s_frames"])
         n_drop = sum(entry["drop_counts"].values())
         rec_key = _recipe_key(assets)          # eqp/class/recipe 고유 키 — leaf 충돌 방지.
+        # template 내재 모호성(Phase 1): 등록 key 가 주기/대칭이면 유일 위치가 없음 → 재등록 후보.
+        # modality 중 max(가장 모호한 쪽)로 recipe 를 대표.
+        rec_periodicity = max(
+            (template_periodicity(t.raw_image) for t, _off in center_tpls.values()
+             if t is not None), default=0.0)
+        periodicities.append((rec_key, round(rec_periodicity, 3)))
         if n_s:
             by_recipe[rec_key] = entry
         print(f"[INFO] {rec_key}: S(crosshair) {n_s}장, E {len(entry['e_paths'])}장"
               + (f"  [누락 {n_drop}: {dict(entry['drop_counts'])}]" if n_drop else ""))
+
+    # === template 내재 모호성(Phase 1): 재등록 후보 비율 ===
+    n_periodic = sum(1 for _k, p in periodicities if p > PERIODICITY_TAU)
+    n_tpl = len(periodicities)
+    periodic_rate = round(n_periodic / n_tpl, 3) if n_tpl else 0.0
+    worst = sorted(periodicities, key=lambda kp: kp[1], reverse=True)
+    print(f"\n[INFO] === template 모호성(재등록 후보, tau={PERIODICITY_TAU}) === "
+          f"periodic {n_periodic}/{n_tpl} (rate={periodic_rate}) — 상위: "
+          + ", ".join(f"{k}={p}" for k, p in worst[:5]))
 
     # msr cond 엔 Scope 가 없어 키/배율로 modality 를 가른다(Scope 분포는 더 이상 추적 안 함).
     print(f"\n[INFO] === msr S 해결된 modality(키/배율) === "
@@ -448,6 +465,8 @@ def run() -> str:
     res["coregister"] = COREGISTER      # min_s 는 _consensus_template_ab 가 이미 반환에 넣는다.
     res["clean_frame"] = CLEAN_FRAME    # 매칭 프레임 정제 여부 — raw 판과 lift 비교 키.
     res["proposer"] = "ensemble" if USE_ENSEMBLE_PROPOSER else "c1"   # C1 vs ensemble A/B 키.
+    res["template_periodic_rate"] = periodic_rate              # Phase 1 재등록 후보 비율.
+    res["template_periodicities"] = dict(periodicities)        # recipe 별 모호성(재등록 우선순위).
     res["modality_distribution"] = dict(mod_total)
     res["drop_distribution"] = dict(drop_total)
     (out_dir / "summary.json").write_text(

@@ -57,9 +57,10 @@ class SuccessDownloader(Protocol):
         --- cond 파일 계약 (deferred consensus build 이 추가 변환 없이 소비하는 조건) ---
 
         - cond(S*.txt) 내용은 `vision/cond_file.py` 의 `parse_cond()` 로 파싱 가능한 형식이어야
-          한다(최소 `Scope` 와 `!Cursor_info`(crosshair 좌표) 포함).
-        - modality(OM/SEM)는 cond(`Scope`) 또는 파일명으로 구분 가능해야 한다(build 가
-          modality 별로 묶는다).
+          한다(최소 `!Cursor_info`(crosshair 좌표) 포함).
+        - modality(OM/SEM)는 구분 가능해야 한다(build 가 modality 별로 묶는다). msr 원문
+          cond 에는 `Scope` 가 없으므로(2026-06-08 확인) `cond_file.msr_modality()` 가
+          추론에 쓰는 키(`!OM_Brightness`/`Accelerating_voltage`/`Magnification`)를 보존할 것.
         - 레이아웃은 평탄(flat): dest_dir/<event_id>/S0001.jpg 옆에 S0001.txt.
           align_images/ 의 `.<파일명>/cond.txt` 숨김폴더 규약과 *다름*에 주의."""
         ...

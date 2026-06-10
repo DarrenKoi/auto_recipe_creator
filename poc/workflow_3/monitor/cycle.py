@@ -478,6 +478,7 @@ def run_alarm_cycle(
         notify_correction_outcome(
             eqp_id, recipe_id, outcome,
             recording_dir=recording_dir, enabled=settings.rich_notify_enabled,
+            reregister_ratio_threshold=settings.reregister_second_ratio_threshold,
         )
 
         # 미보정이면 엔지니어 수동 조작을 녹화하며 대기.

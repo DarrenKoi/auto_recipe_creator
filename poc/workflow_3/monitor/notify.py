@@ -174,10 +174,14 @@ def notify_align_fail_popup(
 # ------------------------------------------------------------------
 
 
-def build_outcome_summary(outcome, *, recording_dir: str = "") -> str:
+def build_outcome_summary(
+    outcome, *, recording_dir: str = "", reregister_ratio_threshold: float | None = None
+) -> str:
     """CorrectionOutcome 을 엔지니어용 한 줄 요약으로 만든다.
 
     outcome 이 None(보정 미수행: RECIPE_ID 없음, 사이클 중단 등)이어도 동작한다.
+    matcher 모호도(second_ratio)가 있으면 값을 덧붙이고, reregister_ratio_threshold 가
+    주어지고 그 값을 넘으면 '재등록 권장(모호 키)' 한 줄을 추가한다(임계 None=구 호출부면 권고 skip).
     """
     if outcome is None:
         parts = ["자동 보정 미수행(사이클 중단 또는 RECIPE_ID 없음) - 직접 확인 필요"]
@@ -192,6 +196,11 @@ def build_outcome_summary(outcome, *, recording_dir: str = "") -> str:
                 parts.append(f"최고후보 score={fallback.best.score:.3f}")
         if getattr(outcome, "error", None):
             parts.append(f"error={outcome.error}")
+        second_ratio = getattr(outcome, "second_ratio", None)
+        if second_ratio is not None:
+            parts.append(f"second_ratio={second_ratio:.3f}")
+            if reregister_ratio_threshold is not None and second_ratio > reregister_ratio_threshold:
+                parts.append("재등록 권장(모호 키)")
     if recording_dir:
         parts.append(f"녹화={recording_dir}")
     return " | ".join(parts)
@@ -204,22 +213,45 @@ def notify_correction_outcome(
     *,
     recording_dir: str = "",
     enabled: bool = True,
+    reregister_ratio_threshold: float | None = None,
 ) -> None:
     """처리 실패 시 cube rich notification 을 비차단 발송한다.
 
     status == "corrected" 면 발송하지 않는다(성공은 로그만). office 함수가
     summary 인자를 받으면 outcome 요약을 함께 보내고, 기존 2-인자 시그니처면
     요약은 파일 로그에만 남긴다(README: office 함수에 optional summary 추가 권장).
+
+    reregister_ratio_threshold 가 주어지면 모호 키(second_ratio>임계)를 판정한다:
+    실패 경로는 summary 에 이미 권고가 실려 cube 에 나가고, corrected+모호는 cube spam
+    없이 work2.log 에 corrected_but_ambiguous audit 만 남긴다(성공이라 재발 추적용).
     """
     status = getattr(outcome, "status", None) if outcome is not None else None
-    summary = build_outcome_summary(outcome, recording_dir=recording_dir)
+    summary = build_outcome_summary(
+        outcome, recording_dir=recording_dir,
+        reregister_ratio_threshold=reregister_ratio_threshold,
+    )
 
     if status == "corrected":
-        print(f"[INFO] 자동 보정 성공 - cube 알림 생략: EQP_ID={eqp_id} | {summary}")
-        log_work2_event(
-            component=LOG_COMPONENT, message="corrected_no_notify",
-            eqp_id=eqp_id, recipe_id=recipe_id, summary=summary,
+        second_ratio = getattr(outcome, "second_ratio", None)
+        ambiguous = (
+            reregister_ratio_threshold is not None
+            and second_ratio is not None
+            and second_ratio > reregister_ratio_threshold
         )
+        if ambiguous:
+            print(f"[INFO] 자동 보정 성공이나 모호 키 - 재등록 권장(cube 생략): "
+                  f"EQP_ID={eqp_id} | {summary}")
+            log_work2_event(
+                component=LOG_COMPONENT, message="corrected_but_ambiguous",
+                eqp_id=eqp_id, recipe_id=recipe_id,
+                second_ratio=f"{second_ratio:.3f}", summary=summary,
+            )
+        else:
+            print(f"[INFO] 자동 보정 성공 - cube 알림 생략: EQP_ID={eqp_id} | {summary}")
+            log_work2_event(
+                component=LOG_COMPONENT, message="corrected_no_notify",
+                eqp_id=eqp_id, recipe_id=recipe_id, summary=summary,
+            )
         return
 
     log_work2_event(

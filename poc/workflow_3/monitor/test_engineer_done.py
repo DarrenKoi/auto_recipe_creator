@@ -6,6 +6,10 @@
 import sys
 
 from poc.workflow_3.config import Workflow3Settings
+from poc.workflow_3.vlm.prompts.prompt_recipe_monitor_counter import (
+    RECIPE_MONITOR_NUMERATOR_INSTRUCTION,
+    build_recipe_monitor_counter_prompt,
+)
 
 
 def _check(name: str, condition: bool) -> bool:
@@ -31,10 +35,22 @@ def test_settings_defaults() -> bool:
     return ok
 
 
+def test_counter_prompt() -> bool:
+    """ui-venus 공식 단일요소 형식([x,y], [-1,-1] 거부)을 따른다."""
+    system_message, user_text = build_recipe_monitor_counter_prompt()
+    ok = True
+    ok &= _check("system empty (official format)", system_message == "")
+    ok &= _check("instruction embedded", RECIPE_MONITOR_NUMERATOR_INSTRUCTION in user_text)
+    ok &= _check("point format requested", "[x,y]" in user_text)
+    ok &= _check("refusal format requested", "[-1,-1]" in user_text)
+    return ok
+
+
 def main() -> int:
     """전체 케이스를 실행하고 통과 여부를 반환한다."""
     tests = [
         test_settings_defaults,
+        test_counter_prompt,
     ]
     results = [test() for test in tests]
     passed = sum(1 for r in results if r)

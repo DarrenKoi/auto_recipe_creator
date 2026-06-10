@@ -79,13 +79,18 @@ class CorrectionConfig:
     require_ok_button: bool = True  # OK 위치 확인 실패 시 corrected 대신 escalate.
     settle_sec: float = 0.0  # 제스처 후 대기(실장비 안정화).
     crop_template_to_box: bool = False  # 등록 이미지의 엔지니어 박스 내부로 template crop(미보정, 기본 off).
+    # 만성 모호 키 게이트(Tier 0.1). second_ratio 가 이 값을 넘으면 present 라도 auto-act 대신
+    # engineer_review 로 보류한다. None(기본)이면 게이트는 과거 act/fallback 2분기만 — 동작 불변.
+    # 운영 루프는 Workflow3Settings.reregister_second_ratio_threshold(기본 0.98)를 주입한다.
+    reregister_ratio_threshold: float | None = None
 
 
 @dataclass
 class CorrectionOutcome:
     """보정 결과. 어느 경로로 끝났는지 + 좌표/decision 기록."""
 
-    # "corrected" | "fallback_<status>" | "escalated_no_ok" | "ok_detect_error" | "no_assets"
+    # "corrected" | "fallback_<status>" | "escalated_ambiguous_key" | "escalated_no_ok"
+    # | "ok_detect_error" | "no_assets"
     status: str
     path: str  # "primary" | "fallback"
     key_decision: str  # 가시성 게이트 판정에 쓰인 matcher decision.
@@ -122,29 +127,56 @@ def _with_key_ambiguity(
 # ------------------------------------------------------------------
 
 
-def key_visibility_gate(result: AlignKeyMatchResult) -> bool:
-    """paused frame 에서 recipe key 가 '지금 여기' 인식되는가 — primary vs fallback 분기.
+# 가시성 게이트가 돌려주는 route intent (Tier 0.1: bool → router).
+GATE_ACT = "act"                          # primary reposition + OK.
+GATE_FALLBACK = "fallback_search"         # live_align_search pan/zoom (키가 안 보임).
+GATE_ENGINEER_REVIEW = "engineer_review"  # 키는 보이나 만성 모호 → 자동보정 보류, 엔지니어 확인.
+# 예약(Tier 3): "vlm_region" — VLM ROI 힌트 후 CV fine-coord. 아직 핸들러 없음이라 미발행.
 
-    "키가 이 전체 프레임에 있는가"(존재/부재) 판정. ensemble 경로(decision/score 정비)에서
-    decision 은 calibrated sel 임계(match 0.6053/adjust 0.4727)로 재판정되므로, featureless
-    배경(chamfer~0.4~0.6·NCC 낮음 → sel~0.25)은 대개 decision="low" 로 1차 차단된다. 그래서:
 
-    * ``best_scale`` 가 충분(>=MIN_CONFIRM_SCALE)해야 한다 — tiny-scale chamfer 과신 차단.
-    * 강한 ``match`` 는 edge 구조만으로 인정.
-    * 약한 ``adjust`` 는 **구조 유일성(distinctive)** 이 있을 때만 가시로 인정 — 배경 거짓양성
-      2차 차단(과거 orb>0 의 대체; ORB 폐지). distinctive 는 chamfer-pool 의 best peak 이
-      2nd 대비 유일한가 = "key 구조가 실제로 존재하는가" presence 신호. 불확실하면 fallback.
+def key_visibility_gate(
+    result: AlignKeyMatchResult,
+    *,
+    reregister_ratio_threshold: float | None = None,
+) -> str:
+    """paused frame 의 route intent 결정 — act(primary) vs fallback_search vs engineer_review.
 
-    True → primary reposition+OK, False → live_align_search fallback(아무것도 안 보임).
+    2단계 판정:
+
+    1) presence — "키가 이 전체 프레임에 있는가"(존재/부재). 과거 bool 게이트와 동일 기준.
+       ensemble 경로에서 decision 은 calibrated sel 임계(match 0.6053/adjust 0.4727)로
+       재판정되므로 featureless 배경(sel~0.25)은 대개 "low" 로 1차 차단된다.
+         * ``best_scale`` 가 충분(>=MIN_CONFIRM_SCALE)해야 한다 — tiny-scale chamfer 과신 차단.
+         * 강한 ``match`` 는 edge 구조만으로 present 인정.
+         * 약한 ``adjust`` 는 **구조 유일성(distinctive)** 이 있을 때만 present — 배경 거짓양성
+           2차 차단(과거 orb>0 의 대체; ORB 폐지).
+       present 아니면 → "fallback_search"(아무것도 안 보임 → live_align_search pan/zoom).
+
+    2) isolation (Tier 0.1, opt-in) — present 라도 ``second_ratio`` 가
+       ``reregister_ratio_threshold`` 를 넘으면 chamfer best peak 이 2nd 대비 고립되지 않은
+       "만성 모호" key (S-LOO golden tau*, AUC0.91 미스예측)다. 평평한 score surface 에서
+       확신 reposition+OK 는 오정렬·오클릭 위험이 크므로 auto-act 대신 "engineer_review" 로
+       보류한다. 임계 None(기본)이면 이 단계를 건너뛰어 과거 act/fallback 2분기를 그대로 보존한다.
+
+    반환: "act" | "fallback_search" | "engineer_review".
     임계/조건은 cold-start 이며 실데이터 calibration 대상.
     """
+    # --- 1) presence: 과거 bool False 조건 → fallback_search. ---
     if result.best_scale < MIN_CONFIRM_SCALE:
-        return False
-    if result.decision == "match":
-        return True
-    if result.decision == "adjust":
-        return result.distinctive
-    return False
+        return GATE_FALLBACK
+    present = result.decision == "match" or (
+        result.decision == "adjust" and result.distinctive
+    )
+    if not present:
+        return GATE_FALLBACK
+    # --- 2) isolation(opt-in): present 하나 만성 모호 → 자동보정 보류. ---
+    if (
+        reregister_ratio_threshold is not None
+        and result.second_ratio is not None
+        and result.second_ratio > reregister_ratio_threshold
+    ):
+        return GATE_ENGINEER_REVIEW
+    return GATE_ACT
 
 
 # ------------------------------------------------------------------
@@ -235,10 +267,12 @@ def correct_align_fail(
     1) capture() 로 paused SEM ROI 프레임 캡처.
     2) read_mode() 로 OM/SEM template 라우팅(route_template).
     3) compute_align_key_score_ensemble(scales=PAUSED_SCALES, policy=STRUCTURE_POLICY).
-    4) key_visibility_gate:
-       - True  → clamp_to_fov(best_xy) → move_to_point(=더블클릭 recenter) →
-                 capture_screen() 에서 OK 버튼을 찾아 click_screen(OK).
-       - False → live_align_search(...) 로 위임(아무것도 안 보일 때만 pan/zoom).
+    4) key_visibility_gate → route:
+       - "act"             → clamp_to_fov(best_xy) → move_to_point(=더블클릭 recenter) →
+                             capture_screen() 에서 OK 버튼을 찾아 click_screen(OK).
+       - "fallback_search" → live_align_search(...) 로 위임(아무것도 안 보일 때만 pan/zoom).
+       - "engineer_review" → present 하나 만성 모호(second_ratio>tau) → actuation 없이
+                             escalated_ambiguous_key 로 보류(config.reregister_ratio_threshold 주입 시).
 
     dry_run=True 면 좌표를 계산·로그·overlay 만 하고 실제 actuation(move/click)은 하지
     않는다(Mac-safe, procedure §5 Phase 3). ok_locator 를 직접 주입하면 VLM 없이도
@@ -286,8 +320,11 @@ def correct_align_fail(
     if debug_dir is not None:
         save_overlay_jpeg(result.debug_overlay, debug_dir / "paused_match.jpg")
 
-    # ---- 가시성 게이트: key 가 안 보이면 fallback 탐색으로 위임. ----
-    if not key_visibility_gate(result):
+    # ---- 가시성 게이트: route intent 에 따라 분기 (act / fallback_search / engineer_review). ----
+    route = key_visibility_gate(
+        result, reregister_ratio_threshold=config.reregister_ratio_threshold
+    )
+    if route == GATE_FALLBACK:
         print("[INFO] key 가 paused 화면에 보이지 않음 → fallback(live_align_search) 위임")
         outcome = live_align_search(
             controller,
@@ -314,6 +351,32 @@ def correct_align_fail(
             pan_count=outcome.pan_count,
         )
         return _with_key_ambiguity(result_outcome, result)
+
+    if route == GATE_ENGINEER_REVIEW:
+        # key 는 present 하나 second_ratio>tau(만성 모호) — 평평한 score surface 에서 확신
+        # reposition+OK 는 오정렬·오클릭 위험이 크다. 자동 보정을 보류하고 엔지니어 확인으로
+        # escalate 한다(actuation 없음). status!=corrected 라 notify 가 cube 로 알린다.
+        sr_txt = f"{result.second_ratio:.3f}" if result.second_ratio is not None else "-"
+        print(f"[WARNING] align key 가 보이나 만성 모호(second_ratio={sr_txt}) → 자동 보정 보류, 엔지니어 확인")
+        log_work2_event(
+            component=LOG_COMPONENT,
+            message="escalated_ambiguous_key",
+            level="warning",
+            key_decision=result.decision,
+            second_ratio=sr_txt,
+        )
+        return _with_key_ambiguity(
+            CorrectionOutcome(
+                status="escalated_ambiguous_key",
+                path="primary",
+                key_decision=result.decision,
+                best_xy=None,
+                ok_screen_xy=None,
+                fallback=None,
+                history=history,
+            ),
+            result,
+        )
 
     # ---- PRIMARY: crosshair 를 best_xy 로 reposition. ----
     cx, cy = clamp_to_fov(result.best_xy[0], result.best_xy[1], fw, fh, config.click_margin_ratio)

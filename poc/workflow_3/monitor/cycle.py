@@ -352,7 +352,7 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
         print(f"[INFO] RECIPE_ID 없음 - 보정 생략, 엔지니어 직접 처리 (EQP_ID={eqp_id})")
         return _make_result(step, "skipped", started_at, settings)
 
-    from poc.workflow_3.vision.align_fail_correct import correct_align_fail_auto
+    from poc.workflow_3.vision.align_fail_correct import CorrectionConfig, correct_align_fail_auto
 
     vlm_client = None
     try:
@@ -374,6 +374,11 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
             context["controller"],
             vlm_client=vlm_client,
             notify_fn=_escalation_log,
+            config=CorrectionConfig(
+                # 만성 모호 키 게이트(Tier 0.1) 활성화 — present 하나 second_ratio>tau 면
+                # 자동 reposition+OK 대신 engineer_review 로 보류한다. notify 임계와 동일 값.
+                reregister_ratio_threshold=settings.reregister_second_ratio_threshold,
+            ),
             dry_run=settings.correction_dry_run,
             debug_dir=debug_dir,
             eqp_id=eqp_id,

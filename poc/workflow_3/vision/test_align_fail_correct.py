@@ -56,7 +56,8 @@ class _FakeController:
 
 
 def _dummy_result(decision: str, *, orb: float = 0.0, scale: float = 1.0,
-                  distinctive: bool = True) -> AlignKeyMatchResult:
+                  distinctive: bool = True,
+                  second_ratio: float | None = None) -> AlignKeyMatchResult:
     overlay = np.zeros((4, 4, 3), dtype=np.uint8)
     return AlignKeyMatchResult(
         score=0.5,
@@ -67,17 +68,46 @@ def _dummy_result(decision: str, *, orb: float = 0.0, scale: float = 1.0,
         decision=decision,
         debug_overlay=overlay,
         distinctive=distinctive,
+        second_ratio=second_ratio,
     )
 
 
 def test_gate() -> bool:
-    """match→True; adjust→distinctive 일 때만 True(ensemble: orb 폐지); low/tiny-scale→False."""
+    """router: 임계 미지정 시 기존 bool 과 1:1(act/fallback_search), 임계 지정 + 만성 모호 시 engineer_review.
+
+    Tier 0.1 — key_visibility_gate 가 bool → route intent 로 승격. reregister_ratio_threshold
+    None(기본)이면 과거 동작 보존: True→"act", False→"fallback_search". 임계가 주어지고
+    key 는 present(match/adjust+distinctive)이나 second_ratio>임계(만성 모호, AUC0.91 미스예측)면
+    auto-act 대신 "engineer_review" — 평평한 surface 에서 확신 오정렬을 막는다.
+    """
+    R = key_visibility_gate
     checks = {
-        "match": key_visibility_gate(_dummy_result("match")) is True,
-        "adjust(distinctive)": key_visibility_gate(_dummy_result("adjust", distinctive=True)) is True,
-        "adjust(not distinctive)": key_visibility_gate(_dummy_result("adjust", distinctive=False)) is False,
-        "low": key_visibility_gate(_dummy_result("low")) is False,
-        "match(tiny-scale)": key_visibility_gate(_dummy_result("match", scale=0.3)) is False,
+        # --- 임계 None: 기존 bool 의미 보존 (act↔과거 True, fallback_search↔과거 False) ---
+        "match→act": R(_dummy_result("match")) == "act",
+        "adjust(distinctive)→act": R(_dummy_result("adjust", distinctive=True)) == "act",
+        "adjust(not distinctive)→fallback": R(_dummy_result("adjust", distinctive=False)) == "fallback_search",
+        "low→fallback": R(_dummy_result("low")) == "fallback_search",
+        "match(tiny-scale)→fallback": R(_dummy_result("match", scale=0.3)) == "fallback_search",
+        # --- 임계 지정: present + 만성 모호(second_ratio>tau) → engineer_review ---
+        "match+ambiguous→review": R(
+            _dummy_result("match", second_ratio=0.99), reregister_ratio_threshold=0.98
+        ) == "engineer_review",
+        "adjust(distinctive)+ambiguous→review": R(
+            _dummy_result("adjust", distinctive=True, second_ratio=0.99),
+            reregister_ratio_threshold=0.98,
+        ) == "engineer_review",
+        # --- 임계 지정이라도 모호도 낮으면 act (정상 보정 경로 유지) ---
+        "match+distinct→act": R(
+            _dummy_result("match", second_ratio=0.80), reregister_ratio_threshold=0.98
+        ) == "act",
+        # --- not-present 면 임계와 무관하게 fallback (키가 없으면 탐색이지 review 아님) ---
+        "low+threshold→fallback": R(
+            _dummy_result("low", second_ratio=0.99), reregister_ratio_threshold=0.98
+        ) == "fallback_search",
+        # --- second_ratio None(후보 1개)이면 모호 판정 불가 → act ---
+        "match+none_ratio→act": R(
+            _dummy_result("match", second_ratio=None), reregister_ratio_threshold=0.98
+        ) == "act",
     }
     ok = all(checks.values())
     print(f"[{'PASS' if ok else 'FAIL'}] gate: {checks}")
@@ -322,6 +352,52 @@ def test_primary_path_stamps_ambiguity() -> bool:
     return ok
 
 
+def test_engineer_review_route() -> bool:
+    """present 하나 만성 모호(second_ratio>tau) → primary 보류: escalated_ambiguous_key, 무액션·fallback 미진입.
+
+    데모는 key 가 보이는(present) 입력이라 임계 None 이면 corrected 로 끝난다(test_primary_path).
+    여기서는 실제 second_ratio 바로 아래로 reregister 임계를 낮춰 '만성 모호' 를 결정적으로
+    강제하고, 게이트가 act 대신 engineer_review 로 라우팅해 actuation 을 막는지 검증한다.
+    """
+    monitor, templates = _make_primary_demo(key_in_view=True)
+    frame = monitor.capture()
+    screen = monitor.capture_screen()
+    fake = _FakeController(frame, screen, mode="SEM")
+
+    # 동일 입력으로 matcher 를 독립 재계산해 실제 second_ratio 를 얻는다(ensemble 결정적).
+    template = route_template(templates, "SEM")
+    expected = compute_align_key_score_ensemble(
+        template, frame, scales=PAUSED_SCALES, policy=STRUCTURE_POLICY
+    )
+    if expected.second_ratio is None:
+        print("[PASS] engineer_review_route: demo second_ratio None(후보 1개) - 검증 스킵")
+        return True
+    thr = max(0.0, expected.second_ratio - 0.01)  # 실제값 바로 아래 → second_ratio>thr 로 모호 강제.
+
+    outcome = correct_align_fail(
+        fake,
+        templates,
+        ok_locator=lambda _s: (690, 560),
+        dry_run=False,  # actuation 이 '일어나지 않아야' 함을 호출 횟수로 검증.
+        config=CorrectionConfig(reregister_ratio_threshold=thr),
+    )
+    ok = (
+        outcome.status == "escalated_ambiguous_key"
+        and outcome.path == "primary"
+        and outcome.key_decision in ("match", "adjust")
+        and len(fake.move_calls) == 0       # reposition(더블클릭) 안 함.
+        and len(fake.screen_clicks) == 0    # OK 클릭 안 함.
+        and outcome.fallback is None        # fallback 탐색에도 진입 안 함(키는 보임).
+        and outcome.second_ratio == expected.second_ratio  # 모호도 stamp 는 그대로 실린다.
+    )
+    print(
+        f"[{'PASS' if ok else 'FAIL'}] engineer_review_route: status={outcome.status} "
+        f"moves={len(fake.move_calls)} clicks={len(fake.screen_clicks)} "
+        f"fallback={outcome.fallback} sr={outcome.second_ratio}"
+    )
+    return ok
+
+
 def main() -> int:
     print("[INFO] align_fail_correct self-test 시작")
     results = [
@@ -334,6 +410,7 @@ def main() -> int:
         test_outcome_ambiguity_defaults(),
         test_with_key_ambiguity_stamps(),
         test_primary_path_stamps_ambiguity(),
+        test_engineer_review_route(),
     ]
     passed = sum(1 for r in results if r)
     print(f"[INFO] {passed}/{len(results)} cases passed")

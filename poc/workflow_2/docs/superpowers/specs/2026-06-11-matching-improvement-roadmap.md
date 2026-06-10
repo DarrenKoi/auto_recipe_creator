@@ -133,6 +133,23 @@ Codex 의 8개 아이디어, 자체 리서치 아이디어 모두 이 3개 레�
 
 ---
 
+## 3.5. 진행 상황
+
+- **Tier 0.1 — 게이트 라우터 승격: ✅ 완료 (2026-06-11, TDD).**
+  `key_visibility_gate()` 가 bool → route intent(`act`/`fallback_search`/`engineer_review`)로
+  승격. present 라도 `second_ratio > reregister tau` 면 auto-act 대신 `engineer_review` 로
+  보류해 평평한 surface 에서의 확신 오정렬+오클릭을 차단한다. `reregister_ratio_threshold`
+  None(기본)이면 과거 act/fallback 2분기를 byte 동일하게 보존(opt-in). 운영 루프(`cycle.py`)는
+  `Workflow3Settings.reregister_second_ratio_threshold`(0.98)를 `CorrectionConfig` 로 주입해
+  게이트를 활성화한다. 모호 보류는 `escalated_ambiguous_key` status → notify 가 cube 로 알리고
+  `재등록 권장(모호 키)` 한 줄을 싣는다. 변경: `align_fail_correct.py`, `config`(기존 필드 재사용),
+  `cycle.py`; 테스트 `test_align_fail_correct.py` 10/10(gate 라우팅 10케이스 + engineer_review
+  caller 통합), 회귀 ensemble/notify 그린.
+- **Tier 0.2 — modality 별 threshold 재보정: ⏸ office-data-gated.**
+  `STRUCTURE_POLICY`/`min_distinct_gap`/`max_second_ratio`/`MIN_CONFIRM_SCALE` 의 실제 fit 은
+  fab golden 데이터가 필요(Mac 반입 불가). plumbing/harness 는 별도 착수 시 blind 작성 →
+  오피스 실행으로 숫자 확보.
+
 ## 4. 다음 단계
 
 트랙은 서로 독립적이라 어느 하나부터 시작 가능. 권장 순서는

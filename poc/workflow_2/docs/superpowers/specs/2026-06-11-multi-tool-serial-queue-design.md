@@ -113,6 +113,11 @@ for eqp_id in ordered:
     info = by_tool[eqp_id]
     append_alarm_record(...)                            # 빠른 파일 append
     if settings.popup_enabled: notify_align_fail_popup(...)   # daemon thread (비차단)
+    # 감지-시점 cube 알림 (Codex 리뷰 반영): popup 은 로컬 PC 한정 + A 사이클의
+    # close_alert_popup 이 B popup 도 닫으므로, 원격/내구 채널은 pass 1 에서 보장.
+    # notify.send_detection_notify_async (기존 미사용 함수) 재사용 — outcome 기반
+    # cube 알림(사이클 후처리)과는 별개의 "감지됨" 통지.
+    send_detection_notify_async(eqp_id, info["recipe_id"], enabled=settings.rich_notify_enabled)
     gather_success_async(eqp_id, info["recipe_id"], settings) # daemon thread (비차단)
     active_tools.add(eqp_id)                            # ownership 을 ack 시점에 확보
 
@@ -229,7 +234,16 @@ class EngineerDoneDetector:
                 self._roi_ratios = None; self._localize_tried = False  # 드래그 대비 1회 재grounding
             return False
         self._ocr_miss_streak = 0
-        is_done = n >= self.s.engineer_done_min_count and (self._last_n is None or n >= self._last_n)
+        # 연속 2회 확인 (Codex 리뷰 반영): 직전 읽기가 존재해야 done.
+        # last_n 없이 첫 OCR 로 done 을 허용하면 이미 높은 카운터(47/350)의 단발
+        # 오독/한 번의 화면 변화만으로 watch 가 조기 종료될 수 있다. 정적 카운터는
+        # CV gate 가 OCR 자체를 막고, done 은 "변화 → 읽기 → 또 변화 → 비감소 읽기"
+        # 라는 실제 증가 관측을 요구한다.
+        is_done = (
+            n >= self.s.engineer_done_min_count
+            and self._last_n is not None
+            and n >= self._last_n
+        )
         self._last_n = n
         return is_done
 ```
@@ -286,7 +300,7 @@ config 게이트 확인 후 detector 생성(필요 시 OCR client lazy 생성). 
 ```
 poll → filter_align_fail → window 필터
  → process_fail_rows:
-     [Pass 1] ack 전부: log + popup(비차단) + cube? + gather(비차단) + active_tools.add
+     [Pass 1] ack 전부: log + popup(비차단) + 감지 cube(비차단) + gather(비차단) + active_tools.add
      [Pass 2] FIFO 직렬:
         run_alarm_cycle(A): RCS→connect→record→SEM panel→correction
            ├ corrected      → notify 생략 → finally(record stop→close_tool(A))
@@ -310,14 +324,32 @@ poll → filter_align_fail → window 필터
 
 ---
 
-## 7. 열린 가정 (오피스 확인 필요)
+## 7. 열린 가정 + 완화책 (Codex adversarial 리뷰 반영)
 
-MES 알람 피드가 **진행 중** align fail 을 poll 마다 **최신 UTC9** 로 재보고한다고 가정
-(현 edge-trigger·window 필터 설계 전제). 만약 **onset 시각**으로만 보고하면, 긴 사이클
-뒤에 큐잉된 tool 이 `detection_window_sec` 밖으로 aging 되어 누락될 수 있다 → 그 경우
-durable cross-poll pending 큐 변형(비범위)로 재검토. 본 spec 은 piece-of-poll 동시 fail
-(같은 poll 에 함께 등장) 의 robust 직렬화를 보장하며, 이 가정에 의존하지 않는다(두 tool 이
-같은 poll 에 보이면 둘 다 같은 window 안). 가정은 *사이클 중 새로 발생한* tool 에만 영향.
+**보장 범위 명시(중요):** 본 spec 이 보장하는 것은 **같은 poll 에 함께 등장한 동시
+fail 의 무손실 직렬 처리**다. *사이클 진행 중 새로 발생한* fail 의 무손실까지 보장하지
+않는다(그건 durable cross-poll pending 큐 — 비범위). 제목의 "하나도 흘리지 않으면서"는
+same-poll 범위로 읽는다.
+
+**열린 가정:** MES 알람 피드가 **진행 중** align fail 을 poll 마다 **최신 UTC9** 로
+재보고한다고 가정(현 edge-trigger·window 필터 설계 전제). 만약 **onset 시각**으로만
+보고하면, A 의 긴 사이클(분 단위) 동안 발생한 B 가 다음 poll 때
+`detection_window_sec`(기본 60s) 밖으로 aging 되어 **acknowledge 조차 못 받고**
+누락될 수 있다.
+
+**완화책(포함 — 큐 구현 시 함께):** window 필터를 고정폭이 아니라 **마지막 poll 시작
+시각 기준 동적 폭**으로 바꾼다:
+
+```
+effective_window = max(detection_window_sec, now - last_poll_started_at + detection_window_sec)
+fails = filter_rows_within_window(fails, effective_window)
+last_poll_started_at = now   # poll 직전 갱신
+```
+
+직전 poll 이후 발생한 onset 은 어떤 경우에도 effective_window 안에 들어오므로, 사이클이
+얼마나 길어도 *다음 poll 에서* 반드시 ack 된다(처리 지연은 직렬 큐의 본질상 허용).
+이 완화로 onset-시각 피드에서도 누락은 "MES 가 row 자체를 더 이상 반환하지 않는 경우"
+로 좁혀진다 — 그 경우만 durable pending 큐로 재검토.
 
 ---
 
@@ -328,7 +360,10 @@ durable cross-poll pending 큐 변형(비범위)로 재검토. 본 spec 은 piec
   먼저 전부 호출됨(호출 로그 순서 검증), cycle 은 FIFO(B→A).
 - **active_tools 편입**: pass 1 후 전 tool 이 active. 다음 poll 동일 입력 → 신규 0.
 - **해제**: current 에서 빠진 tool 이 active 에서 제거.
-- **gather/popup 호출 수**: 신규 tool 수만큼 1회씩(monkeypatch).
+- **gather/popup/감지-cube 호출 수**: 신규 tool 수만큼 1회씩, 전부 첫 cycle 시작 전에
+  발생(monkeypatch + 호출 순서 로그).
+- **동적 window**: last_poll 이 오래 전이면 effective_window 가 그만큼 넓어져 오래된
+  onset row 도 통과(§7 완화책).
 
 신규 `poc/workflow_3/monitor/test_engineer_done.py`:
 - fake `capture`(시퀀스 이미지) + fake grounding + fake OCR 주입.

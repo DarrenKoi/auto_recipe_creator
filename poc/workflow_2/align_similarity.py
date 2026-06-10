@@ -326,10 +326,11 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
     (rerank[MI·contour] 검증은 끝남 — 둘 다 폐기, `docs/study/reranker_ab_failure_analysis.md`.)
     """
     from poc.workflow_3.vision.align_key_matcher import preprocess_for_matching
+    from poc.workflow_2.ensemble_lab import peak_isolation_ratio
     # C1 경로만 frame distance-transform 이 필요 — ensemble 은 raw gray 로 자체 전처리(중복 회피).
     frame_dt = None if USE_ENSEMBLE_PROPOSER else preprocess_for_matching(gray)[1]
     cxh, cyh = crosshair_xy
-    best = None  # (rank|None, n_cand, best_dist, mod, cand_xys)
+    best = None  # (rank|None, n_cand, best_dist, mod, cand_xys, peak_ratio)
     any_cand = False
     for mod, tpl in center_tpls.items():
         if tpl is None:
@@ -346,12 +347,13 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
         dists = [float(np.hypot(c.xy[0] - cxh, c.xy[1] - cyh)) / short for c in cands]
         rank = next((i for i, d in enumerate(dists, 1) if d <= GT_TOL_NORM), None)
         cur = (rank, len(cands), min(dists), mod,
-               [[int(c.xy[0]), int(c.xy[1])] for c in cands])
+               [[int(c.xy[0]), int(c.xy[1])] for c in cands],
+               peak_isolation_ratio(cands))   # (B) match-time 모호도(top2/top1).
         # race: in_topk(rank!=None) 우선 → 낮은 rank → 가까운 best_dist.
         if best is None:
             best = cur
         else:
-            b_rank, _bn, b_dist, _bm, _bc = best
+            b_rank, _bn, b_dist, _bm, _bc, _bp = best
             better = (
                 (rank is not None and (b_rank is None or rank < b_rank))
                 or (rank is None and b_rank is None and cur[2] < b_dist)
@@ -360,7 +362,7 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
                 best = cur
     if not any_cand:
         return None
-    rank, n_cand, best_dist, mod, cand_xys = best
+    rank, n_cand, best_dist, mod, cand_xys, peak_ratio = best
     return {
         "topk_rank": rank,
         "in_topk": rank is not None,
@@ -368,6 +370,7 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
         "best_cand_dist_norm": round(best_dist, 3),
         "modality": mod,
         "cand_xys": cand_xys,
+        "peak_ratio": round(peak_ratio, 4),   # (B) match-time 모호도: top2/top1, 높을수록 miss-like.
     }
 
 
@@ -863,6 +866,8 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None,
     # miss(in_topk=False) 의 '진실↔최근접 후보' 거리 — ensemble 적용 여지 진단(버려지던 값 수집).
     cons_miss_dists: list[float] = []
     rcp_miss_dists: list[float] = []
+    # (B) match-time 모호도 검증용 per-point (missed, peak_ratio) — periodicity 와 달리 진짜 점 단위.
+    cons_points: list[dict] = []
     for rec, data in by_recipe.items():
         frames = data.get("s_frames", [])
         if not frames:
@@ -911,6 +916,8 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None,
             if gc is None:
                 continue
             n += 1
+            cons_points.append({"recipe": rec, "missed": not gc["in_topk"],
+                                "peak_ratio": gc.get("peak_ratio")})   # (B) 점 단위 모호도↔miss.
             if gc["in_topk"]:
                 cons_hit += 1
             elif gc.get("best_cand_dist_norm") is not None:
@@ -1000,6 +1007,8 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None,
         # miss(in_topk=False) 거리 분포 — near 多=ensemble recall 여지 / far 多=구조적 모호성(ensemble 무력).
         "cons_miss_dist_distribution": _miss_dist_distribution(cons_miss_dists),
         "rcp_miss_dist_distribution": _miss_dist_distribution(rcp_miss_dists),
+        # (B) per-point (missed, peak_ratio) — 드라이버가 match-time 모호도↔miss AUC 검증에 사용.
+        "consensus_points": cons_points,
         # 참고용(이 도메인에선 변별 신호 아님 — E 에도 key 가 있을 수 있어 cons_E 높음이 정상일 수 있음).
         "median_cons_free_chamfer_S": round(statistics.median(s_guard), 4) if s_guard else None,
         "median_cons_free_chamfer_E": round(statistics.median(e_guard), 4) if e_guard else None,

@@ -522,6 +522,12 @@ def run() -> str:
                ("auc", "n_miss", "n_hit", "mean_miss", "mean_hit", "best_tau", "tpr", "fpr")},
         })
     res["periodicity_ablation"] = ablation
+    # (B) match-time peak-isolation 모호도 → *진짜* per-point miss AUC (periodicity 천장 0.61 비교).
+    # peak_ratio(top2/top1) 가 높을수록 miss-like → miss_predictor_stats 에 그대로(높음=miss) 투입.
+    _pts = res.pop("consensus_points", [])     # raw 점들은 summary.json 에 안 남김(집계만 저장).
+    _iso = [(p["peak_ratio"], p["missed"]) for p in _pts if p.get("peak_ratio") is not None]
+    res["peak_isolation_calibration"] = miss_predictor_stats(
+        [s for s, _m in _iso], [m for _s, m in _iso])
     (out_dir / "summary.json").write_text(
         json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -589,6 +595,19 @@ def run() -> str:
         _w = ("쓸만함 → 그 (win,lag) 로 workflow_3 포팅" if best["auc"] >= 0.7
               else "여전히 약함 → (B) match-aware 신호(2nd-best decoy ratio)로 전환")
         print(f"      best AUC {best['auc']} → {_w}")
+    print("=" * 64)
+    # (B) match-time peak-isolation — 진짜 per-point (top2/top1 모호도, miss). periodicity 천장 0.61 비교.
+    iso = res.get("peak_isolation_calibration") or {}
+    print("\n[INFO] === (B) match-time peak-isolation 모호도 → miss 예측력 (진짜 per-point) ===")
+    print(f"  n={iso.get('n')}  miss={iso.get('n_miss')}  hit={iso.get('n_hit')}")
+    print(f"  mean peak_ratio(top2/top1): miss={iso.get('mean_miss')}  hit={iso.get('mean_hit')}  "
+          f"(miss>hit 여야 신호)")
+    print(f"  AUC={iso.get('auc')}  (periodicity 천장 0.61 비교; >=0.7 쓸만, >=0.8 강함)")
+    print(f"  Youden tau*={iso.get('best_tau')}  (TPR={iso.get('tpr')} FPR={iso.get('fpr')})")
+    if iso.get("auc") is not None:
+        _b = ("쓸만함 → production fail-time 모호 플래그 + C4 distinctiveness 포팅" if iso["auc"] >= 0.7
+              else "여전히 약함 → match-time 모호도도 부족 → 재등록은 직접 miss 라벨 / per-case escalation")
+        print(f"  >>> 판정: AUC {iso['auc']} → {_b}")
     print("=" * 64)
     print(f"\n[INFO] 완료: {out_dir}  (consensus 템플릿: {out_dir}/consensus/"
           + (f", 결합 패널: {combined_dir}/" if combined_dir is not None else "")

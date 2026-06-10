@@ -94,6 +94,25 @@ def template_periodicity(template_gray, *, center_xy=None, win_frac=None,
     return float(np.clip(nac[annulus].max(), 0.0, 1.0))
 
 
+def peak_isolation_ratio(cands):
+    """score 내림차순 후보의 peak 고립도(ambiguity) ratio = score_2nd / score_best ∈ [0,1].
+
+    (B) match-time distinctiveness — periodicity(template 고유, AUC 천장 0.61)와 달리 *실제*
+    template↔frame 매칭의 모호성을 직접 잰다. 0=top1 독주(distinctive·hit-like),
+    1=top2 가 top1 동률(ambiguous·miss-like). 후보는 이미 NMS 로 공간 분리(_propose_topk)돼
+    있어 2nd 는 non-local peak. <2개거나 best<=0 면 0.0(경쟁 peak 없음=모호 없음).
+    flat score surface(반복 패턴, wrong_local_peak)에서 top1≈top2 → ratio↑ 로 실패를 직접 신호.
+    정답 위치를 몰라도 계산되므로 production fail-time 모호 플래그로 그대로 쓸 수 있다(C4 검증판).
+    """
+    if len(cands) < 2:
+        return 0.0
+    s0 = float(cands[0].score)
+    if s0 <= 0:
+        return 0.0
+    s1 = float(cands[1].score)
+    return float(np.clip(s1 / s0, 0.0, 1.0))
+
+
 def miss_predictor_stats(scores, missed):
     """predictor(score)가 miss(=True)를 예측하나 진단 (Phase1 보정: periodicity↔miss).
 

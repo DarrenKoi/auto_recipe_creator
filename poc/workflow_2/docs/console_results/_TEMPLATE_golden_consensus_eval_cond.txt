@@ -46,6 +46,17 @@ best: variant = ____________   AUC = ____    (Δ vs baseline = ____ )
 # best AUC≥0.7 → 그 (win,lag) workflow_3 포팅.  <0.7 → (B) match-aware(2nd-best decoy ratio).
 # 읽는 법: win 축↑효과 = align point 주변 한정이 먹힘 / lag 축↑효과 = tolerance 안 무해 lag 가 노이즈였음.
 
+★ [B — match-time peak-isolation 모호도 → miss 예측력]   (한 번만; "=== (B) match-time ..." 블록)
+#   진짜 per-point: top2/top1 score ratio(매칭 모호도)가 miss 를 예측하나. periodicity 천장 0.61 과 비교.
+n = ____      miss = ____      hit = ____
+mean peak_ratio:   miss = ____      hit = ____         (miss > hit 여야 신호)
+AUC = ____          (periodicity 0.61 대비; ≥0.7 쓸만 / ≥0.8 강함)
+Youden tau* = ____    (TPR = ____   FPR = ____ )
+판정: ________________________________________   (">>> 판정: ... →" 뒤 문장)
+# AUC≥0.7 → production fail-time 모호 플래그 + C4 distinctiveness 포팅.
+# <0.7 → match-time 신호도 약함 → 재등록은 직접 miss 라벨 / per-case escalation.
+# vs periodicity: 0.61 대비 크게↑면 "match-time 이 옳은 축"(template 고유는 죽음) 확증.
+
 ──────────────────────────────────────────────
 ★ [A/B — RUN1 : C1]   proposer = C1
 #   "=== consensus 재등록 A/B (cond, LOO; 이 블록만 읽어주면 됨) ===" 블록

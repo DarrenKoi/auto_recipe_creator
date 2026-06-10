@@ -115,6 +115,26 @@ def test_template_periodicity_max_lag_caps_far_peak():
     assert wide > capped
 
 
+def test_peak_isolation_ratio_distinctive_low():
+    # top1 독주(0.9) vs 약한 2nd(0.2) → ratio≈0.22 (distinctive, hit-like).
+    cands = [ep._Cand(xy=(10, 10), score=0.9, scale=1.0),
+             ep._Cand(xy=(80, 80), score=0.2, scale=1.0)]
+    assert lab.peak_isolation_ratio(cands) < 0.3
+
+
+def test_peak_isolation_ratio_ambiguous_high():
+    # top1≈top2 (flat surface, 반복 패턴) → ratio≈0.98 (ambiguous, miss-like).
+    cands = [ep._Cand(xy=(10, 10), score=0.61, scale=1.0),
+             ep._Cand(xy=(80, 80), score=0.60, scale=1.0)]
+    assert lab.peak_isolation_ratio(cands) > 0.9
+
+
+def test_peak_isolation_ratio_single_or_empty_zero():
+    # 후보 0/1개 → 경쟁 peak 없음 → 0.0(모호 없음).
+    assert lab.peak_isolation_ratio([]) == 0.0
+    assert lab.peak_isolation_ratio([ep._Cand(xy=(10, 10), score=0.7, scale=1.0)]) == 0.0
+
+
 def test_miss_predictor_strong_signal():
     # miss 가 일관되게 높은 score → 완전 분리: AUC 1.0, Youden J 1.0 (TPR 1·FPR 0).
     scores = [0.8, 0.9, 0.85, 0.95, 0.1, 0.2, 0.15, 0.05]

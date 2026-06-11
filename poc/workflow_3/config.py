@@ -72,7 +72,9 @@ class Workflow3Settings(WorkflowSettings):
     engineer_done_relocalize_after_miss: int = 3  # 변화 후 OCR 연속 미검출 시 재grounding.
     engineer_done_roi_pad_x: float = 0.03  # grounding 점 -> crop 확장 비율(가로, 창 대비).
     engineer_done_roi_pad_y: float = 0.02  # grounding 점 -> crop 확장 비율(세로, 창 대비).
-    engineer_done_vlm_service: str = "ui-venus-1.5-8b"  # grounding 서비스 slug.
+    # 주의: Workflow1VLMClient 는 모델명이 아니라 flask_vlm 의 route_slug 를 받는다
+    # ("ui-venus" O, "ui-venus-1.5-8b" X - workflow_2 스크립트들과 동일 규약).
+    engineer_done_vlm_service: str = "ui-venus"  # grounding 서비스 slug.
     engineer_done_ocr_service: str = "paddleocr-vl-1.5"  # 분자 OCR 서비스 slug.
 
     # --- consensus S-image gather ---
@@ -82,7 +84,7 @@ class Workflow3Settings(WorkflowSettings):
     # --- CV 보정 ---
     correction_enabled: bool = True
     correction_dry_run: bool = True  # False 는 SAFE_MODE off + env 명시(0)일 때만.
-    ok_button_vlm_service: str = "ui-venus-1.5-8b"
+    ok_button_vlm_service: str = "ui-venus"  # route_slug (모델명 "ui-venus-1.5-8b" 아님).
     sem_mode_default: str = "SEM"
     sem_controller_settle_sec: float = 0.5
     zoom_scroll_dy: int = 1
@@ -126,7 +128,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         gather_max_events=env_int("ALIGN_FAIL_GATHER_MAX_EVENTS", 5),
         correction_enabled=env_flag("ALIGN_FAIL_CORRECTION", default=True),
         correction_dry_run=correction_dry_run,
-        ok_button_vlm_service=_env_str("ALIGN_OK_BUTTON_VLM_SERVICE", "ui-venus-1.5-8b"),
+        ok_button_vlm_service=_env_str("ALIGN_OK_BUTTON_VLM_SERVICE", "ui-venus"),
         sem_mode_default=_env_str("ALIGN_SEM_MODE_DEFAULT", "SEM"),
         sem_controller_settle_sec=env_float("ALIGN_SEM_SETTLE_SEC", 0.5),
         zoom_scroll_dy=env_int("ALIGN_SEM_ZOOM_SCROLL_DY", 1),
@@ -137,7 +139,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         engineer_done_relocalize_after_miss=env_int("ALIGN_FAIL_ENGINEER_DONE_RELOCALIZE_MISS", 3),
         engineer_done_roi_pad_x=env_float("ALIGN_FAIL_ENGINEER_DONE_ROI_PAD_X", 0.03),
         engineer_done_roi_pad_y=env_float("ALIGN_FAIL_ENGINEER_DONE_ROI_PAD_Y", 0.02),
-        engineer_done_vlm_service=_env_str("ALIGN_FAIL_ENGINEER_DONE_VLM_SERVICE", "ui-venus-1.5-8b"),
+        engineer_done_vlm_service=_env_str("ALIGN_FAIL_ENGINEER_DONE_VLM_SERVICE", "ui-venus"),
         engineer_done_ocr_service=_env_str("ALIGN_FAIL_ENGINEER_DONE_OCR_SERVICE", "paddleocr-vl-1.5"),
         reregister_second_ratio_threshold=env_float("ALIGN_FAIL_REREGISTER_RATIO", 0.98),
     )

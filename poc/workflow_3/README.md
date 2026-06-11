@@ -70,7 +70,7 @@ uv run python poc/workflow_3/monitor/engineer_done.py
 | `ALIGN_FAIL_ENGINEER_DONE_DETECT` | 0 | 측정-시작(Recipe Monitor 분자) 감지로 engineer watch 조기 종료. 캘리브레이션(`monitor/engineer_done.py` 단독 실행, 측정 중 tool 대상) 검증 후 `1`. |
 | `ALIGN_FAIL_ENGINEER_DONE_POLL_SEC` | 8.0 | watch 안 감지기 호출 간격 |
 | `ALIGN_FAIL_ENGINEER_DONE_MIN_COUNT` | 2 | done 으로 보는 최소 분자값(연속 2회 확인) |
-| `ALIGN_FAIL_ENGINEER_DONE_VLM_SERVICE` | `ui-venus-1.5-8b` | 분자 위치 grounding 서비스 |
+| `ALIGN_FAIL_ENGINEER_DONE_VLM_SERVICE` | `ui-venus` | 분자 위치 grounding 서비스 (route_slug, 모델명 아님) |
 | `ALIGN_FAIL_ENGINEER_DONE_OCR_SERVICE` | `paddleocr-vl-1.5` | 분자 OCR 서비스 |
 | `ALIGN_FAIL_ENGINEER_DONE_CHANGE_MIN_PX` | 4 | CV gate 변화 픽셀 임계(다운샘플) - 감지가 둔하면 낮추고 과민하면 올린다 |
 | `ALIGN_FAIL_ENGINEER_DONE_RELOCALIZE_MISS` | 3 | 변화 후 OCR 연속 미검출 N회 시 ROI 재grounding(패널 드래그 대비) |

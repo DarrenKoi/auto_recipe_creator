@@ -42,7 +42,7 @@ def test_settings_defaults() -> bool:
     ok &= _check("relocalize_after_miss default 3", s.engineer_done_relocalize_after_miss == 3)
     ok &= _check("roi_pad_x default 0.03", s.engineer_done_roi_pad_x == 0.03)
     ok &= _check("roi_pad_y default 0.02", s.engineer_done_roi_pad_y == 0.02)
-    ok &= _check("vlm_service default ui-venus", s.engineer_done_vlm_service == "ui-venus-1.5-8b")
+    ok &= _check("vlm_service default ui-venus", s.engineer_done_vlm_service == "ui-venus")
     ok &= _check("ocr_service default paddleocr", s.engineer_done_ocr_service == "paddleocr-vl-1.5")
     return ok
 
@@ -64,7 +64,7 @@ def test_settings_env_load_path() -> bool:
     ok &= _check("env path detect_enabled False", s.engineer_done_detect_enabled is False)
     ok &= _check("env path poll_sec 8.0", s.engineer_done_poll_sec == 8.0)
     ok &= _check("env path min_count 2", s.engineer_done_min_count == 2)
-    ok &= _check("env path services", s.engineer_done_vlm_service == "ui-venus-1.5-8b" and s.engineer_done_ocr_service == "paddleocr-vl-1.5")
+    ok &= _check("env path services", s.engineer_done_vlm_service == "ui-venus" and s.engineer_done_ocr_service == "paddleocr-vl-1.5")
     return ok
 
 

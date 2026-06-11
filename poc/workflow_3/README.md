@@ -87,6 +87,7 @@ uv run python poc/workflow_3/monitor/engineer_done_align_adjustment.py
 | `ALIGN_SEM_MODE_OVERRIDE` | (없음) | read_mode v0 강제값 (`OM`/`SEM`) |
 | `ALIGN_FAIL_GATHER_SUCCESS` | 1 | consensus gather 활성(최근 S 이미지 stage) — 0 으로 끄면 gather 전체 skip |
 | `ALIGN_FAIL_GATHER_MAX_EVENTS` | 5 | 한 알람당 stage 할 최근 성공 event 수 (이미지 수 아님) |
+| `ALIGN_FAIL_FEASIBILITY_MARK` | 1 | 점검 모니터(`align_fail_monitor_only_check`) 전용. 캡처 후 rcp 엔진으로 보정 가능/불가/모호를 판정해 캡처 옆 `<tag>_rcs_marked.jpg` + `<tag>_feasibility.json` 생성, consensus cache S event 수도 표기. production 보정 루프엔 영향 없음 |
 | `ALIGN_CONSENSUS_CACHE_DIR` | `poc/workflow_3/align_consensus_cache` | staged S 이미지 캐시 루트 override |
 | `WORKFLOW3_FILE_LOG_DETAIL` | 0 | 1 이면 `logs/*.log` 에 info 이벤트/VLM 성공 호출까지 기록. 기본은 warning/error 만 파일 기록 |
 | `WORKFLOW3_LOG_LEVEL` | INFO | 파일 로거 레벨. 구버전 `WORK2_LOG_LEVEL` 도 fallback 으로 읽음 |

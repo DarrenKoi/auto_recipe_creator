@@ -1,16 +1,23 @@
 """실시간 Align Fail '점검 전용' 모니터링 루프 — workflow_3 보조 진입점.
 
 `align_fail_monitor.py` 의 경량 변형이다. 알람마다 [접속 → 첫 화면 1장 캡처 →
-tool 닫기] 만 수행하고, 상시 녹화 / SEM panel 확보 / CV 보정 / engineer watch 는
-전부 뺀다. 과거 데이터 수집은 그대로 유지한다:
+tool 닫기] 만 수행하고(실제 reposition/OK 클릭 = 보정 actuation 은 안 함), 상시 녹화 /
+SEM panel 확보 / engineer watch 는 전부 뺀다. 과거 데이터 수집은 그대로 유지한다:
 
   * rcp / msr 이미지: office MES 가 align_images 트리에 직접 적재(코드 개입 없음).
     물리 루트가 workflow_3 로 잡혀 있으면 캡처도 같은 트리에 모인다.
   * 최근 성공(S) align 이미지: monitor 의 `gather_success_async` 가 비차단 다운로드.
 
-용도: fail 시점 화면을 한 장 박제하고 과거 데이터만 모으는 데이터 수집/점검 모드.
-실제 보정은 production `align_fail_monitor.py` 가 담당한다. 폴링/edge-trigger/로그/
-manifest 골격은 production 과 동일하며, 알람별 사이클만 `run_check_only_cycle` 로
+캡처 직후, tool 을 닫은 뒤 디스크 저장본으로 **보정 가능성** 을 정적 판정한다
+(`run_check_only_cycle` 내부 → `vision.feasibility_check.mark_align_feasibility`):
+검증된 rcp align key 엔진으로 가능/불가/모호를 가리고, align_consensus_cache 의 최근
+성공(S) event 수를 read-only 로 함께 표기해 캡처 옆에 `<tag>_rcs_marked.jpg` +
+`<tag>_feasibility.json` 으로 남긴다. 엔지니어가 마킹 한 장으로 "이 fail 은 자동
+보정이 됐을까" 를 눈으로 확인하는 평가/점검용이다.
+
+용도: fail 시점 화면 박제 + 과거 데이터 수집 + 보정 가능성 마킹(데이터 수집/점검 모드).
+실제 보정 actuation 은 production `align_fail_monitor.py` 가 담당한다. 폴링/edge-trigger/
+로그/manifest 골격은 production 과 동일하며, 알람별 사이클만 `run_check_only_cycle` 로
 교체한다.
 
 사용법:
@@ -179,14 +186,16 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
         f"주기={settings.poll_interval_sec}s, 윈도우={settings.detection_window_sec}s, "
         f"팝업={'on' if settings.popup_enabled else 'off'}, "
         f"사이클={'on' if settings.cycle_enabled else 'off'}, "
-        f"성공이미지수집={'on' if settings.gather_enabled else 'off'})"
+        f"성공이미지수집={'on' if settings.gather_enabled else 'off'}, "
+        f"보정가능성마킹={'on' if settings.feasibility_mark_enabled else 'off'})"
     )
     print(f"[INFO] 알람 로그: {ALARM_LOG_PATH}")
     print(f"[INFO] 점검 manifest: {CYCLE_MANIFEST_PATH}")
     print(
-        "[INFO] 각 신규 Align Fail: RCS 확보 → 접속 → 첫 화면 1장 캡처 → tool 닫기. "
+        "[INFO] 각 신규 Align Fail: RCS 확보 → 접속 → 첫 화면 1장 캡처 → tool 닫기 → "
+        "보정 가능성 판정(_marked.jpg/_feasibility.json). "
         "과거 데이터(rcp/msr=MES 적재, 성공 S 이미지=gather)도 함께 수집. "
-        "보정/녹화는 하지 않음(production 모니터 담당). 중복 알람은 한 번만 처리."
+        "보정 actuation/녹화는 하지 않음(production 모니터 담당). 중복 알람은 한 번만 처리."
     )
 
     while True:

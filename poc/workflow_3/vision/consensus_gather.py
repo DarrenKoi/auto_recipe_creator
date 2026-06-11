@@ -73,6 +73,41 @@ def _events_dir_for(eqp_id, recipe_id, cache_root):
     return Path(cache_root) / eqp_id / recipe_id / "events"
 
 
+# S 이미지로 인정하는 확장자 (gather 가 쓰는 형식 + 안전 마진).
+_S_IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff")
+
+
+def count_staged_events(eqp_id, recipe_id, *,
+                        cache_root=ALIGN_CONSENSUS_CACHE_DIR) -> tuple:
+    """이미 stage 된 consensus event 수와 S 이미지 수를 센다(읽기 전용).
+
+    feasibility 마킹/manifest 의 "consensus 자료 얼마나 있나" 컨텍스트용. gather 와
+    같은 events/ 레이아웃을 쓰되 아무것도 쓰지 않는다. 없으면 (0, 0). `(n_events,
+    n_images)` 반환. recipe_id 비거나 경로 부재/예외면 (0, 0).
+    """
+    if not recipe_id:
+        return 0, 0
+    events_dir = _events_dir_for(eqp_id, recipe_id, cache_root)
+    if not events_dir.is_dir():
+        return 0, 0
+    n_events = 0
+    n_images = 0
+    try:
+        for ev in sorted(events_dir.iterdir()):
+            if not ev.is_dir():
+                continue
+            imgs = [
+                p for p in ev.glob("S*")
+                if p.is_file() and p.suffix.lower() in _S_IMAGE_EXTS
+            ]
+            if imgs:
+                n_events += 1
+                n_images += len(imgs)
+    except OSError:
+        return n_events, n_images
+    return n_events, n_images
+
+
 def gather_success_images(eqp_id, recipe_id, *, downloader,
                           max_events=GATHER_MAX_EVENTS,
                           cache_root=ALIGN_CONSENSUS_CACHE_DIR) -> GatherResult:
@@ -128,5 +163,6 @@ __all__ = [
     "GatherResult",
     "StagedEvent",
     "SuccessDownloader",
+    "count_staged_events",
     "gather_success_images",
 ]

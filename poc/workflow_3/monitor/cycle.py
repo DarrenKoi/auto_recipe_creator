@@ -740,6 +740,35 @@ def run_check_only_cycle(
             block_input(False, debug_label=f"align_fail_check {eqp_id}")
             input_blocked = False
 
+    # 캡처 성공 시 (tool 닫힌 뒤, 디스크 저장본으로) 보정 가능성 정적 분석 + 화면 마킹.
+    # rcp 자산을 특정하려면 recipe_id 가 있어야 한다(없으면 skip). verdict 는 검증된
+    # rcp 엔진이 내고, consensus cache 의 S event 수는 read-only 컨텍스트로 표기된다.
+    capture_path = context.get("capture_path")
+    if capture_path is not None and recipe_id and settings.feasibility_mark_enabled:
+        try:
+            from poc.workflow_3.vision.feasibility_check import mark_align_feasibility
+
+            feas = mark_align_feasibility(
+                Path(capture_path),
+                eqp_id=eqp_id,
+                recipe_id=recipe_id,
+                cond_box_crop=settings.cond_box_crop,
+                reregister_ratio_threshold=settings.reregister_second_ratio_threshold,
+            )
+            # verdict 를 manifest 컬럼에 매핑(별도 컬럼 없이 기존 필드 재사용).
+            result.outcome_status = feas.verdict
+            result.key_decision = feas.decision
+            if feas.align_xy is not None:
+                result.best_xy = f"({feas.align_xy[0]},{feas.align_xy[1]})"
+            if feas.marked_path is not None:
+                result.outcome_path = str(feas.marked_path)
+        except Exception as exc:
+            print(f"[WARNING] feasibility 분석 실패(캡처는 유지): {exc}")
+            log_work2_event(
+                component=LOG_COMPONENT, message="feasibility_error", level="warning",
+                eqp_id=eqp_id, error=str(exc),
+            )
+
     return result
 
 

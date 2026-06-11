@@ -89,6 +89,12 @@ class Workflow3Settings(WorkflowSettings):
     gather_enabled: bool = True
     gather_max_events: int = 5  # vision/consensus_gather.py 의 GATHER_MAX_EVENTS 와 동일 값 유지.
 
+    # --- 점검 모니터 보정 가능성 마킹 ---
+    # 점검 전용 사이클(align_fail_monitor_only_check)에서 캡처 후 rcp 엔진으로 보정
+    # 가능/불가를 판정해 캡처 옆 _marked.jpg + _feasibility.json 으로 남길지. consensus
+    # cache 의 S event 수도 read-only 로 표기. production 보정 사이클에는 영향 없음.
+    feasibility_mark_enabled: bool = True
+
     # --- CV 보정 ---
     correction_enabled: bool = True
     correction_dry_run: bool = True  # False 는 SAFE_MODE off + env 명시(0)일 때만.
@@ -140,6 +146,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         engineer_watch_sec=env_float("ALIGN_FAIL_ENGINEER_WATCH_SEC", 300.0),
         gather_enabled=env_flag("ALIGN_FAIL_GATHER_SUCCESS", default=True),
         gather_max_events=env_int("ALIGN_FAIL_GATHER_MAX_EVENTS", 5),
+        feasibility_mark_enabled=env_flag("ALIGN_FAIL_FEASIBILITY_MARK", default=True),
         correction_enabled=env_flag("ALIGN_FAIL_CORRECTION", default=True),
         correction_dry_run=correction_dry_run,
         ok_button_vlm_service=_env_str("ALIGN_OK_BUTTON_VLM_SERVICE", "ui-venus"),

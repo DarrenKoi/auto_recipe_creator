@@ -87,7 +87,11 @@ class Workflow3Settings(WorkflowSettings):
 
     # --- consensus S-image gather ---
     gather_enabled: bool = True
-    gather_max_events: int = 5  # align/consensus_gather.py 의 GATHER_MAX_EVENTS 와 동일 값 유지.
+    gather_max_events: int = 8  # align/consensus_gather.py 의 GATHER_MAX_EVENTS 와 동일 값 유지.
+    consensus_enabled: bool = True            # consensus 라우팅 마스터 토글(off -> 순수 rcp).
+    consensus_min_s: int = 4                  # modality별 build·신뢰 최소 S(floor 3).
+    consensus_sync_timeout_sec: float = 8.0   # cold-cache bounded 대기(초).
+    consensus_refresh_ttl_sec: int = 21600    # gather 재fetch TTL(초, 6h).
 
     # --- 점검 모니터 보정 가능성 마킹 ---
     # 점검 전용 사이클(align_fail_monitor_only_check)에서 캡처 후 rcp 엔진으로 보정
@@ -145,7 +149,11 @@ def load_workflow3_settings() -> Workflow3Settings:
         recording_max_sec=env_float("ALIGN_FAIL_RECORDING_MAX_SEC", 900.0),
         engineer_watch_sec=env_float("ALIGN_FAIL_ENGINEER_WATCH_SEC", 300.0),
         gather_enabled=env_flag("ALIGN_FAIL_GATHER_SUCCESS", default=True),
-        gather_max_events=env_int("ALIGN_FAIL_GATHER_MAX_EVENTS", 5),
+        gather_max_events=env_int("ALIGN_FAIL_GATHER_MAX_EVENTS", 8),
+        consensus_enabled=env_flag("ALIGN_FAIL_CONSENSUS", default=True),
+        consensus_min_s=max(3, env_int("ALIGN_FAIL_CONSENSUS_MIN_S", 4)),
+        consensus_sync_timeout_sec=env_float("ALIGN_FAIL_CONSENSUS_SYNC_TIMEOUT", 8.0),
+        consensus_refresh_ttl_sec=env_int("ALIGN_FAIL_CONSENSUS_REFRESH_TTL", 21600),
         feasibility_mark_enabled=env_flag("ALIGN_FAIL_FEASIBILITY_MARK", default=True),
         correction_enabled=env_flag("ALIGN_FAIL_CORRECTION", default=True),
         correction_dry_run=correction_dry_run,

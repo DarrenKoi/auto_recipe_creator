@@ -71,14 +71,6 @@ def close_tool(
         return ToolCloseResult(EXIT_INVALID_TOOL_NAME, tool_name or "")
 
     started_at = time.time()
-    log_work2_event(
-        component=COMPONENT_NAME,
-        message="close_started",
-        log_name=LOG_NAME,
-        target_tool_name=normalized,
-        action_enabled=action_enabled,
-    )
-
     tool_window, window_title, backend = wait_for_remote_monitoring_window(
         normalized,
         timeout_sec=window_timeout_sec,
@@ -133,14 +125,6 @@ def close_tool(
     print(
         f"[INFO] close_tool 완료: tool={normalized!r}, closed={closed}, "
         f"title={window_title!r}, 소요={format_elapsed_ms(started_at)}"
-    )
-    log_work2_event(
-        component=COMPONENT_NAME,
-        message="close_finished",
-        log_name=LOG_NAME,
-        target_tool_name=normalized,
-        window_title=window_title,
-        closed=closed,
     )
     return ToolCloseResult(
         EXIT_SUCCESS if closed else EXIT_CLOSE_FAILED,

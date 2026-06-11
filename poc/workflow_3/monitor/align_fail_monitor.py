@@ -30,7 +30,6 @@ import pandas as pd
 
 from poc.workflow_3 import LOG_DIR
 from poc.workflow_3.config import Workflow3Settings, load_workflow3_settings
-from poc.workflow_3.logger import log_work2_event
 from poc.workflow_3.monitor.alarm_source import load_alarm_source
 from poc.workflow_3.monitor.cycle import CycleResult, run_alarm_cycle
 from poc.workflow_3.monitor.notify import (
@@ -378,13 +377,6 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
     print(
         "[INFO] 각 신규 Align Fail: RCS 확보 → 접속 → 상시 녹화 → SEM panel → CV 보정 "
         "→ (실패 시 cube 알림 + 엔지니어 watch) → tool 닫기. 중복 알람은 한 번만 처리."
-    )
-    log_work2_event(
-        component=LOG_COMPONENT, message="monitor_started",
-        alarm_source=source.kind, poll_interval_sec=settings.poll_interval_sec,
-        correction_enabled=settings.correction_enabled,
-        correction_dry_run=settings.correction_dry_run,
-        safe_mode=settings.safe_mode,
     )
 
     while True:

@@ -162,12 +162,6 @@ def main() -> str:
     script_started_at = time.time()
     info(f"script start: exe_path={RCS_EXE}")
     info(f"OPEN_ANOTHER_RCS_PROCESS={OPEN_ANOTHER_RCS_PROCESS}")
-    log_work2_event(
-        component="open_rcs",
-        message="script_started",
-        log_name=LOG_NAME,
-        exe_path=RCS_EXE,
-    )
 
     if not RCS_EXE.exists():
         error(f"실행 파일을 찾을 수 없습니다: {RCS_EXE}")
@@ -191,22 +185,6 @@ def main() -> str:
         existing_pid = int(existing_processes[0]["pid"])
         info(f"기존 RCS 프로세스가 이미 실행 중이므로 새로 열지 않습니다: pid={existing_pid}")
         write_open_rcs_state(existing_pid, EXIT_ALREADY_OPEN)
-        log_work2_event(
-            component="open_rcs",
-            message="launch_skipped_already_open",
-            log_name=LOG_NAME,
-            exe_path=RCS_EXE,
-            existing_processes=existing_processes,
-        )
-        log_work2_event(
-            component="open_rcs",
-            message="script_finished",
-            log_name=LOG_NAME,
-            result=EXIT_ALREADY_OPEN,
-            exe_path=RCS_EXE,
-            pid=existing_pid,
-            elapsed_ms=f"{(time.time() - script_started_at) * 1000:.1f}",
-        )
         return EXIT_ALREADY_OPEN
 
     try:
@@ -241,15 +219,6 @@ def main() -> str:
     info(f"RCS 실행 요청 완료: pid={process.pid}")
     write_open_rcs_state(process.pid, EXIT_SUCCESS)
     info(f"open_rcs end-to-end elapsed={format_elapsed_ms(script_started_at)}")
-    log_work2_event(
-        component="open_rcs",
-        message="script_finished",
-        log_name=LOG_NAME,
-        result=EXIT_SUCCESS,
-        exe_path=RCS_EXE,
-        pid=process.pid,
-        elapsed_ms=f"{(time.time() - script_started_at) * 1000:.1f}",
-    )
     return EXIT_SUCCESS
 
 

@@ -32,7 +32,6 @@ import cv2
 import numpy as np
 
 from poc.workflow_3 import TEMPLATES_DIR
-from poc.workflow_3.logger import log_work2_event
 # util/__init__ 는 pynput/pywinauto 부재 시 None 을 바인딩한다(import-안전).
 # 실제 호출은 오피스(Windows+의존성 설치) 환경에서만 일어난다.
 from poc.workflow_3.util import (
@@ -173,11 +172,6 @@ class RCSSEMMonitor:
         screen_point = self._frame_point_to_screen(px, py)
         if screen_point is None:
             raise RuntimeError("move_to_point: 창 좌표→스크린 변환 실패")
-        log_work2_event(
-            component=LOG_COMPONENT, message="move_to_point",
-            fov=f"({fov_x},{fov_y})", screen=f"({screen_point['x']},{screen_point['y']})",
-            action_enabled=self.action_enabled,
-        )
         click_at_screen(
             screen_point, "sem_recenter", 2, action_enabled=self.action_enabled
         )
@@ -190,11 +184,6 @@ class RCSSEMMonitor:
         screen_point = self._frame_point_to_screen(screen_x, screen_y)
         if screen_point is None:
             raise RuntimeError("click_screen: 창 좌표→스크린 변환 실패")
-        log_work2_event(
-            component=LOG_COMPONENT, message="click_screen",
-            frame=f"({screen_x},{screen_y})", screen=f"({screen_point['x']},{screen_point['y']})",
-            action_enabled=self.action_enabled,
-        )
         click_at_screen(
             screen_point, "sem_dialog_click", 1, action_enabled=self.action_enabled
         )
@@ -213,10 +202,6 @@ class RCSSEMMonitor:
         if screen_point is None:
             raise RuntimeError("zoom: 창 좌표→스크린 변환 실패")
         dy = int(direction) * self.zoom_scroll_dy
-        log_work2_event(
-            component=LOG_COMPONENT, message="zoom",
-            direction=direction, dy=dy, action_enabled=self.action_enabled,
-        )
         scroll_at_screen(screen_point, dy, "sem_zoom", 0, action_enabled=self.action_enabled)
         if self.settle_sec > 0:
             time.sleep(self.settle_sec)

@@ -748,22 +748,6 @@ def analyze_window_target(
         f"point=({refined_full_point['x']}, {refined_full_point['y']}), "
         f"elapsed={format_elapsed_ms(started_at)}"
     )
-    log_work2_event(
-        component=component_name,
-        message="analysis_finished",
-        log_name=log_name,
-        backend=backend,
-        window_title=window_title,
-        target_key=target.key,
-        coarse_service=coarse_service_slug,
-        refine_service=refine_service_slug,
-        coarse_model=coarse_client.model_name,
-        refine_model=refine_client.model_name,
-        coarse_bbox=coarse_result["bbox_pixels"],
-        crop_box=crop_box,
-        final_point=refined_full_point,
-        elapsed_ms=f"{(time.time() - started_at) * 1000:.1f}",
-    )
     return TargetResult(
         EXIT_SUCCESS,
         target.key,

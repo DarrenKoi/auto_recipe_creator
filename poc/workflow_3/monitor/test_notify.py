@@ -75,7 +75,7 @@ def test_summary_threshold_none_skips_recommend() -> bool:
 
 
 def test_notify_corrected_ambiguous_audits_no_cube() -> bool:
-    """corrected+모호 → corrected_but_ambiguous audit 1건·cube 0건(성공이라 spam 없음)."""
+    """corrected+모호 → warning audit 1건·cube 0건(성공이라 spam 없음)."""
     events = _patch_events()
     cube = _patch_cube_recorder()
     notify_correction_outcome(
@@ -89,6 +89,7 @@ def test_notify_corrected_ambiguous_audits_no_cube() -> bool:
         and "corrected_no_notify" not in messages
         and len(cube) == 0
         and ev is not None
+        and ev.get("level") == "warning"
         and ev.get("eqp_id") == "EQP1"
         and ev.get("recipe_id") == "CLS/RCP"
     )
@@ -98,7 +99,7 @@ def test_notify_corrected_ambiguous_audits_no_cube() -> bool:
 
 
 def test_notify_corrected_distinct_no_notify() -> bool:
-    """corrected+유일 → 기존 corrected_no_notify, cube 0건."""
+    """corrected+유일 → 파일 audit 없음, cube 0건."""
     events = _patch_events()
     cube = _patch_cube_recorder()
     notify_correction_outcome(
@@ -107,11 +108,11 @@ def test_notify_corrected_distinct_no_notify() -> bool:
     )
     messages = [e.get("message") for e in events]
     ok = (
-        "corrected_no_notify" in messages
-        and "corrected_but_ambiguous" not in messages
+        messages == []
         and len(cube) == 0
     )
-    print(f"[{'PASS' if ok else 'FAIL'}] corrected_distinct_no_notify: messages={messages}")
+    print(f"[{'PASS' if ok else 'FAIL'}] corrected_distinct_no_notify: "
+          f"messages={messages} cube_calls={len(cube)}")
     return ok
 
 

@@ -466,15 +466,6 @@ def correct_align_fail(
         if not dry_run:
             controller.click_screen(ok_xy[0], ok_xy[1])
 
-    log_work2_event(
-        component=LOG_COMPONENT,
-        message="corrected",
-        level="info",
-        key_decision=result.decision,
-        best_xy=f"({cx},{cy})",
-        ok_screen_xy=str(ok_xy),
-        dry_run=dry_run,
-    )
     return _with_key_ambiguity(
         CorrectionOutcome(
             status="corrected",

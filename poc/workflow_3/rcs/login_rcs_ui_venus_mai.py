@@ -107,14 +107,6 @@ def main() -> str:
     target = PREDEFINED_TARGETS[ACTIVE_TARGET_KEY]
 
     script_started_at = time.time()
-    log_work2_event(
-        component=COMPONENT_NAME,
-        message="script_started",
-        log_name=LOG_NAME,
-        coarse_service="ui-venus",
-        refine_service="mai-ui",
-        target_key=target.key,
-    )
 
     login_window, window_title, backend = find_login_window()
     if login_window is None:
@@ -133,16 +125,6 @@ def main() -> str:
 
     result = analyze_login_target(login_window, window_title, backend, target)
     print(f"[INFO] {LOG_NAME} 총 소요: {format_elapsed_ms(script_started_at)}")
-    log_work2_event(
-        component=COMPONENT_NAME,
-        message="script_finished",
-        log_name=LOG_NAME,
-        result=result.exit_code,
-        target_key=target.key,
-        window_title=window_title,
-        backend=backend,
-        elapsed_ms=f"{(time.time() - script_started_at) * 1000:.1f}",
-    )
     return result.exit_code
 
 

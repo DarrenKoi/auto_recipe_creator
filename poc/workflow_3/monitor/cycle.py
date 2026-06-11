@@ -201,11 +201,7 @@ def _exec_ensure_rcs_ready(step, context, settings: Workflow3Settings) -> StepRe
             from poc.workflow_3.rcs.workflow_login import run_login_workflow
 
             launch_rcs(RCS_EXE)
-            login_run = run_login_workflow(settings)
-            log_work2_event(
-                component=LOG_COMPONENT, message="rcs_recovery_login",
-                status=login_run.status, run_dir=str(login_run.run_dir),
-            )
+            run_login_workflow(settings)
             window, title, backend = wait_for_rcs_main_window(timeout_sec=30.0)
         except Exception as exc:
             return _make_result(
@@ -438,9 +434,6 @@ def _engineer_watch(
             try:
                 if done_detector():
                     print("[INFO] 측정 시작 감지(align 완료 추정) - engineer watch 조기 종료")
-                    log_work2_event(
-                        component=LOG_COMPONENT, message="engineer_done_detected"
-                    )
                     break
             except Exception as exc:
                 print(f"[WARNING] done detector 예외(무시, cap 으로 진행): {exc}")
@@ -555,12 +548,6 @@ def run_alarm_cycle(
                 print(f"[WARNING] tool 창 닫기 실패: {exc}")
         close_alert_window(timeout_sec=settings.alert_close_timeout_sec)
 
-    log_work2_event(
-        component=LOG_COMPONENT, message="cycle_finished",
-        eqp_id=eqp_id, recipe_id=recipe_id, run_status=result.run_status,
-        outcome_status=result.outcome_status, failed_step=result.failed_step,
-        failure_class=result.failure_class, frame_count=result.frame_count,
-    )
     return result
 
 

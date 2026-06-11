@@ -1465,15 +1465,6 @@ def main() -> str:
     started_at = time.time()
     target_tool_name = load_target_tool_name(DEFAULT_TARGET_TOOL_NAME)
 
-    log_work2_event(
-        component=COMPONENT_NAME,
-        message="script_started",
-        log_name=LOG_NAME,
-        target_tool_name=target_tool_name,
-        ocr_service=OCR_SERVICE_SLUG,
-        action_enabled=DEFAULT_ACTION_ENABLED,
-    )
-
     main_window, window_title, backend = wait_for_rcs_main_window()
     if main_window is None:
         print(

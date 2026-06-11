@@ -92,11 +92,6 @@ def gather_success_async(eqp_id, recipe_id, settings: Workflow3Settings):
                 )
                 print(f"[INFO] consensus gather: EQP_ID={eqp_id} recipe={recipe_id} "
                       f"reason={result.reason} events={result.n_events} images={result.n_images}")
-                log_work2_event(
-                    component=LOG_COMPONENT, message="gather_done",
-                    eqp_id=eqp_id, recipe_id=recipe_id, reason=result.reason,
-                    n_events=result.n_events, n_images=result.n_images,
-                )
             except Exception as exc:
                 print(f"[WARNING] consensus gather 예외: EQP_ID={eqp_id}, error={exc}")
                 log_work2_event(

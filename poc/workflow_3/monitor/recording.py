@@ -35,7 +35,6 @@ from pathlib import Path
 import numpy as np
 
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
-from poc.workflow_3.logger import log_work2_event
 from poc.workflow_3.util import capture_window
 
 LOG_COMPONENT = "align_fail_recording"
@@ -210,14 +209,6 @@ class RecordingSession:
         print(
             f"[INFO] 녹화 종료: saved={len(self.frames)}/{self.sampled_count} sampled, "
             f"reason={self.stop_reason}, dir={self.out_dir}"
-        )
-        log_work2_event(
-            component=LOG_COMPONENT,
-            message="recording_finished",
-            frame_count=len(self.frames),
-            sampled_count=self.sampled_count,
-            stop_reason=self.stop_reason,
-            out_dir=str(self.out_dir),
         )
 
 

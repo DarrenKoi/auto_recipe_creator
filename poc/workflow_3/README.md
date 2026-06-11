@@ -82,9 +82,12 @@ uv run python poc/workflow_3/monitor/engineer_done.py
 | `ALIGN_FAIL_GATHER_SUCCESS` | 1 | consensus gather 활성(최근 S 이미지 stage) — 0 으로 끄면 gather 전체 skip |
 | `ALIGN_FAIL_GATHER_MAX_EVENTS` | 5 | 한 알람당 stage 할 최근 성공 event 수 (이미지 수 아님) |
 | `ALIGN_CONSENSUS_CACHE_DIR` | `poc/workflow_3/align_consensus_cache` | staged S 이미지 캐시 루트 override |
+| `WORKFLOW3_FILE_LOG_DETAIL` | 0 | 1 이면 `logs/*.log` 에 info 이벤트/VLM 성공 호출까지 기록. 기본은 warning/error 만 파일 기록 |
+| `WORKFLOW3_LOG_LEVEL` | INFO | 파일 로거 레벨. 구버전 `WORK2_LOG_LEVEL` 도 fallback 으로 읽음 |
 
 ## 산출물 경로
 
+- 파일 로그: 기본은 warning/error 만 기록 (`WORKFLOW3_FILE_LOG_DETAIL=1` 일 때 상세 info 기록)
 - 알람 로그: `poc/workflow_3/logs/align_fail_alarms.txt`
 - 사이클 manifest: `poc/workflow_3/logs/align_fail_cycles.csv` (알람 1건 = 1줄: run_status/failed_step/outcome/녹화 경로)
 - step journal: `poc/workflow_3/logs/workflow_runs/<run_id>_align_fail_cycle_<eqp>/`

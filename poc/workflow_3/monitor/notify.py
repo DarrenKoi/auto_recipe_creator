@@ -223,7 +223,7 @@ def notify_correction_outcome(
 
     reregister_ratio_threshold 가 주어지면 모호 키(second_ratio>임계)를 판정한다:
     실패 경로는 summary 에 이미 권고가 실려 cube 에 나가고, corrected+모호는 cube spam
-    없이 work2.log 에 corrected_but_ambiguous audit 만 남긴다(성공이라 재발 추적용).
+    없이 warning 파일 로그에 corrected_but_ambiguous audit 만 남긴다(재발 추적용).
     """
     status = getattr(outcome, "status", None) if outcome is not None else None
     summary = build_outcome_summary(
@@ -242,16 +242,12 @@ def notify_correction_outcome(
             print(f"[INFO] 자동 보정 성공이나 모호 키 - 재등록 권장(cube 생략): "
                   f"EQP_ID={eqp_id} | {summary}")
             log_work2_event(
-                component=LOG_COMPONENT, message="corrected_but_ambiguous",
+                component=LOG_COMPONENT, message="corrected_but_ambiguous", level="warning",
                 eqp_id=eqp_id, recipe_id=recipe_id,
                 second_ratio=f"{second_ratio:.3f}", summary=summary,
             )
         else:
             print(f"[INFO] 자동 보정 성공 - cube 알림 생략: EQP_ID={eqp_id} | {summary}")
-            log_work2_event(
-                component=LOG_COMPONENT, message="corrected_no_notify",
-                eqp_id=eqp_id, recipe_id=recipe_id, summary=summary,
-            )
         return
 
     log_work2_event(

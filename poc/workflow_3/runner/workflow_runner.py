@@ -5,7 +5,6 @@ import time
 from pathlib import Path
 
 from poc.workflow_3 import LOG_DIR
-from poc.workflow_3.logger import log_work2_event
 from poc.workflow_3.util import make_timestamp_tag
 from poc.workflow_3.runner.workflow_config import WorkflowSettings
 from poc.workflow_3.runner.workflow_types import (
@@ -185,14 +184,6 @@ class WorkflowRunner:
         checker = ConditionChecker(context)
         step_statuses: dict[str, str] = {}
 
-        log_work2_event(
-            component=self.component_name,
-            message="workflow_started",
-            log_name=self.log_name,
-            workflow_name=self.workflow_name,
-            run_id=run.run_id,
-            safe_mode=self.settings.safe_mode,
-        )
         self._write_run_state(run)
 
         for step_index, step in enumerate(steps):
@@ -254,16 +245,6 @@ class WorkflowRunner:
 
         run.finished_at = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime())
         self._write_run_state(run)
-        log_work2_event(
-            component=self.component_name,
-            message="workflow_finished",
-            log_name=self.log_name,
-            workflow_name=self.workflow_name,
-            run_id=run.run_id,
-            status=run.status,
-            step_count=len(run.step_results),
-            run_dir=run.run_dir,
-        )
         return run
 
     def _check_dependencies(

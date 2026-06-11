@@ -160,12 +160,6 @@ def click_list_tab_in_main_window(
 def main() -> str:
     """메인 RCS 창의 List 탭을 탐지하고 클릭한다."""
     started_at = time.time()
-    log_work2_event(
-        component=COMPONENT_NAME,
-        message="script_started",
-        log_name=LOG_NAME,
-        action_enabled=DEFAULT_ACTION_ENABLED,
-    )
 
     main_window, window_title, backend = wait_for_rcs_main_window()
     if main_window is None:

@@ -1,9 +1,7 @@
 """workflow_3 파일 로거.
 
-VLM 호출 및 일반 이벤트를 파일에 기록한다.
-기본 로그 파일:
-- VLM 호출: poc/workflow_3/logs/vlm_calls.log
-- 일반 이벤트: poc/workflow_3/logs/work2.log
+기본값은 운영 중 바로 봐야 하는 warning/error 만 파일에 남긴다.
+상세 추적이 필요할 때만 WORKFLOW3_FILE_LOG_DETAIL=1 로 info 로그를 켠다.
 """
 
 import logging
@@ -14,9 +12,10 @@ from logging.handlers import RotatingFileHandler
 from poc.workflow_3 import LOG_DIR
 
 _LOG_DIR = LOG_DIR
-_MAX_BYTES = 10 * 1024 * 1024  # 10MB
-_BACKUP_COUNT = 5
+_MAX_BYTES = 1024 * 1024
+_BACKUP_COUNT = 1
 _HANDLER_MARKER = "_workflow_3_vlm_logger"
+_DETAIL_ENV = "WORKFLOW3_FILE_LOG_DETAIL"
 
 _loggers: dict[str, logging.Logger] = {}
 
@@ -35,7 +34,11 @@ def _get_logger(log_name: str) -> logging.Logger:
         return existing
 
     logger = logging.getLogger(f"poc.workflow_3.{safe_name}")
-    level_name = os.environ.get("WORK2_LOG_LEVEL", "INFO").strip().upper()
+    level_name = (
+        os.environ.get("WORKFLOW3_LOG_LEVEL")
+        or os.environ.get("WORK2_LOG_LEVEL")
+        or "INFO"
+    ).strip().upper()
     logger.setLevel(getattr(logging, level_name, logging.INFO))
     logger.propagate = False
 
@@ -63,6 +66,20 @@ def _get_logger(log_name: str) -> logging.Logger:
 
     _loggers[safe_name] = logger
     return logger
+
+
+def _detail_enabled() -> bool:
+    """파일 info 로그 활성 여부를 반환한다."""
+    value = os.environ.get(_DETAIL_ENV, "").strip().lower()
+    return value in {"1", "true", "yes", "on", "debug", "verbose"}
+
+
+def _should_write(level: str) -> bool:
+    """warning/error 는 항상, info 는 상세 모드에서만 기록한다."""
+    normalized = (level or "info").strip().lower()
+    if normalized in {"error", "warn", "warning"}:
+        return True
+    return _detail_enabled()
 
 
 def _format_tokens(token_usage: dict[str, int] | None) -> str:
@@ -99,14 +116,16 @@ def log_vlm_call(
     log_name: str = "vlm_calls",
 ) -> None:
     """VLM 호출 결과를 로그에 기록한다."""
+    if not _should_write("error" if status != "ok" else "info"):
+        return
+
     logger = _get_logger(log_name)
     tokens = _format_tokens(token_usage)
-    response_chars = len(response_text or "")
 
     if status == "ok":
         logger.info(
-            "service=%s model=%s status=ok latency_ms=%.1f %s endpoint=%s response_chars=%s",
-            service, model, latency_ms, tokens, endpoint, response_chars,
+            "service=%s model=%s status=ok latency_ms=%.1f %s",
+            service, model, latency_ms, tokens,
         )
     else:
         logger.error(
@@ -123,7 +142,10 @@ def log_work2_event(
     log_name: str = "work2",
     **fields: object,
 ) -> None:
-    """Phase 2 일반 이벤트를 파일 로그에 기록한다."""
+    """workflow_3 일반 이벤트를 파일 로그에 기록한다."""
+    if not _should_write(level):
+        return
+
     logger = _get_logger(log_name)
     extras = _format_fields(fields)
     line = f"component={component} message={message}"

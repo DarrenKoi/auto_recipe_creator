@@ -13,14 +13,12 @@ from poc.workflow_3.rcs.login_rcs_common import (
     RCS_UPDATER_WINDOW_TITLE_PREFIX,
     WINDOW_TITLE_PREFIX,
     find_rcs_main_window,
-    find_remote_monitoring_window,
     find_rcs_updater_window,
     find_login_window,
     wait_for_rcs_main_window,
     wait_for_remote_monitoring_window,
 )
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
-from poc.workflow_3.logger import log_work2_event
 from poc.workflow_3.rcs.workflow_select_tool import (
     EXIT_SUCCESS as SELECT_TOOL_SUCCESS,
     load_target_tool_name,
@@ -1513,16 +1511,6 @@ def run_login_workflow(
         component_name=COMPONENT_NAME,
     )
 
-    log_work2_event(
-        component=COMPONENT_NAME,
-        message="workflow_entry_started",
-        log_name=LOG_NAME,
-        step_ids=[step.step_id for step in steps],
-        safe_mode=resolved_settings.safe_mode,
-        action_enabled=resolved_settings.action_enabled,
-        typing_enabled=resolved_settings.typing_enabled,
-        target_tool_name=resolved_tool_name,
-    )
     run = runner.run(
         steps,
         context,

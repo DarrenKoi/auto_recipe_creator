@@ -264,7 +264,7 @@ def test_combine_2up_has_separator_column():
 def test_matcher_for_eval_toggle(monkeypatch):
     """ALIGN_USE_ENSEMBLE 토글: 참이면 ensemble 매처, 아니면 baseline(eval 전용)."""
     import poc.workflow_2.golden_localization_eval as gle
-    from poc.workflow_2 import align_key_matcher as akm
+    from poc.workflow_3.vision import align_key_matcher as akm
 
     monkeypatch.delenv("ALIGN_USE_ENSEMBLE", raising=False)
     assert gle._matcher_for_eval() is akm.compute_align_key_score        # 기본 baseline.
@@ -345,3 +345,22 @@ def test_binned_report_skips_missing_box_and_nonS():
     near = glec._binned_localization_report(rows)["by_displacement"]["near"]
     assert near["center"]["n"] == 1
     assert near["box"] == {"n": 0, "gt_in_topk": None, "rank1": None}
+
+
+# --- Tier 1.1: ensemble 매처 hardcode (setdefault escape hatch) ---
+# akm 는 기존 test_matcher_for_eval_toggle 과 동일 경로로 — _matcher_for_eval 반환과 is-동일.
+
+def test_apply_matcher_default_forces_ensemble(monkeypatch):
+    import poc.workflow_2.golden_localization_eval as gle
+    from poc.workflow_3.vision import align_key_matcher as akm
+    monkeypatch.delenv("ALIGN_USE_ENSEMBLE", raising=False)
+    glec._apply_matcher_default()                       # 미설정 → ensemble 로 채움.
+    assert gle._matcher_for_eval() is akm.compute_align_key_score_ensemble
+
+
+def test_apply_matcher_default_respects_explicit_off(monkeypatch):
+    import poc.workflow_2.golden_localization_eval as gle
+    from poc.workflow_3.vision import align_key_matcher as akm
+    monkeypatch.setenv("ALIGN_USE_ENSEMBLE", "0")       # 명시적 0 → 유지(escape hatch).
+    glec._apply_matcher_default()
+    assert gle._matcher_for_eval() is akm.compute_align_key_score

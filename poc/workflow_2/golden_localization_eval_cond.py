@@ -140,6 +140,14 @@ DISP_BINS = ((0.10, "near"), (0.20, "mid"), (0.35, "far"))   # 그 외 → "very
 RESCUE_MULT = ((1.0, "hit"), (2.0, "near"), (4.0, "far"))    # 그 외 → "veryfar".
 BIN_FRAME = "inpaint"   # 층화는 clean(inpaint) cell 로 — lever_verdict(box__inpaint)와 일관.
 
+FORCE_ENSEMBLE = True   # Tier 1.1 검증은 항상 production ensemble 매처로.
+
+
+def _apply_matcher_default():
+    """FORCE_ENSEMBLE 이면 ALIGN_USE_ENSEMBLE 기본값을 1 로 채운다(명시적 0 은 존중)."""
+    if FORCE_ENSEMBLE:
+        os.environ.setdefault("ALIGN_USE_ENSEMBLE", "1")
+
 
 def _bin_label(value, edges, over_label):
     """value 를 오름차순 (경계, 라벨) edges 로 분류. 어느 경계도 안 넘으면 over_label."""

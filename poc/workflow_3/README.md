@@ -48,7 +48,7 @@ replay CSV 컬럼: `EQP_ID,ALID,ALARM_NAME,UTC9,RECIPE_ID,OPERATION_DESC,LOT_TYP
 캘리브레이션 (office Windows, 측정 중 tool 대상):
 
 ```bash
-uv run python poc/workflow_3/monitor/engineer_done.py
+uv run python poc/workflow_3/monitor/engineer_done_align_adjustment.py
 ```
 
 측정 중 tool 로 done-감지 체인(grounding/CV/OCR) 즉시 검증. `ALIGN_DONE_CALIB_EQP_ID` 로 대상 tool 지정 (기본: 열려 있는 아무 Remote Monitoring 창). debug crop 은 run 별로 `debug_images/engineer_done_calib/<tool>_<yymmdd_HHMMSS>/` 에 보존된다 (운영 cycle 은 `debug_images/engineer_done/<eqp>_<tag>/`). 참고: 캘리브레이션 tick 간격은 `poll_sec` 그대로지만, 운영 watch 에서는 내부 2s sleep 이 더해져 실제 감지 주기가 `poll_sec + OCR 지연 + 2s` 정도로 약간 길다.
@@ -66,10 +66,10 @@ uv run python poc/workflow_3/monitor/engineer_done.py
 | `ALIGN_FAIL_RECORDING_HEARTBEAT_SEC` | 5.0 | 변화 없어도 이 간격마다 1장 저장 |
 | `ALIGN_FAIL_RECORDING_CHANGE_MIN_PX` | 4 | 변화 판정: delta>15 인 다운샘플 픽셀 최소 개수 (커서 이동도 감지) |
 | `ALIGN_FAIL_RECORDING_MAX_SEC` | 900 | 녹화 상한 |
-| `ALIGN_FAIL_ENGINEER_WATCH_SEC` | 600 | 미보정 시 엔지니어 조작 녹화 대기 상한 |
-| `ALIGN_FAIL_ENGINEER_DONE_DETECT` | 0 | 측정-시작(Recipe Monitor 분자) 감지로 engineer watch 조기 종료. 캘리브레이션(`monitor/engineer_done.py` 단독 실행, 측정 중 tool 대상) 검증 후 `1`. |
+| `ALIGN_FAIL_ENGINEER_WATCH_SEC` | 300 | 미보정 시 엔지니어 조작 녹화 대기 상한(5분) |
+| `ALIGN_FAIL_ENGINEER_DONE_DETECT` | 0 | 측정-시작(Recipe Monitor 분자) 감지로 engineer watch 조기 종료 + cycle teardown 의 tool 창 자동 닫기. 캘리브레이션(`monitor/engineer_done_align_adjustment.py` 단독 실행, 측정 중 tool 대상) 검증 후 `1`. |
 | `ALIGN_FAIL_ENGINEER_DONE_POLL_SEC` | 8.0 | watch 안 감지기 호출 간격 |
-| `ALIGN_FAIL_ENGINEER_DONE_MIN_COUNT` | 2 | done 으로 보는 최소 분자값(연속 2회 확인) |
+| `ALIGN_FAIL_ENGINEER_DONE_MIN_COUNT` | 6 | done(=watch 종료+tool 닫기) 최소 분자값, N>5 연속 2회 확인 |
 | `ALIGN_FAIL_ENGINEER_DONE_VLM_SERVICE` | `ui-venus` | 분자 위치 grounding 서비스 (route_slug, 모델명 아님) |
 | `ALIGN_FAIL_ENGINEER_DONE_OCR_SERVICE` | `paddleocr-vl-1.5` | 분자 OCR 서비스 |
 | `ALIGN_FAIL_ENGINEER_DONE_CHANGE_MIN_PX` | 4 | CV gate 변화 픽셀 임계(다운샘플) - 감지가 둔하면 낮추고 과민하면 올린다 |

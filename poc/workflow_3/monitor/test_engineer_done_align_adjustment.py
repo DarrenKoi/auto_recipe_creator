@@ -1,6 +1,6 @@
-"""engineer_done 감지기 합성 테스트 (Mac/dev, RCS·VLM 불요).
+"""engineer_done_align_adjustment 감지기 합성 테스트 (Mac/dev, RCS·VLM 불요).
 
-`uv run python poc/workflow_3/monitor/test_engineer_done.py` 로 실행한다.
+`uv run python poc/workflow_3/monitor/test_engineer_done_align_adjustment.py` 로 실행한다.
 """
 
 import sys
@@ -11,7 +11,7 @@ from PIL import Image
 
 from poc.workflow_3.config import Workflow3Settings
 from poc.workflow_3.monitor.cycle import _engineer_watch
-from poc.workflow_3.monitor.engineer_done import (
+from poc.workflow_3.monitor.engineer_done_align_adjustment import (
     EngineerDoneDetector,
     build_engineer_done_detector,
     extract_numerator,
@@ -37,7 +37,7 @@ def test_settings_defaults() -> bool:
     ok = True
     ok &= _check("detect_enabled default False", s.engineer_done_detect_enabled is False)
     ok &= _check("poll_sec default 8.0", s.engineer_done_poll_sec == 8.0)
-    ok &= _check("min_count default 2", s.engineer_done_min_count == 2)
+    ok &= _check("min_count default 6", s.engineer_done_min_count == 6)
     ok &= _check("change_min_px default 4", s.engineer_done_change_min_px == 4)
     ok &= _check("relocalize_after_miss default 3", s.engineer_done_relocalize_after_miss == 3)
     ok &= _check("roi_pad_x default 0.03", s.engineer_done_roi_pad_x == 0.03)
@@ -64,7 +64,7 @@ def test_settings_env_load_path() -> bool:
     ok = True
     ok &= _check("env path detect_enabled False", s.engineer_done_detect_enabled is False)
     ok &= _check("env path poll_sec 8.0", s.engineer_done_poll_sec == 8.0)
-    ok &= _check("env path min_count 2", s.engineer_done_min_count == 2)
+    ok &= _check("env path min_count 6", s.engineer_done_min_count == 6)
     ok &= _check("env path services", s.engineer_done_vlm_service == "ui-venus" and s.engineer_done_ocr_service == "paddleocr-vl-1.5")
     return ok
 
@@ -289,7 +289,7 @@ def test_detector_relocalize_after_miss() -> bool:
 
 def test_tool_label_from_title() -> bool:
     """창 제목 -> debug 폴더용 tool 라벨 추출/정제."""
-    from poc.workflow_3.monitor.engineer_done import _tool_label_from_title
+    from poc.workflow_3.monitor.engineer_done_align_adjustment import _tool_label_from_title
 
     ok = True
     ok &= _check(

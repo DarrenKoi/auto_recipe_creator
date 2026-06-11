@@ -1,8 +1,18 @@
 """엔지니어 수동 align 보정 완료 감지 — Recipe Monitor 측정 카운터 기반.
 
-미보정 engineer watch 동안 "측정이 시작됐다"(= align 완료)를 감지해 녹화를 조기
-종료한다. 신호는 tool 창 Recipe Monitor 의 측정 점 카운터 분자(N/M 의 N)가
-증가하는 것 (1/350 -> 2/350 -> ...).
+**align fail 관리 전용** 모듈이다. 미보정 engineer watch 동안 "측정이 시작됐다"
+(= align 보정 완료)를 감지해 녹화를 조기 종료하고, 그 결과 cycle teardown 이
+tool 창을 자동으로 닫는다. 신호는 tool 창 Recipe Monitor 의 측정 점 카운터
+분자(N/M 의 N)가 증가하는 것 (1/350 -> 2/350 -> ...).
+
+분자 N 이 `engineer_done_min_count` 이상(기본 6 = "5보다 큼")까지 올라간 것을
+연속 2회 확인하면 done 으로 판정한다 — 측정 초반의 일시적 1~2 점이 아니라
+재정렬이 끝나고 본 측정이 충분히 진행됐음을 보고 닫기 위해 임계를 높게 둔다
+(re-align 직후 카운터가 잠깐 보였다 사라지는 false-start 회피).
+
+done 판정 시 `cycle._engineer_watch` 가 조기 종료하고, `run_alarm_cycle` 의
+teardown(finally)이 `close_tool(eqp_id)` 로 tool 창을 닫는다 (별도 닫기 호출
+없이 기존 teardown 경로 재사용 — close 동작은 workflow_2 에서 확립됨).
 
 hybrid 파이프라인 (grounding 은 성공 시 1회 캐시):
   1. grounding(성공 시 캐시): VLM(ui-venus)으로 분자 위치를 찾아 tool-window
@@ -26,7 +36,7 @@ engineer_watch_sec cap 이 안전망. (CLAUDE.md 규칙: VLM 은 위치만, 전�
   중에는 분자가 실제로 증가하므로 — grounding/gate/OCR 전 체인을 align fail
   없이 즉시 검증할 수 있다.
 
-  uv run python poc/workflow_3/monitor/engineer_done.py
+  uv run python poc/workflow_3/monitor/engineer_done_align_adjustment.py
 """
 
 import os
@@ -165,7 +175,8 @@ class EngineerDoneDetector:
         if is_done:
             print(
                 f"[INFO] 측정 카운터 확인: N={n} "
-                f"(>= {self.s.engineer_done_min_count}, 연속 2회) - 측정 시작 판정"
+                f"(>= {self.s.engineer_done_min_count}, 연속 2회) - align 완료 판정, "
+                f"watch 조기 종료 후 tool 창 닫기 진행"
             )
         return is_done
 

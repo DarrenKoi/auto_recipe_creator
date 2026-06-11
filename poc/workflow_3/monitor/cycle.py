@@ -417,7 +417,7 @@ def _engineer_watch(
     """미보정 시 엔지니어 수동 조작 구간 대기 — 녹화 스레드가 계속 캡처한다.
 
     종료 조건(첫 충족 시): ① 녹화 스레드 자체 종료(창 닫힘=window_gone/max_sec)
-    ② done_detector() True (측정 시작 = align 완료, engineer_done 모듈)
+    ② done_detector() True (측정 시작 = align 완료, engineer_done_align_adjustment 모듈)
     ③ watch_sec 경과 (이제 backstop cap). detector 예외는 ②만 무력화한다.
     """
     if watch_sec <= 0:
@@ -509,7 +509,7 @@ def run_alarm_cycle(
             done_detector = None
             if settings.engineer_done_detect_enabled and context.get("tool_window") is not None:
                 try:
-                    from poc.workflow_3.monitor.engineer_done import (
+                    from poc.workflow_3.monitor.engineer_done_align_adjustment import (
                         build_engineer_done_detector,
                     )
 
@@ -541,6 +541,8 @@ def run_alarm_cycle(
             frames = recording.stop("cycle_teardown")
             result.recording_dir = str(recording.out_dir)
             result.frame_count = len(frames)
+        # tool 창 닫기 — 보정 성공/실패, 그리고 engineer_done_align_adjustment 가
+        # 측정 시작(N>5 연속 2회)을 감지해 watch 가 조기 종료된 경우 모두 여기서 닫힌다.
         if context.get("tool_window") is not None and CLOSE_TOOL_AVAILABLE:
             try:
                 close_tool(eqp_id)

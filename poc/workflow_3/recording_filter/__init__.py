@@ -6,12 +6,22 @@ interaction_timeline.json 으로 만든다. 자세한 설계는
 docs/superpowers/specs/2026-06-11-recording-filter-design.md 참고.
 """
 
+from poc.workflow_3.recording_filter.click_detect import ClickEvent, detect_clicks
+from poc.workflow_3.recording_filter.filter_recording import run_filter
+from poc.workflow_3.recording_filter.frame_reduce import ChangeEvent, reduce_frames
 from poc.workflow_3.recording_filter.settings import (
     RecordingFilterSettings,
     load_recording_filter_settings,
 )
+from poc.workflow_3.recording_filter.timeline import build_timeline
 
 __all__ = [
     "RecordingFilterSettings",
     "load_recording_filter_settings",
+    "ChangeEvent",
+    "reduce_frames",
+    "ClickEvent",
+    "detect_clicks",
+    "build_timeline",
+    "run_filter",
 ]

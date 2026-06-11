@@ -361,6 +361,7 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
         vlm_client = Workflow1VLMClient(settings.ok_button_vlm_service)
     except Exception as exc:
         print(f"[WARNING] OK 버튼 VLM 클라이언트 생성 실패 - OK 탐지 없이 진행: {exc}")
+    context["vlm_client"] = vlm_client
 
     def _escalation_log(state, history):
         log_work2_event(
@@ -410,16 +411,40 @@ _STEP_EXECUTORS = {
 # ------------------------------------------------------------------
 
 
-def _engineer_watch(recording: RecordingSession, watch_sec: float) -> None:
+def _engineer_watch(
+    recording: RecordingSession,
+    watch_sec: float,
+    *,
+    done_detector=None,
+    poll_sec: float = 8.0,
+) -> None:
     """미보정 시 엔지니어 수동 조작 구간 대기 — 녹화 스레드가 계속 캡처한다.
 
-    종료 조건: 녹화 스레드 자체 종료(창 닫힘=window_gone/max_sec) 또는 watch 시간 초과.
+    종료 조건(첫 충족 시): ① 녹화 스레드 자체 종료(창 닫힘=window_gone/max_sec)
+    ② done_detector() True (측정 시작 = align 완료, engineer_done 모듈)
+    ③ watch_sec 경과 (이제 backstop cap). detector 예외는 ②만 무력화한다.
     """
     if watch_sec <= 0:
         return
-    print(f"[INFO] engineer watch 시작: 최대 {watch_sec:.0f}s (창 닫힘/녹화 종료 시 조기 종료)")
+    print(
+        f"[INFO] engineer watch 시작: 최대 {watch_sec:.0f}s "
+        f"(창 닫힘/측정시작 감지/녹화 종료 시 조기 종료, "
+        f"감지={'on' if done_detector is not None else 'off'})"
+    )
     deadline = time.time() + watch_sec
+    next_check = 0.0
     while time.time() < deadline and recording.is_alive():
+        if done_detector is not None and time.time() >= next_check:
+            try:
+                if done_detector():
+                    print("[INFO] 측정 시작 감지(align 완료 추정) - engineer watch 조기 종료")
+                    log_work2_event(
+                        component=LOG_COMPONENT, message="engineer_done_detected"
+                    )
+                    break
+            except Exception as exc:
+                print(f"[WARNING] done detector 예외(무시, cap 으로 진행): {exc}")
+            next_check = time.time() + max(poll_sec, 0.0)
         time.sleep(2.0)
     print("[INFO] engineer watch 종료")
 
@@ -486,9 +511,27 @@ def run_alarm_cycle(
             reregister_ratio_threshold=settings.reregister_second_ratio_threshold,
         )
 
-        # 미보정이면 엔지니어 수동 조작을 녹화하며 대기.
+        # 미보정이면 엔지니어 수동 조작을 녹화하며 대기 (측정 시작 감지 시 조기 종료).
         if recording is not None and (outcome is None or outcome.status != "corrected"):
-            _engineer_watch(recording, settings.engineer_watch_sec)
+            done_detector = None
+            if settings.engineer_done_detect_enabled and context.get("tool_window") is not None:
+                try:
+                    from poc.workflow_3.monitor.engineer_done import (
+                        build_engineer_done_detector,
+                    )
+
+                    done_detector = build_engineer_done_detector(
+                        context["tool_window"], settings,
+                        vlm_client=context.get("vlm_client"),
+                        debug_dir=DEBUG_IMAGE_DIR / "engineer_done" / tag,
+                    )
+                except Exception as exc:
+                    print(f"[WARNING] done detector 생성 실패(고정 timeout 으로 진행): {exc}")
+            _engineer_watch(
+                recording, settings.engineer_watch_sec,
+                done_detector=done_detector,
+                poll_sec=settings.engineer_done_poll_sec,
+            )
     except Exception as exc:
         result.run_status = "error"
         result.notes.append(f"{type(exc).__name__}: {exc}")

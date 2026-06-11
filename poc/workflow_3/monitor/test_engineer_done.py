@@ -4,11 +4,13 @@
 """
 
 import sys
+import time as _time
 
 import numpy as np
 from PIL import Image
 
 from poc.workflow_3.config import Workflow3Settings
+from poc.workflow_3.monitor.cycle import _engineer_watch
 from poc.workflow_3.monitor.engineer_done import (
     EngineerDoneDetector,
     build_engineer_done_detector,
@@ -227,6 +229,47 @@ def test_builder_gates() -> bool:
     return ok
 
 
+class _FakeRecording:
+    """is_alive 만 흉내내는 fake (n번째 확인 후 사망 옵션)."""
+
+    def __init__(self, alive_checks: int = 10**6):
+        self.alive_checks = alive_checks
+        self.checks = 0
+
+    def is_alive(self) -> bool:
+        self.checks += 1
+        return self.checks <= self.alive_checks
+
+
+def test_watch_early_exit_on_done() -> bool:
+    """detector True -> cap 보다 훨씬 일찍 종료."""
+    detector = _CountingFn([False, True])
+    started = _time.time()
+    _engineer_watch(_FakeRecording(), 60.0, done_detector=detector, poll_sec=0.0)
+    elapsed = _time.time() - started
+    ok = True
+    ok &= _check("early exit well under cap", elapsed < 30.0)
+    ok &= _check("detector called twice", detector.calls == 2)
+    return ok
+
+
+def test_watch_detector_exception_safe() -> bool:
+    """detector 예외 -> 삼키고 recording 사망/cap 으로 정상 종료."""
+
+    def boom():
+        raise RuntimeError("detector crash")
+
+    _engineer_watch(_FakeRecording(alive_checks=2), 60.0, done_detector=boom, poll_sec=0.0)
+    return _check("watch survived detector exception", True)
+
+
+def test_watch_no_detector_unchanged() -> bool:
+    """detector 없음 -> 기존 동작(recording 사망 시 종료)."""
+    recording = _FakeRecording(alive_checks=3)
+    _engineer_watch(recording, 60.0, done_detector=None, poll_sec=0.0)
+    return _check("exits on recording death", recording.checks >= 3)
+
+
 def main() -> int:
     """전체 케이스를 실행하고 통과 여부를 반환한다."""
     tests = [
@@ -241,6 +284,9 @@ def main() -> int:
         test_detector_ground_refusal,
         test_detector_relocalize_after_miss,
         test_builder_gates,
+        test_watch_early_exit_on_done,
+        test_watch_detector_exception_safe,
+        test_watch_no_detector_unchanged,
     ]
     results = [test() for test in tests]
     passed = sum(1 for r in results if r)

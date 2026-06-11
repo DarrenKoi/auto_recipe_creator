@@ -56,6 +56,19 @@ from poc.workflow_3.vision.align_point_correction import (
 )
 from poc.workflow_2.align_similarity import CENTER_AREA_RATIO
 from poc.workflow_3.vision.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
+from poc.workflow_3.vision.cond_template import (
+    CROP_INSET_PX,
+    MIN_INNER_PX,
+    OFFSET_SKIP,
+    OFFSET_WARN,
+    WARN_INNER_PX,
+    _cond_box_center,
+    _cond_box_to_xywh,
+    check_cond_box,
+    cond_align_offset,
+    cond_offset_norm,
+    cond_template_crop,
+)
 from poc.workflow_3.vision.cond_file import CondInfo, load_cond, msr_modality
 from poc.workflow_3.vision.crosshair_detect import detect_crosshair
 # 원본의 cond-독립 부품 재사용(중복/표류 방지).
@@ -114,24 +127,12 @@ def _combine_2up(rcp_canvas, msr_canvas, *, rcp_label, msr_label):
     return cv2.hconcat([rcp, sep, msr])
 
 
-def _cond_box_to_xywh(box_ltrb):
-    """cond.box_ltrb(cursor frame, ×10) → 이미지 px (x, y, w, h)."""
-    l, t = cursor_to_image(box_ltrb[:2], OVERSAMPLE)
-    r, b = cursor_to_image(box_ltrb[2:], OVERSAMPLE)
-    return (int(round(l)), int(round(t)), int(round(r - l)), int(round(b - t)))
-
-
 # --- cond box → template/offset (검출 무관, cond.txt 만으로 결정) -----------------
 # 원본 eval 은 box 의 *내용 검출* inner-crop 중심에서 offset 을 뽑아, crop 오류가
 # offset(전체 eval 의 load-bearing 값)을 오염시켰다. cond.txt 가 정확한 corner 를
 # 주므로 (1) offset = image_center − box_center 를 crop 과 분리해 기하로만 계산하고,
 # (2) template 은 stroke 를 inpaint 로 지운 뒤 box 내부를 *대칭* inset 해 만든다
 # (crop 중심 == box 중심 → offset 과 일관). Codex 검토 반영([[project_align_cond_files_and_coords]]).
-CROP_INSET_PX = 2       # inpaint 후 edge-smear 가 template 에 안 들어오게 하는 대칭 inset.
-MIN_INNER_PX = 16       # 대칭 inset 후 box 내부 하한(미만이면 skip — 매칭 신호 불안정).
-WARN_INNER_PX = 24      # 작은 box 경고 임계(skip 아님).
-OFFSET_WARN = 0.25      # offset_norm(÷대각선) 경고 임계(box 가 중심에서 멂).
-OFFSET_SKIP = 0.38      # offset_norm 하드 skip(=box≠center 가정 붕괴, 엔지니어 검토 필요).
 
 # --- Tier 1.1 검증: miss-distance bin 층화 (리포팅 전용; 경계는 1차 결과 후 재조정 가능) ---
 # A: GT 가 frame 중심에서 떨어진 정도(frame 짧은변 비율) = 구조적 displacement.
@@ -250,80 +251,6 @@ def _print_binned_report(binned):
             print(f"    {b:<9} {str(c['gt_in_topk'])+'/'+str(c['rank1']):<26} "
                   f"{str(x['gt_in_topk'])+'/'+str(x['rank1']):<24} {c['n']}/{x['n']}")
     print("=" * 64)
-
-
-def _cond_box_center(box_ltrb):
-    """cond.box_ltrb → 이미지 px box 중심 (cx, cy) (정수 반올림 전 float)."""
-    l, t = cursor_to_image(box_ltrb[:2], OVERSAMPLE)
-    r, b = cursor_to_image(box_ltrb[2:], OVERSAMPLE)
-    return (l + r) / 2.0, (t + b) / 2.0
-
-
-def cond_align_offset(box_ltrb, shape_hw):
-    """align point(이미지 중심) − box 중심. cond.txt 만으로 결정 → crop 과 분리(decoupled).
-
-    crop 을 어떻게 잡든 align point 의 기하는 안 변한다. 이 분리가 원본의 (B) 결함
-    — 내용검출 inner-crop 의 off-center 가 offset 을 오염시키던 경로 — 를 통째로 없앤다.
-    """
-    h, w = shape_hw[:2]
-    bcx, bcy = _cond_box_center(box_ltrb)
-    return (int(round(w / 2.0 - bcx)), int(round(h / 2.0 - bcy)))
-
-
-def cond_offset_norm(box_ltrb, shape_hw):
-    """|offset| 를 이미지 *대각선* 으로 정규화(crop 무관 척도)."""
-    h, w = shape_hw[:2]
-    dx, dy = cond_align_offset(box_ltrb, shape_hw)
-    diag = float(np.hypot(w, h)) or 1.0
-    return float(np.hypot(dx, dy) / diag)
-
-
-def check_cond_box(box_ltrb, shape_hw):
-    """cond box 가 template 으로 쓸만한지 가드. 반환 (status, reason, offset_norm).
-
-    status: 'ok' | 'warn' | 'skip'. inner = min(box변) − 2·CROP_INSET_PX(대칭 inset 후).
-    skip 우선순위: degenerate → out_of_bounds → too_small → offset_too_far.
-    """
-    h, w = shape_hw[:2]
-    x, y, bw, bh = _cond_box_to_xywh(box_ltrb)
-    onorm = cond_offset_norm(box_ltrb, shape_hw)
-    if bw <= 0 or bh <= 0:
-        return "skip", "box:degenerate", onorm
-    if x < 0 or y < 0 or x + bw > w or y + bh > h:
-        return "skip", "box:out_of_bounds", onorm
-    inner = min(bw, bh) - 2 * CROP_INSET_PX
-    if inner < MIN_INNER_PX:
-        return "skip", "box:too_small", onorm
-    if onorm > OFFSET_SKIP:
-        return "skip", "offset:too_far", onorm
-    if onorm > OFFSET_WARN:
-        return "warn", "offset:far", onorm
-    if inner < WARN_INNER_PX:
-        return "warn", "box:small", onorm
-    return "ok", "ok", onorm
-
-
-def cond_template_crop(gray, cond, *, inset=CROP_INSET_PX):
-    """cond box stroke 를 inpaint 로 지운 뒤 box 내부를 *대칭* inset 해 template crop.
-
-    대칭 inset → crop 중심 == box 중심 → cond_align_offset 과 정확히 일관.
-    inset 후 너무 작아지면 inset 을 생략(작은 box 보호). 반환 (crop, (x0,y0,w,h)).
-
-    **box stroke 만 지운다.** rcp cond 에 crosshair 가 있어도 그건 box 내부를 가로지르는
-    *실제 내용* 이므로 inpaint 하면 매칭 신호가 깎인다 → crosshair_xy=None 으로 마스킹해
-    box 테두리만 제거한다(msr 프레임의 crosshair 제거는 별개 — 거기선 distractor 라 지움).
-    """
-    box_only = CondInfo(scope=cond.scope, pixel=cond.pixel,
-                        box_ltrb=cond.box_ltrb, crosshair_xy=None)
-    cleaned = clean_image(gray, box_only)        # 튜닝된 1/1/2 로 box stroke 만 제거.
-    x, y, bw, bh = _cond_box_to_xywh(cond.box_ltrb)
-    h, w = gray.shape[:2]
-    x0, y0 = max(0, x + inset), max(0, y + inset)
-    x1, y1 = min(w, x + bw - inset), min(h, y + bh - inset)
-    if x1 - x0 < MIN_INNER_PX or y1 - y0 < MIN_INNER_PX:
-        x0, y0 = max(0, x), max(0, y)
-        x1, y1 = min(w, x + bw), min(h, y + bh)
-    return cleaned[y0:y1, x0:x1].copy(), (x0, y0, x1 - x0, y1 - y0)
 
 
 def _offset_diag_cond(records, *, tol=OFFSET_WARN):

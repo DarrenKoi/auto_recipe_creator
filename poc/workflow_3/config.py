@@ -98,6 +98,11 @@ class Workflow3Settings(WorkflowSettings):
     # fail-frame 재보정 대상 · matcher 의 0.94 visibility 게이트(max_second_ratio)와는 별개.
     reregister_second_ratio_threshold: float = 0.98
 
+    # --- cond box-crop template (Tier 1.1) ---
+    # True(기본): cond.box_ltrb 로 box-crop template + decoupled offset(office 검증 rank1 +0.16~0.18).
+    # False: whole-template(구 동작) 롤백 — env ALIGN_FAIL_COND_BOX_CROP=0.
+    cond_box_crop: bool = True
+
 
 def load_workflow3_settings() -> Workflow3Settings:
     """env 오버라이드를 적용해 Workflow3Settings 를 생성한다."""
@@ -146,6 +151,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         engineer_done_vlm_service=_env_str("ALIGN_FAIL_ENGINEER_DONE_VLM_SERVICE", "ui-venus"),
         engineer_done_ocr_service=_env_str("ALIGN_FAIL_ENGINEER_DONE_OCR_SERVICE", "paddleocr-vl-1.5"),
         reregister_second_ratio_threshold=env_float("ALIGN_FAIL_REREGISTER_RATIO", 0.98),
+        cond_box_crop=env_flag("ALIGN_FAIL_COND_BOX_CROP", default=True),
     )
 
 

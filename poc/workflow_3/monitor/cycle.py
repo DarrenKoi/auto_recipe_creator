@@ -375,6 +375,8 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
                 # 만성 모호 키 게이트(Tier 0.1) 활성화 — present 하나 second_ratio>tau 면
                 # 자동 reposition+OK 대신 engineer_review 로 보류한다. notify 임계와 동일 값.
                 reregister_ratio_threshold=settings.reregister_second_ratio_threshold,
+                # cond box-crop template(Tier 1.1; env ALIGN_FAIL_COND_BOX_CROP 로 롤백 가능).
+                cond_box_crop=settings.cond_box_crop,
             ),
             dry_run=settings.correction_dry_run,
             debug_dir=debug_dir,

@@ -30,6 +30,7 @@ scroll_at_screen = None
 
 WindowRow = None
 activate_window = None
+block_input = None
 close_window = None
 collect_window_rows = None
 find_window_by_pid_and_title_prefix = None
@@ -55,6 +56,7 @@ try:
     from .window_utils import (
         WindowRow,
         activate_window,
+        block_input,
         close_window,
         collect_window_rows,
         find_window_by_pid_and_title_prefix,

@@ -42,12 +42,22 @@ from poc.workflow_3.runner.workflow_types import (
 )
 from poc.workflow_3.util import (
     activate_window,
+    block_input,
     capture_window,
     env_float,
     make_timestamp_tag,
 )
 
 LOG_COMPONENT = "align_fail_cycle"
+
+
+def _should_block_input(settings: Workflow3Settings) -> bool:
+    """자동 GUI 구간 입력 차단을 적용할지 — opt-in + SAFE_MODE off + Windows 한정."""
+    return (
+        getattr(settings, "block_input_enabled", False)
+        and not settings.safe_mode
+        and block_input is not None
+    )
 
 # 점검 전용(check-only) 캡처 직전 SEM 영상 렌더 대기(초) — rcs_screenshot 의 settle 과 동일 취지.
 _CHECK_CAPTURE_SETTLE_SEC = env_float("ALIGN_FAIL_CHECK_SETTLE_SEC", 2.0)
@@ -488,7 +498,11 @@ def run_alarm_cycle(
         return _STEP_EXECUTORS[step.step_id](step, step_context, settings)
 
     recording: RecordingSession | None = None
+    input_blocked = False
     try:
+        # 자동 GUI 구간 동안 사용자 물리 입력 차단(opt-in) — foreground lock/클릭 방해 방지.
+        if _should_block_input(settings):
+            input_blocked = block_input(True, debug_label=f"align_fail_cycle {eqp_id}")
         run = runner.run(build_cycle_steps(eqp_id), context, executor)
         result.run_status = run.status
         result.run_dir = str(run.run_dir or "")
@@ -514,6 +528,11 @@ def run_alarm_cycle(
             recording_dir=recording_dir, enabled=settings.rich_notify_enabled,
             reregister_ratio_threshold=settings.reregister_second_ratio_threshold,
         )
+
+        # 자동 GUI 구간 종료 — 엔지니어 수동 조작 전에 입력 차단 해제(엔지니어가 직접 조작해야 함).
+        if input_blocked:
+            block_input(False, debug_label=f"align_fail_cycle {eqp_id}")
+            input_blocked = False
 
         # 미보정이면 엔지니어 수동 조작을 녹화하며 대기 (측정 시작 감지 시 조기 종료).
         if recording is not None and (outcome is None or outcome.status != "corrected"):
@@ -546,6 +565,10 @@ def run_alarm_cycle(
             eqp_id=eqp_id, error=str(exc),
         )
     finally:
+        # 입력 차단 backstop — 위에서 예외로 못 풀었어도 반드시 해제(사용자 잠김 방지).
+        if input_blocked:
+            block_input(False, debug_label=f"align_fail_cycle {eqp_id}")
+            input_blocked = False
         # teardown 보장 — 녹화 중지(manifest) → tool 닫기 → 알림 팝업 backstop.
         recording = recording or context.get("recording")
         if recording is not None:
@@ -677,7 +700,12 @@ def run_check_only_cycle(
     def executor(step, step_context):
         return _CHECK_STEP_EXECUTORS[step.step_id](step, step_context, settings)
 
+    input_blocked = False
     try:
+        # 자동 GUI 구간(접속~캡처~닫기) 동안 사용자 물리 입력 차단(opt-in).
+        # engineer watch 가 없으므로 close 까지 차단 유지하고 finally 끝에서 해제.
+        if _should_block_input(settings):
+            input_blocked = block_input(True, debug_label=f"align_fail_check {eqp_id}")
         run = runner.run(build_check_steps(eqp_id), context, executor)
         result.run_status = run.status
         result.run_dir = str(run.run_dir or "")
@@ -707,6 +735,10 @@ def run_check_only_cycle(
             except Exception as exc:
                 print(f"[WARNING] tool 창 닫기 실패: {exc}")
         close_alert_window(timeout_sec=settings.alert_close_timeout_sec)
+        # 입력 차단 해제 — 자동 구간 전체(닫기 포함) 종료 후. 예외 경로에서도 반드시 해제.
+        if input_blocked:
+            block_input(False, debug_label=f"align_fail_check {eqp_id}")
+            input_blocked = False
 
     return result
 

@@ -16,6 +16,11 @@ _SW_RESTORE = 9
 _SW_MAXIMIZE = 3
 _TITLE_BUF_SIZE = 512
 
+# foreground lock 우회용 SystemParametersInfo 상수.
+_SPI_GETFOREGROUNDLOCKTIMEOUT = 0x2000
+_SPI_SETFOREGROUNDLOCKTIMEOUT = 0x2001
+_SPIF_SENDCHANGE = 0x0002
+
 
 @dataclass(frozen=True)
 class WindowRow:
@@ -226,13 +231,87 @@ def get_window_process_id(window) -> int | None:
     return None
 
 
+def _force_foreground_via_attach(user32, handle: int, settle_sec: float) -> None:
+    """foreground lock 우회 — lock timeout 0 + AttachThreadInput 으로 강제 전면화.
+
+    Windows 는 *현재 foreground 가 아니고 마지막 입력을 받지 않은* 프로세스의
+    SetForegroundWindow 를 거부한다(사용자가 다른 앱을 쓰는 중이면 작업표시줄만
+    깜빡임). 이 함수는 (1) ForegroundLockTimeout 을 임시 0 으로 낮추고 (2) 우리
+    스레드를 현재 foreground/대상 창 스레드 입력 큐에 붙여(AttachThreadInput) 호출
+    권한을 빌린 뒤 SetForegroundWindow 를 다시 시도한다. 항상 원복(detach/timeout)
+    한다. 모든 호출은 best-effort 라 실패해도 조용히 넘어간다(상위 fallback 으로).
+    """
+    try:
+        kernel32 = ctypes.windll.kernel32
+    except Exception:
+        return
+
+    prev_timeout = wintypes.DWORD(0)
+    timeout_changed = False
+    try:
+        if user32.SystemParametersInfoW(
+            _SPI_GETFOREGROUNDLOCKTIMEOUT, 0, ctypes.byref(prev_timeout), 0
+        ):
+            user32.SystemParametersInfoW(
+                _SPI_SETFOREGROUNDLOCKTIMEOUT, 0, ctypes.c_void_p(0), _SPIF_SENDCHANGE
+            )
+            timeout_changed = True
+    except Exception:
+        pass
+
+    our_thread = 0
+    fg_thread = 0
+    target_thread = 0
+    fg_attached = False
+    target_attached = False
+    try:
+        our_thread = int(kernel32.GetCurrentThreadId())
+        fg_hwnd = user32.GetForegroundWindow()
+        if fg_hwnd:
+            fg_thread = int(user32.GetWindowThreadProcessId(fg_hwnd, None))
+        target_thread = int(user32.GetWindowThreadProcessId(handle, None))
+
+        if fg_thread and fg_thread != our_thread:
+            fg_attached = bool(user32.AttachThreadInput(our_thread, fg_thread, True))
+        if target_thread and target_thread not in (our_thread, fg_thread):
+            target_attached = bool(user32.AttachThreadInput(our_thread, target_thread, True))
+
+        user32.ShowWindow(handle, _SW_RESTORE)
+        user32.BringWindowToTop(handle)
+        user32.SetForegroundWindow(handle)
+        time.sleep(settle_sec)
+    except Exception:
+        pass
+    finally:
+        try:
+            if fg_attached:
+                user32.AttachThreadInput(our_thread, fg_thread, False)
+            if target_attached:
+                user32.AttachThreadInput(our_thread, target_thread, False)
+        except Exception:
+            pass
+        if timeout_changed:
+            try:
+                user32.SystemParametersInfoW(
+                    _SPI_SETFOREGROUNDLOCKTIMEOUT, 0,
+                    ctypes.c_void_p(int(prev_timeout.value)), _SPIF_SENDCHANGE,
+                )
+            except Exception:
+                pass
+
+
 def foreground_window(
     window,
     *,
     debug_label: str = "window",
     settle_sec: float = 0.15,
 ) -> bool:
-    """Win32 API 로 창을 foreground 로 올린다."""
+    """Win32 API 로 창을 foreground 로 올린다.
+
+    1차로 단순 SetForegroundWindow 를 시도하고, 사용자가 다른 앱을 활발히 쓰는 중
+    이라 foreground lock 에 막히면 2차로 `_force_foreground_via_attach`(lock timeout 0
+    + AttachThreadInput) 로 강제 전면화를 재시도한다.
+    """
     if os.name != "nt":
         return False
 
@@ -251,8 +330,15 @@ def foreground_window(
             user32.ShowWindow(handle, _SW_RESTORE)
             time.sleep(settle_sec)
 
+        # 1차: 단순 SetForegroundWindow (우리가 이미 foreground 면 이걸로 충분).
         set_foreground_ok = bool(user32.SetForegroundWindow(handle))
         time.sleep(settle_sec)
+        if (int(user32.GetForegroundWindow()) or None) == handle:
+            return True
+
+        # 2차: foreground lock 우회 (사용자가 다른 앱 사용 중일 때 = 보고된 증상).
+        print(f"[INFO] foreground lock 추정 - 우회 재시도: {debug_label}")
+        _force_foreground_via_attach(user32, handle, settle_sec)
         foreground_handle = int(user32.GetForegroundWindow()) or None
     except Exception as exc:
         print(f"[INFO] Win32 foreground 실패: {debug_label}, error={exc}")
@@ -260,10 +346,42 @@ def foreground_window(
 
     is_foreground = foreground_handle == handle
     if is_foreground:
+        print(f"[INFO] foreground lock 우회 성공: {debug_label}")
         return True
 
     print(f"[INFO] Win32 foreground 미확인: {debug_label}, set_foreground_ok={set_foreground_ok}")
     return False
+
+
+def block_input(enable: bool, *, debug_label: str = "") -> bool:
+    """물리 마우스/키보드 입력을 차단(enable=True)/해제(False)한다 (Windows BlockInput).
+
+    align fail 처리 중 사용자의 마우스/키보드 조작이 RCS 전면화·클릭을 방해하지
+    않도록 자동 구간 동안만 물리 입력을 막는 용도다. 핵심 성질:
+
+      * 차단 중에도 자동화의 *합성* 입력(pywinauto/pynput 의 SendInput)은 통과한다.
+        그래서 RCS 클릭/타이핑은 정상 동작하고 사용자 손만 막힌다.
+      * Ctrl+Alt+Del(보안 시퀀스)은 OS 가 강제로 BlockInput 을 해제하므로, 자동화가
+        도중에 죽어도 사용자는 항상 탈출할 수 있다.
+      * BlockInput 을 건 스레드만 해제할 수 있다 → 반드시 같은 스레드에서 finally 로
+        해제(False)를 보장할 것. False 를 중복 호출해도 무해하다.
+
+    비Windows/권한 부족/실패 시 False 를 반환하고 조용히 넘어간다(호출부가 게이트).
+    """
+    if os.name != "nt":
+        return False
+    try:
+        ok = bool(ctypes.windll.user32.BlockInput(bool(enable)))
+    except Exception as exc:
+        print(f"[WARNING] BlockInput 실패: enable={enable}, {debug_label}, error={exc}")
+        return False
+    state = "차단" if enable else "해제"
+    if ok:
+        print(f"[INFO] 사용자 입력 {state}: {debug_label}")
+    else:
+        # enable 실패는 보통 권한(무결성 수준) 문제. 호출부는 RCS 자동화를 그대로 진행.
+        print(f"[WARNING] 사용자 입력 {state} 미적용(권한?): {debug_label}")
+    return ok
 
 
 def activate_window(

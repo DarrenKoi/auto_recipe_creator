@@ -54,6 +54,11 @@ class Workflow3Settings(WorkflowSettings):
     rcs_window_max_trials: int = 10
     rcs_recovery_enabled: bool = False  # RCS 재실행+재로그인 복구(검증 전 기본 off).
     keep_awake: bool = True
+    # 자동 GUI 구간 동안 사용자 물리 마우스/키보드 입력 차단(Windows BlockInput).
+    # 사용자가 다른 앱을 쓰면 foreground lock 으로 RCS 가 안 떠서 방해되는 문제 대응.
+    # 기본 off(opt-in) + SAFE_MODE off 일 때만 실제 적용. engineer watch 구간은 제외
+    # (엔지니어가 직접 조작해야 하므로). Ctrl+Alt+Del 로 항상 해제 가능.
+    block_input_enabled: bool = False
 
     # --- 상시 녹화 (변화 감지 기반 적응 캡처) ---
     recording_poll_sec: float = 0.3  # 샘플링 간격 — 조작 중 커서 궤적 추적 밀도.
@@ -127,6 +132,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         rcs_window_max_trials=env_int("ALIGN_FAIL_RCS_WINDOW_MAX_TRIALS", 10),
         rcs_recovery_enabled=env_flag("ALIGN_FAIL_RCS_RECOVERY", default=False),
         keep_awake=env_flag("ALIGN_FAIL_KEEP_AWAKE", default=True),
+        block_input_enabled=env_flag("ALIGN_FAIL_BLOCK_INPUT", default=False),
         recording_poll_sec=env_float("ALIGN_FAIL_RECORDING_POLL_SEC", 0.3),
         recording_heartbeat_sec=env_float("ALIGN_FAIL_RECORDING_HEARTBEAT_SEC", 5.0),
         recording_change_min_px=env_int("ALIGN_FAIL_RECORDING_CHANGE_MIN_PX", 4),

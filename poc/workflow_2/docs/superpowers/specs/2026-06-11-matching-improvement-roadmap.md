@@ -149,6 +149,16 @@ Codex 의 8개 아이디어, 자체 리서치 아이디어 모두 이 3개 레�
   `STRUCTURE_POLICY`/`min_distinct_gap`/`max_second_ratio`/`MIN_CONFIRM_SCALE` 의 실제 fit 은
   fab golden 데이터가 필요(Mac 반입 불가). plumbing/harness 는 별도 착수 시 blind 작성 →
   오피스 실행으로 숫자 확보.
+- **Tier 1.1 — box-crop localization 검증: ✅ GREEN-LIGHT (2026-06-11, office run).**
+  `golden_localization_eval_cond.py` bin×arm 게이트 결과 — box-crop(cond.box_ltrb + decoupled
+  offset)이 center-crop 대비 **모든 displacement bin 에서 gt_in_topk/rank1 동반 상승**(회귀 0):
+  near +0.110/+0.159, mid +0.130/+0.160, far +0.085/+0.176 (veryfar 표본 0). 가설(far/veryfar
+  구조적 rescue)보다 강함 — **균일한 template 변별력 향상**이라 displacement 라우팅 없이
+  **무조건 포팅**. production headline = rank1 **+0.16~0.18**(올바른 reposition 비율). 검증
+  설계 `specs/2026-06-11-box-crop-localization-validation-design.md`, 구현 플랜
+  `plans/2026-06-11-box-crop-localization-validation.md` (lab 리포팅 4 tasks, 37 tests green).
+  → **production 포팅 spec 진행**. 확인 필요: per-bin n(center/box) 커버리지(box 는 cond box
+  valid recipe 한정, center-crop fallback).
 
 ## 4. 다음 단계
 

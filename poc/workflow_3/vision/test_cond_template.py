@@ -6,6 +6,7 @@
 import cv2
 import numpy as np
 
+from poc.workflow_3.vision.align_key_matcher import build_template
 from poc.workflow_3.vision.align_point_correction import _centered_area_crop_bbox
 from poc.workflow_3.vision.cond_file import CondInfo
 from poc.workflow_3.vision.cond_template import (
@@ -100,3 +101,16 @@ def test_check_warn_for_moderately_offcenter_box():
     status, reason, onorm = check_cond_box((60, 2360, 460, 2760), (512, 512))
     assert (status, reason) == ("warn", "offset:far")
     assert OFFSET_WARN < onorm <= OFFSET_SKIP
+
+
+def test_build_template_carries_align_offset():
+    gray = np.full((64, 64), 120, dtype=np.uint8)
+    tpl = build_template(gray, recipe_id="R", version="v0", key_type="om",
+                         align_offset_xy=(5, -7))
+    assert tpl.align_offset_xy == (5, -7)
+
+
+def test_build_template_defaults_zero_offset():
+    gray = np.full((64, 64), 120, dtype=np.uint8)
+    tpl = build_template(gray, recipe_id="R", version="v0", key_type="om")
+    assert tpl.align_offset_xy == (0, 0)

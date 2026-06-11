@@ -75,6 +75,7 @@ class AlignKeyTemplate:
     nm_per_pixel: float | None
     key_type: str | None
     fetched_at: datetime
+    align_offset_xy: tuple[int, int] = (0, 0)  # rcp px (image_center - box_center); reposition 시 best_scale 환산해 match 중심에 가산.
 
 
 @dataclass
@@ -210,6 +211,7 @@ def build_template(
     version: str,
     nm_per_pixel: float | None = None,
     key_type: str | None = None,
+    align_offset_xy: tuple[int, int] = (0, 0),
 ) -> AlignKeyTemplate:
     """레시피 raw 이미지를 1회 전처리하여 AlignKeyTemplate 으로 묶는다."""
     gray = _to_grayscale(raw_image)
@@ -223,6 +225,7 @@ def build_template(
         nm_per_pixel=nm_per_pixel,
         key_type=key_type,
         fetched_at=datetime.now(),
+        align_offset_xy=align_offset_xy,
     )
 
 

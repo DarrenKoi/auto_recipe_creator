@@ -47,6 +47,27 @@ def test_settings_defaults() -> bool:
     return ok
 
 
+def test_settings_env_load_path() -> bool:
+    """load_workflow3_settings() env 경로로도 engineer_done 기본값이 동일하다."""
+    import os
+
+    from poc.workflow_3.config import load_workflow3_settings
+
+    # 관련 env 가 비어 있는 상태를 보장한 뒤 로드한다 (있다면 임시 제거 후 복원).
+    keys = [k for k in os.environ if k.startswith("ALIGN_FAIL_ENGINEER_DONE")]
+    saved = {k: os.environ.pop(k) for k in keys}
+    try:
+        s = load_workflow3_settings()
+    finally:
+        os.environ.update(saved)
+    ok = True
+    ok &= _check("env path detect_enabled False", s.engineer_done_detect_enabled is False)
+    ok &= _check("env path poll_sec 8.0", s.engineer_done_poll_sec == 8.0)
+    ok &= _check("env path min_count 2", s.engineer_done_min_count == 2)
+    ok &= _check("env path services", s.engineer_done_vlm_service == "ui-venus-1.5-8b" and s.engineer_done_ocr_service == "paddleocr-vl-1.5")
+    return ok
+
+
 def test_counter_prompt() -> bool:
     """ui-venus 공식 단일요소 형식([x,y], [-1,-1] 거부)을 따른다."""
     system_message, user_text = build_recipe_monitor_counter_prompt()
@@ -274,6 +295,7 @@ def main() -> int:
     """전체 케이스를 실행하고 통과 여부를 반환한다."""
     tests = [
         test_settings_defaults,
+        test_settings_env_load_path,
         test_counter_prompt,
         test_parse_point_1000,
         test_point_to_roi_ratios,

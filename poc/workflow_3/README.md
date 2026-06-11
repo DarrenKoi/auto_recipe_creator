@@ -45,6 +45,14 @@ ALIGN_FAIL_REPLAY_CSV=<fixture.csv> \
 replay CSV 컬럼: `EQP_ID,ALID,ALARM_NAME,UTC9,RECIPE_ID,OPERATION_DESC,LOT_TYPE_CD`
 (UTC9 는 로드 시 현재 시각으로 재기록되어 윈도우 필터를 통과한다).
 
+캘리브레이션 (office Windows, 측정 중 tool 대상):
+
+```bash
+uv run python poc/workflow_3/monitor/engineer_done.py
+```
+
+측정 중 tool 로 done-감지 체인(grounding/CV/OCR) 즉시 검증. `ALIGN_DONE_CALIB_EQP_ID` 로 대상 tool 지정 (기본: 열려 있는 아무 Remote Monitoring 창).
+
 ## 주요 env (기존 이름 유지)
 
 | env | 기본 | 의미 |
@@ -59,6 +67,13 @@ replay CSV 컬럼: `EQP_ID,ALID,ALARM_NAME,UTC9,RECIPE_ID,OPERATION_DESC,LOT_TYP
 | `ALIGN_FAIL_RECORDING_CHANGE_MIN_PX` | 4 | 변화 판정: delta>15 인 다운샘플 픽셀 최소 개수 (커서 이동도 감지) |
 | `ALIGN_FAIL_RECORDING_MAX_SEC` | 900 | 녹화 상한 |
 | `ALIGN_FAIL_ENGINEER_WATCH_SEC` | 600 | 미보정 시 엔지니어 조작 녹화 대기 상한 |
+| `ALIGN_FAIL_ENGINEER_DONE_DETECT` | 0 | 측정-시작(Recipe Monitor 분자) 감지로 engineer watch 조기 종료. 캘리브레이션(`monitor/engineer_done.py` 단독 실행, 측정 중 tool 대상) 검증 후 `1`. |
+| `ALIGN_FAIL_ENGINEER_DONE_POLL_SEC` | 8.0 | watch 안 감지기 호출 간격 |
+| `ALIGN_FAIL_ENGINEER_DONE_MIN_COUNT` | 2 | done 으로 보는 최소 분자값(연속 2회 확인) |
+| `ALIGN_FAIL_ENGINEER_DONE_VLM_SERVICE` | `ui-venus-1.5-8b` | 분자 위치 grounding 서비스 |
+| `ALIGN_FAIL_ENGINEER_DONE_OCR_SERVICE` | `paddleocr-vl-1.5` | 분자 OCR 서비스 |
+| `ALIGN_DONE_CALIB_EQP_ID` | (빈값) | 캘리브레이션 대상 tool (빈값=열려있는 아무 Remote Monitoring 창) |
+| `ALIGN_DONE_CALIB_SEC` | 120 | 캘리브레이션 최대 실행 시간 |
 | `ALIGN_FAIL_ALARM_SOURCE` | office | `office` \| `replay` |
 | `ALIGN_SEM_MODE_OVERRIDE` | (없음) | read_mode v0 강제값 (`OM`/`SEM`) |
 | `ALIGN_FAIL_GATHER_SUCCESS` | 1 | consensus gather 활성(최근 S 이미지 stage) — 0 으로 끄면 gather 전체 skip |

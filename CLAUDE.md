@@ -16,19 +16,23 @@ alarm detection (ALID=9006) → connect to tool via RCS → CV align-fail correc
   (captures engineer manual operations too) → close tool → wait for next alarm
 ```
 
-Subpackages (dependency direction `monitor → {rcs, align, sem_monitor, runner, vlm, util}`; workflow_3 never imports workflow_1/2):
+Subpackages — 4-layer DAG: `util` (leaf) → `{vlm, runner}` (services) → `{align, rcs, sem_monitor, recording_filter}` (capabilities) → `monitor` (orchestrator). workflow_3 never imports workflow_1/2.
 
-- **`monitor/`** — the loop. `align_fail_monitor.py` (entry point: polling + edge-trigger + manifest), `cycle.py` (per-alarm WorkflowRunner steps + guaranteed teardown), `recording.py` (always-on RecordingSession), `notify.py` (popup + outcome-based cube notify), `alarm_source.py` (office module 2-stage fallback + replay CSV), `integration_loader.py` (office adapter loading logs).
-- **`rcs/`** — RCS GUI automation: open/login/tool select/close/screenshot.
-- **`align/`** — Align fail correction domain: `assets`, `matching.engine`/`matching.ensemble`, `correction` (primary entry: `correct_align_fail_auto(controller, ...) -> CorrectionOutcome`), `live_search` (fallback + `SEMMonitorController` Protocol + Mac mock), consensus/cond helpers, diagnostics.
-- **`sem_monitor/`** — SEM Monitor panel locator and real `RCSSEMMonitor` adapter skeleton — double-click recenter / wheel zoom / OK click, uncalibrated.
-- **`vlm/`** — Flask VLM client/config/prompts. **`runner/`** — WorkflowRunner/step types/settings. **`util/`** — shared helpers.
+- **`monitor/`** — the loop. `align_fail_monitor.py` (primary entry: polling + edge-trigger + manifest), `align_fail_monitor_only_check.py` (light "check-only" variant: connect → capture one frame → close, no correction actuation / no recording / no engineer watch), `cycle.py` (per-alarm WorkflowRunner steps + guaranteed teardown; also the check-only cycle), `recording.py` (always-on RecordingSession), `notify.py` (popup + outcome-based cube notify), `engineer_done_align_adjustment.py` (detects engineer finishing manual align via Recipe Monitor measurement counter N→ stops recording early so teardown closes the tool), `success_gather.py` (non-blocking office glue around `align.consensus_gather`), `alarm_source.py` (office module 2-stage fallback + replay CSV), `integration_loader.py` (office adapter loading logs).
+- **`rcs/`** — RCS GUI automation: open/login (`login_rcs_common`, `login_rcs_ui_venus_mai`)/tool select+match (`tool_name_match`)/close/screenshot.
+- **`align/`** — Align fail correction domain. Flat domain modules + two subpackages:
+  - `matching/` — coordinate authority: `engine` (match engine, `AlignKeyTemplate`/`build_template`), `ensemble`.
+  - `diagnostics/` — offline review/compare entrypoints (`compare_align_images`, `crosshair_detect`, `search_align_key`, `align_review`, `feasibility_check`, `verify_cond_box_crop`, `test_match_on_captured_frames`).
+  - domain: `assets` (reads the `align_images/...` tree), `correction` (primary entry: `correct_align_fail_auto(controller, ...) -> CorrectionOutcome`), `live_search` (fallback + `SEMMonitorController` Protocol + Mac mock), `templates` (recipe align image → `AlignKeyTemplate`, cond-aware), `ok_button` (VLM OK-button locator), `search_pattern` (square-spiral pan primitive), `cond_file`/`cond_template`/`clean_align_image`/`consensus_gather` (cond + consensus helpers).
+- **`sem_monitor/`** — `panel_locator.py` (SEM Monitor panel locator) + `controller.py` (real `RCSSEMMonitor` adapter skeleton — double-click recenter / wheel zoom / OK click, uncalibrated).
+- **`recording_filter/`** — offline, on-demand frame-filter package (NOT in the loop hot path). Turns `RecordingSession` frames into `interaction_timeline.json` via cv2 change-detection (`frame_reduce`) + VLM cursor-based click detection (`click_detect`); `run_filter` orchestrates, `settings` = `RecordingFilterSettings`.
+- **`vlm/`** — Flask VLM client/config/prompts (`flask_vlm`, `vlm_client`, `ui_venus_mai_locator`, `ocr_spotting`). **`runner/`** — WorkflowRunner/step types/settings. **`util/`** — shared helpers. Top-level: `config.py` (`Workflow3Settings`), `logger.py` (audit trail), `debug_artifacts.py` (debug-file saver, no per-save console spam).
 
 **Frozen:** `poc/workflow_1/` keeps only the CCTV/DVR path + early experiments (no active work; still the `align_images` data root).
 
 **Active offline CV bench:** `poc/workflow_2/` is *not* frozen — it is the eval / A-B / tuning harness where matching, ensemble, threshold, and consensus changes are validated against golden sets, then ported into `workflow_3/align`. It imports the engine from `poc.workflow_3.align` (never the reverse) and forks it bit-parity for experiments via `ensemble_lab.py`; golden drivers are `golden_localization_eval_cond.py` / `golden_consensus_eval_cond.py`. **Current transition:** prove a CV change in workflow_2 → port only the verified change into workflow_3; primary build focus is workflow_3 (the real-time loop).
 
-The filesystem contract (office MES writes, vision reads):
+The filesystem contract (office MES writes, `align` reads):
 
 ```
 align_images/<eqp_id>/<class>/<recipe>/
@@ -47,10 +51,11 @@ align_images/<eqp_id>/<class>/<recipe>/
 
 ```
 poc/workflow_3/          # PRODUCTION: real-time align-fail monitoring loop
-poc/workflow_3/monitor/  #   loop entry + per-alarm cycle + recording + notify + office integrations
+poc/workflow_3/monitor/  #   loop entry (+ check-only variant) + per-alarm cycle + recording + notify + engineer-done + office integrations
 poc/workflow_3/rcs/      #   RCS GUI automation (open/login/select/close/screenshot)
-poc/workflow_3/align/    #   align correction domain (assets/matcher/correct/live search/diagnostics) + smoke tests
-poc/workflow_3/sem_monitor/ # SEM Monitor panel locator + real controller adapter
+poc/workflow_3/align/    #   align correction domain root; align/matching (engine+ensemble), align/diagnostics (offline review) + smoke tests
+poc/workflow_3/recording_filter/ # offline frame-filter: RecordingSession frames -> interaction timeline (change-detect + VLM cursor)
+poc/workflow_3/sem_monitor/ # SEM Monitor panel_locator + real RCSSEMMonitor controller adapter
 poc/workflow_3/vlm/      #   Flask VLM client, service registry, prompt builders
 poc/workflow_3/runner/   #   WorkflowRunner, step/condition types, WorkflowSettings
 poc/workflow_3/util/     #   env, image, json, time + optional mouse/window helpers
@@ -80,6 +85,7 @@ All scripts run with just `uv run python <script>.py` (no CLI args — see Code 
 ```bash
 # workflow_3 — production loop (office Windows)
 uv run python poc/workflow_3/monitor/align_fail_monitor.py   # Real-time align-fail monitoring loop
+uv run python poc/workflow_3/monitor/align_fail_monitor_only_check.py  # Check-only variant: connect + 1 capture + close (no correction/recording)
 
 # dev-PC dry-run (no office modules; replay one synthetic alarm through the cycle)
 SAFE_MODE=1 ALIGN_FAIL_ALARM_SOURCE=replay ALIGN_FAIL_REPLAY_CSV=<fixture.csv> \
@@ -117,6 +123,13 @@ uv run python poc/workflow_3/align/matching/test_engine_ensemble.py
 uv run python poc/workflow_3/align/matching/test_ensemble.py
 uv run python poc/workflow_3/align/diagnostics/test_match_on_captured_frames.py  # needs office capture fixtures
 uv run python poc/workflow_3/rcs/test_tool_name_match.py              # 9/9
+
+# recording_filter — offline frame-filter unit tests (pytest-style, 18 tests)
+uv run pytest poc/workflow_3/recording_filter
+
+# monitor — engineer-done + success-gather smoke tests (run directly)
+uv run python poc/workflow_3/monitor/test_engineer_done_align_adjustment.py
+uv run python poc/workflow_3/monitor/test_success_gather.py
 
 # Video frame parser unit tests
 uv run pytest test/video_frame_parser/tests/
@@ -174,6 +187,7 @@ Each builder returns a `(system_message, user_message)` tuple and takes image `w
 - `prompt_login_rcs_ui_venus.py` — coarse bbox for Server / UserID / Password / Login / Cancel / Shortcut.
 - `prompt_login_rcs_mai_ui.py` — refined click point on the cropped+zoomed region (2-stage locator).
 - `prompt_ocr_assist.py` — OCR text extraction.
+- `prompt_recipe_monitor_counter.py` — grounds the Recipe Monitor measurement counter (N/M) for engineer-done detection.
 
 ### `poc/workflow_3/align/` — align-key engine
 
@@ -181,7 +195,9 @@ Design rule (confirmed 2026-05-25): **OpenCV produces quantitative scores and fi
 
 - `matching/engine.py` — match engine (the coordinate authority). Ensemble path (`compute_align_key_score_ensemble`: C1/C2/C3 proposer RRF + NCC rerank, Youden-calibrated thresholds 0.6053/0.4727) for paused/static frames; lightweight `compute_align_key_score` for live broad-scan. `MatchPolicy` / `DEFAULT_POLICY` / `STRUCTURE_POLICY`; scale bands `DEFAULT_SCALES` (immutable) and `BROAD_SCALES` (low-mag miniature search).
 - `assets.py` — resolves/loads the `align_images/...` tree (see Active Workstreams).
-- `correction.py` — **primary correction entry**: `key_visibility_gate` decides primary (reposition best_xy + OK click) vs fallback; `CorrectionOutcome.status` ∈ {corrected, fallback_*, escalated_no_ok, ok_detect_error, no_assets} drives the cube-notify decision in `monitor/notify.py`.
+- `templates.py` — materializes a recipe align image into an `AlignKeyTemplate` (cond-aware via `cond_template`: box-crop + decoupled `align_offset_xy`, gated by `ALIGN_FAIL_COND_BOX_CROP`).
+- `ok_button.py` — VLM locator for the Align Fail dialog's OK button (screen-absolute coords; VLM identifies the button region only, never the align coordinate).
+- `correction.py` — **primary correction entry** (`correct_align_fail_auto`): `key_visibility_gate` decides primary (reposition best_xy + OK click) vs fallback; `CorrectionOutcome.status` ∈ {corrected, fallback_*, escalated_no_ok, ok_detect_error, no_assets} drives the cube-notify decision in `monitor/notify.py`.
 - `live_search.py` — two-phase fallback search. Physical conventions: **double-click = recenter on click point, wheel = discrete FOV-centered zoom, template routing by OM/SEM mode.** Phase A broad zoom-out + spiral pan (budget 10); Phase B recenter → zoom-in → confirm. Real equipment is isolated behind the `SEMMonitorController` Protocol (Mac mock in same file; real adapter = `sem_monitor/controller.RCSSEMMonitor`).
 - Remaining gaps (office calibration): SEM panel landmarks (`poc/workflow_3/templates/sem_panel_landmarks/`), double-click/wheel↔magnification calibration, `read_mode()` real implementation, real-data threshold calibration.
 

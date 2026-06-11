@@ -9,13 +9,14 @@ import 하지 않아 Mac 합성 다운로더로 단위테스트된다. consensus
 """
 
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
 from poc.workflow_3 import ALIGN_CONSENSUS_CACHE_DIR
 
-GATHER_MAX_EVENTS = 5
+GATHER_MAX_EVENTS = 8
 
 
 @dataclass
@@ -108,9 +109,27 @@ def count_staged_events(eqp_id, recipe_id, *,
     return n_events, n_images
 
 
+def _count_events(events_dir) -> tuple:
+    """events/ 의 (event 수, S 이미지 수). 없으면 (0,0)."""
+    n_events = n_images = 0
+    try:
+        for ev in events_dir.iterdir():
+            if not ev.is_dir():
+                continue
+            imgs = [p for p in ev.glob("S*")
+                    if p.is_file() and p.suffix.lower() in _S_IMAGE_EXTS]
+            if imgs:
+                n_events += 1
+                n_images += len(imgs)
+    except OSError:
+        pass
+    return n_events, n_images
+
+
 def gather_success_images(eqp_id, recipe_id, *, downloader,
                           max_events=GATHER_MAX_EVENTS,
-                          cache_root=ALIGN_CONSENSUS_CACHE_DIR) -> GatherResult:
+                          cache_root=ALIGN_CONSENSUS_CACHE_DIR,
+                          refresh_ttl_sec=0) -> GatherResult:
     """최근 성공 S 이미지를 stage 한다(replace-if-non-empty). 예외는 삼켜 GatherResult 로 보고.
 
     절차: 임시 staging dir 에 downloader 로 받기 → ≥1 event 면 기존 events/ 제거 후 swap,
@@ -120,6 +139,16 @@ def gather_success_images(eqp_id, recipe_id, *, downloader,
     events_dir = _events_dir_for(eqp_id, recipe_id, cache_root)
     if not recipe_id:
         return GatherResult(eqp_id, recipe_id, events_dir, 0, 0, "skipped")
+
+    # TTL freshness: 최근 새로고침 이내면 다운로드 skip(기존 캐시 재사용).
+    if refresh_ttl_sec and events_dir.is_dir():
+        try:
+            age = time.time() - events_dir.stat().st_mtime
+        except OSError:
+            age = None
+        if age is not None and age < refresh_ttl_sec:
+            n_events, n_images = _count_events(events_dir)
+            return GatherResult(eqp_id, recipe_id, events_dir, n_events, n_images, "fresh")
 
     staging_dir = events_dir.parent / ".events_staging"
     if staging_dir.exists():
@@ -140,16 +169,22 @@ def gather_success_images(eqp_id, recipe_id, *, downloader,
         n_events = len(staged)
         n_images = sum(len(ev.image_paths) for ev in staged)
 
-        if n_events == 0:
-            # 빈 fetch — 기존 events/ 보존(replace-if-non-empty).
+        if n_images == 0:                       # 이미지 0장이면 옛 캐시 보존(Codex#2).
             shutil.rmtree(staging_dir, ignore_errors=True)
             return GatherResult(eqp_id, recipe_id, events_dir, 0, 0, "empty")
 
-        # swap: 기존 events/ 제거 후 staging → events (os.replace, 같은 볼륨 rename).
-        if events_dir.exists():
-            shutil.rmtree(events_dir, ignore_errors=True)
+        # 원자적 교체 -- 항상 유효한 events/ 유지: staging->.events_new->events, 기존은 .events_old 비킴.
         events_dir.parent.mkdir(parents=True, exist_ok=True)
-        staging_dir.replace(events_dir)
+        new_dir = events_dir.parent / ".events_new"
+        old_dir = events_dir.parent / ".events_old"
+        for d in (new_dir, old_dir):
+            if d.exists():
+                shutil.rmtree(d, ignore_errors=True)
+        staging_dir.replace(new_dir)            # staging -> .events_new
+        if events_dir.exists():
+            events_dir.replace(old_dir)         # 기존 events -> .events_old (짧은 부재 창)
+        new_dir.replace(events_dir)             # .events_new -> events
+        shutil.rmtree(old_dir, ignore_errors=True)
     except Exception as exc:
         shutil.rmtree(staging_dir, ignore_errors=True)
         return GatherResult(eqp_id, recipe_id, events_dir, 0, 0,

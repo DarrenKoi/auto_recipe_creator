@@ -6,11 +6,14 @@ CLAUDE.md 규칙: argparse 미사용, [PASS]/[FAIL] print, Mac 에서 그대로 
 
 import shutil
 import tempfile
+import time as _time
+from pathlib import Path as _Path
 from pathlib import Path
 
 from poc.workflow_3.align.consensus_gather import (
     StagedEvent,
     gather_success_images,
+    _events_dir_for,
 )
 
 
@@ -211,6 +214,94 @@ def test_max_events_passthrough():
         shutil.rmtree(root, ignore_errors=True)
 
 
+class _StubEvent:
+    """TTL/atomic-swap 테스트용 최소 stub event (StagedEvent 대신 duck-typing)."""
+
+    def __init__(self, n_images):
+        self.event_id = "20260612_090000_r_lot"
+        self.image_paths = [_Path(f"S{i}.jpeg") for i in range(n_images)]
+        self.cond_paths = []
+
+
+class _Downloader:
+    """TTL/atomic-swap 테스트용 최소 stub 다운로더."""
+
+    def __init__(self, events):
+        self.events = events
+        self.calls = 0
+
+    def download_recent_successes(self, recipe_id, *, max_events, dest_dir):
+        self.calls += 1
+        for ev in self.events:
+            d = _Path(dest_dir) / ev.event_id
+            d.mkdir(parents=True, exist_ok=True)
+            for ip in ev.image_paths:
+                (d / ip.name).write_bytes(b"x")
+        return self.events
+
+
+def test_zero_image_event_preserves_old_cache(tmp_path=None):
+    """이미지 0장인 event 가 있어도 n_images==0 이면 기존 캐시 보존."""
+    import tempfile
+    root = _Path(tmp_path) if tmp_path else _Path(tempfile.mkdtemp())
+    try:
+        ev_dir = _events_dir_for("E1", "c/r", root)
+        (ev_dir / "old").mkdir(parents=True)
+        (ev_dir / "old" / "S0.jpeg").write_bytes(b"x")
+        dl = _Downloader([_StubEvent(0)])           # 이미지 0장 event.
+        res = gather_success_images("E1", "c/r", downloader=dl, cache_root=root,
+                                    refresh_ttl_sec=0)
+        ok = res.reason == "empty" and (ev_dir / "old" / "S0.jpeg").exists()
+        print(f"[{'PASS' if ok else 'FAIL'}] zero_image_event_preserves_old_cache: "
+              f"reason={res.reason} old_cache_exists={(ev_dir / 'old' / 'S0.jpeg').exists()}")
+        return ok
+    finally:
+        if tmp_path is None:
+            shutil.rmtree(root, ignore_errors=True)
+
+
+def test_ttl_skips_download(tmp_path=None):
+    """TTL 이내 캐시는 다운로더를 호출하지 않고 'fresh' 반환."""
+    import tempfile
+    root = _Path(tmp_path) if tmp_path else _Path(tempfile.mkdtemp())
+    try:
+        ev_dir = _events_dir_for("E1", "c/r", root)
+        (ev_dir / "e1").mkdir(parents=True)
+        (ev_dir / "e1" / "S0.jpeg").write_bytes(b"x")
+        dl = _Downloader([_StubEvent(2)])
+        res = gather_success_images("E1", "c/r", downloader=dl, cache_root=root,
+                                    refresh_ttl_sec=3600)  # 방금 만든 캐시 -> TTL 내.
+        ok = res.reason == "fresh" and dl.calls == 0
+        print(f"[{'PASS' if ok else 'FAIL'}] ttl_skips_download: "
+              f"reason={res.reason} dl_calls={dl.calls}")
+        return ok
+    finally:
+        if tmp_path is None:
+            shutil.rmtree(root, ignore_errors=True)
+
+
+def test_nonempty_replaces_cache(tmp_path=None):
+    """이미지 ≥1 이면 기존 캐시를 교체하고 events/ 가 유효하게 남는다."""
+    import tempfile
+    root = _Path(tmp_path) if tmp_path else _Path(tempfile.mkdtemp())
+    try:
+        ev_dir = _events_dir_for("E1", "c/r", root)
+        (ev_dir / "old").mkdir(parents=True)
+        (ev_dir / "old" / "S0.jpeg").write_bytes(b"x")
+        dl = _Downloader([_StubEvent(2)])
+        res = gather_success_images("E1", "c/r", downloader=dl, cache_root=root,
+                                    refresh_ttl_sec=0)
+        old_gone = not (ev_dir / "old").exists()
+        ok = res.reason == "ok" and res.n_images == 2 and dl.calls == 1 and ev_dir.is_dir() and old_gone
+        print(f"[{'PASS' if ok else 'FAIL'}] nonempty_replaces_cache: "
+              f"reason={res.reason} n_images={res.n_images} dl_calls={dl.calls} "
+              f"events_valid={ev_dir.is_dir()} old_gone={old_gone}")
+        return ok
+    finally:
+        if tmp_path is None:
+            shutil.rmtree(root, ignore_errors=True)
+
+
 def main():
     print("[INFO] consensus_gather self-test 시작")
     results = [
@@ -222,6 +313,9 @@ def main():
         test_skipped_no_recipe(),
         test_malformed_event_reports_error(),
         test_max_events_passthrough(),
+        test_zero_image_event_preserves_old_cache(),
+        test_ttl_skips_download(),
+        test_nonempty_replaces_cache(),
     ]
     passed = sum(1 for r in results if r)
     print(f"[INFO] {passed}/{len(results)} cases passed")

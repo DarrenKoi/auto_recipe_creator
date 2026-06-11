@@ -79,7 +79,11 @@ def _iter_event_s_images(events_dir, max_events):
     if not events_dir.is_dir():
         return
     try:
-        event_dirs = sorted([d for d in events_dir.iterdir() if d.is_dir()])
+        # 점(.) 으로 시작하는 dir 제외 — gather 의 .events_new/.events_old/.events_staging
+        # 잔재가 실수로 events/ 안에 들어와도 가짜 최신 event 로 잡혀 진짜를 밀어내지 않게.
+        event_dirs = sorted(
+            d for d in events_dir.iterdir() if d.is_dir() and not d.name.startswith(".")
+        )
     except OSError:
         return
     for ev in event_dirs[-max_events:]:          # 최신 우선 cap.
@@ -109,8 +113,12 @@ def load_coregistered_crops(cache_root, eqp_id, cache_key, center_tpls, *, max_e
     for p in _iter_event_s_images(events_dir, max_events):
         try:
             cond = load_cond(p)
-        except Exception:
-            cond = None
+        except Exception as exc:
+            # cond 읽기 *실패*(권한/디코드 등)는 cond 부재(정상 None)와 구분해 따로 집계 —
+            # 오피스 Windows 파일락 등 체계적 실패를 missing_cond 와 섞지 않는다.
+            drop_counts["cond_error"] += 1
+            print(f"[WARNING] cond 읽기 실패 {p.name}: {exc}")
+            continue
         mod = _resolve_mod(cond, recipe_mod) if cond is not None else None
         xy = _cond_crosshair_xy(cond)
         tpl_item = center_tpls.get(mod) or next(

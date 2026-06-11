@@ -53,6 +53,11 @@ uv run python poc/workflow_3/monitor/engineer_done_align_adjustment.py
 
 측정 중 tool 로 done-감지 체인(grounding/CV/OCR) 즉시 검증. `ALIGN_DONE_CALIB_EQP_ID` 로 대상 tool 지정 (기본: 열려 있는 아무 Remote Monitoring 창). debug crop 은 run 별로 `debug_images/engineer_done_calib/<tool>_<yymmdd_HHMMSS>/` 에 보존된다 (운영 cycle 은 `debug_images/engineer_done/<eqp>_<tag>/`). 참고: 캘리브레이션 tick 간격은 `poll_sec` 그대로지만, 운영 watch 에서는 내부 2s sleep 이 더해져 실제 감지 주기가 `poll_sec + OCR 지연 + 2s` 정도로 약간 길다.
 
+기본값(2026-06-11~): **`ALIGN_FAIL_ENGINEER_DONE_MIN_COUNT=6`** — 분자 N 이 5 를 넘어 연속 2회 확인돼야 done(=watch 조기 종료 + cycle teardown 의 tool 창 자동 닫기). 재정렬 직후 카운터가 잠깐 보였다 사라지는 false-start 로 너무 일찍 닫히지 않게 임계를 높였다. **`ALIGN_FAIL_ENGINEER_WATCH_SEC=300`**(5분) 은 done 미감지 시의 backstop cap 이다 — 측정이 시작되면 그 전에 조기 종료한다.
+
+- 캘리브레이션 의도는 **threshold 가 아니라 grounding/CV/OCR 체인 검증**이다. 분자가 6 까지 오르길 기다리면 길어질 수 있으니, 빠른 검증에는 `ALIGN_FAIL_ENGINEER_DONE_MIN_COUNT=2 ALIGN_DONE_CALIB_SEC=180` 처럼 임시로 낮춰 done=True 까지 확인한 뒤, 운영 `.env` 에는 기본 6 을 쓴다.
+- 체인이 정상(ROI 로그 → tick 마다 `changed=True` + `n` 증가)인데 시간 내 done 만 안 나면 임계/시간 문제이지 grounding 실패가 아니다.
+
 ## 주요 env (기존 이름 유지)
 
 | env | 기본 | 의미 |

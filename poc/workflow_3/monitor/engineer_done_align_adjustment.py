@@ -406,9 +406,15 @@ def run_calibration() -> bool:
             return True
         time.sleep(settings.engineer_done_poll_sec)
 
+    last_n = detector.last_debug.get("n")
     print(
-        "[WARNING] duration 내 done 미감지 - debug crop 으로 ROI 를 확인하고 "
-        "grounding 문구(RECIPE_MONITOR_NUMERATOR_INSTRUCTION)/ROI pad 를 조정하세요."
+        "[WARNING] duration 내 done 미감지. 원인 구분:\n"
+        f"  - tick 로그에 changed=True + n 증가가 보였다면 체인은 정상이고, "
+        f"분자가 min_count(={settings.engineer_done_min_count}, N>5) 까지 못 올랐을 뿐 "
+        f"(마지막 n={last_n}). 빠른 검증엔 ALIGN_FAIL_ENGINEER_DONE_MIN_COUNT=2 또는 "
+        f"ALIGN_DONE_CALIB_SEC 상향 후 재실행.\n"
+        "  - n 이 계속 None/blank 면 grounding/OCR 문제 - debug crop 으로 ROI 확인 후 "
+        "grounding 문구(RECIPE_MONITOR_NUMERATOR_INSTRUCTION)/ROI pad 조정."
     )
     return False
 

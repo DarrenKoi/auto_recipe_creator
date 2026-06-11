@@ -231,6 +231,27 @@ def _binned_localization_report(all_rows):
     }
 
 
+def _print_binned_report(binned):
+    """bin × arm(center/box) 표를 콘솔로 — office digest 가 그대로 베껴쓸 형식."""
+    print("\n" + "=" * 64)
+    print(f"[INFO] === Tier 1.1 box-crop 게이트 (frame={binned['frame']}) ===")
+    if binned.get("n_no_frame_hw"):
+        print(f"  [WARNING] frame_hw 없는 S 행 {binned['n_no_frame_hw']}개 → displacement 표서 제외.")
+    for title, key, order in (
+        ("[A] by structural displacement (GT-from-center)", "by_displacement",
+         ("near", "mid", "far", "veryfar")),
+        ("[B] by center-arm miss (rescue)", "by_center_miss",
+         ("hit", "near", "far", "veryfar")),
+    ):
+        print(f"\n  {title}")
+        print(f"    {'bin':<9} {'center gt_in_topk/rank1':<26} {'box gt_in_topk/rank1':<24} n(c/b)")
+        for b in order:
+            c, x = binned[key][b]["center"], binned[key][b]["box"]
+            print(f"    {b:<9} {str(c['gt_in_topk'])+'/'+str(c['rank1']):<26} "
+                  f"{str(x['gt_in_topk'])+'/'+str(x['rank1']):<24} {c['n']}/{x['n']}")
+    print("=" * 64)
+
+
 def _cond_box_center(box_ltrb):
     """cond.box_ltrb → 이미지 px box 중심 (cx, cy) (정수 반올림 전 float)."""
     l, t = cursor_to_image(box_ltrb[:2], OVERSAMPLE)
@@ -473,6 +494,7 @@ def _process_msr_cond(msr_path, center_tpls, box_tpls, *, recipe_id="",
         "crosshair_conf": ch_conf, "crosshair_source": ch_source,
         "modality": None, "modality_skip": None,
         "cells": {}, "overlay": None,
+        "frame_hw": [int(gray_raw.shape[0]), int(gray_raw.shape[1])],   # Tier 1.1 displacement bin 용.
     }
     if label != "S" or crosshair_xy is None:
         return row
@@ -572,6 +594,7 @@ def lever_verdict(cell_stats, *, proposer_ceiling=OLD_PROPOSER_CEILING):
 
 def run() -> str:
     """cond GT 로 golden 위치추정 검증 (인자 없음). 반환: success | no_data | no_rows."""
+    _apply_matcher_default()   # Tier 1.1: ensemble 기본(ALIGN_USE_ENSEMBLE=0 으로 끌 수 있음).
     root_env = os.getenv("ALIGN_GOLDEN_ROOT")
     root = Path(root_env) if root_env else GOLDEN_ROOT
     recipes = gle._collect_recipes(root) if root.is_dir() else []
@@ -666,6 +689,7 @@ def run() -> str:
                                    "skip": n_mskip}
     lv = lever_verdict(summary["cells"].get("box__inpaint", {"n": 0}))
     summary["lever_verdict"] = lv
+    summary["binned"] = _binned_localization_report(all_rows)   # Tier 1.1 bin×arm 게이트.
     # summary.json 은 *출력 전에* 먼저 쓴다 — 프린트 단계에서 죽어도 산출물은 남게.
     (out_dir / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -692,6 +716,8 @@ def run() -> str:
         print(f"  >>> 판정: {lv['verdict'].upper()}")
         print(f"  >>> 다음: {lv['recommendation']}")
     print("=" * 64)
+    _print_binned_report(summary["binned"])   # Tier 1.1: bin×arm 게이트 표(office digest).
+
     print(f"\n[INFO] 완료: {out_dir}")
     return "success"
 

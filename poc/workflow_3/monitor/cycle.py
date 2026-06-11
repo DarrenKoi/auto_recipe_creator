@@ -27,6 +27,7 @@ from pathlib import Path
 
 from poc.workflow_3 import ALIGN_IMAGES_DIR, DEBUG_IMAGE_DIR
 from poc.workflow_3.config import Workflow3Settings
+from poc.workflow_3.debug_artifacts import save_debug_jpeg
 from poc.workflow_3.logger import log_work2_event
 from poc.workflow_3.monitor.notify import close_alert_window, notify_correction_outcome
 from poc.workflow_3.monitor.recording import RecordingSession
@@ -39,9 +40,17 @@ from poc.workflow_3.runner.workflow_types import (
     StepResult,
     WorkflowStep,
 )
-from poc.workflow_3.util import activate_window, make_timestamp_tag
+from poc.workflow_3.util import (
+    activate_window,
+    capture_window,
+    env_float,
+    make_timestamp_tag,
+)
 
 LOG_COMPONENT = "align_fail_cycle"
+
+# 점검 전용(check-only) 캡처 직전 SEM 영상 렌더 대기(초) — rcs_screenshot 의 settle 과 동일 취지.
+_CHECK_CAPTURE_SETTLE_SEC = env_float("ALIGN_FAIL_CHECK_SETTLE_SEC", 2.0)
 
 # RCS GUI 의존 모듈(pywinauto/VLM)은 선택 의존성 — 없는 환경(개발 PC)에서도
 # 본체 import 는 살아 있어야 한다(기존 align_fail_alarm_record 의 패턴).
@@ -555,4 +564,157 @@ def run_alarm_cycle(
     return result
 
 
-__all__ = ["CycleResult", "build_cycle_steps", "run_alarm_cycle"]
+# ------------------------------------------------------------------
+# 점검 전용(check-only) 사이클 — 접속 → 첫 화면 1장 캡처 → 닫기.
+# ------------------------------------------------------------------
+
+
+def _capture_dir_for(eqp_id: str, recipe_id: str, tag: str) -> Path:
+    """첫 화면 캡처 저장 폴더 — captured_img_from_rcs/<tag> (recipe 없으면 _unregistered)."""
+    if recipe_id and captured_dir_for is not None:
+        return captured_dir_for(eqp_id, recipe_id) / tag
+    return ALIGN_IMAGES_DIR / eqp_id / "_unregistered" / tag
+
+
+def _exec_capture_screen(step, context, settings: Workflow3Settings) -> StepResult:
+    """첫 화면 1장 캡처 — 장비는 fail 시 정지라 단일 스크린샷으로 충분."""
+    started_at = time.time()
+    out_dir = _capture_dir_for(context["eqp_id"], context["recipe_id"], context["tag"])
+    try:
+        if _CHECK_CAPTURE_SETTLE_SEC > 0:
+            time.sleep(_CHECK_CAPTURE_SETTLE_SEC)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        image = capture_window(context["tool_window"])
+        out_path = out_dir / f"{context['tag']}_rcs.jpg"
+        save_debug_jpeg(image, out_path)
+        context["capture_path"] = out_path
+        print(f"[INFO] 첫 화면 캡처 저장: {out_path}")
+    except Exception as exc:
+        return _make_result(
+            step, "failed", started_at, settings,
+            failure_class="capture_error", error_message=f"{type(exc).__name__}: {exc}",
+        )
+    return _make_result(step, "success", started_at, settings)
+
+
+def build_check_steps(eqp_id: str) -> list[WorkflowStep]:
+    """점검 전용 사이클 step — 보정/녹화 없이 접속 → 캡처까지만."""
+    return [
+        WorkflowStep(
+            step_id="ensure_rcs_ready",
+            step_type="recover",
+            target_description="RCS 메인 창 확보(전면화/재실행+재로그인)",
+            success_criteria=_ctx_set("rcs_main_window"),
+        ),
+        WorkflowStep(
+            step_id="close_alert_popup",
+            step_type="cleanup",
+            target_description="감지 알림 팝업 닫기(screenshot 오염 방지)",
+        ),
+        WorkflowStep(
+            step_id="connect_tool",
+            step_type="action",
+            target_description=f"List 탭에서 tool 더블클릭: {eqp_id}",
+            depends_on=["ensure_rcs_ready"],
+        ),
+        WorkflowStep(
+            step_id="wait_tool_window",
+            step_type="detect",
+            target_description="Remote Monitoring 창 대기",
+            depends_on=["connect_tool"],
+            success_criteria=_ctx_set("tool_window"),
+        ),
+        WorkflowStep(
+            step_id="capture_screen",
+            step_type="action",
+            target_description="첫 화면 1장 캡처",
+            depends_on=["wait_tool_window"],
+            success_criteria=_ctx_set("capture_path"),
+        ),
+    ]
+
+
+_CHECK_STEP_EXECUTORS = {
+    "ensure_rcs_ready": _exec_ensure_rcs_ready,
+    "close_alert_popup": _exec_close_alert_popup,
+    "connect_tool": _exec_connect_tool,
+    "wait_tool_window": _exec_wait_tool_window,
+    "capture_screen": _exec_capture_screen,
+}
+
+
+def run_check_only_cycle(
+    eqp_id: str,
+    recipe_id: str,
+    settings: Workflow3Settings,
+    *,
+    tag: str | None = None,
+) -> CycleResult:
+    """점검 전용 사이클 — 접속 → 첫 화면 1장 캡처 → tool 닫기.
+
+    production `run_alarm_cycle` 의 경량 변형: 상시 녹화/SEM panel/CV 보정/engineer
+    watch 를 모두 뺀다. 과거 데이터 수집(rcp/msr 는 office MES 가 align_images 에
+    직접 적재, 최근 성공 S 이미지는 monitor 의 gather_success_async)은 사이클 밖에서
+    이뤄진다. step 실패로 runner 가 중단돼도 tool 닫기·팝업 backstop 은 finally 가
+    보장한다(러너가 중간에 죽어도 teardown 이 실행되게).
+    """
+    tag = tag or make_timestamp_tag()
+    result = CycleResult(eqp_id=eqp_id, recipe_id=recipe_id, tag=tag)
+
+    if not RCS_MODULES_AVAILABLE:
+        result.run_status = "rcs_unavailable"
+        result.notes.append("RCS 모듈 비활성 — 감지/로그만")
+        return result
+
+    context: dict = {"eqp_id": eqp_id, "recipe_id": recipe_id, "tag": tag}
+    runner = WorkflowRunner(
+        settings,
+        workflow_name=f"align_fail_check_{eqp_id}",
+        log_name="work2",
+        component_name=LOG_COMPONENT,
+    )
+
+    def executor(step, step_context):
+        return _CHECK_STEP_EXECUTORS[step.step_id](step, step_context, settings)
+
+    try:
+        run = runner.run(build_check_steps(eqp_id), context, executor)
+        result.run_status = run.status
+        result.run_dir = str(run.run_dir or "")
+        for step_result in run.step_results:
+            if step_result.status == "failed":
+                result.failed_step = step_result.step_id
+                result.failure_class = step_result.failure_class or ""
+                break
+        capture_path = context.get("capture_path")
+        if capture_path is not None:
+            result.outcome_status = "captured"
+            result.outcome_path = str(capture_path)
+            result.frame_count = 1
+    except Exception as exc:
+        result.run_status = "error"
+        result.notes.append(f"{type(exc).__name__}: {exc}")
+        print(f"[ERROR] 점검 사이클 예외: EQP_ID={eqp_id}, error={exc}")
+        log_work2_event(
+            component=LOG_COMPONENT, message="check_cycle_error", level="error",
+            eqp_id=eqp_id, error=str(exc),
+        )
+    finally:
+        # teardown 보장 — tool 닫기 → 알림 팝업 backstop.
+        if context.get("tool_window") is not None and CLOSE_TOOL_AVAILABLE:
+            try:
+                close_tool(eqp_id)
+            except Exception as exc:
+                print(f"[WARNING] tool 창 닫기 실패: {exc}")
+        close_alert_window(timeout_sec=settings.alert_close_timeout_sec)
+
+    return result
+
+
+__all__ = [
+    "CycleResult",
+    "build_check_steps",
+    "build_cycle_steps",
+    "run_alarm_cycle",
+    "run_check_only_cycle",
+]

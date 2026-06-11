@@ -1,0 +1,234 @@
+"""실시간 Align Fail '점검 전용' 모니터링 루프 — workflow_3 보조 진입점.
+
+`align_fail_monitor.py` 의 경량 변형이다. 알람마다 [접속 → 첫 화면 1장 캡처 →
+tool 닫기] 만 수행하고, 상시 녹화 / SEM panel 확보 / CV 보정 / engineer watch 는
+전부 뺀다. 과거 데이터 수집은 그대로 유지한다:
+
+  * rcp / msr 이미지: office MES 가 align_images 트리에 직접 적재(코드 개입 없음).
+    물리 루트가 workflow_3 로 잡혀 있으면 캡처도 같은 트리에 모인다.
+  * 최근 성공(S) align 이미지: monitor 의 `gather_success_async` 가 비차단 다운로드.
+
+용도: fail 시점 화면을 한 장 박제하고 과거 데이터만 모으는 데이터 수집/점검 모드.
+실제 보정은 production `align_fail_monitor.py` 가 담당한다. 폴링/edge-trigger/로그/
+manifest 골격은 production 과 동일하며, 알람별 사이클만 `run_check_only_cycle` 로
+교체한다.
+
+사용법:
+  uv run python poc/workflow_3/monitor/align_fail_monitor_only_check.py
+
+개발 PC dry-run:
+  SAFE_MODE=1 ALIGN_FAIL_ALARM_SOURCE=replay ALIGN_FAIL_REPLAY_CSV=<fixture.csv> \
+    uv run python poc/workflow_3/monitor/align_fail_monitor_only_check.py
+"""
+
+import csv
+import time
+from datetime import datetime
+
+from poc.workflow_3 import LOG_DIR
+from poc.workflow_3.config import Workflow3Settings, load_workflow3_settings
+from poc.workflow_3.monitor.alarm_source import load_alarm_source
+
+# 행 파싱/필터/기록 등 경로에 무관한 순수 헬퍼는 production 모니터에서 재사용한다
+# (중복 유지보수를 피하기 위해). 사이클/manifest/루프만 점검 전용으로 따로 둔다.
+from poc.workflow_3.monitor.align_fail_monitor import (
+    CYCLE_MANIFEST_COLUMNS,
+    _alarm_rows_empty,
+    _alarm_time_to_tag,
+    _collapse_rows_by_tool,
+    _set_keep_awake,
+    append_alarm_record,
+    filter_rows_within_window,
+)
+from poc.workflow_3.monitor.cycle import CycleResult, run_check_only_cycle
+from poc.workflow_3.monitor.notify import ALARM_LOG_PATH, notify_align_fail_popup
+from poc.workflow_3.monitor.success_gather import gather_success_async
+
+LOG_COMPONENT = "align_fail_only_check"
+
+# 점검 전용 manifest — production align_fail_cycles.csv 와 분리해 결과가 안 섞이게 한다.
+CYCLE_MANIFEST_PATH = LOG_DIR / "align_fail_check_cycles.csv"
+
+
+def append_cycle_manifest(info: dict, cycle: CycleResult) -> None:
+    """알람 1건의 메타 + 점검 사이클 결과를 CSV manifest 에 한 줄 누적한다.
+
+    파일이 없으면 헤더를 먼저 쓴다(컬럼은 production 과 동일). 기록 실패는 삼켜
+    루프가 죽지 않게 한다.
+    """
+    detected_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        CYCLE_MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
+        write_header = (
+            not CYCLE_MANIFEST_PATH.exists()
+            or CYCLE_MANIFEST_PATH.stat().st_size == 0
+        )
+        with CYCLE_MANIFEST_PATH.open("a", encoding="utf-8", newline="") as fp:
+            writer = csv.writer(fp)
+            if write_header:
+                writer.writerow(CYCLE_MANIFEST_COLUMNS)
+            writer.writerow([
+                detected_at,
+                cycle.eqp_id,
+                cycle.recipe_id,
+                info["alid"],
+                info["utc9"],
+                info["alarm_name"],
+                cycle.run_status,
+                cycle.failed_step,
+                cycle.failure_class,
+                cycle.outcome_status,
+                cycle.outcome_path,
+                cycle.key_decision,
+                cycle.best_xy,
+                cycle.frame_count,
+                cycle.recording_dir,
+                cycle.run_dir,
+            ])
+        print(
+            f"[INFO] check manifest 기록 → {CYCLE_MANIFEST_PATH} "
+            f"(EQP_ID={cycle.eqp_id}, run={cycle.run_status}, outcome={cycle.outcome_status or '-'})"
+        )
+    except Exception as exc:
+        print(f"[WARNING] check manifest 기록 실패: {exc}")
+
+
+def process_fail_rows(
+    fails,
+    active_tools: set[str],
+    settings: Workflow3Settings,
+) -> int:
+    """EQP_ID 기준 edge-triggered 로 신규 알람마다 점검 사이클을 수행한다.
+
+    production `align_fail_monitor.process_fail_rows` 와 동일한 edge-trigger 규약
+    이되, 알람별 사이클만 `run_check_only_cycle`(접속 → 캡처 → 닫기)로 바뀐다.
+    `active_tools` 는 in-place 로 갱신되며, 새로 처리한 개수를 반환한다.
+    """
+    by_tool = _collapse_rows_by_tool(fails)
+    current_tools = set(by_tool.keys())
+
+    new_tools = current_tools - active_tools
+    cleared_tools = active_tools - current_tools
+
+    for eqp_id in sorted(cleared_tools):
+        print(f"[INFO] Align Fail 해제: EQP_ID={eqp_id}")
+    active_tools.difference_update(cleared_tools)
+
+    newly_handled = 0
+    for eqp_id in sorted(new_tools):
+        info = by_tool[eqp_id]
+        alarm_time = str(info["alarm_time"] or "")
+
+        print(
+            f"[WARNING] Align Fail 감지: EQP_ID={eqp_id}, "
+            f"ALID={info['alid']}, RECIPE_ID={info['recipe_id']}, "
+            f"LOT_TYPE={info['lot_type_cd']}, 시각={alarm_time}"
+        )
+        append_alarm_record(
+            eqp_id, alarm_time, info["alarm_name"], info["alid"],
+            recipe_id=info["recipe_id"],
+            operation_desc=info["operation_desc"],
+            lot_type_cd=info["lot_type_cd"],
+        )
+        if settings.popup_enabled:
+            notify_align_fail_popup(
+                eqp_id, alarm_time, info["alarm_name"],
+                recipe_id=info["recipe_id"],
+                operation_desc=info["operation_desc"],
+                lot_type_cd=info["lot_type_cd"],
+                timeout_sec=settings.popup_timeout_sec,
+            )
+
+        # 과거 데이터 수집 — recipe 최근 성공(S) 이미지 stage (비차단 best-effort).
+        # 게이트(gather_enabled/recipe_id/downloader)는 gather_success_async 내부에서 판정.
+        gather_success_async(eqp_id, info["recipe_id"], settings)
+
+        # 점검 전용 사이클 — 접속 → 첫 화면 1장 캡처 → tool 닫기 (보정/녹화 없음).
+        if settings.cycle_enabled:
+            cycle = run_check_only_cycle(
+                eqp_id,
+                info["recipe_id"],
+                settings,
+                tag=_alarm_time_to_tag(info["utc9"]),
+            )
+        else:
+            cycle = CycleResult(eqp_id=eqp_id, recipe_id=info["recipe_id"], tag="")
+            cycle.run_status = "cycle_disabled"
+
+        append_cycle_manifest(info, cycle)
+
+        active_tools.add(eqp_id)
+        newly_handled += 1
+
+    return newly_handled
+
+
+def monitor_loop(settings: Workflow3Settings | None = None) -> None:
+    """점검 전용 메인 루프 — poll 주기마다 신규 Align Fail 을 캡처+닫기 처리한다."""
+    settings = settings or load_workflow3_settings()
+    source = load_alarm_source(settings.alarm_source)
+
+    if settings.keep_awake:
+        _set_keep_awake(True)
+
+    active_tools: set[str] = set()
+    idle_logged = False  # "Align Fail 없음" 은 idle 진입 시 한 번만 로깅 (poll 마다 X)
+
+    print(
+        f"[INFO] Align Fail 점검 모니터링 시작 (소스={source.kind}, "
+        f"주기={settings.poll_interval_sec}s, 윈도우={settings.detection_window_sec}s, "
+        f"팝업={'on' if settings.popup_enabled else 'off'}, "
+        f"사이클={'on' if settings.cycle_enabled else 'off'}, "
+        f"성공이미지수집={'on' if settings.gather_enabled else 'off'})"
+    )
+    print(f"[INFO] 알람 로그: {ALARM_LOG_PATH}")
+    print(f"[INFO] 점검 manifest: {CYCLE_MANIFEST_PATH}")
+    print(
+        "[INFO] 각 신규 Align Fail: RCS 확보 → 접속 → 첫 화면 1장 캡처 → tool 닫기. "
+        "과거 데이터(rcp/msr=MES 적재, 성공 S 이미지=gather)도 함께 수집. "
+        "보정/녹화는 하지 않음(production 모니터 담당). 중복 알람은 한 번만 처리."
+    )
+
+    while True:
+        try:
+            poll_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[INFO] {poll_time} - 알람 조회 (최근 {settings.detection_window_sec}s 윈도우)")
+            alarms = source.poll()
+            fails = source.filter_align_fail(alarms)
+            fails = filter_rows_within_window(fails, settings.detection_window_sec)
+
+            if _alarm_rows_empty(fails):
+                if active_tools:
+                    for eqp_id in sorted(active_tools):
+                        print(f"[INFO] Align Fail 해제: EQP_ID={eqp_id}")
+                    active_tools.clear()
+                if not idle_logged:
+                    print(f"[INFO] {datetime.now().strftime('%H:%M:%S')} - Align Fail 없음")
+                    idle_logged = True
+            else:
+                idle_logged = False
+                count = process_fail_rows(fails, active_tools, settings)
+                if count == 0:
+                    print(
+                        f"[INFO] {datetime.now().strftime('%H:%M:%S')} - "
+                        f"신규 없음 (활성 {len(active_tools)}대 유지)"
+                    )
+        except KeyboardInterrupt:
+            print("\n[INFO] 감지 중단 (Ctrl+C)")
+            break
+        except Exception as exc:
+            print(f"[ERROR] 감지 루프 예외: {exc}")
+
+        try:
+            time.sleep(settings.poll_interval_sec)
+        except KeyboardInterrupt:
+            print("\n[INFO] 감지 중단 (Ctrl+C)")
+            break
+
+    if settings.keep_awake:
+        _set_keep_awake(False)
+    print("[INFO] 점검 감지 종료")
+
+
+if __name__ == "__main__":
+    monitor_loop()

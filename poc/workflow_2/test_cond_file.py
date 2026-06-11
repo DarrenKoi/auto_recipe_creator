@@ -14,8 +14,8 @@ import tempfile
 from pathlib import Path
 
 from poc.workflow_2 import WORKFLOW_2_DIR
-from poc.workflow_3.vision.align_fail_assets import resolve_assets
-from poc.workflow_3.vision.cond_file import (
+from poc.workflow_3.align.assets import resolve_assets
+from poc.workflow_3.align.cond_file import (
     CondInfo, cond_path_for, load_cond, msr_modality, parse_cond,
 )
 

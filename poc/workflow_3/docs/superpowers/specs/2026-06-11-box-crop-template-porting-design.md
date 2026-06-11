@@ -33,7 +33,7 @@ localization 동반 상승**:
 
 ## 2. Architecture (컴포넌트)
 
-### 2.1 신규 `poc/workflow_3/vision/cond_template.py` (primitives 승격)
+### 2.1 신규 `poc/workflow_3/align/cond_template.py` (primitives 승격)
 
 lab(`golden_localization_eval_cond.py`)의 검증된 cond 기하 함수를 **byte-identical 승격**:
 `cond_align_offset`, `check_cond_box`, `cond_template_crop`, `_cond_box_to_xywh`,
@@ -44,11 +44,11 @@ lab(`golden_localization_eval_cond.py`)의 검증된 cond 기하 함수를 **byt
   에 있으므로 그대로 재사용(중복 생성 금지).
 - 이후 **lab 이 이 production 모듈에서 import**(ensemble 과 동일 bit-parity 패턴). lab 의
   기존 cond 테스트(`test_golden_localization_eval_cond.py`)는 re-export 로 계속 통과.
-- 의존 방향: workflow_2(lab) → workflow_3.vision(prod), 역방향 금지(CLAUDE.md 규약).
+- 의존 방향: workflow_2(lab) → workflow_3.align(prod), 역방향 금지(CLAUDE.md 규약).
 
 ### 2.2 `AlignKeyTemplate.align_offset_xy`
 
-`align_key_matcher.AlignKeyTemplate` 에 `align_offset_xy: tuple[int, int] = (0, 0)` 필드 추가,
+`align.matching.engine.AlignKeyTemplate` 에 `align_offset_xy: tuple[int, int] = (0, 0)` 필드 추가,
 `build_template(...)` 에 optional 인자. template 이 자기 offset 을 들고 다닌다(병렬 dict 보다
 단순; eval 의 `(template, offset)` 튜플을 prod 에선 template 안으로 흡수).
 

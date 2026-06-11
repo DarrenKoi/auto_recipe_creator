@@ -13,10 +13,11 @@ legacy 위치에서 로드되면 workflow_3/monitor 로 복사하라는 경고�
 (`align_fail_monitor`)가 담당한다.
 """
 
-import importlib
 import os
 
 import pandas as pd
+
+from poc.workflow_3.monitor.integration_loader import load_office_integration
 
 
 class AlarmSource:
@@ -43,21 +44,15 @@ class AlarmSource:
 
 def _load_office_module():
     """office_align_fail_alarm 을 정위치 → legacy 순서로 찾는다. 없으면 None."""
-    for module_path, is_legacy in (
-        ("poc.workflow_3.monitor.office_align_fail_alarm", False),
-        ("poc.workflow_1.office_align_fail_alarm", True),
-    ):
-        try:
-            module = importlib.import_module(module_path)
-        except Exception:
-            continue
-        if is_legacy:
-            print(
-                "[WARNING] office_align_fail_alarm 이 legacy 위치(workflow_1)에서 "
-                "로드됨 — poc/workflow_3/monitor/ 로 복사하세요."
-            )
-        return module
-    return None
+    integration = load_office_integration(
+        "office_align_fail_alarm",
+        (
+            ("poc.workflow_3.monitor.office_align_fail_alarm", False),
+            ("poc.workflow_1.office_align_fail_alarm", True),
+        ),
+        required_attrs=("get_cdsem_alarms", "filter_align_fail"),
+    )
+    return integration.module if integration.available else None
 
 
 def _replay_filter_align_fail(rows: "pd.DataFrame") -> "pd.DataFrame":

@@ -38,7 +38,7 @@ import cv2
 import numpy as np
 
 from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_3.vision.align_key_matcher import (
+from poc.workflow_3.align.matching.engine import (
     DT_TAU_PX,
     STRUCTURE_POLICY,
     build_template,
@@ -301,10 +301,10 @@ def _propose_topk(tpl, gray, frame_dt, *, scales, topk):
     ensemble 은 raw gray 에서 자체 전처리하므로 frame_dt 가 필요 없다 — frame_dt 는 C1 전용.
     """
     if USE_ENSEMBLE_PROPOSER:
-        from poc.workflow_3.vision.ensemble_proposer import compute_ensemble_candidates
+        from poc.workflow_3.align.matching.ensemble import compute_ensemble_candidates
         ens = compute_ensemble_candidates(tpl.raw_image, gray, scales=scales, top_n=topk)
         return list(ens.fused[:topk])   # RRF 내림차순; in_topk 은 집합 멤버십이라 rerank 무관.
-    from poc.workflow_3.vision.align_key_matcher import compute_chamfer_candidates
+    from poc.workflow_3.align.matching.engine import compute_chamfer_candidates
     return compute_chamfer_candidates(tpl, frame_dt, scales=scales, top_n=topk)
 
 
@@ -325,7 +325,7 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
     cand_xys 는 채택된 modality 의 top-N 후보 좌표(score 내림차순) — 결합 패널 시각화용.
     (rerank[MI·contour] 검증은 끝남 — 둘 다 폐기, `docs/study/reranker_ab_failure_analysis.md`.)
     """
-    from poc.workflow_3.vision.align_key_matcher import preprocess_for_matching
+    from poc.workflow_3.align.matching.engine import preprocess_for_matching
     from poc.workflow_2.ensemble_lab import peak_isolation_ratio
     # C1 경로만 frame distance-transform 이 필요 — ensemble 은 raw gray 로 자체 전처리(중복 회피).
     frame_dt = None if USE_ENSEMBLE_PROPOSER else preprocess_for_matching(gray)[1]
@@ -398,8 +398,8 @@ def _build_templates(assets):
     반환: (center_templates: dict[mod->tpl], box_templates: dict[mod->tpl|None])
     center 는 정중앙 면적 crop(= align 영역), box 는 흰 unique-area box 안쪽 crop.
     """
-    from poc.workflow_3.vision.align_fail_assets import load_gray
-    from poc.workflow_3.vision.align_point_correction import (
+    from poc.workflow_3.align.assets import load_gray
+    from poc.workflow_3.align.diagnostics.align_point_correction import (
         _centered_area_crop_bbox,
         _detect_white_box,
         _inner_crop_for_box,
@@ -433,9 +433,9 @@ def _build_templates(assets):
 
 
 def _process_msr(msr_path, *, center_tpls, box_tpls):
-    from poc.workflow_3.vision.align_fail_assets import load_gray
-    from poc.workflow_3.vision.align_point_correction import _tool_label
-    from poc.workflow_3.vision.crosshair_detect import detect_crosshair
+    from poc.workflow_3.align.assets import load_gray
+    from poc.workflow_3.align.diagnostics.align_point_correction import _tool_label
+    from poc.workflow_3.align.diagnostics.crosshair_detect import detect_crosshair
 
     gray = load_gray(msr_path)
     h, w = gray.shape[:2]
@@ -860,7 +860,7 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None,
       None 반환/예외 = 그 프레임 skip. cons/rcp/가드 S 모두 같은 프레임으로 측정(공정 비교).
     반환: per-recipe + overall in_topk_rate(rcp vs consensus) + lift + generic 가드.
     """
-    from poc.workflow_3.vision.align_fail_assets import load_gray
+    from poc.workflow_3.align.assets import load_gray
 
     cons_dir = None
     if out_dir is not None:
@@ -1151,7 +1151,7 @@ def _print_summary(summary: dict) -> None:
 
 
 def analyze(*, limit_per_recipe=LIMIT_PER_RECIPE) -> str:
-    from poc.workflow_3.vision.align_fail_assets import (
+    from poc.workflow_3.align.assets import (
         iter_msr_images,
         iter_recipe_dirs,
         resolve_assets,
@@ -1251,7 +1251,7 @@ def _frame_with(pattern, *, at, canvas=(300, 400), bg=50) -> np.ndarray:
 
 def _self_test() -> bool:
     """rcp 중앙 패턴이 S frame 중앙엔 있고 E frame 엔 없을 때, 유사도가 S>E 로 갈리는지."""
-    from poc.workflow_3.vision.align_key_matcher import build_template as _bt
+    from poc.workflow_3.align.matching.engine import build_template as _bt
 
     align = _patterned(1)
     other = _patterned(99)
@@ -1290,7 +1290,7 @@ def _self_test() -> bool:
 
 def run() -> str:
     try:
-        from poc.workflow_3.vision.align_fail_assets import iter_recipe_dirs
+        from poc.workflow_3.align.assets import iter_recipe_dirs
         has_data = bool(iter_recipe_dirs())
     except Exception:
         has_data = False

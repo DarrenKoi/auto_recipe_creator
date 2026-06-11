@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
-from poc.workflow_3.vision.align_point_correction import (
+from poc.workflow_3.align.diagnostics.align_point_correction import (
     RCP_BOX_EDGE_MARGIN_PX,
     RCP_BOX_FRAME_BAND_RATIO,
     RCP_BOX_MAX_AREA_RATIO,

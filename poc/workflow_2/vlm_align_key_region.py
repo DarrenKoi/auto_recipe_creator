@@ -50,15 +50,15 @@ import numpy as np
 import requests
 
 from poc.workflow_2 import ALIGN_IMAGES_ROOT, DEBUG_IMAGE_DIR
-from poc.workflow_3.vision.align_fail_assets import (
+from poc.workflow_3.align.assets import (
     iter_msr_images,
     iter_recipe_dirs,
     load_gray,
     resolve_assets,
     resolve_assets_auto,
 )
-from poc.workflow_3.vision.align_key_matcher import build_template, compute_align_key_score
-from poc.workflow_3.vision.align_point_correction import SCALE_BAR_OCR_SERVICE, _ocr_scale_bar
+from poc.workflow_3.align.matching.engine import build_template, compute_align_key_score
+from poc.workflow_3.align.diagnostics.align_point_correction import SCALE_BAR_OCR_SERVICE, _ocr_scale_bar
 from poc.workflow_2.probe_multi_image_vlm import (
     LARGE_VLM_API_BASE,
     LARGE_VLM_API_KEY,

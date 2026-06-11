@@ -56,7 +56,7 @@ import cv2
 import numpy as np
 
 from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_3.vision.align_fail_assets import iter_msr_images, load_gray
+from poc.workflow_3.align.assets import iter_msr_images, load_gray
 from poc.workflow_2.align_similarity import (
     GT_TOL_NORM, USE_ENSEMBLE_PROPOSER, _consensus_template_ab, _matched_crop,
 )
@@ -64,9 +64,9 @@ from poc.workflow_2.ensemble_lab import (
     PEAK_ISO_VARIANTS, PERIODICITY_TAU, miss_predictor_stats,
     peak_isolation_variants, template_periodicity,
 )
-from poc.workflow_3.vision.align_point_correction import _tool_label
-from poc.workflow_3.vision.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
-from poc.workflow_3.vision.cond_file import (
+from poc.workflow_3.align.diagnostics.align_point_correction import _tool_label
+from poc.workflow_3.align.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
+from poc.workflow_3.align.cond_file import (
     MSR_OM_MAG_MAX, MSR_SEM_MAG_MIN, _to_int, load_cond,
     msr_modality as _msr_modality,
 )

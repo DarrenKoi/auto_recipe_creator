@@ -11,7 +11,7 @@
 import numpy as np
 import cv2
 
-from poc.workflow_3.vision.align_key_matcher import (
+from poc.workflow_3.align.matching.engine import (
     STRUCTURE_POLICY,
     build_template,
     compute_align_key_score,

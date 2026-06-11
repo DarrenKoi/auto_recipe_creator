@@ -49,15 +49,15 @@ from pathlib import Path
 import numpy as np
 
 from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_3.vision.align_fail_assets import (
+from poc.workflow_3.align.assets import (
     iter_msr_images,
     iter_recipe_dirs,
     load_gray,
     resolve_assets,
     resolve_assets_auto,
 )
-from poc.workflow_3.vision.align_point_correction import _inpaint_crosshair, _tool_label
-from poc.workflow_3.vision.crosshair_detect import detect_crosshair
+from poc.workflow_3.align.diagnostics.align_point_correction import _inpaint_crosshair, _tool_label
+from poc.workflow_3.align.diagnostics.crosshair_detect import detect_crosshair
 # align_similarity 의 지표/매칭 헬퍼를 그대로 재사용 — 정의 중복/표류 방지.
 from poc.workflow_2.align_similarity import (
     AT_CROSSHAIR_ROI_FACTOR,

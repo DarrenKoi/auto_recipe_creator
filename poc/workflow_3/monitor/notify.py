@@ -10,13 +10,13 @@ office_rich_notify 해석 순서는 alarm_source 와 동일한 2단 fallback:
   2. poc.workflow_1.office_rich_notify           (legacy 위치 — 복사 전 과도기)
 """
 
-import importlib
 import inspect
 import threading
 import time
 
 from poc.workflow_3 import LOG_DIR
 from poc.workflow_3.logger import log_work2_event
+from poc.workflow_3.monitor.integration_loader import load_office_integration
 
 LOG_COMPONENT = "align_fail_notify"
 
@@ -33,24 +33,17 @@ ALARM_LOG_PATH = LOG_DIR / "align_fail_alarms.txt"
 
 def _load_rich_notify():
     """send_cube_align_fail_info 를 정위치 → legacy 순서로 찾는다. 없으면 None."""
-    for module_path, is_legacy in (
-        ("poc.workflow_3.monitor.office_rich_notify", False),
-        ("poc.workflow_1.office_rich_notify", True),
-    ):
-        try:
-            module = importlib.import_module(module_path)
-        except Exception:
-            continue
-        fn = getattr(module, "send_cube_align_fail_info", None)
-        if fn is None:
-            continue
-        if is_legacy:
-            print(
-                "[WARNING] office_rich_notify 가 legacy 위치(workflow_1)에서 로드됨 — "
-                "poc/workflow_3/monitor/ 로 복사하세요."
-            )
-        return fn
-    return None
+    integration = load_office_integration(
+        "office_rich_notify",
+        (
+            ("poc.workflow_3.monitor.office_rich_notify", False),
+            ("poc.workflow_1.office_rich_notify", True),
+        ),
+        required_attrs=("send_cube_align_fail_info",),
+    )
+    if not integration.available:
+        return None
+    return integration.attrs["send_cube_align_fail_info"]
 
 
 _SEND_CUBE_FN = _load_rich_notify()

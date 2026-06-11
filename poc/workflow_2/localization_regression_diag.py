@@ -34,8 +34,8 @@ from pathlib import Path
 import cv2
 
 from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_3.vision.align_fail_assets import iter_msr_images, load_gray
-from poc.workflow_3.vision.align_key_matcher import (
+from poc.workflow_3.align.assets import iter_msr_images, load_gray
+from poc.workflow_3.align.matching.engine import (
     STRUCTURE_POLICY,
     _crop_with_padding,
     _rescore_positions_to_candidates,
@@ -44,13 +44,13 @@ from poc.workflow_3.vision.align_key_matcher import (
     preprocess_for_matching,
 )
 # 소스에서 직접 — align_key_matcher.compute_ensemble_candidates 는 lazy placeholder(None)다.
-from poc.workflow_3.vision.ensemble_proposer import compute_ensemble_candidates
+from poc.workflow_3.align.matching.ensemble import compute_ensemble_candidates
 from poc.workflow_2.align_similarity import COMPARE_SCALES, GT_TOL_NORM
-from poc.workflow_3.vision.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
-from poc.workflow_3.vision.cond_file import load_cond
+from poc.workflow_3.align.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
+from poc.workflow_3.align.cond_file import load_cond
 from poc.workflow_2 import golden_localization_eval as gle
 import poc.workflow_2.golden_localization_eval_cond as glec
-from poc.workflow_3.vision.align_point_correction import _tool_label
+from poc.workflow_3.align.diagnostics.align_point_correction import _tool_label
 from poc.workflow_2.localization_ab_ensemble import (
     OUTPUT_ROOT as AB_ROOT, _err_norm, _predicted_align_point,
 )

@@ -27,7 +27,7 @@ import cv2
 import numpy as np
 
 from poc.workflow_2 import WORKFLOW_2_DIR
-from poc.workflow_3.vision.align_point_correction import (
+from poc.workflow_3.align.diagnostics.align_point_correction import (
     _detect_white_box,
     _inner_crop_for_box,
     _stroke_threshold,

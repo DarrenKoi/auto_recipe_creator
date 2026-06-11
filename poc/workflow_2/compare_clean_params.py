@@ -22,9 +22,9 @@ import numpy as np
 
 from poc.workflow_1 import WORKFLOW_1_DIR
 from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_3.vision.align_fail_assets import SUPPORTED_EXTS
-from poc.workflow_3.vision.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
-from poc.workflow_3.vision.cond_file import load_cond
+from poc.workflow_3.align.assets import SUPPORTED_EXTS
+from poc.workflow_3.align.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
+from poc.workflow_3.align.cond_file import load_cond
 
 GOLDEN_ROOT = Path(
     os.getenv("ALIGN_GOLDEN_ROOT", str(WORKFLOW_1_DIR / "align_images_golden"))

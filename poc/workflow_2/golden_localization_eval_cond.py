@@ -40,13 +40,13 @@ import cv2
 import numpy as np
 
 from poc.workflow_2 import ALIGN_IMAGES_ROOT, DEBUG_IMAGE_DIR
-from poc.workflow_3.vision.align_fail_assets import (
+from poc.workflow_3.align.assets import (
     iter_msr_images,
     load_gray,
     resolve_assets,
 )
-from poc.workflow_3.vision.align_key_matcher import build_template
-from poc.workflow_3.vision.align_point_correction import (
+from poc.workflow_3.align.matching.engine import build_template
+from poc.workflow_3.align.diagnostics.align_point_correction import (
     RCP_FALLBACK_CENTER_CROP_AREA_RATIO,
     _RcpTemplateBundle,
     _centered_area_crop_bbox,
@@ -55,8 +55,8 @@ from poc.workflow_3.vision.align_point_correction import (
     _tool_label,
 )
 from poc.workflow_2.align_similarity import CENTER_AREA_RATIO
-from poc.workflow_3.vision.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
-from poc.workflow_3.vision.cond_template import (
+from poc.workflow_3.align.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
+from poc.workflow_3.align.cond_template import (
     CROP_INSET_PX,
     MIN_INNER_PX,
     OFFSET_SKIP,
@@ -69,8 +69,8 @@ from poc.workflow_3.vision.cond_template import (
     cond_offset_norm,
     cond_template_crop,
 )
-from poc.workflow_3.vision.cond_file import CondInfo, load_cond, msr_modality
-from poc.workflow_3.vision.crosshair_detect import detect_crosshair
+from poc.workflow_3.align.cond_file import CondInfo, load_cond, msr_modality
+from poc.workflow_3.align.diagnostics.crosshair_detect import detect_crosshair
 # 원본의 cond-독립 부품 재사용(중복/표류 방지).
 from poc.workflow_2 import golden_localization_eval as gle
 from poc.workflow_3.util.time_utils import make_timestamp_tag

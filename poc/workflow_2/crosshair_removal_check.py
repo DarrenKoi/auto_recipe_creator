@@ -31,7 +31,7 @@ import cv2
 import numpy as np
 
 from poc.workflow_2 import WORKFLOW_2_DIR
-from poc.workflow_3.vision.crosshair_detect import detect_crosshair
+from poc.workflow_3.align.diagnostics.crosshair_detect import detect_crosshair
 from poc.workflow_3.util.time_utils import make_timestamp_tag
 
 INPUT_DIR = WORKFLOW_2_DIR / "templates" / "crosshair_samples"

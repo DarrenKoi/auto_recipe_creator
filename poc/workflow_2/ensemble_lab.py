@@ -1,4 +1,4 @@
-"""ensemble 개선 실험장 (workflow_2). production 엔진(workflow_3/vision)을 건드리지 않고
+"""ensemble 개선 실험장 (workflow_2). production 엔진(workflow_3/align)을 건드리지 않고
 새 융합/주기성/[Phase2] 채널을 시험한다. 검증되면 workflow_3 으로 포팅한다.
 
 drivers: golden_localization_eval_cond.py, golden_consensus_eval_cond.py.
@@ -12,10 +12,10 @@ import statistics
 
 import numpy as np
 
-from poc.workflow_3.vision.ensemble_proposer import (
+from poc.workflow_3.align.matching.ensemble import (
     EnsembleResult, RRF_K0, SHADOW_N, _Cand, _channel_solo_candidates,
 )
-from poc.workflow_3.vision.align_key_matcher import DEFAULT_SCALES, _to_grayscale
+from poc.workflow_3.align.matching.engine import DEFAULT_SCALES, _to_grayscale
 
 
 # Phase 1: template 내재 주기성(autocorrelation off-center peak). cold-start, 오피스 보정 예정.

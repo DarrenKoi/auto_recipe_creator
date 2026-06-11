@@ -12,7 +12,7 @@ from poc.workflow_3.monitor.notify import (
     build_outcome_summary,
     notify_correction_outcome,
 )
-from poc.workflow_3.vision.align_fail_correct import CorrectionOutcome
+from poc.workflow_3.align.correction import CorrectionOutcome
 
 
 def _outcome(status, *, second_ratio=None, distinctive=True):

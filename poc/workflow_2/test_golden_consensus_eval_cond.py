@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import cv2
 import numpy as np
 
-from poc.workflow_3.vision.cond_file import CondInfo
+from poc.workflow_3.align.cond_file import CondInfo
 import poc.workflow_2.golden_consensus_eval_cond as gce
 
 
@@ -191,7 +191,7 @@ def test_resolve_mod_uses_msr_inference_when_scope_absent():
 
 
 def test_msr_modality_from_parsed_real_like_cond():
-    from poc.workflow_3.vision.cond_file import parse_cond
+    from poc.workflow_3.align.cond_file import parse_cond
     text = ("# Observation condition\nMagnification           104000\n"
             "Accelerating_voltage    1000\nPixel                   512,512\n"
             "!Cursor_info            -1,-1,-1,-1,2097,2561,-1,-1,-1,-1\n")

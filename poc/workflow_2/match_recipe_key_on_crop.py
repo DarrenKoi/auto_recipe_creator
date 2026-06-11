@@ -23,8 +23,8 @@ import time
 from pathlib import Path
 
 from poc.workflow_2 import WORKFLOW_2_DIR
-from poc.workflow_3.vision.align_fail_assets import load_gray, resolve_assets_auto
-from poc.workflow_3.vision.align_key_matcher import (
+from poc.workflow_3.align.assets import load_gray, resolve_assets_auto
+from poc.workflow_3.align.matching.engine import (
     STRUCTURE_POLICY,
     build_template,
     compute_align_key_score_ensemble,

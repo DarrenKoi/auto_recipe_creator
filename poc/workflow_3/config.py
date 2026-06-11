@@ -87,7 +87,7 @@ class Workflow3Settings(WorkflowSettings):
 
     # --- consensus S-image gather ---
     gather_enabled: bool = True
-    gather_max_events: int = 5  # vision/consensus_gather.py 의 GATHER_MAX_EVENTS 와 동일 값 유지.
+    gather_max_events: int = 5  # align/consensus_gather.py 의 GATHER_MAX_EVENTS 와 동일 값 유지.
 
     # --- 점검 모니터 보정 가능성 마킹 ---
     # 점검 전용 사이클(align_fail_monitor_only_check)에서 캡처 후 rcp 엔진으로 보정

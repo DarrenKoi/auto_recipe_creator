@@ -11,7 +11,7 @@
 import cv2
 import numpy as np
 
-from poc.workflow_3.vision.cond_file import CondInfo
+from poc.workflow_3.align.cond_file import CondInfo
 import poc.workflow_2.golden_localization_eval_cond as glec
 
 
@@ -185,7 +185,7 @@ def test_lever_verdict_near_ceiling_when_topk_high_but_no_gap():
 # --- _route_modality (msr frame 을 어느 modality rcp 로 매칭할지; race 제거의 핵심) ---
 
 def _mcond(text):
-    from poc.workflow_3.vision.cond_file import parse_cond
+    from poc.workflow_3.align.cond_file import parse_cond
     return parse_cond(text)
 
 
@@ -264,7 +264,7 @@ def test_combine_2up_has_separator_column():
 def test_matcher_for_eval_toggle(monkeypatch):
     """ALIGN_USE_ENSEMBLE 토글: 참이면 ensemble 매처, 아니면 baseline(eval 전용)."""
     import poc.workflow_2.golden_localization_eval as gle
-    from poc.workflow_3.vision import align_key_matcher as akm
+    from poc.workflow_3.align.matching import engine as akm
 
     monkeypatch.delenv("ALIGN_USE_ENSEMBLE", raising=False)
     assert gle._matcher_for_eval() is akm.compute_align_key_score        # 기본 baseline.
@@ -352,7 +352,7 @@ def test_binned_report_skips_missing_box_and_nonS():
 
 def test_apply_matcher_default_forces_ensemble(monkeypatch):
     import poc.workflow_2.golden_localization_eval as gle
-    from poc.workflow_3.vision import align_key_matcher as akm
+    from poc.workflow_3.align.matching import engine as akm
     monkeypatch.delenv("ALIGN_USE_ENSEMBLE", raising=False)
     glec._apply_matcher_default()                       # 미설정 → ensemble 로 채움.
     assert gle._matcher_for_eval() is akm.compute_align_key_score_ensemble
@@ -360,7 +360,7 @@ def test_apply_matcher_default_forces_ensemble(monkeypatch):
 
 def test_apply_matcher_default_respects_explicit_off(monkeypatch):
     import poc.workflow_2.golden_localization_eval as gle
-    from poc.workflow_3.vision import align_key_matcher as akm
+    from poc.workflow_3.align.matching import engine as akm
     monkeypatch.setenv("ALIGN_USE_ENSEMBLE", "0")       # 명시적 0 → 유지(escape hatch).
     glec._apply_matcher_default()
     assert gle._matcher_for_eval() is akm.compute_align_key_score

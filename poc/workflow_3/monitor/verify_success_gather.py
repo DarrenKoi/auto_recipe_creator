@@ -14,8 +14,8 @@ cond 파싱(crosshair 좌표, modality 추론 — msr cond 는 Scope 가 없어 
 import os
 
 from poc.workflow_3.monitor.success_gather import DOWNLOADER_AVAILABLE, _DOWNLOADER
-from poc.workflow_3.vision.cond_file import load_cond, msr_modality
-from poc.workflow_3.vision.consensus_gather import gather_success_images
+from poc.workflow_3.align.cond_file import load_cond, msr_modality
+from poc.workflow_3.align.consensus_gather import gather_success_images
 
 
 def main():

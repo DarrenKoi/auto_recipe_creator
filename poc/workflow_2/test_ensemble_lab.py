@@ -2,7 +2,7 @@ import numpy as np
 import cv2
 
 from poc.workflow_2 import ensemble_lab as lab
-from poc.workflow_3.vision import ensemble_proposer as ep
+from poc.workflow_3.align.matching import ensemble as ep
 
 
 def _sq(size=200, box=(70, 70, 60, 60), bg=110, edge=230):

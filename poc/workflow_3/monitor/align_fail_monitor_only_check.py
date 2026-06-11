@@ -9,7 +9,7 @@ SEM panel 확보 / engineer watch 는 전부 뺀다. 과거 데이터 수집은 
   * 최근 성공(S) align 이미지: monitor 의 `gather_success_async` 가 비차단 다운로드.
 
 캡처 직후, tool 을 닫은 뒤 디스크 저장본으로 **보정 가능성** 을 정적 판정한다
-(`run_check_only_cycle` 내부 → `vision.feasibility_check.mark_align_feasibility`):
+(`run_check_only_cycle` 내부 → `align.diagnostics.feasibility_check.mark_align_feasibility`):
 검증된 rcp align key 엔진으로 가능/불가/모호를 가리고, align_consensus_cache 의 최근
 성공(S) event 수를 read-only 로 함께 표기해 캡처 옆에 `<tag>_rcs_marked.jpg` +
 `<tag>_feasibility.json` 으로 남긴다. 엔지니어가 마킹 한 장으로 "이 fail 은 자동

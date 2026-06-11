@@ -23,9 +23,9 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 
 from collections import Counter
 
-from poc.workflow_3.vision.align_fail_assets import iter_msr_images
-from poc.workflow_3.vision.align_point_correction import _tool_label
-from poc.workflow_3.vision.cond_file import load_cond
+from poc.workflow_3.align.assets import iter_msr_images
+from poc.workflow_3.align.diagnostics.align_point_correction import _tool_label
+from poc.workflow_3.align.cond_file import load_cond
 from poc.workflow_2 import golden_localization_eval_cond as glec
 from poc.workflow_2.golden_localization_eval import _collect_recipes
 from poc.workflow_2.golden_consensus_eval_cond import _resolve_mod

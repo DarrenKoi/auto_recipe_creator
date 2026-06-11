@@ -1,6 +1,6 @@
 """proposer recall@N / attribution 순수 헬퍼 테스트 — Mac 실행 가능."""
 import poc.workflow_2.proposer_recall_ab as pab
-from poc.workflow_3.vision.ensemble_proposer import _Cand
+from poc.workflow_3.align.matching.ensemble import _Cand
 
 
 def test_gt_rank_in_candidates_hits_within_tol():

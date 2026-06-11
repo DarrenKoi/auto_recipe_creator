@@ -12,7 +12,7 @@ from pathlib import Path
 
 from poc.workflow_3.config import load_workflow3_settings
 from poc.workflow_3.monitor import success_gather
-from poc.workflow_3.vision.consensus_gather import GatherResult
+from poc.workflow_3.align.consensus_gather import GatherResult
 
 
 def _settings(**overrides):

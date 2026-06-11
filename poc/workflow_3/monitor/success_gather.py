@@ -1,6 +1,6 @@
 """consensus gather 의 office 접점 + 비차단 fire (monitor glue).
 
-vision.consensus_gather 의 순수 orchestration 을 office 다운로더 해석(2단 fallback)과
+align.consensus_gather 의 순수 orchestration 을 office 다운로더 해석(2단 fallback)과
 daemon thread 로 감싼다. office 모듈 부재(개발 PC)·예외 시 조용히 skip 해 모니터 루프를
 죽이지 않는다(alarm_source/notify 와 동일 철학).
 
@@ -11,12 +11,16 @@ _IN_FLIGHT 레지스트리로 in-flight dedupe 를 보장한다.
 (설계: poc/workflow_2/docs/superpowers/specs/2026-06-10-consensus-gather-in-loop-design.md §3-A)
 """
 
-import importlib
 import threading
 
 from poc.workflow_3.config import Workflow3Settings
 from poc.workflow_3.logger import log_work2_event
-from poc.workflow_3.vision.consensus_gather import gather_success_images
+from poc.workflow_3.align.consensus_gather import gather_success_images
+from poc.workflow_3.monitor.integration_loader import (
+    load_office_integration,
+    log_office_factory_error,
+    log_office_factory_loaded,
+)
 
 LOG_COMPONENT = "consensus_gather"
 
@@ -32,26 +36,25 @@ def _load_office_downloader():
     office_* 모듈은 gitignore 라 오피스 PC 에만 존재한다. 모듈은 인자 없는
     `make_success_downloader()` 팩토리를 노출해야 한다.
     """
-    for module_path, is_legacy in (
-        ("poc.workflow_3.monitor.office_success_downloader", False),
-        ("poc.workflow_1.office_success_downloader", True),
-    ):
-        try:
-            module = importlib.import_module(module_path)
-        except Exception:
-            continue
-        factory = getattr(module, "make_success_downloader", None)
-        if factory is None:
-            continue
-        if is_legacy:
-            print("[WARNING] office_success_downloader 가 legacy 위치(workflow_1)에서 "
-                  "로드됨, poc/workflow_3/monitor/ 로 복사하세요.")
-        try:
-            return factory()
-        except Exception as exc:
-            print(f"[WARNING] success downloader 생성 실패: {exc}")
-            return None
-    return None
+    integration = load_office_integration(
+        "office_success_downloader",
+        (
+            ("poc.workflow_3.monitor.office_success_downloader", False),
+            ("poc.workflow_1.office_success_downloader", True),
+        ),
+        required_attrs=("make_success_downloader",),
+    )
+    if not integration.available:
+        return None
+
+    factory = integration.attrs["make_success_downloader"]
+    try:
+        downloader = factory()
+    except Exception as exc:
+        log_office_factory_error("office_success_downloader", integration.module_path, exc)
+        return None
+    log_office_factory_loaded("office_success_downloader", integration.module_path)
+    return downloader
 
 
 _DOWNLOADER = _load_office_downloader()

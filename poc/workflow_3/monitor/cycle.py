@@ -31,7 +31,7 @@ from poc.workflow_3.debug_artifacts import save_debug_jpeg
 from poc.workflow_3.logger import log_work2_event
 from poc.workflow_3.monitor.notify import close_alert_window, notify_correction_outcome
 from poc.workflow_3.monitor.recording import RecordingSession
-from poc.workflow_3.monitor.sem_controller import build_rcs_sem_monitor
+from poc.workflow_3.sem_monitor.controller import build_rcs_sem_monitor
 from poc.workflow_3.runner.workflow_runner import WorkflowRunner
 from poc.workflow_3.runner.workflow_types import (
     ConditionGroup,
@@ -367,7 +367,7 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
         print(f"[INFO] RECIPE_ID 없음 - 보정 생략, 엔지니어 직접 처리 (EQP_ID={eqp_id})")
         return _make_result(step, "skipped", started_at, settings)
 
-    from poc.workflow_3.vision.align_fail_correct import CorrectionConfig, correct_align_fail_auto
+    from poc.workflow_3.align.correction import CorrectionConfig, correct_align_fail_auto
 
     vlm_client = None
     try:
@@ -746,7 +746,7 @@ def run_check_only_cycle(
     capture_path = context.get("capture_path")
     if capture_path is not None and recipe_id and settings.feasibility_mark_enabled:
         try:
-            from poc.workflow_3.vision.feasibility_check import mark_align_feasibility
+            from poc.workflow_3.align.diagnostics.feasibility_check import mark_align_feasibility
 
             feas = mark_align_feasibility(
                 Path(capture_path),

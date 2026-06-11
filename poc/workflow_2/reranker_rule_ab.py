@@ -33,14 +33,14 @@ import json
 from pathlib import Path
 
 from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_3.vision.align_fail_assets import iter_msr_images, load_gray
-from poc.workflow_3.vision.align_key_matcher import STRUCTURE_POLICY, compute_align_key_score, preprocess_for_matching
+from poc.workflow_3.align.assets import iter_msr_images, load_gray
+from poc.workflow_3.align.matching.engine import STRUCTURE_POLICY, compute_align_key_score, preprocess_for_matching
 from poc.workflow_2.align_similarity import COMPARE_SCALES, GT_TOL_NORM
-from poc.workflow_3.vision.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
-from poc.workflow_3.vision.cond_file import load_cond
+from poc.workflow_3.align.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
+from poc.workflow_3.align.cond_file import load_cond
 from poc.workflow_2 import golden_localization_eval as gle
 import poc.workflow_2.golden_localization_eval_cond as glec
-from poc.workflow_3.vision.align_point_correction import _tool_label
+from poc.workflow_3.align.diagnostics.align_point_correction import _tool_label
 from poc.workflow_2.localization_ab_ensemble import _err_norm, _predicted_align_point
 from poc.workflow_2.localization_regression_diag import _ensemble_pool
 from poc.workflow_2.reranker_signal_probe import _candidate_signals

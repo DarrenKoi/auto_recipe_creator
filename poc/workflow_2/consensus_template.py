@@ -36,7 +36,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from poc.workflow_3.vision.align_key_matcher import AlignKeyTemplate, build_template
+from poc.workflow_3.align.matching.engine import AlignKeyTemplate, build_template
 from poc.workflow_2.align_similarity import _consensus, _edge_density, _lap_var
 
 CONSENSUS_VERSION = "s_consensus_prod"   # 로그/overlay 에서 rcp 와 구분(저널 163302 §4-B #4).

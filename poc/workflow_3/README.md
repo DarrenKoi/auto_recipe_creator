@@ -18,14 +18,17 @@ office 모듈(`office_success_downloader.py`)이 없으면 자동 비활성(루�
 
 | 서브패키지 | 내용 |
 |---|---|
-| `monitor/` | 루프 본체 — 알람 폴링(`align_fail_monitor.py` 진입점), 알람별 사이클(`cycle.py`), 상시 녹화(`recording.py`, 변화 감지 적응 캡처 — RCS 원격 화면이라 장비측 커서가 프레임에 찍힘), 알림(`notify.py`), 실장비 adapter(`sem_controller.py`), 알람 소스(`alarm_source.py`) |
+| `monitor/` | 루프 본체 — 알람 폴링(`align_fail_monitor.py` 진입점), 알람별 사이클(`cycle.py`), 상시 녹화(`recording.py`, 변화 감지 적응 캡처 — RCS 원격 화면이라 장비측 커서가 프레임에 찍힘), 알림(`notify.py`), 알람 소스(`alarm_source.py`), office adapter 로딩(`integration_loader.py`) |
 | `rcs/` | RCS GUI 자동화 — 실행/로그인/tool 선택·종료/캡처 |
-| `vision/` | CV 엔진 — 매칭(ensemble)/자산 해석/보정(`align_fail_correct`)/라이브 탐색 |
+| `align/` | Align fail 보정 도메인 — 자산 해석(`assets.py`), 보정 orchestration(`correction.py`), 라이브 탐색(`live_search.py`), consensus gather, cond/crop helper |
+| `align/matching/` | Align-key matcher 엔진과 ensemble proposer |
+| `align/diagnostics/` | 오피스/개발 검증용 probe, feasibility mark, crop/캡처 비교 스크립트 |
+| `sem_monitor/` | SEM Monitor panel 위치 검출과 실장비 controller adapter |
 | `vlm/` | VLM 클라이언트/서비스 레지스트리/프롬프트 |
 | `runner/` | WorkflowRunner — step/precondition/journal (`logs/workflow_runs/`) |
 | `util/` | env/image/json/time + 선택적 mouse(pynput)/window(pywinauto) |
 
-의존 방향: `monitor → {rcs, vision, runner, vlm, util}`. workflow_3 는
+의존 방향: `monitor → {rcs, align, sem_monitor, runner, vlm, util}`. workflow_3 는
 poc.workflow_1/2 를 import 하지 않는다(legacy 가 wf3 를 import 하는 방향만 허용).
 
 ## 실행
@@ -115,7 +118,7 @@ production(workflow_3)이 legacy 폴더에 쓰지 않게, MES 산출물 루트�
 cond.txt 는 localization·consensus eval 에서 white box/crosshair 제거용으로 읽기만 한다
 (workflow_3 는 cond.txt 를 쓰지 않음 — 장비 다운로더가 이미지 옆에 함께 받아온다).
 
-> **순서 중요** — MES 출력 경로를 먼저 안 옮기고 코드 default 만 바꾸면, vision 은 새(빈)
+> **순서 중요** — MES 출력 경로를 먼저 안 옮기고 코드 default 만 바꾸면, align 은 새(빈)
 > 트리를 읽고 MES 는 옛 트리에 계속 써서 매칭이 통째로 빈다.
 
 1. **gitignore 가드 (이전 전 필수, 완료)** — `poc/workflow_3/align_images/` 가 .gitignore 에
@@ -175,4 +178,4 @@ cond.txt 는 localization·consensus eval 에서 white box/crosshair 제거용�
 ## Legacy
 
 - `poc/workflow_1/` — CCTV/DVR 경로와 초기 실험 스크립트만 잔류 (동결).
-- `poc/workflow_2/` — 평가/AB/튜닝 하니스만 잔류. CV 엔진은 `poc.workflow_3.vision` 에서 import.
+- `poc/workflow_2/` — 평가/AB/튜닝 하니스만 잔류. CV 엔진은 `poc.workflow_3.align` 에서 import.

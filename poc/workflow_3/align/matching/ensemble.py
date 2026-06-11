@@ -1,0 +1,222 @@
+"""다중 구조 채널 ensemble proposer (C1 Canny + C2 Scharr + C3 orientation-binned).
+
+기존 multi-scale chamfer 엔진(matching.engine)을 edge map 만 바꿔 재사용한다.
+RRF(순위 기반, 스케일 무관)로 채널 후보를 융합해 top-N + shadow pool 을 낸다.
+설계: docs/specs/2026-06-09-ensemble-proposer-design.md.
+"""
+import cv2
+import numpy as np
+from dataclasses import dataclass, field
+
+from poc.workflow_3.align.matching.engine import (
+    DT_TAU_PX, _scaled_edges, _to_grayscale, preprocess_for_matching,
+    _collect_candidates, _extract_peaks, DEFAULT_SCALES,
+)
+
+# C2: gradient magnitude foreground 밀도를 C1 에 맞춘다(3~15% clamp).
+SCHARR_R_MIN = 0.03
+SCHARR_R_MAX = 0.15
+
+
+def _scharr_edges(image: np.ndarray, r_c1: float) -> np.ndarray:
+    """Scharr gradient magnitude 를 C1 밀도 매칭 percentile 로 이진화한 edge map(uint8 0/255).
+
+    threshold = (1 - r) 백분위, r = clamp(r_c1, 3%~15%). Otsu 대신 밀도 매칭 →
+    C1(Canny) 과 foreground ratio 를 맞춰 채널별 mean_dt 스케일을 동등하게.
+
+    타이 브레이킹: 균일 이미지(magnitude=0) 에서도 clamp 하한으로 edge 가 생기도록
+    미세 jitter(< 1e-6)를 더해 percentile 계산. 재현성을 위해 고정 시드 사용.
+    실데이터에선 float32 정밀도가 jitter 를 흡수해 무영향(magnitude≈0 영역에서만 작동);
+    실구조 밀도 < clamp 하한일 때만 부족분이 노이즈 픽셀로 채워진다(실 SEM 프레임엔 비발생).
+    """
+    gray = _to_grayscale(image)
+    gx = cv2.Scharr(gray, cv2.CV_32F, 1, 0)
+    gy = cv2.Scharr(gray, cv2.CV_32F, 0, 1)
+    mag = cv2.magnitude(gx, gy)
+    # 동점(exact-zero) 타이 브레이킹 — 균일 이미지에서도 clamp 하한 밀도 보장
+    rng = np.random.default_rng(0)
+    mag_j = mag + rng.uniform(0, 1e-6, mag.shape).astype(np.float32)
+    r = float(min(SCHARR_R_MAX, max(SCHARR_R_MIN, r_c1)))
+    thr = float(np.percentile(mag_j, 100.0 * (1.0 - r)))
+    edges = (mag_j > thr).astype(np.uint8) * 255
+    return edges
+
+
+N_ORIENT_BINS = 8
+
+
+def _orientation_bin_edges(image, n_bins=N_ORIENT_BINS, r_c1=None):
+    """edge 픽셀을 gradient 방향(0~180° half-angle) n_bins 로 나눈 binary map 리스트.
+
+    edge 위치는 C2 와 동일 밀도 매칭(_scharr_edges). 각 edge 픽셀을 unsigned gradient
+    각도(0~180)로 bin 분류 → bin 별 0/255 map. polarity 불변(SEM/OM 밝기 반전 강건).
+    """
+    gray = _to_grayscale(image)
+    if r_c1 is None:
+        canny = preprocess_for_matching(gray)[0]
+        r_c1 = float((canny > 0).mean())
+    edges = _scharr_edges(gray, r_c1) > 0
+    gx = cv2.Scharr(gray, cv2.CV_32F, 1, 0)
+    gy = cv2.Scharr(gray, cv2.CV_32F, 0, 1)
+    ang = np.rad2deg(np.arctan2(gy, gx)) % 180.0          # 0~180 half-angle.
+    bin_idx = np.minimum((ang / (180.0 / n_bins)).astype(np.int32), n_bins - 1)
+    out = []
+    for b in range(n_bins):
+        m = (edges & (bin_idx == b)).astype(np.uint8) * 255
+        out.append(m)
+    return out
+
+
+def _directional_context(template_gray, frame_gray, n_bins=N_ORIENT_BINS):
+    """directional chamfer 의 scale-불변 준비물: (template 방향 bin 리스트, frame bin 별 DT 리스트).
+
+    frame 방향 bin 과 그 distance transform 은 scale 과 무관하므로 scale 루프 *밖에서 1회*
+    계산해 재사용한다(과거엔 scale 마다 8개 DT 를 재계산 → orient 채널이 비용의 ~78%, 대량
+    프레임에서 hang 처럼 보였음). 점수는 불변 — _directional_score_at_scale 가 같은 가중평균.
+    """
+    t_bins = _orientation_bin_edges(template_gray, n_bins)
+    f_bins = _orientation_bin_edges(frame_gray, n_bins)
+    f_dts = [cv2.distanceTransform(cv2.bitwise_not(fb), cv2.DIST_L2, 5).astype(np.float32)
+             for fb in f_bins]
+    return t_bins, f_dts
+
+
+def _directional_score_at_scale(t_bins, f_dts, scale):
+    """미리 만든 (t_bins, f_dts)[=_directional_context] 로 단일 scale directional chamfer score map.
+
+    scale-의존부만 수행: template bin 축소(_scaled_edges) + same-bin frame DT 위 matchTemplate.
+    bin edge-count 가중 평균 → exp(-weighted_mean_dt/DT_TAU_PX). 반환 (score_map|None, (tw,th)).
+    """
+    num = None        # Σ_bin (edge_count_b * mean_dt_map_b)
+    den = 0.0         # Σ_bin edge_count_b
+    out_size = None
+    for tb, f_dt in zip(t_bins, f_dts):
+        tb_s = _scaled_edges(tb, scale)
+        th, tw = tb_s.shape[:2]
+        fh, fw = f_dt.shape[:2]
+        if th >= fh or tw >= fw:
+            return None, (tw, th)
+        mask = (tb_s > 0).astype(np.float32)
+        cnt = float(mask.sum())
+        if cnt <= 0:
+            continue
+        mean_dt = cv2.matchTemplate(f_dt, mask, cv2.TM_CCORR) / cnt
+        num = mean_dt * cnt if num is None else num + mean_dt * cnt
+        den += cnt
+        out_size = (tw, th)
+    if num is None or den <= 0:
+        return None, (out_size or (0, 0))
+    weighted_mean_dt = num / den
+    return np.exp(-weighted_mean_dt / DT_TAU_PX).astype(np.float32), out_size
+
+
+def _directional_chamfer_score_map(template_gray, frame_gray, *, scale, n_bins=N_ORIENT_BINS):
+    """방향 분할 chamfer score map = exp(-weighted_mean_dt/DT_TAU_PX). (단일 scale 편의 wrapper)
+
+    context 1회 + 1 scale. multi-scale 호출은 _directional_context 를 한 번 만들고
+    _directional_score_at_scale 를 scale 마다 부르는 편이 빠르다(_channel_solo_candidates 가 그렇게 함).
+    """
+    t_bins, f_dts = _directional_context(template_gray, frame_gray, n_bins)
+    return _directional_score_at_scale(t_bins, f_dts, scale)
+
+
+@dataclass
+class _Cand:
+    """채널/융합 후보 — xy(template 중심, frame 좌표) + score(+scale)."""
+    xy: tuple
+    score: float
+    scale: float = 1.0
+
+
+@dataclass
+class EnsembleResult:
+    """ensemble 결과 — fused(RRF 정렬, shadow_n 까지) + top_n_count + per-channel solo."""
+    fused: list                       # list[_Cand] RRF 내림차순
+    top_n_count: int
+    solo: dict = field(default_factory=dict)   # {"canny"|"scharr"|"orient": list[_Cand]}
+
+
+# RRF/NMS 상수 (cold-start, 오피스 sweep 으로 보정 — spec §6).
+RRF_K0 = 10
+SOLO_TOP_K = 24
+SHADOW_N = 24
+
+
+def _channel_solo_candidates(template_gray, frame_gray, channel, *, scales=DEFAULT_SCALES,
+                             top_k=SOLO_TOP_K):
+    """채널 한 개의 solo 후보(top_k). channel: 'canny'|'scharr'|'orient'."""
+    g = _to_grayscale(template_gray)
+    f = _to_grayscale(frame_gray)
+    if channel in ("canny", "scharr"):
+        if channel == "canny":
+            t_edges, _ = preprocess_for_matching(g)
+            _, f_dt = preprocess_for_matching(f)
+        else:
+            # density 기준은 frame 의 Canny 밀도 — template·frame 둘 다 같은 r 로 맞춰
+            # 채널 간 mean_dt 스케일 일관(매칭쌍은 밀도 유사해 무영향; cross-modality 시만 비대칭).
+            r_c1 = float((preprocess_for_matching(f)[0] > 0).mean())
+            t_edges = _scharr_edges(g, r_c1)
+            f_edges = _scharr_edges(f, r_c1)
+            f_dt = cv2.distanceTransform(cv2.bitwise_not(f_edges), cv2.DIST_L2, 5).astype(np.float32)
+        cands = _collect_candidates(t_edges, f_dt, scales=scales, top_n=top_k)
+        return [_Cand(xy=c.xy, score=c.chamfer_score, scale=c.scale) for c in cands]
+    # orient: scale-불변 context(frame DT 8개) 1회 → scale 마다 score map → peaks.
+    collected = []
+    t_bins, f_dts = _directional_context(g, f)        # frame DT 재사용(중복 제거).
+    for scale in scales:
+        smap, (tw, th) = _directional_score_at_scale(t_bins, f_dts, scale)
+        if smap is None:
+            continue
+        nms_r = max(4, int(min(tw, th) * 0.5))
+        for s, cx, cy in _extract_peaks(smap, tw, th, max_peaks=top_k, min_score=0.0, nms_radius=nms_r):
+            collected.append(_Cand(xy=(cx, cy), score=float(s), scale=float(scale)))
+    collected.sort(key=lambda c: c.score, reverse=True)
+    return collected[:top_k]
+
+
+def _rrf_fuse(channel_lists, *, k0=RRF_K0, match_radius=8, top_n=SHADOW_N):
+    """채널별 후보 리스트를 RRF 로 융합. fused(c) = Σ_채널 1/(k0 + rank).
+
+    채널 간 후보는 center 거리 <= match_radius 면 동일 후보로 묶는다(가장 높은 score member 가 대표).
+    거리는 Chebyshev(L-inf, 축정렬 박스) — proposer 라 약간의 과병합 허용(의도된 단순화).
+    반환 list[_Cand] (fused score 내림차순, top_n 까지). 스케일 무관(순위 기반).
+    """
+    clusters = []  # {"xy", "score"(대표 chamfer), "scale"(대표 scale), "rrf"}
+    for ch_list in channel_lists:
+        ranked = sorted(ch_list, key=lambda c: c.score, reverse=True)
+        for rank, cand in enumerate(ranked, 1):
+            hit = next((cl for cl in clusters
+                        if abs(cl["xy"][0] - cand.xy[0]) <= match_radius
+                        and abs(cl["xy"][1] - cand.xy[1]) <= match_radius), None)
+            contrib = 1.0 / (k0 + rank)
+            if hit is None:
+                clusters.append({"xy": cand.xy, "score": cand.score,
+                                 "scale": cand.scale, "rrf": contrib})
+            else:
+                hit["rrf"] += contrib
+                if cand.score > hit["score"]:
+                    # 대표(xy·score·scale)는 더 높은 chamfer member 를 따른다.
+                    # scale 보존 필수 — 다운스트림 rescore/ORB(compute_align_key_score_ensemble)가 사용.
+                    hit["xy"], hit["score"], hit["scale"] = cand.xy, cand.score, cand.scale
+    clusters.sort(key=lambda cl: cl["rrf"], reverse=True)
+    return [_Cand(xy=cl["xy"], score=cl["rrf"], scale=cl["scale"]) for cl in clusters[:top_n]]
+
+
+def compute_ensemble_candidates(template_gray, frame_gray, *, top_n=8, shadow_n=SHADOW_N,
+                                k0=RRF_K0, scales=DEFAULT_SCALES):
+    """3채널 ensemble proposer → EnsembleResult.
+
+    각 채널 solo top-K → RRF 융합(shadow_n 까지) + per-channel solo 보존(attribution).
+    fused 의 앞 top_n 이 KPI 후보, 나머지는 shadow(진단). match/NMS 반경은 template 짧은 변 비례.
+
+    ⚠️ scales 기본은 DEFAULT_SCALES(형제 API compute_chamfer_candidates 와 일관). 특정
+    baseline 과 A/B 하려면 그 baseline 과 **동일 scale 밴드**를 명시로 넘겨야 한다 — 예:
+    box__inpaint(COMPARE_SCALES) 비교 시 scales=COMPARE_SCALES. 안 맞추면 scale 교란.
+    """
+    th, tw = _to_grayscale(template_gray).shape[:2]
+    short = max(1, min(tw, th))
+    match_r = max(8, int(0.05 * short))
+    solo = {ch: _channel_solo_candidates(template_gray, frame_gray, ch, scales=scales)
+            for ch in ("canny", "scharr", "orient")}
+    fused = _rrf_fuse(list(solo.values()), k0=k0, match_radius=match_r, top_n=shadow_n)
+    return EnsembleResult(fused=fused, top_n_count=top_n, solo=solo)

@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 from PIL import Image
 
 from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_3.vision.align_fail_assets import resolve_assets_auto
+from poc.workflow_3.align.assets import resolve_assets_auto
 from poc.workflow_3.debug_artifacts import save_debug_json, save_debug_text, save_marked_bboxes
 from poc.workflow_3.vlm.flask_vlm import UI_VENUS_MODEL_NAME
 from poc.workflow_3.util import format_elapsed_ms, make_timestamp_tag

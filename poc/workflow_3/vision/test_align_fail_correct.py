@@ -25,9 +25,10 @@ from poc.workflow_3.vision.cond_template import cond_align_offset
 from poc.workflow_3.vision.align_key_matcher import (
     STRUCTURE_POLICY,
     AlignKeyMatchResult,
+    build_template,
     compute_align_key_score_ensemble,
 )
-from poc.workflow_3.vision.live_align_search import LiveSearchConfig, route_template
+from poc.workflow_3.vision.live_align_search import LiveSearchConfig, clamp_to_fov, route_template
 from poc.workflow_3.vision.vlm_ok_button_box import locate_ok_button
 
 
@@ -474,6 +475,50 @@ def test_load_template_branches() -> bool:
     return ok
 
 
+def test_offset_applied_to_reposition() -> bool:
+    """reposition 타깃 == clamp(best_xy + round(offset x best_scale)). scale=1·scale!=1·offset0."""
+    import poc.workflow_3.vision.align_fail_correct as afc
+
+    frame = np.zeros((600, 800, 3), dtype=np.uint8)  # fw=800, fh=600.
+    screen = np.zeros((600, 800), dtype=np.uint8)
+    margin = CorrectionConfig().click_margin_ratio
+
+    def _controlled(best_xy, best_scale):
+        return AlignKeyMatchResult(
+            score=0.9, chamfer_score=0.9, orb_inlier_ratio=0.0,
+            best_xy=best_xy, best_scale=best_scale, decision="match",
+            debug_overlay=np.zeros((4, 4, 3), dtype=np.uint8), distinctive=True,
+        )
+
+    def _run(offset, best_xy, best_scale):
+        tpl = build_template(np.full((32, 32), 120, dtype=np.uint8),
+                             recipe_id="R", version="v0", key_type="sem",
+                             align_offset_xy=offset)
+        fake = _FakeController(frame, screen, mode="SEM")
+        orig = afc.compute_align_key_score_ensemble
+        afc.compute_align_key_score_ensemble = lambda *a, **k: _controlled(best_xy, best_scale)
+        try:
+            correct_align_fail(fake, {"SEM": tpl},
+                               ok_locator=lambda _s: (10, 10), dry_run=False)
+        finally:
+            afc.compute_align_key_score_ensemble = orig
+        return fake.move_calls
+
+    moves1 = _run((40, -30), (400, 300), 1.0)   # (400,300)+(40,-30) = (440,270).
+    exp1 = clamp_to_fov(440, 270, 800, 600, margin)
+    moves2 = _run((40, -30), (400, 300), 2.0)   # +round((40,-30)*2) = (480,240).
+    exp2 = clamp_to_fov(480, 240, 800, 600, margin)
+    moves0 = _run((0, 0), (400, 300), 1.0)      # offset0 -> best_xy (regression guard).
+    exp0 = clamp_to_fov(400, 300, 800, 600, margin)
+
+    ok = moves1 == [exp1] and moves2 == [exp2] and moves0 == [exp0]
+    print(
+        f"[{'PASS' if ok else 'FAIL'}] offset_applied: "
+        f"scale1={moves1}(exp{exp1}) scale2={moves2}(exp{exp2}) zero={moves0}(exp{exp0})"
+    )
+    return ok
+
+
 def main() -> int:
     print("[INFO] align_fail_correct self-test 시작")
     results = [
@@ -488,6 +533,7 @@ def main() -> int:
         test_primary_path_stamps_ambiguity(),
         test_engineer_review_route(),
         test_load_template_branches(),
+        test_offset_applied_to_reposition(),
     ]
     passed = sum(1 for r in results if r)
     print(f"[INFO] {passed}/{len(results)} cases passed")

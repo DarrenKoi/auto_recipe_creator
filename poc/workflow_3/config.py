@@ -70,6 +70,9 @@ class Workflow3Settings(WorkflowSettings):
     engineer_done_min_count: int = 2  # done 으로 보는 최소 분자값.
     engineer_done_change_min_px: int = 4  # CV gate 변화 픽셀 임계(다운샘플).
     engineer_done_relocalize_after_miss: int = 3  # 변화 후 OCR 연속 미검출 시 재grounding.
+    # 재정렬 진행 중에는 카운터(N/M)가 빈칸이라 grounding 이 거부될 수 있다(정상).
+    # 거부/실패 후 이 간격으로 재시도한다 (VLM 호출 폭주 방지 throttle).
+    engineer_done_reground_sec: float = 30.0
     engineer_done_roi_pad_x: float = 0.03  # grounding 점 -> crop 확장 비율(가로, 창 대비).
     engineer_done_roi_pad_y: float = 0.02  # grounding 점 -> crop 확장 비율(세로, 창 대비).
     # 주의: Workflow1VLMClient 는 모델명이 아니라 flask_vlm 의 route_slug 를 받는다
@@ -137,6 +140,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         engineer_done_min_count=env_int("ALIGN_FAIL_ENGINEER_DONE_MIN_COUNT", 2),
         engineer_done_change_min_px=env_int("ALIGN_FAIL_ENGINEER_DONE_CHANGE_MIN_PX", 4),
         engineer_done_relocalize_after_miss=env_int("ALIGN_FAIL_ENGINEER_DONE_RELOCALIZE_MISS", 3),
+        engineer_done_reground_sec=env_float("ALIGN_FAIL_ENGINEER_DONE_REGROUND_SEC", 30.0),
         engineer_done_roi_pad_x=env_float("ALIGN_FAIL_ENGINEER_DONE_ROI_PAD_X", 0.03),
         engineer_done_roi_pad_y=env_float("ALIGN_FAIL_ENGINEER_DONE_ROI_PAD_Y", 0.02),
         engineer_done_vlm_service=_env_str("ALIGN_FAIL_ENGINEER_DONE_VLM_SERVICE", "ui-venus"),

@@ -523,7 +523,8 @@ def run_alarm_cycle(
                     done_detector = build_engineer_done_detector(
                         context["tool_window"], settings,
                         vlm_client=context.get("vlm_client"),
-                        debug_dir=DEBUG_IMAGE_DIR / "engineer_done" / tag,
+                        # tool 별/알람 별로 debug crop 이 안 섞이게 폴더를 분리한다.
+                        debug_dir=DEBUG_IMAGE_DIR / "engineer_done" / f"{eqp_id}_{tag}",
                     )
                 except Exception as exc:
                     print(f"[WARNING] done detector 생성 실패(고정 timeout 으로 진행): {exc}")

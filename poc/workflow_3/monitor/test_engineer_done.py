@@ -44,6 +44,7 @@ def test_settings_defaults() -> bool:
     ok &= _check("roi_pad_y default 0.02", s.engineer_done_roi_pad_y == 0.02)
     ok &= _check("vlm_service default ui-venus", s.engineer_done_vlm_service == "ui-venus")
     ok &= _check("ocr_service default paddleocr", s.engineer_done_ocr_service == "paddleocr-vl-1.5")
+    ok &= _check("reground_sec default 30.0", s.engineer_done_reground_sec == 30.0)
     return ok
 
 
@@ -150,15 +151,21 @@ class _CountingFn:
         return value
 
 
-def _settings():
-    """테스트용 설정 — ROI pad 를 합성 프레임 카운터 셀에 맞춘다."""
-    return Workflow3Settings(
+def _settings(**overrides):
+    """테스트용 설정 — ROI pad 를 합성 프레임 카운터 셀에 맞춘다.
+
+    reground_sec=0.0: 테스트에선 grounding 거부 후 다음 호출에 바로 재시도.
+    """
+    base = dict(
         engineer_done_detect_enabled=True,
         engineer_done_roi_pad_x=0.05,
         engineer_done_roi_pad_y=0.05,
         engineer_done_min_count=2,
         engineer_done_relocalize_after_miss=3,
+        engineer_done_reground_sec=0.0,
     )
+    base.update(overrides)
+    return Workflow3Settings(**base)
 
 
 def test_detector_static_no_ocr() -> bool:
@@ -209,17 +216,57 @@ def test_detector_below_min_not_done() -> bool:
     return ok
 
 
-def test_detector_ground_refusal() -> bool:
-    """grounding 거부(None) -> 항상 False, 재시도 안 함."""
+def test_detector_ground_refusal_retries() -> bool:
+    """grounding 거부(None) -> False 지만, 재정렬 중 카운터 blank 일 수 있어 재시도한다."""
     capture = _SeqCapture([_frame(1), _frame(2), _frame(3)])
-    ground = _CountingFn([None])
+    ground = _CountingFn([None, None, None])
     ocr = _CountingFn(["2/350"])
     detector = EngineerDoneDetector(None, _settings(), capture_fn=capture, ground_fn=ground, ocr_fn=ocr)
     results = [detector(), detector(), detector()]
     ok = True
     ok &= _check("refusal -> all False", results == [False, False, False])
-    ok &= _check("ground called once only", ground.calls == 1)
+    ok &= _check("ground retried each call (reground_sec=0)", ground.calls == 3)
     ok &= _check("ocr never called", ocr.calls == 0)
+    return ok
+
+
+def test_detector_reground_throttle() -> bool:
+    """reground_sec 가 크면 거부 후 재시도가 throttle 된다 (VLM 호출 폭주 방지)."""
+    capture = _SeqCapture([_frame(1), _frame(2), _frame(3)])
+    ground = _CountingFn([None])
+    ocr = _CountingFn(["2/350"])
+    settings = _settings(engineer_done_reground_sec=3600.0)
+    detector = EngineerDoneDetector(None, settings, capture_fn=capture, ground_fn=ground, ocr_fn=ocr)
+    results = [detector(), detector(), detector()]
+    ok = True
+    ok &= _check("throttled refusal -> all False", results == [False, False, False])
+    ok &= _check("ground called once (throttled)", ground.calls == 1)
+    return ok
+
+
+def test_detector_ground_blank_then_found() -> bool:
+    """재정렬 중 blank(거부 2회) -> 측정 시작으로 카운터 등장 -> 정상 done 경로.
+
+    오피스 관찰: re-align 진행 중에는 N/M 칸이 빈칸이라 VLM 이 거부한다.
+    측정이 시작되면 숫자가 나타나므로 grounding 재시도가 성공해야 한다.
+    """
+    capture = _SeqCapture([
+        _frame(1),            # grounding 시도 1 (blank 가정 -> 거부)
+        _frame(1),            # grounding 시도 2 (거부)
+        _frame(1),            # grounding 시도 3 (성공)
+        _frame(1),            # baseline crop (첫 샘플)
+        _frame(2),            # 변화 1 -> OCR '2'
+        _frame(3),            # 변화 2 -> OCR '3' -> done
+    ])
+    ground = _CountingFn([None, None, (525, 550)])
+    ocr = _CountingFn(["2/350", "3/350"])
+    detector = EngineerDoneDetector(None, _settings(), capture_fn=capture, ground_fn=ground, ocr_fn=ocr)
+    results = [detector(), detector(), detector(), detector(), detector()]
+    ok = True
+    ok &= _check("blank phase all False", results[:3] == [False, False, False])
+    ok &= _check("first read waits", results[3] is False)
+    ok &= _check("second read done", results[4] is True)
+    ok &= _check("ground called 3 times", ground.calls == 3)
     return ok
 
 
@@ -238,6 +285,23 @@ def test_detector_relocalize_after_miss() -> bool:
     for _ in range(6):
         detector()
     return _check("ground called twice (relocalize)", ground.calls == 2)
+
+
+def test_tool_label_from_title() -> bool:
+    """창 제목 -> debug 폴더용 tool 라벨 추출/정제."""
+    from poc.workflow_3.monitor.engineer_done import _tool_label_from_title
+
+    ok = True
+    ok &= _check(
+        "title prefix stripped",
+        _tool_label_from_title("Remote Monitoring System - MCD630") == "MCD630",
+    )
+    ok &= _check(
+        "special chars sanitized",
+        _tool_label_from_title("Remote Monitoring System - MC D/630 #2") == "MC_D_630__2",
+    )
+    ok &= _check("empty -> empty", _tool_label_from_title("") == "")
+    return ok
 
 
 def test_builder_gates() -> bool:
@@ -303,8 +367,11 @@ def main() -> int:
         test_detector_static_no_ocr,
         test_detector_two_read_confirm,
         test_detector_below_min_not_done,
-        test_detector_ground_refusal,
+        test_detector_ground_refusal_retries,
+        test_detector_reground_throttle,
+        test_detector_ground_blank_then_found,
         test_detector_relocalize_after_miss,
+        test_tool_label_from_title,
         test_builder_gates,
         test_watch_early_exit_on_done,
         test_watch_detector_exception_safe,

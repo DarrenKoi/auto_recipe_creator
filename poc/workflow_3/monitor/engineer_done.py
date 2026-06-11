@@ -4,14 +4,18 @@
 종료한다. 신호는 tool 창 Recipe Monitor 의 측정 점 카운터 분자(N/M 의 N)가
 증가하는 것 (1/350 -> 2/350 -> ...).
 
-hybrid 파이프라인 (사이클당 VLM 1회):
-  1. grounding(1회 캐시): VLM(ui-venus)으로 분자 위치를 찾아 tool-window
+hybrid 파이프라인 (grounding 은 성공 시 1회 캐시):
+  1. grounding(성공 시 캐시): VLM(ui-venus)으로 분자 위치를 찾아 tool-window
      상대비율 ROI 로 캐시한다 (tool 마다/드래그로 위치가 달라 고정 ROI 불가).
+     **오피스 관찰(2026-06-11): re-align 진행 중에는 카운터(N/M)가 빈칸**이라
+     grounding 거부([-1,-1])가 정상 상태다. 따라서 거부는 영구 포기가 아니라
+     `reground_sec` 간격 재시도 — 측정이 시작되면 숫자가 나타나 성공한다.
   2. CV gate(매 호출): ROI crop 변화감지 — align-fix 중엔 카운터가 정적이라
      OCR 호출이 0회로 유지된다 (recording.py 의 다운샘플+delta 로직 재사용).
   3. OCR confirm(변화 시에만): paddleocr 로 분자 N 을 읽어
      N >= min_count 이고 직전 읽기 대비 비감소(연속 2회 확인)면 done.
      연속 2회 확인은 단일 프레임 OCR 오독(분모 등)으로 끊기는 것을 막는다.
+     OCR 연속 미검출(숫자 -> blank 전환 = 새 재정렬 시작 가능)은 ROI 재grounding.
 
 실패는 전부 graceful: grounding 거부/OCR 실패/예외 -> False -> watch 의
 engineer_watch_sec cap 이 안전망. (CLAUDE.md 규칙: VLM 은 위치만, 전이 판정의
@@ -102,7 +106,7 @@ class EngineerDoneDetector:
         self._ocr_fn = ocr_fn
         self.debug_dir = debug_dir
         self._roi_ratios: tuple[float, float, float, float] | None = None
-        self._localize_tried = False
+        self._next_localize_at = 0.0  # 거부(blank) 후 재시도 가능 시각 (throttle).
         self._prev_gray = None
         self._last_n: int | None = None
         self._ocr_miss_streak = 0
@@ -112,11 +116,15 @@ class EngineerDoneDetector:
     def __call__(self) -> bool:
         """측정 시작이 확인되면 True. 모든 실패/미확정은 False (cap 이 안전망)."""
         self.last_debug = {}
-        if self._roi_ratios is None and not self._localize_tried:
-            self._localize_tried = True
-            self._roi_ratios = self._localize()
         if self._roi_ratios is None:
-            return False
+            now = time.time()
+            if now < self._next_localize_at:
+                return False
+            self._roi_ratios = self._localize()
+            if self._roi_ratios is None:
+                # 재정렬 중 카운터 blank 면 거부가 정상 — throttle 후 재시도.
+                self._next_localize_at = now + max(self.s.engineer_done_reground_sec, 0.0)
+                return False
 
         crop = self._crop_numerator()
         if crop is None:
@@ -138,9 +146,9 @@ class EngineerDoneDetector:
             self._ocr_miss_streak += 1
             self.last_debug["ocr_miss_streak"] = self._ocr_miss_streak
             if self._ocr_miss_streak >= self.s.engineer_done_relocalize_after_miss:
-                print("[INFO] OCR 연속 미검출 - ROI 재grounding 예약(패널 이동 가능성)")
+                print("[INFO] OCR 연속 미검출 - ROI 재grounding 예약(패널 이동/카운터 blank 가능성)")
                 self._roi_ratios = None
-                self._localize_tried = False
+                self._next_localize_at = 0.0  # 즉시 재grounding 허용.
                 self._ocr_miss_streak = 0
                 self._prev_gray = None
             return False
@@ -164,7 +172,7 @@ class EngineerDoneDetector:
     # ---- 내부 ----
 
     def _localize(self):
-        """VLM grounding 1회 - 분자 위치를 상대비율 ROI 로. 실패/거부 시 None."""
+        """VLM grounding - 분자 위치를 상대비율 ROI 로. 실패/거부 시 None(재시도 가능)."""
         if self._ground_fn is None:
             print("[WARNING] engineer-done grounding fn 없음 - 감지 비활성(cap 대기)")
             return None
@@ -172,10 +180,13 @@ class EngineerDoneDetector:
             image = self._capture_fn()
             point = self._ground_fn(image)
         except Exception as exc:
-            print(f"[WARNING] engineer-done grounding 실패: {exc}")
+            print(f"[WARNING] engineer-done grounding 실패(재시도 예정): {exc}")
             return None
         if point is None:
-            print("[INFO] engineer-done grounding 거부/미발견 - 감지 비활성(cap 대기)")
+            print(
+                "[INFO] engineer-done grounding 거부/미발견 - 카운터 blank(재정렬 중) "
+                f"가능성, {self.s.engineer_done_reground_sec:.0f}s 후 재시도"
+            )
             return None
         ratios = point_to_roi_ratios(
             point[0], point[1],
@@ -305,6 +316,23 @@ def build_engineer_done_detector(tool_window, settings, *, vlm_client=None, debu
 # 비우면 env ALIGN_DONE_CALIB_EQP_ID 폴백 (그것도 비면 아무 Remote Monitoring 창).
 EQP_ID_OVERRIDE = ""
 
+_REMOTE_MONITORING_TITLE_PREFIX = "Remote Monitoring System -"
+
+
+def _tool_label_from_title(title: str) -> str:
+    """창 제목에서 tool id 부분을 debug 폴더명용으로 추출/정제한다.
+
+    'Remote Monitoring System - MCD630' -> 'MCD630'. 영숫자/'-'/'_' 외는 '_' 로
+    치환해 Windows 경로에 안전하게 만든다.
+    """
+    text = title or ""
+    if text.lower().startswith(_REMOTE_MONITORING_TITLE_PREFIX.lower()):
+        text = text[len(_REMOTE_MONITORING_TITLE_PREFIX):]
+    cleaned = "".join(
+        ch if (ch.isalnum() or ch in "-_") else "_" for ch in text.strip()
+    )
+    return cleaned.strip("_")
+
 
 def run_calibration() -> bool:
     """지금 측정 중인 tool 창에 대해 grounding/gate/OCR 전 체인을 즉시 검증한다.
@@ -336,7 +364,11 @@ def run_calibration() -> bool:
         return False
     print(f"[INFO] 캘리브레이션 대상 창: {title!r}")
 
-    debug_dir = DEBUG_IMAGE_DIR / "engineer_done_calib"
+    # run 별 폴더: <tool>_<timestamp> — 여러 tool/회차의 debug crop 이 안 섞이고 보존된다.
+    from poc.workflow_3.util import make_timestamp_tag
+
+    tool_label = eqp_id or _tool_label_from_title(title) or "any"
+    debug_dir = DEBUG_IMAGE_DIR / "engineer_done_calib" / f"{tool_label}_{make_timestamp_tag()}"
     detector = build_engineer_done_detector(window, settings, debug_dir=debug_dir)
     if detector is None:
         print("[ERROR] detector 생성 실패 - VLM 서비스 설정을 확인하세요.")

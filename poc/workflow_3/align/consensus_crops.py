@@ -7,6 +7,10 @@ modality 분류는 bench 와 동일하게 `_resolve_mod = msr_modality(cond) or 
 recipe 가 silently drop 되지 않게), crop 은 clean→crosshair중심→center tpl 크기 고정,
 modality 별 co-registration. 이름(load_cond/load_gray/clean_image/cursor_to_image/msr_modality)은
 테스트에서 monkeypatch 하므로 모듈 전역 import 로 둔다.
+
+프로덕션 의도적 divergence(bench 와 1줄 차이): mod 의 center tpl 이 없을 때 bench 는 다른
+modality tpl 을 빌려 sizing 했지만(eval coverage 용), 프로덕션은 잘못된 크기 crop 이 median 을
+오염시키지 않도록 그 프레임을 drop 한다(no_template). 결정 2026-06-12(code review).
 """
 
 from collections import Counter, defaultdict
@@ -121,8 +125,12 @@ def load_coregistered_crops(cache_root, eqp_id, cache_key, center_tpls, *, max_e
             continue
         mod = _resolve_mod(cond, recipe_mod) if cond is not None else None
         xy = _cond_crosshair_xy(cond)
-        tpl_item = center_tpls.get(mod) or next(
-            (t for t in center_tpls.values() if t is not None), None)
+        # 프로덕션 의도적 divergence(bench `_build_cond_by_recipe` 와 1줄 차이): bench 는
+        # mod 의 center tpl 이 없으면 `or next(...)` 로 *다른* modality tpl 을 빌려 sizing 했다
+        # (sparse golden eval 의 coverage 유지용). 프로덕션은 잘못된 크기 crop 이 그 modality
+        # 의 median 을 오염시키는 것보다 그 프레임을 버리는 게 안전하므로 fallback 을 뺀다 —
+        # mod 의 center tpl 이 없으면 _precrop_drop_reason 이 no_template 으로 떨군다.
+        tpl_item = center_tpls.get(mod)
         reason = _precrop_drop_reason(cond, xy, mod, tpl_item is not None)
         if reason:
             drop_counts[reason] += 1

@@ -77,14 +77,20 @@ rank1 **0.318 → 0.764 (+0.446)**. 병목은 stale 단일 rcp key 였고, 최�
   └─ gather_success_async(eqp, recipe)   [daemon: TTL 미경과면 skip; 경과면 FTP→최신 N(=8) 복사→cache/events/ 교체]
 사이클 진행 … run_correction 도달
   └─ resolve_templates(assets, settings):
-       rcp_by_mod   = templates.build_templates_from_assets(assets)          # 항상 확보(없으면 no_assets 에스컬레이션)
-       crops_by_mod = load_coregistered_crops(cache, eqp, recipe, rcp_by_mod)
+       if not settings.consensus_enabled: return rcp_by_mod                  # 킬스위치
+       cache_key    = f"{assets.class_name}/{assets.recipe_name}"            # ⚠ assets.recipe_id 는 leaf만 — gather 가 쓴 <eqp>/<class>/<recipe> 와 맞추려면 class/recipe (Codex#5)
+       rcp_by_mod   = templates.build_templates_from_assets(assets)          # 항상 확보(없으면 no_assets 에스컬레이션). 런타임 라우팅 키=대문자 OM/SEM, box-crop 가능
+       center_tpls  = build_center_tpls_for_sizing(assets)                   # consensus crop sizing 전용: 소문자 om/sem, (tpl, offset) center crop — rcp 라우팅 template 과 별개 (Codex#3)
+       crops_by_mod = load_coregistered_crops(cache, eqp, cache_key, center_tpls)
        if (관심 modality 의 len(crops) < min_s) and cache_cold:
-           success_gather.wait_for_gather(eqp, recipe, sync_timeout_sec)     # in-flight thread join(bounded), 1회만
-           crops_by_mod = load_coregistered_crops(...)                       # 1회 재로드
-       cons_by_mod = {mod: build_consensus_template(crops, recipe_id=key, modality=mod, policy)
-                      for mod, crops in crops_by_mod.items()}                # 내부 gate: insufficient_s/blurry → template=None
-       templates   = select_routing_templates(cons_by_mod, rcp_by_mod)       # modality별 consensus or rcp
+           if success_gather.wait_for_gather(eqp, cache_key, sync_timeout_sec) is True:  # bool 분기 (Codex#1)
+               crops_by_mod = load_coregistered_crops(...)                   # 채워졌을 때만 1회 재로드
+           # False(timeout/실패) → 재로드 안 함, 그대로 rcp 폴백(reason=sync_timeout)
+       results_by_mod = {mod: build_consensus_template(crops, recipe_id=cache_key, modality=mod, policy)
+                         for mod, crops in crops_by_mod.items()}             # ConsensusResult: gate 내장(insufficient_s/blurry → template=None)
+       # 로그는 ConsensusResult 로, 라우팅엔 .template 만 (Codex#4)
+       tpl_by_mod = {mod: r.template for mod, r in results_by_mod.items() if r.template is not None}
+       templates  = select_routing_templates(tpl_by_mod, rcp_by_mod)        # modality별 consensus or rcp (AlignKeyTemplate 만)
        return templates
   └─ correct_align_fail_auto: route_template(templates, read_mode()) → match → reposition + OK
 ```
@@ -107,41 +113,64 @@ bench `poc/workflow_2/consensus_template.py` 의 순수 함수를 workflow_3 로
 - `build_consensus_template(crops, *, recipe_id, modality, policy)` — median + blur 가드 내장,
   `ConsensusResult(template, modality, n, edge_ratio, lap_ratio, reason)` 반환.
 - `select_routing_templates(consensus_by_mod, rcp_by_mod)` — modality별 `consensus or rcp` dict 조립
-  (route_template 은 불변; dict 조립 시점 폴백 — 저널 163302 §4-A #6).
+  (route_template 은 불변; dict 조립 시점 폴백 — 저널 163302 §4-A #6). **입력은 `AlignKeyTemplate`(또는
+  None)만** — resolver 가 `ConsensusResult.template` 만 넣고 `ConsensusResult` 객체 자체를 넣지 않는다
+  (그러면 truthy non-template 이 matcher 로 흘러감 — Codex#4). 결정 로그는 `ConsensusResult` 로 따로 남긴다.
 - `DEFAULT_CONSENSUS_POLICY`(min_s, edge_ratio_min=0.70, lap_ratio_min=0.50), `_consensus`,
   `_sharpness_ratio`/`_edge_density`/`_lap_var`, `CONSENSUS_VERSION`.
 - min_s 는 `policy` 로 주입 — resolver 가 `settings.consensus_min_s` 로 policy 구성.
 
-### 4-B. 신규 — event-cache adapter
-`load_coregistered_crops(cache_root, eqp_id, recipe_id, rcp_center_tpls) -> {mod: [gray_crop,...]}`
-- `consensus_gather._events_dir_for` 로 events/ 경로 → `<event_id>/S*` 순회(event_id 시각 prefix =
-  이름정렬=시간정렬, 최신 우선 cap = `gather_max_events`).
-- 각 S: `cond_file.load_cond` → `cond_file.msr_modality(cond)` 로 modality 분류 → 해당 modality
-  rcp center tpl 크기로 crosshair-중심 고정-size crop(bench `_cond_consensus_crop` 동등) →
-  modality별 누적.
+### 4-B. 신규 — event-cache adapter (bench `_build_cond_by_recipe` 의 cache 판, bit-parity)
+`load_coregistered_crops(cache_root, eqp_id, cache_key, center_tpls) -> {mod: [gray_crop,...]}`
+- `cache_key = "<class>/<recipe>"` — `consensus_gather._events_dir_for` 로 events/ 경로 →
+  `<event_id>/S*` 순회(event_id 시각 prefix = 이름정렬=시간정렬, 최신 우선 cap = `gather_max_events`).
+- **modality 분류는 bench 와 동일하게 `_resolve_mod(cond, recipe_mod)`** — bare `msr_modality(cond)` 가
+  아니다. `recipe_mod` = center_tpls 가 단일 modality 면 그것(둘 다면 None). 이 폴백이 없으면 단일-modality
+  recipe 의 S 가 조용히 drop 된다(Codex#3). `recipe_mod` 는 center_tpls 로 산출.
+- **crop 은 clean→crosshair중심→고정 size 순서로 bench 와 동일**: 각 S 를 정제(crosshair/직선 제거)한 뒤
+  `_cond_crosshair_xy(cond)` 중심으로 해당 modality center tpl 크기(`size_wh`)로 `_cond_consensus_crop`
+  (OOB/과소 → None drop). center tpl 은 **소문자 om/sem 키의 (tpl, offset) center crop** 으로, 런타임
+  rcp 라우팅 template(대문자, box-crop 가능)과 *별도로* 만든다(`build_center_tpls_for_sizing`) — 둘을
+  섞으면 crop geometry 가 달라져 bit-parity 깨짐(Codex#3).
 - modality별로 `coregister_crops`(sub-pixel 정렬)로 median blur 저감(bench 와 동일; crop 내용만
   변경, full-frame/GT 불변).
-- drop 사유(modality 미해결/crosshair 없음/OOB/로드실패)는 조용히 버리지 않고 count + `[INFO]` 1줄.
-- **공유 헬퍼 처리:** `_cond_consensus_crop`/crosshair-xy/`coregister_crops` 등 crop 생성 헬퍼는
-  현재 bench 드라이버(`golden_consensus_eval_cond.py`)·`align_similarity.py` 에 있다. 포팅 시
-  workflow_3 align 의 공용 위치(예: `clean_align_image.py`/`cond_template.py` 또는 신규 helper)로
-  단일화하고 bench 가 거기서 import 하도록 정리한다(중복 구현 금지). 정확한 배치/이동은 plan 에서 확정.
+- drop 사유(modality 미해결/crosshair 없음/OOB/`load_gray` 실패)는 조용히 버리지 않고 count + `[INFO]`
+  1줄. 디코드 실패 S 는 drop(전부 실패면 캐시 보존 — §4-D).
+- **공유 헬퍼 처리:** 정확히 bench 의 `_resolve_mod`/`_cond_crosshair_xy`/`_cond_consensus_crop`/
+  `coregister_crops`/`_precrop_drop_reason` 을 재사용한다. 이들은 현재 bench 드라이버
+  (`golden_consensus_eval_cond.py`)·`align_similarity.py` 에 있으므로, workflow_3 align 의 공용 위치로
+  단일화하고 bench 가 거기서 import 하도록 정리한다(중복/재구현 금지 — 재구현하면 bit-parity 위험).
+  정확한 배치/이동은 plan 에서 확정.
 
 ### 4-C. 신규 — resolver + cold-cache bounded sync
 `resolve_templates(assets, settings) -> {"OM":tpl, "SEM":tpl}` (§3 의사코드).
 - `consensus_enabled=False` → 즉시 rcp dict 반환(킬스위치, 현행 동작).
 - cold-cache 정의: 관심 modality crop 수 < `min_s` *그리고* events/ 부재/희박.
-- `success_gather.wait_for_gather(eqp, recipe, timeout) -> bool`: `_IN_FLIGHT[(eqp,recipe)]` 살아있으면
-  `join(timeout)`; 없고 cache cold 면 1회 fire+join. 이미 알람 시점에 async fire 됐으므로 보통은
-  *그 스레드를 join* 한다(중복 fetch 방지). resolver 는 correction 당 최대 1회만 호출.
-- timeout 초과 → 이번엔 rcp, 백그라운드 gather 가 다음을 위해 캐시 데움.
+- `success_gather.wait_for_gather(eqp, cache_key, timeout) -> bool`: **lock 안에서 thread 스냅샷만 뜨고
+  lock 을 푼 뒤 `join(timeout)`** 한다. lock 을 쥔 채 join 하거나 `gather_success_async`(같은 `_IN_FLIGHT_LOCK`
+  취득)를 재호출하면 데드락(Codex#1). 스냅샷된 thread 가 살아있으면 join; 없고 cache cold 면
+  `gather_success_async` 를 lock 밖에서 1회 fire 후 그 thread join. 반환 bool = join 후 캐시가
+  실제로 채워졌는지(events/ 에 ≥min_s 가능). 이미 알람 시점에 async fire 됐으므로 보통은 *그 스레드를
+  join*(중복 fetch 방지). resolver 는 correction 당 최대 1회 호출.
+- 반환이 `True` 일 때만 crop 재로드. `False`(timeout/실패) → 재로드 없이 rcp(`reason=sync_timeout`),
+  백그라운드 gather 가 다음을 위해 캐시 데움.
 - modality별 선택 결과를 `[INFO]` 1줄로(`consensus` / `rcp:insufficient_s(n)` / `rcp:blurry` /
   `rcp:sync_timeout` / `rcp:disabled`) 남겨 manifest/콘솔에서 결정이 보이게 한다.
 
-### 4-D. gather TTL 새로고침
+### 4-D. gather TTL 새로고침 + 원자적 교체
 `gather_success_images(..., refresh_ttl_sec=...)`: 다운로드 전 events/ mtime 확인 → TTL 미경과면
-다운로더 호출 없이 `reason="fresh"` 조기반환(기존 캐시 재사용). 경과면 현행 replace-if-non-empty
+다운로더 호출 없이 `reason="fresh"` 조기반환(기존 캐시 재사용). 경과면 replace-if-non-empty
 (최신 N 으로 통째 교체) 수행. 교체 의미는 유지 — recency 추종이 consensus 의 핵심이라 누적 금지.
+
+**원자적 교체(Codex#2):** 현행은 `rmtree(events_dir)` 후 `staging.replace(events_dir)` 라, 그 사이
+동시 correction 의 adapter 가 events/ 부재를 관측할 수 있다. 수정:
+- swap 을 reader/writer 관점에서 안전하게 — events/ 를 지우지 말고 `staging → events` 를 **단일
+  rename(os.replace)** 로 덮어쓰거나(같은 볼륨), 불가하면 `events.new` 로 rename 후 기존을 `events.old`
+  로 비키고 `events.new→events` 한 뒤 `events.old` 정리(중간에 항상 유효한 events/ 존재).
+- adapter 는 events/ 부재/일시적 빈 상태를 "0 crop → rcp 폴백" 으로 안전 처리(읽기 중 OSError 무시).
+- **"non-empty" 정의를 실제 stage 된 S 이미지 수로** — `len(staged)>0` 만으로 판단하면 이미지 0장짜리
+  event 가 멀쩡한 옛 캐시를 덮어쓸 수 있다(Codex#2). `n_images >= 1`(가능하면 modality별 ≥1) 일 때만 교체,
+  아니면 옛 캐시 보존.
 
 ---
 
@@ -171,6 +200,12 @@ bench `poc/workflow_2/consensus_template.py` 의 순수 함수를 workflow_3 로
 
 blur 가드 임계(0.70/0.50)는 검증된 값이라 `consensus_template.py` 모듈 상수로 둔다(env 비노출, YAGNI).
 
+**⚠ min_s 정책 변경 명시(Codex#5):** §0 의 검증 수치(+0.442 in_topk / +0.446 rank1)는 **`min_s=3`**
+오피스 A/B 결과다. production 기본 `consensus_min_s=4` 는 *의도된 롤아웃 정책 변경* 이다 — 더 강한 median
+(S=3 의 2장 median 보다 변별력↑)을 노리되, S=3 만 모이는 recipe 는 consensus 대신 rcp 로 폴백한다
+(커버리지↓ 가능). bench 수치를 4 에 그대로 귀속하지 말 것. 오피스 롤아웃 시 `ALIGN_FAIL_CONSENSUS_MIN_S`
+로 3↔4 를 A/B 해 커버리지 대 정확도 trade-off 를 실측 후 확정. floor 는 3(LOO 바닥 fm≥3).
+
 ---
 
 ## 7. 에러 처리 — 모든 실패는 rcp 로 강등, 사이클 비중단
@@ -184,8 +219,17 @@ blur 가드 임계(0.70/0.50)는 검증된 값이라 `consensus_template.py` 모
 | blur 가드 미통과 | rcp(`reason=blurry`) |
 | cold-cache sync timeout | 이번 rcp, 백그라운드가 다음 데움 |
 | rcp 자산 자체 없음 | 기존 `no_assets` 에스컬레이션(불변) |
+| 캐시 S 전부 디코드 실패 | 옛 캐시 보존(§4-D), adapter 0 crop → rcp |
+| adapter/build 예외(modality별) | per-modality try/except → 그 modality 만 rcp |
+| `cache_key` 불일치(leaf vs class/recipe) | resolver 가 `f"{class_name}/{recipe_name}"` 사용 — gather/downloader 와 동일 키(Codex#5) |
 
 → office downloader 가 없어도 안전하게 선배포 가능(캐시 안 차면 자동으로 rcp).
+
+**recipe_id 키 일관성(Codex#5):** `AlignFailAssets.recipe_id` 는 leaf(`recipe_name`)만 반환한다. 그러나
+gather(monitor 알람 경로)는 RECIPE_ID=`<class>/<recipe>` 로 cache 를 적재하므로
+(`project_recipe_id_class_recipe_format`), resolver/adapter 는 반드시 `f"{assets.class_name}/{assets.recipe_name}"`
+를 cache/downloader 키로 써야 한다. leaf 만 쓰면 캐시를 못 찾거나(조용한 miss) eqp 내 동명 recipe 끼리
+충돌한다. build_consensus_template 의 `recipe_id` 인자도 같은 키로 통일.
 
 ---
 
@@ -197,8 +241,13 @@ blur 가드 임계(0.70/0.50)는 검증된 값이라 `consensus_template.py` 모
 - select: modality별 `consensus or rcp` 정확.
 - resolver: enough→consensus, `<min_s`→rcp, blurry→rcp, cold→`wait_for_gather` 호출(mock),
   TTL fresh→fetch skip, `consensus_enabled=False`→rcp.
-- `wait_for_gather`: in-flight join + timeout 경로.
-- gather TTL: 미경과 skip(`reason=fresh`) / 경과 replace.
+- `wait_for_gather`: in-flight join + timeout(False) 경로 + lock 밖 join(데드락 회귀 방지) + 반환
+  bool 에 따른 재로드 분기.
+- gather TTL: 미경과 skip(`reason=fresh`) / 경과 replace; **이미지 0장 event 는 옛 캐시 보존**(non-empty=
+  S 이미지 수); 교체 중 events/ 항상 유효(원자 swap).
+- cache_key: leaf 가 아닌 `class/recipe` 로 cache 경로 구성 — gather 가 쓴 위치와 일치 / leaf 충돌 미발생.
+- adapter: `_resolve_mod` 폴백으로 단일-modality recipe S 가 안 드롭됨; 디코드 실패 S drop; 전부 실패→0 crop.
+- routing: `ConsensusResult.template`(AlignKeyTemplate) 만 select 에 들어감(ConsensusResult 객체 미유입).
 - 통합: `correct_align_fail_auto` 가 합성 cache 로 consensus 선택 / 빈 cache 로 rcp 폴백.
 
 ---

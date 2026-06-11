@@ -21,6 +21,7 @@ def test_sharpness_metrics_nonnegative():
     assert _edge_density(g) >= 0.0
     assert _lap_var(g) >= 0.0
     assert _edge_density(np.zeros((0, 0), np.uint8)) == 0.0  # 빈 입력 가드
+    assert _lap_var(np.zeros((0, 0), np.uint8)) == 0.0  # 빈 입력 가드
 
 
 def test_matched_crop_resizes_to_template_size():

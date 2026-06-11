@@ -33,6 +33,14 @@ import numpy as np
 from poc.workflow_3.logger import log_work2_event
 from poc.workflow_3 import DEBUG_IMAGE_DIR
 from poc.workflow_3.vision.align_fail_assets import AlignFailAssets, load_gray, resolve_assets_auto
+from poc.workflow_3.vision.cond_file import load_cond
+from poc.workflow_3.vision.cond_template import (
+    CENTER_AREA_RATIO,
+    centered_area_crop,
+    check_cond_box,
+    cond_align_offset,
+    cond_template_crop,
+)
 from poc.workflow_3.vision.align_key_matcher import (
     DEFAULT_SCALES,
     STRUCTURE_POLICY,
@@ -78,7 +86,7 @@ class CorrectionConfig:
     click_margin_ratio: float = 0.12  # best_xy 를 FOV 안쪽으로 clamp (live search 와 공유).
     require_ok_button: bool = True  # OK 위치 확인 실패 시 corrected 대신 escalate.
     settle_sec: float = 0.0  # 제스처 후 대기(실장비 안정화).
-    crop_template_to_box: bool = False  # 등록 이미지의 엔지니어 박스 내부로 template crop(미보정, 기본 off).
+    cond_box_crop: bool = True  # cond.box_ltrb 기반 box-crop template(+decoupled offset). False -> whole-template(구 동작) 롤백.
     # 만성 모호 키 게이트(Tier 0.1). second_ratio 가 이 값을 넘으면 present 라도 auto-act 대신
     # engineer_review 로 보류한다. None(기본)이면 게이트는 과거 act/fallback 2분기만 — 동작 불변.
     # 운영 루프는 Workflow3Settings.reregister_second_ratio_threshold(기본 0.98)를 주입한다.
@@ -184,63 +192,61 @@ def key_visibility_gate(
 # ------------------------------------------------------------------
 
 
-def extract_annotation_box(gray: np.ndarray) -> tuple[int, int, int, int] | None:
-    """등록 이미지에 엔지니어가 그린 흰색 unique-area 박스의 *inset 내부* bbox 를 추정한다.
+def _load_template(
+    path: Path, *, recipe_id: str, key_type: str, cond_box_crop: bool
+) -> AlignKeyTemplate:
+    """등록 이미지를 cond-aware 하게 crop 해 AlignKeyTemplate 으로 만든다(offset 동봉).
 
-    검출/inset 로직은 ``align_point_correction`` 의 canonical 구현
-    (``_detect_white_box`` + ``_inner_crop_for_box``) 에 위임한다 — top-hat → Otsu →
-    hollowness/edge-margin/aspect gate 로 거른 뒤, 박스 stroke (보통 1~3 px) 두께만큼
-    안쪽으로 깎은 영역만 남긴다. 흰 박스 outline 픽셀이 template 에 새어들어 매칭이
-    흰색을 좇으며 점수가 떨어지는 것을 막는다. ``align_similarity`` 도 같은 경로를 쓴다.
-
-    이 모듈에 따로 있던 approxPolyDP 기반 복제 검출기를 제거하고 단일화한 것이다
-    (얇은 outline 에서 4-코너 근사가 자주 실패하던 약점을 canonical gate 가 보완).
-
-    반환: inset 적용된 내부 bbox ``(left, top, right, bottom)`` 또는 None.
-
-    주의: align key 자체가 box-in-box 모양이면 주석 박스와 혼동될 수 있어 여전히
-    **미보정(uncalibrated)** 이다. 실제 오피스 파일로 검증하기 전까지는
-    ``CorrectionConfig.crop_template_to_box`` 기본값(off)으로 두고 전체 이미지를 쓴다.
+    cond_box_crop=True(기본):
+      - cond.box_ltrb 가 있고 check_cond_box 가 skip 이 아니면 -> box 내부 crop
+        (stroke inpaint + 대칭 inset) + offset = cond_align_offset(검증된 win 경로).
+      - cond 부재/경계밖/너무작음/offset 과도(skip) -> center-area crop + offset (0,0)(검증된 fallback).
+    cond_box_crop=False: 전체 이미지(구 whole-template 동작 롤백) + offset (0,0).
     """
-    # align_similarity 와 동일한 lazy import 패턴 — 모듈 로드 순서 의존 회피.
-    from poc.workflow_3.vision.align_point_correction import _detect_white_box, _inner_crop_for_box
-
-    box = _detect_white_box(gray)
-    if box is None:
-        return None
-    _inner_gray, (ix, iy, iw, ih) = _inner_crop_for_box(gray, box)
-    return (int(ix), int(iy), int(ix + iw), int(iy + ih))
-
-
-def _load_template(path: Path, *, recipe_id: str, key_type: str, crop_to_box: bool) -> AlignKeyTemplate:
-    """경로의 등록 이미지를 (선택적으로 박스 crop 후) AlignKeyTemplate 으로 만든다."""
     gray = load_gray(path)
-    if crop_to_box:
-        box = extract_annotation_box(gray)
-        if box is not None:
-            left, top, right, bottom = box
-            gray = gray[top:bottom, left:right]
-            print(f"[INFO] {key_type} template 박스 내부로 crop: {box}")
+    if not cond_box_crop:
+        crop, offset = gray, (0, 0)
+    else:
+        cond = load_cond(path)
+        box_ltrb = cond.box_ltrb if cond is not None else None
+        if box_ltrb is None:
+            status = "skip"
+            reason = "cond 파일 없음" if cond is None else "box 없음"
         else:
-            print(f"[WARNING] {key_type} 주석 박스를 찾지 못해 전체 이미지를 사용합니다.")
-    return build_template(gray, recipe_id=recipe_id, version="v0", key_type=key_type)
+            status, reason, _onorm = check_cond_box(box_ltrb, gray.shape)
+        if status != "skip":
+            crop, _bbox = cond_template_crop(gray, cond)
+            offset = cond_align_offset(box_ltrb, gray.shape)
+            level = "WARNING" if status == "warn" else "INFO"
+            print(f"[{level}] {key_type} template cond box-crop: offset={offset} ({reason})")
+        else:
+            crop = centered_area_crop(gray, CENTER_AREA_RATIO)
+            offset = (0, 0)
+            print(f"[INFO] {key_type} template center-area crop ({reason})")
+    return build_template(
+        crop, recipe_id=recipe_id, version="v0", key_type=key_type,
+        align_offset_xy=offset,
+    )
 
 
 def build_templates_from_assets(
-    assets: AlignFailAssets, *, crop_to_box: bool = False
+    assets: AlignFailAssets, *, cond_box_crop: bool = True
 ) -> dict[str, AlignKeyTemplate]:
     """recipe_om/recipe_sem → {'OM': ..., 'SEM': ...}. live_align_search 와 동일 계약.
 
     존재하는 등록 이미지만 담는다(부분 생성 허용). 둘 다 없으면 빈 dict.
+    cond_box_crop 은 _load_template 으로 전달된다(box-crop vs center vs whole).
     """
     templates: dict[str, AlignKeyTemplate] = {}
     if assets.recipe_om is not None:
         templates["OM"] = _load_template(
-            assets.recipe_om, recipe_id=assets.recipe_id, key_type="om", crop_to_box=crop_to_box
+            assets.recipe_om, recipe_id=assets.recipe_id, key_type="om",
+            cond_box_crop=cond_box_crop,
         )
     if assets.recipe_sem is not None:
         templates["SEM"] = _load_template(
-            assets.recipe_sem, recipe_id=assets.recipe_id, key_type="sem", crop_to_box=crop_to_box
+            assets.recipe_sem, recipe_id=assets.recipe_id, key_type="sem",
+            cond_box_crop=cond_box_crop,
         )
     return templates
 
@@ -506,7 +512,7 @@ def correct_align_fail_auto(
         print("[ERROR] align fail recipe 폴더를 찾지 못했습니다.")
         log_work2_event(component=LOG_COMPONENT, message="no_assets", level="error")
         return CorrectionOutcome("no_assets", "primary", "low", None, None, None)
-    templates = build_templates_from_assets(assets, crop_to_box=config.crop_template_to_box)
+    templates = build_templates_from_assets(assets, cond_box_crop=config.cond_box_crop)
     if not templates:
         print(f"[ERROR] 등록 OM/SEM 이미지가 없습니다: {assets.recipe_dir}")
         log_work2_event(

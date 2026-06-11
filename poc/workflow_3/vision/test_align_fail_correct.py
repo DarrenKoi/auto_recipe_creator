@@ -4,6 +4,10 @@ CLAUDE.md 규칙: argparse 미사용, [PASS]/[FAIL] print, Mac 에서 그대로 
     uv run python poc/workflow_3/vision/test_align_fail_correct.py
 """
 
+import tempfile
+from pathlib import Path
+
+import cv2
 import numpy as np
 
 from poc.workflow_3.util.json_utils import bbox_center, bbox_to_pixels
@@ -11,11 +15,13 @@ from poc.workflow_3.vision.align_fail_correct import (
     PAUSED_SCALES,
     CorrectionConfig,
     CorrectionOutcome,
+    _load_template,
     _make_primary_demo,
     _with_key_ambiguity,
     correct_align_fail,
     key_visibility_gate,
 )
+from poc.workflow_3.vision.cond_template import cond_align_offset
 from poc.workflow_3.vision.align_key_matcher import (
     STRUCTURE_POLICY,
     AlignKeyMatchResult,
@@ -398,6 +404,76 @@ def test_engineer_review_route() -> bool:
     return ok
 
 
+def test_load_template_branches() -> bool:
+    """_load_template 3분기: cond box -> box-crop+offset, cond 없음 -> center-crop+offset(0), flag off -> whole."""
+    gray = np.full((512, 512), 110, dtype=np.uint8)
+    cv2.rectangle(gray, (150, 200), (250, 300), 255, 1)  # box px (150,200)-(250,300).
+
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        img = root / "IMAP0001.png"
+        cv2.imwrite(str(img), gray)
+        # cond sidecar: .<name>/cond.txt; box idx6..9 = cursor(px x10), crosshair idx4,5 = -1.
+        cond_dir = root / ".IMAP0001.png"
+        cond_dir.mkdir()
+        (cond_dir / "cond.txt").write_text(
+            "Scope\tOM\nPixel\t512,512\n!Cursor_info\t0,0,0,0,-1,-1,1500,2000,2500,3000\n",
+            encoding="utf-8",
+        )
+        box_ltrb = (1500, 2000, 2500, 3000)
+        exp_offset = cond_align_offset(box_ltrb, gray.shape)  # off-center -> 비-(0,0).
+
+        # 1) cond_box_crop=True + cond 존재 -> box-crop + decoupled offset.
+        t_box = _load_template(img, recipe_id="R", key_type="om", cond_box_crop=True)
+        box_ok = (
+            t_box.align_offset_xy == exp_offset
+            and exp_offset != (0, 0)
+            and t_box.raw_image.shape == (96, 96)  # inset=2 on 100x100 cond box.
+        )
+
+        # 2) cond_box_crop=True + cond 없음(sidecar 미생성) -> center-area crop + offset(0).
+        img2 = root / "IMAP0002.png"
+        cv2.imwrite(str(img2), gray)
+        t_center = _load_template(img2, recipe_id="R", key_type="sem", cond_box_crop=True)
+        center_ok = (
+            t_center.align_offset_xy == (0, 0)
+            and t_center.raw_image.shape != (512, 512)
+        )
+
+        # 4) cond_box_crop=True + 작은 centered box -> check_cond_box "warn" 이지만 여전히 box-crop.
+        img3 = root / "IMAP0003.png"
+        cv2.imwrite(str(img3), gray)
+        cond_dir3 = root / ".IMAP0003.png"
+        cond_dir3.mkdir()
+        # 22px centered box -> inner=22-2*CROP_INSET_PX(2)=18 in [16,24) -> warn:box:small. cursor=px*10.
+        (cond_dir3 / "cond.txt").write_text(
+            "Scope\tOM\nPixel\t512,512\n!Cursor_info\t0,0,0,0,-1,-1,2450,2450,2670,2670\n",
+            encoding="utf-8",
+        )
+        t_warn = _load_template(img3, recipe_id="R", key_type="om", cond_box_crop=True)
+        warn_ok = (
+            t_warn.align_offset_xy == (0, 0)         # box 중심 == 이미지 중심.
+            and t_warn.raw_image.shape == (18, 18)   # 22px box, inset 2 -> 18px crop (box-crop, not center).
+        )
+
+        # 3) cond_box_crop=False -> whole-template(구 동작) + offset(0).
+        t_whole = _load_template(img, recipe_id="R", key_type="om", cond_box_crop=False)
+        whole_ok = (
+            t_whole.align_offset_xy == (0, 0)
+            and t_whole.raw_image.shape == (512, 512)
+        )
+
+    ok = box_ok and center_ok and warn_ok and whole_ok
+    print(
+        f"[{'PASS' if ok else 'FAIL'}] load_template_branches: "
+        f"box(off={t_box.align_offset_xy},shape={t_box.raw_image.shape}) "
+        f"center(off={t_center.align_offset_xy},shape={t_center.raw_image.shape}) "
+        f"warn(off={t_warn.align_offset_xy},shape={t_warn.raw_image.shape}) "
+        f"whole(shape={t_whole.raw_image.shape})"
+    )
+    return ok
+
+
 def main() -> int:
     print("[INFO] align_fail_correct self-test 시작")
     results = [
@@ -411,6 +487,7 @@ def main() -> int:
         test_with_key_ambiguity_stamps(),
         test_primary_path_stamps_ambiguity(),
         test_engineer_review_route(),
+        test_load_template_branches(),
     ]
     passed = sum(1 for r in results if r)
     print(f"[INFO] {passed}/{len(results)} cases passed")

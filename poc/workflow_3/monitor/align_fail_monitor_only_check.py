@@ -49,7 +49,10 @@ from poc.workflow_3.monitor.align_fail_monitor import (
 )
 from poc.workflow_3.monitor.cycle import CycleResult, run_check_only_cycle
 from poc.workflow_3.monitor.notify import ALARM_LOG_PATH, notify_align_fail_popup
-from poc.workflow_3.monitor.success_gather import gather_success_async
+from poc.workflow_3.monitor.success_gather import (
+    DOWNLOADER_AVAILABLE,
+    gather_success_async,
+)
 
 LOG_COMPONENT = "align_fail_only_check"
 
@@ -170,6 +173,56 @@ def process_fail_rows(
     return newly_handled
 
 
+def _report_data_paths() -> None:
+    """시작 시 데이터 입출력 루트를 절대경로로 찍어 'MES/다운로더가 코드와 다른 폴더에
+    쓰는지' 를 즉시 드러낸다.
+
+    캡처(captured_img_from_rcs)는 보이는데 rcp/msr(align_images) 과 consensus 캐시가
+    비는 가장 흔한 증상의 1차 진단이다. 두 트리는 이 코드가 아니라 외부(office MES /
+    success downloader)가 채우므로, 코드가 '읽는' 경로가 실제 '쓰는' 경로와 같은지
+    확인하는 것이 핵심이다.
+      * align_images: office MES 가 align_img_from_rcp/msr 를 적재(코드는 읽기만).
+      * align_consensus_cache: success downloader 가 적재(없으면 gather 비활성).
+    """
+    # import 는 함수 안에서 — 모듈 로드 부작용/순환을 피하고 진단 비용을 시작 1회로 한정.
+    from poc.workflow_3 import ALIGN_CONSENSUS_CACHE_DIR, ALIGN_IMAGES_DIR
+    from poc.workflow_3.align.assets import iter_recipe_dirs
+
+    img_root = ALIGN_IMAGES_DIR
+    img_exists = img_root.is_dir()
+    try:
+        n_recipes = len(iter_recipe_dirs(img_root)) if img_exists else 0
+    except Exception:
+        n_recipes = -1  # glob 실패 — 경로 권한 등.
+    print(
+        f"[INFO] align_images 루트(코드가 rcp/msr 를 읽는 곳): {img_root} "
+        f"(존재={'예' if img_exists else '아니오'}, "
+        f"align_img_from_rcp 보유 recipe={n_recipes})"
+    )
+    if not img_exists:
+        print(
+            "[WARNING] align_images 루트가 없습니다. office MES 출력 위치와 "
+            "ALIGN_IMAGES_DIR 가 다른지 확인하세요(rcp/msr 가 안 보이는 주원인). "
+            "MES 가 과거 workflow_1/align_images 에 쓰면 env ALIGN_IMAGES_DIR 로 "
+            "그 경로를 가리키거나 MES 출력 위치를 옮겨야 합니다."
+        )
+    elif n_recipes == 0:
+        print(
+            "[WARNING] align_images 루트는 있으나 align_img_from_rcp 를 가진 recipe 가 "
+            "0개입니다. MES 가 정말 이 경로에 적재 중인지 확인하세요."
+        )
+
+    cache_root = ALIGN_CONSENSUS_CACHE_DIR
+    print(
+        f"[INFO] align_consensus_cache 루트(success S 이미지): {cache_root} "
+        f"(존재={'예' if cache_root.is_dir() else '아니오'})"
+    )
+    print(
+        f"[INFO] success downloader: "
+        f"{'사용가능' if DOWNLOADER_AVAILABLE else '없음 → consensus gather 비활성(캐시 안 채워짐)'}"
+    )
+
+
 def monitor_loop(settings: Workflow3Settings | None = None) -> None:
     """점검 전용 메인 루프 — poll 주기마다 신규 Align Fail 을 캡처+닫기 처리한다."""
     settings = settings or load_workflow3_settings()
@@ -191,6 +244,7 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
     )
     print(f"[INFO] 알람 로그: {ALARM_LOG_PATH}")
     print(f"[INFO] 점검 manifest: {CYCLE_MANIFEST_PATH}")
+    _report_data_paths()
     print(
         "[INFO] 각 신규 Align Fail: RCS 확보 → 접속 → 첫 화면 1장 캡처 → tool 닫기 → "
         "보정 가능성 판정(_marked.jpg/_feasibility.json). "

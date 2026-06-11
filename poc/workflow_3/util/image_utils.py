@@ -31,7 +31,6 @@ def capture_window(window) -> "Image.Image":
         png_data = mss.tools.to_png(shot.rgb, shot.size)
 
     image = Image.open(BytesIO(png_data))
-    print(f"[INFO] 창 캡처 완료: {image.size[0]}x{image.size[1]} px")
     return image
 
 

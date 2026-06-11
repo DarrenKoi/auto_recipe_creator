@@ -57,15 +57,17 @@ LOG_DIR = WORKFLOW_3_DIR / "logs"
 TEMPLATES_DIR = WORKFLOW_3_DIR / "templates"
 
 # 오피스 MES 가 align fail 시 생성하는 이미지 루트. align fail 핸들러는 여기에
-# captured_img_from_rcs 를 함께 적재하고, vision.align_fail_assets 가 읽는다.
+# captured_img_from_rcs(녹화 포함)를 함께 적재하고, vision.align_fail_assets 가 읽는다.
 #   align_images/<eqp_id>/<class>/<recipe>/{align_img_from_rcp, align_img_from_msr, captured_img_from_rcs}
-# 물리 경로는 오피스 MES 도구가 직접 타겟하므로 workflow_1 시절 위치를 그대로 쓴다.
-# 옮겨야 할 때는 env ALIGN_IMAGES_DIR 한 줄로 전환한다.
+# 기본 위치를 workflow_3 아래로 둔다(녹화/캡처가 workflow_3 에 모이도록).
+# 주의: 오피스 MES 도구는 여전히 workflow_1/align_images 에 align key 를 쓰므로,
+# 오피스에서 CV 보정을 쓰려면 env ALIGN_IMAGES_DIR 로 그 경로를 가리키거나 MES
+# 출력 위치를 함께 옮겨야 한다. env ALIGN_IMAGES_DIR 한 줄로 전환 가능.
 _align_images_env = os.environ.get("ALIGN_IMAGES_DIR", "").strip()
 ALIGN_IMAGES_DIR = (
     Path(_align_images_env)
     if _align_images_env
-    else WORKFLOW_3_DIR.parent / "workflow_1" / "align_images"
+    else WORKFLOW_3_DIR / "align_images"
 )
 
 # consensus S-image gather 캐시 루트. MES 산출물(align_images)이 아니라 우리가 만드는

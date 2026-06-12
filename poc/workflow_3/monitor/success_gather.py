@@ -115,8 +115,8 @@ def gather_success_async(eqp_id, recipe_id, settings: Workflow3Settings):
 def _cache_has_min_events(eqp_id, recipe_id) -> bool:
     """events/ 에 S 이미지가 1장 이상 있나(채워졌는지 거친 판정)."""
     from poc.workflow_3.align.consensus_gather import count_staged_events
-    n_events, _ = count_staged_events(eqp_id, recipe_id)
-    return n_events > 0
+    _, n_images = count_staged_events(eqp_id, recipe_id)
+    return n_images > 0   # docstring/Task5 규약대로 S 이미지 수 기준(이벤트 수 아님).
 
 
 def wait_for_gather(eqp_id, recipe_id, timeout) -> bool:

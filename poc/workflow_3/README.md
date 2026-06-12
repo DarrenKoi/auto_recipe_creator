@@ -11,8 +11,19 @@ workflow_1(RCS GUI 자동화) + workflow_2(CV align-key 보정)의 production �
 
 popup 직후, `run_alarm_cycle` 과 **겹쳐** daemon thread 로 consensus gather 가 실행된다:
 해당 recipe 의 최근 성공 S 이미지+cond 를 `align_consensus_cache/` 에 stage 해
-consensus 빌드 재료를 확보한다(`ALIGN_FAIL_GATHER_SUCCESS` 게이트 — 기본 on).
+consensus 빌드 재료를 확보한다(`ALIGN_FAIL_GATHER_SUCCESS` 게이트 — 기본 on; gather 는 TTL
+내면 재fetch skip).
 office 모듈(`office_success_downloader.py`)이 없으면 자동 비활성(루프 응답성·기존 동작 불변).
+
+보정 단계(`run_correction`)는 stage 된 S 이미지로 **consensus template(최근 S median)** 을
+빌드해 등록 rcp align key 대신 라우팅 template 으로 쓴다(`align/consensus_resolve.resolve_templates`,
+modality별 consensus-or-rcp). modality당 S 가 `ALIGN_FAIL_CONSENSUS_MIN_S`(기본 4) 미만이거나
+blur 가드 미통과/캐시 부재/예외면 그 modality 는 기존 rcp 로 폴백(회귀 위험 0). cache cold(최초
+fail)면 1회 bounded sync(`wait_for_gather`, `ALIGN_FAIL_CONSENSUS_SYNC_TIMEOUT`) 후 진행.
+`ALIGN_FAIL_CONSENSUS=0` 으로 끄면 순수 rcp(기존 동작). office downloader 가 캐시를 채워야
+실제 활성 — 없으면 자동으로 rcp.
+검증: bench cond A/B in_topk 0.434→0.876, rank1 0.318→0.764(min_s=3 기준; prod 기본 min_s=4 는
+의도적 정책). 알고리즘은 workflow_2 bench bit-parity 포팅.
 
 ## 패키지 구조
 
@@ -89,7 +100,11 @@ uv run python poc/workflow_3/monitor/engineer_done_align_adjustment.py
 | `ALIGN_FAIL_ALARM_SOURCE` | office | `office` \| `replay` |
 | `ALIGN_SEM_MODE_OVERRIDE` | (없음) | read_mode v0 강제값 (`OM`/`SEM`) |
 | `ALIGN_FAIL_GATHER_SUCCESS` | 1 | consensus gather 활성(최근 S 이미지 stage) — 0 으로 끄면 gather 전체 skip |
-| `ALIGN_FAIL_GATHER_MAX_EVENTS` | 5 | 한 알람당 stage 할 최근 성공 event 수 (이미지 수 아님) |
+| `ALIGN_FAIL_GATHER_MAX_EVENTS` | 8 | 한 알람당 stage 할 최근 성공 event 수 (이미지 수 아님; OM/SEM split 후도 min_s 확보) |
+| `ALIGN_FAIL_CONSENSUS` | 1 | consensus 라우팅 마스터 토글 — 0 이면 보정이 순수 rcp(기존 동작). 롤아웃 킬스위치 |
+| `ALIGN_FAIL_CONSENSUS_MIN_S` | 4 | modality당 consensus 빌드·신뢰 최소 S 장수(floor 3). 미만이면 그 modality rcp 폴백 |
+| `ALIGN_FAIL_CONSENSUS_SYNC_TIMEOUT` | 8.0 | cache cold 시 1회 bounded gather 대기(초). 초과 시 rcp, 백그라운드가 다음 데움 |
+| `ALIGN_FAIL_CONSENSUS_REFRESH_TTL` | 21600 | gather 재fetch TTL(초, 6h). 이내면 FTP skip(캐시 재사용) |
 | `ALIGN_FAIL_FEASIBILITY_MARK` | 1 | 점검 모니터(`align_fail_monitor_only_check`) 전용. 캡처 후 rcp 엔진으로 보정 가능/불가/모호를 판정해 캡처 옆 `<tag>_rcs_marked.jpg` + `<tag>_feasibility.json` 생성, consensus cache S event 수도 표기. production 보정 루프엔 영향 없음 |
 | `ALIGN_CONSENSUS_CACHE_DIR` | `poc/workflow_3/align_consensus_cache` | staged S 이미지 캐시 루트 override |
 | `WORKFLOW3_FILE_LOG_DETAIL` | 0 | 1 이면 `logs/*.log` 에 info 이벤트/VLM 성공 호출까지 기록. 기본은 warning/error 만 파일 기록 |
@@ -108,7 +123,8 @@ uv run python poc/workflow_3/monitor/engineer_done_align_adjustment.py
   체크리스트** 참조. (옮기는 동안은 env `ALIGN_IMAGES_DIR` 한 줄로 검증/전환.)
 - consensus gather 캐시: `align_consensus_cache/<eqp>/<class>/<recipe>/events/<event_id>/`
   — fail 알람 시 최근 성공 S 이미지+cond 를 stage(consensus 빌드 재료). replace-if-non-empty:
-  새 event ≥1 건이면 기존 set 교체, 0건/실패면 기존 보존.
+  새 이미지 ≥1 장이면 기존 set 을 원자적(.events_new/.events_old)으로 교체(읽는 중에도 events/
+  유효), 0장/실패면 기존 보존. TTL(`ALIGN_FAIL_CONSENSUS_REFRESH_TTL`) 이내면 재fetch skip.
 
 ## align_images 루트 이전 체크리스트 (workflow_1 → workflow_3)
 

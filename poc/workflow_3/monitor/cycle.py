@@ -396,6 +396,11 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
                 reregister_ratio_threshold=settings.reregister_second_ratio_threshold,
                 # cond box-crop template(Tier 1.1; env ALIGN_FAIL_COND_BOX_CROP 로 롤백 가능).
                 cond_box_crop=settings.cond_box_crop,
+                # consensus 라우팅 설정(Workflow3Settings 에서 주입).
+                consensus_enabled=settings.consensus_enabled,
+                consensus_min_s=settings.consensus_min_s,
+                consensus_max_events=settings.gather_max_events,
+                consensus_sync_timeout_sec=settings.consensus_sync_timeout_sec,
             ),
             dry_run=settings.correction_dry_run,
             debug_dir=debug_dir,

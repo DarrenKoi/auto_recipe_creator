@@ -519,6 +519,50 @@ def test_offset_applied_to_reposition() -> bool:
     return ok
 
 
+def test_correct_auto_uses_resolver() -> bool:
+    """correct_align_fail_auto 가 resolve_templates 를 호출해 라우팅 dict 을 받는다."""
+    import poc.workflow_3.align.correction as corr
+
+    called = {"resolve": 0}
+
+    class _A:
+        eqp_id = "E1"; class_name = "c"; recipe_name = "r"; recipe_dir = "/x"
+
+    def _resolve(assets, **kw):
+        called["resolve"] += 1
+        from poc.workflow_3.align.matching.test_engine import make_synthetic_template
+        from poc.workflow_3.align.matching.engine import build_template
+        t = build_template(make_synthetic_template(key_type="box"),
+                           recipe_id="r", version="v", key_type="sem")
+        return {"SEM": t}
+
+    orig_assets = corr.resolve_assets_auto
+    orig_resolve = getattr(corr, "resolve_templates", None)
+    corr.resolve_assets_auto = lambda **k: _A()
+    corr.resolve_templates = _resolve
+    try:
+        monitor, _ = corr._make_primary_demo(key_in_view=True)
+        out = corr.correct_align_fail_auto(monitor, dry_run=True,
+                                           eqp_id="E1", recipe_name="c/r")
+        assert called["resolve"] == 1
+        assert out.status in ("corrected", "escalated_no_ok", "ok_detect_error",
+                              "fallback_corrected", "fallback_escalated",
+                              "escalated_ambiguous_key")
+    finally:
+        corr.resolve_assets_auto = orig_assets
+        if orig_resolve is not None:
+            corr.resolve_templates = orig_resolve
+        else:
+            del corr.resolve_templates
+
+    ok = called["resolve"] == 1
+    print(
+        f"[{'PASS' if ok else 'FAIL'}] correct_auto_uses_resolver: "
+        f"resolve_calls={called['resolve']} status={out.status}"
+    )
+    return ok
+
+
 def main() -> int:
     print("[INFO] align_fail_correct self-test 시작")
     results = [
@@ -534,6 +578,7 @@ def main() -> int:
         test_engineer_review_route(),
         test_load_template_branches(),
         test_offset_applied_to_reposition(),
+        test_correct_auto_uses_resolver(),
     ]
     passed = sum(1 for r in results if r)
     print(f"[INFO] {passed}/{len(results)} cases passed")

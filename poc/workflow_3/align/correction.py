@@ -33,6 +33,7 @@ import numpy as np
 from poc.workflow_3.logger import log_work2_event
 from poc.workflow_3 import DEBUG_IMAGE_DIR
 from poc.workflow_3.align.assets import resolve_assets_auto
+from poc.workflow_3.align.consensus_resolve import resolve_templates
 from poc.workflow_3.align.matching.engine import (
     DEFAULT_SCALES,
     STRUCTURE_POLICY,
@@ -42,7 +43,6 @@ from poc.workflow_3.align.matching.engine import (
     compute_align_key_score_ensemble,
     save_overlay_jpeg,
 )
-from poc.workflow_3.align.templates import build_templates_from_assets
 from poc.workflow_3.align.live_search import (
     MIN_CONFIRM_SCALE,
     LiveSearchConfig,
@@ -84,6 +84,11 @@ class CorrectionConfig:
     # engineer_review 로 보류한다. None(기본)이면 게이트는 과거 act/fallback 2분기만 — 동작 불변.
     # 운영 루프는 Workflow3Settings.reregister_second_ratio_threshold(기본 0.98)를 주입한다.
     reregister_ratio_threshold: float | None = None
+    # consensus 라우팅 설정(resolve_templates 에 그대로 전달).
+    consensus_enabled: bool = True             # consensus 라우팅 마스터 토글(off -> 순수 rcp).
+    consensus_min_s: int = 4                   # modality 별 신뢰 최소 S 수(floor 3).
+    consensus_max_events: int = 8              # 캐시에서 로드할 최대 이벤트 수.
+    consensus_sync_timeout_sec: float = 8.0    # cold-cache bounded 대기(초).
 
 
 @dataclass
@@ -446,7 +451,15 @@ def correct_align_fail_auto(
         print("[ERROR] align fail recipe 폴더를 찾지 못했습니다.")
         log_work2_event(component=LOG_COMPONENT, message="no_assets", level="error")
         return CorrectionOutcome("no_assets", "primary", "low", None, None, None)
-    templates = build_templates_from_assets(assets, cond_box_crop=config.cond_box_crop)
+    templates = resolve_templates(
+        assets,
+        eqp_id=eqp_id,
+        consensus_enabled=config.consensus_enabled,
+        min_s=config.consensus_min_s,
+        max_events=config.consensus_max_events,
+        sync_timeout_sec=config.consensus_sync_timeout_sec,
+        cond_box_crop=config.cond_box_crop,
+    )
     if not templates:
         print(f"[ERROR] 등록 OM/SEM 이미지가 없습니다: {assets.recipe_dir}")
         log_work2_event(

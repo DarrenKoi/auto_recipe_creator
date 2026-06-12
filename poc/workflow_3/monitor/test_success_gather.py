@@ -24,7 +24,7 @@ def _install_recording_gather():
     """gather_success_images 를 호출 인자 기록용 fake 로 교체하고 calls 리스트를 돌려준다."""
     calls = []
 
-    def _fake(eqp_id, recipe_id, *, downloader, max_events):
+    def _fake(eqp_id, recipe_id, *, downloader, max_events, refresh_ttl_sec=0):
         calls.append({"eqp_id": eqp_id, "recipe_id": recipe_id,
                       "downloader": downloader, "max_events": max_events})
         return GatherResult(eqp_id, recipe_id, Path("x"), 1, 2, "ok")
@@ -113,7 +113,7 @@ def test_dedupes_in_flight():
     calls = []
     release_event = threading.Event()  # 두 fake 가 공유하는 블로킹 Event.
 
-    def _fake_blocking(eqp_id, recipe_id, *, downloader, max_events):
+    def _fake_blocking(eqp_id, recipe_id, *, downloader, max_events, refresh_ttl_sec=0):
         """첫 번째 스레드가 살아있도록 Event 대기 후 반환한다."""
         calls.append(recipe_id)
         release_event.wait(timeout=10)
@@ -160,6 +160,60 @@ def test_dedupes_in_flight():
     return ok
 
 
+import time
+import poc.workflow_3.monitor.success_gather as sg
+
+
+def test_wait_for_gather_joins_inflight():
+    """wait_for_gather 가 in-flight thread 를 join 하고 bool 을 반환한다."""
+    with sg._IN_FLIGHT_LOCK:
+        sg._IN_FLIGHT.clear()
+
+    done = {"v": False}
+
+    def _slow():
+        time.sleep(0.05)
+        done["v"] = True
+
+    t = threading.Thread(target=_slow)
+    t.start()
+    with sg._IN_FLIGHT_LOCK:
+        sg._IN_FLIGHT[("E1", "c/r")] = t
+    ok_result = sg.wait_for_gather("E1", "c/r", timeout=1.0)
+    ok = done["v"] is True and isinstance(ok_result, bool)
+    print(f"[{'PASS' if ok else 'FAIL'}] wait_for_gather_joins_inflight: "
+          f"done={done['v']} result_type={type(ok_result).__name__}")
+
+    with sg._IN_FLIGHT_LOCK:
+        sg._IN_FLIGHT.clear()
+    return ok
+
+
+def test_wait_for_gather_timeout_returns_false_fast():
+    """wait_for_gather 가 timeout 후 False 를 빠르게 반환한다(lock 미점유 join)."""
+    with sg._IN_FLIGHT_LOCK:
+        sg._IN_FLIGHT.clear()
+
+    def _hang():
+        time.sleep(5)
+
+    t = threading.Thread(target=_hang, daemon=True)
+    t.start()
+    with sg._IN_FLIGHT_LOCK:
+        sg._IN_FLIGHT[("E2", "c/r")] = t
+    start = time.time()
+    ok_result = sg.wait_for_gather("E2", "c/r", timeout=0.1)
+    elapsed = time.time() - start
+    ok = ok_result is False and elapsed < 1.0
+
+    with sg._IN_FLIGHT_LOCK:
+        sg._IN_FLIGHT.clear()
+
+    print(f"[{'PASS' if ok else 'FAIL'}] wait_for_gather_timeout_returns_false_fast: "
+          f"result={ok_result} elapsed={elapsed:.3f}s")
+    return ok
+
+
 def main():
     print("[INFO] success_gather self-test 시작")
     results = [
@@ -169,6 +223,8 @@ def main():
         test_skips_without_downloader(),
         test_loader_canonical(),
         test_dedupes_in_flight(),
+        test_wait_for_gather_joins_inflight(),
+        test_wait_for_gather_timeout_returns_false_fast(),
     ]
     passed = sum(1 for r in results if r)
     print(f"[INFO] {passed}/{len(results)} cases passed")

@@ -92,6 +92,7 @@ def gather_success_async(eqp_id, recipe_id, settings: Workflow3Settings):
                     eqp_id, recipe_id,
                     downloader=_DOWNLOADER,
                     max_events=settings.gather_max_events,
+                    refresh_ttl_sec=settings.consensus_refresh_ttl_sec,
                 )
                 print(f"[INFO] consensus gather: EQP_ID={eqp_id} recipe={recipe_id} "
                       f"reason={result.reason} events={result.n_events} images={result.n_images}")
@@ -111,4 +112,37 @@ def gather_success_async(eqp_id, recipe_id, settings: Workflow3Settings):
     return thread
 
 
-__all__ = ["DOWNLOADER_AVAILABLE", "gather_success_async"]
+def _cache_has_min_events(eqp_id, recipe_id) -> bool:
+    """events/ 에 S 이미지가 1장 이상 있나(채워졌는지 거친 판정)."""
+    from poc.workflow_3.align.consensus_gather import count_staged_events
+    n_events, _ = count_staged_events(eqp_id, recipe_id)
+    return n_events > 0
+
+
+def wait_for_gather(eqp_id, recipe_id, timeout) -> bool:
+    """진행 중인 gather thread 를 bounded join 한 뒤 캐시가 채워졌는지 반환한다.
+
+    lock 안에서는 thread 스냅샷만 -- join 은 lock 밖에서(데드락 방지). 알람 시점에 이미
+    async fire 됐으면 그 thread 를 join(중복 fetch 회피). 없고 캐시도 비면 1회 fire 후 join.
+    반환 bool = join 후 events/ 에 S 가 있나(resolver 는 True 일 때만 crop 재로드).
+    """
+    if not recipe_id or not DOWNLOADER_AVAILABLE:
+        return _cache_has_min_events(eqp_id, recipe_id)
+
+    key = (eqp_id, recipe_id)
+    with _IN_FLIGHT_LOCK:
+        thread = _IN_FLIGHT.get(key)
+        if thread is not None and not thread.is_alive():
+            thread = None
+    # lock 해제 후 join/fire -- lock 안에서 join 이나 gather_success_async 호출 금지(데드락).
+    if thread is None and not _cache_has_min_events(eqp_id, recipe_id):
+        # 알람 fire 가 없었거나 이미 끝났는데 캐시가 비어 있음 -> 1회 fire(내부에서 thread 등록).
+        from poc.workflow_3.config import load_workflow3_settings
+        thread = gather_success_async(eqp_id, recipe_id, load_workflow3_settings())
+
+    if thread is not None:
+        thread.join(timeout)
+    return _cache_has_min_events(eqp_id, recipe_id)
+
+
+__all__ = ["DOWNLOADER_AVAILABLE", "gather_success_async", "wait_for_gather"]

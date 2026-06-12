@@ -530,6 +530,7 @@ def test_correct_auto_uses_resolver() -> bool:
 
     def _resolve(assets, **kw):
         called["resolve"] += 1
+        called["kw"] = kw
         from poc.workflow_3.align.matching.test_engine import make_synthetic_template
         from poc.workflow_3.align.matching.engine import build_template
         t = build_template(make_synthetic_template(key_type="box"),
@@ -542,9 +543,12 @@ def test_correct_auto_uses_resolver() -> bool:
     corr.resolve_templates = _resolve
     try:
         monitor, _ = corr._make_primary_demo(key_in_view=True)
+        # eqp_id="" (자동선택)로 호출 — resolver 는 assets.eqp_id("E1")를 받아야 한다(리뷰 가드).
         out = corr.correct_align_fail_auto(monitor, dry_run=True,
-                                           eqp_id="E1", recipe_name="c/r")
+                                           eqp_id="", recipe_name="c/r")
         assert called["resolve"] == 1
+        assert called["kw"]["eqp_id"] == "E1"        # assets.eqp_id 가 forwarded (빈 문자열 아님)
+        assert called["kw"]["cond_box_crop"] is not None  # config pass-through 존재
         assert out.status in ("corrected", "escalated_no_ok", "ok_detect_error",
                               "fallback_corrected", "fallback_escalated",
                               "escalated_ambiguous_key")

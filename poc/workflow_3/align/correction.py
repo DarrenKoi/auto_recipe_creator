@@ -453,7 +453,9 @@ def correct_align_fail_auto(
         return CorrectionOutcome("no_assets", "primary", "low", None, None, None)
     templates = resolve_templates(
         assets,
-        eqp_id=eqp_id,
+        # 자동선택(eqp_id="") 경로에선 resolve_assets_auto 가 채운 assets.eqp_id 가 권위.
+        # 빈 eqp_id 를 넘기면 consensus cache 경로가 어긋나 항상 cold 로 보인다(리뷰).
+        eqp_id=assets.eqp_id or eqp_id,
         consensus_enabled=config.consensus_enabled,
         min_s=config.consensus_min_s,
         max_events=config.consensus_max_events,

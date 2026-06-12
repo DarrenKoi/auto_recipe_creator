@@ -4,6 +4,10 @@
 correction.correct_align_fail_auto 가 build_templates_from_assets 대신 이걸 호출한다.
 어떤 실패(부족/blur/sync timeout/예외)든 해당 modality 는 rcp 로 강등 — 회귀 위험 0.
 cache_key 는 반드시 "<class>/<recipe>"(gather 가 쓴 키) — assets.recipe_id(leaf)는 금지.
+
+DAG 주의: align 은 monitor 아래 capability 레이어다. cold-cache sync 에 쓰는
+monitor.success_gather.wait_for_gather 는 모듈 최상단에서 import 하지 않고(상향 참조/
+순환 위험 회피) 아래 thin wrapper 에서 지연 import 한다.
 """
 
 from poc.workflow_3 import ALIGN_CONSENSUS_CACHE_DIR
@@ -11,12 +15,22 @@ from poc.workflow_3.align.templates import build_templates_from_assets
 from poc.workflow_3.align.consensus_crops import (
     build_center_tpls_for_sizing, load_coregistered_crops,
 )
+from poc.workflow_3.align.consensus_gather import _events_dir_for
 from poc.workflow_3.align.consensus_template import (
     ConsensusPolicy, build_consensus_template, select_routing_templates,
 )
-from poc.workflow_3.monitor.success_gather import wait_for_gather
 
 LOG_COMPONENT = "consensus_resolve"
+
+
+def wait_for_gather(eqp_id, recipe_id, timeout):
+    """monitor.success_gather.wait_for_gather 로 위임(지연 import — align→monitor 상향 참조 회피).
+
+    모듈 attribute 라 테스트에서 monkeypatch 가능. 실제 import 는 호출 시점(런타임)이라
+    import 그래프상 align 레이어가 monitor 를 정적으로 끌어오지 않는다.
+    """
+    from poc.workflow_3.monitor.success_gather import wait_for_gather as _impl
+    return _impl(eqp_id, recipe_id, timeout)
 
 
 def resolve_templates(assets, *, eqp_id, consensus_enabled, min_s, max_events,
@@ -40,8 +54,11 @@ def resolve_templates(assets, *, eqp_id, consensus_enabled, min_s, max_events,
 
     crops_by_mod = _safe_load(cache_root, eqp_id, cache_key, center_tpls, max_events)
 
-    # cold-cache(진짜 빈 캐시)일 때만 1회 bounded sync — min_s 미달(있긴 함)은 sync 해도 안 늘어남.
-    cold = not any(crops_by_mod.values())
+    # cold-cache 일 때만 1회 bounded sync. cold = crop 0장 *이고* events/ 가 아직 없음
+    # (= 최초 fail, 아직 한 번도 안 모음). events/ 가 있는데 crop 0장이면(전부 drop된 깨진
+    # 캐시) sync 해도 안 늘어나므로 매 알람 8s 를 낭비하지 않고 rcp 로 간다. min_s 미달(있긴
+    # 함)도 sync 대상 아님(FTP 보다 더 못 만듦). short-circuit 으로 crop 있으면 is_dir 미평가.
+    cold = not any(crops_by_mod.values()) and not _events_dir_for(eqp_id, cache_key, cache_root).is_dir()
     if cold:
         if wait_for_gather(eqp_id, cache_key, sync_timeout_sec) is True:   # bool 분기
             crops_by_mod = _safe_load(cache_root, eqp_id, cache_key, center_tpls, max_events)

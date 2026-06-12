@@ -20,8 +20,6 @@ from poc.workflow_3.align.consensus_template import (
     ConsensusPolicy, build_consensus_template, select_routing_templates,
 )
 
-LOG_COMPONENT = "consensus_resolve"
-
 
 def wait_for_gather(eqp_id, recipe_id, timeout):
     """monitor.success_gather.wait_for_gather 로 위임(지연 import — align→monitor 상향 참조 회피).
@@ -64,7 +62,7 @@ def resolve_templates(assets, *, eqp_id, consensus_enabled, min_s, max_events,
             crops_by_mod = _safe_load(cache_root, eqp_id, cache_key, center_tpls, max_events)
         # False(timeout/실패) → 재로드 없이 그대로 진행(아래서 insufficient → rcp).
 
-    policy = ConsensusPolicy(min_s=min_s)
+    policy = ConsensusPolicy(min_s=max(3, min_s))   # floor 3 (LOO 바닥 fm>=3) — caller 가 settings 우회해도 보장.
     cons_by_mod = {}
     for mod, crops in crops_by_mod.items():
         try:

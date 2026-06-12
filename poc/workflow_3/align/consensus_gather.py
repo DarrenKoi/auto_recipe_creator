@@ -37,7 +37,7 @@ class GatherResult:
     events_dir: Path
     n_events: int
     n_images: int
-    reason: str               # "ok" | "empty" | "skipped" | "error:<msg>" | "error:swap:<msg>"
+    reason: str               # "ok" | "fresh" | "empty" | "skipped" | "error:<msg>" | "error:swap:<msg>"
 
 
 class SuccessDownloader(Protocol):
@@ -91,22 +91,7 @@ def count_staged_events(eqp_id, recipe_id, *,
     events_dir = _events_dir_for(eqp_id, recipe_id, cache_root)
     if not events_dir.is_dir():
         return 0, 0
-    n_events = 0
-    n_images = 0
-    try:
-        for ev in sorted(events_dir.iterdir()):
-            if not ev.is_dir():
-                continue
-            imgs = [
-                p for p in ev.glob("S*")
-                if p.is_file() and p.suffix.lower() in _S_IMAGE_EXTS
-            ]
-            if imgs:
-                n_events += 1
-                n_images += len(imgs)
-    except OSError:
-        return n_events, n_images
-    return n_events, n_images
+    return _count_events(events_dir)   # 루프 본문은 단일 출처(_count_events)로 위임(중복 제거).
 
 
 def _count_events(events_dir) -> tuple:
@@ -186,7 +171,11 @@ def gather_success_images(eqp_id, recipe_id, *, downloader,
         new_dir.replace(events_dir)             # .events_new -> events
         shutil.rmtree(old_dir, ignore_errors=True)
     except Exception as exc:
+        # swap 중간 crash 잔재(.events_new/.events_old)도 함께 정리 — 다음 run 이 TTL fresh 로
+        # 빠져 cleanup loop 를 못 타도 잔재가 남지 않게(Codex 리뷰).
         shutil.rmtree(staging_dir, ignore_errors=True)
+        shutil.rmtree(events_dir.parent / ".events_new", ignore_errors=True)
+        shutil.rmtree(events_dir.parent / ".events_old", ignore_errors=True)
         return GatherResult(eqp_id, recipe_id, events_dir, 0, 0,
                             f"error:swap:{type(exc).__name__}: {exc}")
 

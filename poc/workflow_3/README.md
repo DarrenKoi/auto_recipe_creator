@@ -164,12 +164,13 @@ cond.txt 는 localization·consensus eval 에서 white box/crosshair 제거용�
 
 ## 오피스 PC 이전 체크리스트 (단계별 활성화)
 
-1. **office_* 복사** — git pull 후:
+1. **office_* 복사** — git pull 후 정위치(`poc/workflow_3/monitor/`)로 둔다:
    ```
    copy poc\workflow_1\office_align_fail_alarm.py poc\workflow_3\monitor\
    copy poc\workflow_1\office_rich_notify.py      poc\workflow_3\monitor\
    ```
-   (원본은 legacy 스크립트용으로 유지. 복사 전에도 legacy 위치 fallback 으로 동작하지만 경고가 뜬다.)
+   (workflow_3 는 정위치에서만 로드한다 — legacy 위치 fallback 은 제거됨. 정위치에
+   없으면 해당 integration 은 비활성으로 떨어지고 경고만 남긴다.)
 
    **`office_success_downloader.py`** — `poc/workflow_3/monitor/` 에 신규 작성(사용자 담당,
    gitignore). `make_success_downloader()` 팩토리를 노출해 `SuccessDownloader` Protocol 을

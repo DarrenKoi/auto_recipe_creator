@@ -1,6 +1,6 @@
 """consensus gather 의 office 접점 + 비차단 fire (monitor glue).
 
-align.consensus_gather 의 순수 orchestration 을 office 다운로더 해석(2단 fallback)과
+align.consensus_gather 의 순수 orchestration 을 office 다운로더 해석(정위치)과
 daemon thread 로 감싼다. office 모듈 부재(개발 PC)·예외 시 조용히 skip 해 모니터 루프를
 죽이지 않는다(alarm_source/notify 와 동일 철학).
 
@@ -31,17 +31,14 @@ _IN_FLIGHT: dict = {}  # (eqp_id, recipe_id) -> Thread. 같은 recipe 동시 gat
 
 
 def _load_office_downloader():
-    """SuccessDownloader 구현을 정위치 -> legacy 순서로 찾는다. 없으면 None.
+    """SuccessDownloader 구현을 정위치에서 찾는다. 없으면 None.
 
     office_* 모듈은 gitignore 라 오피스 PC 에만 존재한다. 모듈은 인자 없는
     `make_success_downloader()` 팩토리를 노출해야 한다.
     """
     integration = load_office_integration(
         "office_success_downloader",
-        (
-            ("poc.workflow_3.monitor.office_success_downloader", False),
-            ("poc.workflow_1.office_success_downloader", True),
-        ),
+        "poc.workflow_3.monitor.office_success_downloader",
         required_attrs=("make_success_downloader",),
     )
     if not integration.available:

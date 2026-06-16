@@ -11,7 +11,7 @@
 
   * 같은 EQP_ID 의 중복 알람은 한 번만 처리(edge-trigger), 해제되면 재처리 가능.
   * RECIPE_ID 유무와 무관하게 사이클은 돈다(접속+녹화). 보정만 RECIPE_ID 필요.
-  * 알람 소스는 office MES 모듈 또는 replay CSV (`alarm_source` 2단 fallback).
+  * 알람 소스는 office MES 모듈 또는 replay CSV (`alarm_source` 참고).
 
 사용법:
   uv run python poc/workflow_3/monitor/align_fail_monitor.py

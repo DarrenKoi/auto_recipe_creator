@@ -11,8 +11,8 @@ feasibility 가 빈 트리를 읽어 '보정 불가' 오판을 낼 수 있다(�
 버그). 따라서 cycle 직전에 받아 완료를 보장한다.
 
 office 모듈 부재(개발 PC)·예외 시 조용히 skip 해 모니터 루프를 죽이지 않는다
-(alarm_source/notify/success_gather 와 동일 철학). office_rcp_msr_downloader 해석 순서는
-정위치 -> legacy 2단 fallback 이다.
+(alarm_source/notify/success_gather 와 동일 철학). office_rcp_msr_downloader 는
+정위치(poc.workflow_3.monitor)에서 로드한다.
 """
 
 from typing import Protocol
@@ -43,17 +43,14 @@ class RcpMsrDownloader(Protocol):
 
 
 def _load_office_downloader():
-    """RcpMsrDownloader 구현을 정위치 -> legacy 순서로 찾는다. 없으면 None.
+    """RcpMsrDownloader 구현을 정위치에서 찾는다. 없으면 None.
 
     office_* 모듈은 gitignore 라 오피스 PC 에만 존재한다. 모듈은 인자 없는
     `make_rcp_msr_downloader()` 팩토리를 노출해야 한다.
     """
     integration = load_office_integration(
         "office_rcp_msr_downloader",
-        (
-            ("poc.workflow_3.monitor.office_rcp_msr_downloader", False),
-            ("poc.workflow_1.office_rcp_msr_downloader", True),
-        ),
+        "poc.workflow_3.monitor.office_rcp_msr_downloader",
         required_attrs=("make_rcp_msr_downloader",),
     )
     if not integration.available:

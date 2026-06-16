@@ -4,13 +4,11 @@ office 모듈(`office_align_fail_alarm`)은 gitignore(`**/office_*`) 대상이�
 PC 에만 존재한다. 해석 순서:
 
   1. `poc.workflow_3.monitor.office_align_fail_alarm`  (정위치)
-  2. `poc.workflow_1.office_align_fail_alarm`          (legacy 위치 — 복사 전 과도기)
-  3. replay CSV (`ALIGN_FAIL_REPLAY_CSV`)               (개발 PC dry-run 용)
-  4. 비활성 (경고만)
+  2. replay CSV (`ALIGN_FAIL_REPLAY_CSV`)               (개발 PC dry-run 용)
+  3. 비활성 (경고만)
 
-legacy 위치에서 로드되면 workflow_3/monitor 로 복사하라는 경고를 남긴다. 본 모듈은
-"알람 rows 를 어떻게 얻는가" 만 책임지고, 윈도우 필터/edge-trigger 는 호출부
-(`align_fail_monitor`)가 담당한다.
+본 모듈은 "알람 rows 를 어떻게 얻는가" 만 책임지고, 윈도우 필터/edge-trigger 는
+호출부(`align_fail_monitor`)가 담당한다.
 """
 
 import os
@@ -43,13 +41,10 @@ class AlarmSource:
 
 
 def _load_office_module():
-    """office_align_fail_alarm 을 정위치 → legacy 순서로 찾는다. 없으면 None."""
+    """office_align_fail_alarm 을 정위치에서 찾는다. 없으면 None."""
     integration = load_office_integration(
         "office_align_fail_alarm",
-        (
-            ("poc.workflow_3.monitor.office_align_fail_alarm", False),
-            ("poc.workflow_1.office_align_fail_alarm", True),
-        ),
+        "poc.workflow_3.monitor.office_align_fail_alarm",
         required_attrs=("get_cdsem_alarms", "filter_align_fail"),
     )
     return integration.module if integration.available else None

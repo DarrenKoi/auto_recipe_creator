@@ -3,7 +3,7 @@
 오피스 MES 가 align fail 시 생성하는 실제 레이아웃 ([[align-images-layout]]):
 
 ```
-poc/workflow_1/align_images/<eqp_id>/<class_name>/<recipe_name>/
+<ALIGN_IMAGES_DIR>/<eqp_id>/<class_name>/<recipe_name>/
   ├─ align_img_from_rcp/   IMAP0001.*(OM)  IMAP0002.*(SEM)   # recipe 등록 align key
   └─ align_img_from_msr/   S*/E*                             # 측정 궤적 (E 접두 = fail step)
 ```

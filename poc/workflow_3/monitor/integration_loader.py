@@ -1,8 +1,8 @@
 """office 전용 adapter 로딩 helper.
 
 `office_*` 파일은 gitignore 대상이라 오피스 PC 에만 존재한다. monitor 쪽에서는
-정위치(workflow_3.monitor)와 legacy 위치(workflow_1)를 순서대로 시도하되, 어떤
-경로가 실제로 연결됐는지 콘솔과 workflow_3 로그에 남긴다.
+정위치(workflow_3.monitor)에서 모듈을 찾고, 실제로 연결됐는지 콘솔과 workflow_3
+로그에 남긴다.
 """
 
 import importlib
@@ -19,13 +19,12 @@ class OfficeIntegration:
     module: Any | None
     attrs: dict[str, Any] = field(default_factory=dict)
     status: str = "missing"
-    is_legacy: bool = False
     error: str = ""
 
     @property
     def available(self) -> bool:
         """호출 가능한 office adapter 를 찾았는지."""
-        return self.module is not None and self.status in {"loaded", "legacy_loaded"}
+        return self.module is not None and self.status == "loaded"
 
 
 def _log_office_status(
@@ -33,7 +32,6 @@ def _log_office_status(
     name: str,
     status: str,
     module_path: str = "",
-    is_legacy: bool = False,
     error: str = "",
     missing_attrs: list[str] | None = None,
 ) -> None:
@@ -46,9 +44,6 @@ def _log_office_status(
     ]
     if module_path:
         details.append(f"module_path={module_path}")
-    if is_legacy:
-        details.append("legacy=true")
-        details.append("copy_to=poc/workflow_3/monitor")
     if missing_attrs:
         details.append(f"missing_attrs={','.join(missing_attrs)}")
     if error:
@@ -65,7 +60,6 @@ def _log_office_status(
             level=level,
             name=name,
             module_path=module_path,
-            legacy=str(is_legacy),
             missing_attrs=",".join(missing_attrs or []),
             error=error,
         )
@@ -82,66 +76,57 @@ def _is_missing_target_module(exc: ModuleNotFoundError, module_path: str) -> boo
 
 def load_office_integration(
     name: str,
-    module_paths: tuple[tuple[str, bool], ...],
+    module_path: str,
     *,
     required_attrs: tuple[str, ...] = (),
 ) -> OfficeIntegration:
-    """office adapter 모듈을 정위치 → legacy 순서로 찾는다."""
-    attempted = [path for path, _is_legacy in module_paths]
-    for module_path, is_legacy in module_paths:
-        try:
-            module = importlib.import_module(module_path)
-        except ModuleNotFoundError as exc:
-            if _is_missing_target_module(exc, module_path):
-                continue
+    """office adapter 모듈을 정위치(workflow_3)에서 찾는다.
+
+    모듈이 아예 없으면(개발 PC 의 정상 케이스) 조용히 missing 을, 모듈은 있으나 내부
+    import 가 깨졌거나 required attr 가 빠졌으면 그 사유를 로그로 남기고 빈
+    OfficeIntegration 을 돌려준다(어느 경우든 monitor import 자체는 죽지 않는다).
+    """
+    try:
+        module = importlib.import_module(module_path)
+    except ModuleNotFoundError as exc:
+        if _is_missing_target_module(exc, module_path):
+            _log_office_status(name=name, status="missing", module_path=module_path)
+        else:
             _log_office_status(
                 name=name,
                 status="import_error",
                 module_path=module_path,
-                is_legacy=is_legacy,
                 error=f"{type(exc).__name__}: {exc}",
             )
-            continue
-        except Exception as exc:
-            _log_office_status(
-                name=name,
-                status="import_error",
-                module_path=module_path,
-                is_legacy=is_legacy,
-                error=f"{type(exc).__name__}: {exc}",
-            )
-            continue
-
-        attrs = {attr: getattr(module, attr, None) for attr in required_attrs}
-        missing_attrs = [attr for attr, value in attrs.items() if value is None]
-        if missing_attrs:
-            _log_office_status(
-                name=name,
-                status="missing_attr",
-                module_path=module_path,
-                is_legacy=is_legacy,
-                missing_attrs=missing_attrs,
-            )
-            continue
-
-        status = "legacy_loaded" if is_legacy else "loaded"
+        return OfficeIntegration(name=name, module_path="", module=None)
+    except Exception as exc:
         _log_office_status(
             name=name,
-            status=status,
+            status="import_error",
             module_path=module_path,
-            is_legacy=is_legacy,
+            error=f"{type(exc).__name__}: {exc}",
         )
-        return OfficeIntegration(
-            name=name,
-            module_path=module_path,
-            module=module,
-            attrs=attrs,
-            status=status,
-            is_legacy=is_legacy,
-        )
+        return OfficeIntegration(name=name, module_path="", module=None)
 
-    _log_office_status(name=name, status="missing", module_path=",".join(attempted))
-    return OfficeIntegration(name=name, module_path="", module=None)
+    attrs = {attr: getattr(module, attr, None) for attr in required_attrs}
+    missing_attrs = [attr for attr, value in attrs.items() if value is None]
+    if missing_attrs:
+        _log_office_status(
+            name=name,
+            status="missing_attr",
+            module_path=module_path,
+            missing_attrs=missing_attrs,
+        )
+        return OfficeIntegration(name=name, module_path="", module=None)
+
+    _log_office_status(name=name, status="loaded", module_path=module_path)
+    return OfficeIntegration(
+        name=name,
+        module_path=module_path,
+        module=module,
+        attrs=attrs,
+        status="loaded",
+    )
 
 
 def log_office_factory_error(name: str, module_path: str, exc: Exception) -> None:

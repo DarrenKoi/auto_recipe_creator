@@ -5,9 +5,8 @@
 workflow_3 의 정책은 **처리 실패 시 알림** 이다 — CorrectionOutcome.status 가
 "corrected" 가 아니면 outcome 요약을 실어 발송한다(자동화 초기에는 사실상 매번).
 
-office_rich_notify 해석 순서는 alarm_source 와 동일한 2단 fallback:
-  1. poc.workflow_3.monitor.office_rich_notify   (정위치)
-  2. poc.workflow_1.office_rich_notify           (legacy 위치 — 복사 전 과도기)
+office_rich_notify 는 정위치(poc.workflow_3.monitor.office_rich_notify)에서
+로드한다(없으면 cube 알림 비활성, 텍스트 로그만).
 """
 
 import inspect
@@ -27,18 +26,15 @@ ALARM_LOG_PATH = LOG_DIR / "align_fail_alarms.txt"
 
 
 # ------------------------------------------------------------------
-# office_rich_notify 로딩 (2단 fallback).
+# office_rich_notify 로딩 (정위치).
 # ------------------------------------------------------------------
 
 
 def _load_rich_notify():
-    """send_cube_align_fail_info 를 정위치 → legacy 순서로 찾는다. 없으면 None."""
+    """send_cube_align_fail_info 를 정위치에서 찾는다. 없으면 None."""
     integration = load_office_integration(
         "office_rich_notify",
-        (
-            ("poc.workflow_3.monitor.office_rich_notify", False),
-            ("poc.workflow_1.office_rich_notify", True),
-        ),
+        "poc.workflow_3.monitor.office_rich_notify",
         required_attrs=("send_cube_align_fail_info",),
     )
     if not integration.available:

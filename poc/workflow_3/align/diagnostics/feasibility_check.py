@@ -76,6 +76,7 @@ class FeasibilityResult:
     consensus_images: int
     marked_path: Path | None
     json_path: Path | None
+    frame_wh: tuple | None             # 매칭에 쓴 프레임 크기 (w, h) — align_xy 와 동일 좌표계.
 
 
 def _font_scale(width: int) -> float:
@@ -151,8 +152,12 @@ def mark_align_feasibility(
         print(f"[WARNING] feasibility: 캡처 이미지를 읽지 못함 - 분석 생략: {frame_path}")
         return FeasibilityResult(
             "no_assets", "", 0.0, None, 0.0, None, None, "",
-            consensus_events, consensus_images, None, None,
+            consensus_events, consensus_images, None, None, None,
         )
+
+    # align_xy(아래에서 계산)와 동일 좌표계 — load_gray 가 리사이즈 없이 같은 파일을 읽으므로
+    # color(전체 캡처) 크기가 곧 매칭 프레임 크기다. 호출부의 image→screen 변환에 쓴다.
+    frame_wh = (color.shape[1], color.shape[0])
 
     assets = resolve_assets_auto(eqp_id=eqp_id, recipe_name=recipe_id)
     templates = build_templates_from_assets(assets, cond_box_crop=cond_box_crop) if assets else {}
@@ -248,7 +253,7 @@ def mark_align_feasibility(
     return FeasibilityResult(
         verdict, decision, score, second_ratio, best_scale,
         match_xy, align_xy, modality, consensus_events, consensus_images,
-        out_marked, out_json,
+        out_marked, out_json, frame_wh,
     )
 
 

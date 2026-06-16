@@ -26,6 +26,7 @@ MOUSE_UTILS_AVAILABLE = False
 WINDOW_UTILS_AVAILABLE = False
 
 click_at_screen = None
+move_cursor_to_screen = None
 scroll_at_screen = None
 
 WindowRow = None
@@ -46,7 +47,7 @@ window_rect_size = None
 IMAGE_UTILS_AVAILABLE = True
 
 try:
-    from .mouse_utils import click_at_screen, scroll_at_screen
+    from .mouse_utils import click_at_screen, move_cursor_to_screen, scroll_at_screen
 
     MOUSE_UTILS_AVAILABLE = True
 except ImportError:

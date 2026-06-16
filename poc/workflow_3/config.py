@@ -98,6 +98,11 @@ class Workflow3Settings(WorkflowSettings):
     # 가능/불가를 판정해 캡처 옆 _marked.jpg + _feasibility.json 으로 남길지. consensus
     # cache 의 S event 수도 read-only 로 표기. production 보정 사이클에는 영향 없음.
     feasibility_mark_enabled: bool = True
+    # 점검 사이클에서 보정 가능성 판정으로 구한 align point 로 마우스 커서를 옮겨(클릭 없이)
+    # live SEM 박스 위 좌표 매핑을 눈으로 검증할지. tool 을 닫기 전에 이동하고, 커서가
+    # 안착한 화면을 다시 캡처(_rcs_cursor.jpg)한다. 기본 off(opt-in) + SAFE_MODE off 일
+    # 때만 실제 이동(켜도 action_enabled=False 면 DRY-RUN 로그만). production 보정과 무관.
+    reposition_preview_enabled: bool = False
 
     # --- CV 보정 ---
     correction_enabled: bool = True
@@ -155,6 +160,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         consensus_sync_timeout_sec=env_float("ALIGN_FAIL_CONSENSUS_SYNC_TIMEOUT", 8.0),
         consensus_refresh_ttl_sec=env_int("ALIGN_FAIL_CONSENSUS_REFRESH_TTL", 21600),
         feasibility_mark_enabled=env_flag("ALIGN_FAIL_FEASIBILITY_MARK", default=True),
+        reposition_preview_enabled=env_flag("ALIGN_FAIL_REPOSITION_PREVIEW", default=False),
         correction_enabled=env_flag("ALIGN_FAIL_CORRECTION", default=True),
         correction_dry_run=correction_dry_run,
         ok_button_vlm_service=_env_str("ALIGN_OK_BUTTON_VLM_SERVICE", "ui-venus"),

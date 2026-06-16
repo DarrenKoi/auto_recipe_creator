@@ -45,7 +45,9 @@ from poc.workflow_3.util import (
     block_input,
     capture_window,
     env_float,
+    image_point_to_screen,
     make_timestamp_tag,
+    move_cursor_to_screen,
 )
 
 LOG_COMPONENT = "align_fail_cycle"
@@ -61,6 +63,9 @@ def _should_block_input(settings: Workflow3Settings) -> bool:
 
 # 점검 전용(check-only) 캡처 직전 SEM 영상 렌더 대기(초) — rcs_screenshot 의 settle 과 동일 취지.
 _CHECK_CAPTURE_SETTLE_SEC = env_float("ALIGN_FAIL_CHECK_SETTLE_SEC", 2.0)
+
+# align point 커서 이동 후 안착 화면 재캡처 전 대기(초) — 커서가 멈춘 뒤 한 장.
+_PREVIEW_SETTLE_SEC = env_float("ALIGN_FAIL_REPOSITION_PREVIEW_SETTLE_SEC", 0.4)
 
 # RCS GUI 의존 모듈(pywinauto/VLM)은 선택 의존성 — 없는 환경(개발 PC)에서도
 # 본체 import 는 살아 있어야 한다(기존 align_fail_alarm_record 의 패턴).
@@ -671,6 +676,119 @@ _CHECK_STEP_EXECUTORS = {
 }
 
 
+def _save_cursor_preview(tool_window, align_xy, frame_wh, capture_dir: Path, tag: str):
+    """커서가 안착한 live 화면을 재캡처해 align point 에 합성 마커를 그려 저장한다.
+
+    mss 캡처는 OS 하드웨어 커서를 담지 않으므로, 커서가 이동한 좌표에 마커(십자선+원+
+    'cursor' 라벨, feasibility 노랑 십자선과 구분되는 마젠타)를 그려 어디로 갔는지 자명히
+    남긴다. 재캡처 크기가 매칭 프레임(frame_wh)과 다르면 좌표를 비례 보정한다.
+    저장 경로(Path) 반환.
+    """
+    from PIL import ImageDraw
+
+    image = capture_window(tool_window)
+    iw, ih = image.size
+    ax, ay = int(align_xy[0]), int(align_xy[1])
+    fw, fh = int(frame_wh[0]), int(frame_wh[1])
+    if (fw, fh) != (iw, ih) and fw > 0 and fh > 0:
+        ax = int(round(ax * iw / fw))
+        ay = int(round(ay * ih / fh))
+
+    draw = ImageDraw.Draw(image)
+    color = (255, 0, 255)
+    r = 22
+    draw.line([(ax - r, ay), (ax + r, ay)], fill=color, width=3)
+    draw.line([(ax, ay - r), (ax, ay + r)], fill=color, width=3)
+    draw.ellipse([(ax - r, ay - r), (ax + r, ay + r)], outline=color, width=3)
+    draw.text((ax + r + 6, ay - 8), "cursor", fill=color)
+
+    out_path = capture_dir / f"{tag}_rcs_cursor.jpg"
+    save_debug_jpeg(image, out_path)
+    return out_path
+
+
+def _check_feasibility_and_preview(
+    context: dict,
+    result: "CycleResult",
+    settings: Workflow3Settings,
+    eqp_id: str,
+    recipe_id: str,
+) -> None:
+    """캡처 직후(tool 창이 아직 열린 상태) 보정 가능성 판정 + (opt-in) align point 커서 미리보기.
+
+    1) mark_align_feasibility 로 디스크 저장본을 판정해 _marked.jpg/_feasibility.json 을
+       남기고 manifest 필드를 채운다(verdict/decision/align_xy/marked_path).
+    2) reposition_preview_enabled 면 같은 align_xy 를 image_point_to_screen 으로 screen
+       좌표로 변환해 커서만 옮긴 뒤(클릭 없음 = 장비 부작용 없음) 안착 화면을 재캡처한다.
+       align_xy 는 캡처 프레임 좌표라 이미 live 좌표계 — DPI(rect/screenshot) 보정만 남는다.
+
+    teardown(close)을 막지 않도록 모든 단계의 예외를 삼킨다. tool 창이 닫히기 전에
+    호출돼야 한다(image→screen 변환·재캡처가 살아 있는 창을 필요로 함).
+    """
+    capture_path = Path(context["capture_path"])
+    try:
+        from poc.workflow_3.align.diagnostics.feasibility_check import mark_align_feasibility
+
+        feas = mark_align_feasibility(
+            capture_path,
+            eqp_id=eqp_id,
+            recipe_id=recipe_id,
+            cond_box_crop=settings.cond_box_crop,
+            reregister_ratio_threshold=settings.reregister_second_ratio_threshold,
+        )
+    except Exception as exc:
+        print(f"[WARNING] feasibility 분석 실패(캡처는 유지): {exc}")
+        log_work2_event(
+            component=LOG_COMPONENT, message="feasibility_error", level="warning",
+            eqp_id=eqp_id, error=str(exc),
+        )
+        return
+
+    # verdict 를 manifest 컬럼에 매핑(별도 컬럼 없이 기존 필드 재사용).
+    result.outcome_status = feas.verdict
+    result.key_decision = feas.decision
+    if feas.align_xy is not None:
+        result.best_xy = f"({feas.align_xy[0]},{feas.align_xy[1]})"
+    if feas.marked_path is not None:
+        result.outcome_path = str(feas.marked_path)
+
+    # ---- (opt-in) align point 로 커서 이동 + 안착 화면 재캡처. ----
+    if not settings.reposition_preview_enabled:
+        return
+    tool_window = context.get("tool_window")
+    if feas.align_xy is None or feas.frame_wh is None or tool_window is None:
+        print(
+            f"[INFO] align preview 생략: align_xy/frame_wh/tool_window 없음 "
+            f"(verdict={feas.verdict})"
+        )
+        return
+    if image_point_to_screen is None or move_cursor_to_screen is None:
+        print("[INFO] align preview 생략: window/mouse util 비활성(개발 PC)")
+        return
+
+    ax, ay = int(feas.align_xy[0]), int(feas.align_xy[1])
+    screen = image_point_to_screen(tool_window, {"x": ax, "y": ay}, image_size=feas.frame_wh)
+    if screen is None:
+        print("[WARNING] align preview: image→screen 변환 실패 - 이동 생략")
+        return
+    print(
+        f"[INFO] align preview: verdict={feas.verdict} frame={feas.frame_wh} "
+        f"align=({ax},{ay}) → screen=({screen['x']},{screen['y']})"
+        f"{'' if settings.action_enabled else ' [dry-run]'}"
+    )
+    move_cursor_to_screen(screen, "align_preview", action_enabled=settings.action_enabled)
+    if _PREVIEW_SETTLE_SEC > 0:
+        time.sleep(_PREVIEW_SETTLE_SEC)
+    try:
+        cursor_path = _save_cursor_preview(
+            tool_window, feas.align_xy, feas.frame_wh, capture_path.parent, context["tag"]
+        )
+        result.notes.append(f"cursor_preview={cursor_path}")
+        print(f"[INFO] 커서 안착 화면 재캡처: {cursor_path}")
+    except Exception as exc:
+        print(f"[WARNING] 커서 안착 화면 재캡처 실패: {exc}")
+
+
 def run_check_only_cycle(
     eqp_id: str,
     recipe_id: str,
@@ -724,6 +842,14 @@ def run_check_only_cycle(
             result.outcome_status = "captured"
             result.outcome_path = str(capture_path)
             result.frame_count = 1
+            # 캡처 성공 & tool 창이 아직 열린 동안(close 전) 보정 가능성 판정 +
+            # (opt-in) align point 커서 미리보기 + 안착 화면 재캡처. rcp 자산 특정에
+            # recipe_id 가 필요하므로 없으면 skip. live 창이 필요한 image→screen 변환·
+            # 재캡처 때문에 finally 의 close 보다 반드시 먼저 와야 한다.
+            if recipe_id and (
+                settings.feasibility_mark_enabled or settings.reposition_preview_enabled
+            ):
+                _check_feasibility_and_preview(context, result, settings, eqp_id, recipe_id)
     except Exception as exc:
         result.run_status = "error"
         result.notes.append(f"{type(exc).__name__}: {exc}")
@@ -744,35 +870,6 @@ def run_check_only_cycle(
         if input_blocked:
             block_input(False, debug_label=f"align_fail_check {eqp_id}")
             input_blocked = False
-
-    # 캡처 성공 시 (tool 닫힌 뒤, 디스크 저장본으로) 보정 가능성 정적 분석 + 화면 마킹.
-    # rcp 자산을 특정하려면 recipe_id 가 있어야 한다(없으면 skip). verdict 는 검증된
-    # rcp 엔진이 내고, consensus cache 의 S event 수는 read-only 컨텍스트로 표기된다.
-    capture_path = context.get("capture_path")
-    if capture_path is not None and recipe_id and settings.feasibility_mark_enabled:
-        try:
-            from poc.workflow_3.align.diagnostics.feasibility_check import mark_align_feasibility
-
-            feas = mark_align_feasibility(
-                Path(capture_path),
-                eqp_id=eqp_id,
-                recipe_id=recipe_id,
-                cond_box_crop=settings.cond_box_crop,
-                reregister_ratio_threshold=settings.reregister_second_ratio_threshold,
-            )
-            # verdict 를 manifest 컬럼에 매핑(별도 컬럼 없이 기존 필드 재사용).
-            result.outcome_status = feas.verdict
-            result.key_decision = feas.decision
-            if feas.align_xy is not None:
-                result.best_xy = f"({feas.align_xy[0]},{feas.align_xy[1]})"
-            if feas.marked_path is not None:
-                result.outcome_path = str(feas.marked_path)
-        except Exception as exc:
-            print(f"[WARNING] feasibility 분석 실패(캡처는 유지): {exc}")
-            log_work2_event(
-                component=LOG_COMPONENT, message="feasibility_error", level="warning",
-                eqp_id=eqp_id, error=str(exc),
-            )
 
     return result
 

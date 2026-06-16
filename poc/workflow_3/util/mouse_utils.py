@@ -39,6 +39,32 @@ def click_at_screen(
     return True
 
 
+def move_cursor_to_screen(
+    screen_point: dict[str, int],
+    target_key: str,
+    *,
+    action_enabled: bool = True,
+) -> bool:
+    """스크린 좌표로 마우스 커서만 이동한다(클릭 없음).
+
+    align point 매핑을 눈으로 검증하는 용도 — 장비에 부작용(클릭/recenter)을 주지 않고
+    커서만 옮긴다. action_enabled=False 또는 pynput 부재면 DRY-RUN 로그만 남긴다.
+    """
+    sx, sy = screen_point["x"], screen_point["y"]
+
+    if not action_enabled or not PYNPUT_MOUSE_AVAILABLE:
+        print(
+            f"[INFO] [DRY-RUN] 커서 이동 생략: target={target_key}, screen=({sx}, {sy}), "
+            f"action_enabled={action_enabled}, pynput={PYNPUT_MOUSE_AVAILABLE}"
+        )
+        return True
+
+    mouse = MouseController()
+    mouse.position = (sx, sy)
+    print(f"[INFO] 커서 이동 완료: target={target_key}, screen=({sx}, {sy})")
+    return True
+
+
 def scroll_at_screen(
     screen_point: dict[str, int],
     dy: int,

@@ -14,6 +14,16 @@ r"""[TEMPLATE] office_rcp_msr_downloader.py 채움용 견본 — RcpMsrDownloade
 정위치(poc.workflow_3.monitor.office_rcp_msr_downloader) -> legacy 순으로 찾아
 알람마다 사이클 직전 **동기** 호출한다.
 
+[중요] download_align_images_from_rcp/msr 는 **idempotent** 해야 한다 — 같은
+(eqp_id, recipe_id)로 여러 번 불려도 안전하고, 파일이 이미 트리에 있으면 FTP 를
+생략하고 기존 경로를 반환해야 한다. 한 알람당 이 함수들은 최소 두 번 호출되기
+때문이다:
+  1) 여기(office_rcp_msr_downloader) — 사이클 직전, 보정/feasibility 가 읽기 전에 적재.
+  2) office_rich_notify.send_cube_align_fail_info — 실패 알림에 이미지를 embed 할 때.
+idempotent 가드(예: dest 에 IMAP000* 가 이미 있으면 그 경로 반환)가 없으면 알람마다
+같은 이미지를 두 번 FTP 로 받는다(정상 동작이지만 낭비). 가드가 있으면 첫 호출만
+실제 fetch, 이후 호출은 디스크 read 로 즉시 끝난다.
+
 주의: 파일명이 temp_ 라 pytest 수집 대상이 아니다(test_ 접두였다면 수집됨). 그래도
 office_rich_notify 가 없는 개발 PC 에서도 import 가 깨지지 않게 office import 는
 가드한다(아래). 오피스에서 office_rcp_msr_downloader.py 로 복사하면 가드는 통과한다.
@@ -43,6 +53,10 @@ class RcpMsrDownloader:
 
         Case 1(내부 경로 계산): download_align_images_from_rcp/msr 가 align_images 트리에
         직접 적재하므로 dest_dir 는 검증용으로만 쓴다(쓰는 곳==읽는 곳 점검).
+
+        전제: 두 함수는 idempotent(이미 있으면 FTP skip, 기존 경로 반환) — 모듈 docstring
+        의 [중요] 참고. send_cube_align_fail_info 도 같은 함수를 embed 용으로 부르므로,
+        가드가 없으면 알람당 같은 이미지를 두 번 받는다.
         """
         if not _OFFICE_FNS_AVAILABLE:
             raise RuntimeError(

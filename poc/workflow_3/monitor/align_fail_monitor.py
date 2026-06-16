@@ -36,6 +36,7 @@ from poc.workflow_3.monitor.notify import (
     ALARM_LOG_PATH,
     notify_align_fail_popup,
 )
+from poc.workflow_3.monitor.rcp_msr_gather import gather_rcp_msr
 from poc.workflow_3.monitor.success_gather import gather_success_async
 
 LOG_COMPONENT = "align_fail_monitor"
@@ -325,6 +326,11 @@ def process_fail_rows(
         # consensus 재료 수집 — recipe 최근 성공(S) 이미지 stage (비차단 best-effort).
         # 게이트(gather_enabled/recipe_id/downloader)는 gather_success_async 내부에서 판정.
         gather_success_async(eqp_id, info["recipe_id"], settings)
+
+        # rcp/msr 1차 입력 — 사이클이 assets(보정)를 읽기 전에 **동기** 다운로드.
+        # MES 가 align_images 트리에 직접 적재하면 downloader 부재로 자동 skip.
+        # 게이트(rcp_msr_gather_enabled/recipe_id/downloader)는 gather_rcp_msr 내부에서 판정.
+        gather_rcp_msr(eqp_id, info["recipe_id"], settings)
 
         # 알람별 사이클 — RECIPE_ID 유무와 무관하게 접속+녹화는 수행(보정만 RECIPE_ID 필요).
         # cube 알림(처리 실패 시)은 사이클 내부에서 outcome 기반으로 발송된다.

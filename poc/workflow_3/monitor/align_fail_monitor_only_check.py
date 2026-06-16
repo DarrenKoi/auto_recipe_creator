@@ -49,6 +49,10 @@ from poc.workflow_3.monitor.align_fail_monitor import (
 )
 from poc.workflow_3.monitor.cycle import CycleResult, run_check_only_cycle
 from poc.workflow_3.monitor.notify import ALARM_LOG_PATH, notify_align_fail_popup
+from poc.workflow_3.monitor.rcp_msr_gather import (
+    RCP_MSR_DOWNLOADER_AVAILABLE,
+    gather_rcp_msr,
+)
 from poc.workflow_3.monitor.success_gather import (
     DOWNLOADER_AVAILABLE,
     gather_success_async,
@@ -153,6 +157,11 @@ def process_fail_rows(
         # 게이트(gather_enabled/recipe_id/downloader)는 gather_success_async 내부에서 판정.
         gather_success_async(eqp_id, info["recipe_id"], settings)
 
+        # rcp/msr 1차 입력 — cycle 이 assets(feasibility)를 읽기 전에 **동기** 다운로드.
+        # MES 가 align_images 트리에 직접 적재하면 downloader 부재로 자동 skip.
+        # 게이트(rcp_msr_gather_enabled/recipe_id/downloader)는 gather_rcp_msr 내부에서 판정.
+        gather_rcp_msr(eqp_id, info["recipe_id"], settings)
+
         # 점검 전용 사이클 — 접속 → 첫 화면 1장 캡처 → tool 닫기 (보정/녹화 없음).
         if settings.cycle_enabled:
             cycle = run_check_only_cycle(
@@ -220,6 +229,10 @@ def _report_data_paths() -> None:
     print(
         f"[INFO] success downloader: "
         f"{'사용가능' if DOWNLOADER_AVAILABLE else '없음 → consensus gather 비활성(캐시 안 채워짐)'}"
+    )
+    print(
+        f"[INFO] rcp/msr downloader: "
+        f"{'사용가능 → 알람 시 align_images 트리로 동기 다운로드' if RCP_MSR_DOWNLOADER_AVAILABLE else '없음 → rcp/msr 은 office MES 직접 적재에 의존'}"
     )
 
 

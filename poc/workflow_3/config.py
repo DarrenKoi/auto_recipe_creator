@@ -85,6 +85,13 @@ class Workflow3Settings(WorkflowSettings):
     engineer_done_vlm_service: str = "ui-venus"  # grounding 서비스 slug.
     engineer_done_ocr_service: str = "paddleocr-vl-1.5"  # 분자 OCR 서비스 slug.
 
+    # --- rcp/msr 입력 이미지 office 다운로드 ---
+    # align_img_from_rcp(등록 align key) + align_img_from_msr(측정 궤적)는 보정/점검의
+    # 1차 입력이다. 기본 계약은 office MES 가 align_images 트리에 직접 적재하는 것이지만,
+    # MES 출력을 그 트리로 못 받는 환경에서는 office_rcp_msr_downloader 가 알람 시점에
+    # 내려받는다. cycle 이 assets 를 읽기 전에 디스크에 있어야 하므로 동기로 받는다.
+    rcp_msr_gather_enabled: bool = True
+
     # --- consensus S-image gather ---
     gather_enabled: bool = True
     gather_max_events: int = 8  # align/consensus_gather.py 의 GATHER_MAX_EVENTS 와 동일 값 유지.
@@ -153,6 +160,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         recording_change_min_px=env_int("ALIGN_FAIL_RECORDING_CHANGE_MIN_PX", 4),
         recording_max_sec=env_float("ALIGN_FAIL_RECORDING_MAX_SEC", 900.0),
         engineer_watch_sec=env_float("ALIGN_FAIL_ENGINEER_WATCH_SEC", 300.0),
+        rcp_msr_gather_enabled=env_flag("ALIGN_FAIL_GATHER_RCP_MSR", default=True),
         gather_enabled=env_flag("ALIGN_FAIL_GATHER_SUCCESS", default=True),
         gather_max_events=env_int("ALIGN_FAIL_GATHER_MAX_EVENTS", 8),
         consensus_enabled=env_flag("ALIGN_FAIL_CONSENSUS", default=True),

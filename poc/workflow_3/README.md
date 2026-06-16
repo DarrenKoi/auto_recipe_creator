@@ -99,6 +99,7 @@ uv run python poc/workflow_3/monitor/engineer_done_align_adjustment.py
 | `ALIGN_DONE_CALIB_SEC` | 120 | 캘리브레이션 최대 실행 시간 |
 | `ALIGN_FAIL_ALARM_SOURCE` | office | `office` \| `replay` |
 | `ALIGN_SEM_MODE_OVERRIDE` | (없음) | read_mode v0 강제값 (`OM`/`SEM`) |
+| `ALIGN_FAIL_GATHER_RCP_MSR` | 1 | rcp/msr 입력 이미지 office 다운로드 활성(사이클 직전 동기). downloader 부재 시 자동 skip(MES 직접 적재 전제) |
 | `ALIGN_FAIL_GATHER_SUCCESS` | 1 | consensus gather 활성(최근 S 이미지 stage) — 0 으로 끄면 gather 전체 skip |
 | `ALIGN_FAIL_GATHER_MAX_EVENTS` | 8 | 한 알람당 stage 할 최근 성공 event 수 (이미지 수 아님; OM/SEM split 후도 min_s 확보) |
 | `ALIGN_FAIL_CONSENSUS` | 1 | consensus 라우팅 마스터 토글 — 0 이면 보정이 순수 rcp(기존 동작). 롤아웃 킬스위치 |
@@ -178,6 +179,17 @@ cond.txt 는 localization·consensus eval 에서 white box/crosshair 제거용�
    하위 events/ 디렉터리 생성 확인.
    권장: `office_rich_notify.send_cube_align_fail_info` 에 optional `summary: str = ""`
    파라미터를 추가하면 cube 메시지에 보정 결과 요약(status/best_xy/녹화 경로)이 실린다.
+
+   **`office_rcp_msr_downloader.py`** (선택) — MES 가 align_img_from_rcp/msr 를
+   `ALIGN_IMAGES_DIR` 트리에 **직접 적재하지 못하는** 환경에서만 작성한다(사용자 담당,
+   gitignore). `make_rcp_msr_downloader()` 팩토리를 노출해 `RcpMsrDownloader` Protocol
+   (`monitor/rcp_msr_gather.py`)을 구현한다: `download_rcp_msr(eqp_id, recipe_id, *, dest_dir)`
+   가 `dest_dir`(=`ALIGN_IMAGES_DIR/<eqp>/<class>/<recipe>`) 아래에 office MES 와 동일한
+   레이아웃(align_img_from_rcp/IMAP0001·IMAP0002, align_img_from_msr/S*·E*)으로 쓰고 이미지
+   수를 반환. 알람마다 **사이클 직전에 동기** 호출되어 feasibility/보정이 빈 트리를 읽는
+   레이스를 막는다. 모듈/팩토리 부재 시 자동 skip(MES 직접 적재 전제). `ALIGN_FAIL_GATHER_RCP_MSR=0`
+   으로 비활성. 주의: 이 다운로드를 `office_rich_notify`(cube 알림) 안에 넣지 말 것 — 점검
+   모니터는 알림을 호출하지 않으므로 다운로드가 누락된다.
 2. **import sweep** — `uv run python -c "import poc.workflow_3.monitor.align_fail_monitor"`
    (경고 없이 로드되는지).
 3. **SAFE_MODE=1 실알람 dry-run** — 클릭 0회, journal/알림/manifest 만 확인.

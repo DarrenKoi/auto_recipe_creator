@@ -16,7 +16,7 @@ from typing import Protocol
 
 from poc.workflow_3 import ALIGN_CONSENSUS_CACHE_DIR
 
-GATHER_MAX_EVENTS = 8
+GATHER_MAX_EVENTS = 4
 
 
 @dataclass

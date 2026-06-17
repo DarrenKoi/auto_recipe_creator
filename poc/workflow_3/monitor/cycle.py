@@ -45,6 +45,7 @@ from poc.workflow_3.util import (
     activate_window,
     block_input,
     capture_window,
+    click_at_screen,
     env_float,
     image_point_to_screen,
     make_timestamp_tag,
@@ -77,6 +78,8 @@ _PREVIEW_SETTLE_SEC = env_float("ALIGN_FAIL_REPOSITION_PREVIEW_SETTLE_SEC", 0.4)
 # zoom ladder: 커서를 SEM box 로 옮긴 뒤 wheel 전 짧은 hover 안착(초) — 일부 Windows
 # 컨트롤은 커서가 막 텔레포트한 직후 wheel 을 무시하므로 hover 를 잠깐 인식시킨다.
 _ZOOM_AIM_SETTLE_SEC = env_float("ALIGN_FAIL_ZOOM_AIM_SETTLE_SEC", 0.15)
+# PM 드롭다운 fallback: 'PM' 버튼 클릭 후 드롭다운이 그려질 때까지 대기(초).
+_PM_DROPDOWN_OPEN_SETTLE_SEC = env_float("ALIGN_FAIL_PM_DROPDOWN_OPEN_SETTLE_SEC", 0.5)
 
 # RCS GUI 의존 모듈(pywinauto/VLM)은 선택 의존성 — 없는 환경(개발 PC)에서도
 # 본체 import 는 살아 있어야 한다(기존 align_fail_alarm_record 의 패턴).
@@ -1070,37 +1073,56 @@ def _run_zoom_ladder(
                 f"pm={rung['pm_text']!r} → {full_path.name}"
             )
 
-        # --- OUT arm (배율↓). ---
+        # --- OUT arm (배율↓). out1 후 PM 불변이면 wheel 무효 → PM 드롭다운 fallback. ---
+        method = "wheel"
+        dropdown_meta = None
+        wheel_dead = False
         for i in range(1, out_n + 1):
             _aim_and_scroll(dy_out, i)
             _capture_rung(f"out{i}")
-
-        # --- baseline 복귀(캡처 없이 반대 방향으로 OUT 만큼) — arm 전환. ---
-        if out_n > 0 and in_n > 0:
-            for i in range(1, out_n + 1):
-                _aim_and_scroll(-dy_out, i)
-            if sem_box_client is not None:
-                try:
-                    chk = detect_sem_box(
-                        capture_window(tool_window), sem_box_client,
-                        ocr_client=ocr_client, two_stage=settings.pm_two_stage_ocr_enabled,
+            if i == 1 and settings.pm_dropdown_enabled and baseline_mag is not None:
+                m1 = rungs[-1].get("magnification")
+                if m1 is not None and abs(m1 - baseline_mag) < 1e-6:
+                    wheel_dead = True
+                    print(
+                        f"[WARNING] zoom ladder: out1 wheel 후 PM 불변({m1}=={baseline_mag}) "
+                        f"-> wheel 이 배율을 안 바꿈. PM 드롭다운 fallback 전환."
                     )
-                    back_mag = parse_pm_magnification(chk.pm_text)
-                    if back_mag is not None and baseline_mag is not None and back_mag != baseline_mag:
-                        print(
-                            f"[WARNING] zoom ladder: baseline 복귀 PM {back_mag} ≠ 시작 "
-                            f"{baseline_mag} (wheel 비대칭 — IN arm 배율이 어긋날 수 있음)"
-                        )
-                    ns = _box_center_screen(_normalize_bbox(chk.bbox_px))
-                    if ns is not None:
-                        screen = ns
-                except Exception:
-                    pass
+                    break
 
-        # --- IN arm (배율↑ = OUT 반대 부호). ---
-        for i in range(1, in_n + 1):
-            _aim_and_scroll(-dy_out, i)
-            _capture_rung(f"in{i}")
+        if wheel_dead:
+            method = "pm_dropdown"
+            dropdown_meta = _run_pm_dropdown_arms(
+                tool_window, capture_dir, tag, feas, settings,
+                sem_box_client, ocr_client, baseline_mag, out_n, in_n, _capture_rung,
+            )
+        else:
+            # --- baseline 복귀(캡처 없이 반대 방향으로 OUT 만큼) — arm 전환. ---
+            if out_n > 0 and in_n > 0:
+                for i in range(1, out_n + 1):
+                    _aim_and_scroll(-dy_out, i)
+                if sem_box_client is not None:
+                    try:
+                        chk = detect_sem_box(
+                            capture_window(tool_window), sem_box_client,
+                            ocr_client=ocr_client, two_stage=settings.pm_two_stage_ocr_enabled,
+                        )
+                        back_mag = parse_pm_magnification(chk.pm_text)
+                        if back_mag is not None and baseline_mag is not None and back_mag != baseline_mag:
+                            print(
+                                f"[WARNING] zoom ladder: baseline 복귀 PM {back_mag} != 시작 "
+                                f"{baseline_mag} (wheel 비대칭 - IN arm 배율이 어긋날 수 있음)"
+                            )
+                        ns = _box_center_screen(_normalize_bbox(chk.bbox_px))
+                        if ns is not None:
+                            screen = ns
+                    except Exception:
+                        pass
+
+            # --- IN arm (배율↑ = OUT 반대 부호). ---
+            for i in range(1, in_n + 1):
+                _aim_and_scroll(-dy_out, i)
+                _capture_rung(f"in{i}")
 
         # --- best rung = 키가 present(possible/ambiguous) 한 것 중 최고 score. ---
         present = [
@@ -1115,11 +1137,14 @@ def _run_zoom_ladder(
                 "verdict_at_fail": feas.verdict,
                 "baseline_pm_text": feas.pm_text,
                 "baseline_magnification": baseline_mag,
+                "method": method,
                 "scroll_dy_out": dy_out, "out_steps": out_n, "in_steps": in_n,
                 "scrolls_per_step": per, "rematch": settings.zoom_probe_rematch_enabled,
                 "best_rung": best["label"] if best else None,
                 "rungs": rungs,
             }
+            if dropdown_meta is not None:
+                payload["pm_dropdown"] = dropdown_meta
             json_path.write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
             )
@@ -1139,6 +1164,156 @@ def _run_zoom_ladder(
             component=LOG_COMPONENT, message="zoom_ladder_error", level="warning",
             eqp_id=context.get("eqp_id", ""), error=str(exc),
         )
+
+
+def _run_pm_dropdown_arms(
+    tool_window,
+    capture_dir,
+    tag,
+    feas,
+    settings: Workflow3Settings,
+    sem_box_client,
+    ocr_client,
+    baseline_mag,
+    out_n: int,
+    in_n: int,
+    capture_rung,
+) -> dict:
+    """wheel 무효 시 'PM' 버튼 드롭다운으로 절대 배율을 골라 OUT/IN ladder 를 돈다.
+
+    절차: (1) 현재 화면에서 PM 숫자 박스 검출 → 'PM' 버튼 클릭 → 드롭다운 오픈+캡처,
+    (2) 최초 1회 PaddleOCR ``Spotting:`` 으로 행별 (배율, 클릭 박스) 읽기 → 값공간 목표 산출,
+    (3) 각 목표 행 클릭(절대 배율 적용) → settle → ``capture_rung(label)`` 으로 캡처+재매칭.
+
+    절대 선택이라 wheel 처럼 baseline 복귀가 필요 없다(드리프트 없음). 드롭다운은 PM
+    버튼에 고정 앵커되어 같은 위치에 다시 열린다고 보고, 옵션 클릭 좌표는 첫 읽기 값을
+    재사용한다(매번 재오픈하되 재읽기는 생략). 읽기 실패/옵션 부족이면 중단(엔지니어 처리).
+
+    반환: zoom_ladder.json 의 ``pm_dropdown`` 섹션에 들어갈 메타(dict).
+    """
+    from poc.workflow_3.sem_monitor.pm_dropdown import (
+        choose_step_targets,
+        dropdown_region,
+        pm_button_point,
+        read_dropdown_options,
+    )
+    from poc.workflow_3.sem_monitor.sem_box_detect import detect_sem_box
+
+    meta = {"pm_options": [], "spotting_raw": "", "selections": [], "aborted": None}
+    frame_wh = feas.frame_wh
+
+    # spotting 읽기용 OCR client — 없으면 paddleocr-vl 로 1개 생성(실패 시 sem_box client 재사용).
+    reader = ocr_client
+    if reader is None:
+        try:
+            from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
+
+            reader = Workflow1VLMClient(settings.pm_ocr_service, timeout_sec=15.0)
+        except Exception as exc:
+            print(f"[WARNING] PM 드롭다운: OCR client 생성 실패 -> sem_box client 로 읽기: {exc}")
+            reader = sem_box_client
+
+    def _open_dropdown(open_idx):
+        """현재 화면에서 PM 버튼을 눌러 드롭다운을 열고 (crop, origin, pm_box) 반환(실패 None)."""
+        img = capture_window(tool_window)
+        pm_box = None
+        try:
+            det = detect_sem_box(
+                img, sem_box_client, ocr_client=ocr_client,
+                two_stage=settings.pm_two_stage_ocr_enabled,
+            )
+            pm_box = det.pm_box_px
+        except Exception as exc:
+            print(f"[WARNING] PM 드롭다운: PM 박스 검출 실패: {exc}")
+        if pm_box is None:
+            return None
+        btn = pm_button_point(pm_box)
+        btn_scr = (
+            image_point_to_screen(tool_window, btn, image_size=frame_wh) if btn else None
+        )
+        if btn_scr is None:
+            return None
+        print(
+            f"[INFO] PM 드롭다운 열기#{open_idx}: PM버튼 px={btn} -> screen={btn_scr}"
+            f"{'' if settings.action_enabled else ' [dry-run]'}"
+        )
+        click_at_screen(btn_scr, "pm_button", action_enabled=settings.action_enabled)
+        if _PM_DROPDOWN_OPEN_SETTLE_SEC > 0:
+            time.sleep(_PM_DROPDOWN_OPEN_SETTLE_SEC)
+        shot = capture_window(tool_window)
+        try:
+            save_debug_jpeg(shot, capture_dir / f"{tag}_pm_dropdown_open{open_idx}.jpg")
+        except Exception:
+            pass
+        region = dropdown_region(pm_box, frame_wh)
+        if region is None:
+            return None
+        l, t, r, b = region
+        return shot.crop((l, t, r, b)), (l, t), pm_box
+
+    # 1) 첫 오픈 + 옵션 읽기.
+    first = _open_dropdown(1)
+    if first is None:
+        meta["aborted"] = "pm_box_or_open_failed"
+        print("[WARNING] PM 드롭다운 fallback 중단: PM 버튼/박스를 못 찾음.")
+        return meta
+    crop, origin, _pm_box = first
+    options, raw_text = read_dropdown_options(crop, reader, crop_origin=origin)
+    meta["spotting_raw"] = raw_text
+    meta["pm_options"] = [{"value": o["value"], "text": o["text"]} for o in options]
+    if options:
+        print(
+            f"[INFO] PM 드롭다운 옵션 {len(options)}개: "
+            + ", ".join(f"{o['text']}({o['value']})" for o in options)
+        )
+    if len(options) < 2:
+        meta["aborted"] = "too_few_options"
+        print(
+            "[WARNING] PM 드롭다운 fallback 중단: 옵션 2개 미만(읽기 실패 가능). "
+            "spotting_raw 로 보정 필요."
+        )
+        return meta
+
+    targets = choose_step_targets(options, baseline_mag, out_n, in_n)
+    if not targets:
+        meta["aborted"] = "no_targets"
+        print(f"[WARNING] PM 드롭다운 fallback 중단: baseline={baseline_mag} 기준 목표 없음.")
+        return meta
+
+    def _click_option(opt):
+        scr = image_point_to_screen(tool_window, opt["center"], image_size=frame_wh)
+        if scr is None:
+            return False
+        print(
+            f"[INFO] PM 옵션 클릭: {opt['text']}({opt['value']}) px={opt['center']} -> screen={scr}"
+            f"{'' if settings.action_enabled else ' [dry-run]'}"
+        )
+        click_at_screen(scr, f"pm_opt_{opt['text']}", action_enabled=settings.action_enabled)
+        return True
+
+    # 2) 첫 목표는 이미 열린 드롭다운에서 바로 선택, 이후는 매번 재오픈(선택 시 닫힘).
+    open_idx = 1
+    for k, (label, opt) in enumerate(targets):
+        if k > 0:
+            open_idx += 1
+            if _open_dropdown(open_idx) is None:
+                print(f"[WARNING] PM 드롭다운 재오픈 실패({label}) - 건너뜀.")
+                continue
+        if not _click_option(opt):
+            print(f"[WARNING] PM 옵션 screen 변환 실패({label}) - 건너뜀.")
+            continue
+        meta["selections"].append(
+            {"label": label, "value": opt["value"], "text": opt["text"]}
+        )
+        if settings.zoom_probe_settle_sec > 0:
+            time.sleep(settings.zoom_probe_settle_sec)
+        capture_rung(label)
+
+    print(
+        f"[INFO] PM 드롭다운 fallback 완료: 선택 {len(meta['selections'])}/{len(targets)} "
+        f"(baseline={baseline_mag})"
+    )
+    return meta
 
 
 def run_check_only_cycle(

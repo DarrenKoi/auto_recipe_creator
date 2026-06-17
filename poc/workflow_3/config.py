@@ -143,6 +143,9 @@ class Workflow3Settings(WorkflowSettings):
     zoom_probe_scrolls_per_step: int = 1        # 단계당 scroll notch 수(1 notch≠1 PM step 시 튜닝).
     zoom_probe_settle_sec: float = 0.6          # wheel 후 FOV 재렌더+커서 안착 대기(초).
     zoom_probe_rematch_enabled: bool = True     # 각 rung 에서 rcp 키 재매칭(off 면 캡처만).
+    # wheel 이 배율을 안 바꾸는 tool 대비 fallback: out1 wheel 후 PM 배율이 그대로면
+    # 'PM' 버튼 드롭다운(절대 배율 선택)으로 전환해 ladder 를 마저 돈다. 기본 on.
+    pm_dropdown_enabled: bool = True
 
     # --- CV 보정 ---
     correction_enabled: bool = True
@@ -216,6 +219,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         zoom_probe_scrolls_per_step=env_int("ALIGN_FAIL_ZOOM_PROBE_SCROLLS_PER_STEP", 1),
         zoom_probe_settle_sec=env_float("ALIGN_FAIL_ZOOM_PROBE_SETTLE_SEC", 0.6),
         zoom_probe_rematch_enabled=env_flag("ALIGN_FAIL_ZOOM_PROBE_REMATCH", default=True),
+        pm_dropdown_enabled=env_flag("ALIGN_FAIL_PM_DROPDOWN", default=True),
         correction_enabled=env_flag("ALIGN_FAIL_CORRECTION", default=True),
         correction_dry_run=correction_dry_run,
         ok_button_vlm_service=_env_str("ALIGN_OK_BUTTON_VLM_SERVICE", "ui-venus"),

@@ -29,7 +29,16 @@ office_rich_notify 가 없는 개발 PC 에서도 import 가 깨지지 않게 of
 가드한다(아래). 오피스에서 office_rcp_msr_downloader.py 로 복사하면 가드는 통과한다.
 """
 
+import os
+import time
 from pathlib import Path
+
+# msr 측정 이미지는 align fail 직후 tool 이 디스크에 늦게 쓰는 경우가 있어, 첫 fetch 가
+# 0장이면 잠깐 쉬고 재시도한다(rcp 등록 키는 항상 존재하므로 재시도 대상 아님).
+# 동기 gather 라 이 대기만큼 cycle 시작이 늦지만, 빈 msr 트리로 feasibility 를 오판하는
+# 것보다 낫다. env 로 끄거나(횟수 0) 조절 가능.
+MSR_RETRY_COUNT = int(os.environ.get("ALIGN_FAIL_MSR_RETRY_COUNT", "1"))
+MSR_RETRY_DELAY_SEC = float(os.environ.get("ALIGN_FAIL_MSR_RETRY_DELAY_SEC", "2.0"))
 
 # 기존 다운로드 함수 재사용 — 둘 다 (image_path_list, image_cond_path_list) 반환.
 # 개발 PC(office_rich_notify 부재)에서도 이 파일이 import 되도록 가드한다.
@@ -70,7 +79,8 @@ class RcpMsrDownloader:
         # Case 1 — 함수가 (eqp_id, recipe_id) 로 내부에서 경로를 계산해 적재.
         # (함수가 class/recipe 를 따로 받으면: class_name, recipe_name = recipe_id.split("/", 1))
         rcp_imgs, rcp_conds = download_align_images_from_rcp(eqp_id, recipe_id)
-        msr_imgs, msr_conds = download_align_images_from_msr(eqp_id, recipe_id)
+        # msr 은 tool 저장 지연 대비 0장이면 잠깐 뒤 재시도(아래 헬퍼 참고).
+        msr_imgs, msr_conds = self._download_msr_with_retry(eqp_id, recipe_id)
 
         # '쓰는 곳 != 읽는 곳' 조기 발견 — 이 다운로더가 막으려는 바로 그 버그 클래스.
         self._warn_if_outside(list(rcp_imgs) + list(msr_imgs), dest_dir)
@@ -79,6 +89,28 @@ class RcpMsrDownloader:
         print(f"[INFO] rcp/msr 다운로드: rcp={len(rcp_imgs)}장 "
               f"msr={len(msr_imgs)}장 (cond rcp={len(rcp_conds)}/msr={len(msr_conds)}) -> {dest_dir}")
         return n_images
+
+    @staticmethod
+    def _download_msr_with_retry(eqp_id, recipe_id):
+        """msr 측정 이미지를 받되, 0장이면 tool 저장 지연을 감안해 잠깐 뒤 재시도한다.
+
+        align fail 직후엔 측정(E) 이미지가 tool 내부에서 디스크에 늦게 써질 수 있어,
+        첫 호출이 0장이면 MSR_RETRY_DELAY_SEC 쉬고 최대 MSR_RETRY_COUNT 회 더 받아본다.
+        idempotent 전제라 재호출은 안전(이미 있으면 그 경로 반환). (img_paths, cond_paths) 반환.
+
+        주의: 0장이 '아직 안 써짐'이 아니라 '진짜 측정 없음'일 수도 있다 — 그 경우 재시도는
+        헛대기(최대 MSR_RETRY_COUNT*MSR_RETRY_DELAY_SEC 초)지만, 빈 트리로 feasibility 를
+        오판하는 비용이 더 크므로 1회 재시도를 기본값으로 둔다. 끄려면 env 횟수 0.
+        """
+        msr_imgs, msr_conds = download_align_images_from_msr(eqp_id, recipe_id)
+        attempt = 0
+        while len(msr_imgs) == 0 and attempt < MSR_RETRY_COUNT:
+            attempt += 1
+            print(f"[INFO] msr 이미지 0장 - tool 저장 지연 추정, {MSR_RETRY_DELAY_SEC}s 후 재시도 "
+                  f"({attempt}/{MSR_RETRY_COUNT}) EQP_ID={eqp_id} recipe={recipe_id}")
+            time.sleep(MSR_RETRY_DELAY_SEC)
+            msr_imgs, msr_conds = download_align_images_from_msr(eqp_id, recipe_id)
+        return msr_imgs, msr_conds
 
     @staticmethod
     def _warn_if_outside(paths, dest_dir):

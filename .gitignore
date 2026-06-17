@@ -82,3 +82,6 @@ side_projects/screenshot_document_extraction/data/captures/*
 *.jpeg
 !docs/**/*.png
 !docs/**/*.jpg
+
+# Playwright MCP browser session artifacts (transient)
+.playwright-mcp/

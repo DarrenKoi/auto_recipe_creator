@@ -135,6 +135,33 @@ def pm_text_to_mode(pm_text) -> str | None:
     return None
 
 
+def parse_pm_magnification(pm_text) -> float | None:
+    """PM 박스 텍스트(배율 readout) → 비교 가능한 숫자 배율(없으면 None).
+
+    wheel-down 으로 배율이 실제로 *낮아졌는지* 를 단계마다 확인하기 위한 보조용이다.
+    `pm_text_to_mode` 가 OM/SEM 만 돌려주는 것과 달리 숫자 자체를 뽑아 단조 비교한다.
+    규칙(사용자 관측 표기 기준):
+      * 'K' 접미사(SEM 배율) -> 앞 숫자 * 1000. 예: '30K'/'30 K' -> 30000, '1.5K' -> 1500.
+      * 'K' 없는 순수 숫자(OM PM 값 등) -> 그 값. 예: '104' -> 104, '210' -> 210.
+    파싱 불가(글자만, 빈 문자열, 비문자열)면 None — 호출부는 비교를 건너뛴다(하드 게이트 아님).
+    """
+    if not isinstance(pm_text, str):
+        return None
+    text = pm_text.strip().upper()
+    if not text:
+        return None
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(K?)", text)
+    if not m:
+        return None
+    try:
+        value = float(m.group(1))
+    except ValueError:
+        return None
+    if m.group(2) == "K":
+        value *= 1000.0
+    return value
+
+
 # ------------------------------------------------------------------
 # 좌표 정규화.
 # ------------------------------------------------------------------
@@ -533,6 +560,7 @@ __all__ = [
     "crop_pm_region",
     "ocr_pm_crop",
     "pm_text_to_mode",
+    "parse_pm_magnification",
     "grey_frame_mask",
     "snap_box_to_edges",
     "sharpness_in_box",

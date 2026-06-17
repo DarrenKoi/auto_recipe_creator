@@ -124,6 +124,20 @@ class Workflow3Settings(WorkflowSettings):
     pm_two_stage_ocr_enabled: bool = False
     pm_ocr_service: str = "paddleocr-vl-1.5"  # slug==모델명(비대칭). crop OCR 용.
 
+    # --- 점검 모니터 zoom-out(wheel-down) 보정탐색 ---
+    # feasibility verdict 가 모호(ambiguous)/부재(not_visible)라 "어느 점이 align point 인지"
+    # 가릴 수 없을 때, tool 이 열린 동안 live SEM box 위에서 mouse wheel 을 한 칸씩 내려
+    # (배율↓) 더 넓은 FOV 의 lower-mag 화면을 단계별로 저장한다. 클릭/recenter 없음 = 순수
+    # 캡처용. PM readout 으로 배율이 실제 낮아졌는지 확인만 한다(하드 게이트 아님). 기본
+    # off(opt-in) + SAFE_MODE off 일 때만 실제 wheel(켜도 action_enabled=False 면 DRY-RUN
+    # 로그만). 배율은 닫기 전 복원하지 않는다(장비는 fail 정지 → 엔지니어 재셋업). PM 버튼
+    # 드롭다운 방식은 추후 옵션(미구현). production 보정과 무관.
+    zoom_probe_enabled: bool = False
+    zoom_probe_steps: int = 2                   # wheel-down 단계 수(저장 이미지 수).
+    zoom_probe_scroll_dy: int = -1              # 음수 = wheel down = 배율↓ (pynput scroll dy).
+    zoom_probe_scrolls_per_step: int = 1        # 단계당 scroll notch 수(1 notch≠1 PM step 시 튜닝).
+    zoom_probe_settle_sec: float = 0.6          # wheel 후 FOV 재렌더+커서 안착 대기(초).
+
     # --- CV 보정 ---
     correction_enabled: bool = True
     correction_dry_run: bool = True  # False 는 SAFE_MODE off + env 명시(0)일 때만.
@@ -189,6 +203,11 @@ def load_workflow3_settings() -> Workflow3Settings:
         sem_box_vlm_service=_env_str("ALIGN_FAIL_SEM_BOX_SERVICE", "ui-venus"),
         pm_two_stage_ocr_enabled=env_flag("ALIGN_FAIL_PM_TWO_STAGE_OCR", default=False),
         pm_ocr_service=_env_str("ALIGN_FAIL_PM_OCR_SERVICE", "paddleocr-vl-1.5"),
+        zoom_probe_enabled=env_flag("ALIGN_FAIL_ZOOM_PROBE", default=False),
+        zoom_probe_steps=env_int("ALIGN_FAIL_ZOOM_PROBE_STEPS", 2),
+        zoom_probe_scroll_dy=env_int("ALIGN_FAIL_ZOOM_PROBE_SCROLL_DY", -1),
+        zoom_probe_scrolls_per_step=env_int("ALIGN_FAIL_ZOOM_PROBE_SCROLLS_PER_STEP", 1),
+        zoom_probe_settle_sec=env_float("ALIGN_FAIL_ZOOM_PROBE_SETTLE_SEC", 0.6),
         correction_enabled=env_flag("ALIGN_FAIL_CORRECTION", default=True),
         correction_dry_run=correction_dry_run,
         ok_button_vlm_service=_env_str("ALIGN_OK_BUTTON_VLM_SERVICE", "ui-venus"),

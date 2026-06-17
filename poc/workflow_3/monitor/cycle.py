@@ -21,6 +21,7 @@ tool 닫기·알림 발송은 step 이 아니라 `run_alarm_cycle` 의 후처리
   * finally: 녹화 중지(manifest) → tool 닫기 → 알림 팝업 backstop
 """
 
+import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -48,9 +49,15 @@ from poc.workflow_3.util import (
     image_point_to_screen,
     make_timestamp_tag,
     move_cursor_to_screen,
+    scroll_at_screen,
 )
 
 LOG_COMPONENT = "align_fail_cycle"
+
+# zoom-out(wheel-down) 보정탐색을 발동할 feasibility verdict — "어느 점이 align point 인지"
+# 가릴 수 없는 두 경우만(ambiguous=모호, not_visible=프레임에 키 부재). possible(확신)·
+# no_assets(rcp 자산 없음)는 제외. PM_OM_VALUES 처럼 settings 밖 모듈 상수로 둔다.
+_ZOOM_PROBE_VERDICTS = frozenset({"ambiguous", "not_visible"})
 
 
 def _should_block_input(settings: Workflow3Settings) -> bool:
@@ -816,8 +823,25 @@ def _check_feasibility_and_preview(
         result.outcome_path = str(feas.marked_path)
 
     # ---- (opt-in) align point 로 커서 이동 + 안착 화면 재캡처. ----
-    if not settings.reposition_preview_enabled:
-        return
+    if settings.reposition_preview_enabled:
+        _run_reposition_preview(context, result, feas, settings)
+
+    # ---- (opt-in) 모호/부재 verdict 면 wheel-down lower-mag 보정탐색. ----
+    # preview 와 독립 — feasibility 만 계산되면 verdict 로 발동을 판정한다.
+    _run_zoom_out_probe(context, result, feas, settings, sem_box_client, ocr_client)
+
+
+def _run_reposition_preview(
+    context: dict,
+    result: "CycleResult",
+    feas,
+    settings: Workflow3Settings,
+) -> None:
+    """align point 로 커서만 옮긴 뒤(클릭 없음) 안착 화면을 재캡처해 좌표 매핑을 눈으로 검증한다.
+
+    `_check_feasibility_and_preview` 에서 reposition_preview_enabled 일 때만 호출된다.
+    tool 창이 닫히기 전에 와야 한다(image→screen 변환·재캡처가 살아 있는 창 필요).
+    """
     tool_window = context.get("tool_window")
     if feas.align_xy is None or feas.frame_wh is None or tool_window is None:
         print(
@@ -844,12 +868,161 @@ def _check_feasibility_and_preview(
         time.sleep(_PREVIEW_SETTLE_SEC)
     try:
         cursor_path = _save_cursor_preview(
-            tool_window, feas.align_xy, feas.frame_wh, capture_path.parent, context["tag"]
+            tool_window, feas.align_xy, feas.frame_wh,
+            Path(context["capture_path"]).parent, context["tag"],
         )
         result.notes.append(f"cursor_preview={cursor_path}")
         print(f"[INFO] 커서 안착 화면 재캡처: {cursor_path}")
     except Exception as exc:
         print(f"[WARNING] 커서 안착 화면 재캡처 실패: {exc}")
+
+
+def _run_zoom_out_probe(
+    context: dict,
+    result: "CycleResult",
+    feas,
+    settings: Workflow3Settings,
+    sem_box_client,
+    ocr_client,
+) -> None:
+    """모호/부재 verdict 일 때 live SEM box 위에서 wheel 을 한 칸씩 내려(배율↓) lower-mag
+    화면을 단계별로 저장한다(클릭 없음 = 순수 캡처).
+
+    "어느 점이 align point 인지" 가릴 수 없을 때, 더 넓은 FOV 의 맥락 이미지를 모아
+    엔지니어/후속 매칭에 넘기는 데이터 수집용이다. 각 단계마다 풀프레임 + (검출되면)
+    live SEM box ROI crop 을 저장하고, PM readout 으로 배율이 실제 낮아졌는지 확인만
+    한다(하드 게이트 아님 — wheel↔PM step 미보정). 배율은 복원하지 않는다.
+
+    teardown(close)을 막지 않도록 전체를 try/except 로 감싼다. tool 창이 닫히기 전에
+    호출돼야 한다(image→screen 변환·재캡처가 살아 있는 창을 필요로 함).
+    """
+    if not settings.zoom_probe_enabled:
+        return
+    if feas.verdict not in _ZOOM_PROBE_VERDICTS:
+        print(f"[INFO] zoom-out 보정탐색 생략: verdict={feas.verdict} (대상 아님)")
+        return
+    tool_window = context.get("tool_window")
+    if feas.frame_wh is None or tool_window is None:
+        print(f"[INFO] zoom-out 보정탐색 생략: frame_wh/tool_window 없음 (verdict={feas.verdict})")
+        return
+    if image_point_to_screen is None or scroll_at_screen is None:
+        print("[INFO] zoom-out 보정탐색 생략: window/mouse util 비활성(개발 PC)")
+        return
+
+    try:
+        from poc.workflow_3.sem_monitor.sem_box_detect import (
+            detect_sem_box,
+            parse_pm_magnification,
+        )
+
+        fw, fh = int(feas.frame_wh[0]), int(feas.frame_wh[1])
+        # scroll 중심 = live SEM box 중심(있으면), 없으면 프레임 중심.
+        if feas.sem_box_bbox is not None:
+            l, t, r, b = (int(v) for v in feas.sem_box_bbox)
+            cx, cy = (l + r) // 2, (t + b) // 2
+        else:
+            cx, cy = fw // 2, fh // 2
+        screen = image_point_to_screen(
+            tool_window, {"x": cx, "y": cy}, image_size=feas.frame_wh
+        )
+        if screen is None:
+            print("[WARNING] zoom-out 보정탐색: image→screen 변환 실패 - 생략")
+            return
+
+        capture_dir = Path(context["capture_path"]).parent
+        tag = context["tag"]
+        baseline_mag = parse_pm_magnification(feas.pm_text)
+        print(
+            f"[INFO] zoom-out 보정탐색 시작: verdict={feas.verdict} "
+            f"center=({cx},{cy})→screen=({screen['x']},{screen['y']}) "
+            f"steps={settings.zoom_probe_steps} dy={settings.zoom_probe_scroll_dy} "
+            f"baseline_pm={feas.pm_text!r}({baseline_mag})"
+            f"{'' if settings.action_enabled else ' [dry-run]'}"
+        )
+
+        prev_mag = baseline_mag
+        steps: list[dict] = []
+        for step in range(1, max(1, settings.zoom_probe_steps) + 1):
+            for _ in range(max(1, settings.zoom_probe_scrolls_per_step)):
+                scroll_at_screen(
+                    screen, settings.zoom_probe_scroll_dy, "zoom_probe", step,
+                    action_enabled=settings.action_enabled,
+                )
+            if settings.zoom_probe_settle_sec > 0:
+                time.sleep(settings.zoom_probe_settle_sec)
+
+            image = capture_window(tool_window)
+            full_path = capture_dir / f"{tag}_rcs_zoom{step}.jpg"
+            save_debug_jpeg(image, full_path)
+
+            # 새 프레임에서 SEM box 재검출 → (1) ROI crop 저장 (2) PM 재독으로 배율 확인.
+            pm_text = None
+            sembox_path = None
+            if sem_box_client is not None:
+                try:
+                    det = detect_sem_box(
+                        image, sem_box_client,
+                        ocr_client=ocr_client,
+                        two_stage=settings.pm_two_stage_ocr_enabled,
+                    )
+                    pm_text = det.pm_text
+                    if det.bbox_px is not None:
+                        bb = det.bbox_px
+                        crop = image.crop((bb["left"], bb["top"], bb["right"], bb["bottom"]))
+                        sembox_path = capture_dir / f"{tag}_rcs_zoom{step}_sembox.jpg"
+                        save_debug_jpeg(crop, sembox_path)
+                except Exception as exc:
+                    print(f"[WARNING] zoom-out step{step} SEM box 재검출 실패: {exc}")
+
+            new_mag = parse_pm_magnification(pm_text)
+            if new_mag is not None and prev_mag is not None:
+                decreased = new_mag < prev_mag
+                arrow = "↓" if decreased else ("=" if new_mag == prev_mag else "↑")
+                print(
+                    f"[INFO] zoom-out step{step}: PM {prev_mag}{arrow}{new_mag} "
+                    f"(text={pm_text!r}) → {full_path.name}"
+                )
+            else:
+                decreased = None
+                print(
+                    f"[INFO] zoom-out step{step}: PM 비교 불가(text={pm_text!r}) → {full_path.name}"
+                )
+
+            steps.append({
+                "step": step,
+                "pm_text": pm_text,
+                "magnification": new_mag,
+                "decreased": decreased,
+                "full_path": str(full_path),
+                "sembox_path": str(sembox_path) if sembox_path is not None else None,
+            })
+            if new_mag is not None:
+                prev_mag = new_mag
+
+        # sidecar JSON — _feasibility.json 규약과 동일 위치/형식.
+        json_path = capture_dir / f"{tag}_zoom_probe.json"
+        try:
+            payload = {
+                "verdict": feas.verdict,
+                "baseline_pm_text": feas.pm_text,
+                "baseline_magnification": baseline_mag,
+                "scroll_dy": settings.zoom_probe_scroll_dy,
+                "scrolls_per_step": settings.zoom_probe_scrolls_per_step,
+                "steps": steps,
+            }
+            json_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            result.notes.append(f"zoom_probe={json_path} steps={len(steps)}")
+            print(f"[INFO] zoom-out 보정탐색 완료: {json_path} (단계 {len(steps)})")
+        except Exception as exc:
+            print(f"[WARNING] zoom-out sidecar JSON 저장 실패: {exc}")
+    except Exception as exc:
+        print(f"[WARNING] zoom-out 보정탐색 실패(캡처는 유지): {exc}")
+        log_work2_event(
+            component=LOG_COMPONENT, message="zoom_probe_error", level="warning",
+            eqp_id=context.get("eqp_id", ""), error=str(exc),
+        )
 
 
 def run_check_only_cycle(
@@ -910,7 +1083,9 @@ def run_check_only_cycle(
             # recipe_id 가 필요하므로 없으면 skip. live 창이 필요한 image→screen 변환·
             # 재캡처 때문에 finally 의 close 보다 반드시 먼저 와야 한다.
             if recipe_id and (
-                settings.feasibility_mark_enabled or settings.reposition_preview_enabled
+                settings.feasibility_mark_enabled
+                or settings.reposition_preview_enabled
+                or settings.zoom_probe_enabled
             ):
                 _check_feasibility_and_preview(context, result, settings, eqp_id, recipe_id)
     except Exception as exc:

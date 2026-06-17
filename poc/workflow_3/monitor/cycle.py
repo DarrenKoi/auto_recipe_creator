@@ -950,7 +950,16 @@ def _run_zoom_ladder(
                 tool_window, {"x": (l + r) // 2, "y": (t + b) // 2}, image_size=feas.frame_wh
             )
 
+        method_cfg = (settings.zoom_method or "auto").lower()
+        per = max(1, settings.zoom_probe_scrolls_per_step)
+        dy_out = settings.zoom_probe_scroll_dy
+        out_n = max(0, settings.zoom_probe_steps)
+        in_n = max(0, settings.zoom_probe_in_steps)
+        rungs: list[dict] = []
+
         # --- wheel 대상 = live SEM box 중심. feas 에 없으면 새 캡처로 1회 재검출. ---
+        # pm_dropdown 강제 모드는 wheel 을 안 쓰므로 SEM box 중심이 없어도 진행한다
+        # (PM 버튼은 pm_box 로 따로 찾는다).
         box = _normalize_bbox(feas.sem_box_bbox)
         if box is None and sem_box_client is not None:
             try:
@@ -962,29 +971,24 @@ def _run_zoom_ladder(
             except Exception as exc:
                 print(f"[WARNING] zoom ladder: 초기 SEM box 재검출 실패: {exc}")
         screen = _box_center_screen(box)
-        if screen is None:
+        if screen is None and method_cfg != "pm_dropdown":
             print(
-                "[WARNING] zoom ladder 생략: live SEM box 위치 불명 → wheel 대상 없음. "
+                "[WARNING] zoom ladder 생략: live SEM box 위치 불명 -> wheel 대상 없음. "
                 "창 중심 오스크롤 방지로 중단(ALIGN_FAIL_SEM_BOX_DETECT 활성/VLM 연결 확인)."
             )
             return
 
-        # tool 창 포커스 — 일부 Windows 컨트롤은 포커스 없으면 wheel 을 무시한다.
+        # tool 창 포커스 — 일부 Windows 컨트롤은 포커스 없으면 입력을 무시한다.
         if activate_window is not None:
             try:
                 activate_window(tool_window)
             except Exception:
                 pass
 
-        per = max(1, settings.zoom_probe_scrolls_per_step)
-        dy_out = settings.zoom_probe_scroll_dy
-        out_n = max(0, settings.zoom_probe_steps)
-        in_n = max(0, settings.zoom_probe_in_steps)
-        rungs: list[dict] = []
-
+        scr_txt = f"({screen['x']},{screen['y']})" if screen else "n/a"
         print(
-            f"[INFO] zoom ladder 시작: verdict={feas.verdict} "
-            f"box_center→screen=({screen['x']},{screen['y']}) out={out_n} in={in_n} "
+            f"[INFO] zoom ladder 시작: method={method_cfg} verdict={feas.verdict} "
+            f"box_center->screen={scr_txt} out={out_n} in={in_n} "
             f"dy={dy_out} per={per} rematch={settings.zoom_probe_rematch_enabled} "
             f"baseline_pm={feas.pm_text!r}({baseline_mag})"
             f"{'' if settings.action_enabled else ' [dry-run]'}"
@@ -1073,14 +1077,34 @@ def _run_zoom_ladder(
                 f"pm={rung['pm_text']!r} → {full_path.name}"
             )
 
-        # --- OUT arm (배율↓). out1 후 PM 불변이면 wheel 무효 → PM 드롭다운 fallback. ---
+        # --- 방식 분기. method=pm_dropdown 이면 wheel 생략하고 곧장 PM 버튼 드롭다운. ---
         method = "wheel"
         dropdown_meta = None
+
+        if method_cfg == "pm_dropdown":
+            method = "pm_dropdown"
+            print("[INFO] zoom ladder: method=pm_dropdown 강제 -> wheel 생략, PM 버튼 클릭으로 진행.")
+            dropdown_meta = _run_pm_dropdown_arms(
+                tool_window, capture_dir, tag, feas, settings,
+                sem_box_client, ocr_client, baseline_mag, out_n, in_n, _capture_rung,
+            )
+            _finish_zoom_ladder(
+                capture_dir, tag, feas, settings, result,
+                rungs, method, baseline_mag, dy_out, out_n, in_n, per, dropdown_meta,
+            )
+            return
+
+        # --- OUT arm (배율↓). out1 후 PM 불변이면 wheel 무효 → PM 드롭다운 fallback. ---
         wheel_dead = False
         for i in range(1, out_n + 1):
             _aim_and_scroll(dy_out, i)
             _capture_rung(f"out{i}")
-            if i == 1 and settings.pm_dropdown_enabled and baseline_mag is not None:
+            if (
+                method_cfg == "auto"
+                and i == 1
+                and settings.pm_dropdown_enabled
+                and baseline_mag is not None
+            ):
                 m1 = rungs[-1].get("magnification")
                 if m1 is not None and abs(m1 - baseline_mag) < 1e-6:
                     wheel_dead = True
@@ -1124,46 +1148,88 @@ def _run_zoom_ladder(
                 _aim_and_scroll(-dy_out, i)
                 _capture_rung(f"in{i}")
 
-        # --- best rung = 키가 present(possible/ambiguous) 한 것 중 최고 score. ---
-        present = [
-            r for r in rungs
-            if r.get("verdict") in ("possible", "ambiguous") and r.get("score") is not None
-        ]
-        best = max(present, key=lambda r: r["score"]) if present else None
-
-        json_path = capture_dir / f"{tag}_zoom_ladder.json"
-        try:
-            payload = {
-                "verdict_at_fail": feas.verdict,
-                "baseline_pm_text": feas.pm_text,
-                "baseline_magnification": baseline_mag,
-                "method": method,
-                "scroll_dy_out": dy_out, "out_steps": out_n, "in_steps": in_n,
-                "scrolls_per_step": per, "rematch": settings.zoom_probe_rematch_enabled,
-                "best_rung": best["label"] if best else None,
-                "rungs": rungs,
-            }
-            if dropdown_meta is not None:
-                payload["pm_dropdown"] = dropdown_meta
-            json_path.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
-            result.notes.append(
-                f"zoom_ladder={json_path} rungs={len(rungs)} "
-                f"best={best['label'] if best else '-'}"
-            )
-            print(
-                f"[INFO] zoom ladder 완료: {json_path} (rung {len(rungs)}, "
-                f"best={best['label'] if best else '없음'})"
-            )
-        except Exception as exc:
-            print(f"[WARNING] zoom ladder sidecar JSON 저장 실패: {exc}")
+        _finish_zoom_ladder(
+            capture_dir, tag, feas, settings, result,
+            rungs, method, baseline_mag, dy_out, out_n, in_n, per, dropdown_meta,
+        )
     except Exception as exc:
         print(f"[WARNING] zoom ladder 실패(캡처는 유지): {exc}")
         log_work2_event(
             component=LOG_COMPONENT, message="zoom_ladder_error", level="warning",
             eqp_id=context.get("eqp_id", ""), error=str(exc),
         )
+
+
+def _finish_zoom_ladder(
+    capture_dir, tag, feas, settings, result,
+    rungs, method, baseline_mag, dy_out, out_n, in_n, per, dropdown_meta,
+) -> None:
+    """ladder rung 들을 best 선정 + sidecar JSON 저장 + manifest notes 로 마무리한다.
+
+    wheel 경로와 pm_dropdown 강제 경로가 공통으로 호출한다.
+    """
+    present = [
+        r for r in rungs
+        if r.get("verdict") in ("possible", "ambiguous") and r.get("score") is not None
+    ]
+    best = max(present, key=lambda r: r["score"]) if present else None
+
+    json_path = capture_dir / f"{tag}_zoom_ladder.json"
+    try:
+        payload = {
+            "verdict_at_fail": feas.verdict,
+            "baseline_pm_text": feas.pm_text,
+            "baseline_magnification": baseline_mag,
+            "method": method,
+            "scroll_dy_out": dy_out, "out_steps": out_n, "in_steps": in_n,
+            "scrolls_per_step": per, "rematch": settings.zoom_probe_rematch_enabled,
+            "best_rung": best["label"] if best else None,
+            "rungs": rungs,
+        }
+        if dropdown_meta is not None:
+            payload["pm_dropdown"] = dropdown_meta
+        json_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        result.notes.append(
+            f"zoom_ladder={json_path} method={method} rungs={len(rungs)} "
+            f"best={best['label'] if best else '-'}"
+        )
+        print(
+            f"[INFO] zoom ladder 완료: method={method} {json_path} (rung {len(rungs)}, "
+            f"best={best['label'] if best else '없음'})"
+        )
+    except Exception as exc:
+        print(f"[WARNING] zoom ladder sidecar JSON 저장 실패: {exc}")
+
+
+def _save_pm_dropdown_overlay(image, out_path, pm_box, btn, region) -> None:
+    """PM 드롭다운 검증 overlay 저장.
+
+    PM 숫자 박스(cyan, 화면에 이미 보이는 그 박스), 유도한 'PM 버튼' 클릭점(red 십자/원),
+    드롭다운 crop 영역(yellow)을 그려 클릭이 'PM' 버튼에 정확히 맞는지 눈으로 검증한다.
+    """
+    from PIL import ImageDraw
+
+    canvas = image.convert("RGB").copy()
+    draw = ImageDraw.Draw(canvas)
+    if pm_box:
+        draw.rectangle(
+            [int(pm_box["left"]), int(pm_box["top"]),
+             int(pm_box["right"]), int(pm_box["bottom"])],
+            outline=(0, 255, 255), width=3,
+        )
+    if region:
+        l, t, r, b = region
+        draw.rectangle([int(l), int(t), int(r), int(b)], outline=(255, 255, 0), width=2)
+    if btn:
+        x, y = int(btn["x"]), int(btn["y"])
+        rad = 8
+        draw.ellipse([x - rad, y - rad, x + rad, y + rad], outline=(255, 0, 0), width=3)
+        draw.line([x - rad - 5, y, x + rad + 5, y], fill=(255, 0, 0), width=2)
+        draw.line([x, y - rad - 5, x, y + rad + 5], fill=(255, 0, 0), width=2)
+        draw.text((x + rad + 4, y - 14), "PM btn click", fill=(255, 0, 0))
+    save_debug_jpeg(canvas, out_path)
 
 
 def _run_pm_dropdown_arms(
@@ -1241,11 +1307,20 @@ def _run_pm_dropdown_arms(
         if _PM_DROPDOWN_OPEN_SETTLE_SEC > 0:
             time.sleep(_PM_DROPDOWN_OPEN_SETTLE_SEC)
         shot = capture_window(tool_window)
-        try:
-            save_debug_jpeg(shot, capture_dir / f"{tag}_pm_dropdown_open{open_idx}.jpg")
-        except Exception:
-            pass
         region = dropdown_region(pm_box, frame_wh)
+        # 검증 overlay: PM 숫자 박스(cyan, 화면의 그것과 동일), 유도한 PM 버튼 클릭점(red),
+        # 드롭다운 crop 영역(yellow) 을 그려 클릭이 'PM' 버튼에 맞는지 눈으로 확인.
+        try:
+            _save_pm_dropdown_overlay(
+                shot, capture_dir / f"{tag}_pm_dropdown_open{open_idx}.jpg",
+                pm_box, btn, region,
+            )
+        except Exception as exc:
+            print(f"[WARNING] PM 드롭다운 overlay 저장 실패: {exc}")
+            try:
+                save_debug_jpeg(shot, capture_dir / f"{tag}_pm_dropdown_open{open_idx}.jpg")
+            except Exception:
+                pass
         if region is None:
             return None
         l, t, r, b = region

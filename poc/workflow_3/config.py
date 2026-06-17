@@ -146,6 +146,10 @@ class Workflow3Settings(WorkflowSettings):
     # wheel 이 배율을 안 바꾸는 tool 대비 fallback: out1 wheel 후 PM 배율이 그대로면
     # 'PM' 버튼 드롭다운(절대 배율 선택)으로 전환해 ladder 를 마저 돈다. 기본 on.
     pm_dropdown_enabled: bool = True
+    # zoom ladder 방식 강제: "auto"=wheel 먼저 시도 후 무효면 PM 드롭다운 fallback,
+    # "wheel"=wheel 만, "pm_dropdown"=wheel 생략하고 곧장 PM 버튼 드롭다운(이 tool 처럼
+    # wheel 이 mag 을 안 바꾼다고 이미 아는 경우 — PM 버튼 클릭을 매 알람마다 확실히 수행).
+    zoom_method: str = "auto"
 
     # --- CV 보정 ---
     correction_enabled: bool = True
@@ -220,6 +224,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         zoom_probe_settle_sec=env_float("ALIGN_FAIL_ZOOM_PROBE_SETTLE_SEC", 0.6),
         zoom_probe_rematch_enabled=env_flag("ALIGN_FAIL_ZOOM_PROBE_REMATCH", default=True),
         pm_dropdown_enabled=env_flag("ALIGN_FAIL_PM_DROPDOWN", default=True),
+        zoom_method=os.environ.get("ALIGN_FAIL_ZOOM_METHOD", "auto").strip().lower() or "auto",
         correction_enabled=env_flag("ALIGN_FAIL_CORRECTION", default=True),
         correction_dry_run=correction_dry_run,
         ok_button_vlm_service=_env_str("ALIGN_OK_BUTTON_VLM_SERVICE", "ui-venus"),

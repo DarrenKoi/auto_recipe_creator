@@ -126,7 +126,8 @@ def read_dropdown_options(crop_image, ocr_client, *, crop_origin=(0, 0)):
         # 행 텍스트가 'PM' 라벨/단위 등과 섞일 수 있어 토큰별로 배율을 뽑는다.
         for tok in _MAG_TOKEN_RE.findall(text):
             value = parse_pm_magnification(tok)
-            if value is None:
+            # value<=0 은 'PM 0'/구분자/잡토큰에서 나온 가짜 옵션 — 배율이 될 수 없으므로 버린다.
+            if value is None or value <= 0:
                 continue
             cx = ox + (int(bbox["left"]) + int(bbox["right"])) // 2
             cy = oy + (int(bbox["top"]) + int(bbox["bottom"])) // 2

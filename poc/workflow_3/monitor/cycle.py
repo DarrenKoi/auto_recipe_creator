@@ -1116,6 +1116,10 @@ def _run_zoom_ladder(
 
         if wheel_dead:
             method = "pm_dropdown"
+            # 방금 캡처한 wheel out1 rung(배율 불변 = baseline 중복)을 버린다 — 곧 드롭다운이
+            # 진짜 낮은 배율의 out1 을 다시 캡처하므로 라벨/파일 중복을 막는다.
+            if rungs:
+                rungs.pop()
             dropdown_meta = _run_pm_dropdown_arms(
                 tool_window, capture_dir, tag, feas, settings,
                 sem_box_client, ocr_client, baseline_mag, out_n, in_n, _capture_rung,

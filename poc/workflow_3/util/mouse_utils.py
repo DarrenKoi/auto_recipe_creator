@@ -71,11 +71,14 @@ def click_at_screen(
         return True
 
     mouse = MouseController()
-    mouse.position = (sx, sy)
+    # 순간이동 대신 glide+jiggle — RCS 가 커서 이동을 따라와 클릭이 원격에서 목표 위(PM 버튼/
+    # 드롭다운 행)에 걸리게 한다(teleport 면 RCS 가 이동을 놓쳐 엉뚱한 위치를 클릭).
+    _glide_to(mouse, sx, sy)
+    _jiggle(mouse, sx, sy)
     time.sleep(0.01)
     mouse.click(Button.left, click_count)
     print(
-        f"[INFO] 클릭 완료: target={target_key}, screen=({sx}, {sy}), "
+        f"[INFO] 클릭 완료(glide+jiggle): target={target_key}, screen=({sx}, {sy}), "
         f"click_count={click_count}"
     )
     return True

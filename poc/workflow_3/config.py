@@ -131,12 +131,12 @@ class Workflow3Settings(WorkflowSettings):
     # 화면을 저장한다. zoom-out 만으로는 키를 못 찾으므로(좁은 FOV→넓게 보고, 다시 좁혀
     # 정확한 점 확인) 양방향이 필요하다. 클릭/recenter 없음 = 순수 wheel+캡처. rematch 가
     # 켜져 있으면 각 rung 에서 rcp 키를 재매칭(mark_align_feasibility)해 키가 또렷해지는
-    # 배율을 표시한다. 기본 off(opt-in) + SAFE_MODE off 일 때만 실제 wheel(켜도
+    # 배율을 표시한다. 기본 on + SAFE_MODE off 일 때만 실제 wheel(켜도
     # action_enabled=False 면 DRY-RUN 로그만). wheel 대상은 반드시 검출된 live SEM box
     # 중심(없으면 탐색 생략 — 창 중심에 잘못 스크롤 방지). 배율 복원은 arm 전환 시 baseline
     # 복귀에만 쓰고 종료 시엔 복원하지 않는다(장비 fail 정지 → 엔지니어 재셋업). PM 버튼
     # 드롭다운(절대 배율 선택) 방식은 추후 옵션(미구현). production 보정과 무관.
-    zoom_probe_enabled: bool = False
+    zoom_probe_enabled: bool = True
     zoom_probe_steps: int = 2                   # OUT(배율↓) 방향 단계 수.
     zoom_probe_in_steps: int = 2               # IN(배율↑) 방향 단계 수.
     zoom_probe_scroll_dy: int = -1              # 음수 = wheel down = OUT = 배율↓ (pynput scroll dy). IN 은 부호 반전.
@@ -209,7 +209,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         sem_box_vlm_service=_env_str("ALIGN_FAIL_SEM_BOX_SERVICE", "ui-venus"),
         pm_two_stage_ocr_enabled=env_flag("ALIGN_FAIL_PM_TWO_STAGE_OCR", default=False),
         pm_ocr_service=_env_str("ALIGN_FAIL_PM_OCR_SERVICE", "paddleocr-vl-1.5"),
-        zoom_probe_enabled=env_flag("ALIGN_FAIL_ZOOM_PROBE", default=False),
+        zoom_probe_enabled=env_flag("ALIGN_FAIL_ZOOM_PROBE", default=True),
         zoom_probe_steps=env_int("ALIGN_FAIL_ZOOM_PROBE_STEPS", 2),
         zoom_probe_in_steps=env_int("ALIGN_FAIL_ZOOM_PROBE_IN_STEPS", 2),
         zoom_probe_scroll_dy=env_int("ALIGN_FAIL_ZOOM_PROBE_SCROLL_DY", -1),

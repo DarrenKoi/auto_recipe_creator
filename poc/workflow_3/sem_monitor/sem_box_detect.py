@@ -22,10 +22,13 @@ workflow_2 의 검증된 detector(`poc/workflow_2/sem_box_detect.py` +
 import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 import cv2
 import numpy as np
 from PIL import Image
+
+from poc.workflow_3.debug_artifacts import save_debug_jpeg
 
 from poc.workflow_3.util import env_int
 from poc.workflow_3.util.image_utils import encode_image_webp
@@ -35,6 +38,7 @@ from poc.workflow_3.util.json_utils import (
     normalize_bbox_1000,
 )
 from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
+from poc.workflow_3.vlm.prompts.prompt_ocr_assist import build_ocr_assist_prompt
 
 LOG_COMPONENT = "sem_box_detect"
 
@@ -98,6 +102,8 @@ class SemBoxDetection:
     vlm_bbox_px: dict | None     # VLM coarse 박스(snap 전), 픽셀 좌표.
     pm_text: str | None         # PM 박스에서 읽은 텍스트(배율 readout) 원문.
     pm_mode: str | None         # PM 텍스트 → "OM" | "SEM" | None(모호).
+    pm_box_px: dict | None = None       # PM 박스 위치(l/t/r/b 픽셀) — 단일 호출이 함께 반환. crop+OCR 용.
+    pm_text_source: str = "inline_vlm"  # PM 텍스트 출처: "inline_vlm" | "ocr_crop".
 
 
 # ------------------------------------------------------------------
@@ -295,7 +301,8 @@ def _sem_box_system_prompt() -> str:
         "are NOT the box itself and the bbox must NOT shrink to fit around them.\n"
         "  - Near the SEM Monitor Box there is a small 'PM' box showing a short "
         "magnification readout (e.g. '104', '210', or a value containing 'K' such as "
-        "'30K' or '20 K'). Read its text verbatim, including any space before 'K'.\n"
+        "'30K' or '20 K'). Read its text verbatim, including any space before 'K', and "
+        "also report its location as a tight bbox so it can be cropped and re-read.\n"
         "The returned bbox must enclose the FULL rectangle of the live wafer view, "
         "INCLUDING the parts that are currently hidden behind the overlay control "
         "panels. Estimate the underlying rectangle from the visible live-image edges "
@@ -318,6 +325,7 @@ def _sem_box_user_prompt() -> str:
         '  "panel_bbox": {"left": 0, "top": 0, "right": 0, "bottom": 0},\n'
         '  "mode_label": "Optics",\n'
         '  "pm_box_text": "104",\n'
+        '  "pm_box_bbox": {"left": 0, "top": 0, "right": 0, "bottom": 0},\n'
         '  "overlay_panels_seen": ["Optics", "Function", "AMP", "Next", "DDS"],\n'
         '  "confidence": 0.0,\n'
         '  "evidence": "short string explaining what you used to identify the region"\n'
@@ -331,11 +339,14 @@ def _sem_box_user_prompt() -> str:
         "pm_box_text is the short magnification readout you actually read in the 'PM' "
         "box near the SEM Monitor Box (expected examples: '104', '210', '30K', "
         "'20 K'); read it verbatim including any space; use null if you cannot read it. "
+        "pm_box_bbox is a TIGHT bounding box around just that PM readout text (0-1000 "
+        "coords), so it can be cropped and OCR'd; use null if you cannot locate it. "
         "overlay_panels_seen should list 1~5 of the floating control panel labels "
         "you actually read covering the live image (expected examples: 'Optics', "
         "'Function', 'AMP', 'Next', 'DDS'). "
         "If no live wafer-pattern region is visible, set panel_visible=false, "
-        "panel_bbox=null, mode_label=null, pm_box_text=null, overlay_panels_seen=[]."
+        "panel_bbox=null, mode_label=null, pm_box_text=null, pm_box_bbox=null, "
+        "overlay_panels_seen=[]."
     )
 
 
@@ -365,15 +376,93 @@ def _run_sem_box_detection(
 
 
 # ------------------------------------------------------------------
+# PM 텍스트 정규화 + 2단계(crop+OCR) 읽기.
+# ------------------------------------------------------------------
+
+# PM crop 시 VLM bbox 주위로 더할 패딩 비율(작은 박스 부정확 대비). env 조정 가능.
+PM_OCR_CROP_PAD_RATIO = float(os.environ.get("SEM_BOX_PM_CROP_PAD_RATIO", "0.30"))
+
+
+def _coerce_pm_text(pm_raw) -> str | None:
+    """VLM 의 pm_box_text 를 안전한 str|None 으로 정규화한다.
+
+    스칼라 숫자(int/float)는 문자열화('104'→OM 매핑 유지), str 은 그대로, list/dict/
+    bool 등 비스칼라는 None(리스트 str 화로 인한 가짜 숫자 매칭/.strip() 크래시 방지).
+    """
+    if isinstance(pm_raw, str):
+        return pm_raw
+    if isinstance(pm_raw, (int, float)) and not isinstance(pm_raw, bool):
+        return str(pm_raw)
+    return None
+
+
+def crop_pm_region(rgb_image, pm_box_px, *, pad_ratio: float = PM_OCR_CROP_PAD_RATIO):
+    """pm_box_px(l/t/r/b 픽셀) 주위에 pad 를 더해 PM 영역만 crop 한 PIL 이미지를 돌려준다.
+
+    작은 bbox 부정확 대비로 pad 를 더한다. 좌표는 rgb_image 와 동일 픽셀계. 비정상이면 None.
+    """
+    if pm_box_px is None:
+        return None
+    w, h = rgb_image.size
+    l, t = int(pm_box_px["left"]), int(pm_box_px["top"])
+    r, b = int(pm_box_px["right"]), int(pm_box_px["bottom"])
+    pad_x = int(max(1, r - l) * pad_ratio)
+    pad_y = int(max(1, b - t) * pad_ratio)
+    l = max(0, l - pad_x); t = max(0, t - pad_y)
+    r = min(w, r + pad_x); b = min(h, b + pad_y)
+    if r - l < 2 or b - t < 2:
+        return None
+    return rgb_image.crop((l, t, r, b))
+
+
+def ocr_pm_crop(crop, ocr_client):
+    """PM crop(PIL)을 PaddleOCR(OCR:)로 재독해 텍스트를 돌려준다. 실패/빈 결과면 None."""
+    if crop is None or ocr_client is None:
+        return None
+    try:
+        crop_b64, cw, ch = encode_image_webp(crop, quality=90)
+        system_msg, user_text = build_ocr_assist_prompt(cw, ch, context_label="PM magnification readout")
+        resp = ocr_client.chat_with_image_b64(
+            image_b64=crop_b64, system_message=system_msg, user_text=user_text,
+            image_mime="image/webp", temperature=0.0,
+        )
+        text = (resp.text or "").strip()
+        return text or None
+    except Exception as exc:
+        print(f"[WARNING] PM OCR 실패(inline 텍스트로 폴백): {exc}")
+        return None
+
+
+def read_pm_via_ocr(rgb_image, pm_box_px, ocr_client, *, pad_ratio: float = PM_OCR_CROP_PAD_RATIO):
+    """PM 박스 영역만 잘라 PaddleOCR 로 텍스트를 읽는다(layout→crop→recognize 경로).
+
+    PM 은 작아 전체 스크린샷 grounding 1회로는 오독 위험이 크다. crop_pm_region +
+    ocr_pm_crop 의 편의 래퍼. 실패/빈 결과면 None(호출부가 inline 텍스트로 폴백).
+    """
+    return ocr_pm_crop(crop_pm_region(rgb_image, pm_box_px, pad_ratio=pad_ratio), ocr_client)
+
+
+# ------------------------------------------------------------------
 # 진입점.
 # ------------------------------------------------------------------
 
 
-def detect_sem_box(image: "Image.Image", client: Workflow1VLMClient) -> SemBoxDetection:
+def detect_sem_box(
+    image: "Image.Image",
+    client: Workflow1VLMClient,
+    *,
+    ocr_client: Workflow1VLMClient | None = None,
+    two_stage: bool = False,
+    pm_crop_debug_path=None,
+) -> SemBoxDetection:
     """PIL 이미지에서 live SEM box 위치 + PM 모드를 검출한다(VLM coarse → CV snap → sharpness).
 
-    VLM coarse 가 박스를 못 잡으면 ``detected=False`` 로 돌려준다(이 때도 PM 텍스트는
-    읽혔으면 채워 mode 폴백에 쓸 수 있게 한다).
+    PM 텍스트는 기본적으로 단일 VLM 호출의 inline pm_box_text 를 쓴다(저비용). ``two_stage``
+    이고 PM 위치(pm_box_bbox→pm_box_px)와 ``ocr_client`` 가 있으면, 그 작은 영역만 crop 해
+    PaddleOCR 로 재독한 텍스트를 우선한다(실패 시 inline 으로 폴백). PM locate 단계는 이미
+    같은 단일 호출에 포함되므로 별도 locate 호출은 없다. ``pm_crop_debug_path`` 가 주어지면
+    PM crop 을 그 경로에 JPEG 로 남겨(모드 무관) 크롭이 맞는지 눈으로 검증하게 한다. VLM
+    coarse 가 박스를 못 잡아도 PM 텍스트/모드는 채워 mode 폴백에 쓸 수 있게 한다.
     """
     rgb = image.convert("RGB")
     bgr = cv2.cvtColor(np.asarray(rgb), cv2.COLOR_RGB2BGR)
@@ -385,16 +474,26 @@ def detect_sem_box(image: "Image.Image", client: Workflow1VLMClient) -> SemBoxDe
         image_b64=image_b64, width=vlm_w, height=vlm_h, client=client
     )
 
-    # VLM 이 pm_box_text 를 문자열 대신 숫자/리스트로 줄 수 있다. 스칼라(숫자)는 문자열로
-    # 정규화하고, list/dict/bool 등 비스칼라는 None 으로 버린다(.strip() 크래시 방지 +
-    # 리스트 str 화로 인한 가짜 숫자 매칭 방지). pm_text_to_mode 도 내부에서 재방어한다.
-    pm_raw = payload.get("pm_box_text")
-    if isinstance(pm_raw, str):
-        pm_text = pm_raw
-    elif isinstance(pm_raw, (int, float)) and not isinstance(pm_raw, bool):
-        pm_text = str(pm_raw)
-    else:
-        pm_text = None
+    # PM 박스 위치(있으면) — 같은 단일 호출이 inline 텍스트와 함께 좌표도 준다.
+    pm_1000 = normalize_bbox_1000(payload.get("pm_box_bbox"))
+    pm_box_px = bbox_1000_to_pixels(pm_1000, vlm_w, vlm_h) if pm_1000 else None
+
+    # PM crop 을 한 번만 만들어 (1) 디버그 저장(모드 무관, 크롭 검증) (2) 2단계 OCR 에 재사용.
+    pm_crop = crop_pm_region(rgb, pm_box_px) if pm_box_px is not None else None
+    if pm_crop is not None and pm_crop_debug_path is not None:
+        try:
+            save_debug_jpeg(pm_crop, Path(pm_crop_debug_path))
+        except Exception as exc:
+            print(f"[WARNING] PM crop 디버그 저장 실패: {exc}")
+
+    # PM 텍스트 결정: 기본 inline. two_stage 면 crop+OCR 우선(빈 결과면 inline 폴백).
+    pm_text = _coerce_pm_text(payload.get("pm_box_text"))
+    pm_text_source = "inline_vlm"
+    if two_stage and pm_crop is not None and ocr_client is not None:
+        ocr_text = ocr_pm_crop(pm_crop, ocr_client)
+        if ocr_text:
+            pm_text = ocr_text
+            pm_text_source = "ocr_crop"
     pm_mode = pm_text_to_mode(pm_text)
 
     if vlm_bbox is None:
@@ -403,6 +502,7 @@ def detect_sem_box(image: "Image.Image", client: Workflow1VLMClient) -> SemBoxDe
             sharpness=None, blurry=False,
             mode_label=payload.get("mode_label"), confidence=payload.get("confidence"),
             vlm_bbox_px=None, pm_text=pm_text, pm_mode=pm_mode,
+            pm_box_px=pm_box_px, pm_text_source=pm_text_source,
         )
 
     grey_mask = grey_frame_mask(bgr)
@@ -421,12 +521,17 @@ def detect_sem_box(image: "Image.Image", client: Workflow1VLMClient) -> SemBoxDe
         vlm_bbox_px=vlm_bbox,
         pm_text=pm_text,
         pm_mode=pm_mode,
+        pm_box_px=pm_box_px,
+        pm_text_source=pm_text_source,
     )
 
 
 __all__ = [
     "SemBoxDetection",
     "detect_sem_box",
+    "read_pm_via_ocr",
+    "crop_pm_region",
+    "ocr_pm_crop",
     "pm_text_to_mode",
     "grey_frame_mask",
     "snap_box_to_edges",

@@ -16,10 +16,13 @@ from types import SimpleNamespace
 import cv2
 import numpy as np
 
+from PIL import Image
+
 from poc.workflow_3.sem_monitor import sem_box_detect as sbd
 from poc.workflow_3.sem_monitor.sem_box_detect import (
     SemBoxDetection,
     bbox_px_to_1000,
+    crop_pm_region,
     grey_frame_mask,
     pm_text_to_mode,
     sharpness_in_box,
@@ -116,6 +119,92 @@ def test_bbox_px_to_1000():
 
 
 # ------------------------------------------------------------------
+# 2b) PM 2단계(crop + OCR) — locate(단일 호출)→crop→OCR.
+# ------------------------------------------------------------------
+
+
+def test_crop_pm_region():
+    img = Image.new("RGB", (300, 200))
+    box = {"left": 100, "top": 100, "right": 140, "bottom": 120}   # 40x20.
+    crop = crop_pm_region(img, box, pad_ratio=0.5)                 # pad 20x10.
+    # 좌우 각 20px, 상하 각 10px 패딩 → 80x40, 프레임 안.
+    assert crop is not None and crop.size == (80, 40), crop.size
+    # 프레임 경계에서 잘리는 경우(clamp).
+    edge = crop_pm_region(img, {"left": 0, "top": 0, "right": 10, "bottom": 10}, pad_ratio=0.5)
+    assert edge is not None and edge.size[0] <= 300 and edge.size[1] <= 200
+    assert crop_pm_region(img, None) is None
+    print("[OK] test_crop_pm_region")
+
+
+def _install_detect_stubs(monkey_state, *, payload, panel_bbox, ocr_text):
+    """detect_sem_box 의 VLM/OCR 의존성을 stub 으로 교체."""
+    def fake_run(*, image_b64, width, height, client):
+        return payload, panel_bbox
+
+    def fake_ocr(crop, ocr_client):
+        return ocr_text
+
+    for name, fn in [("_run_sem_box_detection", fake_run), ("ocr_pm_crop", fake_ocr)]:
+        monkey_state[name] = getattr(sbd, name)
+        setattr(sbd, name, fn)
+
+
+def _restore_sbd(monkey_state):
+    for name, orig in monkey_state.items():
+        setattr(sbd, name, orig)
+
+
+def test_detect_two_stage_ocr_override():
+    """two_stage: inline=30K(SEM) 이지만 OCR=104 → OCR 우선(OM) + crop 디버그 저장."""
+    payload = {
+        "panel_visible": False, "pm_box_text": "30K",
+        "pm_box_bbox": {"left": 100, "top": 100, "right": 200, "bottom": 150},
+        "mode_label": None, "confidence": 0.5,
+    }
+    state = {}
+    _install_detect_stubs(state, payload=payload, panel_bbox=None, ocr_text="104")
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            crop_path = Path(tmp) / "pm_crop.jpg"
+            detect = sbd.detect_sem_box(
+                Image.new("RGB", (300, 200)), client="dummy",
+                ocr_client="dummy", two_stage=True, pm_crop_debug_path=crop_path,
+            )
+            assert crop_path.exists(), "PM crop 디버그 저장 안 됨"
+    finally:
+        _restore_sbd(state)
+
+    assert detect.pm_text == "104", detect.pm_text
+    assert detect.pm_mode == "OM", detect.pm_mode
+    assert detect.pm_text_source == "ocr_crop", detect.pm_text_source
+    assert detect.pm_box_px is not None
+    print("[OK] test_detect_two_stage_ocr_override")
+
+
+def test_detect_two_stage_ocr_empty_fallback():
+    """two_stage 이지만 OCR 빈 결과 → inline(30K=SEM) 으로 폴백."""
+    payload = {
+        "panel_visible": False, "pm_box_text": "30K",
+        "pm_box_bbox": {"left": 100, "top": 100, "right": 200, "bottom": 150},
+        "mode_label": None, "confidence": 0.5,
+    }
+    state = {}
+    _install_detect_stubs(state, payload=payload, panel_bbox=None, ocr_text=None)
+    try:
+        detect = sbd.detect_sem_box(
+            Image.new("RGB", (300, 200)), client="dummy",
+            ocr_client="dummy", two_stage=True,
+        )
+    finally:
+        _restore_sbd(state)
+
+    assert detect.pm_text == "30K", detect.pm_text
+    assert detect.pm_mode == "SEM", detect.pm_mode
+    assert detect.pm_text_source == "inline_vlm", detect.pm_text_source
+    print("[OK] test_detect_two_stage_ocr_empty_fallback")
+
+
+# ------------------------------------------------------------------
 # 3) feasibility 통합 — 모드 선택 + 좌표 shift + overlay.
 # ------------------------------------------------------------------
 
@@ -140,7 +229,7 @@ def _install_feasibility_stubs(monkey_state, *, detect, best_xy, best_scale, cal
     def fake_build(assets, cond_box_crop=True):
         return {"OM": om_tpl, "SEM": sem_tpl}
 
-    def fake_detect(image, client):
+    def fake_detect(image, client, **kwargs):
         return detect
 
     def fake_compute(template, gray, scales=None, policy=None):
@@ -271,7 +360,10 @@ if __name__ == "__main__":
     test_snap_box_to_edges()
     test_sharpness_in_box()
     test_bbox_px_to_1000()
+    test_crop_pm_region()
+    test_detect_two_stage_ocr_override()
+    test_detect_two_stage_ocr_empty_fallback()
     test_feasibility_pm_mode_and_shift()
     test_feasibility_pm_override_when_far_worse()
     test_feasibility_fallback_when_not_detected()
-    print("\n=== sem_box_detect: 8/8 통과 ===")
+    print("\n=== sem_box_detect: 11/11 통과 ===")

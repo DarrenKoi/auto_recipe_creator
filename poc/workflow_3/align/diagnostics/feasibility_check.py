@@ -87,7 +87,8 @@ class FeasibilityResult:
     pm_text: str | None = None         # PM 박스에서 읽은 배율 텍스트(원문) 또는 None.
     pm_mode: str | None = None         # PM 텍스트 → "OM" | "SEM" | None(모호).
     sem_box_bbox: tuple | None = None  # 검출된 live SEM box (l,t,r,b) 풀프레임 px, 없으면 None.
-    mode_source: str = ""              # modality 결정 근거: "PM(<text>)" | "score" | "".
+    mode_source: str = ""              # modality 결정 근거: "PM(<text>)" | "score_override(...)" | "score".
+    pm_text_source: str = ""           # PM 텍스트 출처: "inline_vlm" | "ocr_crop" | "".
 
 
 def _font_scale(width: int) -> float:
@@ -149,19 +150,41 @@ def _draw_sem_box(canvas, box) -> None:
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 220, 0), 2, cv2.LINE_AA)
 
 
-def _maybe_detect_sem_box(frame_path: Path, vlm_client):
+def _draw_pm_box(canvas, pm_box_px) -> None:
+    """검출된 PM 박스(dict l/t/r/b 픽셀)를 청록 사각형 + 'PM' 라벨로 그린다(있을 때만).
+
+    PM 위치를 overlay 에 남겨, crop(_pm_crop.jpg)이 맞는 영역인지 한눈에 검증하게 한다.
+    SEM box(초록)·align(노랑)과 색이 겹치지 않게 청록을 쓴다.
+    """
+    if not pm_box_px:
+        return
+    l, t = int(pm_box_px["left"]), int(pm_box_px["top"])
+    r, b = int(pm_box_px["right"]), int(pm_box_px["bottom"])
+    cv2.rectangle(canvas, (l, t), (r, b), (255, 255, 0), 2)
+    cv2.putText(canvas, "PM", (l, max(0, t - 6)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2, cv2.LINE_AA)
+
+
+def _maybe_detect_sem_box(frame_path: Path, vlm_client, *, ocr_client=None, pm_two_stage=False):
     """가능하면 live SEM box + PM 모드를 검출한다. client 없거나 실패하면 None.
 
-    개발 PC(Flask VLM 부재)나 VLM 오류에서도 호출부가 전체 프레임 매칭으로
-    안전하게 폴백하도록 예외를 삼키고 None 을 돌려준다.
+    개발 PC(Flask VLM 부재)나 VLM 오류에서도 호출부가 전체 프레임 매칭으로 안전하게
+    폴백하도록 예외를 삼키고 None 을 돌려준다. PM crop 은 캡처 옆 `<stem>_pm_crop.jpg`
+    로 남겨(모드 무관) 크롭 영역을 눈으로 검증하게 한다. two_stage 면 그 crop 을
+    PaddleOCR 로 재독한다.
     """
     if vlm_client is None:
         return None
     try:
         from PIL import Image
 
+        pm_crop_path = frame_path.with_name(frame_path.stem + "_pm_crop.jpg")
         with Image.open(frame_path) as image:
-            return detect_sem_box(image, vlm_client)
+            return detect_sem_box(
+                image, vlm_client,
+                ocr_client=ocr_client, two_stage=pm_two_stage,
+                pm_crop_debug_path=pm_crop_path,
+            )
     except Exception as exc:
         print(f"[WARNING] SEM box 검출 실패(전체 프레임 매칭으로 폴백): {exc}")
         return None
@@ -175,6 +198,8 @@ def mark_align_feasibility(
     cond_box_crop: bool = True,
     reregister_ratio_threshold: float | None = None,
     vlm_client=None,
+    ocr_client=None,
+    pm_two_stage: bool = False,
 ) -> FeasibilityResult:
     """캡처 스크린샷에 보정 가능성을 판정해 overlay(_marked.jpg)+json 으로 남긴다.
 
@@ -221,6 +246,8 @@ def mark_align_feasibility(
     color_bgr = _VERDICT_STYLE["no_assets"][1]
     pm_text = None
     pm_mode = None
+    pm_text_source = ""
+    pm_box_px = None
     sem_box_bbox = None
     mode_source = ""
     sembox_state = "off"   # off(미수행) | located | not_located.
@@ -229,13 +256,17 @@ def mark_align_feasibility(
         gray = load_gray(frame_path)   # 전체 캡처 창 grayscale.
 
         # ---- live SEM box 검출(가능하면) → PM 모드 + box ROI. ----
-        detect = _maybe_detect_sem_box(frame_path, vlm_client)
+        detect = _maybe_detect_sem_box(
+            frame_path, vlm_client, ocr_client=ocr_client, pm_two_stage=pm_two_stage
+        )
         box = None              # (l, t, r, b) 풀프레임 px.
         origin = (0, 0)         # 매칭 ROI 의 풀프레임 원점.
         match_gray = gray
         if detect is not None:
             pm_text = detect.pm_text
             pm_mode = detect.pm_mode
+            pm_text_source = detect.pm_text_source
+            pm_box_px = detect.pm_box_px
             if detect.detected and detect.bbox_px:
                 b = detect.bbox_px
                 l, t = int(b["left"]), int(b["top"])
@@ -302,6 +333,7 @@ def mark_align_feasibility(
         )
         th, tw = template.raw_image.shape[:2]
         _draw_sem_box(color, box)   # 먼저 박스(초록) → 그 위에 match/align 마크.
+        _draw_pm_box(color, pm_box_px)   # PM 박스(청록) — crop 검증용.
         _draw_match_marks(color, match_xy, align_xy, (tw, th), best_scale, color_bgr)
 
     # ---- 배너 텍스트 ----
@@ -313,7 +345,10 @@ def mark_align_feasibility(
             f"decision={decision} score={score:.3f} 2nd/best={sr_txt} "
             f"scale={best_scale:.2f} mode={modality or '-'}[{mode_source or '-'}]"
         )
-        lines.append(f"sembox={sembox_state} pm={pm_text or '-'}->{pm_mode or '-'}")
+        lines.append(
+            f"sembox={sembox_state} pm={pm_text or '-'}->{pm_mode or '-'}"
+            f"[{pm_text_source or '-'}]"
+        )
     else:
         lines.append(f"recipe={recipe_id or '-'} (rcp OM/SEM not found)")
     lines.append(f"consensus: {consensus_events} S events ({consensus_images} imgs)")
@@ -337,6 +372,8 @@ def mark_align_feasibility(
         "mode_source": mode_source,
         "pm_text": pm_text,
         "pm_mode": pm_mode,
+        "pm_text_source": pm_text_source,
+        "pm_box_px": pm_box_px,
         "sem_box_state": sembox_state,
         "sem_box_bbox": list(sem_box_bbox) if sem_box_bbox else None,
         "consensus_events": consensus_events,
@@ -362,7 +399,7 @@ def mark_align_feasibility(
         match_xy, align_xy, modality, consensus_events, consensus_images,
         out_marked, out_json, frame_wh,
         pm_text=pm_text, pm_mode=pm_mode, sem_box_bbox=sem_box_bbox,
-        mode_source=mode_source,
+        mode_source=mode_source, pm_text_source=pm_text_source,
     )
 
 

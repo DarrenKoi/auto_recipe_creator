@@ -371,12 +371,17 @@ def wait_for_remote_monitoring_window(
     timeout_sec: float = 6.0,
     poll_interval_sec: float = 0.5,
     max_attempts: int | None = None,
+    abort_check=None,
 ) -> tuple[object | None, str, str]:
     """툴 창이 나타날 때까지 폴링한다.
 
     `max_attempts` 가 주어지면 그 횟수만큼만 탐색하고 중단한다. RCS 가 다른
     사용자에게 점유돼 'select'(공유/종료 선택) 팝업이 떠 tool 창이 안 열리는 경우
     무한정 폴링 스팸을 막기 위한 안전 상한이다(timeout 보다 먼저 도달하면 중단).
+
+    `abort_check` (Callable[[], bool]) 가 주어지면 매 시도 전에 호출해, True 면 즉시
+    중단하고 `(None, "", "")` 를 돌려준다(점유 'select' 팝업 조기 감지 → 접속 포기). 이
+    함수는 VLM 을 모른다 — 호출부가 bool 판정을 주입한다(레이어 분리). 예외는 호출부 책임.
     """
     print(
         f"[INFO] Remote Monitoring System 창 대기 시작: "
@@ -388,6 +393,13 @@ def wait_for_remote_monitoring_window(
 
     while time.time() < deadline:
         attempt += 1
+        # 점유 'select' 팝업 조기 감지 — 떠 있으면 창 탐색을 더 돌지 않고 즉시 포기.
+        if abort_check is not None and abort_check():
+            print(
+                f"[INFO] Remote Monitoring System 창 대기 중단 — 점유 'select' 팝업 감지 "
+                f"(attempt={attempt}, tool_name={tool_name!r})."
+            )
+            return None, "", ""
         tool_window, window_title, backend = find_remote_monitoring_window(tool_name)
         if tool_window is not None:
             print(

@@ -51,8 +51,12 @@ class Workflow3Settings(WorkflowSettings):
     cycle_enabled: bool = True
     connect_action_enabled: bool = True  # tool 더블클릭 수행 여부(off=인식만 dry-run).
     connect_window_timeout_sec: int = 3
-    rcs_window_max_trials: int = 10
+    rcs_window_max_trials: int = 3  # 점유 'select' 팝업 조기 감지가 있어 상한을 낮춤(과거 10).
     rcs_recovery_enabled: bool = False  # RCS 재실행+재로그인 복구(검증 전 기본 off).
+    # 점유 'select' 팝업(타 사용자 사용 중) 검출 — 떠 있으면 접속 포기 + cooldown 후 재시도.
+    occupied_popup_detect_enabled: bool = True
+    occupied_popup_vlm_service: str = "ui-venus"  # 제목 검출 후 옵션 확인용(route_slug).
+    occupied_retry_cooldown_sec: float = 300.0    # 점유로 포기한 tool 재시도 유예(초).
     keep_awake: bool = True
     # 자동 GUI 구간 동안 사용자 물리 마우스/키보드 입력 차단(Windows BlockInput).
     # 사용자가 다른 앱을 쓰면 foreground lock 으로 RCS 가 안 떠서 방해되는 문제 대응.
@@ -115,6 +119,10 @@ class Workflow3Settings(WorkflowSettings):
     # 되돌리고 (3) box 를 overlay 에 그릴지. off 면 기존 전체 창 매칭으로 폴백한다.
     sem_box_detect_enabled: bool = True
     sem_box_vlm_service: str = "ui-venus"  # route_slug (모델명 "ui-venus-1.5-8b" 아님).
+    # PM 모드 읽기 2단계: off(기본)=단일 호출의 inline pm_box_text. on=같은 호출이 준 PM
+    # 위치를 crop 해 PaddleOCR 로 재독(작은 영역 정확도↑). PM crop 은 항상 디버그 저장된다.
+    pm_two_stage_ocr_enabled: bool = False
+    pm_ocr_service: str = "paddleocr-vl-1.5"  # slug==모델명(비대칭). crop OCR 용.
 
     # --- CV 보정 ---
     correction_enabled: bool = True
@@ -156,7 +164,10 @@ def load_workflow3_settings() -> Workflow3Settings:
         cycle_enabled=env_flag("ALIGN_FAIL_RECORD_CYCLE", default=True),
         connect_action_enabled=env_flag("ALIGN_FAIL_CONNECT_ACTION", default=True),
         connect_window_timeout_sec=env_int("ALIGN_FAIL_CONNECT_WINDOW_TIMEOUT_SEC", 3),
-        rcs_window_max_trials=env_int("ALIGN_FAIL_RCS_WINDOW_MAX_TRIALS", 10),
+        rcs_window_max_trials=env_int("ALIGN_FAIL_RCS_WINDOW_MAX_TRIALS", 3),
+        occupied_popup_detect_enabled=env_flag("ALIGN_FAIL_OCCUPIED_POPUP_DETECT", default=True),
+        occupied_popup_vlm_service=_env_str("ALIGN_FAIL_OCCUPIED_POPUP_SERVICE", "ui-venus"),
+        occupied_retry_cooldown_sec=env_float("ALIGN_FAIL_OCCUPIED_COOLDOWN_SEC", 300.0),
         rcs_recovery_enabled=env_flag("ALIGN_FAIL_RCS_RECOVERY", default=False),
         keep_awake=env_flag("ALIGN_FAIL_KEEP_AWAKE", default=True),
         block_input_enabled=env_flag("ALIGN_FAIL_BLOCK_INPUT", default=False),
@@ -176,6 +187,8 @@ def load_workflow3_settings() -> Workflow3Settings:
         reposition_preview_enabled=env_flag("ALIGN_FAIL_REPOSITION_PREVIEW", default=False),
         sem_box_detect_enabled=env_flag("ALIGN_FAIL_SEM_BOX_DETECT", default=True),
         sem_box_vlm_service=_env_str("ALIGN_FAIL_SEM_BOX_SERVICE", "ui-venus"),
+        pm_two_stage_ocr_enabled=env_flag("ALIGN_FAIL_PM_TWO_STAGE_OCR", default=False),
+        pm_ocr_service=_env_str("ALIGN_FAIL_PM_OCR_SERVICE", "paddleocr-vl-1.5"),
         correction_enabled=env_flag("ALIGN_FAIL_CORRECTION", default=True),
         correction_dry_run=correction_dry_run,
         ok_button_vlm_service=_env_str("ALIGN_OK_BUTTON_VLM_SERVICE", "ui-venus"),

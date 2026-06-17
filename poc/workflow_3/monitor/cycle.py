@@ -283,12 +283,51 @@ def _exec_connect_tool(step, context, settings: Workflow3Settings) -> StepResult
 
 
 def _exec_wait_tool_window(step, context, settings: Workflow3Settings) -> StepResult:
-    """④ tool 창 대기 — RCS 점유(select 팝업) 시 건드리지 않고 포기."""
+    """④ tool 창 대기 — RCS 점유(select 팝업) 시 건드리지 않고 포기.
+
+    점유 검출(opt-in): 매 시도 전 detect_select_popup 으로 'select' 팝업을 조기 감지해,
+    떠 있으면 창 탐색을 더 돌지 않고 즉시 포기한다(세 옵션은 클릭하지 않음). 검출은 제목
+    열거 + (가능하면) VLM 확인의 hybrid 이며, 실패해도 접속을 막지 않는다(전체 흐름은
+    기존 '미발견 → rcs_occupied' 로 폴백). 점유 조기 감지 시 failure_class 를 구분해
+    상위 루프가 cooldown 후 재시도하도록 한다.
+    """
     started_at = time.time()
     eqp_id = context["eqp_id"]
+
+    occupied = {"select": False}
+    abort_check = None
+    if settings.occupied_popup_detect_enabled:
+        popup_client = None
+        try:
+            from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
+
+            # 짧은 timeout: 점유 확인 VLM 이 접속 흐름을 길게 막지 않게 한다.
+            popup_client = Workflow1VLMClient(
+                settings.occupied_popup_vlm_service, timeout_sec=15.0
+            )
+        except Exception as exc:
+            print(f"[WARNING] 점유 팝업 VLM client 생성 실패(제목만으로 검출): {exc}")
+
+        def abort_check() -> bool:
+            from poc.workflow_3.monitor.occupied_popup import detect_select_popup
+
+            if detect_select_popup(popup_client):
+                occupied["select"] = True
+                return True
+            return False
+
     window, title, backend = wait_for_remote_monitoring_window(
-        eqp_id, max_attempts=settings.rcs_window_max_trials
+        eqp_id, max_attempts=settings.rcs_window_max_trials, abort_check=abort_check
     )
+    if occupied["select"]:
+        return _make_result(
+            step, "failed", started_at, settings,
+            failure_class="rcs_occupied_select",
+            error_message=(
+                "점유 'select'(공유/종료) 팝업 감지 - 접속 포기, 옵션 미선택(사람 판단 "
+                "영역). 다른 사용자 해제 후 cooldown 지나면 재시도."
+            ),
+        )
     if window is None:
         return _make_result(
             step, "failed", started_at, settings,
@@ -729,6 +768,7 @@ def _check_feasibility_and_preview(
     # live SEM box 검출용 VLM client(opt-in). 빌드 실패해도 feasibility 는 전체 창
     # 매칭으로 폴백하므로 None 으로 두고 진행한다(개발 PC/Flask 부재 안전).
     sem_box_client = None
+    ocr_client = None
     if settings.sem_box_detect_enabled:
         try:
             from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
@@ -739,6 +779,11 @@ def _check_feasibility_and_preview(
             sem_box_client = Workflow1VLMClient(
                 settings.sem_box_vlm_service, timeout_sec=15.0
             )
+            # PM 2단계 OCR(opt-in)일 때만 OCR client 추가 — crop 재독용(동일 짧은 timeout).
+            if settings.pm_two_stage_ocr_enabled:
+                ocr_client = Workflow1VLMClient(
+                    settings.pm_ocr_service, timeout_sec=15.0
+                )
         except Exception as exc:
             print(f"[WARNING] SEM box VLM client 생성 실패(전체 창 매칭 폴백): {exc}")
     try:
@@ -751,6 +796,8 @@ def _check_feasibility_and_preview(
             cond_box_crop=settings.cond_box_crop,
             reregister_ratio_threshold=settings.reregister_second_ratio_threshold,
             vlm_client=sem_box_client,
+            ocr_client=ocr_client,
+            pm_two_stage=settings.pm_two_stage_ocr_enabled,
         )
     except Exception as exc:
         print(f"[WARNING] feasibility 분석 실패(캡처는 유지): {exc}")

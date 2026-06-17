@@ -275,23 +275,42 @@ def _set_keep_awake(enable: bool) -> None:
 # ------------------------------------------------------------------
 
 
+# 점유(다른 사용자 사용 중)로 접속을 포기한 사이클의 failure_class — active 미등록 + cooldown.
+_OCCUPIED_FAILURE_CLASSES = {"rcs_occupied", "rcs_occupied_select"}
+
+
 def process_fail_rows(
     fails,
     active_tools: set[str],
     settings: Workflow3Settings,
+    occupied_cooldown: dict | None = None,
 ) -> int:
     """EQP_ID 기준 edge-triggered 로 신규 알람마다 사이클을 수행한다.
 
     - 같은 EQP_ID 에서 여러 알람 code 가 와도 하나로 취급.
     - 이전 poll 에서 이미 활성이던 EQP_ID 는 다시 처리하지 않음.
     - 이번 poll 에 사라진 EQP_ID 는 `active_tools` 에서 제거 (복구 시 재처리 가능).
+    - 점유(select 팝업)로 포기한 EQP_ID 는 `active_tools` 에 넣지 않고 `occupied_cooldown`
+      에 만료시각을 기록해, cooldown 동안 재시도를 건너뛴다(점유는 일시적이므로 만료 후 또는
+      알람 해제 후 재시도 가능). `occupied_cooldown` 은 {eqp_id: 만료 epoch} dict.
 
-    `active_tools` 는 in-place 로 갱신된다. 새로 처리한 개수를 반환.
+    `active_tools`/`occupied_cooldown` 는 in-place 로 갱신된다. 새로 처리한 개수를 반환.
     """
+    if occupied_cooldown is None:
+        occupied_cooldown = {}
     by_tool = _collapse_rows_by_tool(fails)
     current_tools = set(by_tool.keys())
 
-    new_tools = current_tools - active_tools
+    # cooldown 만료/알람해제 정리 → 남은 것은 '아직 점유 추정' 으로 이번 poll 에서 건너뜀.
+    now = time.time()
+    for eqp_id in list(occupied_cooldown):
+        if eqp_id not in current_tools or now >= occupied_cooldown[eqp_id]:
+            del occupied_cooldown[eqp_id]
+    cooling = current_tools & set(occupied_cooldown)
+    for eqp_id in sorted(cooling):
+        print(f"[INFO] EQP_ID={eqp_id} 점유 cooldown 중 - 이번 poll 재시도 건너뜀")
+
+    new_tools = current_tools - active_tools - cooling
     cleared_tools = active_tools - current_tools
 
     for eqp_id in sorted(cleared_tools):
@@ -347,7 +366,15 @@ def process_fail_rows(
 
         append_cycle_manifest(info, cycle)
 
-        active_tools.add(eqp_id)
+        # 점유(select)로 포기한 경우: active 에 넣지 않고 cooldown 등록 → 만료 후 재시도.
+        if cycle.failure_class in _OCCUPIED_FAILURE_CLASSES:
+            occupied_cooldown[eqp_id] = time.time() + settings.occupied_retry_cooldown_sec
+            print(
+                f"[INFO] EQP_ID={eqp_id} 점유(select) 추정 - active 미등록, "
+                f"{settings.occupied_retry_cooldown_sec:.0f}s 후 재시도"
+            )
+        else:
+            active_tools.add(eqp_id)
         newly_handled += 1
 
     return newly_handled
@@ -367,6 +394,7 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
         _set_keep_awake(True)
 
     active_tools: set[str] = set()
+    occupied_cooldown: dict = {}  # {eqp_id: 재시도 가능 epoch} — 점유(select)로 포기한 tool.
     idle_logged = False  # "Align Fail 없음" 은 idle 진입 시 한 번만 로깅 (poll 마다 X)
 
     print(
@@ -403,7 +431,7 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
                     idle_logged = True
             else:
                 idle_logged = False
-                count = process_fail_rows(fails, active_tools, settings)
+                count = process_fail_rows(fails, active_tools, settings, occupied_cooldown)
                 if count == 0:
                     print(
                         f"[INFO] {datetime.now().strftime('%H:%M:%S')} - "

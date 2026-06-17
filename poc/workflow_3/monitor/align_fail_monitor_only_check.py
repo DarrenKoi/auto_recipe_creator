@@ -255,7 +255,7 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
         f"성공이미지수집={'on' if settings.gather_enabled else 'off'}, "
         f"보정가능성마킹={'on' if settings.feasibility_mark_enabled else 'off'}, "
         f"보정점미리보기(cursor)={'on' if settings.reposition_preview_enabled else 'off'}, "
-        f"보정탐색(zoom-out)={'on' if settings.zoom_probe_enabled else 'off'})"
+        f"보정탐색(zoom in/out)={'on' if settings.zoom_probe_enabled else 'off'})"
     )
     print(f"[INFO] 알람 로그: {ALARM_LOG_PATH}")
     print(f"[INFO] 점검 manifest: {CYCLE_MANIFEST_PATH}")

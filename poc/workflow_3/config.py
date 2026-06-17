@@ -124,19 +124,25 @@ class Workflow3Settings(WorkflowSettings):
     pm_two_stage_ocr_enabled: bool = False
     pm_ocr_service: str = "paddleocr-vl-1.5"  # slug==모델명(비대칭). crop OCR 용.
 
-    # --- 점검 모니터 zoom-out(wheel-down) 보정탐색 ---
+    # --- 점검 모니터 zoom in/out 보정탐색(ladder) ---
     # feasibility verdict 가 모호(ambiguous)/부재(not_visible)라 "어느 점이 align point 인지"
-    # 가릴 수 없을 때, tool 이 열린 동안 live SEM box 위에서 mouse wheel 을 한 칸씩 내려
-    # (배율↓) 더 넓은 FOV 의 lower-mag 화면을 단계별로 저장한다. 클릭/recenter 없음 = 순수
-    # 캡처용. PM readout 으로 배율이 실제 낮아졌는지 확인만 한다(하드 게이트 아님). 기본
-    # off(opt-in) + SAFE_MODE off 일 때만 실제 wheel(켜도 action_enabled=False 면 DRY-RUN
-    # 로그만). 배율은 닫기 전 복원하지 않는다(장비는 fail 정지 → 엔지니어 재셋업). PM 버튼
-    # 드롭다운 방식은 추후 옵션(미구현). production 보정과 무관.
+    # 가릴 수 없을 때, tool 이 열린 동안 live SEM box 안으로 커서를 옮긴 뒤 mouse wheel 로
+    # fail 시점 배율 기준 OUT(배율↓) · IN(배율↑) 양방향으로 한 칸씩 훑어 각 배율(rung)의
+    # 화면을 저장한다. zoom-out 만으로는 키를 못 찾으므로(좁은 FOV→넓게 보고, 다시 좁혀
+    # 정확한 점 확인) 양방향이 필요하다. 클릭/recenter 없음 = 순수 wheel+캡처. rematch 가
+    # 켜져 있으면 각 rung 에서 rcp 키를 재매칭(mark_align_feasibility)해 키가 또렷해지는
+    # 배율을 표시한다. 기본 off(opt-in) + SAFE_MODE off 일 때만 실제 wheel(켜도
+    # action_enabled=False 면 DRY-RUN 로그만). wheel 대상은 반드시 검출된 live SEM box
+    # 중심(없으면 탐색 생략 — 창 중심에 잘못 스크롤 방지). 배율 복원은 arm 전환 시 baseline
+    # 복귀에만 쓰고 종료 시엔 복원하지 않는다(장비 fail 정지 → 엔지니어 재셋업). PM 버튼
+    # 드롭다운(절대 배율 선택) 방식은 추후 옵션(미구현). production 보정과 무관.
     zoom_probe_enabled: bool = False
-    zoom_probe_steps: int = 2                   # wheel-down 단계 수(저장 이미지 수).
-    zoom_probe_scroll_dy: int = -1              # 음수 = wheel down = 배율↓ (pynput scroll dy).
+    zoom_probe_steps: int = 2                   # OUT(배율↓) 방향 단계 수.
+    zoom_probe_in_steps: int = 2               # IN(배율↑) 방향 단계 수.
+    zoom_probe_scroll_dy: int = -1              # 음수 = wheel down = OUT = 배율↓ (pynput scroll dy). IN 은 부호 반전.
     zoom_probe_scrolls_per_step: int = 1        # 단계당 scroll notch 수(1 notch≠1 PM step 시 튜닝).
     zoom_probe_settle_sec: float = 0.6          # wheel 후 FOV 재렌더+커서 안착 대기(초).
+    zoom_probe_rematch_enabled: bool = True     # 각 rung 에서 rcp 키 재매칭(off 면 캡처만).
 
     # --- CV 보정 ---
     correction_enabled: bool = True
@@ -205,9 +211,11 @@ def load_workflow3_settings() -> Workflow3Settings:
         pm_ocr_service=_env_str("ALIGN_FAIL_PM_OCR_SERVICE", "paddleocr-vl-1.5"),
         zoom_probe_enabled=env_flag("ALIGN_FAIL_ZOOM_PROBE", default=False),
         zoom_probe_steps=env_int("ALIGN_FAIL_ZOOM_PROBE_STEPS", 2),
+        zoom_probe_in_steps=env_int("ALIGN_FAIL_ZOOM_PROBE_IN_STEPS", 2),
         zoom_probe_scroll_dy=env_int("ALIGN_FAIL_ZOOM_PROBE_SCROLL_DY", -1),
         zoom_probe_scrolls_per_step=env_int("ALIGN_FAIL_ZOOM_PROBE_SCROLLS_PER_STEP", 1),
         zoom_probe_settle_sec=env_float("ALIGN_FAIL_ZOOM_PROBE_SETTLE_SEC", 0.6),
+        zoom_probe_rematch_enabled=env_flag("ALIGN_FAIL_ZOOM_PROBE_REMATCH", default=True),
         correction_enabled=env_flag("ALIGN_FAIL_CORRECTION", default=True),
         correction_dry_run=correction_dry_run,
         ok_button_vlm_service=_env_str("ALIGN_OK_BUTTON_VLM_SERVICE", "ui-venus"),

@@ -74,6 +74,10 @@ _CHECK_CAPTURE_SETTLE_SEC = env_float("ALIGN_FAIL_CHECK_SETTLE_SEC", 2.0)
 # align point 커서 이동 후 안착 화면 재캡처 전 대기(초) — 커서가 멈춘 뒤 한 장.
 _PREVIEW_SETTLE_SEC = env_float("ALIGN_FAIL_REPOSITION_PREVIEW_SETTLE_SEC", 0.4)
 
+# zoom ladder: 커서를 SEM box 로 옮긴 뒤 wheel 전 짧은 hover 안착(초) — 일부 Windows
+# 컨트롤은 커서가 막 텔레포트한 직후 wheel 을 무시하므로 hover 를 잠깐 인식시킨다.
+_ZOOM_AIM_SETTLE_SEC = env_float("ALIGN_FAIL_ZOOM_AIM_SETTLE_SEC", 0.15)
+
 # RCS GUI 의존 모듈(pywinauto/VLM)은 선택 의존성 — 없는 환경(개발 PC)에서도
 # 본체 import 는 살아 있어야 한다(기존 align_fail_alarm_record 의 패턴).
 try:
@@ -826,9 +830,9 @@ def _check_feasibility_and_preview(
     if settings.reposition_preview_enabled:
         _run_reposition_preview(context, result, feas, settings)
 
-    # ---- (opt-in) 모호/부재 verdict 면 wheel-down lower-mag 보정탐색. ----
+    # ---- (opt-in) 모호/부재 verdict 면 zoom in/out ladder 보정탐색. ----
     # preview 와 독립 — feasibility 만 계산되면 verdict 로 발동을 판정한다.
-    _run_zoom_out_probe(context, result, feas, settings, sem_box_client, ocr_client)
+    _run_zoom_ladder(context, result, feas, settings, sem_box_client, ocr_client)
 
 
 def _run_reposition_preview(
@@ -877,7 +881,16 @@ def _run_reposition_preview(
         print(f"[WARNING] 커서 안착 화면 재캡처 실패: {exc}")
 
 
-def _run_zoom_out_probe(
+def _normalize_bbox(bbox):
+    """SEM box bbox(dict l/t/r/b 또는 tuple)를 (l,t,r,b) int tuple 로 정규화. None→None."""
+    if bbox is None:
+        return None
+    if isinstance(bbox, dict):
+        return (int(bbox["left"]), int(bbox["top"]), int(bbox["right"]), int(bbox["bottom"]))
+    return (int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))
+
+
+def _run_zoom_ladder(
     context: dict,
     result: "CycleResult",
     feas,
@@ -885,13 +898,16 @@ def _run_zoom_out_probe(
     sem_box_client,
     ocr_client,
 ) -> None:
-    """모호/부재 verdict 일 때 live SEM box 위에서 wheel 을 한 칸씩 내려(배율↓) lower-mag
-    화면을 단계별로 저장한다(클릭 없음 = 순수 캡처).
+    """모호/부재 verdict 일 때 live SEM box 안에서 wheel 로 fail 배율 기준 OUT(↓)·IN(↑)
+    양방향을 한 칸씩 훑어 각 배율(rung)의 화면을 저장한다(클릭/recenter 없음 = 순수 wheel+캡처).
 
-    "어느 점이 align point 인지" 가릴 수 없을 때, 더 넓은 FOV 의 맥락 이미지를 모아
-    엔지니어/후속 매칭에 넘기는 데이터 수집용이다. 각 단계마다 풀프레임 + (검출되면)
-    live SEM box ROI crop 을 저장하고, PM readout 으로 배율이 실제 낮아졌는지 확인만
-    한다(하드 게이트 아님 — wheel↔PM step 미보정). 배율은 복원하지 않는다.
+    zoom-out 만으로는 키를 못 찾으므로(좁은 FOV→넓게 보고, 다시 좁혀 정확한 점 확인)
+    양방향이 필요하다. rematch 가 켜져 있으면 각 rung 에서 rcp 키를 재매칭해(mark_align_
+    feasibility) 키가 또렷해지는 배율과 그 align point 를 표시(_marked.jpg)한다.
+
+    핵심: wheel 은 반드시 **검출된 live SEM box 중심** 위에서 건다. 박스를 못 찾으면
+    창 중심에 잘못 스크롤하지 않도록 탐색을 생략한다. 매 스크롤 전 커서를 박스로 다시
+    옮기고(hover 안착) 창을 활성화해 wheel 이 박스 위에서 걸리게 한다.
 
     teardown(close)을 막지 않도록 전체를 try/except 로 감싼다. tool 창이 닫히기 전에
     호출돼야 한다(image→screen 변환·재캡처가 살아 있는 창을 필요로 함).
@@ -899,128 +915,228 @@ def _run_zoom_out_probe(
     if not settings.zoom_probe_enabled:
         return
     if feas.verdict not in _ZOOM_PROBE_VERDICTS:
-        print(f"[INFO] zoom-out 보정탐색 생략: verdict={feas.verdict} (대상 아님)")
+        print(f"[INFO] zoom ladder 생략: verdict={feas.verdict} (대상 아님)")
         return
     tool_window = context.get("tool_window")
     if feas.frame_wh is None or tool_window is None:
-        print(f"[INFO] zoom-out 보정탐색 생략: frame_wh/tool_window 없음 (verdict={feas.verdict})")
+        print(f"[INFO] zoom ladder 생략: frame_wh/tool_window 없음 (verdict={feas.verdict})")
         return
-    if image_point_to_screen is None or scroll_at_screen is None:
-        print("[INFO] zoom-out 보정탐색 생략: window/mouse util 비활성(개발 PC)")
+    if image_point_to_screen is None or scroll_at_screen is None or move_cursor_to_screen is None:
+        print("[INFO] zoom ladder 생략: window/mouse util 비활성(개발 PC)")
         return
 
     try:
+        from poc.workflow_3.align.diagnostics.feasibility_check import mark_align_feasibility
         from poc.workflow_3.sem_monitor.sem_box_detect import (
             detect_sem_box,
             parse_pm_magnification,
         )
 
-        fw, fh = int(feas.frame_wh[0]), int(feas.frame_wh[1])
-        # scroll 중심 = live SEM box 중심(있으면), 없으면 프레임 중심.
-        if feas.sem_box_bbox is not None:
-            l, t, r, b = (int(v) for v in feas.sem_box_bbox)
-            cx, cy = (l + r) // 2, (t + b) // 2
-        else:
-            cx, cy = fw // 2, fh // 2
-        screen = image_point_to_screen(
-            tool_window, {"x": cx, "y": cy}, image_size=feas.frame_wh
-        )
-        if screen is None:
-            print("[WARNING] zoom-out 보정탐색: image→screen 변환 실패 - 생략")
-            return
-
+        eqp_id = context.get("eqp_id", "")
+        recipe_id = context.get("recipe_id", "")
         capture_dir = Path(context["capture_path"]).parent
         tag = context["tag"]
         baseline_mag = parse_pm_magnification(feas.pm_text)
+
+        def _box_center_screen(bbox):
+            bbox = _normalize_bbox(bbox)
+            if bbox is None:
+                return None
+            l, t, r, b = bbox
+            return image_point_to_screen(
+                tool_window, {"x": (l + r) // 2, "y": (t + b) // 2}, image_size=feas.frame_wh
+            )
+
+        # --- wheel 대상 = live SEM box 중심. feas 에 없으면 새 캡처로 1회 재검출. ---
+        box = _normalize_bbox(feas.sem_box_bbox)
+        if box is None and sem_box_client is not None:
+            try:
+                det0 = detect_sem_box(
+                    capture_window(tool_window), sem_box_client,
+                    ocr_client=ocr_client, two_stage=settings.pm_two_stage_ocr_enabled,
+                )
+                box = _normalize_bbox(det0.bbox_px)
+            except Exception as exc:
+                print(f"[WARNING] zoom ladder: 초기 SEM box 재검출 실패: {exc}")
+        screen = _box_center_screen(box)
+        if screen is None:
+            print(
+                "[WARNING] zoom ladder 생략: live SEM box 위치 불명 → wheel 대상 없음. "
+                "창 중심 오스크롤 방지로 중단(ALIGN_FAIL_SEM_BOX_DETECT 활성/VLM 연결 확인)."
+            )
+            return
+
+        # tool 창 포커스 — 일부 Windows 컨트롤은 포커스 없으면 wheel 을 무시한다.
+        if activate_window is not None:
+            try:
+                activate_window(tool_window)
+            except Exception:
+                pass
+
+        per = max(1, settings.zoom_probe_scrolls_per_step)
+        dy_out = settings.zoom_probe_scroll_dy
+        out_n = max(0, settings.zoom_probe_steps)
+        in_n = max(0, settings.zoom_probe_in_steps)
+        rungs: list[dict] = []
+
         print(
-            f"[INFO] zoom-out 보정탐색 시작: verdict={feas.verdict} "
-            f"center=({cx},{cy})→screen=({screen['x']},{screen['y']}) "
-            f"steps={settings.zoom_probe_steps} dy={settings.zoom_probe_scroll_dy} "
+            f"[INFO] zoom ladder 시작: verdict={feas.verdict} "
+            f"box_center→screen=({screen['x']},{screen['y']}) out={out_n} in={in_n} "
+            f"dy={dy_out} per={per} rematch={settings.zoom_probe_rematch_enabled} "
             f"baseline_pm={feas.pm_text!r}({baseline_mag})"
             f"{'' if settings.action_enabled else ' [dry-run]'}"
         )
 
-        prev_mag = baseline_mag
-        steps: list[dict] = []
-        for step in range(1, max(1, settings.zoom_probe_steps) + 1):
-            for _ in range(max(1, settings.zoom_probe_scrolls_per_step)):
-                scroll_at_screen(
-                    screen, settings.zoom_probe_scroll_dy, "zoom_probe", step,
-                    action_enabled=settings.action_enabled,
+        def _aim_and_scroll(dy, idx):
+            # 매 스크롤 전 커서를 (갱신된) SEM box 중심으로 다시 옮겨 wheel 이 박스 위에서 걸리게.
+            nonlocal screen
+            if screen is not None:
+                move_cursor_to_screen(
+                    screen, f"zoom_ladder_aim{idx}", action_enabled=settings.action_enabled
                 )
+                if _ZOOM_AIM_SETTLE_SEC > 0:
+                    time.sleep(_ZOOM_AIM_SETTLE_SEC)
+                for _ in range(per):
+                    scroll_at_screen(
+                        screen, dy, "zoom_ladder", idx, action_enabled=settings.action_enabled
+                    )
             if settings.zoom_probe_settle_sec > 0:
                 time.sleep(settings.zoom_probe_settle_sec)
 
+        def _capture_rung(label):
+            nonlocal screen
             image = capture_window(tool_window)
-            full_path = capture_dir / f"{tag}_rcs_zoom{step}.jpg"
+            full_path = capture_dir / f"{tag}_rcs_zoom_{label}.jpg"
             save_debug_jpeg(image, full_path)
-
-            # 새 프레임에서 SEM box 재검출 → (1) ROI crop 저장 (2) PM 재독으로 배율 확인.
-            pm_text = None
-            sembox_path = None
-            if sem_box_client is not None:
+            rung = {
+                "label": label, "full_path": str(full_path), "verdict": None,
+                "decision": None, "score": None, "second_ratio": None,
+                "pm_text": None, "magnification": None, "align_xy": None,
+                "marked_path": None, "sembox_path": None,
+            }
+            new_box = None
+            if settings.zoom_probe_rematch_enabled:
+                try:
+                    fr = mark_align_feasibility(
+                        full_path, eqp_id=eqp_id, recipe_id=recipe_id,
+                        cond_box_crop=settings.cond_box_crop,
+                        reregister_ratio_threshold=settings.reregister_second_ratio_threshold,
+                        vlm_client=sem_box_client, ocr_client=ocr_client,
+                        pm_two_stage=settings.pm_two_stage_ocr_enabled,
+                    )
+                    rung.update(
+                        verdict=fr.verdict, decision=fr.decision, score=fr.score,
+                        second_ratio=fr.second_ratio, pm_text=fr.pm_text,
+                        magnification=parse_pm_magnification(fr.pm_text),
+                        align_xy=list(fr.align_xy) if fr.align_xy is not None else None,
+                        marked_path=str(fr.marked_path) if fr.marked_path is not None else None,
+                    )
+                    new_box = _normalize_bbox(fr.sem_box_bbox)
+                except Exception as exc:
+                    print(f"[WARNING] zoom ladder {label} 재매칭 실패: {exc}")
+            elif sem_box_client is not None:
+                # 재매칭 off → SEM box 만 검출(다음 조준 + ROI crop + PM 확인).
                 try:
                     det = detect_sem_box(
-                        image, sem_box_client,
-                        ocr_client=ocr_client,
+                        image, sem_box_client, ocr_client=ocr_client,
                         two_stage=settings.pm_two_stage_ocr_enabled,
                     )
-                    pm_text = det.pm_text
-                    if det.bbox_px is not None:
-                        bb = det.bbox_px
-                        crop = image.crop((bb["left"], bb["top"], bb["right"], bb["bottom"]))
-                        sembox_path = capture_dir / f"{tag}_rcs_zoom{step}_sembox.jpg"
-                        save_debug_jpeg(crop, sembox_path)
+                    rung["pm_text"] = det.pm_text
+                    rung["magnification"] = parse_pm_magnification(det.pm_text)
+                    new_box = _normalize_bbox(det.bbox_px)
                 except Exception as exc:
-                    print(f"[WARNING] zoom-out step{step} SEM box 재검출 실패: {exc}")
+                    print(f"[WARNING] zoom ladder {label} SEM box 검출 실패: {exc}")
 
-            new_mag = parse_pm_magnification(pm_text)
-            if new_mag is not None and prev_mag is not None:
-                decreased = new_mag < prev_mag
-                arrow = "↓" if decreased else ("=" if new_mag == prev_mag else "↑")
-                print(
-                    f"[INFO] zoom-out step{step}: PM {prev_mag}{arrow}{new_mag} "
-                    f"(text={pm_text!r}) → {full_path.name}"
-                )
-            else:
-                decreased = None
-                print(
-                    f"[INFO] zoom-out step{step}: PM 비교 불가(text={pm_text!r}) → {full_path.name}"
-                )
+            # ROI crop 저장 (이번 rung 의 box, 없으면 직전 box).
+            cbox = new_box or box
+            if cbox is not None:
+                try:
+                    l, t, r, b = cbox
+                    crop = image.crop((l, t, r, b))
+                    sp = capture_dir / f"{tag}_rcs_zoom_{label}_sembox.jpg"
+                    save_debug_jpeg(crop, sp)
+                    rung["sembox_path"] = str(sp)
+                except Exception as exc:
+                    print(f"[WARNING] zoom ladder {label} ROI crop 실패: {exc}")
 
-            steps.append({
-                "step": step,
-                "pm_text": pm_text,
-                "magnification": new_mag,
-                "decreased": decreased,
-                "full_path": str(full_path),
-                "sembox_path": str(sembox_path) if sembox_path is not None else None,
-            })
-            if new_mag is not None:
-                prev_mag = new_mag
+            # 다음 스크롤 조준 갱신(배율이 바뀌면 박스가 이동).
+            ns = _box_center_screen(new_box) if new_box is not None else None
+            if ns is not None:
+                screen = ns
+            rungs.append(rung)
+            print(
+                f"[INFO] zoom ladder {label}: verdict={rung['verdict']} "
+                f"score={rung['score']} 2nd/best={rung['second_ratio']} "
+                f"pm={rung['pm_text']!r} → {full_path.name}"
+            )
 
-        # sidecar JSON — _feasibility.json 규약과 동일 위치/형식.
-        json_path = capture_dir / f"{tag}_zoom_probe.json"
+        # --- OUT arm (배율↓). ---
+        for i in range(1, out_n + 1):
+            _aim_and_scroll(dy_out, i)
+            _capture_rung(f"out{i}")
+
+        # --- baseline 복귀(캡처 없이 반대 방향으로 OUT 만큼) — arm 전환. ---
+        if out_n > 0 and in_n > 0:
+            for i in range(1, out_n + 1):
+                _aim_and_scroll(-dy_out, i)
+            if sem_box_client is not None:
+                try:
+                    chk = detect_sem_box(
+                        capture_window(tool_window), sem_box_client,
+                        ocr_client=ocr_client, two_stage=settings.pm_two_stage_ocr_enabled,
+                    )
+                    back_mag = parse_pm_magnification(chk.pm_text)
+                    if back_mag is not None and baseline_mag is not None and back_mag != baseline_mag:
+                        print(
+                            f"[WARNING] zoom ladder: baseline 복귀 PM {back_mag} ≠ 시작 "
+                            f"{baseline_mag} (wheel 비대칭 — IN arm 배율이 어긋날 수 있음)"
+                        )
+                    ns = _box_center_screen(_normalize_bbox(chk.bbox_px))
+                    if ns is not None:
+                        screen = ns
+                except Exception:
+                    pass
+
+        # --- IN arm (배율↑ = OUT 반대 부호). ---
+        for i in range(1, in_n + 1):
+            _aim_and_scroll(-dy_out, i)
+            _capture_rung(f"in{i}")
+
+        # --- best rung = 키가 present(possible/ambiguous) 한 것 중 최고 score. ---
+        present = [
+            r for r in rungs
+            if r.get("verdict") in ("possible", "ambiguous") and r.get("score") is not None
+        ]
+        best = max(present, key=lambda r: r["score"]) if present else None
+
+        json_path = capture_dir / f"{tag}_zoom_ladder.json"
         try:
             payload = {
-                "verdict": feas.verdict,
+                "verdict_at_fail": feas.verdict,
                 "baseline_pm_text": feas.pm_text,
                 "baseline_magnification": baseline_mag,
-                "scroll_dy": settings.zoom_probe_scroll_dy,
-                "scrolls_per_step": settings.zoom_probe_scrolls_per_step,
-                "steps": steps,
+                "scroll_dy_out": dy_out, "out_steps": out_n, "in_steps": in_n,
+                "scrolls_per_step": per, "rematch": settings.zoom_probe_rematch_enabled,
+                "best_rung": best["label"] if best else None,
+                "rungs": rungs,
             }
             json_path.write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
             )
-            result.notes.append(f"zoom_probe={json_path} steps={len(steps)}")
-            print(f"[INFO] zoom-out 보정탐색 완료: {json_path} (단계 {len(steps)})")
+            result.notes.append(
+                f"zoom_ladder={json_path} rungs={len(rungs)} "
+                f"best={best['label'] if best else '-'}"
+            )
+            print(
+                f"[INFO] zoom ladder 완료: {json_path} (rung {len(rungs)}, "
+                f"best={best['label'] if best else '없음'})"
+            )
         except Exception as exc:
-            print(f"[WARNING] zoom-out sidecar JSON 저장 실패: {exc}")
+            print(f"[WARNING] zoom ladder sidecar JSON 저장 실패: {exc}")
     except Exception as exc:
-        print(f"[WARNING] zoom-out 보정탐색 실패(캡처는 유지): {exc}")
+        print(f"[WARNING] zoom ladder 실패(캡처는 유지): {exc}")
         log_work2_event(
-            component=LOG_COMPONENT, message="zoom_probe_error", level="warning",
+            component=LOG_COMPONENT, message="zoom_ladder_error", level="warning",
             eqp_id=context.get("eqp_id", ""), error=str(exc),
         )
 

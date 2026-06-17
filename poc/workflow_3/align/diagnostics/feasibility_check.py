@@ -153,7 +153,7 @@ def _draw_sem_box(canvas, box) -> None:
 def _draw_pm_box(canvas, pm_box_px) -> None:
     """검출된 PM 박스(dict l/t/r/b 픽셀)를 청록 사각형 + 'PM' 라벨로 그린다(있을 때만).
 
-    PM 위치를 overlay 에 남겨, crop(_pm_crop.jpg)이 맞는 영역인지 한눈에 검증하게 한다.
+    PM 위치를 overlay(_marked.jpg)에 남겨 어느 영역을 읽었는지 한눈에 검증하게 한다.
     SEM box(초록)·align(노랑)과 색이 겹치지 않게 청록을 쓴다.
     """
     if not pm_box_px:
@@ -169,21 +169,18 @@ def _maybe_detect_sem_box(frame_path: Path, vlm_client, *, ocr_client=None, pm_t
     """가능하면 live SEM box + PM 모드를 검출한다. client 없거나 실패하면 None.
 
     개발 PC(Flask VLM 부재)나 VLM 오류에서도 호출부가 전체 프레임 매칭으로 안전하게
-    폴백하도록 예외를 삼키고 None 을 돌려준다. PM crop 은 캡처 옆 `<stem>_pm_crop.jpg`
-    로 남겨(모드 무관) 크롭 영역을 눈으로 검증하게 한다. two_stage 면 그 crop 을
-    PaddleOCR 로 재독한다.
+    폴백하도록 예외를 삼키고 None 을 돌려준다. two_stage 면 PM crop 을 PaddleOCR 로
+    재독한다(crop 은 메모리에서만 만들고 디버그 이미지는 더 이상 저장하지 않는다).
     """
     if vlm_client is None:
         return None
     try:
         from PIL import Image
 
-        pm_crop_path = frame_path.with_name(frame_path.stem + "_pm_crop.jpg")
         with Image.open(frame_path) as image:
             return detect_sem_box(
                 image, vlm_client,
                 ocr_client=ocr_client, two_stage=pm_two_stage,
-                pm_crop_debug_path=pm_crop_path,
             )
     except Exception as exc:
         print(f"[WARNING] SEM box 검출 실패(전체 프레임 매칭으로 폴백): {exc}")

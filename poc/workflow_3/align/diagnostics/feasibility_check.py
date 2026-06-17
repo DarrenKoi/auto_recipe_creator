@@ -41,8 +41,15 @@ from poc.workflow_3.align.matching.engine import (
     compute_align_key_score_ensemble,
 )
 from poc.workflow_3.align.consensus_gather import count_staged_events
+from poc.workflow_3.sem_monitor.sem_box_detect import detect_sem_box
+from poc.workflow_3.util import env_float
 
 LOG_COMPONENT = "align_feasibility"
+
+# PM 모드를 기본 채택하되, *다른* modality template 이 PM 채택분보다 이 이상(sel score)
+# 높으면 PM 오독으로 보고 점수 승자로 폴백한다. PM 한 글자 오독이 엉뚱한 OM/SEM key 를
+# 확정하지 못하게 하는 안전 가드(콜드스타트값, 실데이터 보정 대상).
+PM_OVERRIDE_MARGIN = env_float("ALIGN_FAIL_PM_OVERRIDE_MARGIN", 0.15)
 
 # verdict -> (라벨, BGR 색).
 _VERDICT_STYLE = {
@@ -77,6 +84,10 @@ class FeasibilityResult:
     marked_path: Path | None
     json_path: Path | None
     frame_wh: tuple | None             # 매칭에 쓴 프레임 크기 (w, h) — align_xy 와 동일 좌표계.
+    pm_text: str | None = None         # PM 박스에서 읽은 배율 텍스트(원문) 또는 None.
+    pm_mode: str | None = None         # PM 텍스트 → "OM" | "SEM" | None(모호).
+    sem_box_bbox: tuple | None = None  # 검출된 live SEM box (l,t,r,b) 풀프레임 px, 없으면 None.
+    mode_source: str = ""              # modality 결정 근거: "PM(<text>)" | "score" | "".
 
 
 def _font_scale(width: int) -> float:
@@ -124,6 +135,38 @@ def _draw_match_marks(canvas, match_xy, align_xy, tpl_wh, scale, color) -> None:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2, cv2.LINE_AA)
 
 
+def _draw_sem_box(canvas, box) -> None:
+    """검출된 live SEM box(l,t,r,b)를 초록 사각형 + 'SEM box' 라벨로 그린다.
+
+    box 가 None 이면(검출 실패/미수행) 아무것도 그리지 않는다 — '검출 못함' 은
+    배너 텍스트(sembox=...)로 알린다. align 십자선과 색이 겹치지 않게 초록을 쓴다.
+    """
+    if box is None:
+        return
+    l, t, r, b = (int(box[0]), int(box[1]), int(box[2]), int(box[3]))
+    cv2.rectangle(canvas, (l, t), (r, b), (0, 220, 0), 2)
+    cv2.putText(canvas, "SEM box", (l + 4, max(0, t - 6)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 220, 0), 2, cv2.LINE_AA)
+
+
+def _maybe_detect_sem_box(frame_path: Path, vlm_client):
+    """가능하면 live SEM box + PM 모드를 검출한다. client 없거나 실패하면 None.
+
+    개발 PC(Flask VLM 부재)나 VLM 오류에서도 호출부가 전체 프레임 매칭으로
+    안전하게 폴백하도록 예외를 삼키고 None 을 돌려준다.
+    """
+    if vlm_client is None:
+        return None
+    try:
+        from PIL import Image
+
+        with Image.open(frame_path) as image:
+            return detect_sem_box(image, vlm_client)
+    except Exception as exc:
+        print(f"[WARNING] SEM box 검출 실패(전체 프레임 매칭으로 폴백): {exc}")
+        return None
+
+
 def mark_align_feasibility(
     frame_path: Path,
     *,
@@ -131,14 +174,19 @@ def mark_align_feasibility(
     recipe_id: str,
     cond_box_crop: bool = True,
     reregister_ratio_threshold: float | None = None,
+    vlm_client=None,
 ) -> FeasibilityResult:
     """캡처 스크린샷에 보정 가능성을 판정해 overlay(_marked.jpg)+json 으로 남긴다.
 
     rcp 등록 align key(OM/SEM)를 정적 프레임에 ensemble 매칭하고 key_visibility_gate
-    로 verdict 를 정한다. modality 는 점검 모드에 read_mode 가 없어, 존재하는 template
-    들을 모두 매칭해 *최고 점수* 를 채택한다. consensus cache 의 S event 수는 read-only
-    로 읽어 표기만 한다(verdict 에 영향 없음). 예외/자산 부재도 캡처 위에 배너를 남겨
-    엔지니어가 한눈에 보게 한다. `FeasibilityResult` 반환.
+    로 verdict 를 정한다. `vlm_client` 가 주어지면 먼저 live SEM box 를 검출해
+    (1) PM 박스 텍스트로 OM/SEM modality 를 정하고(읽으면 그 template 만 매칭, 못 읽으면
+    기존 '전체 매칭 후 최고점수' 폴백), (2) box 안쪽만 잘라 매칭한 뒤 box 원점만큼
+    align point 를 풀프레임 좌표로 되돌리고, (3) box 사각형을 overlay 에 그린다. client 가
+    없거나(개발 PC) 검출이 실패하면 전체 캡처 창 매칭으로 안전하게 폴백한다.
+    consensus cache 의 S event 수는 read-only 로 읽어 표기만 한다(verdict 에 영향 없음).
+    예외/자산 부재도 캡처 위에 배너를 남겨 엔지니어가 한눈에 보게 한다.
+    `FeasibilityResult` 반환.
     """
     frame_path = Path(frame_path)
     out_marked = frame_path.with_name(frame_path.stem + "_marked.jpg")
@@ -171,23 +219,74 @@ def mark_align_feasibility(
     align_xy = None
     modality = ""
     color_bgr = _VERDICT_STYLE["no_assets"][1]
+    pm_text = None
+    pm_mode = None
+    sem_box_bbox = None
+    mode_source = ""
+    sembox_state = "off"   # off(미수행) | located | not_located.
 
     if templates:
-        gray = load_gray(frame_path)
-        best = None  # (mode, template, result)
-        for mode, template in templates.items():
-            result = compute_align_key_score_ensemble(
-                template, gray, scales=PAUSED_SCALES, policy=STRUCTURE_POLICY
-            )
-            if best is None or result.score > best[2].score:
-                best = (mode, template, result)
+        gray = load_gray(frame_path)   # 전체 캡처 창 grayscale.
 
-        modality, template, result = best
+        # ---- live SEM box 검출(가능하면) → PM 모드 + box ROI. ----
+        detect = _maybe_detect_sem_box(frame_path, vlm_client)
+        box = None              # (l, t, r, b) 풀프레임 px.
+        origin = (0, 0)         # 매칭 ROI 의 풀프레임 원점.
+        match_gray = gray
+        if detect is not None:
+            pm_text = detect.pm_text
+            pm_mode = detect.pm_mode
+            if detect.detected and detect.bbox_px:
+                b = detect.bbox_px
+                l, t = int(b["left"]), int(b["top"])
+                r, bm = int(b["right"]), int(b["bottom"])
+                # box 안쪽만 잘라 매칭(UI 크롬 오검출 차단). 비정상 ROI 면 전체로 폴백.
+                if r - l >= 2 and bm - t >= 2:
+                    box = (l, t, r, bm)
+                    sem_box_bbox = box
+                    origin = (l, t)
+                    match_gray = gray[t:bm, l:r]
+                    sembox_state = "located"
+                else:
+                    sembox_state = "not_located"
+            else:
+                sembox_state = "not_located"
+
+        # ---- modality 결정: 항상 모든 template 을 매칭(점수 비교 + PM 가드용)한 뒤 선택. ----
+        # PM 모드가 읽히면 기본 채택하되, 다른 modality 가 PM_OVERRIDE_MARGIN 이상 높은
+        # 점수면 PM 오독으로 보고 점수 승자로 폴백(misread 가 엉뚱한 key 를 확정 못하게).
+        results = {
+            mode: compute_align_key_score_ensemble(
+                tpl, match_gray, scales=PAUSED_SCALES, policy=STRUCTURE_POLICY
+            )
+            for mode, tpl in templates.items()
+        }
+        score_mode = max(results, key=lambda m: results[m].score)
+        if pm_mode in results:
+            if (
+                score_mode != pm_mode
+                and results[score_mode].score - results[pm_mode].score > PM_OVERRIDE_MARGIN
+            ):
+                modality = score_mode
+                mode_source = f"score_override(PM={pm_text})"
+            else:
+                modality = pm_mode
+                mode_source = f"PM({pm_text})"
+        else:
+            modality = score_mode
+            mode_source = "score"
+        template = templates[modality]
+        result = results[modality]
+
         decision = result.decision
         score = float(result.score)
         second_ratio = result.second_ratio
         best_scale = float(result.best_scale)
-        match_xy = (int(result.best_xy[0]), int(result.best_xy[1]))
+        # ROI-local best_xy → box 원점만큼 더해 풀프레임 좌표로 환산(클릭 좌표계 일치).
+        match_xy = (
+            int(result.best_xy[0]) + origin[0],
+            int(result.best_xy[1]) + origin[1],
+        )
 
         route = key_visibility_gate(
             result, reregister_ratio_threshold=reregister_ratio_threshold
@@ -202,6 +301,7 @@ def mark_align_feasibility(
             int(match_xy[1] + round(oy * best_scale)),
         )
         th, tw = template.raw_image.shape[:2]
+        _draw_sem_box(color, box)   # 먼저 박스(초록) → 그 위에 match/align 마크.
         _draw_match_marks(color, match_xy, align_xy, (tw, th), best_scale, color_bgr)
 
     # ---- 배너 텍스트 ----
@@ -211,8 +311,9 @@ def mark_align_feasibility(
     if verdict != "no_assets":
         lines.append(
             f"decision={decision} score={score:.3f} 2nd/best={sr_txt} "
-            f"scale={best_scale:.2f} mode={modality or '-'}"
+            f"scale={best_scale:.2f} mode={modality or '-'}[{mode_source or '-'}]"
         )
+        lines.append(f"sembox={sembox_state} pm={pm_text or '-'}->{pm_mode or '-'}")
     else:
         lines.append(f"recipe={recipe_id or '-'} (rcp OM/SEM not found)")
     lines.append(f"consensus: {consensus_events} S events ({consensus_images} imgs)")
@@ -233,6 +334,11 @@ def mark_align_feasibility(
         "match_xy": list(match_xy) if match_xy else None,
         "align_xy": list(align_xy) if align_xy else None,
         "modality": modality,
+        "mode_source": mode_source,
+        "pm_text": pm_text,
+        "pm_mode": pm_mode,
+        "sem_box_state": sembox_state,
+        "sem_box_bbox": list(sem_box_bbox) if sem_box_bbox else None,
         "consensus_events": consensus_events,
         "consensus_images": consensus_images,
         "eqp_id": eqp_id,
@@ -247,13 +353,16 @@ def mark_align_feasibility(
 
     print(
         f"[INFO] feasibility: verdict={verdict} decision={decision or '-'} "
-        f"score={score:.3f} 2nd/best={sr_txt} mode={modality or '-'} "
+        f"score={score:.3f} 2nd/best={sr_txt} mode={modality or '-'}[{mode_source or '-'}] "
+        f"sembox={sembox_state} pm={pm_text or '-'}->{pm_mode or '-'} "
         f"consensus={consensus_events}ev/{consensus_images}img -> {out_marked}"
     )
     return FeasibilityResult(
         verdict, decision, score, second_ratio, best_scale,
         match_xy, align_xy, modality, consensus_events, consensus_images,
         out_marked, out_json, frame_wh,
+        pm_text=pm_text, pm_mode=pm_mode, sem_box_bbox=sem_box_bbox,
+        mode_source=mode_source,
     )
 
 

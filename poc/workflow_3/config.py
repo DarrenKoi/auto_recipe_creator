@@ -110,6 +110,11 @@ class Workflow3Settings(WorkflowSettings):
     # 안착한 화면을 다시 캡처(_rcs_cursor.jpg)한다. 기본 off(opt-in) + SAFE_MODE off 일
     # 때만 실제 이동(켜도 action_enabled=False 면 DRY-RUN 로그만). production 보정과 무관.
     reposition_preview_enabled: bool = False
+    # 점검 사이클의 보정 가능성 마킹에서 live SEM box 를 VLM 으로 검출해 (1) PM 박스로
+    # OM/SEM modality 를 정하고 (2) box 안쪽만 매칭한 뒤 align point 를 풀프레임으로
+    # 되돌리고 (3) box 를 overlay 에 그릴지. off 면 기존 전체 창 매칭으로 폴백한다.
+    sem_box_detect_enabled: bool = True
+    sem_box_vlm_service: str = "ui-venus"  # route_slug (모델명 "ui-venus-1.5-8b" 아님).
 
     # --- CV 보정 ---
     correction_enabled: bool = True
@@ -169,6 +174,8 @@ def load_workflow3_settings() -> Workflow3Settings:
         consensus_refresh_ttl_sec=env_int("ALIGN_FAIL_CONSENSUS_REFRESH_TTL", 21600),
         feasibility_mark_enabled=env_flag("ALIGN_FAIL_FEASIBILITY_MARK", default=True),
         reposition_preview_enabled=env_flag("ALIGN_FAIL_REPOSITION_PREVIEW", default=False),
+        sem_box_detect_enabled=env_flag("ALIGN_FAIL_SEM_BOX_DETECT", default=True),
+        sem_box_vlm_service=_env_str("ALIGN_FAIL_SEM_BOX_SERVICE", "ui-venus"),
         correction_enabled=env_flag("ALIGN_FAIL_CORRECTION", default=True),
         correction_dry_run=correction_dry_run,
         ok_button_vlm_service=_env_str("ALIGN_OK_BUTTON_VLM_SERVICE", "ui-venus"),

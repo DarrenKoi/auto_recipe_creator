@@ -726,6 +726,21 @@ def _check_feasibility_and_preview(
     호출돼야 한다(image→screen 변환·재캡처가 살아 있는 창을 필요로 함).
     """
     capture_path = Path(context["capture_path"])
+    # live SEM box 검출용 VLM client(opt-in). 빌드 실패해도 feasibility 는 전체 창
+    # 매칭으로 폴백하므로 None 으로 두고 진행한다(개발 PC/Flask 부재 안전).
+    sem_box_client = None
+    if settings.sem_box_detect_enabled:
+        try:
+            from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
+
+            # 짧은 timeout: 이 호출은 tool 창이 열린 채(teardown 전) 도므로, 느린/행
+            # 걸린 VLM 이 close 를 최대 120s(기본) 막지 않도록 15s 로 묶는다. 초과하면
+            # 검출 실패 → 전체 창 매칭 폴백(루프 진행 보장).
+            sem_box_client = Workflow1VLMClient(
+                settings.sem_box_vlm_service, timeout_sec=15.0
+            )
+        except Exception as exc:
+            print(f"[WARNING] SEM box VLM client 생성 실패(전체 창 매칭 폴백): {exc}")
     try:
         from poc.workflow_3.align.diagnostics.feasibility_check import mark_align_feasibility
 
@@ -735,6 +750,7 @@ def _check_feasibility_and_preview(
             recipe_id=recipe_id,
             cond_box_crop=settings.cond_box_crop,
             reregister_ratio_threshold=settings.reregister_second_ratio_threshold,
+            vlm_client=sem_box_client,
         )
     except Exception as exc:
         print(f"[WARNING] feasibility 분석 실패(캡처는 유지): {exc}")

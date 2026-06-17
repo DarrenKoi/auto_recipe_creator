@@ -18,6 +18,13 @@ verdict:
   * "ambiguous"    — GATE_ENGINEER_REVIEW: 보이나 만성 모호(second_ratio>tau) → 엔지니어.
   * "not_visible"  — GATE_FALLBACK: key 가 이 화면에 안 보임 → pan/zoom 탐색 또는 엔지니어.
   * "no_assets"    — rcp 등록 OM/SEM 이미지를 못 찾음(판정 불가).
+
+마킹 정직성(2026-06-18): verdict 게이트(reregister tau=0.98)는 production 보정과 동일하게
+유지하되, 매처의 *always-on* 변별 플래그(``result.distinctive``, engine max_second_ratio=0.94)
+를 렌더링에 반영한다. 비변별 매칭(best peak 이 2nd 와 거의 동률)이면 score 가 임계를 넘어
+``decision=match`` 가 떠도 배너에 ``[NON-DISTINCT]`` 를 붙이고 align 십자선을 확신 노랑 대신
+verdict 색 + "align?" 로 그려, coin-flip 좌표를 확정 정답처럼 보이지 않게 한다. 게이트보다
+엄격한 0.94 라 0.94~0.98 회색지대(게이트는 possible)도 시각적으로 경고된다.
 """
 
 import json
@@ -119,8 +126,13 @@ def _draw_banner(canvas: np.ndarray, lines: list, color: tuple) -> None:
         y += line_h
 
 
-def _draw_match_marks(canvas, match_xy, align_xy, tpl_wh, scale, color) -> None:
-    """match bbox/중심 + align target 십자선을 그린다."""
+def _draw_match_marks(canvas, match_xy, align_xy, tpl_wh, scale, color, *, ambiguous=False) -> None:
+    """match bbox/중심 + align target 십자선을 그린다.
+
+    ``ambiguous`` 면(매처가 best peak 을 2nd 대비 유일하다고 보지 못한 비변별 매칭)
+    align 십자선을 확신 노랑 대신 verdict 색(``color``)으로 그리고 라벨도 "align?" 로
+    바꿔, 좌표가 coin-flip 일 수 있음을 표시한다. 점을 확정 정답처럼 그리지 않는다.
+    """
     if match_xy is not None and tpl_wh is not None:
         bw = int(tpl_wh[0] * scale)
         bh = int(tpl_wh[1] * scale)
@@ -130,10 +142,12 @@ def _draw_match_marks(canvas, match_xy, align_xy, tpl_wh, scale, color) -> None:
     if align_xy is not None:
         ax, ay = int(align_xy[0]), int(align_xy[1])
         r = 18
-        cv2.line(canvas, (ax - r, ay), (ax + r, ay), (255, 255, 0), 2)
-        cv2.line(canvas, (ax, ay - r), (ax, ay + r), (255, 255, 0), 2)
-        cv2.putText(canvas, "align", (ax + r + 4, ay + 4),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2, cv2.LINE_AA)
+        cross_color = color if ambiguous else (255, 255, 0)
+        label = "align? (ambiguous)" if ambiguous else "align"
+        cv2.line(canvas, (ax - r, ay), (ax + r, ay), cross_color, 2)
+        cv2.line(canvas, (ax, ay - r), (ax, ay + r), cross_color, 2)
+        cv2.putText(canvas, label, (ax + r + 4, ay + 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, cross_color, 2, cv2.LINE_AA)
 
 
 def _draw_sem_box(canvas, box) -> None:
@@ -236,6 +250,7 @@ def mark_align_feasibility(
     decision = ""
     score = 0.0
     second_ratio = None
+    distinctive = True   # 매처가 best peak 을 2nd 대비 유일하다고 봤는가(engine flag, 0.94).
     best_scale = 0.0
     match_xy = None
     align_xy = None
@@ -309,6 +324,7 @@ def mark_align_feasibility(
         decision = result.decision
         score = float(result.score)
         second_ratio = result.second_ratio
+        distinctive = bool(result.distinctive)
         best_scale = float(result.best_scale)
         # ROI-local best_xy → box 원점만큼 더해 풀프레임 좌표로 환산(클릭 좌표계 일치).
         match_xy = (
@@ -331,15 +347,21 @@ def mark_align_feasibility(
         th, tw = template.raw_image.shape[:2]
         _draw_sem_box(color, box)   # 먼저 박스(초록) → 그 위에 match/align 마크.
         _draw_pm_box(color, pm_box_px)   # PM 박스(청록) — crop 검증용.
-        _draw_match_marks(color, match_xy, align_xy, (tw, th), best_scale, color_bgr)
+        _draw_match_marks(
+            color, match_xy, align_xy, (tw, th), best_scale, color_bgr,
+            ambiguous=not distinctive,
+        )
 
     # ---- 배너 텍스트 ----
     label = _VERDICT_STYLE[verdict][0]
     sr_txt = f"{second_ratio:.3f}" if second_ratio is not None else "-"
+    # 비변별 매칭이면 decision 옆에 [NON-DISTINCT] 를 붙여, score 가 임계를 넘어
+    # decision=match 가 떠도 2nd peak 과 거의 동률(coin-flip)임을 숨기지 않는다.
+    distinct_flag = "" if distinctive else " [NON-DISTINCT]"
     lines = [label]
     if verdict != "no_assets":
         lines.append(
-            f"decision={decision} score={score:.3f} 2nd/best={sr_txt} "
+            f"decision={decision}{distinct_flag} score={score:.3f} 2nd/best={sr_txt} "
             f"scale={best_scale:.2f} mode={modality or '-'}[{mode_source or '-'}]"
         )
         lines.append(
@@ -362,6 +384,7 @@ def mark_align_feasibility(
         "decision": decision,
         "score": score,
         "second_ratio": second_ratio,
+        "distinctive": distinctive,
         "best_scale": best_scale,
         "match_xy": list(match_xy) if match_xy else None,
         "align_xy": list(align_xy) if align_xy else None,
@@ -386,7 +409,7 @@ def mark_align_feasibility(
         out_json = None
 
     print(
-        f"[INFO] feasibility: verdict={verdict} decision={decision or '-'} "
+        f"[INFO] feasibility: verdict={verdict} decision={decision or '-'}{distinct_flag} "
         f"score={score:.3f} 2nd/best={sr_txt} mode={modality or '-'}[{mode_source or '-'}] "
         f"sembox={sembox_state} pm={pm_text or '-'}->{pm_mode or '-'} "
         f"consensus={consensus_events}ev/{consensus_images}img -> {out_marked}"

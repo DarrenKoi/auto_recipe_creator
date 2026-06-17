@@ -69,7 +69,18 @@ def gather_success_async(eqp_id, recipe_id, settings: Workflow3Settings):
     같은 (eqp_id, recipe_id) 에 대해 gather thread 가 이미 살아있으면 skip(None 반환).
     고정 .events_staging 경로 공유로 인한 동시 쓰기/부분 promote 경쟁을 _IN_FLIGHT 레지스트리로 차단.
     """
-    if not settings.gather_enabled or not recipe_id or not DOWNLOADER_AVAILABLE:
+    # 게이트 단락은 조용히 None 이면 "왜 캐시가 비나"를 콘솔에서 분간할 수 없다.
+    # 각 사유를 명시 로깅해 오피스 1회 실행으로 어느 경계가 막혔는지 바로 드러낸다(진단).
+    if not settings.gather_enabled:
+        print(f"[INFO] consensus gather skip(gather_enabled=0): "
+              f"EQP_ID={eqp_id} recipe={recipe_id}")
+        return None
+    if not recipe_id:
+        print(f"[INFO] consensus gather skip(recipe_id 비어있음): EQP_ID={eqp_id}")
+        return None
+    if not DOWNLOADER_AVAILABLE:
+        print(f"[INFO] consensus gather skip(downloader 부재/임포트시 적재 실패): "
+              f"EQP_ID={eqp_id} recipe={recipe_id}")
         return None
 
     key = (eqp_id, recipe_id)

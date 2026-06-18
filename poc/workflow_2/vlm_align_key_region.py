@@ -78,10 +78,18 @@ from poc.workflow_3.util.time_utils import format_elapsed_ms, make_timestamp_tag
 # ====================================================================
 
 # 멀티이미지 native PASS 모델 (probe_multi_image_vlm 결과, 2026-06-02).
-PERCEPTION_MODEL = "Qwen3-VL-30B-A3B-Instruct"
+PERCEPTION_MODEL = os.getenv(
+    "PROBE_PERCEPTION_MODEL", "Qwen3-VL-30B-A3B-Instruct"
+).strip() or "Qwen3-VL-30B-A3B-Instruct"  # Kimi-K2.6 등으로 바꾸려면 env override.
 ENCODE_FMT = "webp"          # 게이트웨이 WebP PASS, payload 작음.
 TIMEOUT_SEC = 90.0
-MAX_TOKENS = 512             # JSON 한 덩어리 + 여유.
+MAX_TOKENS = 4096            # Kimi 등 reasoning 모델은 JSON 앞에 prose 를 길게 뱉어 512 면
+                             # JSON 이 truncate 된다(Qwen 은 512 로 충분했음). 여유 크게.
+# 응답을 JSON 객체로 강제(OpenAI 호환 response_format) → reasoning prose 억제 + 파싱 보장.
+# 게이트웨이가 미지원이면 400 이 날 수 있어 PROBE_JSON_MODE=0 으로 끌 수 있게 토글로 둔다.
+JSON_MODE = os.getenv("PROBE_JSON_MODE", "1").strip().lower() not in (
+    "0", "false", "no", "off",
+)
 REQUEST_DELAY_SEC = 1.0
 LOG_NAME = "vlm_align_key_region"
 OUTPUT_ROOT = DEBUG_IMAGE_DIR / LOG_NAME
@@ -304,6 +312,9 @@ def _ask_region(ref_bgr: np.ndarray, scene_bgr: np.ndarray) -> dict:
         "temperature": 0.0,
         "max_tokens": MAX_TOKENS,
     }
+    if JSON_MODE:
+        # JSON 전용 출력 강제(장황한 reasoning 모델 대비). 미지원 게이트웨이면 PROBE_JSON_MODE=0.
+        payload["response_format"] = {"type": "json_object"}
     out = {"ok": False, "status": None, "latency_s": None,
            "payload_kb": round(len(json.dumps(payload)) / 1024, 1),
            "raw_text": "", "parsed": {}, "error": ""}
@@ -320,8 +331,11 @@ def _ask_region(ref_bgr: np.ndarray, scene_bgr: np.ndarray) -> dict:
                 text = " ".join(p.get("text", "") for p in text if isinstance(p, dict))
         except (ValueError, KeyError, IndexError, TypeError):
             text = resp.text
-        out["raw_text"] = (text or "").strip()[:1000]
-        out["parsed"] = extract_json(out["raw_text"])
+        full_text = (text or "").strip()
+        # raw_text 는 로깅용으로만 자르고, 파싱은 *전체* 텍스트에서 한다 — 장황한 모델은
+        # prose 뒤에 JSON 이 오므로 [:1000] 으로 자르면 JSON 이 통째로 날아가 항상 fail 한다.
+        out["raw_text"] = full_text[:4000]
+        out["parsed"] = extract_json(full_text)
         out["ok"] = True
     except requests.RequestException as exc:
         out["latency_s"] = round(time.time() - t0, 2)

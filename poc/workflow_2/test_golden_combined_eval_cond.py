@@ -185,3 +185,68 @@ def test_routed_by_modality_combines_arms():
     assert out["om"]["rank1_rate"] == 0.6       # (0.8*10 + 0.4*10)/20
     assert out["sem"]["rank1_rate"] == 0.7      # sem: rcp-only 만
     assert out["sem"]["n_frames"] == 5
+
+
+# --- 실패유형 히스토그램 (Step 2: OM/SEM split 증거) ---
+
+def test_classify_cell_three_types():
+    assert gcc._classify_cell({"topk_rank": 1, "in_topk": True}) == "rank1_hit"
+    assert gcc._classify_cell({"topk_rank": 3, "in_topk": True}) == "look_alike"
+    assert gcc._classify_cell({"topk_rank": None, "in_topk": False}) == "recall_miss"
+
+
+def test_failure_hist_by_modality_counts_and_periodic():
+    cells = [
+        {"mod": "om", "topk_rank": 1, "in_topk": True, "periodic": False},
+        {"mod": "om", "topk_rank": 2, "in_topk": True, "periodic": True},   # periodic look_alike
+        {"mod": "om", "topk_rank": 4, "in_topk": True, "periodic": False},  # non-periodic look_alike
+        {"mod": "OM", "topk_rank": None, "in_topk": False, "periodic": True},  # recall_miss (periodic 무관)
+    ]
+    h = gcc._failure_hist_by_modality(cells)["om"]
+    assert h["n"] == 4
+    assert h["rank1_hit"]["n"] == 1
+    assert h["look_alike"]["n"] == 2
+    assert h["recall_miss"]["n"] == 1
+    assert h["periodic_look_alike"]["n"] == 1          # topk_rank 2 만(rank4 는 non-periodic)
+    assert h["look_alike"]["share"] == 0.5
+
+
+def test_failure_hist_from_rates_reconstructs_counts():
+    # n=10, in_topk=0.8(=8 in pool), rank1=0.5(=5 rank1) → recall_miss=2, look_alike=3, rank1_hit=5.
+    rows = [{"modality": "sem", "n_S_loo": 10, "cons_in_topk_rate": 0.8,
+             "cons_rank1_rate": 0.5, "periodic": False}]
+    h = gcc._failure_hist_from_rates(rows)["sem"]
+    assert h["recall_miss"]["n"] == 2
+    assert h["look_alike"]["n"] == 3
+    assert h["rank1_hit"]["n"] == 5
+    assert h["periodic_look_alike"]["n"] == 0
+
+
+def test_failure_hist_from_rates_periodic_tags_lookalike():
+    rows = [{"modality": "om", "n_S_loo": 10, "cons_in_topk_rate": 0.8,
+             "cons_rank1_rate": 0.5, "periodic": True}]
+    h = gcc._failure_hist_from_rates(rows)["om"]
+    assert h["periodic_look_alike"]["n"] == 3          # periodic recipe → 전체 look_alike 가 periodic.
+
+
+def test_merge_failure_hists_sums_and_reshare():
+    a = gcc._with_shares({"rank1_hit": 1, "look_alike": 1, "recall_miss": 0,
+                          "periodic_look_alike": 1, "n": 2})
+    b = gcc._with_shares({"rank1_hit": 0, "look_alike": 2, "recall_miss": 2,
+                          "periodic_look_alike": 0, "n": 4})
+    m = gcc._merge_failure_hists(a, b)
+    assert m["n"] == 6
+    assert m["look_alike"]["n"] == 3
+    assert m["recall_miss"]["n"] == 2
+    assert m["periodic_look_alike"]["n"] == 1
+    assert m["look_alike"]["share"] == 0.5
+
+
+def test_routed_failure_hist_unions_modalities():
+    cons = {"om": gcc._with_shares({"rank1_hit": 5, "look_alike": 0, "recall_miss": 0,
+                                    "periodic_look_alike": 0, "n": 5})}
+    rcp = {"sem": gcc._with_shares({"rank1_hit": 0, "look_alike": 0, "recall_miss": 3,
+                                    "periodic_look_alike": 0, "n": 3})}
+    out = gcc._routed_failure_hist(cons, rcp)
+    assert out["om"]["n"] == 5 and out["sem"]["n"] == 3
+    assert out["sem"]["recall_miss"]["share"] == 1.0

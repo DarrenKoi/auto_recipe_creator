@@ -172,6 +172,85 @@ def _routed_overall(cons_frames, cons_rank1_rate, cons_topk_rate, rcp_stats):
     }
 
 
+_FAILURE_TYPES = ("rank1_hit", "look_alike", "recall_miss", "periodic_look_alike")
+
+
+def _classify_cell(cell):
+    """per-frame 셀 → 실패유형. topk_rank==1=rank1_hit, in_topk(=rank 2..k)=look_alike, 그 외=recall_miss."""
+    if cell.get("topk_rank") == 1:
+        return "rank1_hit"
+    if cell.get("in_topk"):
+        return "look_alike"
+    return "recall_miss"
+
+
+def _with_shares(acc):
+    """counts dict(키 _FAILURE_TYPES + 'n') → {n, <type>:{n, share}}. share = n_type/n."""
+    n = int(acc.get("n", 0))
+    out = {"n": n}
+    for t in _FAILURE_TYPES:
+        c = int(acc.get(t, 0))
+        out[t] = {"n": c, "share": round(c / n, 3) if n else None}
+    return out
+
+
+def _failure_hist_by_modality(cells):
+    """rcp_only per-frame 셀 list → {mod: _with_shares}. periodic_look_alike = look_alike & cell['periodic']."""
+    by_mod = {}
+    for c in cells:
+        mod = (c.get("mod") or "unknown").lower()
+        acc = by_mod.setdefault(mod, {t: 0 for t in _FAILURE_TYPES} | {"n": 0})
+        t = _classify_cell(c)
+        acc[t] += 1
+        acc["n"] += 1
+        if t == "look_alike" and c.get("periodic"):
+            acc["periodic_look_alike"] += 1
+    return {mod: _with_shares(acc) for mod, acc in by_mod.items()}
+
+
+def _failure_hist_from_rates(per_recipe):
+    """consensus per_recipe rows → {mod: _with_shares}. per-frame 없이 rate 에서 재구성.
+
+    recall_miss = round(n*(1-in_topk)), look_alike = round(n*(in_topk-rank1)),
+    rank1_hit = n - 둘(음수 클램프). periodic recipe(row['periodic'])면 look_alike 전부 periodic.
+    """
+    by_mod = {}
+    for r in per_recipe:
+        mod = (r.get("modality") or "unknown").lower()
+        n = int(r["n_S_loo"])
+        topk = float(r["cons_in_topk_rate"])
+        rank1 = float(r["cons_rank1_rate"])
+        recall_miss = max(0, int(round(n * (1.0 - topk))))
+        look_alike = max(0, int(round(n * (topk - rank1))))
+        rank1_hit = max(0, n - recall_miss - look_alike)
+        acc = by_mod.setdefault(mod, {t: 0 for t in _FAILURE_TYPES} | {"n": 0})
+        acc["rank1_hit"] += rank1_hit
+        acc["look_alike"] += look_alike
+        acc["recall_miss"] += recall_miss
+        acc["n"] += n
+        if r.get("periodic"):
+            acc["periodic_look_alike"] += look_alike
+    return {mod: _with_shares(acc) for mod, acc in by_mod.items()}
+
+
+def _merge_failure_hists(*hists):
+    """여러 _with_shares dict 합산 → 새 _with_shares (counts 합산 후 share 재계산)."""
+    acc = {t: 0 for t in _FAILURE_TYPES} | {"n": 0}
+    for h in hists:
+        if not h:
+            continue
+        for t in _FAILURE_TYPES:
+            acc[t] += int(h.get(t, {}).get("n", 0))
+        acc["n"] += int(h.get("n", 0))
+    return _with_shares(acc)
+
+
+def _routed_failure_hist(cons_hist, rcp_hist):
+    """modality 별 routed 실패히스토그램 = consensus arm + rcp_only arm 합산."""
+    return {mod: _merge_failure_hists(cons_hist.get(mod), rcp_hist.get(mod))
+            for mod in set(cons_hist) | set(rcp_hist)}
+
+
 def _consensus_by_modality(per_recipe):
     """consensus per_recipe rows → {modality: {n_frames, rank1_rate, in_topk_rate}} (frame-weighted).
 

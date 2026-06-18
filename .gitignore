@@ -85,3 +85,6 @@ side_projects/screenshot_document_extraction/data/captures/*
 
 # Playwright MCP browser session artifacts (transient)
 .playwright-mcp/
+
+# golden eval local config (edit-often scratch; template = *.example.py)
+poc/workflow_2/golden_eval_config.py

@@ -59,12 +59,17 @@ OUTPUT_ROOT = DEBUG_IMAGE_DIR / "golden_combined_eval_cond"
 
 
 # ======================================================================
-# CONFIG — 여기 3줄만 고치고 `uv run python poc/workflow_2/golden_combined_eval_cond.py`.
-# env·CLI 인자 불필요(No-CLI 규약 + env 입력 회피). env 가 설정돼 있으면 그게 우선(하위호환).
+# CONFIG — 상수는 별도 파일 golden_eval_config.py 에서 편집한다(driver 로직 무수정).
+# golden_eval_config.example.py 를 golden_eval_config.py 로 복사 → 그 파일의 3줄만 고치고
+# `uv run python poc/workflow_2/golden_combined_eval_cond.py`. env 가 설정돼 있으면 env 우선.
+# golden_eval_config.py 가 없으면 아래 기본값으로 동작(import 폴백).
 # ======================================================================
-GOLDEN_ROOT = None     # 골든 데이터 루트(예: r"C:\data\align_images"). None = 기본 경로/ALIGN_GOLDEN_ROOT.
-LAB_MODE = ""          # rcp-only arm 매처 채널. "" = production ensemble, "edge_ncc" = C4 레버 평가.
-MIN_S = None           # consensus 최소 S(바닥 3). None = consensus 드라이버 기본값.
+try:
+    from poc.workflow_2.golden_eval_config import GOLDEN_ROOT, LAB_MODE, MIN_S
+except ImportError:
+    GOLDEN_ROOT = None   # 골든 데이터 루트(예: r"C:\data\align_images"). None = 기본 경로.
+    LAB_MODE = ""        # rcp-only arm 매처 채널. "" = production ensemble, "edge_ncc" = C4 레버.
+    MIN_S = None         # consensus 최소 S(바닥 3). None = consensus 드라이버 기본값.
 # ======================================================================
 
 

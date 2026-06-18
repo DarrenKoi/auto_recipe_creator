@@ -212,15 +212,18 @@ def resolve_assets(recipe_dir: Path) -> AlignFailAssets:
         current_sem=_pick_current_sem(from_msr_images),
         from_msr=tuple(from_msr_images),
     )
+    # current_sem(from_msr) 은 런타임 미소비라 부재해도 경고하지 않는다 - 오프라인
+    # 진단에서만 쓰며, 거기서는 호출부가 None 여부를 직접 확인한다.
     for label, path in (
         ("recipe_om", assets.recipe_om),
         ("recipe_sem", assets.recipe_sem),
-        ("current_sem", assets.current_sem),
     ):
         if path is None:
             print(f"[WARNING] {label} 이미지를 찾지 못했습니다: {recipe_dir}")
         else:
             print(f"[INFO] {label} = {path.name}")
+    if assets.current_sem is not None:
+        print(f"[INFO] current_sem = {assets.current_sem.name}")
     return assets
 
 

@@ -266,6 +266,7 @@ def test_matcher_for_eval_toggle(monkeypatch):
     import poc.workflow_2.golden_localization_eval as gle
     from poc.workflow_3.align.matching import engine as akm
 
+    monkeypatch.delenv("ALIGN_ENSEMBLE_LAB_MODE", raising=False)
     monkeypatch.delenv("ALIGN_USE_ENSEMBLE", raising=False)
     assert gle._matcher_for_eval() is akm.compute_align_key_score        # 기본 baseline.
     monkeypatch.setenv("ALIGN_USE_ENSEMBLE", "1")
@@ -274,6 +275,27 @@ def test_matcher_for_eval_toggle(monkeypatch):
     assert gle._matcher_for_eval() is akm.compute_align_key_score_ensemble
     monkeypatch.setenv("ALIGN_USE_ENSEMBLE", "0")
     assert gle._matcher_for_eval() is akm.compute_align_key_score         # off → baseline.
+
+
+def test_matcher_for_eval_lab_mode_uses_lab_wrapper(monkeypatch):
+    """ALIGN_ENSEMBLE_LAB_MODE 는 production ensemble 대신 workflow_2 lab wrapper 를 고른다."""
+    import poc.workflow_2.golden_localization_eval as gle
+
+    monkeypatch.setenv("ALIGN_ENSEMBLE_LAB_MODE", "edge_ncc")
+    monkeypatch.delenv("ALIGN_LAB_ENSEMBLE_CHANNELS", raising=False)
+    monkeypatch.delenv("ENSEMBLE_CHANNELS", raising=False)
+    matcher = gle._matcher_for_eval()
+    assert matcher.__name__ == "_compute_align_key_score_lab_for_eval"
+    assert gle._lab_channels_for_eval() == ("canny", "scharr", "orient", "edge_ncc")
+
+
+def test_matcher_for_eval_lab_channels_env(monkeypatch):
+    """ALIGN_LAB_ENSEMBLE_CHANNELS 가 있으면 lab mode 기본 채널보다 우선한다."""
+    import poc.workflow_2.golden_localization_eval as gle
+
+    monkeypatch.setenv("ALIGN_ENSEMBLE_LAB_MODE", "1")
+    monkeypatch.setenv("ALIGN_LAB_ENSEMBLE_CHANNELS", "canny,c4")
+    assert gle._lab_channels_for_eval() == ("canny", "edge_ncc")
 
 
 # --- Tier 1.1: miss-distance bin 분류 (순수) ---

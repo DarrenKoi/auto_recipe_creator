@@ -143,6 +143,52 @@ _CELL_MEANING = {
 }
 
 
+def _env_truthy(value: str | None) -> bool:
+    """env 토글 문자열을 bool 로 해석한다."""
+    return (value or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_enabled(value: str | None) -> bool:
+    """lab mode 처럼 이름/모드를 받는 env 가 활성 상태인지 판정한다."""
+    v = (value or "").strip().lower()
+    return bool(v) and v not in ("0", "false", "no", "off", "none")
+
+
+def _lab_channels_for_eval():
+    """golden eval 이 lab ensemble 에 넘길 채널 tuple.
+
+    우선순위:
+      1. ``ALIGN_LAB_ENSEMBLE_CHANNELS`` 또는 ``ENSEMBLE_CHANNELS`` 직접 지정.
+      2. ``ALIGN_ENSEMBLE_LAB_MODE=edge_ncc|c4|c4_edge_ncc`` 이면 C4 포함.
+      3. 그 외 lab mode 는 기본 C1/C2/C3.
+    """
+    from poc.workflow_2.ensemble_lab import (
+        LAB_DEFAULT_CHANNELS,
+        LAB_EDGE_NCC_CHANNEL,
+        parse_ensemble_channels,
+    )
+
+    channels_env = os.getenv("ALIGN_LAB_ENSEMBLE_CHANNELS") or os.getenv("ENSEMBLE_CHANNELS")
+    if channels_env:
+        return parse_ensemble_channels(channels_env)
+    mode = os.getenv("ALIGN_ENSEMBLE_LAB_MODE", "").strip().lower()
+    if mode in ("edge_ncc", "c4", "c4_edge_ncc"):
+        return tuple(LAB_DEFAULT_CHANNELS) + (LAB_EDGE_NCC_CHANNEL,)
+    return tuple(LAB_DEFAULT_CHANNELS)
+
+
+def _compute_align_key_score_lab_for_eval(template, frame, **kwargs):
+    """golden eval 전용 lab matcher wrapper — 채널은 env/상수에서 읽는다."""
+    from poc.workflow_2.ensemble_lab import compute_align_key_score_lab
+
+    return compute_align_key_score_lab(
+        template,
+        frame,
+        channels=_lab_channels_for_eval(),
+        **kwargs,
+    )
+
+
 # ------------------------------------------------------------------
 # offset-aware template 빌드.
 # ------------------------------------------------------------------
@@ -244,17 +290,27 @@ def _build_offset_templates(
 
 
 def _matcher_for_eval():
-    """eval 매처 선택 — env ``ALIGN_USE_ENSEMBLE`` 가 참이면 ensemble, 아니면 baseline.
+    """eval 매처 선택.
 
     golden eval 은 기본 baseline(compute_align_key_score)으로 측정한다. decision/score 정비된
     ensemble 경로의 개선(hit/decision)을 같은 golden 셋·오버레이로 확인하려면
-    ``ALIGN_USE_ENSEMBLE=1`` 로 실행한다(No-CLI-arg 규약상 env 토글). 둘 다 동일 시그니처.
+    ``ALIGN_USE_ENSEMBLE=1`` 로 실행한다. workflow_2 실험 채널은
+    ``ALIGN_ENSEMBLE_LAB_MODE=...`` 로 opt-in 하며, 이 경우 production 엔진 대신
+    ``ensemble_lab.compute_align_key_score_lab`` wrapper 를 쓴다(No-CLI-arg 규약상 env 토글).
     """
-    use_ens = os.getenv("ALIGN_USE_ENSEMBLE", "").strip().lower() in ("1", "true", "yes", "on")
+    if _env_enabled(os.getenv("ALIGN_ENSEMBLE_LAB_MODE")):
+        return _compute_align_key_score_lab_for_eval
+    use_ens = _env_truthy(os.getenv("ALIGN_USE_ENSEMBLE"))
     return compute_align_key_score_ensemble if use_ens else compute_align_key_score
 
 
-def _localize(templates: dict, frame: np.ndarray, crosshair_xy: tuple[int, int]) -> dict | None:
+def _localize(
+    templates: dict,
+    frame: np.ndarray,
+    crosshair_xy: tuple[int, int],
+    *,
+    roi_hint: tuple[int, int, int, int] | None = None,
+) -> dict | None:
     """offset-aware template 집합으로 frame 을 free 검색 → align point 가 crosshair(GT)에
     떨어지나 채점.
 
@@ -267,7 +323,7 @@ def _localize(templates: dict, frame: np.ndarray, crosshair_xy: tuple[int, int])
     반환: {mod, score, align_xy, dist_norm, hit, topk_rank, in_topk} 또는 매칭 불가 시 None.
     dist_norm 은 승자 modality template 짧은 변 대비 거리(GT_TOL_NORM 과 동일 척도).
     """
-    best = None  # (score, dist_norm, hit, rank, align_xy, mod)
+    best = None  # (score, dist_norm, hit, rank, align_xy, mod, result)
     matcher = _matcher_for_eval()
     for mod, item in templates.items():
         if item is None:
@@ -277,7 +333,7 @@ def _localize(templates: dict, frame: np.ndarray, crosshair_xy: tuple[int, int])
         short = max(1, min(tw, th))
         try:
             r = matcher(
-                tpl, frame, scales=COMPARE_SCALES, policy=STRUCTURE_POLICY,
+                tpl, frame, roi_hint=roi_hint, scales=COMPARE_SCALES, policy=STRUCTURE_POLICY,
             )
         except Exception as exc:
             print(f"[WARNING] score 실패 ({mod}): {exc}")
@@ -295,13 +351,13 @@ def _localize(templates: dict, frame: np.ndarray, crosshair_xy: tuple[int, int])
                 rank = i
                 break
 
-        cur = (float(r.score), dist_norm, dist_norm <= GT_TOL_NORM, rank, ap, mod)
+        cur = (float(r.score), dist_norm, dist_norm <= GT_TOL_NORM, rank, ap, mod, r)
         if best is None or cur[0] > best[0]:  # race = 최고 score modality.
             best = cur
 
     if best is None:
         return None
-    score, dist_norm, hit, rank, ap, mod = best
+    score, dist_norm, hit, rank, ap, mod, result = best
     return {
         "mod": mod,
         "score": round(score, 4),
@@ -310,6 +366,25 @@ def _localize(templates: dict, frame: np.ndarray, crosshair_xy: tuple[int, int])
         "hit": bool(hit),
         "topk_rank": rank,
         "in_topk": rank is not None,
+        "score_gap": (
+            None if getattr(result, "score_gap", None) is None
+            else round(float(result.score_gap), 4)
+        ),
+        "second_ratio": (
+            None if getattr(result, "second_ratio", None) is None
+            else round(float(result.second_ratio), 4)
+        ),
+        "distinctive": bool(getattr(result, "distinctive", True)),
+        "reject_reason": getattr(result, "reject_reason", None),
+        "lab_selection_gap": (
+            None if getattr(result, "lab_selection_gap", None) is None
+            else round(float(result.lab_selection_gap), 4)
+        ),
+        "lab_selection_second_ratio": (
+            None if getattr(result, "lab_selection_second_ratio", None) is None
+            else round(float(result.lab_selection_second_ratio), 4)
+        ),
+        "lab_channels": list(getattr(result, "lab_channels", ())),
     }
 
 

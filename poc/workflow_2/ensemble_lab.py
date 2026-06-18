@@ -10,18 +10,35 @@ drivers: golden_localization_eval_cond.py, golden_consensus_eval_cond.py.
 """
 import statistics
 
+import cv2
 import numpy as np
 
 from poc.workflow_3.align.matching.ensemble import (
-    EnsembleResult, RRF_K0, SHADOW_N, _Cand, _channel_solo_candidates,
+    EnsembleResult, RRF_K0, SHADOW_N, SOLO_TOP_K, _Cand, _channel_solo_candidates,
 )
-from poc.workflow_3.align.matching.engine import DEFAULT_SCALES, _to_grayscale
+from poc.workflow_3.align.matching.engine import (
+    DEFAULT_POLICY,
+    DEFAULT_SCALES,
+    _candidate_ncc,
+    _extract_peaks,
+    _finalize_match,
+    _no_candidate_result,
+    _prepare_match_inputs,
+    _rescore_positions_to_candidates,
+    _scaled_edges,
+    _to_grayscale,
+    preprocess_for_matching,
+)
 
 
 # Phase 1: template 내재 주기성(autocorrelation off-center peak). cold-start, 오피스 보정 예정.
 PERIODICITY_EXCL_FRAC = 0.10      # zero-lag 제외 중심 반경 = min(h,w) 의 이 비율(=min_lag_frac 기본).
 PERIODICITY_MAX_LAG_FRAC = 0.8    # 상한 lag 반경 = min(h,w) 의 이 비율. overlap→0 극단 lag 잡음 차단.
 PERIODICITY_TAU = 0.5             # 이 값 초과면 template_periodic(=재등록 후보). 비교는 strict >. 합성 검증으로 선택.
+
+# lab proposer 채널. 기본 3개는 workflow_3 production ensemble 과 bit-parity 를 유지한다.
+LAB_DEFAULT_CHANNELS = ("canny", "scharr", "orient")
+LAB_EDGE_NCC_CHANNEL = "edge_ncc"
 
 
 def _norm_autocorr(g):
@@ -195,6 +212,103 @@ def miss_predictor_stats(scores, missed):
     return out
 
 
+def parse_ensemble_channels(value=None, *, default=LAB_DEFAULT_CHANNELS):
+    """env/상수 문자열을 lab ensemble 채널 tuple 로 정규화한다.
+
+    빈 값이면 기본 3채널(``canny,scharr,orient``)을 돌려 bit-parity 를 보존한다.
+    ``edge_ncc``/``edge-ncc``/``c4`` 는 opt-in C4 edge-only NCC proposer 로 매핑한다.
+    알 수 없는 채널은 즉시 ``ValueError`` 를 내 eval 설정 오류를 조용히 숨기지 않는다.
+    """
+    if value is None or value == "":
+        return tuple(default)
+    if isinstance(value, str):
+        raw = [p.strip().lower().replace("-", "_") for p in value.split(",")]
+    else:
+        raw = [str(p).strip().lower().replace("-", "_") for p in value]
+    aliases = {
+        "c1": "canny",
+        "canny_dt": "canny",
+        "c2": "scharr",
+        "scharr_gradient": "scharr",
+        "c3": "orient",
+        "orientation": "orient",
+        "directional": "orient",
+        "c4": LAB_EDGE_NCC_CHANNEL,
+        "edge": LAB_EDGE_NCC_CHANNEL,
+        "edge_ncc": LAB_EDGE_NCC_CHANNEL,
+        "ncc_edge": LAB_EDGE_NCC_CHANNEL,
+    }
+    allowed = set(LAB_DEFAULT_CHANNELS) | {LAB_EDGE_NCC_CHANNEL}
+    out = []
+    for item in raw:
+        if not item:
+            continue
+        ch = aliases.get(item, item)
+        if ch not in allowed:
+            raise ValueError(f"unknown lab ensemble channel: {item!r}")
+        if ch not in out:
+            out.append(ch)
+    return tuple(out or default)
+
+
+def _edge_ncc_solo_candidates(template_gray, frame_gray, *, scales=DEFAULT_SCALES,
+                              top_k=SOLO_TOP_K):
+    """C4 edge-only NCC solo 후보.
+
+    C1 과 같은 Canny edge 를 쓰되 distance transform 이 아니라 binary edge map 간
+    ``TM_CCOEFF_NORMED`` peak 를 뽑는다. 같은 edge family 라서 도메인 drift 리스크가 낮고,
+    Chamfer 와 달리 "edge 가 근처에만 있으면 OK"가 아니라 국소 edge 배치의 정규화 상관을 본다.
+    기본 채널에는 들어가지 않으며 ``edge_ncc`` 를 명시했을 때만 실행된다.
+    """
+    t_edges, _ = preprocess_for_matching(_to_grayscale(template_gray))
+    f_edges, _ = preprocess_for_matching(_to_grayscale(frame_gray))
+    frame_edge = (f_edges > 0).astype(np.float32)
+    fh, fw = frame_edge.shape[:2]
+    collected = []
+    for scale in scales:
+        te = _scaled_edges(t_edges, scale)
+        th, tw = te.shape[:2]
+        if th >= fh or tw >= fw:
+            continue
+        tpl_edge = (te > 0).astype(np.float32)
+        if float(tpl_edge.sum()) <= 0.0 or float(tpl_edge.std()) < 1e-6:
+            continue
+        score_map = cv2.matchTemplate(frame_edge, tpl_edge, cv2.TM_CCOEFF_NORMED)
+        score_map = np.nan_to_num(score_map, nan=-1.0, posinf=-1.0, neginf=-1.0)
+        score_map = np.maximum(score_map, 0.0).astype(np.float32)
+        if float(score_map.max()) <= 0.0:
+            continue
+        nms_r = max(4, int(min(tw, th) * 0.5))
+        for s, cx, cy in _extract_peaks(
+            score_map, tw, th, max_peaks=top_k, min_score=0.0, nms_radius=nms_r,
+        ):
+            collected.append(_Cand(xy=(cx, cy), score=float(s), scale=float(scale)))
+    collected.sort(key=lambda c: c.score, reverse=True)
+    return collected[:top_k]
+
+
+def _channel_solo_candidates_lab(template_gray, frame_gray, channel, *,
+                                 scales=DEFAULT_SCALES):
+    """lab 채널 dispatch. C1/C2/C3 는 production primitive, C4 만 workflow_2 전용."""
+    if channel in LAB_DEFAULT_CHANNELS:
+        return _channel_solo_candidates(template_gray, frame_gray, channel, scales=scales)
+    if channel == LAB_EDGE_NCC_CHANNEL:
+        return _edge_ncc_solo_candidates(template_gray, frame_gray, scales=scales)
+    raise ValueError(f"unknown lab ensemble channel: {channel!r}")
+
+
+def _selection_gap(selection_scores):
+    """selection score 내림차순 기준 best-second gap metadata 를 만든다."""
+    vals = sorted((float(s) for s in selection_scores), reverse=True)
+    if not vals:
+        return None, None, None
+    if len(vals) == 1:
+        return None, None, vals[0]
+    gap = vals[0] - vals[1]
+    ratio = vals[1] / vals[0] if vals[0] > 0 else None
+    return float(gap), (float(np.clip(ratio, 0.0, 1.0)) if ratio is not None else None), vals[0]
+
+
 def rrf_fuse(channel_lists, *, k0=RRF_K0, match_radius=8, top_n=SHADOW_N, rescore_fn=None):
     """RRF 융합(포크). fused(c) = Σ_채널 1/(k0 + rank). 채널 간 후보는 center 거리 <=
     match_radius(Chebyshev) 면 동일 후보로 묶는다. 반환 list[_Cand](fused 내림차순, top_n).
@@ -239,17 +353,84 @@ def rrf_fuse(channel_lists, *, k0=RRF_K0, match_radius=8, top_n=SHADOW_N, rescor
 
 
 def compute_ensemble_candidates(template_gray, frame_gray, *,
-                                channels=("canny", "scharr", "orient"),
+                                channels=LAB_DEFAULT_CHANNELS,
                                 top_n=8, shadow_n=SHADOW_N, k0=RRF_K0,
                                 scales=DEFAULT_SCALES, rescore_fn=None):
     """lab ensemble — channel 선택 + rescore 대표. 기본 인자는 workflow_3
     compute_ensemble_candidates 와 bit-parity(parity 테스트로 고정).
     """
+    channels = parse_ensemble_channels(channels)
     th, tw = _to_grayscale(template_gray).shape[:2]
     short = max(1, min(tw, th))
     match_r = max(8, int(0.05 * short))
-    solo = {ch: _channel_solo_candidates(template_gray, frame_gray, ch, scales=scales)
+    solo = {ch: _channel_solo_candidates_lab(template_gray, frame_gray, ch, scales=scales)
             for ch in channels}
     fused = rrf_fuse(list(solo.values()), k0=k0, match_radius=match_r,
                      top_n=shadow_n, rescore_fn=rescore_fn)
     return EnsembleResult(fused=fused, top_n_count=top_n, solo=solo)
+
+
+def compute_align_key_score_lab(
+    template,
+    frame,
+    *,
+    frame_nm_per_pixel=None,
+    roi_hint=None,
+    scales=None,
+    policy=DEFAULT_POLICY,
+    channels=LAB_DEFAULT_CHANNELS,
+):
+    """workflow_2 전용 lab ensemble matcher.
+
+    production ``compute_align_key_score_ensemble`` 과 같은 계약을 유지하되, proposer 채널을
+    ``channels`` 로 바꿀 수 있게 한다. 기본 채널은 C1/C2/C3 이므로 결과 해석은 production
+    ensemble 과 동일하고, ``edge_ncc`` 를 넣은 경우에만 C4 실험이 켜진다. 반환 객체에는
+    기존 필드 외에 ``lab_selection_gap`` / ``lab_selection_second_ratio`` /
+    ``lab_channels`` 속성을 덧붙여 absolute threshold 와 별도로 best-second gap 을 볼 수 있다.
+    """
+    channels = parse_ensemble_channels(channels)
+    gray_frame, frame_dt, scales, roi_origin = _prepare_match_inputs(
+        template,
+        frame,
+        frame_nm_per_pixel=frame_nm_per_pixel,
+        roi_hint=roi_hint,
+        scales=scales,
+    )
+    ens = compute_ensemble_candidates(
+        template.raw_image, gray_frame, channels=channels, scales=scales, top_n=policy.top_n
+    )
+    positions = [(c.xy, c.scale) for c in ens.fused[:policy.top_n]]
+    candidates = _rescore_positions_to_candidates(template, frame_dt, positions)
+    if not candidates or all(c.chamfer_score <= 0.0 for c in candidates):
+        result = _no_candidate_result(frame, frame_dt, template, roi_origin)
+        result.lab_channels = channels
+        result.lab_selection_gap = None
+        result.lab_selection_second_ratio = None
+        result.lab_selection_best = None
+        return result
+
+    best_cand = candidates[0]
+    best_sel = -1.0e18
+    selection_scores = []
+    for cand in candidates:
+        ncc = _candidate_ncc(template.raw_image, gray_frame, cand.xy, cand.scale)
+        ncc_pos = max(0.0, ncc) if ncc is not None else 0.0
+        sel = policy.rerank_chamfer_w * cand.chamfer_score + policy.rerank_ncc_w * ncc_pos
+        selection_scores.append(sel)
+        if sel > best_sel:
+            best_sel = sel
+            best_cand = cand
+
+    gap, second_ratio, best_value = _selection_gap(selection_scores)
+    candidates_sorted = sorted(candidates, key=lambda c: c.chamfer_score, reverse=True)
+    result = _finalize_match(
+        best_cand, candidates_sorted, frame, template, policy, roi_origin,
+        chamfer_score=best_cand.chamfer_score, orb_ratio=0.0,
+        score_override=best_sel,
+        decision_thresholds=(policy.ensemble_match_threshold, policy.ensemble_adjust_threshold),
+    )
+    result.lab_channels = channels
+    result.lab_selection_gap = gap
+    result.lab_selection_second_ratio = second_ratio
+    result.lab_selection_best = best_value
+    return result

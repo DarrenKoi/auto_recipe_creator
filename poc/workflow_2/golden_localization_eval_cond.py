@@ -526,7 +526,7 @@ def run() -> str:
     root = Path(root_env) if root_env else GOLDEN_ROOT
     recipes = gle._collect_recipes(root) if root.is_dir() else []
     if not recipes:
-        print(f"[ERROR] golden 데이터를 찾지 못했습니다: {root} "
+        print(f"[WARNING] golden 데이터를 찾지 못했습니다: {root} "
               f"(env ALIGN_GOLDEN_ROOT 로 경로 지정). cond 판은 self-test 없음.")
         return "no_data"
 
@@ -538,6 +538,9 @@ def run() -> str:
     # _localize 가 쓰는 매처 모드(env ALIGN_USE_ENSEMBLE) — baseline/ensemble 실행 구분용.
     matcher_mode = gle._matcher_for_eval().__name__
     print(f"[INFO] (cond GT) recipe {len(recipes)}개 처리 → {out_dir}  [matcher={matcher_mode}]")
+    if os.getenv("ALIGN_ENSEMBLE_LAB_MODE"):
+        print(f"[INFO] lab ensemble: mode={os.getenv('ALIGN_ENSEMBLE_LAB_MODE')} "
+              f"channels={','.join(gle._lab_channels_for_eval())}")
     if matcher_mode == "compute_align_key_score":
         print("[INFO] baseline 매처. ensemble 개선을 보려면 ALIGN_USE_ENSEMBLE=1 로 재실행.")
 
@@ -614,6 +617,13 @@ def run() -> str:
     summary["modality_routing"] = {"om": mod_counts.get("om", 0),
                                    "sem": mod_counts.get("sem", 0),
                                    "skip": n_mskip}
+    summary["lab_variant"] = {
+        "matcher": matcher_mode,
+        "lab_mode": os.getenv("ALIGN_ENSEMBLE_LAB_MODE", ""),
+        "lab_channels": (
+            list(gle._lab_channels_for_eval()) if os.getenv("ALIGN_ENSEMBLE_LAB_MODE") else []
+        ),
+    }
     lv = lever_verdict(summary["cells"].get("box__inpaint", {"n": 0}))
     summary["lever_verdict"] = lv
     summary["binned"] = _binned_localization_report(all_rows)   # Tier 1.1 bin×arm 게이트.
@@ -650,4 +660,5 @@ def run() -> str:
 
 
 if __name__ == "__main__":
-    raise SystemExit(0 if run() == "success" else 1)
+    _status = run()
+    raise SystemExit(0 if _status in ("success", "no_data") else 1)

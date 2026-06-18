@@ -3,6 +3,7 @@ import cv2
 
 from poc.workflow_2 import ensemble_lab as lab
 from poc.workflow_3.align.matching import ensemble as ep
+from poc.workflow_3.align.matching.engine import STRUCTURE_POLICY, build_template
 
 
 def _sq(size=200, box=(70, 70, 60, 60), bg=110, edge=230):
@@ -25,6 +26,42 @@ def test_lab_ensemble_parity_with_workflow3():
     pa = [(c.xy, round(c.score, 6), c.scale) for c in a.fused]
     pb = [(c.xy, round(c.score, 6), c.scale) for c in b.fused]
     assert pa == pb
+
+
+def test_parse_ensemble_channels_accepts_c4_aliases():
+    # env/string 입력에서 C4 별칭은 edge_ncc 로 정규화되고 중복은 제거된다.
+    assert lab.parse_ensemble_channels("canny,c4,edge-ncc") == ("canny", "edge_ncc")
+    assert lab.parse_ensemble_channels("") == lab.LAB_DEFAULT_CHANNELS
+
+
+def test_edge_ncc_channel_is_opt_in_and_surfaces_true_region():
+    # 기본 채널에는 edge_ncc 가 없고, 명시했을 때만 C4 solo 후보가 생긴다.
+    frame = _sq(240, (120, 90, 60, 60))
+    tpl = _sq(80, (10, 10, 60, 60))
+    base = lab.compute_ensemble_candidates(tpl, frame, scales=(1.0,), shadow_n=8)
+    assert lab.LAB_EDGE_NCC_CHANNEL not in base.solo
+
+    res = lab.compute_ensemble_candidates(
+        tpl, frame, channels=("canny", "edge_ncc"), scales=(1.0,), shadow_n=8
+    )
+    c4 = res.solo[lab.LAB_EDGE_NCC_CHANNEL]
+    assert c4
+    assert min(abs(c.xy[0] - 150) + abs(c.xy[1] - 120) for c in c4) <= 4
+
+
+def test_compute_align_key_score_lab_records_selection_gap_metadata():
+    # lab matcher 는 기존 AlignKeyMatchResult 계약을 유지하면서 selection-space gap 을 부가 속성으로 남긴다.
+    frame = _sq(240, (120, 90, 60, 60))
+    tpl_img = _sq(80, (10, 10, 60, 60))
+    tpl = build_template(tpl_img, recipe_id="r1", version="lab", key_type="sem")
+    result = lab.compute_align_key_score_lab(
+        tpl, frame, scales=(1.0,), policy=STRUCTURE_POLICY,
+        channels=("canny", "edge_ncc"),
+    )
+    assert result.candidates
+    assert result.lab_channels == ("canny", "edge_ncc")
+    assert hasattr(result, "lab_selection_gap")
+    assert hasattr(result, "lab_selection_second_ratio")
 
 
 def test_lab_rrf_fuse_rescore_fn_overrides_raw_representative():

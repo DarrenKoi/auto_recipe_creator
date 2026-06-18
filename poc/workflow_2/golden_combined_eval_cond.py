@@ -211,8 +211,11 @@ def _failure_hist_by_modality(cells):
 def _failure_hist_from_rates(per_recipe):
     """consensus per_recipe rows → {mod: _with_shares}. per-frame 없이 rate 에서 재구성.
 
-    recall_miss = round(n*(1-in_topk)), look_alike = round(n*(in_topk-rank1)),
-    rank1_hit = n - 둘(음수 클램프). periodic recipe(row['periodic'])면 look_alike 전부 periodic.
+    누적 클램프로 합이 정확히 n 을 보장:
+      recall_miss = min(n,        round(n*(1-in_topk)))   (n 이하 보장)
+      look_alike  = min(n-miss,   round(n*(in_topk-rank1))) (나머지 예산 이하 보장)
+      rank1_hit   = n - recall_miss - look_alike          (항상 >= 0, share 합 <= 1.0)
+    periodic recipe(row['periodic'])면 look_alike 전부 periodic.
     """
     by_mod = {}
     for r in per_recipe:
@@ -220,9 +223,9 @@ def _failure_hist_from_rates(per_recipe):
         n = int(r["n_S_loo"])
         topk = float(r["cons_in_topk_rate"])
         rank1 = float(r["cons_rank1_rate"])
-        recall_miss = max(0, int(round(n * (1.0 - topk))))
-        look_alike = max(0, int(round(n * (topk - rank1))))
-        rank1_hit = max(0, n - recall_miss - look_alike)
+        recall_miss = max(0, min(n, int(round(n * (1.0 - topk)))))
+        look_alike = max(0, min(n - recall_miss, int(round(n * (topk - rank1)))))
+        rank1_hit = n - recall_miss - look_alike
         acc = by_mod.setdefault(mod, {t: 0 for t in _FAILURE_TYPES} | {"n": 0})
         acc["rank1_hit"] += rank1_hit
         acc["look_alike"] += look_alike

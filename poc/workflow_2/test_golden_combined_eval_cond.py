@@ -250,3 +250,13 @@ def test_routed_failure_hist_unions_modalities():
     out = gcc._routed_failure_hist(cons, rcp)
     assert out["om"]["n"] == 5 and out["sem"]["n"] == 3
     assert out["sem"]["recall_miss"]["share"] == 1.0
+
+
+def test_failure_hist_from_rates_counts_sum_to_n_under_rounding():
+    # 반올림으로 recall_miss+look_alike 가 n 을 넘던 케이스: 누적 클램프로 합이 정확히 n.
+    rows = [{"modality": "om", "n_S_loo": 3, "cons_in_topk_rate": 0.5,
+             "cons_rank1_rate": 0.0, "periodic": False}]
+    h = gcc._failure_hist_from_rates(rows)["om"]
+    total = h["rank1_hit"]["n"] + h["look_alike"]["n"] + h["recall_miss"]["n"]
+    assert total == 3                                  # 합이 n 을 정확히 보존
+    assert h["rank1_hit"]["share"] + h["look_alike"]["share"] + h["recall_miss"]["share"] <= 1.0

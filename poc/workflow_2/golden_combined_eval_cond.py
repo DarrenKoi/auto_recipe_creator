@@ -56,6 +56,7 @@ from poc.workflow_2 import DEBUG_IMAGE_DIR
 from poc.workflow_2 import golden_localization_eval as gle
 from poc.workflow_2 import golden_localization_eval_cond as glec
 from poc.workflow_2 import golden_consensus_eval_cond as gce
+from poc.workflow_2.ensemble_lab import template_periodicity, PERIODICITY_TAU
 from poc.workflow_3.util.time_utils import make_timestamp_tag
 
 
@@ -455,6 +456,7 @@ def run() -> str:
     # 1) recipe 별 template + consensus 입력(entry) 빌드. rcp-only 채점용으로 template 보관.
     by_recipe = {}                    # rec_key -> entry (consensus A/B 입력; n_s>0 만)
     tpls_by_key = {}                  # rec_key -> (assets, center_tpls, box_tpls)  rcp-only 채점용
+    periodic_by_key = {}              # rec_key -> bool (등록 key 가 주기/대칭 = template_periodicity > tau)
     for assets in recipes:
         if assets is None:
             continue
@@ -466,6 +468,14 @@ def run() -> str:
         if not any(v is not None for v in center_tpls.values()):
             continue
         rec_key = gce._recipe_key(assets)
+        try:
+            rec_periodicity = max(
+                (template_periodicity(t.raw_image) for t, _off in center_tpls.values()
+                 if t is not None), default=0.0)
+        except Exception as exc:
+            print(f"[WARNING] periodicity 계산 실패 {assets.recipe_id}: {exc}")
+            rec_periodicity = 0.0
+        periodic_by_key[rec_key] = rec_periodicity > PERIODICITY_TAU
         entry = gce._build_cond_by_recipe(assets, center_tpls)
         tpls_by_key[rec_key] = (assets, center_tpls, box_tpls)
         if len(entry["s_frames"]):
@@ -489,9 +499,17 @@ def run() -> str:
             continue
         cells = _score_rcp_only(assets, center_tpls, box_tpls)
         if cells:
+            is_periodic = periodic_by_key.get(rec_key, False)
+            for c in cells:                       # 실패유형 히스토그램용 태깅(순수 헬퍼는 이 필드만 읽음).
+                c["periodic"] = is_periodic
+                c["rec_key"] = rec_key
             n_rcp_only_recipes += 1
             rcp_only_cells.extend(cells)
     rcp_only = _arm_rates(rcp_only_cells)
+
+    # consensus per_recipe row 에 periodic(recipe-level) join — _failure_hist_from_rates 가 읽음.
+    for r in per_recipe:
+        r["periodic"] = periodic_by_key.get(r["recipe"], False)
 
     # 4) 리포트 조립.
     scaling = _bin_by_s_count(per_recipe)
@@ -501,6 +519,24 @@ def run() -> str:
     cons_by_mod = _consensus_by_modality(per_recipe)
     rcp_by_mod = _arm_rates_by_modality(rcp_only_cells)
     routed_by_mod = _routed_by_modality(cons_by_mod, rcp_by_mod)
+
+    # Step 2: 실패유형 히스토그램(양 arm + routed) + per-mod Youden + split verdict.
+    cons_fail = _failure_hist_from_rates(per_recipe)
+    rcp_fail = _failure_hist_by_modality(rcp_only_cells)
+    routed_fail = _routed_failure_hist(cons_fail, rcp_fail)
+    youden_by_mod = _youden_by_modality(rcp_only_cells)
+    n_rec_by_mod = _recipes_by_modality(per_recipe, rcp_only_cells)
+
+    def _mod_rate(mod):
+        rt = routed_by_mod.get(mod, {})
+        return {"n_frames": rt.get("n_frames", 0), "rank1_rate": rt.get("rank1_rate"),
+                "n_recipes": n_rec_by_mod.get(mod, 0)}
+
+    empty_hist = _with_shares({"n": 0})
+    split_verdict = _split_verdict(
+        routed_fail.get("om", empty_hist), routed_fail.get("sem", empty_hist),
+        _mod_rate("om"), _mod_rate("sem"), _SPLIT_CFG)
+
     summary = {
         "matcher_rcp_only": matcher_mode,
         "lab_mode": os.getenv("ALIGN_ENSEMBLE_LAB_MODE", ""),
@@ -528,7 +564,12 @@ def run() -> str:
             "consensus": cons_by_mod,
             "rcp_only": rcp_by_mod,
             "routed": routed_by_mod,
+            "failure_modes": {                      # Step 2: 실패유형 분해(어떻게 깨지나).
+                "consensus": cons_fail, "rcp_only": rcp_fail, "routed": routed_fail,
+            },
+            "youden": youden_by_mod,                # Step 2: per-mod 임계 분리(L1 증거; rcp_only arm).
         },
+        "split_verdict": split_verdict,             # Step 2: SPLIT/shared_tune/no_split/insufficient.
     }
     (out_dir / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -565,6 +606,10 @@ def _digest_line(summary):
         d = routed_mod.get(m)
         return f"{m.upper()} r1/topk={d['rank1_rate']}/{d['in_topk_rate']} (n={d['n_frames']})" if d else f"{m.upper()} -"
 
+    sv = summary.get("split_verdict") or {}
+    verdict_tok = (f"verdict={sv.get('verdict', '-')}"
+                   + (f"(om={sv.get('dominant_om')},sem={sv.get('dominant_sem')})"
+                      if sv.get('verdict') == 'SPLIT' else ""))
     return (
         f"lab={lab} minS={summary['consensus_min_s']} consMode={cons_mode} | "
         f"routed r1/topk={r['rank1_rate']}/{r['in_topk_rate']} (n={r['n_frames']}) | "
@@ -573,7 +618,8 @@ def _digest_line(summary):
         f"rcp_only r1/topk={ro['rank1_rate']}/{ro['in_topk_rate']} "
         f"(n={ro['n']},rec={summary['n_recipes_rcp_only']}) | "
         f"mod[{_mod('om')} {_mod('sem')}] | "
-        f"scaling[{scaling}]"
+        f"scaling[{scaling}] | "
+        f"{verdict_tok}"
     )
 
 
@@ -623,6 +669,33 @@ def _print_report(summary):
         ts = f"{rt.get('rank1_rate')}/{rt.get('in_topk_rate')} ({rt.get('n_frames', 0)})"
         print(f"    {mod.upper():<6} {cs:<26} {rs:<24} {ts:<22}")
     print("    * OM(저배율·반복패턴) rank1 이 SEM 보다 확연히 낮고 실패유형이 다르면 → modality-specific CV 정책 검토.")
+
+    fm = (summary.get("by_modality") or {}).get("failure_modes", {}).get("routed", {})
+    yd = (summary.get("by_modality") or {}).get("youden", {})
+    print("\n[INFO] === (Step 2) 실패유형 분해 (routed; 'rank1 이 왜 낮나') ===")
+    print(f"    {'mod':<6} {'n':>5} {'rank1_hit':>10} {'look_alike':>11} "
+          f"{'periodic_la':>12} {'recall_miss':>12}   youden(thr/J,n+/-)")
+    for mod in ("om", "sem"):
+        h = fm.get(mod, {})
+        y = yd.get(mod, {})
+        if not h:
+            continue
+        def _sh(t):
+            return h.get(t, {}).get("share")
+        ys = (f"{y.get('thr')}/{y.get('J')} ({y.get('n_pos')}+/{y.get('n_neg')}-)"
+              if y.get("thr") is not None else "-")
+        print(f"    {mod.upper():<6} {h.get('n', 0):>5} {str(_sh('rank1_hit')):>10} "
+              f"{str(_sh('look_alike')):>11} {str(_sh('periodic_look_alike')):>12} "
+              f"{str(_sh('recall_miss')):>12}   {ys}")
+    print("    * periodic_la 지배=OM 주기억제(L2), recall_miss 지배=SEM recall proposer(L3).")
+
+    sv = summary.get("split_verdict") or {}
+    print(f"\n[INFO] === (Step 2) SPLIT 판정 === verdict={sv.get('verdict', '-')}  "
+          f"gap_reason={sv.get('gap_reason')}  "
+          f"OM 지배={sv.get('dominant_om')}  SEM 지배={sv.get('dominant_sem')}  "
+          f"권장 lever={sv.get('suggested_levers') or '-'}"
+          + (f"  (insufficient: {sv.get('insufficient_mods')})"
+             if sv.get('verdict') == 'insufficient' else ""))
 
 
 if __name__ == "__main__":

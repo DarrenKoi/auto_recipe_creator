@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Weekly Report — workflow_3 (2026.06.11~06.18)</title>
+<style>
+  :root {
+    --bg: #0f1117; --card: #181b24; --card2: #1f2430; --line: #2a3040;
+    --text: #e6e9ef; --muted: #9aa3b2; --accent: #6ea8fe; --accent2: #79e0c9;
+    --ok: #3fb950; --warn: #d29922; --exp: #a371f7; --code: #ffa657;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", Segoe UI, Roboto, sans-serif;
+    line-height: 1.7; font-size: 16px;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 48px 24px 96px; }
+  header.hero {
+    border-bottom: 1px solid var(--line); padding-bottom: 28px; margin-bottom: 36px;
+  }
+  header.hero .eyebrow { color: var(--accent); font-weight: 700; letter-spacing: .08em; font-size: 13px; text-transform: uppercase; }
+  header.hero h1 { font-size: 34px; margin: 8px 0 6px; }
+  header.hero .meta { color: var(--muted); font-size: 14px; }
+  header.hero .meta b { color: var(--text); }
+  h2 {
+    font-size: 22px; margin: 44px 0 8px; padding-top: 8px;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  h2 .num { color: var(--accent2); font-variant-numeric: tabular-nums; }
+  .badge {
+    font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px;
+    border: 1px solid transparent; white-space: nowrap;
+  }
+  .b-ok   { color: var(--ok);   background: rgba(63,185,80,.12);  border-color: rgba(63,185,80,.4); }
+  .b-warn { color: var(--warn); background: rgba(210,153,34,.12); border-color: rgba(210,153,34,.4); }
+  .b-exp  { color: var(--exp);  background: rgba(163,113,247,.12);border-color: rgba(163,113,247,.4); }
+  .summary {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 22px 26px; margin-bottom: 12px;
+  }
+  .summary ol { margin: 12px 0 0; padding-left: 22px; }
+  .summary li { margin: 6px 0; }
+  section.item {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 6px 26px 18px; margin-top: 6px;
+  }
+  ul { margin: 10px 0; padding-left: 22px; }
+  li { margin: 5px 0; }
+  blockquote {
+    margin: 14px 0 4px; padding: 10px 16px; border-left: 3px solid var(--accent);
+    background: var(--card2); border-radius: 0 8px 8px 0; color: var(--muted); font-size: 14.5px;
+  }
+  code {
+    font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    font-size: 13px; color: var(--code); background: rgba(255,166,87,.10);
+    padding: 1px 6px; border-radius: 5px;
+  }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 15px; }
+  th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .05em; }
+  tr:last-child td { border-bottom: none; }
+  .status-cell { white-space: nowrap; font-weight: 600; }
+  .next ol { padding-left: 22px; }
+  .next li { margin: 9px 0; }
+  .next b { color: var(--accent2); }
+  footer { margin-top: 48px; color: var(--muted); font-size: 13px; text-align: center; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 14px; font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <div class="eyebrow">Weekly Report</div>
+    <h1>workflow_3 — 실시간 align-fail 모니터링 루프</h1>
+    <div class="meta"><b>기간</b> 2026.06.11 ~ 06.18 &nbsp;·&nbsp; <b>커밋</b> 약 60개 &nbsp;·&nbsp; 전량 <code>main</code> 직접 반영</div>
+  </header>
+
+  <div class="summary">
+    <strong>요약 —</strong> workflow_3 실시간 align-fail 루프의 <b>구조 통합과 현장 진단 기능</b>을 집중 개발한 한 주. 핵심 성과 4가지:
+    <ol>
+      <li><b>align 모듈 구조 재편 완료</b> (<code>vision/</code> → <code>align/</code>, matching/diagnostics 서브패키지)</li>
+      <li><b>consensus 템플릿을 라이브 보정 경로에 정식 배선</b> (활성화는 office downloader 대기)</li>
+      <li><b>check-only 모니터에 SEM-box 검출 + PM 배율 줌 래더 진단 기능 탑재</b></li>
+      <li><b>만성 모호 recipe 재등록 플래깅 자동화</b></li>
+    </ol>
+    <div class="legend">
+      <span><span class="badge b-ok">완료</span> 반영·검증됨</span>
+      <span><span class="badge b-warn">진행 중</span> 코드 완료 / 후속 대기</span>
+      <span><span class="badge b-exp">실험</span> A/B 검증 단계</span>
+    </div>
+  </div>
+
+  <h2><span class="num">1.</span> 구조 재편 — align 도메인 정리 <span class="badge b-ok">완료</span></h2>
+  <section class="item">
+    <ul>
+      <li><code>vision/</code> → <code>align/</code> 분리, <code>matching/</code>(엔진 + ensemble) · <code>diagnostics/</code>(오프라인 리뷰) 서브패키지로 재편 <code>3c93b2f</code></li>
+      <li>workflow_1 레거시 경로 import fallback 제거 — office 어댑터는 <code>monitor/</code>만이 정식 위치 <code>de8e11b</code></li>
+      <li>CLAUDE.md 구조 동기화 <code>98b5214</code></li>
+    </ul>
+    <blockquote>4-layer DAG (util → {vlm, runner} → capabilities → monitor) 확립.</blockquote>
+  </section>
+
+  <h2><span class="num">2.</span> Cond-aware 박스-크롭 템플릿 <span class="badge b-ok">완료</span></h2>
+  <section class="item">
+    <ul>
+      <li>CV 흰박스 검출을 <b>cond.txt 기반 기하 박스-크롭</b>으로 대체 — <code>AlignKeyTemplate</code>이 <code>align_offset_xy</code> 운반, reposition 시 <code>offset × best_scale</code> 적용 <code>1ca3d87</code> <code>34028e3</code> <code>4296c59</code></li>
+      <li><code>ALIGN_FAIL_COND_BOX_CROP</code> kill-switch 추가, 7-task TDD로 포팅 <code>e16dfb6</code> <code>0b5fb5e</code></li>
+    </ul>
+    <blockquote>workflow_2에서 검증 후 workflow_3 포팅 원칙대로 진행.</blockquote>
+  </section>
+
+  <h2><span class="num">3.</span> Consensus → 라이브 보정 배선 <span class="badge b-warn">코드 완료 / 활성화 대기</span></h2>
+  <section class="item">
+    <ul>
+      <li>consensus CV 프리미티브 · build/gate/select를 bit-parity로 포팅 <code>4b2cff4</code> <code>4578c7e</code></li>
+      <li><code>resolve_templates</code>: <b>consensus 우선, rcp 폴백</b> 라우팅 + cold-cache bounded sync, TTL 신선도, atomic swap <code>4be70e3</code> <code>acc3808</code> <code>6214307</code></li>
+      <li><code>correct_align_fail_auto</code>가 resolve 경로 경유, 모든 실패 → rcp 폴백, <code>ALIGN_FAIL_CONSENSUS</code> kill-switch <code>acc3808</code></li>
+    </ul>
+    <blockquote><b>남은 활성화 게이트 = office_success_downloader 구현</b> (S 이미지 공급원).</blockquote>
+  </section>
+
+  <h2><span class="num">4.</span> Check-only 모니터 + 현장 진단 <span class="badge b-warn">구현 완료 / 캘리브레이션 중</span></h2>
+  <section class="item">
+    <p>경량 변형(접속 → 1프레임 캡처 → 종료, 보정·녹화 없음) 위에 진단 스택 구축:</p>
+    <ul>
+      <li><b>SEM-box 검출 + PM OM/SEM 모드 판독</b> — 화면 PM 배율(104/210 = OM, K 접미사 = SEM)로 modality 결정, live SEM box ROI 내 매칭 <code>c59bfc3</code> <code>2329d75</code></li>
+      <li><b>점유 'select' 팝업 검출</b> — 타 엔지니어 사용 중 감지 시 공유/종료 옵션 안 건드리고 백오프(300s 쿨다운) <code>2329d75</code></li>
+      <li><b>줌 인/아웃 래더</b> — feasibility가 <code>ambiguous</code> / <code>not_visible</code>일 때 mouse wheel 양방향 스윕 + 매 rung 재매칭 <code>f01a053</code> <code>9d708a7</code></li>
+      <li><b>PM-dropdown 폴백</b> — 이 장비는 wheel이 배율을 안 바꿈 확인 → <b>'PM' 버튼(2-stage VLM locate) → 드롭다운</b>으로 value-space 배율 제어가 <b>기본값</b> <code>81397ea</code> <code>546ba35</code> <code>3058617</code></li>
+      <li><b>RCS 커서 추적 수정</b> — teleport → glide + jiggle, RCS가 커서를 live SEM box까지 따라오게 <code>ed93bc5</code></li>
+      <li>클릭 검증 오버레이 디버그 이미지(PM 박스 / 버튼점 / 드롭다운 영역) 저장</li>
+    </ul>
+  </section>
+
+  <h2><span class="num">5.</span> 만성 모호 recipe 재등록 플래깅 <span class="badge b-ok">완료</span></h2>
+  <section class="item">
+    <ul>
+      <li>feasibility가 <code>ambiguous</code>(2nd/best ratio &gt; τ)이면 <code>reregister_recommended</code> 플래그 + audit-log, marked 이미지에 <b>2nd-best 위치(magenta)</b> 표시 <code>cc32991</code> <code>ca5a604</code></li>
+      <li>엔지니어가 어떤 recipe의 align key를 더 변별력 있는 영역으로 재등록할지 식별 가능</li>
+    </ul>
+  </section>
+
+  <h2><span class="num">6.</span> VLM 2-image align-point 폴백 <span class="badge b-exp">실험</span></h2>
+  <section class="item">
+    <ul>
+      <li>CV가 모호할 때 rcp vs live 2장 비교 프롬프트 (<code>prompt_align_compare</code>, Kimi-K2.6) — VLM은 영역 식별만, 최종 좌표는 CV (2026-05-25 원칙) <code>5fca221</code></li>
+      <li>workflow_2 probe에서 Kimi 검증(Gemma 실패), 빈 응답 진단 강화</li>
+      <li>Kimi-K2.5 → <b>K2.6</b> 승급, deprecated Qwen3-VL 제거 <code>0abaf7a</code></li>
+    </ul>
+    <blockquote>workflow_2 A/B 검증 중, 프로덕션 미적용.</blockquote>
+  </section>
+
+  <h2><span class="num">7.</span> MSR를 프로덕션 루프에서 제거 <span class="badge b-warn">진행 중</span></h2>
+  <section class="item">
+    <ul>
+      <li>분석 결과 <code>align_img_from_msr</code>가 프로덕션 루프에선 dead I/O → spec/plan 작성 후 <code>include_msr</code> 프로토콜 플래그로 <b>rcp-only 프로덕션 gather</b> 구현 <code>8eeffb6</code> <code>f4cb97e</code> <code>66a5784</code></li>
+    </ul>
+    <blockquote>잔여: assets 경고 정리 · 오프라인 msr-fetch 스크립트 · 테스트.</blockquote>
+  </section>
+
+  <h2><span class="num">8.</span> 기타 인프라</h2>
+  <section class="item">
+    <ul>
+      <li><b>recording_filter</b> 패키지 신설 — RecordingSession 프레임 → interaction timeline (cv2 change-detect + VLM 커서 클릭 검출), 18 테스트 <code>5eed267</code>~<code>8ead575</code></li>
+      <li>엔지니어 align 완료 시 <b>N&gt;5 자동 종료</b>, watch 5분 캡 <code>ac31c6a</code></li>
+      <li>시작 시 <b>경로 헬스 리포트</b> — align_images MES 경로 불일치 조기 경고 <code>11b03e1</code></li>
+      <li>rcp/msr office downloader 훅을 notify에서 분리 <code>cdbcff5</code></li>
+    </ul>
+  </section>
+
+  <h2>진행 현황 한눈에</h2>
+  <section class="item">
+    <table>
+      <thead><tr><th>항목</th><th>상태</th></tr></thead>
+      <tbody>
+        <tr><td>align 모듈 구조 재편</td><td class="status-cell"><span class="badge b-ok">완료</span></td></tr>
+        <tr><td>Cond-aware 박스-크롭 템플릿</td><td class="status-cell"><span class="badge b-ok">완료</span></td></tr>
+        <tr><td>Consensus 라이브 보정 배선</td><td class="status-cell"><span class="badge b-warn">코드 완료 / downloader 대기</span></td></tr>
+        <tr><td>Check-only 진단 (SEM-box · PM 줌)</td><td class="status-cell"><span class="badge b-warn">구현 완료 / 캘리브레이션 중</span></td></tr>
+        <tr><td>재등록 플래깅</td><td class="status-cell"><span class="badge b-ok">완료</span></td></tr>
+        <tr><td>VLM 2-image 폴백</td><td class="status-cell"><span class="badge b-exp">실험 중</span></td></tr>
+        <tr><td>MSR 제거</td><td class="status-cell"><span class="badge b-warn">진행 중</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <h2>다음 주 우선순위</h2>
+  <section class="item next">
+    <ol>
+      <li><b>office_success_downloader 구현</b> — consensus 라이브 보정 활성화의 마지막 게이트</li>
+      <li><b>PM-dropdown 줌 + SEM-box 검출 오피스 실측 캘리브레이션</b> — 클릭 좌표 · 배율 매핑 검증</li>
+      <li>MSR 제거 잔여 정리 + 오프라인 msr-fetch 스크립트</li>
+      <li>VLM 2-image 폴백 workflow_2 A/B 결론 → 채택 여부 결정</li>
+    </ol>
+  </section>
+
+  <footer>workflow_3 — 실시간 align-fail 모니터링 루프 · 2026.06.18 작성</footer>
+
+</div>
+</body>
+</html>

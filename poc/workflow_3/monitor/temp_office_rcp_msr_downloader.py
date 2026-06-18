@@ -27,6 +27,11 @@ idempotent 가드(예: dest 에 IMAP000* 가 이미 있으면 그 경로 반환)
 주의: 파일명이 temp_ 라 pytest 수집 대상이 아니다(test_ 접두였다면 수집됨). 그래도
 office_rich_notify 가 없는 개발 PC 에서도 import 가 깨지지 않게 office import 는
 가드한다(아래). 오피스에서 office_rcp_msr_downloader.py 로 복사하면 가드는 통과한다.
+
+[프로덕션 = rcp 만] download_rcp_msr(include_msr=False) 가 기본이라 알람마다 rcp 만
+받는다. msr 은 오프라인 벤치(fetch_msr_offline.py)가 include_msr=True 로 부를 때만 받는다.
+오피스 PC 의 실제 office_rcp_msr_downloader.py 에도 동일하게 include_msr 가드를 적용해야
+프로덕션에서 msr FTP I/O 가 실제로 빠진다(이 temp_ 견본만 고치면 git 추적용일 뿐 동작 안 함).
 """
 
 import os
@@ -57,13 +62,17 @@ except ImportError:
 class RcpMsrDownloader:
     """recipe 의 등록 align key(rcp) + 측정 궤적(msr)을 align_images 트리로 받는다."""
 
-    def download_rcp_msr(self, eqp_id, recipe_id, *, dest_dir) -> int:
-        """eqp_id + recipe_id('<class>/<recipe>') 의 rcp/msr 이미지를 받고 총개수를 반환.
+    def download_rcp_msr(self, eqp_id, recipe_id, *, dest_dir, include_msr=True) -> int:
+        """eqp_id + recipe_id('<class>/<recipe>') 의 rcp(+선택적 msr) 이미지를 받고 총개수를 반환.
+
+        include_msr=True 일 때만 측정 궤적(msr)도 받는다. 프로덕션 루프는 msr 을 소비하지
+        않으므로 rcp 만(include_msr=False) 받아 동기 다운로드 지연을 줄인다. msr 은 오프라인
+        벤치(fetch_msr_offline.py)에서만 include_msr=True 로 받는다.
 
         Case 1(내부 경로 계산): download_align_images_from_rcp/msr 가 align_images 트리에
         직접 적재하므로 dest_dir 는 검증용으로만 쓴다(쓰는 곳==읽는 곳 점검).
 
-        전제: 두 함수는 idempotent(이미 있으면 FTP skip, 기존 경로 반환) — 모듈 docstring
+        전제: 두 함수는 idempotent(이미 있으면 FTP skip, 기존 경로 반환) - 모듈 docstring
         의 [중요] 참고. send_cube_align_fail_info 도 같은 함수를 embed 용으로 부르므로,
         가드가 없으면 알람당 같은 이미지를 두 번 받는다.
         """
@@ -76,13 +85,15 @@ class RcpMsrDownloader:
         dest_dir = Path(dest_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
 
-        # Case 1 — 함수가 (eqp_id, recipe_id) 로 내부에서 경로를 계산해 적재.
-        # (함수가 class/recipe 를 따로 받으면: class_name, recipe_name = recipe_id.split("/", 1))
+        # Case 1 - 함수가 (eqp_id, recipe_id) 로 내부에서 경로를 계산해 적재.
         rcp_imgs, rcp_conds = download_align_images_from_rcp(eqp_id, recipe_id)
-        # msr 은 tool 저장 지연 대비 0장이면 잠깐 뒤 재시도(아래 헬퍼 참고).
-        msr_imgs, msr_conds = self._download_msr_with_retry(eqp_id, recipe_id)
+        # msr 은 프로덕션에서 미사용 - include_msr=True(오프라인 벤치)일 때만 받는다.
+        if include_msr:
+            msr_imgs, msr_conds = self._download_msr_with_retry(eqp_id, recipe_id)
+        else:
+            msr_imgs, msr_conds = [], []
 
-        # '쓰는 곳 != 읽는 곳' 조기 발견 — 이 다운로더가 막으려는 바로 그 버그 클래스.
+        # '쓰는 곳 != 읽는 곳' 조기 발견 - 이 다운로더가 막으려는 바로 그 버그 클래스.
         self._warn_if_outside(list(rcp_imgs) + list(msr_imgs), dest_dir)
 
         n_images = len(rcp_imgs) + len(msr_imgs)

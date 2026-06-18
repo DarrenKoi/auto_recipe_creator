@@ -255,9 +255,10 @@ def _routed_failure_hist(cons_hist, rcp_hist):
 
 
 def _youden_threshold(samples):
-    """[(score, hit_bool)] -> Youden 최적 임계. hit=True 가 positive(임계 이상이면 맞다고 예측).
+    """[(score, hit_bool)] → Youden 최적 임계. hit=True 가 positive(임계 이상이면 맞다고 예측).
 
     임계 후보 = 등장한 score 들. J = TPR - FPR 최대점. 한 클래스라도 비면 None.
+    J 동점 시 낮은 임계(sensitivity 우선)가 선택된다.
     """
     pos = [s for s, h in samples if h]
     neg = [s for s, h in samples if not h]
@@ -280,7 +281,7 @@ def _youden_by_modality(cells):
     """rcp_only 셀 -> {mod: _youden_threshold}. score(None 아님)+hit 있는 셀만."""
     by_mod = {}
     for c in cells:
-        if c.get("score") is None or "hit" not in c:
+        if c.get("score") is None or c.get("hit") is None:
             continue
         by_mod.setdefault((c.get("mod") or "unknown").lower(), []).append(
             (float(c["score"]), bool(c["hit"])))

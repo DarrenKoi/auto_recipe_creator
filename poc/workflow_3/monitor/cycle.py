@@ -829,6 +829,20 @@ def _check_feasibility_and_preview(
     if feas.marked_path is not None:
         result.outcome_path = str(feas.marked_path)
 
+    # ---- 만성 모호(ambiguous) → align key 재등록 권고를 manifest/로그로 surface. ----
+    if feas.reregister_recommended:
+        sr = f"{feas.second_ratio:.3f}" if feas.second_ratio is not None else "-"
+        note = (
+            f"REREGISTER recipe={recipe_id} (chronic-ambiguous: 2nd/best={sr}); "
+            f"align key 를 더 변별력 있는 영역으로 재등록 권고"
+        )
+        result.notes.append(note)
+        print(f"[WARNING] {note}")
+        log_work2_event(
+            component=LOG_COMPONENT, message="reregister_recommended", level="warning",
+            eqp_id=eqp_id, recipe_id=recipe_id, second_ratio=feas.second_ratio,
+        )
+
     # ---- (opt-in) align point 로 커서 이동 + 안착 화면 재캡처. ----
     if settings.reposition_preview_enabled:
         _run_reposition_preview(context, result, feas, settings)

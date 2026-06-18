@@ -96,6 +96,8 @@ class FeasibilityResult:
     sem_box_bbox: tuple | None = None  # 검출된 live SEM box (l,t,r,b) 풀프레임 px, 없으면 None.
     mode_source: str = ""              # modality 결정 근거: "PM(<text>)" | "score_override(...)" | "score".
     pm_text_source: str = ""           # PM 텍스트 출처: "inline_vlm" | "ocr_crop" | "".
+    second_xy: tuple | None = None     # 2nd-best 후보 중심(풀프레임 px) — 모호성 유발 look-alike.
+    reregister_recommended: bool = False  # 만성 모호(ambiguous) → align key 재등록 권고.
 
 
 def _font_scale(width: int) -> float:
@@ -148,6 +150,27 @@ def _draw_match_marks(canvas, match_xy, align_xy, tpl_wh, scale, color, *, ambig
         cv2.line(canvas, (ax, ay - r), (ax, ay + r), cross_color, 2)
         cv2.putText(canvas, label, (ax + r + 4, ay + 4),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, cross_color, 2, cv2.LINE_AA)
+
+
+def _draw_second_mark(canvas, second_xy, tpl_wh, scale) -> None:
+    """2nd-best 후보(look-alike) 위치를 자홍(magenta) 점선풍 박스+중심+"2nd" 로 그린다.
+
+    best 와 거의 동률인 이 위치 때문에 매칭이 모호(non-distinct)해진다 — 엔지니어가
+    어떤 곳이 best 와 혼동되는지 눈으로 확인하게 한다. best 마크(verdict 색)와 구분되도록
+    자홍을 쓴다.
+    """
+    if second_xy is None:
+        return
+    magenta = (255, 0, 255)
+    sx, sy = int(second_xy[0]), int(second_xy[1])
+    if tpl_wh is not None:
+        bw = int(tpl_wh[0] * scale)
+        bh = int(tpl_wh[1] * scale)
+        x0, y0 = int(sx - bw / 2), int(sy - bh / 2)
+        cv2.rectangle(canvas, (x0, y0), (x0 + bw, y0 + bh), magenta, 1)
+    cv2.circle(canvas, (sx, sy), 4, magenta, -1)
+    cv2.putText(canvas, "2nd", (sx + 6, sy - 6),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, magenta, 2, cv2.LINE_AA)
 
 
 def _draw_sem_box(canvas, box) -> None:
@@ -254,6 +277,8 @@ def mark_align_feasibility(
     best_scale = 0.0
     match_xy = None
     align_xy = None
+    second_xy = None
+    reregister_recommended = False
     modality = ""
     color_bgr = _VERDICT_STYLE["no_assets"][1]
     pm_text = None
@@ -332,11 +357,19 @@ def mark_align_feasibility(
             int(result.best_xy[1]) + origin[1],
         )
 
+        # 2nd-best 후보 중심(있으면) → 풀프레임 좌표. 모호성을 유발한 look-alike 위치.
+        if len(result.candidates) >= 2:
+            c2 = result.candidates[1]
+            second_xy = (int(c2.xy[0]) + origin[0], int(c2.xy[1]) + origin[1])
+
         route = key_visibility_gate(
             result, reregister_ratio_threshold=reregister_ratio_threshold
         )
         verdict = _ROUTE_TO_VERDICT.get(route, "not_visible")
         color_bgr = _VERDICT_STYLE[verdict][1]
+        # 만성 모호(verdict=ambiguous = second_ratio>tau) → 이 recipe 의 align key 는 더
+        # 변별력 있는 영역으로 재등록 권고. verdict 정의상 chronic-ambiguous 와 동치.
+        reregister_recommended = verdict == "ambiguous"
 
         # align target = match 중심 + (rcp offset * best_scale). offset (0,0)이면 match 중심.
         ox, oy = template.align_offset_xy
@@ -351,6 +384,8 @@ def mark_align_feasibility(
             color, match_xy, align_xy, (tw, th), best_scale, color_bgr,
             ambiguous=not distinctive,
         )
+        # 2nd-best look-alike 를 따로 마킹(자홍) — 엔지니어가 모호성의 원인을 보게.
+        _draw_second_mark(color, second_xy, (tw, th), best_scale)
 
     # ---- 배너 텍스트 ----
     label = _VERDICT_STYLE[verdict][0]
@@ -358,7 +393,8 @@ def mark_align_feasibility(
     # 비변별 매칭이면 decision 옆에 [NON-DISTINCT] 를 붙여, score 가 임계를 넘어
     # decision=match 가 떠도 2nd peak 과 거의 동률(coin-flip)임을 숨기지 않는다.
     distinct_flag = "" if distinctive else " [NON-DISTINCT]"
-    lines = [label]
+    reregister_flag = " [RE-REGISTER]" if reregister_recommended else ""
+    lines = [label + reregister_flag]
     if verdict != "no_assets":
         lines.append(
             f"decision={decision}{distinct_flag} score={score:.3f} 2nd/best={sr_txt} "
@@ -388,6 +424,8 @@ def mark_align_feasibility(
         "best_scale": best_scale,
         "match_xy": list(match_xy) if match_xy else None,
         "align_xy": list(align_xy) if align_xy else None,
+        "second_xy": list(second_xy) if second_xy else None,
+        "reregister_recommended": reregister_recommended,
         "modality": modality,
         "mode_source": mode_source,
         "pm_text": pm_text,
@@ -409,7 +447,8 @@ def mark_align_feasibility(
         out_json = None
 
     print(
-        f"[INFO] feasibility: verdict={verdict} decision={decision or '-'}{distinct_flag} "
+        f"[INFO] feasibility: verdict={verdict}{reregister_flag} "
+        f"decision={decision or '-'}{distinct_flag} "
         f"score={score:.3f} 2nd/best={sr_txt} mode={modality or '-'}[{mode_source or '-'}] "
         f"sembox={sembox_state} pm={pm_text or '-'}->{pm_mode or '-'} "
         f"consensus={consensus_events}ev/{consensus_images}img -> {out_marked}"
@@ -420,6 +459,7 @@ def mark_align_feasibility(
         out_marked, out_json, frame_wh,
         pm_text=pm_text, pm_mode=pm_mode, sem_box_bbox=sem_box_bbox,
         mode_source=mode_source, pm_text_source=pm_text_source,
+        second_xy=second_xy, reregister_recommended=reregister_recommended,
     )
 
 

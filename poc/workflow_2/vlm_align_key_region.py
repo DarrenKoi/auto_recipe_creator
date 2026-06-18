@@ -340,13 +340,15 @@ def _ask_region(ref_bgr: np.ndarray, scene_bgr: np.ndarray) -> dict:
         except (ValueError, KeyError, IndexError, TypeError):
             text = resp.text
         out["finish_reason"] = finish_reason
+        out["usage"] = (data.get("usage") if isinstance(data, dict) else None)
         full_text = (text or "").strip()
         # raw_text 는 로깅용으로만 자르고, 파싱은 *전체* 텍스트에서 한다 — 장황한 모델은
         # prose 뒤에 JSON 이 오므로 [:1000] 으로 자르면 JSON 이 통째로 날아가 항상 fail 한다.
         out["raw_text"] = full_text[:4000]
         if not full_text:
-            # 빈 content(200 OK) — 흔히 response_format=json_object 미지원/reasoning 토큰 소진.
-            # 크래시 대신 기록하고 다음 recipe 로. PROBE_JSON_MODE=0 으로 재시도 권장.
+            # 빈 content(200 OK) — content 가 비면 raw_text 로는 원인을 못 본다. 게이트웨이가
+            # 돌려준 *원본 body* 전체를 찍어 finish_reason/usage/reasoning_content/에러를 본다.
+            out["raw_body"] = (resp.text or "")[:1200]
             out["error"] = f"empty_content(finish={finish_reason})"
         else:
             try:
@@ -460,8 +462,13 @@ def _probe_pair(pair: dict, recipe_id: str, out_dir: Path) -> dict:
     region_px = _region_to_pixels(vlm.get("parsed", {}), scene_w, scene_h) if vlm["ok"] else None
     _save_region_overlay(scene_bgr, region_px, out_dir / "vlm_region_overlay.jpg")
     print(f"[INFO] [{mod}] VLM ok={vlm['ok']} status={vlm.get('status')} "
+          f"finish={vlm.get('finish_reason')} usage={vlm.get('usage')} "
           f"found={vlm.get('parsed', {}).get('found')} conf={vlm.get('parsed', {}).get('confidence')} "
-          f"region_px={region_px} err={vlm.get('error', '')[:60]}")
+          f"region_px={region_px} err={vlm.get('error', '')[:120]}")
+    if not vlm["ok"]:
+        # content 가 비었거나 파싱 실패 — 게이트웨이 원본 body 를 그대로 찍어 원인 진단.
+        print(f"[DEBUG] [{mod}] raw_body={vlm.get('raw_body', '')!r}")
+        print(f"[DEBUG] [{mod}] raw_text={vlm.get('raw_text', '')[:300]!r}")
 
     # 2) CV 핸드오프 — full-frame, 그리고 region 이 있으면 ROI.
     cv_full = _run_cv(ref_gray, scene_gray, recipe_id, roi=None, out_dir=out_dir)

@@ -117,20 +117,44 @@ def read_dropdown_options(crop_image, ocr_client, *, crop_origin=(0, 0)):
 
     items = parse_spotting_items(raw_text)
     ox, oy = int(crop_origin[0]), int(crop_origin[1])
+    cw, ch = crop_image.size
+
+    # 좌표계 추정: spotting bbox 가 crop 픽셀인지 / 0-1 비율 / 0-1000 정규화인지.
+    # encode_image_webp 는 리사이즈하지 않으므로 crop 픽셀이 기본 가정이지만, OCR 모델이
+    # 정규화 좌표를 줄 수 있어(=클릭이 엉뚱한 위치로) bbox 최대값으로 보정한다.
+    max_coord = 0.0
+    for it in items:
+        bb = it.get("bbox")
+        if bb:
+            max_coord = max(max_coord, float(bb.get("right", 0)), float(bb.get("bottom", 0)))
+    if items and max_coord <= 1.5:
+        sx, sy, space = float(cw), float(ch), "frac01"
+    elif max_coord <= max(cw, ch) * 1.05:
+        sx, sy, space = 1.0, 1.0, "crop_px"
+    else:
+        sx, sy, space = cw / 1000.0, ch / 1000.0, "norm1000"
+    if items and space != "crop_px":
+        print(f"[INFO] PM 드롭다운 좌표계 보정: {space} (bbox max={max_coord:.0f}, crop={cw}x{ch})")
+
     by_value = {}
     for it in items:
         text = (it.get("text") or "").strip()
         bbox = it.get("bbox")
         if not text or not bbox:
             continue
+        # crop 로컬 중심(좌표계 보정 적용).
+        lcx = (float(bbox["left"]) + float(bbox["right"])) / 2.0 * sx
+        lcy = (float(bbox["top"]) + float(bbox["bottom"])) / 2.0 * sy
+        # crop 영역 밖이면 좌표계 오류 가능 — 라이브 이미지 오클릭(recenter) 방지로 버린다.
+        if not (0 <= lcx <= cw and 0 <= lcy <= ch):
+            continue
+        cx, cy = ox + int(round(lcx)), oy + int(round(lcy))
         # 행 텍스트가 'PM' 라벨/단위 등과 섞일 수 있어 토큰별로 배율을 뽑는다.
         for tok in _MAG_TOKEN_RE.findall(text):
             value = parse_pm_magnification(tok)
             # value<=0 은 'PM 0'/구분자/잡토큰에서 나온 가짜 옵션 — 배율이 될 수 없으므로 버린다.
             if value is None or value <= 0:
                 continue
-            cx = ox + (int(bbox["left"]) + int(bbox["right"])) // 2
-            cy = oy + (int(bbox["top"]) + int(bbox["bottom"])) // 2
             # 같은 배율이 여러 토큰/행에 나오면 첫 검출만 유지(중복 제거).
             by_value.setdefault(
                 value, {"value": value, "text": tok.strip(), "center": {"x": cx, "y": cy}}

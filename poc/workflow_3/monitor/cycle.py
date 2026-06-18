@@ -1370,14 +1370,28 @@ def _run_pm_dropdown_arms(
         click_at_screen(scr, f"pm_opt_{opt['text']}", action_enabled=settings.action_enabled)
         return True
 
-    # 2) 첫 목표는 이미 열린 드롭다운에서 바로 선택, 이후는 매번 재오픈(선택 시 닫힘).
+    def _locate(opts, value):
+        return min(opts, key=lambda o: abs(o["value"] - value)) if opts else None
+
+    # 2) 각 목표: 첫 목표는 이미 열린 드롭다운(+읽은 옵션) 재사용, 이후는 매번 재오픈 후
+    #    **재읽기**해 목표 배율 행의 현재 좌표를 다시 찾는다 — 선택으로 배율이 바뀌어
+    #    드롭다운/PM 박스가 이동해도 stale 좌표로 오클릭하지 않게 한다.
+    target_values = [(label, opt["value"]) for label, opt in targets]
+    cur_options = options
     open_idx = 1
-    for k, (label, opt) in enumerate(targets):
+    for k, (label, value) in enumerate(target_values):
         if k > 0:
             open_idx += 1
-            if _open_dropdown(open_idx) is None:
+            op = _open_dropdown(open_idx)
+            if op is None:
                 print(f"[WARNING] PM 드롭다운 재오픈 실패({label}) - 건너뜀.")
                 continue
+            crop_k, origin_k, _box_k = op
+            cur_options, _raw_k = read_dropdown_options(crop_k, reader, crop_origin=origin_k)
+        opt = _locate(cur_options, value)
+        if opt is None:
+            print(f"[WARNING] PM 드롭다운 재읽기 실패({label} target={value}) - 건너뜀.")
+            continue
         if not _click_option(opt):
             print(f"[WARNING] PM 옵션 screen 변환 실패({label}) - 건너뜀.")
             continue

@@ -325,19 +325,36 @@ def _ask_region(ref_bgr: np.ndarray, scene_bgr: np.ndarray) -> dict:
         out["latency_s"] = round(time.time() - t0, 2)
         out["status"] = resp.status_code
         resp.raise_for_status()
+        finish_reason = None
         try:
             data = resp.json()
-            text = data["choices"][0]["message"]["content"]
+            choice = data["choices"][0]
+            finish_reason = choice.get("finish_reason")
+            msg = choice.get("message", {}) or {}
+            text = msg.get("content")
             if isinstance(text, list):
                 text = " ".join(p.get("text", "") for p in text if isinstance(p, dict))
+            # reasoning 모델이 content 를 비우고 reasoning_content 에만 답을 둘 때 폴백.
+            if not (text or "").strip():
+                text = msg.get("reasoning_content") or ""
         except (ValueError, KeyError, IndexError, TypeError):
             text = resp.text
+        out["finish_reason"] = finish_reason
         full_text = (text or "").strip()
         # raw_text 는 로깅용으로만 자르고, 파싱은 *전체* 텍스트에서 한다 — 장황한 모델은
         # prose 뒤에 JSON 이 오므로 [:1000] 으로 자르면 JSON 이 통째로 날아가 항상 fail 한다.
         out["raw_text"] = full_text[:4000]
-        out["parsed"] = extract_json(full_text)
-        out["ok"] = True
+        if not full_text:
+            # 빈 content(200 OK) — 흔히 response_format=json_object 미지원/reasoning 토큰 소진.
+            # 크래시 대신 기록하고 다음 recipe 로. PROBE_JSON_MODE=0 으로 재시도 권장.
+            out["error"] = f"empty_content(finish={finish_reason})"
+        else:
+            try:
+                out["parsed"] = extract_json(full_text)
+                out["ok"] = True
+            except json.JSONDecodeError as exc:
+                # 비어있진 않은데 JSON 이 아님(prose 만, 잘림 등) — raw_text 로 원인 확인.
+                out["error"] = f"json_parse_failed(finish={finish_reason}): {str(exc)[:80]}"
     except requests.RequestException as exc:
         out["latency_s"] = round(time.time() - t0, 2)
         out["error"] = str(exc)[:300]

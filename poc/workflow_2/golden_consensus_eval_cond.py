@@ -74,6 +74,10 @@ from poc.workflow_2 import golden_localization_eval as gle
 import poc.workflow_2.golden_localization_eval_cond as glec
 from poc.workflow_3.util.time_utils import make_timestamp_tag
 
+# golden_eval_config.py 상수 → env. 아래 CONSENSUS_MIN_S(import 시점 읽음) 전에 호출해야 반영된다.
+from poc.workflow_2.golden_eval_config_loader import seed_env
+seed_env()
+
 OUTPUT_ROOT = DEBUG_IMAGE_DIR / "golden_consensus_eval_cond"
 
 # co-registration: integer-crosshair 정렬이 남긴 sub-pixel 잔차를 phase-correlation 으로

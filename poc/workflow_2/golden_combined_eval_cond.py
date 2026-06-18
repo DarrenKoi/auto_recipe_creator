@@ -48,6 +48,10 @@ from pathlib import Path
 if __package__ in (None, ""):   # 직접 실행 시 repo 루트를 path 에 (다른 드라이버와 동일 관용).
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+# golden_eval_config.py 상수 → env. *gce/glec import 전에* (gce 는 import 시점에 CONSENSUS_MIN_S 읽음).
+from poc.workflow_2.golden_eval_config_loader import seed_env
+seed_env()
+
 from poc.workflow_2 import DEBUG_IMAGE_DIR
 from poc.workflow_2 import golden_localization_eval as gle
 from poc.workflow_2 import golden_localization_eval_cond as glec
@@ -58,38 +62,14 @@ from poc.workflow_3.util.time_utils import make_timestamp_tag
 OUTPUT_ROOT = DEBUG_IMAGE_DIR / "golden_combined_eval_cond"
 
 
-# ======================================================================
-# CONFIG — 상수는 별도 파일 golden_eval_config.py 에서 편집한다(driver 로직 무수정).
-# golden_eval_config.example.py 를 golden_eval_config.py 로 복사 → 그 파일의 3줄만 고치고
-# `uv run python poc/workflow_2/golden_combined_eval_cond.py`. env 가 설정돼 있으면 env 우선.
-# golden_eval_config.py 가 없으면 아래 기본값으로 동작(import 폴백).
-# ======================================================================
-try:
-    from poc.workflow_2.golden_eval_config import GOLDEN_ROOT, LAB_MODE, MIN_S
-except ImportError:
-    GOLDEN_ROOT = None   # 골든 데이터 루트(예: r"C:\data\align_images"). None = 기본 경로.
-    LAB_MODE = ""        # rcp-only arm 매처 채널. "" = production ensemble, "edge_ncc" = C4 레버.
-    MIN_S = None         # consensus 최소 S(바닥 3). None = consensus 드라이버 기본값.
-# ======================================================================
+# 설정은 별도 파일 golden_eval_config.py 에서 편집(세 드라이버 공용; seed_env() 가 env 로 브리지).
+# golden_eval_config.example.py 를 golden_eval_config.py 로 복사해 GOLDEN_ROOT/LAB_MODE/MIN_S 만 고친다.
 
 
-def _apply_config():
-    """CONFIG 상수를 적용하고 골든 루트 Path 를 돌려준다. env 가 있으면 env 우선(하위호환).
-
-    상수→내부 env/모듈attr 브리지는 구현 세부일 뿐, 사용자는 env 를 만질 필요가 없다.
-    - LAB_MODE: gle 가 호출시점에 ALIGN_ENSEMBLE_LAB_MODE 를 읽으므로 os.environ 에 주입.
-    - MIN_S: gce 가 import 시점에 CONSENSUS_MIN_S 를 읽으므로 모듈 attr 를 덮어쓴다(floor 3).
-    """
-    if LAB_MODE and not os.getenv("ALIGN_ENSEMBLE_LAB_MODE"):
-        os.environ["ALIGN_ENSEMBLE_LAB_MODE"] = LAB_MODE
-    if MIN_S is not None and not os.getenv("CONSENSUS_MIN_S"):
-        gce.CONSENSUS_MIN_S = max(3, int(MIN_S))
+def _resolve_golden_root():
+    """골든 루트 Path. seed_env() 가 이미 config→env 브리지를 했으므로 env 만 보면 된다."""
     root_env = os.getenv("ALIGN_GOLDEN_ROOT")
-    if root_env:
-        return Path(root_env)
-    if GOLDEN_ROOT:
-        return Path(GOLDEN_ROOT)
-    return glec.GOLDEN_ROOT
+    return Path(root_env) if root_env else glec.GOLDEN_ROOT
 
 # (A) consensus scaling 층화 bin — n_S_loo(= dominant modality LOO 점 수) 기준. floor 3.
 S_COUNT_BINS = [
@@ -208,7 +188,7 @@ def _score_rcp_only(rec_assets, center_tpls, box_tpls):
 
 def run() -> str:
     """routed pipeline 통합 평가(인자 없음). 반환: success | no_data | no_eligible."""
-    root = _apply_config()          # CONFIG 상수(또는 env) 적용 + 골든 루트 결정.
+    root = _resolve_golden_root()   # seed_env() 가 config→env 브리지 완료. 여기선 env 만.
     glec._apply_matcher_default()   # rcp-only arm: ensemble 기본(ALIGN_USE_ENSEMBLE=0 으로 끌 수 있음).
     recipes = gle._collect_recipes(root) if root.is_dir() else []
     if not recipes:

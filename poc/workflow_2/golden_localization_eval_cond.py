@@ -75,6 +75,10 @@ from poc.workflow_3.align.diagnostics.crosshair_detect import detect_crosshair
 from poc.workflow_2 import golden_localization_eval as gle
 from poc.workflow_3.util.time_utils import make_timestamp_tag
 
+# golden_eval_config.py 상수(GOLDEN_ROOT/LAB_MODE) → env. 세 드라이버 공용 설정.
+from poc.workflow_2.golden_eval_config_loader import seed_env
+seed_env()
+
 GOLDEN_ROOT = ALIGN_IMAGES_ROOT.parent / "align_images_golden"
 OUTPUT_ROOT = DEBUG_IMAGE_DIR / "golden_localization_eval_cond"
 SAVE_OVERLAYS = gle.SAVE_OVERLAYS

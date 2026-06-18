@@ -1,4 +1,4 @@
-"""회사 direct 게이트웨이(Qwen3-VL, OpenAI-compatible)의 *멀티이미지 능력*을 찍는 capability probe.
+"""회사 direct 게이트웨이(Kimi-K2.6, OpenAI-compatible)의 *멀티이미지 능력*을 찍는 capability probe.
 
 목적
 ----
@@ -57,14 +57,13 @@ from poc.workflow_2 import DEBUG_IMAGE_DIR
 # large VLM 직접 연결 — 이 파일 안에서 standalone 으로 정의한다(flask_vlm 의존 제거).
 # api_base 는 /v1 까지 포함한다고 가정한다 → 엔드포인트는 {api_base}/chat/completions.
 # 오피스에서 실행 전 아래 두 값을 실제 게이트웨이 값으로 교체할 것.
-LARGE_VLM_API_BASE = "http://workplace-litellm.aipp02.skhynix.com/v1"   # /v1 포함.
+LARGE_VLM_API_BASE = "http://common.llm.skhynix.com/v1"   # /v1 포함. flask_vlm 의 Kimi 게이트웨이와 일치.
 LARGE_VLM_API_KEY = ""                                                   # TODO: 새 api_key 로 교체.
 
-# LiteLLM 게이트웨이에 등록된 large VLM 들 — 각 모델에 대해 동일한 매트릭스를 돈다.
-# 모델명은 LiteLLM 의 alias 와 정확히 일치해야 한다(불일치 시 400 model_not_found).
+# 게이트웨이에 등록된 모델 — 각 모델에 대해 동일한 매트릭스를 돈다. 모델명은 게이트웨이
+# alias 와 정확히 일치해야 한다(불일치 시 400 model_not_found). Qwen 계열은 사내 deprecated.
 MODELS = [
-    "Qwen3-VL-30B-A3B-Instruct",
-    "Qwen2.5-VL-72B-Instruct",
+    "Kimi-K2.6",
 ]
 
 # discriminative 합산용 두 정수. 한 자리 echo 와 헷갈리지 않게 두 자리 + 합도 두 자리.
@@ -77,7 +76,9 @@ EXPECTED_SUM = REF_NUMBER + SCENE_NUMBER  # 42
 MAX_B64_CHARS = 950_000
 
 TIMEOUT_SEC = 90.0
-MAX_TOKENS = 64
+# Kimi 등 reasoning 모델은 정답 정수 앞에 prose 를 길게 뱉어 64 면 정답까지 도달 못 하고
+# truncate → operand 만 파싱돼 PARTIAL 로 오판한다. 정답이 살아남도록 충분히 크게.
+MAX_TOKENS = 1024
 
 OUTPUT_DIR = DEBUG_IMAGE_DIR / "probe_multi_image"
 
@@ -276,8 +277,12 @@ def run_probe(name: str, model: str, content_blocks: list[dict], n_images: int, 
             data = resp.json()
         except ValueError:
             data = None
-        res.response_text = _extract_text(data, resp.text)[:300]
-        res.parsed_ints = [int(x) for x in re.findall(r"-?\d+", res.response_text)]
+        # 파싱은 *전체* 응답에서 한다 — 장황한 reasoning 모델은 정답 정수가 prose 뒤
+        # (300자 이후)에 올 수 있어 먼저 자르면 정답을 놓쳐 PARTIAL/FAIL 로 오판한다.
+        # response_text 는 표시·로깅용으로만 자른다.
+        full_text = _extract_text(data, resp.text)
+        res.parsed_ints = [int(x) for x in re.findall(r"-?\d+", full_text)]
+        res.response_text = full_text[:300]
         res.verdict = _verdict(res.parsed_ints, expected, name)
     except requests.RequestException as exc:
         res.latency_s = round(time.time() - t0, 2)

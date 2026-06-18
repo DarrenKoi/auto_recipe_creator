@@ -19,8 +19,14 @@ golden_eval_config.py 가 없으면 driver 는 아래와 동일한 기본값으�
 env(ALIGN_GOLDEN_ROOT/ALIGN_ENSEMBLE_LAB_MODE/CONSENSUS_MIN_S)가 설정돼 있으면 env 가 우선.
 """
 
-# 골든 데이터 루트. 예: r"C:\\data\\align_images". None = 기본 경로(glec.GOLDEN_ROOT).
+# 골든 데이터 루트(align_images: <eqp>/<class>/<recipe>/...). 예: r"C:\\data\\align_images".
+# None = 기본 경로(glec.GOLDEN_ROOT).
 GOLDEN_ROOT = None
+
+# consensus 과거 성공 S 풀의 *별도* root. **class/recipe 로만 매칭(eqp 무관)** — 같은 recipe 면
+# 장비 달라도 공유. 레이아웃: <HISTORY_ROOT>/<class>/<recipe>/events/<event_id>/S*.jpeg (+ .<img>/cond.txt,
+# office_success_downloader 포맷 그대로). None/부재 = LOO 폴백(from_msr 안에서 leave-one-out).
+HISTORY_ROOT = None
 
 # rcp-only arm 매처 채널. "" = production ensemble, "edge_ncc" = C4 레버 평가.
 LAB_MODE = ""

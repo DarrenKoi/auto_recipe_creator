@@ -56,7 +56,7 @@ import cv2
 import numpy as np
 
 from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_3.align.assets import iter_msr_images, load_gray
+from poc.workflow_3.align.assets import iter_msr_images, load_gray, _list_images
 from poc.workflow_2.align_similarity import (
     GT_TOL_NORM, USE_ENSEMBLE_PROPOSER, _consensus_template_ab, _matched_crop,
 )
@@ -83,6 +83,11 @@ OUTPUT_ROOT = DEBUG_IMAGE_DIR / "golden_consensus_eval_cond"
 # co-registration: integer-crosshair 정렬이 남긴 sub-pixel 잔차를 phase-correlation 으로
 # 마저 맞춰 median blur(edge_ratio<0.70 경고)를 줄인다 → consensus 가 또렷해져 membership·
 # rank1 둘 다 개선 기대. env CONSENSUS_COREGISTER=0 으로 끄면 A/B 비교 가능.
+# consensus 과거 성공 S 풀의 *별도* root — **class/recipe 로만 매칭(eqp 무관)**. seed_env() 가
+# golden_eval_config.HISTORY_ROOT 를 여기로 브리지. 미설정/부재면 LOO 폴백(from_msr leave-one-out).
+# 레이아웃: <ALIGN_MSR_HISTORY_ROOT>/<class>/<recipe>/events/<event_id>/S*.jpeg (+ .<img>/cond.txt).
+HISTORY_ROOT = os.getenv("ALIGN_MSR_HISTORY_ROOT") or None
+
 COREGISTER = os.getenv("CONSENSUS_COREGISTER", "1") != "0"
 
 # LOO 매칭 프레임 정제: raw 프레임은 GT 위치에 진짜 crosshair 가 남아 있고, consensus 템플릿
@@ -304,7 +309,58 @@ def _build_cond_by_recipe(assets, center_tpls):
         for fs in by_mod.values():
             for f, aligned in zip(fs, coregister_crops([f["crop"] for f in fs])):
                 f["crop"] = aligned
+    # consensus 과거 S 풀(from_msr_history). 있으면 _consensus_template_ab 가 LOO 대신
+    # 이 disjoint 풀로 consensus 를 빌드(eval=from_msr S, 누설 0). 부재면 {} → LOO 폴백.
+    entry["history_crops"] = _crop_history_by_mod(assets, center_tpls, recipe_mod)
     return entry
+
+
+def _history_images(assets):
+    """consensus 과거 S 풀 이미지 — <HISTORY_ROOT>/<class>/<recipe>/ (eqp 무관, events 레이아웃 평면화).
+
+    별도 root 운영: 같은 class/recipe 면 eqp 달라도 공유한다. _list_images 가 rglob 으로
+    events/<event_id>/S*.jpeg 를 찾고 숨김 cond 폴더(.<img>/)는 제외. 미설정/부재면 [] → LOO 폴백.
+    """
+    if not HISTORY_ROOT:
+        return []
+    return _list_images(Path(HISTORY_ROOT) / assets.class_name / assets.recipe_name)
+
+
+def _crop_history_by_mod(assets, center_tpls, recipe_mod):
+    """과거 성공 S 풀을 modality 별 consensus crop 리스트로. 부재면 {}.
+
+    s_frames 와 동일 cropping(crosshair 중심·제거, 해당 modality center tpl size) + modality 별
+    co-registration. eval(from_msr)과 disjoint 한 consensus 재료 전용이라 xy/path 는 보관 안 한다.
+    """
+    hist_imgs = _history_images(assets)
+    if not hist_imgs:
+        return {}
+    by_mod = defaultdict(list)
+    for p in hist_imgs:
+        if _tool_label(p.name) != "S":     # 규약상 S only — 방어적 필터.
+            continue
+        cond = load_cond(p)
+        mod = _resolve_mod(cond, recipe_mod)
+        xy = _cond_crosshair_xy(cond)
+        tpl_item = center_tpls.get(mod) or next(
+            (t for t in center_tpls.values() if t is not None), None)
+        if _precrop_drop_reason(cond, xy, mod, tpl_item is not None):
+            continue
+        tpl = tpl_item[0]
+        size_wh = (tpl.raw_image.shape[1], tpl.raw_image.shape[0])
+        try:
+            gray = load_gray(p)
+        except Exception:
+            continue
+        crop = _cond_consensus_crop(gray, cond, size_wh)
+        if crop is None:
+            continue
+        by_mod[mod].append(crop)
+    if COREGISTER:
+        for mod, crops in list(by_mod.items()):
+            if crops:
+                by_mod[mod] = list(coregister_crops(crops))
+    return dict(by_mod)
 
 
 # --- 결합 패널(combined) — localization cond 판과 같은 "한 장 추적" 시각화 ----------

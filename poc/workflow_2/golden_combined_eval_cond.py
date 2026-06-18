@@ -97,17 +97,20 @@ def _bin_by_s_count(per_recipe, edges=S_COUNT_BINS):
         for lo, hi, lbl in edges
     )
     for r in per_recipe:
-        ns = int(r["n_S_loo"])
+        # 층화 축 = consensus 풀 크기(history=과거 S 장수, LOO=fm-1; 구버전 row 는 n_S_loo 폴백).
+        # 가중치 = eval frame 수(n_S_loo) — 풀 크기와 분리해야 history(풀 크고 frame 적음)가 안 왜곡됨.
+        pool = int(r.get("cons_pool_n", r["n_S_loo"]))
+        w = int(r["n_S_loo"])
         for lo, hi, lbl in edges:
-            if ns >= lo and (hi is None or ns <= hi):
+            if pool >= lo and (hi is None or pool <= hi):
                 b = bins[lbl]
                 b["n_recipes"] += 1
-                b["n_frames"] += ns
-                b["cons_rank1_sum"] += r["cons_rank1_rate"] * ns
-                b["cons_topk_sum"] += r["cons_in_topk_rate"] * ns
-                b["rcp_rank1_sum"] += r["rcp_rank1_rate"] * ns
-                b["rcp_topk_sum"] += r["rcp_in_topk_rate"] * ns
-                b["lift_sum"] += r["lift"] * ns
+                b["n_frames"] += w
+                b["cons_rank1_sum"] += r["cons_rank1_rate"] * w
+                b["cons_topk_sum"] += r["cons_in_topk_rate"] * w
+                b["rcp_rank1_sum"] += r["rcp_rank1_rate"] * w
+                b["rcp_topk_sum"] += r["rcp_in_topk_rate"] * w
+                b["lift_sum"] += r["lift"] * w
                 break
     out = []
     for b in bins.values():
@@ -249,6 +252,7 @@ def run() -> str:
     # 4) 리포트 조립.
     scaling = _bin_by_s_count(per_recipe)
     routed = _routed_overall(cons_frames, cons_rank1, cons_topk, rcp_only)
+    n_history = sum(1 for r in per_recipe if r.get("mode") == "history")
     summary = {
         "matcher_rcp_only": matcher_mode,
         "lab_mode": os.getenv("ALIGN_ENSEMBLE_LAB_MODE", ""),
@@ -262,6 +266,8 @@ def run() -> str:
             "n_frames": cons_frames,
             "rank1_rate": cons_rank1,
             "in_topk_rate": cons_topk,
+            "n_recipes_history": n_history,                       # 별도 history root 로 consensus 빌드한 recipe.
+            "n_recipes_loo": len(eligible_keys) - n_history,      # history 없어 from_msr LOO 로 빌드한 recipe.
             "rcp_counterfactual_rank1_rate": res["overall_rcp_rank1_rate"] if res else None,
             "rcp_counterfactual_in_topk_rate": res["overall_rcp_in_topk_rate"] if res else None,
             "overall_lift": res["overall_lift"] if res else None,
@@ -299,8 +305,9 @@ def _digest_line(summary):
         for b in summary["consensus_scaling_by_s_count"] if b["n_frames"]
     ) or "-"
     lab = summary["lab_mode"] or "off"
+    cons_mode = f"hist:{ca.get('n_recipes_history', 0)}/loo:{ca.get('n_recipes_loo', 0)}"
     return (
-        f"lab={lab} minS={summary['consensus_min_s']} | "
+        f"lab={lab} minS={summary['consensus_min_s']} consMode={cons_mode} | "
         f"routed r1/topk={r['rank1_rate']}/{r['in_topk_rate']} (n={r['n_frames']}) | "
         f"cons r1/topk={ca['rank1_rate']}/{ca['in_topk_rate']} lift={ca['overall_lift']} "
         f"(n={ca['n_frames']},rec={summary['n_recipes_consensus_eligible']}) | "

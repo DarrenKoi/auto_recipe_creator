@@ -37,17 +37,35 @@ rcp-only arm 은 box 템플릿(포팅 경로). routed *pick* 은 일관(eligible
 arm 간 rcp 정의가 달라 lift 비교는 arm 별로만 해석한다. 순수 헬퍼(`_bin_by_s_count`/`_pick_cell`/
 `_arm_rates`/`_routed_overall`)는 `test_golden_combined_eval_cond.py` 로 합성 row 검증(golden 불요).
 
-## 결정 2 — office S 수집 정책
+## 결정 2 — consensus 과거 S 풀: 별도 root, class/recipe 키(eqp 무관)
 
-consensus scaling 곡선(A)을 의미 있게 채우려면 office 에서 recipe 당 S 를 더 쌓아야 한다.
-과거 다운로드 셋은 298 recipe 중 1개만 S>=4, 135개가 S=3(LOO 2장, 약함)이라 high bin 이 비어 있었다.
+consensus 이력(과거 성공 S)은 align_images 안의 per-recipe 하위폴더가 **아니라 별도 root** 에서
+운영한다. 키는 **`<class>/<recipe>` 만 — eqp_id 무관**(같은 recipe 면 장비 달라도 공유). 레이아웃은
+production consensus 캐시와 동일:
 
-- **recipe·modality 당 최근 S 8~10장(rolling)** 수집. 8 median 이면 per-wafer noise + 드리프트를
-  충분히 평탄화하고, LOO 로 n_S=2..9 곡선을 그릴 수 있다. 10+ 는 한계효용 급감.
+```
+<HISTORY_ROOT>/<class>/<recipe>/events/<event_id>/S*.jpeg   (+ .<img>/cond.txt 숨김 sidecar)
+```
+
+`office_success_downloader` 출력 포맷 그대로라 무변환 적재 가능. 설정은 `golden_eval_config.HISTORY_ROOT`
+(→ `seed_env()` → env `ALIGN_MSR_HISTORY_ROOT`). production `align/assets.py` 는 **건드리지 않는다**
+(history 는 벤치/골든 전용 개념) — `gce._history_images(assets)` 가 `<root>/<class>/<recipe>` 를
+`_list_images`(rglob, 숨김 cond 폴더 제외)로 평면화해 읽는다.
+
+**history-first + LOO 폴백**: history 풀이 >= min_s 면 `_consensus_template_ab` 가 그 disjoint 풀로
+consensus 를 빌드(eval=from_msr S, 누설 0, LOO 불필요)하고, 없으면 기존 from_msr leave-one-out 으로
+폴백한다(LOO 경로는 byte-identical 보존). per_recipe row 에 `cons_pool_n`(consensus 풀 크기 = scaling 축)
++ `mode`(history|loo) 추가. combined 드라이버는 `cons_pool_n` 으로 층화(가중치는 eval frame 수).
+digest 에 `consMode=hist:X/loo:Y` 노출.
+
+### office 수집 정책
+- **class·recipe·modality 당 최근 S 8~10장(rolling)** 을 `<HISTORY_ROOT>/<class>/<recipe>/events/` 에 적재.
+  8 median 이면 noise+드리프트 평탄화 + scaling 곡선(n_S=2..9) 확보. 10+ 는 한계효용 급감.
 - 카운트는 **modality(OM/SEM)별**(매칭은 fail 난 modality 키로만). dual-modality 는 양쪽 다.
-- **최신순 rolling** — consensus 는 "현재 외형 추종"이 존재 이유라 오래된 S 는 drop(stale 방지).
-- **S only.** E(fail)는 crosshair 가 없어 consensus 정렬 anchor 도, 자동 채점 GT 도 못 됨 → consensus·
-  벤치 모두 불용. E 로 production-faithful fail-frame 테스트를 하려면 수동 GT 라벨이 필요(현 단계 보류).
+- **최신순 rolling** — consensus 는 "현재 외형 추종"이라 오래된 S 는 drop(stale 방지).
+- **S only.** E(fail)는 crosshair 가 없어 consensus 정렬 anchor 도, 자동 채점 GT 도 못 됨.
+- **eqp 무관 주의**: 같은 class/recipe 라도 tool-to-tool 외형차가 크면 consensus 가 흐려질 수 있다 —
+  scaling/lift 가 안 오르면 eqp 별 분리도 후속 검토 대상.
 
 ## 검증
 

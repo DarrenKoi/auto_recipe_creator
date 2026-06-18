@@ -18,8 +18,12 @@ import os
 
 try:
     from poc.workflow_2.golden_eval_config import GOLDEN_ROOT, LAB_MODE, MIN_S
+    try:
+        from poc.workflow_2.golden_eval_config import HISTORY_ROOT
+    except ImportError:   # 구버전 config(HISTORY_ROOT 없음) 하위호환.
+        HISTORY_ROOT = None
 except ImportError:   # 실편집 파일 부재 — golden_eval_config.example.py 참고(복사해서 생성).
-    GOLDEN_ROOT, LAB_MODE, MIN_S = None, "", None
+    GOLDEN_ROOT, LAB_MODE, MIN_S, HISTORY_ROOT = None, "", None, None
 
 
 def seed_env():
@@ -29,6 +33,8 @@ def seed_env():
     """
     if GOLDEN_ROOT:
         os.environ.setdefault("ALIGN_GOLDEN_ROOT", str(GOLDEN_ROOT))
+    if HISTORY_ROOT:
+        os.environ.setdefault("ALIGN_MSR_HISTORY_ROOT", str(HISTORY_ROOT))
     if LAB_MODE:
         os.environ.setdefault("ALIGN_ENSEMBLE_LAB_MODE", str(LAB_MODE))
     if MIN_S is not None:

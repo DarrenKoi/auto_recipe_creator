@@ -888,9 +888,17 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None,
         # consensus 일관성 위해 최다 modality 한 종류로 한정.
         mod = Counter(f["mod"] for f in frames).most_common(1)[0][0]
         fm = [f for f in frames if f["mod"] == mod]
-        if len(fm) < min_s:
-            continue
-        crops = [f["crop"] for f in fm]
+        # consensus 재료: from_msr_history(disjoint 과거 S 풀) 우선, 없으면 LOO(fm).
+        history = (data.get("history_crops") or {}).get(mod)
+        use_history = history is not None and len(history) >= min_s
+        if use_history:
+            if not fm:                     # 채점할 from_msr S 가 없으면 skip.
+                continue
+            crops = list(history)          # consensus 풀 = 과거 S (eval=fm 과 disjoint, LOO 불필요).
+        else:
+            if len(fm) < min_s:
+                continue
+            crops = [f["crop"] for f in fm]
         rcp_tpl = data.get("rcp_tpls", {}).get(mod)
         # all-crops consensus 1회 빌드(루프 불변) — 가드 + 저장에 재사용.
         all_consensus = _consensus(crops)
@@ -914,11 +922,14 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None,
                 lap_ratio_rcp.append(c_lap / r_lap)
         n = rcp_hit = cons_hit = rcp_r1 = cons_r1 = 0
         for i, f in enumerate(fm):
-            others = [c for j, c in enumerate(crops) if j != i]
-            if len(others) < 2:
-                continue
-            cons_tpl = build_template(_consensus(others), recipe_id=rec,
-                                      version="s_consensus", key_type=mod)
+            if use_history:
+                cons_tpl = all_cons_tpl    # disjoint 과거 S consensus — 모든 eval frame 동일(LOO 없음).
+            else:
+                others = [c for j, c in enumerate(crops) if j != i]
+                if len(others) < 2:
+                    continue
+                cons_tpl = build_template(_consensus(others), recipe_id=rec,
+                                          version="s_consensus", key_type=mod)
             try:
                 gray = frame_loader(f) if frame_loader is not None else load_gray(f["path"])
             except Exception:
@@ -980,6 +991,9 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None,
                 continue
         per_recipe.append({
             "recipe": rec, "modality": mod, "n_S_loo": n,
+            # consensus 풀 크기(= "consensus 많을수록" 축): history=과거 S 장수, LOO=fm-1.
+            "cons_pool_n": len(crops) if use_history else max(0, len(fm) - 1),
+            "mode": "history" if use_history else "loo",
             "rcp_template": rcp_tpl is not None,
             "rcp_in_topk_rate": round(rcp_hit / n, 3),
             "cons_in_topk_rate": round(cons_hit / n, 3),

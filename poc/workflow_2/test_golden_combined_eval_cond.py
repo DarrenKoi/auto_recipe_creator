@@ -47,6 +47,16 @@ def test_bin_by_s_count_empty_bin_is_none():
     assert b["n_frames"] == 0 and b["cons_rank1_rate"] is None
 
 
+def test_bin_by_s_count_prefers_cons_pool_n():
+    # n_S_loo(=eval frame 수)와 cons_pool_n(=consensus 풀 크기)이 다르면 풀 크기로 층화한다.
+    # history mode: eval frame 2개지만 consensus 풀(과거 S)은 6장 → S=5-6 bin.
+    rows = [{**_row("a", 2, 0.9, 1.0), "cons_pool_n": 6, "mode": "history"}]
+    bins = {b["label"]: b for b in gcc._bin_by_s_count(rows)}
+    assert bins["S=5-6"]["n_recipes"] == 1     # cons_pool_n=6 으로 분류(n_S_loo=2 아님)
+    assert bins["S=5-6"]["n_frames"] == 2      # 가중치는 eval frame 수(n_S_loo)
+    assert bins["S=3"]["n_recipes"] == 0
+
+
 # --- _pick_cell (production-relevant 셀 선택) ---
 
 def test_pick_cell_prefers_box_inpaint():

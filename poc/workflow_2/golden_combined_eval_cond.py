@@ -290,7 +290,39 @@ def run() -> str:
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
     _print_report(summary)
+    digest = _digest_line(summary)
+    (out_dir / "digest.txt").write_text(digest + "\n", encoding="utf-8")
+    # 사용자가 콘솔 전체 대신 이 한 줄만 복사해 전달하도록 맨 끝에 크게 찍는다.
+    print("\n" + "=" * 70)
+    print("[DIGEST] " + digest)
+    print("=" * 70)
+    print(f"[INFO] (이 한 줄만 복사해서 주면 됨. 파일: {out_dir / 'digest.txt'})")
     return "success" if (cons_frames or rcp_only["n"]) else "no_eligible"
+
+
+def _digest_line(summary):
+    """콘솔 마지막에 찍는 한 줄 다이제스트 — 사용자가 이 줄만 복사해 전달.
+
+    포맷(고정): lab/minS | routed r1/topk | cons r1/topk lift | rcp_only r1/topk | scaling[bin:cons_r1 ...].
+    숫자만 보면 (A) scaling 추세 / (B) rcp-only 레버 효과 / (C) routed 정확도를 다 읽을 수 있다.
+    """
+    ca = summary["consensus_arm"]
+    ro = summary["rcp_only_arm"]
+    r = summary["routed_overall"]
+    scaling = " ".join(
+        f"{b['label']}:{b['cons_rank1_rate']}"
+        for b in summary["consensus_scaling_by_s_count"] if b["n_frames"]
+    ) or "-"
+    lab = summary["lab_mode"] or "off"
+    return (
+        f"lab={lab} minS={summary['consensus_min_s']} | "
+        f"routed r1/topk={r['rank1_rate']}/{r['in_topk_rate']} (n={r['n_frames']}) | "
+        f"cons r1/topk={ca['rank1_rate']}/{ca['in_topk_rate']} lift={ca['overall_lift']} "
+        f"(n={ca['n_frames']},rec={summary['n_recipes_consensus_eligible']}) | "
+        f"rcp_only r1/topk={ro['rank1_rate']}/{ro['in_topk_rate']} "
+        f"(n={ro['n']},rec={summary['n_recipes_rcp_only']}) | "
+        f"scaling[{scaling}]"
+    )
 
 
 def _print_report(summary):

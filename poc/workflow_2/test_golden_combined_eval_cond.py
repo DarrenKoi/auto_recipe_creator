@@ -105,3 +105,38 @@ def test_routed_overall_consensus_only():
     rcp = {"n": 0, "rank1_rate": None, "in_topk_rate": None}
     out = gcc._routed_overall(8, 0.75, 0.9, rcp)
     assert out["rank1_rate"] == 0.75 and out["in_topk_rate"] == 0.9
+
+
+# --- _digest_line (한 줄 다이제스트 — 사용자가 이 줄만 복사) ---
+
+def _summary(**over):
+    s = {
+        "lab_mode": "edge_ncc", "consensus_min_s": 3,
+        "n_recipes_consensus_eligible": 45, "n_recipes_rcp_only": 120,
+        "consensus_arm": {"n_frames": 140, "rank1_rate": 0.78, "in_topk_rate": 0.86,
+                          "overall_lift": 0.09},
+        "rcp_only_arm": {"n": 210, "rank1_rate": 0.61, "in_topk_rate": 0.70},
+        "routed_overall": {"n_frames": 350, "rank1_rate": 0.72, "in_topk_rate": 0.81},
+        "consensus_scaling_by_s_count": [
+            {"label": "S=3", "n_frames": 80, "cons_rank1_rate": 0.70},
+            {"label": "S=4", "n_frames": 60, "cons_rank1_rate": 0.82},
+            {"label": "S=5-6", "n_frames": 0, "cons_rank1_rate": None},
+        ],
+    }
+    s.update(over)
+    return s
+
+
+def test_digest_line_is_single_line_with_key_numbers():
+    d = gcc._digest_line(_summary())
+    assert "\n" not in d                       # 반드시 한 줄.
+    assert "lab=edge_ncc minS=3" in d
+    assert "routed r1/topk=0.72/0.81 (n=350)" in d
+    assert "rcp_only r1/topk=0.61/0.7 (n=210,rec=120)" in d   # 0.70 → float repr 0.7
+    assert "S=3:0.7" in d and "S=4:0.82" in d   # scaling 추세.
+    assert "S=5-6" not in d                     # frames=0 bin 은 생략.
+
+
+def test_digest_line_lab_off_default():
+    d = gcc._digest_line(_summary(lab_mode=""))
+    assert "lab=off" in d

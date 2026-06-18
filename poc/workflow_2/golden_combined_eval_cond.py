@@ -303,6 +303,7 @@ def _youden_by_modality(cells):
     return {mod: _youden_threshold(s) for mod, s in by_mod.items()}
 
 
+# split 판정 로직(아래) — run() 의 Step 2(modality 전략 분기 리포트)에서 사용.
 _LEVER_BY_BUCKET = {
     "periodic_look_alike": "L2_om_periodicity",
     "recall_miss": "L3_sem_recall",
@@ -344,17 +345,22 @@ def _split_verdict(fail_om, fail_sem, rate_om, rate_sem, cfg):
     격차: |r1차| >= RANK1_GAP OR min(r1) < RANK1_FLOOR.
     분기: 두 modality 지배 실패유형이 서로 다름.
     verdict: 격차&분기 -> SPLIT(+lever), 격차만 -> shared_tune, 그 외 -> no_split.
+    rate_om/rate_sem: {n_frames, rank1_rate, n_recipes} (run() 가 routed rate + _recipes_by_modality 로 조립).
+    한 modality 만 지배 실패유형이 있으면 divergent=False → shared_tune.
     """
     insufficient = [name for name, rate in (("om", rate_om), ("sem", rate_sem))
                     if rate.get("n_frames", 0) < cfg["SPLIT_MIN_FRAMES"]
                     or rate.get("n_recipes", 0) < cfg["SPLIT_MIN_RECIPES"]]
     if insufficient:
-        return {"verdict": "insufficient", "insufficient_mods": insufficient,
+        return {"verdict": "insufficient", "insufficient_mods": insufficient, "gap_reason": None,
                 "dominant_om": None, "dominant_sem": None, "suggested_levers": []}
 
     r_om = rate_om.get("rank1_rate") or 0.0
     r_sem = rate_sem.get("rank1_rate") or 0.0
-    gap = abs(r_om - r_sem) >= cfg["SPLIT_RANK1_GAP"] or min(r_om, r_sem) < cfg["SPLIT_RANK1_FLOOR"]
+    gap_abs = abs(r_om - r_sem) >= cfg["SPLIT_RANK1_GAP"]
+    gap_floor = min(r_om, r_sem) < cfg["SPLIT_RANK1_FLOOR"]
+    gap = gap_abs or gap_floor
+    gap_reason = ("abs_diff" if gap_abs else "floor") if gap else None
     dom_om = _dominant_failure(fail_om, cfg["SPLIT_DOMINANCE"])
     dom_sem = _dominant_failure(fail_sem, cfg["SPLIT_DOMINANCE"])
     divergent = dom_om is not None and dom_sem is not None and dom_om != dom_sem
@@ -366,7 +372,7 @@ def _split_verdict(fail_om, fail_sem, rate_om, rate_sem, cfg):
         verdict, levers = "shared_tune", []
     else:
         verdict, levers = "no_split", []
-    return {"verdict": verdict, "insufficient_mods": [],
+    return {"verdict": verdict, "insufficient_mods": [], "gap_reason": gap_reason,
             "dominant_om": dom_om, "dominant_sem": dom_sem, "suggested_levers": levers}
 
 

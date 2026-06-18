@@ -368,3 +368,22 @@ def test_recipes_by_modality_counts_distinct():
     cells = [{"mod": "om", "rec_key": "B"}, {"mod": "sem", "rec_key": "C"}]   # B 중복, C 신규
     out = gcc._recipes_by_modality(per_recipe, cells)
     assert out["om"] == 2 and out["sem"] == 1
+
+
+def test_split_verdict_split_when_floor_triggers_not_abs_gap():
+    # abs 차 0.02 < 0.10 이지만 min(0.63) < 0.70 → floor 로 gap, 분기 있으면 SPLIT.
+    om = _hist(rank1_hit=2, look_alike=8, periodic_look_alike=8)
+    sem = _hist(rank1_hit=2, recall_miss=8)
+    v = gcc._split_verdict(om, sem, _rate(40, 0.63, 6), _rate(40, 0.65, 6), _CFG)
+    assert v["verdict"] == "SPLIT"
+    assert v["gap_reason"] == "floor"
+
+
+def test_split_verdict_shared_tune_when_one_dominant_one_none():
+    # OM periodic 지배, SEM 실패 균등(dom=None: 각 bucket < 0.40) → divergent=False → shared_tune.
+    # SEM: look_alike=6(periodic=3,other=3), recall=3 → 총 실패 9, 각 bucket 3/9≈0.333 < 0.40.
+    om = _hist(rank1_hit=2, look_alike=8, periodic_look_alike=8)
+    sem = _hist(rank1_hit=2, look_alike=6, recall_miss=3, periodic_look_alike=3)
+    v = gcc._split_verdict(om, sem, _rate(40, 0.60, 6), _rate(40, 0.85, 6), _CFG)
+    assert v["verdict"] == "shared_tune"
+    assert v["suggested_levers"] == []

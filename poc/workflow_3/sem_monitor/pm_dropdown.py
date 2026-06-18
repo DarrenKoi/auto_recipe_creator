@@ -36,6 +36,11 @@ PM_BUTTON_MIN_GAP = env_int("ALIGN_FAIL_PM_BTN_MIN_GAP", 14)
 PM_DROPDOWN_DOWN_RATIO = env_float("ALIGN_FAIL_PM_DD_DOWN_RATIO", 0.45)
 PM_DROPDOWN_SIDE_PAD_RATIO = env_float("ALIGN_FAIL_PM_DD_SIDE_PAD_RATIO", 1.5)
 PM_DROPDOWN_UP_PAD_RATIO = env_float("ALIGN_FAIL_PM_DD_UP_PAD_RATIO", 0.5)
+# 드롭다운은 'PM 버튼 바로 아래'에 펼쳐진다 — 버튼 점 기준 crop(좌/우는 frame 폭 비율,
+# 위는 버튼에서 살짝 내려서 시작, 아래로 frame 높이 비율).
+PM_DD_LEFT_RATIO = env_float("ALIGN_FAIL_PM_DD_LEFT_RATIO", 0.04)
+PM_DD_RIGHT_RATIO = env_float("ALIGN_FAIL_PM_DD_RIGHT_RATIO", 0.12)
+PM_DD_TOP_GAP_RATIO = env_float("ALIGN_FAIL_PM_DD_TOP_GAP_RATIO", 0.0)
 
 
 def pm_button_point(pm_box_px):
@@ -82,6 +87,29 @@ def dropdown_region(pm_box_px, frame_wh):
     r = min(fw, r0 + side)
     t = max(0, t0 - int(round(h * PM_DROPDOWN_UP_PAD_RATIO)))
     b = min(fh, t0 + int(round(fh * PM_DROPDOWN_DOWN_RATIO)))
+    if r - l < 4 or b - t < 4:
+        return None
+    return (l, t, r, b)
+
+
+def dropdown_region_below(button_xy, frame_wh):
+    """'PM 버튼 바로 아래'에 펼쳐지는 드롭다운의 crop 영역 (l, t, r, b) 픽셀을 만든다.
+
+    버튼 점(button_xy: {"x","y"} 풀프레임 px) 기준으로 좌/우는 frame 폭 비율, 위는 버튼에서
+    살짝 내려서(top_gap) 시작, 아래로 frame 높이 비율만큼 잡는다. 버튼 위치를 2단계 VLM 으로
+    정확히 얻은 뒤 이 함수로 그 아래만 OCR 한다(숫자박스 기준 추정보다 정확).
+    """
+    if not button_xy or not frame_wh:
+        return None
+    try:
+        fw, fh = int(frame_wh[0]), int(frame_wh[1])
+        bx, by = int(button_xy["x"]), int(button_xy["y"])
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+    l = max(0, bx - int(round(fw * PM_DD_LEFT_RATIO)))
+    r = min(fw, bx + int(round(fw * PM_DD_RIGHT_RATIO)))
+    t = max(0, by + int(round(fh * PM_DD_TOP_GAP_RATIO)))
+    b = min(fh, by + int(round(fh * PM_DROPDOWN_DOWN_RATIO)))
     if r - l < 4 or b - t < 4:
         return None
     return (l, t, r, b)
@@ -191,6 +219,7 @@ def choose_step_targets(options, current_mag, out_steps, in_steps):
 __all__ = [
     "pm_button_point",
     "dropdown_region",
+    "dropdown_region_below",
     "read_dropdown_options",
     "choose_step_targets",
 ]

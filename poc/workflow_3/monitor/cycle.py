@@ -1277,7 +1277,7 @@ def _run_pm_dropdown_arms(
     """
     from poc.workflow_3.sem_monitor.pm_dropdown import (
         choose_step_targets,
-        dropdown_region,
+        dropdown_region_below,
         pm_button_point,
         read_dropdown_options,
     )
@@ -1297,24 +1297,65 @@ def _run_pm_dropdown_arms(
             print(f"[WARNING] PM 드롭다운: OCR client 생성 실패 -> sem_box client 로 읽기: {exc}")
             reader = sem_box_client
 
+    # PM 버튼 위치는 2단계 VLM(coarse ui-venus → refine mai-ui)으로 직접 grounding 한다.
+    # 단일 VLM/숫자박스-왼쪽 기하 추정이 부정확해 클릭이 빗나갔으므로 2단계로 정확도를 높이고
+    # 한 번 찾으면 캐시한다(PM 버튼은 고정 UI — 재오픈마다 다시 안 찾음).
+    _btn_cache = {"pt": None}
+
+    def _locate_pm_button(image):
+        if _btn_cache["pt"] is not None:
+            return _btn_cache["pt"]
+        pt = None
+        try:
+            from poc.workflow_3.vlm.ui_venus_mai_locator import (
+                EXIT_SUCCESS,
+                TargetConfig,
+                analyze_window_target,
+            )
+
+            target = TargetConfig(
+                key="pm_button",
+                description=(
+                    "the small 'PM' button (its label starts with the letter P followed "
+                    "by M) in the SEM monitor toolbar, located just to the left of the "
+                    "magnification value readout; clicking it opens a magnification dropdown"
+                ),
+            )
+            res = analyze_window_target(
+                tool_window, "", "uia", target,
+                debug_image_dir=capture_dir, log_name="vlm_calls",
+                component_name=LOG_COMPONENT, artifact_prefix=f"{tag}_pmbtn",
+                image=image, timeout_sec=15.0,
+            )
+            if res.exit_code == EXIT_SUCCESS and res.point:
+                pt = {"x": int(res.point["x"]), "y": int(res.point["y"])}
+                print(f"[INFO] PM 버튼 2단계 VLM 위치: {pt}")
+            else:
+                print(f"[WARNING] PM 버튼 2단계 VLM 미검출(exit={res.exit_code}) -> 기하 폴백.")
+        except Exception as exc:
+            print(f"[WARNING] PM 버튼 2단계 VLM 실패(기하 폴백): {exc}")
+        _btn_cache["pt"] = pt
+        return pt
+
     def _open_dropdown(open_idx):
         """현재 화면에서 PM 버튼을 눌러 드롭다운을 열고 (crop, origin, pm_box) 반환(실패 None)."""
         img = capture_window(tool_window)
+        # PM 버튼: 2단계 VLM(캐시) 우선. 실패 시에만 숫자박스 검출 → 왼쪽 기하 폴백.
+        btn = _locate_pm_button(img)
         pm_box = None
-        try:
-            det = detect_sem_box(
-                img, sem_box_client, ocr_client=ocr_client,
-                two_stage=settings.pm_two_stage_ocr_enabled,
-            )
-            pm_box = det.pm_box_px
-        except Exception as exc:
-            print(f"[WARNING] PM 드롭다운: PM 박스 검출 실패: {exc}")
-        if pm_box is None:
+        if btn is None:
+            try:
+                det = detect_sem_box(
+                    img, sem_box_client, ocr_client=ocr_client,
+                    two_stage=settings.pm_two_stage_ocr_enabled,
+                )
+                pm_box = det.pm_box_px
+            except Exception as exc:
+                print(f"[WARNING] PM 드롭다운: PM 박스 검출 실패: {exc}")
+            btn = pm_button_point(pm_box)
+        if btn is None:
             return None
-        btn = pm_button_point(pm_box)
-        btn_scr = (
-            image_point_to_screen(tool_window, btn, image_size=frame_wh) if btn else None
-        )
+        btn_scr = image_point_to_screen(tool_window, btn, image_size=frame_wh)
         if btn_scr is None:
             return None
         print(
@@ -1325,7 +1366,8 @@ def _run_pm_dropdown_arms(
         if _PM_DROPDOWN_OPEN_SETTLE_SEC > 0:
             time.sleep(_PM_DROPDOWN_OPEN_SETTLE_SEC)
         shot = capture_window(tool_window)
-        region = dropdown_region(pm_box, frame_wh)
+        # 드롭다운은 PM 버튼 '바로 아래'에 펼쳐진다 — 버튼 점 기준으로 그 아래만 crop.
+        region = dropdown_region_below(btn, frame_wh)
         # 검증 overlay: PM 숫자 박스(cyan, 화면의 그것과 동일), 유도한 PM 버튼 클릭점(red),
         # 드롭다운 crop 영역(yellow) 을 그려 클릭이 'PM' 버튼에 맞는지 눈으로 확인.
         try:
@@ -1372,6 +1414,18 @@ def _run_pm_dropdown_arms(
         meta["aborted"] = "no_targets"
         print(f"[WARNING] PM 드롭다운 fallback 중단: baseline={baseline_mag} 기준 목표 없음.")
         return meta
+
+    # 탐색 순서: 키를 찾았으면(ambiguous = 보이나 모호) 먼저 **zoom IN**(배율↑)으로 점을
+    # 더 또렷이 핀하고, 키를 못 찾았으면(not_visible = 저점수) 먼저 **zoom OUT**(배율↓)으로
+    # 넓게 보고 찾는다. (zoom-in 이 align 위치를 더 잘 잡는다는 경험.)
+    outs = [t for t in targets if t[0].startswith("out")]
+    ins = [t for t in targets if t[0].startswith("in")]
+    targets = (outs + ins) if feas.verdict == "not_visible" else (ins + outs)
+    meta["order"] = "out_first" if feas.verdict == "not_visible" else "in_first"
+    print(
+        f"[INFO] PM 드롭다운 탐색 순서: {meta['order']} (verdict={feas.verdict}) "
+        f"-> {[lbl for lbl, _ in targets]}"
+    )
 
     def _click_option(opt):
         scr = image_point_to_screen(tool_window, opt["center"], image_size=frame_wh)

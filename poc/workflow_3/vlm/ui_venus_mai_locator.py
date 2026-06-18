@@ -448,6 +448,7 @@ def analyze_window_target(
     refine_service_slug: str = "mai-ui",
     result_mode: str = "ui_venus_then_mai_ui_single_target",
     image: Image.Image | None = None,
+    timeout_sec: float | None = None,
 ) -> TargetResult:
     """임의의 윈도우에서 지정된 타겟을 2단계로 찾는다.
 
@@ -486,8 +487,11 @@ def analyze_window_target(
             )
             return TargetResult(EXIT_CAPTURE_FAILED, target.key)
 
-    coarse_client = Workflow1VLMClient(service_slug=coarse_service_slug, log_name=log_name)
-    refine_client = Workflow1VLMClient(service_slug=refine_service_slug, log_name=log_name)
+    _client_kw = {"log_name": log_name}
+    if timeout_sec is not None:
+        _client_kw["timeout_sec"] = timeout_sec
+    coarse_client = Workflow1VLMClient(service_slug=coarse_service_slug, **_client_kw)
+    refine_client = Workflow1VLMClient(service_slug=refine_service_slug, **_client_kw)
     pipeline_model_name = f"{coarse_client.model_name}__{refine_client.model_name}"
 
     full_b64, full_w, full_h = encode_image_webp(image)

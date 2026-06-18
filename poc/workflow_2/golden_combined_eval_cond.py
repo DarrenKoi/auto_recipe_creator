@@ -270,6 +270,20 @@ def _routed_failure_hist(cons_hist, rcp_hist):
             for mod in set(cons_hist) | set(rcp_hist)}
 
 
+def _confusion_at(samples, thr):
+    """[(score, hit_bool)] 를 임계 thr 에서 채점한 혼동행렬. predict pos = score>=thr, actual pos = hit.
+
+    반환 {tp, fp, tn, fn, acc}. n==0 이면 acc=None.
+    """
+    tp = sum(1 for s, h in samples if h and s >= thr)
+    fp = sum(1 for s, h in samples if (not h) and s >= thr)
+    fn = sum(1 for s, h in samples if h and s < thr)
+    tn = sum(1 for s, h in samples if (not h) and s < thr)
+    n = tp + fp + fn + tn
+    return {"tp": tp, "fp": fp, "tn": tn, "fn": fn,
+            "acc": round((tp + tn) / n, 3) if n else None}
+
+
 def _youden_threshold(samples):
     """[(score, hit_bool)] → Youden 최적 임계. hit=True 가 positive(임계 이상이면 맞다고 예측).
 
@@ -293,15 +307,27 @@ def _youden_threshold(samples):
             "tpr": round(tpr, 3), "fpr": round(fpr, 3), "n_pos": n_pos, "n_neg": n_neg}
 
 
-def _youden_by_modality(cells):
-    """rcp_only 셀 -> {mod: _youden_threshold}. score(None 아님)+hit 있는 셀만."""
+def _youden_by_modality(cells, prod_thr=None):
+    """rcp_only 셀 → {mod: _youden_threshold}. score(None 아님)+hit 있는 셀만.
+
+    prod_thr 가 주어지면(공용 production 임계) 각 modality 에 prod_thr, delta_vs_prod
+    (=최적 thr - prod_thr), confusion_prod(그 임계의 혼동행렬)를 덧붙인다 — L1(per-mod 임계 분리) 증거.
+    """
     by_mod = {}
     for c in cells:
         if c.get("score") is None or c.get("hit") is None:
             continue
         by_mod.setdefault((c.get("mod") or "unknown").lower(), []).append(
             (float(c["score"]), bool(c["hit"])))
-    return {mod: _youden_threshold(s) for mod, s in by_mod.items()}
+    out = {}
+    for mod, s in by_mod.items():
+        y = _youden_threshold(s)
+        if prod_thr is not None and y["thr"] is not None:
+            y = {**y, "prod_thr": round(float(prod_thr), 4),
+                 "delta_vs_prod": round(y["thr"] - float(prod_thr), 4),
+                 "confusion_prod": _confusion_at(s, float(prod_thr))}
+        out[mod] = y
+    return out
 
 
 # split 판정 로직(아래) — run() 의 Step 2(modality 전략 분기 리포트)에서 사용.
@@ -525,7 +551,8 @@ def run() -> str:
     cons_fail = _failure_hist_from_rates(per_recipe)
     rcp_fail = _failure_hist_by_modality(rcp_only_cells)
     routed_fail = _routed_failure_hist(cons_fail, rcp_fail)
-    youden_by_mod = _youden_by_modality(rcp_only_cells)
+    youden_by_mod = _youden_by_modality(
+        rcp_only_cells, prod_thr=gle.STRUCTURE_POLICY.ensemble_match_threshold)
     n_rec_by_mod = _recipes_by_modality(per_recipe, rcp_only_cells)
 
     def _mod_rate(mod):
@@ -586,6 +613,25 @@ def run() -> str:
     return "success" if (cons_frames or rcp_only["n"]) else "no_eligible"
 
 
+def _mod_evidence_tok(summary):
+    """digest 용 per-modality 증거 토큰: OM/SEM 의 실패share(la/pm/rm) + youden thr/J. 없으면 '-'."""
+    bm = summary.get("by_modality") or {}
+    fm = bm.get("failure_modes", {}).get("routed", {})
+    yd = bm.get("youden", {})
+    parts = []
+    for m in ("om", "sem"):
+        h = fm.get(m)
+        if not h:
+            continue
+        la = h.get("look_alike", {}).get("share")
+        pm = h.get("periodic_look_alike", {}).get("share")
+        rm = h.get("recall_miss", {}).get("share")
+        y = yd.get(m) or {}
+        yt = f"{y.get('thr')}/{y.get('J')}" if y.get("thr") is not None else "-"
+        parts.append(f"{m.upper()}:la/pm/rm={la}/{pm}/{rm} yd={yt}")
+    return " ".join(parts) or "-"
+
+
 def _digest_line(summary):
     """콘솔 마지막에 찍는 한 줄 다이제스트 — 사용자가 이 줄만 복사해 전달.
 
@@ -611,6 +657,7 @@ def _digest_line(summary):
     verdict_tok = (f"verdict={sv.get('verdict', '-')}"
                    + (f"(om={sv.get('dominant_om')},sem={sv.get('dominant_sem')})"
                       if sv.get('verdict') == 'SPLIT' else ""))
+    evidence_tok = _mod_evidence_tok(summary)
     return (
         f"lab={lab} minS={summary['consensus_min_s']} consMode={cons_mode} | "
         f"routed r1/topk={r['rank1_rate']}/{r['in_topk_rate']} (n={r['n_frames']}) | "
@@ -620,7 +667,8 @@ def _digest_line(summary):
         f"(n={ro['n']},rec={summary['n_recipes_rcp_only']}) | "
         f"mod[{_mod('om')} {_mod('sem')}] | "
         f"scaling[{scaling}] | "
-        f"{verdict_tok}"
+        f"{verdict_tok} | "
+        f"evid[{evidence_tok}]"
     )
 
 
@@ -682,12 +730,18 @@ def _print_report(summary):
         y = yd.get(mod, {})
         if not h:
             continue
-        ys = (f"{y.get('thr')}/{y.get('J')} ({y.get('n_pos')}+/{y.get('n_neg')}-)"
-              if y.get("thr") is not None else "-")
+        if y.get("thr") is not None:
+            ys = f"{y.get('thr')}/{y.get('J')} ({y.get('n_pos')}+/{y.get('n_neg')}-)"
+            if y.get("delta_vs_prod") is not None:
+                conf = y.get("confusion_prod") or {}
+                ys += f" d_prod={y.get('delta_vs_prod')} accP={conf.get('acc')}"
+        else:
+            ys = "-"
         print(f"    {mod.upper():<6} {h.get('n', 0):>5} {str(_sh(h, 'rank1_hit')):>10} "
               f"{str(_sh(h, 'look_alike')):>11} {str(_sh(h, 'periodic_look_alike')):>12} "
               f"{str(_sh(h, 'recall_miss')):>12}   {ys}")
-    print("    * periodic_la 지배=OM 주기억제(L2), recall_miss 지배=SEM recall proposer(L3).")
+    print("    * periodic_la 지배=OM 주기억제(L2), recall_miss 지배=SEM recall proposer(L3)."
+          " d_prod=최적임계-공용(0.6053) 차이, accP=공용임계 정확도(L1 증거).")
 
     sv = summary.get("split_verdict") or {}
     print(f"\n[INFO] === (Step 2) SPLIT 판정 === verdict={sv.get('verdict', '-')}  "

@@ -387,3 +387,71 @@ def test_split_verdict_shared_tune_when_one_dominant_one_none():
     v = gcc._split_verdict(om, sem, _rate(40, 0.60, 6), _rate(40, 0.85, 6), _CFG)
     assert v["verdict"] == "shared_tune"
     assert v["suggested_levers"] == []
+
+
+# --- production-threshold 비교 (spec 4.3; L1 증거) ---
+
+def test_confusion_at_threshold():
+    # pos {0.9,0.7}, neg {0.6,0.2}; thr=0.65 → tp(0.9,0.7)=2, fp(none>=0.65 in neg? 0.6<0.65)=0, tn=2, fn=0.
+    samples = [(0.9, True), (0.7, True), (0.6, False), (0.2, False)]
+    c = gcc._confusion_at(samples, 0.65)
+    assert c["tp"] == 2 and c["fp"] == 0 and c["tn"] == 2 and c["fn"] == 0
+    assert c["acc"] == 1.0
+
+
+def test_confusion_at_with_misses():
+    # thr=0.75 → tp(0.9)=1, fn(0.7)=1; neg both <0.75 → tn=2, fp=0. acc=3/4.
+    samples = [(0.9, True), (0.7, True), (0.6, False), (0.2, False)]
+    c = gcc._confusion_at(samples, 0.75)
+    assert c["tp"] == 1 and c["fn"] == 1 and c["tn"] == 2 and c["fp"] == 0
+    assert c["acc"] == 0.75
+
+
+def test_youden_by_modality_adds_prod_comparison():
+    cells = [
+        {"mod": "om", "score": 0.9, "hit": True},
+        {"mod": "om", "score": 0.2, "hit": False},
+    ]
+    out = gcc._youden_by_modality(cells, prod_thr=0.6053)
+    y = out["om"]
+    assert y["prod_thr"] == 0.6053
+    assert y["delta_vs_prod"] == round(y["thr"] - 0.6053, 4)
+    assert y["confusion_prod"]["tp"] == 1 and y["confusion_prod"]["tn"] == 1
+
+
+def test_youden_by_modality_no_prod_thr_unchanged():
+    cells = [{"mod": "om", "score": 0.9, "hit": True}, {"mod": "om", "score": 0.2, "hit": False}]
+    y = gcc._youden_by_modality(cells)["om"]   # prod_thr 없으면 기존 키만
+    assert "prod_thr" not in y and "thr" in y
+
+
+# --- digest 풍부화 (spec 4.5) ---
+
+def test_digest_line_split_verdict_token():
+    s = _summary(split_verdict={"verdict": "SPLIT", "gap_reason": "abs_diff",
+                                "dominant_om": "periodic_look_alike",
+                                "dominant_sem": "recall_miss", "suggested_levers": ["L2_om_periodicity"]})
+    d = gcc._digest_line(s)
+    assert "\n" not in d
+    assert "verdict=SPLIT(om=periodic_look_alike,sem=recall_miss)" in d
+
+
+def test_digest_line_mod_evidence_token():
+    s = _summary(**{"by_modality": {
+        "failure_modes": {"routed": {
+            "om": {"n": 10, "rank1_hit": {"share": 0.2}, "look_alike": {"share": 0.8},
+                   "periodic_look_alike": {"share": 0.8}, "recall_miss": {"share": 0.0}},
+        }},
+        "youden": {"om": {"thr": 0.71, "J": 0.6}},
+    }})
+    d = gcc._digest_line(s)
+    assert "\n" not in d
+    assert "OM:" in d and "la/pm/rm=" in d
+
+
+def test_split_verdict_insufficient_recipes_only_gate():
+    om = _hist(rank1_hit=2, recall_miss=8)
+    sem = _hist(rank1_hit=2, recall_miss=8)
+    # frames pass(40>=30) 지만 recipes 부족(2<5) — recipes 게이트 단독 트리거.
+    v = gcc._split_verdict(om, sem, _rate(40, 0.6, 2), _rate(40, 0.85, 6), _CFG)
+    assert v["verdict"] == "insufficient" and "om" in v["insufficient_mods"]

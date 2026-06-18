@@ -254,6 +254,39 @@ def _routed_failure_hist(cons_hist, rcp_hist):
             for mod in set(cons_hist) | set(rcp_hist)}
 
 
+def _youden_threshold(samples):
+    """[(score, hit_bool)] -> Youden 최적 임계. hit=True 가 positive(임계 이상이면 맞다고 예측).
+
+    임계 후보 = 등장한 score 들. J = TPR - FPR 최대점. 한 클래스라도 비면 None.
+    """
+    pos = [s for s, h in samples if h]
+    neg = [s for s, h in samples if not h]
+    n_pos, n_neg = len(pos), len(neg)
+    if n_pos == 0 or n_neg == 0:
+        return {"thr": None, "J": None, "tpr": None, "fpr": None, "n_pos": n_pos, "n_neg": n_neg}
+    best = None
+    for thr in sorted({s for s, _ in samples}):
+        tpr = sum(1 for s in pos if s >= thr) / n_pos
+        fpr = sum(1 for s in neg if s >= thr) / n_neg
+        j = tpr - fpr
+        if best is None or j > best[0]:
+            best = (j, thr, tpr, fpr)
+    j, thr, tpr, fpr = best
+    return {"thr": round(thr, 4), "J": round(j, 4),
+            "tpr": round(tpr, 3), "fpr": round(fpr, 3), "n_pos": n_pos, "n_neg": n_neg}
+
+
+def _youden_by_modality(cells):
+    """rcp_only 셀 -> {mod: _youden_threshold}. score(None 아님)+hit 있는 셀만."""
+    by_mod = {}
+    for c in cells:
+        if c.get("score") is None or "hit" not in c:
+            continue
+        by_mod.setdefault((c.get("mod") or "unknown").lower(), []).append(
+            (float(c["score"]), bool(c["hit"])))
+    return {mod: _youden_threshold(s) for mod, s in by_mod.items()}
+
+
 def _consensus_by_modality(per_recipe):
     """consensus per_recipe rows → {modality: {n_frames, rank1_rate, in_topk_rate}} (frame-weighted).
 

@@ -260,3 +260,33 @@ def test_failure_hist_from_rates_counts_sum_to_n_under_rounding():
     total = h["rank1_hit"]["n"] + h["look_alike"]["n"] + h["recall_miss"]["n"]
     assert total == 3                                  # 합이 n 을 정확히 보존
     assert h["rank1_hit"]["share"] + h["look_alike"]["share"] + h["recall_miss"]["share"] <= 1.0
+
+
+# --- per-modality Youden 분리 (분류 축; L1 증거) ---
+
+def test_youden_threshold_finds_separating_point():
+    # hit(pos) 점수 {0.7,0.8,0.9}, miss(neg) {0.1,0.2,0.3} -> 임계 0.7 에서 J=1.0.
+    samples = [(0.9, True), (0.8, True), (0.7, True), (0.3, False), (0.2, False), (0.1, False)]
+    y = gcc._youden_threshold(samples)
+    assert y["thr"] == 0.7
+    assert y["J"] == 1.0
+    assert y["tpr"] == 1.0 and y["fpr"] == 0.0
+    assert y["n_pos"] == 3 and y["n_neg"] == 3
+
+
+def test_youden_threshold_none_when_one_class_empty():
+    y = gcc._youden_threshold([(0.5, True), (0.6, True)])
+    assert y == {"thr": None, "J": None, "tpr": None, "fpr": None, "n_pos": 2, "n_neg": 0}
+
+
+def test_youden_by_modality_splits_and_skips_missing_score():
+    cells = [
+        {"mod": "om", "score": 0.9, "hit": True},
+        {"mod": "om", "score": 0.2, "hit": False},
+        {"mod": "sem", "score": 0.8, "hit": True},
+        {"mod": "sem", "score": 0.1, "hit": False},
+        {"mod": "sem", "score": None, "hit": True},   # score 없으면 skip
+    ]
+    out = gcc._youden_by_modality(cells)
+    assert out["om"]["n_pos"] == 1 and out["om"]["n_neg"] == 1
+    assert out["sem"]["n_pos"] == 1 and out["sem"]["n_neg"] == 1   # None score 제외

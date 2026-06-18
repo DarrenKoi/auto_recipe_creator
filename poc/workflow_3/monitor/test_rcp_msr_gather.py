@@ -24,8 +24,11 @@ class _RecordingDownloader:
     def __init__(self):
         self.calls = []
 
-    def download_rcp_msr(self, eqp_id, recipe_id, *, dest_dir):
-        self.calls.append({"eqp_id": eqp_id, "recipe_id": recipe_id, "dest_dir": dest_dir})
+    def download_rcp_msr(self, eqp_id, recipe_id, *, dest_dir, include_msr=True):
+        self.calls.append({
+            "eqp_id": eqp_id, "recipe_id": recipe_id,
+            "dest_dir": dest_dir, "include_msr": include_msr,
+        })
         return 4  # 받은 이미지 수(rcp 2 + msr 2 가정).
 
 
@@ -82,7 +85,7 @@ def test_skips_without_downloader():
 def test_swallows_downloader_exception():
     """downloader 예외는 삼키고 False 를 반환해 루프가 죽지 않는다(best-effort)."""
     class _Boom:
-        def download_rcp_msr(self, eqp_id, recipe_id, *, dest_dir):
+        def download_rcp_msr(self, eqp_id, recipe_id, *, dest_dir, include_msr=True):
             raise RuntimeError("FTP timeout")
 
     rcp_msr_gather._DOWNLOADER = _Boom()
@@ -108,6 +111,32 @@ def test_loader_canonical():
     return ok
 
 
+def test_production_requests_rcp_only():
+    """기본(프로덕션) 호출은 include_msr=False 로 rcp 만 받는다."""
+    fake = _RecordingDownloader()
+    rcp_msr_gather._DOWNLOADER = fake
+    rcp_msr_gather.RCP_MSR_DOWNLOADER_AVAILABLE = True
+    rcp_msr_gather.gather_rcp_msr("EQP1", "CLS/RCP", _settings(rcp_msr_gather_enabled=True))
+    ok = len(fake.calls) == 1 and fake.calls[0]["include_msr"] is False
+    print(f"[{'PASS' if ok else 'FAIL'}] production_requests_rcp_only: "
+          f"include_msr={fake.calls[0]['include_msr'] if fake.calls else '-'}")
+    return ok
+
+
+def test_include_msr_propagates():
+    """include_msr=True 를 주면 downloader 까지 그대로 전달된다(오프라인 벤치용)."""
+    fake = _RecordingDownloader()
+    rcp_msr_gather._DOWNLOADER = fake
+    rcp_msr_gather.RCP_MSR_DOWNLOADER_AVAILABLE = True
+    rcp_msr_gather.gather_rcp_msr(
+        "EQP1", "CLS/RCP", _settings(rcp_msr_gather_enabled=True), include_msr=True
+    )
+    ok = len(fake.calls) == 1 and fake.calls[0]["include_msr"] is True
+    print(f"[{'PASS' if ok else 'FAIL'}] include_msr_propagates: "
+          f"include_msr={fake.calls[0]['include_msr'] if fake.calls else '-'}")
+    return ok
+
+
 def main():
     print("[INFO] rcp_msr_gather self-test 시작")
     results = [
@@ -117,6 +146,8 @@ def main():
         test_skips_without_downloader(),
         test_swallows_downloader_exception(),
         test_loader_canonical(),
+        test_production_requests_rcp_only(),
+        test_include_msr_propagates(),
     ]
     passed = sum(1 for r in results if r)
     print(f"[INFO] {passed}/{len(results)} cases passed")

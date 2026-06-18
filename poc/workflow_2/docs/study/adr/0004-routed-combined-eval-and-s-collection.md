@@ -64,8 +64,7 @@ digest 에 `consMode=hist:X/loo:Y` 노출.
 - 카운트는 **modality(OM/SEM)별**(매칭은 fail 난 modality 키로만). dual-modality 는 양쪽 다.
 - **최신순 rolling** — consensus 는 "현재 외형 추종"이라 오래된 S 는 drop(stale 방지).
 - **S only.** E(fail)는 crosshair 가 없어 consensus 정렬 anchor 도, 자동 채점 GT 도 못 됨.
-- **eqp 무관 주의**: 같은 class/recipe 라도 tool-to-tool 외형차가 크면 consensus 가 흐려질 수 있다 —
-  scaling/lift 가 안 오르면 eqp 별 분리도 후속 검토 대상.
+- **eqp 무관 공유로 확정** — 같은 class/recipe 면 tool 무관하게 한 풀로 합친다(tool-to-tool 외형차는 고려 안 함).
 
 ## 검증
 

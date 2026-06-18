@@ -521,6 +521,7 @@ def run() -> str:
     routed_by_mod = _routed_by_modality(cons_by_mod, rcp_by_mod)
 
     # Step 2: 실패유형 히스토그램(양 arm + routed) + per-mod Youden + split verdict.
+    # consensus row 는 'modality', rcp 셀은 'mod' 키 — 각 헬퍼가 맞는 필드를 읽고 _routed_failure_hist 가 병합.
     cons_fail = _failure_hist_from_rates(per_recipe)
     rcp_fail = _failure_hist_by_modality(rcp_only_cells)
     routed_fail = _routed_failure_hist(cons_fail, rcp_fail)
@@ -675,18 +676,17 @@ def _print_report(summary):
     print("\n[INFO] === (Step 2) 실패유형 분해 (routed; 'rank1 이 왜 낮나') ===")
     print(f"    {'mod':<6} {'n':>5} {'rank1_hit':>10} {'look_alike':>11} "
           f"{'periodic_la':>12} {'recall_miss':>12}   youden(thr/J,n+/-)")
+    _sh = lambda hist, t: hist.get(t, {}).get("share")   # 실패유형 share 안전 추출.
     for mod in ("om", "sem"):
         h = fm.get(mod, {})
         y = yd.get(mod, {})
         if not h:
             continue
-        def _sh(t):
-            return h.get(t, {}).get("share")
         ys = (f"{y.get('thr')}/{y.get('J')} ({y.get('n_pos')}+/{y.get('n_neg')}-)"
               if y.get("thr") is not None else "-")
-        print(f"    {mod.upper():<6} {h.get('n', 0):>5} {str(_sh('rank1_hit')):>10} "
-              f"{str(_sh('look_alike')):>11} {str(_sh('periodic_look_alike')):>12} "
-              f"{str(_sh('recall_miss')):>12}   {ys}")
+        print(f"    {mod.upper():<6} {h.get('n', 0):>5} {str(_sh(h, 'rank1_hit')):>10} "
+              f"{str(_sh(h, 'look_alike')):>11} {str(_sh(h, 'periodic_look_alike')):>12} "
+              f"{str(_sh(h, 'recall_miss')):>12}   {ys}")
     print("    * periodic_la 지배=OM 주기억제(L2), recall_miss 지배=SEM recall proposer(L3).")
 
     sv = summary.get("split_verdict") or {}

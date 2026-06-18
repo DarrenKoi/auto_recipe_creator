@@ -33,3 +33,11 @@ LAB_MODE = ""
 
 # consensus 최소 S(바닥 3). None = consensus 드라이버 기본값.
 MIN_S = None
+
+# === OM/SEM split 판정 임계 (golden_combined_eval_cond 전용; 오피스에서 데이터 보고 튜닝) ===
+# 이 블록은 combined 드라이버만 읽는다(env 브리지 X). 실편집 golden_eval_config.py 에 복사해 조정.
+SPLIT_MIN_FRAMES = 30      # modality당 최소 채점 프레임(미달 → verdict=insufficient)
+SPLIT_MIN_RECIPES = 5      # modality당 최소 recipe
+SPLIT_RANK1_GAP = 0.10     # |rank1(OM)-rank1(SEM)| 이 이상이면 split 후보(10pp)
+SPLIT_RANK1_FLOOR = 0.70   # 약한 쪽 routed rank1 이 이 밑이면 split 후보
+SPLIT_DOMINANCE = 0.40     # 지배 실패유형 최소 비중(총 실패 중)

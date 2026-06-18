@@ -290,3 +290,81 @@ def test_youden_by_modality_splits_and_skips_missing_score():
     out = gcc._youden_by_modality(cells)
     assert out["om"]["n_pos"] == 1 and out["om"]["n_neg"] == 1
     assert out["sem"]["n_pos"] == 1 and out["sem"]["n_neg"] == 1   # None score 제외
+
+
+# --- split verdict (판정 규칙) ---
+
+_CFG = {"SPLIT_MIN_FRAMES": 30, "SPLIT_MIN_RECIPES": 5,
+        "SPLIT_RANK1_GAP": 0.10, "SPLIT_RANK1_FLOOR": 0.70, "SPLIT_DOMINANCE": 0.40}
+
+
+def _hist(rank1_hit=0, look_alike=0, recall_miss=0, periodic_look_alike=0):
+    n = rank1_hit + look_alike + recall_miss
+    return gcc._with_shares({"rank1_hit": rank1_hit, "look_alike": look_alike,
+                             "recall_miss": recall_miss,
+                             "periodic_look_alike": periodic_look_alike, "n": n})
+
+
+def _rate(n_frames, rank1_rate, n_recipes):
+    return {"n_frames": n_frames, "rank1_rate": rank1_rate, "n_recipes": n_recipes}
+
+
+def test_dominant_failure_periodic_lookalike():
+    h = _hist(rank1_hit=2, look_alike=8, periodic_look_alike=8)   # 실패 8 전부 periodic
+    assert gcc._dominant_failure(h, 0.40) == "periodic_look_alike"
+
+
+def test_dominant_failure_recall_miss():
+    h = _hist(rank1_hit=2, recall_miss=8)
+    assert gcc._dominant_failure(h, 0.40) == "recall_miss"
+
+
+def test_dominant_failure_none_when_no_failures():
+    assert gcc._dominant_failure(_hist(rank1_hit=5), 0.40) is None
+
+
+def test_dominant_failure_none_when_below_dominance():
+    # 실패 9 = periodic 3 + other_look_alike 3(=look_alike6-periodic3) + recall 3 -> 각 share 1/3 < 0.4 -> None.
+    h = _hist(rank1_hit=0, look_alike=6, recall_miss=3, periodic_look_alike=3)
+    assert gcc._dominant_failure(h, 0.40) is None
+
+
+def test_split_verdict_split_when_gap_and_divergent():
+    om = _hist(rank1_hit=2, look_alike=8, periodic_look_alike=8)    # OM: periodic 지배
+    sem = _hist(rank1_hit=2, recall_miss=8)                         # SEM: recall 지배
+    v = gcc._split_verdict(om, sem, _rate(40, 0.60, 6), _rate(40, 0.85, 6), _CFG)  # gap 0.25
+    assert v["verdict"] == "SPLIT"
+    assert v["dominant_om"] == "periodic_look_alike"
+    assert v["dominant_sem"] == "recall_miss"
+    assert "L2_om_periodicity" in v["suggested_levers"]
+    assert "L3_sem_recall" in v["suggested_levers"]
+
+
+def test_split_verdict_shared_tune_when_gap_no_divergence():
+    om = _hist(rank1_hit=2, recall_miss=8)
+    sem = _hist(rank1_hit=2, recall_miss=8)                         # 같은 실패유형
+    v = gcc._split_verdict(om, sem, _rate(40, 0.55, 6), _rate(40, 0.85, 6), _CFG)
+    assert v["verdict"] == "shared_tune"
+    assert v["suggested_levers"] == []
+
+
+def test_split_verdict_no_split_when_no_gap():
+    om = _hist(rank1_hit=8, periodic_look_alike=2, look_alike=2)
+    sem = _hist(rank1_hit=8, recall_miss=2)
+    v = gcc._split_verdict(om, sem, _rate(40, 0.82, 6), _rate(40, 0.85, 6), _CFG)  # gap 0.03, floor ok
+    assert v["verdict"] == "no_split"
+
+
+def test_split_verdict_insufficient_when_thin():
+    om = _hist(rank1_hit=2, recall_miss=8)
+    sem = _hist(rank1_hit=2, recall_miss=8)
+    v = gcc._split_verdict(om, sem, _rate(10, 0.5, 2), _rate(40, 0.85, 6), _CFG)   # OM n_frames<30
+    assert v["verdict"] == "insufficient"
+    assert "om" in v["insufficient_mods"]
+
+
+def test_recipes_by_modality_counts_distinct():
+    per_recipe = [{"modality": "om", "recipe": "A"}, {"modality": "om", "recipe": "B"}]
+    cells = [{"mod": "om", "rec_key": "B"}, {"mod": "sem", "rec_key": "C"}]   # B 중복, C 신규
+    out = gcc._recipes_by_modality(per_recipe, cells)
+    assert out["om"] == 2 and out["sem"] == 1

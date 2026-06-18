@@ -61,6 +61,21 @@ from poc.workflow_3.util.time_utils import make_timestamp_tag
 
 OUTPUT_ROOT = DEBUG_IMAGE_DIR / "golden_combined_eval_cond"
 
+# split 판정 임계 — golden_eval_config(실편집/gitignored)에서 읽고, 없으면 기본값(example 과 동일).
+try:
+    from poc.workflow_2.golden_eval_config import (
+        SPLIT_MIN_FRAMES, SPLIT_MIN_RECIPES, SPLIT_RANK1_GAP, SPLIT_RANK1_FLOOR, SPLIT_DOMINANCE,
+    )
+except ImportError:   # 파일 부재/구버전 — 기본값 폴백.
+    SPLIT_MIN_FRAMES, SPLIT_MIN_RECIPES = 30, 5
+    SPLIT_RANK1_GAP, SPLIT_RANK1_FLOOR, SPLIT_DOMINANCE = 0.10, 0.70, 0.40
+
+_SPLIT_CFG = {
+    "SPLIT_MIN_FRAMES": SPLIT_MIN_FRAMES, "SPLIT_MIN_RECIPES": SPLIT_MIN_RECIPES,
+    "SPLIT_RANK1_GAP": SPLIT_RANK1_GAP, "SPLIT_RANK1_FLOOR": SPLIT_RANK1_FLOOR,
+    "SPLIT_DOMINANCE": SPLIT_DOMINANCE,
+}
+
 
 # 설정은 별도 파일 golden_eval_config.py 에서 편집(세 드라이버 공용; seed_env() 가 env 로 브리지).
 # golden_eval_config.example.py 를 golden_eval_config.py 로 복사해 GOLDEN_ROOT/LAB_MODE/MIN_S 만 고친다.
@@ -288,8 +303,75 @@ def _youden_by_modality(cells):
     return {mod: _youden_threshold(s) for mod, s in by_mod.items()}
 
 
+_LEVER_BY_BUCKET = {
+    "periodic_look_alike": "L2_om_periodicity",
+    "recall_miss": "L3_sem_recall",
+    "other_look_alike": "shared_rerank",
+}
+
+
+def _dominant_failure(fail, dominance):
+    """_with_shares dict -> 지배 실패 bucket 또는 None. 분모 = 총 실패(look_alike+recall_miss).
+
+    bucket: periodic_look_alike / other_look_alike(= look_alike-periodic) / recall_miss.
+    최대 bucket share >= dominance 면 그 bucket, 아니면 None(지배 없음).
+    """
+    la = int(fail.get("look_alike", {}).get("n", 0))
+    pla = int(fail.get("periodic_look_alike", {}).get("n", 0))
+    rm = int(fail.get("recall_miss", {}).get("n", 0))
+    buckets = {"periodic_look_alike": pla, "other_look_alike": max(0, la - pla), "recall_miss": rm}
+    total_fail = sum(buckets.values())
+    if total_fail == 0:
+        return None
+    top = max(buckets, key=buckets.get)
+    return top if buckets[top] / total_fail >= dominance else None
+
+
+def _recipes_by_modality(per_recipe, rcp_only_cells):
+    """modality 별 기여 recipe 수(중복 제거). consensus=row['recipe'], rcp_only=cell['rec_key']."""
+    by_mod = {}
+    for r in per_recipe:
+        by_mod.setdefault((r.get("modality") or "unknown").lower(), set()).add(r.get("recipe"))
+    for c in rcp_only_cells:
+        by_mod.setdefault((c.get("mod") or "unknown").lower(), set()).add(c.get("rec_key"))
+    return {mod: len(s) for mod, s in by_mod.items()}
+
+
+def _split_verdict(fail_om, fail_sem, rate_om, rate_sem, cfg):
+    """OM/SEM 실패히스토그램(routed) + rate -> verdict.
+
+    게이트: n_frames>=MIN_FRAMES AND n_recipes>=MIN_RECIPES (미달 -> verdict=insufficient).
+    격차: |r1차| >= RANK1_GAP OR min(r1) < RANK1_FLOOR.
+    분기: 두 modality 지배 실패유형이 서로 다름.
+    verdict: 격차&분기 -> SPLIT(+lever), 격차만 -> shared_tune, 그 외 -> no_split.
+    """
+    insufficient = [name for name, rate in (("om", rate_om), ("sem", rate_sem))
+                    if rate.get("n_frames", 0) < cfg["SPLIT_MIN_FRAMES"]
+                    or rate.get("n_recipes", 0) < cfg["SPLIT_MIN_RECIPES"]]
+    if insufficient:
+        return {"verdict": "insufficient", "insufficient_mods": insufficient,
+                "dominant_om": None, "dominant_sem": None, "suggested_levers": []}
+
+    r_om = rate_om.get("rank1_rate") or 0.0
+    r_sem = rate_sem.get("rank1_rate") or 0.0
+    gap = abs(r_om - r_sem) >= cfg["SPLIT_RANK1_GAP"] or min(r_om, r_sem) < cfg["SPLIT_RANK1_FLOOR"]
+    dom_om = _dominant_failure(fail_om, cfg["SPLIT_DOMINANCE"])
+    dom_sem = _dominant_failure(fail_sem, cfg["SPLIT_DOMINANCE"])
+    divergent = dom_om is not None and dom_sem is not None and dom_om != dom_sem
+
+    if gap and divergent:
+        verdict = "SPLIT"
+        levers = sorted({_LEVER_BY_BUCKET.get(dom_om), _LEVER_BY_BUCKET.get(dom_sem)} - {None})
+    elif gap:
+        verdict, levers = "shared_tune", []
+    else:
+        verdict, levers = "no_split", []
+    return {"verdict": verdict, "insufficient_mods": [],
+            "dominant_om": dom_om, "dominant_sem": dom_sem, "suggested_levers": levers}
+
+
 def _consensus_by_modality(per_recipe):
-    """consensus per_recipe rows → {modality: {n_frames, rank1_rate, in_topk_rate}} (frame-weighted).
+    """consensus per_recipe rows -> {modality: {n_frames, rank1_rate, in_topk_rate}} (frame-weighted).
 
     OM(저배율·반복패턴 多)과 SEM(box/직선) 이 같은 단일 CV 정책에서 다르게 동작하는지 측정용.
     """

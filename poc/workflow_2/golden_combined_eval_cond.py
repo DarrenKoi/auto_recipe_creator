@@ -57,6 +57,35 @@ from poc.workflow_3.util.time_utils import make_timestamp_tag
 
 OUTPUT_ROOT = DEBUG_IMAGE_DIR / "golden_combined_eval_cond"
 
+
+# ======================================================================
+# CONFIG — 여기 3줄만 고치고 `uv run python poc/workflow_2/golden_combined_eval_cond.py`.
+# env·CLI 인자 불필요(No-CLI 규약 + env 입력 회피). env 가 설정돼 있으면 그게 우선(하위호환).
+# ======================================================================
+GOLDEN_ROOT = None     # 골든 데이터 루트(예: r"C:\data\align_images"). None = 기본 경로/ALIGN_GOLDEN_ROOT.
+LAB_MODE = ""          # rcp-only arm 매처 채널. "" = production ensemble, "edge_ncc" = C4 레버 평가.
+MIN_S = None           # consensus 최소 S(바닥 3). None = consensus 드라이버 기본값.
+# ======================================================================
+
+
+def _apply_config():
+    """CONFIG 상수를 적용하고 골든 루트 Path 를 돌려준다. env 가 있으면 env 우선(하위호환).
+
+    상수→내부 env/모듈attr 브리지는 구현 세부일 뿐, 사용자는 env 를 만질 필요가 없다.
+    - LAB_MODE: gle 가 호출시점에 ALIGN_ENSEMBLE_LAB_MODE 를 읽으므로 os.environ 에 주입.
+    - MIN_S: gce 가 import 시점에 CONSENSUS_MIN_S 를 읽으므로 모듈 attr 를 덮어쓴다(floor 3).
+    """
+    if LAB_MODE and not os.getenv("ALIGN_ENSEMBLE_LAB_MODE"):
+        os.environ["ALIGN_ENSEMBLE_LAB_MODE"] = LAB_MODE
+    if MIN_S is not None and not os.getenv("CONSENSUS_MIN_S"):
+        gce.CONSENSUS_MIN_S = max(3, int(MIN_S))
+    root_env = os.getenv("ALIGN_GOLDEN_ROOT")
+    if root_env:
+        return Path(root_env)
+    if GOLDEN_ROOT:
+        return Path(GOLDEN_ROOT)
+    return glec.GOLDEN_ROOT
+
 # (A) consensus scaling 층화 bin — n_S_loo(= dominant modality LOO 점 수) 기준. floor 3.
 S_COUNT_BINS = [
     (3, 3, "S=3"),
@@ -174,9 +203,8 @@ def _score_rcp_only(rec_assets, center_tpls, box_tpls):
 
 def run() -> str:
     """routed pipeline 통합 평가(인자 없음). 반환: success | no_data | no_eligible."""
+    root = _apply_config()          # CONFIG 상수(또는 env) 적용 + 골든 루트 결정.
     glec._apply_matcher_default()   # rcp-only arm: ensemble 기본(ALIGN_USE_ENSEMBLE=0 으로 끌 수 있음).
-    root_env = os.getenv("ALIGN_GOLDEN_ROOT")
-    root = Path(root_env) if root_env else glec.GOLDEN_ROOT
     recipes = gle._collect_recipes(root) if root.is_dir() else []
     if not recipes:
         print(f"[WARNING] golden 데이터를 찾지 못했습니다: {root} "

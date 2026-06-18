@@ -1,16 +1,33 @@
-<!--
-Marp 슬라이드 소스. 렌더링:
-  npx @marp-team/marp-cli@latest weekly_report_slides.md -o weekly_report_slides.pdf
-  npx @marp-team/marp-cli@latest weekly_report_slides.md -o weekly_report_slides.html
-VS Code 의 "Marp for VS Code" 확장으로 미리보기도 가능.
--->
 ---
 marp: true
 theme: default
 paginate: true
 size: 16:9
+backgroundColor: '#FFFFFF'
 header: 'workflow_3 Weekly Report'
 footer: '2026.06.11 ~ 06.18'
+style: |
+  section { font-family: 'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-serif; color:#212121; font-size: 22px; background:#FFFFFF; }
+  h1 { color:#1a1a1a; }
+  h2 { color:#455A64; border-bottom:2px solid #CFD8DC; padding-bottom:4px; font-size: 28px; }
+  code { background:#ECEFF1; padding:1px 5px; border-radius:4px; font-size:.85em; }
+  .badge { display:inline-block; padding:0 7px; border:1px solid; border-radius:12px; font-size:13px; font-weight:700; }
+  .b-done{ background:#E8F5E9; border-color:#2E7D32; color:#1B5E20; }
+  .b-prog{ background:#FFF3E0; border-color:#ED6C02; color:#B25500; }
+  .b-plan{ background:#F3E5F5; border-color:#6A1B9A; color:#4A148C; }
+  .b-new { background:#E3F2FD; border-color:#1565C0; color:#0D47A1; }
+  .flow-row{ display:flex; gap:26px; margin:8px 0; }
+  .node{ position:relative; flex:1; background:#fff; border:2px solid #CFD8DC; border-radius:12px; padding:8px 12px; }
+  .node.done{ border-color:#66BB6A; background:#F4FBF4; }
+  .node.prog{ border-color:#FFA726; background:#FFFBF3; }
+  .node .step{ font-size:11px; font-weight:700; color:#90A4AE; }
+  .node .ttl{ font-size:16px; font-weight:700; margin:2px 0 4px; }
+  .node .sub{ font-size:12px; color:#607D8B; line-height:1.3; }
+  .node:not(:last-child)::after{ content:"\203A"; position:absolute; right:-19px; top:50%; transform:translateY(-50%); font-size:30px; color:#B0BEC5; font-weight:700; }
+  .branch{ margin-top:6px; padding:8px 12px; background:#FAFCFF; border:1.5px dashed #90CAF9; border-radius:10px; font-size:14px; color:#37474F; }
+  .legend{ font-size:13px; color:#455A64; margin-top:6px; }
+  table{ font-size:17px; }
+  th{ background:#ECEFF1; color:#37474F; }
 ---
 
 <!-- _paginate: false -->
@@ -25,115 +42,57 @@ footer: '2026.06.11 ~ 06.18'
 
 ---
 
-## 이번 주 핵심 4가지
+## 이번 주 요약
 
-1. **align 모듈 구조 재편 완료**
-   `vision/` → `align/`, matching / diagnostics 서브패키지
-2. **consensus 템플릿을 라이브 보정 경로에 정식 배선**
-   (활성화는 office downloader 대기)
-3. **check-only 모니터에 현장 진단 기능 탑재**
-   SEM-box 검출 + PM 배율 줌 래더
-4. **만성 모호 recipe 재등록 플래깅 자동화**
+구조 통합과 현장 진단 능력을 집중 개발한 한 주.
 
----
+- **align 모듈 구조 재편 완료** — `vision/` → `align/` (matching·diagnostics 서브패키지)
+- **consensus 템플릿을 라이브 보정 경로에 정식 배선** — 코드 완료, 활성화는 downloader 대기
+- **check-only 진단 탑재** — SEM-box 검출 · PM 배율 줌 래더
+- **만성 모호 recipe 재등록 플래깅 자동화**
 
-## 1. 구조 재편 — align 도메인 정리
-
-**상태: ✅ 완료**
-
-- `vision/` → `align/` 분리
-  - `matching/` (엔진 + ensemble)
-  - `diagnostics/` (오프라인 리뷰)
-- workflow_1 레거시 import fallback 제거 (office 어댑터는 `monitor/`만)
-- CLAUDE.md 구조 동기화
-
-> 4-layer DAG 확립: util → {vlm, runner} → capabilities → monitor
+> 남은 활성화 게이트 = **office_success_downloader 구현** 하나.
 
 ---
 
-## 2. Cond-aware 박스-크롭 템플릿
+## 실시간 루프 — 단계별 진행
 
-**상태: ✅ 완료**
-
-- CV 흰박스 검출 → **cond.txt 기반 기하 박스-크롭**으로 대체
-- `AlignKeyTemplate`이 `align_offset_xy` 운반
-  - reposition 시 `offset × best_scale` 적용
-- `ALIGN_FAIL_COND_BOX_CROP` kill-switch, 7-task TDD 포팅
-
-> workflow_2 검증 → workflow_3 포팅 원칙 준수
-
----
-
-## 3. Consensus → 라이브 보정 배선
-
-**상태: 🟡 코드 완료 / 활성화 대기**
-
-- consensus CV 프리미티브 · build/gate/select bit-parity 포팅
-- `resolve_templates`: **consensus 우선, rcp 폴백**
-  - cold-cache bounded sync, TTL 신선도, atomic swap
-- 모든 실패 → rcp 폴백, `ALIGN_FAIL_CONSENSUS` kill-switch
-
-> **남은 게이트 = office_success_downloader 구현** (S 이미지 공급원)
+<div class="flow-row">
+  <div class="node done"><div class="step">STEP 1</div><div class="ttl">알람 감지</div><div class="sub">ALID=9006 polling + edge-trigger</div></div>
+  <div class="node done"><div class="step">STEP 2</div><div class="ttl">RCS 접속·툴 매칭</div><div class="sub">login→List→더블클릭<br><span class="badge b-new">NEW</span> 점유 팝업 백오프</div></div>
+  <div class="node prog"><div class="step">STEP 3</div><div class="ttl">CV 매칭·feasibility</div><div class="sub">consensus→rcp 매칭<br><span class="badge b-new">NEW</span> SEM-box·PM 모드</div></div>
+  <div class="node prog"><div class="step">STEP 4</div><div class="ttl">보정 reposition+OK</div><div class="sub">key 보이면 1차 보정<br><span class="badge b-new">NEW</span> PM 줌 래더</div></div>
+</div>
+<div class="flow-row">
+  <div class="node done"><div class="step">STEP 5</div><div class="ttl">실패 시 알림</div><div class="sub">cube notify<br><span class="badge b-new">NEW</span> 재등록 플래그</div></div>
+  <div class="node done"><div class="step">STEP 6</div><div class="ttl">상시 화면 녹화</div><div class="sub">수동 조작까지 기록 · N&gt;5 조기 종료</div></div>
+  <div class="node done"><div class="step">STEP 7</div><div class="ttl">툴 종료</div><div class="sub">try/finally teardown</div></div>
+  <div class="node done"><div class="step">STEP 8</div><div class="ttl">다음 알람 대기</div><div class="sub">↻ STEP 1 로 순환</div></div>
+</div>
+<div class="branch"><b>check-only 변형</b>: 접속 → 1프레임 캡처 → 종료. 이번 주 진단 기능을 이 경로에 먼저 탑재해 오피스 실측 중.</div>
+<div class="legend"><span class="badge b-done">●</span> 안정 동작 &nbsp; <span class="badge b-prog">●</span> 코드 완료·캘리브레이션 중 &nbsp; <span class="badge b-new">NEW</span> 이번 주 추가</div>
 
 ---
 
-## 4. Check-only 모니터 + 현장 진단
+## 작업 항목 진행 현황
 
-**상태: 🟡 구현 완료 / 오피스 캘리브레이션 중**
-
-- **SEM-box 검출 + PM OM/SEM 모드 판독**
-  104/210 = OM, K 접미사 = SEM → modality 결정
-- **점유 'select' 팝업 검출** — 타 엔지니어 사용 중 백오프(300s)
-- **줌 인/아웃 래더** — ambiguous / not_visible 시 양방향 스윕
-- **PM-dropdown 폴백** — wheel 무효 장비용 value-space 배율 제어
-- **RCS 커서 추적 수정** — teleport → glide + jiggle
-
----
-
-## 5. 재등록 플래깅 · 6. VLM 2-image 폴백
-
-**재등록 플래깅 — ✅ 완료**
-- `ambiguous`(2nd/best > τ) 시 `reregister_recommended` + 2nd-best 위치(magenta) 표시
-- 어떤 recipe align key를 재등록할지 식별
-
-**VLM 2-image align-point 폴백 — 🔬 실험 중**
-- rcp vs live 2장 비교 (Kimi-K2.6), VLM은 영역만·좌표는 CV
-- Kimi-K2.5 → K2.6 승급, Qwen3-VL 제거
-
----
-
-## 7. MSR 제거 · 8. 기타 인프라
-
-**MSR 프로덕션 제거 — 🟡 진행 중**
-- `align_img_from_msr` dead I/O 확인 → `include_msr` 플래그로 rcp-only gather
-
-**기타**
-- **recording_filter** 패키지 신설 (프레임 → interaction timeline, 18 테스트)
-- 엔지니어 align 완료 시 N>5 자동 종료, watch 5분 캡
-- 시작 시 경로 헬스 리포트 (MES 경로 불일치 조기 경고)
-
----
-
-## 진행 현황 한눈에
-
-| 항목 | 상태 |
-| --- | --- |
-| align 모듈 구조 재편 | ✅ 완료 |
-| Cond-aware 박스-크롭 템플릿 | ✅ 완료 |
-| Consensus 라이브 보정 배선 | 🟡 코드 완료 / downloader 대기 |
-| Check-only 진단(SEM-box·PM 줌) | 🟡 구현 완료 / 캘리브레이션 중 |
-| 재등록 플래깅 | ✅ 완료 |
-| VLM 2-image 폴백 | 🔬 실험 중 |
-| MSR 제거 | 🟡 진행 중 |
+| 항목 | 상태 | 요지 |
+| --- | :--: | --- |
+| align 모듈 구조 재편 | <span class="badge b-done">완료</span> | `vision/`→`align/`, 4-layer DAG 확립 |
+| Cond-aware 박스-크롭 템플릿 | <span class="badge b-done">완료</span> | cond.txt 기하 크롭 + `align_offset_xy`, 7-task TDD |
+| Consensus 라이브 보정 배선 | <span class="badge b-prog">진행</span> | consensus→rcp 라우팅, **downloader가 게이트** |
+| Check-only 진단 (SEM-box·PM 줌) | <span class="badge b-prog">진행</span> | 양방향 줌 래더 + PM-dropdown 폴백, **캘리브레이션 중** |
+| 모호 recipe 재등록 플래깅 | <span class="badge b-done">완료</span> | `ambiguous` 시 권고 + 2nd-best 표시 |
+| VLM 2-image align-point 폴백 | <span class="badge b-plan">실험</span> | rcp vs live 비교(K2.6), 좌표는 CV |
+| MSR 프로덕션 제거 | <span class="badge b-prog">진행</span> | `include_msr` 플래그 rcp-only gather |
+| recording_filter 패키지 | <span class="badge b-done">완료</span> | 녹화→interaction timeline, 18 테스트 |
 
 ---
 
 ## 다음 주 우선순위
 
-1. **office_success_downloader 구현**
-   → consensus 라이브 보정 활성화의 마지막 게이트
-2. **PM-dropdown 줌 + SEM-box 검출 오피스 실측 캘리브레이션**
-   → 클릭 좌표 · 배율 매핑 검증
+1. **office_success_downloader 구현** — consensus 라이브 보정 활성화의 마지막 게이트
+2. **PM-dropdown 줌 · SEM-box 검출 오피스 실측 캘리브레이션** — 클릭 좌표·배율 매핑 검증
 3. MSR 제거 잔여 정리 + 오프라인 msr-fetch 스크립트
 4. VLM 2-image 폴백 A/B 결론 → 채택 여부 결정
 
@@ -144,3 +103,8 @@ footer: '2026.06.11 ~ 06.18'
 # 감사합니다
 
 **workflow_3** — 실시간 align-fail 모니터링 루프
+
+<!--
+빌드: npx -y @marp-team/marp-cli@latest weekly_report_slides.md --html --pptx -o weekly_report_slides.pptx
+HTML(div) 렌더링을 위해 --html 플래그 필수.
+-->

@@ -59,6 +59,8 @@ TEMPLATES_DIR = WORKFLOW_3_DIR / "templates"
 # 오피스 MES 가 align fail 시 생성하는 이미지 루트. align fail 핸들러는 여기에
 # captured_img_from_rcs(녹화 포함)를 함께 적재하고, align.assets 가 읽는다.
 #   align_images/<eqp_id>/<class>/<recipe>/{align_img_from_rcp, align_img_from_msr, captured_img_from_rcs}
+# 런타임은 align_img_from_rcp(+consensus)만 소비한다. align_img_from_msr 은 오프라인
+# 벤치 전용이며 프로덕션 루프는 받지 않는다(fetch_msr_offline.py 로 필요 시 수동 적재).
 # 기본 위치를 workflow_3 아래로 둔다(녹화/캡처가 workflow_3 에 모이도록).
 # 주의: 오피스 MES 도구는 여전히 workflow_1/align_images 에 align key 를 쓰므로,
 # 오피스에서 CV 보정을 쓰려면 env ALIGN_IMAGES_DIR 로 그 경로를 가리키거나 MES

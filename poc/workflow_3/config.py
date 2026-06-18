@@ -89,11 +89,13 @@ class Workflow3Settings(WorkflowSettings):
     engineer_done_vlm_service: str = "ui-venus"  # grounding 서비스 slug.
     engineer_done_ocr_service: str = "paddleocr-vl-1.5"  # 분자 OCR 서비스 slug.
 
-    # --- rcp/msr 입력 이미지 office 다운로드 ---
-    # align_img_from_rcp(등록 align key) + align_img_from_msr(측정 궤적)는 보정/점검의
-    # 1차 입력이다. 기본 계약은 office MES 가 align_images 트리에 직접 적재하는 것이지만,
-    # MES 출력을 그 트리로 못 받는 환경에서는 office_rcp_msr_downloader 가 알람 시점에
-    # 내려받는다. cycle 이 assets 를 읽기 전에 디스크에 있어야 하므로 동기로 받는다.
+    # --- rcp 입력 이미지 office 다운로드 ---
+    # align_img_from_rcp(등록 align key)는 보정/점검의 런타임 입력이다. 보정/feasibility 는
+    # 라이브 캡처 프레임에 consensus(우선)/rcp(폴백) 템플릿을 매칭하며, align_img_from_msr
+    # (측정 궤적)은 런타임에서 소비하지 않으므로 프로덕션 gather 는 rcp 만 받는다(rcp-only).
+    # msr 은 오프라인 벤치에서만 fetch_msr_offline.py 로 받는다. 기본 계약은 office MES 가
+    # align_images 트리에 직접 적재하는 것이지만, 못 받는 환경에선 office_rcp_msr_downloader
+    # 가 알람 시점에 동기로 내려받는다(cycle 이 assets 읽기 전 디스크 적재 보장).
     rcp_msr_gather_enabled: bool = True
 
     # --- consensus S-image gather ---

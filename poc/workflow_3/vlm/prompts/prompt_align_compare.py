@@ -15,7 +15,7 @@ VLM 은 image 1 의 마킹 지점 '모양'을 먼저 서술(reasoning scaffold)�
 동점일 때만 쓰는 soft tiebreaker 로 준다(Q1 에 있는 recipe 를 silent fail 시키지 않기 위해).
 
 2-이미지 입력이라 ui-venus(단일 요소 grounding) 가 아니라 직접 게이트웨이의
-Qwen3-VL-30B-Instruct(native 2-image) 를 대상으로 한다.
+Kimi-K2.6(native 2-image) 를 대상으로 한다(사내 Qwen3-VL deprecated).
 """
 
 

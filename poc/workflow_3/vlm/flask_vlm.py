@@ -36,16 +36,14 @@ class VLMServiceEntry:
 DEFAULT_FLASK_API_BASE_URL = "http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com/api"
 DEFAULT_COMPANY_LLM_BASE_URL = "http://common.llm.skhynix.com/v1"
 
-KIMI_K2_5_MODEL_NAME = "Kimi-K2.5"
-QWEN3_VL_30B_INSTRUCT_MODEL_NAME = "Qwen3-VL-30B-Instruct"
+KIMI_K2_6_MODEL_NAME = "Kimi-K2.6"
 UI_VENUS_MODEL_NAME = "ui-venus-1.5-8b"
 MAI_UI_MODEL_NAME = "mai-ui-8b"
 UI_TARS_MODEL_NAME = "ui-tars-1.5-7b"
 PADDLEOCR_VL_1_5_MODEL_NAME = "paddleocr-vl-1.5"
 GOT_OCR_MODEL_NAME = "got-ocr-2.0-hf"
 
-KIMI_K2_5_API_URL = DEFAULT_COMPANY_LLM_BASE_URL
-QWEN3_VL_30B_INSTRUCT_API_URL = DEFAULT_COMPANY_LLM_BASE_URL
+KIMI_K2_6_API_URL = DEFAULT_COMPANY_LLM_BASE_URL
 UI_VENUS_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/ui-venus"
 MAI_UI_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/mai-ui"
 UI_TARS_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/ui-tars"
@@ -61,18 +59,10 @@ DEFAULT_OCR_MODEL_NAME = PADDLEOCR_VL_1_5_MODEL_NAME
 
 ALL_VLM_SERVICES: list[VLMServiceEntry] = [
     VLMServiceEntry(
-        "kimi-k2.5",
-        "Kimi-K2.5",
-        KIMI_K2_5_MODEL_NAME,
-        KIMI_K2_5_API_URL,
-        enabled=True,
-        connection_mode="direct",
-    ),
-    VLMServiceEntry(
-        "qwen3-vl-30b-instruct",
-        "Qwen3-VL-30B-Instruct",
-        QWEN3_VL_30B_INSTRUCT_MODEL_NAME,
-        QWEN3_VL_30B_INSTRUCT_API_URL,
+        "kimi-k2.6",
+        "Kimi-K2.6",
+        KIMI_K2_6_MODEL_NAME,
+        KIMI_K2_6_API_URL,
         enabled=True,
         connection_mode="direct",
     ),

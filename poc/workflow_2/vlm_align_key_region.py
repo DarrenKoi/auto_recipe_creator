@@ -77,10 +77,11 @@ from poc.workflow_3.util.time_utils import format_elapsed_ms, make_timestamp_tag
 # 설정 (CLI 인자 없음 — 상수로만).
 # ====================================================================
 
-# 멀티이미지 native PASS 모델 (probe_multi_image_vlm 결과, 2026-06-02).
+# 멀티이미지 native PASS 모델. Qwen3-VL 은 사내 deprecated → Kimi-K2.6 가 기본.
+# 다른 모델로 바꾸려면 PROBE_PERCEPTION_MODEL 로 override.
 PERCEPTION_MODEL = os.getenv(
-    "PROBE_PERCEPTION_MODEL", "Qwen3-VL-30B-A3B-Instruct"
-).strip() or "Qwen3-VL-30B-A3B-Instruct"  # Kimi-K2.6 등으로 바꾸려면 env override.
+    "PROBE_PERCEPTION_MODEL", "Kimi-K2.6"
+).strip() or "Kimi-K2.6"
 ENCODE_FMT = "webp"          # 게이트웨이 WebP PASS, payload 작음.
 TIMEOUT_SEC = 90.0
 MAX_TOKENS = 4096            # Kimi 등 reasoning 모델은 JSON 앞에 prose 를 길게 뱉어 512 면

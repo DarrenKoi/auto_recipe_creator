@@ -66,6 +66,19 @@ digest 에 `consMode=hist:X/loo:Y` 노출.
 - **S only.** E(fail)는 crosshair 가 없어 consensus 정렬 anchor 도, 자동 채점 GT 도 못 됨.
 - **eqp 무관 공유로 확정** — 같은 class/recipe 면 tool 무관하게 한 풀로 합친다(tool-to-tool 외형차는 고려 안 함).
 
+## 결정 3 — modality(OM/SEM) 층화 (Step 1; split 여부 판단 근거)
+
+현재 엔진은 OM/SEM 에 **동일 단일 CV 정책**(전역 Canny 임계, 단일 scale band, OM+SEM 섞어 calibration 한
+Youden 0.6053/0.4727)을 쓰고 route_template 은 *어느 템플릿*만 고른다. OM(저배율·반복패턴 多 →
+wrong_local_peak 온상)과 SEM(box/직선·edge 희소·contrast 다름)은 외형이 달라 단일 정책이 최적이 아닐 수
+있다. 가정 말고 측정: combined 드라이버가 3 arm(consensus/rcp-only/routed)을 OM vs SEM 로 쪼개 rank1/topk 를
+낸다(`by_modality` summary + digest `mod[OM .. SEM ..]` + report 표). 순수 헬퍼
+`_consensus_by_modality`/`_arm_rates_by_modality`/`_routed_by_modality` 는 테스트로 검증.
+
+**판정**: OM rank1 이 SEM 보다 확연히 낮고 실패유형이 다르면 → Step 2 로 modality-specific 레버(Canny 임계
+분리, Youden 재calibration, proposer 구성: SEM box→NCC/corner/Hough-line, OM→periodicity 억제/재등록)를
+ensemble_lab 에서 A/B. 비슷하면 split 안 함(S 희박한데 튜닝면적 2배는 비효율). CV 가 좌표 권위 유지(2026-05-25 룰).
+
 ## 검증
 
 Mac dev(golden 없음): `py_compile` OK, `uv run pytest test_golden_combined_eval_cond.py

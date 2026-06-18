@@ -150,3 +150,38 @@ def test_digest_line_is_single_line_with_key_numbers():
 def test_digest_line_lab_off_default():
     d = gcc._digest_line(_summary(lab_mode=""))
     assert "lab=off" in d
+
+
+# --- modality 층화 (Step 1: OM vs SEM) ---
+
+def test_consensus_by_modality_frame_weighted_split():
+    rows = [
+        {"modality": "om", "n_S_loo": 4, "cons_rank1_rate": 0.5, "cons_in_topk_rate": 0.6},
+        {"modality": "om", "n_S_loo": 6, "cons_rank1_rate": 0.7, "cons_in_topk_rate": 0.8},
+        {"modality": "sem", "n_S_loo": 5, "cons_rank1_rate": 0.9, "cons_in_topk_rate": 1.0},
+    ]
+    out = gcc._consensus_by_modality(rows)
+    assert out["om"]["n_frames"] == 10
+    assert out["om"]["rank1_rate"] == 0.62      # (0.5*4 + 0.7*6)/10
+    assert out["sem"]["rank1_rate"] == 0.9
+
+
+def test_arm_rates_by_modality_splits_cells():
+    cells = [
+        {"mod": "om", "topk_rank": 3, "in_topk": True},
+        {"mod": "OM", "topk_rank": 1, "in_topk": True},   # 대소문자 정규화
+        {"mod": "sem", "topk_rank": 1, "in_topk": True},
+    ]
+    out = gcc._arm_rates_by_modality(cells)
+    assert out["om"]["n"] == 2 and out["om"]["rank1_rate"] == 0.5
+    assert out["sem"]["n"] == 1 and out["sem"]["rank1_rate"] == 1.0
+
+
+def test_routed_by_modality_combines_arms():
+    cons = {"om": {"n_frames": 10, "rank1_rate": 0.8, "in_topk_rate": 0.9}}
+    rcp = {"om": {"n": 10, "rank1_rate": 0.4, "in_topk_rate": 0.6},
+           "sem": {"n": 5, "rank1_rate": 0.7, "in_topk_rate": 0.7}}
+    out = gcc._routed_by_modality(cons, rcp)
+    assert out["om"]["rank1_rate"] == 0.6       # (0.8*10 + 0.4*10)/20
+    assert out["sem"]["rank1_rate"] == 0.7      # sem: rcp-only 만
+    assert out["sem"]["n_frames"] == 5

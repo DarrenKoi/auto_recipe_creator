@@ -172,6 +172,46 @@ def _routed_overall(cons_frames, cons_rank1_rate, cons_topk_rate, rcp_stats):
     }
 
 
+def _consensus_by_modality(per_recipe):
+    """consensus per_recipe rows → {modality: {n_frames, rank1_rate, in_topk_rate}} (frame-weighted).
+
+    OM(저배율·반복패턴 多)과 SEM(box/직선) 이 같은 단일 CV 정책에서 다르게 동작하는지 측정용.
+    """
+    acc = {}
+    for r in per_recipe:
+        mod = (r.get("modality") or "unknown").lower()
+        w = int(r["n_S_loo"])
+        a = acc.setdefault(mod, {"n": 0, "r1": 0.0, "tk": 0.0})
+        a["n"] += w
+        a["r1"] += r["cons_rank1_rate"] * w
+        a["tk"] += r["cons_in_topk_rate"] * w
+    return {mod: {"n_frames": a["n"],
+                  "rank1_rate": round(a["r1"] / a["n"], 3) if a["n"] else None,
+                  "in_topk_rate": round(a["tk"] / a["n"], 3) if a["n"] else None}
+            for mod, a in acc.items()}
+
+
+def _arm_rates_by_modality(cells_list):
+    """rcp-only 셀 list 를 cell['mod'] 로 쪼개 modality 별 _arm_rates."""
+    by_mod = {}
+    for c in cells_list:
+        by_mod.setdefault((c.get("mod") or "unknown").lower(), []).append(c)
+    return {mod: _arm_rates(cs) for mod, cs in by_mod.items()}
+
+
+def _routed_by_modality(cons_by_mod, rcp_by_mod):
+    """modality 별 routed 종합 (eligible→consensus, rest→rcp). frame-weighted."""
+    out = {}
+    for mod in set(cons_by_mod) | set(rcp_by_mod):
+        c = cons_by_mod.get(mod, {})
+        rp = rcp_by_mod.get(mod, {})
+        out[mod] = _routed_overall(
+            c.get("n_frames", 0), c.get("rank1_rate"), c.get("in_topk_rate"),
+            {"n": rp.get("n", 0), "rank1_rate": rp.get("rank1_rate"),
+             "in_topk_rate": rp.get("in_topk_rate")})
+    return out
+
+
 def _score_rcp_only(rec_assets, center_tpls, box_tpls):
     """consensus 불가 recipe 의 모든 S 프레임을 rcp box localization 으로 채점 → 선택 셀 list."""
     from poc.workflow_3.align.assets import iter_msr_images
@@ -253,6 +293,10 @@ def run() -> str:
     scaling = _bin_by_s_count(per_recipe)
     routed = _routed_overall(cons_frames, cons_rank1, cons_topk, rcp_only)
     n_history = sum(1 for r in per_recipe if r.get("mode") == "history")
+    # modality 층화(Step 1) — OM/SEM 가 같은 단일 CV 정책에서 다르게 동작하는지 측정.
+    cons_by_mod = _consensus_by_modality(per_recipe)
+    rcp_by_mod = _arm_rates_by_modality(rcp_only_cells)
+    routed_by_mod = _routed_by_modality(cons_by_mod, rcp_by_mod)
     summary = {
         "matcher_rcp_only": matcher_mode,
         "lab_mode": os.getenv("ALIGN_ENSEMBLE_LAB_MODE", ""),
@@ -276,6 +320,11 @@ def run() -> str:
         "consensus_scaling_by_s_count": scaling,   # (A)
         "rcp_only_arm": rcp_only,                   # (B)
         "routed_overall": routed,                   # (C)
+        "by_modality": {                            # Step 1: OM vs SEM 층화(split 여부 판단 근거).
+            "consensus": cons_by_mod,
+            "rcp_only": rcp_by_mod,
+            "routed": routed_by_mod,
+        },
     }
     (out_dir / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -306,6 +355,12 @@ def _digest_line(summary):
     ) or "-"
     lab = summary["lab_mode"] or "off"
     cons_mode = f"hist:{ca.get('n_recipes_history', 0)}/loo:{ca.get('n_recipes_loo', 0)}"
+    routed_mod = (summary.get("by_modality") or {}).get("routed", {})
+
+    def _mod(m):
+        d = routed_mod.get(m)
+        return f"{m.upper()} r1/topk={d['rank1_rate']}/{d['in_topk_rate']} (n={d['n_frames']})" if d else f"{m.upper()} -"
+
     return (
         f"lab={lab} minS={summary['consensus_min_s']} consMode={cons_mode} | "
         f"routed r1/topk={r['rank1_rate']}/{r['in_topk_rate']} (n={r['n_frames']}) | "
@@ -313,6 +368,7 @@ def _digest_line(summary):
         f"(n={ca['n_frames']},rec={summary['n_recipes_consensus_eligible']}) | "
         f"rcp_only r1/topk={ro['rank1_rate']}/{ro['in_topk_rate']} "
         f"(n={ro['n']},rec={summary['n_recipes_rcp_only']}) | "
+        f"mod[{_mod('om')} {_mod('sem')}] | "
         f"scaling[{scaling}]"
     )
 
@@ -350,6 +406,19 @@ def _print_report(summary):
           f"(vs rcp counterfactual r1={ca['rcp_counterfactual_rank1_rate']} "
           f"topk={ca['rcp_counterfactual_in_topk_rate']}, lift={ca['overall_lift']})")
     print("    * routed pick 은 일관(eligible=consensus, rest=rcp box). arm 간 rcp 정의(center vs box)는 lift 해석시 주의.")
+
+    bm = summary.get("by_modality") or {}
+    print("\n[INFO] === (Step 1) modality 층화 — OM vs SEM (단일 CV 정책에서 다르게 동작하나) ===")
+    print(f"    {'mod':<6} {'consensus r1/topk (n)':<26} {'rcp_only r1/topk (n)':<24} {'routed r1/topk (n)':<22}")
+    for mod in ("om", "sem"):
+        c = bm.get("consensus", {}).get(mod, {})
+        rp = bm.get("rcp_only", {}).get(mod, {})
+        rt = bm.get("routed", {}).get(mod, {})
+        cs = f"{c.get('rank1_rate')}/{c.get('in_topk_rate')} ({c.get('n_frames', 0)})"
+        rs = f"{rp.get('rank1_rate')}/{rp.get('in_topk_rate')} ({rp.get('n', 0)})"
+        ts = f"{rt.get('rank1_rate')}/{rt.get('in_topk_rate')} ({rt.get('n_frames', 0)})"
+        print(f"    {mod.upper():<6} {cs:<26} {rs:<24} {ts:<22}")
+    print("    * OM(저배율·반복패턴) rank1 이 SEM 보다 확연히 낮고 실패유형이 다르면 → modality-specific CV 정책 검토.")
 
 
 if __name__ == "__main__":

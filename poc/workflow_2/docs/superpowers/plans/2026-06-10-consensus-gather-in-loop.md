@@ -19,6 +19,7 @@
 ### Task 1: cache root 상수 추가 (`ALIGN_CONSENSUS_CACHE_DIR`)
 
 **Files:**
+
 - Modify: `poc/workflow_3/__init__.py` (ALIGN_IMAGES_DIR 블록 직후 + `__all__`)
 
 `vision/consensus_gather.py`(Task 2)가 이 상수를 import 하므로 **먼저** 추가한다. `ALIGN_IMAGES_DIR` 와 같은 env-override 패턴.
@@ -65,6 +66,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ### Task 2: vision 순수 orchestration (`gather_success_images`)
 
 **Files:**
+
 - Create: `poc/workflow_3/vision/consensus_gather.py`
 - Test: `poc/workflow_3/vision/test_consensus_gather.py`
 
@@ -394,6 +396,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ### Task 3: config 게이트 필드 (`gather_enabled` / `gather_max_events`)
 
 **Files:**
+
 - Modify: `poc/workflow_3/config.py` (Workflow3Settings 필드 + load_workflow3_settings)
 
 - [ ] **Step 1: dataclass 필드 추가**
@@ -436,6 +439,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ### Task 4: monitor glue (`success_gather`) — office loader + 비차단 fire
 
 **Files:**
+
 - Create: `poc/workflow_3/monitor/success_gather.py`
 - Test: `poc/workflow_3/monitor/test_success_gather.py`
 
@@ -688,6 +692,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ### Task 5: 루프 통합 — `process_fail_rows` 호출 1줄
 
 **Files:**
+
 - Modify: `poc/workflow_3/monitor/align_fail_monitor.py` (import + process_fail_rows 호출)
 
 - [ ] **Step 1: import 추가**
@@ -734,6 +739,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ### Task 6: office downloader 스켈레톤 (사용자 구현, office-only)
 
 **Files:**
+
 - Create(사용자, office PC): `poc/workflow_3/monitor/office_success_downloader.py` (`**/office_*` → **gitignore, 커밋 안 됨**)
 
 > 이 파일은 사용자가 측정이력 DB 에 붙여 채운다. Task 1–5(Mac 완결) 후, `SuccessDownloader`
@@ -810,6 +816,7 @@ office PC 에서 실제 fail 알람(또는 replay)으로 루프를 돌려 `align
 ## Self-Review
 
 **Spec coverage:**
+
 - §3-A 컴포넌트 6개 → Task 1(__init__) · Task 2(vision) · Task 3(config) · Task 4(monitor glue) · Task 5(루프) · Task 6(office). ✅
 - §3-B 인터페이스(StagedEvent/GatherResult/SuccessDownloader/gather_success_images) → Task 2 그대로. ✅
 - §3-C cache layout(`<eqp>/<class>/<recipe>/events/<event_id>/`) → Task 2 `_events_dir_for` + test_layout_nested. ✅

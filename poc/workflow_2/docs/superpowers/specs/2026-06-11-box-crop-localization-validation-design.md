@@ -14,6 +14,7 @@
 대비 align point localization 을 올리는가 — 특히 **far/very-far 구조적 displacement** 구간에서?
 
 집계(aggregate) 단독으로는 답할 수 없다:
+
 - 과거 box-crop 신호는 약했다(`free_best_box bACC 0.61`, 일부 "역전") —
   [[project_matcher_flat_chamfer_distinctiveness]].
 - 로드맵 §0: 잔여 miss 의 ~89% 가 구조적 far/very-far displacement. 집계가 wash 여도
@@ -105,7 +106,7 @@ near/mid/far/veryfar 라벨·경계는 모듈 상수로 두어 office 1차 결�
 - 실행(env prefix 불필요): `uv run python poc/workflow_2/golden_localization_eval_cond.py`
 - 돌려줄 digest = `summary["binned"]` 표 (260608_133422 placeholder 를 채움):
 
-```
+```text
 [A] by structural displacement   |  center gt_in_topk / rank1   |  box gt_in_topk / rank1   |  n
   near     (<0.10)               |        __ / __               |        __ / __            | __
   mid      (<0.20)               |        __ / __               |        __ / __            | __

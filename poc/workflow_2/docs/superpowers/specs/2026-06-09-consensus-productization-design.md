@@ -40,7 +40,7 @@ consensus 가 proposer recall 을 올린다는 것은 검증됐고, fail 프레�
 ### 3-A. 컴포넌트
 
 | 파일 | 상태 | 책임 |
-|---|---|---|
+| --- | --- | --- |
 | `consensus_template.py` | ✅ 구현됨 | `build_consensus_template`(게이트: median→blur 가드→template\|None), `select_routing_templates`(consensus-or-rcp 라우팅 dict) |
 | `crop_pipeline.py` | 신규(리팩터) | clean(crosshair/box 제거)+crosshair중심 crop+co-registration 을 `golden_consensus_eval_cond.py` 에서 추출 → eval/prod 공유(표류 방지, §2-F) |
 | `consensus_cache.py` | 신규 | 캐시 레이아웃 + 롤링 윈도우: `topup_evict()`, `resolve_consensus_template()`, source-set hash, TTL throttle |
@@ -52,7 +52,7 @@ consensus 가 proposer recall 을 올린다는 것은 검증됐고, fail 프레�
 
 로컬 SSD 기본, `align_images/`·`align_img_from_rcp` 와 **물리 분리**(race/혼동 없음, §2-C):
 
-```
+```text
 align_consensus_cache/<eqp>/<class>/<recipe>/
 ├─ events/<event_id>/  S0001.jpg + S0001.txt(cond sidecar, 필수)   # 진실 = 원본 이미지
 ├─ template/  OM.png OM.json  SEM.png SEM.json                      # 파생물(median 재계산 쌈)
@@ -66,7 +66,7 @@ align_consensus_cache/<eqp>/<class>/<recipe>/
 
 ### 3-C. 데이터 흐름
 
-```
+```text
 fail 감지 ─enqueue(hot loop, download 없음)→ consensus_prep_queue.jsonl
                                                   │
 consensus_prep.py(워커, 비동기 분리) ─────────────┘
@@ -103,7 +103,8 @@ consensus_cache.resolve_consensus_template(eqp, class_name, recipe_id, modality)
 
 ## 4. 결정사항
 
-**확정(설계-시점)**
+### 확정(설계-시점)
+
 - 큐: 별도 `consensus_prep_queue.jsonl`(append-only 한 줄/이벤트). `align_fail_records.csv` 는
   audit log 로 유지(혼합 안 함).
 - 윈도우 단위 = 측정 **이벤트**, 크기 **N=5 이벤트**(~10-15장), env 튜닝.
@@ -112,7 +113,8 @@ consensus_cache.resolve_consensus_template(eqp, class_name, recipe_id, modality)
 - 원자성: template/state 는 temp→`os.replace`(Windows 원자적).
 - 단일 워커 가정(`uv run`, 인자 없음). lockfile 은 YAGNI-deferred.
 
-**측정-대기(empirical, 파라미터화됨 — 블로커 아님)**
+### 측정-대기(empirical, 파라미터화됨 — 블로커 아님)
+
 - 그룹핑 default(`per-eqp`/`pooled`/`hybrid`) → §6 A/B 로 확정. 검증 전까진 validated 체제(per-eqp).
 - blur 임계 `edge_ratio<0.70` / `lap_ratio<0.50` → golden 데이터 1회 실측(저널 `260609_045819` 실행 카드).
   현재 `ConsensusPolicy` 기본값으로 박혀 있고 env 로 조정 가능.
@@ -123,7 +125,7 @@ consensus_cache.resolve_consensus_template(eqp, class_name, recipe_id, modality)
 `crop_pipeline.py` 로 공유해 재사용.
 
 | 상황 | 워커 동작 | 소비 효과 |
-|---|---|---|
+| --- | --- | --- |
 | download 전체 실패 | 로그; 캐시 유지; 다음 enqueue 가 TTL 후 재시도 | 이전 윈도우(있으면) 서빙, 없으면 None→rcp |
 | download 부분 실패 | 받은 것으로 빌드 | modality ≥min_s 면 빌드, 아니면 None→rcp |
 | cond 없음 / crosshair 없음 | 프레임 drop(`missing_cond`/`missing_crosshair`) 집계 | crop 감소 → min_s 미달 가능 |

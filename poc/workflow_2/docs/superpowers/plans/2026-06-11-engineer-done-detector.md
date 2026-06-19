@@ -11,6 +11,7 @@
 **spec 대비 의도적 강화 1건:** done 판정을 "N ≥ min_count 且 비감소(첫 읽기 허용)" 대신 **"N ≥ min_count 且 직전 읽기 존재 且 N ≥ 직전"**(연속 2회 확인)으로 한다. 단일 프레임 OCR 오독(예: 분모 350 을 한 번 잡음)으로 녹화가 끊기는 것을 막는다. 비용은 poll 1회(~8s) 지연.
 
 **레포 규약 주의(모든 task 공통):**
+
 - 한국어 docstring, print 로깅(`[INFO]`/`[WARNING]`/`[ERROR]`), `logging` 모듈 금지.
 - print() 문자열에 em-dash(U+2014)·이모지 금지(office cp949). docstring 은 허용.
 - `from __future__` import 금지. CLI 인자(argparse) 금지 — env/모듈 상수만.
@@ -23,7 +24,7 @@
 ## File Structure
 
 | 파일 | 상태 | 책임 |
-|---|---|---|
+| --- | --- | --- |
 | `poc/workflow_3/config.py` | 수정 | `Workflow3Settings` engineer_done_* 필드 8개 + env 배선 |
 | `poc/workflow_3/vlm/prompts/prompt_recipe_monitor_counter.py` | 신규 | 분자 grounding 프롬프트(ui-venus 공식 단일요소 형식 재사용) |
 | `poc/workflow_3/monitor/engineer_done.py` | 신규 | 순수 헬퍼(parse/roi/extract) + `EngineerDoneDetector` + `build_engineer_done_detector` + 캘리브레이션 `main()` |
@@ -36,6 +37,7 @@
 ### Task 1: `Workflow3Settings` engineer_done_* 필드 + env 배선
 
 **Files:**
+
 - Modify: `poc/workflow_3/config.py`
 - Test: `poc/workflow_3/monitor/test_engineer_done.py` (신규 생성, 이후 task 들이 누적)
 
@@ -154,6 +156,7 @@ git commit -m "workflow_3(engineer-done): Workflow3Settings 측정-시작 감지
 ### Task 2: 분자 grounding 프롬프트 빌더
 
 **Files:**
+
 - Create: `poc/workflow_3/vlm/prompts/prompt_recipe_monitor_counter.py`
 - Test: `poc/workflow_3/monitor/test_engineer_done.py` (추가)
 
@@ -241,6 +244,7 @@ git commit -m "workflow_3(engineer-done): Recipe Monitor 분자 grounding 프롬
 ### Task 3: 순수 헬퍼 — `parse_point_1000` / `point_to_roi_ratios` / `extract_numerator`
 
 **Files:**
+
 - Create: `poc/workflow_3/monitor/engineer_done.py` (헬퍼부터; detector 는 Task 4)
 - Test: `poc/workflow_3/monitor/test_engineer_done.py` (추가)
 
@@ -386,6 +390,7 @@ git commit -m "workflow_3(engineer-done): 점/ROI/분자 순수 헬퍼"
 ### Task 4: `EngineerDoneDetector` (주입 seam + 상태 기계)
 
 **Files:**
+
 - Modify: `poc/workflow_3/monitor/engineer_done.py` (detector 클래스 추가)
 - Test: `poc/workflow_3/monitor/test_engineer_done.py` (추가)
 
@@ -709,6 +714,7 @@ Run: `uv run python poc/workflow_3/monitor/test_engineer_done.py`
 Expected: `10/10 통과`, exit 0
 
 검증 포인트(실패 시 디버깅 힌트):
+
 - `test_detector_static_no_ocr` 실패 → `_frame_changed` 의 첫-샘플 처리(`first_sample` 가드) 확인.
 - `test_detector_relocalize_after_miss` 실패 → 재grounding 시 `_prev_gray = None` 리셋 확인
   (리셋 안 하면 새 ROI 첫 crop 이 곧장 changed 로 잡혀 호출 수가 어긋난다).
@@ -725,6 +731,7 @@ git commit -m "workflow_3(engineer-done): EngineerDoneDetector (VLM 1회 + CV ga
 ### Task 5: 실배선 builder + 오피스 캘리브레이션 단독 실행
 
 **Files:**
+
 - Modify: `poc/workflow_3/monitor/engineer_done.py` (builder + main)
 - Test: `poc/workflow_3/monitor/test_engineer_done.py` (gate 테스트 추가)
 
@@ -941,6 +948,7 @@ git commit -m "workflow_3(engineer-done): 실배선 builder + 측정중 tool 캘
 ### Task 6: `cycle.py` watch 배선 (done-detector 조기종료)
 
 **Files:**
+
 - Modify: `poc/workflow_3/monitor/cycle.py` (`_engineer_watch`, `_exec_run_correction`, `run_alarm_cycle`)
 - Test: `poc/workflow_3/monitor/test_engineer_done.py` (watch 단위 테스트 추가)
 
@@ -1113,6 +1121,7 @@ git commit -m "workflow_3(engineer-done): engineer watch done-detector 조기종
 ### Task 7: README env 표 갱신 + 전체 테스트
 
 **Files:**
+
 - Modify: `poc/workflow_3/README.md`
 
 - [ ] **Step 1: env 표 위치 확인**

@@ -64,9 +64,9 @@ GT 가 항상 존재한다.
 
 | 유형 | 조건 | 의미 |
 | --- | --- | --- |
-| `rank1_hit`   | `topk_rank == 1`        | 성공 |
-| `look_alike`  | `topk_rank` ∈ 2..k      | 진실은 후보에 있으나 다른 위치(주로 주기적)에 1등 뺏김 |
-| `recall_miss` | `topk_rank is None`     | 진실이 후보 pool 에 아예 없음(proposer 가 못 띄움) |
+| `rank1_hit` | `topk_rank == 1` | 성공 |
+| `look_alike` | `topk_rank` ∈ 2..k | 진실은 후보에 있으나 다른 위치(주로 주기적)에 1등 뺏김 |
+| `recall_miss` | `topk_rank is None` | 진실이 후보 pool 에 아예 없음(proposer 가 못 띄움) |
 
 `look_alike` 에 **`periodic` 서브플래그**(§4.2). 집계 단위: modality(OM/SEM) × arm
 (consensus / rcp_only / routed).
@@ -118,7 +118,7 @@ arm 의 per_recipe row 는 per-frame score 를 안 남김 — rcp localization �
 per modality 쌍(OM vs SEM)에 대해 다음 게이트를 순서대로 적용한다. 임계값은 모두
 **`golden_eval_config` 의 명명 상수**(오피스에서 데이터 보고 튜닝). 기본값:
 
-```
+```python
 SPLIT_MIN_FRAMES   = 30     # 신뢰 게이트: modality당 최소 채점 프레임
 SPLIT_MIN_RECIPES  = 5      # 신뢰 게이트: modality당 최소 recipe
 SPLIT_RANK1_GAP    = 0.10   # 헤드라인 격차(10pp)
@@ -128,7 +128,7 @@ SPLIT_DOMINANCE    = 0.40   # 지배 실패유형 최소 비중
 
 규칙:
 
-```
+```text
 1. 신뢰 게이트:  n_frames(m) ≥ SPLIT_MIN_FRAMES  AND  n_recipes(m) ≥ SPLIT_MIN_RECIPES
                  → 미달 modality 가 있으면 verdict = "insufficient" (판정 보류)
 2. 헤드라인 격차: |rank1(OM) − rank1(SEM)| ≥ SPLIT_RANK1_GAP

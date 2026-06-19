@@ -15,7 +15,7 @@
 - Absolute imports `from poc.workflow_2.xxx import ...`.
 - Git: commit directly to `main`; stage only this plan's files via pathspec(no `git add -A`); verify with `git show --stat`.
 - Commit footer (every commit):
-  ```
+  ```text
   Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
   ```
 
@@ -32,10 +32,12 @@
 ### Task 1: 실패유형 히스토그램 헬퍼 (양 arm)
 
 **Files:**
+
 - Modify: `poc/workflow_2/golden_combined_eval_cond.py` (신규 헬퍼; 기존 `_consensus_by_modality` 아래에 추가)
 - Test: `poc/workflow_2/test_golden_combined_eval_cond.py` (확장)
 
 **Interfaces:**
+
 - Produces:
   - `_classify_cell(cell) -> str` ∈ {"rank1_hit","look_alike","recall_miss"}
   - `_with_shares(acc) -> dict` (counts dict → {n, <type>:{n,share}})
@@ -225,10 +227,12 @@ git show --stat HEAD | head -8
 ### Task 2: per-modality Youden 분리 헬퍼 (rcp_only arm)
 
 **Files:**
+
 - Modify: `poc/workflow_2/golden_combined_eval_cond.py` (Task 1 헬퍼 아래에 추가)
 - Test: `poc/workflow_2/test_golden_combined_eval_cond.py` (확장)
 
 **Interfaces:**
+
 - Produces:
   - `_youden_threshold(samples) -> {thr, J, tpr, fpr, n_pos, n_neg}` (samples = `[(score, hit_bool)]`)
   - `_youden_by_modality(cells) -> {mod: youden}` (rcp_only 셀의 score+hit)
@@ -331,11 +335,13 @@ git show --stat HEAD | head -8
 ### Task 3: split verdict + dominant + n_recipes + config 상수
 
 **Files:**
+
 - Modify: `poc/workflow_2/golden_combined_eval_cond.py` (헬퍼 + config import-with-fallback)
 - Modify: `poc/workflow_2/golden_eval_config.example.py` (SPLIT_* 블록)
 - Test: `poc/workflow_2/test_golden_combined_eval_cond.py` (확장)
 
 **Interfaces:**
+
 - Produces:
   - `_dominant_failure(fail, dominance) -> str | None` ∈ {"periodic_look_alike","other_look_alike","recall_miss",None}
   - `_recipes_by_modality(per_recipe, rcp_only_cells) -> {mod: int}`
@@ -557,9 +563,11 @@ git show --stat HEAD | head -8
 ### Task 4: run() 배선 + report + digest + summary 키
 
 **Files:**
+
 - Modify: `poc/workflow_2/golden_combined_eval_cond.py` (`run`, `_print_report`, `_digest_line`)
 
 **Interfaces:**
+
 - Consumes: Task 1-3 헬퍼, `ensemble_lab.template_periodicity` / `PERIODICITY_TAU`.
 - Produces: `summary["by_modality"]["failure_modes"]` / `["youden"]`, `summary["split_verdict"]`; report 표 + digest 의 `verdict=...` 토큰.
 
@@ -793,6 +801,7 @@ Expected: pytest all passed, 드라이버 no_data exit 0.
 ## Self-Review
 
 **Spec coverage:**
+
 - spec §4.1 (실패유형 히스토그램 양 arm) → Task 1. ✓
 - spec §4.2 (periodic = template_periodicity 재사용, recipe-level join) → Task 4 Step 2-3 + Task 1 의 periodic 분기. ✓
 - spec §4.3 (per-mod Youden, rcp_only arm) → Task 2. ✓
@@ -805,6 +814,7 @@ Expected: pytest all passed, 드라이버 no_data exit 0.
 **Placeholder scan:** TBD/TODO/"적절히 처리" 없음. 모든 코드 블록 완전. ✓
 
 **Type consistency:**
+
 - `_with_shares` 입력 = counts dict(키 `_FAILURE_TYPES` + `"n"`), 출력 = {n, <type>:{n,share}} — Task 1/3 일관 사용.
 - 셀 필드 `topk_rank`/`in_topk`/`mod`/`score`/`hit`/`periodic`/`rec_key` — `_localize` 반환(score/hit/topk_rank/in_topk/mod) + run() 태깅(periodic/rec_key) 일치.
 - per_recipe row 키 `modality`/`n_S_loo`/`cons_in_topk_rate`/`cons_rank1_rate`/`recipe`/`periodic` — `_consensus_template_ab` 산출(테스트 fixture 확인) + run() join(periodic) 일치.

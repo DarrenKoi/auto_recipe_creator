@@ -31,7 +31,7 @@
 ### 결론: 진짜 레버는 3개뿐
 
 | 레버 | 의미 | 현재 상태 |
-|------|------|-----------|
+| --- | --- | --- |
 | **L1. 템플릿 변별력 ↑** | 평평한 score surface 를 붕괴시켜 옳은 peak 가 이기게 | 미착수 (본 로드맵 Tier 1·2 핵심) |
 | **L2. 탐색 공간 ↓** | proposer 가 건초더미에서 바늘 찾지 않게 | peak-isolation router + VLM-region (부분 착수) |
 | **L3. 현재 공정 외형 반영** | stale rcp 대신 최근 success 외형으로 매칭 | **consensus, +0.44 in_topk 검증 완료, 프로덕션화 중** |
@@ -61,7 +61,7 @@ Codex 의 8개 아이디어, 자체 리서치 아이디어 모두 이 3개 레�
 ### 1.2 eval 이력 (`poc/workflow_2/docs/`)
 
 | 지표 | baseline | best | 출처 |
-|------|----------|------|------|
+| --- | --- | --- | --- |
 | in_topk (proposer recall) | 0.434 (rcp) | **0.876** (consensus LOO) | 260608 |
 | rank1 | 0.269 (LOO) | **0.764** (consensus LOO) | 260608 |
 | gt_in_topk 천장 | 0.594 | proposer 한계 | 260602 |
@@ -84,14 +84,14 @@ Codex 의 8개 아이디어, 자체 리서치 아이디어 모두 이 3개 레�
 ### Tier 0 — 저비용, 이번 주: 신규 CV 없음, wiring + calibration 만
 
 | # | 액션 | 레버 | 출처 |
-|---|------|------|------|
+| --- | --- | --- | --- |
 | 0.1 | **`second_ratio` 를 notify-flag → router 로 승격.** `key_visibility_gate()` 가 bool 대신 `act / fallback_search / vlm_region / engineer_review` 반환. 검증된 tau\*≈0.98 사용. 평평한 surface 에서 **확신 오정렬 대신 abstain** 가능해져 이후 모든 항목을 배포 가능하게 만드는 안전망. | L2 | Codex #1 + peak-isolation port spec |
 | 0.2 | **cold-start threshold 를 modality 별 재보정.** `STRUCTURE_POLICY`, `min_distinct_gap`, `max_second_ratio`, `MIN_CONFIRM_SCALE` 를 golden label + AUC-0.91 signal 로 OM/SEM 분리 fit. | L1 | 자체 (엔진 맵에서 미보정 플래그) |
 
 ### Tier 1 — 근본 원인 최대 payoff: 평평한 surface 죽이기
 
 | # | 액션 | 레버 | 출처 |
-|---|------|------|------|
+| --- | --- | --- | --- |
 | 1.1 | **White-box unique-region 템플릿 cropping.** 등록 시 rcp 템플릿을 `cond.box_ltrb`(엔지니어가 표시한 unique area)로 crop → 그걸 매칭 → `align_offset` 으로 center 복원. 흰 박스는 주기적 field 의 모호성을 깨라고 엔지니어가 찍어준 **국소 고유 영역**이며, `cond_file.load_cond()` 가 이미 `box_ltrb` 를 파싱한다. `ensemble_lab` 에서 far/very-far miss bin 별로 검증. | L1 | 자체 (Codex #3 가 닿지만 본 로드맵은 headline 으로 승격) |
 | 1.2 | **Anchor-relative matching (주기적 key).** 1.1 일반화 — key 가 주기적 field 에 있으면 근처 **globally-unique landmark**(쉽고 sharp 한 peak)를 매칭 후 알려진 geometric offset 적용. 건초더미 탐색 자체를 우회. | L1+L2 | 자체 |
 | 1.3 | **등록 시 periodicity gate.** 기존 `ensemble_lab.template_periodicity()`(FFT autocorr) 재사용해 score surface 가 평평할 key 를 **사전 flag**. periodic key → context-expansion(1.1/1.2) 강제 또는 bank(Tier 3) 로 라우팅. | L2(routing) | 자체 (Codex #5 의 FFT primitive 를 quality gate 로 용도 전환) |
@@ -99,7 +99,7 @@ Codex 의 8개 아이디어, 자체 리서치 아이디어 모두 이 3개 레�
 ### Tier 2 — 구조적 miss 절반 복구 (proposer recall)
 
 | # | 액션 | 레버 | 출처 |
-|---|------|------|------|
+| --- | --- | --- | --- |
 | 2.1 | **Constellation / geometric-layout verifier.** top-N 을 단일 patch 유사도가 아니라 **여러 feature 의 상대 기하**(mutual-NN + spatial-layout consistency)로 재정렬. 이것이 MI/Hu-moments 가 **원리적으로 못 본** 공간 배치 축을 보는 reranker. | L1 | 자체 (기각된 두 reranker 가 *왜* 실패했는지에 직접 답) |
 | 2.2 | **Descriptor-channel 확장(검증용)**: AKAZE/SIFT geometry, phase-congruency edge 를 top-N 에만 — full-frame primary 절대 금지. lab-first, far/very-far bin 움직이는 채널만 포팅. | L1 | Codex #4 |
 | 2.3 | **Fourier-Mellin / log-polar phase correlation** 으로 broad zoom-out scan 의 scale+rotation 처리. candidate 생성에만 bound, 최종 권한 아님. | L2 | Codex #5 |
@@ -107,7 +107,7 @@ Codex 의 8개 아이디어, 자체 리서치 아이디어 모두 이 3개 레�
 ### Tier 3 — 어려운 잔여 + 장기 베팅
 
 | # | 액션 | 레버 | 출처 |
-|---|------|------|------|
+| --- | --- | --- | --- |
 | 3.1 | **VLM-region → CV fine-coord**, Tier-0 router 의 `second_ratio` 모호도로 gating. `vlm_align_key_region.py` 가 올바른 contract(VLM=ROI 제안, CV=좌표 소유) 이미 보유. 구조적 절반의 채택된 escalation 경로. | L2 | Codex #6 + 설계 규칙 |
 | 3.2 | **Multi-template bank.** periodicity gate(1.3)가 본질적 모호로 flag 한 recipe 는 K anchor 유지 → live-confirm/VLM 이 disambiguate, 하나로 조기 commit 안 함. | L1 | Codex #2·#7 |
 | 3.3 | **소형 Siamese/metric descriptor** — bank+gate 가 천장 친 *후에만*, label 허용 시. top-N reranker, recipe-split validation. | L1 | Codex #7 |

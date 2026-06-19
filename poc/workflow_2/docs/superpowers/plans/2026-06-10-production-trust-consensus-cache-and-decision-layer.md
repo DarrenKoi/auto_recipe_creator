@@ -37,6 +37,7 @@ in lab). Scores are high but **not enough for production**. Exploration (2026-06
 Learned-feature (DINOv2/LoFTR) and VLM-reranker tiers are deferred to a later residual-only pass.
 
 ### Definition of "production-ready" (the target metric)
+
 - **false-lock rate** — fraction of auto-ACT decisions where the locked point is wrong → must be near-zero.
 - **trustworthy coverage** — fraction of alarms auto-acted while false-lock ≤ target (e.g. ≤1–2%).
 - **abstain precision** — of abstained cases, fraction genuinely unsafe (guard against over-abstaining → everything

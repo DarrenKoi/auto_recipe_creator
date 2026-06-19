@@ -27,6 +27,7 @@
   알람이 그만큼 늦어진다.
 
 **사용자 결정(brainstorming):**
+
 - **동시성 모델 = robust serial.** 한 번에 한 tool 만 능동 제어. (병렬 제어/2nd-monitor
   창 이동/배경 녹화는 범위 아님.)
 - **A 를 완전히 끝내고 B.** 단, `_engineer_watch` 를 **측정 시작 감지**로 조기 종료해
@@ -47,21 +48,24 @@ FIFO 직렬로 한 대씩. (b) 미보정 watch 를 측정-시작 감지로 조�
 
 ## 2. 범위·불변 원칙
 
-**포함**
+### 포함
+
 - `process_fail_rows` two-pass 재구성(acknowledge-all → control-serial, FIFO).
 - `cycle._engineer_watch` 를 done-detector 조기종료로 업그레이드(+cap backstop).
 - 신규 `EngineerDoneDetector`(VLM 1회 grounding + CV gate + OCR confirm).
 - 신규 grounding prompt builder.
 - `Workflow3Settings` 필드 + env 배선.
 
-**제외(비범위)**
+### 제외(비범위)
+
 - 병렬 제어, 핸드오프 배경 녹화, 2nd-monitor 창 이동/move-window primitive.
 - durable cross-poll pending 큐(§7 가정이 깨질 때만 재검토).
 - Recipe Monitor ROI 의 **오피스 캘리브레이션**(grounding 프롬프트 문구 미세조정,
   numerator 패딩 실측값) — 기본값 제공 + 오피스에서 검증/조정.
 - OCR/grounding 서비스 자체 구현(기존 `paddleocr-vl-1.5`/`ui-venus` 재사용).
 
-**불변 원칙**
+### 불변 원칙
+
 - **경계 유지:** monitor = 폴링/큐/배선, vision/vlm = 인식. 의존 방향 `monitor → vlm`
   준수(`engineer_done` 은 monitor 안, vlm client/prompt 만 호출). workflow_1/2 import 0.
 - **graceful degrade:** grounding 거부(`[-1,-1]`)·OCR 실패·detector 예외 어느 것도 루프/
@@ -80,7 +84,7 @@ FIFO 직렬로 한 대씩. (b) 미보정 watch 를 측정-시작 감지로 조�
 순환 없음.
 
 | 파일 | 상태 | 책임 |
-|---|---|---|
+| --- | --- | --- |
 | `monitor/align_fail_monitor.py` | 수정 | `process_fail_rows` two-pass(acknowledge-all → control-serial, FIFO by UTC9). `active_tools` 편입 시점을 pass 1 로. |
 | `monitor/cycle.py` | 수정 | `_engineer_watch` 를 done-detector 조기종료로. watch 진입 시 detector 빌드(enabled 시), 기존 `vlm_client` 재사용. |
 | `monitor/engineer_done.py` | 신규 | `EngineerDoneDetector`(callable) + `build_engineer_done_detector()`. VLM 1회 grounding → ROI 캐시 → CV gate → OCR confirm(N≥2). |
@@ -98,7 +102,7 @@ tool 별로 record→popup→gather→**cycle(blocking)**→`active_tools.add` �
 
 신규(시그니처·반환 불변, 내부만 2-pass):
 
-```
+```python
 by_tool = _collapse_rows_by_tool(fails)
 current_tools = set(by_tool)
 cleared_tools = active_tools - current_tools           # 기존 해제 처리 동일
@@ -131,6 +135,7 @@ return len(ordered)
 ```
 
 근거:
+
 - **Pass 1 은 전부 비차단**(popup=`show_popup_windows` daemon thread, gather=daemon
   thread, record=짧은 파일 append). 따라서 동시 fail 전부가 *즉시* 가시화된다.
 - **`active_tools` 편입을 pass 1 로** 이동: ack 시점에 ownership 확보 → pass 2 가 중간에
@@ -148,7 +153,7 @@ timeout 이 있어 허용. (필요 시 추후 per-tool 제목 분기 — 비범�
 ### 4-B. 완료-게이트 `_engineer_watch` (`cycle.py`)
 
 현재:
-```
+```python
 def _engineer_watch(recording, watch_sec):
     deadline = time.time() + watch_sec
     while time.time() < deadline and recording.is_alive():
@@ -156,7 +161,7 @@ def _engineer_watch(recording, watch_sec):
 ```
 
 신규(첫 조건 충족 시 종료):
-```
+```python
 def _engineer_watch(recording, watch_sec, *, done_detector=None, poll_sec=8.0):
     deadline = time.time() + watch_sec
     next_check = 0.0
@@ -178,7 +183,7 @@ def _engineer_watch(recording, watch_sec, *, done_detector=None, poll_sec=8.0):
 ①③ 은 유지.
 
 `run_alarm_cycle` watch 호출부:
-```
+```python
 if recording is not None and (outcome is None or outcome.status != "corrected"):
     done_detector = None
     if settings.engineer_done_detect_enabled and context.get("tool_window") is not None:
@@ -200,7 +205,7 @@ detector 가 재사용(없으면 detector 가 자체 생성 시도). 보정 성�
 Recipe Monitor 측정 카운터 분자로 "측정 시작=align 완료" 판정. callable 1개가 watch
 iteration 마다 호출되며 사이클당 상태(ROI 캐시, 직전 crop, 직전 N)를 보유.
 
-```
+```python
 class EngineerDoneDetector:
     def __init__(self, tool_window, settings, *, vlm_client=None, ocr_client=None):
         self.tool_window = tool_window
@@ -249,6 +254,7 @@ class EngineerDoneDetector:
 ```
 
 세부:
+
 - `_localize_numerator()`: `capture_window(tool_window)` → `prompt_recipe_monitor_counter`
   로 grounding → 단일 점 `[x,y]`(0–1000). 거부 `[-1,-1]`/파싱불가 → None. 점을
   numerator cell 로 확장(`engineer_done_roi_pad_*` 비율 패딩) → tool-window **상대비율**로
@@ -281,7 +287,7 @@ config 게이트 확인 후 detector 생성(필요 시 OCR client lazy 생성). 
 ### 4-E. `Workflow3Settings` (`config.py`)
 
 | 필드 | 기본 | env | 의미 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `engineer_done_detect_enabled` | `False` | `ALIGN_FAIL_ENGINEER_DONE_DETECT` | 측정-시작 조기종료 on/off. 캘리브레이션 전 False. |
 | `engineer_done_poll_sec` | `8.0` | `ALIGN_FAIL_ENGINEER_DONE_POLL_SEC` | detector 호출 간격(watch 안). |
 | `engineer_done_min_count` | `2` | `ALIGN_FAIL_ENGINEER_DONE_MIN_COUNT` | done 으로 보는 최소 분자값. |
@@ -297,7 +303,7 @@ config 게이트 확인 후 detector 생성(필요 시 OCR client lazy 생성). 
 
 ## 5. 데이터 흐름
 
-```
+```text
 poll → filter_align_fail → window 필터
  → process_fail_rows:
      [Pass 1] ack 전부: log + popup(비차단) + 감지 cube(비차단) + gather(비차단) + active_tools.add
@@ -340,7 +346,7 @@ same-poll 범위로 읽는다.
 **완화책(포함 — 큐 구현 시 함께):** window 필터를 고정폭이 아니라 **마지막 poll 시작
 시각 기준 동적 폭**으로 바꾼다:
 
-```
+```python
 effective_window = max(detection_window_sec, now - last_poll_started_at + detection_window_sec)
 fails = filter_rows_within_window(fails, effective_window)
 last_poll_started_at = now   # poll 직전 갱신
@@ -356,6 +362,7 @@ last_poll_started_at = now   # poll 직전 갱신
 ## 8. 테스트 (전부 Mac/dev, RCS·VLM 불요)
 
 신규 `poc/workflow_3/monitor/test_multi_tool_queue.py`:
+
 - **two-pass 순서**: fake cycle fn 으로 [B(이른 UTC9), A(늦은)] 입력 → ack 가 cycle 보다
   먼저 전부 호출됨(호출 로그 순서 검증), cycle 은 FIFO(B→A).
 - **active_tools 편입**: pass 1 후 전 tool 이 active. 다음 poll 동일 입력 → 신규 0.
@@ -366,6 +373,7 @@ last_poll_started_at = now   # poll 직전 갱신
   onset row 도 통과(§7 완화책).
 
 신규 `poc/workflow_3/monitor/test_engineer_done.py`:
+
 - fake `capture`(시퀀스 이미지) + fake grounding + fake OCR 주입.
 - 정적 구간 → CV gate False → OCR 미호출(call count 0).
 - 카운터 변화 + OCR "2" → True(첫 충족). "1" → False. 비감소 위반(3→2) → False.
@@ -374,6 +382,7 @@ last_poll_started_at = now   # poll 직전 갱신
 - detector 예외 → `_engineer_watch` 가 cap 으로 정상 종료(별도 watch 단위 테스트).
 
 `_engineer_watch` 단위(fake recording.is_alive + fake detector):
+
 - detector True → cap 전 조기 break. recording 사망 → break. detector 예외 → cap 까지.
 
 ---

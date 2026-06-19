@@ -46,7 +46,8 @@ cache layout(productization spec 호환), cache root 상수.
 
 **제외:** 위 비목표 전부. build 는 명시적으로 vision 이 나중에 lazy 수행.
 
-**불변 원칙**
+### 불변 원칙
+
 - **경계 유지:** monitor = 폴링/수집/배선, vision = consensus 빌드·소비(추후), office_* = DB/장비
   접점. 이 작업은 monitor 가 vision 의 순수 gather 를 호출해 raw S 이미지를 stage 하는 데서 끝난다
   (template 생성 안 함). 의존 방향 `monitor → vision` 준수.
@@ -66,7 +67,7 @@ cache layout(productization spec 호환), cache root 상수.
 → `workflow_3` 루트 상수. office downloader 는 importlib 2단 fallback. 순환 없음.
 
 | 파일 | 상태 | 책임 |
-|---|---|---|
+| --- | --- | --- |
 | `poc/workflow_3/vision/consensus_gather.py` | 신규 | Protocol + dataclass + `gather_success_images()` orchestration. **순수·Mac 테스트 가능**(office/threading import 0). 추후 `consensus_prep.py` 흡수. |
 | `poc/workflow_3/monitor/success_gather.py` | 신규 | glue: `load_success_downloader()`(office 2단 fallback, `alarm_source`/`notify` 패턴) + `gather_success_async()`(daemon thread). |
 | `poc/workflow_3/monitor/office_success_downloader.py` | 신규(사용자, office-only, `**/office_*` gitignore) | DB 조회 + S 이미지/cond 다운로드. `SuccessDownloader` 준수. Mac 미존재. |
@@ -115,7 +116,7 @@ downloader 한 곳에. → 사용자는 "어디에"가 아니라 "무엇을 DB�
 
 ### 3-C. cache layout (productization spec 호환)
 
-```
+```text
 poc/workflow_3/align_consensus_cache/<eqp_id>/<class>/<recipe>/events/<event_id>/
    ├─ S0001.jpg  S0001.txt
    └─ S0002.jpg  S0002.txt
@@ -134,7 +135,7 @@ poc/workflow_3/align_consensus_cache/<eqp_id>/<class>/<recipe>/events/<event_id>
 (접속·녹화·보정·engineer_watch 최대 수백초)과 **겹쳐 실행**(DB/디스크 vs RCS GUI — 자원 비경합).
 gather 는 monitor 의 데이터 수집 책임(cycle 의 RCS/보정과 독립)이라 cycle 이 아니라 루프 레벨에 둔다.
 
-```
+```text
 process_fail_rows (per new eqp edge)
   → append_alarm_record / popup
   → [NEW] if settings.gather_enabled and recipe_id:

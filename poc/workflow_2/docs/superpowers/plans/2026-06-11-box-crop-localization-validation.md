@@ -17,6 +17,7 @@
 이 검증 작업은 **앙상블 매칭 알고리즘을 한 줄도 바꾸지 않는다**(bit-parity 규칙). 정리하면:
 
 **바꾸지 않는 것 — 앙상블 알고리즘 내부 전부 그대로:**
+
 - C1/C2/C3 proposer (Canny / Scharr / orientation-binned chamfer)
 - RRF fusion (k0=10, top-N)
 - NCC reranker (selection = chamfer 0.5 + ncc 0.5)
@@ -25,6 +26,7 @@
 → `compute_align_key_score_ensemble` 와 `ensemble_proposer.py` 는 **무수정**. 손대면 bit-parity 위반.
 
 **바꾸는 것 — 앙상블의 *사용 방식* 딱 하나:**
+
 - `_apply_matcher_default()` 가 `ALIGN_USE_ENSEMBLE` 환경변수 기본값을 `1` 로 채운다
   (`os.environ.setdefault`). 그러면 eval 의 `_matcher_for_eval()` 가 baseline
   (`compute_align_key_score`) 대신 **기존** ensemble(`compute_align_key_score_ensemble`)을 호출한다.
@@ -32,6 +34,7 @@
   baseline 비교도 여전히 가능(escape hatch).
 
 **그럼 box-crop 은 앙상블과 어떻게 엮이나? — 알고리즘이 아니라 *입력 template* 의 변화:**
+
 - box-crop 은 `_build_offset_templates_cond`(이미 lab 에 존재, 무수정)가 rcp 를
   `cond.box_ltrb` 로 crop 한 `box` template 과 center-area crop 한 `center` template
   **두 벌**을 만드는 것뿐이다. 이 template 생성 로직도 이번에 안 바꾼다.
@@ -63,6 +66,7 @@ template 준비 경로를 바꾸는 식으로만 일어난다.
 ## Task 1: bin 분류 헬퍼 + 상수
 
 **Files:**
+
 - Modify: `poc/workflow_2/golden_localization_eval_cond.py`
 - Test: `poc/workflow_2/test_golden_localization_eval_cond.py`
 
@@ -151,6 +155,7 @@ git commit -m "test(wf2): Tier 1.1 bin 분류 헬퍼(displacement/rescue) + 경�
 ## Task 2: arm 집계 + bin 리포트
 
 **Files:**
+
 - Modify: `poc/workflow_2/golden_localization_eval_cond.py`
 - Test: `poc/workflow_2/test_golden_localization_eval_cond.py`
 
@@ -296,6 +301,7 @@ git commit -m "test(wf2): Tier 1.1 _binned_localization_report(displacement+resc
 ## Task 3: FORCE_ENSEMBLE 강제(테스트 가능 헬퍼)
 
 **Files:**
+
 - Modify: `poc/workflow_2/golden_localization_eval_cond.py`
 - Test: `poc/workflow_2/test_golden_localization_eval_cond.py`
 
@@ -356,6 +362,7 @@ git commit -m "test(wf2): Tier 1.1 FORCE_ENSEMBLE _apply_matcher_default(setdefa
 ## Task 4: run() 배선 + frame_hw 캡처 + 출력 (glue, office 검증)
 
 **Files:**
+
 - Modify: `poc/workflow_2/golden_localization_eval_cond.py`
 
 > 이 Task 는 통합 glue(파일 I/O·전체 파이프라인 의존)라 Mac 단위테스트 대상이 아니다 — Task 1~3 의 순수 함수가 동작을 보증하고, 실제 표는 office 실행이 검증한다. (기존 테스트도 `run()`/`_process_msr_cond` 는 단위테스트하지 않는다.)

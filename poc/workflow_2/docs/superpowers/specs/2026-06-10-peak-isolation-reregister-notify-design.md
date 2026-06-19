@@ -32,6 +32,7 @@ matcher 의 점수면이 평평해져(top1≈top2) align fail 이 재발한다. 
 어느 키가 만성적으로 모호한지 production 에서 가릴 신호가 없었다.
 
 **검증(lab, golden consensus S-LOO, office digest).**
+
 - **template-내재 축은 죽음**: periodicity(자기상관) 는 어떤 기하 정제(선형/window/lag)로도
   miss 예측 AUC 천장 ≈ 0.61. "닮은 구조가 있다"는 miss 의 필요조건이지 충분조건이 아님.
 - **match-time peak-isolation 은 강함**: `second_ratio`(= 2nd/best chamfer) 의 per-point
@@ -58,6 +59,7 @@ notify 경로가 **모호 키를 엔지니어에게 재등록 권장**으로 알
 `notify.py` 의 알림/audit 에리치, `monitor/cycle.py` 배선, 합성 테스트.
 
 **비목표(YAGNI — 명시적 범위 밖):**
+
 - 재등록 worklist/큐/데이터 경로 (이번엔 알림·로그까지만; 큐는 별도 결정에서 다룸).
 - visibility 게이트(`MatchPolicy.max_second_ratio = 0.94`) 또는 어떤 correction 동작 변경.
 - act/abstain 3-way 결정(상위 production-trust plan 의 영역) — 본 spec 은 **read-only 알림만**.
@@ -81,6 +83,7 @@ peak-isolation 은 *측정*(CV)이고 임계는 *정책*(monitor)이다 — 프�
   다른 0.94 visibility 게이트와 혼동.
 
 세 가지 사용자 확정 결정:
+
 1. **범위 = 알림 에리치만**(read-only, 동작·0.94 게이트 불변).
 2. **위치 = 실패 cube 알림 + corrected-but-ambiguous 는 work2.log audit**(성공 시 cube spam 없음).
 3. **임계 = `Workflow3Settings` 설정값**(기본 ≈0.98, tau\* 유래), raw `second_ratio` 항상 표기,
@@ -91,6 +94,7 @@ peak-isolation 은 *측정*(CV)이고 임계는 *정책*(monitor)이다 — 프�
 ## 4. 컴포넌트별 변경
 
 ### A. CV 층 — `poc/workflow_3/vision/align_fail_correct.py`
+
 - `CorrectionOutcome`: 옵션 필드 추가 — `second_ratio: float | None = None`,
   `score_gap: float | None = None`, `distinctive: bool = True`.
   (`AlignKeyMatchResult` 의 옵션-필드 패턴과 동일; 기존 필드/의미 불변 → 하위호환.)
@@ -100,11 +104,13 @@ peak-isolation 은 *측정*(CV)이고 임계는 *정책*(monitor)이다 — 프�
   (0.94)·decision 경로는 **무수정**(read-only surface).
 
 ### B. 설정 — `poc/workflow_3/config.py` (`Workflow3Settings`)
+
 - 추가: `reregister_second_ratio_threshold: float = 0.98`.
   주석: tau\*(S-LOO golden 보정, AUC 0.91) 유래 · **fail-frame 재보정 대상** · 0.94 visibility
   게이트와 별개. env override `ALIGN_FAIL_REREGISTER_RATIO`(legacy env-name 패턴, `load_workflow3_settings`).
 
 ### C. monitor 층 — `poc/workflow_3/monitor/notify.py`
+
 - `build_outcome_summary(outcome, *, reregister_ratio_threshold: float | None = None, ...)`:
   `second_ratio` 가 있으면 `second_ratio={x:.3f}` 추가; 임계가 주어지고 `second_ratio > 임계` 면
   `재등록 권장(모호 키)` 한 줄 추가(em-dash 없이). 임계 `None`(구 호출부) → 권장 줄 skip.
@@ -116,6 +122,7 @@ peak-isolation 은 *측정*(CV)이고 임계는 *정책*(monitor)이다 — 프�
   - 임계 None/`second_ratio` None 비교는 모두 guard.
 
 ### D. 배선 — `poc/workflow_3/monitor/cycle.py`
+
 - `notify_correction_outcome(...)` 호출에 `reregister_ratio_threshold=settings.
   reregister_second_ratio_threshold` 전달. (build_outcome_summary 도 동일 임계 사용.)
 
@@ -123,7 +130,7 @@ peak-isolation 은 *측정*(CV)이고 임계는 *정책*(monitor)이다 — 프�
 
 ## 5. 데이터 흐름
 
-```
+```text
 fail frame
   → compute_align_key_score_ensemble  (이미 second_ratio/score_gap/distinctive 계산)
   → correct_align_fail: _with_key_ambiguity 로 CorrectionOutcome 에 stamp

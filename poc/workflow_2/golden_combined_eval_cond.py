@@ -307,11 +307,17 @@ def _youden_threshold(samples):
             "tpr": round(tpr, 3), "fpr": round(fpr, 3), "n_pos": n_pos, "n_neg": n_neg}
 
 
-def _youden_by_modality(cells, prod_thr=None):
+def _youden_by_modality(cells, prod_thr=None, prod_match_thr=None):
     """rcp_only 셀 → {mod: _youden_threshold}. score(None 아님)+hit 있는 셀만.
 
-    prod_thr 가 주어지면(공용 production 임계) 각 modality 에 prod_thr, delta_vs_prod
-    (=최적 thr - prod_thr), confusion_prod(그 임계의 혼동행렬)를 덧붙인다 — L1(per-mod 임계 분리) 증거.
+    prod_thr 가 주어지면 각 modality 에 prod_thr, delta_vs_prod(=최적 thr - prod_thr),
+    confusion_prod(그 임계의 혼동행렬)를 덧붙인다 — L1(per-mod 임계 분리) 증거.
+
+    *1차 prod 기준은 actuation 게이트* = ensemble_adjust_threshold(0.4727, 고-recall)다.
+    align-point 보정의 실제 절대 score 컷(align_point_correction.py 의 reposition/low_match
+    판정)이 이 값을 쓰므로, balanced 인 ensemble_match_threshold(0.6053)가 아니라 adjust 로
+    비교해야 벤치가 실제 보정 결정경로를 반영한다. prod_match_thr 가 주어지면 balanced 임계의
+    혼동행렬도 confusion_match 로 함께 낸다("두 임계 모두 리포트").
     """
     by_mod = {}
     for c in cells:
@@ -326,16 +332,38 @@ def _youden_by_modality(cells, prod_thr=None):
             y = {**y, "prod_thr": round(float(prod_thr), 4),
                  "delta_vs_prod": round(y["thr"] - float(prod_thr), 4),
                  "confusion_prod": _confusion_at(s, float(prod_thr))}
+            if prod_match_thr is not None:
+                y["prod_match_thr"] = round(float(prod_match_thr), 4)
+                y["confusion_match"] = _confusion_at(s, float(prod_match_thr))
         out[mod] = y
     return out
 
 
 # split 판정 로직(아래) — run() 의 Step 2(modality 전략 분기 리포트)에서 사용.
-_LEVER_BY_BUCKET = {
-    "periodic_look_alike": "L2_om_periodicity",
-    "recall_miss": "L3_sem_recall",
+# named lever 는 *modality 특정* 개입이다(spec §5): L2=OM lattice-NMS 주기억제, L3=SEM struct
+# proposer. 그래서 (modality, 지배 bucket) 으로 키를 잡는다. 관측 패턴이 설계와 반대면
+# (예: SEM 이 periodic 지배) named lever 로 단정하지 않고 중립 라벨 '{mod}:{bucket}' 을 내
+# 다음 plan 이 lever 를 고르게 한다.
+_LEVER_BY_MOD_BUCKET = {
+    ("om", "periodic_look_alike"): "L2_om_periodicity",
+    ("sem", "recall_miss"): "L3_sem_recall",
+}
+# modality 무관(공유) lever — 특정 modality 개입이 아닌 bucket.
+_LEVER_BY_BUCKET_SHARED = {
     "other_look_alike": "shared_rerank",
 }
+
+
+def _lever_for(mod, bucket):
+    """(modality, 지배 bucket) → lever 라벨. 설계 매핑이면 named lever, 공유 bucket 이면 공유 lever,
+    그 외 설계 밖 조합은 중립 '{mod}:{bucket}'(named lever 오라벨 방지)."""
+    if bucket is None:
+        return None
+    if (mod, bucket) in _LEVER_BY_MOD_BUCKET:
+        return _LEVER_BY_MOD_BUCKET[(mod, bucket)]
+    if bucket in _LEVER_BY_BUCKET_SHARED:
+        return _LEVER_BY_BUCKET_SHARED[bucket]
+    return f"{mod}:{bucket}"
 
 
 def _dominant_failure(fail, dominance):
@@ -394,7 +422,7 @@ def _split_verdict(fail_om, fail_sem, rate_om, rate_sem, cfg):
 
     if gap and divergent:
         verdict = "SPLIT"
-        levers = sorted({_LEVER_BY_BUCKET.get(dom_om), _LEVER_BY_BUCKET.get(dom_sem)} - {None})
+        levers = sorted({_lever_for("om", dom_om), _lever_for("sem", dom_sem)} - {None})
     elif gap:
         verdict, levers = "shared_tune", []
     else:
@@ -482,7 +510,7 @@ def run() -> str:
     # 1) recipe 별 template + consensus 입력(entry) 빌드. rcp-only 채점용으로 template 보관.
     by_recipe = {}                    # rec_key -> entry (consensus A/B 입력; n_s>0 만)
     tpls_by_key = {}                  # rec_key -> (assets, center_tpls, box_tpls)  rcp-only 채점용
-    periodic_by_key = {}              # rec_key -> bool (등록 key 가 주기/대칭 = template_periodicity > tau)
+    periodic_by_key_mod = {}          # (rec_key, mod) -> bool (등록 key 가 주기/대칭 = template_periodicity > tau)
     for assets in recipes:
         if assets is None:
             continue
@@ -494,14 +522,19 @@ def run() -> str:
         if not any(v is not None for v in center_tpls.values()):
             continue
         rec_key = gce._recipe_key(assets)
-        try:
-            rec_periodicity = max(
-                (template_periodicity(t.raw_image) for t, _off in center_tpls.values()
-                 if t is not None), default=0.0)
-        except Exception as exc:
-            print(f"[WARNING] periodicity 계산 실패 {assets.recipe_id}: {exc}")
-            rec_periodicity = 0.0
-        periodic_by_key[rec_key] = rec_periodicity > PERIODICITY_TAU
+        # periodicity 는 modality 별로 따로 — dual OM/SEM recipe 에서 한쪽(OM) 주기성이
+        # 다른쪽(SEM) look_alike 로 새면 OM/SEM split 증거가 오염된다. center_tpls 는 mod 키이므로
+        # (rec_key, mod) 로 저장하고, 셀/row 는 각자의 modality 로 조회한다.
+        for mod, val in center_tpls.items():
+            tpl = val[0] if val is not None else None
+            if tpl is None:
+                continue
+            try:
+                is_periodic = template_periodicity(tpl.raw_image) > PERIODICITY_TAU
+            except Exception as exc:
+                print(f"[WARNING] periodicity 계산 실패 {assets.recipe_id}/{mod}: {exc}")
+                is_periodic = False
+            periodic_by_key_mod[(rec_key, mod)] = is_periodic
         entry = gce._build_cond_by_recipe(assets, center_tpls)
         tpls_by_key[rec_key] = (assets, center_tpls, box_tpls)
         if len(entry["s_frames"]):
@@ -525,17 +558,20 @@ def run() -> str:
             continue
         cells = _score_rcp_only(assets, center_tpls, box_tpls)
         if cells:
-            is_periodic = periodic_by_key.get(rec_key, False)
             for c in cells:                       # 실패유형 히스토그램용 태깅(순수 헬퍼는 이 필드만 읽음).
-                c["periodic"] = is_periodic
+                # 셀의 실제 매칭 modality(cell['mod'])로 periodicity 조회 — 교차오염 차단.
+                c["periodic"] = periodic_by_key_mod.get(
+                    (rec_key, (c.get("mod") or "").lower()), False)
                 c["rec_key"] = rec_key
             n_rcp_only_recipes += 1
             rcp_only_cells.extend(cells)
     rcp_only = _arm_rates(rcp_only_cells)
 
-    # consensus per_recipe row 에 periodic(recipe-level) join — _failure_hist_from_rates 가 읽음.
+    # consensus per_recipe row 에 periodic(recipe·modality-level) join — _failure_hist_from_rates 가 읽음.
+    # row 의 dominant modality(row['modality'])로 조회 — OM↔SEM 교차오염 차단.
     for r in per_recipe:
-        r["periodic"] = periodic_by_key.get(r["recipe"], False)
+        r["periodic"] = periodic_by_key_mod.get(
+            (r["recipe"], (r.get("modality") or "").lower()), False)
 
     # 4) 리포트 조립.
     scaling = _bin_by_s_count(per_recipe)
@@ -552,7 +588,9 @@ def run() -> str:
     rcp_fail = _failure_hist_by_modality(rcp_only_cells)
     routed_fail = _routed_failure_hist(cons_fail, rcp_fail)
     youden_by_mod = _youden_by_modality(
-        rcp_only_cells, prod_thr=gle.STRUCTURE_POLICY.ensemble_match_threshold)
+        rcp_only_cells,
+        prod_thr=gle.STRUCTURE_POLICY.ensemble_adjust_threshold,        # actuation 게이트(1차).
+        prod_match_thr=gle.STRUCTURE_POLICY.ensemble_match_threshold)   # balanced(참고용 2차).
     n_rec_by_mod = _recipes_by_modality(per_recipe, rcp_only_cells)
 
     def _mod_rate(mod):
@@ -735,13 +773,17 @@ def _print_report(summary):
             if y.get("delta_vs_prod") is not None:
                 conf = y.get("confusion_prod") or {}
                 ys += f" d_prod={y.get('delta_vs_prod')} accP={conf.get('acc')}"
+                confm = y.get("confusion_match")
+                if confm is not None:
+                    ys += f" accM={confm.get('acc')}"
         else:
             ys = "-"
         print(f"    {mod.upper():<6} {h.get('n', 0):>5} {str(_sh(h, 'rank1_hit')):>10} "
               f"{str(_sh(h, 'look_alike')):>11} {str(_sh(h, 'periodic_look_alike')):>12} "
               f"{str(_sh(h, 'recall_miss')):>12}   {ys}")
     print("    * periodic_la 지배=OM 주기억제(L2), recall_miss 지배=SEM recall proposer(L3)."
-          " d_prod=최적임계-공용(0.6053) 차이, accP=공용임계 정확도(L1 증거).")
+          " d_prod=최적임계-actuation게이트(adjust 0.4727) 차이, accP=adjust 게이트 정확도,"
+          " accM=balanced(match 0.6053) 게이트 정확도(L1 증거).")
 
     sv = summary.get("split_verdict") or {}
     print(f"\n[INFO] === (Step 2) SPLIT 판정 === verdict={sv.get('verdict', '-')}  "

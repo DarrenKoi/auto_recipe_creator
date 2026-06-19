@@ -340,6 +340,28 @@ def test_split_verdict_split_when_gap_and_divergent():
     assert "L3_sem_recall" in v["suggested_levers"]
 
 
+def test_split_verdict_reversed_pattern_emits_neutral_levers():
+    # 설계와 반대(OM=recall 지배, SEM=periodic 지배) — named lever 를 swap 해 붙이면 안 됨.
+    # (om, recall_miss)·(sem, periodic_look_alike)는 설계 매핑 밖 → 중립 '{mod}:{bucket}' 라벨.
+    om = _hist(rank1_hit=2, recall_miss=8)                          # OM: recall 지배(설계 밖)
+    sem = _hist(rank1_hit=2, look_alike=8, periodic_look_alike=8)   # SEM: periodic 지배(설계 밖)
+    v = gcc._split_verdict(om, sem, _rate(40, 0.60, 6), _rate(40, 0.85, 6), _CFG)
+    assert v["verdict"] == "SPLIT"
+    assert v["dominant_om"] == "recall_miss" and v["dominant_sem"] == "periodic_look_alike"
+    assert v["suggested_levers"] == ["om:recall_miss", "sem:periodic_look_alike"]
+    # named lever 를 modality 무시하고 붙이는 회귀 차단.
+    assert "L2_om_periodicity" not in v["suggested_levers"]
+    assert "L3_sem_recall" not in v["suggested_levers"]
+
+
+def test_lever_for_maps_modality_and_bucket():
+    assert gcc._lever_for("om", "periodic_look_alike") == "L2_om_periodicity"
+    assert gcc._lever_for("sem", "recall_miss") == "L3_sem_recall"
+    assert gcc._lever_for("om", "other_look_alike") == "shared_rerank"   # 공유 lever
+    assert gcc._lever_for("sem", "periodic_look_alike") == "sem:periodic_look_alike"  # 설계 밖→중립
+    assert gcc._lever_for("om", None) is None
+
+
 def test_split_verdict_shared_tune_when_gap_no_divergence():
     om = _hist(rank1_hit=2, recall_miss=8)
     sem = _hist(rank1_hit=2, recall_miss=8)                         # 같은 실패유형
@@ -423,6 +445,28 @@ def test_youden_by_modality_no_prod_thr_unchanged():
     cells = [{"mod": "om", "score": 0.9, "hit": True}, {"mod": "om", "score": 0.2, "hit": False}]
     y = gcc._youden_by_modality(cells)["om"]   # prod_thr 없으면 기존 키만
     assert "prod_thr" not in y and "thr" in y
+
+
+def test_youden_by_modality_reports_both_gates():
+    # prod_thr(=actuation/adjust 0.4727)이 1차, prod_match_thr(=balanced 0.6053)이 참고용 2차.
+    # 두 임계 모두 혼동행렬을 내야 한다(finding 1: "report both").
+    cells = [
+        {"mod": "om", "score": 0.9, "hit": True},
+        {"mod": "om", "score": 0.5, "hit": True},    # adjust(0.4727) 위, match(0.6053) 아래
+        {"mod": "om", "score": 0.2, "hit": False},
+    ]
+    y = gcc._youden_by_modality(cells, prod_thr=0.4727, prod_match_thr=0.6053)["om"]
+    assert y["prod_thr"] == 0.4727 and y["prod_match_thr"] == 0.6053
+    # adjust 게이트: 0.9·0.5 가 pos 로 통과(tp=2), 0.2 는 tn=1.
+    assert y["confusion_prod"]["tp"] == 2 and y["confusion_prod"]["tn"] == 1
+    # match 게이트(더 엄격): 0.9 만 통과(tp=1), 0.5 는 fn=1, 0.2 는 tn=1.
+    assert y["confusion_match"]["tp"] == 1 and y["confusion_match"]["fn"] == 1
+
+
+def test_youden_by_modality_match_gate_optional():
+    cells = [{"mod": "om", "score": 0.9, "hit": True}, {"mod": "om", "score": 0.2, "hit": False}]
+    y = gcc._youden_by_modality(cells, prod_thr=0.4727)["om"]   # prod_match_thr 생략
+    assert "confusion_prod" in y and "confusion_match" not in y
 
 
 # --- digest 풍부화 (spec 4.5) ---

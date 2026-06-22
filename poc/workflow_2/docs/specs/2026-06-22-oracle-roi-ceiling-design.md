@@ -1,5 +1,13 @@
 # Oracle-ROI ceiling sweep — 설계
 
+> **⚠️ SUPERSEDED / 미진행 (2026-06-22).** 본 설계 직후 도메인 사실 확인: SEM 은 고배율로
+> align-key 가 프레임의 **80~100%** 를 채운다(OM 만 10~20%) — [[project_om_sem_mag_key_fills_frame]].
+> 따라서 ROI/search-space 좁히기는 SEM 에 **구조적으로 무용**(distractor 가 key *바깥*이 아니라
+> key 내부의 periodic self-similar). oracle-ROI 도 SEM 에선 degenerate(narrow 할 여백 없음). Job 2 는
+> **template-bank** 로 pivot(`2026-06-22-sem-template-bank-design.md`). 본 문서는 *왜 ROI 가 SEM
+> 레버가 아닌지*의 추론 기록으로 보존(구현 안 함). 측정 계약(고정 denominator, survivorship 금지)·
+> oracle ceiling 패턴은 다른 실험에 재사용 가능.
+
 작성: 2026-06-22 · 대상 코드: `poc/workflow_2/align_similarity.py`
 (`_gt_in_topk`, `_consensus_template_ab`), `poc/workflow_2/golden_consensus_eval_cond.py`,
 `poc/workflow_2/golden_eval_config.py`(+example, loader)

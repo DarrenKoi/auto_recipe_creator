@@ -360,7 +360,14 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
         if not cands:
             continue
         any_cand = True
-        dists = [float(np.hypot(c.xy[0] - cxh, c.xy[1] - cyh)) / short for c in cands]
+        ox, oy = getattr(tpl, "align_offset_xy", (0, 0)) or (0, 0)
+        # box template: match 중심(box center) + offset×scale = align point. center tpl 은 offset (0,0) → 불변.
+        dists = []
+        for c in cands:
+            sc = getattr(c, "scale", 1.0) or 1.0
+            ax = c.xy[0] + ox * sc
+            ay = c.xy[1] + oy * sc
+            dists.append(float(np.hypot(ax - cxh, ay - cyh)) / short)
         rank = next((i for i, d in enumerate(dists, 1) if d <= GT_TOL_NORM), None)
         cur = (rank, len(cands), min(dists), mod,
                [[int(c.xy[0]), int(c.xy[1])] for c in cands],

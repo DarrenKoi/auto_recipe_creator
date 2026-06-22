@@ -80,3 +80,40 @@ def test_propose_topk_does_not_call_lab_when_inactive(monkeypatch):
     # 예외 없이 후보를 반환하면 lab 경로를 안 탄 것.
     out = alsim._propose_topk(tpl, frame, frame_dt, scales=alsim.COMPARE_SCALES, topk=8)
     assert isinstance(out, list)
+
+
+def test_no_lab_consensus_proposer_mirrors_production_ensemble(monkeypatch):
+    """lab·env 미설정(기본) → consensus proposer 가 production 3채널 ensemble 로 라우팅.
+
+    프로덕션 correction.py 는 consensus 매칭에 compute_align_key_score_ensemble(3채널)을 쓴다.
+    벤치 무-lab 경로도 이를 거울처럼 따라야 'vs lab=off' A/B 가 프로덕션 기준선을 과소평가하지
+    않는다([[project_edge_ncc_consensus_ab_3arm]]). 여기선 라우팅(어느 proposer 를 호출하나)만
+    검증 — C1 chamfer 가 아니라 workflow_3 3채널 ensemble 을 부르는가.
+    """
+    _clear_lab_env(monkeypatch)
+    monkeypatch.delenv("CONSENSUS_USE_ENSEMBLE", raising=False)
+    # 기본값(코드 상수)이 production 거울 = ensemble 이어야 한다.
+    assert alsim.USE_ENSEMBLE_PROPOSER is True, (
+        "무-lab consensus proposer 기본이 ensemble 이 아님 — 프로덕션 기준선 과소평가")
+
+    from poc.workflow_3.align.matching import ensemble as w3_ens
+    from poc.workflow_3.align.matching import engine as w3_eng
+
+    sentinel = [_FakeCand()]
+    seen = {"ens": False}
+
+    def _ens_spy(template_gray, frame_gray, *, scales, top_n, **kw):
+        seen["ens"] = True
+        return w3_ens.EnsembleResult(fused=list(sentinel), top_n_count=top_n, solo={})
+
+    def _chamfer_boom(*a, **k):
+        raise AssertionError("무-lab 기본인데 C1 chamfer proposer 가 호출됨(프로덕션 거울 아님)")
+
+    monkeypatch.setattr(w3_ens, "compute_ensemble_candidates", _ens_spy)
+    monkeypatch.setattr(w3_eng, "compute_chamfer_candidates", _chamfer_boom)
+
+    tpl = build_template(_bar_crop(x=30), recipe_id="R", version="t", key_type="sem")
+    got = alsim._propose_topk(tpl, _textured_frame(), None, scales=alsim.COMPARE_SCALES, topk=8)
+
+    assert seen["ens"], "무-lab 기본인데 production ensemble proposer 를 호출하지 않음"
+    assert got == sentinel

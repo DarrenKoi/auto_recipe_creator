@@ -87,18 +87,23 @@ TOPK_CANDIDATES = STRUCTURE_POLICY.top_n
 # 별도 값으로 둔다(한쪽을 조이면 다른 쪽이 따라 움직이는 것 방지).
 GT_TOL_NORM = 0.20
 
-# consensus proposer A/B 토글 — 기본 C1(canny chamfer). env CONSENSUS_USE_ENSEMBLE=1 이면 후보
-# 생성기(_gt_in_topk)를 3채널 RRF ensemble(C1 canny + C2 scharr + C3 orient)로 바꿔, 같은 LOO
-# harness 에서 in_topk(proposer recall) 이 뛰나 측정한다. 두 경로 모두 후보 xy = template-center·
-# frame px (동일 계약) → apples-to-apples. 게다가 ensemble.solo['canny'] 가 곧 C1 이므로 ON==OFF
-# 면 C2/C3/RRF 가 무효(= 잔여 miss 가 구조적 천장)라는 직접 증거가 된다. 비용: ensemble 은 채널
-# 3배(~1s/frame)라 오피스 A/B 전용. (참조 [[project_ensemble_on_consensus_rejected]])
+# consensus proposer A/B 토글 — 기본 3채널 RRF ensemble(C1 canny + C2 scharr + C3 orient).
+# 이 기본값은 프로덕션을 거울처럼 따른다: workflow_3 의 correction.py 가 consensus 매칭에
+# compute_align_key_score_ensemble(3채널)을 쓰므로, 벤치 무-lab 경로도 ensemble 이어야 'vs
+# lab=off' A/B 가 프로덕션 기준선을 과소평가하지 않는다(예전 C1 기본은 ~4pp 낮게 잡혀 모든
+# A/B 가 레버를 과대평가했다). env CONSENSUS_USE_ENSEMBLE=0 이면 후보 생성기(_gt_in_topk)를
+# C1(canny chamfer)으로 *내려* 같은 LOO harness 에서 ensemble 대비 C2/C3/RRF 기여를 격리 측정한다
+# (ON==OFF 면 잔여 miss 가 구조적 천장). 두 경로 모두 후보 xy = template-center·frame px (동일
+# 계약) → apples-to-apples. ensemble.solo['canny'] 가 곧 C1 이다. 비용: ensemble 은 채널 3배
+# (~1s/frame)라 오피스 A/B 전용. (참조 [[project_edge_ncc_consensus_ab_3arm]],
+# [[project_ensemble_on_consensus_rejected]])
 #
 # A/B 스위치 (둘 중 편한 방법):
-#   1) 코드로: 아래 _USE_ENSEMBLE_DEFAULT 를 False(C1) / True(ensemble) 로 직접 바꿔 두 번 실행.
-#      env 안 건드려도 되고 세션 잔존(persist) 함정도 없다 — 단, 바꾼 줄을 commit 하지 않도록 주의.
-#   2) env 로: CONSENSUS_USE_ENSEMBLE=1/0 (설정돼 있으면 코드 기본값을 덮어쓴다). tree 깨끗·스크립트용.
-_USE_ENSEMBLE_DEFAULT = False
+#   1) 코드로: 아래 _USE_ENSEMBLE_DEFAULT 를 True(ensemble=프로덕션 거울) / False(C1) 로 직접
+#      바꿔 두 번 실행. env 안 건드려도 되고 세션 잔존(persist) 함정도 없다 — 단, 바꾼 줄을 commit
+#      하지 않도록 주의(기본은 항상 True 로 둔다).
+#   2) env 로: CONSENSUS_USE_ENSEMBLE=0/1 (설정돼 있으면 코드 기본값을 덮어쓴다). tree 깨끗·스크립트용.
+_USE_ENSEMBLE_DEFAULT = True
 _use_ens_env = os.getenv("CONSENSUS_USE_ENSEMBLE")
 USE_ENSEMBLE_PROPOSER = (_use_ens_env != "0") if _use_ens_env is not None else _USE_ENSEMBLE_DEFAULT
 

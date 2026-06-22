@@ -477,7 +477,7 @@ def run() -> str:
     print(f"[INFO] 매칭 프레임: {'CLEAN(crosshair 제거)' if CLEAN_FRAME else 'RAW(crosshair 잔존)'} "
           f"(env CONSENSUS_CLEAN_FRAME=0 이면 raw — crosshair 가짜 lock A/B 용)")
     print(f"[INFO] proposer: {'ENSEMBLE (C1 canny + C2 scharr + C3 orient, RRF)' if USE_ENSEMBLE_PROPOSER else 'C1 (canny chamfer)'} "
-          f"(env CONSENSUS_USE_ENSEMBLE=1 이면 ensemble — 기본 0=C1; in_topk A/B 용)")
+          f"(기본 ensemble=프로덕션 거울; env CONSENSUS_USE_ENSEMBLE=0 이면 C1 로 내림 — in_topk A/B 용)")
 
     if _MIN_S_ENV < CONSENSUS_MIN_S:   # 2 이하는 LOO 가 못 나와 무의미 → 바닥 3 으로 보정됨.
         print(f"[WARNING] CONSENSUS_MIN_S={_MIN_S_ENV} 는 무의미(LOO 바닥 fm>=3) → "

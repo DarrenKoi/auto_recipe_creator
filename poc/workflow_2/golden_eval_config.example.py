@@ -38,6 +38,10 @@ LAB_MODE = ""
 # 같은 MIN_S 라도 modality별 건수 게이트가 다르다. None = consensus 드라이버 기본값.
 MIN_S = None
 
+# consensus arm whitebox box-crop A/B (center vs box, OM/SEM 층화). 1 이면 box arm 측정.
+# 0(기본) 이면 기존 동작 그대로(digest 미출력, box_crop=False).
+CONSENSUS_BOX_CROP = 0
+
 # === OM/SEM split 판정 임계 (golden_combined_eval_cond 전용; 오피스에서 데이터 보고 튜닝) ===
 # 이 블록은 combined 드라이버만 읽는다(env 브리지 X). 실편집 golden_eval_config.py 에 복사해 조정.
 SPLIT_MIN_FRAMES = 30      # modality당 최소 채점 프레임(미달 → verdict=insufficient)

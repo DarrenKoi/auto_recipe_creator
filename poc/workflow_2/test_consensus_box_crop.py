@@ -141,3 +141,22 @@ def test_box_crop_is_centered_on_box_region_offset_from_crosshair():
     assert crop.shape == (24, 24)
     # box 마커를 담았으면 평균이 밝다(잘못된 영역이면 어둡다).
     assert crop.mean() > 150, "box crop 이 box 영역(밝은 마커)을 담아야 함"
+
+
+def test_box_crop_digest_formats_per_modality_delta():
+    """_format_box_crop_digest: per-modality center-vs-box delta + 카운트 표기를 검증한다.
+
+    SEM: box-center = 0.88-0.71 = +0.17, OM: 0.90-0.91 = -0.01.
+    줄에 modality 이름·delta·n_eval·no_cand 가 있어야 함.
+    """
+    per_mod = {
+        "sem": {"center": {"recall": 0.71, "rank1": 0.71, "n_eval": 100, "n_hit": 71, "n_no_candidate": 0},
+                "box": {"recall": 0.88, "rank1": 0.85, "n_eval": 100, "n_hit": 88, "n_no_candidate": 3}},
+        "om": {"center": {"recall": 0.91, "rank1": 0.90, "n_eval": 50, "n_hit": 46, "n_no_candidate": 0},
+               "box": {"recall": 0.90, "rank1": 0.89, "n_eval": 50, "n_hit": 45, "n_no_candidate": 1}},
+    }
+    lines = gce._format_box_crop_digest(per_mod)
+    joined = "\n".join(lines)
+    assert "sem" in joined.lower() and "om" in joined.lower()
+    assert "+0.17" in joined or "+0.170" in joined, "SEM box-center delta(+0.17) 표기"
+    assert "n_eval" in joined and "no_cand" in joined.replace("_candidate", "_cand")

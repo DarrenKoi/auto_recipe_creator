@@ -90,6 +90,10 @@ HISTORY_ROOT = os.getenv("ALIGN_MSR_HISTORY_ROOT") or None
 
 COREGISTER = os.getenv("CONSENSUS_COREGISTER", "1") != "0"
 
+# consensus arm whitebox box-crop A/B (center vs box, OM/SEM 층화). 1 이면 box arm 측정.
+# golden_eval_config.py 에서 CONSENSUS_BOX_CROP=1 로 켜면 오피스 실행 시 per-modality digest 출력.
+CONSENSUS_BOX_CROP = os.getenv("CONSENSUS_BOX_CROP", "0") not in ("0", "", "false", "False")
+
 # LOO 매칭 프레임 정제: raw 프레임은 GT 위치에 진짜 crosshair 가 남아 있고, consensus 템플릿
 # 중앙에는 inpaint 잔상 십자가 코히런트하게 쌓여 있어(모든 S crop 이 crosshair 중심 정렬 +
 # median 은 공통 신호 보존) chamfer 가 crosshair↔crosshair 로 lock 하면 in_topk 가 *가짜로*
@@ -133,6 +137,26 @@ PERIODICITY_ABLATION_GRID = [
     ("win0.6 lag0.30", 0.6, 0.30),
     ("win0.4 lag0.20", 0.4, 0.20),
 ]
+
+
+def _format_box_crop_digest(per_modality):
+    """per-modality center-vs-box recall digest 줄들. box-center delta + 고정분모 카운트.
+
+    survivorship 자가점검: n_eval 동일 + n_no_candidate 노출(분모 축소 아님 확인).
+    box_no_cand 는 box arm 에서 후보가 없어 miss 로 셀인 케이스 수(분모는 줄지 않음).
+    """
+    lines = ["[DIGEST] box-crop A/B (consensus arm, per modality):"]
+    for mod in sorted(per_modality):
+        c = per_modality[mod].get("center", {})
+        b = per_modality[mod].get("box", {})
+        cr, br = c.get("recall", 0.0), b.get("recall", 0.0)
+        delta = br - cr
+        lines.append(
+            f"  {mod}: center {cr:.3f} -> box {br:.3f} (delta {delta:+.3f}) "
+            f"[n_eval {c.get('n_eval', 0)}/{b.get('n_eval', 0)}, "
+            f"hit {c.get('n_hit', 0)}/{b.get('n_hit', 0)}, "
+            f"box_no_cand {b.get('n_no_candidate', 0)}]")
+    return lines
 
 
 def _calibrate_periodicity(score_by_recipe, per_recipe):
@@ -582,11 +606,15 @@ def run() -> str:
 
     res = _consensus_template_ab(
         by_recipe, min_s=CONSENSUS_MIN_S, out_dir=out_dir,
-        combined_renderer=renderer,
+        combined_renderer=renderer, box_crop=CONSENSUS_BOX_CROP,
         frame_loader=_cleaned_frame_loader if CLEAN_FRAME else None)
     if res is None:
-        print(f"[ERROR] consensus A/B 불가 — LOO 가능한(같은 modality ≥{CONSENSUS_MIN_S}) recipe 가 없음.")
+        print(f"[ERROR] consensus A/B 불가 — LOO 가능한(같은 modality >={CONSENSUS_MIN_S}) recipe 가 없음.")
         return "no_ab"
+
+    if CONSENSUS_BOX_CROP and res and res.get("box_crop_ab"):
+        for line in _format_box_crop_digest(res["box_crop_ab"]["per_modality"]):
+            print(line)
 
     res["coregister"] = COREGISTER      # min_s 는 _consensus_template_ab 가 이미 반환에 넣는다.
     res["clean_frame"] = CLEAN_FRAME    # 매칭 프레임 정제 여부 — raw 판과 lift 비교 키.

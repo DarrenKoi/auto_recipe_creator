@@ -22,8 +22,12 @@ try:
         from poc.workflow_2.golden_eval_config import HISTORY_ROOT
     except ImportError:   # 구버전 config(HISTORY_ROOT 없음) 하위호환.
         HISTORY_ROOT = None
+    try:
+        from poc.workflow_2.golden_eval_config import CONSENSUS_BOX_CROP
+    except ImportError:   # 구버전 config(CONSENSUS_BOX_CROP 없음) 하위호환.
+        CONSENSUS_BOX_CROP = None
 except ImportError:   # 실편집 파일 부재 — golden_eval_config.example.py 참고(복사해서 생성).
-    GOLDEN_ROOT, LAB_MODE, MIN_S, HISTORY_ROOT = None, "", None, None
+    GOLDEN_ROOT, LAB_MODE, MIN_S, HISTORY_ROOT, CONSENSUS_BOX_CROP = None, "", None, None, None
 
 
 def seed_env():
@@ -39,3 +43,5 @@ def seed_env():
         os.environ.setdefault("ALIGN_ENSEMBLE_LAB_MODE", str(LAB_MODE))
     if MIN_S is not None:
         os.environ.setdefault("CONSENSUS_MIN_S", str(MIN_S))
+    if CONSENSUS_BOX_CROP is not None:
+        os.environ.setdefault("CONSENSUS_BOX_CROP", str(CONSENSUS_BOX_CROP))

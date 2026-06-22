@@ -110,3 +110,37 @@ def test_rank_rows_single_and_equal_safe():
     assert rr._rank_rows([{"recipe": "x", "risk_score": 1.0, "worst_disp": 0.0}])[0]["recipe"] == "x"
     rr._rank_rows([{"recipe": "p", "risk_score": 1.0, "worst_disp": 0.0},
                    {"recipe": "q", "risk_score": 1.0, "worst_disp": 0.0}])  # no raise
+
+
+def _sample_rows():
+    return {
+        "om": [
+            {"recipe": "L/r1", "tier": "STRONG", "strong_fail_frac": 0.5, "worst_disp": 0.8,
+             "msr_peak_tail": 0.99, "self_ratio": 0.9, "advisory_confidence": "ok", "n_s": 6,
+             "risk_score": 2.5, "suggestion": "box(10,10,40,40)", "sugg_self": 0.5, "sugg_fidelity": 0.7},
+        ],
+        "sem": [
+            {"recipe": "L/r2", "tier": "MEDIUM", "strong_fail_frac": 0.0, "worst_disp": 0.2,
+             "msr_peak_tail": 0.92, "self_ratio": 0.99, "advisory_confidence": "low", "n_s": 3,
+             "risk_score": 1.92, "suggestion": "insufficient", "sugg_self": None, "sugg_fidelity": None},
+        ],
+    }
+
+
+def test_report_is_ascii_and_has_banner_and_rows():
+    text = rr._format_report(_sample_rows())
+    text.encode("ascii")  # em-dash 등 비-ASCII 있으면 raise.
+    assert rr.SURVIVORSHIP_BANNER in text
+    assert "L/r1" in text and "L/r2" in text
+    assert "STRONG" in text and "MEDIUM" in text
+
+
+def test_digest_is_ascii_one_line_per_pipe():
+    d = rr._format_digest(_sample_rows())
+    d.encode("ascii")
+    assert d.startswith("[DIGEST] reregister(S-only):")
+    assert "om[" in d and "sem[" in d and "|" in d
+
+
+def test_banner_has_no_emdash():
+    assert "—" not in rr.SURVIVORSHIP_BANNER

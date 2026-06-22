@@ -162,19 +162,10 @@ def _lab_channels_for_eval():
       2. ``ALIGN_ENSEMBLE_LAB_MODE=edge_ncc|c4|c4_edge_ncc`` 이면 C4 포함.
       3. 그 외 lab mode 는 기본 C1/C2/C3.
     """
-    from poc.workflow_2.ensemble_lab import (
-        LAB_DEFAULT_CHANNELS,
-        LAB_EDGE_NCC_CHANNEL,
-        parse_ensemble_channels,
-    )
-
-    channels_env = os.getenv("ALIGN_LAB_ENSEMBLE_CHANNELS") or os.getenv("ENSEMBLE_CHANNELS")
-    if channels_env:
-        return parse_ensemble_channels(channels_env)
-    mode = os.getenv("ALIGN_ENSEMBLE_LAB_MODE", "").strip().lower()
-    if mode in ("edge_ncc", "c4", "c4_edge_ncc"):
-        return tuple(LAB_DEFAULT_CHANNELS) + (LAB_EDGE_NCC_CHANNEL,)
-    return tuple(LAB_DEFAULT_CHANNELS)
+    # 단일 출처(ensemble_lab.lab_channels_from_env)로 위임 — consensus arm(_propose_topk)도 같은
+    # 리졸버를 써서 'edge_ncc' 가 두 arm 에서 동일 채널을 뜻하게 한다.
+    from poc.workflow_2.ensemble_lab import lab_channels_from_env
+    return lab_channels_from_env()
 
 
 def _compute_align_key_score_lab_for_eval(template, frame, **kwargs):

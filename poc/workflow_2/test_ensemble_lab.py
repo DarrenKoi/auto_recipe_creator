@@ -222,3 +222,41 @@ def test_miss_predictor_empty_miss_group_returns_none():
     r = lab.miss_predictor_stats([0.2, 0.3], [False, False])
     assert r["n_miss"] == 0
     assert r["auc"] is None and r["best_tau"] is None
+
+
+# --- lab 채널/활성 env 리졸버 (consensus·rcp arm 공용 단일 출처) ---
+
+def _clear_lab_env(monkeypatch):
+    for k in ("ALIGN_ENSEMBLE_LAB_MODE", "ALIGN_LAB_ENSEMBLE_CHANNELS", "ENSEMBLE_CHANNELS"):
+        monkeypatch.delenv(k, raising=False)
+
+
+def test_lab_channels_from_env_default(monkeypatch):
+    """lab env 없음 → 기본 3채널(production bit-parity)."""
+    _clear_lab_env(monkeypatch)
+    assert lab.lab_channels_from_env() == tuple(lab.LAB_DEFAULT_CHANNELS)
+
+
+def test_lab_channels_from_env_edge_ncc_mode_adds_c4(monkeypatch):
+    """ALIGN_ENSEMBLE_LAB_MODE=edge_ncc → 기본 3채널 + C4 (solo 가 아니라 추가)."""
+    _clear_lab_env(monkeypatch)
+    monkeypatch.setenv("ALIGN_ENSEMBLE_LAB_MODE", "edge_ncc")
+    assert lab.lab_channels_from_env() == tuple(lab.LAB_DEFAULT_CHANNELS) + (lab.LAB_EDGE_NCC_CHANNEL,)
+
+
+def test_lab_channels_from_env_explicit_channels_override_mode(monkeypatch):
+    """명시 ALIGN_LAB_ENSEMBLE_CHANNELS 가 mode 보다 우선(여기선 C4 solo)."""
+    _clear_lab_env(monkeypatch)
+    monkeypatch.setenv("ALIGN_ENSEMBLE_LAB_MODE", "edge_ncc")
+    monkeypatch.setenv("ALIGN_LAB_ENSEMBLE_CHANNELS", "edge_ncc")
+    assert lab.lab_channels_from_env() == (lab.LAB_EDGE_NCC_CHANNEL,)
+
+
+def test_lab_active_from_env(monkeypatch):
+    """lab 경로 활성 판정: mode truthy 또는 명시 채널이면 True, off/none/빈값은 False."""
+    _clear_lab_env(monkeypatch)
+    assert lab.lab_active_from_env() is False
+    monkeypatch.setenv("ALIGN_ENSEMBLE_LAB_MODE", "edge_ncc")
+    assert lab.lab_active_from_env() is True
+    monkeypatch.setenv("ALIGN_ENSEMBLE_LAB_MODE", "off")
+    assert lab.lab_active_from_env() is False

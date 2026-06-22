@@ -299,7 +299,18 @@ def _propose_topk(tpl, gray, frame_dt, *, scales, topk):
     CONSENSUS_USE_ENSEMBLE 로 C1(canny chamfer) ↔ 3채널 RRF ensemble 을 전환한다. 두 경로의 후보
     좌표 계약이 동일(template-center, frame px)해 _gt_in_topk 의 in_topk A/B 가 apples-to-apples.
     ensemble 은 raw gray 에서 자체 전처리하므로 frame_dt 가 필요 없다 — frame_dt 는 C1 전용.
+
+    ALIGN_ENSEMBLE_LAB_MODE(또는 명시 채널)가 활성이면 lab ensemble(예: edge_ncc=C4 포함)로
+    후보를 낸다 — rcp-only arm 과 동일 리졸버(ensemble_lab.lab_channels_from_env)를 써서 'edge_ncc'
+    가 두 arm 에서 같은 채널을 뜻하게 한다. recall_miss(consensus arm 의 진짜 약점)에 C4 proposer 를
+    A/B 로 댈 수 있는 자리. ensemble_lab 을 모듈로 참조(call-time attr)해 디스패치를 테스트 가능하게 둔다.
     """
+    from poc.workflow_2 import ensemble_lab as _lab
+    if _lab.lab_active_from_env():
+        ens = _lab.compute_ensemble_candidates(
+            tpl.raw_image, gray, channels=_lab.lab_channels_from_env(),
+            scales=scales, top_n=topk)
+        return list(ens.fused[:topk])
     if USE_ENSEMBLE_PROPOSER:
         from poc.workflow_3.align.matching.ensemble import compute_ensemble_candidates
         ens = compute_ensemble_candidates(tpl.raw_image, gray, scales=scales, top_n=topk)

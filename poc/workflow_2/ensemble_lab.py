@@ -8,6 +8,7 @@ drivers: golden_localization_eval_cond.py, golden_consensus_eval_cond.py.
 
 실행 (인자 없음): uv run pytest poc/workflow_2/test_ensemble_lab.py
 """
+import os
 import statistics
 
 import cv2
@@ -249,6 +250,37 @@ def parse_ensemble_channels(value=None, *, default=LAB_DEFAULT_CHANNELS):
         if ch not in out:
             out.append(ch)
     return tuple(out or default)
+
+
+def lab_channels_from_env():
+    """env → lab ensemble 채널 tuple. consensus arm·rcp-only arm 공용 단일 출처.
+
+    우선순위:
+      1. ``ALIGN_LAB_ENSEMBLE_CHANNELS`` 또는 ``ENSEMBLE_CHANNELS`` 직접 지정(파싱 그대로).
+      2. ``ALIGN_ENSEMBLE_LAB_MODE=edge_ncc|c4|c4_edge_ncc`` → 기본 C1/C2/C3 + C4.
+      3. 그 외 → 기본 C1/C2/C3.
+    golden_localization_eval._lab_channels_for_eval 와 _propose_topk(consensus) 가 둘 다 이 함수를
+    써야 'edge_ncc' 가 두 arm 에서 동일 채널을 뜻한다(드라이버는 align_similarity 를 import 하므로
+    리졸버를 더 낮은 ensemble_lab 에 둬 순환 import 를 피한다).
+    """
+    channels_env = os.getenv("ALIGN_LAB_ENSEMBLE_CHANNELS") or os.getenv("ENSEMBLE_CHANNELS")
+    if channels_env:
+        return parse_ensemble_channels(channels_env)
+    mode = os.getenv("ALIGN_ENSEMBLE_LAB_MODE", "").strip().lower()
+    if mode in ("edge_ncc", "c4", "c4_edge_ncc"):
+        return tuple(LAB_DEFAULT_CHANNELS) + (LAB_EDGE_NCC_CHANNEL,)
+    return tuple(LAB_DEFAULT_CHANNELS)
+
+
+def lab_active_from_env():
+    """proposer 가 lab ensemble 경로를 타야 하나(env 기반). 명시 채널 또는 활성 lab mode 면 True.
+
+    lab mode 활성 판정은 golden_localization_eval._env_enabled 와 동일(빈값/0/false/no/off/none = 비활성).
+    """
+    if os.getenv("ALIGN_LAB_ENSEMBLE_CHANNELS") or os.getenv("ENSEMBLE_CHANNELS"):
+        return True
+    mode = os.getenv("ALIGN_ENSEMBLE_LAB_MODE", "").strip().lower()
+    return bool(mode) and mode not in ("0", "false", "no", "off", "none")
 
 
 def _edge_ncc_solo_candidates(template_gray, frame_gray, *, scales=DEFAULT_SCALES,

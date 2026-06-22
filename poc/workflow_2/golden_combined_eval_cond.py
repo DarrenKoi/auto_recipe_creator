@@ -19,8 +19,9 @@ production 과 같은 라우팅을 적용한 **routed 정확도**를 낸다.
   (A) consensus scaling : consensus-eligible recipe 를 n_S(LOO 에 쓰인 S 장수)별로 층화 →
                           "consensus 많을수록 rank1/topk 가 오르나" 곡선. (S-희박이면 high bin 이 비어
                           신뢰 못 함 — n_recipes 를 같이 본다.)
-  (B) rcp-only arm      : consensus 불가(S<min_s) recipe 의 rcp box localization. consensus 가 못 돕는
-                          영역이라 여기가 matching-engine 레버(edge_ncc 등 ALIGN_ENSEMBLE_LAB_MODE)의 testbed.
+  (B) rcp-only arm      : consensus 불가(S<min_s) recipe 의 rcp box localization. (matching-engine 레버
+                          ALIGN_ENSEMBLE_LAB_MODE=edge_ncc 는 이제 consensus arm 의 proposer 에도
+                          적용된다 — 두 arm 다 같은 lab 채널. recall_miss 가 consensus arm 문제라 거기서 평가.)
   (C) routed overall    : eligible → consensus, rcp-only → rcp 로 라우팅한 frame-weighted 종합.
 
 지표 정의(양 arm 동일): in_topk = 진실이 후보 pool 에 듦, rank1 = 진실이 top 후보(topk_rank==1).
@@ -35,7 +36,7 @@ arm 간 rcp 정의가 달라 lift 비교는 arm 별로만 해석한다.
     uv run python poc/workflow_2/golden_combined_eval_cond.py
     ALIGN_ENSEMBLE_LAB_MODE=edge_ncc uv run python poc/workflow_2/golden_combined_eval_cond.py  # (B) 레버 평가
 
-env: ALIGN_GOLDEN_ROOT(데이터 루트), CONSENSUS_MIN_S(consensus 최소 S, 바닥 3), ALIGN_ENSEMBLE_LAB_MODE(rcp-only arm 채널).
+env: ALIGN_GOLDEN_ROOT(데이터 루트), CONSENSUS_MIN_S(consensus 최소 S, 바닥 3), ALIGN_ENSEMBLE_LAB_MODE(lab 채널 — consensus·rcp-only 양 arm).
 Mac dev(golden 없음)에선 [WARNING] 후 no_data 로 깨끗이 빠진다.
 """
 
@@ -516,7 +517,7 @@ def run() -> str:
     print(f"[INFO] (combined routed) recipe {len(recipes)}개 → {out_dir}  [rcp matcher={matcher_mode}]")
     print(f"[INFO] consensus min_s={gce.CONSENSUS_MIN_S} (floor 3) · clean_frame={gce.CLEAN_FRAME}")
     if os.getenv("ALIGN_ENSEMBLE_LAB_MODE"):
-        print(f"[INFO] rcp-only arm lab ensemble: mode={os.getenv('ALIGN_ENSEMBLE_LAB_MODE')} "
+        print(f"[INFO] lab ensemble (consensus + rcp-only arm): mode={os.getenv('ALIGN_ENSEMBLE_LAB_MODE')} "
               f"channels={','.join(gle._lab_channels_for_eval())}")
 
     # 1) recipe 별 template + consensus 입력(entry) 빌드. rcp-only 채점용으로 template 보관.

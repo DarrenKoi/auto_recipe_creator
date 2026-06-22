@@ -488,6 +488,18 @@ def _score_rcp_only(rec_assets, center_tpls, box_tpls):
     return cells
 
 
+def _consensus_mode_counts(per_recipe):
+    """per_recipe (recipe,modality) cell 의 consensus 빌드 모드 분포 → {history, loo}.
+
+    per-modality 평가 후 per_recipe 는 recipe당 cell 다수라 cell≠recipe. 그래서 loo 를
+    recipe 수에서 빼면 음수가 난다(실측 loo:-58). 각 모드를 직접 세면 둘 다 *cell* 수이고
+    history+loo=len(per_recipe) 로 일관된다.
+    """
+    hist = sum(1 for r in per_recipe if r.get("mode") == "history")
+    loo = sum(1 for r in per_recipe if r.get("mode") == "loo")
+    return {"history": hist, "loo": loo}
+
+
 def run() -> str:
     """routed pipeline 통합 평가(인자 없음). 반환: success | no_data | no_eligible."""
     root = _resolve_golden_root()   # seed_env() 가 config→env 브리지 완료. 여기선 env 만.
@@ -576,7 +588,7 @@ def run() -> str:
     # 4) 리포트 조립.
     scaling = _bin_by_s_count(per_recipe)
     routed = _routed_overall(cons_frames, cons_rank1, cons_topk, rcp_only)
-    n_history = sum(1 for r in per_recipe if r.get("mode") == "history")
+    mode_counts = _consensus_mode_counts(per_recipe)   # history/loo *cell* 수(recipe 아님 — loo 음수 방지).
     # modality 층화(Step 1) — OM/SEM 가 같은 단일 CV 정책에서 다르게 동작하는지 측정.
     cons_by_mod = _consensus_by_modality(per_recipe)
     rcp_by_mod = _arm_rates_by_modality(rcp_only_cells)
@@ -616,8 +628,8 @@ def run() -> str:
             "n_frames": cons_frames,
             "rank1_rate": cons_rank1,
             "in_topk_rate": cons_topk,
-            "n_recipes_history": n_history,                       # 별도 history root 로 consensus 빌드한 recipe.
-            "n_recipes_loo": len(eligible_keys) - n_history,      # history 없어 from_msr LOO 로 빌드한 recipe.
+            "n_recipes_history": mode_counts["history"],          # (recipe,modality) cell — history 풀로 빌드.
+            "n_recipes_loo": mode_counts["loo"],                  # (recipe,modality) cell — from_msr LOO 폴백.
             "rcp_counterfactual_rank1_rate": res["overall_rcp_rank1_rate"] if res else None,
             "rcp_counterfactual_in_topk_rate": res["overall_rcp_in_topk_rate"] if res else None,
             "overall_lift": res["overall_lift"] if res else None,
@@ -642,12 +654,15 @@ def run() -> str:
 
     _print_report(summary)
     digest = _digest_line(summary)
+    # digest.txt 는 한 줄(복사·프로그램용 정본) 유지; 콘솔은 한 줄이 너무 길어 못 읽으므로
+    # ' | ' 구획마다 줄바꿈해 보기 좋게 찍는다(내용 동일, 어느 쪽을 붙여 넣어도 무방).
     (out_dir / "digest.txt").write_text(digest + "\n", encoding="utf-8")
-    # 사용자가 콘솔 전체 대신 이 한 줄만 복사해 전달하도록 맨 끝에 크게 찍는다.
     print("\n" + "=" * 70)
-    print("[DIGEST] " + digest)
+    print("[DIGEST]")
+    for seg in digest.split(" | "):
+        print("  " + seg)
     print("=" * 70)
-    print(f"[INFO] (이 한 줄만 복사해서 주면 됨. 파일: {out_dir / 'digest.txt'})")
+    print(f"[INFO] (위 블록 또는 한 줄 파일을 붙여 주면 됨. 파일: {out_dir / 'digest.txt'})")
     return "success" if (cons_frames or rcp_only["n"]) else "no_eligible"
 
 

@@ -12,6 +12,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import poc.workflow_2.golden_combined_eval_cond as gcc
 
 
+# --- _consensus_mode_counts (history/loo cell 분포) ---
+
+def test_consensus_mode_counts_are_cells_never_negative():
+    """per-modality 평가 후 per_recipe 는 recipe당 modality cell 다수 → history/loo 는 *cell* 수.
+
+    회귀: n_history(cell 수)를 eligible_keys(recipe 수)에서 빼서 loo 를 구하던 옛 코드는
+    같은 recipe 의 두 modality cell 이 둘 다 history 면 loo=recipe1-cell2=-1 (음수, 실측 loo:-58).
+    각 모드를 직접 세면 loo>=0 이고 history+loo=len(per_recipe).
+    """
+    per_recipe = [
+        {"recipe": "A", "modality": "om", "mode": "history"},
+        {"recipe": "A", "modality": "sem", "mode": "history"},
+        {"recipe": "B", "modality": "sem", "mode": "loo"},
+    ]
+    out = gcc._consensus_mode_counts(per_recipe)
+    assert out == {"history": 2, "loo": 1}
+
+
 # --- _bin_by_s_count (consensus scaling 층화) ---
 
 def _row(rec, n, cons_r1, cons_topk, rcp_r1=0.0, rcp_topk=0.0, lift=None):

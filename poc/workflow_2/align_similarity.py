@@ -324,7 +324,8 @@ def _propose_topk(tpl, gray, frame_dt, *, scales, topk):
     return compute_chamfer_candidates(tpl, frame_dt, scales=scales, top_n=topk)
 
 
-def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales=COMPARE_SCALES):
+def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales=COMPARE_SCALES,
+                tol_short=None):
     """정답(crosshair) 위치가 free-search 후보 top-N 안에 들어오는지 측정 (proposer recall).
 
     후보 생성기는 CONSENSUS_USE_ENSEMBLE 토글(C1 canny vs 3채널 RRF ensemble) — _propose_topk 참조.
@@ -352,7 +353,10 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
         if tpl is None:
             continue
         th, tw = tpl.raw_image.shape[:2]
-        short = max(1, min(tw, th))
+        # tol_short: hit tolerance 정규화 기준(픽셀). 주면 그걸 쓰고(arm 간 동일 tolerance 로
+        # 공정 비교), 없으면 per-tpl short(기본·하위호환). box arm 은 center tpl short 를 넘겨
+        # center/box 가 같은 절대 픽셀 tolerance 로 채점되게 한다.
+        short = int(tol_short) if tol_short is not None else max(1, min(tw, th))
         try:
             cands = _propose_topk(tpl, gray, frame_dt, scales=scales, topk=topk)
         except Exception:
@@ -1013,7 +1017,12 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None,
                             key_type=mod,
                             align_offset_xy=off,
                         )
-                        gb = _gt_in_topk(gray, tuple(f["xy"]), {mod: cons_box})
+                        # center arm 과 동일 tolerance 로 채점 — box tpl 크기차로 인한
+                        # tolerance 불일치 제거(apples-to-apples). cons_tpl = center 합의 tpl.
+                        _ch, _cw = cons_tpl.raw_image.shape[:2]
+                        center_short = max(1, min(_cw, _ch))
+                        gb = _gt_in_topk(gray, tuple(f["xy"]), {mod: cons_box},
+                                         tol_short=center_short)
                 if gb is None:
                     bx["n_no_cand"] += 1
                 else:

@@ -83,7 +83,7 @@ def test_consensus_box_arm_reports_fixed_denominator_per_modality(monkeypatch, t
     # _gt_in_topk 을 결정적 스텁으로: center 는 항상 hit, box 는 항상 no-candidate(None 후보 모사).
     calls = {"center": 0, "box": 0}
 
-    def _fake_gt(gray, xy, tpls, *, scales=None, topk=None):
+    def _fake_gt(gray, xy, tpls, *, scales=None, topk=None, tol_short=None):
         (mod, tpl), = tpls.items()
         ver = getattr(tpl, "version", "")
         if "box" in ver:
@@ -156,7 +156,7 @@ def test_history_crops_box_feeds_box_arm_in_history_path(monkeypatch, tmp_path):
     """
     calls = {"center": 0, "box": 0}
 
-    def _fake_gt(gray, xy, tpls, *, scales=None, topk=None):
+    def _fake_gt(gray, xy, tpls, *, scales=None, topk=None, tol_short=None):
         (mod, tpl), = tpls.items()
         ver = getattr(tpl, "version", "")
         if "box" in ver:
@@ -220,3 +220,31 @@ def test_box_crop_digest_formats_per_modality_delta():
     assert "sem" in joined.lower() and "om" in joined.lower()
     assert "+0.17" in joined or "+0.170" in joined, "SEM box-center delta(+0.17) 표기"
     assert "n_eval" in joined and "box_no_cand" in joined
+
+
+def test_gt_in_topk_tol_short_overrides_hit_tolerance(monkeypatch):
+    """tol_short 가 주어지면 hit 판정 tolerance 를 그 reference 로 정규화한다.
+
+    center vs box arm 비교 공정성: box template 은 크기가 달라 per-tpl short(=tol)이 달라지면
+    같은 align point 를 두 arm 이 다른 픽셀 tolerance 로 채점한다. tol_short 로 양 arm 의
+    tolerance 를 일치시켜 apples-to-apples 로 만든다. (GT_TOL_NORM=0.20)
+    """
+    class _Cand:
+        def __init__(self):
+            self.xy = (60, 50)   # truth (50,50) 에서 10 px 떨어짐
+            self.score = 0.9
+            self.scale = 1.0
+
+    monkeypatch.setattr(alsim, "_propose_topk", lambda *a, **k: [_Cand()])
+    tpl = build_template(np.full((20, 20), 200, np.uint8),
+                         recipe_id="R", version="t", key_type="sem")
+    frame = np.zeros((200, 200), np.uint8)
+    truth = (50, 50)
+
+    # per-tpl short=20 → tol=0.20*20=4 px; dist 10 px > 4 → miss.
+    miss = alsim._gt_in_topk(frame, truth, {"sem": tpl}, scales=(1.0,), topk=8)
+    assert miss is not None and miss["in_topk"] is False
+
+    # tol_short=100 → tol=0.20*100=20 px; dist 10 px < 20 → hit.
+    hit = alsim._gt_in_topk(frame, truth, {"sem": tpl}, scales=(1.0,), topk=8, tol_short=100)
+    assert hit is not None and hit["in_topk"] is True

@@ -841,6 +841,23 @@ def _miss_dist_distribution(dists, *, tol=GT_TOL_NORM):
             "p25": _q(0.25), "p75": _q(0.75), "max": round(s[-1], 3), "bins": bins}
 
 
+def _iter_recipe_modalities(by_recipe: dict):
+    """(rec, data, mod) 를 modality별로 하나씩 흘려보낸다 — recipe 의 *모든* modality 평가.
+
+    이전에는 recipe당 `Counter(mod).most_common(1)` 로 dominant modality 한 종류만 평가했다.
+    그런데 align 측정 1회당 OM 2장 / SEM 3장이라([[project_om_sem_positions_per_measurement]])
+    dual recipe 는 거의 항상 SEM 이 dominant → OM consensus 가 영영 측정되지 못했다. 각 modality
+    를 독립 평가하면 dual recipe 도 OM·SEM consensus row 를 각각 낸다(같은 마크·다른 stage 위치라
+    modality 내 풀링은 그대로 타당). s_frames 가 없는 recipe 는 건너뛴다.
+    """
+    for rec, data in by_recipe.items():
+        frames = data.get("s_frames", [])
+        if not frames:
+            continue
+        for mod in sorted({f["mod"] for f in frames}):
+            yield rec, data, mod
+
+
 def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None,
                            combined_renderer=None, frame_loader=None) -> dict | None:
     """S-consensus 템플릿 A/B (leave-one-out) — rcp 대신 consensus 로 in_topk 가 뛰나.
@@ -881,12 +898,8 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None,
     rcp_miss_dists: list[float] = []
     # (B) match-time 모호도 검증용 per-point (missed, peak_ratio) — periodicity 와 달리 진짜 점 단위.
     cons_points: list[dict] = []
-    for rec, data in by_recipe.items():
-        frames = data.get("s_frames", [])
-        if not frames:
-            continue
-        # consensus 일관성 위해 최다 modality 한 종류로 한정.
-        mod = Counter(f["mod"] for f in frames).most_common(1)[0][0]
+    for rec, data, mod in _iter_recipe_modalities(by_recipe):
+        frames = data["s_frames"]
         fm = [f for f in frames if f["mod"] == mod]
         # consensus 재료: from_msr_history(disjoint 과거 S 풀) 우선, 없으면 LOO(fm).
         history = (data.get("history_crops") or {}).get(mod)

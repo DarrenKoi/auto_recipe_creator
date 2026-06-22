@@ -87,7 +87,7 @@ def _resolve_golden_root():
     root_env = os.getenv("ALIGN_GOLDEN_ROOT")
     return Path(root_env) if root_env else glec.GOLDEN_ROOT
 
-# (A) consensus scaling 층화 bin — n_S_loo(= dominant modality LOO 점 수) 기준. floor 3.
+# (A) consensus scaling 층화 bin — n_S_loo(= 그 (recipe,modality) 의 LOO eval 점 수) 기준. floor 3.
 S_COUNT_BINS = [
     (3, 3, "S=3"),
     (4, 4, "S=4"),
@@ -568,7 +568,7 @@ def run() -> str:
     rcp_only = _arm_rates(rcp_only_cells)
 
     # consensus per_recipe row 에 periodic(recipe·modality-level) join — _failure_hist_from_rates 가 읽음.
-    # row 의 dominant modality(row['modality'])로 조회 — OM↔SEM 교차오염 차단.
+    # row 의 modality(row['modality'])로 조회 — recipe당 OM·SEM row 가 따로 나오므로 교차오염 차단.
     for r in per_recipe:
         r["periodic"] = periodic_by_key_mod.get(
             (r["recipe"], (r.get("modality") or "").lower()), False)

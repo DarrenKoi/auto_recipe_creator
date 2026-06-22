@@ -63,3 +63,24 @@ def test_gt_in_topk_zero_offset_unchanged():
 
     assert out is not None
     assert out["in_topk"] is True
+
+
+from poc.workflow_2 import golden_consensus_eval_cond as gce
+
+
+def test_box_crop_is_centered_on_box_region_offset_from_crosshair():
+    """box crop = crosshair - offset 중심·box size. crosshair 중심 center crop 과 다른 영역."""
+    # 합성: full frame 에 box marker 를 crosshair 에서 offset 만큼 떨어뜨려 둔다.
+    size = 300
+    gray = np.full((size, size), 30, np.uint8)
+    crosshair = (200, 150)
+    offset = (40, -20)               # offset = img_center - box_center → box center = crosshair - offset
+    box_cx, box_cy = crosshair[0] - offset[0], crosshair[1] - offset[1]   # (160,170)
+    gray[box_cy - 12:box_cy + 12, box_cx - 12:box_cx + 12] = 220          # box 영역 마커
+    box_tpl = build_template(np.full((24, 24), 220, np.uint8),
+                             recipe_id="R", version="box", key_type="sem")
+    crop = gce._box_consensus_crop(gray, crosshair, offset, box_tpl)
+    assert crop is not None
+    assert crop.shape == (24, 24)
+    # box 마커를 담았으면 평균이 밝다(잘못된 영역이면 어둡다).
+    assert crop.mean() > 150, "box crop 이 box 영역(밝은 마커)을 담아야 함"

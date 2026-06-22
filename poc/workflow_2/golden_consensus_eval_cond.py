@@ -199,6 +199,21 @@ def _cond_crosshair_xy(cond):
     return (int(round(gx)), int(round(gy)))
 
 
+def _box_consensus_crop(gray, crosshair_xy, offset_xy, box_tpl):
+    """box 영역(=crosshair - offset 중심) crop, box template 크기. consensus box arm 재료.
+
+    offset = image_center - box_center 이고 S 프레임에선 align point(=image center) 가
+    crosshair 에 오므로 box center = crosshair - offset. crosshair 는 distractor 라 호출부에서
+    이미 정제된(clean) 프레임을 넘기거나, 여기선 raw 를 받아 box 영역만 자른다(box 영역엔
+    보통 crosshair 가 없음). 없으면(OOB/너무작음) None.
+    """
+    bcx = crosshair_xy[0] - offset_xy[0]
+    bcy = crosshair_xy[1] - offset_xy[1]
+    bw = box_tpl.raw_image.shape[1]
+    bh = box_tpl.raw_image.shape[0]
+    return _matched_crop(gray, (bcx, bcy), bw, bh, 1.0)
+
+
 def _cond_consensus_crop(gray, cond, size_wh):
     """crosshair(=align point) 중심·고정 size 의 *정제된*(crosshair 제거) crop. 없으면 None.
 
@@ -252,14 +267,16 @@ def _precrop_drop_reason(cond, xy, mod, has_tpl):
     return None
 
 
-def _build_cond_by_recipe(assets, center_tpls):
+def _build_cond_by_recipe(assets, center_tpls, box_tpls=None):
     """한 recipe → `_consensus_template_ab` 입력 항목.
 
     baseline rcp_tpls = center template(offset 0). s_frames 의 crop 은 cond crosshair
     중심·crosshair 제거된 고정 size(해당 modality center tpl 크기). E 는 가드용 경로만.
+    box_tpls: {mod: (box_tpl, offset)|None} — 있으면 각 S 프레임에 crop_box 추가(box arm 재료).
     """
     entry = {
         "rcp_tpls": {m: t for m, (t, _off) in center_tpls.items() if t is not None},
+        "box_tpls": {m: bt for m, bt in (box_tpls or {}).items()},   # {mod: (box_tpl, offset)|None}
         "s_frames": [],
         "e_paths": [],
         "mod_counts": Counter(),     # *해결된* modality 분포(om/sem/unresolved) — 키/배율 추론 결과.
@@ -299,6 +316,14 @@ def _build_cond_by_recipe(assets, center_tpls):
             entry["drop_counts"]["crop_failed"] += 1
             continue
         entry["s_frames"].append({"path": p, "xy": xy, "mod": mod, "crop": crop})
+        # box arm 재료: box template 이 있는 modality 만. clean 프레임에서 box 영역을 자른다.
+        crop_box = None
+        bt = (box_tpls or {}).get(mod)
+        if bt is not None and xy is not None:
+            _box_tpl, _off = bt
+            cleaned = clean_image(gray, cond)
+            crop_box = _box_consensus_crop(cleaned, xy, _off, _box_tpl)
+        entry["s_frames"][-1]["crop_box"] = crop_box
 
     # co-registration: modality 별로(외형이 달라 섞으면 안 됨) crop 들을 sub-pixel 정렬해
     # median blur 를 줄인다. 정렬은 crop 내용만 바꾸고 crosshair GT(xy)·full-frame 은 불변.
@@ -492,13 +517,13 @@ def run() -> str:
         if assets is None:
             continue
         try:
-            center_tpls, _box = glec._build_offset_templates_cond(assets)
+            center_tpls, box_tpls = glec._build_offset_templates_cond(assets)
         except Exception as exc:
             print(f"[WARNING] template 빌드 실패 {assets.recipe_id}: {exc}")
             continue
         if not any(v is not None for v in center_tpls.values()):
             continue
-        entry = _build_cond_by_recipe(assets, center_tpls)
+        entry = _build_cond_by_recipe(assets, center_tpls, box_tpls)
         mod_total.update(entry["mod_counts"])
         drop_total.update(entry["drop_counts"])
         n_s = len(entry["s_frames"])

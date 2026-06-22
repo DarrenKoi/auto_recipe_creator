@@ -882,7 +882,8 @@ def _iter_recipe_modalities(by_recipe: dict):
 
 
 def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None,
-                           combined_renderer=None, frame_loader=None) -> dict | None:
+                           combined_renderer=None, frame_loader=None,
+                           box_crop=False) -> dict | None:
     """S-consensus 템플릿 A/B (leave-one-out) — rcp 대신 consensus 로 in_topk 가 뛰나.
 
     by_recipe[rec] = {"s_frames": [{path,xy,mod,crop}], "e_paths": [Path], "rcp_tpls": {mod: tpl}}.
@@ -921,6 +922,13 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None,
     rcp_miss_dists: list[float] = []
     # (B) match-time 모호도 검증용 per-point (missed, peak_ratio) — periodicity 와 달리 진짜 점 단위.
     cons_points: list[dict] = []
+    # box arm A/B (whitebox box-crop vs center) — per (modality, arm) 고정 분모 카운트.
+    box_ab: dict = {}   # {mod: {arm: {"n_eval","n_hit","n_r1","n_no_cand"}}}
+
+    def _box_cell(mod, arm):
+        return box_ab.setdefault(mod, {}).setdefault(
+            arm, {"n_eval": 0, "n_hit": 0, "n_r1": 0, "n_no_cand": 0})
+
     for rec, data, mod in _iter_recipe_modalities(by_recipe):
         frames = data["s_frames"]
         fm = [f for f in frames if f["mod"] == mod]
@@ -976,6 +984,43 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None,
             if gc is None:
                 continue
             n += 1
+            if box_crop:
+                bt = (data.get("box_tpls") or {}).get(mod)
+                cb = f.get("crop_box")
+                # center arm cell (gc 유효 -> 분모 +1).
+                cc = _box_cell(mod, "center")
+                cc["n_eval"] += 1
+                if gc["in_topk"]:
+                    cc["n_hit"] += 1
+                if gc["topk_rank"] == 1:
+                    cc["n_r1"] += 1
+                # box arm cell - 같은 분모(+1). 재료 없거나 후보 0개면 miss.
+                bx = _box_cell(mod, "box")
+                bx["n_eval"] += 1
+                gb = None
+                if bt is not None and cb is not None:
+                    if use_history:
+                        pool_box = list((data.get("history_crops_box") or {}).get(mod) or [])
+                    else:
+                        pool_box = [g.get("crop_box") for j, g in enumerate(fm)
+                                    if j != i and g.get("crop_box") is not None]
+                    if len(pool_box) >= 2:
+                        box_tpl_obj, off = bt
+                        cons_box = build_template(
+                            _consensus(pool_box),
+                            recipe_id=rec,
+                            version=f"s_consensus_box_{mod}",
+                            key_type=mod,
+                            align_offset_xy=off,
+                        )
+                        gb = _gt_in_topk(gray, tuple(f["xy"]), {mod: cons_box})
+                if gb is None:
+                    bx["n_no_cand"] += 1
+                else:
+                    if gb["in_topk"]:
+                        bx["n_hit"] += 1
+                    if gb["topk_rank"] == 1:
+                        bx["n_r1"] += 1
             cons_points.append({"recipe": rec, "missed": not gc["in_topk"],
                                 "peak_ratio": gc.get("peak_ratio"),
                                 "cand_scores": gc.get("cand_scores"),
@@ -1052,7 +1097,7 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None,
 
     cons_r1_rate = tot_cons_r1 / tot_n
     cons_topk_rate = tot_cons / tot_n
-    return {
+    result = {
         "n_recipes": len(per_recipe),
         "n_S_loo": tot_n,
         "overall_rcp_in_topk_rate": round(tot_rcp / tot_n, 3),
@@ -1080,9 +1125,24 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None,
         "per_recipe": per_recipe,
         "min_s": min_s,
         "note": ("lift = recall(후보에 truth) 개선; rank1_lift = precision(정답 lock) 개선. "
-                 "남은 정밀도 갭(topk_not_rank1)은 reranker 로 못 메움(MI·contour 폐기) → "
-                 "VLM-region+CV 로 escalation. cons_S≈cons_E 는 blur 신호 아님 → 선명도 비율로 판정."),
+                 "남은 정밀도 갭(topk_not_rank1)은 reranker 로 못 메움(MI·contour 폐기) -> "
+                 "VLM-region+CV 로 escalation. cons_S~=cons_E 는 blur 신호 아님 -> 선명도 비율로 판정."),
     }
+    if box_crop:
+        per_mod: dict = {}
+        for mod, arms in box_ab.items():
+            per_mod[mod] = {}
+            for arm, c in arms.items():
+                e = c["n_eval"] or 0
+                per_mod[mod][arm] = {
+                    "recall": round(c["n_hit"] / e, 4) if e else 0.0,
+                    "rank1": round(c["n_r1"] / e, 4) if e else 0.0,
+                    "n_eval": e,
+                    "n_hit": c["n_hit"],
+                    "n_no_candidate": c["n_no_cand"],
+                }
+        result["box_crop_ab"] = {"per_modality": per_mod}
+    return result
 
 
 def _print_summary(summary: dict) -> None:

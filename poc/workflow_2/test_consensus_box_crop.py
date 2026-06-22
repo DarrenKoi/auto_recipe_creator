@@ -66,6 +66,63 @@ def test_gt_in_topk_zero_offset_unchanged():
 
 
 from poc.workflow_2 import golden_consensus_eval_cond as gce
+from poc.workflow_3.align.matching.engine import AlignKeyTemplate
+
+
+def _stack_crops(marker_val, size=40, n=4):
+    crops = []
+    for _ in range(n):
+        c = np.full((size, size), 30, np.uint8)
+        c[10:30, 10:30] = marker_val
+        crops.append(c)
+    return crops
+
+
+def test_consensus_box_arm_reports_fixed_denominator_per_modality(monkeypatch, tmp_path):
+    """box arm 이 켜지면 per-(modality, arm) recall + 고정 분모 카운트를 반환한다."""
+    # _gt_in_topk 을 결정적 스텁으로: center 는 항상 hit, box 는 항상 no-candidate(None 후보 모사).
+    calls = {"center": 0, "box": 0}
+
+    def _fake_gt(gray, xy, tpls, *, scales=None, topk=None):
+        (mod, tpl), = tpls.items()
+        ver = getattr(tpl, "version", "")
+        if "box" in ver:
+            calls["box"] += 1
+            return None              # box: 후보 0개 -> miss(skip 아님)여야 함
+        calls["center"] += 1
+        return {"topk_rank": 1, "in_topk": True, "n_cand": 8,
+                "best_cand_dist_norm": 0.0, "modality": mod, "cand_xys": [],
+                "peak_ratio": 1.0, "cand_scores": [], "cand_ncc": None}
+
+    monkeypatch.setattr(alsim, "_gt_in_topk", _fake_gt)
+
+    # 한 recipe·SEM·4 S 프레임. center crop + box crop + box_tpls 제공.
+    fm = [{"path": f"S{i}", "xy": (50, 50), "mod": "sem",
+           "crop": _stack_crops(220)[0], "crop_box": _stack_crops(200)[0]} for i in range(4)]
+    box_tpl = build_template(np.full((20, 20), 200, np.uint8),
+                             recipe_id="R", version="sem_box", key_type="sem")
+    by_recipe = {"R": {"s_frames": fm, "e_paths": [],
+                       "rcp_tpls": {}, "box_tpls": {"sem": (box_tpl, (5, 5))},
+                       "history_crops": {}}}
+
+    res = alsim._consensus_template_ab(by_recipe, min_s=3, out_dir=str(tmp_path),
+                                       box_crop=True,
+                                       frame_loader=lambda f: np.full((100, 100), 30, np.uint8))
+    ab = res["box_crop_ab"]["per_modality"]["sem"]
+    assert ab["center"]["n_eval"] == ab["box"]["n_eval"], "두 arm 의 분모가 같아야(고정 분모)"
+    assert ab["box"]["n_no_candidate"] == ab["box"]["n_eval"], "box 후보 0개는 miss 로 세야(분모 유지)"
+    assert ab["box"]["recall"] == 0.0
+    assert ab["center"]["recall"] == 1.0
+
+
+def test_consensus_box_arm_off_by_default(tmp_path):
+    """box_crop=False(기본) -> box_crop_ab 없음(기존 동작 불변)."""
+    fm = [{"path": f"S{i}", "xy": (50, 50), "mod": "sem",
+           "crop": _stack_crops(220)[0]} for i in range(4)]
+    by_recipe = {"R": {"s_frames": fm, "e_paths": [], "rcp_tpls": {}, "history_crops": {}}}
+    res = alsim._consensus_template_ab(by_recipe, min_s=3, out_dir=str(tmp_path),
+                                       frame_loader=lambda f: np.full((100, 100), 30, np.uint8))
+    assert res is None or "box_crop_ab" not in (res or {})
 
 
 def test_box_crop_is_centered_on_box_region_offset_from_crosshair():

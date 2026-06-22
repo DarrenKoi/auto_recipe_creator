@@ -49,3 +49,9 @@ SPLIT_MIN_RECIPES = 5      # modality당 최소 recipe (OM 이 보통 binding �
 SPLIT_RANK1_GAP = 0.10     # |rank1(OM)-rank1(SEM)| 이 이상이면 split 후보(10pp)
 SPLIT_RANK1_FLOOR = 0.70   # 약한 쪽 routed rank1 이 이 밑이면 split 후보
 SPLIT_DOMINANCE = 0.40     # 지배 실패유형 최소 비중(총 실패 중)
+
+# === re-registration 리포트 (golden_reregister_report_cond) ===
+# 1 이면 박스 제안(C2)까지, 0 이면 랭킹 리포트(C1)만.
+REREGISTER_BOX_SUGGEST = 1
+# DIGEST/overlay 상위 N 제한(0=무제한).
+REREGISTER_TOPN = 0

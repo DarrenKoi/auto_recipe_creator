@@ -26,8 +26,18 @@ try:
         from poc.workflow_2.golden_eval_config import CONSENSUS_BOX_CROP
     except ImportError:   # 구버전 config(CONSENSUS_BOX_CROP 없음) 하위호환.
         CONSENSUS_BOX_CROP = None
+    try:
+        from poc.workflow_2.golden_eval_config import REREGISTER_BOX_SUGGEST, REREGISTER_TOPN
+    except ImportError:   # 구버전 config(REREGISTER_* 없음) 하위호환.
+        REREGISTER_BOX_SUGGEST = 1
+        REREGISTER_TOPN = 0
+    try:
+        from poc.workflow_2.golden_eval_config import REREGISTER_ACCEPT_MARGIN
+    except ImportError:   # 구버전 config(REREGISTER_ACCEPT_MARGIN 없음) 하위호환.
+        REREGISTER_ACCEPT_MARGIN = None
 except ImportError:   # 실편집 파일 부재 — golden_eval_config.example.py 참고(복사해서 생성).
     GOLDEN_ROOT, LAB_MODE, MIN_S, HISTORY_ROOT, CONSENSUS_BOX_CROP = None, "", None, None, None
+    REREGISTER_BOX_SUGGEST, REREGISTER_TOPN, REREGISTER_ACCEPT_MARGIN = 1, 0, None
 
 
 def seed_env():
@@ -45,3 +55,7 @@ def seed_env():
         os.environ.setdefault("CONSENSUS_MIN_S", str(MIN_S))
     if CONSENSUS_BOX_CROP is not None:
         os.environ.setdefault("CONSENSUS_BOX_CROP", str(CONSENSUS_BOX_CROP))
+    os.environ.setdefault("REREGISTER_BOX_SUGGEST", str(REREGISTER_BOX_SUGGEST))
+    os.environ.setdefault("REREGISTER_TOPN", str(REREGISTER_TOPN))
+    if REREGISTER_ACCEPT_MARGIN is not None:
+        os.environ.setdefault("REREGISTER_ACCEPT_MARGIN", str(REREGISTER_ACCEPT_MARGIN))

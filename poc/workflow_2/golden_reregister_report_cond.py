@@ -72,3 +72,31 @@ def _self_ratio(cands, best_xy, excl_radius_px):
         if float(np.hypot(c.xy[0] - bx, c.xy[1] - by)) > excl_radius_px:
             return float(c.score) / best_score
     return 0.0
+
+
+# ====================================================================
+# 순수 헬퍼 — tier / risk / 랭킹.
+# ====================================================================
+def _evidence_tier(modality, strong_fail_frac, msr_peak_tail, self_ratio):
+    """가장 강한 증거 1개로 tier 결정(상관 축 이중계수 회피). raw 절대 floor 경계.
+
+    SEM self-match 는 near-degenerate 라 단독 tier 를 만들지 않는다(ADVISORY 는 OM 만).
+    반환 (tier, severity) — severity 는 tier 내 정렬 키(raw, 정규화 없음).
+    """
+    if strong_fail_frac > 0:
+        return "STRONG", float(strong_fail_frac)
+    if msr_peak_tail >= MSR_FLOOR:
+        return "MEDIUM", float(msr_peak_tail)
+    if modality == "om" and self_ratio >= SELF_FLOOR:
+        return "ADVISORY", float(self_ratio)
+    return "NONE", 0.0
+
+
+def _risk_score(tier, severity):
+    """tier 가중 + tier 내 raw severity. cohort 통계 없음(1-recipe/동값 안전)."""
+    return TIER_WEIGHT[tier] + float(severity)
+
+
+def _rank_rows(rows):
+    """한 modality row 들을 risk_score desc 정렬, 동점은 worst_disp desc tiebreak."""
+    return sorted(rows, key=lambda r: (r["risk_score"], r.get("worst_disp", 0.0)), reverse=True)

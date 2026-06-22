@@ -63,3 +63,50 @@ def test_self_ratio_unique_when_no_survivor():
             self.xy, self.score = xy, score
     cands = [C((100, 100), 1.0), C((103, 100), 0.9)]  # 둘 다 excl 안 → 생존 0.
     assert rr._self_ratio(cands, (100, 100), 10.0) == 0.0
+
+
+def test_tier_strong_when_free_search_fails():
+    tier, sev = rr._evidence_tier("sem", 0.5, 0.99, 0.99)
+    assert tier == "STRONG" and sev == 0.5
+
+
+def test_tier_medium_on_msr_tail():
+    tier, sev = rr._evidence_tier("sem", 0.0, 0.90, 0.99)
+    assert tier == "MEDIUM" and sev == 0.90
+
+
+def test_tier_advisory_only_for_om():
+    tier, _ = rr._evidence_tier("om", 0.0, 0.10, 0.90)
+    assert tier == "ADVISORY"
+
+
+def test_sem_self_never_surfaces():
+    # SEM self-match 가 높아도(near-degenerate) MEDIUM/ADVISORY 로 안 뜸 → NONE.
+    tier, _ = rr._evidence_tier("sem", 0.0, 0.10, 0.99)
+    assert tier == "NONE"
+
+
+def test_tier_none_below_floors():
+    assert rr._evidence_tier("om", 0.0, 0.10, 0.10)[0] == "NONE"
+
+
+def test_risk_score_orders_tiers():
+    assert (rr._risk_score("STRONG", 0.0) > rr._risk_score("MEDIUM", 0.99)
+            > rr._risk_score("ADVISORY", 0.99) > rr._risk_score("NONE", 0.99))
+
+
+def test_rank_rows_desc_with_disp_tiebreak():
+    rows = [
+        {"recipe": "a", "risk_score": 2.5, "worst_disp": 0.3},
+        {"recipe": "b", "risk_score": 2.5, "worst_disp": 0.9},  # 동점 → worst_disp 큰 게 위.
+        {"recipe": "c", "risk_score": 1.2, "worst_disp": 0.9},
+    ]
+    ranked = rr._rank_rows(rows)
+    assert [r["recipe"] for r in ranked] == ["b", "a", "c"]
+
+
+def test_rank_rows_single_and_equal_safe():
+    # 1-recipe / 동값 cohort 에서 예외·div 없이 동작(min-max 제거 회귀 가드).
+    assert rr._rank_rows([{"recipe": "x", "risk_score": 1.0, "worst_disp": 0.0}])[0]["recipe"] == "x"
+    rr._rank_rows([{"recipe": "p", "risk_score": 1.0, "worst_disp": 0.0},
+                   {"recipe": "q", "risk_score": 1.0, "worst_disp": 0.0}])  # no raise

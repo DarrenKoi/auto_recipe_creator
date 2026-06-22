@@ -143,6 +143,66 @@ def test_box_crop_is_centered_on_box_region_offset_from_crosshair():
     assert crop.mean() > 150, "box crop 이 box 영역(밝은 마커)을 담아야 함"
 
 
+def test_history_crops_box_feeds_box_arm_in_history_path(monkeypatch, tmp_path):
+    """I2 회귀 가드: history_crops_box 가 채워지면 history 경로에서 box arm 이 실제 hit 를 낸다.
+
+    history 경로(use_history=True)에서 box arm pool 은 data["history_crops_box"][mod] 로
+    채워진다. 이전 버전은 history_crops_box 를 쓰기 않아 pool 이 항상 비어 n_no_cand 가
+    n_eval 과 같았다. 이 테스트는 history_crops_box 가 min_s 이상 채워진 경우 box arm 에서
+    n_no_cand < n_eval (= 실제 hit 발생)임을 보장한다.
+
+    setup: SEM 1개 eval frame, history_crops >=min_s (history 경로 진입),
+           history_crops_box >=2 (box pool 충분), _gt_in_topk 스텁 = box arm 항상 hit.
+    """
+    calls = {"center": 0, "box": 0}
+
+    def _fake_gt(gray, xy, tpls, *, scales=None, topk=None):
+        (mod, tpl), = tpls.items()
+        ver = getattr(tpl, "version", "")
+        if "box" in ver:
+            calls["box"] += 1
+            return {"topk_rank": 1, "in_topk": True, "n_cand": 8,
+                    "best_cand_dist_norm": 0.0, "modality": mod, "cand_xys": [],
+                    "peak_ratio": 1.0, "cand_scores": [], "cand_ncc": None}
+        calls["center"] += 1
+        return {"topk_rank": 1, "in_topk": True, "n_cand": 8,
+                "best_cand_dist_norm": 0.0, "modality": mod, "cand_xys": [],
+                "peak_ratio": 1.0, "cand_scores": [], "cand_ncc": None}
+
+    monkeypatch.setattr(alsim, "_gt_in_topk", _fake_gt)
+
+    # eval: SEM 1장(history 경로이므로 LOO pool 은 쓰지 않는다).
+    fm = [{"path": "S0", "xy": (50, 50), "mod": "sem",
+           "crop": _stack_crops(220)[0], "crop_box": _stack_crops(200)[0]}]
+    box_tpl = build_template(np.full((20, 20), 200, np.uint8),
+                             recipe_id="R", version="sem_box", key_type="sem")
+    # history_crops: SEM 4장 — use_history=True 조건 충족(min_s=3).
+    history_center = _stack_crops(220, n=4)
+    # history_crops_box: SEM 4장 — box arm pool 충분.
+    history_box = _stack_crops(200, n=4)
+    by_recipe = {
+        "R": {
+            "s_frames": fm,
+            "e_paths": [],
+            "rcp_tpls": {},
+            "box_tpls": {"sem": (box_tpl, (5, 5))},
+            "history_crops": {"sem": history_center},
+            "history_crops_box": {"sem": history_box},
+        }
+    }
+
+    res = alsim._consensus_template_ab(by_recipe, min_s=3, out_dir=str(tmp_path),
+                                       box_crop=True,
+                                       frame_loader=lambda f: np.full((100, 100), 30, np.uint8))
+    assert res is not None, "결과 없음 — recipe 가 min_s 조건을 통과해야 함"
+    ab = res["box_crop_ab"]["per_modality"]["sem"]
+    assert ab["box"]["n_eval"] > 0, "history 경로에서 box arm 분모가 0"
+    assert ab["box"]["n_no_candidate"] < ab["box"]["n_eval"], (
+        "history_crops_box 가 채워졌으므로 box arm 이 최소 1개 이상 hit 를 내야 함 "
+        "(n_no_cand < n_eval). history_crops_box 미설정이면 이 조건은 항상 실패한다.")
+    assert ab["box"]["recall"] > 0.0, "box arm recall > 0 이어야(history pool 활용)"
+
+
 def test_box_crop_digest_formats_per_modality_delta():
     """_format_box_crop_digest: per-modality center-vs-box delta + 카운트 표기를 검증한다.
 
@@ -159,4 +219,4 @@ def test_box_crop_digest_formats_per_modality_delta():
     joined = "\n".join(lines)
     assert "sem" in joined.lower() and "om" in joined.lower()
     assert "+0.17" in joined or "+0.170" in joined, "SEM box-center delta(+0.17) 표기"
-    assert "n_eval" in joined and "no_cand" in joined.replace("_candidate", "_cand")
+    assert "n_eval" in joined and "box_no_cand" in joined

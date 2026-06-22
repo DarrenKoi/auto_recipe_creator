@@ -227,9 +227,13 @@ def _box_consensus_crop(gray, crosshair_xy, offset_xy, box_tpl):
     """box 영역(=crosshair - offset 중심) crop, box template 크기. consensus box arm 재료.
 
     offset = image_center - box_center 이고 S 프레임에선 align point(=image center) 가
-    crosshair 에 오므로 box center = crosshair - offset. crosshair 는 distractor 라 호출부에서
-    이미 정제된(clean) 프레임을 넘기거나, 여기선 raw 를 받아 box 영역만 자른다(box 영역엔
-    보통 crosshair 가 없음). 없으면(OOB/너무작음) None.
+    crosshair 에 오므로 box center = crosshair - offset.
+
+    호출부는 clean_image(gray, cond) 로 crosshair/box 를 제거한 정제된 프레임을 전달해야 한다
+    (raw 프레임이 아님). 이렇게 하면 consensus center arm 의 _cond_consensus_crop 도
+    clean_image 를 거치므로 두 arm 이 동일 전처리 기준(apples-to-apples)을 갖는다.
+    cond_template_crop(rcp template 경로)과는 달리 clean_image 경로를 따름에 유의.
+    없으면(OOB/너무작음) None.
     """
     bcx = crosshair_xy[0] - offset_xy[0]
     bcy = crosshair_xy[1] - offset_xy[1]
@@ -351,6 +355,8 @@ def _build_cond_by_recipe(assets, center_tpls, box_tpls=None):
 
     # co-registration: modality 별로(외형이 달라 섞으면 안 됨) crop 들을 sub-pixel 정렬해
     # median blur 를 줄인다. 정렬은 crop 내용만 바꾸고 crosshair GT(xy)·full-frame 은 불변.
+    # crop_box 도 같이 정렬한다 — modality 내 box crop 은 모두 같은 box template 크기이므로
+    # 섞어도 무방하고, 정렬하지 않으면 box arm pool 만 jitter 가 남아 median 이 흐려진다.
     if COREGISTER and entry["s_frames"]:
         by_mod = defaultdict(list)
         for f in entry["s_frames"]:
@@ -358,9 +364,17 @@ def _build_cond_by_recipe(assets, center_tpls, box_tpls=None):
         for fs in by_mod.values():
             for f, aligned in zip(fs, coregister_crops([f["crop"] for f in fs])):
                 f["crop"] = aligned
+            # box crop co-registration: None 을 제외한 것만 정렬하고 제자리에 기록.
+            box_frames = [f for f in fs if f.get("crop_box") is not None]
+            if box_frames:
+                box_aligned = coregister_crops([f["crop_box"] for f in box_frames])
+                for f, aligned in zip(box_frames, box_aligned):
+                    f["crop_box"] = aligned
     # consensus 과거 S 풀(from_msr_history). 있으면 _consensus_template_ab 가 LOO 대신
     # 이 disjoint 풀로 consensus 를 빌드(eval=from_msr S, 누설 0). 부재면 {} → LOO 폴백.
     entry["history_crops"] = _crop_history_by_mod(assets, center_tpls, recipe_mod)
+    entry["history_crops_box"] = _crop_history_by_mod_box(
+        assets, center_tpls, entry["box_tpls"], recipe_mod)
     return entry
 
 
@@ -405,6 +419,49 @@ def _crop_history_by_mod(assets, center_tpls, recipe_mod):
         if crop is None:
             continue
         by_mod[mod].append(crop)
+    if COREGISTER:
+        for mod, crops in list(by_mod.items()):
+            if crops:
+                by_mod[mod] = list(coregister_crops(crops))
+    return dict(by_mod)
+
+
+def _crop_history_by_mod_box(assets, center_tpls, box_tpls, recipe_mod):
+    """과거 성공 S 풀을 modality 별 box consensus crop 리스트로. 부재면 {}.
+
+    _crop_history_by_mod 의 box arm 대응 함수. center_tpls 는 modality 결정·drop 사유
+    판정(sizing 폴백 포함)에만 사용하고, box crop 은 box_tpls[mod] 의 template 크기와
+    offset 을 따른다. box template 이 없는 modality 는 건너뛴다.
+    eval(from_msr)과 disjoint 한 consensus 재료 전용이라 xy/path 는 보관 안 한다.
+    modality 별 co-registration 도 center arm 과 동일하게 적용한다.
+    """
+    hist_imgs = _history_images(assets)
+    if not hist_imgs:
+        return {}
+    by_mod = defaultdict(list)
+    for p in hist_imgs:
+        if _tool_label(p.name) != "S":
+            continue
+        cond = load_cond(p)
+        mod = _resolve_mod(cond, recipe_mod)
+        xy = _cond_crosshair_xy(cond)
+        tpl_item = center_tpls.get(mod) or next(
+            (t for t in center_tpls.values() if t is not None), None)
+        if _precrop_drop_reason(cond, xy, mod, tpl_item is not None):
+            continue
+        bt = (box_tpls or {}).get(mod)
+        if bt is None:
+            continue          # 이 modality 에 box template 없음 — box arm 재료 없음.
+        box_tpl_obj, off = bt
+        try:
+            gray = load_gray(p)
+        except Exception:
+            continue
+        cleaned = clean_image(gray, cond)
+        crop_box = _box_consensus_crop(cleaned, xy, off, box_tpl_obj)
+        if crop_box is None:
+            continue
+        by_mod[mod].append(crop_box)
     if COREGISTER:
         for mod, crops in list(by_mod.items()):
             if crops:

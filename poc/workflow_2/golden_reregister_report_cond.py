@@ -37,15 +37,18 @@ def _aggregate_strong(frame_results):
 
     frame_results: 프레임별 `_gt_in_topk` 반환 dict 리스트(None 프레임은 호출부에서 제외).
     fail = in_topk=False 또는 topk_rank>1.
+    worst_disp: FAIL 프레임에서만 측정(pass 프레임 변위는 tiebreak 왜곡 방지).
+    fail 프레임이 없으면 worst_disp=0.0.
     """
     n = len(frame_results)
     if n == 0:
         return {"strong_fail_frac": 0.0, "worst_disp": 0.0, "n_s": 0}
-    fails = sum(
-        1 for f in frame_results
+    fail_frames = [
+        f for f in frame_results
         if (not f.get("in_topk")) or (f.get("topk_rank") or 1) > 1
-    )
-    worst = max((f.get("best_cand_dist_norm") or 0.0) for f in frame_results)
+    ]
+    fails = len(fail_frames)
+    worst = max((f.get("best_cand_dist_norm") or 0.0) for f in fail_frames) if fail_frames else 0.0
     return {"strong_fail_frac": fails / n, "worst_disp": float(worst), "n_s": n}
 
 
@@ -153,7 +156,10 @@ def _mean(xs):
 
 
 def _split_frames(frame_keys, *, split_min_s=SPLIT_MIN_S):
-    """held-out 분할. < split_min_s 면 None(insufficient). even-idx=select, odd-idx=validate."""
+    """held-out 분할. < split_min_s 면 None(insufficient). even-idx=select, odd-idx=validate.
+
+    frame_keys: (gray, gt_xy) 튜플 또는 임의 아이템 리스트 — "키(경로)" 외에도 일반 아이템에 동작.
+    """
     if len(frame_keys) < split_min_s:
         return None
     select = [k for i, k in enumerate(frame_keys) if i % 2 == 0]
@@ -246,8 +252,10 @@ def _patch_self_ratio(img, box):
 def _search_unique_box(img, base_box):
     """rcp 이미지 위 후보 박스 중 self_ratio 최저(가장 변별)를 반환.
 
-    반환: {box, self_ratio} 또는 None(텍스처 있는 후보 없음).
     base_box 를 기준 크기로 슬라이드 윈도를 생성해 각 후보의 self_ratio 를 측정.
+    반환: {box, self_ratio} 또는 None(텍스처 있는 후보가 하나도 생성되지 않은 경우).
+    전부 주기 배경처럼 텍스처 없는 후보만 있을 때는 None 이 아니라 self_ratio=1.0 항목이
+    반환될 수 있다 — 호출부가 self_ratio 임계로 필터링해야 한다.
     """
     h, w = img.shape[:2]
     best = None
@@ -262,11 +270,45 @@ def _search_unique_box(img, base_box):
 _FIDELITY_GT_TOL_NORM = 0.20
 
 
+def _real_box_ltrb(rcp_gray):
+    """rcp 그레이 이미지에서 엔지니어 whitebox 의 진짜 위치를 (l, t, r, b) 로 반환.
+
+    `_build_templates` 가 쓰는 것과 동일한 `_detect_white_box`/`_inner_crop_for_box` 검출기를 호출한다.
+    `_detect_white_box` 는 (x, y, w, h), `_inner_crop_for_box` 의 inner_bbox 도 (x0, y0, w, h) 이지만
+    여기서는 외곽 박스 위치(엔지니어 그린 박스 테두리)가 필요하므로 `_detect_white_box` 의 결과를
+    (l, t, r, b) 로 변환해 반환한다.
+    검출 실패 시 None.
+    """
+    try:
+        from poc.workflow_3.align.diagnostics.align_point_correction import (
+            _detect_white_box,
+            _inner_crop_for_box,
+        )
+        det = _detect_white_box(rcp_gray)
+        if det is None:
+            return None
+        # det = (x, y, w, h); inner_bbox 는 inner crop 좌표라 box 위치와 다름.
+        # baseline 은 "엔지니어 현재 whitebox" 외곽 bbox 를 써야 한다(spec §7).
+        # _inner_crop_for_box 를 호출해 inner_bbox 를 얻고, 그것을 base_box 로 사용한다.
+        # inner_bbox = (x0, y0, w, h) in full-image px.
+        _inner, inner_bbox = _inner_crop_for_box(rcp_gray, det)
+        x0, y0, iw, ih = inner_bbox
+        return (int(x0), int(y0), int(x0 + iw), int(y0 + ih))
+    except Exception:
+        return None
+
+
 def _compute_fidelity_from_patch(patch, s_frames):
     """patch(ndarray gray)를 template 으로 각 S 프레임에 매칭한 fidelity 리스트 반환.
 
     s_frames: [(gray_clean, gt_xy)] 리스트.
     fidelity = GT crosshair 위치 hit tolerance 내 최고 점수 후보의 score. 없으면 0.0.
+
+    rcp->msr 비교에는 COMPARE_SCALES(생산 rcp->msr 비교 band) 를 사용한다.
+    `_patch_self_ratio`(rcp->rcp self-match)와 달리 동일 배율 가정이 아니므로
+    _SELF_MATCH_SCALES 가 아닌 COMPARE_SCALES 를 써야 배율 불일치로 fidelity 가 0
+    이 되는 것을 방지한다.
+    모든 프레임 fidelity 가 0.0 이면 scale band 불일치 가능성이 있으므로 경고를 출력한다.
     """
     if patch.size == 0 or not s_frames:
         return []
@@ -277,7 +319,7 @@ def _compute_fidelity_from_patch(patch, s_frames):
     fidelities = []
     for gray, gt_xy in s_frames:
         try:
-            res = compute_align_key_score_ensemble(tpl, gray, scales=_SELF_MATCH_SCALES, policy=STRUCTURE_POLICY)
+            res = compute_align_key_score_ensemble(tpl, gray, scales=COMPARE_SCALES, policy=STRUCTURE_POLICY)
             cands = list(res.candidates)
         except Exception:
             fidelities.append(0.0)
@@ -292,6 +334,8 @@ def _compute_fidelity_from_patch(patch, s_frames):
             fidelities.append(float(max(c.score for c in near)))
         else:
             fidelities.append(0.0)
+    if fidelities and all(f == 0.0 for f in fidelities):
+        print("[WARNING] fidelity all-zero: possible scale band mismatch in _compute_fidelity_from_patch")
     return fidelities
 
 
@@ -327,17 +371,23 @@ def _suggest_for_row(row):
         row["suggestion"] = "no distinctive sub-region"
         return
 
-    # base_box: 현재 엔지니어 whitebox(rcp native px). _box 템플릿의 raw_image 크기로 추정.
+    # base_box: 현재 엔지니어 whitebox 의 실제 위치(rcp native px).
+    # _real_box_ltrb 가 _detect_white_box/_inner_crop_for_box 로 진짜 박스 위치를 복원한다.
+    # 실패 시 _box 템플릿 크기를 이미지 중앙에 위치시키는 근사로 폴백하고 경고 플래그를 세운다.
     box_tpl = (row.get("_box") or {}).get(modality)
     if box_tpl is None:
         row["suggestion"] = "no distinctive sub-region"
         return
-    th, tw = box_tpl.raw_image.shape[:2]
-    # rcp 이미지 중앙 기준 whitebox 추정(cond.txt box 좌표가 없는 경우 중앙 crop 으로 근사).
-    rh, rw = rcp_gray.shape[:2]
-    cx, cy = rw // 2, rh // 2
-    base_box = (max(0, cx - tw // 2), max(0, cy - th // 2),
-                min(rw, cx + tw // 2 + tw % 2), min(rh, cy + th // 2 + th % 2))
+    base_box = _real_box_ltrb(rcp_gray)
+    sugg_pos_approx = False
+    if base_box is None:
+        # 폴백: box 템플릿 크기로 중앙 근사.
+        th, tw = box_tpl.raw_image.shape[:2]
+        rh, rw = rcp_gray.shape[:2]
+        cx, cy = rw // 2, rh // 2
+        base_box = (max(0, cx - tw // 2), max(0, cy - th // 2),
+                    min(rw, cx + tw // 2 + tw % 2), min(rh, cy + th // 2 + th % 2))
+        sugg_pos_approx = True
 
     # baseline: 현재 base_box patch 의 fidelity.
     bl, bt, br, bb = base_box
@@ -394,7 +444,10 @@ def _suggest_for_row(row):
         _, gt_xy = s_frames[0]
         gx, gy = gt_xy
         # crosshair removal region 근사: crosshair 중심 ± short/4 사각형.
-        short_s = max(1, min(tw, th))
+        # base_box 의 단변(short side)으로 기준 크기를 산정(tw/th 의존 제거).
+        bl, bt, br, bb = base_box
+        bw_bb, bh_bb = br - bl, bb - bt
+        short_s = max(1, min(bw_bb, bh_bb))
         half = max(2, short_s // 4)
         removal_rect = (max(0, gx - half), max(0, gy - half), gx + half, gy + half)
         cand_overlap = _box_overlap_ratio(chosen["box"], removal_rect)
@@ -407,7 +460,10 @@ def _suggest_for_row(row):
 
     # 채택.
     box = chosen["box"]
-    row["suggestion"] = f"box{box}"
+    sugg_str = f"box{box}"
+    if sugg_pos_approx:
+        sugg_str += "(approx-pos)"
+    row["suggestion"] = sugg_str
     row["sugg_self"] = chosen["self_ratio"]
     row["sugg_fidelity"] = _mean(chosen["val_fidelities"])
 
@@ -435,14 +491,17 @@ def _render_overlay(row):
         rcp_gray = load_gray(rcp_path)
         overlay = cv2.cvtColor(rcp_gray, cv2.COLOR_GRAY2BGR)
 
-        # 현재 whitebox: box template 크기로 중앙 추정.
+        # 현재 whitebox: _real_box_ltrb 로 진짜 위치 복원.
+        # _real_box_ltrb 실패 시 box template 크기로 중앙 근사(overlay 표기에만 영향).
         box_tpl = (row.get("_box") or {}).get(modality)
         if box_tpl is not None:
-            th, tw = box_tpl.raw_image.shape[:2]
-            rh, rw = overlay.shape[:2]
-            cx, cy = rw // 2, rh // 2
-            base_box = (max(0, cx - tw // 2), max(0, cy - th // 2),
-                        min(rw, cx + tw // 2 + tw % 2), min(rh, cy + th // 2 + th % 2))
+            base_box = _real_box_ltrb(rcp_gray)
+            if base_box is None:
+                th, tw = box_tpl.raw_image.shape[:2]
+                rh, rw = overlay.shape[:2]
+                cx, cy = rw // 2, rh // 2
+                base_box = (max(0, cx - tw // 2), max(0, cy - th // 2),
+                            min(rw, cx + tw // 2 + tw % 2), min(rh, cy + th // 2 + th % 2))
             bl, bt, br, bb = base_box
             cv2.rectangle(overlay, (bl, bt), (br, bb), (255, 0, 255), 2)   # 자홍(BGR).
             cv2.putText(overlay, "current", (bl, max(0, bt - 4)),
@@ -477,7 +536,7 @@ def _render_overlay(row):
 import cv2
 from pathlib import Path
 
-from poc.workflow_2.align_similarity import _build_templates, _gt_in_topk
+from poc.workflow_2.align_similarity import _build_templates, _gt_in_topk, COMPARE_SCALES
 from poc.workflow_3.align.matching.engine import (
     build_template,
     compute_align_key_score_ensemble,
@@ -716,7 +775,8 @@ def run():
     (OUTPUT_ROOT / "reregister_report.txt").write_text(_format_report(rows_by_mod), encoding="utf-8")
     digest = _format_digest(rows_by_mod)
     (OUTPUT_ROOT / "digest.txt").write_text(digest, encoding="utf-8")
-    print(digest)
+    # cp949 콘솔에서 비-ASCII recipe 이름이 포함될 수 있으므로 ASCII safe 변환 후 출력(파일은 utf-8 그대로).
+    print(digest.encode("ascii", "replace").decode("ascii"))
     return digest
 
 

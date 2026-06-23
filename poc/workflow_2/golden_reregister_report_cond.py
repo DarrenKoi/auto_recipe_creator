@@ -317,11 +317,13 @@ def _box_offset_xy(box, frame_w, frame_h):
     return (cx - frame_w / 2.0, cy - frame_h / 2.0)
 
 
-def _compute_fidelity_from_patch(patch, s_frames, *, box_offset_xy=(0.0, 0.0)):
+def _compute_fidelity_from_patch(patch, s_frames, *, box_offset_xy=(0.0, 0.0), tag=""):
     """patch(ndarray gray)를 template 으로 각 S 프레임에 매칭한 fidelity 리스트 반환.
 
     s_frames: [(gray_clean, gt_xy)] 리스트.
     box_offset_xy: rcp px 기준 (box_center - rcp_center). off-center sub-crop 보정용.
+    tag: 진단 라벨(baseline-* / cand / chosen-val). all-zero 경고가 엔지니어 박스(baseline)
+         에서 나는지(진짜 문제) 후보 박스(cand, 변별 안 되면 0 이 정상)에서 나는지 구분용.
 
     fidelity = 기대 위치 hit tolerance 내 최고 점수 후보의 score. 없으면 0.0.
 
@@ -353,7 +355,8 @@ def _compute_fidelity_from_patch(patch, s_frames, *, box_offset_xy=(0.0, 0.0)):
     # all-zero 진단 카운터: 세 경로(exc/empty/offtarget)를 구분해 한 줄로 보고.
     n_exc = n_empty = n_offtarget = 0
     first_exc = ""
-    nearest_dbg = None   # (best_dist, tol, best_scale, best_xy, expected_xy) — off-target 예시.
+    nearest_dbg = None   # (best_dist, tol, best_scale, best_xy, expected_xy) — 기대 위치 최근접 후보.
+    top1_dbg = None      # (n_cands, top1_xy, top1_scale, top1_score, top1_dist) — 최고점수 후보.
     for gray, gt_xy in s_frames:
         try:
             res = compute_align_key_score_ensemble(tpl, gray, scales=COMPARE_SCALES, policy=STRUCTURE_POLICY)
@@ -385,15 +388,22 @@ def _compute_fidelity_from_patch(patch, s_frames, *, box_offset_xy=(0.0, 0.0)):
             if nearest_dbg is None or bd < nearest_dbg[0]:
                 nearest_dbg = (bd, tol_px, bc.scale, bc.xy,
                                (round(gx + ox * bc.scale, 1), round(gy + oy * bc.scale, 1)))
+            # 최고-score 후보(엔진의 실제 1픽)가 기대 위치와 얼마나 먼지 — 변별 실패 vs 좌표계 진단.
+            t1d, t1c = max(dists, key=lambda dc: dc[1].score)
+            if top1_dbg is None:
+                top1_dbg = (len(cands), t1c.xy, t1c.scale, round(float(t1c.score), 3), round(t1d, 1))
     if fidelities and all(f == 0.0 for f in fidelities):
         # 0.0 은 세 경로(엔진 예외/후보 없음/기대 위치 밖) 모두에서 나올 수 있어 분해해 보고.
         n = len(fidelities)
-        msg = (f"[WARNING] fidelity all-zero: frames={n} exc={n_exc} empty={n_empty} "
+        msg = (f"[WARNING] fidelity all-zero[{tag or '?'}]: frames={n} exc={n_exc} empty={n_empty} "
                f"offtarget={n_offtarget} | patch={pw}x{ph} tol={tol_px:.1f} "
                f"offset=({ox:.0f},{oy:.0f})")
         if nearest_dbg is not None:
             bd, tp, bsc, bxy, exp = nearest_dbg
-            msg += f" | ex_offtarget: best_xy={bxy} expected={exp} dist={bd:.1f} scale={bsc:.2f}"
+            msg += f" | nearest: xy={bxy} expected={exp} dist={bd:.1f} scale={bsc:.2f}"
+        if top1_dbg is not None:
+            nc, t1xy, t1sc, t1score, t1d = top1_dbg
+            msg += f" | top1(n={nc}): xy={t1xy} scale={t1sc:.2f} score={t1score} dist={t1d}"
         if first_exc:
             msg += f" | exc: {first_exc}"
         print(msg)
@@ -458,8 +468,8 @@ def _suggest_for_row(row):
     bl, bt, br, bb = base_box
     base_patch = rcp_gray[bt:bb, bl:br]
     base_off = _box_offset_xy(base_box, w, h)
-    baseline_sel = _compute_fidelity_from_patch(base_patch, sel_frames, box_offset_xy=base_off)
-    baseline_val = _compute_fidelity_from_patch(base_patch, val_frames, box_offset_xy=base_off)
+    baseline_sel = _compute_fidelity_from_patch(base_patch, sel_frames, box_offset_xy=base_off, tag="baseline-sel")
+    baseline_val = _compute_fidelity_from_patch(base_patch, val_frames, box_offset_xy=base_off, tag="baseline-val")
     baseline_self = _patch_self_ratio(rcp_gray, base_box)
 
     # select-half: 후보 박스 검색 + 각 후보 fidelity 계산.
@@ -470,7 +480,7 @@ def _suggest_for_row(row):
         patch = rcp_gray[t:b, l:r]
         if not _passes_texture(patch):
             continue
-        sel_fid = _compute_fidelity_from_patch(patch, sel_frames, box_offset_xy=_box_offset_xy(box, w, h))
+        sel_fid = _compute_fidelity_from_patch(patch, sel_frames, box_offset_xy=_box_offset_xy(box, w, h), tag="cand")
         cand_metrics.append({
             "box": box,
             "self_ratio": sr,
@@ -491,7 +501,7 @@ def _suggest_for_row(row):
     cl, ct, cr, cb = chosen["box"]
     cand_patch = rcp_gray[ct:cb, cl:cr]
     chosen["val_fidelities"] = _compute_fidelity_from_patch(
-        cand_patch, val_frames, box_offset_xy=_box_offset_xy(chosen["box"], w, h))
+        cand_patch, val_frames, box_offset_xy=_box_offset_xy(chosen["box"], w, h), tag="chosen-val")
     baseline_val_metric = {"self_ratio": baseline_self, "val_fidelities": baseline_val}
 
     val_delta = _mean(chosen["val_fidelities"]) - _mean(baseline_val_metric["val_fidelities"])

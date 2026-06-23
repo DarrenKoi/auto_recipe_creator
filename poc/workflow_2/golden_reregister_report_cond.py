@@ -301,17 +301,46 @@ def _real_box_ltrb(rcp_gray):
         return None
 
 
-def _compute_fidelity_from_patch(patch, s_frames):
+def _box_offset_xy(box, frame_w, frame_h):
+    """(box_center - frame_center) in rcp px. off-center sub-crop 의 fidelity 보정용 offset.
+
+    box: (l, t, r, b). align point(crosshair)=frame 중심 가정과 박스 중심의 차이를 돌려준다.
+
+    주의: 부호가 엔진의 `AlignKeyTemplate.align_offset_xy`(= image_center - box_center,
+    engine.py)와 **반대**다. 여기 값은 `_compute_fidelity_from_patch` 의 box_offset_xy
+    슬롯에만 쓴다(기대 위치 = gt_xy + offset*scale). 엔진 align_offset 슬롯에 그대로
+    넘기면 부호가 이중 반전되어 fidelity 가 전부 0 으로 무너지니 섞어 쓰지 말 것.
+    """
+    l, t, r, b = box
+    cx = (l + r) / 2.0
+    cy = (t + b) / 2.0
+    return (cx - frame_w / 2.0, cy - frame_h / 2.0)
+
+
+def _compute_fidelity_from_patch(patch, s_frames, *, box_offset_xy=(0.0, 0.0)):
     """patch(ndarray gray)를 template 으로 각 S 프레임에 매칭한 fidelity 리스트 반환.
 
     s_frames: [(gray_clean, gt_xy)] 리스트.
-    fidelity = GT crosshair 위치 hit tolerance 내 최고 점수 후보의 score. 없으면 0.0.
+    box_offset_xy: rcp px 기준 (box_center - rcp_center). off-center sub-crop 보정용.
+
+    fidelity = 기대 위치 hit tolerance 내 최고 점수 후보의 score. 없으면 0.0.
+
+    매칭 후보의 xy 는 patch 중심이 frame 에 박힌 위치다(엔진은 align_offset 을 xy 에
+    적용하지 않는다). 따라서 박스가 align point(=crosshair=gt_xy)에서 떨어져 있으면
+    기대 매칭 위치는 gt_xy 가 아니라 gt_xy + box_offset_xy * scale 이다. 이 보정을 빼면
+    off-center 박스(특히 OM unique-area)는 후보가 gt_xy 근처에 없어 fidelity 가 전부
+    0 으로 떨어진다(과거 all-zero 경고의 진짜 원인). box_offset_xy=(0,0) 이면 중심 박스
+    가정으로 기존 동작과 동일하다.
 
     rcp->msr 비교에는 COMPARE_SCALES(생산 rcp->msr 비교 band) 를 사용한다.
-    `_patch_self_ratio`(rcp->rcp self-match)와 달리 동일 배율 가정이 아니므로
-    _SELF_MATCH_SCALES 가 아닌 COMPARE_SCALES 를 써야 배율 불일치로 fidelity 가 0
-    이 되는 것을 방지한다.
-    모든 프레임 fidelity 가 0.0 이면 scale band 불일치 가능성이 있으므로 경고를 출력한다.
+    모든 프레임 fidelity 가 0.0 이면 경고를 출력한다(매칭 자체 실패 신호).
+
+    한계(co-magnification 가정): tol_px 는 patch 단변(rcp px) 기준이고 offset 은
+    후보 scale 로 환산한다. rcp/msr 가 거의 같은 배율(scale~1.0)일 때 정확하며,
+    배율이 크게 다르면 (a) tol 이 frame px 와 어긋나고 (b) RRF 융합 후보의 scale 이
+    실제 위치 scale 과 한 step 어긋날 수 있어, offset 이 큰 (far off-center) 박스에서
+    참 매칭이 tol 밖으로 밀릴 수 있다. 벤치는 co-magnification 가정이라 지배 오차
+    (center-vs-offset, 수십 px)만 보정한다. tol 의 scale 일관화는 별도 office 검증 필요.
     """
     if patch.size == 0 or not s_frames:
         return []
@@ -319,6 +348,7 @@ def _compute_fidelity_from_patch(patch, s_frames):
     ph, pw = patch.shape[:2]
     short = max(1, min(pw, ph))
     tol_px = _FIDELITY_GT_TOL_NORM * short
+    ox, oy = box_offset_xy
     fidelities = []
     for gray, gt_xy in s_frames:
         try:
@@ -331,14 +361,19 @@ def _compute_fidelity_from_patch(patch, s_frames):
             fidelities.append(0.0)
             continue
         gx, gy = gt_xy
-        # GT hit tolerance 내 후보 중 최고 score.
-        near = [c for c in cands if float(np.hypot(c.xy[0] - gx, c.xy[1] - gy)) <= tol_px]
+        # 기대 매칭 위치 = gt_xy + box_offset * scale (후보마다 scale 다름) 의 tolerance 내 최고 score.
+        near = [
+            c for c in cands
+            if float(np.hypot(c.xy[0] - (gx + ox * c.scale),
+                              c.xy[1] - (gy + oy * c.scale))) <= tol_px
+        ]
         if near:
             fidelities.append(float(max(c.score for c in near)))
         else:
             fidelities.append(0.0)
     if fidelities and all(f == 0.0 for f in fidelities):
-        print("[WARNING] fidelity all-zero: possible scale band mismatch in _compute_fidelity_from_patch")
+        # 0.0 은 세 경로(엔진 예외/후보 없음/기대 위치 밖) 모두에서 나올 수 있다.
+        print("[WARNING] fidelity all-zero in _compute_fidelity_from_patch (no usable match: empty/exception/off-target)")
     return fidelities
 
 
@@ -393,14 +428,18 @@ def _suggest_for_row(row):
         sugg_pos_approx = True
 
     # baseline: 현재 base_box patch 의 fidelity.
+    # off-center 박스 보정: 매칭 후보는 patch 중심 위치를 돌려주므로 기대 위치는
+    # gt_xy + (box_center - rcp_center) 다. 이 offset 없이 평가하면 align point 에서
+    # 떨어진 박스(특히 OM)의 fidelity 가 전부 0 으로 떨어진다.
+    h, w = rcp_gray.shape[:2]
     bl, bt, br, bb = base_box
     base_patch = rcp_gray[bt:bb, bl:br]
-    baseline_sel = _compute_fidelity_from_patch(base_patch, sel_frames)
-    baseline_val = _compute_fidelity_from_patch(base_patch, val_frames)
+    base_off = _box_offset_xy(base_box, w, h)
+    baseline_sel = _compute_fidelity_from_patch(base_patch, sel_frames, box_offset_xy=base_off)
+    baseline_val = _compute_fidelity_from_patch(base_patch, val_frames, box_offset_xy=base_off)
     baseline_self = _patch_self_ratio(rcp_gray, base_box)
 
     # select-half: 후보 박스 검색 + 각 후보 fidelity 계산.
-    h, w = rcp_gray.shape[:2]
     cand_metrics = []
     for box in _iter_candidate_boxes(w, h, base_box):
         sr = _patch_self_ratio(rcp_gray, box)
@@ -408,7 +447,7 @@ def _suggest_for_row(row):
         patch = rcp_gray[t:b, l:r]
         if not _passes_texture(patch):
             continue
-        sel_fid = _compute_fidelity_from_patch(patch, sel_frames)
+        sel_fid = _compute_fidelity_from_patch(patch, sel_frames, box_offset_xy=_box_offset_xy(box, w, h))
         cand_metrics.append({
             "box": box,
             "self_ratio": sr,
@@ -428,7 +467,8 @@ def _suggest_for_row(row):
     # validate-half: 후보 vs baseline 재측정.
     cl, ct, cr, cb = chosen["box"]
     cand_patch = rcp_gray[ct:cb, cl:cr]
-    chosen["val_fidelities"] = _compute_fidelity_from_patch(cand_patch, val_frames)
+    chosen["val_fidelities"] = _compute_fidelity_from_patch(
+        cand_patch, val_frames, box_offset_xy=_box_offset_xy(chosen["box"], w, h))
     baseline_val_metric = {"self_ratio": baseline_self, "val_fidelities": baseline_val}
 
     val_delta = _mean(chosen["val_fidelities"]) - _mean(baseline_val_metric["val_fidelities"])

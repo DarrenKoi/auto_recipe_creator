@@ -182,6 +182,14 @@ def test_split_frames_default_allows_two():
     assert rr._split_frames(["a"]) is None       # 1장은 여전히 insufficient.
 
 
+def test_box_offset_xy_is_box_center_minus_frame_center():
+    # frame 240x240 -> center (120,120). box (154,104,190,140) -> center (172,122).
+    off = rr._box_offset_xy((154, 104, 190, 140), 240, 240)
+    assert off == (52.0, 2.0)
+    # 중심 박스는 offset 0.
+    assert rr._box_offset_xy((100, 100, 140, 140), 240, 240) == (0.0, 0.0)
+
+
 def test_iter_candidate_boxes_within_bounds():
     boxes = rr._iter_candidate_boxes(200, 200, (80, 80, 120, 120))
     assert boxes  # 비어있지 않음.
@@ -263,4 +271,56 @@ def test_suggestion_all_periodic_returns_none_distinctive():
     # 전부 주기 → None(후보 없음)이거나 self_ratio 가 높아야(변별 안 됨).
     assert found is None or found["self_ratio"] >= 0.9, (
         f"self_ratio={found['self_ratio']:.3f} < 0.9 — 주기 이미지에서 변별 후보가 잘못 선택됨."
+    )
+
+
+def _frame_with_offset_mark(mark_xy=(170, 120)):
+    """저텍스처 배경 + crosshair(=정중앙) 에서 떨어진 위치에 고유 마크를 둔 프레임.
+
+    mark_xy 는 frame 중심(=align point/crosshair)에서 떨어져 있어 이 마크 박스의
+    중심은 align point 와 일치하지 않는다(off-center sub-crop). 마크는 비대칭(오른쪽
+    돌출)이라 매칭이 유일 위치에 lock 된다.
+    """
+    g = np.full((240, 240), 40, np.uint8)
+    mx, my = mark_xy
+    g[my - 12:my + 12, mx - 12:mx + 12] = 200
+    g[my - 12:my + 12, mx - 2:mx + 2] = 40    # 내부 세로 십자.
+    g[my - 2:my + 2, mx - 12:mx + 12] = 40    # 내부 가로 십자.
+    g[my - 12:my + 4, mx + 12:mx + 18] = 200  # 오른쪽 돌출 -> 비대칭.
+    return g
+
+
+def test_fidelity_nonzero_for_offset_box():
+    """align point 에서 떨어진 박스라도 box_offset_xy 를 주면 fidelity > 0.
+
+    박스 중심이 crosshair(gt_xy)와 (+52,+2) 어긋나 있어도, offset 을 적용하면
+    기대 위치 = gt_xy + offset*scale 부근에서 매칭을 찾아 fidelity 가 살아난다.
+    이 경로(off-center sub-crop 의 fidelity)가 바로 all-zero 경고를 양산하던 곳이다.
+    """
+    img = _frame_with_offset_mark()
+    box = (154, 104, 190, 140)         # 마크(170,120) 둘레 박스. 중심 (172,122).
+    patch = img[box[1]:box[3], box[0]:box[2]]
+    s_frames = [(img, (120, 120))]     # gt_xy = frame 중심(= align point).
+    offset = rr._box_offset_xy(box, 240, 240)   # (52,2) = box_center - frame_center.
+    fids = rr._compute_fidelity_from_patch(patch, s_frames, box_offset_xy=offset)
+    assert fids and fids[0] > 0.0, (
+        f"offset 적용 fidelity={fids} -> 0. box_offset 보정이 동작하지 않음."
+    )
+
+
+def test_fidelity_offset_beats_no_offset_for_offset_box():
+    """동일 off-center 박스를 offset 없이(=중심 가정) 평가하면 fidelity 가 떨어진다.
+
+    offset 보정이 fidelity 를 살리는 레버임을 못박는 가드. 보정 없으면 후보가
+    gt_xy(=중심) 근처에 없어 0 으로 떨어지고, 보정하면 진짜 위치에서 살아난다.
+    """
+    img = _frame_with_offset_mark()
+    box = (154, 104, 190, 140)
+    patch = img[box[1]:box[3], box[0]:box[2]]
+    s_frames = [(img, (120, 120))]
+    with_offset = rr._compute_fidelity_from_patch(
+        patch, s_frames, box_offset_xy=rr._box_offset_xy(box, 240, 240))
+    no_offset = rr._compute_fidelity_from_patch(patch, s_frames)   # 기본 (0,0) = 중심 가정.
+    assert with_offset[0] > no_offset[0], (
+        f"offset {with_offset} 가 no-offset {no_offset} 보다 크지 않음 — 보정 효과 없음."
     )

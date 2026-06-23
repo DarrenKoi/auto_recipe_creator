@@ -362,3 +362,27 @@ def test_fidelity_offset_beats_no_offset_for_offset_box():
     assert with_offset[0] > no_offset[0], (
         f"offset {with_offset} 가 no-offset {no_offset} 보다 크지 않음 — 보정 효과 없음."
     )
+
+
+# ====================================================================
+# Task 2: _e_confirm rule + E_CONFIRMED tier weight + thresholds.
+# ====================================================================
+def test_e_confirm_rule_all_branches():
+    """_e_confirm 의 모든 분기: high-S premise + (delta collapse | E-floor) | low-S reject | None 거부."""
+    # high-S premise met + delta collapse -> confirm.
+    assert rr._e_confirm(0.80, 0.60) is True           # delta 0.20 >= 0.15
+    # high-S premise met + E below floor (delta small) -> confirm.
+    assert rr._e_confirm(0.62, 0.49) is True            # delta 0.13 < 0.15 but e <= 0.50
+    # high-S premise met but E holds up -> no collapse.
+    assert rr._e_confirm(0.80, 0.70) is False           # delta 0.10 < 0.15 and e > 0.50
+    # low S (no premise) -> never confirm even if E tiny.
+    assert rr._e_confirm(0.55, 0.10) is False           # s < 0.60
+    # missing reps -> no confirm.
+    assert rr._e_confirm(None, 0.10) is False
+    assert rr._e_confirm(0.90, None) is False
+
+
+def test_e_confirmed_tier_is_top_weight():
+    """E_CONFIRMED 가 TIER_WEIGHT 에서 최상위 무게이고, risk_score 로도 STRONG 을 앞건다."""
+    assert rr.TIER_WEIGHT["E_CONFIRMED"] > rr.TIER_WEIGHT["STRONG"]
+    assert rr._risk_score("E_CONFIRMED", 0.2) > rr._risk_score("STRONG", 1.0)

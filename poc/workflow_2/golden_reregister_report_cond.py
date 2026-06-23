@@ -26,7 +26,14 @@ SUGG_STRIDE_RATIO = 0.25
 # 하고 4 면 전 recipe insufficient → 제안 0건. validate-half 가 1장이면 advisory(낮은 신뢰)로 표기.
 SPLIT_MIN_S = 2
 ACCEPT_MARGIN = float(os.getenv("REREGISTER_ACCEPT_MARGIN", "0.05"))
-TIER_WEIGHT = {"STRONG": 2.0, "MEDIUM": 1.0, "ADVISORY": 0.3, "NONE": 0.0}
+
+# Phase 2 (E-frame confirmation) 임계 — office 보정 대상(점수 ~0.6 압축 분포).
+E_CONFIRM_ON = os.getenv("REREGISTER_E_CONFIRM", "1") != "0"
+S_FLOOR = float(os.getenv("REREGISTER_S_FLOOR", "0.60"))
+E_FLOOR = float(os.getenv("REREGISTER_E_FLOOR", "0.50"))
+COLLAPSE_MARGIN = float(os.getenv("REREGISTER_COLLAPSE_MARGIN", "0.15"))
+
+TIER_WEIGHT = {"E_CONFIRMED": 3.0, "STRONG": 2.0, "MEDIUM": 1.0, "ADVISORY": 0.3, "NONE": 0.0}
 
 # fidelity 매칭 scale band. 진단상 작은 box crop 은 주기 SEM 텍스처에서 *최소 scale(0.6)* 로
 # 줄여 wrong-phase distractor 에 high-score 매칭되어(예: top1 0.9 @ 300px off) 참 위치를 놓쳤다.
@@ -133,6 +140,18 @@ def _evidence_tier(modality, strong_fail_frac, msr_peak_tail, self_ratio):
 def _risk_score(tier, severity):
     """tier 가중 + tier 내 raw severity. cohort 통계 없음(1-recipe/동값 안전)."""
     return TIER_WEIGHT[tier] + float(severity)
+
+
+def _e_confirm(s_rep, e_rep):
+    """score collapse S->E 판정. high-S premise + (delta 또는 E-floor). 순수 함수.
+
+    s_rep/e_rep: free-search best-score 의 modality-row median(없으면 None).
+    """
+    if s_rep is None or e_rep is None:
+        return False
+    if s_rep < S_FLOOR:                       # high-S premise: 애초에 findable 했어야 collapse.
+        return False
+    return (s_rep - e_rep >= COLLAPSE_MARGIN) or (e_rep <= E_FLOOR)
 
 
 def _rank_rows(rows):

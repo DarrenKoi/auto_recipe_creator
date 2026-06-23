@@ -46,10 +46,20 @@ try:
         from poc.workflow_2.golden_eval_config import REREGISTER_GT_TOL_NORM
     except ImportError:   # 구버전 config(REREGISTER_GT_TOL_NORM 없음) 하위호환.
         REREGISTER_GT_TOL_NORM = None
+    try:
+        from poc.workflow_2.golden_eval_config import (
+            REREGISTER_E_CONFIRM, REREGISTER_S_FLOOR, REREGISTER_E_FLOOR,
+            REREGISTER_COLLAPSE_MARGIN,
+        )
+    except ImportError:   # 구버전 config(Phase 2 knob 없음) 하위호환.
+        REREGISTER_E_CONFIRM = 1
+        REREGISTER_S_FLOOR, REREGISTER_E_FLOOR, REREGISTER_COLLAPSE_MARGIN = 0.6, 0.5, 0.15
 except ImportError:   # 실편집 파일 부재 — golden_eval_config.example.py 참고(복사해서 생성).
     GOLDEN_ROOT, LAB_MODE, MIN_S, HISTORY_ROOT, CONSENSUS_BOX_CROP = None, "", None, None, None
     REREGISTER_BOX_SUGGEST, REREGISTER_TOPN, REREGISTER_ACCEPT_MARGIN = 1, 0, None
     REREGISTER_MAX_RECIPES, REREGISTER_FIDELITY_SCALES, REREGISTER_GT_TOL_NORM = 0, "", None
+    REREGISTER_E_CONFIRM = 1
+    REREGISTER_S_FLOOR, REREGISTER_E_FLOOR, REREGISTER_COLLAPSE_MARGIN = 0.6, 0.5, 0.15
 
 
 def seed_env():
@@ -76,3 +86,7 @@ def seed_env():
         os.environ.setdefault("REREGISTER_FIDELITY_SCALES", str(REREGISTER_FIDELITY_SCALES))
     if REREGISTER_GT_TOL_NORM is not None:
         os.environ.setdefault("REREGISTER_GT_TOL_NORM", str(REREGISTER_GT_TOL_NORM))
+    os.environ.setdefault("REREGISTER_E_CONFIRM", str(REREGISTER_E_CONFIRM))
+    os.environ.setdefault("REREGISTER_S_FLOOR", str(REREGISTER_S_FLOOR))
+    os.environ.setdefault("REREGISTER_E_FLOOR", str(REREGISTER_E_FLOOR))
+    os.environ.setdefault("REREGISTER_COLLAPSE_MARGIN", str(REREGISTER_COLLAPSE_MARGIN))

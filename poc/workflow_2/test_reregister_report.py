@@ -18,6 +18,17 @@ def test_seed_env_respects_existing_reregister(monkeypatch):
     assert os.environ["REREGISTER_BOX_SUGGEST"] == "0"  # OS env 우선
 
 
+def test_seed_env_bridges_e_confirm_defaults(monkeypatch):
+    for k in ("REREGISTER_E_CONFIRM", "REREGISTER_S_FLOOR", "REREGISTER_E_FLOOR",
+              "REREGISTER_COLLAPSE_MARGIN"):
+        monkeypatch.delenv(k, raising=False)
+    cfg.seed_env()
+    assert os.environ["REREGISTER_E_CONFIRM"] == "1"
+    assert os.environ["REREGISTER_S_FLOOR"] == "0.6"
+    assert os.environ["REREGISTER_E_FLOOR"] == "0.5"
+    assert os.environ["REREGISTER_COLLAPSE_MARGIN"] == "0.15"
+
+
 from poc.workflow_2 import golden_reregister_report_cond as rr
 
 

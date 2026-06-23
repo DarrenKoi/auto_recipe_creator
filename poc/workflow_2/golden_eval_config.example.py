@@ -63,3 +63,11 @@ REREGISTER_FIDELITY_SCALES = ""
 # fidelity hit tolerance(patch 단변 비율). 참 localization 0.20~0.24, distractor >=0.42 라
 # 0.30 이 둘을 가른다. 옛 동작은 0.20.
 REREGISTER_GT_TOL_NORM = 0.30
+
+# === Phase 2: E-frame confirmation (golden_reregister_report_cond) ===
+# 1 이면 flagged recipe 를 E(fail) 프레임 score-collapse 로 confirm, 0 이면 Phase 1 만.
+REREGISTER_E_CONFIRM = 1
+# collapse 규칙 임계(점수 ~0.6 압축 분포 기준 출발점, office 보정 대상).
+REREGISTER_S_FLOOR = 0.6           # S best-score median 이 이 이상이어야 'collapse' 전제 성립.
+REREGISTER_E_FLOOR = 0.5           # E best-score median 이 이 밑이면 (delta 작아도) collapse.
+REREGISTER_COLLAPSE_MARGIN = 0.15  # S_rep - E_rep 이 이 이상이면 collapse.

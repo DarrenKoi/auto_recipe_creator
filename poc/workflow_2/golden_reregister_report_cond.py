@@ -141,3 +141,221 @@ def _format_digest(rows_by_mod):
         top = ",".join(r["recipe"] for r in rows[:2]) or "-"
         parts.append(f"{mod}[screened {len(rows)}, strong {strong}, w_sugg {w_sugg}, top {top}]")
     return "[DIGEST] reregister(S-only): " + " | ".join(parts)
+
+
+# ====================================================================
+# C1 통합 — 프레임 로드 + 매칭 패스 + run().
+# ====================================================================
+import cv2
+from pathlib import Path
+
+from poc.workflow_2.align_similarity import _build_templates, _gt_in_topk
+from poc.workflow_3.align.matching.engine import (
+    compute_align_key_score_ensemble,
+    STRUCTURE_POLICY,
+    DEFAULT_SCALES,
+)
+from poc.workflow_3.align.clean_align_image import clean_image, cursor_to_image, OVERSAMPLE
+from poc.workflow_3.align.cond_file import load_cond, msr_modality
+from poc.workflow_3.align.diagnostics.align_point_correction import _tool_label
+from poc.workflow_3.align.diagnostics.crosshair_detect import detect_crosshair
+from poc.workflow_3.align.assets import iter_msr_images, iter_recipe_dirs, resolve_assets
+from poc.workflow_2 import DEBUG_IMAGE_DIR
+from poc.workflow_2 import golden_localization_eval as gle
+
+# 자기-match 에 쓸 scale band — DEFAULT_SCALES (paused/static frame 기준).
+_SELF_MATCH_SCALES = DEFAULT_SCALES
+
+OUTPUT_ROOT = DEBUG_IMAGE_DIR / "golden_reregister_report_cond"
+
+
+def _self_match_ratio(box_tpl):
+    """rcp box 템플릿을 자기 raw 이미지에 매칭 → exclusion-zone self_ratio + degenerate 판정.
+
+    반환 (self_ratio, confidence). 템플릿이 이미지를 거의 채우면 confidence='low'(SEM near-degenerate).
+    """
+    img = box_tpl.raw_image
+    th, tw = img.shape[:2]
+    res = compute_align_key_score_ensemble(box_tpl, img, scales=_SELF_MATCH_SCALES, policy=STRUCTURE_POLICY)
+    cands = list(res.candidates)
+    if not cands:
+        return 0.0, "low"
+    excl = EXCL_RADIUS_FOOTPRINTS * max(tw, th)
+    ratio = _self_ratio(cands, cands[0].xy, excl)
+    # raw image 가 작아 슬라이드 여지 부족하면 near-degenerate.
+    conf = "low" if (tw >= img.shape[1] * 0.9 and th >= img.shape[0] * 0.9) else "ok"
+    return ratio, conf
+
+
+def _load_s_frames(assets, modality):
+    """recipe 의 from_msr S 프레임을 주어진 modality 로 필터 후 (gray_clean, gt_xy) 리스트로 반환.
+
+    _process_msr_cond 의 프레임 modality 배정 + clean_image 호출 + cond.txt crosshair
+    px@5120 -> 프레임 px 환산 패턴을 그대로 따른다.
+    GT 없는 프레임(E, crosshair 없음, modality 불일치)은 건너뛴다.
+    """
+    from poc.workflow_3.align.assets import load_gray
+
+    available_mods = {modality}   # 지정 modality 만 허용(race 금지).
+    result = []
+    for msr_path in iter_msr_images(assets):
+        try:
+            gray_raw = load_gray(msr_path)
+        except Exception as exc:
+            print(f"[WARNING] msr 로드 실패 {msr_path.name}: {exc}")
+            continue
+
+        label = _tool_label(msr_path.name)
+        if label != "S":
+            continue   # E 프레임 제외.
+
+        cond = load_cond(msr_path)
+
+        # crosshair GT: cond 가 있으면 cond.txt cursor 좌표 → 프레임 px 변환, 없으면 검출 폴백.
+        if cond and cond.crosshair_xy is not None:
+            gx, gy = cursor_to_image(cond.crosshair_xy, OVERSAMPLE)
+            crosshair_xy = (int(round(gx)), int(round(gy)))
+        else:
+            ch = detect_crosshair(gray_raw)
+            crosshair_xy = ch.xy
+
+        if crosshair_xy is None:
+            continue   # GT 없으면 재료로 쓸 수 없음.
+
+        # msr modality 배정(race 금지) — 요청 modality 와 다르면 skip.
+        routed = _route_modality_for_mod(cond, available_mods, modality)
+        if routed is None:
+            continue
+
+        # crosshair 제거 후 clean gray 산출.
+        if cond and cond.crosshair_xy is not None:
+            gray_clean = clean_image(gray_raw, cond)
+        else:
+            # cond 없음 — 검출된 crosshair 위치로 inpaint(golden_localization_eval_cond 폴백과 동일).
+            try:
+                from poc.workflow_3.align.diagnostics.align_point_correction import _inpaint_crosshair
+                gray_clean = _inpaint_crosshair(gray_raw, crosshair_xy)
+            except Exception:
+                gray_clean = gray_raw   # inpaint 불가시 raw 사용(부정확하나 크래시 방지).
+
+        result.append((gray_clean, crosshair_xy))
+    return result
+
+
+def _route_modality_for_mod(cond, available_mods, target_mod):
+    """msr frame 의 cond 에서 추론한 modality 가 target_mod 와 일치하면 target_mod, 아니면 None.
+
+    _route_modality(golden_localization_eval_cond) 와 동일 로직 — dual-recipe/미상 + dual 모호는 skip.
+    단, 여기서는 target_mod 하나만 허용(race 금지).
+    """
+    inferred = msr_modality(cond)
+    if inferred is not None:
+        return inferred if inferred == target_mod else None
+    # modality 미상: available_mods 가 단일(=target_mod 하나)이면 그걸로 폴백.
+    if len(available_mods) == 1:
+        return target_mod
+    # 미상 + dual → skip.
+    return None
+
+
+def _walk_recipes(root):
+    """ALIGN_GOLDEN_ROOT 아래의 recipe 목록을 AlignFailAssets 리스트로 반환.
+
+    golden_localization_eval._collect_recipes 패턴: root 가 유효한 디렉터리면
+    iter_recipe_dirs 로 leaf 목록을 순회하고 resolve_assets 로 assets 를 만든다.
+    빈 루트이거나 디렉터리가 아니면 빈 리스트.
+    """
+    if not root.is_dir():
+        return []
+    dirs = iter_recipe_dirs(root)
+    if not dirs:
+        return []
+    assets_list = []
+    for d in dirs:
+        try:
+            assets_list.append(resolve_assets(d))
+        except Exception as exc:
+            print(f"[WARNING] recipe 해석 실패 {d}: {exc}")
+    return assets_list
+
+
+def _recipe_row(assets, modality):
+    """한 recipe·modality 의 C1 증거 row. S 프레임/템플릿 없으면 None.
+
+    S 프레임 로딩(clean + 프레임 GT)·modality 배정은 _process_msr_cond 패턴을 따른다.
+    각 S 프레임: rcp center 템플릿으로 _gt_in_topk → STRONG/MEDIUM 재료.
+    self_ratio: box 템플릿 self-match(ADVISORY).
+    """
+    try:
+        center_tpls, box_tpls = _build_templates(assets)
+    except Exception as exc:
+        print(f"[WARNING] 템플릿 빌드 실패 {assets.recipe_id}: {exc}")
+        return None
+
+    if center_tpls.get(modality) is None:
+        return None
+
+    # S 프레임 (gray_clean, gt_xy) 리스트 — _process_msr_cond 패턴으로 로딩.
+    s_frames = _load_s_frames(assets, modality)
+    if not s_frames:
+        return None
+
+    frame_results = []
+    for gray, gt_xy in s_frames:
+        r = _gt_in_topk(gray, gt_xy, {modality: center_tpls[modality]})
+        if r is not None:
+            frame_results.append(r)
+
+    if not frame_results:
+        return None
+
+    strong = _aggregate_strong(frame_results)
+    medium = _aggregate_medium(frame_results)
+    self_ratio_val, conf = 0.0, "ok"
+    if box_tpls.get(modality) is not None:
+        try:
+            self_ratio_val, conf = _self_match_ratio(box_tpls[modality])
+        except Exception as exc:
+            print(f"[WARNING] self_match 실패 {assets.recipe_id}/{modality}: {exc}")
+
+    tier, sev = _evidence_tier(modality, strong["strong_fail_frac"], medium["msr_peak_tail"], self_ratio_val)
+    return {
+        "recipe": f"{assets.class_name}/{assets.recipe_name}",
+        "modality": modality, "tier": tier, "risk_score": _risk_score(tier, sev),
+        "strong_fail_frac": strong["strong_fail_frac"], "worst_disp": strong["worst_disp"],
+        "msr_peak_tail": medium["msr_peak_tail"], "self_ratio": self_ratio_val,
+        "advisory_confidence": conf, "n_s": strong["n_s"],
+        "suggestion": "none", "sugg_self": None, "sugg_fidelity": None,
+        "_assets": assets, "_center": center_tpls, "_box": box_tpls, "_s_frames": s_frames,
+    }
+
+
+def run():
+    """골든 루트 walk → recipe·modality 별 row → 랭킹 → 리포트/DIGEST 파일. 반환 = DIGEST(또는 no_data 경고)."""
+    root = Path(os.getenv("ALIGN_GOLDEN_ROOT", "")).expanduser()
+    recipes = _walk_recipes(root)
+    if not recipes:
+        print("[WARNING] no_data: ALIGN_GOLDEN_ROOT empty or unset")
+        return "[WARNING] no_data"
+
+    rows_by_mod = {"om": [], "sem": []}
+    for assets in recipes:
+        for mod in ("om", "sem"):
+            row = _recipe_row(assets, mod)
+            if row is not None:
+                rows_by_mod[mod].append(row)
+
+    # C2(박스 제안)는 Task 7 에서 flagged row 에 채운다(REREGISTER_BOX_SUGGEST=1).
+    for mod in rows_by_mod:
+        rows_by_mod[mod] = _rank_rows(rows_by_mod[mod])
+
+    OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+    (OUTPUT_ROOT / "reregister_report.txt").write_text(_format_report(rows_by_mod), encoding="utf-8")
+    digest = _format_digest(rows_by_mod)
+    (OUTPUT_ROOT / "digest.txt").write_text(digest, encoding="utf-8")
+    print(digest)
+    return digest
+
+
+if __name__ == "__main__":
+    run()

@@ -144,3 +144,10 @@ def test_digest_is_ascii_one_line_per_pipe():
 
 def test_banner_has_no_emdash():
     assert "—" not in rr.SURVIVORSHIP_BANNER
+
+
+def test_run_no_data_returns_warning(monkeypatch, tmp_path):
+    # 빈 골든 루트 → no_data 경로(예외 없이 경고 문자열).
+    monkeypatch.setenv("ALIGN_GOLDEN_ROOT", str(tmp_path))
+    out = rr.run()
+    assert "no_data" in out.lower()

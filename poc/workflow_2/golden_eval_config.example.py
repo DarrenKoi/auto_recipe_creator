@@ -55,3 +55,8 @@ SPLIT_DOMINANCE = 0.40     # 지배 실패유형 최소 비중(총 실패 중)
 REREGISTER_BOX_SUGGEST = 1
 # DIGEST/overlay 상위 N 제한(0=무제한).
 REREGISTER_TOPN = 0
+# fast A/B: 앞 N개 recipe 만 처리(box-suggestion sweep 가 무거워 전체 >10분). 0=전체.
+REREGISTER_MAX_RECIPES = 0
+# fidelity 매칭 scale band(A/B). "" 면 코드 기본 tight band(0.85,1.0,1.15) — 작은 box crop 이
+# 최소 scale(0.6) distractor 로 빠지는 걸 막음. 옛 동작 복원은 "0.6,0.75,0.85,1.0".
+REREGISTER_FIDELITY_SCALES = ""

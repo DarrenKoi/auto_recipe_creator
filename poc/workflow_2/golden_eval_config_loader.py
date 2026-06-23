@@ -35,9 +35,17 @@ try:
         from poc.workflow_2.golden_eval_config import REREGISTER_ACCEPT_MARGIN
     except ImportError:   # 구버전 config(REREGISTER_ACCEPT_MARGIN 없음) 하위호환.
         REREGISTER_ACCEPT_MARGIN = None
+    try:
+        # MAX_RECIPES: fast A/B 용 앞 N개 cap(0=전체). FIDELITY_SCALES: "0.6,0.75,0.85,1.0" 처럼
+        # 쉼표구분 band 문자열(빈 문자열="" 이면 코드 기본 tight band). 둘 다 fidelity scale A/B 용.
+        from poc.workflow_2.golden_eval_config import REREGISTER_MAX_RECIPES, REREGISTER_FIDELITY_SCALES
+    except ImportError:   # 구버전 config(신규 knob 없음) 하위호환.
+        REREGISTER_MAX_RECIPES = 0
+        REREGISTER_FIDELITY_SCALES = ""
 except ImportError:   # 실편집 파일 부재 — golden_eval_config.example.py 참고(복사해서 생성).
     GOLDEN_ROOT, LAB_MODE, MIN_S, HISTORY_ROOT, CONSENSUS_BOX_CROP = None, "", None, None, None
     REREGISTER_BOX_SUGGEST, REREGISTER_TOPN, REREGISTER_ACCEPT_MARGIN = 1, 0, None
+    REREGISTER_MAX_RECIPES, REREGISTER_FIDELITY_SCALES = 0, ""
 
 
 def seed_env():
@@ -59,3 +67,6 @@ def seed_env():
     os.environ.setdefault("REREGISTER_TOPN", str(REREGISTER_TOPN))
     if REREGISTER_ACCEPT_MARGIN is not None:
         os.environ.setdefault("REREGISTER_ACCEPT_MARGIN", str(REREGISTER_ACCEPT_MARGIN))
+    os.environ.setdefault("REREGISTER_MAX_RECIPES", str(REREGISTER_MAX_RECIPES))
+    if str(REREGISTER_FIDELITY_SCALES).strip():   # 빈 값이면 코드 기본 tight band 유지(env 미설정).
+        os.environ.setdefault("REREGISTER_FIDELITY_SCALES", str(REREGISTER_FIDELITY_SCALES))

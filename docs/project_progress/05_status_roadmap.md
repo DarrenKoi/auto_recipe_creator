@@ -10,7 +10,10 @@
 |------|------|------|
 | VLM 배포·운영 (deploy_vlms + Flask proxy) | ✅ 운영 중 | H200×2, 5 모델 |
 | workflow_1 GUI 자동화 + CCTV PoC | ✅ 검증 완료(동결) | production은 wf3로 이전 |
-| workflow_2 CV 평가 벤치 | ✅ 활성 | 오피스 golden 데이터 실측 대기 |
+| workflow_2 CV 평가 벤치 (4 driver) | ✅ 활성 | 오피스 golden 데이터 실측 대기 |
+| OM/SEM modality-split 평가 | ✅ 코드 완료 | split verdict + Youden delta + failure-mode |
+| Job 2 box-crop 실험 | ❌ 기각 (ADR 0005) | 오피스 실데이터 열세, production 미포팅 |
+| 재등록 우선순위 리포트 (Phase 1) | 🟡 캘리브레이션 중 | STRONG tier 게이트 조정 중, Phase 2=E-frame |
 | workflow_3 루프 골격·녹화·알림 | ✅ 코드 완료 | — |
 | workflow_3 primary 보정 + fallback search | ✅ 코드 완료 | dry-run 게이트 |
 | box-crop cond-aware 템플릿 | ✅ 코드 완료 | TDD 검증 |
@@ -53,8 +56,10 @@
   같은 recipe의 학습 데이터 자동 공유, 코드 변경 최소.
 - **데이터 자산화**: 상시 녹화 + `recording_filter`로 엔지니어 수동 조작을 interaction timeline으로 추출 →
   향후 모방학습/원인 자동 분류 학습 데이터.
-- **VLM ROI prior**: paused 프레임에서 align key 영역을 VLM이 grounding해 CV 탐색 범위를 좁히는 설계
-  진행 중(2-tier fallback — ROI 실패 시 full-FOV 재시도).
+- **재등록·template bank 축**: SEM에서는 ROI/box-crop 탐색 범위 축소가 구조적으로 무효임을 확인
+  (distractor가 align key **내부**의 periodic 구조라 frame 밖이 아님 — Job 2 box-crop 기각, ADR 0005).
+  남은 어려운 케이스는 chronic-ambiguous align key의 **재등록 권고**(`golden_reregister_report_cond.py`)와
+  recipe별 template bank로 풀어간다.
 - **검증된 변경만 포팅**: workflow_2 golden 검증 → workflow_3 bit-parity 포팅으로 회귀 통제.
 
 ## 5. 리스크 & 완화
@@ -74,4 +79,5 @@
 1. `office_success_downloader` 구현 → consensus 라이브 보정 활성화.
 2. 오피스 캘리브레이션(zoom/click 좌표, engineer-done) 완료.
 3. `golden_combined_eval_cond.py` 오피스 실행 → OM/SEM 층화·라우팅 정확도 확정.
-4. pilot 장비 1대 dry-run → 실보정 단계적 전환.
+4. `golden_reregister_report_cond.py` STRONG tier 게이트 오피스 캘리브레이션 마무리 → 재등록 권고 리스트 산출.
+5. pilot 장비 1대 dry-run → 실보정 단계적 전환.

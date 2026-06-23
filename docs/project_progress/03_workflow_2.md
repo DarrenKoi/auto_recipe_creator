@@ -14,13 +14,14 @@
 - **"가정 말고 측정"**: 정책 변경 전 항상 golden set으로 수치를 먼저 확인.
 - **벤치→프로덕션 파이프라인**: 여기서 검증 → workflow_3/align으로 검증된 변경만 포팅 → 회귀 위험 통제.
 
-## 2. 3대 Golden Driver
+## 2. Golden Driver (4종)
 
 | 드라이버 | 측정 대상 |
 |----------|-----------|
 | `golden_localization_eval_cond.py` | rcp(등록 align key) template 단독의 localization 정확도 |
 | `golden_consensus_eval_cond.py` | **consensus template**(최근 성공 median) vs rcp의 A/B |
 | `golden_combined_eval_cond.py` | **production 라우팅**(consensus 우선·rcp 폴백) end-to-end + 3축 리포트 |
+| `golden_reregister_report_cond.py` | **재등록 우선순위 리포트**(2026-06-23 신규) — align key 재등록이 필요한 recipe를 순위화 + 대체 영역 제안 |
 
 `golden_combined_eval_cond.py`의 3축:
 - **(A) consensus scaling** — 성공 이미지 수(`cons_pool_n`)별 층화: "S가 많을수록 좋아지는가".
@@ -75,7 +76,33 @@
 > OM/SEM 층화 판정은 office `GOLDEN_ROOT`/`HISTORY_ROOT` 데이터에서 `golden_combined_eval_cond.py`
 > 실행 후 `[DIGEST]` 한 줄로 확정 예정([05_status_roadmap.md](05_status_roadmap.md)).
 
-## 6. 의의
+## 6. 최근 진행 (2026-06-19 ~ 06-23)
+
+### (1) OM/SEM modality-split 평가 + 조건부 레버
+- combined eval을 OM/SEM **modality별로 분리**해 rank1/topk를 따로 본다(같은 recipe라도 OM은
+  프레임의 10~20%, SEM은 80~100%를 채우는 등 실패 양상이 다름).
+- modality별 **Youden separability**(delta-vs-production) + **failure-mode 히스토그램** +
+  **split verdict**(어느 modality에 어떤 레버를 댈지)를 digest에 출력.
+
+### (2) Job 2 box-crop — **기각**(ADR 0005)
+- 가설: align key가 SEM 프레임을 가득 채우므로 등록 white box로 crop하면 distractor를 격리해 매칭이
+  오를 것이다.
+- consensus arm에 box-crop을 붙여(center vs whitebox, 고정 분모) A/B한 결과 **오피스 실데이터에서 열세**
+  (OM −0.042, SEM −0.110). 또한 hit-tolerance 혼동(`tol_short`) 버그를 잡아 공정 비교로 재측정해도
+  이득 없음 → **production 미포팅, ADR 0005로 기각**.
+- 교훈: "그럴듯한" ROI 축소가 SEM에서는 무효(distractor가 key 내부 periodic 구조라 frame 밖이 아님).
+  남은 절반의 어려운 케이스는 ROI/box-crop이 아니라 **재등록·template bank** 축으로 풀어야 함.
+
+### (3) 재등록 우선순위 리포트 (Phase 1, S-only)
+- 새 driver `golden_reregister_report_cond.py`: align key 자체가 chronic-ambiguous(반복 패턴 위에
+  등록돼 근본적으로 매칭이 어려운) recipe를 **순위화**하고, 더 distinctive한 **대체 영역(box)을 제안**한다.
+- 증거 3-tier(distinctiveness/fidelity 축) + risk score 랭킹. 대체 영역은 rcp self-match로 후보를 찾아
+  overlay로 시각화(C1 screening + C2 box-suggestion).
+- 현재 **오피스 캘리브레이션 중**: 초기 실행에서 STRONG tier가 과발화(SEM 95% / OM 52%)해
+  STRONG 정의를 "GT-absent + fail-fraction floor"로 조이고 `SPLIT_MIN_S`를 4→2로 조정.
+  정확도는 오피스 실데이터로 확정 예정. Phase 2 = E-frame 확인 단계.
+
+## 7. 의의
 
 - consensus re-registration은 "정렬 정확도의 천장(rcp 단독 ~0.43)"을 뚫은 핵심 발견이며,
   workflow_3의 보정 품질을 좌우하는 알고리즘이다.

@@ -392,7 +392,11 @@ def _compute_fidelity_from_patch(patch, s_frames, *, box_offset_xy=(0.0, 0.0), t
             t1d, t1c = max(dists, key=lambda dc: dc[1].score)
             if top1_dbg is None:
                 top1_dbg = (len(cands), t1c.xy, t1c.scale, round(float(t1c.score), 3), round(t1d, 1))
-    if fidelities and all(f == 0.0 for f in fidelities):
+    # all-zero 경고는 baseline(엔지니어 박스)에 한정해 출력한다. cand(후보 박스)는 주기 SEM
+    # 텍스처의 비변별 sub-region 이라 distractor 에 wrong-phase 매칭(off-target)되어 0 이 나는
+    # 게 정상(=올바른 기각)이므로 경고를 띄우지 않는다. baseline all-zero 는 엔지니어 박스조차
+    # msr 에 재정착하지 못한다는 뜻이라 진짜 재등록 신호다 — 이때만 진단 한 줄을 남긴다.
+    if fidelities and all(f == 0.0 for f in fidelities) and tag.startswith("baseline"):
         # 0.0 은 세 경로(엔진 예외/후보 없음/기대 위치 밖) 모두에서 나올 수 있어 분해해 보고.
         n = len(fidelities)
         msg = (f"[WARNING] fidelity all-zero[{tag or '?'}]: frames={n} exc={n_exc} empty={n_empty} "

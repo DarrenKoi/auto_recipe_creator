@@ -825,6 +825,31 @@ def _load_s_frames(assets, modality):
     return result
 
 
+def _load_e_frames(assets, modality):
+    """recipe 의 from_msr E(fail) 프레임을 modality 필터해 raw gray 리스트로 반환.
+
+    E 는 crosshair/GT 가 없으므로 inpaint/clean 없이 raw gray 그대로 쓴다. modality 배정은
+    S 와 동일하게 cond 기반(_route_modality_for_mod) — cond/ modality 미상 프레임은 skip.
+    """
+    from poc.workflow_3.align.assets import load_gray
+
+    available_mods = {modality}
+    result = []
+    for msr_path in iter_msr_images(assets):
+        if _tool_label(msr_path.name) != "E":
+            continue   # S 프레임 제외(Phase 1 이 소비).
+        try:
+            gray_raw = load_gray(msr_path)
+        except Exception as exc:
+            print(f"[WARNING] msr(E) 로드 실패 {msr_path.name}: {exc}")
+            continue
+        cond = load_cond(msr_path)
+        if _route_modality_for_mod(cond, available_mods, modality) is None:
+            continue   # modality 미상/불일치 skip.
+        result.append(gray_raw)
+    return result
+
+
 def _route_modality_for_mod(cond, available_mods, target_mod):
     """msr frame 의 cond 에서 추론한 modality 가 target_mod 와 일치하면 target_mod, 아니면 None.
 
@@ -913,7 +938,9 @@ def _recipe_row(assets, modality):
         "msr_peak_tail": medium["msr_peak_tail"], "self_ratio": self_ratio_val,
         "advisory_confidence": conf, "n_s": strong["n_s"],
         "suggestion": "none", "sugg_self": None, "sugg_fidelity": None,
-        "_assets": assets, "_center": center_tpls, "_box": box_tpls, "_s_frames": s_frames,
+        "e_confirmed": False, "s_rep": None, "e_rep": None, "n_e": 0,
+        "_assets": assets, "_center": center_tpls, "_box": box_tpls,
+        "_s_frames": s_frames, "_frame_results": frame_results,
     }
 
 
@@ -938,6 +965,27 @@ def run():
             row = _recipe_row(assets, mod)
             if row is not None:
                 rows_by_mod[mod].append(row)
+
+    # Phase 2: E-frame confirmation post-pass (flagged row 만, upgrade-only).
+    if E_CONFIRM_ON:
+        print(f"[INFO] e_confirm on: S_FLOOR={S_FLOOR} E_FLOOR={E_FLOOR} "
+              f"COLLAPSE_MARGIN={COLLAPSE_MARGIN}")
+        for mod in rows_by_mod:
+            for row in rows_by_mod[mod]:
+                if row["tier"] == "NONE":
+                    continue
+                center_tpl = row["_center"].get(mod)
+                if center_tpl is None:
+                    continue
+                s_rep = _s_rep_score(row.get("_frame_results", []))
+                e_frames = _load_e_frames(row["_assets"], mod)
+                e_rep = _e_rep_score(center_tpl, e_frames)
+                row["s_rep"], row["e_rep"], row["n_e"] = s_rep, e_rep, len(e_frames)
+                if _e_confirm(s_rep, e_rep):
+                    row["e_confirmed"] = True
+                    row["tier"] = "E_CONFIRMED"
+                    sev = max(0.0, s_rep - e_rep)   # collapse 클수록 E_CONFIRMED 내 상위.
+                    row["risk_score"] = _risk_score("E_CONFIRMED", sev)
 
     # 랭킹 전 C2: flagged row 에 박스 제안을 채운다.
     box_suggest_on = os.getenv("REREGISTER_BOX_SUGGEST", "1") != "0"

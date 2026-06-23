@@ -468,3 +468,14 @@ def test_report_shows_e_columns_and_note():
     assert "0.800->0.550" in out          # s_rep->e_rep column.
     assert "n_e=2" in out
     assert "E_CONFIRMED rows" in out      # confirmation note line present.
+
+
+# ====================================================================
+# Task 6: run() E-confirm post-pass no-data smoke (regression guard).
+# ====================================================================
+def test_run_no_data_still_returns_warning_with_e_confirm(monkeypatch, tmp_path):
+    """E_CONFIRM=1 이어도 빈 루트에서 no_data 경고를 반환하고 크래시 없음 (post-pass regression guard)."""
+    import poc.workflow_2.golden_reregister_report_cond as r
+    monkeypatch.setenv("ALIGN_GOLDEN_ROOT", str(tmp_path))   # 빈 루트.
+    monkeypatch.setenv("REREGISTER_E_CONFIRM", "1")
+    assert r.run() == "[WARNING] no_data"

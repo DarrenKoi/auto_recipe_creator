@@ -10,6 +10,51 @@
 
 **Spec:** `poc/workflow_2/docs/specs/2026-06-23-reregister-phase2-eframe-confirmation-design.md`
 
+---
+
+## ⏸ RESUME / HANDOFF (paused 2026-06-23 EOD — continue tomorrow)
+
+**Status:** Spec + this plan are DONE and committed. **Phase 2 code is NOT started** — 0/6 tasks
+implemented. Nothing in `golden_reregister_report_cond.py` has Phase 2 changes yet.
+
+**Exact next action to resume:** decide execution mode, then start at **Task 1**.
+- Recommended: **Subagent-Driven Development** (we used it for Phase 1). To resume, invoke
+  `superpowers:subagent-driven-development` against THIS plan file; it dispatches a fresh subagent
+  per task (1→6), reviews each, then a whole-branch review. Tasks 1-5 verify on Mac
+  (`uv run pytest poc/workflow_2/test_reregister_report.py`); Task 6 accuracy is office-only.
+- Alternative: inline execution (executing-plans) with checkpoints.
+- A `.superpowers/sdd/progress.md` ledger (gitignored) will track task completion if SDD is used —
+  check it first on resume; tasks marked complete there are DONE, do not re-dispatch.
+
+**Git state:** branch `main`, HEAD = `f3274e1`, everything pushed (Mac→push→office pull workflow).
+Phase 2 doc commits: spec `99d5833`, plan `f3274e1`. Resume by `git pull` at the office first.
+
+**What already shipped this session (Phase 1 box-fidelity thread — COMPLETE):**
+`f7501fb` off-center offset fix → `463426b` tight scale band → `b7cb567` tol widen 0.20→0.30
+(+ `47cda7e`/`6aa23af`/`ca31403` diagnostics, `7284572` fast-mode cap, `8dbe880` config bridge).
+Result: `w_sugg 0→1`. Knobs `REREGISTER_MAX_RECIPES`, `REREGISTER_FIDELITY_SCALES`,
+`REREGISTER_GT_TOL_NORM` all bridge via `golden_eval_config`. Journal:
+`docs/journals/260623/260623_155946_reregister-phase1-box-fidelity-debug.md`. Memory:
+`project_reregister_report_phase1.md`.
+
+**Open loose end (NOT blocking Phase 2):** a full uncapped office run of the box-fidelity changes
+is still pending — `w_sugg` was confirmed `1` only on a 20-recipe fast-mode cap. When convenient run
+`REREGISTER_MAX_RECIPES=0 uv run python poc/workflow_2/golden_reregister_report_cond.py` and relay
+the `[DIGEST]` for the full 67-recipe set.
+
+**Phase 2 calibration (after Task 6 lands):** first office run prints
+`[INFO] e_confirm on: S_FLOOR=.. E_FLOOR=.. COLLAPSE_MARGIN=..` + a `[DIGEST]` with `confirmed C`
+per modality. Relay those + 1-2 sample `E_CONFIRMED` rows (`s_rep->e_rep(n_e=K)`), then tune
+`S_FLOOR/E_FLOOR/COLLAPSE_MARGIN` via env (code unchanged) using the observed S/E score spread.
+Defaults (0.60/0.50/0.15) are starting guesses since matcher scores cluster ~0.6.
+
+**Hard reminders for whoever resumes:** office data cannot come to Mac (write blind, relay digest
+text — never ask for sample images); commit directly to `main` with **pathspec** (only the files a
+task touches; no `add -A`); ASCII-only `print()` (cp949 console); never edit the gitignored
+`golden_eval_config.py` (edit `.example.py` + loader). Full rules in Global Constraints below.
+
+---
+
 ## Global Constraints
 
 - Korean docstrings throughout; print-based logging with `[INFO]`/`[WARNING]` prefixes (never the `logging` module).

@@ -212,6 +212,266 @@ def _dodge_guard(cand_overlap, base_overlap, val_delta, *, accept_margin=ACCEPT_
 
 
 # ====================================================================
+# C2 — _search_unique_box + fidelity + suggest + overlay.
+# ====================================================================
+def _passes_texture(patch, *, min_edge=0.02, min_lap=5.0):
+    """blank/저텍스처 패치 skip. _edge_density/_lap_var 재사용.
+
+    텍스처가 없는 패치(흰색 영역, 빈 배경)는 고유 구조가 없어 안정적 매칭이 불가하므로 건너뛴다.
+    """
+    from poc.workflow_2.align_similarity import _edge_density, _lap_var
+    if patch.size == 0:
+        return False
+    return _edge_density(patch) >= min_edge and _lap_var(patch) >= min_lap
+
+
+def _patch_self_ratio(img, box):
+    """box 패치를 full 이미지에 매칭한 self_ratio(제외존 밖 look-alike 강도).
+
+    저텍스처 패치면 1.0(최대 모호, 선택 안 됨). 반환 값 낮을수록 더 변별.
+    """
+    l, t, r, b = box
+    patch = img[t:b, l:r]
+    if not _passes_texture(patch):
+        return 1.0   # 저텍스처 → 변별 무의미(최대 모호 취급, 선택 안 됨).
+    tpl = build_template(patch.copy(), recipe_id="sugg", version="sugg", key_type="om")
+    res = compute_align_key_score_ensemble(tpl, img, scales=_SELF_MATCH_SCALES, policy=STRUCTURE_POLICY)
+    cands = list(res.candidates)
+    if not cands:
+        return 1.0
+    excl = EXCL_RADIUS_FOOTPRINTS * max(r - l, b - t)
+    return _self_ratio(cands, cands[0].xy, excl)
+
+
+def _search_unique_box(img, base_box):
+    """rcp 이미지 위 후보 박스 중 self_ratio 최저(가장 변별)를 반환.
+
+    반환: {box, self_ratio} 또는 None(텍스처 있는 후보 없음).
+    base_box 를 기준 크기로 슬라이드 윈도를 생성해 각 후보의 self_ratio 를 측정.
+    """
+    h, w = img.shape[:2]
+    best = None
+    for box in _iter_candidate_boxes(w, h, base_box):
+        sr = _patch_self_ratio(img, box)
+        if best is None or sr < best["self_ratio"]:
+            best = {"box": box, "self_ratio": sr}
+    return best
+
+
+# GT_FIDELITY_TOL: 프레임 GT 위치 근방 hit tolerance(short-side 정규화 기준 0.2 = GT_TOL_NORM).
+_FIDELITY_GT_TOL_NORM = 0.20
+
+
+def _compute_fidelity_from_patch(patch, s_frames):
+    """patch(ndarray gray)를 template 으로 각 S 프레임에 매칭한 fidelity 리스트 반환.
+
+    s_frames: [(gray_clean, gt_xy)] 리스트.
+    fidelity = GT crosshair 위치 hit tolerance 내 최고 점수 후보의 score. 없으면 0.0.
+    """
+    if patch.size == 0 or not s_frames:
+        return []
+    tpl = build_template(patch.copy(), recipe_id="sugg", version="sugg", key_type="om")
+    ph, pw = patch.shape[:2]
+    short = max(1, min(pw, ph))
+    tol_px = _FIDELITY_GT_TOL_NORM * short
+    fidelities = []
+    for gray, gt_xy in s_frames:
+        try:
+            res = compute_align_key_score_ensemble(tpl, gray, scales=_SELF_MATCH_SCALES, policy=STRUCTURE_POLICY)
+            cands = list(res.candidates)
+        except Exception:
+            fidelities.append(0.0)
+            continue
+        if not cands:
+            fidelities.append(0.0)
+            continue
+        gx, gy = gt_xy
+        # GT hit tolerance 내 후보 중 최고 score.
+        near = [c for c in cands if float(np.hypot(c.xy[0] - gx, c.xy[1] - gy)) <= tol_px]
+        if near:
+            fidelities.append(float(max(c.score for c in near)))
+        else:
+            fidelities.append(0.0)
+    return fidelities
+
+
+def _suggest_for_row(row):
+    """flagged row 에 C2 박스 제안을 채운다(row 인플레이스 업데이트, 반환 없음).
+
+    row["suggestion"]: "box(l,t,r,b)" | "no distinctive sub-region" | "insufficient"
+    row["sugg_self"]: 제안 박스 self_ratio (채택 시)
+    row["sugg_fidelity"]: 제안 박스 validate-half mean fidelity (채택 시)
+    REREGISTER_BOX_SUGGEST=0 이거나 tier=NONE 이면 호출 자체를 skip(caller 책임).
+    """
+    assets = row.get("_assets")
+    modality = row.get("modality", "om")
+    s_frames = row.get("_s_frames", [])
+
+    # held-out split.
+    split = _split_frames(s_frames)
+    if split is None:
+        row["suggestion"] = "insufficient"
+        return
+    sel_frames, val_frames = split
+
+    # rcp 이미지 로드.
+    try:
+        from poc.workflow_3.align.assets import load_gray
+        rcp_path = assets.recipe_om if modality == "om" else assets.recipe_sem
+        if rcp_path is None:
+            row["suggestion"] = "no distinctive sub-region"
+            return
+        rcp_gray = load_gray(rcp_path)
+    except Exception as exc:
+        print(f"[WARNING] rcp 로드 실패({row['recipe']}/{modality}): {exc}")
+        row["suggestion"] = "no distinctive sub-region"
+        return
+
+    # base_box: 현재 엔지니어 whitebox(rcp native px). _box 템플릿의 raw_image 크기로 추정.
+    box_tpl = (row.get("_box") or {}).get(modality)
+    if box_tpl is None:
+        row["suggestion"] = "no distinctive sub-region"
+        return
+    th, tw = box_tpl.raw_image.shape[:2]
+    # rcp 이미지 중앙 기준 whitebox 추정(cond.txt box 좌표가 없는 경우 중앙 crop 으로 근사).
+    rh, rw = rcp_gray.shape[:2]
+    cx, cy = rw // 2, rh // 2
+    base_box = (max(0, cx - tw // 2), max(0, cy - th // 2),
+                min(rw, cx + tw // 2 + tw % 2), min(rh, cy + th // 2 + th % 2))
+
+    # baseline: 현재 base_box patch 의 fidelity.
+    bl, bt, br, bb = base_box
+    base_patch = rcp_gray[bt:bb, bl:br]
+    baseline_sel = _compute_fidelity_from_patch(base_patch, sel_frames)
+    baseline_val = _compute_fidelity_from_patch(base_patch, val_frames)
+    baseline_self = _patch_self_ratio(rcp_gray, base_box)
+
+    # select-half: 후보 박스 검색 + 각 후보 fidelity 계산.
+    h, w = rcp_gray.shape[:2]
+    cand_metrics = []
+    for box in _iter_candidate_boxes(w, h, base_box):
+        sr = _patch_self_ratio(rcp_gray, box)
+        l, t, r, b = box
+        patch = rcp_gray[t:b, l:r]
+        if not _passes_texture(patch):
+            continue
+        sel_fid = _compute_fidelity_from_patch(patch, sel_frames)
+        cand_metrics.append({
+            "box": box,
+            "self_ratio": sr,
+            "sel_fidelities": sel_fid,
+        })
+
+    if not cand_metrics:
+        row["suggestion"] = "no distinctive sub-region"
+        return
+
+    baseline_metric = {"self_ratio": baseline_self, "sel_fidelities": baseline_sel}
+    chosen = _select_candidate(cand_metrics, baseline_metric)
+    if chosen is None:
+        row["suggestion"] = "no distinctive sub-region"
+        return
+
+    # validate-half: 후보 vs baseline 재측정.
+    cl, ct, cr, cb = chosen["box"]
+    cand_patch = rcp_gray[ct:cb, cl:cr]
+    chosen["val_fidelities"] = _compute_fidelity_from_patch(cand_patch, val_frames)
+    baseline_val_metric = {"self_ratio": baseline_self, "val_fidelities": baseline_val}
+
+    val_delta = _mean(chosen["val_fidelities"]) - _mean(baseline_val_metric["val_fidelities"])
+
+    if not _accept_candidate(
+        {"self_ratio": chosen["self_ratio"], "val_fidelities": chosen["val_fidelities"]},
+        {"self_ratio": baseline_self, "val_fidelities": baseline_val},
+    ):
+        row["suggestion"] = "no distinctive sub-region"
+        return
+
+    # inpaint-dodge 가드: removal mask 는 crosshair 위치에서 유도.
+    # GT crosshair 를 S 프레임에서 얻어 removal mask 사각형을 근사.
+    cand_overlap, base_overlap = 0.0, 0.0
+    if s_frames:
+        _, gt_xy = s_frames[0]
+        gx, gy = gt_xy
+        # crosshair removal region 근사: crosshair 중심 ± short/4 사각형.
+        short_s = max(1, min(tw, th))
+        half = max(2, short_s // 4)
+        removal_rect = (max(0, gx - half), max(0, gy - half), gx + half, gy + half)
+        cand_overlap = _box_overlap_ratio(chosen["box"], removal_rect)
+        base_overlap = _box_overlap_ratio(base_box, removal_rect)
+
+    if _dodge_guard(cand_overlap, base_overlap, val_delta):
+        print(f"[WARNING] dodge_guard reject({row['recipe']}/{modality}): overlap avoidance only")
+        row["suggestion"] = "no distinctive sub-region"
+        return
+
+    # 채택.
+    box = chosen["box"]
+    row["suggestion"] = f"box{box}"
+    row["sugg_self"] = chosen["self_ratio"]
+    row["sugg_fidelity"] = _mean(chosen["val_fidelities"])
+
+
+def _safe_recipe_label(recipe_str):
+    """recipe 문자열을 파일명으로 쓸 수 있게 정제(/ 등 대체)."""
+    return recipe_str.replace("/", "_").replace("\\", "_").replace(" ", "_")
+
+
+def _render_overlay(row):
+    """현재 박스(자홍) + 제안 박스(초록)를 rcp 이미지에 그려 JPEG 로 저장.
+
+    채택된 박스(row['suggestion'].startswith('box')) 인 경우에만 의미 있으나,
+    현재 박스는 rcp 이미지에 항상 표시해 엔지니어가 비교할 수 있게 한다.
+    반환: 저장 경로(Path) 또는 None(저장 실패/skip).
+    """
+    try:
+        from poc.workflow_3.align.assets import load_gray
+
+        assets = row.get("_assets")
+        modality = row.get("modality", "om")
+        rcp_path = assets.recipe_om if modality == "om" else assets.recipe_sem
+        if rcp_path is None:
+            return None
+        rcp_gray = load_gray(rcp_path)
+        overlay = cv2.cvtColor(rcp_gray, cv2.COLOR_GRAY2BGR)
+
+        # 현재 whitebox: box template 크기로 중앙 추정.
+        box_tpl = (row.get("_box") or {}).get(modality)
+        if box_tpl is not None:
+            th, tw = box_tpl.raw_image.shape[:2]
+            rh, rw = overlay.shape[:2]
+            cx, cy = rw // 2, rh // 2
+            base_box = (max(0, cx - tw // 2), max(0, cy - th // 2),
+                        min(rw, cx + tw // 2 + tw % 2), min(rh, cy + th // 2 + th % 2))
+            bl, bt, br, bb = base_box
+            cv2.rectangle(overlay, (bl, bt), (br, bb), (255, 0, 255), 2)   # 자홍(BGR).
+            cv2.putText(overlay, "current", (bl, max(0, bt - 4)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1, cv2.LINE_AA)
+
+        # 제안 박스(초록).
+        sugg = row.get("suggestion", "none")
+        if sugg.startswith("box"):
+            try:
+                # "box(l,t,r,b)" -> 튜플 파싱.
+                inner = sugg[3:].strip("()")
+                sl, st, sr, sb = [int(x.strip()) for x in inner.split(",")]
+                cv2.rectangle(overlay, (sl, st), (sr, sb), (0, 255, 0), 2)   # 초록(BGR).
+                cv2.putText(overlay, "suggested", (sl, max(0, st - 4)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
+            except Exception as exc:
+                print(f"[WARNING] overlay suggestion 파싱 실패: {exc}")
+
+        safe = _safe_recipe_label(row["recipe"])
+        out_path = OUTPUT_ROOT / f"{safe}_{modality}_reregister.jpg"
+        OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(out_path), overlay, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+        return out_path
+    except Exception as exc:
+        print(f"[WARNING] overlay 렌더 실패({row.get('recipe','?')}): {exc}")
+        return None
+
+
+# ====================================================================
 # C1 통합 — 프레임 로드 + 매칭 패스 + run().
 # ====================================================================
 import cv2
@@ -219,11 +479,17 @@ from pathlib import Path
 
 from poc.workflow_2.align_similarity import _build_templates, _gt_in_topk
 from poc.workflow_3.align.matching.engine import (
+    build_template,
     compute_align_key_score_ensemble,
     STRUCTURE_POLICY,
     DEFAULT_SCALES,
 )
-from poc.workflow_3.align.clean_align_image import clean_image, cursor_to_image, OVERSAMPLE
+from poc.workflow_3.align.clean_align_image import (
+    build_removal_mask,
+    clean_image,
+    cursor_to_image,
+    OVERSAMPLE,
+)
 from poc.workflow_3.align.cond_file import load_cond, msr_modality
 from poc.workflow_3.align.diagnostics.align_point_correction import _tool_label
 from poc.workflow_3.align.diagnostics.crosshair_detect import detect_crosshair
@@ -416,9 +682,35 @@ def run():
             if row is not None:
                 rows_by_mod[mod].append(row)
 
-    # C2(박스 제안)는 Task 7 에서 flagged row 에 채운다(REREGISTER_BOX_SUGGEST=1).
+    # 랭킹 전 C2: flagged row 에 박스 제안을 채운다.
+    box_suggest_on = os.getenv("REREGISTER_BOX_SUGGEST", "1") != "0"
+    topn = int(os.getenv("REREGISTER_TOPN", "0"))
+    if box_suggest_on:
+        for mod in rows_by_mod:
+            # 랭킹 전 임시 정렬(flagged 먼저 처리; topn 이 0 이면 전체).
+            flagged = [r for r in rows_by_mod[mod] if r["tier"] != "NONE"]
+            flagged_sorted = sorted(flagged, key=lambda r: r["risk_score"], reverse=True)
+            if topn > 0:
+                flagged_sorted = flagged_sorted[:topn]
+            for row in flagged_sorted:
+                try:
+                    _suggest_for_row(row)
+                except Exception as exc:
+                    print(f"[WARNING] C2 제안 실패({row['recipe']}/{mod}): {exc}")
+                    row["suggestion"] = "no distinctive sub-region"
+
     for mod in rows_by_mod:
         rows_by_mod[mod] = _rank_rows(rows_by_mod[mod])
+
+    # overlay 저장(채택 행 한정, topn 존중).
+    if box_suggest_on:
+        for mod in rows_by_mod:
+            flagged_ranked = [r for r in rows_by_mod[mod] if r["tier"] != "NONE"]
+            if topn > 0:
+                flagged_ranked = flagged_ranked[:topn]
+            for row in flagged_ranked:
+                if str(row.get("suggestion", "none")).startswith("box"):
+                    _render_overlay(row)
 
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     (OUTPUT_ROOT / "reregister_report.txt").write_text(_format_report(rows_by_mod), encoding="utf-8")

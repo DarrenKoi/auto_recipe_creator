@@ -210,3 +210,40 @@ def test_dodge_guard_rejects_overlap_avoidance_near_margin():
     assert rr._dodge_guard(0.0, 0.5, 0.05) is True
     # 후보가 충분히 이기면(val_delta 큼) overlap 급감이어도 통과(가짜 아님).
     assert rr._dodge_guard(0.0, 0.5, 0.5) is False
+
+
+# ====================================================================
+# Task 7: C2 합성 이미지 테스트 — 실 엔진으로 Mac 에서 실행 가능.
+# ====================================================================
+import numpy as np
+
+
+def _periodic_img(w=240, h=240, period=24):
+    """주기 격자 배경 이미지(uint8). 테스트 전용."""
+    g = np.zeros((h, w), np.uint8)
+    g[:, ::period] = 255
+    g[::period, :] = 255
+    return g
+
+
+def test_suggestion_finds_unique_patch_over_periodic():
+    """주기 배경 + 한 곳에 비주기 고유 마크 -> 검색이 그 영역 박스를 찾음(self_ratio 낮음)."""
+    img = _periodic_img()
+    img[112:128, 112:128] = 180   # 고유 블록.
+    base = (10, 10, 30, 30)       # 주기 영역의 엔지니어 박스(모호).
+    found = rr._search_unique_box(img, base)
+    assert found is not None, "_search_unique_box 가 None 반환(후보 없음) — 고유 마크를 찾지 못했음."
+    assert found["self_ratio"] < 0.9, (
+        f"self_ratio={found['self_ratio']:.3f} >= 0.9 — 고유 마크 박스가 선택되지 않았음."
+    )
+
+
+def test_suggestion_all_periodic_returns_none_distinctive():
+    """전부 주기 배경 -> 어떤 박스도 충분히 변별 안 됨 -> None 또는 self_ratio >= 0.9."""
+    img = _periodic_img()
+    base = (10, 10, 34, 34)
+    found = rr._search_unique_box(img, base)
+    # 전부 주기 → None(후보 없음)이거나 self_ratio 가 높아야(변별 안 됨).
+    assert found is None or found["self_ratio"] >= 0.9, (
+        f"self_ratio={found['self_ratio']:.3f} < 0.9 — 주기 이미지에서 변별 후보가 잘못 선택됨."
+    )

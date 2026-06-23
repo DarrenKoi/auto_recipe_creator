@@ -190,6 +190,13 @@ def test_box_offset_xy_is_box_center_minus_frame_center():
     assert rr._box_offset_xy((100, 100, 140, 140), 240, 240) == (0.0, 0.0)
 
 
+def test_cap_recipes_limits_when_positive():
+    items = ["a", "b", "c", "d", "e"]
+    assert rr._cap_recipes(items, 3) == ["a", "b", "c"]   # 양수 cap -> 앞에서 N개.
+    assert rr._cap_recipes(items, 0) == items             # 0 = 전체(무제한).
+    assert rr._cap_recipes(items, 99) == items            # cap > len -> 전체.
+
+
 def test_resolve_fidelity_scales_default_is_tight_band():
     # 기본: 0.6/0.75 distractor escape hatch 를 뺀 1.0 근방 tight band.
     band = rr._resolve_fidelity_scales(None)

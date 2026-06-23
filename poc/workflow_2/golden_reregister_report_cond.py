@@ -54,6 +54,12 @@ def _resolve_fidelity_scales(env_val):
 
 _FIDELITY_SCALES = _resolve_fidelity_scales(os.getenv("REREGISTER_FIDELITY_SCALES"))
 
+# fast A/B 용 recipe cap. box-suggestion sweep 가 무거워(>10분) 전체 대신 앞 N개만 돌려
+# tight-band A/B 방향만 빠르게 본다. REREGISTER_MAX_RECIPES=20 권장, 0=전체(기본).
+def _cap_recipes(recipes, cap):
+    """cap 이 양수면 앞 cap 개로 자른다. 0/음수면 전체."""
+    return recipes[:cap] if cap and cap > 0 else recipes
+
 SURVIVORSHIP_BANNER = (
     "S-only latent-risk screening: candidates among historically-successful "
     "recipes, NOT a confirmed fail list. E-frame confirmation = Phase 2."
@@ -839,6 +845,11 @@ def run():
     # A/B 자기-라벨: 활성 fidelity scale band 를 한 줄로 찍어 relay 시 어느 arm 인지 명확히.
     print(f"[INFO] fidelity_scales={_FIDELITY_SCALES} (env REREGISTER_FIDELITY_SCALES to A/B)")
     recipes = _walk_recipes(root)
+    cap = int(os.getenv("REREGISTER_MAX_RECIPES", "0") or "0")
+    if cap and cap > 0:
+        n_all = len(recipes)
+        recipes = _cap_recipes(recipes, cap)
+        print(f"[INFO] fast-mode: recipes capped {len(recipes)}/{n_all} (env REREGISTER_MAX_RECIPES=0 for full)")
     if not recipes:
         print("[WARNING] no_data: ALIGN_GOLDEN_ROOT empty or unset")
         return "[WARNING] no_data"

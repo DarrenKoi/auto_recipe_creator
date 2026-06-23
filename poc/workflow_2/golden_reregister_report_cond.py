@@ -350,30 +350,53 @@ def _compute_fidelity_from_patch(patch, s_frames, *, box_offset_xy=(0.0, 0.0)):
     tol_px = _FIDELITY_GT_TOL_NORM * short
     ox, oy = box_offset_xy
     fidelities = []
+    # all-zero 진단 카운터: 세 경로(exc/empty/offtarget)를 구분해 한 줄로 보고.
+    n_exc = n_empty = n_offtarget = 0
+    first_exc = ""
+    nearest_dbg = None   # (best_dist, tol, best_scale, best_xy, expected_xy) — off-target 예시.
     for gray, gt_xy in s_frames:
         try:
             res = compute_align_key_score_ensemble(tpl, gray, scales=COMPARE_SCALES, policy=STRUCTURE_POLICY)
             cands = list(res.candidates)
-        except Exception:
+        except Exception as exc:
             fidelities.append(0.0)
+            n_exc += 1
+            if not first_exc:
+                first_exc = f"{type(exc).__name__}: {exc}"
             continue
         if not cands:
             fidelities.append(0.0)
+            n_empty += 1
             continue
         gx, gy = gt_xy
         # 기대 매칭 위치 = gt_xy + box_offset * scale (후보마다 scale 다름) 의 tolerance 내 최고 score.
-        near = [
-            c for c in cands
-            if float(np.hypot(c.xy[0] - (gx + ox * c.scale),
-                              c.xy[1] - (gy + oy * c.scale))) <= tol_px
+        dists = [
+            (float(np.hypot(c.xy[0] - (gx + ox * c.scale),
+                            c.xy[1] - (gy + oy * c.scale))), c)
+            for c in cands
         ]
+        near = [c for d, c in dists if d <= tol_px]
         if near:
             fidelities.append(float(max(c.score for c in near)))
         else:
             fidelities.append(0.0)
+            n_offtarget += 1
+            bd, bc = min(dists, key=lambda dc: dc[0])   # 기대 위치에 가장 가까운 후보.
+            if nearest_dbg is None or bd < nearest_dbg[0]:
+                nearest_dbg = (bd, tol_px, bc.scale, bc.xy,
+                               (round(gx + ox * bc.scale, 1), round(gy + oy * bc.scale, 1)))
     if fidelities and all(f == 0.0 for f in fidelities):
-        # 0.0 은 세 경로(엔진 예외/후보 없음/기대 위치 밖) 모두에서 나올 수 있다.
-        print("[WARNING] fidelity all-zero in _compute_fidelity_from_patch (no usable match: empty/exception/off-target)")
+        # 0.0 은 세 경로(엔진 예외/후보 없음/기대 위치 밖) 모두에서 나올 수 있어 분해해 보고.
+        n = len(fidelities)
+        msg = (f"[WARNING] fidelity all-zero: frames={n} exc={n_exc} empty={n_empty} "
+               f"offtarget={n_offtarget} | patch={pw}x{ph} tol={tol_px:.1f} "
+               f"offset=({ox:.0f},{oy:.0f})")
+        if nearest_dbg is not None:
+            bd, tp, bsc, bxy, exp = nearest_dbg
+            msg += f" | ex_offtarget: best_xy={bxy} expected={exp} dist={bd:.1f} scale={bsc:.2f}"
+        if first_exc:
+            msg += f" | exc: {first_exc}"
+        print(msg)
     return fidelities
 
 

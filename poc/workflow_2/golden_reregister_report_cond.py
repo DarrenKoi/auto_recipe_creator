@@ -28,6 +28,32 @@ SPLIT_MIN_S = 2
 ACCEPT_MARGIN = float(os.getenv("REREGISTER_ACCEPT_MARGIN", "0.05"))
 TIER_WEIGHT = {"STRONG": 2.0, "MEDIUM": 1.0, "ADVISORY": 0.3, "NONE": 0.0}
 
+# fidelity 매칭 scale band. 진단상 작은 box crop 은 주기 SEM 텍스처에서 *최소 scale(0.6)* 로
+# 줄여 wrong-phase distractor 에 high-score 매칭되어(예: top1 0.9 @ 300px off) 참 위치를 놓쳤다.
+# rcp/msr 는 거의 같은 배율이므로 참 매칭은 ~1.0 근방이다. 0.6/0.75 escape hatch 를 빼고 1.0
+# 근방 tight band 만 허용해 distractor 매칭을 줄인다. A/B: REREGISTER_FIDELITY_SCALES 로
+# 임의 band(예: "0.6,0.75,0.85,1.0" 로 기존 COMPARE_SCALES 복원) 지정 가능.
+_FIDELITY_SCALES_DEFAULT = (0.85, 1.0, 1.15)
+
+
+def _resolve_fidelity_scales(env_val):
+    """REREGISTER_FIDELITY_SCALES 환경값(쉼표구분 float)을 band 튜플로. 비거나 malformed 면 기본 tight band."""
+    if not env_val:
+        return _FIDELITY_SCALES_DEFAULT
+    out = []
+    for tok in env_val.split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            out.append(float(tok))
+        except ValueError:
+            continue
+    return tuple(out) if out else _FIDELITY_SCALES_DEFAULT
+
+
+_FIDELITY_SCALES = _resolve_fidelity_scales(os.getenv("REREGISTER_FIDELITY_SCALES"))
+
 SURVIVORSHIP_BANNER = (
     "S-only latent-risk screening: candidates among historically-successful "
     "recipes, NOT a confirmed fail list. E-frame confirmation = Phase 2."
@@ -334,15 +360,14 @@ def _compute_fidelity_from_patch(patch, s_frames, *, box_offset_xy=(0.0, 0.0), t
     0 으로 떨어진다(과거 all-zero 경고의 진짜 원인). box_offset_xy=(0,0) 이면 중심 박스
     가정으로 기존 동작과 동일하다.
 
-    rcp->msr 비교에는 COMPARE_SCALES(생산 rcp->msr 비교 band) 를 사용한다.
-    모든 프레임 fidelity 가 0.0 이면 경고를 출력한다(매칭 자체 실패 신호).
+    rcp->msr 비교에는 `_FIDELITY_SCALES`(기본 1.0 근방 tight band) 를 사용한다 — 작은 box
+    crop 이 최소 scale(0.6)로 줄어 주기 distractor 에 매칭되는 걸 막는다. A/B 는
+    REREGISTER_FIDELITY_SCALES 로 band 를 바꿔 측정한다(예: COMPARE_SCALES 복원).
+    모든 프레임 fidelity 가 0.0 이면(baseline tag 만) 경고를 출력한다.
 
-    한계(co-magnification 가정): tol_px 는 patch 단변(rcp px) 기준이고 offset 은
-    후보 scale 로 환산한다. rcp/msr 가 거의 같은 배율(scale~1.0)일 때 정확하며,
-    배율이 크게 다르면 (a) tol 이 frame px 와 어긋나고 (b) RRF 융합 후보의 scale 이
-    실제 위치 scale 과 한 step 어긋날 수 있어, offset 이 큰 (far off-center) 박스에서
-    참 매칭이 tol 밖으로 밀릴 수 있다. 벤치는 co-magnification 가정이라 지배 오차
-    (center-vs-offset, 수십 px)만 보정한다. tol 의 scale 일관화는 별도 office 검증 필요.
+    한계(co-magnification 가정): tol_px 는 patch 단변(rcp px) 기준이고 offset 은 후보 scale 로
+    환산한다. rcp/msr 가 거의 같은 배율(scale~1.0)일 때 정확하다. 작은 box crop 은 변별력이
+    약해(주기 SEM) 참 위치에 안 붙을 수 있고, 그건 좌표 버그가 아니라 매칭 recall 한계다.
     """
     if patch.size == 0 or not s_frames:
         return []
@@ -359,7 +384,7 @@ def _compute_fidelity_from_patch(patch, s_frames, *, box_offset_xy=(0.0, 0.0), t
     top1_dbg = None      # (n_cands, top1_xy, top1_scale, top1_score, top1_dist) — 최고점수 후보.
     for gray, gt_xy in s_frames:
         try:
-            res = compute_align_key_score_ensemble(tpl, gray, scales=COMPARE_SCALES, policy=STRUCTURE_POLICY)
+            res = compute_align_key_score_ensemble(tpl, gray, scales=_FIDELITY_SCALES, policy=STRUCTURE_POLICY)
             cands = list(res.candidates)
         except Exception as exc:
             fidelities.append(0.0)
@@ -811,6 +836,8 @@ def _recipe_row(assets, modality):
 def run():
     """골든 루트 walk → recipe·modality 별 row → 랭킹 → 리포트/DIGEST 파일. 반환 = DIGEST(또는 no_data 경고)."""
     root = Path(os.getenv("ALIGN_GOLDEN_ROOT", "")).expanduser()
+    # A/B 자기-라벨: 활성 fidelity scale band 를 한 줄로 찍어 relay 시 어느 arm 인지 명확히.
+    print(f"[INFO] fidelity_scales={_FIDELITY_SCALES} (env REREGISTER_FIDELITY_SCALES to A/B)")
     recipes = _walk_recipes(root)
     if not recipes:
         print("[WARNING] no_data: ALIGN_GOLDEN_ROOT empty or unset")

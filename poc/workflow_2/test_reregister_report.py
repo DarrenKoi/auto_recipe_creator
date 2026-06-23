@@ -190,6 +190,21 @@ def test_box_offset_xy_is_box_center_minus_frame_center():
     assert rr._box_offset_xy((100, 100, 140, 140), 240, 240) == (0.0, 0.0)
 
 
+def test_resolve_fidelity_scales_default_is_tight_band():
+    # 기본: 0.6/0.75 distractor escape hatch 를 뺀 1.0 근방 tight band.
+    band = rr._resolve_fidelity_scales(None)
+    assert 1.0 in band
+    assert 0.6 not in band and 0.75 not in band
+    assert all(0.8 <= s <= 1.2 for s in band)
+
+
+def test_resolve_fidelity_scales_env_override_and_malformed():
+    # env 로 임의 band 지정(예: COMPARE_SCALES 복원 A arm).
+    assert rr._resolve_fidelity_scales("0.6,0.75,0.85,1.0") == (0.6, 0.75, 0.85, 1.0)
+    # malformed -> 기본 tight band 로 폴백(크래시 금지).
+    assert rr._resolve_fidelity_scales("abc, ,") == rr._resolve_fidelity_scales(None)
+
+
 def test_iter_candidate_boxes_within_bounds():
     boxes = rr._iter_candidate_boxes(200, 200, (80, 80, 120, 120))
     assert boxes  # 비어있지 않음.

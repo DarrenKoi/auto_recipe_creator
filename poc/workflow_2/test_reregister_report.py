@@ -411,3 +411,31 @@ def test_s_rep_score_uses_best_per_frame_median():
     assert rr._s_rep_score(frame_results) == 0.70          # median(0.80, 0.60)
     assert rr._s_rep_score([]) is None
     assert rr._s_rep_score([{"cand_scores": []}]) is None
+
+
+# ====================================================================
+# Task 4: _free_search_best_score + _e_rep_score (E proposer).
+# ====================================================================
+def test_free_search_best_score_localizes_mark():
+    """_free_search_best_score: center 템플릿 free-search 최고 proposer 점수.
+
+    자기 자신을 템플릿으로 매칭하면 강한 점수(>0)를 반환해야 한다.
+    """
+    import numpy as np
+    img = _frame_with_offset_mark()
+    tpl = rr.build_template(img.copy(), recipe_id="e", version="e", key_type="om")
+    score = rr._free_search_best_score(tpl, img)
+    assert score is not None and score > 0.0
+
+
+def test_e_rep_score_median_and_empty():
+    """_e_rep_score: E 프레임별 best score(None 제외)의 median.
+
+    동일 프레임 2개의 median은 단일 점수와 같아야 한다.
+    E 프레임 없으면(빈 리스트) None을 반환한다.
+    """
+    img = _frame_with_offset_mark()
+    tpl = rr.build_template(img.copy(), recipe_id="e", version="e", key_type="om")
+    one = rr._free_search_best_score(tpl, img)
+    assert rr._e_rep_score(tpl, [img, img]) == one
+    assert rr._e_rep_score(tpl, []) is None

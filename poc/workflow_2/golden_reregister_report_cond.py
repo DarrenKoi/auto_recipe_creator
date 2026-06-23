@@ -693,12 +693,16 @@ def _render_overlay(row):
 import cv2
 from pathlib import Path
 
-from poc.workflow_2.align_similarity import _build_templates, _gt_in_topk, COMPARE_SCALES
+from poc.workflow_2.align_similarity import (
+    _build_templates, _gt_in_topk, COMPARE_SCALES,
+    _propose_topk, USE_ENSEMBLE_PROPOSER, TOPK_CANDIDATES,
+)
 from poc.workflow_3.align.matching.engine import (
     build_template,
     compute_align_key_score_ensemble,
     STRUCTURE_POLICY,
     DEFAULT_SCALES,
+    preprocess_for_matching,
 )
 from poc.workflow_3.align.clean_align_image import (
     build_removal_mask,
@@ -734,6 +738,29 @@ def _self_match_ratio(box_tpl, full_gray):
     fh, fw = full_gray.shape[:2]
     conf = "low" if (tw >= fw * 0.9 and th >= fh * 0.9) else "ok"
     return ratio, conf
+
+
+def _free_search_best_score(center_tpl, gray):
+    """center 템플릿 free-search 최고 proposer 점수. 예외/후보없음(artifact)이면 None.
+
+    낮은 점수는 collapse 증거이므로 절대 None/0 으로 버리지 않는다(후보가 있으면 float).
+    proposer 호출은 _gt_in_topk 와 bit-parity (align_similarity.py:348,361) — 변경 시 함께.
+    E free-search 는 center-crop localization 이라 COMPARE_SCALES (NOT _FIDELITY_SCALES).
+    """
+    try:
+        frame_dt = None if USE_ENSEMBLE_PROPOSER else preprocess_for_matching(gray)[1]
+        cands = _propose_topk(center_tpl, gray, frame_dt, scales=COMPARE_SCALES, topk=TOPK_CANDIDATES)
+    except Exception:
+        return None
+    if not cands:
+        return None
+    return float(max(c.score for c in cands))
+
+
+def _e_rep_score(center_tpl, e_frames):
+    """E 프레임별 best score(None 제외)의 median. 사용가능 점수 0개면 None."""
+    scores = [s for s in (_free_search_best_score(center_tpl, g) for g in e_frames) if s is not None]
+    return _median(scores)
 
 
 def _load_s_frames(assets, modality):

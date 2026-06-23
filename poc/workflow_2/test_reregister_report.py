@@ -151,3 +151,62 @@ def test_run_no_data_returns_warning(monkeypatch, tmp_path):
     monkeypatch.setenv("ALIGN_GOLDEN_ROOT", str(tmp_path))
     out = rr.run()
     assert "no_data" in out.lower()
+
+
+# ====================================================================
+# Task 5: 박스 제안 순수 헬퍼 테스트.
+# ====================================================================
+def test_split_frames_insufficient():
+    assert rr._split_frames(["a", "b", "c"], split_min_s=4) is None
+
+
+def test_split_frames_deterministic_halves():
+    sel, val = rr._split_frames(["a", "b", "c", "d", "e"], split_min_s=4)
+    assert sel == ["a", "c", "e"] and val == ["b", "d"]  # even-idx select, odd-idx validate.
+
+
+def test_iter_candidate_boxes_within_bounds():
+    boxes = rr._iter_candidate_boxes(200, 200, (80, 80, 120, 120))
+    assert boxes  # 비어있지 않음.
+    for (l, t, r, b) in boxes:
+        assert 0 <= l < r <= 200 and 0 <= t < b <= 200
+
+
+def test_select_candidate_gates_on_baseline_fidelity():
+    baseline = {"self_ratio": 0.95, "sel_fidelities": [0.6, 0.6]}  # mean 0.6.
+    cands = [
+        {"box": (0, 0, 10, 10), "self_ratio": 0.3, "sel_fidelities": [0.4, 0.4]},  # fid<baseline → 탈락.
+        {"box": (1, 1, 11, 11), "self_ratio": 0.5, "sel_fidelities": [0.7, 0.7]},  # 통과, self 0.5.
+        {"box": (2, 2, 12, 12), "self_ratio": 0.4, "sel_fidelities": [0.65, 0.65]},  # 통과, self 0.4(최저).
+    ]
+    pick = rr._select_candidate(cands, baseline)
+    assert pick["box"] == (2, 2, 12, 12)
+
+
+def test_select_candidate_none_when_all_fail_gate():
+    baseline = {"self_ratio": 0.9, "sel_fidelities": [0.8, 0.8]}
+    cands = [{"box": (0, 0, 1, 1), "self_ratio": 0.1, "sel_fidelities": [0.5, 0.5]}]
+    assert rr._select_candidate(cands, baseline) is None
+
+
+def test_accept_candidate_requires_both_margins():
+    baseline = {"self_ratio": 0.95, "val_fidelities": [0.6, 0.6]}
+    good = {"self_ratio": 0.4, "val_fidelities": [0.7, 0.7]}  # fid +0.1, self -0.55 → accept.
+    assert rr._accept_candidate(good, baseline) is True
+    weak_fid = {"self_ratio": 0.4, "val_fidelities": [0.61, 0.61]}  # fid +0.01 < margin.
+    assert rr._accept_candidate(weak_fid, baseline) is False
+    weak_self = {"self_ratio": 0.93, "val_fidelities": [0.7, 0.7]}  # self -0.02 < margin.
+    assert rr._accept_candidate(weak_self, baseline) is False
+
+
+def test_box_overlap_ratio():
+    # box (0,0,10,10) area100; region (5,5,15,15) intersect (5,5,10,10) area25 → 0.25.
+    assert abs(rr._box_overlap_ratio((0, 0, 10, 10), (5, 5, 15, 15)) - 0.25) < 1e-9
+    assert rr._box_overlap_ratio((0, 0, 10, 10), (50, 50, 60, 60)) == 0.0
+
+
+def test_dodge_guard_rejects_overlap_avoidance_near_margin():
+    # 현재 overlap 0.5, 후보 0.0(급감) + val_delta 가 margin 부근(0.05) → reject.
+    assert rr._dodge_guard(0.0, 0.5, 0.05) is True
+    # 후보가 충분히 이기면(val_delta 큼) overlap 급감이어도 통과(가짜 아님).
+    assert rr._dodge_guard(0.0, 0.5, 0.5) is False

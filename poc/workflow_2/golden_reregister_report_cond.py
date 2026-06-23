@@ -144,6 +144,74 @@ def _format_digest(rows_by_mod):
 
 
 # ====================================================================
+# 순수 헬퍼 — 박스 제안 (C2).
+# ====================================================================
+def _mean(xs):
+    """xs 의 산술평균. 빈 리스트면 0.0."""
+    xs = list(xs)
+    return sum(xs) / len(xs) if xs else 0.0
+
+
+def _split_frames(frame_keys, *, split_min_s=SPLIT_MIN_S):
+    """held-out 분할. < split_min_s 면 None(insufficient). even-idx=select, odd-idx=validate."""
+    if len(frame_keys) < split_min_s:
+        return None
+    select = [k for i, k in enumerate(frame_keys) if i % 2 == 0]
+    validate = [k for i, k in enumerate(frame_keys) if i % 2 == 1]
+    return select, validate
+
+
+def _iter_candidate_boxes(img_w, img_h, base_box, *, scales=SUGG_SCALES, stride_ratio=SUGG_STRIDE_RATIO):
+    """엔지니어 박스 크기 × scales 윈도를 stride 로 슬라이드. 이미지 경계 내 박스만."""
+    bl, bt, br, bb = base_box
+    bw, bh = br - bl, bb - bt
+    short = max(1, min(bw, bh))
+    stride = max(1, int(round(stride_ratio * short)))
+    out = []
+    for s in scales:
+        w, h = max(1, int(round(bw * s))), max(1, int(round(bh * s)))
+        if w >= img_w or h >= img_h:
+            continue
+        for t in range(0, img_h - h + 1, stride):
+            for l in range(0, img_w - w + 1, stride):
+                out.append((l, t, l + w, t + h))
+    return out
+
+
+def _select_candidate(cand_metrics, baseline):
+    """select-half: mean fidelity >= baseline mean fidelity 인 후보 중 최저 self_ratio. 없으면 None."""
+    base_fid = _mean(baseline["sel_fidelities"])
+    passing = [c for c in cand_metrics if _mean(c["sel_fidelities"]) >= base_fid]
+    if not passing:
+        return None
+    return min(passing, key=lambda c: c["self_ratio"])
+
+
+def _accept_candidate(cand, baseline, *, accept_margin=ACCEPT_MARGIN):
+    """validate-half: mean paired fidelity delta >= margin AND self_ratio 개선 >= margin."""
+    fid_delta = _mean(cand["val_fidelities"]) - _mean(baseline["val_fidelities"])
+    self_gain = baseline["self_ratio"] - cand["self_ratio"]
+    return fid_delta >= accept_margin and self_gain >= accept_margin
+
+
+def _box_overlap_ratio(box, region):
+    """box 가 region(=removal mask 사각형)과 겹치는 비율 = 교집합/ box 면적."""
+    l, t, r, b = box
+    rl, rt, rr_, rb = region
+    iw = max(0, min(r, rr_) - max(l, rl))
+    ih = max(0, min(b, rb) - max(t, rt))
+    area = max(1, (r - l) * (b - t))
+    return (iw * ih) / area
+
+
+def _dodge_guard(cand_overlap, base_overlap, val_delta, *, accept_margin=ACCEPT_MARGIN):
+    """True=REJECT. 후보가 overlap 급감(현재 대비)으로만 이득(val_delta 가 margin 부근)이면 가짜 이득."""
+    avoids = cand_overlap < base_overlap - 0.2
+    marginal = val_delta < 2 * accept_margin
+    return avoids and marginal
+
+
+# ====================================================================
 # C1 통합 — 프레임 로드 + 매칭 패스 + run().
 # ====================================================================
 import cv2

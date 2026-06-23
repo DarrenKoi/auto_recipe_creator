@@ -190,6 +190,11 @@ def test_box_offset_xy_is_box_center_minus_frame_center():
     assert rr._box_offset_xy((100, 100, 140, 140), 240, 240) == (0.0, 0.0)
 
 
+def test_fidelity_gt_tol_norm_default_widened():
+    # 0.20 은 참 localization(0.20~0.24)을 1~6px 차로 놓쳤다 -> 기본 0.30 으로 넓힘.
+    assert rr._FIDELITY_GT_TOL_NORM == 0.30
+
+
 def test_cap_recipes_limits_when_positive():
     items = ["a", "b", "c", "d", "e"]
     assert rr._cap_recipes(items, 3) == ["a", "b", "c"]   # 양수 cap -> 앞에서 N개.

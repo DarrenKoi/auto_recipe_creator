@@ -60,3 +60,6 @@ REREGISTER_MAX_RECIPES = 0
 # fidelity 매칭 scale band(A/B). "" 면 코드 기본 tight band(0.85,1.0,1.15) — 작은 box crop 이
 # 최소 scale(0.6) distractor 로 빠지는 걸 막음. 옛 동작 복원은 "0.6,0.75,0.85,1.0".
 REREGISTER_FIDELITY_SCALES = ""
+# fidelity hit tolerance(patch 단변 비율). 참 localization 0.20~0.24, distractor >=0.42 라
+# 0.30 이 둘을 가른다. 옛 동작은 0.20.
+REREGISTER_GT_TOL_NORM = 0.30

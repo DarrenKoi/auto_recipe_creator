@@ -302,7 +302,10 @@ def _search_unique_box(img, base_box):
 
 
 # GT_FIDELITY_TOL: 프레임 GT 위치 근방 hit tolerance(short-side 정규화 기준 0.2 = GT_TOL_NORM).
-_FIDELITY_GT_TOL_NORM = 0.20
+# fidelity hit tolerance = 이 비율 × patch 단변(px). 오피스 실측상 tight band 에서 참 localization
+# 은 short 의 0.20~0.24 에 떨어지고 distractor 는 >=0.42 라 깨끗이 갈린다 — 0.20 은 참 매칭을 1~6px
+# 차로 놓쳐 baseline 이 all-zero 가 됐다. 0.30 으로 넓혀 참 매칭만 잡고 distractor 는 계속 기각.
+_FIDELITY_GT_TOL_NORM = float(os.getenv("REREGISTER_GT_TOL_NORM", "0.30"))
 
 
 def _real_box_ltrb(rcp_gray):

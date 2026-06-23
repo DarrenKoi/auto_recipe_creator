@@ -21,8 +21,9 @@ def test_seed_env_respects_existing_reregister(monkeypatch):
 from poc.workflow_2 import golden_reregister_report_cond as rr
 
 
-def test_aggregate_strong_counts_off_target_and_missing():
-    # 3 프레임: rank1(ok) / rank3(off) / None=in_topk False(missing) → fail 2/3.
+def test_aggregate_strong_counts_only_in_topk_false():
+    # fail = in_topk=False 만. rank3(후보엔 있음)은 리랭커 복구 가능 → fail 아님 → 1/3.
+    # worst_disp 는 fail(missing) 프레임에서만 → 0.9 (rank3 의 0.4 는 제외).
     frames = [
         {"in_topk": True, "topk_rank": 1, "best_cand_dist_norm": 0.05},
         {"in_topk": True, "topk_rank": 3, "best_cand_dist_norm": 0.4},
@@ -30,7 +31,7 @@ def test_aggregate_strong_counts_off_target_and_missing():
     ]
     out = rr._aggregate_strong(frames)
     assert out["n_s"] == 3
-    assert abs(out["strong_fail_frac"] - 2 / 3) < 1e-9
+    assert abs(out["strong_fail_frac"] - 1 / 3) < 1e-9
     assert out["worst_disp"] == 0.9
 
 
@@ -68,6 +69,14 @@ def test_self_ratio_unique_when_no_survivor():
 def test_tier_strong_when_free_search_fails():
     tier, sev = rr._evidence_tier("sem", 0.5, 0.99, 0.99)
     assert tier == "STRONG" and sev == 0.5
+
+
+def test_tier_strong_requires_frac_floor():
+    # frac < STRONG_FRAC_FLOOR(0.5) 면 STRONG 아님 (재랭킹 가능한 소수 miss). 다른 신호 낮으면 NONE.
+    tier, _ = rr._evidence_tier("sem", 0.33, 0.10, 0.10)
+    assert tier == "NONE"
+    # 단, 같은 sub-floor 라도 msr 모호하면 MEDIUM 으로 떨어진다(STRONG 만 못 됨).
+    assert rr._evidence_tier("sem", 0.33, 0.90, 0.10)[0] == "MEDIUM"
 
 
 def test_tier_medium_on_msr_tail():
@@ -163,6 +172,14 @@ def test_split_frames_insufficient():
 def test_split_frames_deterministic_halves():
     sel, val = rr._split_frames(["a", "b", "c", "d", "e"], split_min_s=4)
     assert sel == ["a", "c", "e"] and val == ["b", "d"]  # even-idx select, odd-idx validate.
+
+
+def test_split_frames_default_allows_two():
+    # 오피스 실측 n_s=2~3 → 기본 SPLIT_MIN_S=2 라야 제안이 돈다(4 면 전부 insufficient).
+    assert rr.SPLIT_MIN_S == 2
+    sel, val = rr._split_frames(["a", "b"])     # 기본 floor 사용.
+    assert sel == ["a"] and val == ["b"]        # 1/1 split (validate 1장, advisory).
+    assert rr._split_frames(["a"]) is None       # 1장은 여전히 insufficient.
 
 
 def test_iter_candidate_boxes_within_bounds():

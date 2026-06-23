@@ -122,12 +122,18 @@ align_images 트리/`align/assets.py` 수정.
 구제해 성공한 latent 위험이다. 따라서 `strong_fail_frac>0` 은 "**무가드 free-search** 가 ≥1 S 프레임에서 진짜
 점을 못 고름"의 binary 사실이며, "production 가 실패했다"가 아니다(§11 라벨과 일관).
 
-### STRONG — free-search localization (가드 의존 위험 직격)
+### STRONG — proposer 가 GT 를 후보에 못 올림 (재등록 직격)
 각 S 프레임에 `_gt_in_topk`:
-- `gt_rank`(=`topk_rank`; 채택 modality top-N 내 GT 순위; rank1 아니면 위험),
+- `in_topk`(GT 가 후보 pool 에 있나),
 - `free_best_disp_norm`(=`best_cand_dist_norm`; free-best 가 GT 에서 얼마나 떨어졌나).
-recipe 집계: `strong_fail_frac` = (`in_topk=False` 또는 `topk_rank>1` 인 프레임 비율) + worst-case
-`free_best_disp_norm`. **클수록 위험.** "무가드 매처가 진짜 점을 *고르지 못함*."
+recipe 집계: `strong_fail_frac` = **`in_topk=False` 인 프레임 비율** + worst-case `free_best_disp_norm`
+(fail 프레임에서만). **클수록 위험.**
+
+> **개정 (2026-06-23, 오피스 1차 실측 기반):** 초안은 fail = `in_topk=False` **또는 `topk_rank>1`**
+> 였으나, `topk_rank>1`(GT 가 후보엔 있고 순위만 밀림)은 production 리랭커가 복구하므로 재등록 신호가
+> 아니다. 포함 시 SEM 95% / OM 52% 로 STRONG 이 포화돼 tier 변별을 잃었다. → fail = **`in_topk=False`
+> 만**(proposer 벽 = 비변별, 재랭킹 무의미; [[project_matcher_flat_chamfer_distinctiveness]]). 멤버십도
+> §6 처럼 `STRONG_FRAC_FLOOR` 다수결 게이트를 둔다.
 
 ### MEDIUM — msr ambiguity tail (`peak_ratio`)
 같은 `_gt_in_topk` dict 의 `peak_ratio`(top2/top1 chamfer) → recipe 집계 **worst-case(max)** + `n_s_frames`.
@@ -153,11 +159,12 @@ flag 개수 합산이 아니라 tier 가중 risk score. **severity 는 신호 ra
 
 ```
 # 자체 절대 floor (module const; live τ 아님). 오피스에서 1회 보정.
-MSR_FLOOR  = 0.85   # peak_ratio tail 이 이 미만이면 모호 아님(MEDIUM 미달).
-SELF_FLOOR = 0.85   # self_ratio 가 이 미만이면 변별 충분(ADVISORY 미달).
+MSR_FLOOR  = 0.85         # peak_ratio tail 이 이 미만이면 모호 아님(MEDIUM 미달).
+SELF_FLOOR = 0.85         # self_ratio 가 이 미만이면 변별 충분(ADVISORY 미달).
+STRONG_FRAC_FLOOR = 0.5   # GT-absent 가 다수 프레임이라야 STRONG (개정 2026-06-23; 포화 방지).
 
 evidence_tier(recipe,mod):
-  STRONG   if strong_fail_frac > 0                        # 무가드 free-search 가 틀림 (binary 사실)
+  STRONG   if strong_fail_frac >= STRONG_FRAC_FLOOR       # GT-absent 다수 프레임 (재랭킹 불가)
   MEDIUM   elif msr_peak_ratio_tail >= MSR_FLOOR          # 측정 외형 모호 (raw 절대 컷)
   ADVISORY elif (mod==OM and self_ratio >= SELF_FLOOR)    # rcp self 모호 — **OM 만**
   NONE     otherwise
@@ -190,9 +197,11 @@ crosshair 위치에 놓고 `compute_align_key_score_ensemble` 의 `.score`. `sel
 1. **후보 생성:** rcp 이미지 위 modality별 window(엔지니어 박스 크기 × `SUGG_SCALES`=`(0.8,1.0,1.25)`, stride
    = `SUGG_STRIDE_RATIO`=0.25 × 박스 short side; module const) 슬라이드. texture 게이트(`_edge_density`/`_lap_var`
    최소치 미만 패치 skip — unique-but-blank 는 무용/불안정).
-2. **held-out split (viable 최소 프레임 = `SPLIT_MIN_S`=4):** modality 의 S 프레임이 `SPLIT_MIN_S` 미만이면
-   제안 **skip + "insufficient frames"**(리뷰 반영: OM 2/SEM 3 희박 recipe 다수가 여기 해당 — C2 가 다수 recipe 에서
-   미동작함을 알려진 한계로 명시. Phase 2 에서 E 프레임 합류 시 완화). 충족 시 홀짝 결정적 분할(각 half ≥2).
+2. **held-out split (viable 최소 프레임 = `SPLIT_MIN_S`=2):** modality 의 S 프레임이 `SPLIT_MIN_S` 미만이면
+   제안 **skip + "insufficient frames"**. **개정 (2026-06-23, 오피스 실측 n_s=2~3):** 초안 `=4` 는 전 recipe
+   insufficient → 제안 0건이라 `=2` 로 낮춤. n_s=2 → 1/1 split, n_s=3 → 2/1 split. validate-half 가 1장이면
+   검증이 약하므로 제안 문자열에 `(1-frame-val)` 표기 + 엔지니어 육안(overlay) 확인 전제. Phase 2(E 프레임)로
+   프레임 수가 늘면 split 신뢰가 오른다. 충족 시 홀짝 결정적 분할.
    - *select-half* 로 후보별 self_ratio(낮을수록 unique) + per-frame fidelity 계산 → **mean fidelity ≥ 현재 박스
      mean fidelity**(paired delta ≥ 0) 인 후보 중 최저 self_ratio 선택.
    - *validate-half* 로 후보·현재 박스 재측정. 채택 조건(둘 다): **mean paired fidelity delta ≥ `accept_margin`**
@@ -234,8 +243,8 @@ crosshair 위치에 놓고 `compute_align_key_score_ensemble` 의 `.score`. `sel
 - `REREGISTER_BOX_SUGGEST` (기본 1) — C2 on/off. 0 이면 C1 리포트만.
 - `REREGISTER_TOPN` (기본 0=전체) — DIGEST/overlay 상위 N 제한(0=무제한).
 - (선택) `REREGISTER_ACCEPT_MARGIN` 미설정 시 module const 0.05.
-- module const(설정 아님; 오피스 보정 대상): `MSR_FLOOR`/`SELF_FLOOR`(0.85), `REL_FLOOR` 제거됨,
-  `EXCL_RADIUS_FOOTPRINTS`(1.0), `SUGG_SCALES`/`SUGG_STRIDE_RATIO`, `SPLIT_MIN_S`(4).
+- module const(설정 아님; 오피스 보정 대상): `MSR_FLOOR`/`SELF_FLOOR`(0.85), `STRONG_FRAC_FLOOR`(0.5),
+  `EXCL_RADIUS_FOOTPRINTS`(1.0), `SUGG_SCALES`/`SUGG_STRIDE_RATIO`, `SPLIT_MIN_S`(2). (`REL_FLOOR` 제거됨.)
 - `seed_env()` 가 `os.environ.setdefault` 로 브리지(OS env 우선). config 상수 `GOLDEN_ROOT` →
   **env 명은 `ALIGN_GOLDEN_ROOT`**(리뷰 확인; §13 실행 스니펫과 일치). rcp+msr 동일 트리라 별도 root 불필요.
 

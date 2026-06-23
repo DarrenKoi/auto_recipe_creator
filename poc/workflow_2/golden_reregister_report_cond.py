@@ -16,10 +16,15 @@ import numpy as np
 # ---- module consts (오피스 보정 대상) ----
 MSR_FLOOR = 0.85               # peak_ratio tail 이 이 이상이면 MEDIUM.
 SELF_FLOOR = 0.85              # self_ratio 가 이 이상이면 ADVISORY(OM 만).
+# STRONG 멤버십 floor: 오피스 1차 실측(2026-06-23)에서 frac>0 게이트가 SEM 95%/OM 52% 로 포화 →
+# tier 변별 상실. GT-absent(in_topk=False, 재랭킹 불가)가 *다수* 프레임에서 나야 STRONG.
+STRONG_FRAC_FLOOR = 0.5        # strong_fail_frac 이 이 이상이어야 STRONG (그 미만은 하위 tier).
 EXCL_RADIUS_FOOTPRINTS = 1.0   # self-match 제외존 = 이 배수 × max(tw,th).
 SUGG_SCALES = (0.8, 1.0, 1.25)
 SUGG_STRIDE_RATIO = 0.25
-SPLIT_MIN_S = 4
+# n_s(modality당 S 장수)는 오피스 실측상 2~3 (측정 1건 = OM 2 / SEM 3). held-out split 가 돌려면 >=2 라야
+# 하고 4 면 전 recipe insufficient → 제안 0건. validate-half 가 1장이면 advisory(낮은 신뢰)로 표기.
+SPLIT_MIN_S = 2
 ACCEPT_MARGIN = float(os.getenv("REREGISTER_ACCEPT_MARGIN", "0.05"))
 TIER_WEIGHT = {"STRONG": 2.0, "MEDIUM": 1.0, "ADVISORY": 0.3, "NONE": 0.0}
 
@@ -33,20 +38,18 @@ SURVIVORSHIP_BANNER = (
 # 순수 헬퍼 — 증거 집계 (I/O 없음, 합성 데이터로 테스트).
 # ====================================================================
 def _aggregate_strong(frame_results):
-    """STRONG: 무가드 free-search 가 진짜 점을 못 고른 S 프레임 비율 + worst 변위.
+    """STRONG: proposer 가 GT 를 후보에 아예 못 올린(in_topk=False) S 프레임 비율 + worst 변위.
 
     frame_results: 프레임별 `_gt_in_topk` 반환 dict 리스트(None 프레임은 호출부에서 제외).
-    fail = in_topk=False 또는 topk_rank>1.
-    worst_disp: FAIL 프레임에서만 측정(pass 프레임 변위는 tiebreak 왜곡 방지).
-    fail 프레임이 없으면 worst_disp=0.0.
+    fail = **in_topk=False 만**. topk_rank>1(후보엔 있고 순위만 밀림)은 production 리랭커가 복구하므로
+    재등록 신호가 아니다 — 오피스 1차 실측에서 rank>1 포함이 STRONG 을 포화시켜(SEM 95%) 제외.
+    [[project_matcher_flat_chamfer_distinctiveness]]: in_topk=False = proposer 벽 = 비변별(재랭킹 무의미).
+    worst_disp: FAIL 프레임에서만 측정(pass 프레임 변위는 tiebreak 왜곡 방지). 없으면 0.0.
     """
     n = len(frame_results)
     if n == 0:
         return {"strong_fail_frac": 0.0, "worst_disp": 0.0, "n_s": 0}
-    fail_frames = [
-        f for f in frame_results
-        if (not f.get("in_topk")) or (f.get("topk_rank") or 1) > 1
-    ]
+    fail_frames = [f for f in frame_results if not f.get("in_topk")]
     fails = len(fail_frames)
     worst = max((f.get("best_cand_dist_norm") or 0.0) for f in fail_frames) if fail_frames else 0.0
     return {"strong_fail_frac": fails / n, "worst_disp": float(worst), "n_s": n}
@@ -86,7 +89,7 @@ def _evidence_tier(modality, strong_fail_frac, msr_peak_tail, self_ratio):
     SEM self-match 는 near-degenerate 라 단독 tier 를 만들지 않는다(ADVISORY 는 OM 만).
     반환 (tier, severity) — severity 는 tier 내 정렬 키(raw, 정규화 없음).
     """
-    if strong_fail_frac > 0:
+    if strong_fail_frac >= STRONG_FRAC_FLOOR:
         return "STRONG", float(strong_fail_frac)
     if msr_peak_tail >= MSR_FLOOR:
         return "MEDIUM", float(msr_peak_tail)
@@ -463,6 +466,8 @@ def _suggest_for_row(row):
     sugg_str = f"box{box}"
     if sugg_pos_approx:
         sugg_str += "(approx-pos)"
+    if len(val_frames) < 2:
+        sugg_str += "(1-frame-val)"   # validate-half 1장 -> 약한 검증, 엔지니어 육안 확인 필수.
     row["suggestion"] = sugg_str
     row["sugg_self"] = chosen["self_ratio"]
     row["sugg_fidelity"] = _mean(chosen["val_fidelities"])

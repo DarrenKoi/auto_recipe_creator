@@ -439,3 +439,32 @@ def test_e_rep_score_median_and_empty():
     one = rr._free_search_best_score(tpl, img)
     assert rr._e_rep_score(tpl, [img, img]) == one
     assert rr._e_rep_score(tpl, []) is None
+
+
+# ====================================================================
+# Task 5: digest confirmed-count + report s_rep->e_rep column + note
+# ====================================================================
+def test_digest_includes_confirmed_count():
+    import poc.workflow_2.golden_reregister_report_cond as r
+    rows_by_mod = {"om": [
+        {"recipe": "c/a", "tier": "E_CONFIRMED", "e_confirmed": True, "suggestion": "none"},
+        {"recipe": "c/b", "tier": "STRONG", "e_confirmed": False, "suggestion": "box(1,2,3,4)"},
+    ], "sem": []}
+    d = r._format_digest(rows_by_mod)
+    assert "confirmed 1" in d
+    assert d == d.encode("ascii", "replace").decode("ascii")   # ASCII only.
+
+
+def test_report_shows_e_columns_and_note():
+    import poc.workflow_2.golden_reregister_report_cond as r
+    rows_by_mod = {"om": [
+        {"recipe": "c/a", "tier": "E_CONFIRMED", "e_confirmed": True,
+         "strong_fail_frac": 0.5, "worst_disp": 0.9, "msr_peak_tail": 0.1,
+         "self_ratio": 0.2, "advisory_confidence": "ok", "n_s": 3,
+         "suggestion": "none", "sugg_self": None, "sugg_fidelity": None,
+         "s_rep": 0.80, "e_rep": 0.55, "n_e": 2},
+    ], "sem": []}
+    out = r._format_report(rows_by_mod)
+    assert "0.800->0.550" in out          # s_rep->e_rep column.
+    assert "n_e=2" in out
+    assert "E_CONFIRMED rows" in out      # confirmation note line present.

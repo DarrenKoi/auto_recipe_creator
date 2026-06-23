@@ -171,7 +171,7 @@ def _format_report(rows_by_mod):
     """modality 별 worst-first 테이블 텍스트(ASCII). 헤더에 survivorship 배너."""
     lines = ["=== Re-registration priority (S-only screening) ===", SURVIVORSHIP_BANNER, ""]
     cols = ("rank recipe tier strong_fail worst_disp msr_tail self_ratio(conf) "
-            "n_s suggestion sugg_self/fid")
+            "n_s s_rep->e_rep(n_e) suggestion sugg_self/fid")
     for mod in ("om", "sem"):
         rows = rows_by_mod.get(mod, [])
         lines.append(f"-- {mod.upper()} ({len(rows)} screened) --")
@@ -181,22 +181,29 @@ def _format_report(rows_by_mod):
                 str(i), r["recipe"], r["tier"], _fmt_num(r["strong_fail_frac"]),
                 _fmt_num(r["worst_disp"]), _fmt_num(r["msr_peak_tail"]),
                 f"{_fmt_num(r['self_ratio'])}({r.get('advisory_confidence','ok')})",
-                str(r["n_s"]), r.get("suggestion", "none"),
+                str(r["n_s"]),
+                f"{_fmt_num(r.get('s_rep'))}->{_fmt_num(r.get('e_rep'))}(n_e={r.get('n_e', 0)})",
+                r.get("suggestion", "none"),
                 f"{_fmt_num(r.get('sugg_self'))}/{_fmt_num(r.get('sugg_fidelity'))}",
             ]))
         lines.append("")
+    if any(rr.get("e_confirmed") for rs in rows_by_mod.values() for rr in rs):
+        lines.append("E_CONFIRMED rows have fail-frame (E) score-collapse confirmation; "
+                     "others remain S-only latent.")
     return "\n".join(lines)
 
 
 def _format_digest(rows_by_mod):
-    """1줄 DIGEST(ASCII). modality 별 screened/strong/w_sugg + top recipe 2개."""
+    """1줄 DIGEST(ASCII). modality 별 screened/strong/confirmed/w_sugg + top recipe 2개."""
     parts = []
     for mod in ("om", "sem"):
         rows = rows_by_mod.get(mod, [])
         strong = sum(1 for r in rows if r["tier"] == "STRONG")
+        confirmed = sum(1 for r in rows if r.get("e_confirmed"))
         w_sugg = sum(1 for r in rows if str(r.get("suggestion", "none")).startswith("box"))
         top = ",".join(r["recipe"] for r in rows[:2]) or "-"
-        parts.append(f"{mod}[screened {len(rows)}, strong {strong}, w_sugg {w_sugg}, top {top}]")
+        parts.append(f"{mod}[screened {len(rows)}, strong {strong}, confirmed {confirmed}, "
+                     f"w_sugg {w_sugg}, top {top}]")
     return "[DIGEST] reregister(S-only): " + " | ".join(parts)
 
 

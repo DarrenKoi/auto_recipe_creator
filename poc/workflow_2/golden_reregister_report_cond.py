@@ -161,7 +161,6 @@ from poc.workflow_3.align.diagnostics.align_point_correction import _tool_label
 from poc.workflow_3.align.diagnostics.crosshair_detect import detect_crosshair
 from poc.workflow_3.align.assets import iter_msr_images, iter_recipe_dirs, resolve_assets
 from poc.workflow_2 import DEBUG_IMAGE_DIR
-from poc.workflow_2 import golden_localization_eval as gle
 
 # 자기-match 에 쓸 scale band — DEFAULT_SCALES (paused/static frame 기준).
 _SELF_MATCH_SCALES = DEFAULT_SCALES
@@ -169,21 +168,21 @@ _SELF_MATCH_SCALES = DEFAULT_SCALES
 OUTPUT_ROOT = DEBUG_IMAGE_DIR / "golden_reregister_report_cond"
 
 
-def _self_match_ratio(box_tpl):
-    """rcp box 템플릿을 자기 raw 이미지에 매칭 → exclusion-zone self_ratio + degenerate 판정.
+def _self_match_ratio(box_tpl, full_gray):
+    """rcp box(whitebox) 템플릿을 *full* rcp 이미지에 매칭 → exclusion-zone self_ratio + degenerate 판정.
 
-    반환 (self_ratio, confidence). 템플릿이 이미지를 거의 채우면 confidence='low'(SEM near-degenerate).
+    spec 5 ADVISORY: 등록 key 이미지 안에서 whitebox 가 다른 영역과 닮았는지(look-alike). 반환
+    (self_ratio, confidence). 템플릿이 full 이미지를 거의 채우면 confidence='low'(SEM near-degenerate).
     """
-    img = box_tpl.raw_image
-    th, tw = img.shape[:2]
-    res = compute_align_key_score_ensemble(box_tpl, img, scales=_SELF_MATCH_SCALES, policy=STRUCTURE_POLICY)
+    th, tw = box_tpl.raw_image.shape[:2]
+    res = compute_align_key_score_ensemble(box_tpl, full_gray, scales=_SELF_MATCH_SCALES, policy=STRUCTURE_POLICY)
     cands = list(res.candidates)
     if not cands:
         return 0.0, "low"
     excl = EXCL_RADIUS_FOOTPRINTS * max(tw, th)
     ratio = _self_ratio(cands, cands[0].xy, excl)
-    # raw image 가 작아 슬라이드 여지 부족하면 near-degenerate.
-    conf = "low" if (tw >= img.shape[1] * 0.9 and th >= img.shape[0] * 0.9) else "ok"
+    fh, fw = full_gray.shape[:2]
+    conf = "low" if (tw >= fw * 0.9 and th >= fh * 0.9) else "ok"
     return ratio, conf
 
 
@@ -313,10 +312,14 @@ def _recipe_row(assets, modality):
     medium = _aggregate_medium(frame_results)
     self_ratio_val, conf = 0.0, "ok"
     if box_tpls.get(modality) is not None:
-        try:
-            self_ratio_val, conf = _self_match_ratio(box_tpls[modality])
-        except Exception as exc:
-            print(f"[WARNING] self_match 실패 {assets.recipe_id}/{modality}: {exc}")
+        rcp_path = assets.recipe_om if modality == "om" else assets.recipe_sem
+        if rcp_path is not None:
+            try:
+                from poc.workflow_3.align.assets import load_gray
+                full_gray = load_gray(rcp_path)
+                self_ratio_val, conf = _self_match_ratio(box_tpls[modality], full_gray)
+            except Exception as exc:
+                print(f"[WARNING] self_match 실패 {assets.recipe_id}/{modality}: {exc}")
 
     tier, sev = _evidence_tier(modality, strong["strong_fail_frac"], medium["msr_peak_tail"], self_ratio_val)
     return {

@@ -209,6 +209,28 @@ def _mean(xs):
     return sum(xs) / len(xs) if xs else 0.0
 
 
+def _median(xs):
+    """리스트 median. 짝수 길이는 가운데 두 값 평균. 빈 리스트는 None."""
+    s = sorted(xs)
+    n = len(s)
+    if n == 0:
+        return None
+    mid = n // 2
+    if n % 2:
+        return float(s[mid])
+    return (float(s[mid - 1]) + float(s[mid])) / 2.0
+
+
+def _s_rep_score(frame_results):
+    """S frame_results 의 프레임별 best proposer 점수(cand_scores[0])의 median. 없으면 None."""
+    scores = []
+    for fr in frame_results:
+        cs = fr.get("cand_scores") or []
+        if cs:
+            scores.append(float(cs[0]))
+    return _median(scores)
+
+
 def _split_frames(frame_keys, *, split_min_s=SPLIT_MIN_S):
     """held-out 분할. < split_min_s 면 None(insufficient). even-idx=select, odd-idx=validate.
 

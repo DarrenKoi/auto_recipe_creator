@@ -386,3 +386,28 @@ def test_e_confirmed_tier_is_top_weight():
     """E_CONFIRMED 가 TIER_WEIGHT 에서 최상위 무게이고, risk_score 로도 STRONG 을 앞건다."""
     assert rr.TIER_WEIGHT["E_CONFIRMED"] > rr.TIER_WEIGHT["STRONG"]
     assert rr._risk_score("E_CONFIRMED", 0.2) > rr._risk_score("STRONG", 1.0)
+
+
+# ====================================================================
+# Task 3: _median + _s_rep_score 순수 헬퍼.
+# ====================================================================
+def test_median_odd_even_and_empty():
+    """_median: 홀수면 중앙값, 짝수면 가운데 두 값 평균, 빈 리스트는 None."""
+    assert rr._median([0.2, 0.9, 0.5]) == 0.5            # 홀수
+    assert rr._median([0.2, 0.8]) == 0.5                  # 짝수 -> 가운데 두 값 평균
+    assert rr._median([]) is None
+
+
+def test_s_rep_score_uses_best_per_frame_median():
+    """_s_rep_score: frame_results 각 항목의 best proposer 점수(cand_scores[0])의 median.
+
+    cand_scores 가 비거나 없는 프레임은 skip. 모두 비거나 입력 없으면 None.
+    """
+    frame_results = [
+        {"cand_scores": [0.80, 0.4]},
+        {"cand_scores": [0.60, 0.3]},
+        {"cand_scores": []},          # 점수 없는 프레임은 skip.
+    ]
+    assert rr._s_rep_score(frame_results) == 0.70          # median(0.80, 0.60)
+    assert rr._s_rep_score([]) is None
+    assert rr._s_rep_score([{"cand_scores": []}]) is None

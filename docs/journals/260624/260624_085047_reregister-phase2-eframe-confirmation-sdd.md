@@ -137,3 +137,34 @@ uv run python poc/workflow_2/golden_reregister_report_cond.py
 받아 실제 S 분포·S->E drop 을 본 뒤 `S_FLOOR/E_FLOOR/COLLAPSE_MARGIN` 을 실제 스케일로 설정. 파이프라인이 발화하는지만
 빠르게 보려면 **illustrative(최종 아님)** `S_FLOOR=0.15 / E_FLOOR=0.20 / COLLAPSE_MARGIN=0.05` 로 재실행 시
 `0.244->0.187` 이 `E_CONFIRMED` 로 뒤집힘(smoke test). 코드 무수정, env/config 만.
+
+---
+
+## 7. 결론 — Phase 2(E-frame confirmation) 실험 종료
+
+**smoke-test 실행 결과(`S_FLOOR=0.15 E_FLOOR=0.20 COLLAPSE_MARGIN=0.05`):**
+`om[... confirmed 1 ...] | sem[... confirmed 5 ...]`. 그러나 분기 분석 결과 **5/6 이 false positive**:
+| row | s_rep | e_rep | delta | margin(>=0.05) | E-floor(<=0.20) |
+| OM 0.244->0.187 | 0.244 | 0.187 | 0.057 | YES | YES |
+| SEM 0.155->0.122 | 0.155 | 0.122 | 0.033 | no | YES |
+| SEM 0.182->0.162 | 0.182 | 0.162 | 0.020 | no | YES |
+| SEM 0.158->0.153 | 0.158 | 0.153 | 0.005 | no | YES |
+SEM 3건은 전부 **E-floor 분기로만** 확정 — delta 0.005~0.033(사실상 collapse 아님). `E_FLOOR` 절대임계는
+점수대가 전부 ~0.15-0.25 인 이 데이터에서 무효(S·E 둘 다 floor 밑이라 '낮은 점수'를 'collapse' 로 오판). 진짜
+collapse 는 OM 1건(delta 0.057)뿐이고 그마저 noise floor 미측정.
+
+**결론(사용자 합의): Phase 2 / E-frame confirmation 은 이 데이터에서 신뢰할 신호가 아니므로 실험 종료.**
+근본 원인 = **rcp align key 가 충분히 distinctive 하지 않다** — s_rep 가 *success* 프레임에서도 낮음(0.15-0.31),
+STRONG tier 41(OM)/80(SEM). key 가 S 에서도 약하니 fail 시 올바른 align point 회복 불가. score-collapse 는 'S 에서
+높다가 E 에서 무너지는' key 가 필요한데 Phase 1 이 flag 하는 recipe 는 *애초에 S 에서 약한* key 라 구조적 모순
+(무너질 높이가 없음). 이는 기존 증거([[project_matcher_flat_chamfer_distinctiveness]], [[project_om_sem_mag_key_fills_frame]])
+및 production 이 rcp 보다 consensus 템플릿을 *우선*하는 아키텍처 결정과 일치.
+
+**상태/후속:**
+- `E_CONFIRMED` 머신러리(코드/테스트)는 그대로 남김(shipped, 60 tests) — 더 강한 신호 생기면 재활성. 단 기본
+  `REREGISTER_E_CONFIRM=1` 은 실데이터서 오해 소지 출력(false-positive confirmed) → **기본 0 으로 내리는 1줄 변경
+  권장**(미적용, 후속). dataset-health / EFRAME_ROOT 분리는 유용하니 유지.
+- **진짜 레버 = (a) re-registration**(Phase 1 신호; 더 distinctive 영역으로 align key 재등록) **+ (b) matcher 자체 개선**.
+- **다음 job = matcher** (사용자 지정). rcp/매처의 distinctiveness·discrimination 약함이 이 워크스트림 전반의 병목.
+- 미규명(액션 불변): rcp **이미지** 약함 vs **matcher** 약함 분리 안 됨(둘 다 prior 증거 있음).
+- 부수 미해결: `8 overlay suggestion 파싱 실패`(Phase 1 box-suggest 오버레이; verbatim 라인 확보 시 수정).

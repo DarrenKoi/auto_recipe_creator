@@ -82,3 +82,28 @@ uv run python poc/workflow_2/golden_reregister_report_cond.py
 - **`.remember/remember.md` 핸드오프 작성**: 다음 세션(오피스 추정)이 보정 절차·릴레이 항목·WONTFIX 트리아지·git 상태를 바로 잡도록 정리.
 - 루트 `MEMORY.md` 인덱스: 기존 `project_reregister_report_phase1.md` 1줄 포인터가 그대로 유효(파일 내용만 확장) → 추가 변경 없음.
 - 새 아키텍처/컨벤션 변화는 없음(기존 드라이버에 upgrade-only 포스트패스 1개 추가). CLAUDE.md 변경 불필요.
+
+---
+
+## 5. 추가 작업 — EFRAME_ROOT 분리 + dataset-health 사전점검 (main `039303b`)
+
+같은 세션 후속: E-frame 보정 데이터셋을 S-only golden 과 **분리된 전용 루트**로 두고, 실행 시작 시
+'E_CONFIRMED 도달 불가' recipe 를 사전 경고하도록 추가(TDD, 신규 파일 `test_eframe_dataset.py` 12 테스트,
+기존 reregister 스위트 48 pass).
+
+- **`EFRAME_ROOT` (config) -> `ALIGN_EFRAME_ROOT` (env)**: `golden_eval_config` 브리지 추가
+  (`golden_eval_config.example.py` + `golden_eval_config_loader.py`). `run()` 의 `_resolve_report_root()` 가
+  `ALIGN_EFRAME_ROOT` 설정 시 우선, 없으면 `ALIGN_GOLDEN_ROOT` 폴백(하위호환). `[INFO] report root source=eframe|golden`.
+  → S-only baseline = `GOLDEN_ROOT` 설정 / E-frame 보정 = `EFRAME_ROOT` 설정.
+- **reregister 는 rcp-template-only** (검증: 드라이버에 `HISTORY_ROOT`/consensus 참조 0; `_build_templates` 가
+  `from_rcp` 에서 빌드). 따라서 eframe 데이터셋은 recipe 마다 `align_img_from_rcp/` + `align_img_from_msr/{S,E}` +
+  `.<file>/cond.txt` 만 필요 — **consensus_history(HISTORY_ROOT) 불필요**.
+- **dataset-health 리포트** (`_dataset_health`/`_format_dataset_health`, `E_CONFIRM_ON` 일 때 시작 시 출력):
+  recipe 별 rcp/S/E/cond 집계 → confirm-capable(rcp+S+E) / incomplete(missing rcp/S/E) / cond-gap 표시.
+  `confirmed 0` 이 데이터 탓(E/rcp 부재)인지 임계 탓인지 구분.
+- **S-only msr 폴더는 무해**: Phase 1 screening 정상 + Phase 2 는 `_load_e_frames=[]`→`e_rep=None`→`_e_confirm=False`
+  로 절대 오확정 안 됨(테스트 `_e_rep_score([])is None`, `_e_confirm(.,None)is False`); health 에서 `missing E` 로 표기,
+  confirm-capable/E-bearing 카운트서 제외. 단 보정 신호 0 이므로 유효 표본은 `confirm-capable C`(전체 N 아님).
+
+메모리/핸드오프(둘 다 git 밖 — `~/.claude` 메모리는 repo 아님, `.remember/`는 gitignore)는 동일 내용으로 갱신했고,
+저장소엔 본 저널 + `039303b` 커밋 메시지 + `golden_eval_config.example.py` EFRAME_ROOT 주석으로 반영.

@@ -153,3 +153,31 @@ def test_estimate_lattice_period_detects_stripes():
     tpl = build_template(img, recipe_id="r", version="r", key_type="om")
     per = tb.estimate_lattice_period(tpl)
     assert per is not None and abs(per - p) <= 3
+
+
+def test_bootstrap_ci_is_deterministic_and_bracketed():
+    import poc.workflow_2.golden_consensus_eval_cond as g
+    vals = [0.0] * 50 + [1.0] * 50            # mean 0.5.
+    lo, hi = g._bootstrap_ci(vals, n_boot=500, seed=1)
+    assert lo < 0.5 < hi
+    assert g._bootstrap_ci(vals, n_boot=500, seed=1) == (lo, hi)   # seed 고정 결정적.
+    import math
+    a, b = g._bootstrap_ci([], n_boot=10, seed=1)
+    assert math.isnan(a) and math.isnan(b)
+
+
+def test_aggregate_buckets_counts():
+    import poc.workflow_2.golden_consensus_eval_cond as g
+    labels = ["correct", "correct", "near_periodic", "far_wrong", "one_member_only"]
+    d = g._aggregate_buckets(labels)
+    assert d["correct"] == 2 and d["near_periodic"] == 1 and d["total"] == 5
+
+
+def test_format_bank_digest_ascii_one_line():
+    import poc.workflow_2.golden_consensus_eval_cond as g
+    stats = {"om": {"heatmap_in_topk": 0.71, "cons_in_topk": 0.66, "near_periodic": 0.05},
+             "sem": {"heatmap_in_topk": 0.70, "cons_in_topk": 0.66, "near_periodic": 0.30}}
+    d = g._format_bank_digest(stats)
+    assert d.startswith("[DIGEST] template-bank")
+    assert "om[" in d and "sem[" in d and "\n" not in d
+    assert d == d.encode("ascii", "replace").decode("ascii")

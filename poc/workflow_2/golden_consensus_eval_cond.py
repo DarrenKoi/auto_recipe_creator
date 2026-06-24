@@ -159,6 +159,43 @@ def _format_box_crop_digest(per_modality):
     return lines
 
 
+def _bootstrap_ci(values, *, n_boot=1000, seed=0, lo=2.5, hi=97.5):
+    """평균의 percentile bootstrap CI. 빈 입력은 (nan,nan). seed 고정 결정적."""
+    import numpy as _np
+    arr = _np.asarray(values, dtype=float)
+    if arr.size == 0:
+        return (float("nan"), float("nan"))
+    rng = _np.random.RandomState(seed)
+    means = _np.empty(n_boot, dtype=float)
+    n = arr.size
+    for i in range(n_boot):
+        means[i] = arr[rng.randint(0, n, n)].mean()
+    return (float(_np.percentile(means, lo)), float(_np.percentile(means, hi)))
+
+
+def _aggregate_buckets(labels):
+    """classify_winner 라벨 리스트 -> 버킷 카운트 + total."""
+    out = {"correct": 0, "near_periodic": 0, "far_wrong": 0, "one_member_only": 0, "total": 0}
+    for lb in labels:
+        if lb in out:
+            out[lb] += 1
+        out["total"] += 1
+    return out
+
+
+def _format_bank_digest(stats_by_mod):
+    """per-modality bank vs consensus 한 줄 ASCII digest."""
+    parts = []
+    for mod in ("om", "sem"):
+        s = stats_by_mod.get(mod)
+        if not s:
+            continue
+        parts.append(
+            f"{mod}[heatmap {s['heatmap_in_topk']:.3f} vs cons {s['cons_in_topk']:.3f}, "
+            f"near_periodic {s['near_periodic']:.3f}]")
+    return "[DIGEST] template-bank (in_topk + kill-test): " + " | ".join(parts)
+
+
 def _calibrate_periodicity(score_by_recipe, per_recipe):
     """recipe별 periodicity 점수 + per_recipe in_topk 율 → per-point miss_predictor_stats.
 

@@ -954,14 +954,18 @@ def run() -> str:
         res["tbank_rrf_enabled"] = TBANK_RRF
 
         # kill-test line: near_periodic per modality.
+        # TODO(spec section 7 follow-up): consensus arm 의 near_periodic 비교값은 아직
+        # 미구현 — consensus winner top-1 xy 의 modality 분류가 필요해 보류.
+        # 현재 H0 판단은 heatmap 절댓값(SEM >= 0.30 근방이면 경고) +
+        # heatmap_in_topk vs cons_in_topk 게이트로 읽는다.
         om_s = bank_stats_by_mod.get("om") or {}
         sem_s = bank_stats_by_mod.get("sem") or {}
         om_np = om_s.get("near_periodic") or 0.0
         sem_np = sem_s.get("near_periodic") or 0.0
         print(
-            f"[INFO] kill-test (heatmap winners): "
-            f"om near_periodic={om_np:.3f} sem near_periodic={sem_np:.3f} "
-            f"(>= cons near_periodic => H0 distractor reinforcement)"
+            f"[INFO] kill-test (heatmap near_periodic; high rate esp. SEM"
+            f" => H0 distractor reinforcement, see spec section 7):"
+            f" om={om_np:.3f} sem={sem_np:.3f}"
         )
         print(_format_bank_digest(bank_stats_by_mod))
 

@@ -24,9 +24,23 @@ A **median-consensus** mechanism already exists (`consensus_cv._consensus`): it 
 
 ## 2. Hypothesis — AND its explicit counter-hypothesis
 
-**Hypothesis (H1):** Keeping the N S-crops **individual** (sharp) and fusing their match candidates by
-**cross-member agreement** localizes the align point better than the median (which blurs distinctive structure
+**Hypothesis (H1):** Keeping the N S-crops **individual** (sharp) and fusing their **dense match responses by
+cross-member agreement** localizes the align point better than the median (which blurs distinctive structure
 and has no defence when the live frame resembles one specific past appearance).
+
+**Primary fusion = soft-voting heatmap (dense), not RRF (discrete).** Rationale (decided 2026-06-24):
+- Production *already* does discrete-candidate → RRF → rerank and is stuck at ~0.2–0.3 / 68% SEM recall; an
+  RRF-bank is the same fusion family on a new input and likely inherits that ceiling. Heatmap is a genuinely
+  different mechanism.
+- **Recall recovery (the key argument):** RRF can only fuse candidates that reached each member's **top-K**.
+  In the 0.2–0.3 regime the true point is often in **no** member's top-K — that *is* the `gt_in_topk` ~68%
+  bottleneck — so RRF never sees it. Dense accumulation sums the true point's weak-but-consistent response
+  across members **even when no single member ranked it**, so a weak-everywhere peak can still rise. This
+  attacks `gt_not_in_topk` directly.
+- Fewer free parameters (no clustering tolerance, no RRF `k`), so less room to manufacture lift (Codex #2).
+
+RRF-bank is retained as the **extra arm** ("does discrete candidate fusion add anything over dense
+accumulation?").
 
 **Counter-hypothesis (H0, from Codex review — the thing we must rule out FIRST):** If the periodic
 distractors are *consistent across S frames* (likely on a stable-process recipe), then **every** sharp member
@@ -51,15 +65,17 @@ All new code lives in `poc/workflow_2`:
   - `bank_build(crops, ...) -> list[AlignKeyTemplate]` — the N S-crops as **individual** templates
     (cond-aware crop, coregistered), i.e. `consensus_cv` source/coreg plumbing **without** the `np.median`
     collapse. Respects the same `min_s` gating.
-  - `bank_match_rrf(bank, frame, ...) -> BankResult` — the **primary** arm: each member runs the existing
-    per-member proposer → top-K candidates; **collapse within-member** (one vote per member per cluster);
-    **pool across members → RRF-fuse with spatial clustering** → **NCC-rerank** fused top candidates →
-    winner `(xy, score)` + per-cluster member-support set.
-  - `bank_match_heatmap(bank, frame, ...) -> BankResult` — the **negative-control** arm (Codex #4):
-    sum each member's **dense response map** (the chamfer score map the proposer already computes, accumulated
-    in a common frame coordinate space across scales), take the global peak. No clustering tolerance, no RRF
-    constant. Same failure mode as RRF (consistent distractors add constructively) but with **zero tuning
-    params**, so it isolates whether any lift is due to the *bank* vs the *RRF machinery*.
+  - `bank_match_heatmap(bank, frame, ...) -> BankResult` — the **PRIMARY** arm (soft-voting): for each member,
+    compute its **dense response map** (the chamfer score map the proposer already computes) and accumulate by
+    **SUM** into a common frame coordinate space across scales and members; take the global peak (peak-NMS for
+    top-K). SUM = agreement semantics (a point many members weakly support rises); the only knob is the
+    peak-NMS radius. Recovers true peaks that per-member top-K extraction drops (§2). Same H0 failure mode as
+    any agreement method (consistent distractors add constructively) — guarded by the §7 kill-test.
+  - `bank_match_rrf(bank, frame, ...) -> BankResult` — the **extra** arm ("does discrete fusion add over dense
+    accumulation?"): each member runs the existing per-member proposer → top-K candidates; **collapse
+    within-member** (one vote per member per cluster); **pool across members → RRF-fuse with spatial
+    clustering** → **NCC-rerank** fused top candidates → winner `(xy, score)` + per-cluster member-support set.
+    If this does not beat the heatmap primary, the discrete RRF machinery is not earning its complexity.
   - `BankResult` carries: winner `xy`/`score`, the fused top-K (each with member-support count), and the
     per-member raw candidates (for diagnostics).
 - **bank arm in `golden_consensus_eval_cond.py`** — adds a 3rd/4th arm (RRF-bank + heatmap-control) beside
@@ -85,15 +101,24 @@ seed the bank, independent of *how* they fuse):
 
 ## 6. Fusion specifics (the free parameters Codex flagged — pinned + swept)
 
-- **One vote per member per cluster** (Codex #2): before cross-member fusion, collapse each member's own
-  near-duplicate candidates (within `cluster_tol`) so a single crop cannot double-vote.
-- **Spatial clustering tolerance** `cluster_tol`: default tied to template short-side fraction; **swept**
-  at ±5 / ±10 / ±20 px equivalents in the report. Too tight splits real agreement; too loose merges
-  true + periodic-distractor clusters one lattice period apart.
+**Heatmap (primary) — minimal knobs:**
+- **Accumulation = SUM** across members (agreement). MAX (best-member-per-pixel) is *not* built here
+  (it is the "per-member NCC-max" idea; a follow-up only if SUM underperforms).
+- **Response registration:** each member's chamfer score map is placed in a common frame coordinate space
+  (template-center convention, summed across the engine's scales) before accumulation — reuses the engine's
+  existing cross-scale placement.
+- **Only knob = peak-NMS radius** (min separation between extracted peaks); default tied to template
+  short-side fraction; reported, lightly swept (±50%) to show stability. No clustering tolerance, no RRF `k`.
+
+**RRF (extra arm) — the params Codex flagged, pinned + swept:**
+- **One vote per member per cluster** (Codex #2): collapse each member's own near-duplicate candidates
+  (within `cluster_tol`) so a single crop cannot double-vote.
+- **Spatial clustering tolerance** `cluster_tol`: default tied to template short-side fraction; **swept** at
+  ±5 / ±10 / ±20 px equivalents. Too tight splits real agreement; too loose merges true + periodic-distractor
+  clusters one lattice period apart.
 - **RRF constant** `k`: default 60; **swept** at 20 / 60 / 120. At large `k`, rank differences flatten and the
-  fused score degenerates to "count of nearby nominations" — exactly the reinforcement path; the sweep makes
-  that visible rather than hidden.
-- No single headline number is reported without the tol × k **sensitivity table**.
+  fused score degenerates to "count of nearby nominations" — the reinforcement path; the sweep makes it visible.
+- No RRF-arm headline number is reported without the tol × k **sensitivity table**.
 
 ## 7. Kill-test (run FIRST — decides H1 vs H0 cheaply)
 
@@ -104,8 +129,9 @@ Before trusting any aggregate lift, classify each fused **winner** against GT in
 - `far_wrong` — winner far from GT, not a periodic offset.
 - `one_member_only` — winning cluster supported by a single member.
 
-**Kill criterion:** if, on the bank arm, `near_periodic` winners are a large fraction (and notably larger than
-the median-consensus arm's), then **agreement is reinforcing distractors (H0)** → stop; do not pursue the bank
+**Kill criterion:** if, on the **heatmap (primary) arm**, `near_periodic` winners are a large fraction (and
+notably larger than the median-consensus arm's), then **agreement is reinforcing distractors (H0)** → stop;
+do not pursue the bank
 (record the negative result; the lever is re-registration, not this matcher change). This directly answers
 Codex #1 and replaces the fatal "≥2-member support" diagnostic (Codex #3): support is reported **conditioned on
 GT bucket**, never as a bare count (which is circular, since fusion selects supported clusters).
@@ -138,15 +164,18 @@ only and excluded from the periodic-reinforcement statistic (noted, not silently
 ## 10. Testing (Mac, synthetic, TDD)
 
 - `bank_build`: N synthetic crops → N **individual** templates (not 1 median); respects `min_s`; cond-aware.
-- `bank_match_rrf` **positive case**: frame with a known mark + a distractor that fools **1 of N** members
-  (distractors *decorrelated*) → fused winner lands on the true mark (H1 in miniature).
-- `bank_match_rrf` **negative case (H0)**: frame where **all** members are fooled by the **same** distractor
-  → fused winner lands on the distractor, and the kill-test buckets it `near_periodic`. This proves the
-  experiment can *detect its own failure mode* (without it, the harness could rubber-stamp H1).
-- `bank_match_heatmap`: same two cases → confirms the negative control behaves as expected.
-- Within-member dedup: a member with two near-duplicate candidates contributes **one** vote.
+- `bank_match_heatmap` (**primary**) **positive case**: frame with a known mark + a distractor that fools
+  **1 of N** members (distractors *decorrelated*) → accumulated peak lands on the true mark (H1 in miniature).
+- `bank_match_heatmap` (**primary**) **recall-recovery case**: a true mark that is **rank-K+1 in every member**
+  (in no member's top-K) but weakly+consistently present → the SUM heatmap peak still lands on it. This is the
+  case RRF *cannot* pass, and the reason heatmap is primary (§2).
+- `bank_match_heatmap` **negative case (H0)**: frame where **all** members are fooled by the **same** distractor
+  → peak lands on the distractor, and the kill-test buckets it `near_periodic`. Proves the harness can *detect
+  its own failure mode* rather than rubber-stamp H1.
+- `bank_match_rrf` (extra) positive + H0 cases → confirms the discrete arm behaves and is comparable.
+- Within-member dedup (RRF arm): a member with two near-duplicate candidates contributes **one** vote.
 - RRF clustering: candidates within `cluster_tol` merge/reinforce; outside stay separate.
-- Per-member proposer call is **bit-parity** with the engine proposer.
+- Per-member proposer / response-map call is **bit-parity** with the engine primitives.
 - Office-gated: the golden-set A/B accuracy (relayed as `[DIGEST]`).
 
 ## 11. Out of scope (YAGNI)
@@ -155,8 +184,8 @@ only and excluded from the periodic-reinforcement statistic (noted, not silently
 - No extra bank sources (history-S only; no rcp member, no synthetic augmentation).
 - No threshold recalibration (recall/rank-1 first; thresholds are a port concern).
 - No live/broad-scan cost work (N× match cost is a port concern, noted not solved).
-- **Best-member (max-score) aggregation is not built** — RRF + heatmap-control only; best-member is a
-  follow-up only if both underperform.
+- **Best-member / per-pixel MAX aggregation is not built** — heatmap (SUM, primary) + RRF (extra) only;
+  MAX-heatmap / best-member is a follow-up only if SUM-heatmap underperforms.
 - No per-crop distractor inpainting (a distinct idea; deferred — risks erasing the key's own internal
   structure if mis-detected).
 
@@ -167,7 +196,7 @@ only and excluded from the periodic-reinforcement statistic (noted, not silently
 | 1 | Cross-member agreement reinforces consistent distractors (H0) | SERIOUS | Kill-test §7 front-loaded; `near_periodic` bucket; negative-case unit test §10 |
 | 2 | RRF clustering free params manufacture lift | SERIOUS | One-vote-per-member §6; tol × k sensitivity sweep required §6 |
 | 3 | "≥2-member support" diagnostic is circular/fatal | FATAL | Replaced by GT-bucket-conditioned classification §7 |
-| 4 | RRF complexity not attributable vs simpler method | SERIOUS | Soft-voting heatmap **negative-control** arm §4 |
+| 4 | RRF complexity not attributable vs simpler method | SERIOUS | Heatmap is now **primary**; RRF demoted to the extra arm that must *beat* heatmap to justify its complexity §4/§14 |
 | 5 | Illusory lift (min_s=3 ≈ median-of-2, false-S, recall≠rank-1, OM hides SEM) | SERIOUS | min_s bins, both metrics, OM/SEM strat, bootstrap CIs §8; false-S confound §9 |
 
 ## 13. File structure
@@ -184,8 +213,11 @@ only and excluded from the periodic-reinforcement statistic (noted, not silently
 ## 14. Decision gate (what "done" means for THIS spec)
 
 Run the bench. Decide one of:
-- **H0 confirmed** (periodic reinforcement dominates) → record negative result, do not port; matcher-bank is
-  not the lever. (A clean, valuable kill.)
-- **H1 + attributed** (RRF-bank beats median on `gt_in_topk`/rank-1, CIs separate, **and** it beats the
-  heatmap control so the lift is the bank not the machinery) → write the separate `workflow_3` port spec.
-- **H1 but unattributed** (heatmap matches RRF) → port the simpler heatmap, not the RRF bank.
+- **H0 confirmed** (periodic reinforcement dominates — heatmap winners cluster `near_periodic`, ≥ median) →
+  record negative result, do not port; matcher-bank is not the lever. (A clean, valuable kill.)
+- **H1, heatmap wins** (the heatmap primary beats median-consensus on `gt_in_topk`/rank-1, CIs separate) →
+  write the separate `workflow_3` port spec for the **heatmap** (simplest sufficient mechanism). The
+  recall-recovery (`gt_not_in_topk` → recovered) magnitude is the headline.
+- **H1, RRF earns its keep** (the RRF extra arm *further* beats heatmap with separated CIs) → port RRF instead;
+  the discrete machinery is justified.
+- **Neither beats median** → no lever here; close the thread.

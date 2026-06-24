@@ -107,3 +107,33 @@ uv run python poc/workflow_2/golden_reregister_report_cond.py
 
 메모리/핸드오프(둘 다 git 밖 — `~/.claude` 메모리는 repo 아님, `.remember/`는 gitignore)는 동일 내용으로 갱신했고,
 저장소엔 본 저널 + `039303b` 커밋 메시지 + `golden_eval_config.example.py` EFRAME_ROOT 주석으로 반영.
+
+---
+
+## 6. 오피스 실행 #1 (eframe 데이터셋) — confirmed 0, 진단 = 임계 miscalibration
+
+첫 오피스 실행 결과(릴레이):
+- `report root source=eframe` (루트 선택 정상), `fidelity_scales=(0.85,1.0,1.15)` (기본).
+- `dataset health: 117 recipes | confirm-capable 28 | E-bearing 28 | incomplete 89`.
+- `[DIGEST] om[screened 89, strong 42, confirmed 0, w_sugg 2] | sem[screened 104, strong 84, confirmed 0, w_sugg 6]`.
+- `e_confirm on: S_FLOOR=0.6 E_FLOOR=0.5 COLLAPSE_MARGIN=0.15`.
+- STRONG 샘플 `s_rep->e_rep(n_e)`: `0.206->-(n_e=0)`, `0.308->-(n_e=0)`, `0.244->0.187(n_e=1)`.
+- 부수: `8 overlay suggestion 파싱 실패` (Phase 1 box-suggest 오버레이 렌더, E-confirm 무관 — 별도 조사).
+
+**진단 (확정): high-S premise 가 전부를 사전 기각.** 실제 점수대는 **~0.2-0.3** 인데 기본 임계는 ~0.5-0.6 가정.
+`_e_confirm` 첫 줄 `if s_rep < S_FLOOR(0.6): return False` 라 collapse 로직 도달 전 100% 탈락 → confirmed 0.
+`0.244->0.187` 은 실제 collapse(방향 맞음, e_rep<=낮은 E-floor 면 발화)인데 premise 가 먼저 죽임.
+
+**두 축 분리(중요): 임계 문제 1개 + 신호 약함 1개.**
+1. premise 스케일 오류(env 로 수정 가능): `S_FLOOR` 를 실제 s_rep 밴드 아래로.
+2. collapse delta 가 작음(`0.244->0.187`=0.057 절대; ~24% 상대) → [[project_e_images_no_crosshair]] 의 'E 매처 변별력
+   약함(≈0.62 flat)' 와 일치. 28개 전부 이 정도 delta 면 collapse 는 약한 신호 → `COLLAPSE_MARGIN` 을 0.05 로 낮추면
+   노이즈 확정 위험. 임계 튜닝이 아니라 premise(접근법) 재고 사안일 수 있음.
+
+**데이터 제약:** 117 중 **28만 E-bearing**(89 incomplete=대부분 E 없음), 그 28도 E 장수 적음(샘플 n_e=1) → 확정 가능
+모집단이 작고 per-recipe E 증거가 얇음.
+
+**다음 단계(보류):** 1점으로 튜닝 금지. `reregister_report.txt` 에서 **n_e>=1 인 ~28 행의 `s_rep->e_rep(n_e)` 전체**를
+받아 실제 S 분포·S->E drop 을 본 뒤 `S_FLOOR/E_FLOOR/COLLAPSE_MARGIN` 을 실제 스케일로 설정. 파이프라인이 발화하는지만
+빠르게 보려면 **illustrative(최종 아님)** `S_FLOOR=0.15 / E_FLOOR=0.20 / COLLAPSE_MARGIN=0.05` 로 재실행 시
+`0.244->0.187` 이 `E_CONFIRMED` 로 뒤집힘(smoke test). 코드 무수정, env/config 만.

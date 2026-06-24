@@ -195,15 +195,23 @@ def _aggregate_buckets(labels):
 
 
 def _format_bank_digest(stats_by_mod):
-    """per-modality bank vs consensus 한 줄 ASCII digest."""
+    """per-modality bank vs consensus 한 줄 ASCII digest.
+
+    cons_in_topk 가 None 일 수 있음 (bank 평가 레시피 중 consensus baseline 없는 경우).
+    None 값은 "n/a" 로 출력해 TypeError 방지.
+    """
+    def _f(x):
+        """None-safe 소수점 3자리 포매터."""
+        return f"{x:.3f}" if x is not None else "n/a"
+
     parts = []
     for mod in ("om", "sem"):
         s = stats_by_mod.get(mod)
         if not s:
             continue
         parts.append(
-            f"{mod}[heatmap {s['heatmap_in_topk']:.3f} vs cons {s['cons_in_topk']:.3f}, "
-            f"near_periodic {s['near_periodic']:.3f}]")
+            f"{mod}[heatmap {_f(s['heatmap_in_topk'])} vs cons {_f(s['cons_in_topk'])}, "
+            f"near_periodic {_f(s['near_periodic'])}]")
     return "[DIGEST] template-bank (in_topk + kill-test): " + " | ".join(parts)
 
 
@@ -790,6 +798,8 @@ def run() -> str:
         # per-recipe per-modality 평균 for bootstrap CI.
         _tb_pr_h_in:  dict = defaultdict(list)     # mod -> [float] (per-recipe heatmap mean)
         _tb_pr_r_in:  dict = defaultdict(list)     # mod -> [float] (per-recipe rrf mean)
+        # bank 가 실제로 평가한 레시피 집합 — cons baseline 교집합 계산용 (#3 버그 수정).
+        _tb_recipes_by_mod: dict = defaultdict(set)  # mod -> {rec}
         # min_s bin breakdown.
         _tb_bin_h:    dict = defaultdict(lambda: defaultdict(list))  # mod -> bin -> [bool]
         _tb_bin_r:    dict = defaultdict(lambda: defaultdict(list))  # mod -> bin -> [bool]
@@ -844,8 +854,13 @@ def run() -> str:
                     # _consensus_template_ab 의 `len(others) < 2` 게이트와 동일 — A/B 패리티.
                     if len(loo_crops) < 2:
                         continue
+                    # min_s=2: _consensus_template_ab LOO 패리티.
+                    # 외부 bank_build(crops, min_s=CONSENSUS_MIN_S) 는 레시피 자격 검사용이고,
+                    # LOO sub-bank 는 멤버 2개 이상이면 유효 — min_s=CONSENSUS_MIN_S 로 두면
+                    # 정확히 CONSENSUS_MIN_S(=3) 레시피가 loo_crops=2 일 때 빈 bank 를 돌려줘
+                    # 전체 min_s=3 bin(~135 레시피)이 조용히 누락된다.
                     loo_bank = bank_build(
-                        loo_crops, recipe_id=rec, modality=mod, min_s=CONSENSUS_MIN_S)
+                        loo_crops, recipe_id=rec, modality=mod, min_s=2)
                     if not loo_bank:
                         continue
                     act_bank = loo_bank
@@ -891,16 +906,25 @@ def run() -> str:
             if pr_h_hits:
                 _tb_pr_h_in[mod].append(
                     sum(pr_h_hits) / len(pr_h_hits))
+                # bank 가 실제로 평가한 레시피 집합 추적 — cons baseline 교집합용 (#3).
+                _tb_recipes_by_mod[mod].add(rec)
             if pr_r_hits:
                 _tb_pr_r_in[mod].append(
                     sum(pr_r_hits) / len(pr_r_hits))
 
         # per-recipe cons in_topk shadow (from _consensus_template_ab per_recipe rows).
-        _cons_pr_by_mod: dict = defaultdict(list)
+        # #3 수정: list+phantom-zero 방식 대신 {recipe: rate} dict 로 수집.
+        # - cons_in_topk_rate 가 없는 row(None/missing) 는 건너뜀 (phantom zero 제거).
+        # - recipe 키: per_recipe row 의 "recipe" 필드 = _recipe_key(assets) 트리플렛.
+        # 집계 시 bank 가 평가한 레시피(_tb_recipes_by_mod)와 교집합만 평균해
+        # 서로 다른 레시피 집합 비교를 방지한다.
+        _cons_pr_by_mod: dict = defaultdict(dict)  # mod -> {recipe: cons_in_topk_rate}
         for row in res.get("per_recipe", []):
             m = row.get("modality")
-            if m:
-                _cons_pr_by_mod[m].append(row.get("cons_in_topk_rate", 0.0))
+            rate = row.get("cons_in_topk_rate")
+            rec_key = row.get("recipe")
+            if m and rate is not None and rec_key is not None:
+                _cons_pr_by_mod[m][rec_key] = rate
 
         # 결과 집계 및 summary.json 키 설정.
         tbank_result: dict = {}
@@ -912,12 +936,19 @@ def run() -> str:
             r_r1_vals = _tb_mod_r_r1.get(mod, [])
             h_bucks = _tb_h_buck.get(mod, [])
             r_bucks = _tb_r_buck.get(mod, [])
-            c_pr_vals = _cons_pr_by_mod.get(mod, [])
+            # #3: cons baseline = bank 평가 레시피와의 교집합만 평균.
+            # _cons_pr_by_mod[mod] = {recipe: rate} (phantom zero 없음).
+            # _tb_recipes_by_mod[mod] = bank 가 실제로 평가한 {recipe} 집합.
+            _cons_dict = _cons_pr_by_mod.get(mod, {})
+            _bank_recs = _tb_recipes_by_mod.get(mod, set())
+            _intersect_vals = [v for r, v in _cons_dict.items() if r in _bank_recs]
             hm_in = (sum(h_vals) / len(h_vals)) if h_vals else float("nan")
             rm_in = (sum(r_vals) / len(r_vals)) if r_vals else float("nan")
             hm_r1 = (sum(h_r1_vals) / len(h_r1_vals)) if h_r1_vals else float("nan")
             rm_r1 = (sum(r_r1_vals) / len(r_r1_vals)) if r_r1_vals else float("nan")
-            cons_in_mean = (sum(c_pr_vals) / len(c_pr_vals)) if c_pr_vals else float("nan")
+            cons_in_mean = (
+                sum(_intersect_vals) / len(_intersect_vals)
+            ) if _intersect_vals else float("nan")
             h_buckets = _aggregate_buckets(h_bucks)
             r_buckets = _aggregate_buckets(r_bucks) if r_bucks else {}
             np_frac = (h_buckets["near_periodic"] / h_buckets["total"]
@@ -925,7 +956,7 @@ def run() -> str:
             bank_stats_by_mod[mod] = {
                 "heatmap_in_topk": round(hm_in, 4) if h_vals else None,
                 "heatmap_rank1": round(hm_r1, 4) if h_r1_vals else None,
-                "cons_in_topk": round(cons_in_mean, 4) if c_pr_vals else None,
+                "cons_in_topk": round(cons_in_mean, 4) if _intersect_vals else None,
                 "near_periodic": round(np_frac, 4),
                 "heatmap_buckets": h_buckets,
                 "rrf_in_topk": round(rm_in, 4) if r_vals else None,

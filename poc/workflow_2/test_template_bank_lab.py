@@ -183,6 +183,17 @@ def test_format_bank_digest_ascii_one_line():
     assert d == d.encode("ascii", "replace").decode("ascii")
 
 
+def test_format_bank_digest_handles_none_cons():
+    """cons_in_topk=None 일 때 _format_bank_digest 가 크래시 없이 'n/a' 를 포함한 ASCII 한 줄을 반환."""
+    import poc.workflow_2.golden_consensus_eval_cond as g
+    stats = {"om": {"heatmap_in_topk": 0.7, "cons_in_topk": None, "near_periodic": 0.1}}
+    d = g._format_bank_digest(stats)
+    assert isinstance(d, str)
+    assert "\n" not in d
+    assert "n/a" in d
+    assert d == d.encode("ascii", "replace").decode("ascii")
+
+
 def test_consensus_run_no_data_with_tbank(monkeypatch, tmp_path):
     """TBANK on + 빈 루트에서 run() 이 no_data/no_ab 로 정상 반환 (no-data smoke)."""
     import poc.workflow_2.golden_consensus_eval_cond as g

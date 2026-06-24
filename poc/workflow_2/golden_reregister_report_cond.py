@@ -717,7 +717,7 @@ from poc.workflow_3.align.clean_align_image import (
     cursor_to_image,
     OVERSAMPLE,
 )
-from poc.workflow_3.align.cond_file import load_cond, msr_modality
+from poc.workflow_3.align.cond_file import load_cond, msr_modality, cond_path_for
 from poc.workflow_3.align.diagnostics.align_point_correction import _tool_label
 from poc.workflow_3.align.diagnostics.crosshair_detect import detect_crosshair
 from poc.workflow_3.align.assets import iter_msr_images, iter_recipe_dirs, resolve_assets
@@ -887,6 +887,69 @@ def _walk_recipes(root):
     return assets_list
 
 
+def _dataset_health(assets_list):
+    """recipe 별 rcp/S/E/cond sidecar 존재 집계 + 'E_CONFIRMED 도달 불가' missing 플래그.
+
+    E-frame 데이터셋 사전점검용(순수 집계 — 이미지 디코딩 없이 경로/sidecar 존재만 본다).
+    confirm-capable = rcp>=1 AND S>=1 AND E>=1 (Phase 2 는 Phase 1 이 S 로 flag 한 recipe 만
+    E 로 upgrade 하므로 셋 다 필요). cond sidecar 부재는 hard-miss 가 아니라(런타임 modality
+    라우팅서 그 프레임만 skip) n_cond 로만 노출한다. 반환 = recipe 별 dict 리스트(원본 순서).
+    """
+    rows = []
+    for a in assets_list:
+        n_s = n_e = n_cond = 0
+        for p in iter_msr_images(a):
+            label = _tool_label(p.name)
+            if label == "S":
+                n_s += 1
+            elif label == "E":
+                n_e += 1
+            if cond_path_for(p).is_file():
+                n_cond += 1
+        rcp = sum(1 for q in (a.recipe_om, a.recipe_sem) if q is not None)
+        missing = []
+        if rcp == 0:
+            missing.append("rcp")
+        if n_s == 0:
+            missing.append("S")
+        if n_e == 0:
+            missing.append("E")
+        rows.append({
+            "recipe": f"{a.class_name}/{a.recipe_name}",
+            "rcp": rcp, "n_s": n_s, "n_e": n_e, "n_cond": n_cond,
+            "missing": missing,
+        })
+    return rows
+
+
+def _format_dataset_health(rows):
+    """_dataset_health rows -> ASCII 멀티라인 리포트(모두 [INFO] 접두). cp949 안전.
+
+    요약 1줄 + incomplete recipe 목록(최대 30개, 초과분은 +N more) + cond gap 노트.
+    """
+    n = len(rows)
+    capable = sum(1 for d in rows if not d["missing"])
+    e_bearing = sum(1 for d in rows if d["n_e"] > 0)
+    lines = [f"[INFO] dataset health: {n} recipes | confirm-capable {capable} (rcp+S+E) | "
+             f"E-bearing {e_bearing}"]
+
+    incomplete = [d for d in rows if d["missing"]]
+    if incomplete:
+        lines.append(f"[INFO]   incomplete (cannot reach E_CONFIRMED): {len(incomplete)}")
+        for d in incomplete[:30]:
+            lines.append(f"[INFO]     {d['recipe']}: missing {','.join(d['missing'])}")
+        if len(incomplete) > 30:
+            lines.append(f"[INFO]     ... (+{len(incomplete) - 30} more)")
+    else:
+        lines.append(f"[INFO]   all {n} recipes have rcp+S+E.")
+
+    cond_gap = sum(1 for d in rows if (d["n_s"] + d["n_e"]) > 0 and d["n_cond"] < d["n_s"] + d["n_e"])
+    if cond_gap:
+        lines.append(f"[INFO]   cond sidecar gap in {cond_gap} recipes "
+                     f"(those frames skip at modality routing).")
+    return "\n".join(lines)
+
+
 def _recipe_row(assets, modality):
     """한 recipe·modality 의 C1 증거 row. S 프레임/템플릿 없으면 None.
 
@@ -944,20 +1007,38 @@ def _recipe_row(assets, modality):
     }
 
 
+def _resolve_report_root():
+    """리포트 walk 루트 결정. ALIGN_EFRAME_ROOT(설정 시) 우선, 없으면 ALIGN_GOLDEN_ROOT.
+
+    Phase 2(E-frame confirmation) 보정용 데이터셋(rcp+S+E)을 S-only golden 과
+    분리해 두기 위함. 반환 = (Path, source) 이고 source 는 'eframe' | 'golden'.
+    공백뿐인 ALIGN_EFRAME_ROOT 는 미설정 취급(golden 폴백).
+    """
+    eframe = os.getenv("ALIGN_EFRAME_ROOT", "").strip()
+    if eframe:
+        return Path(eframe).expanduser(), "eframe"
+    return Path(os.getenv("ALIGN_GOLDEN_ROOT", "")).expanduser(), "golden"
+
+
 def run():
-    """골든 루트 walk → recipe·modality 별 row → 랭킹 → 리포트/DIGEST 파일. 반환 = DIGEST(또는 no_data 경고)."""
-    root = Path(os.getenv("ALIGN_GOLDEN_ROOT", "")).expanduser()
+    """리포트 루트 walk → recipe·modality 별 row → 랭킹 → 리포트/DIGEST 파일. 반환 = DIGEST(또는 no_data 경고)."""
+    root, root_src = _resolve_report_root()
+    print(f"[INFO] report root source={root_src} path={root}")
     # A/B 자기-라벨: 활성 fidelity scale band 를 한 줄로 찍어 relay 시 어느 arm 인지 명확히.
     print(f"[INFO] fidelity_scales={_FIDELITY_SCALES} (env REREGISTER_FIDELITY_SCALES to A/B)")
     recipes = _walk_recipes(root)
+    if not recipes:
+        print(f"[WARNING] no_data: report root ({root_src}) empty or unset: {root}")
+        return "[WARNING] no_data"
+    # E-frame 데이터셋 사전점검(전체 set, cap 이전): confirm-capable / incomplete recipe 를
+    # 한눈에 보여 'confirmed 0' 가 임계 탓인지 데이터(E/rcp 부재) 탓인지 가른다.
+    if E_CONFIRM_ON:
+        print(_format_dataset_health(_dataset_health(recipes)))
     cap = int(os.getenv("REREGISTER_MAX_RECIPES", "0") or "0")
     if cap and cap > 0:
         n_all = len(recipes)
         recipes = _cap_recipes(recipes, cap)
         print(f"[INFO] fast-mode: recipes capped {len(recipes)}/{n_all} (env REREGISTER_MAX_RECIPES=0 for full)")
-    if not recipes:
-        print("[WARNING] no_data: ALIGN_GOLDEN_ROOT empty or unset")
-        return "[WARNING] no_data"
 
     rows_by_mod = {"om": [], "sem": []}
     for assets in recipes:

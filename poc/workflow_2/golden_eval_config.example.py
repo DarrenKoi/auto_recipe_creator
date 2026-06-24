@@ -23,6 +23,12 @@ env(ALIGN_GOLDEN_ROOT/ALIGN_ENSEMBLE_LAB_MODE/CONSENSUS_MIN_S)가 설정돼 있�
 # None = 기본 경로(glec.GOLDEN_ROOT).
 GOLDEN_ROOT = None
 
+# Phase 2 E-frame confirmation 전용 데이터셋 루트(S-only golden 과 분리). 설정 시 reregister 드라이버가
+# GOLDEN_ROOT 대신 이 루트를 walk 한다(미설정/None 이면 GOLDEN_ROOT 폴백). 레이아웃은 golden 과 동일하나
+# recipe 마다 align_img_from_rcp + align_img_from_msr 에 **S 와 E 둘 다** 필요(rcp 키로 S/E free-search →
+# score collapse 판정). consensus_history(HISTORY_ROOT)는 reregister 와 무관하므로 불필요.
+EFRAME_ROOT = None
+
 # consensus 과거 성공 S 풀의 *별도* root. **class/recipe 로만 매칭(eqp 무관)** — 같은 recipe 면
 # 장비 달라도 공유. 레이아웃: <HISTORY_ROOT>/<class>/<recipe>/events/<event_id>/S*.jpeg (+ .<img>/cond.txt,
 # office_success_downloader 포맷 그대로). None/부재 = LOO 폴백(from_msr 안에서 leave-one-out).

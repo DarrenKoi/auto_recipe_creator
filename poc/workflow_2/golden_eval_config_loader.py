@@ -23,6 +23,10 @@ try:
     except ImportError:   # 구버전 config(HISTORY_ROOT 없음) 하위호환.
         HISTORY_ROOT = None
     try:
+        from poc.workflow_2.golden_eval_config import EFRAME_ROOT
+    except ImportError:   # 구버전 config(EFRAME_ROOT 없음) 하위호환.
+        EFRAME_ROOT = None
+    try:
         from poc.workflow_2.golden_eval_config import CONSENSUS_BOX_CROP
     except ImportError:   # 구버전 config(CONSENSUS_BOX_CROP 없음) 하위호환.
         CONSENSUS_BOX_CROP = None
@@ -56,6 +60,7 @@ try:
         REREGISTER_S_FLOOR, REREGISTER_E_FLOOR, REREGISTER_COLLAPSE_MARGIN = 0.6, 0.5, 0.15
 except ImportError:   # 실편집 파일 부재 — golden_eval_config.example.py 참고(복사해서 생성).
     GOLDEN_ROOT, LAB_MODE, MIN_S, HISTORY_ROOT, CONSENSUS_BOX_CROP = None, "", None, None, None
+    EFRAME_ROOT = None
     REREGISTER_BOX_SUGGEST, REREGISTER_TOPN, REREGISTER_ACCEPT_MARGIN = 1, 0, None
     REREGISTER_MAX_RECIPES, REREGISTER_FIDELITY_SCALES, REREGISTER_GT_TOL_NORM = 0, "", None
     REREGISTER_E_CONFIRM = 1
@@ -71,6 +76,8 @@ def seed_env():
         os.environ.setdefault("ALIGN_GOLDEN_ROOT", str(GOLDEN_ROOT))
     if HISTORY_ROOT:
         os.environ.setdefault("ALIGN_MSR_HISTORY_ROOT", str(HISTORY_ROOT))
+    if EFRAME_ROOT:
+        os.environ.setdefault("ALIGN_EFRAME_ROOT", str(EFRAME_ROOT))
     if LAB_MODE:
         os.environ.setdefault("ALIGN_ENSEMBLE_LAB_MODE", str(LAB_MODE))
     if MIN_S is not None:

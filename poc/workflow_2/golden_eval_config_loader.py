@@ -52,6 +52,14 @@ try:
         REREGISTER_GT_TOL_NORM = None
     try:
         from poc.workflow_2.golden_eval_config import (
+            TBANK_HEATMAP, TBANK_RRF, TBANK_PEAK_NMS_FRAC,
+            TBANK_CLUSTER_TOL_FRAC, TBANK_RRF_K,
+        )
+    except ImportError:   # 구버전 config(template-bank knob 없음) 하위호환.
+        TBANK_HEATMAP, TBANK_RRF = 1, 1
+        TBANK_PEAK_NMS_FRAC, TBANK_CLUSTER_TOL_FRAC, TBANK_RRF_K = 0.5, 0.10, 60
+    try:
+        from poc.workflow_2.golden_eval_config import (
             REREGISTER_E_CONFIRM, REREGISTER_S_FLOOR, REREGISTER_E_FLOOR,
             REREGISTER_COLLAPSE_MARGIN,
         )
@@ -63,6 +71,8 @@ except ImportError:   # 실편집 파일 부재 — golden_eval_config.example.p
     EFRAME_ROOT = None
     REREGISTER_BOX_SUGGEST, REREGISTER_TOPN, REREGISTER_ACCEPT_MARGIN = 1, 0, None
     REREGISTER_MAX_RECIPES, REREGISTER_FIDELITY_SCALES, REREGISTER_GT_TOL_NORM = 0, "", None
+    TBANK_HEATMAP, TBANK_RRF = 1, 1
+    TBANK_PEAK_NMS_FRAC, TBANK_CLUSTER_TOL_FRAC, TBANK_RRF_K = 0.5, 0.10, 60
     REREGISTER_E_CONFIRM = 1
     REREGISTER_S_FLOOR, REREGISTER_E_FLOOR, REREGISTER_COLLAPSE_MARGIN = 0.6, 0.5, 0.15
 
@@ -93,6 +103,11 @@ def seed_env():
         os.environ.setdefault("REREGISTER_FIDELITY_SCALES", str(REREGISTER_FIDELITY_SCALES))
     if REREGISTER_GT_TOL_NORM is not None:
         os.environ.setdefault("REREGISTER_GT_TOL_NORM", str(REREGISTER_GT_TOL_NORM))
+    os.environ.setdefault("TBANK_HEATMAP", str(TBANK_HEATMAP))
+    os.environ.setdefault("TBANK_RRF", str(TBANK_RRF))
+    os.environ.setdefault("TBANK_PEAK_NMS_FRAC", str(TBANK_PEAK_NMS_FRAC))
+    os.environ.setdefault("TBANK_CLUSTER_TOL_FRAC", str(TBANK_CLUSTER_TOL_FRAC))
+    os.environ.setdefault("TBANK_RRF_K", str(TBANK_RRF_K))
     os.environ.setdefault("REREGISTER_E_CONFIRM", str(REREGISTER_E_CONFIRM))
     os.environ.setdefault("REREGISTER_S_FLOOR", str(REREGISTER_S_FLOOR))
     os.environ.setdefault("REREGISTER_E_FLOOR", str(REREGISTER_E_FLOOR))

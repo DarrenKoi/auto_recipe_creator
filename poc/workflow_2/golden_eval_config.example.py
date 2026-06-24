@@ -70,6 +70,14 @@ REREGISTER_FIDELITY_SCALES = ""
 # 0.30 이 둘을 가른다. 옛 동작은 0.20.
 REREGISTER_GT_TOL_NORM = 0.30
 
+# === Template-bank matcher bench (golden_consensus_eval_cond) ===
+# heatmap=primary(soft-voting), rrf=extra arm. 1/0 토글.
+TBANK_HEATMAP = 1
+TBANK_RRF = 1
+TBANK_PEAK_NMS_FRAC = 0.5      # heatmap peak-NMS 반경 = 이 비율 * 템플릿 단변.
+TBANK_CLUSTER_TOL_FRAC = 0.10  # RRF arm 공간 클러스터 허용 = 이 비율 * 템플릿 단변.
+TBANK_RRF_K = 60               # RRF 상수.
+
 # === Phase 2: E-frame confirmation (golden_reregister_report_cond) ===
 # 1 이면 flagged recipe 를 E(fail) 프레임 score-collapse 로 confirm, 0 이면 Phase 1 만.
 REREGISTER_E_CONFIRM = 1

@@ -10,7 +10,7 @@ import numpy as np
 
 from poc.workflow_3.align.matching.engine import build_template
 from poc.workflow_3.align.matching.engine import preprocess_for_matching, _chamfer_score_map_at_scale
-from poc.workflow_3.align.matching.engine import _candidate_ncc
+from poc.workflow_3.align.matching.engine import _candidate_ncc, _to_grayscale
 from poc.workflow_3.align.consensus_cv import coregister_crops
 from poc.workflow_2.align_similarity import COMPARE_SCALES, TOPK_CANDIDATES
 from poc.workflow_2.align_similarity import _propose_topk, USE_ENSEMBLE_PROPOSER
@@ -156,3 +156,48 @@ def bank_match_rrf(bank, gray, *, scales=COMPARE_SCALES, topk=TOPK_CANDIDATES,
     cand_scores = [cl["rrf"] for cl in ordered]
     support = [len(cl["members"]) for cl in ordered]
     return BankResult(cand_xys[0], cand_scores[0], cand_xys, cand_scores, support, "rrf")
+
+
+def estimate_lattice_period(template):
+    """템플릿 raw 의 1D 자기상관 주기(px) 추정. 1차/2차 peak 간격의 최소; 불명확하면 None.
+
+    행/열 평균 프로파일의 정규화 자기상관에서 lag>=3 의 첫 강한 peak 를 주기로 본다.
+    """
+    g = _to_grayscale(template.raw_image).astype(np.float32)
+
+    def _axis_period(profile):
+        p = profile - profile.mean()
+        if np.allclose(p, 0):
+            return None
+        ac = np.correlate(p, p, mode="full")[len(p) - 1:]
+        ac = ac / (ac[0] + 1e-6)
+        best_lag, best_val = None, 0.0
+        for lag in range(3, len(ac) // 2):
+            if ac[lag] > ac[lag - 1] and ac[lag] >= ac[lag + 1] and ac[lag] > 0.3:
+                if ac[lag] > best_val:
+                    best_val, best_lag = ac[lag], lag
+        return float(best_lag) if best_lag is not None else None
+
+    cands = [v for v in (_axis_period(g.mean(axis=0)), _axis_period(g.mean(axis=1)))
+             if v is not None]
+    return min(cands) if cands else None
+
+
+def classify_winner(winner_xy, gt_xy, *, period, tol_px, member_support=None):
+    """winner 를 GT 대비 버킷 분류. one_member_only(rrf support==1)이 최우선."""
+    if member_support is not None and member_support <= 1:
+        return "one_member_only"
+    if winner_xy is None:
+        return "far_wrong"
+    dx = winner_xy[0] - gt_xy[0]
+    dy = winner_xy[1] - gt_xy[1]
+    dist = float(np.hypot(dx, dy))
+    if dist <= tol_px:
+        return "correct"
+    if period and period > 0:
+        # 가장 가까운 격자 배수와의 잔차가 tol 안이면 near_periodic.
+        rx = abs(dx) - round(abs(dx) / period) * period
+        ry = abs(dy) - round(abs(dy) / period) * period
+        if np.hypot(rx, ry) <= tol_px and dist <= 3 * period:
+            return "near_periodic"
+    return "far_wrong"

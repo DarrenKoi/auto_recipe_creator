@@ -128,3 +128,28 @@ def test_heatmap_recovers_consistent_peak_individual_members_miss():
     # 합산: 참 위치 4*0.4=1.6 > 각 distractor 1.0 -> _peaks_center 가 참 위치를 1등으로.
     peaks = tb._peaks_center(acc, nms_radius=3, max_peaks=5, min_score=0.0)
     assert peaks and (peaks[0][1], peaks[0][2]) == true_xy
+
+
+def test_classify_winner_buckets():
+    import poc.workflow_2.template_bank_lab as tb
+    gt = (100, 100)
+    # correct: within tol.
+    assert tb.classify_winner((104, 99), gt, period=40, tol_px=8) == "correct"
+    # near_periodic: off by ~one period along x.
+    assert tb.classify_winner((140, 100), gt, period=40, tol_px=8) == "near_periodic"
+    # far_wrong: residual from nearest period multiple exceeds tol.
+    assert tb.classify_winner((189, 100), gt, period=40, tol_px=8) == "far_wrong"
+    # one_member_only overrides (rrf arm) when support==1.
+    assert tb.classify_winner((104, 99), gt, period=40, tol_px=8,
+                              member_support=1) == "one_member_only"
+
+
+def test_estimate_lattice_period_detects_stripes():
+    import poc.workflow_2.template_bank_lab as tb
+    from poc.workflow_3.align.matching.engine import build_template
+    size, p = 96, 12
+    img = np.zeros((size, size), np.uint8)
+    img[:, ::p] = 220                                # 주기 p 세로 줄무늬.
+    tpl = build_template(img, recipe_id="r", version="r", key_type="om")
+    per = tb.estimate_lattice_period(tpl)
+    assert per is not None and abs(per - p) <= 3

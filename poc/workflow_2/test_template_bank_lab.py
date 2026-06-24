@@ -84,6 +84,29 @@ def test_heatmap_h0_all_members_same_distractor():
     assert abs(res.xy[0] - 190) <= 8 and abs(res.xy[1] - 190) <= 8
 
 
+def test_dedup_within_member_collapses_near_duplicates():
+    import poc.workflow_2.template_bank_lab as tb
+
+    class C:
+        def __init__(self, xy, score):
+            self.xy, self.score, self.scale = xy, score, 1.0
+    cands = [C((100, 100), 0.9), C((103, 101), 0.5), C((180, 180), 0.7)]
+    kept = tb._dedup_within_member(cands, tol=10)
+    assert len(kept) == 2                       # (100,100)+(103,101) 한 표로 병합.
+    assert kept[0].xy == (100, 100)             # 클러스터 대표 = 최고점.
+
+
+def test_rrf_positive_one_member_distractor():
+    import poc.workflow_2.template_bank_lab as tb
+    crops = [_mark_crop(s) for s in range(4)]
+    bank = tb.bank_build(crops, recipe_id="r", modality="om", min_s=3)
+    frame = _frame_with_mark((120, 120))
+    res = tb.bank_match_rrf(bank, frame, cluster_tol=10, rrf_k=60)
+    assert res.xy is not None
+    assert abs(res.xy[0] - 120) <= 10 and abs(res.xy[1] - 120) <= 10
+    assert res.member_support is not None and res.member_support[0] >= 1
+
+
 def test_heatmap_recovers_consistent_peak_individual_members_miss():
     """SUM 누적이 '개별 멤버는 1등으로 안 꼽지만 일관된 약 peak' 를 복원 — heatmap-primary 의
     핵심 근거(RRF 가 통과 못 하는 케이스). map 레벨에서 결정적으로 검증(취약한 실이미지 chamfer 회피)."""

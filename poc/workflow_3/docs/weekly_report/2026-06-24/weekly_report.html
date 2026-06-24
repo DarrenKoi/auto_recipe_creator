@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>주간 진행 보고 · 재등록 리포트 Phase 1·2 · 2026-06-24</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+    margin: 0; padding: 32px 48px; color: #212121; background: #FFFFFF;
+    line-height: 1.5;
+  }
+  h1 { font-size: 26px; margin: 0 0 4px 0; }
+  h2 { font-size: 17px; margin: 26px 0 10px 0; color: #455A64; border-bottom: 2px solid #CFD8DC; padding-bottom: 4px; }
+  .meta { color: #607D8B; font-size: 13px; margin-bottom: 12px; }
+  .meta code { background: #F5F5F5; padding: 1px 5px; border-radius: 4px; }
+  .summary { background: #fff; border-left: 4px solid #1976D2; padding: 11px 16px; margin: 8px 0 4px 0; font-size: 13.5px; }
+  code { background: #ECEFF1; padding: 1px 4px; border-radius: 4px; font-size: 11.5px; }
+
+  /* badges */
+  .badge {
+    display: inline-block; padding: 1px 7px; border: 1px solid; border-radius: 12px;
+    font-size: 11px; font-weight: 700; white-space: nowrap; vertical-align: middle;
+  }
+  .b-done { background: #E8F5E9; border-color: #2E7D32; color: #1B5E20; }
+  .b-prog { background: #FFF3E0; border-color: #ED6C02; color: #B25500; }
+  .b-plan { background: #F3E5F5; border-color: #6A1B9A; color: #4A148C; }
+  .b-new  { background: #E3F2FD; border-color: #1565C0; color: #0D47A1; }
+  .b-stop { background: #FFEBEE; border-color: #C62828; color: #B71C1C; }
+
+  /* ---- flow chart ---- */
+  .flow { margin: 6px 0 2px 0; }
+  .flow-row { display: flex; align-items: stretch; flex-wrap: wrap; gap: 0; }
+  .node {
+    position: relative; flex: 1 1 0; min-width: 150px;
+    background: #fff; border: 1.5px solid #CFD8DC; border-radius: 10px;
+    padding: 9px 11px 10px; margin: 4px 18px 4px 0;
+  }
+  .node:last-child { margin-right: 0; }
+  .node.done { border-color: #66BB6A; background: #F4FBF4; }
+  .node.prog { border-color: #FFA726; background: #FFFBF3; }
+  .node.stop { border-color: #EF5350; background: #FFF6F6; }
+  .node .step { font-size: 10px; font-weight: 700; color: #90A4AE; letter-spacing:.4px; }
+  .node .ttl  { font-size: 12.5px; font-weight: 700; margin: 2px 0 5px; line-height: 1.3; }
+  .node .sub  { font-size: 10.5px; color: #607D8B; line-height: 1.35; }
+  /* arrow between nodes */
+  .node:not(:last-child)::after {
+    content: "›"; position: absolute; right: -14px; top: 50%; transform: translateY(-50%);
+    font-size: 22px; color: #B0BEC5; font-weight: 700; line-height: 0;
+  }
+  .branch {
+    margin: 8px 0 2px; padding: 8px 12px; background:#FAFCFF; border:1px dashed #90CAF9;
+    border-radius: 8px; font-size: 12px; color:#37474F;
+  }
+  .branch b { color:#0D47A1; }
+  .branch.warn { background:#FFF8F8; border-color:#EF9A9A; }
+  .branch.warn b { color:#B71C1C; }
+
+  /* status table */
+  .status-table { width: 100%; border-collapse: collapse; background: #fff; font-size: 12.5px; }
+  .status-table th, .status-table td { border: 1px solid #E0E0E0; padding: 7px 10px; text-align: left; vertical-align: top; }
+  .status-table th { background: #ECEFF1; font-weight: 600; color: #37474F; }
+  .status-table td.name { width: 220px; font-weight: 600; }
+  .status-table td.st { width: 92px; text-align: center; white-space: nowrap; }
+  .status-table td.r { text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+  .legend { display: flex; gap: 14px; font-size: 11.5px; color: #455A64; margin: 8px 0 2px; flex-wrap: wrap; }
+  .next-ol ol { margin: 4px 0; padding-left: 20px; }
+  .next-ol li { margin-bottom: 5px; font-size: 13px; }
+  .footer { margin-top: 24px; font-size: 11px; color: #90A4AE; text-align: right; }
+</style>
+</head>
+<body>
+
+<h1>주간 진행 보고 · 재등록 리포트 Phase 1·2</h1>
+<div class="meta">기간: 2026-06-19 ~ 06-24 · 범위: <code>poc/workflow_2/golden_reregister_report_cond.py</code> (오프라인 CV 벤치) · 커밋 ~25 · 전량 <code>main</code></div>
+
+<div class="summary">
+  만성 모호 align-key를 <b>데이터로 식별해 재등록 우선순위를 매기는 리포트</b>를 2단계로 개발했습니다.
+  <b>Phase 1</b>(success 프레임만으로 약한 key 스크리닝)은 완료, <b>Phase 2</b>(fail 프레임 점수 collapse로 confirmed 승급)는
+  오피스 실측에서 <b>신호 신뢰 불가</b>로 판명되어 종료했습니다. 근본 병목 = <b>rcp align-key가 success에서도 변별력 부족</b> →
+  다음 단계로 <b>matcher 개선(template-bank)</b>에 착수했습니다.
+</div>
+
+<h2>① 작업 흐름 — Phase 1 → Phase 2 → 다음 단계</h2>
+<div class="flow">
+  <div class="flow-row">
+    <div class="node done">
+      <div class="step">PHASE 1</div>
+      <div class="ttl">S-only 스크리닝</div>
+      <div class="sub">success 프레임만으로 약한 align-key를 latent-risk로 랭킹 + 대체 박스 제안<br><span class="badge b-done">완료</span></div>
+    </div>
+    <div class="node done">
+      <div class="step">PHASE 1 · 디버그</div>
+      <div class="ttl">box-fidelity 버그</div>
+      <div class="sub">off-center 박스 fidelity 전부 0 → align-offset 보정 + tight band + tol widen<br><b>w_sugg 0 → 1</b></div>
+    </div>
+    <div class="node stop">
+      <div class="step">PHASE 2</div>
+      <div class="ttl">E-frame confirmation</div>
+      <div class="sub">S→E 점수 collapse로 confirmed 승급. SDD 6태스크 구현(60 tests)<br><span class="badge b-stop">실험 종료</span></div>
+    </div>
+    <div class="node prog">
+      <div class="step">NEXT</div>
+      <div class="ttl">matcher 개선</div>
+      <div class="sub">template-bank 매칭 벤치 (heatmap-primary + RRF)<br><span class="badge b-new">착수</span></div>
+    </div>
+  </div>
+  <div class="branch warn">
+    <b>왜 Phase 2에서 멈췄나:</b> 오피스 실측 결과 <b>confirmed 0</b> (기본 임계 ~0.6 가정, 실제 점수대 ~0.2-0.3) →
+    임계 낮춰 재실행 시 <b>5/6이 false positive</b>(E-floor 분기로만 발화, delta 0.005~0.033 = 사실상 collapse 아님).
+    근본 원인 = <b>rcp key가 success에서도 약함(s_rep 0.15-0.31)</b> → "S에서 높다가 E에서 무너지는" collapse 자체가 성립 불가.
+  </div>
+</div>
+<div class="legend">
+  <span><span class="badge b-done">완료</span> 반영·검증됨</span>
+  <span><span class="badge b-stop">실험 종료</span> 코드는 보존, 실데이터서 신호 불가</span>
+  <span><span class="badge b-new">착수</span> 이번 주 시작</span>
+</div>
+
+<h2>② 오피스 실측 — Phase 2 종료 근거</h2>
+<table class="status-table">
+  <thead><tr><th>row</th><th class="r">s_rep → e_rep</th><th class="r">delta</th><th>판정</th></tr></thead>
+  <tbody>
+    <tr><td class="name">OM</td><td class="r">0.244 → 0.187</td><td class="r">0.057</td><td>유일한 진짜 collapse 후보 (그마저 noise floor 미측정)</td></tr>
+    <tr><td class="name">SEM</td><td class="r">0.155 → 0.122</td><td class="r">0.033</td><td><span class="badge b-stop">false positive</span> E-floor 분기로만 확정</td></tr>
+    <tr><td class="name">SEM</td><td class="r">0.182 → 0.162</td><td class="r">0.020</td><td><span class="badge b-stop">false positive</span></td></tr>
+    <tr><td class="name">SEM</td><td class="r">0.158 → 0.153</td><td class="r">0.005</td><td><span class="badge b-stop">false positive</span></td></tr>
+  </tbody>
+</table>
+<div class="legend">
+  <span>dataset health: 117 recipes · confirm-capable <b>28</b> · E-bearing <b>28</b> · incomplete 89 (대부분 E 없음)</span>
+</div>
+
+<h2>③ 작업 항목 진행 현황</h2>
+<table class="status-table">
+  <thead><tr><th>항목</th><th class="st">상태</th><th>요지</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="name">Phase 1 — S-only 재등록 스크리닝</td>
+      <td class="st"><span class="badge b-done">완료</span></td>
+      <td>3단 evidence tier + risk score + 랭킹, C1 스크리닝 + C2 대체 박스 제안·오버레이.</td>
+    </tr>
+    <tr>
+      <td class="name">Phase 1 — box-fidelity 버그</td>
+      <td class="st"><span class="badge b-done">완료</span></td>
+      <td>엔진이 patch 중심 반환·offset 미적용 → off-center 박스 fidelity 0. <code>_box_offset_xy</code> + tight band + tol 0.30. <b>w_sugg 0→1</b>.</td>
+    </tr>
+    <tr>
+      <td class="name">Phase 2 — E-frame confirmation 구현</td>
+      <td class="st"><span class="badge b-done">완료</span></td>
+      <td>SDD 6태스크, <code>E_CONFIRMED</code> 최상위 tier + <code>_e_confirm</code> collapse 규칙, bit-parity proposer. 48 tests, merge-yes.</td>
+    </tr>
+    <tr>
+      <td class="name">Phase 2 — 오피스 실측 검증</td>
+      <td class="st"><span class="badge b-stop">종료</span></td>
+      <td>confirmed 0 → 임계 낮춰도 5/6 false positive. <b>rcp key가 success에서도 약해 collapse 신호 불가.</b></td>
+    </tr>
+    <tr>
+      <td class="name">EFRAME_ROOT + dataset-health</td>
+      <td class="st"><span class="badge b-done">유지</span></td>
+      <td>E-frame 전용 루트 분리 + 시작 시 confirm-capable 사전점검(12 tests). 유용해 보존.</td>
+    </tr>
+    <tr>
+      <td class="name">다음 단계 — template-bank matcher</td>
+      <td class="st"><span class="badge b-plan">착수</span></td>
+      <td>matcher distinctiveness가 cross-cutting 병목. heatmap-primary + RRF arm 벤치 spec 작성 중.</td>
+    </tr>
+  </tbody>
+</table>
+<div class="legend">
+  <span><span class="badge b-done">완료</span> 반영·검증됨</span>
+  <span><span class="badge b-stop">종료</span> 실데이터서 신호 불가 (코드 보존)</span>
+  <span><span class="badge b-plan">착수</span> spec 작성 단계</span>
+</div>
+
+<h2>④ 다음 주 우선순위</h2>
+<div class="next-ol">
+  <ol>
+    <li><b>template-bank matcher 벤치 구현</b> — heatmap-primary + RRF arm, rcp/matcher distinctiveness 정면 개선.</li>
+    <li><b>re-registration 신호 활용</b> — Phase 1 랭킹으로 더 distinctive 영역에 align-key 재등록 (a 레버).</li>
+    <li>rcp <b>이미지</b> 약함 vs <b>matcher</b> 약함 분리 진단 (둘 다 prior 증거 있음).</li>
+    <li>(정리) <code>REREGISTER_E_CONFIRM</code> 기본 0으로 — 실데이터서 오해 소지 출력 방지.</li>
+  </ol>
+</div>
+
+<div class="footer">생성: 2026-06-24 · poc/workflow_3/docs/weekly_report/2026-06-24/</div>
+
+</body>
+</html>

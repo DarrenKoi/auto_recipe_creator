@@ -60,6 +60,10 @@ from poc.workflow_3.align.assets import iter_msr_images, load_gray, _list_images
 from poc.workflow_2.align_similarity import (
     GT_TOL_NORM, USE_ENSEMBLE_PROPOSER, _consensus_template_ab, _matched_crop,
 )
+from poc.workflow_2.template_bank_lab import (
+    bank_build, bank_match_heatmap, bank_match_rrf,
+    estimate_lattice_period, classify_winner,
+)
 from poc.workflow_2.ensemble_lab import (
     PEAK_ISO_VARIANTS, PERIODICITY_TAU, miss_predictor_stats,
     peak_isolation_variants, template_periodicity,
@@ -123,6 +127,13 @@ def _floor_min_s(value):
 
 
 CONSENSUS_MIN_S = _floor_min_s(_MIN_S_ENV)
+
+# Template-bank arms (bench 실험; heatmap=primary, rrf=extra). seed_env 가 기본 브리지.
+TBANK_HEATMAP = os.getenv("TBANK_HEATMAP", "1") != "0"
+TBANK_RRF = os.getenv("TBANK_RRF", "1") != "0"
+TBANK_PEAK_NMS_FRAC = float(os.getenv("TBANK_PEAK_NMS_FRAC", "0.5"))
+TBANK_CLUSTER_TOL_FRAC = float(os.getenv("TBANK_CLUSTER_TOL_FRAC", "0.10"))
+TBANK_RRF_K = int(os.getenv("TBANK_RRF_K", "60"))
 
 # Phase1-A: periodicity 날카롭게 — (win_frac, min_lag_frac) ablation. max_lag 는 기본(0.8) 고정.
 # 첫 행(whole, lag0.10)=선형 자기상관 baseline → office 순환판 AUC 0.636 과 비교(선형 전환 효과).
@@ -752,6 +763,208 @@ def run() -> str:
         var_cal.append({"variant": name, **{k: st.get(k) for k in
             ("auc", "n", "n_miss", "n_hit", "mean_miss", "mean_hit", "best_tau", "tpr", "fpr")}})
     res["peak_isolation_variants"] = var_cal
+
+    # === Template-bank arms (bench 실험; heatmap=primary, rrf=extra) ===
+    # by_recipe 를 한 번 더 순회해 consensus 와 완전 동일한 crops/GT 원천을 재사용한다.
+    # crops 선택 로직: history-first(use_history) else LOO — _consensus_template_ab 와 bit-parity.
+    # frame gray 는 같은 frame_loader 를 거쳐 consensus 와 동일한 정제 수준을 유지한다.
+    bank_stats_by_mod: dict = {}   # mod -> {heatmap_in_topk, cons_in_topk, near_periodic, ...}
+    _tbank_frame_loader = _cleaned_frame_loader if CLEAN_FRAME else None
+
+    def _min_s_bin(n_crops):
+        """crops 수를 min_s 구간으로 분류 (summary.json 축)."""
+        if n_crops <= 3:
+            return "3"
+        if n_crops <= 6:
+            return "4-6"
+        return "7+"
+
+    if TBANK_HEATMAP:
+        # per-modality 누적 컨테이너.
+        _tb_mod_h_in: dict = defaultdict(list)     # mod -> [bool]  (heatmap in_topk)
+        _tb_mod_h_r1: dict = defaultdict(list)     # mod -> [bool]  (heatmap rank1)
+        _tb_mod_r_in: dict = defaultdict(list)     # mod -> [bool]  (rrf in_topk)
+        _tb_mod_r_r1: dict = defaultdict(list)     # mod -> [bool]  (rrf rank1)
+        _tb_mod_c_in: dict = defaultdict(list)     # mod -> [bool]  (cons in_topk — shadow)
+        _tb_h_buck:   dict = defaultdict(list)     # mod -> [label] (heatmap classify_winner)
+        _tb_r_buck:   dict = defaultdict(list)     # mod -> [label] (rrf classify_winner)
+        # per-recipe per-modality 평균 for bootstrap CI.
+        _tb_pr_h_in:  dict = defaultdict(list)     # mod -> [float] (per-recipe heatmap mean)
+        _tb_pr_r_in:  dict = defaultdict(list)     # mod -> [float] (per-recipe rrf mean)
+        # min_s bin breakdown.
+        _tb_bin_h:    dict = defaultdict(lambda: defaultdict(list))  # mod -> bin -> [bool]
+        _tb_bin_r:    dict = defaultdict(lambda: defaultdict(list))  # mod -> bin -> [bool]
+
+        from poc.workflow_3.align.assets import load_gray as _load_gray_raw
+        from poc.workflow_2.align_similarity import _iter_recipe_modalities
+
+        for rec, data, mod in _iter_recipe_modalities(by_recipe):
+            frames = data["s_frames"]
+            fm = [f for f in frames if f["mod"] == mod]
+            history = (data.get("history_crops") or {}).get(mod)
+            use_history = history is not None and len(history) >= CONSENSUS_MIN_S
+            if use_history:
+                if not fm:
+                    continue
+                crops = list(history)
+            else:
+                if len(fm) < CONSENSUS_MIN_S:
+                    continue
+                crops = [f["crop"] for f in fm]
+
+            bank = bank_build(crops, recipe_id=rec, modality=mod, min_s=CONSENSUS_MIN_S)
+            if not bank:
+                continue
+            period = estimate_lattice_period(bank[0]) if bank else None
+            _bin = _min_s_bin(len(crops))
+
+            pr_h_hits = []
+            pr_r_hits = []
+
+            for i, f in enumerate(fm):
+                # gray 로드 — frame_loader 와 동일 경로(consensus 와 같은 프레임).
+                try:
+                    if _tbank_frame_loader is not None:
+                        gray = _tbank_frame_loader(f)
+                    else:
+                        gray = _load_gray_raw(f["path"])
+                except Exception:
+                    continue
+                if gray is None:
+                    continue
+                short = min(gray.shape[:2])
+                tol_px = GT_TOL_NORM * short
+                cxh, cyh = tuple(f["xy"])
+
+                # LOO 게이트: history 없을 때 자기 자신이 bank 재료에 들어가지 않게.
+                # crops = [f["crop"] for f in fm] 이므로 i 번 crop 이 bank 에 포함됨.
+                # consensus 는 LOO 로 others 를 쓰지만 bank_build 는 모든 crops 를 쓰므로
+                # 동일 no-leakage 를 위해 LOO 판에서 bank 를 rebuild 한다.
+                if not use_history:
+                    loo_crops = [c for j, c in enumerate(crops) if j != i]
+                    if len(loo_crops) < CONSENSUS_MIN_S:
+                        continue
+                    loo_bank = bank_build(
+                        loo_crops, recipe_id=rec, modality=mod, min_s=CONSENSUS_MIN_S)
+                    if not loo_bank:
+                        continue
+                    act_bank = loo_bank
+                else:
+                    act_bank = bank
+
+                # heatmap arm.
+                hres = bank_match_heatmap(act_bank, gray, peak_nms_frac=TBANK_PEAK_NMS_FRAC)
+                h_in = any(
+                    np.hypot(x - cxh, y - cyh) <= tol_px for (x, y) in hres.cand_xys
+                ) if hres.cand_xys else False
+                h_r1 = (hres.xy is not None and
+                        np.hypot(hres.xy[0] - cxh, hres.xy[1] - cyh) <= tol_px)
+                hb = classify_winner(hres.xy, (cxh, cyh), period=period, tol_px=tol_px)
+
+                _tb_mod_h_in[mod].append(h_in)
+                _tb_mod_h_r1[mod].append(h_r1)
+                _tb_h_buck[mod].append(hb)
+                _tb_bin_h[mod][_bin].append(h_in)
+                pr_h_hits.append(float(h_in))
+
+                # rrf arm (extra).
+                if TBANK_RRF:
+                    short_t = min(act_bank[0].raw_image.shape[:2]) if act_bank else short
+                    cluster_tol = max(1, int(TBANK_CLUSTER_TOL_FRAC * short_t))
+                    rres = bank_match_rrf(
+                        act_bank, gray, cluster_tol=cluster_tol, rrf_k=TBANK_RRF_K)
+                    r_in = any(
+                        np.hypot(x - cxh, y - cyh) <= tol_px for (x, y) in rres.cand_xys
+                    ) if rres.cand_xys else False
+                    r_r1 = (rres.xy is not None and
+                            np.hypot(rres.xy[0] - cxh, rres.xy[1] - cyh) <= tol_px)
+                    ms = (rres.member_support[0] if rres.member_support else None)
+                    rb = classify_winner(
+                        rres.xy, (cxh, cyh), period=period, tol_px=tol_px,
+                        member_support=ms)
+                    _tb_mod_r_in[mod].append(r_in)
+                    _tb_mod_r_r1[mod].append(r_r1)
+                    _tb_r_buck[mod].append(rb)
+                    _tb_bin_r[mod][_bin].append(r_in)
+                    pr_r_hits.append(float(r_in))
+
+            if pr_h_hits:
+                _tb_pr_h_in[mod].append(
+                    sum(pr_h_hits) / len(pr_h_hits))
+            if pr_r_hits:
+                _tb_pr_r_in[mod].append(
+                    sum(pr_r_hits) / len(pr_r_hits))
+
+        # per-recipe cons in_topk shadow (from _consensus_template_ab per_recipe rows).
+        _cons_pr_by_mod: dict = defaultdict(list)
+        for row in res.get("per_recipe", []):
+            m = row.get("modality")
+            if m:
+                _cons_pr_by_mod[m].append(row.get("cons_in_topk_rate", 0.0))
+
+        # 결과 집계 및 summary.json 키 설정.
+        tbank_result: dict = {}
+        _all_mods = sorted(set(list(_tb_mod_h_in.keys()) + list(_tb_mod_c_in.keys())))
+        for mod in _all_mods:
+            h_vals = _tb_mod_h_in.get(mod, [])
+            r_vals = _tb_mod_r_in.get(mod, [])
+            h_r1_vals = _tb_mod_h_r1.get(mod, [])
+            r_r1_vals = _tb_mod_r_r1.get(mod, [])
+            h_bucks = _tb_h_buck.get(mod, [])
+            r_bucks = _tb_r_buck.get(mod, [])
+            c_pr_vals = _cons_pr_by_mod.get(mod, [])
+            hm_in = (sum(h_vals) / len(h_vals)) if h_vals else float("nan")
+            rm_in = (sum(r_vals) / len(r_vals)) if r_vals else float("nan")
+            hm_r1 = (sum(h_r1_vals) / len(h_r1_vals)) if h_r1_vals else float("nan")
+            rm_r1 = (sum(r_r1_vals) / len(r_r1_vals)) if r_r1_vals else float("nan")
+            cons_in_mean = (sum(c_pr_vals) / len(c_pr_vals)) if c_pr_vals else float("nan")
+            h_buckets = _aggregate_buckets(h_bucks)
+            r_buckets = _aggregate_buckets(r_bucks) if r_bucks else {}
+            np_frac = (h_buckets["near_periodic"] / h_buckets["total"]
+                       if h_buckets.get("total") else 0.0)
+            bank_stats_by_mod[mod] = {
+                "heatmap_in_topk": round(hm_in, 4) if h_vals else None,
+                "heatmap_rank1": round(hm_r1, 4) if h_r1_vals else None,
+                "cons_in_topk": round(cons_in_mean, 4) if c_pr_vals else None,
+                "near_periodic": round(np_frac, 4),
+                "heatmap_buckets": h_buckets,
+                "rrf_in_topk": round(rm_in, 4) if r_vals else None,
+                "rrf_rank1": round(rm_r1, 4) if r_r1_vals else None,
+                "rrf_buckets": r_buckets if r_bucks else None,
+                "heatmap_in_topk_ci": _bootstrap_ci(_tb_pr_h_in.get(mod, [])),
+                "rrf_in_topk_ci": _bootstrap_ci(_tb_pr_r_in.get(mod, [])) if TBANK_RRF else None,
+                "min_s_bins": {
+                    b: {
+                        "heatmap_in_topk": (
+                            round(sum(_tb_bin_h[mod][b]) / len(_tb_bin_h[mod][b]), 4)
+                            if _tb_bin_h[mod][b] else None),
+                        "rrf_in_topk": (
+                            round(sum(_tb_bin_r[mod][b]) / len(_tb_bin_r[mod][b]), 4)
+                            if TBANK_RRF and _tb_bin_r[mod][b] else None),
+                        "n": len(_tb_bin_h[mod][b]),
+                    }
+                    for b in ("3", "4-6", "7+")
+                },
+                "n": len(h_vals),
+            }
+            tbank_result[mod] = bank_stats_by_mod[mod]
+
+        res["template_bank"] = tbank_result
+        res["tbank_heatmap_enabled"] = TBANK_HEATMAP
+        res["tbank_rrf_enabled"] = TBANK_RRF
+
+        # kill-test line: near_periodic per modality.
+        om_s = bank_stats_by_mod.get("om") or {}
+        sem_s = bank_stats_by_mod.get("sem") or {}
+        om_np = om_s.get("near_periodic") or 0.0
+        sem_np = sem_s.get("near_periodic") or 0.0
+        print(
+            f"[INFO] kill-test (heatmap winners): "
+            f"om near_periodic={om_np:.3f} sem near_periodic={sem_np:.3f} "
+            f"(>= cons near_periodic => H0 distractor reinforcement)"
+        )
+        print(_format_bank_digest(bank_stats_by_mod))
+
     (out_dir / "summary.json").write_text(
         json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")
 

@@ -181,3 +181,12 @@ def test_format_bank_digest_ascii_one_line():
     assert d.startswith("[DIGEST] template-bank")
     assert "om[" in d and "sem[" in d and "\n" not in d
     assert d == d.encode("ascii", "replace").decode("ascii")
+
+
+def test_consensus_run_no_data_with_tbank(monkeypatch, tmp_path):
+    """TBANK on + 빈 루트에서 run() 이 no_data/no_ab 로 정상 반환 (no-data smoke)."""
+    import poc.workflow_2.golden_consensus_eval_cond as g
+    monkeypatch.setenv("ALIGN_GOLDEN_ROOT", str(tmp_path))
+    monkeypatch.setenv("TBANK_HEATMAP", "1")
+    out = g.run()
+    assert out in ("no_data", "no_ab")

@@ -26,15 +26,20 @@ def notify_abort_outcome(
     outcome,
     *,
     capture_path: str = "",
+    detail: str = "",
     enabled: bool = True,
 ) -> None:
     """측정 abort 결과를 cube rich notification 으로 비차단 발송한다.
 
     outcome 은 status 문자열('aborted'|'abort_dry_run'|'abort_button_not_found'|
-    'abort_error') 또는 None(rcs 비활성). enabled=False/어댑터 부재면 텍스트 로그만.
+    'abort_error') 또는 None(rcs 비활성). detail 은 알람 정보(예: 연속 실패 수가 담긴
+    ALARM_NAME)로, 요약 앞에 붙어 엔지니어에게 전달된다. enabled=False/어댑터 부재면
+    텍스트 로그만.
     """
     status = outcome or "unknown"
     summary = _ABORT_SUMMARY.get(status, "측정 실패 abort 잡 - 엔지니어 확인 필요.")
+    if detail:
+        summary = f"{detail} - {summary}"
     if capture_path:
         summary = f"{summary} (capture={capture_path})"
 

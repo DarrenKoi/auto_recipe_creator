@@ -99,7 +99,8 @@ def process_abort_rows(meas_fails, aborted_tools: set, settings, abort_cooldown:
         )
         if settings.cycle_enabled:
             cycle = run_abort_cycle(
-                eqp_id, info["recipe_id"], settings, tag=_alarm_time_to_tag(info["utc9"])
+                eqp_id, info["recipe_id"], settings,
+                tag=_alarm_time_to_tag(info["utc9"]), detail=info["alarm_name"],
             )
         else:
             cycle = CycleResult(eqp_id=eqp_id, recipe_id=info["recipe_id"], tag="")

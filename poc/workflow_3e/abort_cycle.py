@@ -156,9 +156,12 @@ _ABORT_STEP_EXECUTORS = {
 }
 
 
-def run_abort_cycle(eqp_id: str, recipe_id: str, settings, *, tag: str | None = None) -> CycleResult:
+def run_abort_cycle(
+    eqp_id: str, recipe_id: str, settings, *, tag: str | None = None, detail: str = ""
+) -> CycleResult:
     """측정 abort 알람 1건 사이클 — 접속 -> 증거 캡처 -> Stop/Abort 클릭(게이트) -> 닫기.
 
+    detail 은 알람 정보(예: 연속 실패 수가 담긴 ALARM_NAME)로 cube 알림에 함께 실린다.
     step 실패로 runner 가 중단돼도 cube 알림·tool 닫기·팝업 backstop 은 finally 가 보장한다.
     예외는 삼켜 상위 슈퍼바이저 루프가 죽지 않게 한다.
     """
@@ -168,7 +171,9 @@ def run_abort_cycle(eqp_id: str, recipe_id: str, settings, *, tag: str | None = 
     if not RCS_MODULES_AVAILABLE:
         result.run_status = "rcs_unavailable"
         result.notes.append("RCS 모듈 비활성 - 감지/로그만")
-        notify_abort_outcome(eqp_id, recipe_id, None, enabled=settings.rich_notify_enabled)
+        notify_abort_outcome(
+            eqp_id, recipe_id, None, detail=detail, enabled=settings.rich_notify_enabled
+        )
         return result
 
     context: dict = {"eqp_id": eqp_id, "recipe_id": recipe_id, "tag": tag}
@@ -198,7 +203,8 @@ def run_abort_cycle(eqp_id: str, recipe_id: str, settings, *, tag: str | None = 
             result.outcome_path = str(context["capture_path"])
         notify_abort_outcome(
             eqp_id, recipe_id, result.outcome_status or None,
-            capture_path=result.outcome_path, enabled=settings.rich_notify_enabled,
+            capture_path=result.outcome_path, detail=detail,
+            enabled=settings.rich_notify_enabled,
         )
     except Exception as exc:
         result.run_status = "error"

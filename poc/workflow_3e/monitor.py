@@ -28,8 +28,8 @@ from poc.workflow_3.monitor.align_fail_monitor import (
 )
 from poc.workflow_3.monitor.notify import ALARM_LOG_PATH
 from poc.workflow_3e.config import Workflow3eSettings, load_workflow3e_settings
-from poc.workflow_3e.detector import filter_measurement_fail
 from poc.workflow_3e.dispatch import ABORT_MANIFEST_PATH, process_abort_rows
+from poc.workflow_3e.meas_alarm_source import MEAS_PROVIDER_AVAILABLE, measurement_fail_rows
 
 
 def monitor_loop(settings: Workflow3eSettings | None = None) -> None:
@@ -53,16 +53,20 @@ def monitor_loop(settings: Workflow3eSettings | None = None) -> None:
         f"{'(dry-run)' if settings.correction_enabled and settings.correction_dry_run else ''})"
     )
     armed = settings.meas_fail_abort_enabled and not settings.abort_action_dry_run
+    meas_src = "office provider" if MEAS_PROVIDER_AVAILABLE else f"ALID 필터({settings.meas_fail_alid or '미설정'})"
     print(
         f"[INFO] 측정 실패 abort 잡: {'on' if settings.meas_fail_abort_enabled else 'off'}"
         f"{' (notify-only, dry-run)' if settings.meas_fail_abort_enabled and not armed else ''}"
-        f"{' [ARMED]' if armed else ''}, ALID={settings.meas_fail_alid or '미설정'}"
+        f"{' [ARMED]' if armed else ''}, 소스={meas_src}"
     )
     print(f"[INFO] 알람 로그: {ALARM_LOG_PATH}")
     print(f"[INFO] align manifest: {CYCLE_MANIFEST_PATH}")
     print(f"[INFO] abort manifest: {ABORT_MANIFEST_PATH}")
-    if settings.meas_fail_abort_enabled and not settings.meas_fail_alid:
-        print("[WARNING] MEAS_FAIL_ALID 미설정 - 측정 실패 abort 는 검출되지 않음(오피스에서 설정 필요).")
+    if settings.meas_fail_abort_enabled and not MEAS_PROVIDER_AVAILABLE and not settings.meas_fail_alid:
+        print(
+            "[WARNING] 측정 실패 provider 없음 + MEAS_FAIL_ALID 미설정 - 측정 실패 abort 가 "
+            "검출되지 않음. 오피스에서 office_meas_many_fails.py 구현 또는 MEAS_FAIL_ALID 설정 필요."
+        )
 
     while True:
         try:
@@ -90,9 +94,9 @@ def monitor_loop(settings: Workflow3eSettings | None = None) -> None:
                         f"신규 없음 (활성 {len(active_tools)}대 유지)"
                     )
 
-            # --- 측정 실패 abort 잡 (workflow_3e 신규, 같은 alarms 스트림) ---
-            if settings.meas_fail_abort_enabled and alarms is not None:
-                meas = filter_measurement_fail(alarms, settings.meas_fail_alid)
+            # --- 측정 실패 abort 잡 (workflow_3e 신규: 전용 provider 우선, 없으면 ALID 필터) ---
+            if settings.meas_fail_abort_enabled and (MEAS_PROVIDER_AVAILABLE or alarms is not None):
+                meas = measurement_fail_rows(alarms, settings.meas_fail_alid)
                 meas = filter_rows_within_window(meas, settings.detection_window_sec)
                 if not _alarm_rows_empty(meas):
                     process_abort_rows(meas, aborted_tools, settings, abort_cooldown)

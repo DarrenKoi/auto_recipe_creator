@@ -62,13 +62,56 @@ cube-notify the engineer, but **do not click**. Dry-run exercises the whole path
 VLM locate) and gates only the final click. Arm it (`SAFE_MODE=0 MEAS_FAIL_ABORT_DRY_RUN=0`)
 only after verifying the located button at the office.
 
-## Office activation checklist
+## Office contract — how you feed in the alarm
 
-1. Provide `filter_measurement_fail(rows)` in `office_align_fail_alarm` **or** set `MEAS_FAIL_ALID`
-   (the supervisor filters the raw alarm feed by ALID, so `MEAS_FAIL_ALID` alone is enough).
-2. Confirm the measurement-fail threshold **ALID** with MES.
+You implement the **detection** side (count consecutive fails, decide the threshold); `workflow_3e`
+does the **action** side. There are two ways to deliver the alarm; pick one:
+
+**Path A (recommended) — dedicated provider.** Copy `temp_office_meas_many_fails.py` →
+`office_meas_many_fails.py` (gitignored at the office) and implement **one function**:
+
+```python
+def get_measurement_fail_alarms() -> pandas.DataFrame:
+    """지금 '연속 N회 측정 실패' 임계를 넘긴 tool 들의 표준 알람 rows (없으면 빈 DataFrame)."""
+```
+
+- **Input:** none — it queries MES itself. Called every poll (`ALIGN_FAIL_POLL_SEC`).
+- **Output:** a DataFrame in the **same schema as align-fail alarms** (`ALARM_COLUMNS`). Build each
+  row with the provided `build_measurement_fail_alarm_row(...)` helper so the format is guaranteed.
+- **Stateless-safe:** keep returning the same `EQP_ID` row while the tool is over threshold —
+  `workflow_3e` edge-triggers (acts once) and re-arms when the row disappears.
+
+Row schema (REQUIRED = consumed; rest = logged/notify):
+
+| Column | Req | Meaning |
+|---|---|---|
+| `EQP_ID` | ✅ | tool id — connect target + dedup key |
+| `ALID` | ✅ | alarm id (`MEAS_FAIL_ALID`, distinct from align's 9006) |
+| `UTC9` | ✅ | `"%Y-%m-%d %H:%M:%S"` detection time — recency window + capture folder tag |
+| `RECIPE_ID` |  | `"<class>/<recipe>"` — capture/asset path (else `_unregistered`) |
+| `ALARM_NAME` |  | human label — **put the fail count here** (e.g. `"...Fail (20/100)"`); it reaches the engineer cube |
+| `OPERATION_DESC`, `LOT_TYPE_CD`, `TIMESTAMP` |  | extra context |
+
+**Path B — ride the shared feed.** If the consecutive-fail alarm is already a native MES alarm in
+`get_cdsem_alarms()` with its own ALID, skip the provider and just set `MEAS_FAIL_ALID=<that ALID>`.
+The supervisor filters the raw feed by it.
+
+The supervisor prefers Path A if `office_meas_many_fails.py` is present, else falls back to Path B.
+
+### Sending the "info"
+
+The failure detail (`ALARM_NAME`, e.g. the `20/100` count) is threaded into the cube notification
+automatically — it shows up as `"Measurement Consecutive Fail (20/100) - <status>"`. By default the
+abort cube reuses the existing `office_rich_notify.send_cube_align_fail_info` adapter; add a
+dedicated `send_cube_meas_fail_info(...)` only if you want a measurement-specific cube format (the
+template notes the optional signature).
+
+## Activation checklist
+
+1. Implement `office_meas_many_fails.get_measurement_fail_alarms()` (Path A) **or** set `MEAS_FAIL_ALID` (Path B).
+2. Confirm the measurement-fail threshold value (e.g. 20 consecutive) and ALID with MES.
 3. Run notify-only first; verify the `_rcs.jpg` evidence capture + the `[DRY-RUN] Abort 버튼 검출`
-   coordinate land on the real Stop/Abort button.
+   coordinate land on the real Stop/Abort button, and that the cube shows the right fail count.
 4. Arm with `SAFE_MODE=0 MEAS_FAIL_ABORT_DRY_RUN=0` once verified.
 
 ## Tests (dev PC, no RCS)

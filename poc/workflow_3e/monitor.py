@@ -1,0 +1,122 @@
+"""workflow_3e 통합 슈퍼바이저 — align fail + 측정 실패 abort 를 한 루프/한 프로세스로.
+
+단일 RCS 커서를 공유하므로 두 잡은 직렬(blocking)로 처리된다. MES 는 한 번만 polling 하고
+두 필터로 나눠 본다:
+  * align fail(ALID=9006)  -> workflow_3 의 process_fail_rows (그대로 재사용)
+  * 측정 실패 임계 알람      -> workflow_3e 의 process_abort_rows (신규)
+
+align 경로의 폴링/edge-trigger/idle 로직은 workflow_3 의 헬퍼를 재사용하고, abort 분기만
+더한다. abort 잡은 'abort can queue' 전제라 별도 lock 없이 한 프로세스 직렬로 충분하다.
+
+    uv run python poc/workflow_3e/monitor.py
+
+개발 PC dry-run (RCS 없이 두 잡 경로 확인):
+    SAFE_MODE=1 ALIGN_FAIL_ALARM_SOURCE=replay ALIGN_FAIL_REPLAY_CSV=<fixture.csv> \
+      MEAS_FAIL_ALID=<alid> uv run python poc/workflow_3e/monitor.py
+"""
+
+import time
+from datetime import datetime
+
+from poc.workflow_3.monitor.alarm_source import load_alarm_source
+from poc.workflow_3.monitor.align_fail_monitor import (
+    CYCLE_MANIFEST_PATH,
+    _alarm_rows_empty,
+    _set_keep_awake,
+    filter_rows_within_window,
+    process_fail_rows,
+)
+from poc.workflow_3.monitor.notify import ALARM_LOG_PATH
+from poc.workflow_3e.config import Workflow3eSettings, load_workflow3e_settings
+from poc.workflow_3e.detector import filter_measurement_fail
+from poc.workflow_3e.dispatch import ABORT_MANIFEST_PATH, process_abort_rows
+
+
+def monitor_loop(settings: Workflow3eSettings | None = None) -> None:
+    """통합 감지 루프 — poll 주기마다 align fail + 측정 실패 abort 를 함께 처리한다."""
+    settings = settings or load_workflow3e_settings()
+    source = load_alarm_source(settings.alarm_source)
+
+    if settings.keep_awake:
+        _set_keep_awake(True)
+
+    active_tools: set[str] = set()            # align fail edge-trigger 상태.
+    occupied_cooldown: dict = {}              # align 점유(select) 재시도 유예.
+    aborted_tools: set[str] = set()           # 측정 실패 abort edge-trigger 상태.
+    abort_cooldown: dict = {}                 # abort 점유 재시도 유예.
+    idle_logged = False
+
+    print(
+        f"[INFO] 통합 모니터링 시작 (소스={source.kind}, 주기={settings.poll_interval_sec}s, "
+        f"윈도우={settings.detection_window_sec}s, "
+        f"보정={'on' if settings.correction_enabled else 'off'}"
+        f"{'(dry-run)' if settings.correction_enabled and settings.correction_dry_run else ''})"
+    )
+    armed = settings.meas_fail_abort_enabled and not settings.abort_action_dry_run
+    print(
+        f"[INFO] 측정 실패 abort 잡: {'on' if settings.meas_fail_abort_enabled else 'off'}"
+        f"{' (notify-only, dry-run)' if settings.meas_fail_abort_enabled and not armed else ''}"
+        f"{' [ARMED]' if armed else ''}, ALID={settings.meas_fail_alid or '미설정'}"
+    )
+    print(f"[INFO] 알람 로그: {ALARM_LOG_PATH}")
+    print(f"[INFO] align manifest: {CYCLE_MANIFEST_PATH}")
+    print(f"[INFO] abort manifest: {ABORT_MANIFEST_PATH}")
+    if settings.meas_fail_abort_enabled and not settings.meas_fail_alid:
+        print("[WARNING] MEAS_FAIL_ALID 미설정 - 측정 실패 abort 는 검출되지 않음(오피스에서 설정 필요).")
+
+    while True:
+        try:
+            poll_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[INFO] {poll_time} - 알람 조회 (최근 {settings.detection_window_sec}s 윈도우)")
+            alarms = source.poll()
+
+            # --- align fail 잡 (workflow_3 재사용) ---
+            fails = source.filter_align_fail(alarms)
+            fails = filter_rows_within_window(fails, settings.detection_window_sec)
+            if _alarm_rows_empty(fails):
+                if active_tools:
+                    for eqp_id in sorted(active_tools):
+                        print(f"[INFO] Align Fail 해제: EQP_ID={eqp_id}")
+                    active_tools.clear()
+                if not idle_logged:
+                    print(f"[INFO] {datetime.now().strftime('%H:%M:%S')} - Align Fail 없음")
+                    idle_logged = True
+            else:
+                idle_logged = False
+                count = process_fail_rows(fails, active_tools, settings, occupied_cooldown)
+                if count == 0:
+                    print(
+                        f"[INFO] {datetime.now().strftime('%H:%M:%S')} - "
+                        f"신규 없음 (활성 {len(active_tools)}대 유지)"
+                    )
+
+            # --- 측정 실패 abort 잡 (workflow_3e 신규, 같은 alarms 스트림) ---
+            if settings.meas_fail_abort_enabled and alarms is not None:
+                meas = filter_measurement_fail(alarms, settings.meas_fail_alid)
+                meas = filter_rows_within_window(meas, settings.detection_window_sec)
+                if not _alarm_rows_empty(meas):
+                    process_abort_rows(meas, aborted_tools, settings, abort_cooldown)
+                elif aborted_tools:
+                    for eqp_id in sorted(aborted_tools):
+                        print(f"[INFO] 측정 실패 알람 해제: EQP_ID={eqp_id}")
+                    aborted_tools.clear()
+
+        except KeyboardInterrupt:
+            print("\n[INFO] 감지 중단 (Ctrl+C)")
+            break
+        except Exception as exc:
+            print(f"[ERROR] 통합 감지 루프 예외: {exc}")
+
+        try:
+            time.sleep(settings.poll_interval_sec)
+        except KeyboardInterrupt:
+            print("\n[INFO] 감지 중단 (Ctrl+C)")
+            break
+
+    if settings.keep_awake:
+        _set_keep_awake(False)
+    print("[INFO] 통합 감지 종료")
+
+
+if __name__ == "__main__":
+    monitor_loop()

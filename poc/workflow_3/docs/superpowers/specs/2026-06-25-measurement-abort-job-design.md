@@ -1,8 +1,36 @@
 # Add a measurement-abort job to the production loop
 
 **Date:** 2026-06-25
-**Status:** Approved (design)
-**Scope:** `poc/workflow_3/` production loop (`monitor/align_fail_monitor.py`, `monitor/cycle.py`, `monitor/alarm_source.py`, `config.py`)
+**Status:** Approved (design) — **realized as the `poc/workflow_3e/` extension package (see Revision below)**
+**Scope:** new `poc/workflow_3e/` extension package; `poc/workflow_3/` is reused one-way and left **untouched**
+
+> ## Revision 2026-06-25: realized as a `workflow_3e` extension package (same process)
+>
+> To keep `workflow_3`'s core from growing an `ALIGN_FAIL_*`-style tangle every time a new
+> alarm-driven job is added, the measurement-abort job is built as a **separate extension
+> package `poc/workflow_3e/`** rather than edited into `workflow_3`'s files. The structural
+> decision (one process, one serialized GUI, abort can queue, MES owns the streak) is
+> **unchanged** — only the *code home* moves. Concretely:
+>
+> - **`workflow_3e` imports `workflow_3` one-way** (extension → core, never the reverse —
+>   the same dependency rule legacy packages follow). `workflow_3` gets **zero edits**.
+> - **One unified supervisor** (`workflow_3e/monitor.py`) is the new entry point. It polls
+>   MES once, hands align rows to `workflow_3`'s existing `process_fail_rows` and abort rows
+>   to `workflow_3e`'s own `process_abort_rows`. One process ⇒ the single RCS cursor is
+>   serialized by the blocking cycle model, no lock needed.
+> - The abort cycle **reuses `workflow_3`'s step executors** (`_exec_ensure_rcs_ready`,
+>   `_exec_connect_tool`, `_exec_wait_tool_window`, `_exec_capture_screen`), `WorkflowRunner`,
+>   `CycleResult`, and teardown — only `_exec_abort_measurement` + the button locator are new.
+> - The measurement-fail filter runs on the **raw `alarms` DataFrame** inside `workflow_3e`,
+>   so `workflow_3/monitor/alarm_source.py` needs no `filter_measurement_fail` edit either.
+> - Config: new `Workflow3eSettings(Workflow3Settings)` adds the `MEAS_FAIL_*` fields; the
+>   loader wraps `load_workflow3_settings()`. No `MEAS_FAIL_*` lands in `workflow_3/config.py`.
+> - You launch `uv run python poc/workflow_3e/monitor.py` instead of `align_fail_monitor.py`;
+>   `align_fail_monitor.py` still runs standalone (align-only) for backward compatibility.
+>
+> The section numbering below (Changes 1–7) describes the *logical* changes; the Revision
+> remaps them into `workflow_3e/` modules with no `workflow_3` edits. The implementation plan
+> (`../plans/2026-06-25-measurement-abort-job.md`) is authored against this revised structure.
 
 ## Problem
 

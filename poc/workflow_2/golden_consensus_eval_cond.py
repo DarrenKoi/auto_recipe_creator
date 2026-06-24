@@ -785,7 +785,6 @@ def run() -> str:
         _tb_mod_h_r1: dict = defaultdict(list)     # mod -> [bool]  (heatmap rank1)
         _tb_mod_r_in: dict = defaultdict(list)     # mod -> [bool]  (rrf in_topk)
         _tb_mod_r_r1: dict = defaultdict(list)     # mod -> [bool]  (rrf rank1)
-        _tb_mod_c_in: dict = defaultdict(list)     # mod -> [bool]  (cons in_topk — shadow)
         _tb_h_buck:   dict = defaultdict(list)     # mod -> [label] (heatmap classify_winner)
         _tb_r_buck:   dict = defaultdict(list)     # mod -> [label] (rrf classify_winner)
         # per-recipe per-modality 평균 for bootstrap CI.
@@ -842,7 +841,8 @@ def run() -> str:
                 # 동일 no-leakage 를 위해 LOO 판에서 bank 를 rebuild 한다.
                 if not use_history:
                     loo_crops = [c for j, c in enumerate(crops) if j != i]
-                    if len(loo_crops) < CONSENSUS_MIN_S:
+                    # _consensus_template_ab 의 `len(others) < 2` 게이트와 동일 — A/B 패리티.
+                    if len(loo_crops) < 2:
                         continue
                     loo_bank = bank_build(
                         loo_crops, recipe_id=rec, modality=mod, min_s=CONSENSUS_MIN_S)
@@ -904,7 +904,7 @@ def run() -> str:
 
         # 결과 집계 및 summary.json 키 설정.
         tbank_result: dict = {}
-        _all_mods = sorted(set(list(_tb_mod_h_in.keys()) + list(_tb_mod_c_in.keys())))
+        _all_mods = sorted(_tb_mod_h_in.keys())
         for mod in _all_mods:
             h_vals = _tb_mod_h_in.get(mod, [])
             r_vals = _tb_mod_r_in.get(mod, [])

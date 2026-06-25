@@ -1,7 +1,10 @@
 # Template-Bank Matching — Design Spec (bench experiment)
 
+> **CONCLUDED 2026-06-25 — REJECTED (no port). See [ADR 0006](../study/adr/0006-template-bank-matcher-rejected-fusion-exhausted.md).**
+> Kill-test passed (near_periodic om 0.014 / sem 0.052) and in_topk beat consensus per-modality (SEM heatmap +9.4pp, OM rrf +3.8pp), **but rank-1 — the production deliverable — was ~0.5 on both modalities** (heatmap om 0.531 / sem 0.492). SEM is a ranking/distinctiveness problem unrankable by any member-fusion (median/heatmap/RRF all hit the same ~0.5 rank-1 wall). Lever is align-key distinctiveness (re-registration), not the matcher. Code kept as a bench arm behind `TBANK_HEATMAP=0`.
+
 - **Date:** 2026-06-24
-- **Status:** Design (pre-implementation)
+- **Status:** CONCLUDED / REJECTED (was: Design, pre-implementation)
 - **Scope:** Offline CV bench experiment in `poc/workflow_2` only. No `workflow_3`/production changes.
 - **Adversarial review:** Codex rescue pass (2026-06-24) — its findings are folded in as hard
   requirements and Risks below. This spec is deliberately structured to **falsify the idea cheaply**

@@ -1,5 +1,7 @@
 # Template-Bank Matching Implementation Plan
 
+> **CONCLUDED 2026-06-25 — implemented (7 tasks, all on `main`, 16/16 tests) and REJECTED on results. See [ADR 0006](../study/adr/0006-template-bank-matcher-rejected-fusion-exhausted.md) + the spec banner.** Kill-test passed but rank-1 ~0.5 both modalities — no port. Plan retained for provenance.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a bench-only template-bank matcher (soft-voting heatmap primary, RRF extra arm) plus a kill-test/A-B eval arm, to test whether cross-member agreement over individual recent-success S crops localizes the align point better than median-consensus — without ever editing workflow_3.

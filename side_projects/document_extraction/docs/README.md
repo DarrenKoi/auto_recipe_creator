@@ -83,7 +83,9 @@ Large VLM은 reasoning error를 줄이는 데 도움이 되지만, 보이지 않
 
 ## 관련 문서
 
+- [pipeline_overview.md](./pipeline_overview.md) — **구현된 파이프라인 end-to-end 개요**
 - [research_notes.md](./research_notes.md)
 - [pipeline_plan.md](./pipeline_plan.md)
 - [rag_db_plan.md](./rag_db_plan.md)
 - [benchmark_plan.md](./benchmark_plan.md)
+- [marp_roundtrip_design.md](./marp_roundtrip_design.md)

@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>주간 진행 보고 · 측정 실패 abort 잡 + template-bank matcher · 2026-06-25</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+    margin: 0; padding: 32px 48px; color: #212121; background: #FFFFFF;
+    line-height: 1.5;
+  }
+  h1 { font-size: 26px; margin: 0 0 4px 0; }
+  h2 { font-size: 17px; margin: 26px 0 10px 0; color: #455A64; border-bottom: 2px solid #CFD8DC; padding-bottom: 4px; }
+  .meta { color: #607D8B; font-size: 13px; margin-bottom: 12px; }
+  .meta code { background: #F5F5F5; padding: 1px 5px; border-radius: 4px; }
+  .summary { background: #fff; border-left: 4px solid #1976D2; padding: 11px 16px; margin: 8px 0 4px 0; font-size: 13.5px; }
+  code { background: #ECEFF1; padding: 1px 4px; border-radius: 4px; font-size: 11.5px; }
+
+  /* badges */
+  .badge {
+    display: inline-block; padding: 1px 7px; border: 1px solid; border-radius: 12px;
+    font-size: 11px; font-weight: 700; white-space: nowrap; vertical-align: middle;
+  }
+  .b-done { background: #E8F5E9; border-color: #2E7D32; color: #1B5E20; }
+  .b-prog { background: #FFF3E0; border-color: #ED6C02; color: #B25500; }
+  .b-plan { background: #F3E5F5; border-color: #6A1B9A; color: #4A148C; }
+  .b-new  { background: #E3F2FD; border-color: #1565C0; color: #0D47A1; }
+  .b-stop { background: #FFEBEE; border-color: #C62828; color: #B71C1C; }
+
+  /* ---- flow chart ---- */
+  .flow { margin: 6px 0 2px 0; }
+  .flow-row { display: flex; align-items: stretch; flex-wrap: wrap; gap: 0; }
+  .node {
+    position: relative; flex: 1 1 0; min-width: 150px;
+    background: #fff; border: 1.5px solid #CFD8DC; border-radius: 10px;
+    padding: 9px 11px 10px; margin: 4px 18px 4px 0;
+  }
+  .node:last-child { margin-right: 0; }
+  .node.done { border-color: #66BB6A; background: #F4FBF4; }
+  .node.prog { border-color: #FFA726; background: #FFFBF3; }
+  .node.stop { border-color: #EF5350; background: #FFF6F6; }
+  .node .step { font-size: 10px; font-weight: 700; color: #90A4AE; letter-spacing:.4px; }
+  .node .ttl  { font-size: 12.5px; font-weight: 700; margin: 2px 0 5px; line-height: 1.3; }
+  .node .sub  { font-size: 10.5px; color: #607D8B; line-height: 1.35; }
+  /* arrow between nodes */
+  .node:not(:last-child)::after {
+    content: "›"; position: absolute; right: -14px; top: 50%; transform: translateY(-50%);
+    font-size: 22px; color: #B0BEC5; font-weight: 700; line-height: 0;
+  }
+  .branch {
+    margin: 8px 0 2px; padding: 8px 12px; background:#FAFCFF; border:1px dashed #90CAF9;
+    border-radius: 8px; font-size: 12px; color:#37474F;
+  }
+  .branch b { color:#0D47A1; }
+  .branch.warn { background:#FFF8F8; border-color:#EF9A9A; }
+  .branch.warn b { color:#B71C1C; }
+
+  /* status table */
+  .status-table { width: 100%; border-collapse: collapse; background: #fff; font-size: 12.5px; }
+  .status-table th, .status-table td { border: 1px solid #E0E0E0; padding: 7px 10px; text-align: left; vertical-align: top; }
+  .status-table th { background: #ECEFF1; font-weight: 600; color: #37474F; }
+  .status-table td.name { width: 220px; font-weight: 600; }
+  .status-table td.st { width: 92px; text-align: center; white-space: nowrap; }
+  .status-table td.r { text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+  .legend { display: flex; gap: 14px; font-size: 11.5px; color: #455A64; margin: 8px 0 2px; flex-wrap: wrap; }
+  .next-ol ol { margin: 4px 0; padding-left: 20px; }
+  .next-ol li { margin-bottom: 5px; font-size: 13px; }
+  .footer { margin-top: 24px; font-size: 11px; color: #90A4AE; text-align: right; }
+</style>
+</head>
+<body>
+
+<h1>주간 진행 보고 · 측정 실패 abort 잡 + template-bank matcher</h1>
+<div class="meta">기간: 2026-06-25 (직전 리포트 06-19~06-24 이후) · 범위: <code>poc/workflow_3e/</code> (신규 확장 패키지) · <code>poc/workflow_2</code> matcher 벤치 · 커밋 ~15 · 전량 <code>main</code></div>
+
+<div class="summary">
+  효율적 장비 운영을 위해 <b>두 번째 MES 알람 — "측정 연속 실패" 자동 abort</b> 잡을 프로덕션 루프에 추가했습니다.
+  align fail(ALID=9006)만 처리하던 루프가, 정렬은 성공했으나 측정 포인트가 임계치(예: 100점 중 ~20점 연속 실패)를 넘기면
+  <b>감지 → 접속 → 증거 캡처 → Stop/Abort</b> 로 run 을 중단해 wafer 1장 손실을 막습니다. <code>workflow_3</code> core 를
+  <b>무수정</b>으로 둔 채 <b>확장 패키지 <code>workflow_3e</code></b> 로 구현했고, abort 클릭은 CV 보정과 동일한
+  <b>이중 게이트 + notify-only 기본값</b>으로 보호합니다(6 test 파일 통과). 병행으로 <b>template-bank matcher 벤치</b>를
+  7-task TDD 로 구현(오피스 평가 대기)했습니다.
+</div>
+
+<h2>① 통합 루프 — 한 프로세스가 두 MES 알람을 직렬 처리</h2>
+<div class="flow">
+  <div class="flow-row">
+    <div class="node done">
+      <div class="step">DETECT</div>
+      <div class="ttl">MES 1회 polling</div>
+      <div class="sub">tick 당 한 번 조회 → 두 필터로 분배. 측정 실패 streak 카운팅은 <b>MES 소유</b>(감지기 stateless)</div>
+    </div>
+    <div class="node done">
+      <div class="step">JOB A (기존)</div>
+      <div class="ttl">align fail → 보정</div>
+      <div class="sub">ALID=9006 → <code>process_fail_rows</code> → CV 보정 (workflow_3, 무수정)</div>
+    </div>
+    <div class="node prog">
+      <div class="step">JOB B (신규)</div>
+      <div class="ttl">측정 실패 → abort</div>
+      <div class="sub">임계 알람 → <code>process_abort_rows</code> → 접속·캡처·Stop/Abort<br><span class="badge b-new">착수</span></div>
+    </div>
+    <div class="node done">
+      <div class="step">SERIALIZE</div>
+      <div class="ttl">단일 커서 = 직렬</div>
+      <div class="sub">RCS 커서 1개라 동시 actuation 불가. abort 큐잉 가능 → blocking 사이클 재사용으로 <b>락 불필요</b></div>
+    </div>
+  </div>
+  <div class="branch">
+    <b>왜 별도 <code>workflow_3e</code> 패키지인가:</b> 알람 잡을 추가할 때마다 <code>workflow_3/config.py</code> 에
+    <code>ALIGN_FAIL_*</code> 플래그가 쌓이고 <code>cycle.py</code> 분기가 는다. 확장을 <b>단방향 import</b>(3e → 3, 역방향 금지)로
+    격리해 core 편집 0건. abort 사이클은 connect/창대기/캡처/teardown 을 <b>재사용</b>, <code>_exec_abort_measurement</code> +
+    버튼 locator 만 신규.
+  </div>
+</div>
+<div class="legend">
+  <span><span class="badge b-done">기존·재사용</span> workflow_3 무수정</span>
+  <span><span class="badge b-new">착수</span> 이번 주 신규</span>
+</div>
+
+<h2>② abort 잡 — 안전(이중 게이트, notify-only 기본) &amp; 환경변수</h2>
+<div class="branch warn">
+  <b>파괴적·외부 영향 행동이므로</b> CV 보정과 동일한 <b>이중 게이트</b>(<code>SAFE_MODE=0</code> <b>그리고</b>
+  <code>MEAS_FAIL_ABORT_DRY_RUN=0</code>) + <b>notify-only 기본값</b>. dry-run 은 VLM 버튼 locate 를 포함한 전체 경로를
+  태우고 <b>최종 클릭만</b> 게이트 — 보정을 검증했던 방식 그대로. 기본은 감지 → 접속 → 캡처 → locate → <b>cube 알림</b>, 클릭 없음.
+</div>
+<table class="status-table">
+  <thead><tr><th>Env (<code>MEAS_FAIL_*</code>)</th><th class="st">기본값</th><th>의미</th></tr></thead>
+  <tbody>
+    <tr><td class="name">MEAS_FAIL_ABORT_ENABLED</td><td class="st"><code>1</code></td><td>abort 잡 마스터 토글(감지 + 알림)</td></tr>
+    <tr><td class="name">MEAS_FAIL_ALID</td><td class="st"><code>""</code></td><td>임계 알람 ALID — <b>오피스 확인 필요</b>; 비면 검출 안 함</td></tr>
+    <tr><td class="name">MEAS_FAIL_ABORT_DRY_RUN</td><td class="st"><code>1</code></td><td>actuation 게이트. 실제 클릭은 <code>SAFE_MODE=0</code> <b>그리고</b> 이 값 <code>=0</code> 일 때만</td></tr>
+    <tr><td class="name">MEAS_FAIL_ABORT_BUTTON_SERVICE</td><td class="st"><code>ui-venus</code></td><td>Stop/Abort locator VLM route_slug(모델명 아님)</td></tr>
+  </tbody>
+</table>
+
+<h2>③ 작업 항목 진행 현황</h2>
+<table class="status-table">
+  <thead><tr><th>항목</th><th class="st">상태</th><th>요지</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="name">측정 실패 abort — <code>workflow_3e</code> 패키지</td>
+      <td class="st"><span class="badge b-new">코드 shipped</span></td>
+      <td>통합 슈퍼바이저 + detector + dispatch + abort_cycle + abort_button + notify + config. core 무수정 단방향 확장. 6 test 파일 통과.</td>
+    </tr>
+    <tr>
+      <td class="name">측정 실패 abort — 안전 게이트</td>
+      <td class="st"><span class="badge b-done">적용</span></td>
+      <td>이중 게이트(SAFE_MODE off + DRY_RUN 0) + notify-only 기본. dry-run 이 VLM locate 포함 전체 경로 태우고 클릭만 게이트.</td>
+    </tr>
+    <tr>
+      <td class="name">측정 실패 abort — dry-run 경로</td>
+      <td class="st"><span class="badge b-done">검증</span></td>
+      <td>검출 → 접속 → 캡처 → <code>[DRY-RUN]</code> 좌표 로깅 → manifest 1줄 → cube-notify, <b>클릭 없음</b> 확인.</td>
+    </tr>
+    <tr>
+      <td class="name">측정 실패 abort — 오피스 detection 입력</td>
+      <td class="st"><span class="badge b-prog">오피스 게이트</span></td>
+      <td><code>office_meas_many_fails.py</code>(연속 실패 임계 = MES 소유) 또는 <code>MEAS_FAIL_ALID</code> 확정 필요. 미제공 시 잡 self-disable(align 무영향).</td>
+    </tr>
+    <tr>
+      <td class="name">측정 실패 abort — 버튼 calibrate + 무장</td>
+      <td class="st"><span class="badge b-prog">예정</span></td>
+      <td>실장비에서 Abort/확인 버튼 locator dry-run 검증 후에만 명시 단계로 무장(<code>SAFE_MODE=0 DRY_RUN=0</code>).</td>
+    </tr>
+    <tr>
+      <td class="name">template-bank matcher 벤치</td>
+      <td class="st"><span class="badge b-done">구현 완료</span></td>
+      <td>heatmap soft-voting(primary) + RRF(extra) 2-arm + kill-test(lattice-period·GT-bucket) + eval helpers. bench 전용 bit-parity fork.</td>
+    </tr>
+    <tr>
+      <td class="name">template-bank matcher — 오피스 평가</td>
+      <td class="st"><span class="badge b-plan">대기</span></td>
+      <td>골든셋에서 heatmap vs RRF vs baseline digest 미실행. H1(합의 융합) vs H0(distractor 강화) 판정 후 포팅 게이트.</td>
+    </tr>
+  </tbody>
+</table>
+<div class="legend">
+  <span><span class="badge b-new">코드 shipped</span> 구현·자체검증</span>
+  <span><span class="badge b-done">적용/검증</span> 동작 확인</span>
+  <span><span class="badge b-prog">오피스 게이트</span> 오피스 입력 대기</span>
+  <span><span class="badge b-plan">대기</span> 평가 미실행</span>
+</div>
+
+<h2>④ 다음 주 우선순위</h2>
+<div class="next-ol">
+  <ol>
+    <li><b>abort 잡 오피스 활성화</b> — <code>office_meas_many_fails.py</code> 구현 + <code>MEAS_FAIL_ALID</code> 확정 + 실장비 Stop/Abort·확인 다이얼로그 calibrate.</li>
+    <li><b>dry-run → 무장 단계</b> — 캡처로 버튼 위치 검증 후에만 <code>SAFE_MODE=0 MEAS_FAIL_ABORT_DRY_RUN=0</code> 으로 실제 abort 활성.</li>
+    <li><b>template-bank 골든셋 평가 실행</b> — heatmap-primary 가 baseline 대비 <code>gt_in_topk</code>·rank-1(OM/SEM 층화) 끌어올리는지, H0 발화 여부 digest 확보.</li>
+    <li>rcp <b>이미지</b> 약함 vs <b>matcher</b> 약함 분리 진단 — template-bank 결과로 일부 귀속.</li>
+  </ol>
+</div>
+
+<div class="footer">생성: 2026-06-25 · poc/workflow_3/docs/weekly_report/2026-06-25/</div>
+
+</body>
+</html>

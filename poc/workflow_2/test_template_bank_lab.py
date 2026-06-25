@@ -174,19 +174,24 @@ def test_aggregate_buckets_counts():
 
 
 def test_format_bank_digest_ascii_one_line():
+    """digest 가 ASCII 한 줄, heatmap_in_topk_byrecipe vs cons_in_topk 비교 포함 (#3 residual)."""
     import poc.workflow_2.golden_consensus_eval_cond as g
-    stats = {"om": {"heatmap_in_topk": 0.71, "cons_in_topk": 0.66, "near_periodic": 0.05},
-             "sem": {"heatmap_in_topk": 0.70, "cons_in_topk": 0.66, "near_periodic": 0.30}}
+    stats = {"om": {"heatmap_in_topk": 0.71, "heatmap_in_topk_byrecipe": 0.70,
+                    "cons_in_topk": 0.66, "near_periodic": 0.05},
+             "sem": {"heatmap_in_topk": 0.70, "heatmap_in_topk_byrecipe": 0.69,
+                     "cons_in_topk": 0.66, "near_periodic": 0.30}}
     d = g._format_bank_digest(stats)
     assert d.startswith("[DIGEST] template-bank")
     assert "om[" in d and "sem[" in d and "\n" not in d
+    assert "heatmap_byrecipe" in d          # per-recipe 비교 필드 이름 확인.
     assert d == d.encode("ascii", "replace").decode("ascii")
 
 
 def test_format_bank_digest_handles_none_cons():
-    """cons_in_topk=None 일 때 _format_bank_digest 가 크래시 없이 'n/a' 를 포함한 ASCII 한 줄을 반환."""
+    """cons_in_topk=None, heatmap_in_topk_byrecipe=None 모두 'n/a' 를 포함한 ASCII 한 줄 반환."""
     import poc.workflow_2.golden_consensus_eval_cond as g
-    stats = {"om": {"heatmap_in_topk": 0.7, "cons_in_topk": None, "near_periodic": 0.1}}
+    stats = {"om": {"heatmap_in_topk": 0.7, "heatmap_in_topk_byrecipe": None,
+                    "cons_in_topk": None, "near_periodic": 0.1}}
     d = g._format_bank_digest(stats)
     assert isinstance(d, str)
     assert "\n" not in d

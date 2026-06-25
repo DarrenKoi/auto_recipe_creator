@@ -199,6 +199,8 @@ def _format_bank_digest(stats_by_mod):
 
     cons_in_topk 가 None 일 수 있음 (bank 평가 레시피 중 consensus baseline 없는 경우).
     None 값은 "n/a" 로 출력해 TypeError 방지.
+    heatmap_in_topk_byrecipe vs cons_in_topk 로 비교 — 둘 다 cons X bank 교집합 레시피의
+    per-recipe 평균이므로 사과 대 사과(apples-to-apples) 비교가 된다(#3 residual).
     """
     def _f(x):
         """None-safe 소수점 3자리 포매터."""
@@ -209,8 +211,10 @@ def _format_bank_digest(stats_by_mod):
         s = stats_by_mod.get(mod)
         if not s:
             continue
+        # per-recipe 교집합 기반 비교(#3 residual): heatmap_in_topk_byrecipe vs cons_in_topk.
+        hm_byrecipe = s.get("heatmap_in_topk_byrecipe")
         parts.append(
-            f"{mod}[heatmap {_f(s['heatmap_in_topk'])} vs cons {_f(s['cons_in_topk'])}, "
+            f"{mod}[heatmap_byrecipe {_f(hm_byrecipe)} vs cons {_f(s['cons_in_topk'])}, "
             f"near_periodic {_f(s['near_periodic'])}]")
     return "[DIGEST] template-bank (in_topk + kill-test): " + " | ".join(parts)
 
@@ -796,8 +800,9 @@ def run() -> str:
         _tb_h_buck:   dict = defaultdict(list)     # mod -> [label] (heatmap classify_winner)
         _tb_r_buck:   dict = defaultdict(list)     # mod -> [label] (rrf classify_winner)
         # per-recipe per-modality 평균 for bootstrap CI.
-        _tb_pr_h_in:  dict = defaultdict(list)     # mod -> [float] (per-recipe heatmap mean)
-        _tb_pr_r_in:  dict = defaultdict(list)     # mod -> [float] (per-recipe rrf mean)
+        # #3 residual: dict 로 변경해 교집합 평균 계산 시 레시피 키로 바로 조회 가능하게.
+        _tb_pr_h_in:  dict = defaultdict(dict)     # mod -> {recipe: per-recipe heatmap mean}
+        _tb_pr_r_in:  dict = defaultdict(dict)     # mod -> {recipe: per-recipe rrf mean}
         # bank 가 실제로 평가한 레시피 집합 — cons baseline 교집합 계산용 (#3 버그 수정).
         _tb_recipes_by_mod: dict = defaultdict(set)  # mod -> {rec}
         # min_s bin breakdown.
@@ -821,11 +826,29 @@ def run() -> str:
                     continue
                 crops = [f["crop"] for f in fm]
 
-            bank = bank_build(crops, recipe_id=rec, modality=mod, min_s=CONSENSUS_MIN_S)
-            if not bank:
+            # full_bank 를 레시피/modality 단위로 한 번만 빌드하고 LOO 는 슬라이싱으로.
+            # 패리티 근거:
+            #   from_msr 경로: crops 는 _build_cond_by_recipe 의 COREGISTER 블록(~line 416)에서
+            #     이미 modality 단위로 sub-pixel 정렬된 채 f["crop"] 에 저장돼 있다.
+            #     따라서 bank_build(coregister=False) 로 빌드해야 단일 coregister 를 보장.
+            #     coregister=True 를 쓰면 이미 정렬된 crops 를 다시 정렬 → 이중 coregister.
+            #   history 경로: _crop_history_by_mod 도 COREGISTER 가 True 면 crops 를 정렬하고
+            #     반환한다(~line 478). 마찬가지로 coregister=False.
+            #   _consensus 는 순수 np.median 이고 coregister 를 하지 않는다 — crops 는 upstream
+            #     에서 이미 정렬된 상태이므로 bank 도 동일 조건으로 맞춘다.
+            full_bank = bank_build(crops, recipe_id=rec, modality=mod, min_s=2,
+                                   coregister=False)
+            if not full_bank:
                 continue
-            period = estimate_lattice_period(bank[0]) if bank else None
+            # period: full_bank[0] 기준(참고: 모든 멤버가 같은 align key 를 보므로
+            # 어느 멤버든 주기가 같다; finding #5 = 동일 key 의 LOO 슬라이스 차이 미미).
+            period = estimate_lattice_period(full_bank[0])
             _bin = _min_s_bin(len(crops))
+
+            # cluster_tol / short_t 는 bank 크기에만 의존 — 루프 밖으로 호이스트.
+            if TBANK_RRF:
+                short_t = min(full_bank[0].raw_image.shape[:2])
+                cluster_tol = max(1, int(TBANK_CLUSTER_TOL_FRAC * short_t))
 
             pr_h_hits = []
             pr_r_hits = []
@@ -846,29 +869,24 @@ def run() -> str:
                 cxh, cyh = tuple(f["xy"])
 
                 # LOO 게이트: history 없을 때 자기 자신이 bank 재료에 들어가지 않게.
-                # crops = [f["crop"] for f in fm] 이므로 i 번 crop 이 bank 에 포함됨.
-                # consensus 는 LOO 로 others 를 쓰지만 bank_build 는 모든 crops 를 쓰므로
-                # 동일 no-leakage 를 위해 LOO 판에서 bank 를 rebuild 한다.
+                # full_bank 는 crops 와 1:1 대응 — i 번 멤버를 순수 슬라이싱으로 제외.
+                # _consensus_template_ab 의 `len(others) < 2` 게이트와 패리티 유지.
                 if not use_history:
-                    loo_crops = [c for j, c in enumerate(crops) if j != i]
-                    # _consensus_template_ab 의 `len(others) < 2` 게이트와 동일 — A/B 패리티.
-                    if len(loo_crops) < 2:
+                    if len(crops) - 1 < 2:
                         continue
-                    # min_s=2: _consensus_template_ab LOO 패리티.
-                    # 외부 bank_build(crops, min_s=CONSENSUS_MIN_S) 는 레시피 자격 검사용이고,
-                    # LOO sub-bank 는 멤버 2개 이상이면 유효 — min_s=CONSENSUS_MIN_S 로 두면
-                    # 정확히 CONSENSUS_MIN_S(=3) 레시피가 loo_crops=2 일 때 빈 bank 를 돌려줘
-                    # 전체 min_s=3 bin(~135 레시피)이 조용히 누락된다.
-                    loo_bank = bank_build(
-                        loo_crops, recipe_id=rec, modality=mod, min_s=2)
-                    if not loo_bank:
+                    act_bank = full_bank[:i] + full_bank[i + 1:]  # O(N) 슬라이싱, 재빌드 없음.
+                    if not act_bank:
                         continue
-                    act_bank = loo_bank
                 else:
-                    act_bank = bank
+                    act_bank = full_bank
+
+                # frame_dt 를 프레임당 한 번만 계산해 heatmap/rrf 두 arm 에서 공유(#8).
+                from poc.workflow_3.align.matching.engine import preprocess_for_matching as _pfm
+                frame_dt = _pfm(gray)[1]
 
                 # heatmap arm.
-                hres = bank_match_heatmap(act_bank, gray, peak_nms_frac=TBANK_PEAK_NMS_FRAC)
+                hres = bank_match_heatmap(act_bank, gray, peak_nms_frac=TBANK_PEAK_NMS_FRAC,
+                                          frame_dt=frame_dt)
                 h_in = any(
                     np.hypot(x - cxh, y - cyh) <= tol_px for (x, y) in hres.cand_xys
                 ) if hres.cand_xys else False
@@ -884,10 +902,9 @@ def run() -> str:
 
                 # rrf arm (extra).
                 if TBANK_RRF:
-                    short_t = min(act_bank[0].raw_image.shape[:2]) if act_bank else short
-                    cluster_tol = max(1, int(TBANK_CLUSTER_TOL_FRAC * short_t))
                     rres = bank_match_rrf(
-                        act_bank, gray, cluster_tol=cluster_tol, rrf_k=TBANK_RRF_K)
+                        act_bank, gray, cluster_tol=cluster_tol, rrf_k=TBANK_RRF_K,
+                        frame_dt=frame_dt)
                     r_in = any(
                         np.hypot(x - cxh, y - cyh) <= tol_px for (x, y) in rres.cand_xys
                     ) if rres.cand_xys else False
@@ -904,13 +921,13 @@ def run() -> str:
                     pr_r_hits.append(float(r_in))
 
             if pr_h_hits:
-                _tb_pr_h_in[mod].append(
-                    sum(pr_h_hits) / len(pr_h_hits))
+                # #3 residual: dict 로 저장(recipe 키 → per-recipe 평균). bootstrap CI 는
+                # list(dict.values()) 로 꺼내어 기존 _bootstrap_ci 를 그대로 재사용한다.
+                _tb_pr_h_in[mod][rec] = sum(pr_h_hits) / len(pr_h_hits)
                 # bank 가 실제로 평가한 레시피 집합 추적 — cons baseline 교집합용 (#3).
                 _tb_recipes_by_mod[mod].add(rec)
             if pr_r_hits:
-                _tb_pr_r_in[mod].append(
-                    sum(pr_r_hits) / len(pr_r_hits))
+                _tb_pr_r_in[mod][rec] = sum(pr_r_hits) / len(pr_r_hits)
 
         # per-recipe cons in_topk shadow (from _consensus_template_ab per_recipe rows).
         # #3 수정: list+phantom-zero 방식 대신 {recipe: rate} dict 로 수집.
@@ -942,6 +959,14 @@ def run() -> str:
             _cons_dict = _cons_pr_by_mod.get(mod, {})
             _bank_recs = _tb_recipes_by_mod.get(mod, set())
             _intersect_vals = [v for r, v in _cons_dict.items() if r in _bank_recs]
+            # #3 residual: heatmap per-recipe 평균도 교집합(cons X bank)으로 제한해
+            # digest 의 heatmap vs cons 비교가 동일 레시피 집합 기준이 되게 한다.
+            # cons X bank 교집합 레시피 = _cons_dict 키 중 _bank_recs 에 포함된 것.
+            _h_pr_dict = _tb_pr_h_in.get(mod, {})
+            _hm_byrecipe_intersect = [
+                _h_pr_dict[r] for r in _cons_dict
+                if r in _bank_recs and r in _h_pr_dict
+            ]
             hm_in = (sum(h_vals) / len(h_vals)) if h_vals else float("nan")
             rm_in = (sum(r_vals) / len(r_vals)) if r_vals else float("nan")
             hm_r1 = (sum(h_r1_vals) / len(h_r1_vals)) if h_r1_vals else float("nan")
@@ -949,6 +974,9 @@ def run() -> str:
             cons_in_mean = (
                 sum(_intersect_vals) / len(_intersect_vals)
             ) if _intersect_vals else float("nan")
+            hm_byrecipe_intersect = (
+                sum(_hm_byrecipe_intersect) / len(_hm_byrecipe_intersect)
+            ) if _hm_byrecipe_intersect else None
             h_buckets = _aggregate_buckets(h_bucks)
             r_buckets = _aggregate_buckets(r_bucks) if r_bucks else {}
             np_frac = (h_buckets["near_periodic"] / h_buckets["total"]
@@ -956,14 +984,18 @@ def run() -> str:
             bank_stats_by_mod[mod] = {
                 "heatmap_in_topk": round(hm_in, 4) if h_vals else None,
                 "heatmap_rank1": round(hm_r1, 4) if h_r1_vals else None,
+                # per-recipe 교집합 평균 (#3 residual): cons X bank 동일 레시피 기준.
+                "heatmap_in_topk_byrecipe": (
+                    round(hm_byrecipe_intersect, 4)
+                    if hm_byrecipe_intersect is not None else None),
                 "cons_in_topk": round(cons_in_mean, 4) if _intersect_vals else None,
                 "near_periodic": round(np_frac, 4),
                 "heatmap_buckets": h_buckets,
                 "rrf_in_topk": round(rm_in, 4) if r_vals else None,
                 "rrf_rank1": round(rm_r1, 4) if r_r1_vals else None,
                 "rrf_buckets": r_buckets if r_bucks else None,
-                "heatmap_in_topk_ci": _bootstrap_ci(_tb_pr_h_in.get(mod, [])),
-                "rrf_in_topk_ci": _bootstrap_ci(_tb_pr_r_in.get(mod, [])) if TBANK_RRF else None,
+                "heatmap_in_topk_ci": _bootstrap_ci(list(_tb_pr_h_in.get(mod, {}).values())),
+                "rrf_in_topk_ci": _bootstrap_ci(list(_tb_pr_r_in.get(mod, {}).values())) if TBANK_RRF else None,
                 "min_s_bins": {
                     b: {
                         "heatmap_in_topk": (

@@ -461,6 +461,32 @@ def test_e_rep_score_median_and_empty():
 
 
 # ====================================================================
+# Task 3: Fix-type classifier — _classify_fix
+# ====================================================================
+def test_classify_fix_ok_when_rcp_distinctive():
+    assert rr._classify_fix(0.8, 0.4, distinct_floor=0.7) == "OK"   # rcp >= floor -> OK (cons 무시)
+
+
+def test_classify_fix_fresh_snapshot_when_region_fine():
+    assert rr._classify_fix(0.5, 0.8, distinct_floor=0.7) == "FRESH_SNAPSHOT"
+
+
+def test_classify_fix_new_region_when_region_ambiguous():
+    assert rr._classify_fix(0.4, 0.5, distinct_floor=0.7) == "NEW_REGION"
+
+
+def test_classify_fix_no_data_when_rcp_none():
+    assert rr._classify_fix(None, None, distinct_floor=0.7) == "NO_DATA"
+    assert rr._classify_fix(None, 0.9, distinct_floor=0.7) == "NO_DATA"
+
+
+def test_classify_fix_floor_is_inclusive():
+    # rcp_rank1 == floor 이면 OK(>=). cons == floor 이면 FRESH(>=).
+    assert rr._classify_fix(0.7, 0.0, distinct_floor=0.7) == "OK"
+    assert rr._classify_fix(0.6, 0.7, distinct_floor=0.7) == "FRESH_SNAPSHOT"
+
+
+# ====================================================================
 # Task 5: digest confirmed-count + report s_rep->e_rep column + note
 # ====================================================================
 def test_digest_includes_confirmed_count():

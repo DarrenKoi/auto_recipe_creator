@@ -158,6 +158,22 @@ def _e_confirm(s_rep, e_rep):
     return (s_rep - e_rep >= COLLAPSE_MARGIN) or (e_rep <= E_FLOOR)
 
 
+def _classify_fix(rcp_rank1, cons_rank1, *, distinct_floor):
+    """등록 key 와 영역의 rank-1 변별력으로 fix 유형을 분류한다(순수). spec 4.2 표.
+
+    rcp_rank1 = 등록 snapshot 의 success-frame rank-1(낮으면 재등록), cons_rank1 = 영역(중앙값
+    consensus)의 rank-1(낮으면 영역 자체가 모호 -> 같은 자리 재촬영 무용). 둘 다 floor 이상 needed.
+    rcp_rank1=None(조인 미스) -> NO_DATA.
+    """
+    if rcp_rank1 is None:
+        return "NO_DATA"
+    if rcp_rank1 >= distinct_floor:
+        return "OK"
+    if cons_rank1 is not None and cons_rank1 >= distinct_floor:
+        return "FRESH_SNAPSHOT"
+    return "NEW_REGION"
+
+
 def _rank_rows(rows):
     """한 modality row 들을 risk_score desc 정렬, 동점은 worst_disp desc tiebreak."""
     return sorted(rows, key=lambda r: (r["risk_score"], r.get("worst_disp", 0.0)), reverse=True)

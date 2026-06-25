@@ -34,6 +34,10 @@ S_FLOOR = float(os.getenv("REREGISTER_S_FLOOR", "0.60"))
 E_FLOOR = float(os.getenv("REREGISTER_E_FLOOR", "0.50"))
 COLLAPSE_MARGIN = float(os.getenv("REREGISTER_COLLAPSE_MARGIN", "0.15"))
 
+# rank-1 변별력 floor — rcp_rank1/cons_rank1 의 OK/FRESH/NEW 분기 임계(office 보정 대상).
+# SEM rank-1 이 ~0.5 군집(ADR 0006)이라 0.70 이면 대부분 SEM key 가 flag 된다. 히스토그램 보고 튜닝.
+DISTINCT_FLOOR = float(os.getenv("REREGISTER_DISTINCT_FLOOR", "0.70"))
+
 TIER_WEIGHT = {"E_CONFIRMED": 3.0, "STRONG": 2.0, "MEDIUM": 1.0, "ADVISORY": 0.3, "NONE": 0.0}
 
 # fix 유형 가중(worklist 정렬) — 어려운/고가치 fix 가 위로. _worklist_priority 에서 사용.
@@ -362,6 +366,12 @@ def _rank1_histogram(rank1_lookup):
     for mod in sorted(buckets):
         lines.append(f"  {mod}: " + " ".join(str(c) for c in buckets[mod]))
     return "\n".join(lines)
+
+
+def _join_coverage_line(matched, total, *, collisions=0):
+    """rank1 조인 커버리지 한 줄(ASCII). matched/total + 충돌 수. M~0 이면 키 불일치 경보."""
+    return (f"[INFO] rank1-join: matched {matched}/{total} report recipes"
+            f" to consensus rows (collisions={collisions})")
 
 
 # ====================================================================
@@ -1295,6 +1305,24 @@ def run():
 
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     (OUTPUT_ROOT / "reregister_report.txt").write_text(_format_report(rows_by_mod), encoding="utf-8")
+
+    # ---- Phase 3: rank-1 distinctiveness worklist (consensus summary.json 소비) ----
+    rank1_lookup = _load_consensus_rank1()
+    worklist = _worklist_rows(rows_by_mod, rank1_lookup, distinct_floor=DISTINCT_FLOOR)
+    total_recipes = sum(len(rs) for rs in rows_by_mod.values())
+    matched = sum(1 for w in worklist if w["rcp_rank1"] is not None)
+    print(_join_coverage_line(matched, total_recipes, collisions=_LAST_JOIN_COLLISIONS))
+    print(f"[INFO] distinct_floor={DISTINCT_FLOOR} (env REREGISTER_DISTINCT_FLOOR)")
+    print(_rank1_histogram(rank1_lookup))
+    (OUTPUT_ROOT / "reregister_worklist.txt").write_text(_format_worklist(worklist), encoding="utf-8")
+    (OUTPUT_ROOT / "reregister_worklist.json").write_text(
+        json.dumps(worklist, ensure_ascii=False, indent=2), encoding="utf-8")
+    _wl_counts = {}
+    for w in worklist:
+        _wl_counts[w["fix_type"]] = _wl_counts.get(w["fix_type"], 0) + 1
+    print("[DIGEST] worklist " + " ".join(f"{k}={v}" for k, v in sorted(_wl_counts.items()))
+          + f" join={matched}/{total_recipes}")
+
     digest = _format_digest(rows_by_mod)
     (OUTPUT_ROOT / "digest.txt").write_text(digest, encoding="utf-8")
     # cp949 콘솔에서 비-ASCII recipe 이름이 포함될 수 있으므로 ASCII safe 변환 후 출력(파일은 utf-8 그대로).

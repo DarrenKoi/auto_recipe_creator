@@ -51,6 +51,10 @@ try:
     except ImportError:   # 구버전 config(REREGISTER_GT_TOL_NORM 없음) 하위호환.
         REREGISTER_GT_TOL_NORM = None
     try:
+        from poc.workflow_2.golden_eval_config import REREGISTER_DISTINCT_FLOOR
+    except ImportError:   # 구버전 config(REREGISTER_DISTINCT_FLOOR 없음) 하위호환.
+        REREGISTER_DISTINCT_FLOOR = 0.70
+    try:
         from poc.workflow_2.golden_eval_config import (
             TBANK_HEATMAP, TBANK_RRF, TBANK_PEAK_NMS_FRAC,
             TBANK_CLUSTER_TOL_FRAC, TBANK_RRF_K,
@@ -71,6 +75,7 @@ except ImportError:   # 실편집 파일 부재 — golden_eval_config.example.p
     EFRAME_ROOT = None
     REREGISTER_BOX_SUGGEST, REREGISTER_TOPN, REREGISTER_ACCEPT_MARGIN = 1, 0, None
     REREGISTER_MAX_RECIPES, REREGISTER_FIDELITY_SCALES, REREGISTER_GT_TOL_NORM = 0, "", None
+    REREGISTER_DISTINCT_FLOOR = 0.70
     TBANK_HEATMAP, TBANK_RRF = 1, 1
     TBANK_PEAK_NMS_FRAC, TBANK_CLUSTER_TOL_FRAC, TBANK_RRF_K = 0.5, 0.10, 60
     REREGISTER_E_CONFIRM = 1
@@ -103,6 +108,7 @@ def seed_env():
         os.environ.setdefault("REREGISTER_FIDELITY_SCALES", str(REREGISTER_FIDELITY_SCALES))
     if REREGISTER_GT_TOL_NORM is not None:
         os.environ.setdefault("REREGISTER_GT_TOL_NORM", str(REREGISTER_GT_TOL_NORM))
+    os.environ.setdefault("REREGISTER_DISTINCT_FLOOR", str(REREGISTER_DISTINCT_FLOOR))
     os.environ.setdefault("TBANK_HEATMAP", str(TBANK_HEATMAP))
     os.environ.setdefault("TBANK_RRF", str(TBANK_RRF))
     os.environ.setdefault("TBANK_PEAK_NMS_FRAC", str(TBANK_PEAK_NMS_FRAC))

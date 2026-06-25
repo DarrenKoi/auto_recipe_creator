@@ -665,3 +665,25 @@ def test_rank1_histogram_ascii_and_per_modality():
     h = rr._rank1_histogram(lookup)
     assert h.isascii()
     assert "sem" in h and "om" in h
+
+
+# ====================================================================
+# Task 6: REREGISTER_DISTINCT_FLOOR env 브리지 + _join_coverage_line 형식 테스트.
+# ====================================================================
+def test_seed_env_bridges_distinct_floor(monkeypatch):
+    monkeypatch.delenv("REREGISTER_DISTINCT_FLOOR", raising=False)
+    cfg.seed_env()
+    assert os.environ["REREGISTER_DISTINCT_FLOOR"] == "0.7"
+
+
+def test_seed_env_respects_existing_distinct_floor(monkeypatch):
+    monkeypatch.setenv("REREGISTER_DISTINCT_FLOOR", "0.55")
+    cfg.seed_env()
+    assert os.environ["REREGISTER_DISTINCT_FLOOR"] == "0.55"
+
+
+def test_join_coverage_line_format():
+    # M/N 커버리지 문자열은 ASCII 한 줄.
+    line = rr._join_coverage_line(3, 5, collisions=1)
+    assert line.isascii()
+    assert "3/5" in line

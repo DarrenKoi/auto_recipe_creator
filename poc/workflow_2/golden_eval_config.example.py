@@ -69,6 +69,9 @@ REREGISTER_FIDELITY_SCALES = ""
 # fidelity hit tolerance(patch 단변 비율). 참 localization 0.20~0.24, distractor >=0.42 라
 # 0.30 이 둘을 가른다. 옛 동작은 0.20.
 REREGISTER_GT_TOL_NORM = 0.30
+# rank-1 변별력 floor(Phase 3 worklist). rcp_rank1>=floor=OK, <floor 이고 cons_rank1>=floor=
+# FRESH_SNAPSHOT, 둘 다 <floor=NEW_REGION. SEM ~0.5 군집이라 0.70 이 대부분 SEM flag. office 보정.
+REREGISTER_DISTINCT_FLOOR = 0.70
 
 # === Template-bank matcher bench (golden_consensus_eval_cond) ===
 # heatmap=primary(soft-voting), rrf=extra arm. 1/0 토글.

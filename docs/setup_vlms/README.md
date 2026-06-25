@@ -34,6 +34,8 @@ It replaces the older fragmented setup notes and also absorbs the vLLM runtime a
 2. [`02-model-bringup-and-special-settings.md`](./02-model-bringup-and-special-settings.md)
 3. [`03-ocr-and-parser-services.md`](./03-ocr-and-parser-services.md)
 4. [`04-operations-integration-and-benchmarking.md`](./04-operations-integration-and-benchmarking.md)
+5. [`06-recent-small-vlm-hf-survey-2026-06-25.md`](./06-recent-small-vlm-hf-survey-2026-06-25.md)
+6. [`07-h100-downgrade-capacity.md`](./07-h100-downgrade-capacity.md)
 
 ## Non-Negotiable Rules
 

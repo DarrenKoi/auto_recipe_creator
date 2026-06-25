@@ -15,13 +15,20 @@ RAG-ready chunk 까지 만든다.
 
 | 파일 | 역할 | 서버 필요? |
 |---|---|---|
-| `schemas.py` | 출력 계약 dataclass (ExtractionResult/Region/Table/Chart/Formula/RagChunk) | ✗ |
+| `schemas.py` | 출력 계약 dataclass + to_dict/from_dict 라운드트립 | ✗ |
 | `prompts.py` | 스테이지별 `(system, user)` 프롬프트 빌더 | ✗ |
 | `models.py` | `StageRunner` — service slug 별 VLM 호출 + offline 폴백 | 호출 시 |
 | `merge.py` | Stage 5 evidence merge (순수 함수, 충돌 표시) | ✗ |
-| `rag_chunks.py` | Stage 8 chunk 생성 + embedding_text + JSONL writer | ✗ |
+| `synthesis.py` | Stage 6 결정론적 무-LLM 합성 (kimi 없이 summary 조립) | ✗ |
+| `crop.py` | Stage 4 crop 기하 (bbox+margin+clamp -> JPEG, CropMeta) | ✗ |
+| `rag_chunks.py` | Stage 8 chunk 생성(region/table/table_row/chart/formula/doc) + embedding_text + JSONL | ✗ |
+| `retrieval.py` | RAG 검색 + quality gate (trusted/lower_trust tier) | ✗ |
+| `search.py` | rag_chunks.jsonl keyword 검색 엔트리 (CLI 인자 없음) | ✗ |
 | `extract_screenshot.py` | Stage 1~8 오케스트레이터 (폴더 단위) | 호출 시 |
-| `test_extraction_smoke.py` | OFFLINE e2e + merge + chunk + keyword 검색 스모크 | ✗ |
+| `test_extraction_smoke.py` / `test_retrieval_smoke.py` | OFFLINE 스모크 (merge/crop/chunk/synthesis/검색) | ✗ |
+
+> Stage 6 합성은 `SYNTHESIS_MODE` ∈ {`deterministic`(기본, 모델 0콜) | `kimi`(kimi-k2.6) | `none`}.
+> 기본 경로는 모델 없이 e2e 완주한다.
 
 ## 스테이지 ↔ 모델 (poc/workflow_3/vlm)
 
@@ -54,12 +61,17 @@ DOC_EXTRACT_OFFLINE=1 uv run python -m side_projects.document_extraction.extract
 - `<OUTPUT_DIR>/rag_chunks.jsonl` — retrieval store (chunk JSONL)
 - `<OUTPUT_DIR>/raw_evidence/<screenshot_id>.json` — raw evidence (debug/reprocess)
 
-## 아직 안 된 것 (office 캘리브레이션 후)
+## 구현 완료 (집에서, 모델 없이 검증)
 
-- **Stage 4 crop 재병합**: 현재 crop 후보 region 식별만(훅). bbox crop 저장 →
-  `run_crop_refine` → ocr 재병합은 미구현 (`extract_screenshot._apply_crop_refine` TODO).
-- **table_row 단위 chunk**, 좌표 기반 nearest-heading 매칭.
-- **실제 VLM 호출 검증**: 사내 PC 에서 paddleocr/ui-venus/kimi 1콜 스모크
-  (benchmark_plan.md "다음 단계").
-- **벤치마크 채점 하네스** (benchmark_plan.md) — 별도.
-- **Marp roundtrip** (marp_roundtrip_design.md) — 별도 트랙.
+- Stage 4 crop 기하 + 재인식 호출 + lossless 재병합 (`crop.py`, `_apply_crop_refine`).
+- Stage 6 결정론적 무-LLM 합성 (`synthesis.py`).
+- Stage 8 `table_row` chunk + bbox 기반 nearest-heading (`rag_chunks.py`).
+- RAG 검색 + quality gate (`retrieval.py`, `search.py`).
+- 벤치마크 채점 하네스 (`../benchmark/`), Marp 생성 (`../marp/`).
+
+## 아직 안 된 것 (사내 PC 필요)
+
+- **실제 VLM 호출 검증**: paddleocr/ui-venus/mai-ui/kimi-k2.6 1콜 스모크 + crop 재인식 튜닝.
+- **9장 스크린샷 캡처(Windows COM) + ground-truth 작성** → 그 뒤 벤치 채점은 집에서.
+- **Marp Stage 6/7**: marp-cli 렌더 + 재렌더 SSIM 검증/자동 강등 루프.
+- **crop_path ↔ chart region 좌표 대응**(래스터 재삽입 자동 연결).

@@ -90,6 +90,82 @@ def test_chunk_generation_and_embedding_text() -> None:
     print("[PASS] test_chunk_generation_and_embedding_text")
 
 
+def test_crop_geometry() -> None:
+    """compute_crop_box: margin 추가 + frame clamp + 무효 bbox 거부."""
+    from side_projects.document_extraction.extraction.crop import (
+        compute_crop_box, crop_region)
+
+    # 정상: margin 10%
+    box = compute_crop_box((100, 100, 200, 200), (1000, 1000), margin_ratio=0.1)
+    assert box == (90, 90, 210, 210), box
+    # frame 경계 clamp
+    box = compute_crop_box((0, 0, 50, 50), (40, 40), margin_ratio=0.5)
+    assert box == (0, 0, 40, 40), box
+    # 무효 bbox(너비 0)
+    assert compute_crop_box((100, 100, 100, 200), (1000, 1000)) is None
+    assert compute_crop_box((100, 100, 200, 200), (0, 0)) is None
+
+    # crop_region: 실제 이미지에서 잘라 저장
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        img_path = tmp_path / "src.webp"
+        _make_synth_image(img_path, (800, 600))
+        meta = crop_region(img_path, "r001", "table", (100, 100, 300, 250),
+                           tmp_path / "crops", margin_ratio=0.05)
+        assert meta is not None
+        assert Path(meta.crop_path).exists()
+        assert meta.crop_wh[0] > 0 and meta.crop_wh[1] > 0
+        assert meta.parent_bbox == (100, 100, 300, 250)
+    print("[PASS] test_crop_geometry")
+
+
+def test_crop_merge_lossless() -> None:
+    """_merge_crop_refine: 별개 표는 보존, 정확 중복만 제거."""
+    from side_projects.document_extraction.extraction.extract_screenshot import (
+        _merge_crop_refine)
+
+    ocr = {"tables": [{"header": ["a", "b"], "rows": [["1", "2"]]}]}
+    # 같은 header -> 중복으로 skip
+    _merge_crop_refine("table", {"header": ["a", "b"], "rows": [["9", "9"]]}, ocr)
+    assert len(ocr["tables"]) == 1, "정확 중복은 추가되면 안 됨"
+    # 다른 header -> 별개 표로 추가(손실 금지)
+    _merge_crop_refine("table", {"header": ["x", "y"], "rows": [["3", "4"]]}, ocr)
+    assert len(ocr["tables"]) == 2, "별개 표는 보존돼야 함"
+
+    # 두 개의 distinct chart 영역 -> charts[0] 로 뭉치지 않음
+    ocr2 = {}
+    _merge_crop_refine("chart", {"labels": ["red", "blue"]}, ocr2)
+    _merge_crop_refine("chart", {"labels": ["cat", "dog"]}, ocr2)
+    assert len(ocr2["charts"]) == 2, "별개 차트는 보존돼야 함"
+    print("[PASS] test_crop_merge_lossless")
+
+
+def test_table_row_chunks_and_heading() -> None:
+    """table_row chunk 생성 + bbox 기반 nearest-heading."""
+    from side_projects.document_extraction.extraction.schemas import (
+        BBox, Region, Table)
+
+    result = ExtractionResult(source_image="x/s1.webp", document_id="doc1",
+                              screenshot_id="doc1_s001", screenshot_index=1)
+    # 위쪽 title + 아래 body
+    result.regions.append(Region(region_id="r001", type="title", text="Section A",
+                                 bbox=BBox(0, 0, 400, 50)))
+    result.regions.append(Region(region_id="r002", type="body", text="some body",
+                                 bbox=BBox(0, 60, 400, 120)))
+    result.tables.append(Table(region_id="t001", title="Setup time",
+                               header=["mode", "min"],
+                               cells=[["manual", "30"], ["AI", "18"]], confidence=0.8))
+    chunks = rag_chunks.generate_chunks(result)
+    rows = [c for c in chunks if c.region_type == "table_row"]
+    assert len(rows) == 2, len(rows)
+    assert "mode: manual" in rows[0].content and "min: 30" in rows[0].content
+    assert rows[0].parent_heading == "Setup time"
+    # body chunk 의 heading 은 위쪽 title
+    body = next(c for c in chunks if c.region_id == "r002")
+    assert body.parent_heading == "Section A", body.parent_heading
+    print("[PASS] test_table_row_chunks_and_heading")
+
+
 def test_deterministic_synthesis_no_model() -> None:
     """무-LLM 합성: evidence 만으로 summary/confidence/unresolved 조립."""
     from side_projects.document_extraction.extraction.schemas import (
@@ -165,6 +241,9 @@ def main() -> int:
     test_merge_pure_function()
     test_merge_conflict_marking()
     test_chunk_generation_and_embedding_text()
+    test_crop_geometry()
+    test_crop_merge_lossless()
+    test_table_row_chunks_and_heading()
     test_deterministic_synthesis_no_model()
     test_offline_pipeline_and_keyword_search()
     print("\n[INFO] 모든 스모크 테스트 통과")

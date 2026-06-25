@@ -20,6 +20,9 @@ from side_projects.document_extraction.extraction.schemas import (
 # confidence 가 이 값 이상이면 trusted tier 후보 (rag_db_plan.md Quality Gates).
 TRUST_CONFIDENCE = 0.7
 
+# 표 1개당 생성할 table_row chunk 상한(폭주 방지). 초과분은 로그로 알림(silent 금지).
+MAX_TABLE_ROW_CHUNKS = 50
+
 
 def build_embedding_text(chunk: RagChunk) -> str:
     """chunk metadata + content 로 embedding 입력 텍스트를 만든다.
@@ -84,7 +87,7 @@ def generate_chunks(result: ExtractionResult, *, created_at: str = "") -> list[R
                 region_id=region.region_id,
                 region_type=chunk_type,
                 bbox=region.bbox,
-                parent_heading=_nearest_heading(result, region.region_id),
+                parent_heading=_nearest_heading(result, region),
                 content=region.text.strip(),
                 raw_ocr_text=region.text.strip(),
                 confidence=region.confidence,
@@ -113,6 +116,37 @@ def generate_chunks(result: ExtractionResult, *, created_at: str = "") -> list[R
                 created_at=created_at,
             )
         )
+
+    # table_row: 각 row 가 독립적으로 의미 있도록 header 맥락과 함께 chunk 화
+    for table in result.tables:
+        if not table.header or not table.cells:
+            continue
+        rows = table.cells
+        if len(rows) > MAX_TABLE_ROW_CHUNKS:
+            print(
+                f"[INFO] table_row 상한 적용: {table.region_id} {len(rows)}행 중 "
+                f"{MAX_TABLE_ROW_CHUNKS}행만 chunk 화"
+            )
+            rows = rows[:MAX_TABLE_ROW_CHUNKS]
+        for ridx, row in enumerate(rows):
+            pairs = []
+            for cidx, val in enumerate(row):
+                col = table.header[cidx] if cidx < len(table.header) else f"col{cidx + 1}"
+                pairs.append(f"{col}: {val}")
+            content = f"Row in table '{table.title}': " + "; ".join(pairs)
+            chunks.append(
+                _new_chunk(
+                    result,
+                    f"{table.region_id}_row{ridx + 1}",
+                    region_id=table.region_id,
+                    region_type="table_row",
+                    parent_heading=table.title,
+                    content=content,
+                    confidence=table.confidence,
+                    model_sources=list(table.model_sources),
+                    created_at=created_at,
+                )
+            )
 
     # chart_summary
     for chart in result.charts:
@@ -171,16 +205,31 @@ def generate_chunks(result: ExtractionResult, *, created_at: str = "") -> list[R
     return chunks
 
 
-def _nearest_heading(result: ExtractionResult, region_id: str) -> str:
-    """해당 region 에 가장 가까운 title region 의 텍스트를 heading 으로 쓴다.
+def _nearest_heading(result: ExtractionResult, region) -> str:
+    """region 위쪽에 가장 가까운 title region 텍스트를 heading 으로 쓴다.
 
-    skeleton: 첫 title region 텍스트를 공통 heading 으로 사용(좌표 기반 근접
-    매칭은 후속 단계).
+    bbox 기준: title.bottom <= region.top(위에 있음) 중 가로로 겹치는 것을 우선,
+    그다음 세로 gap 이 작은 것을 고른다. 위쪽 title 이 없으면 첫 title 로 폴백.
+    bbox 가 전부 0(offline stub)이면 자연스럽게 첫 title 로 수렴한다.
     """
-    for region in result.regions:
-        if region.type == "title" and region.text.strip():
-            return region.text.strip()
-    return ""
+    titles = [r for r in result.regions if r.type == "title" and r.text.strip()]
+    if not titles:
+        return ""
+
+    rb = region.bbox
+    above = []
+    for t in titles:
+        if t.region_id == region.region_id:
+            continue  # 자기 자신 제외
+        tb = t.bbox
+        if tb.bottom <= rb.top:
+            overlap = min(tb.right, rb.right) - max(tb.left, rb.left)
+            gap = rb.top - tb.bottom
+            above.append((0 if overlap > 0 else 1, gap, t))
+    if above:
+        above.sort(key=lambda x: (x[0], x[1]))
+        return above[0][2].text.strip()
+    return titles[0].text.strip()
 
 
 def write_chunks_jsonl(chunks: list[RagChunk], out_path: Path) -> int:

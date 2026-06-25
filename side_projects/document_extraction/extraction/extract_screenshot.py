@@ -26,7 +26,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from side_projects.document_extraction.extraction import merge, rag_chunks
+from side_projects.document_extraction.extraction import crop, merge, rag_chunks
 from side_projects.document_extraction.extraction.models import StageRunner
 from side_projects.document_extraction.extraction.schemas import ExtractionResult
 from side_projects.document_extraction.extraction.synthesis import synthesize_deterministic
@@ -93,7 +93,8 @@ def extract_one(
 
     # Stage 4 (옵션): table/chart/formula/legend 영역만 crop 재인식
     if enable_crop_refine:
-        _apply_crop_refine(runner, image_path, layout, ocr, width, height)
+        crop_dir = image_path.parent / "_crops" / screenshot_id
+        _apply_crop_refine(runner, image_path, layout, ocr, (width, height), crop_dir)
 
     # Stage 5: merge
     result = merge.merge_evidence(
@@ -145,22 +146,77 @@ def extract_one(
     return result
 
 
-def _apply_crop_refine(runner, image_path, layout, ocr, width, height) -> None:
-    """Stage 4 훅(skeleton): dense region 을 crop 해서 재인식.
+def _apply_crop_refine(runner, image_path, layout, ocr, frame_wh, crop_dir) -> None:
+    """Stage 4: dense region(table/chart/formula/legend)을 잘라 재인식하고 ocr 에 병합.
 
-    실제 crop 저장/재병합은 office 캘리브레이션 후 구현한다. 지금은 어떤 region 이
-    crop 후보인지 식별만 하고, 호출 경로가 살아 있음을 보장한다.
+    - bbox 로 원본 crop 을 저장(crop.crop_region; 순수 CV).
+    - crop 을 run_crop_refine 로 재인식(offline 이면 stub).
+    - 재인식 결과를 ocr 의 tables/charts/formulas/raw_text 에 보강 병합.
+    표/차트는 기존 항목이 비어 있을 때만 채워, 좋은 first-pass 결과를 덮지 않는다.
     """
     crop_targets = {"table", "chart", "formula", "legend"}
-    for raw_region in layout.get("regions") or []:
+    width, height = frame_wh
+    for idx, raw_region in enumerate(layout.get("regions") or []):
         if not isinstance(raw_region, dict):
             continue
         rtype = (raw_region.get("type") or "").strip().lower()
         if rtype not in crop_targets:
             continue
-        # TODO(office): bbox 로 원본 crop 저장 후 crop_path 로 run_crop_refine 호출,
-        # 결과를 ocr 의 tables/charts/formulas 에 재병합.
-        print(f"[INFO] (skeleton) crop refine 후보 region: type={rtype}")
+        bbox = raw_region.get("bbox") or {}
+        box_tuple = (
+            bbox.get("left", 0), bbox.get("top", 0),
+            bbox.get("right", 0), bbox.get("bottom", 0),
+        )
+        meta = crop.crop_region(
+            image_path, f"r{idx + 1:03d}", rtype, box_tuple, crop_dir
+        )
+        if meta is None:
+            print(f"[INFO] crop refine 스킵(유효하지 않은 bbox): type={rtype}")
+            continue
+
+        refined = runner.run_crop_refine(
+            meta.crop_path, meta.crop_wh[0], meta.crop_wh[1], rtype
+        )
+        _merge_crop_refine(rtype, refined, ocr)
+
+
+def _merge_crop_refine(region_type: str, refined: dict, ocr: dict) -> None:
+    """crop 재인식 결과를 ocr evidence 에 병합.
+
+    원칙: 데이터 손실 금지(별개 표/차트는 보존) + 정확 중복만 제거. 각 crop 영역은
+    distinct 한 표/차트이므로, 같은 header(표)/legend(차트)가 이미 있을 때만 skip,
+    아니면 새 항목으로 추가한다. (좌표 기반 first-pass<->crop 매칭/정교한 dedup 은
+    office 캘리브레이션 TODO; 지금은 손실보다 보존을 택한다.)
+    """
+    text = (refined.get("text") or "").strip()
+    if text:
+        ocr["raw_text"] = ((ocr.get("raw_text") or "") + "\n" + text).strip()
+
+    if region_type == "table":
+        header = [str(h) for h in (refined.get("header") or [])]
+        rows = [[str(c) for c in row] for row in (refined.get("rows") or [])]
+        if not (header or rows):
+            return
+        tables = ocr.setdefault("tables", [])
+        existing_headers = {tuple(t.get("header") or []) for t in tables}
+        if tuple(header) not in existing_headers:
+            tables.append({"title": "", "header": header, "rows": rows})
+    elif region_type in {"chart", "legend"}:
+        labels = [str(l) for l in (refined.get("labels") or [])]
+        if not labels:
+            return
+        charts = ocr.setdefault("charts", [])
+        if region_type == "legend" and charts:
+            # legend 영역: 가장 최근 차트의 legend 를 보강(어느 차트 소속인지 좌표 없이
+            # 단정 불가하므로 last chart 에 attach)
+            existing = charts[-1].setdefault("legend_labels", [])
+            for lab in labels:
+                if lab not in existing:
+                    existing.append(lab)
+        else:
+            existing_label_sets = [set(c.get("legend_labels") or []) for c in charts]
+            if set(labels) not in existing_label_sets:
+                charts.append({"title": "", "legend_labels": labels})
 
 
 def extract_folder(

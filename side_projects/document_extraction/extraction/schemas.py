@@ -159,6 +159,8 @@ class ExtractionResult:
     screenshot_index: int = 1
     overall_confidence: float = 0.0
     summary_markdown: str = ""
+    # summary_markdown 을 만든 출처 (예: ["deterministic"] 또는 ["kimi-k2.6"])
+    summary_model_sources: list[str] = field(default_factory=list)
     regions: list[Region] = field(default_factory=list)
     tables: list[Table] = field(default_factory=list)
     charts: list[Chart] = field(default_factory=list)
@@ -179,6 +181,7 @@ class ExtractionResult:
             "screenshot_index": self.screenshot_index,
             "overall_confidence": self.overall_confidence,
             "summary_markdown": self.summary_markdown,
+            "summary_model_sources": list(self.summary_model_sources),
             "regions": [r.to_dict() for r in self.regions],
             "tables": [t.to_dict() for t in self.tables],
             "charts": [c.to_dict() for c in self.charts],

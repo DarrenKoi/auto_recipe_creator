@@ -90,6 +90,30 @@ def test_chunk_generation_and_embedding_text() -> None:
     print("[PASS] test_chunk_generation_and_embedding_text")
 
 
+def test_deterministic_synthesis_no_model() -> None:
+    """무-LLM 합성: evidence 만으로 summary/confidence/unresolved 조립."""
+    from side_projects.document_extraction.extraction.schemas import (
+        Chart, Region, Table)
+    from side_projects.document_extraction.extraction.synthesis import (
+        synthesize_deterministic)
+
+    result = ExtractionResult(source_image="x/s1.webp", source_type="powerpoint")
+    result.regions.append(Region(region_id="r001", type="title", text="Q2 setup", confidence=0.8))
+    result.regions.append(Region(region_id="r002", type="body", text="yield improved", confidence=0.6))
+    result.tables.append(Table(region_id="t001", title="Setup time", header=["mode", "min"],
+                               cells=[["manual", "30"]], confidence=0.7))
+    result.charts.append(Chart(region_id="c001", title="Trend", trend_summary="AI lower"))
+
+    synth = synthesize_deterministic(result)
+    assert synth["summary_markdown"].startswith("# Q2 setup")
+    assert "## Tables" in synth["summary_markdown"]
+    assert "## Charts" in synth["summary_markdown"]
+    # confidence = mean(0.8, 0.6, 0.7) = 0.7
+    assert abs(synth["overall_confidence"] - 0.7) < 1e-6
+    assert isinstance(synth["unresolved"], list)
+    print("[PASS] test_deterministic_synthesis_no_model")
+
+
 def test_offline_pipeline_and_keyword_search() -> None:
     """OFFLINE 파이프라인 e2e + JSONL keyword 검색 스모크."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -105,7 +129,7 @@ def test_offline_pipeline_and_keyword_search() -> None:
             out_dir,
             collection_id="test_collection",
             enable_crop_refine=True,  # crop 훅 경로도 태움
-            enable_synthesis=True,
+            synthesis_mode="deterministic",  # 모델 0콜 합성 경로
             offline=True,
         )
         assert total > 0, "offline 모드에서도 chunk 가 생성돼야 함"
@@ -126,6 +150,11 @@ def test_offline_pipeline_and_keyword_search() -> None:
         hits = [r for r in records if "offline" in (r["content"] + r["embedding_text"]).lower()]
         assert hits, "keyword 검색이 최소 1건은 맞아야 함"
 
+        # document_summary chunk 의 provenance 가 deterministic 으로 정직해야 함
+        doc_summaries = [r for r in records if r["region_type"] == "document_summary"]
+        for ds in doc_summaries:
+            assert ds["model_sources"] == ["deterministic"], ds["model_sources"]
+
         # raw evidence 저장 검증
         raw_dir = out_dir / "raw_evidence"
         assert raw_dir.exists() and any(raw_dir.iterdir())
@@ -136,6 +165,7 @@ def main() -> int:
     test_merge_pure_function()
     test_merge_conflict_marking()
     test_chunk_generation_and_embedding_text()
+    test_deterministic_synthesis_no_model()
     test_offline_pipeline_and_keyword_search()
     print("\n[INFO] 모든 스모크 테스트 통과")
     return 0

@@ -29,6 +29,7 @@ if str(_REPO_ROOT) not in sys.path:
 from side_projects.document_extraction.extraction import merge, rag_chunks
 from side_projects.document_extraction.extraction.models import StageRunner
 from side_projects.document_extraction.extraction.schemas import ExtractionResult
+from side_projects.document_extraction.extraction.synthesis import synthesize_deterministic
 
 
 # === 실행 전 매번 채워 넣을 것 =================================================
@@ -37,7 +38,8 @@ INPUT_IMAGE_DIR: Path = Path("")   # 예: Path(r"C:\...\extracted\presentation_A
 OUTPUT_DIR: Path = Path("")        # 예: Path(r"C:\...\extracted\presentation_A\_rag")
 COLLECTION_ID: str = "default_collection"
 ENABLE_CROP_REFINE: bool = False   # skeleton: 기본 비활성(office 캘리브레이션 후 활성)
-ENABLE_SYNTHESIS: bool = True      # kimi 합성 스테이지 on/off
+# 합성 모드: "deterministic"(모델 0콜, 기본) | "kimi"(kimi-k2.6 호출) | "none"(생략)
+SYNTHESIS_MODE: str = "deterministic"
 OFFLINE: bool | None = None        # None=env(DOC_EXTRACT_OFFLINE)로 결정, True/False 강제
 # ==============================================================================
 
@@ -75,7 +77,7 @@ def extract_one(
     source_type_hint: str,
     runner: StageRunner,
     enable_crop_refine: bool = False,
-    enable_synthesis: bool = True,
+    synthesis_mode: str = "deterministic",
 ) -> ExtractionResult:
     """스크린샷 1장에 대한 Stage 1~8 을 실행한다."""
     width, height = _image_size(image_path)
@@ -104,8 +106,11 @@ def extract_one(
         screenshot_id=screenshot_id,
     )
 
-    # Stage 6: synthesis (옵션)
-    if enable_synthesis:
+    # Stage 6: synthesis
+    #   deterministic = 모델 0콜로 evidence 조립(기본)
+    #   kimi          = kimi-k2.6 호출(고품질 합성/충돌 해소)
+    #   none          = 합성 생략
+    if synthesis_mode == "kimi":
         evidence_json = json.dumps(
             {
                 "regions": [r.to_dict() for r in result.regions],
@@ -123,6 +128,16 @@ def extract_one(
             result.overall_confidence = 0.0
         for item in synth.get("unresolved") or []:
             result.unresolved.append(str(item))
+        if result.summary_markdown:
+            result.summary_model_sources = ["kimi-k2.6"]
+    elif synthesis_mode == "deterministic":
+        synth = synthesize_deterministic(result)
+        result.summary_markdown = synth["summary_markdown"]
+        result.overall_confidence = synth["overall_confidence"]
+        result.unresolved = synth["unresolved"]
+        if result.summary_markdown:
+            result.summary_model_sources = ["deterministic"]
+    # synthesis_mode == "none": 합성 생략(summary_markdown 빈 채로 둠)
 
     # Stage 8: RAG chunks
     rag_chunks.generate_chunks(result)
@@ -154,7 +169,7 @@ def extract_folder(
     *,
     collection_id: str,
     enable_crop_refine: bool,
-    enable_synthesis: bool,
+    synthesis_mode: str,
     offline: bool | None,
 ) -> int:
     """문서 1개의 page 이미지 폴더 전체를 추출하고 chunk JSONL 을 누적 저장한다."""
@@ -192,7 +207,7 @@ def extract_folder(
             source_type_hint=source_type_hint,
             runner=runner,
             enable_crop_refine=enable_crop_refine,
-            enable_synthesis=enable_synthesis,
+            synthesis_mode=synthesis_mode,
         )
         # Stage 7: raw evidence(=review packet 핵심) 저장
         raw_path = output_dir / "raw_evidence" / f"{result.screenshot_id}.json"
@@ -233,7 +248,7 @@ def main() -> int:
             output_dir,
             collection_id=COLLECTION_ID,
             enable_crop_refine=ENABLE_CROP_REFINE,
-            enable_synthesis=ENABLE_SYNTHESIS,
+            synthesis_mode=SYNTHESIS_MODE,
             offline=OFFLINE,
         )
     except Exception as exc:

@@ -162,7 +162,7 @@ def generate_chunks(result: ExtractionResult, *, created_at: str = "") -> list[R
                 region_type="document_summary",
                 content=result.summary_markdown.strip(),
                 confidence=result.overall_confidence,
-                model_sources=["kimi-k2.6"],
+                model_sources=list(result.summary_model_sources) or ["unknown"],
                 created_at=created_at,
             )
         )

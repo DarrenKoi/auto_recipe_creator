@@ -48,7 +48,11 @@ from poc.workflow_3.monitor.align_fail_monitor import (
     filter_rows_within_window,
 )
 from poc.workflow_3.monitor.cycle import CycleResult, run_check_only_cycle
-from poc.workflow_3.monitor.notify import ALARM_LOG_PATH, notify_align_fail_popup
+from poc.workflow_3.monitor.notify import (
+    ALARM_LOG_PATH,
+    notify_align_fail_popup,
+    send_detection_notify_async,
+)
 from poc.workflow_3.monitor.rcp_msr_gather import (
     RCP_MSR_DOWNLOADER_AVAILABLE,
     gather_rcp_msr,
@@ -152,6 +156,14 @@ def process_fail_rows(
                 lot_type_cd=info["lot_type_cd"],
                 timeout_sec=settings.popup_timeout_sec,
             )
+
+        # 감지 시점 cube rich notification — 점검 모드는 보정 actuation 이 없어
+        # CorrectionOutcome 을 만들지 않으므로 outcome 기반 notify_correction_outcome
+        # (production 전용) 대신 detection-time 변형을 쓴다. office_rich_notify 부재
+        # /rich_notify_enabled=off 면 내부에서 조용히 skip(텍스트 로그만).
+        send_detection_notify_async(
+            eqp_id, info["recipe_id"], enabled=settings.rich_notify_enabled,
+        )
 
         # 과거 데이터 수집 — recipe 최근 성공(S) 이미지 stage (비차단 best-effort).
         # 게이트(gather_enabled/recipe_id/downloader)는 gather_success_async 내부에서 판정.

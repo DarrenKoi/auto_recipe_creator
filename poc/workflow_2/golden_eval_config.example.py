@@ -59,8 +59,9 @@ SPLIT_DOMINANCE = 0.40     # 지배 실패유형 최소 비중(총 실패 중)
 # === re-registration 리포트 (golden_reregister_report_cond) ===
 # 1 이면 박스 제안(C2)까지, 0 이면 랭킹 리포트(C1)만.
 REREGISTER_BOX_SUGGEST = 1
-# DIGEST/overlay 상위 N 제한(0=무제한).
-REREGISTER_TOPN = 0
+# DIGEST/overlay + 박스 제안 sweep 을 위험도 상위 N개(modality당)로 제한(0=무제한, 느림).
+# 스크리닝/랭킹/rank-1 worklist 는 전체 그대로 — TOPN 은 무거운 box 제안(_suggest_for_row)에만 적용.
+REREGISTER_TOPN = 10
 # fast A/B: 앞 N개 recipe 만 처리(box-suggestion sweep 가 무거워 전체 >10분). 0=전체.
 REREGISTER_MAX_RECIPES = 0
 # fidelity 매칭 scale band(A/B). "" 면 코드 기본 tight band(0.85,1.0,1.15) — 작은 box crop 이

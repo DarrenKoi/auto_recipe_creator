@@ -120,15 +120,26 @@ Stage 7  검증 루프        재렌더 이미지 vs 원본 캡처 SSIM/diff →
 
 ---
 
-> **구현 상태(2026-06-25): Stage 5(생성) 구현됨.** `side_projects/document_extraction/marp/`
-> 에 evidence -> Marp Markdown 생성(`generate.py`: 텍스트류 네이티브 + 래스터류 crop
-> 재삽입/데이터표 대체) + `build_marp.py`(raw_evidence -> deck.md) 가 순수 함수로
-> 구현되어 스모크 테스트로 검증됨. Stage 6 렌더(marp-cli) + Stage 7 SSIM 검증/자동
-> 강등 루프는 marp-cli/이미지가 필요해 office TODO.
+> **구현 상태(2026-06-26): Stage 5+6+7 구현됨.** `side_projects/document_extraction/marp/`
+> - **Stage 5(생성)** `generate.py`: evidence -> Marp Markdown(텍스트류 네이티브 +
+>   래스터류 crop 재삽입/데이터표 대체) + `build_marp.py`(raw_evidence -> deck.md).
+> - **Stage 6(렌더)** `render.py`: `build_render_args`(순수, png/pptx/pdf/html) +
+>   `render_deck`(marp-cli 호출, 부재 시 graceful). marp 우선 PATH, 없으면 `npx
+>   @marp-team/marp-cli`. Mac e2e 검증: 2-슬라이드 deck -> deck.001/002.png 렌더 성공.
+> - **Stage 7(검증/강등)** `verify.py`: `ssim`(numpy, skimage 비의존) + `slide_fidelity`
+>   (해상도 보정) + `flag_low_fidelity`(floor=0.90) + `plan_downgrade`(차트 영역 ->
+>   래스터, 최후엔 슬라이드 전체 `![bg]` 래스터 = 안전망) + `apply_downgrade_plans`
+>   (보정 deck 재작성) + `verify_and_downgrade`(render->score->강등 루프, I/O).
+>
+> 순수 결정 로직은 스모크 테스트로 검증(`test_render_smoke` 6, `test_verify_smoke` 11,
+> `test_marp_smoke` 8 = 25 통과). 실제 render/score 루프는 원본 캡처가 있어야 의미가
+> 있어 office 에서 돈다(없으면 graceful degrade). 남은 office 작업: 9장 미니 벤치로
+> floor/crop 분기 임계 보정 + Marp 커스텀 테마(아래 §8).
 
 ## 8. 다음 단계 (검증 먼저)
 
 1. **9장 미니 벤치**(benchmark_plan.md 재활용): 슬라이드 캡처에 대해 PaddleOCR-VL(crop) 텍스트/표/수식 recall, Kimi 비전 합성 품질, 재렌더 SSIM 측정.
 2. crop 분기 규칙(Stage 3) 임계 튜닝 — 어느 type을 래스터로 강등할지 결정.
 3. Kimi Platform 엔드포인트 + base64 이미지 입력 1콜 스모크.
-4. Marp 커스텀 테마 1종 + Stage 7 자동 강등 루프 PoC.
+4. Marp 커스텀 테마 1종(시각 보정). Stage 7 자동 강등 루프는 구현 완료 — office 에서
+   원본 캡처로 `verify_and_downgrade` 돌려 floor=0.90 보정 + 강등 빈도 측정.

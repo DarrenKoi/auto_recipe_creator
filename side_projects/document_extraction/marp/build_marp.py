@@ -48,9 +48,10 @@ def build_deck(raw_evidence_dir: Path, output_md: Path, crop_lookups: dict) -> i
     output_md.parent.mkdir(parents=True, exist_ok=True)
     output_md.write_text(deck, encoding="utf-8")
     print(f"[INFO] Marp deck 생성: {len(results)} 슬라이드 -> {output_md}")
-    # Stage 6/7 (office TODO):
-    #   marp-cli 로 PPTX/PDF/HTML 렌더: `marp deck.md --pptx`
-    #   재렌더 이미지 vs 원본 캡처 SSIM 비교 -> 임계 미달 영역은 crop 재삽입으로 강등
+    # Stage 6/7 (구현됨; 원본 캡처가 있으면 이어서 호출):
+    #   from .render import render_deck            # marp-cli -> png/pptx/pdf/html
+    #   from .verify import verify_and_downgrade   # 슬라이드별 SSIM -> 저충실도 자동 강등
+    #   verify_and_downgrade(results, output_md, capture_paths, out_dir=output_md.parent)
     return len(results)
 
 

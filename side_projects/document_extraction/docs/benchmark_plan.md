@@ -1,5 +1,11 @@
 # Benchmark 계획
 
+> **구현 상태(2026-06-25): 채점 하네스 구현됨.** 이 문서의 메트릭/비교 매트릭스/
+> acceptance criteria 는 `side_projects/document_extraction/benchmark/` 에
+> 순수 Python 으로 구현되어 있고, 합성 데이터 스모크 테스트로 검증했다. 실제 추출
+> 산출물을 `extractions/<pipeline>/` 에 넣으면 모델 서버 없이 채점된다. 자세한 건
+> [`../benchmark/README.md`](../benchmark/README.md) 참고.
+
 ## 목적
 
 Hybrid model pipeline이 PowerPoint, PDF, Excel screenshot에서 실제로 extraction 품질을 개선하는지 측정합니다.

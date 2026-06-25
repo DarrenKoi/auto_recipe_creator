@@ -9,6 +9,24 @@ dataclass 로 옮긴 것. 첫 구현은 dict 로 시작해도 되지만, schema 
 from dataclasses import asdict, dataclass, field
 
 
+def _coerce_float(value, default: float = 0.0) -> float:
+    """None/문자열/garbage 를 안전하게 float 로(실패 시 default). '3.0' 도 허용."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_int(value, default: int = 0) -> int:
+    """안전한 int 강제: float 경유라 '3.0'/3.0 도 3 으로. 0 도 보존(`or` 미사용)."""
+    if value is None:
+        return default
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
 # 알려진 region type (pipeline_plan.md Stage 3). 그 외는 "other".
 REGION_TYPES: tuple[str, ...] = (
     "title",
@@ -46,6 +64,16 @@ class BBox:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict | None) -> "BBox":
+        data = data or {}
+        def _int(key: str) -> int:
+            try:
+                return int(data.get(key, 0) or 0)
+            except (TypeError, ValueError):
+                return 0
+        return cls(_int("left"), _int("top"), _int("right"), _int("bottom"))
 
 
 @dataclass
@@ -190,6 +218,72 @@ class ExtractionResult:
             "unresolved": list(self.unresolved),
             "stage_log": list(self.stage_log),
         }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ExtractionResult":
+        """raw_evidence JSON(dict) -> ExtractionResult. rag_chunks 는 복원하지 않는다
+        (Marp/리포팅은 구조 evidence 만 필요; chunk 는 별도 JSONL 에서 읽는다)."""
+        result = cls(
+            source_image=str(data.get("source_image", "")),
+            source_type=str(data.get("source_type", "unknown")),
+            document_id=str(data.get("document_id", "")),
+            collection_id=str(data.get("collection_id", "")),
+            screenshot_id=str(data.get("screenshot_id", "")),
+            screenshot_index=_coerce_int(data.get("screenshot_index"), 1),
+            overall_confidence=_coerce_float(data.get("overall_confidence")),
+            summary_markdown=str(data.get("summary_markdown", "")),
+            summary_model_sources=[str(s) for s in (data.get("summary_model_sources") or [])],
+            unresolved=[str(u) for u in (data.get("unresolved") or [])],
+            stage_log=list(data.get("stage_log") or []),
+        )
+        for r in data.get("regions") or []:
+            result.regions.append(
+                Region(
+                    region_id=str(r.get("region_id", "")),
+                    type=str(r.get("type", "other")),
+                    bbox=BBox.from_dict(r.get("bbox")),
+                    text=str(r.get("text", "")),
+                    surrounding_context=str(r.get("surrounding_context", "")),
+                    confidence=_coerce_float(r.get("confidence")),
+                    model_sources=[str(s) for s in (r.get("model_sources") or [])],
+                    conflicts=[str(c) for c in (r.get("conflicts") or [])],
+                )
+            )
+        for t in data.get("tables") or []:
+            result.tables.append(
+                Table(
+                    region_id=str(t.get("region_id", "")),
+                    title=str(t.get("title", "")),
+                    header=[str(h) for h in (t.get("header") or [])],
+                    cells=[[str(c) for c in row] for row in (t.get("cells") or [])],
+                    confidence=_coerce_float(t.get("confidence")),
+                    model_sources=[str(s) for s in (t.get("model_sources") or [])],
+                )
+            )
+        for c in data.get("charts") or []:
+            result.charts.append(
+                Chart(
+                    region_id=str(c.get("region_id", "")),
+                    title=str(c.get("title", "")),
+                    axis_labels=[str(a) for a in (c.get("axis_labels") or [])],
+                    legend_labels=[str(l) for l in (c.get("legend_labels") or [])],
+                    visible_values=[str(v) for v in (c.get("visible_values") or [])],
+                    trend_summary=str(c.get("trend_summary", "")),
+                    confidence=_coerce_float(c.get("confidence")),
+                    model_sources=[str(s) for s in (c.get("model_sources") or [])],
+                )
+            )
+        for f in data.get("formulas") or []:
+            result.formulas.append(
+                Formula(
+                    region_id=str(f.get("region_id", "")),
+                    latex=str(f.get("latex", "")),
+                    nearby_label=str(f.get("nearby_label", "")),
+                    confidence=_coerce_float(f.get("confidence")),
+                    model_sources=[str(s) for s in (f.get("model_sources") or [])],
+                )
+            )
+        return result
 
 
 __all__ = [

@@ -84,6 +84,8 @@ Large VLM은 reasoning error를 줄이는 데 도움이 되지만, 보이지 않
 ## 관련 문서
 
 - [pipeline_overview.md](./pipeline_overview.md) — **구현된 파이프라인 end-to-end 개요**
+- [runbook.md](./runbook.md) — **사내 실행 절차서**(캡처 → 추출 → 검색/벤치/Marp)
+- [status.md](./status.md) — **현황표**(계획 / 완료 / 필요 테스트)
 - [research_notes.md](./research_notes.md)
 - [pipeline_plan.md](./pipeline_plan.md)
 - [rag_db_plan.md](./rag_db_plan.md)

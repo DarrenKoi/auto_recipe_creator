@@ -120,6 +120,12 @@ Stage 7  검증 루프        재렌더 이미지 vs 원본 캡처 SSIM/diff →
 
 ---
 
+> **구현 상태(2026-06-25): Stage 5(생성) 구현됨.** `side_projects/document_extraction/marp/`
+> 에 evidence -> Marp Markdown 생성(`generate.py`: 텍스트류 네이티브 + 래스터류 crop
+> 재삽입/데이터표 대체) + `build_marp.py`(raw_evidence -> deck.md) 가 순수 함수로
+> 구현되어 스모크 테스트로 검증됨. Stage 6 렌더(marp-cli) + Stage 7 SSIM 검증/자동
+> 강등 루프는 marp-cli/이미지가 필요해 office TODO.
+
 ## 8. 다음 단계 (검증 먼저)
 
 1. **9장 미니 벤치**(benchmark_plan.md 재활용): 슬라이드 캡처에 대해 PaddleOCR-VL(crop) 텍스트/표/수식 recall, Kimi 비전 합성 품질, 재렌더 SSIM 측정.

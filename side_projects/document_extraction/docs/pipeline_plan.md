@@ -162,13 +162,13 @@ Resolution:
 
 - Text는 exact OCR을 우선합니다.
 - Region type과 bounding box는 layout model을 우선합니다.
-- 정확한 evidence가 있을 때 semantic conflict resolution은 Kimi-K2.5를 우선합니다.
+- 정확한 evidence가 있을 때 semantic conflict resolution은 Kimi-K2.6를 우선합니다.
 
 ## Stage 6: Large VLM Synthesis
 
 Model:
 
-- `kimi-k2.5`
+- `kimi-k2.6`
 
 Use only when:
 
@@ -177,7 +177,7 @@ Use only when:
 - OCR과 crop refinement 이후 confidence가 낮은 경우
 - 여러 screenshot을 merged narrative로 묶어야 하는 경우
 
-Input to Kimi-K2.5:
+Input to Kimi-K2.6:
 
 - Latency budget이 허용하면 original screenshot
 - OCR text
@@ -195,7 +195,7 @@ Expected result:
 
 Important rule:
 
-- Kimi-K2.5가 missing data를 만들어내도록 요청하지 않습니다. Prompt에는 unavailable 또는 unreadable field를 unknown으로 표시하라고 명시해야 합니다.
+- Kimi-K2.6가 missing data를 만들어내도록 요청하지 않습니다. Prompt에는 unavailable 또는 unreadable field를 unknown으로 표시하라고 명시해야 합니다.
 
 ## Stage 7: Human Review Loop
 
@@ -252,24 +252,31 @@ Rules:
 
 ## 이후 Code Pass의 구현 형태
 
-Recommended package location:
+> **구현 상태(2026-06-25): skeleton 완료.** 아래 파일들이
+> `side_projects/document_extraction/extraction/` 에 구현되어 있고, 모델 서버 없이
+> OFFLINE(dry-run) 으로 e2e 가 도는 것을 스모크 테스트로 검증했다. 자세한 건
+> [`../extraction/README.md`](../extraction/README.md) 참고.
 
-- `side_projects/screenshot_document_extraction/`
+Package location (실제):
 
-Potential files:
+- `side_projects/document_extraction/extraction/` (캡처 코드와 co-located.
+  옛 표기 `screenshot_document_extraction/` 은 README 에 명시된 대로 `document_extraction/` 로 개명됨)
 
-- `extract_screenshot.py`
-- `prompts.py`
-- `models.py`
-- `merge.py`
-- `schemas.py`
-- `rag_chunks.py`
+Files (구현됨):
 
-Reuse:
+- `extract_screenshot.py` — Stage 1~8 오케스트레이터 (폴더 단위, CLI 인자 없음)
+- `prompts.py` — 스테이지별 `(system, user)` 빌더
+- `models.py` — `StageRunner` (service slug 별 VLM 호출 + offline 폴백)
+- `merge.py` — Stage 5 evidence merge (순수 함수)
+- `schemas.py` — 출력 계약 dataclass
+- `rag_chunks.py` — Stage 8 chunk 생성 + embedding_text + JSONL writer
+- `test_extraction_smoke.py` — OFFLINE e2e 스모크
 
-- `poc.work2.vlm_client.Work2VLMClient`
-- `poc.work2.flask_vlm` service registry
-- `poc.work2.util.image_utils.encode_image_webp`
+Reuse (현 production 경로 — docs 의 `poc.work2` 표기는 stale):
+
+- `poc.workflow_3.vlm.vlm_client.Workflow1VLMClient` (service slug 기반)
+- `poc.workflow_3.vlm.flask_vlm` service registry
+- Kimi service slug 은 `kimi-k2.6` (옛 `kimi-k2.6` 아님)
 
 첫 버전에서는 CLI-heavy argument parsing을 추가하지 않습니다. 현재 repo의 operational-script style에 맞춰 `.env`와 in-code default를 우선합니다.
 

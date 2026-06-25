@@ -81,7 +81,7 @@ Conceptual retrieval chunk:
   "context_before": "The slide discusses recipe setup automation benefits.",
   "context_after": "A footer notes that the data is from an internal pilot.",
   "keywords": ["recipe setup", "automation", "setup time"],
-  "model_sources": ["paddleocr-vl-1.5", "ui-venus", "kimi-k2.5"],
+  "model_sources": ["paddleocr-vl-1.5", "ui-venus", "kimi-k2.6"],
   "confidence": 0.78,
   "review_status": "needs_review",
   "created_at": "2026-05-13"

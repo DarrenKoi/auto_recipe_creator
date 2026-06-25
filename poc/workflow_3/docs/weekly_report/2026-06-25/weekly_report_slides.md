@@ -4,8 +4,8 @@ theme: default
 paginate: true
 size: 16:9
 backgroundColor: '#FFFFFF'
-header: '측정 실패 abort + matcher 벤치 Weekly Report'
-footer: '2026.06.25'
+header: '재등록 리포트 · 측정 실패 abort · matcher 벤치 Weekly Report'
+footer: '2026.06.19~25'
 style: |
   section { font-family: 'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-serif; color:#212121; font-size: 22px; background:#FFFFFF; }
   h1 { color:#1a1a1a; }
@@ -28,6 +28,10 @@ style: |
   .node:not(:last-child)::after{ content:"\203A"; position:absolute; right:-20px; top:50%; transform:translateY(-50%); font-size:30px; color:#B0BEC5; font-weight:700; }
   .branch{ margin-top:6px; padding:8px 12px; background:#FAFCFF; border:1.5px dashed #90CAF9; border-radius:10px; font-size:14px; color:#37474F; }
   .branch b{ color:#0D47A1; }
+  .branch.warn{ background:#FFF8F8; border-color:#EF9A9A; }
+  .branch.warn b{ color:#B71C1C; }
+  .branch.ok{ background:#F4FBF4; border-color:#A5D6A7; }
+  .branch.ok b{ color:#1B5E20; }
   .legend{ font-size:13px; color:#455A64; margin-top:6px; }
   table{ font-size:17px; }
   th{ background:#ECEFF1; color:#37474F; }
@@ -37,88 +41,99 @@ style: |
 <!-- _header: '' -->
 <!-- _footer: '' -->
 
-# Weekly Report — 측정 실패 abort 잡 + matcher 벤치
+# Weekly Report — 재등록 리포트 · 측정 실패 abort · matcher 벤치
 
-### 효율적 장비 운영 — 측정 연속 실패 시 자동 abort (`workflow_3e`)
+### 하나의 병목(align-key 변별력) → 세 갈래 공략 → "레버는 재등록"
 
-**2026.06.25** · 커밋 ~15개 · 전량 `main` 직접 반영
-
----
-
-## 이번 주 요약
-
-효율적 장비 운영을 위해 **두 번째 MES 알람 — "측정 연속 실패" 자동 abort** 잡을 프로덕션 루프에 추가.
-
-- **측정 실패 abort 잡 착수** — 정렬 성공 후 포인트 연속 실패(예: 100점 중 ~20점)면 run 중단 → wafer 손실 방지
-- **`workflow_3` core 무수정** — 별도 확장 패키지 `workflow_3e` 단방향 import
-- **이중 게이트 + notify-only 기본** — CV 보정과 동일 안전 모델, 6 test 파일 통과
-- **template-bank matcher 벤치 구현 완료** — heatmap-primary + RRF arm (오피스 평가 대기)
-
-> 핵심: 단일 RCS 커서라 **두 잡은 한 프로세스에서 직렬**. abort 큐잉 가능 → 락 불필요. 실패 카운팅은 **MES 소유**.
+**2026.06.19~25** · 커밋 ~40개 · 전량 `main` 직접 반영 · 용어는 `concepts_explained.md`
 
 ---
 
-## 통합 루프 — 한 프로세스가 두 MES 알람을 직렬 처리
+## 이번 주 요약 — 무엇을 시도하고 무엇이 나왔나
+
+**"align-key 변별력이 약하다"는 근본 병목**을 세 갈래로 공략 → **매처 개선은 막혀 있고 진짜 레버는 align-key 재등록**임을 확인.
+
+- **재등록 Phase 1** — S-only 변별력 스크리닝 + 대체 박스 제안 → <span class="badge b-done">완료</span>
+- **재등록 Phase 2** — E-frame S→E collapse 승급 → 오피스 실측서 신호 신뢰 불가 → <span class="badge b-stop">종료</span>
+- **측정 실패 abort 잡** — 두 번째 MES 알람 자동 abort(`workflow_3e`), notify-only 기본 → <span class="badge b-new">코드 shipped</span>
+- **template-bank matcher 벤치** — heatmap+RRF 융합 구현·평가 → **rank-1 0.5, 출하 불가** → <span class="badge b-stop">기각(ADR 0006)</span>
+
+> 핵심: 매처를 어떻게 융합해도 **1등을 못 꼽음**(rank-1 0.5). 등록된 key 가 애초에 변별력이 없으면 1등 근거가 없다 → **재등록이 유일한 레버**.
+
+---
+
+## ① 재등록 리포트 Phase 1·2 — 시도 → 결과
+
+**Phase 1 (완료)** — success 프레임만으로 약한 align-key 를 latent-risk 랭킹 + 대체 박스 제안(3단 evidence tier).
+→ box-fidelity 전 recipe 0 버그 추적(후보 xy=patch 중심, offset 미적용)·해결 → **`w_sugg 0 → 1`**.
+
+**Phase 2 (종료)** — fail(E) 프레임에서 **S→E 점수 collapse** 로 confirmed 승급(60 tests, `EFRAME_ROOT`+health).
+
+<div class="branch warn">
+<b>오피스 실측 결과:</b> 실제 점수대 <b>~0.2-0.3</b>인데 임계 ~0.5 가정 → confirmed 0; 임계 낮추니 <b>5/6 false positive</b>. <b>근본 원인 = key 가 S 에서도 약함 → 무너질 높이가 없는 구조적 모순.</b> 재등록 리포트가 약하다고 flag 하는 recipe 는 애초에 success 에서도 약한 key.
+</div>
+
+---
+
+## ② 측정 실패 abort 잡 — 한 프로세스가 두 MES 알람을 직렬 처리
 
 <div class="flow-row">
   <div class="node done"><div class="step">DETECT</div><div class="ttl">MES 1회 polling</div><div class="sub">tick 당 한 번 조회 → 두 필터 분배<br>streak은 <b>MES 소유</b></div></div>
   <div class="node done"><div class="step">JOB A (기존)</div><div class="ttl">align fail → 보정</div><div class="sub">ALID=9006 → CV 보정<br>workflow_3 무수정</div></div>
-  <div class="node prog"><div class="step">JOB B (신규)</div><div class="ttl">측정 실패 → abort</div><div class="sub">임계 알람 → 접속·캡처·Stop<br><span class="badge b-new">착수</span></div></div>
+  <div class="node prog"><div class="step">JOB B (신규)</div><div class="ttl">측정 실패 → abort</div><div class="sub">임계 알람 → 접속·캡처·Stop<br><span class="badge b-new">코드 shipped</span></div></div>
   <div class="node done"><div class="step">SERIALIZE</div><div class="ttl">단일 커서=직렬</div><div class="sub">커서 1개·abort 큐잉<br><b>락 불필요</b></div></div>
 </div>
-<div class="branch"><b>왜 별도 <code>workflow_3e</code>:</b> 잡 추가 때마다 <code>ALIGN_FAIL_*</code> 플래그·분기 증식을 격리. <b>단방향 import</b>(3e→3, 역방향 금지)로 core 편집 0건. connect/창대기/캡처/teardown 재사용, <code>_exec_abort_measurement</code>+버튼 locator 만 신규.</div>
-<div class="legend"><span class="badge b-done">기존·재사용</span> workflow_3 무수정 &nbsp; <span class="badge b-new">착수</span> 이번 주 신규</div>
+<div class="branch"><b>왜 별도 <code>workflow_3e</code>:</b> 잡 추가 때마다 <code>ALIGN_FAIL_*</code> 플래그·분기 증식을 격리. <b>단방향 import</b>(3e→3)로 core 편집 0건. connect/창대기/캡처/teardown 재사용, <code>_exec_abort_measurement</code>+버튼 locator 만 신규.</div>
+<div class="branch warn"><b>안전:</b> 파괴적 행동이라 <b>이중 게이트</b>(<code>SAFE_MODE=0</code> AND <code>MEAS_FAIL_ABORT_DRY_RUN=0</code>) + <b>notify-only 기본</b>. 6 test 파일 통과. 남은 건 오피스 detection 입력 + 실장비 버튼 calibrate → 무장.</div>
 
 ---
 
-## abort 잡 — 안전(이중 게이트, notify-only) & 환경변수
+## ③ template-bank matcher 벤치 — 가설과 3단 판정
 
-파괴적·외부 영향이라 **이중 게이트**(`SAFE_MODE=0` **그리고** `MEAS_FAIL_ABORT_DRY_RUN=0`) + **notify-only 기본**. dry-run 이 VLM locate 포함 전체 경로 태우고 **클릭만** 게이트.
+**동기** — rcp 가 **success 에서도** 약하게(~0.2-0.3) localize, SEM recall ~68% 병목.
+**H1(주력)** = S-crop 을 **개별(sharp)** 유지 + dense 응답을 **heatmap soft-voting(SUM)** 융합이 median 보다 낫다. RRF 는 extra arm.
+**H0(반대가설)** = distractor 가 S 간 일관되면 합의가 **distractor 강화** → median 보다 나쁠 수도.
 
-| Env (`MEAS_FAIL_*`) | 기본 | 의미 |
+| 검증 단계 | 판정 | 내용 |
 | --- | :--: | --- |
-| `MEAS_FAIL_ABORT_ENABLED` | `1` | abort 잡 마스터 토글(감지+알림) |
-| `MEAS_FAIL_ALID` | `""` | 임계 알람 ALID — **오피스 확인 필요** |
-| `MEAS_FAIL_ABORT_DRY_RUN` | `1` | 클릭 게이트(`SAFE_MODE=0` **AND** `=0`) |
-| `MEAS_FAIL_ABORT_BUTTON_SERVICE` | `ui-venus` | Stop/Abort locator route_slug |
-
-> 기본 경로: 감지 → 접속 → 캡처 → 버튼 locate → **cube 알림**, 클릭 없음.
+| 1. kill-test (H0 배제) | <span class="badge b-done">통과</span> | near_periodic om 0.014/sem 0.052 → distractor 강화 안 일어남 |
+| 2. in_topk (천장) | <span class="badge b-done">이김</span> | 정답을 후보 안엔 잘 넣음 |
+| 3. **rank-1 (출하 성능)** | <span class="badge b-stop">막힘</span> | **OM/SEM 둘 다 ≈ 0.5(동전 던지기)** |
 
 ---
 
-## template-bank matcher 벤치 (병행)
+## ③ template-bank — 결론: 기각 (ADR 0006)
 
-직전 "다음 단계"였던 매처 개선 — rcp 가 **success 에서도** 약하게(~0.2–0.3) localize, SEM recall ~68% 병목.
+<div class="branch warn">
+실전은 후보 8개가 아니라 <b>1등 좌표 하나를 클릭</b> → <b>rank-1 이 실제 출하 성능</b>(<code>in_topk</code> 는 천장일 뿐). rank-1 0.5 는 출하 불가. heatmap·RRF·기타 3가지 융합이 <b>모두 같은 벽</b>에 막힘 → <b>SEM 은 어떤 멤버 융합으로도 못 푸는 ranking/distinctiveness 문제</b>. 매처-융합 소진, 레버는 <b>upstream 재등록</b>.
+</div>
 
-- **가설 H1** — N 개 S-crop 을 **개별(sharp)** 유지 + **dense 응답을 멤버 합의로 융합**이 median 보다 낫다
-- **primary = heatmap soft-voting** — top-K 에 못 든 약한 응답도 합산해 `gt_not_in_topk` 정면 공략. RRF 는 extra arm
-- **반대가설 H0(먼저 배제)** — distractor 가 S 간 일관되면 합의가 **distractor 강화** → median 보다 나쁠 수도
-- **구현** — `bank_build`(개별, no median) + heatmap/RRF 2-arm + **kill-test**(lattice-period·GT-bucket) + eval helpers
+<div class="branch ok"><b>가장 비싸게 배운 규율:</b> 벤치 A/B 는 <code>in_topk</code>(천장)가 아니라 <b>rank-1</b>(출하 성능)으로 비교한다. 코드는 <code>TBANK_HEATMAP=0</code> kill switch 뒤 보존(16/16 tests), <code>workflow_3</code> 포팅 안 함.</div>
 
-> bench 전용 bit-parity fork(`workflow_3` 무수정). **오피스 골든셋 평가 미실행** → H1/H0 판정 후 포팅 게이트.
+> **두 갈래(재등록 Phase 2 + template-bank)가 같은 결론**을 가리킴: 문제는 매처가 아니라 **align-key 이미지의 변별력**.
 
 ---
 
-## 작업 항목 진행 현황
+## ④ 작업 항목 진행 현황
 
 | 항목 | 상태 | 요지 |
 | --- | :--: | --- |
-| abort — `workflow_3e` 패키지 | <span class="badge b-new">코드 shipped</span> | core 무수정 단방향 확장, 6 test 파일 통과 |
-| abort — 안전 게이트 | <span class="badge b-done">적용</span> | 이중 게이트 + notify-only 기본 |
-| abort — dry-run 경로 | <span class="badge b-done">검증</span> | 캡처 → 좌표 로깅 → notify, **클릭 없음** |
-| abort — 오피스 detection 입력 | <span class="badge b-prog">오피스 게이트</span> | `office_meas_many_fails.py`/`MEAS_FAIL_ALID` |
-| abort — 버튼 calibrate + 무장 | <span class="badge b-prog">예정</span> | dry-run 검증 후 명시 단계로 무장 |
-| template-bank 벤치 | <span class="badge b-done">구현 완료</span> | heatmap+RRF 2-arm + kill-test + helpers |
-| template-bank — 오피스 평가 | <span class="badge b-plan">대기</span> | digest 미실행, 포팅 게이트 |
+| 재등록 Phase 1 — S-only + box-fidelity | <span class="badge b-done">완료</span> | `w_sugg 0→1` 복구 |
+| 재등록 Phase 2 — E-frame confirmation | <span class="badge b-stop">종료</span> | 60 tests, 신호 신뢰 불가 |
+| abort — `workflow_3e` 패키지 | <span class="badge b-new">코드 shipped</span> | core 무수정 단방향, 6 test 파일 |
+| abort — 안전 게이트 + dry-run | <span class="badge b-done">검증</span> | 이중 게이트 + notify-only |
+| abort — 오피스 입력 + 무장 | <span class="badge b-prog">오피스 게이트</span> | provider/ALID + 버튼 calibrate |
+| template-bank — 벤치 + 평가 | <span class="badge b-done">완료</span> | heatmap+RRF + kill-test |
+| template-bank — 출하 판정 | <span class="badge b-stop">기각</span> | rank-1 0.5, ADR 0006 |
 
 ---
 
-## 다음 주 우선순위
+## ⑤ 다음 주 우선순위
 
-1. **abort 잡 오피스 활성화** — `office_meas_many_fails.py` 구현 + `MEAS_FAIL_ALID` 확정 + 실장비 버튼 calibrate
-2. **dry-run → 무장 단계** — 캡처로 버튼 검증 후 `SAFE_MODE=0 MEAS_FAIL_ABORT_DRY_RUN=0`
-3. **template-bank 골든셋 평가 실행** — heatmap vs RRF vs baseline digest, H1/H0 판정
-4. rcp **이미지** 약함 vs **matcher** 약함 분리 진단
+1. **재등록이 유일한 레버** — Phase 1 신호로 약한 align-key 를 더 distinctive 한 영역으로 재등록(Phase 3 worklist)
+2. **abort 잡 오피스 활성화** — `office_meas_many_fails.py` + `MEAS_FAIL_ALID` 확정 + 실장비 버튼 calibrate → 무장
+3. **규율 정착** — 벤치 A/B 는 `in_topk`(천장)가 아니라 **rank-1**(출하 성능)으로 비교
+4. rcp **이미지** 약함 vs **matcher** 약함 분리 — 무게추는 **이미지(재등록)** 쪽
 
 ---
 
@@ -126,7 +141,7 @@ style: |
 
 # 감사합니다
 
-**효율적 장비 운영** — 측정 연속 실패 자동 abort + matcher distinctiveness 개선
+**하나의 병목, 세 갈래, 한 결론** — align-key **재등록**이 진짜 레버
 
 <!--
 빌드: npx -y @marp-team/marp-cli@latest weekly_report_slides.md --html --pptx -o weekly_report_slides.pptx

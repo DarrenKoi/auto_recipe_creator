@@ -292,6 +292,78 @@ def _format_digest(rows_by_mod):
     return "[DIGEST] reregister(S-only): " + " | ".join(parts)
 
 
+# FRESH_SNAPSHOT row 안내: cons_rank1 은 중앙값이라 단일 재촬영은 그 denoising 을 못 받는다.
+# 런타임 consensus-live-correction(이미 구현)을 켜는 편이 더 싸고 나은 fix 일 수 있음.
+_FRESH_HINT = "region ok by median; enabling consensus-live-correction may beat a single re-snapshot"
+
+
+def _worklist_rows(rows_by_mod, rank1_lookup, *, distinct_floor):
+    """rows_by_mod 를 consensus rank1 과 조인 -> fix 유형 분류 + 우선순위 -> worst-first 리스트(순수).
+
+    각 worklist row: recipe, modality, rcp_rank1, cons_rank1, fix_type, suggested_whitebox,
+    tier, priority, hint. suggested_whitebox 는 NEW_REGION 의 payload(Phase1 의 row['suggestion']).
+    FRESH_SNAPSHOT 은 consensus-live-correction hint 부여. OK 포함(호출측이 TXT body 에서 제외).
+    """
+    out = []
+    for mod, rows in rows_by_mod.items():
+        for r in rows:
+            info = rank1_lookup.get((r["recipe"], mod))
+            rcp_r1 = info["rcp_rank1"] if info else None
+            cons_r1 = info["cons_rank1"] if info else None
+            fix = _classify_fix(rcp_r1, cons_r1, distinct_floor=distinct_floor)
+            tw = TIER_WEIGHT.get(r.get("tier", "NONE"), 0.0)
+            out.append({
+                "recipe": r["recipe"],
+                "modality": mod,
+                "rcp_rank1": rcp_r1,
+                "cons_rank1": cons_r1,
+                "fix_type": fix,
+                "suggested_whitebox": r.get("suggestion", "none"),
+                "tier": r.get("tier", "NONE"),
+                "priority": _worklist_priority(fix, rcp_r1, tw),
+                "hint": _FRESH_HINT if fix == "FRESH_SNAPSHOT" else "",
+            })
+    out.sort(key=lambda w: w["priority"], reverse=True)
+    return out
+
+
+def _format_worklist(worklist_rows):
+    """worklist 를 ASCII 정렬 테이블 텍스트로. body 는 NEW_REGION/FRESH_SNAPSHOT/NO_DATA
+    worst-first(OK 는 카운트 줄에만). em-dash 금지(cp949).
+    """
+    body = [w for w in worklist_rows if w["fix_type"] != "OK"]
+    n_ok = sum(1 for w in worklist_rows if w["fix_type"] == "OK")
+    lines = ["=== Re-registration worklist (rank-1 distinctiveness) ==="]
+    counts = {}
+    for w in worklist_rows:
+        counts[w["fix_type"]] = counts.get(w["fix_type"], 0) + 1
+    lines.append("counts: " + " ".join(f"{k}={v}" for k, v in sorted(counts.items())))
+    lines.append("rank recipe modality rcp_r1 cons_r1 fix_type tier whitebox priority hint")
+    for i, w in enumerate(body, 1):
+        lines.append(" ".join([
+            str(i), w["recipe"], w["modality"],
+            _fmt_num(w["rcp_rank1"]), _fmt_num(w["cons_rank1"]),
+            w["fix_type"], w["tier"], w["suggested_whitebox"],
+            f"{w['priority']:.3f}", (w["hint"] or "-"),
+        ]))
+    lines.append(f"(OK rows omitted from body: {n_ok})")
+    return "\n".join(lines) + "\n"
+
+
+def _rank1_histogram(rank1_lookup):
+    """rcp_rank1 분포를 modality별 10구간 ASCII 히스토그램으로 -- distinct_floor 보정용(순수)."""
+    buckets = {"om": [0] * 10, "sem": [0] * 10}
+    for (_rec, mod), info in rank1_lookup.items():
+        if mod not in buckets:
+            buckets[mod] = [0] * 10
+        idx = min(9, max(0, int(float(info["rcp_rank1"]) * 10)))
+        buckets[mod][idx] += 1
+    lines = ["rank1-hist (rcp_rank1, buckets 0.0..1.0):"]
+    for mod in sorted(buckets):
+        lines.append(f"  {mod}: " + " ".join(str(c) for c in buckets[mod]))
+    return "\n".join(lines)
+
+
 # ====================================================================
 # 순수 헬퍼 — 박스 제안 (C2).
 # ====================================================================

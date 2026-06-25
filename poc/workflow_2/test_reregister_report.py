@@ -601,3 +601,67 @@ def test_worklist_priority_no_data_below_equal_tier_backed_flag():
     p_nodata = rr._worklist_priority("NO_DATA", None, tw)
     p_ok_backed = rr._worklist_priority("OK", 0.9, tw)   # rank-1-backed, 같은 tier
     assert p_ok_backed > p_nodata
+
+
+# ====================================================================
+# Task 5: Worklist assembly + format + histogram
+# ====================================================================
+def test_worklist_rows_joins_classifies_and_sorts(_distinct=0.7):
+    rows_by_mod = {
+        "sem": [
+            {"recipe": "CLSA/REC1", "tier": "STRONG", "suggestion": "box=10,10,40,40"},
+            {"recipe": "CLSA/REC2", "tier": "NONE", "suggestion": "none"},
+        ],
+        "om": [
+            {"recipe": "CLSA/REC3", "tier": "MEDIUM", "suggestion": "none"},
+        ],
+    }
+    lookup = {
+        ("CLSA/REC1", "sem"): {"rcp_rank1": 0.3, "cons_rank1": 0.4, "n_S_loo": 6, "cons_pool_n": 8},
+        ("CLSA/REC2", "sem"): {"rcp_rank1": 0.5, "cons_rank1": 0.9, "n_S_loo": 5, "cons_pool_n": 5},
+        # REC3 (om) 없음 -> NO_DATA
+    }
+    wl = rr._worklist_rows(rows_by_mod, lookup, distinct_floor=_distinct)
+    by_rec = {(w["recipe"], w["modality"]): w for w in wl}
+    assert by_rec[("CLSA/REC1", "sem")]["fix_type"] == "NEW_REGION"
+    assert by_rec[("CLSA/REC1", "sem")]["suggested_whitebox"] == "box=10,10,40,40"
+    assert by_rec[("CLSA/REC2", "sem")]["fix_type"] == "FRESH_SNAPSHOT"
+    assert by_rec[("CLSA/REC3", "om")]["fix_type"] == "NO_DATA"
+    # worst-first: NEW_REGION(REC1) 이 FRESH(REC2) 보다 앞.
+    order = [(w["recipe"], w["modality"]) for w in wl]
+    assert order.index(("CLSA/REC1", "sem")) < order.index(("CLSA/REC2", "sem"))
+
+
+def test_worklist_rows_fresh_snapshot_has_live_correction_hint():
+    rows_by_mod = {"om": [{"recipe": "CLSA/REC1", "tier": "NONE", "suggestion": "none"}]}
+    lookup = {("CLSA/REC1", "om"): {"rcp_rank1": 0.5, "cons_rank1": 0.9,
+                                    "n_S_loo": 4, "cons_pool_n": 4}}
+    wl = rr._worklist_rows(rows_by_mod, lookup, distinct_floor=0.7)
+    assert "live-correction" in wl[0]["hint"]
+
+
+def test_format_worklist_is_ascii_and_excludes_ok_body():
+    rows = [
+        {"recipe": "CLSA/REC1", "modality": "sem", "rcp_rank1": 0.3, "cons_rank1": 0.4,
+         "fix_type": "NEW_REGION", "suggested_whitebox": "box=1,2,3,4", "tier": "STRONG",
+         "priority": 2.1, "hint": ""},
+        {"recipe": "CLSA/REC9", "modality": "om", "rcp_rank1": 0.95, "cons_rank1": 0.95,
+         "fix_type": "OK", "suggested_whitebox": "none", "tier": "NONE",
+         "priority": 0.0, "hint": ""},
+    ]
+    txt = rr._format_worklist(rows)
+    assert txt.isascii()
+    assert "NEW_REGION" in txt and "CLSA/REC1" in txt
+    assert "CLSA/REC9" not in txt          # OK 는 body 제외
+    assert "—" not in txt             # em-dash 금지
+
+
+def test_rank1_histogram_ascii_and_per_modality():
+    lookup = {
+        ("CLSA/REC1", "sem"): {"rcp_rank1": 0.05, "cons_rank1": 0.4, "n_S_loo": 6, "cons_pool_n": 8},
+        ("CLSA/REC2", "sem"): {"rcp_rank1": 0.55, "cons_rank1": 0.5, "n_S_loo": 5, "cons_pool_n": 5},
+        ("CLSA/REC3", "om"):  {"rcp_rank1": 0.95, "cons_rank1": 0.9, "n_S_loo": 4, "cons_pool_n": 4},
+    }
+    h = rr._rank1_histogram(lookup)
+    assert h.isascii()
+    assert "sem" in h and "om" in h

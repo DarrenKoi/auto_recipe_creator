@@ -86,12 +86,17 @@ def _peaks_center(acc, *, nms_radius, max_peaks, min_score):
 
 
 def bank_match_heatmap(bank, gray, *, scales=COMPARE_SCALES, peak_nms_frac=0.5,
-                       topk=TOPK_CANDIDATES):
+                       topk=TOPK_CANDIDATES, frame_dt=None):
     """PRIMARY arm: 멤버 dense 응답을 SUM → 전역 peak. per-member top-K 가 떨어뜨린
-    참 peak 도 약하게 일관되면 합산으로 살아남는다(gt_not_in_topk 공략)."""
+    참 peak 도 약하게 일관되면 합산으로 살아남는다(gt_not_in_topk 공략).
+
+    frame_dt: 미리 계산한 거리변환(None 이면 내부에서 계산). 복수 arm 에서 공유해
+    중복 계산을 피할 때 전달한다.
+    """
     if not bank:
         return BankResult(None, 0.0, [], [], None, "heatmap")
-    frame_dt = preprocess_for_matching(gray)[1]
+    if frame_dt is None:
+        frame_dt = preprocess_for_matching(gray)[1]
     acc = _accumulate_heatmap(bank, frame_dt, gray.shape[:2], scales)
     short = min(bank[0].raw_image.shape[:2])
     nms_radius = max(1, int(peak_nms_frac * short))
@@ -115,17 +120,28 @@ def _dedup_within_member(cands, tol):
 
 
 def bank_match_rrf(bank, gray, *, scales=COMPARE_SCALES, topk=TOPK_CANDIDATES,
-                   cluster_tol, rrf_k):
+                   cluster_tol, rrf_k, frame_dt=None):
     """EXTRA arm: 멤버별 proposer top-K → member 내 dedup(1표/멤버/클러스터) →
     cross-member 공간 클러스터 RRF → max-member NCC rerank. heatmap 을 못 이기면
-    discrete 기교가 값을 못 한다는 뜻."""
+    discrete 기교가 값을 못 한다는 뜻.
+
+    frame_dt: 미리 계산한 거리변환(None 이면 비앙상블 branch 에서 내부 계산). 전달해도
+    USE_ENSEMBLE_PROPOSER=True 면 proposer 에는 None 을 넘기는 규약을 유지한다.
+    """
     if not bank:
         return BankResult(None, 0.0, [], [], [], "rrf")
-    frame_dt = None if USE_ENSEMBLE_PROPOSER else preprocess_for_matching(gray)[1]
+    # USE_ENSEMBLE_PROPOSER 일 때 proposer 에는 항상 None 을 전달해야 한다(bit-parity 규약).
+    # 비앙상블 branch 에서는 전달된 frame_dt 를 재사용해 중복 계산을 피한다.
+    if USE_ENSEMBLE_PROPOSER:
+        eff_dt = None
+    elif frame_dt is not None:
+        eff_dt = frame_dt
+    else:
+        eff_dt = preprocess_for_matching(gray)[1]
     # 멤버별 proposer (bit-parity with _gt_in_topk:361), member 내 dedup.
     per_member = []
     for tpl in bank:
-        cands = _propose_topk(tpl, gray, frame_dt, scales=scales, topk=topk)
+        cands = _propose_topk(tpl, gray, eff_dt, scales=scales, topk=topk)
         per_member.append(_dedup_within_member(cands or [], cluster_tol))
     # cross-member 공간 클러스터: 각 클러스터에 멤버별 best rank 로 RRF 점수.
     clusters = []   # 각: {"xy":(x,y), "rrf":float, "members":set, "scale":float}
@@ -147,11 +163,14 @@ def bank_match_rrf(bank, gray, *, scales=COMPARE_SCALES, topk=TOPK_CANDIDATES,
     if not clusters:
         return BankResult(None, 0.0, [], [], [], "rrf")
     # max-member NCC rerank: 클러스터 xy 에서 멤버 raw 중 최고 NCC 를 점수로.
+    # sorted key 안에서 반복 호출하면 클러스터마다 N 번 NCC 를 연산하게 돼 O(C×N) 호출이
+    # C 번(정렬 비교) 더 중첩된다. 정렬 전에 한 번만 계산해 dict 에 캐시한다.
     def _ncc_max(cl):
         vals = [_candidate_ncc(t.raw_image, gray, cl["xy"], cl["scale"]) for t in bank]
         vals = [v for v in vals if v is not None]
         return max(vals) if vals else -1.0
-    ordered = sorted(clusters, key=lambda cl: (cl["rrf"], _ncc_max(cl)), reverse=True)
+    ncc_cache = {id(cl): _ncc_max(cl) for cl in clusters}
+    ordered = sorted(clusters, key=lambda cl: (cl["rrf"], ncc_cache[id(cl)]), reverse=True)
     cand_xys = [cl["xy"] for cl in ordered]
     cand_scores = [cl["rrf"] for cl in ordered]
     support = [len(cl["members"]) for cl in ordered]

@@ -194,6 +194,31 @@ def test_format_bank_digest_handles_none_cons():
     assert d == d.encode("ascii", "replace").decode("ascii")
 
 
+def test_bank_match_passes_explicit_frame_dt_equivalent():
+    """bank_match_heatmap / bank_match_rrf 에 미리 계산한 frame_dt 를 전달해도
+    결과(xy, cand_scores)가 기본 경로(내부 계산)와 동일해야 한다(#8 공유 최적화 정확성 검증)."""
+    import poc.workflow_2.template_bank_lab as tb
+    from poc.workflow_3.align.matching.engine import preprocess_for_matching
+
+    crops = [_mark_crop(s) for s in range(4)]
+    bank = tb.bank_build(crops, recipe_id="r", modality="om", min_s=3)
+    frame = _frame_with_mark((120, 120))
+
+    # heatmap arm: 기본 vs 명시적 frame_dt.
+    res_default = tb.bank_match_heatmap(bank, frame)
+    res_explicit = tb.bank_match_heatmap(bank, frame,
+                                         frame_dt=preprocess_for_matching(frame)[1])
+    assert res_default.xy == res_explicit.xy
+    assert res_default.cand_scores == res_explicit.cand_scores
+
+    # rrf arm: 기본 vs 명시적 frame_dt.
+    res_rrf_default = tb.bank_match_rrf(bank, frame, cluster_tol=10, rrf_k=60)
+    res_rrf_explicit = tb.bank_match_rrf(bank, frame, cluster_tol=10, rrf_k=60,
+                                          frame_dt=preprocess_for_matching(frame)[1])
+    assert res_rrf_default.xy == res_rrf_explicit.xy
+    assert res_rrf_default.cand_scores == res_rrf_explicit.cand_scores
+
+
 def test_consensus_run_no_data_with_tbank(monkeypatch, tmp_path):
     """TBANK on + 빈 루트에서 run() 이 no_data/no_ab 로 정상 반환 (no-data smoke)."""
     import poc.workflow_2.golden_consensus_eval_cond as g

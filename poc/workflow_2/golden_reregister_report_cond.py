@@ -36,6 +36,11 @@ COLLAPSE_MARGIN = float(os.getenv("REREGISTER_COLLAPSE_MARGIN", "0.15"))
 
 TIER_WEIGHT = {"E_CONFIRMED": 3.0, "STRONG": 2.0, "MEDIUM": 1.0, "ADVISORY": 0.3, "NONE": 0.0}
 
+# fix 유형 가중(worklist 정렬) — 어려운/고가치 fix 가 위로. _worklist_priority 에서 사용.
+FIX_WEIGHT = {"NEW_REGION": 3.0, "FRESH_SNAPSHOT": 2.0, "OK": 0.0, "NO_DATA": 0.0}
+# rank-1-backed row 가 같은 tier 의 NO_DATA 보다 위에 오도록 하는 미세 보너스.
+_RANK1_BACKED_BONUS = 0.001
+
 # 조인 충돌(같은 class/recipe·modality 가 여러 장비에서 collapse)된 consensus row 수 -- 커버리지 로그용.
 _LAST_JOIN_COLLISIONS = 0
 
@@ -172,6 +177,18 @@ def _classify_fix(rcp_rank1, cons_rank1, *, distinct_floor):
     if cons_rank1 is not None and cons_rank1 >= distinct_floor:
         return "FRESH_SNAPSHOT"
     return "NEW_REGION"
+
+
+def _worklist_priority(fix_type, rcp_rank1, tier_weight):
+    """worklist 정렬 우선순위(순수). 1차 severity = (1 - rcp_rank1) * fix 가중 + tier 코로보레이션.
+
+    rcp_rank1=None(NO_DATA) 은 tier_weight 단독으로 산정 -> 같은 tier 의 rank-1-backed flag
+    아래로 내려간다(_RANK1_BACKED_BONUS 차이). 클수록 worst -> worklist 위.
+    """
+    if rcp_rank1 is None:
+        return float(tier_weight)
+    severity = 1.0 - float(rcp_rank1)
+    return FIX_WEIGHT.get(fix_type, 0.0) * severity + float(tier_weight) + _RANK1_BACKED_BONUS
 
 
 def _rank_rows(rows):

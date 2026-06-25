@@ -576,3 +576,28 @@ def test_load_consensus_rank1_reads_fixture(tmp_path):
     ]}), encoding="utf-8")
     lk = rr._load_consensus_rank1(str(summ))
     assert lk[("CLSA/REC1", "sem")]["rcp_rank1"] == 0.4
+
+
+# ====================================================================
+# Task 4: Worklist priority — _worklist_priority
+# ====================================================================
+def test_worklist_priority_new_region_above_fresh_above_ok_at_equal_rcp():
+    # 같은 rcp_rank1·tier 에서 NEW_REGION > FRESH_SNAPSHOT > OK.
+    tw = rr.TIER_WEIGHT["STRONG"]
+    p_new = rr._worklist_priority("NEW_REGION", 0.5, tw)
+    p_fresh = rr._worklist_priority("FRESH_SNAPSHOT", 0.5, tw)
+    p_ok = rr._worklist_priority("OK", 0.5, tw)
+    assert p_new > p_fresh > p_ok
+
+
+def test_worklist_priority_lower_rcp_rank1_ranks_higher():
+    tw = rr.TIER_WEIGHT["NONE"]
+    assert rr._worklist_priority("NEW_REGION", 0.2, tw) > rr._worklist_priority("NEW_REGION", 0.6, tw)
+
+
+def test_worklist_priority_no_data_below_equal_tier_backed_flag():
+    # NO_DATA(rcp_rank1=None) 은 같은 tier 의 rank-1-backed flag 보다 아래.
+    tw = rr.TIER_WEIGHT["MEDIUM"]
+    p_nodata = rr._worklist_priority("NO_DATA", None, tw)
+    p_ok_backed = rr._worklist_priority("OK", 0.9, tw)   # rank-1-backed, 같은 tier
+    assert p_ok_backed > p_nodata

@@ -6,6 +6,7 @@
 
 spec: poc/workflow_2/docs/specs/2026-06-23-reregister-report-design.md
 """
+import json
 import os
 
 from poc.workflow_2 import golden_eval_config_loader
@@ -34,6 +35,9 @@ E_FLOOR = float(os.getenv("REREGISTER_E_FLOOR", "0.50"))
 COLLAPSE_MARGIN = float(os.getenv("REREGISTER_COLLAPSE_MARGIN", "0.15"))
 
 TIER_WEIGHT = {"E_CONFIRMED": 3.0, "STRONG": 2.0, "MEDIUM": 1.0, "ADVISORY": 0.3, "NONE": 0.0}
+
+# 조인 충돌(같은 class/recipe·modality 가 여러 장비에서 collapse)된 consensus row 수 -- 커버리지 로그용.
+_LAST_JOIN_COLLISIONS = 0
 
 # fidelity 매칭 scale band. 진단상 작은 box crop 은 주기 SEM 텍스처에서 *최소 scale(0.6)* 로
 # 줄여 wrong-phase distractor 에 high-score 매칭되어(예: top1 0.9 @ 300px off) 참 위치를 놓쳤다.
@@ -171,6 +175,40 @@ def _normalize_consensus_key(rec):
     if len(parts) <= 2:
         return "/".join(parts)
     return "/".join(parts[-2:])
+
+
+def _build_rank1_lookup(per_recipe):
+    """consensus per_recipe 리스트 -> {(class/recipe, modality): {rcp_rank1, cons_rank1,
+    n_S_loo, cons_pool_n}}. 순수 함수(테스트용). 키는 _normalize_consensus_key 로 더블렛 정규화.
+
+    충돌(두 장비의 같은 class/recipe·modality 가 더블렛으로 합쳐짐)은 최저 rcp_rank1(가장
+    변별력 낮은 쪽)을 유지한다 -- 재등록 worklist 는 보수적으로 flag 하는 게 안전. 합쳐진 수는
+    모듈 카운터 _LAST_JOIN_COLLISIONS 에 기록(커버리지 라인에서 노출).
+    rcp_rank1_rate/cons_rank1_rate/modality 가 없는 row 는 건너뛴다.
+    """
+    global _LAST_JOIN_COLLISIONS
+    _LAST_JOIN_COLLISIONS = 0
+    lookup = {}
+    for row in per_recipe:
+        mod = row.get("modality")
+        rcp = row.get("rcp_rank1_rate")
+        cons = row.get("cons_rank1_rate")
+        if mod is None or rcp is None or cons is None:
+            continue
+        key = (_normalize_consensus_key(row.get("recipe", "")), mod)
+        rec = {
+            "rcp_rank1": float(rcp),
+            "cons_rank1": float(cons),
+            "n_S_loo": int(row.get("n_S_loo", 0)),
+            "cons_pool_n": int(row.get("cons_pool_n", 0)),
+        }
+        if key in lookup:
+            _LAST_JOIN_COLLISIONS += 1
+            if rec["rcp_rank1"] < lookup[key]["rcp_rank1"]:
+                lookup[key] = rec        # 최저(worst) 유지.
+        else:
+            lookup[key] = rec
+    return lookup
 
 
 # ====================================================================
@@ -782,6 +820,44 @@ def _e_rep_score(center_tpl, e_frames):
     """E 프레임별 best score(None 제외)의 median. 사용가능 점수 0개면 None."""
     scores = [s for s in (_free_search_best_score(center_tpl, g) for g in e_frames) if s is not None]
     return _median(scores)
+
+
+def _resolve_consensus_summary(path=None):
+    """consensus summary.json 경로 해석: 명시 인자 -> REREGISTER_CONSENSUS_SUMMARY env ->
+    DEBUG_IMAGE_DIR/golden_consensus_eval_cond/<ts>/summary.json 중 최신 ts. 없으면 None.
+    """
+    if path:
+        p = Path(path)
+        return p if p.exists() else None
+    env = os.getenv("REREGISTER_CONSENSUS_SUMMARY")
+    if env:
+        p = Path(env)
+        return p if p.exists() else None
+    base = DEBUG_IMAGE_DIR / "golden_consensus_eval_cond"
+    if not base.is_dir():
+        return None
+    cands = sorted((d for d in base.iterdir() if d.is_dir()), key=lambda d: d.name, reverse=True)
+    for d in cands:
+        s = d / "summary.json"
+        if s.exists():
+            return s
+    return None
+
+
+def _load_consensus_rank1(path=None):
+    """consensus summary.json 을 읽어 (class/recipe, modality) -> rank1 dict 로. 파일 부재/
+    파싱 실패 시 빈 dict(graceful degrade -- 모든 recipe NO_DATA). consensus eval 무수정.
+    """
+    summ = _resolve_consensus_summary(path)
+    if summ is None:
+        print("[WARNING] rank1-join: consensus summary.json not found (all recipes -> NO_DATA)")
+        return {}
+    try:
+        data = json.loads(summ.read_text(encoding="utf-8"))
+    except Exception as e:   # noqa: BLE001 - 파싱 실패는 graceful degrade.
+        print(f"[WARNING] rank1-join: failed to read {summ} ({e}); NO_DATA fallback")
+        return {}
+    return _build_rank1_lookup(data.get("per_recipe", []))
 
 
 def _load_s_frames(assets, modality):

@@ -498,3 +498,55 @@ def test_run_no_data_still_returns_warning_with_e_confirm(monkeypatch, tmp_path)
     monkeypatch.setenv("ALIGN_GOLDEN_ROOT", str(tmp_path))   # 빈 루트.
     monkeypatch.setenv("REREGISTER_E_CONFIRM", "1")
     assert r.run() == "[WARNING] no_data"
+
+
+# ====================================================================
+# Task 2 (build 2): consensus rank-1 lookup 순수 헬퍼 + I/O 리더.
+# ====================================================================
+def test_build_rank1_lookup_basic_and_key_normalization():
+    per_recipe = [
+        {"recipe": "EQP01/CLSA/REC1", "modality": "sem",
+         "rcp_rank1_rate": 0.4, "cons_rank1_rate": 0.5, "n_S_loo": 6, "cons_pool_n": 8},
+        {"recipe": "EQP01/CLSA/REC1", "modality": "om",
+         "rcp_rank1_rate": 0.9, "cons_rank1_rate": 0.95, "n_S_loo": 4, "cons_pool_n": 4},
+    ]
+    lk = rr._build_rank1_lookup(per_recipe)
+    assert lk[("CLSA/REC1", "sem")]["rcp_rank1"] == 0.4
+    assert lk[("CLSA/REC1", "sem")]["cons_rank1"] == 0.5
+    assert lk[("CLSA/REC1", "om")]["rcp_rank1"] == 0.9
+
+
+def test_build_rank1_lookup_collision_keeps_worst():
+    # 두 장비의 같은 class/recipe·modality 가 더블렛으로 충돌 -> 최저 rcp_rank1(보수적) 유지.
+    per_recipe = [
+        {"recipe": "EQP01/CLSA/REC1", "modality": "sem",
+         "rcp_rank1_rate": 0.6, "cons_rank1_rate": 0.6, "n_S_loo": 5, "cons_pool_n": 5},
+        {"recipe": "EQP02/CLSA/REC1", "modality": "sem",
+         "rcp_rank1_rate": 0.3, "cons_rank1_rate": 0.4, "n_S_loo": 5, "cons_pool_n": 5},
+    ]
+    lk = rr._build_rank1_lookup(per_recipe)
+    assert lk[("CLSA/REC1", "sem")]["rcp_rank1"] == 0.3
+
+
+def test_build_rank1_lookup_skips_incomplete_rows():
+    per_recipe = [
+        {"recipe": "EQP01/CLSA/REC1", "modality": "sem"},  # no rates
+        {"recipe": "EQP01/CLSA/REC2", "rcp_rank1_rate": 0.4, "cons_rank1_rate": 0.5},  # no modality
+    ]
+    assert rr._build_rank1_lookup(per_recipe) == {}
+
+
+def test_load_consensus_rank1_empty_on_missing(tmp_path):
+    missing = tmp_path / "nope" / "summary.json"
+    assert rr._load_consensus_rank1(str(missing)) == {}
+
+
+def test_load_consensus_rank1_reads_fixture(tmp_path):
+    import json
+    summ = tmp_path / "summary.json"
+    summ.write_text(json.dumps({"per_recipe": [
+        {"recipe": "EQP01/CLSA/REC1", "modality": "sem",
+         "rcp_rank1_rate": 0.4, "cons_rank1_rate": 0.5, "n_S_loo": 6, "cons_pool_n": 8},
+    ]}), encoding="utf-8")
+    lk = rr._load_consensus_rank1(str(summ))
+    assert lk[("CLSA/REC1", "sem")]["rcp_rank1"] == 0.4

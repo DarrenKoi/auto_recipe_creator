@@ -159,6 +159,20 @@ def _rank_rows(rows):
     return sorted(rows, key=lambda r: (r["risk_score"], r.get("worst_disp", 0.0)), reverse=True)
 
 
+def _normalize_consensus_key(rec):
+    """consensus per_recipe['recipe'](eqp/class/recipe 트리플렛)를 reregister 의
+    class/recipe 더블렛으로 정규화한다. 조인 키 정렬용 — 마지막 두 세그먼트만 취한다.
+
+    consensus 는 _recipe_key(assets)=eqp/class/recipe 로 키를 잡고(장비 leaf 충돌 방지),
+    reregister 는 class/recipe 로 잡으므로 eqp 접두를 떼야 조인이 붙는다. 이미 더블렛이면
+    멱등(그대로), 세그먼트가 더 많아도 class/recipe 두 개만 남긴다.
+    """
+    parts = [p for p in str(rec).strip().split("/") if p != ""]
+    if len(parts) <= 2:
+        return "/".join(parts)
+    return "/".join(parts[-2:])
+
+
 # ====================================================================
 # 순수 헬퍼 — 포맷(ASCII only).
 # ====================================================================

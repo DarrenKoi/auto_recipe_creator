@@ -132,6 +132,25 @@ def test_rank_rows_single_and_equal_safe():
                    {"recipe": "q", "risk_score": 1.0, "worst_disp": 0.0}])  # no raise
 
 
+def test_normalize_consensus_key_triplet_to_doublet():
+    # consensus 키는 eqp/class/recipe 트리플렛 → reregister 의 class/recipe 더블렛으로.
+    assert rr._normalize_consensus_key("EQP01/CLSA/REC1") == "CLSA/REC1"
+
+
+def test_normalize_consensus_key_doublet_passthrough():
+    # 이미 더블렛이면 그대로(정규화 멱등).
+    assert rr._normalize_consensus_key("CLSA/REC1") == "CLSA/REC1"
+
+
+def test_normalize_consensus_key_extra_segments_keeps_last_two():
+    # 혹시 4단 이상이어도 마지막 두 세그먼트(class/recipe)만.
+    assert rr._normalize_consensus_key("F/EQP01/CLSA/REC1") == "CLSA/REC1"
+
+
+def test_normalize_consensus_key_strips_whitespace():
+    assert rr._normalize_consensus_key("  EQP01/CLSA/REC1  ") == "CLSA/REC1"
+
+
 def _sample_rows():
     return {
         "om": [

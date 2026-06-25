@@ -162,13 +162,13 @@ Resolution:
 
 - Text는 exact OCR을 우선합니다.
 - Region type과 bounding box는 layout model을 우선합니다.
-- 정확한 evidence가 있을 때 semantic conflict resolution은 Kimi-K2.5를 우선합니다.
+- 정확한 evidence가 있을 때 semantic conflict resolution은 Kimi-K2.6를 우선합니다.
 
 ## Stage 6: Large VLM Synthesis
 
 Model:
 
-- `kimi-k2.5`
+- `kimi-k2.6`
 
 Use only when:
 
@@ -177,7 +177,7 @@ Use only when:
 - OCR과 crop refinement 이후 confidence가 낮은 경우
 - 여러 screenshot을 merged narrative로 묶어야 하는 경우
 
-Input to Kimi-K2.5:
+Input to Kimi-K2.6:
 
 - Latency budget이 허용하면 original screenshot
 - OCR text
@@ -195,7 +195,7 @@ Expected result:
 
 Important rule:
 
-- Kimi-K2.5가 missing data를 만들어내도록 요청하지 않습니다. Prompt에는 unavailable 또는 unreadable field를 unknown으로 표시하라고 명시해야 합니다.
+- Kimi-K2.6가 missing data를 만들어내도록 요청하지 않습니다. Prompt에는 unavailable 또는 unreadable field를 unknown으로 표시하라고 명시해야 합니다.
 
 ## Stage 7: Human Review Loop
 
@@ -276,7 +276,7 @@ Reuse (현 production 경로 — docs 의 `poc.work2` 표기는 stale):
 
 - `poc.workflow_3.vlm.vlm_client.Workflow1VLMClient` (service slug 기반)
 - `poc.workflow_3.vlm.flask_vlm` service registry
-- Kimi service slug 은 `kimi-k2.6` (옛 `kimi-k2.5` 아님)
+- Kimi service slug 은 `kimi-k2.6` (옛 `kimi-k2.6` 아님)
 
 첫 버전에서는 CLI-heavy argument parsing을 추가하지 않습니다. 현재 repo의 operational-script style에 맞춰 `.env`와 in-code default를 우선합니다.
 

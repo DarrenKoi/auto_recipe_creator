@@ -11,7 +11,7 @@ Benchmark는 다음 pipeline을 비교합니다.
 - `paddleocr-vl-1.5` only
 - `paddleocr-vl-1.5` plus `ui-venus`
 - `mai-ui`를 사용한 hybrid crop refinement
-- `kimi-k2.5` synthesis를 포함한 full pipeline
+- `kimi-k2.6` synthesis를 포함한 full pipeline
 
 ## Test Set
 
@@ -120,7 +120,7 @@ Model call별로 기록합니다.
 - token usage가 있으면 포함
 - success 또는 error
 
-`kimi-k2.5`는 느릴 것으로 예상되므로 latency 기록이 중요합니다.
+`kimi-k2.6`는 느릴 것으로 예상되므로 latency 기록이 중요합니다.
 
 ### RAG Readiness
 
@@ -143,7 +143,7 @@ Extracted output이 retrieval에 적합한지 측정합니다.
 | OCR only |  |  |  |  |  |  |  |  |
 | OCR + UI-Venus |  |  |  |  |  |  |  |  |
 | OCR + UI-Venus + crops |  |  |  |  |  |  |  |  |
-| Full with Kimi-K2.5 |  |  |  |  |  |  |  |  |
+| Full with Kimi-K2.6 |  |  |  |  |  |  |  |  |
 
 ## Acceptance Criteria
 
@@ -153,7 +153,7 @@ Side project를 더 구현할 가치가 있으려면 다음을 만족해야 합�
 - Excel simple-grid extraction의 table accuracy가 0.7 이상입니다.
 - Full pipeline이 direct large-VLM reading보다 hallucination을 줄입니다.
 - Crop refinement가 dense-table 또는 small-label case를 개선합니다.
-- Kimi-K2.5가 complex page에서 latency를 감수할 만큼 summary quality를 개선합니다.
+- Kimi-K2.6가 complex page에서 latency를 감수할 만큼 summary quality를 개선합니다.
 - 대부분의 screenshot에서 RAG readiness가 0.7 이상입니다.
 - Retrieved chunk가 screenshot과 region을 cite할 수 있을 만큼 source metadata를 포함합니다.
 

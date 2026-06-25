@@ -63,9 +63,9 @@ Source:
 - 작은 chart legend, Excel table header, footer, label을 검사합니다.
 - Region이 모호할 때 UI-Venus region proposal을 cross-check합니다.
 
-### Kimi-K2.5
+### Kimi-K2.6
 
-Repo의 `poc/work2/flask_vlm.py`에는 `kimi-k2.5` direct company API model entry가 이미 정의되어 있습니다. 응답 시간이 느릴 수 있으므로 모든 crop에 실행하지 않습니다.
+Repo의 `poc/work2/flask_vlm.py`에는 `kimi-k2.6` direct company API model entry가 이미 정의되어 있습니다. 응답 시간이 느릴 수 있으므로 모든 crop에 실행하지 않습니다.
 
 권장 역할:
 
@@ -113,5 +113,5 @@ Repo의 `poc/work2/flask_vlm.py`에는 `kimi-k2.5` direct company API model entr
 1. PaddleOCR-VL만으로도 대부분의 visible text는 복원하지만, useful business-level summary는 항상 만들지 못할 수 있습니다.
 2. UI-Venus는 slide, spreadsheet, mixed UI screenshot의 region routing을 개선할 것입니다.
 3. MAI-UI는 full screenshot보다 crop에 사용할 때 small-region extraction을 개선할 것입니다.
-4. Kimi-K2.5는 final document summary와 conflict resolution을 개선하지만, latency 때문에 confidence gate 또는 final synthesis step으로 제한해야 합니다.
+4. Kimi-K2.6는 final document summary와 conflict resolution을 개선하지만, latency 때문에 confidence gate 또는 final synthesis step으로 제한해야 합니다.
 5. 가장 큰 개선은 특정 모델 하나를 바꾸는 것보다 crop retry와 evidence merging에서 나올 가능성이 큽니다.

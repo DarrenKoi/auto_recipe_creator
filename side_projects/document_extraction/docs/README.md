@@ -29,7 +29,7 @@
 | PaddleOCR-VL-1.5 | `paddleocr-vl-1.5` | OCR, reading order, table, formula, chart, document parsing |
 | UI-Venus-1.5-8B | `ui-venus` | 전체 스크린샷 layout 및 UI/document visual understanding |
 | MAI-UI-8B | `mai-ui` | dense region 또는 작은 region의 crop-level refinement |
-| Kimi-K2.5 | `kimi-k2.5` | 느리지만 고품질 synthesis, ambiguity resolution, final reasoning |
+| Kimi-K2.6 | `kimi-k2.6` | 느리지만 고품질 synthesis, ambiguity resolution, final reasoning |
 
 ## 기대 출력
 
@@ -77,7 +77,7 @@ Large VLM은 reasoning error를 줄이는 데 도움이 되지만, 보이지 않
    - 먼저 `paddleocr-vl-1.5`
    - 그다음 `ui-venus`
    - `mai-ui` 또는 `paddleocr-vl-1.5`로 crop retry
-   - 필요한 경우에만 `kimi-k2.5`로 final merge
+   - 필요한 경우에만 `kimi-k2.6`로 final merge
 4. 추출된 region을 `rag_db_plan.md` 기준으로 RAG chunk로 변환합니다.
 5. `benchmark_plan.md` 기준으로 결과를 평가합니다.
 

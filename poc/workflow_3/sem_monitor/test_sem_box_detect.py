@@ -234,6 +234,13 @@ def _install_feasibility_stubs(monkey_state, *, detect, best_xy, best_scale, cal
 
     def fake_compute(template, gray, scales=None, policy=None):
         calls.append(template.name)
+        # candidates: 실제 engine 처럼 score 내림차순 list[AlignKeyCandidate] (각 .xy).
+        # [0]=best(best_xy 와 동일), [1]=2nd-best(모호성 유발 look-alike) — feasibility 가
+        # candidates[1].xy 로 second_xy 를 환산하므로 최소 2개를 둬 그 경로를 실측한다.
+        candidates = [
+            SimpleNamespace(xy=best_xy),
+            SimpleNamespace(xy=(best_xy[0] + 10, best_xy[1] + 10)),
+        ]
         return SimpleNamespace(
             score=scores[template.name],
             decision="match",
@@ -241,6 +248,7 @@ def _install_feasibility_stubs(monkey_state, *, detect, best_xy, best_scale, cal
             best_scale=best_scale,
             best_xy=best_xy,
             distinctive=True,
+            candidates=candidates,
         )
 
     def fake_count(eqp_id, recipe_id):
@@ -295,6 +303,8 @@ def test_feasibility_pm_mode_and_shift():
     # align_xy = match_xy + offset*scale = (130+5, 90-5) = (135, 85).
     assert feas.align_xy == (135, 85), feas.align_xy
     assert feas.frame_wh == (300, 200), feas.frame_wh   # 풀프레임 좌표계 유지.
+    # 2nd-best 후보(candidates[1].xy=(40,50)) → second_xy = +origin(100,50) = (140,100).
+    assert feas.second_xy == (140, 100), feas.second_xy
     print("[OK] test_feasibility_pm_mode_and_shift")
 
 

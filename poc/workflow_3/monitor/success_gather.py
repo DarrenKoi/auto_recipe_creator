@@ -4,9 +4,10 @@ align.consensus_gather 의 순수 orchestration 을 office 다운로더 해석(�
 daemon thread 로 감싼다. office 모듈 부재(개발 PC)·예외 시 조용히 skip 해 모니터 루프를
 죽이지 않는다(alarm_source/notify 와 동일 철학).
 
-동일 (eqp_id, recipe_id) 조합에 대해 gather 가 이미 진행 중이면 skip 한다.
-고정 .events_staging 경로를 두 스레드가 동시에 쓰면 partial promote 경쟁이 발생하므로
-_IN_FLIGHT 레지스트리로 in-flight dedupe 를 보장한다.
+동일 recipe_id(=cache_key, class/recipe)에 대해 gather 가 이미 진행 중이면 skip 한다.
+consensus pool 은 eqp 무관이라 같은 recipe 의 고정 .events_staging 경로를 모든 장비가
+공유한다 — 두 스레드가 동시에 쓰면 partial promote 경쟁이 발생하므로 _IN_FLIGHT
+레지스트리(recipe 단독 키)로 in-flight dedupe 를 보장한다.
 
 (설계: poc/workflow_2/docs/superpowers/specs/2026-06-10-consensus-gather-in-loop-design.md §3-A)
 """
@@ -27,7 +28,7 @@ LOG_COMPONENT = "consensus_gather"
 # 동일 recipe 동시 gather 의 staging 경쟁 방지.
 # (eqp_id, recipe_id) -> Thread. 살아있는 Thread 가 있으면 새 gather 는 skip.
 _IN_FLIGHT_LOCK = threading.Lock()
-_IN_FLIGHT: dict = {}  # (eqp_id, recipe_id) -> Thread. 같은 recipe 동시 gather 의 staging 경쟁 방지.
+_IN_FLIGHT: dict = {}  # recipe_id(class/recipe) -> Thread. 같은 recipe 동시 gather 의 staging 경쟁 방지(eqp 무관).
 
 
 def _load_office_downloader():
@@ -66,7 +67,7 @@ def gather_success_async(eqp_id, recipe_id, settings: Workflow3Settings):
     gather_enabled off / recipe_id 없음 / downloader 부재면 아무것도 안 하고 None.
     실제 fire 하면 시작된 Thread 를 반환한다(테스트 join 용). 예외는 thread 안에서 삼킨다.
 
-    같은 (eqp_id, recipe_id) 에 대해 gather thread 가 이미 살아있으면 skip(None 반환).
+    같은 recipe_id(eqp 무관)에 대해 gather thread 가 이미 살아있으면 skip(None 반환).
     고정 .events_staging 경로 공유로 인한 동시 쓰기/부분 promote 경쟁을 _IN_FLIGHT 레지스트리로 차단.
     """
     # 게이트 단락은 조용히 None 이면 "왜 캐시가 비나"를 콘솔에서 분간할 수 없다.
@@ -83,7 +84,11 @@ def gather_success_async(eqp_id, recipe_id, settings: Workflow3Settings):
               f"EQP_ID={eqp_id} recipe={recipe_id}")
         return None
 
-    key = (eqp_id, recipe_id)
+    # dedupe 키 = recipe_id(=cache_key, class/recipe) 단독. consensus pool 은 eqp 무관이라
+    # 같은 recipe 의 events/staging 경로를 모든 장비가 공유한다 — 키에 eqp 를 넣으면 두 장비가
+    # 같은 recipe 를 동시에 gather 할 때 한 .events_staging 을 서로 다른 키로 동시에 써서
+    # partial promote 경쟁이 난다. recipe 단독 키로 묶어 한 번만 fire 한다.
+    key = recipe_id
     with _IN_FLIGHT_LOCK:
         # 죽은 entry 정리 (dict 를 소형으로 유지).
         dead = [k for k, t in _IN_FLIGHT.items() if not t.is_alive()]
@@ -137,7 +142,7 @@ def wait_for_gather(eqp_id, recipe_id, timeout) -> bool:
     if not recipe_id or not DOWNLOADER_AVAILABLE:
         return _cache_has_min_events(eqp_id, recipe_id)
 
-    key = (eqp_id, recipe_id)
+    key = recipe_id   # eqp 무관 pool — recipe 단독 키(gather_success_async 와 동일).
     with _IN_FLIGHT_LOCK:
         thread = _IN_FLIGHT.get(key)
         if thread is not None and not thread.is_alive():

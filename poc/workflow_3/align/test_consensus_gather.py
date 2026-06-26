@@ -245,7 +245,7 @@ def test_zero_image_event_preserves_old_cache(tmp_path=None):
     import tempfile
     root = _Path(tmp_path) if tmp_path else _Path(tempfile.mkdtemp())
     try:
-        ev_dir = _events_dir_for("E1", "c/r", root)
+        ev_dir = _events_dir_for("c/r", root)
         (ev_dir / "old").mkdir(parents=True)
         (ev_dir / "old" / "S0.jpeg").write_bytes(b"x")
         dl = _Downloader([_StubEvent(0)])           # 이미지 0장 event.
@@ -265,7 +265,7 @@ def test_ttl_skips_download(tmp_path=None):
     import tempfile
     root = _Path(tmp_path) if tmp_path else _Path(tempfile.mkdtemp())
     try:
-        ev_dir = _events_dir_for("E1", "c/r", root)
+        ev_dir = _events_dir_for("c/r", root)
         (ev_dir / "e1").mkdir(parents=True)
         (ev_dir / "e1" / "S0.jpeg").write_bytes(b"x")
         dl = _Downloader([_StubEvent(2)])
@@ -285,7 +285,7 @@ def test_nonempty_replaces_cache(tmp_path=None):
     import tempfile
     root = _Path(tmp_path) if tmp_path else _Path(tempfile.mkdtemp())
     try:
-        ev_dir = _events_dir_for("E1", "c/r", root)
+        ev_dir = _events_dir_for("c/r", root)
         (ev_dir / "old").mkdir(parents=True)
         (ev_dir / "old" / "S0.jpeg").write_bytes(b"x")
         dl = _Downloader([_StubEvent(2)])

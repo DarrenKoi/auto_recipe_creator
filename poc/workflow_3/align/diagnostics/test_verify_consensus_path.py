@@ -37,9 +37,13 @@ class _FakeTpl:
         self.raw_image = np.zeros((h, w), dtype=np.uint8)   # crop size = (w,h).
 
 
-def _make_events(root: Path, eqp, cls, rcp, n):
-    """root/eqp/cls/rcp/events/<id>/S1.jpeg 를 n개 만든다(내용은 load_gray 가 가로챔)."""
-    events = root / eqp / cls / rcp / "events"
+def _make_events(root: Path, cls, rcp, n):
+    """root/cls/rcp/events/<id>/S1.jpeg 를 n개 만든다(eqp 무관 pool — 경로에 eqp 없음).
+
+    내용은 load_gray 가 가로채므로 빈 파일. consensus_gather._events_dir_for 가
+    `<root>/<class>/<recipe>/events` 로 읽는 것과 동일 레이아웃.
+    """
+    events = root / cls / rcp / "events"
     for i in range(n):
         d = events / f"20260612_09{i:02d}_0"
         d.mkdir(parents=True, exist_ok=True)
@@ -73,8 +77,9 @@ def _run_one(n_events):
     try:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            _make_events(root, "E1", "c", "r", n_events)
-            assets = SimpleNamespace(eqp_id="E1", class_name="c", recipe_name="r")
+            _make_events(root, "c", "r", n_events)
+            # eqp_id 는 일부러 다르게 줘도(여러 장비) 같은 class/recipe pool 을 읽어야 한다.
+            assets = SimpleNamespace(eqp_id="ANY_EQP", class_name="c", recipe_name="r")
             return vc._verify_one(assets, min_s=4, max_events=8, cache_root=root)
     finally:
         _unpatch(monkey)

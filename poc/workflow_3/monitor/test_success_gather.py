@@ -178,7 +178,7 @@ def test_wait_for_gather_joins_inflight():
     t = threading.Thread(target=_slow)
     t.start()
     with sg._IN_FLIGHT_LOCK:
-        sg._IN_FLIGHT[("E1", "c/r")] = t
+        sg._IN_FLIGHT["c/r"] = t   # 키 = recipe_id 단독(eqp 무관 pool).
     ok_result = sg.wait_for_gather("E1", "c/r", timeout=1.0)
     ok = done["v"] is True and isinstance(ok_result, bool)
     print(f"[{'PASS' if ok else 'FAIL'}] wait_for_gather_joins_inflight: "
@@ -200,7 +200,7 @@ def test_wait_for_gather_timeout_returns_false_fast():
     t = threading.Thread(target=_hang, daemon=True)
     t.start()
     with sg._IN_FLIGHT_LOCK:
-        sg._IN_FLIGHT[("E2", "c/r")] = t
+        sg._IN_FLIGHT["c/r"] = t   # 키 = recipe_id 단독(eqp 무관 pool).
     start = time.time()
     ok_result = sg.wait_for_gather("E2", "c/r", timeout=0.1)
     elapsed = time.time() - start

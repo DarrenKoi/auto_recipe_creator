@@ -33,7 +33,7 @@ def _patch(monkeypatch_map):
 
 def _events(tmp, n, prefix="20260612_0900"):
     """events/<id>/S1.jpeg 더미 파일 n개 생성(내용은 monkeypatch 가 가로채므로 빈 파일)."""
-    ev = tmp / "E1" / "c" / "r" / "events"
+    ev = tmp / "c" / "r" / "events"
     ev.mkdir(parents=True, exist_ok=True)
     for i in range(n):
         d = ev / f"{prefix}{i:02d}_r_lot"

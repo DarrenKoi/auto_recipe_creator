@@ -56,7 +56,7 @@ def resolve_templates(assets, *, eqp_id, consensus_enabled, min_s, max_events,
     # (= 최초 fail, 아직 한 번도 안 모음). events/ 가 있는데 crop 0장이면(전부 drop된 깨진
     # 캐시) sync 해도 안 늘어나므로 매 알람 8s 를 낭비하지 않고 rcp 로 간다. min_s 미달(있긴
     # 함)도 sync 대상 아님(FTP 보다 더 못 만듦). short-circuit 으로 crop 있으면 is_dir 미평가.
-    cold = not any(crops_by_mod.values()) and not _events_dir_for(eqp_id, cache_key, cache_root).is_dir()
+    cold = not any(crops_by_mod.values()) and not _events_dir_for(cache_key, cache_root).is_dir()
     if cold:
         if wait_for_gather(eqp_id, cache_key, sync_timeout_sec) is True:   # bool 분기
             crops_by_mod = _safe_load(cache_root, eqp_id, cache_key, center_tpls, max_events)

@@ -108,7 +108,8 @@ def load_coregistered_crops(cache_root, eqp_id, cache_key, center_tpls, *, max_e
     Returns:
         {'om'|'sem': [gray_crop, ...]} — 빌더 입력. 비면 빈 dict/빈 리스트.
     """
-    events_dir = _events_dir_for(eqp_id, cache_key, cache_root)
+    # eqp_id 는 시그니처 호환을 위해 받지만 경로에는 안 쓴다(pool 은 eqp 무관).
+    events_dir = _events_dir_for(cache_key, cache_root)
     rcp_mods = [m for m, v in center_tpls.items() if v is not None]
     recipe_mod = rcp_mods[0] if len(rcp_mods) == 1 else None
 

@@ -69,9 +69,16 @@ class SuccessDownloader(Protocol):
         ...
 
 
-def _events_dir_for(eqp_id, recipe_id, cache_root):
-    """이 recipe 의 최종 events/ 경로. recipe_id 가 '<class>/<recipe>' 라 3단 중첩."""
-    return Path(cache_root) / eqp_id / recipe_id / "events"
+def _events_dir_for(recipe_id, cache_root):
+    """이 recipe 의 최종 events/ 경로 = `<cache_root>/<class>/<recipe>/events`.
+
+    **eqp_id 는 경로에 들어가지 않는다(의도적).** consensus pool 은 eqp 무관 —
+    같은 recipe 는 어느 장비에서 측정됐든 하나의 pool 을 공유한다(office_success_downloader
+    가 쓰는 레이아웃과 동일, ADR 0004). recipe_id 가 '<class>/<recipe>' 라 2단 중첩.
+    여기에 eqp 를 다시 넣으면 pool 이 장비별로 쪼개져 min_s 도달이 어려워지고 office
+    적재 경로와 어긋나 consensus 가 조용히 안 잡힌다 — 절대 re-add 금지.
+    """
+    return Path(cache_root) / recipe_id / "events"
 
 
 # S 이미지로 인정하는 확장자 (gather 가 쓰는 형식 + 안전 마진).
@@ -88,7 +95,8 @@ def count_staged_events(eqp_id, recipe_id, *,
     """
     if not recipe_id:
         return 0, 0
-    events_dir = _events_dir_for(eqp_id, recipe_id, cache_root)
+    # eqp_id 는 시그니처 호환을 위해 받지만 경로에는 안 쓴다(pool 은 eqp 무관).
+    events_dir = _events_dir_for(recipe_id, cache_root)
     if not events_dir.is_dir():
         return 0, 0
     return _count_events(events_dir)   # 루프 본문은 단일 출처(_count_events)로 위임(중복 제거).
@@ -121,7 +129,8 @@ def gather_success_images(eqp_id, recipe_id, *, downloader,
     0건/예외면 기존 events/ 보존. 어떤 경로든 staging 잔재는 정리한다.
     다운로드 예외 → reason="error:<Type>: <msg>", swap/count 예외 → reason="error:swap:<Type>: <msg>".
     """
-    events_dir = _events_dir_for(eqp_id, recipe_id, cache_root)
+    # eqp_id 는 GatherResult 보고용으로만 쓰고 경로에는 안 쓴다(pool 은 eqp 무관).
+    events_dir = _events_dir_for(recipe_id, cache_root)
     if not recipe_id:
         return GatherResult(eqp_id, recipe_id, events_dir, 0, 0, "skipped")
 

@@ -142,16 +142,18 @@ class Workflow3Settings(WorkflowSettings):
     zoom_probe_steps: int = 2                   # OUT(배율↓) 방향 단계 수.
     zoom_probe_in_steps: int = 2               # IN(배율↑) 방향 단계 수.
     zoom_probe_scroll_dy: int = -1              # 음수 = wheel down = OUT = 배율↓ (pynput scroll dy). IN 은 부호 반전.
-    zoom_probe_scrolls_per_step: int = 1        # 단계당 scroll notch 수(1 notch≠1 PM step 시 튜닝).
+    zoom_probe_scrolls_per_step: int = 5        # 단계당 scroll notch 수. 1-2 notch 로는 배율이 거의
+                                                # 무의미하게 바뀌어 의미 있는 step 이 되도록 5 로 상향(오피스 rung 별 mag 보고 조정).
     zoom_probe_settle_sec: float = 0.6          # wheel 후 FOV 재렌더+커서 안착 대기(초).
     zoom_probe_rematch_enabled: bool = True     # 각 rung 에서 rcp 키 재매칭(off 면 캡처만).
     # wheel 이 배율을 안 바꾸는 tool 대비 fallback: out1 wheel 후 PM 배율이 그대로면
     # 'PM' 버튼 드롭다운(절대 배율 선택)으로 전환해 ladder 를 마저 돈다. 기본 on.
     pm_dropdown_enabled: bool = True
-    # zoom ladder 방식: "pm_dropdown"=wheel 생략하고 곧장 PM 버튼 드롭다운(기본 — 이 tool 은
-    # wheel 이 mag 을 안 바꾸고 오히려 RCS 가 wheel 을 recenter 클릭으로 오해), "auto"=wheel
-    # 먼저 시도 후 무효면 PM 드롭다운 fallback, "wheel"=wheel 만(다른 tool 용).
-    zoom_method: str = "pm_dropdown"
+    # zoom ladder 방식: "auto"=wheel 먼저 시도 후 무효(out1 후 PM 배율 불변)면 PM 드롭다운
+    # fallback(기본 — wheel 이 안 듣던 장비가 fab-out 되어 wheel 우선이 안전), "pm_dropdown"=
+    # wheel 생략하고 곧장 PM 버튼 드롭다운(wheel 이 mag 을 안 바꾸고 RCS 가 recenter 로 오해하는
+    # tool), "wheel"=wheel 만(드롭다운 fallback 없음, 다른 tool 용).
+    zoom_method: str = "auto"
 
     # --- CV 보정 ---
     correction_enabled: bool = True
@@ -222,11 +224,11 @@ def load_workflow3_settings() -> Workflow3Settings:
         zoom_probe_steps=env_int("ALIGN_FAIL_ZOOM_PROBE_STEPS", 2),
         zoom_probe_in_steps=env_int("ALIGN_FAIL_ZOOM_PROBE_IN_STEPS", 2),
         zoom_probe_scroll_dy=env_int("ALIGN_FAIL_ZOOM_PROBE_SCROLL_DY", -1),
-        zoom_probe_scrolls_per_step=env_int("ALIGN_FAIL_ZOOM_PROBE_SCROLLS_PER_STEP", 1),
+        zoom_probe_scrolls_per_step=env_int("ALIGN_FAIL_ZOOM_PROBE_SCROLLS_PER_STEP", 5),
         zoom_probe_settle_sec=env_float("ALIGN_FAIL_ZOOM_PROBE_SETTLE_SEC", 0.6),
         zoom_probe_rematch_enabled=env_flag("ALIGN_FAIL_ZOOM_PROBE_REMATCH", default=True),
         pm_dropdown_enabled=env_flag("ALIGN_FAIL_PM_DROPDOWN", default=True),
-        zoom_method=os.environ.get("ALIGN_FAIL_ZOOM_METHOD", "pm_dropdown").strip().lower() or "pm_dropdown",
+        zoom_method=os.environ.get("ALIGN_FAIL_ZOOM_METHOD", "auto").strip().lower() or "auto",
         correction_enabled=env_flag("ALIGN_FAIL_CORRECTION", default=True),
         correction_dry_run=correction_dry_run,
         ok_button_vlm_service=_env_str("ALIGN_OK_BUTTON_VLM_SERVICE", "ui-venus"),

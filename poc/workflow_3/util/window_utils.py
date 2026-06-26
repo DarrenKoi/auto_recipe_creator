@@ -21,6 +21,11 @@ _SPI_GETFOREGROUNDLOCKTIMEOUT = 0x2000
 _SPI_SETFOREGROUNDLOCKTIMEOUT = 0x2001
 _SPIF_SENDCHANGE = 0x0002
 
+# keystroke-prime 용 (foreground lock 우회 보강): SetForegroundWindow 직전에 우리
+# 프로세스가 "마지막 입력을 받은" 것으로 기록되도록 더미 Alt 키를 합성 주입한다.
+_VK_MENU = 0x12  # Alt — 메뉴 활성/기타 부작용이 가장 적은 무해한 키.
+_KEYEVENTF_KEYUP = 0x0002
+
 
 @dataclass(frozen=True)
 class WindowRow:
@@ -276,6 +281,24 @@ def _force_foreground_via_attach(user32, handle: int, settle_sec: float) -> None
         if target_thread and target_thread not in (our_thread, fg_thread):
             target_attached = bool(user32.AttachThreadInput(our_thread, target_thread, True))
 
+        # keystroke-prime — 더미 Alt down/up 을 합성 주입해 우리 스레드를 "마지막
+        # 입력 수신자" 로 만든다. Windows 의 foreground 규칙은 마지막 입력을 받은
+        # 프로세스의 SetForegroundWindow 만 허용하므로, AttachThreadInput 만으로
+        # 부족할 때(사용자가 다른 앱을 활발히 조작 중) 이 prime 이 통과율을 높인다.
+        # 합성 키 출력이므로 SAFE_MODE 에서는 주입하지 않는다(실제 키/마우스 출력 차단
+        # 계약). down 후 반드시 up 을 보장(finally)해 예외 시 Alt 가 눌린 채로 남아
+        # 이후 클릭이 Alt+click 으로 변질되는 stuck-modifier 를 막는다.
+        if not _safe_mode_active():
+            try:
+                user32.keybd_event(_VK_MENU, 0, 0, 0)
+            except Exception:
+                pass
+            finally:
+                try:
+                    user32.keybd_event(_VK_MENU, 0, _KEYEVENTF_KEYUP, 0)
+                except Exception:
+                    pass
+
         user32.ShowWindow(handle, _SW_RESTORE)
         user32.BringWindowToTop(handle)
         user32.SetForegroundWindow(handle)
@@ -382,6 +405,54 @@ def block_input(enable: bool, *, debug_label: str = "") -> bool:
         # enable 실패는 보통 권한(무결성 수준) 문제. 호출부는 RCS 자동화를 그대로 진행.
         print(f"[WARNING] 사용자 입력 {state} 미적용(권한?): {debug_label}")
     return ok
+
+
+def _safe_mode_active() -> bool:
+    """SAFE_MODE env 가 켜져 있는지 — 켜져 있으면 합성 키/마우스 출력을 금지한다.
+
+    함수 안 import 로 util 패키지 초기화 순환을 피한다(호출 시점엔 모듈 로드 완료).
+    """
+    try:
+        from poc.workflow_3.util import env_flag
+        return bool(env_flag("SAFE_MODE", default=False))
+    except Exception:
+        return False
+
+
+def is_elevated() -> bool | None:
+    """현재 프로세스가 관리자 권한(elevated)으로 실행 중인지 반환한다.
+
+    Windows 의 UIPI(User Interface Privilege Isolation) 때문에 *비elevated* 프로세스는
+    더 높은 무결성 수준의 창을 foreground 로 올리거나(AttachThreadInput/SetForeground
+    Window) 그 위로 BlockInput 을 거는 것이 조용히 실패한다. 사용자가 다른 앱을 쓰는
+    중에 RCS 전면화가 안 되는 가장 흔한 숨은 원인이라, 시작 시 진단으로 찍는다.
+
+    Windows 가 아니거나 조회 실패면 None(판정 불가)을 반환한다.
+    """
+    if os.name != "nt":
+        return None
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return None
+
+
+def print_elevation_status() -> None:
+    """관리자 권한 여부를 시작 1회 진단으로 출력한다(비elevated 면 UIPI 경고).
+
+    production / check-only 두 모니터 진입점이 공유한다 — 둘 다 BlockInput·강제
+    전면화에 의존하므로 비elevated 경고가 동일하게 필요하다. 비Windows/조회 실패
+    (is_elevated()==None)면 아무것도 출력하지 않는다. (cp949 콘솔 대비 em-dash 미사용.)
+    """
+    elevated = is_elevated()
+    if elevated is True:
+        print("[INFO] 프로세스 권한: 관리자(elevated) - 강제 전면화/BlockInput 가능.")
+    elif elevated is False:
+        print(
+            "[WARNING] 프로세스 권한: 비관리자 - UIPI 로 인해 사용자가 다른 앱을 쓰는 중엔 "
+            "RCS 강제 전면화/BlockInput 이 실패할 수 있습니다. '관리자 권한으로 실행' 으로 "
+            "터미널/스크립트를 띄우세요."
+        )
 
 
 def activate_window(

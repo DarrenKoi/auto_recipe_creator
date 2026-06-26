@@ -408,6 +408,9 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
     )
     print(f"[INFO] 알람 로그: {ALARM_LOG_PATH}")
     print(f"[INFO] 사이클 manifest: {CYCLE_MANIFEST_PATH}")
+    # 관리자 권한 진단 — production 도 BlockInput·강제 전면화에 의존하므로 비elevated 경고 필요.
+    from poc.workflow_3.util.window_utils import print_elevation_status
+    print_elevation_status()
     print(
         "[INFO] 각 신규 Align Fail: RCS 확보 → 접속 → 상시 녹화 → SEM panel → CV 보정 "
         "→ (실패 시 cube 알림 + 엔지니어 watch) → tool 닫기. 중복 알람은 한 번만 처리."
@@ -455,4 +458,9 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
 
 
 if __name__ == "__main__":
+    # 실편집 workflow_3_config.py 의 토글을 env 로 브리지(있으면). load_workflow3_settings
+    # 가 env 를 읽기 전에 호출해야 적용된다. 실제 OS env 가 우선(setdefault).
+    from poc.workflow_3.workflow_3_config_loader import seed_env
+
+    seed_env()
     monitor_loop()

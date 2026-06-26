@@ -208,6 +208,11 @@ def _report_data_paths() -> None:
     # import 는 함수 안에서 — 모듈 로드 부작용/순환을 피하고 진단 비용을 시작 1회로 한정.
     from poc.workflow_3 import ALIGN_CONSENSUS_CACHE_DIR, ALIGN_IMAGES_DIR
     from poc.workflow_3.align.assets import iter_recipe_dirs
+    from poc.workflow_3.util.window_utils import print_elevation_status
+
+    # 관리자 권한(elevated) 여부 — UIPI 때문에 비elevated 면 사용자가 다른 앱을 쓰는
+    # 중에 RCS 강제 전면화/BlockInput 이 조용히 실패한다(전면화 안 되는 숨은 주원인).
+    print_elevation_status()
 
     img_root = ALIGN_IMAGES_DIR
     img_exists = img_root.is_dir()
@@ -322,4 +327,9 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
 
 
 if __name__ == "__main__":
+    # 실편집 workflow_3_config.py 의 토글을 env 로 브리지(있으면). load_workflow3_settings
+    # 가 env 를 읽기 전에 호출해야 적용된다. 실제 OS env 가 우선(setdefault).
+    from poc.workflow_3.workflow_3_config_loader import seed_env
+
+    seed_env()
     monitor_loop()

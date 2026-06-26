@@ -88,3 +88,6 @@ side_projects/screenshot_document_extraction/data/captures/*
 
 # golden eval local config (edit-often scratch; template = *.example.py)
 poc/workflow_2/golden_eval_config.py
+
+# workflow_3 monitor local config (edit-often scratch; template = *.example.py)
+poc/workflow_3/workflow_3_config.py

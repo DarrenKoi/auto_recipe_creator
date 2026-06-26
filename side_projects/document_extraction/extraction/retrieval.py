@@ -9,16 +9,16 @@ import json
 import re
 from pathlib import Path
 
+from side_projects.document_extraction.extraction.schemas import CHUNK_TYPES
+
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 
 # quality gate 의 confidence 임계 (rag_chunks.TRUST_CONFIDENCE 와 동일)
 TRUST_CONFIDENCE = 0.7
 
-_KNOWN_REGION_TYPES = {
-    "document_summary", "region_text", "table_summary",
-    "table_row", "chart_summary", "formula", "unresolved",
-}
+# 알려진 chunk type 은 schemas.CHUNK_TYPES 단일 출처에서 파생(중복/드리프트 방지).
+_KNOWN_REGION_TYPES = set(CHUNK_TYPES)
 
 
 def _safe_float(value, default: float = 0.0) -> float:

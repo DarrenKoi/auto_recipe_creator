@@ -39,7 +39,7 @@ REGION_TYPES: tuple[str, ...] = (
     "other",
 )
 
-# RAG chunk type (rag_db_plan.md "Chunk Types").
+# RAG chunk type (rag_db_plan.md "Chunk Types" + Phase 1 digital-harvest 확장).
 CHUNK_TYPES: tuple[str, ...] = (
     "document_summary",
     "region_text",
@@ -48,6 +48,10 @@ CHUNK_TYPES: tuple[str, ...] = (
     "chart_summary",
     "formula",
     "unresolved",
+    # Phase 1 (harvest digital 레이어) 신규: 절차 / 에러코드 / 그림
+    "procedure",
+    "error_code",
+    "figure",
 )
 
 SOURCE_TYPES: tuple[str, ...] = ("powerpoint", "pdf", "excel", "unknown")

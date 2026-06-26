@@ -87,6 +87,33 @@ def test_figure_chunk_points_at_original_bytes():
         assert c.parent_heading == "1.1 Setup"    # section context for retrieval
 
 
+def test_param_table_deduped_across_sources():
+    # pymupdf + pdfplumber emit the SAME table; rows must not double.
+    with tempfile.TemporaryDirectory() as td:
+        bundle = _prepared_bundle(td)
+        chunks = chunk_page(bundle.pages[0], bundle.doc_id)
+        assert len(_by_type(chunks, "table_row")) == 2      # Focus, Gain (not 4)
+        assert len(_by_type(chunks, "table_summary")) == 1  # not 2
+
+
+def test_error_table_multiword_header_and_none_row():
+    # 'Error Code' header (not exact 'code') + a None row must not crash.
+    with tempfile.TemporaryDirectory() as td:
+        bundle = _prepared_bundle(td)
+        chunks = chunk_page(bundle.pages[2], bundle.doc_id)
+        err = _by_type(chunks, "error_code")
+        assert len(err) == 2, [c.content for c in chunks]   # None row skipped
+        assert any("E9006" in c.keywords for c in err)
+
+
+def test_repeated_figure_deduped_across_pages():
+    # same xref figure on page 1 and 2 -> ONE figure chunk in the bundle.
+    with tempfile.TemporaryDirectory() as td:
+        bundle = _prepared_bundle(td)
+        chunks = chunk_bundle(bundle)
+        assert len(_by_type(chunks, "figure")) == 1
+
+
 def test_chunk_bundle_end_to_end():
     with tempfile.TemporaryDirectory() as td:
         bundle = _prepared_bundle(td)
@@ -99,6 +126,7 @@ def test_chunk_bundle_end_to_end():
             assert c.document_id == "syn_manual"
             assert c.embedding_text
             assert c.chunk_id
+            assert c.model_sources == ["harvest"]
 
 
 def main():
@@ -107,6 +135,9 @@ def main():
     test_param_table_rows_exact()
     test_error_code_table()
     test_figure_chunk_points_at_original_bytes()
+    test_param_table_deduped_across_sources()
+    test_error_table_multiword_header_and_none_row()
+    test_repeated_figure_deduped_across_pages()
     test_chunk_bundle_end_to_end()
     print("[PASS] test_chunkers_smoke")
 

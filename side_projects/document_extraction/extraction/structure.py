@@ -47,16 +47,26 @@ def detect_headings(page) -> list:
     """
     if not page.blocks:
         return []
-    # 크기별 누적 글자수 -> 지배 크기 = body baseline
+    # 크기별 누적 글자수 -> 지배 크기 = body baseline.
+    # 실 PDF 는 kerning/subset 으로 9.96/10.0/10.04 처럼 흩어지므로 0.5 단위로 버킷팅해
+    # histogram 파편화를 막는다.
     char_by_size = {}
     for b in page.blocks:
         for s in b.spans:
-            char_by_size[s.size] = char_by_size.get(s.size, 0) + len(s.text)
+            bucket = round(s.size * 2) / 2
+            char_by_size[bucket] = char_by_size.get(bucket, 0) + len(s.text)
     baseline = max(char_by_size, key=char_by_size.get) if char_by_size else 0.0
 
     headings = []
     for b in page.blocks:
-        b.is_heading = baseline > 0 and b.max_size > baseline * HEADING_RATIO
+        bucket = round(b.max_size * 2) / 2
+        # 크기가 body 대비 크거나, body 와 같은 크기라도 굵게(bold flag 16)면 heading.
+        is_big = baseline > 0 and bucket > baseline * HEADING_RATIO
+        # bold 는 짧은 한 줄(<=80자)일 때만 heading 신호로 - bold 본문이 통째로
+        # heading 으로 오인돼 region_text 가 비는 것을 막는다.
+        is_bold = (bucket >= baseline and len(b.text.strip()) <= 80
+                   and any(int(s.flags) & 16 for s in b.spans))
+        b.is_heading = bool(is_big or is_bold)
         if b.is_heading:
             headings.append(b)
     return headings

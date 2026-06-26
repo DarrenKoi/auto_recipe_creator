@@ -80,6 +80,9 @@ def load_bundle(root: Path) -> Bundle:
 
     pages = []
     for rec in per_page:
+        if not isinstance(rec.get("page"), int):
+            print(f"[WARNING] manifest per_page 레코드에 정수 page 없음, 건너뜀: {rec.get('page')!r}")
+            continue
         pages.append(_load_page(root, rec))
 
     return Bundle(root=root, doc_id=doc_id, toc=toc, metadata=metadata, pages=pages)
@@ -135,19 +138,26 @@ def _load_page(root: Path, rec: dict) -> PageModel:
 
 
 def _parse_blocks(text_dict: dict) -> list:
-    """get_text('dict') -> Block 목록 (type 0 텍스트 block 만)."""
+    """get_text('dict') -> Block 목록 (type 0 텍스트 block 만).
+
+    줄바꿈을 보존한다: line 내 span 은 이어 붙이고(line 텍스트), block 텍스트는 line 을
+    '\\n' 로 합친다. (실데이터에선 각 시각적 line 이 별도 'lines' 항목이라, 단순 space-join
+    하면 'Step 1\\nStep 2...' 의 줄 구분이 사라져 절차 감지가 무력화된다.)
+    """
     blocks = []
     for b in text_dict.get("blocks", []):
         if b.get("type") != 0:
             continue  # 이미지 block 은 figures/ 로 따로 수확됨
         spans = []
+        line_texts = []
         for line in b.get("lines", []):
-            for s in line.get("spans", []):
+            line_spans = line.get("spans", [])
+            for s in line_spans:
                 spans.append(Span(text=s.get("text", ""), bbox=list(s.get("bbox") or []),
                                   size=float(s.get("size") or 0.0), font=s.get("font", ""),
                                   flags=int(s.get("flags") or 0)))
-        # span 텍스트를 읽기순서대로 합침(공백 join). 빈 block 은 건너뜀.
-        text = " ".join(s.text for s in spans).strip()
+            line_texts.append("".join(s.get("text", "") for s in line_spans))
+        text = "\n".join(line_texts).strip()
         if not text and not spans:
             continue
         blocks.append(Block(bbox=list(b.get("bbox") or []), spans=spans, text=text))

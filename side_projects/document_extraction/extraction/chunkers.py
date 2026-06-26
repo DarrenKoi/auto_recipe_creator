@@ -17,7 +17,7 @@ import re
 from side_projects.document_extraction.extraction.schemas import BBox, RagChunk
 from side_projects.document_extraction.extraction.rag_chunks import (
     MAX_TABLE_ROW_CHUNKS,
-    TRUST_CONFIDENCE,
+    _review_status,
     build_embedding_text,
 )
 
@@ -49,8 +49,12 @@ def _section_leaf(page) -> str:
 
 def _make_chunk(doc_id, page, suffix, region_type, content, *, bbox=None,
                 parent_heading="", source_image="", confidence=CONF_TEXT,
-                keywords=None, raw_text="", context_after=""):
-    """공통 provenance 를 채운 RagChunk. section_path 는 context_before 로 보존."""
+                keywords=None, raw_text=""):
+    """공통 provenance 를 채운 RagChunk. section_path 는 context_before 로 보존.
+
+    review_status 는 rag_chunks._review_status 단일 정책을 재사용(이중 정의 방지).
+    model_sources=["harvest"] 로 디지털-harvest 산출 chunk 임을 lineage 에 남긴다.
+    """
     chunk = RagChunk(
         chunk_id=f"{doc_id}_p{page.page_no:04d}_{suffix}",
         document_id=doc_id,
@@ -65,10 +69,10 @@ def _make_chunk(doc_id, page, suffix, region_type, content, *, bbox=None,
         content=content,
         raw_ocr_text=raw_text,
         context_before=" > ".join(page.section_path),
-        context_after=context_after,
         keywords=keywords or [],
+        model_sources=["harvest"],
         confidence=confidence,
-        review_status="approved" if confidence >= TRUST_CONFIDENCE else "needs_review",
+        review_status=_review_status(confidence),
     )
     chunk.embedding_text = build_embedding_text(chunk)
     return chunk
@@ -87,11 +91,38 @@ def chunk_page(page, doc_id) -> list:
 
 
 def chunk_bundle(bundle) -> list:
-    """bundle 전체 -> RagChunk 목록 (structure 가 먼저 assign 되어 있어야 함)."""
+    """bundle 전체 -> RagChunk 목록 (structure 가 먼저 assign 되어 있어야 함).
+
+    매 페이지에 반복되는 그림(로고)/머리말·꼬리말(동일 본문)을 전역 dedup 해서
+    수천 개의 동일 chunk 가 trusted tier 를 오염시키는 것을 막는다(첫 등장만 보존)."""
     out = []
     for page in bundle.pages:
         out.extend(chunk_page(page, bundle.doc_id))
-    return out
+    return _dedup_repeats(out)
+
+
+def _dedup_repeats(chunks) -> list:
+    """반복 figure(source_image 동일) + 반복 region_text(content 동일) 전역 dedup."""
+    seen_fig = set()
+    seen_text = set()
+    kept = []
+    dropped = 0
+    for c in chunks:
+        if c.region_type == "figure" and c.source_image:
+            if c.source_image in seen_fig:
+                dropped += 1
+                continue
+            seen_fig.add(c.source_image)
+        elif c.region_type == "region_text":
+            key = c.content.strip()
+            if key in seen_text:
+                dropped += 1
+                continue
+            seen_text.add(key)
+        kept.append(c)
+    if dropped:
+        print(f"[INFO] 반복 chunk dedup: {dropped}건 제거(figure/머리꼬리말)")
+    return kept
 
 
 def _procedure_chunks(page, doc_id, consumed) -> list:
@@ -129,7 +160,28 @@ def _procedure_chunks(page, doc_id, consumed) -> list:
 
 
 def _is_error_table(header) -> bool:
-    return any(str(h).strip().lower() in ERROR_HEADER_KEYWORDS for h in header)
+    """header 셀의 토큰 중 하나라도 에러 키워드면 True. 'Error Code'/'Alarm Code' 등
+    다단어 header 도 잡는다(정확일치 X)."""
+    for h in header:
+        if set(re.findall(r"[a-z]+", str(h).lower())) & ERROR_HEADER_KEYWORDS:
+            return True
+    return False
+
+
+def _dedup_tables(tables) -> list:
+    """같은 표를 pymupdf/pdfplumber 두 출처로 받았을 때 rows 가 동일하면 하나만 남긴다
+    (param/error 행이 두 배로 불어나는 것 방지). 내용이 다르면 둘 다 보존."""
+    seen = set()
+    unique = []
+    for t in tables:
+        rows = t.get("rows") or []
+        key = tuple(tuple("" if c is None else str(c).strip() for c in (r or []))
+                    for r in rows)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(t)
+    return unique
 
 
 def _row_pairs(header, row) -> str:
@@ -145,13 +197,14 @@ def _table_chunks(page, doc_id) -> list:
     """표 -> error_code(에러표) 또는 table_summary + table_row(일반표)."""
     chunks = []
     tnum = 0
-    for table in page.tables:
+    for table in _dedup_tables(page.tables):
         rows = table.get("rows") or []
-        if not rows:
+        if not rows or rows[0] is None:
             continue
         tnum += 1
         header = [("" if c is None else str(c)) for c in rows[0]]
-        data = rows[1:]
+        # ragged 실표: None 행 제거(빈 행/스페이서)
+        data = [r for r in rows[1:] if r]
 
         if _is_error_table(header):
             for ridx, row in enumerate(data):

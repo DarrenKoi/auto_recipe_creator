@@ -31,9 +31,17 @@ def build_chunks(bundle_root: Path) -> list:
 
 
 def build_to_jsonl(bundle_root: Path, out_path: Path) -> int:
-    """번들 -> rag_chunks.jsonl. 기록한 chunk 수 반환."""
+    """번들 -> rag_chunks.jsonl. 기록한 chunk 수 반환.
+
+    write_chunks_jsonl 은 append 라, 재실행 시 store 가 두 배가 되는 것을 막기 위해
+    기존 파일을 먼저 비운다(overwrite). 튜닝 후 재빌드가 흔하므로 idempotent 가 맞다.
+    """
+    out_path = Path(out_path)
+    if out_path.exists():
+        out_path.unlink()
+        print(f"[INFO] 기존 {out_path.name} 삭제 후 재생성(overwrite)")
     chunks = build_chunks(bundle_root)
-    n = write_chunks_jsonl(chunks, Path(out_path))
+    n = write_chunks_jsonl(chunks, out_path)
     print(f"[INFO] chunk {n}건 -> {out_path}")
     return n
 

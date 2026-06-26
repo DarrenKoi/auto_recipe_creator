@@ -31,7 +31,7 @@ def test_blocks_parsed_with_spans():
         assert head.text == "1.1 Setup"
         assert head.max_size == 18.0
         assert "alignment system" in body.text
-        assert body.max_size == 10.0
+        assert body.max_size == 9.96   # real PDFs scatter sizes; structure buckets them
         # bbox preserved as [x0,y0,x1,y1]
         assert head.bbox == [72, 60, 300, 82]
 
@@ -41,8 +41,8 @@ def test_tables_figures_render_loaded():
         root = write_synthetic_bundle(Path(td) / "syn_manual")
         b = load_bundle(root)
         p1, p2 = b.pages[0], b.pages[1]
-        # tables
-        assert len(p1.tables) == 1
+        # tables: loader keeps BOTH raw sources (pymupdf+pdfplumber); dedup is the chunker's job
+        assert len(p1.tables) == 2
         assert p1.tables[0]["rows"][0] == ["Parameter", "Range"]
         assert p2.tables == []
         # figures: file path resolved against bundle root, points at a real file
@@ -65,11 +65,34 @@ def test_missing_files_tolerated():
         assert any("tables 누락" in w for w in p3.load_warnings), p3.load_warnings
 
 
+def test_block_preserves_line_breaks():
+    # real get_text('dict') puts each visual line in its own 'lines' entry;
+    # the loader must keep newlines so step detection works downstream.
+    with tempfile.TemporaryDirectory() as td:
+        root = write_synthetic_bundle(Path(td) / "syn_manual")
+        proc_block = load_bundle(root).pages[1].blocks[1]   # the 3-line procedure
+        assert proc_block.text.count("\n") == 2             # 3 lines -> 2 breaks
+        assert proc_block.text.splitlines()[0].startswith("Step 1")
+
+
+def test_non_int_page_record_skipped():
+    import json
+    with tempfile.TemporaryDirectory() as td:
+        root = write_synthetic_bundle(Path(td) / "syn_manual")
+        man = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+        man["per_page"].append({"page": None, "text": True})   # corrupt rec
+        (root / "manifest.json").write_text(json.dumps(man), encoding="utf-8")
+        bundle = load_bundle(root)                              # must not raise
+        assert len(bundle.pages) == 3                           # bad rec skipped
+
+
 def main():
     test_load_bundle_basic()
     test_blocks_parsed_with_spans()
     test_tables_figures_render_loaded()
     test_missing_files_tolerated()
+    test_block_preserves_line_breaks()
+    test_non_int_page_record_skipped()
     print("[PASS] test_harvest_loader_smoke")
 
 

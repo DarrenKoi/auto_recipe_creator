@@ -33,8 +33,20 @@ def test_pipeline_jsonl_searchable():
         assert "Range: 1-5" in gain[0]["chunk"]["content"]
 
 
+def test_rebuild_is_idempotent():
+    # re-running the build over the same bundle must NOT double the store.
+    with tempfile.TemporaryDirectory() as td:
+        root = write_synthetic_bundle(Path(td) / "syn_manual")
+        out = Path(td) / "rag_chunks.jsonl"
+        n1 = build_to_jsonl(root, out)
+        n2 = build_to_jsonl(root, out)        # rerun (e.g. after tuning)
+        assert n1 == n2
+        assert len(load_chunks(out)) == n1    # not 2*n1
+
+
 def main():
     test_pipeline_jsonl_searchable()
+    test_rebuild_is_idempotent()
     print("[PASS] test_b1_pipeline_smoke")
 
 

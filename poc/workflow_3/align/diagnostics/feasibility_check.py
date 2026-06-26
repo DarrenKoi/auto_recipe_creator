@@ -234,6 +234,10 @@ def mark_align_feasibility(
     vlm_client=None,
     ocr_client=None,
     pm_two_stage: bool = False,
+    consensus_enabled: bool = False,
+    consensus_min_s: int = 4,
+    consensus_max_events: int = 8,
+    consensus_sync_timeout_sec: float = 8.0,
 ) -> FeasibilityResult:
     """캡처 스크린샷에 보정 가능성을 판정해 overlay(_marked.jpg)+json 으로 남긴다.
 
@@ -243,7 +247,9 @@ def mark_align_feasibility(
     기존 '전체 매칭 후 최고점수' 폴백), (2) box 안쪽만 잘라 매칭한 뒤 box 원점만큼
     align point 를 풀프레임 좌표로 되돌리고, (3) box 사각형을 overlay 에 그린다. client 가
     없거나(개발 PC) 검출이 실패하면 전체 캡처 창 매칭으로 안전하게 폴백한다.
-    consensus cache 의 S event 수는 read-only 로 읽어 표기만 한다(verdict 에 영향 없음).
+    consensus cache 의 S event 수는 read-only 로 읽어 항상 표기한다. `consensus_enabled`
+    면 매칭 template 자체를 consensus history(과거 성공 S) 우선·rcp 폴백으로 라우팅해
+    verdict 에 반영한다(off 면 rcp-only, S 개수는 표기만).
     예외/자산 부재도 캡처 위에 배너를 남겨 엔지니어가 한눈에 보게 한다.
     `FeasibilityResult` 반환.
     """
@@ -267,7 +273,27 @@ def mark_align_feasibility(
     frame_wh = (color.shape[1], color.shape[0])
 
     assets = resolve_assets_auto(eqp_id=eqp_id, recipe_name=recipe_id)
-    templates = build_templates_from_assets(assets, cond_box_crop=cond_box_crop) if assets else {}
+    # 매칭 template: consensus_enabled 면 consensus history(과거 성공 S) 우선·rcp 폴백
+    # (production correct_align_fail_auto 와 동일한 resolve_templates 라우팅을 재사용).
+    # history 가 충분하면 누적 성공의 합의 키로 매칭하고(올바른 align point 확률↑),
+    # 부족/blur/timeout/예외면 해당 modality 는 등록된 rcp 키로 강등한다. 기본 off 면
+    # 기존 rcp-only 경로(테스트/오프라인 진단 불변).
+    if not assets:
+        templates = {}
+    elif consensus_enabled:
+        from poc.workflow_3.align.consensus_resolve import resolve_templates
+
+        templates = resolve_templates(
+            assets,
+            eqp_id=eqp_id,
+            consensus_enabled=True,
+            min_s=consensus_min_s,
+            max_events=consensus_max_events,
+            sync_timeout_sec=consensus_sync_timeout_sec,
+            cond_box_crop=cond_box_crop,
+        )
+    else:
+        templates = build_templates_from_assets(assets, cond_box_crop=cond_box_crop)
 
     verdict = "no_assets"
     decision = ""

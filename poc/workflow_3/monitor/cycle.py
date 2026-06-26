@@ -812,6 +812,10 @@ def _check_feasibility_and_preview(
             vlm_client=sem_box_client,
             ocr_client=ocr_client,
             pm_two_stage=settings.pm_two_stage_ocr_enabled,
+            consensus_enabled=settings.consensus_enabled,
+            consensus_min_s=settings.consensus_min_s,
+            consensus_max_events=settings.gather_max_events,
+            consensus_sync_timeout_sec=settings.consensus_sync_timeout_sec,
         )
     except Exception as exc:
         print(f"[WARNING] feasibility 분석 실패(캡처는 유지): {exc}")
@@ -1044,6 +1048,10 @@ def _run_zoom_ladder(
                         reregister_ratio_threshold=settings.reregister_second_ratio_threshold,
                         vlm_client=sem_box_client, ocr_client=ocr_client,
                         pm_two_stage=settings.pm_two_stage_ocr_enabled,
+                        consensus_enabled=settings.consensus_enabled,
+                        consensus_min_s=settings.consensus_min_s,
+                        consensus_max_events=settings.gather_max_events,
+                        consensus_sync_timeout_sec=settings.consensus_sync_timeout_sec,
                     )
                     rung.update(
                         verdict=fr.verdict, decision=fr.decision, score=fr.score,

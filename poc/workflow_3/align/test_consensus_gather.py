@@ -80,13 +80,24 @@ def test_stage_basic():
 
 
 def test_layout_nested():
+    """cache 경로는 eqp 무관 — `<root>/<class>/<recipe>/events` (eqp_id 절대 미포함).
+
+    consensus pool 은 같은 recipe 면 장비 달라도 공유한다. eqp 가 경로에 끼면 office
+    적재(eqp 없음)와 어긋나 consensus 가 조용히 안 잡힌다 — 이 가드가 재발을 막는다.
+    """
     root = Path(tempfile.mkdtemp())
     try:
         dl = _FakeDownloader([("EV1", 1)])
         res = gather_success_images("EQP1", "CLS/RCP", downloader=dl, cache_root=root)
-        expected = root / "EQP1" / "CLS" / "RCP" / "events"
-        ok = res.events_dir == expected and (expected / "EV1" / "S0001.jpeg").exists()
-        print(f"[{'PASS' if ok else 'FAIL'}] layout_nested: events_dir={res.events_dir}")
+        expected = root / "CLS" / "RCP" / "events"               # eqp 없음.
+        no_eqp = "EQP1" not in res.events_dir.parts               # eqp 가 경로에 끼면 즉시 FAIL.
+        ok = (
+            res.events_dir == expected
+            and no_eqp
+            and (expected / "EV1" / "S0001.jpeg").exists()
+        )
+        print(f"[{'PASS' if ok else 'FAIL'}] layout_nested(eqp-independent): "
+              f"events_dir={res.events_dir} no_eqp={no_eqp}")
         return ok
     finally:
         shutil.rmtree(root, ignore_errors=True)
@@ -136,7 +147,7 @@ def test_downloader_raises():
                                     downloader=_FakeDownloader([], raise_exc=True),
                                     cache_root=root)
         event_dirs = {f.split("/")[0] for f in _staged_files(res.events_dir)}
-        staging = root / "EQP1" / "CLS" / "RCP" / ".events_staging"
+        staging = root / "CLS" / "RCP" / ".events_staging"
         ok = (
             res.reason.startswith("error:")
             and event_dirs == {"KEEP_A"}        # 기존 set 보존.
@@ -183,7 +194,7 @@ def test_malformed_event_reports_error():
         dl = _MalformedDownloader()
         res = gather_success_images("EQP1", "CLS/RCP", downloader=dl, cache_root=root)
         event_dirs = {f.split("/")[0] for f in _staged_files(res.events_dir)}
-        staging = root / "EQP1" / "CLS" / "RCP" / ".events_staging"
+        staging = root / "CLS" / "RCP" / ".events_staging"
         ok = (
             res.reason.startswith("error:swap:")   # swap/count 예외 경로
             and event_dirs == {"KEEP_A"}            # 기존 캐시 보존
@@ -302,11 +313,26 @@ def test_nonempty_replaces_cache(tmp_path=None):
             shutil.rmtree(root, ignore_errors=True)
 
 
+def test_cross_eqp_shares_one_pool():
+    """다른 두 장비가 같은 recipe 를 측정하면 **동일** cache 경로(공유 pool)를 쓴다.
+
+    eqp 별로 쪼개지면(예전 버그) 같은 recipe 의 S 가 두 폴더로 흩어져 min_s 도달이
+    어려워진다. _events_dir_for 가 eqp 를 안 받으므로 구조적으로 보장되지만, 회귀 가드로
+    명시 검증한다(office downloader 가 eqp 없이 쓰는 경로와도 일치해야 함).
+    """
+    a = _events_dir_for("CLS/RCP", _Path("/cache"))
+    b = _events_dir_for("CLS/RCP", _Path("/cache"))  # 다른 장비라도 같은 recipe → 같은 경로.
+    ok = a == b == _Path("/cache/CLS/RCP/events")
+    print(f"[{'PASS' if ok else 'FAIL'}] cross_eqp_shares_one_pool: {a}")
+    return ok
+
+
 def main():
     print("[INFO] consensus_gather self-test 시작")
     results = [
         test_stage_basic(),
         test_layout_nested(),
+        test_cross_eqp_shares_one_pool(),
         test_replace_swaps_to_latest(),
         test_empty_preserves_existing(),
         test_downloader_raises(),

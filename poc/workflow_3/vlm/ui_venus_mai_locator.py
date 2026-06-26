@@ -44,6 +44,7 @@ class TargetResult:
     exit_code: str
     target_key: str
     point: dict | None = None
+    bbox: dict | None = None   # coarse(ui-venus) 단계 영역 bbox(full px) — 영역 crop 재사용용.
     artifacts: dict[str, str] = field(default_factory=dict)
 
 
@@ -756,6 +757,7 @@ def analyze_window_target(
         EXIT_SUCCESS,
         target.key,
         point=refined_full_point,
+        bbox=coarse_result["bbox_pixels"],
         artifacts=result_payload["artifacts"],
     )
 

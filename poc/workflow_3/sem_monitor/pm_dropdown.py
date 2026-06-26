@@ -115,6 +115,34 @@ def dropdown_region_below(button_xy, frame_wh):
     return (l, t, r, b)
 
 
+def crop_region_from_bbox(coarse_bbox, frame_wh, *, pad_x_ratio=0.4, pad_y_ratio=0.3):
+    """VLM coarse bbox(열린 드롭다운 영역)를 패딩+frame clamp 한 crop (l,t,r,b) 픽셀로 만든다.
+
+    드롭다운 리스트가 coarse bbox 보다 약간 크게 렌더될 수 있어 bbox 폭/높이 비율만큼
+    여유를 둔다. 고정 비율 기하 추정(dropdown_region_below)을 대체하는, VLM 으로 위치를
+    찾은 영역. bbox/frame 누락·degenerate 면 None.
+    """
+    if not coarse_bbox or not frame_wh:
+        return None
+    try:
+        fw, fh = int(frame_wh[0]), int(frame_wh[1])
+        l0 = int(coarse_bbox["left"]); t0 = int(coarse_bbox["top"])
+        r0 = int(coarse_bbox["right"]); b0 = int(coarse_bbox["bottom"])
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+    w = max(1, r0 - l0)
+    h = max(1, b0 - t0)
+    px = int(round(w * pad_x_ratio))
+    py = int(round(h * pad_y_ratio))
+    l = max(0, l0 - px)
+    t = max(0, t0 - py)
+    r = min(fw, r0 + px)
+    b = min(fh, b0 + py)
+    if r - l < 4 or b - t < 4:
+        return None
+    return (l, t, r, b)
+
+
 _MAG_TOKEN_RE = re.compile(r"\d+(?:\.\d+)?\s*[kK]?")
 
 
@@ -191,6 +219,31 @@ def read_dropdown_options(crop_image, ocr_client, *, crop_origin=(0, 0)):
     return options, raw_text
 
 
+def nearest_option(options, value):
+    """options(각 {"value": float, ...}) 중 value 와 가장 가까운 행을 고른다. 빈 목록이면 None.
+
+    드롭다운 재읽기 후 목표 배율값에 해당하는 현재 행을 다시 찾을 때 쓴다(배율이 바뀌어
+    행이 이동해도 값 기준으로 매칭).
+    """
+    if not options:
+        return None
+    return min(options, key=lambda o: abs(o["value"] - value))
+
+
+def row_target_description(value, text):
+    """mai-ui 2단계 그라운더가 찾을 '드롭다운 한 행' 설명 문자열을 만든다.
+
+    coarse(ui-venus)->fine(mai-ui) 파이프라인에 넘길 타깃 설명. 라이브 SEM 이미지의
+    배율 숫자와 헷갈리지 않게 '열린 magnification dropdown 의 행'이라는 맥락을 명시하고
+    그 행의 배율 텍스트를 넣는다.
+    """
+    label = (str(text).strip() or str(value))
+    return (
+        f"the row showing the magnification value '{label}' in the opened "
+        "magnification dropdown list that appeared below the PM button"
+    )
+
+
 def choose_step_targets(options, current_mag, out_steps, in_steps):
     """배율 값공간에서 OUT(낮은 값)·IN(높은 값) 목표 행들을 고른다.
 
@@ -220,6 +273,9 @@ __all__ = [
     "pm_button_point",
     "dropdown_region",
     "dropdown_region_below",
+    "crop_region_from_bbox",
     "read_dropdown_options",
     "choose_step_targets",
+    "nearest_option",
+    "row_target_description",
 ]

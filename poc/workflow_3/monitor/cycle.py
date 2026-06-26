@@ -1277,17 +1277,27 @@ def _run_pm_dropdown_arms(
     (2) 최초 1회 PaddleOCR ``Spotting:`` 으로 행별 (배율, 클릭 박스) 읽기 → 값공간 목표 산출,
     (3) 각 목표 행 클릭(절대 배율 적용) → settle → ``capture_rung(label)`` 으로 캡처+재매칭.
 
-    절대 선택이라 wheel 처럼 baseline 복귀가 필요 없다(드리프트 없음). 드롭다운은 PM
-    버튼에 고정 앵커되어 같은 위치에 다시 열린다고 보고, 옵션 클릭 좌표는 첫 읽기 값을
-    재사용한다(매번 재오픈하되 재읽기는 생략). 읽기 실패/옵션 부족이면 중단(엔지니어 처리).
+    위치 파이프라인(coarse->fine, 검증된 2단계 VLM 을 드롭다운에도 적용):
+      * 드롭다운 영역 = coarse(ui-venus) bbox -> crop_region_from_bbox 패딩(고정 비율
+        dropdown_region_below 는 폴백). PM 앵커라 캐시.
+      * 값 열거 = PaddleOCR ``Spotting:`` 1회로 배율 값공간만 얻어 OUT/IN stepping.
+      * 행 클릭 점 = 각 목표 값마다 fine(mai-ui)로 '값 <text> 행'을 직접 그라운딩
+        (실패 시 PaddleOCR 박스 중심 폴백). VLM=영역/좌표, OCR=값 확인 규약.
+
+    절대 선택이라 wheel 처럼 baseline 복귀가 필요 없다(드리프트 없음). 선택으로 배율이
+    바뀌어도 mai-ui 가 매 목표마다 행을 다시 찾으므로 stale 좌표 오클릭이 없다. 읽기
+    실패/옵션 부족이면 중단(엔지니어 처리).
 
     반환: zoom_ladder.json 의 ``pm_dropdown`` 섹션에 들어갈 메타(dict).
     """
     from poc.workflow_3.sem_monitor.pm_dropdown import (
         choose_step_targets,
+        crop_region_from_bbox,
         dropdown_region_below,
+        nearest_option,
         pm_button_point,
         read_dropdown_options,
+        row_target_description,
     )
     from poc.workflow_3.sem_monitor.sem_box_detect import detect_sem_box
 
@@ -1345,8 +1355,78 @@ def _run_pm_dropdown_arms(
         _btn_cache["pt"] = pt
         return pt
 
+    # 드롭다운 영역도 PM 버튼처럼 2단계 VLM(coarse ui-venus)으로 찾는다 — 고정 비율
+    # dropdown_region_below 추정이 빗나가 OCR 이 엉뚱한 걸 읽던 문제 해결. PM 앵커라 캐시.
+    _dd_region_cache = {"region": None}
+
+    def _locate_dropdown_region(image, btn):
+        """열린 드롭다운 리스트 영역을 coarse VLM bbox -> crop(l,t,r,b)로. 실패 시 기하 폴백."""
+        if _dd_region_cache["region"] is not None:
+            return _dd_region_cache["region"]
+        region = None
+        try:
+            from poc.workflow_3.vlm.ui_venus_mai_locator import (
+                EXIT_SUCCESS,
+                TargetConfig,
+                analyze_window_target,
+            )
+
+            target = TargetConfig(
+                key="pm_dropdown_list",
+                description=(
+                    "the opened magnification dropdown list (a vertical list of "
+                    "magnification value rows) that appeared just below the 'PM' button "
+                    "in the SEM monitor toolbar"
+                ),
+            )
+            res = analyze_window_target(
+                tool_window, "", "uia", target,
+                debug_image_dir=capture_dir, log_name="vlm_calls",
+                component_name=LOG_COMPONENT, artifact_prefix=f"{tag}_pmdd",
+                image=image, timeout_sec=15.0,
+            )
+            if res.exit_code == EXIT_SUCCESS and res.bbox:
+                region = crop_region_from_bbox(res.bbox, frame_wh)
+                if region is not None:
+                    print(f"[INFO] PM 드롭다운 영역 2단계 VLM: bbox={res.bbox} -> crop={region}")
+        except Exception as exc:
+            print(f"[WARNING] PM 드롭다운 영역 VLM 실패(기하 폴백): {exc}")
+        if region is None:
+            region = dropdown_region_below(btn, frame_wh)
+            print(f"[INFO] PM 드롭다운 영역 기하 폴백: {region}")
+        _dd_region_cache["region"] = region
+        return region
+
+    def _locate_row_point(image, value, text):
+        """mai-ui(2단계)로 '값 <text> 행'의 클릭 점(full px)을 찾는다. 실패 시 None."""
+        try:
+            from poc.workflow_3.vlm.ui_venus_mai_locator import (
+                EXIT_SUCCESS,
+                TargetConfig,
+                analyze_window_target,
+            )
+
+            target = TargetConfig(
+                key=f"pm_row_{text}", description=row_target_description(value, text),
+            )
+            res = analyze_window_target(
+                tool_window, "", "uia", target,
+                debug_image_dir=capture_dir, log_name="vlm_calls",
+                component_name=LOG_COMPONENT, artifact_prefix=f"{tag}_pmrow_{text}",
+                image=image, timeout_sec=15.0,
+            )
+            if res.exit_code == EXIT_SUCCESS and res.point:
+                return {"x": int(res.point["x"]), "y": int(res.point["y"])}
+            print(f"[WARNING] PM 행 mai-ui 미검출({text}, exit={res.exit_code}) -> PaddleOCR 폴백.")
+        except Exception as exc:
+            print(f"[WARNING] PM 행 mai-ui 실패({text}, PaddleOCR 폴백): {exc}")
+        return None
+
     def _open_dropdown(open_idx):
-        """현재 화면에서 PM 버튼을 눌러 드롭다운을 열고 (crop, origin, pm_box) 반환(실패 None)."""
+        """PM 버튼을 눌러 드롭다운을 열고 (crop, origin, pm_box, shot) 반환(실패 None).
+
+        crop/origin 은 PaddleOCR 열거·폴백용(VLM 영역 기준), shot 은 mai-ui 행 그라운딩용 전체화면.
+        """
         img = capture_window(tool_window)
         # PM 버튼: 2단계 VLM(캐시) 우선. 실패 시에만 숫자박스 검출 → 왼쪽 기하 폴백.
         btn = _locate_pm_button(img)
@@ -1374,8 +1454,8 @@ def _run_pm_dropdown_arms(
         if _PM_DROPDOWN_OPEN_SETTLE_SEC > 0:
             time.sleep(_PM_DROPDOWN_OPEN_SETTLE_SEC)
         shot = capture_window(tool_window)
-        # 드롭다운은 PM 버튼 '바로 아래'에 펼쳐진다 — 버튼 점 기준으로 그 아래만 crop.
-        region = dropdown_region_below(btn, frame_wh)
+        # 드롭다운 영역 = 2단계 VLM(coarse) bbox. 실패 시 PM 버튼 아래 고정 비율 폴백.
+        region = _locate_dropdown_region(shot, btn)
         # 검증 overlay: PM 숫자 박스(cyan, 화면의 그것과 동일), 유도한 PM 버튼 클릭점(red),
         # 드롭다운 crop 영역(yellow) 을 그려 클릭이 'PM' 버튼에 맞는지 눈으로 확인.
         try:
@@ -1392,7 +1472,7 @@ def _run_pm_dropdown_arms(
         if region is None:
             return None
         l, t, r, b = region
-        return shot.crop((l, t, r, b)), (l, t), pm_box
+        return shot.crop((l, t, r, b)), (l, t), pm_box, shot
 
     # 1) 첫 오픈 + 옵션 읽기.
     first = _open_dropdown(1)
@@ -1400,7 +1480,7 @@ def _run_pm_dropdown_arms(
         meta["aborted"] = "pm_box_or_open_failed"
         print("[WARNING] PM 드롭다운 fallback 중단: PM 버튼/박스를 못 찾음.")
         return meta
-    crop, origin, _pm_box = first
+    crop, origin, _pm_box, shot0 = first
     options, raw_text = read_dropdown_options(crop, reader, crop_origin=origin)
     meta["spotting_raw"] = raw_text
     meta["pm_options"] = [{"value": o["value"], "text": o["text"]} for o in options]
@@ -1435,44 +1515,46 @@ def _run_pm_dropdown_arms(
         f"-> {[lbl for lbl, _ in targets]}"
     )
 
-    def _click_option(opt):
-        scr = image_point_to_screen(tool_window, opt["center"], image_size=frame_wh)
-        if scr is None:
-            return False
-        print(
-            f"[INFO] PM 옵션 클릭: {opt['text']}({opt['value']}) px={opt['center']} -> screen={scr}"
-            f"{'' if settings.action_enabled else ' [dry-run]'}"
-        )
-        click_at_screen(scr, f"pm_opt_{opt['text']}", action_enabled=settings.action_enabled)
-        return True
-
-    def _locate(opts, value):
-        return min(opts, key=lambda o: abs(o["value"] - value)) if opts else None
-
-    # 2) 각 목표: 첫 목표는 이미 열린 드롭다운(+읽은 옵션) 재사용, 이후는 매번 재오픈 후
-    #    **재읽기**해 목표 배율 행의 현재 좌표를 다시 찾는다 — 선택으로 배율이 바뀌어
-    #    드롭다운/PM 박스가 이동해도 stale 좌표로 오클릭하지 않게 한다.
-    target_values = [(label, opt["value"]) for label, opt in targets]
-    cur_options = options
+    # 2) 각 목표 행 클릭: 1순위 mai-ui(전체화면에서 '값 text 행' 직접 그라운딩),
+    #    폴백 PaddleOCR(드롭다운 crop 재읽기 + 값 매칭 박스 중심). 첫 목표는 이미 열린
+    #    드롭다운(+읽은 crop/shot) 재사용, 이후는 매번 재오픈. mai-ui 가 매번 행을 다시
+    #    찾으므로 선택으로 배율이 바뀌어 행이 이동해도 stale 좌표 오클릭이 없다.
+    cur_crop, cur_origin, cur_shot = crop, origin, shot0
     open_idx = 1
-    for k, (label, value) in enumerate(target_values):
+    for k, (label, opt0) in enumerate(targets):
+        value, text = opt0["value"], opt0["text"]
         if k > 0:
             open_idx += 1
             op = _open_dropdown(open_idx)
             if op is None:
                 print(f"[WARNING] PM 드롭다운 재오픈 실패({label}) - 건너뜀.")
                 continue
-            crop_k, origin_k, _box_k = op
-            cur_options, _raw_k = read_dropdown_options(crop_k, reader, crop_origin=origin_k)
-        opt = _locate(cur_options, value)
-        if opt is None:
-            print(f"[WARNING] PM 드롭다운 재읽기 실패({label} target={value}) - 건너뜀.")
+            cur_crop, cur_origin, _box_k, cur_shot = op
+
+        # 1순위: mai-ui 로 행 클릭 점.
+        point = _locate_row_point(cur_shot, value, text)
+        used = "mai-ui"
+        # 폴백: 드롭다운 crop 재읽기 후 값 매칭 PaddleOCR 박스 중심.
+        if point is None:
+            opts_k, _raw_k = read_dropdown_options(cur_crop, reader, crop_origin=cur_origin)
+            opt = nearest_option(opts_k, value)
+            if opt is not None:
+                point, used = opt["center"], "paddle"
+        if point is None:
+            print(f"[WARNING] PM 행 위치 실패({label} {text}={value}) - 건너뜀.")
             continue
-        if not _click_option(opt):
+
+        scr = image_point_to_screen(tool_window, point, image_size=frame_wh)
+        if scr is None:
             print(f"[WARNING] PM 옵션 screen 변환 실패({label}) - 건너뜀.")
             continue
+        print(
+            f"[INFO] PM 옵션 클릭({used}): {text}({value}) px={point} -> screen={scr}"
+            f"{'' if settings.action_enabled else ' [dry-run]'}"
+        )
+        click_at_screen(scr, f"pm_opt_{text}", action_enabled=settings.action_enabled)
         meta["selections"].append(
-            {"label": label, "value": opt["value"], "text": opt["text"]}
+            {"label": label, "value": value, "text": text, "locator": used}
         )
         if settings.zoom_probe_settle_sec > 0:
             time.sleep(settings.zoom_probe_settle_sec)

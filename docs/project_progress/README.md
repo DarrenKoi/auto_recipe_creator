@@ -3,7 +3,7 @@
 > AI 기반 CD-SEM/VeritySEM recipe 자동 setup PoC — 그동안의 작업(VLM 배포·운영, workflow_1/2/3 구현·테스트·운영) 정리.
 
 이 폴더는 사내 보고용 진행 보고서의 **원본(source of truth)** 입니다. 본문 Markdown을 근거로
-Word(.docx)와 PPT(.pptx)를 생성합니다. (보고서 본문은 경어체로 작성합니다.)
+Word(.docx) 보고서와 시각 부록(`_appendix.html`)을 생성합니다. (보고서 본문은 경어체로 작성합니다.)
 
 ## 문서 목록 (읽는 순서)
 
@@ -18,8 +18,8 @@ Word(.docx)와 PPT(.pptx)를 생성합니다. (보고서 본문은 경어체로 
 
 ## 산출물 생성
 
-본문 6개 `.md`가 **단일 source-of-truth**입니다. `build_report_docx.py`는 이 `.md`를 직접 파싱하여
-(`_md_report.py` 공용 파서) `.docx`로 렌더링하므로, **내용 수정은 `.md`만 고치면 산출물에 반영**됩니다.
+본문 6개 `.md`가 **단일 source-of-truth**입니다. `build_report_docx.py`는 이 `.md`를 공용 파서(`_md_report.py`)로
+직접 파싱해 `.docx`로 렌더링하므로 **내용 수정은 `.md`만 고치면 산출물에 반영**됩니다.
 
 ```bash
 # 의존성 (python-docx 필요)
@@ -35,7 +35,7 @@ uv run python docs/project_progress/build_report_docx.py
 
 ## 작성 원칙
 
-- 본문은 한국어 **경어체**로 작성하고, 모델명·CV 기법·env·경로 등 기술 용어는 영문을 병기합니다.
+- 본문은 한국어 **경어체**로 작성하고 모델명·CV 기법·env·경로 등 기술 용어는 영문을 병기합니다.
 - 모든 수치·경로는 저장소 내 근거 문서를 인용합니다(임의 추정 금지). 주요 근거:
   `docs/setup_vlms/`, `poc/workflow_2/docs/`, `poc/workflow_3/README.md` + `poc/workflow_3/docs/`.
-- 정확도 수치는 **벤치(golden set) 기준**임을 명시하고, 오피스 실데이터 검증 대기 항목과 구분합니다.
+- 정확도 수치는 **벤치(golden set) 기준**임을 명시하고 오피스 실데이터 검증 대기 항목과 구분합니다.

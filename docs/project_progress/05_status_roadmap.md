@@ -1,6 +1,6 @@
 # 05. 현황 & 로드맵 (Status & Roadmap)
 
-> 목적: 완료/대기 항목을 명확히 구분하고, production 활성화까지 남은 단계와 일정·확장 방향·리스크를 정리합니다.
+> 목적: 완료/대기 항목을 명확히 구분하고 production 활성화까지 남은 단계와 일정·확장 방향·리스크를 정리합니다.
 
 근거: `poc/workflow_3/README.md`(이전 체크리스트), `docs/journals/260618/`.
 
@@ -33,7 +33,7 @@
 4. **import sweep** — 경고 없이 로드되는지 확인합니다.
 5. **SAFE_MODE=1 dry-run** — 클릭 0회, journal/알림/manifest만 확인합니다.
 6. **record-only 패리티** — `ALIGN_FAIL_CORRECTION=0`로 접속→캡처→닫기 + 상시 녹화를 재현합니다.
-7. **보정 dry-run** — `ALIGN_FAIL_CORRECTION=1`(DRY_RUN 유지): 좌표 계산·overlay·cube 알림까지 확인하고, 클릭은 로그만 남깁니다.
+7. **보정 dry-run** — `ALIGN_FAIL_CORRECTION=1`(DRY_RUN 유지): 좌표 계산·overlay·cube 알림까지 확인하고 클릭은 로그만 남깁니다.
 8. **캘리브레이션** (모델별):
    - SEM panel landmark crop + meta.json → `templates/sem_panel_landmarks/<model_id>/`
    - 더블클릭 recenter 이동량, wheel 1단계↔배율(`ALIGN_SEM_ZOOM_SCROLL_DY`) 측정
@@ -43,7 +43,7 @@
 ## 3. 활성화 일정 (Milestone)
 
 > **[목표일은 팀 합의 후 채워 주시기 바랍니다. 아래는 의존 순서 기준 단계 정의입니다.]**
-> 각 단계는 앞 단계 완료를 전제로 하며, 임원 보고 시 "언제 현장 적용?"에 대한 답이 됩니다.
+> 각 단계는 앞 단계 완료를 전제로 하며 임원 보고 시 "언제 현장 적용?"에 대한 답이 됩니다.
 
 | 단계 | 게이트(완료 기준) | 선행 조건 | 목표 시점 |
 |------|------------------|-----------|----------|
@@ -65,9 +65,9 @@
 
 - **모델 확장**: Flask proxy에 `.env` + 모듈 1개로 6번째 모델을 추가합니다(GPU 1에 ~50 GiB 헤드룸).
   multi-GPU data/tensor parallel로 처리량을 확장합니다.
-- **장비·recipe 일반화**: consensus 이력 풀이 `<class>/<recipe>` 키(장비 무관)이므로, 신규 장비 onboarding 시
+- **장비·recipe 일반화**: consensus 이력 풀이 `<class>/<recipe>` 키(장비 무관)이므로 신규 장비 onboarding 시
   같은 recipe의 학습 데이터가 자동 공유되어 코드 변경이 최소화됩니다.
-- **데이터 자산화**: 상시 녹화 + `recording_filter`로 엔지니어 수동 조작을 interaction timeline으로 추출하여,
+- **데이터 자산화**: 상시 녹화 + `recording_filter`로 엔지니어 수동 조작을 interaction timeline으로 추출하여
   향후 모방학습/원인 자동 분류 학습 데이터로 활용합니다.
 - **재등록·template bank 축**: SEM에서는 ROI/box-crop 탐색 범위 축소가 구조적으로 무효임을 확인했습니다
   (distractor가 align key **내부**의 periodic 구조라 frame 밖이 아님 — Job 2 box-crop 기각, ADR 0005).

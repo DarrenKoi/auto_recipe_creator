@@ -14,7 +14,7 @@
 ```
 
 특징은 다음과 같습니다.
-- popup 직후, `run_alarm_cycle`과 **겹쳐** daemon thread로 consensus gather가 실행되어, 해당 recipe의
+- popup 직후, `run_alarm_cycle`과 **겹쳐** daemon thread로 consensus gather가 실행되어 해당 recipe의
   최근 성공 S 이미지를 `align_consensus_cache/`에 stage합니다(보정용 consensus 재료 확보).
 - office 모듈 부재 시 자동 비활성화됩니다 → **기존 동작·루프 응답성 불변**(회귀 위험 0).
 
@@ -61,7 +61,7 @@ Layer 1  util/           (leaf)
 - RCS 원격 화면이므로 **장비측 커서·엔지니어 수동 조작까지 프레임에 보존**됩니다 → 후속 분석 데이터.
 
 ### (4) Engineer-done 감지 (`engineer_done_align_adjustment.py`)
-- Recipe Monitor 측정 카운터(N/M)를 hybrid(VLM grounding + CV gate + OCR)로 읽어, 엔지니어가
+- Recipe Monitor 측정 카운터(N/M)를 hybrid(VLM grounding + CV gate + OCR)로 읽어 엔지니어가
   측정을 시작하면(분자 N>5 연속 2회) watch를 조기 종료하고 tool을 자동으로 닫습니다.
 
 ### (5) Feasibility 판정 & 재등록 플래깅 (`diagnostics/feasibility_check.py`)

@@ -1,6 +1,6 @@
 # 02. workflow_1 — RCS GUI 자동화 + CCTV 캡처 PoC
 
-> 목적: VLM으로 RCS 화면을 이해하고 GUI를 자동 조작하는 것이 가능한지, 그리고 Align Fail 발생
+> 목적: VLM으로 RCS 화면을 이해하고 GUI를 자동으로 조작할 수 있는지, 그리고 Align Fail 발생
 > 시점의 증거(CCTV 영상)를 무인으로 보존할 수 있는지를 증명합니다. **현재는 동결(frozen)** 이며
 > production 경로는 workflow_3로 이전되었습니다.
 
@@ -53,12 +53,12 @@ align_images/<eqp_id>/<class>/<recipe>/
 **증명한 것:**
 
 - VLM 기반 coarse→fine 좌표 인식이 UIA 없이도 RCS UI를 안정적으로 클릭할 만큼 견고합니다.
-- Align Fail 시점 챔버 영상을 100% 자동 보존할 수 있어 야간/주말 무인 모니터링, 원인 분석 시간 단축이 가능합니다.
+- Align Fail 시점 챔버 영상을 100% 자동으로 보존하므로 야간/주말 무인 모니터링과 원인 분석 시간 단축이 가능합니다.
 - 수집된 프레임은 후속 VLM 기반 자동 진단의 학습/검증 데이터로 재활용할 수 있습니다.
 
 **한계 / 배운 점:**
 
-- GUI "화면 읽기"가 곧 align key "찾기"는 아닙니다 — align key 정밀 매칭은 CV의 영역입니다(→ workflow_2/3).
+- GUI "화면 읽기"가 곧 align key "찾기"는 아닙니다. align key 정밀 매칭은 CV의 영역입니다(→ workflow_2/3).
 - 전 단계를 VLM 호출에 의존하면 비용·지연·edge-case 처리 부담이 커져 full 자동화의 경제성이 떨어집니다.
 
 ## 5. 동결(frozen) 사유와 잔류물

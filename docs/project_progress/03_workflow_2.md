@@ -39,7 +39,7 @@
 - 융합 상위 후보를 **NCC(정규화 상관)** 로 rerank하여 최종 선택합니다.
 - Youden 보정 임계: `match=0.6053`, `adjust=0.4727` (paused/static 프레임용).
 
-### (2) Consensus re-registration (핵심 발견)
+### (2) Consensus re-registration
 - 등록 align key(rcp)는 시간이 지나면 외관이 달라져(stale) 매칭이 약해집니다.
 - 같은 recipe의 **최근 성공(S) crop들을 crosshair 기준으로 co-register한 뒤 median blend**하여
   "현재 외관을 따라가는" consensus template를 만듭니다.
@@ -49,7 +49,7 @@
 - 모든 S/E 프레임 쌍의 proposer 점수를 모아 **Youden J(=TPR+TNR−1) 최대화**로 match/adjust 임계를 결정합니다.
 
 ### (4) ensemble_lab 실험 채널
-- `edge_ncc` C4 proposer(edge map에 직접 NCC) 등을 production 무수정으로 A/B합니다 —
+- `edge_ncc` C4 proposer(edge map에 직접 NCC) 등을 production 무수정으로 A/B합니다.
   회귀 없이 정확도가 오르면 포팅 후보가 됩니다.
 
 ## 4. 평가 방법론
@@ -59,7 +59,7 @@
 - **Leave-One-Out(LOO)**: 각 S에 대해 나머지 S로 consensus를 만들어 held-out S에 매칭합니다(누설 방지).
 - **history-first + LOO 폴백**: 별도 history 풀이 `min_s` 이상이면 disjoint 풀로 consensus(LOO 불필요),
   없으면 byte-identical LOO 경로를 사용합니다.
-- **consensus history 풀**: `<class>/<recipe>` 키(**장비 무관** — 같은 recipe면 장비가 달라도 공유)로
+- **consensus history 풀**: `<class>/<recipe>` 키(**장비 무관**, 같은 recipe면 장비가 달라도 공유)로
   최근 S 8~10장을 rolling 적재합니다. production consensus 캐시와 동일 포맷입니다.
 
 ## 5. 측정 결과 (golden set 벤치)
@@ -104,7 +104,7 @@
 
 ## 7. 의의
 
-- consensus re-registration은 "정렬 정확도의 천장(rcp 단독 ~0.43)"을 뚫은 핵심 발견이며,
+- consensus re-registration은 정렬 정확도의 천장(rcp 단독 ~0.43)을 뚫은 변경이며,
   workflow_3의 보정 품질을 좌우하는 알고리즘입니다.
 - bench/config 분리(`golden_eval_config.py`, gitignore) + `[DIGEST]` 한 줄 회신 구조로
   오피스↔개발 간 결과 전달 비용을 최소화했습니다.

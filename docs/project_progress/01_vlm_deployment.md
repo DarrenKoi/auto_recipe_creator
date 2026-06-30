@@ -1,7 +1,7 @@
 # 01. VLM 배포·운영 (deploy_vlms + Flask Proxy)
 
 > 목적: 오픈소스 VLM(Vision Language Model)을 조사·선정하고, 사내 HCP(GPU 서버)에 설치·운영하는
-> 기반을 구축합니다. 이후 모든 workflow가 이 인프라를 통해 화면을 이해합니다.
+> 기반을 구축합니다. 이후 모든 workflow가 이 인프라로 화면을 이해합니다.
 
 근거: `docs/setup_vlms/01~05`, `deploy_vlms/`, `flask_api/vlm_serve/`.
 
@@ -85,7 +85,7 @@
 
 **핵심 메시지**: GUI grounding + OCR이라는 실제 필요 작업 표면(task surface)에 한정하면
 **하드웨어 약 4배, 가중치 풋프린트·모델 밀도 약 20배**(처리량 효율이 아닌 메모리·밀도 기준)를 절감합니다.
-포기하는 것은 범용 추론 능력이며, 이는 "우리가 실제로 읽어야 하는 화면"에 불필요한 범용성을 의도적으로
+포기하는 것은 범용 추론 능력입니다. "우리가 실제로 읽어야 하는 화면"에 불필요한 범용성을 의도적으로
 버린 트레이드오프입니다. (근거: `docs/setup_vlms/05-resource-comparison-vs-kimi-k2.md`)
 
 ## 7. 확장성

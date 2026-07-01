@@ -1,6 +1,6 @@
 """프로젝트 진행 보고서 Word(.docx) 생성 스크립트.
 
-docs/project_progress/ 의 Markdown 보고서(00~05)를 **그대로 읽어** 하나의 임원 보고용 .docx 로
+docs/project_progress/ 의 Markdown 보고서(00~05)를 **그대로 읽어** 하나의 보고용 .docx 로
 렌더링한다. 보고서 내용 수정은 .md 만 고치면 되며(단일 source-of-truth), 본 스크립트는
 스타일·레이아웃만 담당한다.
 
@@ -181,13 +181,13 @@ def _code_block(doc, lines):
 def build_cover(doc):
     for _ in range(4):
         doc.add_paragraph()
-    _para(doc, "프로젝트 진행 보고서", size=30, bold=True, color=NAVY,
+    _para(doc, "프로젝트 진행 보고서", size=13, color=MUTED,
+          align=WD_ALIGN_PARAGRAPH.CENTER, space_after=10)
+    _para(doc, "VLM-GUI 기반 Auto Recipe Creation", size=30, bold=True, color=NAVY,
           align=WD_ALIGN_PARAGRAPH.CENTER, space_after=8)
-    _para(doc, "AI 기반 CD-SEM / VeritySEM Recipe 자동 Setup PoC", size=15,
-          color=MUTED, align=WD_ALIGN_PARAGRAPH.CENTER, space_after=4)
-    _para(doc, "VLM 배포·운영  ·  workflow_1 / workflow_2 / workflow_3", size=12,
+    _para(doc, "1차 PoC — Align Fail 대응 자동화", size=15,
           color=ACCENT, align=WD_ALIGN_PARAGRAPH.CENTER, space_after=40)
-    _para(doc, "목적 · PoC 방향 · 성과 · 확장성", size=11, color=MUTED,
+    _para(doc, "목적 · PoC 방향 · 설계 흐름 · 성과 · 확장성", size=11, color=MUTED,
           align=WD_ALIGN_PARAGRAPH.CENTER, space_after=6)
     _para(doc, "(시각 보조 자료: 짝 문서 _appendix.html 참조)", size=9.5, color=MUTED,
           align=WD_ALIGN_PARAGRAPH.CENTER)

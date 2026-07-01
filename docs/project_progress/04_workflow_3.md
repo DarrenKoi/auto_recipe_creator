@@ -1,106 +1,55 @@
-# 04. workflow_3 — 실시간 Align Fail 모니터링 루프 (Production, 현재 주력)
+# 04. 본격 PoC 구현 — 실시간 Align Fail 자동 대응 Agent
 
-> 목적: workflow_1(RCS GUI 자동화) + workflow_2(CV align-key 보정)의 production 경로를 하나의
-> end-to-end 실시간 루프로 통합합니다. **현재 주력 패키지입니다.**
+> 목적: 앞서 만든 GUI 자동화와 CV 정렬 보정을 하나로 묶어, Align Fail을 사람 없이 감지하고 보정하는 실시간 대응 Agent를 구현합니다. 지금 가장 힘을 쏟고 있는 단계입니다.
 
-근거: `poc/workflow_3/README.md`, `poc/workflow_3/docs/`.
+## 1. 실시간 알람 감지
 
-## 1. 루프 개요
+10초마다 Smart Alarm System에 R3 CD-SEM의 알람 코드를 물어봅니다. 이 중에서 Align Fail(알람코드 9006)이 잡히면 곧바로 자동 대응 루프를 시작합니다.
 
-```
-알람 감지(ALID=9006) → RCS 장비 접속 → CV align fail 보정
-→ 실패 시 cube rich notification → 상시 screenshot 녹화(엔지니어 수동 조작 포함)
-→ tool 닫기 → 다음 알람 대기
-```
+## 2. 작동 루프 개요
 
-특징은 다음과 같습니다.
-- popup 직후, `run_alarm_cycle`과 **겹쳐** daemon thread로 consensus gather가 실행되어 해당 recipe의
-  최근 성공 S 이미지를 `align_consensus_cache/`에 stage합니다(보정용 consensus 재료 확보).
-- office 모듈 부재 시 자동 비활성화됩니다 → **기존 동작·루프 응답성 불변**(회귀 위험 0).
+Align Fail(9006)이 감지되면 다음 순서로 움직입니다.
 
-## 2. 4-Layer 모듈 아키텍처 (DAG)
+**RCS 실행 → 해당 장비 모니터 접속 → 자동 정렬 보정 → (실패 시) 담당자 알림 → 상시 녹화 →
+자동 종료 → 다음 알람 대기**
 
-의존 방향은 `monitor → {rcs, align, sem_monitor, runner, vlm, util}`입니다. workflow_3는 workflow_1/2를
-import하지 않습니다(legacy가 wf3를 import하는 방향만 허용).
+알람이 잡히면 이 대응 루프와 동시에, 과거 정렬 성공 이미지를 추적·다운로드하는 작업(consensus gather)이 백그라운드에서 함께 돕니다. 보정에 쓸 최신 성공 이미지를 미리 확보해 두려는 것이며, 대응 루프의 속도를 늦추지 않습니다.
 
-```
-Layer 4  monitor/        루프 본체 (오케스트레이터)
-Layer 3  align/ · rcs/ · sem_monitor/ · recording_filter/   (capabilities)
-Layer 2  vlm/ · runner/  (services)
-Layer 1  util/           (leaf)
-```
+## 3. 핵심 기능
 
-| 서브패키지 | 내용 |
-|-----------|------|
-| `monitor/` | 알람 폴링(`align_fail_monitor.py` 진입점), 알람별 사이클(`cycle.py`), 상시 녹화(`recording.py`), 알림(`notify.py`), 엔지니어-done 감지, consensus gather glue, 알람 소스, office adapter 로딩 |
-| `rcs/` | RCS GUI 자동화 — 실행/로그인/tool 선택·종료/캡처 |
-| `align/` | Align fail 보정 도메인 — 자산 해석, 보정 orchestration(`correction.py`), 라이브 탐색, consensus, cond/crop helper |
-| `align/matching/` | align-key matcher 엔진 + ensemble proposer (좌표 authority) |
-| `align/diagnostics/` | 오피스/개발 검증용 probe, feasibility mark, crop 비교 |
-| `sem_monitor/` | SEM Monitor panel 위치 검출 + 실장비 controller adapter |
-| `vlm/` | VLM 클라이언트/서비스 레지스트리/프롬프트 |
-| `runner/` | WorkflowRunner — step/precondition/journal |
-| `util/` | env/image/json/time + 선택적 mouse(pynput)/window(pywinauto) |
+- **알람 1건 단위의 안전한 처리**: 알람 한 건마다 장비 접속부터 정렬 보정까지 순서대로 처리합니다. 도중에 오류가 나더라도 녹화 종료, 장비 창 닫기, 팝업 정리 같은 뒷정리는 반드시 수행해, 장비를 늘 깨끗한 상태로 되돌립니다.
+- **성공 사례 기반 자동 보정**: 최근 정렬 성공 이미지를 종합한 기준으로 정렬 위치를 다시 찾아 보정합니다. 성공 이미지가 부족하거나 품질이 떨어지면 처음 등록된 이미지로 자동 전환해, 어떤 경우에도 안전하게 동작합니다.
+- **엔지니어 작업 자동 감지**: 엔지니어가 직접 재정렬에 나서면 이를 알아채고 자동 감시를 끝낸 뒤 장비 창을 닫습니다. 사람의 작업을 방해하지 않기 위해서입니다.
+- **보정 가능 여부 판정과 재등록 권고**: 지금 화면에서 정렬 위치를 확실히 찾을 수 있는지 판정합니다. 비슷한 후보가 많아 근본적으로 헷갈리는 Recipe는 "더 뚜렷한 위치로 재등록 권고"를 기록으로 남깁니다.
+- **여러 배율로 탐색**: 정렬 위치가 어느 배율에서 잘 보이는지 애매할 때는 화면 배율을 바꿔 가며 다시 찾습니다. 마우스 휠로 배율이 안 바뀌는 일부 장비는 배율 조절 버튼을 씁니다.
+- **점검 전용 모드**: 실제 보정 없이 접속 → 화면 1장 캡처 → 판정 → 종료만 수행하는 진단·점검용 모드도 갖췄습니다.
 
-## 3. 핵심 능력
+## 4. 안전 장치 — 오측 감지 시 사람 개입
 
-### (1) Per-alarm cycle + 보장 teardown (`cycle.py`)
-- 알람당 step 시퀀스: RCS 준비 → 팝업 닫기 → tool 접속 → 창 대기 → 녹화 시작 → SEM panel ROI →
-  CV 보정.
-- cleanup(녹화 중지·tool 닫기·팝업 backstop)은 step이 아니라 `try/finally`로 **반드시 실행**됩니다.
+VLM이 실제 보정을 마친 뒤에도 이후 측정 과정을 계속 지켜봅니다. 여기서 잘못된 보정(오측)이 감지되면 즉시 측정을 멈추고, 담당 Engineer에게 Cube로 알람을 보내 사람이 확인·개입하도록 했습니다. 자동 보정이 틀렸을 때 잘못된 상태로 측정이 이어지지 않도록, 사람이 반드시 한 번 확인하는 안전장치를 둔 것입니다.
 
-### (2) Consensus 라우팅 보정
-- stage된 S로 **consensus template(최근 S median)** 을 빌드하여 등록 rcp 대신 라우팅합니다
-  (`align/consensus_resolve.resolve_templates`, modality별 consensus-or-rcp).
-- modality당 S가 `ALIGN_FAIL_CONSENSUS_MIN_S`(기본 4) 미만이거나 blur 미통과·캐시 부재·예외이면 그 modality는
-  rcp로 폴백합니다(**회귀 위험 0**). cache cold면 1회 bounded sync 후 진행합니다.
-- `ALIGN_FAIL_CONSENSUS=0`이면 순수 rcp(기존 동작) — 롤아웃 킬스위치입니다.
+## 5. 암묵지 지식 자산화 구조
 
-### (3) 상시 녹화 (`recording.py`)
-- 변화 감지 적응 캡처: 변화가 있으면 ~0.3s 간격, 없으면 5s heartbeat. delta>15 다운샘플 픽셀 수로 판정합니다.
-- RCS 원격 화면이므로 **장비측 커서·엔지니어 수동 조작까지 프레임에 보존**됩니다 → 후속 분석 데이터.
+- **정렬 성공/실패 이미지 저장**: align에 성공한 이미지와 실패한 이미지를 저장하고, 최신 이미지가 계속 자동으로 갱신되도록 했습니다. 다음에 같은 Recipe에서 Align Fail이 나면 VLM이 참고할 최신 자료가 됩니다.
+- **녹화를 VLM 학습·분석에 활용**: 엔지니어가 장비를 조작하는 과정을 녹화해 두고, 이를 VLM workflow(학습·분석)에 쓸 수 있는 형태로 만듭니다. 사람이 손으로 쌓아 온 암묵지, 즉 작업 노하우를 데이터로 자산화하는 구조입니다.
 
-### (4) Engineer-done 감지 (`engineer_done_align_adjustment.py`)
-- Recipe Monitor 측정 카운터(N/M)를 hybrid(VLM grounding + CV gate + OCR)로 읽어 엔지니어가
-  측정을 시작하면(분자 N>5 연속 2회) watch를 조기 종료하고 tool을 자동으로 닫습니다.
+## 6. 진행 현황
 
-### (5) Feasibility 판정 & 재등록 플래깅 (`diagnostics/feasibility_check.py`)
-- 보정 가능/불가/모호(`possible`/`not_visible`/`ambiguous`)를 판정합니다. 모호(2nd/best ratio>τ)면
-  "이 recipe의 align key를 더 distinctive한 영역으로 재등록 권고"를 audit log에 남깁니다.
+핵심 기능은 구현을 마쳤습니다. 지금은 각 단계의 안정성을 끌어올리며 현장 적용을 준비하고 있습니다.
 
-### (6) Zoom ladder / PM dropdown (check-only)
-- feasibility가 모호/미발견일 때 live SEM box의 배율을 mouse wheel 또는 **PM 버튼 드롭다운**으로
-  바꿔가며 각 배율에서 재매칭합니다(어느 배율에서 key가 보이는지 탐색). 일부 장비는 wheel이 배율을 바꾸지 않아
-  PM 드롭다운이 기본입니다.
+| 구분 | 항목 | 상태 |
+|------|------|------|
+| 실시간 감지 | 10초 주기 알람 확인 · Align Fail(9006) 선별 | ✅ 구현 완료 |
+| 자동 대응 | RCS 접속 → 자동 정렬 보정 → 종료 루프 | ✅ 구현 완료 |
+| 보정 품질 | 성공 사례 기반 보정 + 등록 이미지 자동 폴백 | ✅ 구현 완료 |
+| 안전 장치 | 보정 후 측정 모니터링 · 오측 시 중단·Cube 알람 | ✅ 구현 완료 |
+| 지식 자산화 | 성공/실패 이미지 저장(최신 자동 갱신) · 녹화 | ✅ 구현 완료 |
+| 안정화 | 각 루프 단계 안정성 향상·고도화 | 🟡 진행 중 |
+| 현장 검증 | CV 정렬 정확도의 오피스 실데이터 확정 | 🟡 진행 중 |
+| 실전 적용 | MI 현업 엔지니어 실전 테스트 | 🟡 예정 |
 
-### (7) Check-only 변형 (`align_fail_monitor_only_check.py`)
-- 접속 → 1프레임 캡처 → feasibility 판정 → 닫기만 수행합니다(실보정·녹화·watch 없음). 진단·캘리브레이션용입니다.
+## 7. 향후 일정
 
-## 4. 안전 장치 (Safe-mode gating)
-
-| env | 기본 | 의미 |
-|-----|------|------|
-| `SAFE_MODE` | 0 | 1이면 모든 마우스/키보드 차단(전역 dry-run) |
-| `ALIGN_FAIL_CORRECTION` | 1 | CV 보정 단계 수행 여부 |
-| `ALIGN_FAIL_CORRECTION_DRY_RUN` | 1 | 보정 move/click 차단. 실클릭은 `SAFE_MODE=0` **그리고** 이 값=0일 때만 |
-| `ALIGN_FAIL_CONSENSUS` | 1 | consensus 라우팅 마스터 토글(킬스위치) |
-| `ALIGN_FAIL_ENGINEER_DONE_DETECT` | 0 | 측정-시작 감지(캘리브레이션 후 1) |
-
-→ 실보정은 **두 단계 게이트**(`SAFE_MODE=0` + `DRY_RUN=0`)를 모두 통과해야만 작동합니다.
-
-## 5. 산출물 경로
-
-- 알람 로그: `logs/align_fail_alarms.txt`
-- 사이클 manifest: `logs/align_fail_cycles.csv` (알람 1건 = 1줄)
-- step journal: `logs/workflow_runs/<run_id>_align_fail_cycle_<eqp>/`
-- 녹화: `align_images/<eqp>/<class>/<recipe>/captured_img_from_rcs/<tag>/recording/`
-- consensus 캐시: `align_consensus_cache/<eqp>/<class>/<recipe>/events/<event_id>/`
-
-## 6. 현재 상태
-
-- ✅ 코드 완료: 루프 골격, primary 보정(reposition+OK), fallback live search, consensus 라우팅(코드),
-  box-crop cond-aware 템플릿, 재등록 플래깅, check-only 진단.
-- 🟡 활성화 대기: `office_success_downloader`(S 이미지 공급) 구현, 오피스 캘리브레이션(zoom/click 좌표,
-  engineer-done), pilot 실보정.
-
-상세 현황·로드맵은 [05_status_roadmap.md](05_status_roadmap.md)를 참조하시기 바랍니다.
+- **7~8월**: MI 현업 엔지니어와 함께 실전 테스트를 진행합니다.
+- **9월**: 실전 배치를 목표로 합니다.
+- **2027년**: 이번 PoC를 발판 삼아, VLM이 Recipe Tuning을 실제로 수행하도록 workflow 구조를 다듬을 예정입니다.

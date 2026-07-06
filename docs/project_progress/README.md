@@ -13,7 +13,7 @@ Word(.docx) 보고서와 시각 부록(`_appendix.html`)을 생성합니다. (�
 | 01 | [01_vlm_deployment.md](01_vlm_deployment.md) | **VLM 인프라 확보** — 자사 HCP에 SOTA 오픈소스 소형 모델 5종(VLM 3 + OCR 2) 배포, 단일 모델 Action 한계 → coarse→fine 2단계 + OCR 검증, HCP 제약·확보 역량 |
 | 02 | [02_workflow_1.md](02_workflow_1.md) | **GUI 자동화 검증 (workflow 1)** — RCS 자동 조작 + CCTV 캡처 PoC. As-Is→To-Be, 핵심 확보 기술(클릭·타이핑 90%+·재시도/fallback·rescale), 데이터 자산화, CCTV 한계, 동결 사유 |
 | 03 | [03_workflow_2.md](03_workflow_2.md) | **정렬 위치 재조정 CV 정확도 평가 (workflow 2)** — Recipe 200개 오프라인 벤치. As-Is→To-Be(등록 1장 → consensus), in_topk·rank1·OM/SEM 결과, 아이디어별 실험과 결정/남은 평가 |
-| 04 | [04_workflow_3.md](04_workflow_3.md) | **실시간 Align Fail 자동 대응 Agent (workflow 3)** — As-Is→To-Be(수동 5분 → 무인 1분), 10초 알람 감지(9006)→RCS 접속→자동 보정, consensus gather 병렬, 오측 감지 시 측정 중단·Cube 알람, 지식 자산화, **진행 현황·향후 일정**(현재 주력) |
+| 04 | [04_workflow_3.md](04_workflow_3.md) | **실시간 Align Fail 자동 대응 Agent (workflow 3)** — As-Is→To-Be(수동 5분 → 무인 1분), 10초 알람 감지(9006)→RCS 접속→자동 보정, consensus gather 병렬, 오측 감지 시 측정 중단·Cube 알람, 지식 자산화, **진행 현황·예상 허들과 대응·향후 일정**(현재 주력) |
 
 ## 산출물 생성
 

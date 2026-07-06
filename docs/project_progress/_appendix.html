@@ -87,6 +87,25 @@
     padding:16px 20px;font-size:14px}
   .rule b{color:var(--accent-soft)}
 
+  /* ---- as-is / to-be ---- */
+  .abrow{display:grid;grid-template-columns:104px 1fr 40px 1fr;align-items:stretch;
+    border-bottom:1px dashed var(--line)}
+  .abrow:last-child{border-bottom:0}
+  .abl{font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--muted);
+    padding:14px 14px;display:flex;align-items:center;justify-content:flex-end;text-align:right}
+  .abc{font-size:13.5px;padding:14px 16px;display:flex;align-items:center}
+  .abc.asis{background:#f2f4f8;color:var(--muted)}
+  .abc.tobe{background:#fdf4ec;color:var(--ink)}
+  .aba{display:flex;align-items:center;justify-content:center;
+    font-family:var(--mono);font-weight:700;color:var(--accent)}
+  .abrow.head{border-bottom:1px solid var(--line)}
+  .abrow.head .abc{font-family:var(--mono);font-size:12px;letter-spacing:.1em;
+    text-transform:uppercase;font-weight:600}
+  .abrow.head .abc.asis{color:var(--muted)}
+  .abrow.head .abc.tobe{color:var(--accent)}
+  .abrow.key .abc.asis{font-weight:600}
+  .abrow.key .abc.tobe{font-weight:700;color:var(--accent);font-size:14.5px}
+
   /* ---- timeline ---- */
   .timeline{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
   .stage{padding:20px 18px;position:relative}
@@ -208,6 +227,8 @@
     .role.vlm{border-radius:12px 12px 0 0}.role.cv{border-radius:0 0 12px 12px}
     .timeline,.grid3,.loop,.grid2{grid-template-columns:1fr}
     .pstep{border-radius:10px!important}.pstep::after{display:none}
+    .abrow{grid-template-columns:70px 1fr 24px 1fr}
+    .abc{font-size:12.5px;padding:11px 10px}.abl{font-size:10.5px;padding:11px 8px}
   }
   @media print{
     body{background:#fff;background-image:none}
@@ -237,9 +258,23 @@
     <div class="pair-note reveal" style="animation-delay:.24s">본 HTML은 Word 보고서(project_progress_report.docx)와 짝을 이루는 시각 부록입니다. 수치·맥락의 근거와 상세는 docx 본문을 따릅니다.</div>
   </header>
 
-  <!-- 1. 역할 분리 -->
+  <!-- 1. As-Is -> To-Be -->
   <section>
-    <div class="sec-head"><span class="sec-num">01</span><h2>PoC 핵심 방향 — VLM과 CV의 역할 분리</h2></div>
+    <div class="sec-head"><span class="sec-num">01</span><h2>As-Is → To-Be — 사람 수동 대응을 무인 자동 대응으로</h2></div>
+    <p class="lead">주 평균 약 400건 발생하는 Align Fail 대응 전체를 사람 손에서 무인 Agent로 전환합니다. 항목별 상세 근거는 docx 본문 각 장의 As-Is → To-Be 표를 따릅니다.</p>
+    <div class="card" style="overflow:hidden">
+      <div class="abrow head"><div class="abl"></div><div class="abc asis">As-Is · 사람 수동</div><div class="aba"></div><div class="abc tobe">To-Be · 무인 자동</div></div>
+      <div class="abrow"><div class="abl">감지</div><div class="abc asis">Line 구성원이 알람을 확인</div><div class="aba">→</div><div class="abc tobe">10초 주기 자동 확인 · Align Fail(9006)만 선별</div></div>
+      <div class="abrow"><div class="abl">접속·보정</div><div class="abc asis">엔지니어가 RCS로 장비에 접속해 수동 재정렬</div><div class="aba">→</div><div class="abc tobe">RCS 자동 접속 → 성공 사례 기반 자동 보정(등록 이미지 자동 폴백)</div></div>
+      <div class="abrow"><div class="abl">실패·오측</div><div class="abc asis">사람이 발견할 때까지 지연</div><div class="aba">→</div><div class="abc tobe">실패 시 담당자 알림 · 오측 감지 시 측정 중단 + Cube 알람</div></div>
+      <div class="abrow"><div class="abl">기록</div><div class="abc asis">별도 기록 없음</div><div class="aba">→</div><div class="abc tobe">상시 녹화 + 성공/실패 이미지 자동 저장(지식 자산화)</div></div>
+      <div class="abrow key"><div class="abl">대응 시간</div><div class="abc asis">평균 5분/건</div><div class="aba">→</div><div class="abc tobe">목표 1분/건 (4분 단축)</div></div>
+    </div>
+  </section>
+
+  <!-- 2. 역할 분리 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>PoC 핵심 방향 — VLM과 CV의 역할 분리</h2></div>
     <p class="lead">화면 의미 이해는 VLM에, 정밀 좌표·정량 점수는 CV에 맡겨 무인 자동화의 신뢰도를 확보합니다. (설계 원칙 확정: 2026-05-25)</p>
     <div class="card split">
       <div class="role vlm">
@@ -269,7 +304,7 @@
 
   <!-- 2. 타임라인 -->
   <section>
-    <div class="sec-head"><span class="sec-num">02</span><h2>단계별 진행 (Workstream Timeline)</h2></div>
+    <div class="sec-head"><span class="sec-num">03</span><h2>단계별 진행 (Workstream Timeline)</h2></div>
     <div class="flow-line">VLM 인프라 확보 <span class="a">→</span> GUI 자동화 가능성 증명 <span class="a">→</span> CV 정확도 확보 <span class="a">→</span> 실시간 통합 루프</div>
     <div class="timeline">
       <div class="card stage"><div class="n">STAGE 1</div><div class="nm">VLM 인프라 확보</div><p>자사 HCP에 소형 오픈소스 모델 5종(VLM 3 + OCR 2) 배포·자체 운영</p><span class="chip live">● 운영 중</span></div>
@@ -281,7 +316,7 @@
 
   <!-- 3. VLM 인프라 -->
   <section>
-    <div class="sec-head"><span class="sec-num">03</span><h2>VLM 인프라 — 자사 HCP 소형 모델 자체 운영</h2></div>
+    <div class="sec-head"><span class="sec-num">04</span><h2>VLM 인프라 — 자사 HCP 소형 모델 자체 운영</h2></div>
     <p class="lead">화면 이해(VLM)와 문자 인식(OCR)에 필요한 능력을 소형 오픈소스 모델로 분담해 자사 HCP에 직접 배포했습니다. 대규모 GPU가 필요한 단일 거대 모델 없이 사내에서 자체 구동합니다.</p>
     <div class="grid3">
       <div class="card stat"><div class="big">5<em>종</em></div><div class="cap">설치 모델<br>VLM 3 + OCR 2</div></div>
@@ -293,7 +328,7 @@
 
   <!-- 4. 2-stage locator -->
   <section>
-    <div class="sec-head"><span class="sec-num">04</span><h2>2-stage VLM 로케이터 (GUI 자동화 핵심)</h2></div>
+    <div class="sec-head"><span class="sec-num">05</span><h2>2-stage VLM 로케이터 (GUI 자동화 핵심)</h2></div>
     <p class="lead">RCS는 화면 요소가 표준 컴포넌트가 아니라 일반 UI 자동화 도구로 인식되지 않습니다. "대략 위치 → 정밀 좌표 → 확인"을 서로 다른 모델로 분리해 안정적으로 클릭합니다.</p>
     <div class="pipe">
       <div class="pstep"><span class="pn">1</span><div class="pt">Capture</div><div class="pm">화면 캡처</div><div class="pd">전체 화면 캡처</div></div>
@@ -307,7 +342,7 @@
 
   <!-- 5. real-time loop -->
   <section>
-    <div class="sec-head"><span class="sec-num">05</span><h2>실시간 Align Fail 자동 대응 루프</h2></div>
+    <div class="sec-head"><span class="sec-num">06</span><h2>실시간 Align Fail 자동 대응 루프</h2></div>
     <p class="lead"><b>매 10초</b> Smart Alarm System에서 R3 CD-SEM 알람 코드를 확인하고, <b>Align Fail(코드 9006)</b> 감지 시 아래 사이클을 수행합니다. 도중에 오류가 나도 뒷정리(녹화 종료·장비 창 닫기)는 반드시 실행됩니다.</p>
 
     <!-- concurrent background track -->
@@ -330,7 +365,7 @@
 
   <!-- 6. accuracy -->
   <section>
-    <div class="sec-head"><span class="sec-num">06</span><h2>정렬 정확도 도약 — 성공 사례 종합(consensus)</h2></div>
+    <div class="sec-head"><span class="sec-num">07</span><h2>정렬 정확도 도약 — 성공 사례 종합(consensus)</h2></div>
     <p class="lead">처음 등록한 이미지는 시간이 지나면 실제 외관과 달라져 매칭이 약해집니다. 최근 정렬 성공 이미지를 종합한 기준으로 재조정하면 탐색 정확도가 크게 오릅니다.</p>
     <div class="card acc">
       <div class="accrow">
@@ -348,8 +383,8 @@
         </div>
       </div>
       <div class="legend">
-        <span><i style="background:#9aa6b6"></i>등록 이미지 1장</span>
-        <span><i style="background:var(--accent)"></i>성공 사례 종합</span>
+        <span><i style="background:#9aa6b6"></i>등록 이미지 1장 · As-Is</span>
+        <span><i style="background:var(--accent)"></i>성공 사례 종합 · To-Be</span>
         <span style="font-family:var(--mono)">후보 포함률 +0.442 (약 +102%) · 1순위 +0.446</span>
       </div>
       <div class="caveat">※ 위 수치는 <b>오프라인 평가(다운로드 샘플) 기준</b>이며, 오피스 실데이터 현장 검증은 진행 예정입니다(실제 운영은 성공 사례를 더 많이 요구하는 보수적 기준 적용).</div>
@@ -358,7 +393,7 @@
 
   <!-- 7. status + schedule -->
   <section>
-    <div class="sec-head"><span class="sec-num">07</span><h2>진행 현황 &amp; 향후 일정</h2></div>
+    <div class="sec-head"><span class="sec-num">08</span><h2>진행 현황 &amp; 향후 일정</h2></div>
     <div class="grid2">
       <div class="card statlist">
         <div class="si"><span class="dot ok"></span>VLM 인프라 (자사 HCP)<span class="st">운영 중</span></div>
@@ -375,6 +410,15 @@
         <div class="mrow"><span class="m">9월</span><span class="mt">실전 배치<small>현장 적용 목표</small></span><span class="when">2026</span></div>
         <div class="mrow"><span class="m">2027</span><span class="mt">Recipe Tuning 고도화<small>PoC 기반으로 VLM이 Recipe Tuning을 직접 수행하도록 workflow 구조 확장</small></span><span class="when">차기</span></div>
       </div>
+    </div>
+    <div class="card statlist" style="margin-top:18px">
+      <div class="si" style="font-weight:600;color:var(--navy)">예상 허들 (Risks)<span class="st">대응</span></div>
+      <div class="si"><span class="dot go"></span>정확도 수치가 오프라인 벤치 기준 — 현장과 다를 수 있음<span class="st">오피스 실측 확정 · 보수적 기준</span></div>
+      <div class="si"><span class="dot go"></span>성공 이미지 적재 전에는 성공 사례 기반 보정 효과 제한<span class="st">수집·적재 기능 최우선</span></div>
+      <div class="si"><span class="dot go"></span>비변별 정렬 키(특히 SEM)는 알고리즘 개선으로 안 풀림<span class="st">우선순위화 · 재등록 협업</span></div>
+      <div class="si"><span class="dot go"></span>장비별 조작 방식·점유·PC 환경 편차<span class="st">장비별 캘리브레이션 · 예외 처리</span></div>
+      <div class="si"><span class="dot go"></span>VLM 서버 재시작 시 재설치 약 3~4시간 — 그동안 자동 대응 중단<span class="st">운영 제약 관리 · 절차 표준화</span></div>
+      <div class="si"><span class="dot go"></span>실보정 오동작 시 측정 영향<span class="st">점검 모드 → 단일 장비 pilot → 확대</span></div>
     </div>
     <div class="caveat" style="margin-top:16px">기대 효과 — 대상 <b>28대</b>, 주 평균 약 <b>400건</b>, 1건당 대응 시간 <b>5분 → 1분</b>(4분 단축)으로 주 WAFER 약 <b>100장</b> 추가 측정. 상세는 docx 본문 요약(§5)을 참조하시기 바랍니다.</div>
   </section>

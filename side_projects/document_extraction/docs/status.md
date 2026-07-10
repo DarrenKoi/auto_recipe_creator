@@ -56,6 +56,11 @@ Stage 0 캡처 ──▶ Stage 1~8 추출 ──▶ ┌ 검색(search)
   꼬리, crop 우선 이미지 첨부, 기계추출 라벨).
 - 스모크: `test_opensearch_smoke` 9 테스트(fake transport 색인->검색 e2e) 추가,
   전 스위트 10종 통과. 상세: [rag_chart_heavy_architecture.md §5-1](./rag_chart_heavy_architecture.md).
+- **Phase 1.5 검색 벤치 골격**: `benchmark/retrieval_golden.py`(질의 tier =
+  chart_only/table/text/mixed + chunk/스크린샷 수준 relevance 매처 + 예시 템플릿),
+  `retrieval_metrics.py`(Recall@k/MRR tier 집계 + parser-loss recovery),
+  `run_retrieval_benchmark.py`(3-arm bm25/dense/hybrid + `[DIGEST]` 한 줄 +
+  digest.txt). GT 작성만 사내 잔여. 스모크 7 테스트 추가(전 스위트 11종).
 
 ## 3-1. 이전 (GLM-5.2 + DRM 폴백 + Marp 강화, 2026-07-10)
 
@@ -104,6 +109,7 @@ Stage 0 캡처 ──▶ Stage 1~8 추출 ──▶ ┌ 검색(search)
 | 11 | ~~차트 RAG Phase 1 골격(3-표상 + OpenSearch 색인)~~ ✅ (2026-07-10) | 코드 | 완료 |
 | 12 | Phase 1 사내 배선: bge-m3 embeddings URL + bge-reranker 훅 + 실색인 1회 | 검증 | 사내 |
 | 13 | 차트 RAG Phase 2: Qwen3-VL-Embedding 배포(R4 vision arm) | 배포 | [설계](./rag_chart_heavy_architecture.md) |
+| 14 | **Phase 1.5 golden GT 작성**(chart_only 비중↑; 예시 템플릿 복사) + `run_retrieval_benchmark` 실행 -> digest 전달 | 데이터+측정 | 사내 |
 
 ---
 
@@ -115,6 +121,7 @@ Stage 0 캡처 ──▶ Stage 1~8 추출 ──▶ ┌ 검색(search)
 | `extraction/test_extraction_smoke` | 10 | Stage 1~8 골격 + 합성 폴백 체인 + crops.json |
 | `extraction/test_retrieval_smoke` | — | 검색 + quality gate |
 | `extraction/test_opensearch_smoke` | 9 | 색인기/RRF/hybrid/reader payload (fake transport) |
+| `benchmark/test_retrieval_benchmark_smoke` | 7 | golden 스키마/매처/Recall·MRR/recovery/3-arm e2e |
 | `benchmark/test_benchmark_smoke` | — | 채점 하네스 |
 | `marp/test_marp_smoke` | 9 | Stage 5 생성 + 테마 프론트매터 |
 | `marp/test_render_smoke` | 7 | Stage 6 인자 빌더 + --theme + graceful |

@@ -16,6 +16,21 @@
 | `run_benchmark.py` | 폴더 단위 실행 엔트리 (CLI 인자 없음) |
 | `test_benchmark_smoke.py` | 합성 GT/추출로 메트릭 검증 (서버 불필요) |
 
+### Phase 1.5 검색 벤치 (2026-07-10 신규 — 추출 벤치와 별개 축)
+
+| 파일 | 역할 |
+|---|---|
+| `retrieval_golden.py` | golden 질의 스키마(tier: **chart_only**/table/text/mixed) + 로더/검증 + 예시 writer. relevance = chunk_id 정밀 또는 screenshot_id(+region_type) 페이지 수준 |
+| `retrieval_metrics.py` | Recall@k / MRR tier 집계 + **parser-loss recovery**(baseline=bm25 가 놓친 chart_only 를 후보 arm 이 회수한 비율) |
+| `run_retrieval_benchmark.py` | 3-arm(bm25/dense/hybrid) 실행 엔트리. `retrieval_scores.json` + `retrieval_matrix.md` + `digest.txt` + 콘솔 `[DIGEST]` 한 줄 |
+| `golden_retrieval_queries.example.json` | 사내 GT 작성 시작 템플릿(합성 예시 5질의). **실데이터 golden 은 커밋 금지** |
+| `test_retrieval_benchmark_smoke.py` | 7 테스트: 스키마/매처/메트릭 수학/recovery/stub-searcher e2e |
+
+사내 실행 순서: 색인(`extraction/opensearch_index.py`) → golden 작성(예시 복사,
+chart_only 비중 있게) → `run_retrieval_benchmark.py` (GOLDEN_JSON 상수 지정) →
+`digest.txt` 한 줄로 결과 전달. Phase 2 에서 vision arm 이 추가되면 searchers
+dict 에 arm 하나만 더 얹으면 같은 하네스로 A/B 된다.
+
 ## 메트릭 (benchmark_plan.md)
 
 | 메트릭 | 범위 | 방식 |

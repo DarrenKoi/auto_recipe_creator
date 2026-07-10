@@ -100,7 +100,7 @@ def rrf_fuse(ranked_lists: list[list[str]], *, k: int = RRF_K,
     )
 
 
-def _hits_from_response(response: dict) -> list[dict]:
+def hits_from_response(response: dict) -> list[dict]:
     """OpenSearch 응답 -> [{"_id", ...source}] 목록(순수)."""
     hits = []
     for hit in ((response.get("hits") or {}).get("hits")) or []:
@@ -155,13 +155,13 @@ def search_hybrid(
     bm25_resp = client.search(
         index_name, build_bm25_query(query_text, size=arm_size, filters=filters)
     )
-    bm25_hits = _hits_from_response(bm25_resp)
+    bm25_hits = hits_from_response(bm25_resp)
 
     query_vec = embedder.embed_one(query_text)
     knn_resp = client.search(
         index_name, build_knn_query(query_vec, size=arm_size, filters=filters)
     )
-    knn_hits = _hits_from_response(knn_resp)
+    knn_hits = hits_from_response(knn_resp)
 
     by_id: dict[str, dict] = {}
     for hit in bm25_hits + knn_hits:
@@ -256,6 +256,7 @@ __all__ = [
     "build_bm25_query",
     "build_knn_query",
     "build_reader_payload",
+    "hits_from_response",
     "rerank_hits",
     "rrf_fuse",
     "search_hybrid",

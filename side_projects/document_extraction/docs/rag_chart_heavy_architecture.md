@@ -122,7 +122,7 @@ chart record (rag_chunks + payload)
 | 단계 | 작업 | 게이트 | 어디서 |
 |---|---|---|---|
 | **Phase 1 (지금, 배포 0)** | 3-표상 저장 완성: chart chunk 에 `crop_path` provenance 연결(crops.json), OpenSearch 색인(BM25+bge-m3+sparse, RRF), bge-reranker, reader 에 R1 이미지 첨부(DVI) — **코드 골격 구현됨(2026-07-10, 아래 §5-1)** | 없음 | 색인/검색 사내 |
-| Phase 1.5 | golden 질의셋에 **차트-온리 질의**(값/추세를 차트에서만 읽을 수 있는 것) 별도 계층 추가 + Recall@k / parser-loss recovery 측정 | GT 작성 | 사내 |
+| Phase 1.5 | golden 질의셋에 **차트-온리 질의**(값/추세를 차트에서만 읽을 수 있는 것) 별도 계층 추가 + Recall@k / parser-loss recovery 측정 — **벤치 골격 구현됨(2026-07-10, benchmark/retrieval_*)**; GT 작성만 사내 잔여 | GT 작성 | 사내 |
 | **Phase 2 (배포 1개, 최대 ROI)** | Qwen3-VL-Embedding(+Reranker) 배포 → R4 arm C 추가, 3-arm RRF, 질의유형별 가중 튜닝 | 가중치 반입 | 사내 |
 | Phase 3 (선택) | ColQwen3 late-interaction A/B(사이드카 MaxSim), 부족 시 LoRA 도메인 적응 | Phase 2 결과 | 사내 GPU |
 
@@ -141,6 +141,14 @@ extraction/
 ├─ hybrid_search.py   BM25/kNN 쿼리 빌더 + rrf_fuse(k=60, arm 가중) + rerank 훅(passthrough)
 │                     + build_reader_payload (DVI: 관련최고=꼬리, crop 우선 이미지, 기계추출 라벨)
 └─ test_opensearch_smoke.py  9 테스트 (fake transport 로 색인->검색 e2e, 서버 불필요)
+
+benchmark/  (Phase 1.5 검색 벤치)
+├─ retrieval_golden.py     golden 질의 스키마(tier: chart_only/table/text/mixed)
+│                          + relevance 매처(chunk_id 정밀 | screenshot_id 페이지 수준)
+├─ retrieval_metrics.py    Recall@k / MRR tier 집계 + parser-loss recovery(baseline=bm25)
+├─ run_retrieval_benchmark.py  3-arm(bm25/dense/hybrid) 채점 + [DIGEST]/digest.txt
+├─ golden_retrieval_queries.example.json  사내 GT 작성 템플릿(합성 5질의)
+└─ test_retrieval_benchmark_smoke.py      7 테스트 (stub searcher e2e)
 ```
 
 - env: `DOC_EXTRACT_OPENSEARCH_URL/INDEX/USER/PASSWORD`,

@@ -1,0 +1,71 @@
+{
+  "_readme": "Phase 1.5 검색 golden 질의셋. tier=chart_only 가 핵심(답이 차트 픽셀에만 있는 질의). relevant 는 chunk_id 정밀 매칭 또는 screenshot_id(+region_type) 페이지 수준 매칭. 실데이터 golden 은 커밋 금지(사내 전용).",
+  "queries": [
+    {
+      "query_id": "q001",
+      "tier": "chart_only",
+      "query_text": "2분기 수율 추세는 개선됐는가?",
+      "query_variants": [
+        "Q2 yield trend improvement"
+      ],
+      "relevant": [
+        {
+          "screenshot_id": "doc1_s003",
+          "region_type": "chart_summary"
+        }
+      ],
+      "expected_answer": "개선(하락 추세 -> AI 적용 후 회복)",
+      "notes": "값이 라인 차트에만 있음. 본문/표에 수치 없음"
+    },
+    {
+      "query_id": "q002",
+      "tier": "chart_only",
+      "query_text": "장비별 알람 건수가 가장 많은 장비는?",
+      "relevant": [
+        {
+          "chunk_id": "doc2_s005_c001"
+        }
+      ],
+      "expected_answer": "EQP-07",
+      "notes": "막대 차트의 최대 막대 - 축 라벨만 텍스트로 추출됨"
+    },
+    {
+      "query_id": "q003",
+      "tier": "table",
+      "query_text": "manual 모드 셋업 시간은 몇 분인가?",
+      "relevant": [
+        {
+          "screenshot_id": "doc1_s001",
+          "region_type": "table_row"
+        }
+      ],
+      "expected_answer": "30분"
+    },
+    {
+      "query_id": "q004",
+      "tier": "text",
+      "query_text": "레시피 자동화 프로젝트의 목적은?",
+      "relevant": [
+        {
+          "screenshot_id": "doc1_s001",
+          "region_type": "region_text"
+        }
+      ]
+    },
+    {
+      "query_id": "q005",
+      "tier": "mixed",
+      "query_text": "셋업 시간 단축 효과를 수치와 추세로 설명하라",
+      "relevant": [
+        {
+          "screenshot_id": "doc1_s001"
+        },
+        {
+          "screenshot_id": "doc1_s003",
+          "region_type": "chart_summary"
+        }
+      ],
+      "notes": "표(수치) + 차트(추세) 둘 다 필요"
+    }
+  ]
+}

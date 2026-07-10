@@ -71,6 +71,14 @@ def test_deck_join_and_frontmatter() -> None:
     print("[PASS] test_deck_join_and_frontmatter")
 
 
+def test_deck_custom_theme_frontmatter() -> None:
+    deck = results_to_deck([_sample_result()], theme="doc-restore")
+    assert "theme: doc-restore" in deck.split("---\n", 2)[1]
+    # 기본은 default 유지(하위호환)
+    assert "theme: default" in results_to_deck([_sample_result()])
+    print("[PASS] test_deck_custom_theme_frontmatter")
+
+
 def test_no_value_fabrication() -> None:
     """행이 header 보다 짧으면 빈 칸 패딩(값 창작 금지)."""
     result = ExtractionResult(source_image="x", screenshot_id="s1")
@@ -142,6 +150,7 @@ def main() -> int:
     test_text_tracks_render_native()
     test_chart_raster_vs_datatable()
     test_deck_join_and_frontmatter()
+    test_deck_custom_theme_frontmatter()
     test_no_value_fabrication()
     test_table_pipe_escape_and_widening()
     test_empty_slide_filtered()

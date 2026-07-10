@@ -30,8 +30,24 @@ COM `Slide.Export()` 대신 **실제 슬라이드쇼 모드를 띄워 화면 캡
 |---|---|---|
 | `.ppt / .pptx / .pptm` | `ppt_handler.py` | PowerPoint COM → `SlideShowSettings.Run()` (단일 모니터 강제) → primary 모니터 mss 캡처 → `View.Next()` → WebP 저장(1MB 캡) |
 | `.xls / .xlsx / .xlsm` | `excel_handler.py` | xlwings로 워크북 열기 → 시트별 `ExportAsFixedFormat(0)` (xlTypePDF) → PyMuPDF 200 DPI 페이지 분할 → WebP 저장(1MB 캡) |
-| `.doc / .docx / .docm` | `word_handler.py` | Word COM → `ExportAsFixedFormat(ExportFormat=17)` (wdExportFormatPDF) → PyMuPDF 200 DPI → WebP 저장(1MB 캡) |
-| `.pdf` | `pdf_handler.py` | PyMuPDF 200 DPI 직접 렌더 (앱 안 열림) → WebP 저장(1MB 캡) |
+| `.doc / .docx / .docm` | `word_handler.py` | Word COM → `ExportAsFixedFormat(ExportFormat=17)` (wdExportFormatPDF) → PyMuPDF 200 DPI → WebP 저장(1MB 캡). **export 실패(DRM) 시 뷰어 캡처 폴백** |
+| `.pdf` | `pdf_handler.py` | PyMuPDF 200 DPI 직접 렌더 (앱 안 열림) → WebP 저장(1MB 캡). **열기 실패/암호화(DRM) 시 뷰어 캡처 폴백** |
+
+### DRM 보호 문서 폴백 (`util/viewer_capture.py`)
+
+DRM 은 파일 파싱/export 는 차단해도 **허가된 앱 안에서의 표시는 항상 허용**한다.
+PPT 가 처음부터 슬라이드쇼 화면 캡처인 것과 같은 원리로, PDF/Word 도 직접
+경로가 실패하면 기본 연결 프로그램으로 열어(`os.startfile`) 전체화면 키를 보내고
+`{PGDN}` 으로 페이지를 넘기며 primary 모니터를 캡처한다. 총 페이지 수를 알 수
+없으므로 **화면이 더 이상 안 바뀌면 마지막 페이지**로 판정한다(frame-diff,
+`frames_look_identical`).
+
+- 키 시퀀스는 핸들러 상단 상수로 보정: PDF `PDF_VIEWER_FULLSCREEN_KEYS`(기본
+  `^l` = Acrobat 전체화면; Edge 뷰어면 조정), Word `WORD_VIEWER_FULLSCREEN_KEYS`
+  (기본 `%wf` = 읽기 모드 keytip).
+- 캡처 중 키보드/마우스 입력 금지(PPT 캡처와 동일).
+- DRM Excel 은 스크롤형 시트라 범용 폴백이 불안정 → 폴백 없이 경고만
+  (수동 인쇄 미리보기 캡처 권장).
 
 ### 1MB 캡 정책 (`util/screen_capture.save_webp_capped`)
 

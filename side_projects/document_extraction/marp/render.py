@@ -22,12 +22,17 @@ _FORMAT_FLAGS = {
     "html": ("--html", ".html"),
 }
 
+# 문서 복원용 커스텀 테마 CSS(시각 보정). deck 프론트매터 `theme: doc-restore` 와 짝.
+DOC_RESTORE_THEME_CSS = Path(__file__).resolve().parent / "themes" / "doc_restore.css"
 
-def build_render_args(deck_path, out_dir, fmt):
+
+def build_render_args(deck_path, out_dir, fmt, *, theme_css=None):
     """marp-cli 인자 리스트(순수). base 명령(marp / npx ...) 뒤에 붙일 부분만.
 
     png 은 `--images png` 로 슬라이드별 PNG(<stem>.001.png ...) 를 out_dir 에 쓴다.
     pptx/pdf/html 은 단일 파일. 알 수 없는 fmt 는 ValueError.
+    theme_css: 커스텀 테마 CSS 경로(--theme). deck 프론트매터의 theme 이름과
+    CSS 의 `@theme` 이름이 일치해야 적용된다.
     """
     if fmt not in _FORMAT_FLAGS:
         raise ValueError(f"지원하지 않는 렌더 포맷: {fmt} (지원: {sorted(_FORMAT_FLAGS)})")
@@ -40,6 +45,8 @@ def build_render_args(deck_path, out_dir, fmt):
         args += [flag, "png"]   # --images png
     else:
         args += [flag]
+    if theme_css:
+        args += ["--theme", str(theme_css)]
     args += ["-o", str(out_path)]
     return args
 
@@ -65,11 +72,13 @@ class RenderResult:
     stderr: str = ""
 
 
-def render_deck(deck_path, out_dir, *, fmt="png", marp_cmd=None, timeout=180):
+def render_deck(deck_path, out_dir, *, fmt="png", marp_cmd=None, timeout=180,
+                theme_css=None):
     """deck.md 를 marp-cli 로 렌더한다(I/O). marp 부재 시 available=False 로 graceful.
 
     marp_cmd: base 명령 override(테스트/오프라인용). None 이면 resolve_marp_command.
-    성공 시 out_dir 에서 stem.* 산출물을 수집해 outputs 에 담는다.
+    theme_css: 커스텀 테마 CSS 경로(--theme). 성공 시 out_dir 에서 stem.* 산출물을
+    수집해 outputs 에 담는다.
     """
     deck_path = Path(deck_path)
     out_dir = Path(out_dir)
@@ -79,7 +88,7 @@ def render_deck(deck_path, out_dir, *, fmt="png", marp_cmd=None, timeout=180):
         print("[WARNING] marp-cli 를 찾을 수 없습니다 (marp/npx 부재). 렌더 건너뜀.")
         return RenderResult(available=False, ok=False, fmt=fmt)
 
-    cmd = list(base) + build_render_args(deck_path, out_dir, fmt)
+    cmd = list(base) + build_render_args(deck_path, out_dir, fmt, theme_css=theme_css)
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except FileNotFoundError as exc:   # base 명령 자체가 실행 불가.
@@ -106,6 +115,7 @@ def render_deck(deck_path, out_dir, *, fmt="png", marp_cmd=None, timeout=180):
 
 
 __all__ = [
+    "DOC_RESTORE_THEME_CSS",
     "RenderResult",
     "build_render_args",
     "render_deck",

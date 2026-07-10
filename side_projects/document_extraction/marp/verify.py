@@ -144,7 +144,7 @@ def whole_slide_marp(capture_path) -> str:
 
 
 def apply_downgrade_plans(results, crop_lookups, plans, *, available_crops=None,
-                          with_frontmatter=True) -> str:
+                          with_frontmatter=True, theme="default") -> str:
     """강등 계획을 반영해 deck(.md) 를 다시 만든다(순수). 부분 강등은 해당 차트
     region 의 crop 을 주입해 데이터표 대신 이미지로, 전체 강등은 슬라이드를 원본
     캡처 래스터로 대체. 계획 없는 슬라이드는 Stage 5 그대로.
@@ -152,6 +152,7 @@ def apply_downgrade_plans(results, crop_lookups, plans, *, available_crops=None,
     crop_lookups: {screenshot_id -> {region_id -> 경로}} (기존 deck 의 crop).
     available_crops: {region_id -> 경로} (강등 시 주입할 가용 crop, deck 전역 유일 가정).
     plans: DowngradePlan 리스트(slide_index 로 results 와 정렬).
+    theme: 원본 deck 과 같은 테마 유지(보정 deck 의 프론트매터).
     """
     crop_lookups = crop_lookups or {}
     available_crops = available_crops or {}
@@ -171,7 +172,9 @@ def apply_downgrade_plans(results, crop_lookups, plans, *, available_crops=None,
         if slide.strip():
             slides.append(slide)
     body = "\n\n---\n\n".join(slides)
-    return (_generate._FRONTMATTER + "\n" + body + "\n") if with_frontmatter else body
+    if not with_frontmatter:
+        return body
+    return _generate.frontmatter_for_theme(theme) + "\n" + body + "\n"
 
 
 def _load_image(path):
@@ -189,12 +192,14 @@ def _load_image(path):
 
 def verify_and_downgrade(results, deck_path, capture_paths, *, out_dir,
                          crop_lookups=None, available_crops=None,
-                         threshold=DEFAULT_SSIM_FLOOR, marp_cmd=None):
+                         threshold=DEFAULT_SSIM_FLOOR, marp_cmd=None,
+                         theme="default", theme_css=None):
     """Stage 7 루프(I/O): deck 렌더 -> 슬라이드별 SSIM -> 저충실도 강등 -> 보정 deck
     재작성. design 의 '자동 강등이 충실도의 안전망' 을 실행한다.
 
     capture_paths: 슬라이드 인덱스 순서의 원본 캡처 경로 리스트(SSIM 기준).
     out_dir: 렌더 PNG + 보정 deck 출력 폴더.
+    theme/theme_css: deck 생성에 쓴 커스텀 테마(렌더 --theme + 보정 deck 프론트매터).
     반환 report dict: {rendered, scores, flagged, plans, corrected_deck}.
 
     marp 부재/이미지 부재면 graceful degrade(rendered=False) — office 에서 marp
@@ -203,7 +208,8 @@ def verify_and_downgrade(results, deck_path, capture_paths, *, out_dir,
     out_dir = Path(out_dir)
     report = {"rendered": False, "scores": [], "flagged": [], "plans": [],
               "corrected_deck": None}
-    render = render_deck(deck_path, out_dir, fmt="png", marp_cmd=marp_cmd)
+    render = render_deck(deck_path, out_dir, fmt="png", marp_cmd=marp_cmd,
+                         theme_css=theme_css)
     if not render.ok:
         print("[WARNING] 렌더 미수행 - Stage 7 검증/강등 건너뜀(graceful).")
         return report
@@ -238,7 +244,7 @@ def verify_and_downgrade(results, deck_path, capture_paths, *, out_dir,
     report["plans"] = plans
 
     corrected = apply_downgrade_plans(results, crop_lookups or {}, plans,
-                                      available_crops=available_crops)
+                                      available_crops=available_crops, theme=theme)
     corrected_path = out_dir / "deck_corrected.md"
     corrected_path.write_text(corrected, encoding="utf-8")
     report["corrected_deck"] = str(corrected_path)

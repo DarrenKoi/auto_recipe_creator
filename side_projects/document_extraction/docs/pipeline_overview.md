@@ -35,7 +35,10 @@ confidence 를 함께 보존해, 나중에 답변이 원본 스크린샷 근거�
 ```
 
 - **Stage 0 캡처**는 Windows COM(PowerPoint/Excel/Word 슬라이드쇼·인쇄) + PyMuPDF 로
-  페이지를 WebP 로 떨군다. 사내 PC 전용.
+  페이지를 WebP 로 떨군다. 사내 PC 전용. **DRM 폴백**: DRM/암호화 PDF(fitz 열기
+  실패/needs_pass)와 export 차단된 Word 는 `util/viewer_capture.py` 로 기본 뷰어를
+  띄워 페이지별 화면 캡처(frame-diff 로 마지막 페이지 판정) — PPT 슬라이드쇼
+  캡처와 동일 원리라 DRM 안전.
 - **Stage 1~8 추출**부터는 모두 순수 로직 + VLM 호출이라, VLM 서버가 없으면 OFFLINE
   폴백으로 골격이 그대로 돈다(아래 §6).
 
@@ -82,10 +85,14 @@ OCR + layout 을 `ExtractionResult` 로 합친다. 텍스트는 OCR 우선, regi
 요약(summary_markdown) + overall_confidence + unresolved 를 만든다. 모드 선택:
 - **`deterministic`(기본)**: 모델 0콜. evidence 만으로 제목/본문/표/차트/수식을 Markdown 으로
   조립. 값 창작 위험 없음.
-- **`kimi`**: `kimi-k2.6` 으로 고품질 합성/충돌 해소(latency 큼).
+- **`kimi`**: `kimi-k2.6` 비전 합성(이미지+evidence). **실패 시 `glm-5.2` 텍스트
+  폴백 -> 그래도 실패해야 offline stub**(폴백 체인, models.run_synthesis).
+- **`glm`**: `glm-5.2` 텍스트 전용 합성(evidence-only, 이미지 미전송) — 사내
+  로컬 API 의 텍스트 LLM 을 직접 지정.
 - **`none`**: 합성 생략.
 
-요약 출처는 `summary_model_sources`(예: `["deterministic"]` / `["kimi-k2.6"]`)로 정직하게 기록한다.
+요약 출처는 `summary_model_sources`(예: `["deterministic"]` / `["kimi-k2.6"]` /
+`["glm-5.2"]` / stub 이면 `["offline"]`)로 실제 사용 서비스를 정직하게 기록한다.
 
 ### Stage 7 — Human Review Packet
 `raw_evidence/<screenshot_id>.json` 으로 전체 evidence(요약/충돌/저신뢰 포함)를 저장해
@@ -120,7 +127,16 @@ evidence 를 Marp(Markdown 슬라이드)로 되돌린다(marp_roundtrip_design S
 (제목/본문/표/수식)는 Marp 네이티브로, 래스터류(차트)는 원본 crop 이미지 재삽입(crop_lookup)
 또는 데이터 표 대체 + 화자 노트로 보존. 표 셀의 `|`·줄바꿈은 escape 하고, row 가 header 보다
 길면 colN 으로 보강해 데이터를 잘라내지 않는다. `build_marp.py` 가 `raw_evidence/*.json` ->
-`deck.md` 를 만든다.
+`deck.md` 를 만든다. 추가 기능(전부 선택, 기본 off):
+- **crop 자동 대응**(`crop_map.py`): Stage 4 가 남긴 `_crops/<sid>/crops.json`
+  (없으면 파일명 스캔)에서 chart crop 을 찾아 evidence 의 cNNN 차트에 순서 대응 —
+  CROP_LOOKUPS 수동 작성 불필요(status 계획 8번 해소).
+- **커스텀 테마**(`themes/doc_restore.css`, `THEME="doc-restore"`): 한국어 글꼴
+  스택 고정 + 사내 슬라이드 룩 근사(시각 보정, status 계획 7번). 렌더 시
+  `render_deck(..., theme_css=DOC_RESTORE_THEME_CSS)`.
+- **LLM 구조 다듬기**(`refine.py`, `REFINE_SERVICE="glm-5.2"|"kimi-k2.6"`):
+  슬라이드 단위로 헤딩/불릿 구조만 다듬고, 표 행·수식·이미지 참조 verbatim 보존
+  + 새 숫자 금지 검증을 통과한 슬라이드만 채택(실패 시 원본 유지).
 
 ## 6. OFFLINE(dry-run) 폴백
 
@@ -163,10 +179,13 @@ uv run python -m side_projects.document_extraction.marp.test_marp_smoke
 | Stage 2 OCR/parse | PaddleOCR-VL-1.5 | `paddleocr-vl-1.5` |
 | Stage 3 layout | UI-Venus-1.5-8B | `ui-venus` |
 | Stage 4 crop refine | MAI-UI-8B | `mai-ui` |
-| Stage 6 synthesis | Kimi-K2.6 | `kimi-k2.6` |
+| Stage 6 synthesis | Kimi-K2.6 (비전) | `kimi-k2.6` |
+| Stage 6 폴백/대체 + Marp refine | GLM-5.2 (텍스트 전용) | `glm-5.2` |
 
 > 사내 게이트웨이에서 Kimi-K2.5/Qwen3-VL 은 deprecated → `kimi-k2.6` 으로 통일됨.
-> VLM 클라이언트는 `poc.workflow_3.vlm.vlm_client.Workflow1VLMClient` 를 그대로 쓴다.
+> GLM-5.2 는 같은 게이트웨이의 텍스트 LLM(direct 모드) — 이미지 없이
+> `Workflow1VLMClient.chat_text()` 로 호출한다. VLM 클라이언트는
+> `poc.workflow_3.vlm.vlm_client.Workflow1VLMClient` 를 그대로 쓴다.
 
 ## 9. 패키지 레이아웃
 

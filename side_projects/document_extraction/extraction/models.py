@@ -14,6 +14,11 @@ OFFLINE 토글:
     Stage 3 layout     -> "ui-venus"
     Stage 4 crop       -> "mai-ui" (또는 "paddleocr-vl-1.5")
     Stage 6 synthesis  -> "kimi-k2.6"  (docs 의 kimi-k2.5 는 stale)
+                          폴백 "glm-5.2" (텍스트 전용, evidence-only)
+
+Stage 6 폴백 체인: kimi(비전, 이미지+evidence) 실패 시 glm(텍스트, evidence-only)
+로 1회 재시도하고, 둘 다 실패해야 offline stub 으로 강등한다. OCR/layout 은 기존
+동작 유지(1회 실패 시 runner 전체 offline 강등 = 서버 다운 가정).
 """
 
 import json
@@ -28,6 +33,8 @@ OCR_SERVICE = "paddleocr-vl-1.5"
 LAYOUT_SERVICE = "ui-venus"
 CROP_SERVICE = "mai-ui"
 SYNTHESIS_SERVICE = "kimi-k2.6"
+# 합성 폴백/대체: 사내 로컬 API 의 텍스트 LLM(GLM-5.2). 이미지 없이 evidence 만 합성.
+SYNTHESIS_FALLBACK_SERVICE = "glm-5.2"
 
 
 def _offline_env() -> bool:
@@ -190,30 +197,142 @@ class StageRunner:
             offline_stub=stub,
         )
 
-    def run_synthesis(
-        self, image_path: str, source_type: str, evidence_json: str
-    ) -> dict:
-        """Stage 6: large-VLM synthesis (요약 + 충돌 해소)."""
-        system, user = prompts.prompt_synthesis(source_type)
-        stub = {
+    def _synthesis_stub(self) -> dict:
+        return {
             "summary_markdown": "[offline-stub] synthesis skipped (no VLM server)",
             "overall_confidence": 0.0,
             "unresolved": [],
+            "synthesis_service": "offline",
         }
-        return self._call(
-            stage="synthesis",
-            service_slug=SYNTHESIS_SERVICE,
-            image_path=image_path,
+
+    def _text_synthesis_once(
+        self, service_slug: str, source_type: str, evidence_json: str
+    ) -> dict:
+        """텍스트 전용 합성 1회 시도(이미지 없음). 실패는 호출부로 raise."""
+        system, user = prompts.prompt_synthesis_text_only(source_type)
+        started = time.time()
+        client = self._client(service_slug)
+        resp = client.chat_text(
             system_message=system,
             user_text=user + evidence_json,
-            offline_stub=stub,
         )
+        parsed = _parse_json_loose(resp.text)
+        if not parsed:
+            raise ValueError(f"synthesis JSON 파싱 실패(service={service_slug})")
+        self.stage_log.append(
+            {
+                "stage": "synthesis",
+                "service": service_slug,
+                "mode": "online-text",
+                "ok": True,
+                "latency_ms": (time.time() - started) * 1000,
+                "token_usage": resp.token_usage,
+            }
+        )
+        parsed["synthesis_service"] = service_slug
+        return parsed
+
+    def run_synthesis(
+        self, image_path: str, source_type: str, evidence_json: str
+    ) -> dict:
+        """Stage 6: large-VLM synthesis (요약 + 충돌 해소).
+
+        폴백 체인: kimi(비전) -> glm(텍스트, evidence-only) -> offline stub.
+        중간 실패는 runner 를 offline 으로 강등하지 않는다(체인이 끝까지
+        실패했을 때만 강등) — OCR/layout 의 즉시 강등 정책과 다른 점.
+        """
+        if self.offline:
+            self.stage_log.append(
+                {"stage": "synthesis", "service": SYNTHESIS_SERVICE,
+                 "mode": "offline", "ok": True}
+            )
+            return self._synthesis_stub()
+
+        # 1차: kimi-k2.6 비전 합성(이미지 + evidence)
+        system, user = prompts.prompt_synthesis(source_type)
+        started = time.time()
+        try:
+            client = self._client(SYNTHESIS_SERVICE)
+            resp = client.chat_with_image_path(
+                image_path=image_path,
+                system_message=system,
+                user_text=user + evidence_json,
+            )
+            parsed = _parse_json_loose(resp.text)
+            if not parsed:
+                raise ValueError("synthesis JSON 파싱 실패(kimi)")
+            self.stage_log.append(
+                {
+                    "stage": "synthesis",
+                    "service": SYNTHESIS_SERVICE,
+                    "mode": "online",
+                    "ok": True,
+                    "latency_ms": (time.time() - started) * 1000,
+                    "token_usage": resp.token_usage,
+                }
+            )
+            parsed["synthesis_service"] = SYNTHESIS_SERVICE
+            return parsed
+        except Exception as exc:
+            print(
+                f"[WARNING] synthesis 1차({SYNTHESIS_SERVICE}) 실패 -> "
+                f"{SYNTHESIS_FALLBACK_SERVICE} 텍스트 폴백: {exc}"
+            )
+            self.stage_log.append(
+                {
+                    "stage": "synthesis",
+                    "service": SYNTHESIS_SERVICE,
+                    "mode": "online",
+                    "ok": False,
+                    "error": str(exc),
+                    "latency_ms": (time.time() - started) * 1000,
+                }
+            )
+
+        # 2차: glm-5.2 텍스트 합성(evidence-only)
+        return self.run_synthesis_text(
+            source_type, evidence_json, service_slug=SYNTHESIS_FALLBACK_SERVICE
+        )
+
+    def run_synthesis_text(
+        self, source_type: str, evidence_json: str, *, service_slug: str | None = None
+    ) -> dict:
+        """Stage 6 텍스트 전용 합성(이미지 없음). 기본 서비스 = glm-5.2.
+
+        SYNTHESIS_MODE="glm" 일 때의 직접 진입점이자 run_synthesis 의 2차 폴백.
+        실패하면 offline stub 으로 강등한다(기존 _call 정책과 동일).
+        """
+        slug = service_slug or SYNTHESIS_FALLBACK_SERVICE
+        if self.offline:
+            self.stage_log.append(
+                {"stage": "synthesis", "service": slug, "mode": "offline", "ok": True}
+            )
+            return self._synthesis_stub()
+
+        started = time.time()
+        try:
+            return self._text_synthesis_once(slug, source_type, evidence_json)
+        except Exception as exc:
+            print(f"[WARNING] synthesis 텍스트({slug}) 실패 -> offline 폴백: {exc}")
+            self.offline = True
+            self.stage_log.append(
+                {
+                    "stage": "synthesis",
+                    "service": slug,
+                    "mode": "offline-fallback",
+                    "ok": False,
+                    "error": str(exc),
+                    "latency_ms": (time.time() - started) * 1000,
+                }
+            )
+            return self._synthesis_stub()
 
 
 __all__ = [
     "CROP_SERVICE",
     "LAYOUT_SERVICE",
     "OCR_SERVICE",
+    "SYNTHESIS_FALLBACK_SERVICE",
     "SYNTHESIS_SERVICE",
     "StageRunner",
 ]

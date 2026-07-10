@@ -48,6 +48,7 @@ def extract(source: Path, out_dir: Path) -> int:
             update_links=False,
         )
         page_index = 1
+        failed_sheets = 0
         try:
             for sheet in wb.sheets:
                 try:
@@ -60,10 +61,20 @@ def extract(source: Path, out_dir: Path) -> int:
 
                 with tempfile.TemporaryDirectory(prefix="xlw_pdf_") as tmpdir:
                     tmp_pdf = Path(tmpdir) / f"{sheet.name}.pdf"
-                    # 0 = xlTypePDF
-                    sheet.api.ExportAsFixedFormat(0, str(tmp_pdf))
+                    # 0 = xlTypePDF. DRM 이 export 를 차단하면 여기서 COM 예외가 난다
+                    # -> 해당 시트만 스킵하고 계속(워크북 전체 중단 방지).
+                    try:
+                        sheet.api.ExportAsFixedFormat(0, str(tmp_pdf))
+                    except Exception as exc:
+                        print(
+                            f"[WARNING]   - 시트 export 예외(DRM 차단 가능): "
+                            f"{sheet.name}: {exc}"
+                        )
+                        failed_sheets += 1
+                        continue
                     if not tmp_pdf.exists():
                         print(f"[WARNING]   - 시트 export 실패: {sheet.name}")
+                        failed_sheets += 1
                         continue
                     before = page_index
                     page_index = render_pdf_to_webps(
@@ -86,5 +97,12 @@ def extract(source: Path, out_dir: Path) -> int:
         app.quit()
 
     page_count = page_index - 1
+    if page_count == 0 and failed_sheets > 0:
+        # 스크롤형 시트는 PDF/Word 처럼 페이지 개념이 없어 범용 뷰어 캡처 폴백이
+        # 불안정하다 -> 폴백 없이 명확히 안내(수동으로 인쇄 미리보기 캡처 권장).
+        print(
+            f"[WARNING] Excel 전 시트 export 실패({failed_sheets}건) - DRM 차단 가능. "
+            "DRM Excel 은 수동 캡처(인쇄 미리보기)로 처리하세요."
+        )
     print(f"[INFO] Excel 추출 완료: {source.name} ({page_count}페이지)")
     return page_count

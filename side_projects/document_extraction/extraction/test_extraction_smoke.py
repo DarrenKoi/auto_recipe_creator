@@ -190,6 +190,61 @@ def test_deterministic_synthesis_no_model() -> None:
     print("[PASS] test_deterministic_synthesis_no_model")
 
 
+def test_synthesis_chain_offline_stub_and_glm_mode() -> None:
+    """Stage 6 폴백 체인: offline 에서 kimi/glm 모두 stub + synthesis_service 기록."""
+    from side_projects.document_extraction.extraction.models import StageRunner
+    from side_projects.document_extraction.extraction.extract_screenshot import extract_one
+
+    runner = StageRunner(offline=True)
+    synth = runner.run_synthesis("x.webp", "powerpoint", "{}")
+    assert synth["synthesis_service"] == "offline"
+    synth_text = runner.run_synthesis_text("powerpoint", "{}")
+    assert synth_text["synthesis_service"] == "offline"
+    assert synth_text["summary_markdown"].startswith("[offline-stub]")
+
+    # glm 모드 e2e(offline): summary_model_sources 가 실제 사용 서비스(offline)를 기록
+    with tempfile.TemporaryDirectory() as tmp:
+        img = Path(tmp) / "page_001.webp"
+        _make_synth_image(img)
+        result = extract_one(
+            img,
+            screenshot_index=1,
+            document_id="doc_glm",
+            collection_id="c",
+            source_type_hint="powerpoint",
+            runner=StageRunner(offline=True),
+            synthesis_mode="glm",
+        )
+        assert result.summary_model_sources == ["offline"], result.summary_model_sources
+    print("[PASS] test_synthesis_chain_offline_stub_and_glm_mode")
+
+
+def test_crop_metas_persisted_for_marp_mapping() -> None:
+    """crop refine 이 crops.json(CropMeta 목록)을 남겨 marp crop 대응이 가능해야 함."""
+    from side_projects.document_extraction.extraction.extract_screenshot import (
+        _apply_crop_refine)
+    from side_projects.document_extraction.extraction.models import StageRunner
+
+    with tempfile.TemporaryDirectory() as tmp:
+        img = Path(tmp) / "page_001.webp"
+        _make_synth_image(img)
+        layout = {"regions": [
+            {"type": "title", "bbox": {"left": 0, "top": 0, "right": 100, "bottom": 40}},
+            {"type": "chart", "bbox": {"left": 10, "top": 100, "right": 600, "bottom": 400}},
+        ]}
+        ocr: dict = {}
+        crop_dir = Path(tmp) / "_crops" / "doc_s001"
+        _apply_crop_refine(StageRunner(offline=True), img, layout, ocr,
+                           (1280, 720), crop_dir)
+        meta_path = crop_dir / "crops.json"
+        assert meta_path.exists(), "crops.json 이 저장돼야 함"
+        metas = json.loads(meta_path.read_text(encoding="utf-8"))
+        assert len(metas) == 1 and metas[0]["region_type"] == "chart"
+        assert metas[0]["region_id"] == "r002"
+        assert Path(metas[0]["crop_path"]).exists()
+    print("[PASS] test_crop_metas_persisted_for_marp_mapping")
+
+
 def test_offline_pipeline_and_keyword_search() -> None:
     """OFFLINE 파이프라인 e2e + JSONL keyword 검색 스모크."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -245,6 +300,8 @@ def main() -> int:
     test_crop_merge_lossless()
     test_table_row_chunks_and_heading()
     test_deterministic_synthesis_no_model()
+    test_synthesis_chain_offline_stub_and_glm_mode()
+    test_crop_metas_persisted_for_marp_mapping()
     test_offline_pipeline_and_keyword_search()
     print("\n[INFO] 모든 스모크 테스트 통과")
     return 0

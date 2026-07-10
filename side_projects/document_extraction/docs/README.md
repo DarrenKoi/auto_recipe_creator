@@ -29,7 +29,8 @@
 | PaddleOCR-VL-1.5 | `paddleocr-vl-1.5` | OCR, reading order, table, formula, chart, document parsing |
 | UI-Venus-1.5-8B | `ui-venus` | 전체 스크린샷 layout 및 UI/document visual understanding |
 | MAI-UI-8B | `mai-ui` | dense region 또는 작은 region의 crop-level refinement |
-| Kimi-K2.6 | `kimi-k2.6` | 느리지만 고품질 synthesis, ambiguity resolution, final reasoning |
+| Kimi-K2.6 | `kimi-k2.6` | 느리지만 고품질 synthesis(비전), ambiguity resolution, final reasoning |
+| GLM-5.2 | `glm-5.2` | 텍스트 전용 로컬 LLM — evidence-only synthesis, Kimi 폴백, Marp deck 다듬기 |
 
 ## 기대 출력
 
@@ -91,3 +92,5 @@ Large VLM은 reasoning error를 줄이는 데 도움이 되지만, 보이지 않
 - [rag_db_plan.md](./rag_db_plan.md)
 - [benchmark_plan.md](./benchmark_plan.md)
 - [marp_roundtrip_design.md](./marp_roundtrip_design.md)
+- [rag_context_architecture.md](./rag_context_architecture.md) — 텍스트 RAG 코어(하이브리드+재랭크+DVI)
+- [rag_chart_heavy_architecture.md](./rag_chart_heavy_architecture.md) — **차트/그래프 중심 corpus 의 저장 표상 + hybrid 검색 설계**

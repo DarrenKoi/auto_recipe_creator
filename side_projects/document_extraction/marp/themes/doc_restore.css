@@ -1,0 +1,79 @@
+/* @theme doc-restore */
+/*
+ * 문서 복원용 커스텀 Marp 테마 (marp_roundtrip_design.md §5 시각 보정, status 계획 7번).
+ *
+ * 목표: 사내 발표자료의 일반적 룩(흰 배경, 남색 제목, 컴팩트한 표)을 근사해
+ * 재렌더 SSIM 을 default 테마보다 끌어올린다. 한국어 글꼴 스택을 고정해
+ * 폰트 폴백으로 인한 텍스트 메트릭 변화(가짜 SSIM 하락)를 방지한다.
+ *
+ * 사용: deck 프론트매터 `theme: doc-restore` + marp-cli `--theme <이 파일 경로>`.
+ */
+@import 'default';
+
+section {
+  font-family: 'Malgun Gothic', 'Noto Sans KR', 'Apple SD Gothic Neo', 'Segoe UI', sans-serif;
+  font-size: 22px;
+  line-height: 1.5;
+  padding: 44px 60px;
+  color: #1f2430;
+  background: #ffffff;
+}
+
+section h1 {
+  font-size: 1.5em;
+  color: #0f2a52;
+  border-bottom: 2px solid #2f6fb2;
+  padding-bottom: 0.2em;
+  margin-bottom: 0.6em;
+}
+
+section h2 {
+  font-size: 1.2em;
+  color: #17427e;
+  margin: 0.5em 0 0.3em;
+}
+
+section table {
+  font-size: 0.82em;
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.4em 0;
+}
+
+section th {
+  background: #eef3fa;
+  color: #0f2a52;
+}
+
+section td,
+section th {
+  border: 1px solid #c9d4e4;
+  padding: 0.28em 0.55em;
+}
+
+section img {
+  display: block;
+  margin: 0.4em auto;
+  max-width: 92%;
+  max-height: 62%;
+  object-fit: contain;
+}
+
+section ul {
+  margin: 0.2em 0;
+}
+
+section li {
+  margin: 0.15em 0;
+}
+
+section footer,
+section header {
+  color: #8a93a5;
+  font-size: 0.6em;
+}
+
+/* 전체 래스터 강등 슬라이드(![bg fit])는 여백 없이 원본 픽셀을 살린다 */
+section.raster {
+  padding: 0;
+}

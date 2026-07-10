@@ -91,9 +91,32 @@ def prompt_synthesis(source_type: str) -> tuple[str, str]:
     return system, user
 
 
+def prompt_synthesis_text_only(source_type: str) -> tuple[str, str]:
+    """Stage 6 텍스트 전용 합성 프롬프트 (glm-5.2 등 text LLM, 이미지 없음).
+
+    prompt_synthesis 와 동일 계약이되 스크린샷 언급을 제거한다 — evidence JSON 만
+    보고 합성하며, evidence 에 없는 값은 절대 만들지 않는다.
+    """
+    system = (
+        "You synthesize a final document extraction from OCR and layout evidence. "
+        "You are given ONLY structured evidence JSON (no image). "
+        "Use the evidence as the sole source of truth for exact text, tables, "
+        "and formulas; do NOT regenerate or alter those values. Mark anything "
+        "uncertain as unknown. Never fabricate numbers or labels. " + _JSON_ONLY
+    )
+    user = (
+        f"Source type: {source_type}. Below is the extracted evidence as JSON.\n"
+        "Produce JSON: {\"summary_markdown\": \"\", "
+        '"overall_confidence": 0.0, "unresolved": ["..."]}.\n'
+        "EVIDENCE:\n"
+    )
+    return system, user
+
+
 __all__ = [
     "prompt_crop_refine",
     "prompt_first_pass_ocr",
     "prompt_layout_regions",
     "prompt_synthesis",
+    "prompt_synthesis_text_only",
 ]

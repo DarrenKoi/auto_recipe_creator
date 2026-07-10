@@ -15,7 +15,14 @@
 from side_projects.document_extraction.extraction.schemas import ExtractionResult
 
 
-_FRONTMATTER = "---\nmarp: true\ntheme: default\npaginate: true\n---\n"
+def frontmatter_for_theme(theme: str = "default") -> str:
+    """Marp 프론트매터를 만든다.
+
+    theme: marp 내장 테마('default'/'gaia'/'uncover') 또는 커스텀 테마 이름
+    (예: 'doc-restore' — 렌더 시 marp-cli --theme <css> 로 함께 등록해야 한다).
+    """
+    name = (theme or "default").strip() or "default"
+    return f"---\nmarp: true\ntheme: {name}\npaginate: true\n---\n"
 
 
 def _cell(value) -> str:
@@ -135,11 +142,16 @@ def evidence_to_marp(result: ExtractionResult, *, crop_lookup: dict | None = Non
 
 
 def results_to_deck(
-    results: list, *, crop_lookups: dict | None = None, with_frontmatter: bool = True
+    results: list,
+    *,
+    crop_lookups: dict | None = None,
+    with_frontmatter: bool = True,
+    theme: str = "default",
 ) -> str:
     """여러 ExtractionResult 를 하나의 Marp deck(.md 본문)으로 합친다.
 
     crop_lookups: {screenshot_id -> {region_id -> 이미지경로}} (선택).
+    theme: 프론트매터 theme 이름(커스텀이면 렌더 시 --theme CSS 필요).
     슬라이드는 Marp 의 `---` 로 구분한다.
     """
     crop_lookups = crop_lookups or {}
@@ -151,7 +163,9 @@ def results_to_deck(
             slides.append(slide)
 
     body = "\n\n---\n\n".join(slides)
-    return (_FRONTMATTER + "\n" + body + "\n") if with_frontmatter else body
+    if not with_frontmatter:
+        return body
+    return frontmatter_for_theme(theme) + "\n" + body + "\n"
 
 
-__all__ = ["evidence_to_marp", "results_to_deck"]
+__all__ = ["evidence_to_marp", "frontmatter_for_theme", "results_to_deck"]

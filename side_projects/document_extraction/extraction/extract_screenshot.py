@@ -38,7 +38,8 @@ INPUT_IMAGE_DIR: Path = Path("")   # 예: Path(r"C:\...\extracted\presentation_A
 OUTPUT_DIR: Path = Path("")        # 예: Path(r"C:\...\extracted\presentation_A\_rag")
 COLLECTION_ID: str = "default_collection"
 ENABLE_CROP_REFINE: bool = False   # skeleton: 기본 비활성(office 캘리브레이션 후 활성)
-# 합성 모드: "deterministic"(모델 0콜, 기본) | "kimi"(kimi-k2.6 호출) | "none"(생략)
+# 합성 모드: "deterministic"(모델 0콜, 기본) | "kimi"(kimi-k2.6 비전, 실패 시 glm 폴백)
+#           | "glm"(glm-5.2 텍스트, evidence-only) | "none"(생략)
 SYNTHESIS_MODE: str = "deterministic"
 OFFLINE: bool | None = None        # None=env(DOC_EXTRACT_OFFLINE)로 결정, True/False 강제
 # ==============================================================================
@@ -109,9 +110,10 @@ def extract_one(
 
     # Stage 6: synthesis
     #   deterministic = 모델 0콜로 evidence 조립(기본)
-    #   kimi          = kimi-k2.6 호출(고품질 합성/충돌 해소)
+    #   kimi          = kimi-k2.6 비전 합성(실패 시 glm-5.2 텍스트 폴백)
+    #   glm           = glm-5.2 텍스트 합성(evidence-only, 이미지 미전송)
     #   none          = 합성 생략
-    if synthesis_mode == "kimi":
+    if synthesis_mode in {"kimi", "glm"}:
         evidence_json = json.dumps(
             {
                 "regions": [r.to_dict() for r in result.regions],
@@ -121,7 +123,12 @@ def extract_one(
             },
             ensure_ascii=False,
         )
-        synth = runner.run_synthesis(str(image_path), result.source_type, evidence_json)
+        if synthesis_mode == "kimi":
+            synth = runner.run_synthesis(
+                str(image_path), result.source_type, evidence_json
+            )
+        else:
+            synth = runner.run_synthesis_text(result.source_type, evidence_json)
         result.summary_markdown = (synth.get("summary_markdown") or "").strip()
         try:
             result.overall_confidence = float(synth.get("overall_confidence") or 0.0)
@@ -130,7 +137,9 @@ def extract_one(
         for item in synth.get("unresolved") or []:
             result.unresolved.append(str(item))
         if result.summary_markdown:
-            result.summary_model_sources = ["kimi-k2.6"]
+            # 실제 합성한 서비스 slug 를 정직하게 기록(폴백이면 glm-5.2, stub 이면 offline)
+            used = (synth.get("synthesis_service") or "").strip()
+            result.summary_model_sources = [used or synthesis_mode]
     elif synthesis_mode == "deterministic":
         synth = synthesize_deterministic(result)
         result.summary_markdown = synth["summary_markdown"]
@@ -156,6 +165,7 @@ def _apply_crop_refine(runner, image_path, layout, ocr, frame_wh, crop_dir) -> N
     """
     crop_targets = {"table", "chart", "formula", "legend"}
     width, height = frame_wh
+    crop_metas: list[dict] = []
     for idx, raw_region in enumerate(layout.get("regions") or []):
         if not isinstance(raw_region, dict):
             continue
@@ -173,11 +183,19 @@ def _apply_crop_refine(runner, image_path, layout, ocr, frame_wh, crop_dir) -> N
         if meta is None:
             print(f"[INFO] crop refine 스킵(유효하지 않은 bbox): type={rtype}")
             continue
+        crop_metas.append(meta.to_dict())
 
         refined = runner.run_crop_refine(
             meta.crop_path, meta.crop_wh[0], meta.crop_wh[1], rtype
         )
         _merge_crop_refine(rtype, refined, ocr)
+
+    # crop 메타 저장: marp 의 crop_lookup 자동 대응(crop_map.py)이 이 파일을 읽는다.
+    if crop_metas:
+        meta_path = Path(crop_dir) / "crops.json"
+        meta_path.write_text(
+            json.dumps(crop_metas, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
 
 def _merge_crop_refine(region_type: str, refined: dict, ocr: dict) -> None:

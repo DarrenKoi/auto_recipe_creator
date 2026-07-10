@@ -10,11 +10,21 @@ extraction/ 이 만든 evidence(ExtractionResult)를 Marp(Markdown 슬라이드)
 있으면 office 에서 돈다(없으면 graceful degrade).
 """
 
+from side_projects.document_extraction.marp.crop_map import (
+    build_crop_lookups,
+    map_chart_crops,
+)
 from side_projects.document_extraction.marp.generate import (
     evidence_to_marp,
+    frontmatter_for_theme,
     results_to_deck,
 )
+from side_projects.document_extraction.marp.refine import (
+    refine_deck,
+    validate_refined_slide,
+)
 from side_projects.document_extraction.marp.render import (
+    DOC_RESTORE_THEME_CSS,
     RenderResult,
     build_render_args,
     render_deck,
@@ -34,18 +44,24 @@ from side_projects.document_extraction.marp.verify import (
 
 __all__ = [
     "DEFAULT_SSIM_FLOOR",
+    "DOC_RESTORE_THEME_CSS",
     "DowngradePlan",
     "RenderResult",
     "apply_downgrade_plans",
+    "build_crop_lookups",
     "build_render_args",
     "evidence_to_marp",
     "flag_low_fidelity",
+    "frontmatter_for_theme",
+    "map_chart_crops",
     "plan_downgrade",
+    "refine_deck",
     "render_deck",
     "resolve_marp_command",
     "results_to_deck",
     "slide_fidelity",
     "ssim",
+    "validate_refined_slide",
     "verify_and_downgrade",
     "whole_slide_marp",
 ]

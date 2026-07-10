@@ -54,6 +54,21 @@ def test_build_render_args_rejects_unknown_format() -> None:
     raise AssertionError("unknown format 는 ValueError 여야 한다")
 
 
+def test_build_render_args_theme_css() -> None:
+    from side_projects.document_extraction.marp.render import DOC_RESTORE_THEME_CSS
+
+    args = build_render_args(Path("deck.md"), Path("out"), "png",
+                             theme_css=DOC_RESTORE_THEME_CSS)
+    ti = args.index("--theme")
+    assert args[ti + 1].endswith("doc_restore.css")
+    assert DOC_RESTORE_THEME_CSS.exists(), "테마 CSS 파일이 패키지에 있어야 함"
+    text = DOC_RESTORE_THEME_CSS.read_text(encoding="utf-8")
+    assert "@theme doc-restore" in text, "CSS @theme 이름은 프론트매터와 일치해야 함"
+    # theme_css 미지정이면 --theme 없음(하위호환)
+    assert "--theme" not in build_render_args(Path("deck.md"), Path("out"), "png")
+    print("[PASS] test_build_render_args_theme_css")
+
+
 def test_resolve_marp_command_returns_list_or_none() -> None:
     cmd = resolve_marp_command()
     assert cmd is None or (isinstance(cmd, list) and cmd)
@@ -87,6 +102,7 @@ def main() -> int:
     test_build_render_args_png_per_slide()
     test_build_render_args_pptx_pdf_html()
     test_build_render_args_rejects_unknown_format()
+    test_build_render_args_theme_css()
     test_resolve_marp_command_returns_list_or_none()
     test_render_deck_graceful_when_binary_missing()
     test_render_deck_runs_injected_command()

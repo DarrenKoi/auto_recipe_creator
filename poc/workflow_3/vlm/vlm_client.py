@@ -35,6 +35,19 @@ class ChatImageRequest:
     stream: bool = False
 
 
+@dataclass(frozen=True)
+class ChatTextRequest:
+    """텍스트 전용 chat 요청 데이터 (이미지 없음 — GLM 등 text LLM 용)."""
+
+    model: str
+    system_message: str
+    user_text: str
+    temperature: float = 0.0
+    max_tokens: int = DEFAULT_MAX_TOKENS
+    frequency_penalty: float | None = None
+    stream: bool = False
+
+
 class OpenAICompatibleVLMClient:
     """OpenAI-compatible chat-completions endpoint 용 최소 클라이언트."""
 
@@ -231,6 +244,32 @@ class OpenAICompatibleVLMClient:
         if request.stream:
             payload["stream"] = True
 
+        return self._post_chat(payload, request.model)
+
+    def chat_text(self, request: ChatTextRequest) -> str:
+        """텍스트 전용 chat completions 요청(이미지 없음)을 보내고 응답 텍스트를 반환한다."""
+        print(f"[INFO] LLM 텍스트 요청: model={request.model}, user={len(request.user_text)}자")
+
+        messages: list[dict] = []
+        if request.system_message:
+            messages.append({"role": "system", "content": request.system_message})
+        messages.append({"role": "user", "content": request.user_text})
+
+        payload = {
+            "model": request.model,
+            "messages": messages,
+            "temperature": request.temperature,
+            "max_tokens": request.max_tokens,
+        }
+        if request.frequency_penalty is not None:
+            payload["frequency_penalty"] = request.frequency_penalty
+        if request.stream:
+            payload["stream"] = True
+
+        return self._post_chat(payload, request.model)
+
+    def _post_chat(self, payload: dict, model: str) -> str:
+        """chat completions POST + 응답 파싱 공통 경로(이미지/텍스트 요청이 공유)."""
         try:
             response = requests.post(
                 self.endpoint,
@@ -242,10 +281,10 @@ class OpenAICompatibleVLMClient:
         except requests.RequestException as exc:
             status_code = getattr(getattr(exc, "response", None), "status_code", None)
             if status_code is None:
-                print(f"[ERROR] VLM 응답 실패: model={request.model}, error={exc}")
+                print(f"[ERROR] VLM 응답 실패: model={model}, error={exc}")
             else:
                 print(
-                    f"[ERROR] VLM 응답 실패: model={request.model}, "
+                    f"[ERROR] VLM 응답 실패: model={model}, "
                     f"status={status_code}, error={exc}"
                 )
             raise
@@ -263,7 +302,7 @@ class OpenAICompatibleVLMClient:
             if text:
                 usage = self.last_token_usage or {}
                 print(
-                    f"[INFO] VLM 응답 성공: model={request.model}, "
+                    f"[INFO] VLM 응답 성공: model={model}, "
                     f"prompt={usage.get('prompt_tokens', '?')}, "
                     f"completion={usage.get('completion_tokens', '?')}, "
                     f"total={usage.get('total_tokens', '?')}"
@@ -278,7 +317,7 @@ class OpenAICompatibleVLMClient:
         sse_text = self._extract_text_from_sse_body(body_text)
         if sse_text:
             print(
-                f"[INFO] VLM 응답 성공: model={request.model}, "
+                f"[INFO] VLM 응답 성공: model={model}, "
                 "prompt=?, completion=?, total=?"
             )
             return sse_text
@@ -286,7 +325,7 @@ class OpenAICompatibleVLMClient:
         stripped_body = body_text.strip()
         if stripped_body:
             print(
-                f"[INFO] VLM 응답 성공: model={request.model}, "
+                f"[INFO] VLM 응답 성공: model={model}, "
                 "prompt=?, completion=?, total=?"
             )
             return stripped_body
@@ -435,6 +474,60 @@ class Workflow1VLMClient:
             token_usage=dict(self._client.last_token_usage or {}),
         )
 
+    def chat_text(
+        self,
+        *,
+        system_message: str,
+        user_text: str,
+        temperature: float = 0.0,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        frequency_penalty: float | None = None,
+        model_name: str | None = None,
+        stream: bool | None = None,
+    ) -> Workflow1VLMResponse:
+        """이미지 없이 텍스트만으로 요청한다 (GLM-5.2 같은 text LLM / evidence-only 합성용)."""
+        request = ChatTextRequest(
+            model=(model_name or self.model_name).strip(),
+            system_message=system_message,
+            user_text=user_text,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            frequency_penalty=frequency_penalty,
+            stream=self.prefer_stream if stream is None else bool(stream),
+        )
+        started_at = time.time()
+        try:
+            text = self._client.chat_text(request)
+        except Exception as exc:
+            log_vlm_call(
+                service=self.service_slug,
+                model=request.model,
+                status="error",
+                latency_ms=(time.time() - started_at) * 1000,
+                token_usage=dict(self._client.last_token_usage or {}),
+                error=str(exc),
+                endpoint=self.endpoint,
+                log_name=self.log_name,
+            )
+            raise
+        log_vlm_call(
+            service=self.service_slug,
+            model=request.model,
+            status="ok",
+            latency_ms=(time.time() - started_at) * 1000,
+            token_usage=dict(self._client.last_token_usage or {}),
+            endpoint=self.endpoint,
+            response_text=text,
+            log_name=self.log_name,
+        )
+        return Workflow1VLMResponse(
+            service_slug=self.service_slug,
+            model_name=request.model,
+            api_url=self.api_url,
+            text=text,
+            token_usage=dict(self._client.last_token_usage or {}),
+        )
+
     def chat_with_image_bytes(
         self,
         *,
@@ -495,6 +588,7 @@ class Workflow1VLMClient:
 __all__ = [
     "DEFAULT_MAX_TOKENS",
     "ChatImageRequest",
+    "ChatTextRequest",
     "OpenAICompatibleVLMClient",
     "Workflow1VLMClient",
     "Workflow1VLMResponse",

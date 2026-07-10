@@ -37,6 +37,7 @@ DEFAULT_FLASK_API_BASE_URL = "http://itc-1stop-solution-gpu-image-webapp.aipp02.
 DEFAULT_COMPANY_LLM_BASE_URL = "http://common.llm.skhynix.com/v1"
 
 KIMI_K2_6_MODEL_NAME = "Kimi-K2.6"
+GLM_5_2_MODEL_NAME = "GLM-5.2"
 UI_VENUS_MODEL_NAME = "ui-venus-1.5-8b"
 MAI_UI_MODEL_NAME = "mai-ui-8b"
 UI_TARS_MODEL_NAME = "ui-tars-1.5-7b"
@@ -44,6 +45,7 @@ PADDLEOCR_VL_1_5_MODEL_NAME = "paddleocr-vl-1.5"
 GOT_OCR_MODEL_NAME = "got-ocr-2.0-hf"
 
 KIMI_K2_6_API_URL = DEFAULT_COMPANY_LLM_BASE_URL
+GLM_5_2_API_URL = DEFAULT_COMPANY_LLM_BASE_URL
 UI_VENUS_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/ui-venus"
 MAI_UI_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/mai-ui"
 UI_TARS_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/ui-tars"
@@ -63,6 +65,14 @@ ALL_VLM_SERVICES: list[VLMServiceEntry] = [
         "Kimi-K2.6",
         KIMI_K2_6_MODEL_NAME,
         KIMI_K2_6_API_URL,
+        enabled=True,
+        connection_mode="direct",
+    ),
+    VLMServiceEntry(
+        "glm-5.2",
+        "GLM-5.2",
+        GLM_5_2_MODEL_NAME,
+        GLM_5_2_API_URL,
         enabled=True,
         connection_mode="direct",
     ),

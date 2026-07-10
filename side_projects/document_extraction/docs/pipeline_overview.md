@@ -107,8 +107,12 @@ region type + context 포함)를 별도로 갖는다. heading 은 bbox 기반 ne
 
 ## 5. 후속 소비 단계
 
-### 검색 — `retrieval.py` / `search.py`
-embedding 없이 동작하는 첫 단계 검색.
+### 검색 — `retrieval.py` / `search.py` (+ OpenSearch hybrid: `opensearch_index.py` / `hybrid_search.py`)
+embedding 없이 동작하는 첫 단계 검색. **Phase 1 hybrid 골격(2026-07-10)**:
+`embeddings.py`(bge-m3, offline stub) + `opensearch_index.py`(BM25+dense kNN 단일
+인덱스 색인기) + `hybrid_search.py`(2-arm RRF k=60 + rerank 훅 + DVI reader
+payload — crop_path/source_image provenance 를 reader 첨부 이미지로 전달).
+설계/사내 배선 잔여는 [`rag_chart_heavy_architecture.md`](./rag_chart_heavy_architecture.md) §5-1.
 - `quality_gate`: rag_db_plan Quality Gates(content 비어있지 않음 / source_image 존재 /
   region_type 알려짐 / confidence≥0.7 또는 approved / 표·차트 chunk 의 label 보유)로
   `trusted` vs `lower_trust` 분류.
@@ -158,6 +162,10 @@ uv run python -m side_projects.document_extraction.extraction.extract_screenshot
 
 # 2) 검색
 uv run python -m side_projects.document_extraction.extraction.search
+
+# 2-1) OpenSearch 색인 + hybrid 검색 (사내; env DOC_EXTRACT_OPENSEARCH_* / EMBED_*)
+uv run python -m side_projects.document_extraction.extraction.opensearch_index
+uv run python -m side_projects.document_extraction.extraction.hybrid_search
 
 # 3) 벤치 채점
 uv run python -m side_projects.document_extraction.benchmark.run_benchmark

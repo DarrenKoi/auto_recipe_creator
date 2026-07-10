@@ -67,12 +67,21 @@ def _new_chunk(result: ExtractionResult, suffix: str, **kwargs) -> RagChunk:
     return chunk
 
 
-def generate_chunks(result: ExtractionResult, *, created_at: str = "") -> list[RagChunk]:
+def generate_chunks(
+    result: ExtractionResult,
+    *,
+    created_at: str = "",
+    chart_crop_lookup: dict | None = None,
+) -> list[RagChunk]:
     """ExtractionResult -> RagChunk 목록.
 
     region_text / table_summary / chart_summary / formula / document_summary 를 생성한다.
     table_row(행 단위) chunk 는 후속 단계로 두고 skeleton 에서는 table_summary 만.
+
+    chart_crop_lookup: {chart_region_id -> crop 경로}. chart_summary chunk 에
+    R1 래스터 provenance(crop_path)를 연결한다(3-표상 저장의 R1 고리).
     """
+    chart_crop_lookup = chart_crop_lookup or {}
     chunks: list[RagChunk] = []
 
     # region_text: title/body/footer/legend 등 텍스트 region
@@ -161,6 +170,7 @@ def generate_chunks(result: ExtractionResult, *, created_at: str = "") -> list[R
                 chart.region_id,
                 region_id=chart.region_id,
                 region_type="chart_summary",
+                crop_path=chart_crop_lookup.get(chart.region_id, ""),
                 parent_heading=chart.title,
                 content=content,
                 confidence=chart.confidence,

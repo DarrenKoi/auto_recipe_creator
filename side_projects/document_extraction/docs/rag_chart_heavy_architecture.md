@@ -121,13 +121,34 @@ chart record (rag_chunks + payload)
 
 | 단계 | 작업 | 게이트 | 어디서 |
 |---|---|---|---|
-| **Phase 1 (지금, 배포 0)** | 3-표상 저장 완성: chart chunk 에 `crop_path` provenance 연결(crops.json), OpenSearch 색인(BM25+bge-m3+sparse, RRF), bge-reranker, reader 에 R1 이미지 첨부(DVI) | 없음 | 색인/검색 사내 |
+| **Phase 1 (지금, 배포 0)** | 3-표상 저장 완성: chart chunk 에 `crop_path` provenance 연결(crops.json), OpenSearch 색인(BM25+bge-m3+sparse, RRF), bge-reranker, reader 에 R1 이미지 첨부(DVI) — **코드 골격 구현됨(2026-07-10, 아래 §5-1)** | 없음 | 색인/검색 사내 |
 | Phase 1.5 | golden 질의셋에 **차트-온리 질의**(값/추세를 차트에서만 읽을 수 있는 것) 별도 계층 추가 + Recall@k / parser-loss recovery 측정 | GT 작성 | 사내 |
 | **Phase 2 (배포 1개, 최대 ROI)** | Qwen3-VL-Embedding(+Reranker) 배포 → R4 arm C 추가, 3-arm RRF, 질의유형별 가중 튜닝 | 가중치 반입 | 사내 |
 | Phase 3 (선택) | ColQwen3 late-interaction A/B(사이드카 MaxSim), 부족 시 LoRA 도메인 적응 | Phase 2 결과 | 사내 GPU |
 
 Phase 1 만으로도 "차트를 이미지로 답하는" DVI 경로는 열린다(검색 recall 천장은
 남지만, R3 컨텍스트가 캡션 역할로 완화). Phase 2 가 recall 천장을 걷어낸다.
+
+### 5-1. Phase 1 코드 골격 (구현됨, 2026-07-10)
+
+```
+extraction/
+├─ schemas.py         RagChunk.crop_path 필드 신설 (R1 래스터 provenance)
+├─ crop.py            map_charts_to_crop_paths (CropMeta -> cNNN 순서 대응)
+├─ rag_chunks.py      generate_chunks(chart_crop_lookup=...) -> chart_summary 에 crop_path
+├─ embeddings.py      bge-m3 dense 클라이언트 (OpenAI-호환 /embeddings) + offline 결정론 stub
+├─ opensearch_index.py  매핑/문서변환/bulk(순수) + REST 클라이언트(transport 주입) + 색인 엔트리
+├─ hybrid_search.py   BM25/kNN 쿼리 빌더 + rrf_fuse(k=60, arm 가중) + rerank 훅(passthrough)
+│                     + build_reader_payload (DVI: 관련최고=꼬리, crop 우선 이미지, 기계추출 라벨)
+└─ test_opensearch_smoke.py  9 테스트 (fake transport 로 색인->검색 e2e, 서버 불필요)
+```
+
+- env: `DOC_EXTRACT_OPENSEARCH_URL/INDEX/USER/PASSWORD`,
+  `DOC_EXTRACT_EMBED_API_URL/MODEL/API_KEY`(미설정=offline stub),
+  `DOC_EXTRACT_RERANK_API_URL`(미설정=passthrough).
+- 사내 잔여 배선: 실제 bge-m3 embeddings 엔드포인트 URL 확인, bge-reranker 훅
+  구현(`hybrid_search.rerank_hits`), neural sparse 파이프라인(`sparse_features`
+  필드는 예약됨), arm 가중 질의유형별 튜닝(Phase 1.5 벤치).
 
 ## 6. 리스크 / 캐비엇
 

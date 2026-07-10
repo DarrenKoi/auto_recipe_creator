@@ -42,7 +42,22 @@ Stage 0 캡처 ──▶ Stage 1~8 추출 ──▶ ┌ 검색(search)
 
 ---
 
-## 3. 이번에 한 일 (GLM-5.2 + DRM 폴백 + Marp 강화, 2026-07-10)
+## 3. 이번에 한 일 (차트 RAG Phase 1 골격, 2026-07-10 오후)
+
+- **3-표상 저장 완성(R1 고리)**: `RagChunk.crop_path` 신설, `crop.map_charts_to_crop_paths`
+  (CropMeta -> cNNN 순서 대응), `generate_chunks(chart_crop_lookup=...)` 로
+  chart_summary chunk 에 crop provenance 연결(extract_one 자동 배선).
+- **OpenSearch 색인기**: `extraction/opensearch_index.py` — 매핑(BM25 + knn_vector
+  1024 + sparse/R4 예약)/문서변환/bulk 순수 빌더 + REST 클라이언트(transport 주입)
+  + `index_chunks_jsonl` 엔트리. `extraction/embeddings.py` — bge-m3 클라이언트
+  (offline 결정론 stub).
+- **hybrid 검색**: `extraction/hybrid_search.py` — 2-arm(BM25/kNN) + 클라이언트측
+  RRF(k=60, arm 가중 열림) + rerank 훅(passthrough) + DVI reader payload(관련최고=
+  꼬리, crop 우선 이미지 첨부, 기계추출 라벨).
+- 스모크: `test_opensearch_smoke` 9 테스트(fake transport 색인->검색 e2e) 추가,
+  전 스위트 10종 통과. 상세: [rag_chart_heavy_architecture.md §5-1](./rag_chart_heavy_architecture.md).
+
+## 3-1. 이전 (GLM-5.2 + DRM 폴백 + Marp 강화, 2026-07-10)
 
 - **GLM-5.2 로컬 API 통합**: `flask_vlm.py` 에 `glm-5.2`(direct) 등록,
   `Workflow1VLMClient.chat_text()`(텍스트 전용) 신설. Stage 6 합성 폴백 체인
@@ -86,7 +101,9 @@ Stage 0 캡처 ──▶ Stage 1~8 추출 ──▶ ┌ 검색(search)
 | 8 | ~~crop_path <-> chart region 자동 대응~~ ✅ `crop_map.py` (2026-07-10) | 코드 | 완료 |
 | 9 | **DRM 폴백 실검증**: DRM PDF/Word 1개씩 뷰어 캡처 + 키 시퀀스 보정 | 검증 | 사내 |
 | 10 | Marp refine 실호출 A/B(glm vs kimi, 채택률/기각 사유 확인) | 검증 | 사내 |
-| 11 | 차트 RAG Phase 1(3-표상 + OpenSearch 색인) -> Phase 2(vision embedding 배포) | 코드+배포 | [설계](./rag_chart_heavy_architecture.md) |
+| 11 | ~~차트 RAG Phase 1 골격(3-표상 + OpenSearch 색인)~~ ✅ (2026-07-10) | 코드 | 완료 |
+| 12 | Phase 1 사내 배선: bge-m3 embeddings URL + bge-reranker 훅 + 실색인 1회 | 검증 | 사내 |
+| 13 | 차트 RAG Phase 2: Qwen3-VL-Embedding 배포(R4 vision arm) | 배포 | [설계](./rag_chart_heavy_architecture.md) |
 
 ---
 
@@ -97,6 +114,7 @@ Stage 0 캡처 ──▶ Stage 1~8 추출 ──▶ ┌ 검색(search)
 |---|---|---|
 | `extraction/test_extraction_smoke` | 10 | Stage 1~8 골격 + 합성 폴백 체인 + crops.json |
 | `extraction/test_retrieval_smoke` | — | 검색 + quality gate |
+| `extraction/test_opensearch_smoke` | 9 | 색인기/RRF/hybrid/reader payload (fake transport) |
 | `benchmark/test_benchmark_smoke` | — | 채점 하네스 |
 | `marp/test_marp_smoke` | 9 | Stage 5 생성 + 테마 프론트매터 |
 | `marp/test_render_smoke` | 7 | Stage 6 인자 빌더 + --theme + graceful |

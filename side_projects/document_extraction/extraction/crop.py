@@ -101,4 +101,30 @@ def crop_region(
     )
 
 
-__all__ = ["CropMeta", "compute_crop_box", "crop_region"]
+def map_charts_to_crop_paths(charts, crop_metas: list[dict]) -> dict:
+    """chart evidence(cNNN)에 chart crop 경로를 순서 대응시킨다(순수).
+
+    crop 은 layout region id(rNNN) 기준으로 저장되지만 Chart 에는 bbox 가 없어
+    좌표 대응이 불가능하다 -> "layout 의 k번째 chart crop <-> k번째 chart" 순서
+    대응(marp/crop_map.py 와 동일 규칙; 여기는 추출 시점의 in-memory CropMeta 용).
+
+    반환: {chart_region_id -> crop_path}. 개수가 어긋나면 앞에서부터만 대응.
+    """
+    chart_metas = sorted(
+        (m for m in crop_metas
+         if (m.get("region_type") or "").strip().lower() == "chart"
+         and (m.get("crop_path") or "").strip()),
+        key=lambda m: str(m.get("region_id") or ""),
+    )
+    lookup: dict = {}
+    for chart, meta in zip(charts, chart_metas):
+        lookup[chart.region_id] = str(meta["crop_path"])
+    if chart_metas and charts and len(chart_metas) != len(charts):
+        print(
+            f"[WARNING] chart/crop 개수 불일치: charts={len(charts)}, "
+            f"crops={len(chart_metas)} - 앞에서부터 순서 대응"
+        )
+    return lookup
+
+
+__all__ = ["CropMeta", "compute_crop_box", "crop_region", "map_charts_to_crop_paths"]

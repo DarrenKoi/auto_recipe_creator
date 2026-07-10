@@ -160,6 +160,10 @@ class RagChunk:
     region_id: str = ""
     region_type: str = "other"
     bbox: BBox = field(default_factory=BBox)
+    # R1 래스터 provenance: chart 계열 chunk 의 원본 crop 이미지 경로(있을 때만).
+    # 답변 시 reader 에게 crop 을 직접 첨부하는 DVI 경로의 연결 고리
+    # (rag_chart_heavy_architecture.md 3+1 표상 중 R1).
+    crop_path: str = ""
     parent_heading: str = ""
     content: str = ""
     raw_ocr_text: str = ""

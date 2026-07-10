@@ -93,9 +93,12 @@ def extract_one(
         layout["source_type"] = source_type_hint
 
     # Stage 4 (옵션): table/chart/formula/legend 영역만 crop 재인식
+    crop_metas: list[dict] = []
     if enable_crop_refine:
         crop_dir = image_path.parent / "_crops" / screenshot_id
-        _apply_crop_refine(runner, image_path, layout, ocr, (width, height), crop_dir)
+        crop_metas = _apply_crop_refine(
+            runner, image_path, layout, ocr, (width, height), crop_dir
+        )
 
     # Stage 5: merge
     result = merge.merge_evidence(
@@ -149,19 +152,22 @@ def extract_one(
             result.summary_model_sources = ["deterministic"]
     # synthesis_mode == "none": 합성 생략(summary_markdown 빈 채로 둠)
 
-    # Stage 8: RAG chunks
-    rag_chunks.generate_chunks(result)
+    # Stage 8: RAG chunks. chart crop 이 있으면 chart_summary 에 R1 provenance
+    # (crop_path)를 연결한다 - 3-표상 저장의 래스터 고리(rag_chart_heavy_architecture).
+    chart_crop_lookup = crop.map_charts_to_crop_paths(result.charts, crop_metas)
+    rag_chunks.generate_chunks(result, chart_crop_lookup=chart_crop_lookup)
     result.stage_log = list(runner.stage_log)
     return result
 
 
-def _apply_crop_refine(runner, image_path, layout, ocr, frame_wh, crop_dir) -> None:
+def _apply_crop_refine(runner, image_path, layout, ocr, frame_wh, crop_dir) -> list[dict]:
     """Stage 4: dense region(table/chart/formula/legend)을 잘라 재인식하고 ocr 에 병합.
 
     - bbox 로 원본 crop 을 저장(crop.crop_region; 순수 CV).
     - crop 을 run_crop_refine 로 재인식(offline 이면 stub).
     - 재인식 결과를 ocr 의 tables/charts/formulas/raw_text 에 보강 병합.
     표/차트는 기존 항목이 비어 있을 때만 채워, 좋은 first-pass 결과를 덮지 않는다.
+    저장한 CropMeta dict 목록을 반환한다(chart chunk 의 crop_path 연결에 사용).
     """
     crop_targets = {"table", "chart", "formula", "legend"}
     width, height = frame_wh
@@ -196,6 +202,7 @@ def _apply_crop_refine(runner, image_path, layout, ocr, frame_wh, crop_dir) -> N
         meta_path.write_text(
             json.dumps(crop_metas, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+    return crop_metas
 
 
 def _merge_crop_refine(region_type: str, refined: dict, ocr: dict) -> None:

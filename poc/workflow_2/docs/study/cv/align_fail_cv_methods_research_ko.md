@@ -204,6 +204,16 @@ candidate verifier arm은 `gt_in_topk=True` row를 우선 분석합니다. propo
 
 이 기준을 못 넘으면 score를 합성해 억지로 선택하지 않고, `not_distinctive`/재등록 분류를 강화합니다.
 
+## 4.5 구현 현황 (2026-07-20)
+
+`registration_lab.py` + `golden_registration_eval_cond.py` 에 아래가 구현되어 있고, 합성 self-test(24개)와 드라이버 합성 테스트(pytest 5개)를 통과했습니다. 오피스 golden A/B 는 아직 미실행입니다.
+
+- P0-A `ecc`, P0-B `sift`/`akaze`, P1-C `phase`(raw) — 최초 구현분.
+- P1-C 확장 `grad_phase`(Sobel magnitude 표상 phase), cascade `phase_ecc`(phase 전역 추정으로 ECC warp 초기화 — ECC 의 좁은 capture range 보완, 합성에서 20px 초기 오차 복원 확인).
+- P1-D `mind`(MIND-like self-similarity, score-only verifier — 문서 설계 단계 1 그대로, shift 없음).
+- `fuse` 의사-arm: fallback 아닌 arm 들의 재정렬 순열 RRF 합의(`rrf_fuse_orders`) — §4.3 의 단일-arm false-positive 상쇄 장치. 드라이버가 arm 2개 이상이면 자동 집계(`ALIGN_REG_FUSE=0` 으로 끔).
+- 드라이버 summary 에 hit 행 GT 거리 중앙값(`err_b0_med_px`→`err_ref_med_px`)을 추가 — rank 지표와 별개로 sub-pixel 정밀화 효과를 분리 관찰.
+
 ## 5. 추천 실행 순서
 
 1. **ECC lab**: candidate crop extraction과 transform-to-`best_xy` contract부터 synthetic unit test로 고정하고, golden LOO에서 `translation` arm만 실행합니다. 효과가 있을 때만 Euclidean/affine을 추가합니다.

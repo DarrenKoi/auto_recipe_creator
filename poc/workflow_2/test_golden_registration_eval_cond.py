@@ -1,0 +1,108 @@
+"""registration verifier A/B 드라이버(_RegAccum) 합성 테스트 — 실데이터 불필요.
+
+핵심 불변:
+  - _tally 는 arm/fuse 공통 집계 규약: raw(순위 효과)와 ref(순위+정밀화)를 분해하고,
+    promote/regress 는 B0 대비 방향 전이만 센다.
+  - fuse 의사-arm 은 fallback 아닌 arm 들의 순열 RRF 합의 — 전 arm 거부면 B0 강등.
+  - hook(_process)은 harness ctx 계약({gc, cons_tpl, gray, xy, mod, recipe, path})만으로
+    동작해야 한다(합성 frame 위 실제 ensemble proposer 재실행 포함).
+
+실행: uv run pytest poc/workflow_2/test_golden_registration_eval_cond.py
+"""
+
+import io
+import json
+import math
+from pathlib import Path
+
+import numpy as np
+
+from poc.workflow_2 import registration_lab as reg
+import poc.workflow_2.golden_registration_eval_cond as gre
+from poc.workflow_3.align.matching.engine import build_template
+
+
+# --- _median -------------------------------------------------------------------------
+
+def test_median_empty_and_odd_even():
+    assert gre._median([]) is None
+    assert gre._median([3.0]) == 3.0
+    assert gre._median([1.0, 2.0, 10.0]) == 2.0
+    assert gre._median([1.0, 2.0, 3.0, 4.0]) == 2.5
+
+
+# --- _RegAccum 합성 end-to-end -------------------------------------------------------
+
+def _make_ctx():
+    """registration_lab 합성 scene 을 harness ctx 계약으로 포장."""
+    frame, tpl_img, truth, _ = reg._make_scene()
+    cons_tpl = build_template(tpl_img, recipe_id="synthetic/rec", version="t",
+                              key_type="om", align_offset_xy=(0, 0))
+    return {
+        "recipe": "synthetic/rec", "mod": "om", "path": Path("S0001.jpeg"),
+        "gray": frame, "xy": (float(truth[0]), float(truth[1])),
+        "cons_tpl": cons_tpl, "rcp_tpl": None,
+        "gc": {"cand_xys": None, "topk_rank": 1},
+        "gr": None,
+    }
+
+
+def test_accum_process_populates_cells_and_fuse_row():
+    fh = io.StringIO()
+    acc = gre._RegAccum(fh, None, ("phase", "mind"), fuse=True)
+    acc(_make_ctx())
+    assert acc.n_hook_err == 0, "hook 예외 발생"
+    assert acc.n_points == 1
+    row = json.loads(fh.getvalue().strip())
+    # 실제 arm + fuse 의사-arm 모두 row 에 존재.
+    assert set(row["arms"]) == {"phase", "mind", "fuse"}
+    assert row["bucket"] in ("rank1_ok", "rank_error", "proposer_miss")
+    # cell 은 (arm, mod) 키 — fuse 포함.
+    for name in ("phase", "mind", "fuse"):
+        assert acc.cells[(name, "om")]["n"] == 1
+    # fuse 는 실제 verifier 를 다시 돌리지 않으므로 runtime/n_cand 비집계.
+    assert acc.cells[("fuse", "om")]["rt_ms"] == 0.0
+    assert acc.cells[("fuse", "om")]["n_cand"] == 0
+    # report_arms 로 summary 가 그대로 만들어져야 한다(err median 포함).
+    for name in acc.report_arms:
+        s = gre._arm_summary(acc, name)
+        assert s["n"] == 1
+        assert "err_ref_med_px" in s
+
+
+def test_tally_promote_regress_and_raw_ref_split():
+    acc = gre._RegAccum(io.StringIO(), None, ("phase",), fuse=False)
+    base_pts = [(100.0, 100.0), (50.0, 50.0)]
+    base_d = [40.0, 5.0]   # top-1 은 GT 에서 멀고(top=0 이면 miss), top-2 가 정답 근처.
+    gt, tol = (55.0, 55.0), 10.0
+    # 후보 재정렬로 top=1 을 앞세우고 refined 가 GT 를 더 파고들면 promote.
+    e = acc._tally("phase", "om", "r", 1, False, (54.0, 54.0),
+                   base_pts, base_d, gt, tol, b0_hit=False, bucket="rank_error")
+    assert e["hit_raw"] and e["hit_ref"] and e["changed"]
+    st = acc.cells[("phase", "om")]
+    assert st["promote"] == 1 and st["regress"] == 0
+    assert st["sub_n"] == 1 and st["sub_ref"] == 1   # rank_error 부분집합 집계.
+    # 반대로 B0 hit 였는데 재정렬이 top 을 먼 후보로 바꾸면 regress.
+    e2 = acc._tally("phase", "om", "r", 0, False, base_pts[0],
+                    [(55.0, 55.0), (200.0, 200.0)], [2.0, 150.0], gt, tol,
+                    b0_hit=True, bucket="rank1_ok")
+    assert not e2["hit_ref"]
+    assert acc.cells[("phase", "om")]["regress"] == 1
+
+
+def test_fuse_falls_back_to_b0_when_all_arms_reject():
+    """전 arm fallback 이면 fuse 도 top=0 + fallback=True (B0 강등 규약)."""
+    fh = io.StringIO()
+    acc = gre._RegAccum(fh, None, ("mind",), fuse=True)
+    ctx = _make_ctx()
+    ctx["gray"] = np.full_like(ctx["gray"], 128)   # 평탄 frame — 모든 후보 거부 유도.
+    acc(ctx)
+    if acc.n_points:   # proposer 가 평탄 frame 에서 후보를 냈을 때만 의미 있음.
+        row = json.loads(fh.getvalue().strip())
+        assert row["arms"]["fuse"]["fallback"] is True
+        assert row["arms"]["fuse"]["top"] == 0
+
+
+def test_default_arms_are_all_known():
+    assert set(gre.ARMS) <= set(reg.REG_ARM_NAMES)
+    assert gre.FUSE_ON in (True, False)

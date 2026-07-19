@@ -1,7 +1,9 @@
 """top-K 후보 국소 registration verifier A/B 드라이버 (cond GT, recipe 샘플링).
 
 `docs/study/cv/align_fail_cv_methods_research_ko.md` 의 P0/P1 verifier arm
-(ECC / phase correlation / SIFT·AKAZE+RANSAC)을 **production 무수정**으로 A/B 한다.
+(ECC / phase[raw·grad] / phase→ECC cascade / SIFT·AKAZE+RANSAC / MIND-like[P1-D])을
+**production 무수정**으로 A/B 한다. arm 이 2개 이상이면 'fuse' 의사-arm(각 arm 재정렬의
+RRF 합의 — `registration_lab.rrf_fuse_orders`)도 같은 표에 집계한다.
 
 - B0(기준선) = 기존 consensus LOO harness(`align_similarity._consensus_template_ab`)
   그대로: proposer(3채널 RRF ensemble) top-K 의 1순위가 정답이면 hit.
@@ -21,7 +23,9 @@ verifier 는 rank_error 버킷만 고칠 수 있다 — 버킷 크기가 이 실
 설정 (우선순위: env > golden_eval_config.py > 기본값):
     ALIGN_REG_SAMPLE_N    / REG_SAMPLE_N    recipe 표본 수 (기본 40, 0=전체)
     ALIGN_REG_SAMPLE_SEED / REG_SAMPLE_SEED 표본 시드 (기본 0; 같은 시드=같은 표본)
-    ALIGN_REG_ARMS        / REG_ARMS        쉼표 arm 목록 (기본 "ecc,phase,sift,akaze")
+    ALIGN_REG_ARMS        / REG_ARMS        쉼표 arm 목록 (기본 = REG_ARM_NAMES 전체;
+                                            'fuse' 는 arm 이 아니라 자동 의사-arm)
+    ALIGN_REG_FUSE        / REG_FUSE        RRF 합의 의사-arm on/off (기본 1; arm>=2 필요)
     ALIGN_REG_OVERLAY_MAX / REG_OVERLAY_MAX top-1 이 바뀐 행 overlay 저장 상한 (기본 60)
   골든 루트/MIN_S/CLEAN_FRAME 등은 consensus 드라이버와 동일 env 를 그대로 따른다.
 출력: stdout 표 + [DIGEST] 한 줄 + DEBUG_IMAGE_DIR/golden_registration_eval_cond/<ts>/
@@ -91,8 +95,9 @@ def _opt(env_name, cfg_name, default, cast=int):
 SAMPLE_N = _opt("ALIGN_REG_SAMPLE_N", "REG_SAMPLE_N", 40)          # 0 = 전체 recipe.
 SAMPLE_SEED = _opt("ALIGN_REG_SAMPLE_SEED", "REG_SAMPLE_SEED", 0)
 ARMS = tuple(a.strip() for a in
-             _opt("ALIGN_REG_ARMS", "REG_ARMS", "ecc,phase,sift,akaze", str).split(",")
+             _opt("ALIGN_REG_ARMS", "REG_ARMS", ",".join(reg.REG_ARM_NAMES), str).split(",")
              if a.strip())
+FUSE_ON = bool(_opt("ALIGN_REG_FUSE", "REG_FUSE", 1)) and len(ARMS) >= 2
 OVERLAY_MAX = _opt("ALIGN_REG_OVERLAY_MAX", "REG_OVERLAY_MAX", 60)
 
 OUTPUT_ROOT = DEBUG_IMAGE_DIR / "golden_registration_eval_cond"
@@ -101,7 +106,9 @@ OUTPUT_ROOT = DEBUG_IMAGE_DIR / "golden_registration_eval_cond"
 _CLR_GT = (0, 200, 0)
 _CLR_B0 = (255, 200, 0)
 _ARM_CLR = {"ecc": (0, 170, 255), "phase": (255, 0, 255),
-            "sift": (0, 255, 255), "akaze": (0, 0, 255)}
+            "phase_ecc": (255, 128, 0), "grad_phase": (128, 220, 128),
+            "sift": (0, 255, 255), "akaze": (0, 0, 255),
+            "mind": (255, 255, 0), "fuse": (255, 255, 255)}
 
 
 def _bucket(rank):
@@ -126,10 +133,12 @@ class _RegAccum:
     harness 가 이미 끝냈으므로 hook 실패가 B0 수치를 오염시키지 않는다.
     """
 
-    def __init__(self, rows_fh, overlay_dir, arms):
+    def __init__(self, rows_fh, overlay_dir, arms, fuse=False):
         self.rows_fh = rows_fh
         self.overlay_dir = overlay_dir
         self.arms = arms
+        self.fuse = fuse
+        self.report_arms = list(arms) + (["fuse"] if fuse else [])
         self.cells = defaultdict(_new_cell)          # {(arm, mod): cell}
         self.per_recipe = defaultdict(lambda: defaultdict(
             lambda: {"n": 0, "b0": 0, "arm": 0}))    # [arm][recipe]
@@ -184,65 +193,99 @@ class _RegAccum:
                "gc_rank": gc.get("topk_rank"), "bucket": bucket, "arms": {}}
         changed_any = False
         arm_tops = {}
+        arm_runs = {}    # {arm: (order, fallback, verdicts)} — fuse 재료.
         for arm in self.arms:
             verdicts = [reg.refine_candidate(arm, tpl_img, gray, tuple(c.xy), sc)
                         for c, sc in zip(cands, scales)]
             order, fallback = reg.rerank_by_verdicts(verdicts)
+            arm_runs[arm] = (order, fallback, verdicts)
             top = order[0]
             v = verdicts[top]
-            raw_pt = base_pts[top]
             if v.ok and v.refined_xy is not None:
                 sc = scales[top]
                 ref_pt = (v.refined_xy[0] + ox * sc, v.refined_xy[1] + oy * sc)
             else:
-                ref_pt = raw_pt
-            d_raw = math.hypot(raw_pt[0] - gt[0], raw_pt[1] - gt[1])
-            d_ref = math.hypot(ref_pt[0] - gt[0], ref_pt[1] - gt[1])
-            hit_raw = d_raw <= tol_px          # 순위 효과만(원좌표) — refine 효과와 분해.
-            hit_ref = d_ref <= tol_px          # 순위 + 정밀화(최종 arm 성능).
-
+                ref_pt = base_pts[top]
+            entry = self._tally(arm, mod, rec, top, fallback, ref_pt,
+                                base_pts, base_d, gt, tol_px, b0_hit, bucket)
             st = self.cells[(arm, mod)]
-            st["n"] += 1
-            st["b0"] += b0_hit
-            st["raw"] += hit_raw
-            st["ref"] += hit_ref
-            st["changed"] += (top != 0)
-            st["fallback"] += fallback
-            if b0_hit and not hit_ref:
-                st["regress"] += 1
-            if (not b0_hit) and hit_ref:
-                st["promote"] += 1
-            if bucket != "proposer_miss":      # verifier 가 고칠 수 있는 유일한 영역.
-                st["sub_n"] += 1
-                st["sub_b0"] += b0_hit
-                st["sub_ref"] += hit_ref
             st["n_cand"] += len(cands)
             st["n_ok"] += sum(1 for x in verdicts if x.ok)
             st["rt_ms"] += sum(x.runtime_ms for x in verdicts)
             st["rej"].update(x.reject_reason for x in verdicts if not x.ok)
-            if b0_hit:
-                st["err_b0"].append(base_d[0])
-            if hit_ref:
-                st["err_ref"].append(d_ref)
-            pr = self.per_recipe[arm][rec]
-            pr["n"] += 1
-            pr["b0"] += b0_hit
-            pr["arm"] += hit_ref
-
-            row["arms"][arm] = {
-                "top": top, "changed": top != 0, "fallback": fallback,
-                "hit_raw": hit_raw, "hit_ref": hit_ref, "err_ref_px": round(d_ref, 1),
+            entry.update({
                 "score": None if v.score is None else round(float(v.score), 4),
                 "shift_px": v.shift_frame_px,
                 "n_ok": sum(1 for x in verdicts if x.ok),
                 "rejects": dict(Counter(x.reject_reason for x in verdicts if not x.ok)),
-            }
-            changed_any = changed_any or (top != 0)
+            })
+            row["arms"][arm] = entry
+            changed_any = changed_any or entry["changed"]
             arm_tops[arm] = ref_pt
+
+        # fuse 의사-arm: fallback 이 아닌 arm 들의 재정렬 순열을 RRF 합의로 융합.
+        if self.fuse:
+            live = [order for order, fb, _ in arm_runs.values() if not fb]
+            if live:
+                forder = reg.rrf_fuse_orders(live, len(cands))
+                top, fallback = forder[0], False
+            else:
+                top, fallback = 0, True     # 전 arm 거부 → B0 강등(단일 arm 과 동일 규약).
+            # 융합 top 의 정밀 좌표 = 그 후보를 ok 로 판정한 shift arm 들의 refined 평균.
+            pts = []
+            for arm in self.arms:
+                if arm in reg.SCORE_ONLY_ARMS:
+                    continue
+                v = arm_runs[arm][2][top]
+                if v.ok and v.refined_xy is not None:
+                    sc = scales[top]
+                    pts.append((v.refined_xy[0] + ox * sc, v.refined_xy[1] + oy * sc))
+            ref_pt = (sum(p[0] for p in pts) / len(pts),
+                      sum(p[1] for p in pts) / len(pts)) if pts else base_pts[top]
+            entry = self._tally("fuse", mod, rec, top, fallback, ref_pt,
+                                base_pts, base_d, gt, tol_px, b0_hit, bucket)
+            entry["n_arms_live"] = len(live)
+            row["arms"]["fuse"] = entry
+            changed_any = changed_any or entry["changed"]
+            arm_tops["fuse"] = ref_pt
 
         self.rows_fh.write(json.dumps(row, ensure_ascii=False) + "\n")
         if changed_any and self.overlay_dir is not None and self.n_overlay < OVERLAY_MAX:
             self._save_overlay(gray, gt, base_pts[0], arm_tops, rec, ctx["path"].name)
+
+    def _tally(self, name, mod, rec, top, fallback, ref_pt,
+               base_pts, base_d, gt, tol_px, b0_hit, bucket):
+        """arm(또는 fuse 의사-arm) 하나의 per-point 집계 — cell/per_recipe 갱신 + row entry."""
+        raw_pt = base_pts[top]
+        d_raw = math.hypot(raw_pt[0] - gt[0], raw_pt[1] - gt[1])
+        d_ref = math.hypot(ref_pt[0] - gt[0], ref_pt[1] - gt[1])
+        hit_raw = d_raw <= tol_px          # 순위 효과만(원좌표) — refine 효과와 분해.
+        hit_ref = d_ref <= tol_px          # 순위 + 정밀화(최종 성능).
+        st = self.cells[(name, mod)]
+        st["n"] += 1
+        st["b0"] += b0_hit
+        st["raw"] += hit_raw
+        st["ref"] += hit_ref
+        st["changed"] += (top != 0)
+        st["fallback"] += fallback
+        if b0_hit and not hit_ref:
+            st["regress"] += 1
+        if (not b0_hit) and hit_ref:
+            st["promote"] += 1
+        if bucket != "proposer_miss":      # verifier 가 고칠 수 있는 유일한 영역.
+            st["sub_n"] += 1
+            st["sub_b0"] += b0_hit
+            st["sub_ref"] += hit_ref
+        if b0_hit:
+            st["err_b0"].append(base_d[0])
+        if hit_ref:
+            st["err_ref"].append(d_ref)
+        pr = self.per_recipe[name][rec]
+        pr["n"] += 1
+        pr["b0"] += b0_hit
+        pr["arm"] += hit_ref
+        return {"top": top, "changed": top != 0, "fallback": fallback,
+                "hit_raw": hit_raw, "hit_ref": hit_ref, "err_ref_px": round(d_ref, 1)}
 
     def _save_overlay(self, gray, gt, b0_pt, arm_tops, rec, msr_name):
         """top-1 이 바뀐 행의 검증용 overlay(문서 §4.3 false-positive 추적)."""
@@ -266,6 +309,16 @@ def _rate(num, den):
     return round(num / den, 3) if den else None
 
 
+def _median(xs):
+    """중앙값(px, 1자리) — 빈 리스트면 None."""
+    if not xs:
+        return None
+    s = sorted(xs)
+    mid = len(s) // 2
+    val = s[mid] if len(s) % 2 else (s[mid - 1] + s[mid]) / 2.0
+    return round(val, 1)
+
+
 def _arm_summary(acc, arm):
     """arm 하나의 overall/모드별 집계 + per-recipe paired bootstrap CI."""
     mods = sorted({m for (a, m) in acc.cells if a == arm})
@@ -277,6 +330,8 @@ def _arm_summary(acc, arm):
                   "regress", "sub_n", "sub_b0", "sub_ref", "n_cand", "n_ok", "rt_ms"):
             tot[k] += c[k]
         tot["rej"].update(c["rej"])
+        tot["err_b0"] += c["err_b0"]
+        tot["err_ref"] += c["err_ref"]
         per_mod[m] = {
             "n": c["n"], "b0_r1": _rate(c["b0"], c["n"]),
             "arm_r1_raw": _rate(c["raw"], c["n"]), "arm_r1_ref": _rate(c["ref"], c["n"]),
@@ -287,6 +342,9 @@ def _arm_summary(acc, arm):
             "reject_rate": _rate(c["n_cand"] - c["n_ok"], c["n_cand"]),
             "rejects": dict(c["rej"].most_common()),
             "ms_per_point": _rate(c["rt_ms"], c["n"]),
+            # hit 행의 GT 거리 중앙값(px): b0 는 원좌표, arm 은 정밀화 후 — sub-pixel 효과 축.
+            "err_b0_med_px": _median(c["err_b0"]),
+            "err_ref_med_px": _median(c["err_ref"]),
         }
     diffs = [(p["arm"] - p["b0"]) / p["n"]
              for p in acc.per_recipe[arm].values() if p["n"]]
@@ -306,6 +364,8 @@ def _arm_summary(acc, arm):
         "reject_rate": _rate(tot["n_cand"] - tot["n_ok"], tot["n_cand"]),
         "rejects": dict(tot["rej"].most_common()),
         "ms_per_point": _rate(tot["rt_ms"], tot["n"]),
+        "err_b0_med_px": _median(tot["err_b0"]),
+        "err_ref_med_px": _median(tot["err_ref"]),
         "per_modality": per_mod,
     }
 
@@ -313,21 +373,23 @@ def _arm_summary(acc, arm):
 def _print_arm_table(arm_stats):
     print("\n" + "=" * 76)
     print("[INFO] === registration verifier A/B (B0 = consensus proposer top-1) ===")
-    print(f"    {'arm':<7}{'mod':<9}{'n':>5}  {'B0_r1':>6} {'raw':>6} {'ref':>6} "
-          f"{'d_ref':>6}  {'promo/reg':>9} {'rej%':>5} {'ms/pt':>7}")
+    print(f"    {'arm':<11}{'mod':<6}{'n':>5}  {'B0_r1':>6} {'raw':>6} {'ref':>6} "
+          f"{'d_ref':>6}  {'promo/reg':>9} {'rej%':>5} {'ms/pt':>7} {'err_med':>9}")
     for arm, s in arm_stats.items():
         rows = [("all", s)] + sorted(s["per_modality"].items())
         for mod, r in rows:
             d = (r.get("delta_ref") if mod == "all"
                  else (None if r["arm_r1_ref"] is None or r["b0_r1"] is None
                        else round(r["arm_r1_ref"] - r["b0_r1"], 3)))
-            print(f"    {arm:<7}{mod:<9}{r['n']:>5}  "
+            err = f"{r['err_b0_med_px']}>{r['err_ref_med_px']}"
+            print(f"    {arm:<11}{mod:<6}{r['n']:>5}  "
                   f"{str(r['b0_r1']):>6} {str(r['arm_r1_raw']):>6} {str(r['arm_r1_ref']):>6} "
                   f"{str(d):>6}  {r['promote']:>4}/{r['regress']:<4} "
-                  f"{str(r['reject_rate']):>5} {str(r['ms_per_point']):>7}")
+                  f"{str(r['reject_rate']):>5} {str(r['ms_per_point']):>7} {err:>9}")
     print("=" * 76)
     print("  raw = 순위 효과만(원좌표) / ref = 순위+정밀화(최종). d_ref = ref - B0.")
     print("  promo = B0 miss -> arm hit / reg = B0 hit -> arm miss (reg 가 안전성 지표).")
+    print("  err_med = hit 행 GT 거리 중앙값 px, B0>arm — sub-pixel 정밀화 효과 축.")
 
 
 def _print_subset_table(arm_stats):
@@ -391,7 +453,8 @@ def run() -> str:
     overlay_dir.mkdir(parents=True, exist_ok=True)
     print(f"[INFO] (registration A/B) recipe {len(recipes)}/{n_total}개 "
           f"(sample_n={SAMPLE_N or '전체'}, seed={SAMPLE_SEED}) → {out_dir}")
-    print(f"[INFO] arms={','.join(ARMS)}  topk={TOPK_CANDIDATES}  tol={GT_TOL_NORM}"
+    print(f"[INFO] arms={','.join(ARMS)}{'+fuse' if FUSE_ON else ''}"
+          f"  topk={TOPK_CANDIDATES}  tol={GT_TOL_NORM}"
           f"  proposer={'ensemble' if USE_ENSEMBLE_PROPOSER else 'c1'}"
           f"  clean_frame={'ON' if gce.CLEAN_FRAME else 'OFF'}"
           f"  min_s={gce.CONSENSUS_MIN_S}")
@@ -416,7 +479,7 @@ def run() -> str:
 
     rows_path = out_dir / "rows.jsonl"
     with rows_path.open("w", encoding="utf-8") as fh:
-        acc = _RegAccum(fh, overlay_dir, ARMS)
+        acc = _RegAccum(fh, overlay_dir, ARMS, fuse=FUSE_ON)
         res = _consensus_template_ab(
             by_recipe, min_s=gce.CONSENSUS_MIN_S, out_dir=out_dir,
             combined_renderer=acc,
@@ -443,7 +506,7 @@ def run() -> str:
               f"rank_err={c['rank_error']}({c['rank_error'] / n:.2f}) "
               f"rank1={c['rank1_ok']}({c['rank1_ok'] / n:.2f})")
 
-    arm_stats = {arm: _arm_summary(acc, arm) for arm in ARMS}
+    arm_stats = {arm: _arm_summary(acc, arm) for arm in acc.report_arms}
     _print_arm_table(arm_stats)
     _print_subset_table(arm_stats)
 
@@ -456,6 +519,7 @@ def run() -> str:
     digest = _digest_line(acc, arm_stats, len(recipes), n_total)
     summary = {
         "config": {"sample_n": SAMPLE_N, "sample_seed": SAMPLE_SEED, "arms": list(ARMS),
+                   "fuse": FUSE_ON,
                    "topk": TOPK_CANDIDATES, "gt_tol_norm": GT_TOL_NORM,
                    "proposer": "ensemble" if USE_ENSEMBLE_PROPOSER else "c1",
                    "clean_frame": gce.CLEAN_FRAME, "min_s": gce.CONSENSUS_MIN_S,

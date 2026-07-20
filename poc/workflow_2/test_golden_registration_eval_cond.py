@@ -138,3 +138,24 @@ def test_prod_arm_replicates_production_selection():
 def test_prod_arm_off_keeps_report_arms():
     acc = gre._RegAccum(io.StringIO(), None, ("mind",), fuse=False, prod=False)
     assert acc.report_arms == ["mind"]
+
+
+# --- overlay 표기 -------------------------------------------------------------------
+
+def test_overlay_groups_same_pick_and_adds_banner(tmp_path):
+    """같은 점을 고른 arm 은 그룹(동심 링 + 라벨)으로, 상단엔 범례 배너가 붙는다."""
+    import cv2
+    acc = gre._RegAccum(io.StringIO(), tmp_path, ("ecc", "mind"), fuse=True, prod=True)
+    gray = np.full((200, 300), 40, dtype=np.uint8)
+    arm_tops = {"ecc": (80.0, 100.0), "mind": (220.0, 100.0), "fuse": (220.0, 100.0),
+                "prod": (80.0, 100.0), "prod_mind": (220.0, 100.0)}
+    acc._save_overlay(gray, (150.0, 100.0), (80.0, 100.0), arm_tops,
+                      "cls/rec", "S0001.jpeg", bucket="rank_error")
+    files = list(tmp_path.glob("*.jpg"))
+    assert len(files) == 1 and acc.n_overlay == 1
+    img = cv2.imread(str(files[0]))
+    # 배너(26px)만큼 세로가 늘어난다.
+    assert img.shape[0] == 200 + 26 and img.shape[1] == 300
+    # 그룹 라벨/배너가 실제 그려졌는지: 순수 회색 프레임보다 유채색 픽셀이 존재.
+    b, g, r = img[:, :, 0].astype(int), img[:, :, 1].astype(int), img[:, :, 2].astype(int)
+    assert (np.abs(b - g) + np.abs(g - r)).max() > 100, "컬러 마킹이 그려지지 않음"

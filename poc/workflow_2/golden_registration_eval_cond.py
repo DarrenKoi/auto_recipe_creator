@@ -73,6 +73,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 from poc.workflow_2 import DEBUG_IMAGE_DIR
 
@@ -131,14 +132,21 @@ OVERLAY_MAX = _opt("ALIGN_REG_OVERLAY_MAX", "REG_OVERLAY_MAX", 60)
 
 OUTPUT_ROOT = DEBUG_IMAGE_DIR / "golden_registration_eval_cond"
 
-# overlay 색(BGR): GT=초록, B0 top-1=하늘, arm top-1 은 아래 표.
-_CLR_GT = (0, 200, 0)
-_CLR_B0 = (255, 200, 0)
-_ARM_CLR = {"ecc": (0, 170, 255), "phase": (255, 0, 255),
-            "phase_ecc": (255, 128, 0), "grad_phase": (128, 220, 128),
-            "sift": (0, 255, 255), "akaze": (0, 0, 255),
-            "mind": (255, 255, 0), "fuse": (255, 255, 255),
-            "prod": (0, 215, 255), "prod_mind": (180, 105, 255)}
+# overlay 색(BGR). 서로 혼동되기 쉬웠던 조합(mind↔B0, ecc↔prod)을 분리해 재배정
+# (2026-07-20): 기본 arm 셋(ecc/mind/fuse/prod/prod_mind)이 한눈에 구분되는 것을 우선.
+# 배너 범례가 각 이름을 자기 색으로 그리므로 색-이름 대응은 이미지 안에서 자기설명된다.
+_CLR_GT = (0, 200, 0)        # 초록 십자.
+_CLR_B0 = (255, 200, 0)      # 하늘색 큰 링.
+_ARM_CLR = {"ecc": (0, 140, 255),         # 주황
+            "phase": (255, 0, 170),       # 보라
+            "phase_ecc": (255, 128, 0),   # 청람
+            "grad_phase": (128, 220, 128),  # 연녹
+            "sift": (0, 255, 180),        # 황록
+            "akaze": (130, 60, 200),      # 적갈
+            "mind": (0, 255, 255),        # 노랑
+            "fuse": (255, 255, 255),      # 흰색
+            "prod": (0, 0, 255),          # 빨강
+            "prod_mind": (255, 0, 255)}   # 자홍
 
 
 def _bucket(rank):
@@ -322,7 +330,8 @@ class _RegAccum:
 
         self.rows_fh.write(json.dumps(row, ensure_ascii=False) + "\n")
         if changed_any and self.overlay_dir is not None and self.n_overlay < OVERLAY_MAX:
-            self._save_overlay(gray, gt, base_pts[0], arm_tops, rec, ctx["path"].name)
+            self._save_overlay(gray, gt, base_pts[0], arm_tops, rec, ctx["path"].name,
+                               bucket=bucket)
 
     def _tally(self, name, mod, rec, top, fallback, ref_pt,
                base_pts, base_d, gt, tol_px, b0_hit, bucket):
@@ -358,21 +367,55 @@ class _RegAccum:
         return {"top": top, "changed": top != 0, "fallback": fallback,
                 "hit_raw": hit_raw, "hit_ref": hit_ref, "err_ref_px": round(d_ref, 1)}
 
-    def _save_overlay(self, gray, gt, b0_pt, arm_tops, rec, msr_name):
-        """top-1 이 바뀐 행의 검증용 overlay(문서 §4.3 false-positive 추적)."""
+    def _save_overlay(self, gray, gt, b0_pt, arm_tops, rec, msr_name, bucket=""):
+        """top-1 이 바뀐 행의 검증용 overlay(문서 §4.3 false-positive 추적).
+
+        읽는 법: 초록 십자=GT, 하늘색 큰 링=B0(proposer 1위). arm 들은 "같은 점을 고른
+        그룹"으로 묶어 동심 링(안쪽부터 그룹 내 각 arm 색) + 이름 라벨("mind+prod_mind")
+        로 그린다 — 과거처럼 같은 반지름 원을 겹쳐 그리면 마지막 색만 남아 fuse/prod_mind
+        가 가려졌다(같은 점을 고른 arm 이 많을수록 심함). 상단 배너에 bucket 과 범례
+        (각 arm 이름을 자기 색으로) 를 몰아 이미지 위 텍스트 겹침을 없앤다.
+        """
         canvas = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+
+        def _txt(img, text, org, color, scale=0.5):
+            cv2.putText(img, text, org, font, scale, (0, 0, 0), 3, cv2.LINE_AA)
+            cv2.putText(img, text, org, font, scale, color, 1, cv2.LINE_AA)
+
         cv2.drawMarker(canvas, (int(gt[0]), int(gt[1])), _CLR_GT,
-                       cv2.MARKER_CROSS, 26, 2)
-        cv2.circle(canvas, (int(b0_pt[0]), int(b0_pt[1])), 12, _CLR_B0, 2)
+                       cv2.MARKER_CROSS, 30, 2)
+        _txt(canvas, "GT", (int(gt[0]) + 18, int(gt[1]) - 10), _CLR_GT)
+        bx, by = int(b0_pt[0]), int(b0_pt[1])
+        cv2.circle(canvas, (bx, by), 16, _CLR_B0, 2)
+        _txt(canvas, "B0", (bx + 20, by + 26), _CLR_B0)
+
+        groups = {}          # {(ix, iy): [arm, ...]} — report 순서 유지.
         for arm, pt in arm_tops.items():
-            cv2.circle(canvas, (int(pt[0]), int(pt[1])), 6,
-                       _ARM_CLR.get(arm, (200, 200, 200)), 2)
-        legend = "GT=green  B0=skyblue  " + "  ".join(
-            f"{a}={'/'.join(map(str, _ARM_CLR.get(a, ())))}" for a in arm_tops)
-        cv2.putText(canvas, legend, (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
-                    (255, 255, 255), 1, cv2.LINE_AA)
+            groups.setdefault((int(pt[0]), int(pt[1])), []).append(arm)
+        h, w = canvas.shape[:2]
+        for (px, py), arms in groups.items():
+            for j, arm in enumerate(arms):
+                cv2.circle(canvas, (px, py), 7 + 4 * j,
+                           _ARM_CLR.get(arm, (200, 200, 200)), 2)
+            name = "+".join(arms)
+            r = 7 + 4 * (len(arms) - 1)
+            tw = cv2.getTextSize(name, font, 0.5, 1)[0][0]
+            lx = min(max(2, px + r + 6), w - tw - 2)
+            ly = min(max(16, py - r - 8), h - 6)
+            _txt(canvas, name, (lx, ly), _ARM_CLR.get(arms[0], (200, 200, 200)))
+
+        # 상단 배너: bucket + 범례(각 이름을 자기 색으로 — 색-이름 대응 자기설명).
+        banner = np.full((26, w, 3), 25, np.uint8)
+        x = 8
+        tokens = [(bucket or "-", (200, 200, 200)), ("GT", _CLR_GT), ("B0", _CLR_B0)]
+        tokens += [(a, _ARM_CLR.get(a, (200, 200, 200))) for a in arm_tops]
+        for text, color in tokens:
+            cv2.putText(banner, text, (x, 18), font, 0.5, color, 1, cv2.LINE_AA)
+            x += cv2.getTextSize(text, font, 0.5, 1)[0][0] + 14
+        canvas = np.vstack([banner, canvas])
         out = self.overlay_dir / f"{rec.replace('/', '__')}__{Path(msr_name).stem}.jpg"
-        cv2.imwrite(str(out), canvas, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+        cv2.imwrite(str(out), canvas, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
         self.n_overlay += 1
 
 

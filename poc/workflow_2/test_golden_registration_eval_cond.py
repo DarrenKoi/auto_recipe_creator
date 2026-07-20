@@ -106,3 +106,35 @@ def test_fuse_falls_back_to_b0_when_all_arms_reject():
 def test_default_arms_are_all_known():
     assert set(gre.ARMS) <= set(reg.REG_ARM_NAMES)
     assert gre.FUSE_ON in (True, False)
+    assert gre.PROD_ARM in (True, False)
+
+
+# --- prod / prod_mind 의사-arm ------------------------------------------------------
+
+def test_prod_arm_replicates_production_selection():
+    """prod = 운영 NCC rerank 재현, prod_mind = prod+mind RRF 결합 — 둘 다 집계에 존재."""
+    fh = io.StringIO()
+    acc = gre._RegAccum(fh, None, ("mind",), fuse=False, prod=True)
+    acc(_make_ctx())
+    assert acc.n_hook_err == 0, "prod arm hook 예외 발생"
+    assert acc.n_points == 1
+    assert acc.report_arms == ["mind", "prod", "prod_mind"]
+    row = json.loads(fh.getvalue().strip())
+    assert set(row["arms"]) == {"mind", "prod", "prod_mind"}
+    # prod 는 절대 fallback 하지 않는다(항상 sel 점수를 낸다).
+    assert row["arms"]["prod"]["fallback"] is False
+    assert isinstance(row["arms"]["prod"]["sel"], float)
+    assert "mind_fallback" in row["arms"]["prod_mind"]
+    for name in ("prod", "prod_mind"):
+        assert acc.cells[(name, "om")]["n"] == 1
+        s = gre._arm_summary(acc, name)
+        assert s["n"] == 1
+    # digest 에도 pseudo-arm 이 실린다.
+    stats = {a: gre._arm_summary(acc, a) for a in acc.report_arms}
+    line = gre._digest_line(acc, stats, 1, 1)
+    assert "prod r1=" in line and "prod_mind r1=" in line
+
+
+def test_prod_arm_off_keeps_report_arms():
+    acc = gre._RegAccum(io.StringIO(), None, ("mind",), fuse=False, prod=False)
+    assert acc.report_arms == ["mind"]

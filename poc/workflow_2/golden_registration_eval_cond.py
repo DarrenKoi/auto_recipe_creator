@@ -33,6 +33,15 @@ verifier 는 rank_error 버킷만 고칠 수 있다 — 버킷 크기가 이 실
                                             ALIGN_REG_ARMS 에 REG_ARM_NAMES 전체 지정.
                                             'fuse' 는 arm 이 아니라 자동 의사-arm)
     ALIGN_REG_FUSE        / REG_FUSE        RRF 합의 의사-arm on/off (기본 1; arm>=2 필요)
+    ALIGN_REG_PROD_ARM    / REG_PROD_ARM    production selection 재현 의사-arm on/off (기본 1).
+                                            'prod' = 운영 NCC rerank(sel = rerank_chamfer_w
+                                            ·chamfer + rerank_ncc_w·max(0,ncc), engine 그대로)
+                                            로 후보를 고르는 기준 arm — B0(RRF 순서)가 아니라
+                                            이것이 오늘 production 의 실제 성적이다.
+                                            'prod_mind' = prod 순서와 mind 순서의 RRF 결합
+                                            (mind 가 arm 목록에 있을 때만) — 포팅 후보안.
+                                            판정: prod_mind > prod 여야 mind 포팅 가치가 있다
+                                            (mind > B0 만으로는 NCC 와 이득이 겹칠 수 있음).
     ALIGN_REG_OVERLAY_MAX / REG_OVERLAY_MAX top-1 이 바뀐 행 overlay 저장 상한 (기본 60)
   골든 루트/MIN_S/CLEAN_FRAME 등은 consensus 드라이버와 동일 env 를 그대로 따른다.
 출력: stdout 표 + [DIGEST] 한 줄 + DEBUG_IMAGE_DIR/golden_registration_eval_cond/<ts>/
@@ -78,7 +87,12 @@ from poc.workflow_2.align_similarity import (
     _consensus_template_ab,
     _propose_topk,
 )
-from poc.workflow_3.align.matching.engine import preprocess_for_matching
+from poc.workflow_3.align.matching.engine import (
+    DEFAULT_POLICY,
+    _candidate_ncc,
+    _rescore_positions_to_candidates,
+    preprocess_for_matching,
+)
 from poc.workflow_3.util.time_utils import make_timestamp_tag
 
 # 선택 상수는 golden_eval_config.py 에 있으면 읽는다(없어도 동작 — env/기본값 폴백).
@@ -106,6 +120,7 @@ ARMS = tuple(a.strip() for a in
              _opt("ALIGN_REG_ARMS", "REG_ARMS", "ecc,mind", str).split(",")
              if a.strip())
 FUSE_ON = bool(_opt("ALIGN_REG_FUSE", "REG_FUSE", 1)) and len(ARMS) >= 2
+PROD_ARM = bool(_opt("ALIGN_REG_PROD_ARM", "REG_PROD_ARM", 1))
 OVERLAY_MAX = _opt("ALIGN_REG_OVERLAY_MAX", "REG_OVERLAY_MAX", 60)
 
 OUTPUT_ROOT = DEBUG_IMAGE_DIR / "golden_registration_eval_cond"
@@ -116,7 +131,8 @@ _CLR_B0 = (255, 200, 0)
 _ARM_CLR = {"ecc": (0, 170, 255), "phase": (255, 0, 255),
             "phase_ecc": (255, 128, 0), "grad_phase": (128, 220, 128),
             "sift": (0, 255, 255), "akaze": (0, 0, 255),
-            "mind": (255, 255, 0), "fuse": (255, 255, 255)}
+            "mind": (255, 255, 0), "fuse": (255, 255, 255),
+            "prod": (0, 215, 255), "prod_mind": (180, 105, 255)}
 
 
 def _bucket(rank):
@@ -141,12 +157,17 @@ class _RegAccum:
     harness 가 이미 끝냈으므로 hook 실패가 B0 수치를 오염시키지 않는다.
     """
 
-    def __init__(self, rows_fh, overlay_dir, arms, fuse=False):
+    def __init__(self, rows_fh, overlay_dir, arms, fuse=False, prod=False):
         self.rows_fh = rows_fh
         self.overlay_dir = overlay_dir
         self.arms = arms
         self.fuse = fuse
+        self.prod = prod
         self.report_arms = list(arms) + (["fuse"] if fuse else [])
+        if prod:
+            self.report_arms.append("prod")
+            if "mind" in arms:
+                self.report_arms.append("prod_mind")
         self.cells = defaultdict(_new_cell)          # {(arm, mod): cell}
         self.per_recipe = defaultdict(lambda: defaultdict(
             lambda: {"n": 0, "b0": 0, "arm": 0}))    # [arm][recipe]
@@ -256,6 +277,42 @@ class _RegAccum:
             row["arms"]["fuse"] = entry
             changed_any = changed_any or entry["changed"]
             arm_tops["fuse"] = ref_pt
+
+        # production selection 재현 의사-arm 'prod' — 운영 NCC rerank(engine 과 동일 식)로
+        # 후보를 고른다. B0(RRF 순서)는 운영의 실제 선택이 아니므로, mind 의 이득이 NCC 와
+        # 겹치는지(prod 만으로 충분) 직교인지(prod_mind > prod)는 이 arm 이 있어야 판별된다.
+        if self.prod:
+            fdt = frame_dt if frame_dt is not None else preprocess_for_matching(gray)[1]
+            rescored = _rescore_positions_to_candidates(
+                cons_tpl, fdt, [(tuple(c.xy), sc) for c, sc in zip(cands, scales)])
+            sels = []
+            for rc in rescored:
+                ncc = _candidate_ncc(cons_tpl.raw_image, gray, rc.xy, rc.scale)
+                ncc_pos = max(0.0, ncc) if ncc is not None else 0.0
+                sels.append(DEFAULT_POLICY.rerank_chamfer_w * rc.chamfer_score
+                            + DEFAULT_POLICY.rerank_ncc_w * ncc_pos)
+            prod_order = sorted(range(len(cands)), key=lambda i: (-sels[i], i))
+            top = prod_order[0]
+            entry = self._tally("prod", mod, rec, top, False, base_pts[top],
+                                base_pts, base_d, gt, tol_px, b0_hit, bucket)
+            entry["sel"] = round(float(sels[top]), 4)
+            row["arms"]["prod"] = entry
+            changed_any = changed_any or entry["changed"]
+            arm_tops["prod"] = base_pts[top]
+
+            # 포팅 후보안 'prod_mind' — prod 순서와 mind 재정렬 순서의 RRF 결합(순위 기반,
+            # sel/mind score 는 척도가 달라 직접 합산 불가). mind 가 전 후보 거부면 prod 단독.
+            if "mind" in arm_runs:
+                morder, mfb, _ = arm_runs["mind"]
+                forder = (reg.rrf_fuse_orders([prod_order, morder], len(cands))
+                          if not mfb else prod_order)
+                top = forder[0]
+                entry = self._tally("prod_mind", mod, rec, top, False, base_pts[top],
+                                    base_pts, base_d, gt, tol_px, b0_hit, bucket)
+                entry["mind_fallback"] = mfb
+                row["arms"]["prod_mind"] = entry
+                changed_any = changed_any or entry["changed"]
+                arm_tops["prod_mind"] = base_pts[top]
 
         self.rows_fh.write(json.dumps(row, ensure_ascii=False) + "\n")
         if changed_any and self.overlay_dir is not None and self.n_overlay < OVERLAY_MAX:
@@ -468,6 +525,7 @@ def run() -> str:
     print(f"[INFO] (registration A/B) recipe {len(recipes)}/{n_total}개 "
           f"(sample_n={SAMPLE_N or '전체'}, seed={SAMPLE_SEED}) → {out_dir}")
     print(f"[INFO] arms={','.join(ARMS)}{'+fuse' if FUSE_ON else ''}"
+          f"{'+prod' if PROD_ARM else ''}"
           f"  topk={TOPK_CANDIDATES}  tol={GT_TOL_NORM}"
           f"  proposer={'ensemble' if USE_ENSEMBLE_PROPOSER else 'c1'}"
           f"  clean_frame={'ON' if gce.CLEAN_FRAME else 'OFF'}"
@@ -493,7 +551,7 @@ def run() -> str:
 
     rows_path = out_dir / "rows.jsonl"
     with rows_path.open("w", encoding="utf-8") as fh:
-        acc = _RegAccum(fh, overlay_dir, ARMS, fuse=FUSE_ON)
+        acc = _RegAccum(fh, overlay_dir, ARMS, fuse=FUSE_ON, prod=PROD_ARM)
         res = _consensus_template_ab(
             by_recipe, min_s=gce.CONSENSUS_MIN_S, out_dir=out_dir,
             combined_renderer=acc,
@@ -533,7 +591,7 @@ def run() -> str:
     digest = _digest_line(acc, arm_stats, len(recipes), n_total)
     summary = {
         "config": {"sample_n": SAMPLE_N, "sample_seed": SAMPLE_SEED, "arms": list(ARMS),
-                   "fuse": FUSE_ON,
+                   "fuse": FUSE_ON, "prod_arm": PROD_ARM,
                    "topk": TOPK_CANDIDATES, "gt_tol_norm": GT_TOL_NORM,
                    "proposer": "ensemble" if USE_ENSEMBLE_PROPOSER else "c1",
                    "clean_frame": gce.CLEAN_FRAME, "min_s": gce.CONSENSUS_MIN_S,

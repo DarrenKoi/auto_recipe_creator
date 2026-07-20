@@ -20,6 +20,12 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from poc.workflow_3.align.matching.mind_rerank import (
+    mind_rerank_enabled,
+    mind_rerank_order,
+    rrf_fuse_orders,
+)
+
 # ------------------------------------------------------------------
 # 모듈 상수 — §7.3 의 임계값과 §7.2 의 multi-scale fallback 설정.
 # ------------------------------------------------------------------
@@ -857,7 +863,8 @@ def compute_align_key_score_ensemble(
 ) -> AlignKeyMatchResult:
     """ensemble proposer 기반 매칭 — compute_align_key_score 와 동일 시그니처/결과 형태.
 
-    proposer(3채널 RRF, recall 향상) → chamfer rescore → NCC reranker selection → 공유 finalize.
+    proposer(3채널 RRF, recall 향상) → chamfer rescore → NCC reranker selection
+    → MIND self-similarity 재정렬 결합(RRF; ALIGN_FAIL_MIND_RERANK=0 으로 비활성) → 공유 finalize.
     A/B 가 잰 recall@N(진실이 후보 집합에 듦)을 최종 픽으로 전환하려면 pool 을 chamfer-직교 신호로
     rerank 해야 한다 — selection = rerank_chamfer_w·chamfer + rerank_ncc_w·max(0,ncc). 검증:
     ens_ncc hit 0.607 vs baseline 0.422 vs ORB-selection 0.407 (n=756, p≪0.0001). NCC 는
@@ -911,15 +918,29 @@ def compute_align_key_score_ensemble(
     # 전환한다(검증: ens_ncc hit 0.607 vs baseline 0.422 vs ORB-selection 0.407). NCC 는
     # reranker(구조-제안 소수 후보 판별)로만 — primary matcher 금지와 별개. ORB selection 은
     # 폐기(orb_flip 27% 유발). 결정 score/decision 은 아래에서 기존 chamfer+ORB 로 보존.
-    best_cand = candidates[0]
-    best_sel = -1.0e18
+    sels = []
     for cand in candidates:                       # candidates 는 위에서 top_n 으로 cap 됨.
         ncc = _candidate_ncc(template.raw_image, gray_frame, cand.xy, cand.scale)
         ncc_pos = max(0.0, ncc) if ncc is not None else 0.0
-        sel = policy.rerank_chamfer_w * cand.chamfer_score + policy.rerank_ncc_w * ncc_pos
-        if sel > best_sel:
-            best_sel = sel
-            best_cand = cand
+        sels.append(policy.rerank_chamfer_w * cand.chamfer_score + policy.rerank_ncc_w * ncc_pos)
+    sel_order = sorted(range(len(candidates)), key=lambda i: (-sels[i], i))
+    pick = sel_order[0]                           # 동점은 낮은 index — 기존 argmax(첫 최대)와 동일.
+
+    # MIND self-similarity 재정렬 결합(workflow_2 A/B 검증 포팅, 2026-07-20): sel 순서와
+    # mind 순서를 RRF 로 결합해 최종 후보를 고른다 — prod_mind d=+0.042 > prod d=+0.009,
+    # SEM 은 +0.026→+0.057 (67 recipe/334점, promote/regress 26/12). mind 가 전 후보를
+    # 거부하면 기존 selection 그대로(안전 폴백). 좌표는 항상 기존 후보 중 하나(score-only,
+    # 새 좌표 생성 없음). 킬스위치 ALIGN_FAIL_MIND_RERANK=0. 보고 score 는 '선택된 후보의
+    # sel' — mind 가 저-sel 후보를 고르면 decision 이 보수적으로 낮아진다(오클릭보다 폴백이
+    # 안전한 방향; sel 자체는 재캘리브 불필요, 후보별 신뢰도 의미 유지).
+    if mind_rerank_enabled():
+        m_order = mind_rerank_order(
+            template.raw_image, gray_frame,
+            [(c.xy, c.scale) for c in candidates])
+        if m_order is not None:
+            pick = rrf_fuse_orders([sel_order, m_order], len(candidates))[0]
+    best_cand = candidates[pick]
+    best_sel = sels[pick]
 
     # 결정 score/decision = selection sel(=chamfer+NCC)로 일원화(decision/score 정비). ORB 제거:
     # selection 이 NCC 라 ORB 는 결정에 무익(orb_flip 27% 유발)하고, 저-chamfer 정답을 고를 때

@@ -42,6 +42,12 @@ verifier 는 rank_error 버킷만 고칠 수 있다 — 버킷 크기가 이 실
                                             (mind 가 arm 목록에 있을 때만) — 포팅 후보안.
                                             판정: prod_mind > prod 여야 mind 포팅 가치가 있다
                                             (mind > B0 만으로는 NCC 와 이득이 겹칠 수 있음).
+                                            → 3차 실측(2026-07-20)에서 prod_mind +0.042 >
+                                            prod +0.009 확정, workflow_3 engine 에 포팅됨
+                                            (align/matching/mind_rerank.py). 이 벤치의
+                                            'prod' 는 여전히 NCC-only selection(=포팅 전
+                                            운영) 기준 arm 으로 유지 — 운영 현재 동작은
+                                            'prod_mind' 행이 가리킨다.
     ALIGN_REG_OVERLAY_MAX / REG_OVERLAY_MAX top-1 이 바뀐 행 overlay 저장 상한 (기본 60)
   골든 루트/MIN_S/CLEAN_FRAME 등은 consensus 드라이버와 동일 env 를 그대로 따른다.
 출력: stdout 표 + [DIGEST] 한 줄 + DEBUG_IMAGE_DIR/golden_registration_eval_cond/<ts>/

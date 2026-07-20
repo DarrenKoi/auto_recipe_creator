@@ -142,6 +142,42 @@ def test_prod_arm_off_keeps_report_arms():
 
 # --- overlay 표기 -------------------------------------------------------------------
 
+# --- 커버리지 집계 (어떤 방법으로도 GT 못 잡은 점) ---------------------------------
+
+def test_coverage_invariant_and_bucket_split():
+    """oracle_hit + all_miss == n, 그리고 all_miss 는 bucket 별로 분해된다."""
+    acc = gre._RegAccum(io.StringIO(), None, ("phase",), fuse=False)
+    acc(_make_ctx())
+    assert acc.coverage["om"]["n"] == 1
+    s = gre._coverage_summary(acc.coverage["om"])
+    assert s["oracle_hit"] + s["all_miss"] == s["n"]
+    # all_miss 는 세 bucket miss 의 합이며 proposer_miss/rank_error 로 분해된다.
+    assert s["all_miss"] == (s["miss_proposer_miss"] + s["miss_rank_error"]
+                             + s["miss_rank1_ok"])
+    # rank1_ok 버킷은 정의상 b0_hit 라 커버리지 miss 가 0 이어야 한다.
+    assert s["miss_rank1_ok"] == 0
+
+
+def test_coverage_all_miss_on_flat_proposer_miss():
+    """평탄 frame: proposer 가 후보를 내도 GT 도달 불가 -> all_miss(대개 proposer_miss)."""
+    acc = gre._RegAccum(io.StringIO(), None, ("mind",), fuse=False, prod=True)
+    ctx = _make_ctx()
+    ctx["gray"] = np.full_like(ctx["gray"], 128)
+    ctx["xy"] = (5.0, 5.0)      # GT 를 구석에 둬서 어떤 후보도 tol 안에 못 오게.
+    acc(ctx)
+    if acc.n_points:            # proposer 가 평탄 frame 에서 후보를 냈을 때만 유의미.
+        s = gre._coverage_summary(acc.coverage[ctx["mod"]])
+        assert s["oracle_hit"] == 0 and s["all_miss"] == 1
+
+
+def test_digest_has_oracle_and_allmiss():
+    acc = gre._RegAccum(io.StringIO(), None, ("mind",), fuse=True, prod=True)
+    acc(_make_ctx())
+    stats = {a: gre._arm_summary(acc, a) for a in acc.report_arms}
+    line = gre._digest_line(acc, stats, 1, 1)
+    assert "oracle=" in line and "allmiss[pm=" in line and "/re=" in line
+
+
 def test_overlay_groups_same_pick_and_adds_banner(tmp_path):
     """같은 점을 고른 arm 은 그룹(동심 링 + 라벨)으로, 상단엔 범례 배너가 붙는다."""
     import cv2

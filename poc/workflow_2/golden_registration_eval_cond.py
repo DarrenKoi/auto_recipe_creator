@@ -186,6 +186,9 @@ class _RegAccum:
         self.per_recipe = defaultdict(lambda: defaultdict(
             lambda: {"n": 0, "b0": 0, "arm": 0}))    # [arm][recipe]
         self.buckets = defaultdict(Counter)          # [mod][bucket]
+        # 커버리지: 한 점에서 B0·전 arm 통틀어 하나라도 GT 도달(oracle)했는지 + 전부
+        # 실패(all_miss)를 bucket 별로. 불변식 oracle_hit + all_miss == n.
+        self.coverage = defaultdict(Counter)         # [mod] -> Counter
         self.n_points = 0
         self.n_mismatch = 0
         self.n_overlay = 0
@@ -327,6 +330,18 @@ class _RegAccum:
                 row["arms"]["prod_mind"] = entry
                 changed_any = changed_any or entry["changed"]
                 arm_tops["prod_mind"] = base_pts[top]
+
+        # 커버리지: B0(proposer top-1) 또는 어느 arm/fuse/prod 라도 GT 를 tol 안에 잡으면
+        # oracle_hit(현재 방법들의 이론적 상한). 아무도 못 잡으면 bucket 별 all_miss —
+        # proposer_miss 는 후보에 GT 자체가 없어 rerank 불가(재등록 축), rank_error 는
+        # GT 가 후보엔 있으나 전 arm 실패(verifier 여지). rank1_ok 는 정의상 b0_hit 라 0.
+        any_arm_hit = any(e.get("hit_ref") for e in row["arms"].values())
+        oracle_hit = bool(b0_hit or any_arm_hit)
+        cov = self.coverage[mod]
+        cov["n"] += 1
+        cov["oracle_hit"] += oracle_hit
+        if not oracle_hit:
+            cov[f"miss_{bucket}"] += 1
 
         self.rows_fh.write(json.dumps(row, ensure_ascii=False) + "\n")
         if changed_any and self.overlay_dir is not None and self.n_overlay < OVERLAY_MAX:
@@ -514,6 +529,34 @@ def _print_subset_table(arm_stats):
     print("  이 표가 오르지 않으면 개선은 우연(전체 평균의 버킷 구성 차이)이다 — 문서 §P0-A.")
 
 
+def _coverage_summary(cov):
+    """단일 mod(또는 통합) Counter -> {n, oracle_hit, oracle_rate, all_miss, miss_*}."""
+    n = int(cov["n"])
+    miss_pm = int(cov.get("miss_proposer_miss", 0))
+    miss_re = int(cov.get("miss_rank_error", 0))
+    miss_r1 = int(cov.get("miss_rank1_ok", 0))
+    all_miss = miss_pm + miss_re + miss_r1
+    return {"n": n, "oracle_hit": int(cov["oracle_hit"]),
+            "oracle_rate": _rate(cov["oracle_hit"], n),
+            "all_miss": all_miss, "all_miss_rate": _rate(all_miss, n),
+            "miss_proposer_miss": miss_pm, "miss_rank_error": miss_re,
+            "miss_rank1_ok": miss_r1}
+
+
+def _print_coverage(cov_stats):
+    """어떤 방법으로도 GT 못 잡은 점을 bucket 별로 — 개선 상한을 축별로 분해."""
+    print("\n[INFO] === 커버리지 (B0·전 arm 통틀어 GT 도달 여부) ===")
+    print(f"    {'mod':<5}{'n':>5} {'oracle':>8}  {'all_miss':>9}   "
+          f"{'->재등록(pm)':>12} {'->verifier(re)':>15}")
+    for mod, s in cov_stats.items():
+        print(f"    {mod:<5}{s['n']:>5} {str(s['oracle_rate']):>8}  "
+              f"{s['all_miss']}({str(s['all_miss_rate'])})".rjust(9)
+              + f"   {s['miss_proposer_miss']:>12} {s['miss_rank_error']:>15}")
+    print("  oracle = 현재 방법(B0+arm) 중 하나라도 GT 도달 = 도달 가능 상한.")
+    print("  all_miss = 전부 실패. pm(proposer_miss)=후보에 GT 없음 -> 재등록 축(rerank 불가),")
+    print("             re(rank_error)=GT 후보엔 있으나 전 arm 실패 -> verifier 로 더 짜낼 여지.")
+
+
 def _digest_line(acc, arm_stats, n_sampled, n_total):
     om = sum(acc.buckets.get("om", Counter()).values())
     sem = sum(acc.buckets.get("sem", Counter()).values())
@@ -537,6 +580,13 @@ def _digest_line(acc, arm_stats, n_sampled, n_total):
         parts.append(f"{arm} r1={s['arm_r1_ref']} d={s['delta_ref']:+.3f}{mod_s} {ci_s} "
                      f"p/r={s['promote']}/{s['regress']}"
                      if s["delta_ref"] is not None else f"{arm} n=0")
+    # 커버리지: oracle(도달 상한) + all_miss 를 재등록 몫(pm)/verifier 여지(re)로 분해.
+    cov = Counter()
+    for c in acc.coverage.values():
+        cov.update(c)
+    parts.append(f"oracle={_rate(cov['oracle_hit'], n)} "
+                 f"allmiss[pm={int(cov.get('miss_proposer_miss', 0))}/"
+                 f"re={int(cov.get('miss_rank_error', 0))}]")
     if acc.n_mismatch:
         parts.append(f"MISMATCH={acc.n_mismatch}")
     if acc.n_hook_err:
@@ -631,6 +681,14 @@ def run() -> str:
     _print_arm_table(arm_stats)
     _print_subset_table(arm_stats)
 
+    cov_tot = Counter()
+    for c in acc.coverage.values():
+        cov_tot.update(c)
+    cov_stats = {mod: _coverage_summary(acc.coverage[mod]) for mod in sorted(acc.coverage)}
+    if len(cov_stats) > 1:
+        cov_stats["all"] = _coverage_summary(cov_tot)
+    _print_coverage(cov_stats)
+
     if acc.n_mismatch:
         print(f"\n[WARNING] proposer 재실행 top-1 불일치 {acc.n_mismatch}점 - "
               f"비결정성 의심(결과 해석 주의).")
@@ -649,6 +707,7 @@ def run() -> str:
         "n_mismatch": acc.n_mismatch,
         "n_hook_err": acc.n_hook_err,
         "buckets": {m: dict(c) for m, c in acc.buckets.items()},
+        "coverage": cov_stats,
         "arms": arm_stats,
         "harness_b0": {k: res[k] for k in
                        ("n_recipes", "n_S_loo", "overall_cons_in_topk_rate",

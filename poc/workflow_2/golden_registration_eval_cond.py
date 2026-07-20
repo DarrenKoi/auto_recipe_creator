@@ -48,6 +48,14 @@ verifier 는 rank_error 버킷만 고칠 수 있다 — 버킷 크기가 이 실
                                             'prod' 는 여전히 NCC-only selection(=포팅 전
                                             운영) 기준 arm 으로 유지 — 운영 현재 동작은
                                             'prod_mind' 행이 가리킨다.
+    ALIGN_REG_ROUTE       / REG_ROUTE       modality-aware 라우팅 의사-arm on/off (기본 1;
+                                            prod·ecc·mind 모두 필요). route3=SEM sel⊕mind⊕ecc,
+                                            route2=SEM sel⊕ecc, OM 은 둘 다 prod_mind.
+                                            근거: SEM 실측 ecc 0.79 > prod_mind 0.759 >
+                                            mind 0.743, oracle 0.817 — SEM 에서 ecc 결합이
+                                            더 짜낼 여지. ecc 는 OM 유해라 SEM 한정(PM box
+                                            로 modality 판별). 판정: route* > prod_mind 이고
+                                            OM 손실 없으면 SEM-aware ecc 포팅.
     ALIGN_REG_OVERLAY_MAX / REG_OVERLAY_MAX top-1 이 바뀐 행 overlay 저장 상한 (기본 60)
   골든 루트/MIN_S/CLEAN_FRAME 등은 consensus 드라이버와 동일 env 를 그대로 따른다.
 출력: stdout 표 + [DIGEST] 한 줄 + DEBUG_IMAGE_DIR/golden_registration_eval_cond/<ts>/
@@ -128,6 +136,7 @@ ARMS = tuple(a.strip() for a in
              if a.strip())
 FUSE_ON = bool(_opt("ALIGN_REG_FUSE", "REG_FUSE", 1)) and len(ARMS) >= 2
 PROD_ARM = bool(_opt("ALIGN_REG_PROD_ARM", "REG_PROD_ARM", 1))
+ROUTE_ARM = bool(_opt("ALIGN_REG_ROUTE", "REG_ROUTE", 1))    # SEM-aware ecc 라우팅 A/B.
 OVERLAY_MAX = _opt("ALIGN_REG_OVERLAY_MAX", "REG_OVERLAY_MAX", 60)
 
 OUTPUT_ROOT = DEBUG_IMAGE_DIR / "golden_registration_eval_cond"
@@ -146,7 +155,9 @@ _ARM_CLR = {"ecc": (0, 140, 255),         # 주황
             "mind": (0, 255, 255),        # 노랑
             "fuse": (255, 255, 255),      # 흰색
             "prod": (0, 0, 255),          # 빨강
-            "prod_mind": (255, 0, 255)}   # 자홍
+            "prod_mind": (255, 0, 255),   # 자홍
+            "route3": (80, 200, 40),      # 진초록
+            "route2": (200, 160, 40)}     # 청록
 
 
 def _bucket(rank):
@@ -171,17 +182,22 @@ class _RegAccum:
     harness 가 이미 끝냈으므로 hook 실패가 B0 수치를 오염시키지 않는다.
     """
 
-    def __init__(self, rows_fh, overlay_dir, arms, fuse=False, prod=False):
+    def __init__(self, rows_fh, overlay_dir, arms, fuse=False, prod=False, route=False):
         self.rows_fh = rows_fh
         self.overlay_dir = overlay_dir
         self.arms = arms
         self.fuse = fuse
         self.prod = prod
+        # modality-aware 라우팅: SEM 에서 ecc 를 결합에 추가(ecc 는 SEM 유익·OM 유해라
+        # SEM 한정). prod·ecc·mind 가 모두 있어야 성립.
+        self.route = route and prod and "ecc" in arms and "mind" in arms
         self.report_arms = list(arms) + (["fuse"] if fuse else [])
         if prod:
             self.report_arms.append("prod")
             if "mind" in arms:
                 self.report_arms.append("prod_mind")
+        if self.route:
+            self.report_arms += ["route3", "route2"]
         self.cells = defaultdict(_new_cell)          # {(arm, mod): cell}
         self.per_recipe = defaultdict(lambda: defaultdict(
             lambda: {"n": 0, "b0": 0, "arm": 0}))    # [arm][recipe]
@@ -330,6 +346,31 @@ class _RegAccum:
                 row["arms"]["prod_mind"] = entry
                 changed_any = changed_any or entry["changed"]
                 arm_tops["prod_mind"] = base_pts[top]
+
+            # modality-aware 라우팅(route3/route2): SEM 에서 ecc 를 결합에 추가한다
+            # (실측 SEM: ecc 0.79 > prod_mind 0.759 > mind 0.743; ecc 는 OM 유해라 SEM 한정).
+            # route3 = SEM sel⊕mind⊕ecc, route2 = SEM sel⊕ecc. OM 은 둘 다 prod_mind(=sel⊕mind).
+            # fallback arm 은 결합에서 뺀다(rrf_fuse_orders 규약). 순위 기반 결합이라 좌표는
+            # base_pts(후보 원좌표) — ecc/mind 의 이득이 순위 교정에서 오는지 A/B(sub-pixel 무효).
+            if self.route:
+                morder, mfb, _ = arm_runs["mind"]
+                eorder, efb, _ = arm_runs["ecc"]
+                for name, extra_orders in (
+                    ("route3", [o for o, fb in ((morder, mfb), (eorder, efb)) if not fb]),
+                    ("route2", [eorder] if not efb else []),
+                ):
+                    if mod == "sem":
+                        orders = [prod_order] + extra_orders
+                    else:                              # OM: 항상 prod_mind(=sel⊕mind).
+                        orders = [prod_order] + ([morder] if not mfb else [])
+                    forder = reg.rrf_fuse_orders(orders, len(cands))
+                    top = forder[0]
+                    entry = self._tally(name, mod, rec, top, False, base_pts[top],
+                                        base_pts, base_d, gt, tol_px, b0_hit, bucket)
+                    entry["n_orders"] = len(orders)
+                    row["arms"][name] = entry
+                    changed_any = changed_any or entry["changed"]
+                    arm_tops[name] = base_pts[top]
 
         # 커버리지: B0(proposer top-1) 또는 어느 arm/fuse/prod 라도 GT 를 tol 안에 잡으면
         # oracle_hit(현재 방법들의 이론적 상한). 아무도 못 잡으면 bucket 별 all_miss —
@@ -624,7 +665,7 @@ def run() -> str:
     print(f"[INFO] (registration A/B) recipe {len(recipes)}/{n_total}개 "
           f"(sample_n={SAMPLE_N or '전체'}, seed={SAMPLE_SEED}) → {out_dir}")
     print(f"[INFO] arms={','.join(ARMS)}{'+fuse' if FUSE_ON else ''}"
-          f"{'+prod' if PROD_ARM else ''}"
+          f"{'+prod' if PROD_ARM else ''}{'+route' if ROUTE_ARM else ''}"
           f"  topk={TOPK_CANDIDATES}  tol={GT_TOL_NORM}"
           f"  proposer={'ensemble' if USE_ENSEMBLE_PROPOSER else 'c1'}"
           f"  clean_frame={'ON' if gce.CLEAN_FRAME else 'OFF'}"
@@ -650,7 +691,8 @@ def run() -> str:
 
     rows_path = out_dir / "rows.jsonl"
     with rows_path.open("w", encoding="utf-8") as fh:
-        acc = _RegAccum(fh, overlay_dir, ARMS, fuse=FUSE_ON, prod=PROD_ARM)
+        acc = _RegAccum(fh, overlay_dir, ARMS, fuse=FUSE_ON, prod=PROD_ARM,
+                        route=ROUTE_ARM)
         res = _consensus_template_ab(
             by_recipe, min_s=gce.CONSENSUS_MIN_S, out_dir=out_dir,
             combined_renderer=acc,
@@ -698,7 +740,7 @@ def run() -> str:
     digest = _digest_line(acc, arm_stats, len(recipes), n_total)
     summary = {
         "config": {"sample_n": SAMPLE_N, "sample_seed": SAMPLE_SEED, "arms": list(ARMS),
-                   "fuse": FUSE_ON, "prod_arm": PROD_ARM,
+                   "fuse": FUSE_ON, "prod_arm": PROD_ARM, "route_arm": ROUTE_ARM,
                    "topk": TOPK_CANDIDATES, "gt_tol_norm": GT_TOL_NORM,
                    "proposer": "ensemble" if USE_ENSEMBLE_PROPOSER else "c1",
                    "clean_frame": gce.CLEAN_FRAME, "min_s": gce.CONSENSUS_MIN_S,

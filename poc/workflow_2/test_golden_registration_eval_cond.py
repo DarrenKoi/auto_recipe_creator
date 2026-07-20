@@ -140,6 +140,38 @@ def test_prod_arm_off_keeps_report_arms():
     assert acc.report_arms == ["mind"]
 
 
+# --- route (modality-aware ecc) 의사-arm --------------------------------------------
+
+def test_route_arms_present_only_with_prod_ecc_mind():
+    # ecc·mind·prod 모두 있을 때만 route3/route2 가 붙는다.
+    acc = gre._RegAccum(io.StringIO(), None, ("ecc", "mind"), fuse=False,
+                        prod=True, route=True)
+    assert acc.report_arms[-2:] == ["route3", "route2"]
+    # mind 없으면 route 성립 안 함.
+    acc2 = gre._RegAccum(io.StringIO(), None, ("ecc",), fuse=False, prod=True, route=True)
+    assert "route3" not in acc2.report_arms
+    # prod 없으면 route 성립 안 함.
+    acc3 = gre._RegAccum(io.StringIO(), None, ("ecc", "mind"), fuse=False,
+                         prod=False, route=True)
+    assert acc3.report_arms == ["ecc", "mind"]
+
+
+def test_route_tallies_both_and_labels_om_as_prod_mind():
+    """route3/route2 가 집계되고, OM 점에서는 둘 다 prod_mind 와 동일 top 을 고른다."""
+    fh = io.StringIO()
+    acc = gre._RegAccum(fh, None, ("ecc", "mind"), fuse=False, prod=True, route=True)
+    acc(_make_ctx())                      # _make_ctx 는 mod="om".
+    assert acc.n_hook_err == 0
+    row = json.loads(fh.getvalue().strip())
+    assert {"route3", "route2", "prod_mind"} <= set(row["arms"])
+    # OM 이므로 route3/route2 의 top 은 prod_mind 와 같아야 한다(둘 다 sel⊕mind).
+    assert row["arms"]["route3"]["top"] == row["arms"]["prod_mind"]["top"]
+    assert row["arms"]["route2"]["top"] == row["arms"]["prod_mind"]["top"]
+    for name in ("route3", "route2"):
+        assert acc.cells[(name, "om")]["n"] == 1
+        assert gre._arm_summary(acc, name)["n"] == 1
+
+
 # --- overlay 표기 -------------------------------------------------------------------
 
 # --- 커버리지 집계 (어떤 방법으로도 GT 못 잡은 점) ---------------------------------

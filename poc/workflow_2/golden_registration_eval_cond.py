@@ -21,9 +21,16 @@ verifier 는 rank_error 버킷만 고칠 수 있다 — 버킷 크기가 이 실
 실행 (오피스, 인자 없음):
     uv run python poc/workflow_2/golden_registration_eval_cond.py
 설정 (우선순위: env > golden_eval_config.py > 기본값):
-    ALIGN_REG_SAMPLE_N    / REG_SAMPLE_N    recipe 표본 수 (기본 40, 0=전체)
+    ALIGN_REG_SAMPLE_N    / REG_SAMPLE_N    recipe 표본 수 (기본 0=전체; 1차 실측 후
+                                            표본 40 → 전체로 승격 — CI 가 0 을 포함해
+                                            표본 확대가 판정 조건)
     ALIGN_REG_SAMPLE_SEED / REG_SAMPLE_SEED 표본 시드 (기본 0; 같은 시드=같은 표본)
-    ALIGN_REG_ARMS        / REG_ARMS        쉼표 arm 목록 (기본 = REG_ARM_NAMES 전체;
+    ALIGN_REG_ARMS        / REG_ARMS        쉼표 arm 목록 (기본 = "ecc,mind";
+                                            2026-07-20 오피스 1차 A/B 결과 반영 —
+                                            phase/phase_ecc 는 regress 2배로 유해,
+                                            sift/akaze 는 전 후보 거부(0/0), grad_phase
+                                            는 churn. 전체 7종 재실험은 이 env 로 복원:
+                                            ALIGN_REG_ARMS 에 REG_ARM_NAMES 전체 지정.
                                             'fuse' 는 arm 이 아니라 자동 의사-arm)
     ALIGN_REG_FUSE        / REG_FUSE        RRF 합의 의사-arm on/off (기본 1; arm>=2 필요)
     ALIGN_REG_OVERLAY_MAX / REG_OVERLAY_MAX top-1 이 바뀐 행 overlay 저장 상한 (기본 60)
@@ -92,10 +99,11 @@ def _opt(env_name, cfg_name, default, cast=int):
     return cast(val)
 
 
-SAMPLE_N = _opt("ALIGN_REG_SAMPLE_N", "REG_SAMPLE_N", 40)          # 0 = 전체 recipe.
+SAMPLE_N = _opt("ALIGN_REG_SAMPLE_N", "REG_SAMPLE_N", 0)           # 0 = 전체 recipe.
 SAMPLE_SEED = _opt("ALIGN_REG_SAMPLE_SEED", "REG_SAMPLE_SEED", 0)
+# 기본 arm = 1차 실측 생존자만(ecc,mind) — fuse 가 유해 arm 에 희석되지 않게.
 ARMS = tuple(a.strip() for a in
-             _opt("ALIGN_REG_ARMS", "REG_ARMS", ",".join(reg.REG_ARM_NAMES), str).split(",")
+             _opt("ALIGN_REG_ARMS", "REG_ARMS", "ecc,mind", str).split(",")
              if a.strip())
 FUSE_ON = bool(_opt("ALIGN_REG_FUSE", "REG_FUSE", 1)) and len(ARMS) >= 2
 OVERLAY_MAX = _opt("ALIGN_REG_OVERLAY_MAX", "REG_OVERLAY_MAX", 60)

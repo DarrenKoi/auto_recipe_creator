@@ -209,6 +209,42 @@ def test_digest_has_oracle_and_allmiss():
     assert "oracle=" in line and "allmiss[pm=" in line and "/re=" in line
 
 
+# --- 재등록 후보 worklist -----------------------------------------------------------
+
+def test_reregister_worklist_filters_and_sorts():
+    """pm>=1 인 recipe 만, (oracle_miss_rate, pm_rate, pm) 내림차순."""
+    from collections import Counter
+    rb = {
+        ("clsA/recA", "sem"): Counter({"n": 4, "proposer_miss": 3, "rank_error": 1,
+                                       "oracle_miss": 3}),
+        ("clsB/recB", "om"): Counter({"n": 5, "proposer_miss": 1, "rank1_ok": 4,
+                                      "oracle_miss": 0}),
+        ("clsC/recC", "sem"): Counter({"n": 2, "rank1_ok": 2}),   # pm=0 -> 제외.
+    }
+    rows = gre._reregister_worklist(rb)
+    assert [r["recipe"] for r in rows] == ["clsA/recA", "clsB/recB"]   # recC 제외.
+    top = rows[0]
+    assert top["recipe"] == "clsA/recA"       # oracle_miss_rate 0.75 로 최상위.
+    assert top["pm_rate"] == 0.75 and top["oracle_miss_rate"] == 0.75
+    assert rows[1]["proposer_miss"] == 1 and rows[1]["oracle_miss_rate"] == 0.0
+
+
+def test_reregister_worklist_empty_when_no_pm():
+    from collections import Counter
+    rb = {("c/r", "om"): Counter({"n": 3, "rank1_ok": 3})}
+    assert gre._reregister_worklist(rb) == []
+
+
+def test_process_populates_recipe_bucket():
+    """_process 가 recipe_bucket 을 recipe·mod 키로 채운다(불변식 n == bucket 합)."""
+    acc = gre._RegAccum(io.StringIO(), None, ("mind",), fuse=False, prod=True, route=False)
+    acc(_make_ctx())
+    assert ("synthetic/rec", "om") in acc.recipe_bucket
+    c = acc.recipe_bucket[("synthetic/rec", "om")]
+    assert c["n"] == 1
+    assert c["proposer_miss"] + c["rank_error"] + c["rank1_ok"] == c["n"]
+
+
 def test_overlay_groups_same_pick_and_adds_banner(tmp_path):
     """같은 점을 고른 arm 은 그룹(동심 링 + 라벨)으로, 상단엔 범례 배너가 붙는다."""
     import cv2

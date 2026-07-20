@@ -62,7 +62,10 @@ verifier 는 rank_error 버킷만 고칠 수 있다 — 버킷 크기가 이 실
     ALIGN_REG_OVERLAY_MAX / REG_OVERLAY_MAX top-1 이 바뀐 행 overlay 저장 상한 (기본 60)
   골든 루트/MIN_S/CLEAN_FRAME 등은 consensus 드라이버와 동일 env 를 그대로 따른다.
 출력: stdout 표 + [DIGEST] 한 줄 + DEBUG_IMAGE_DIR/golden_registration_eval_cond/<ts>/
-      {rows.jsonl, summary.json, digest.txt, overlays/, consensus/}
+      {rows.jsonl, summary.json, digest.txt, reregister_candidates.json, overlays/, consensus/}
+재등록 후보(reregister_candidates.json): proposer_miss(후보에 GT 없음 = 매칭 근본 실패)가
+있는 recipe 를 worst-first 로. 이 벤치가 프로덕션과 동일 매칭(consensus + SEM=ecc/OM=mind
+rerank)을 쓰므로 "현재 프로덕션이 실제로 못 잡는" 재등록 1순위 명단이다.
 (cond.txt 실데이터 전용 — 데이터 없으면 no_data 로 종료. 합성 검증은
  `uv run python poc/workflow_2/registration_lab.py` 의 self-test 가 담당.)
 """
@@ -209,6 +212,9 @@ class _RegAccum:
         # 커버리지: 한 점에서 B0·전 arm 통틀어 하나라도 GT 도달(oracle)했는지 + 전부
         # 실패(all_miss)를 bucket 별로. 불변식 oracle_hit + all_miss == n.
         self.coverage = defaultdict(Counter)         # [mod] -> Counter
+        # 재등록 후보용 recipe 단위 bucket — [(recipe, mod)] -> Counter
+        # (n/proposer_miss/rank_error/rank1_ok/oracle_miss). pm 다발 recipe = 재등록 1순위.
+        self.recipe_bucket = defaultdict(Counter)
         self.n_points = 0
         self.n_mismatch = 0
         self.n_overlay = 0
@@ -401,6 +407,14 @@ class _RegAccum:
         cov["oracle_hit"] += oracle_hit
         if not oracle_hit:
             cov[f"miss_{bucket}"] += 1
+
+        # 재등록 후보: recipe·mod 단위로 bucket + oracle_miss 누적. proposer_miss(후보에
+        # GT 없음)가 많은 recipe = 프로덕션 매칭이 근본적으로 못 잡는 = 재등록 1순위.
+        rb = self.recipe_bucket[(rec, mod)]
+        rb["n"] += 1
+        rb[bucket] += 1
+        if not oracle_hit:
+            rb["oracle_miss"] += 1
 
         self.rows_fh.write(json.dumps(row, ensure_ascii=False) + "\n")
         if changed_any and self.overlay_dir is not None and self.n_overlay < OVERLAY_MAX:
@@ -616,6 +630,52 @@ def _print_coverage(cov_stats):
     print("             re(rank_error)=GT 후보엔 있으나 전 arm 실패 -> verifier 로 더 짜낼 여지.")
 
 
+def _reregister_worklist(recipe_bucket):
+    """recipe·mod 단위 proposer_miss 를 재등록 후보 worklist 로 조립(worst-first).
+
+    각 행: recipe/mod/n/pm/pm_rate/re/oracle_miss/oracle_miss_rate. pm>=1 인 것만
+    담는다(proposer 가 후보로도 GT 를 못 잡은 = 재등록이 유일 레버인 recipe). 정렬은
+    (oracle_miss_rate, pm_rate, pm) 내림차순 — 프로덕션이 실제로 못 잡은 정도 우선.
+    """
+    rows = []
+    for (rec, mod), c in recipe_bucket.items():
+        n = int(c["n"])
+        pm = int(c.get("proposer_miss", 0))
+        if pm < 1:                       # 재등록 후보 = proposer_miss 가 있는 recipe.
+            continue
+        om = int(c.get("oracle_miss", 0))
+        rows.append({
+            "recipe": rec, "mod": mod, "n": n,
+            "proposer_miss": pm, "pm_rate": round(pm / n, 3) if n else None,
+            "rank_error": int(c.get("rank_error", 0)),
+            "oracle_miss": om, "oracle_miss_rate": round(om / n, 3) if n else None,
+        })
+    rows.sort(key=lambda r: (r["oracle_miss_rate"] or 0.0, r["pm_rate"] or 0.0,
+                             r["proposer_miss"]), reverse=True)
+    return rows
+
+
+def _print_reregister_worklist(rows, top=25):
+    """재등록 후보 worklist 콘솔 출력(top-N). 전체는 파일로 저장된다."""
+    print("\n[INFO] === 재등록 후보 worklist (proposer_miss recipe, worst-first) ===")
+    if not rows:
+        print("    (proposer_miss 인 recipe 없음 — 이 표본에선 재등록 후보 0)")
+        return
+    n_pm = sum(r["proposer_miss"] for r in rows)
+    print(f"    후보 recipe {len(rows)}개 / proposer_miss 총 {n_pm}점")
+    print(f"    {'recipe':<34}{'mod':<5}{'n':>4}{'pm':>4}{'pm%':>7}"
+          f"{'re':>5}{'orc_miss':>12}")
+    for r in rows[:top]:
+        rec = r["recipe"] if len(r["recipe"]) <= 33 else "…" + r["recipe"][-32:]
+        orc = f"{r['oracle_miss']}({r['oracle_miss_rate']})"
+        print(f"    {rec:<34}{r['mod']:<5}{r['n']:>4}{r['proposer_miss']:>4}"
+              f"{str(r['pm_rate']):>7}{r['rank_error']:>5}{orc:>12}")
+    if len(rows) > top:
+        print(f"    … 외 {len(rows) - top}개 (전체는 reregister_candidates.json)")
+    print("  pm = proposer_miss(후보에 GT 없음, 재등록 근본 신호). orc_miss = 어떤 방법으로도 실패.")
+    print("  정렬 = oracle_miss_rate > pm_rate > pm (프로덕션이 실제로 못 잡은 정도 우선).")
+
+
 def _digest_line(acc, arm_stats, n_sampled, n_total):
     om = sum(acc.buckets.get("om", Counter()).values())
     sem = sum(acc.buckets.get("sem", Counter()).values())
@@ -749,6 +809,9 @@ def run() -> str:
         cov_stats["all"] = _coverage_summary(cov_tot)
     _print_coverage(cov_stats)
 
+    worklist = _reregister_worklist(acc.recipe_bucket)
+    _print_reregister_worklist(worklist)
+
     if acc.n_mismatch:
         print(f"\n[WARNING] proposer 재실행 top-1 불일치 {acc.n_mismatch}점 - "
               f"비결정성 의심(결과 해석 주의).")
@@ -768,6 +831,7 @@ def run() -> str:
         "n_hook_err": acc.n_hook_err,
         "buckets": {m: dict(c) for m, c in acc.buckets.items()},
         "coverage": cov_stats,
+        "reregister_candidates": worklist,
         "arms": arm_stats,
         "harness_b0": {k: res[k] for k in
                        ("n_recipes", "n_S_loo", "overall_cons_in_topk_rate",
@@ -778,6 +842,8 @@ def run() -> str:
     (out_dir / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     (out_dir / "digest.txt").write_text(digest + "\n", encoding="utf-8")
+    (out_dir / "reregister_candidates.json").write_text(
+        json.dumps(worklist, ensure_ascii=False, indent=2), encoding="utf-8")
     print("\n" + digest)
     print(f"[INFO] 완료: {out_dir}")
     return "success"

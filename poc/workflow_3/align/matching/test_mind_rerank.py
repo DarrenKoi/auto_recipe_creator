@@ -17,6 +17,10 @@ from poc.workflow_3.align.matching.engine import (
     compute_align_key_score_ensemble,
 )
 from poc.workflow_3.align.matching.mind_rerank import (
+    ecc_rerank_enabled,
+    ecc_rerank_order,
+    ecc_score,
+    is_sem_template,
     mind_rerank_enabled,
     mind_rerank_order,
     mind_score,
@@ -71,27 +75,55 @@ def test_rrf_fuse_orders_majority_and_tiebreak():
     assert rrf_fuse_orders([[0, 1], [1, 0]], 2)[0] == 0         # 동점 → 낮은 index.
 
 
-def test_engine_picks_truth_with_and_without_mind():
-    """engine e2e: 킬스위치 양쪽 모두 유효 결과 + best_xy 는 truth 근방(합성 장면)."""
+def test_is_sem_template_gate():
+    tpl, _, _, _ = _scene()
+    assert is_sem_template(build_template(tpl, recipe_id="r", version="t", key_type="sem"))
+    for kt in ("om", "box", "checker", None):
+        assert not is_sem_template(build_template(tpl, recipe_id="r", version="t", key_type=kt))
+
+
+def test_ecc_score_self_high_and_flat_rejects():
+    tpl, _, _, _ = _scene()
+    cc, reason = ecc_score(tpl, tpl.copy())         # 자기 자신 → 높은 cc.
+    assert cc is not None and cc > 0.9 and reason is None
+    flat = np.full_like(tpl, 128)
+    cc2, reason2 = ecc_score(tpl, flat)             # 평탄 → 거부.
+    assert cc2 is None and reason2 is not None
+
+
+def test_ecc_rerank_prefers_truth_over_decoy():
+    tpl, frame, truth, decoy = _scene()
+    order = ecc_rerank_order(tpl, frame, [(decoy, 1.0), (truth, 1.0)])
+    assert order is not None and order[0] == 1        # truth(index 1) 우선.
+
+
+def test_engine_om_uses_mind_sem_uses_ecc():
+    """engine e2e: OM/SEM 각 경로 + 킬스위치가 실제 동작하고 best_xy 는 truth 근방·후보 내부."""
     tpl, frame, truth, _ = _scene()
-    template = build_template(tpl, recipe_id="synthetic/mind", version="t")
-    prev = os.environ.get("ALIGN_FAIL_MIND_RERANK")
+    saved = {k: os.environ.get(k) for k in ("ALIGN_FAIL_MIND_RERANK", "ALIGN_FAIL_ECC_RERANK")}
     try:
-        for flag in ("0", "1"):
-            os.environ["ALIGN_FAIL_MIND_RERANK"] = flag
-            assert mind_rerank_enabled() == (flag == "1")
+        # (key_type, mind_flag, ecc_flag) 조합 — 네 경로 모두 유효 결과 + score-only 불변.
+        cases = [("om", "1", "1"), ("om", "0", "1"), ("sem", "1", "1"), ("sem", "1", "0")]
+        for key_type, mflag, eflag in cases:
+            os.environ["ALIGN_FAIL_MIND_RERANK"] = mflag
+            os.environ["ALIGN_FAIL_ECC_RERANK"] = eflag
+            assert mind_rerank_enabled() == (mflag == "1")
+            assert ecc_rerank_enabled() == (eflag == "1")
+            template = build_template(tpl, recipe_id="synthetic/x", version="t",
+                                      key_type=key_type)
             result = compute_align_key_score_ensemble(template, frame, scales=(1.0,))
             assert result.best_xy is not None
-            # score-only 불변: best_xy 는 후보 목록 안의 좌표여야 한다.
+            # 순위-only 불변: best_xy 는 후보 목록 안의 좌표.
             assert any(tuple(c.xy) == tuple(result.best_xy) for c in result.candidates), \
-                f"best_xy {result.best_xy} 가 후보 밖(flag={flag})"
+                f"best_xy 후보 밖 ({key_type},{mflag},{eflag})"
             d = np.hypot(result.best_xy[0] - truth[0], result.best_xy[1] - truth[1])
-            assert d <= 12, f"best_xy {result.best_xy} truth {truth} 거리 {d:.1f}px (flag={flag})"
+            assert d <= 12, f"거리 {d:.1f}px ({key_type},{mflag},{eflag})"
     finally:
-        if prev is None:
-            os.environ.pop("ALIGN_FAIL_MIND_RERANK", None)
-        else:
-            os.environ["ALIGN_FAIL_MIND_RERANK"] = prev
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
 
 def _run():

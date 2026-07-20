@@ -21,6 +21,9 @@ import cv2
 import numpy as np
 
 from poc.workflow_3.align.matching.mind_rerank import (
+    ecc_rerank_enabled,
+    ecc_rerank_order,
+    is_sem_template,
     mind_rerank_enabled,
     mind_rerank_order,
     rrf_fuse_orders,
@@ -864,7 +867,8 @@ def compute_align_key_score_ensemble(
     """ensemble proposer 기반 매칭 — compute_align_key_score 와 동일 시그니처/결과 형태.
 
     proposer(3채널 RRF, recall 향상) → chamfer rescore → NCC reranker selection
-    → MIND self-similarity 재정렬 결합(RRF; ALIGN_FAIL_MIND_RERANK=0 으로 비활성) → 공유 finalize.
+    → modality-aware 재정렬(OM: sel⊕mind RRF / SEM: ecc 단독 순위; ALIGN_FAIL_MIND_RERANK·
+    ALIGN_FAIL_ECC_RERANK=0 으로 각각 비활성) → 공유 finalize.
     A/B 가 잰 recall@N(진실이 후보 집합에 듦)을 최종 픽으로 전환하려면 pool 을 chamfer-직교 신호로
     rerank 해야 한다 — selection = rerank_chamfer_w·chamfer + rerank_ncc_w·max(0,ncc). 검증:
     ens_ncc hit 0.607 vs baseline 0.422 vs ORB-selection 0.407 (n=756, p≪0.0001). NCC 는
@@ -926,17 +930,22 @@ def compute_align_key_score_ensemble(
     sel_order = sorted(range(len(candidates)), key=lambda i: (-sels[i], i))
     pick = sel_order[0]                           # 동점은 낮은 index — 기존 argmax(첫 최대)와 동일.
 
-    # MIND self-similarity 재정렬 결합(workflow_2 A/B 검증 포팅, 2026-07-20): sel 순서와
-    # mind 순서를 RRF 로 결합해 최종 후보를 고른다 — prod_mind d=+0.042 > prod d=+0.009,
-    # SEM 은 +0.026→+0.057 (67 recipe/334점, promote/regress 26/12). mind 가 전 후보를
-    # 거부하면 기존 selection 그대로(안전 폴백). 좌표는 항상 기존 후보 중 하나(score-only,
-    # 새 좌표 생성 없음). 킬스위치 ALIGN_FAIL_MIND_RERANK=0. 보고 score 는 '선택된 후보의
-    # sel' — mind 가 저-sel 후보를 고르면 decision 이 보수적으로 낮아진다(오클릭보다 폴백이
-    # 안전한 방향; sel 자체는 재캘리브 불필요, 후보별 신뢰도 의미 유지).
-    if mind_rerank_enabled():
-        m_order = mind_rerank_order(
-            template.raw_image, gray_frame,
-            [(c.xy, c.scale) for c in candidates])
+    # modality-aware 재정렬(workflow_2 A/B 검증 포팅, 2026-07-20~21). 좌표는 항상 기존 후보
+    # 중 하나(순위만; sub-pixel 무효 실증 route_sw raw==ref). 전 후보 거부 시 기존 NCC
+    # selection 그대로(안전 폴백). 보고 score 는 '선택된 후보의 sel' — 재정렬이 저-sel 후보를
+    # 고르면 decision 이 보수적으로 낮아진다(오클릭보다 폴백이 안전; sel 재캘리브 불필요).
+    cand_xy_scales = [(c.xy, c.scale) for c in candidates]
+    if is_sem_template(template):
+        # SEM: ecc 단독 순위로 전환(결합 아님). ecc 가 SEM 을 압도해 RRF 로 섞으면 희석 —
+        # route_sw 0.826 > route3(sel⊕mind⊕ecc) 0.820; SEM ecc 0.775 > prod_mind 0.759.
+        # ecc 전 후보 거부면 NCC selection 폴백. 킬스위치 ALIGN_FAIL_ECC_RERANK=0.
+        if ecc_rerank_enabled():
+            e_order = ecc_rerank_order(template.raw_image, gray_frame, cand_xy_scales)
+            if e_order is not None:
+                pick = e_order[0]
+    elif mind_rerank_enabled():
+        # OM: sel 순서 ⊕ mind 순서 RRF 결합(prod_mind d=+0.042 > prod d=+0.009, OM +0.021).
+        m_order = mind_rerank_order(template.raw_image, gray_frame, cand_xy_scales)
         if m_order is not None:
             pick = rrf_fuse_orders([sel_order, m_order], len(candidates))[0]
     best_cand = candidates[pick]

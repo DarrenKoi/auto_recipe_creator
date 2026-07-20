@@ -50,12 +50,15 @@ verifier 는 rank_error 버킷만 고칠 수 있다 — 버킷 크기가 이 실
                                             'prod_mind' 행이 가리킨다.
     ALIGN_REG_ROUTE       / REG_ROUTE       modality-aware 라우팅 의사-arm on/off (기본 1;
                                             prod·ecc·mind 모두 필요). route3=SEM sel⊕mind⊕ecc,
-                                            route2=SEM sel⊕ecc, OM 은 둘 다 prod_mind.
+                                            route2=SEM sel⊕ecc, route_sw=SEM ecc **단독**
+                                            (결합 아님), OM 은 셋 다 prod_mind.
                                             근거: SEM 실측 ecc 0.79 > prod_mind 0.759 >
-                                            mind 0.743, oracle 0.817 — SEM 에서 ecc 결합이
-                                            더 짜낼 여지. ecc 는 OM 유해라 SEM 한정(PM box
-                                            로 modality 판별). 판정: route* > prod_mind 이고
-                                            OM 손실 없으면 SEM-aware ecc 포팅.
+                                            mind 0.743. 4차 결과 route3(0.820)>prod_mind
+                                            (0.817)이나 route3 sem(0.764)<ecc단독(0.79) —
+                                            RRF 가 ecc 를 희석. route_sw(완전 전환) 추정
+                                            0.835 가 진짜 최적 후보. ecc 는 OM 유해라 SEM
+                                            한정(PM box 로 modality 판별). 판정: route_sw >
+                                            route3 이고 OM 손실 없으면 SEM=ecc/OM=prod_mind 포팅.
     ALIGN_REG_OVERLAY_MAX / REG_OVERLAY_MAX top-1 이 바뀐 행 overlay 저장 상한 (기본 60)
   골든 루트/MIN_S/CLEAN_FRAME 등은 consensus 드라이버와 동일 env 를 그대로 따른다.
 출력: stdout 표 + [DIGEST] 한 줄 + DEBUG_IMAGE_DIR/golden_registration_eval_cond/<ts>/
@@ -157,7 +160,8 @@ _ARM_CLR = {"ecc": (0, 140, 255),         # 주황
             "prod": (0, 0, 255),          # 빨강
             "prod_mind": (255, 0, 255),   # 자홍
             "route3": (80, 200, 40),      # 진초록
-            "route2": (200, 160, 40)}     # 청록
+            "route2": (200, 160, 40),     # 청록
+            "route_sw": (40, 90, 230)}    # 주홍
 
 
 def _bucket(rank):
@@ -197,7 +201,7 @@ class _RegAccum:
             if "mind" in arms:
                 self.report_arms.append("prod_mind")
         if self.route:
-            self.report_arms += ["route3", "route2"]
+            self.report_arms += ["route3", "route2", "route_sw"]
         self.cells = defaultdict(_new_cell)          # {(arm, mod): cell}
         self.per_recipe = defaultdict(lambda: defaultdict(
             lambda: {"n": 0, "b0": 0, "arm": 0}))    # [arm][recipe]
@@ -371,6 +375,20 @@ class _RegAccum:
                     row["arms"][name] = entry
                     changed_any = changed_any or entry["changed"]
                     arm_tops[name] = base_pts[top]
+
+                # route_sw: 결합이 아니라 완전 전환 — SEM 이면 ecc 단독 순위(ecc 가 SEM 을
+                # 압도해 RRF 로 섞으면 오히려 희석; route3 sem 0.764 < ecc 단독 0.79), OM 이면
+                # prod_mind. ecc 전 후보 거부면 prod 폴백. 좌표는 후보 원좌표(순위만).
+                if mod == "sem":
+                    top = eorder[0] if not efb else prod_order[0]
+                else:
+                    top = (reg.rrf_fuse_orders([prod_order, morder], len(cands))[0]
+                           if not mfb else prod_order[0])
+                entry = self._tally("route_sw", mod, rec, top, False, base_pts[top],
+                                    base_pts, base_d, gt, tol_px, b0_hit, bucket)
+                row["arms"]["route_sw"] = entry
+                changed_any = changed_any or entry["changed"]
+                arm_tops["route_sw"] = base_pts[top]
 
         # 커버리지: B0(proposer top-1) 또는 어느 arm/fuse/prod 라도 GT 를 tol 안에 잡으면
         # oracle_hit(현재 방법들의 이론적 상한). 아무도 못 잡으면 bucket 별 all_miss —

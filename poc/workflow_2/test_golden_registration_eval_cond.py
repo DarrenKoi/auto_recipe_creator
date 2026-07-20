@@ -146,7 +146,7 @@ def test_route_arms_present_only_with_prod_ecc_mind():
     # ecc·mind·prod 모두 있을 때만 route3/route2 가 붙는다.
     acc = gre._RegAccum(io.StringIO(), None, ("ecc", "mind"), fuse=False,
                         prod=True, route=True)
-    assert acc.report_arms[-2:] == ["route3", "route2"]
+    assert acc.report_arms[-3:] == ["route3", "route2", "route_sw"]
     # mind 없으면 route 성립 안 함.
     acc2 = gre._RegAccum(io.StringIO(), None, ("ecc",), fuse=False, prod=True, route=True)
     assert "route3" not in acc2.report_arms
@@ -163,11 +163,10 @@ def test_route_tallies_both_and_labels_om_as_prod_mind():
     acc(_make_ctx())                      # _make_ctx 는 mod="om".
     assert acc.n_hook_err == 0
     row = json.loads(fh.getvalue().strip())
-    assert {"route3", "route2", "prod_mind"} <= set(row["arms"])
-    # OM 이므로 route3/route2 의 top 은 prod_mind 와 같아야 한다(둘 다 sel⊕mind).
-    assert row["arms"]["route3"]["top"] == row["arms"]["prod_mind"]["top"]
-    assert row["arms"]["route2"]["top"] == row["arms"]["prod_mind"]["top"]
-    for name in ("route3", "route2"):
+    assert {"route3", "route2", "route_sw", "prod_mind"} <= set(row["arms"])
+    # OM 이므로 route* 셋 다 top 이 prod_mind 와 같아야 한다(OM 은 모두 sel⊕mind).
+    for name in ("route3", "route2", "route_sw"):
+        assert row["arms"][name]["top"] == row["arms"]["prod_mind"]["top"]
         assert acc.cells[(name, "om")]["n"] == 1
         assert gre._arm_summary(acc, name)["n"] == 1
 

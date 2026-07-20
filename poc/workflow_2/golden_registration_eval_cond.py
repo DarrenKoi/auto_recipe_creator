@@ -422,7 +422,13 @@ def _digest_line(acc, arm_stats, n_sampled, n_total):
         ci = s["delta_ci95"]
         ci_s = (f"ci[{ci[0]:+.3f},{ci[1]:+.3f}]"
                 if ci and ci[0] is not None else "ci[nan]")
-        parts.append(f"{arm} r1={s['arm_r1_ref']} d={s['delta_ref']:+.3f} {ci_s} "
+        # modality별 델타 — SEM/OM 어느 쪽에서 이득이 나는지 digest 만으로 판독.
+        mod_parts = []
+        for m, r in sorted(s["per_modality"].items()):
+            if r["arm_r1_ref"] is not None and r["b0_r1"] is not None:
+                mod_parts.append(f"{m}{r['arm_r1_ref'] - r['b0_r1']:+.3f}")
+        mod_s = f" [{'/'.join(mod_parts)}]" if mod_parts else ""
+        parts.append(f"{arm} r1={s['arm_r1_ref']} d={s['delta_ref']:+.3f}{mod_s} {ci_s} "
                      f"p/r={s['promote']}/{s['regress']}"
                      if s["delta_ref"] is not None else f"{arm} n=0")
     if acc.n_mismatch:

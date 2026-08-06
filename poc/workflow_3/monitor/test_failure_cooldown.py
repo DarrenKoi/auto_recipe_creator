@@ -24,11 +24,16 @@ def _restore(state):
 
 
 def _stub_deps(state, module, cycle_fn, cycle_attr="run_alarm_cycle"):
-    _swap(state, module, "append_alarm_record", lambda *a, **k: None)
-    _swap(state, module, "notify_align_fail_popup", lambda *a, **k: None)
-    _swap(state, module, "gather_success_async", lambda *a, **k: None)
-    _swap(state, module, "gather_rcp_msr", lambda *a, **k: None)
-    _swap(state, module, "append_cycle_manifest", lambda *a, **k: None)
+    """process_fail_rows 의존성을 no-op 로 교체한다.
+
+    check-only 모니터는 production 에 없는 send_detection_notify_async 를 추가로
+    호출하므로, 모듈에 있는 이름만 골라 교체해 두 모니터에 공용으로 쓴다.
+    """
+    for name in ("append_alarm_record", "notify_align_fail_popup",
+                 "send_detection_notify_async", "gather_success_async",
+                 "gather_rcp_msr", "append_cycle_manifest"):
+        if hasattr(module, name):
+            _swap(state, module, name, lambda *a, **k: None)
     _swap(state, module, cycle_attr, cycle_fn)
 
 
@@ -132,9 +137,38 @@ def test_raising_tool_does_not_skip_remaining_tools():
     print("[OK] test_raising_tool_does_not_skip_remaining_tools")
 
 
+def test_check_only_monitor_registers_failure_cooldown():
+    """check-only 모니터도 같은 규약 - 실패 tool 은 cooldown, 나머지는 계속(F2/F5)."""
+    from poc.workflow_3.monitor import align_fail_monitor_only_check as afmc
+
+    state = {}
+    seen = []
+
+    def _cycle(eqp_id, recipe_id, settings, tag=None):
+        seen.append(eqp_id)
+        if eqp_id == "EQP_BAD":
+            raise RuntimeError("boom")
+        return CycleResult(eqp_id=eqp_id, recipe_id=recipe_id, tag=tag or "",
+                           run_status="completed")
+
+    _stub_deps(state, afmc, _cycle, cycle_attr="run_check_only_cycle")
+    try:
+        settings = afmc.load_workflow3_settings()
+        active, cooldown = set(), {}
+        fails = [{"eqp_id": "EQP_BAD", "recipe_id": "C/R"},
+                 {"eqp_id": "EQP_OK", "recipe_id": "C/R"}]
+        afmc.process_fail_rows(fails, active, settings, cooldown)
+        assert "EQP_OK" in seen and "EQP_OK" in active, (seen, active)
+        assert "EQP_BAD" in cooldown and "EQP_BAD" not in active, (cooldown, active)
+    finally:
+        _restore(state)
+    print("[OK] test_check_only_monitor_registers_failure_cooldown")
+
+
 if __name__ == "__main__":
     test_error_cycle_registers_cooldown_and_skips_active()
     test_aborted_cycle_with_failed_step_registers_cooldown()
     test_correction_fallback_does_not_register_cooldown()
     test_raising_tool_does_not_skip_remaining_tools()
+    test_check_only_monitor_registers_failure_cooldown()
     print("\n[OK] 실패 cooldown / tool 가드 테스트 통과")

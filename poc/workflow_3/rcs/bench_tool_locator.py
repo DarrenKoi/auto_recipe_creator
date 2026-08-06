@@ -23,6 +23,8 @@
   BENCH_TOOL_NAMES    쉼표 구분 tool ID 목록 (기본 MCDN01,MCDA01,MDSK10)
   BENCH_COMBOS        쉼표 구분 "coarse>fine" 조합 (기본 아래 DEFAULT_COMBOS)
   BENCH_REPEATS       조합x tool 당 반복 횟수 (기본 3)
+  BENCH_RESULT_JSON   지정하면 **측정하지 않고** 그 결과 JSON 으로 digest 만 재출력
+                      (RCS/VLM 불필요 - digest 형식이 바뀌었을 때 재측정 회피)
 
 사용법:
   uv run python poc/workflow_3/rcs/bench_tool_locator.py
@@ -39,10 +41,12 @@ tool 은 모델 실패가 아니라 화면 밖이라, digest 가 `unresolved` �
 BENCH_TOOL_NAMES 를 한 화면에 보이는 것들로 좁혀 다시 돌린다.
 """
 
+import json
 import os
 import statistics
 import sys
 import time
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -393,23 +397,32 @@ def _print_digest(
             f"[DIGEST] unresolved(어떤 조합도 못 찾음, 화면 밖 추정)={','.join(unresolved)}"
         )
         print("[DIGEST] -> acc 는 보이는 tool 기준. unresolved 는 창 확대/목록 축소 후 재측정.")
+    # 실패를 항상 종류별로 쪼개 보여준다. 합계만 보면 '옆 행 클릭(wrong)'과 '아무것도
+    # 못 찾음(nodet)' 이 같은 점수로 뭉뚱그려지는데, 둘은 성질이 완전히 다르다:
+    # wrong = 엉뚱한 tool 접속(위험), nodet = 재시도로 회복(양호),
+    # unread = 채점 OCR 이 못 읽음(모델 탓이 아닐 수 있음 - overlay 확인 필요).
     print(
-        f"[DIGEST] {'combo':26s} {'acc':>6s} {'wrong':>6s} {'stab':>6s} "
-        f"{'med_s':>6s}  {'correct/visible':>15s}"
+        f"[DIGEST] {'combo':26s} {'acc':>6s} {'stab':>6s} {'med_s':>6s} "
+        f"{'ok':>4s} {'wrong':>5s} {'unread':>6s} {'nodet':>5s} {'err':>4s}"
     )
     for item in summary:
         marker = " *prod" if item["is_production"] else ("  1vlm" if item["single_model"] else "")
         print(
             f"[DIGEST] {item['combo']:26s} {item['accuracy']:6.3f} "
-            f"{item['wrong_row_rate']:6.3f} {item['stability']:6.3f} "
-            f"{item['median_sec']:6.2f}  "
-            f"{item['n_' + SCORE_CORRECT]:>7d}/{item['visible_total']:<7d}{marker}"
+            f"{item['stability']:6.3f} {item['median_sec']:6.2f} "
+            f"{item['n_' + SCORE_CORRECT]:4d} {item['n_' + SCORE_WRONG_ROW]:5d} "
+            f"{item['n_' + SCORE_UNREADABLE]:6d} {item['n_' + SCORE_NO_DETECT]:5d} "
+            f"{item['n_' + SCORE_ERROR]:4d}{marker}"
         )
 
     if hard_tools:
         detail = ", ".join(f"{name}x{count}" for name, count in hard_tools)
         print(f"[DIGEST] wrong_row 발생 tool: {detail}")
         print("[DIGEST] -> 해당 overlay 를 열어 어느 행을 눌렀는지 확인 (혼동 쌍 후보)")
+    else:
+        print("[DIGEST] wrong_row 없음 - 옆 행 클릭은 한 건도 발생하지 않았다.")
+        print("[DIGEST] -> 실패는 전부 nodet(미검출)/unread(채점 OCR 판독 실패)다.")
+        print("[DIGEST] -> nodet 는 production 에서 재시도로 회복되는 실패다(오접속 아님).")
 
     if not summary:
         print("[DIGEST] verdict: 결과 없음")
@@ -440,8 +453,55 @@ def _print_digest(
     print("[DIGEST] ==========================================")
 
 
+def _reprint_from_json(path_text: str) -> str:
+    """이미 저장된 결과 JSON 으로 digest 만 다시 출력한다 (재측정 없음).
+
+    digest 형식이 바뀌었을 때 20~30분짜리 벤치를 다시 돌리지 않아도 되도록 한다.
+    RCS 도 VLM 도 필요 없으므로 어느 PC 에서든 돈다.
+    """
+    path = Path(path_text).expanduser()
+    if not path.is_file():
+        print(f"[ERROR] 결과 JSON 을 찾을 수 없습니다: {path}")
+        return "result_json_not_found"
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"[ERROR] 결과 JSON 파싱 실패: {type(exc).__name__}: {exc}")
+        return "result_json_parse_failed"
+
+    results = payload.get("runs") or []
+    if not results:
+        print(f"[ERROR] runs 가 비어 있습니다: {path}")
+        return "result_json_empty"
+
+    tool_names = payload.get("tool_names") or sorted({row["tool_name"] for row in results})
+    repeats = payload.get("repeats", 0)
+    combos: list[tuple[str, str]] = []
+    for row in results:
+        combo = (row.get("coarse_service", ""), row.get("refine_service", ""))
+        if all(combo) and combo not in combos:
+            combos.append(combo)
+    if not combos:
+        print("[ERROR] runs 에 coarse/refine 서비스 정보가 없어 조합을 복원할 수 없습니다.")
+        return "result_json_no_combos"
+
+    print(f"[INFO] 저장된 결과로 digest 재출력: {path}")
+    unresolved = _unresolved_tools(results, tool_names)
+    hard_tools = _hard_tools(results)
+    _print_digest(_summarize(results, combos, unresolved), tool_names, repeats, unresolved, hard_tools)
+    return "success"
+
+
 def main() -> str:
-    """List 탭 프레임 1장을 캡처해 모든 VLM 조합을 채점한다."""
+    """List 탭 프레임 1장을 캡처해 모든 VLM 조합을 채점한다.
+
+    BENCH_RESULT_JSON 이 있으면 측정하지 않고 그 결과로 digest 만 다시 낸다.
+    """
+    replay_json = os.getenv("BENCH_RESULT_JSON", "").strip()
+    if replay_json:
+        return _reprint_from_json(replay_json)
+
     tool_names = _load_tool_names()
     combos = _load_combos()
     repeats = _load_repeats()

@@ -472,8 +472,16 @@ def _summarize_buttons(results: list[dict], combos: list[tuple[str, str]]) -> li
         if not rows:
             continue
         total = len(rows)
-        correct = sum(1 for row in rows if row["score"] == SCORE_CORRECT)
-        wrong = sum(1 for row in rows if row["score"] == SCORE_WRONG_LABEL)
+        counts = {
+            score: sum(1 for row in rows if row["score"] == score)
+            for score in (
+                SCORE_CORRECT,
+                SCORE_WRONG_LABEL,
+                SCORE_UNREADABLE,
+                SCORE_NO_DETECT,
+                SCORE_ERROR,
+            )
+        }
         latencies = [row["elapsed_sec"] for row in rows]
         summary.append(
             {
@@ -481,10 +489,11 @@ def _summarize_buttons(results: list[dict], combos: list[tuple[str, str]]) -> li
                 "single_model": combo[0] == combo[1],
                 "is_production": tuple(combo) == PRODUCTION_COMBO,
                 "total": total,
-                "accuracy": round(correct / total, 3),
-                "wrong_label_rate": round(wrong / total, 3),
+                "accuracy": round(counts[SCORE_CORRECT] / total, 3),
+                "wrong_label_rate": round(counts[SCORE_WRONG_LABEL] / total, 3),
                 "median_sec": round(statistics.median(latencies), 2),
-                "n_correct": correct,
+                "n_correct": counts[SCORE_CORRECT],
+                **{f"n_{key}": value for key, value in counts.items()},
             }
         )
     summary.sort(key=lambda item: (-item["accuracy"], item["wrong_label_rate"]))
@@ -534,13 +543,19 @@ def _print_digest(
     print("[DIGEST] ===== tool window reader bench =====")
     print(f"[DIGEST] targets={','.join(labels)} repeats={repeats}")
     if button_summary:
-        print(f"[DIGEST] [buttons] {'combo':26s} {'acc':>6s} {'wrong':>6s} {'med_s':>6s}")
+        # 실패 종류를 항상 쪼개 보여준다 - wrong(다른 버튼 라벨을 읽음 = 오클릭 위험)과
+        # nodet(미검출, 재시도로 회복)은 성질이 다른데 합계만 보면 구분되지 않는다.
+        print(
+            f"[DIGEST] [buttons] {'combo':26s} {'acc':>6s} {'med_s':>6s} "
+            f"{'ok':>4s} {'wrong':>5s} {'unread':>6s} {'nodet':>5s} {'err':>4s}"
+        )
         for item in button_summary:
             marker = " *prod" if item["is_production"] else ("  1vlm" if item["single_model"] else "")
             print(
                 f"[DIGEST] [buttons] {item['combo']:26s} {item['accuracy']:6.3f} "
-                f"{item['wrong_label_rate']:6.3f} {item['median_sec']:6.2f}"
-                f"  {item['n_correct']:>3d}/{item['total']:<3d}{marker}"
+                f"{item['median_sec']:6.2f} {item['n_' + SCORE_CORRECT]:4d} "
+                f"{item['n_' + SCORE_WRONG_LABEL]:5d} {item['n_' + SCORE_UNREADABLE]:6d} "
+                f"{item['n_' + SCORE_NO_DETECT]:5d} {item['n_' + SCORE_ERROR]:4d}{marker}"
             )
         best = button_summary[0]
         prod = next((item for item in button_summary if item["is_production"]), None)

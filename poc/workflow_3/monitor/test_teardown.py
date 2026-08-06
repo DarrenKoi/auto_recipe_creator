@@ -76,10 +76,44 @@ def test_alarm_cycle_teardown_unblocks_input_first():
     print("[OK] test_alarm_cycle_teardown_unblocks_input_first")
 
 
+def test_check_only_teardown_unblocks_input_first():
+    """F1 회귀 테스트 - check-only teardown 이 입력 해제를 마지막에 두면 안 된다.
+
+    기존 순서는 close_tool -> close_alert_window(미보호) -> block_input(False) 라,
+    close_alert_window 가 던지면 엔지니어 입력이 잠긴 채 남았다.
+    """
+    from poc.workflow_3.config import load_workflow3_settings
+    from poc.workflow_3.monitor.cycle import _check_teardown_steps
+
+    settings = load_workflow3_settings()
+    steps = _check_teardown_steps("EQP1", {}, settings, input_blocked=True)
+    names = [n for n, _ in steps]
+    assert names[0] == "input_unblock", names
+    assert names == ["input_unblock", "close_tool", "close_alert"], names
+    print("[OK] test_check_only_teardown_unblocks_input_first")
+
+
+def test_check_only_teardown_survives_failing_close_alert():
+    """close_alert 가 던져도 앞선 입력 해제는 이미 실행됐고, 헬퍼는 안 던진다."""
+    from poc.workflow_3.monitor.teardown import run_teardown
+
+    calls = []
+    failures = run_teardown([
+        ("input_unblock", lambda: calls.append("unblock")),
+        ("close_tool", lambda: calls.append("close_tool")),
+        ("close_alert", lambda: (_ for _ in ()).throw(OSError("popup gone"))),
+    ])
+    assert calls == ["unblock", "close_tool"], calls
+    assert [n for n, _ in failures] == ["close_alert"], failures
+    print("[OK] test_check_only_teardown_survives_failing_close_alert")
+
+
 if __name__ == "__main__":
     test_raising_step_does_not_block_later_steps()
     test_failures_returned_in_order_with_names()
     test_helper_never_raises()
     test_empty_list_is_noop()
     test_alarm_cycle_teardown_unblocks_input_first()
+    test_check_only_teardown_unblocks_input_first()
+    test_check_only_teardown_survives_failing_close_alert()
     print("\n[OK] teardown 헬퍼 테스트 통과")

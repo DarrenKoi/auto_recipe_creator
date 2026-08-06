@@ -1648,6 +1648,32 @@ def _run_pm_dropdown_arms(
     return meta
 
 
+def _check_teardown_steps(eqp_id, context, settings, *, input_blocked):
+    """점검(check-only) 사이클 teardown 단계 목록 - 녹화가 없어 3단계다.
+
+    첫 단계는 **항상** 입력 해제다. 과거 이 사이클만 해제를 마지막에 둬서,
+    close_alert_window 가 던지면 엔지니어 입력이 잠긴 채 남는 결함이 있었다
+    (F1). 순서는 test_teardown.py 가 검사한다.
+    """
+
+    def _unblock():
+        if input_blocked:
+            block_input(False, debug_label=f"align_fail_check {eqp_id}")
+
+    def _close_tool():
+        if context.get("tool_window") is not None and CLOSE_TOOL_AVAILABLE:
+            close_tool(eqp_id)
+
+    def _close_alert():
+        close_alert_window(timeout_sec=settings.alert_close_timeout_sec)
+
+    return [
+        ("input_unblock", _unblock),
+        ("close_tool", _close_tool),
+        ("close_alert", _close_alert),
+    ]
+
+
 def run_check_only_cycle(
     eqp_id: str,
     recipe_id: str,
@@ -1720,17 +1746,13 @@ def run_check_only_cycle(
             eqp_id=eqp_id, error=str(exc),
         )
     finally:
-        # teardown 보장 — tool 닫기 → 알림 팝업 backstop.
-        if context.get("tool_window") is not None and CLOSE_TOOL_AVAILABLE:
-            try:
-                close_tool(eqp_id)
-            except Exception as exc:
-                print(f"[WARNING] tool 창 닫기 실패: {exc}")
-        close_alert_window(timeout_sec=settings.alert_close_timeout_sec)
-        # 입력 차단 해제 — 자동 구간 전체(닫기 포함) 종료 후. 예외 경로에서도 반드시 해제.
-        if input_blocked:
-            block_input(False, debug_label=f"align_fail_check {eqp_id}")
-            input_blocked = False
+        # 입력 해제를 **첫 단계**로 올린다 - 과거엔 close_alert_window 뒤에 있어
+        # 그게 던지면 엔지니어 입력이 잠긴 채 남았다(F1).
+        failures = run_teardown(
+            _check_teardown_steps(eqp_id, context, settings, input_blocked=input_blocked),
+            label=f"align_fail_check {eqp_id}",
+        )
+        result.notes.extend(f"teardown_failed:{n}: {e}" for n, e in failures)
 
     return result
 

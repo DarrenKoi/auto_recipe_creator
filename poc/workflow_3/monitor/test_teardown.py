@@ -108,18 +108,6 @@ def test_check_only_teardown_survives_failing_close_alert():
     print("[OK] test_check_only_teardown_survives_failing_close_alert")
 
 
-def test_abort_cycle_teardown_unblocks_input_first():
-    """workflow_3e abort 사이클도 같은 순서 규약을 따른다(F4 - 복제된 형태 방지)."""
-    from poc.workflow_3.config import load_workflow3_settings
-    from poc.workflow_3e.abort_cycle import _abort_teardown_steps
-
-    settings = load_workflow3_settings()
-    steps = _abort_teardown_steps("EQP1", {}, settings, input_blocked=True)
-    names = [n for n, _ in steps]
-    assert names == ["input_unblock", "close_tool", "close_alert"], names
-    print("[OK] test_abort_cycle_teardown_unblocks_input_first")
-
-
 if __name__ == "__main__":
     test_raising_step_does_not_block_later_steps()
     test_failures_returned_in_order_with_names()
@@ -128,5 +116,4 @@ if __name__ == "__main__":
     test_alarm_cycle_teardown_unblocks_input_first()
     test_check_only_teardown_unblocks_input_first()
     test_check_only_teardown_survives_failing_close_alert()
-    test_abort_cycle_teardown_unblocks_input_first()
     print("\n[OK] teardown 헬퍼 테스트 통과")

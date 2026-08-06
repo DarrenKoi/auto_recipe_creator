@@ -18,6 +18,7 @@ office 모듈 부재(개발 PC)·예외 시 조용히 skip 해 모니터 루프�
 office_rcp_msr_downloader 는 정위치(poc.workflow_3.monitor)에서 로드한다.
 """
 
+import threading
 from typing import Protocol
 
 from poc.workflow_3 import ALIGN_IMAGES_DIR
@@ -78,42 +79,75 @@ if not RCP_MSR_DOWNLOADER_AVAILABLE:
     print("[INFO] rcp/msr downloader 없음 (개발 PC/미구현). "
           "rcp/msr 은 office MES 가 align_images 트리에 직접 적재해야 합니다.")
 
+# recipe_id -> Thread. 진행 중인 gather 가 있으면 새로 fire 하지 않는다 - timeout 으로
+# 포기한 스레드가 같은 dest_dir 에 계속 쓰는 동안 새 스레드가 겹쳐 쓰면 부분읽기
+# 경쟁이 난다(success_gather 와 같은 규약).
+_IN_FLIGHT_LOCK = threading.Lock()
+_IN_FLIGHT: dict = {}
+
 
 def gather_rcp_msr(
-    eqp_id, recipe_id, settings: Workflow3Settings, *, include_msr: bool = False
+    eqp_id, recipe_id, settings: Workflow3Settings, *,
+    include_msr: bool = False, timeout_sec=None,
 ) -> bool:
     """recipe 의 rcp 입력 이미지를 align_images 트리로 **동기** 다운로드한다.
 
-    프로덕션 기본은 rcp 만(include_msr=False) — 보정/feasibility 는 라이브 캡처 프레임에
-    consensus/rcp 템플릿을 매칭하므로 msr 을 소비하지 않는다. msr 은 오프라인 벤치에서만
-    필요해 include_msr=True 로 명시할 때 받는다(fetch_msr_offline.py).
+    동기 계약은 유지된다 - cycle 이 assets(feasibility/보정)를 읽기 전에 디스크
+    적재를 보장해야 하기 때문이다. 다만 대기는 bounded 다: daemon thread 로 돌리고
+    timeout_sec 만큼만 join 한다(success_gather.wait_for_gather 와 같은 관용구).
 
-    rcp_msr_gather_enabled off / recipe_id 없음 / downloader 부재면 아무것도 안 하고 False.
-    다운로드가 (예외 없이) 끝나면 True. 예외는 삼키고(best-effort) False 를 반환해
-    모니터 루프가 죽지 않게 한다.
+    timeout_sec=None 이면 무한 대기(기존 동작) - 오프라인 벤치 fetch_msr_offline.py
+    는 수 분짜리 msr 다운로드가 정상이라 상한을 두지 않는다. 모니터는
+    settings.rcp_gather_timeout_sec 를 넘긴다.
 
-    cycle 직전에 호출해 assets 읽기 전 디스크 적재를 보장하는 게 핵심이다.
+    반환 True = 시간 안에 예외 없이 끝남. False = 게이트 미충족/예외/시간 초과.
+    시간 초과 시 스레드는 계속 돌지만 루프는 진행한다 - assets 가 없거나 부분일 수
+    있어 feasibility 가 '보정 불가' 오판을 낼 수 있다(알람 1건의 bounded 오답이
+    전체 루프 무한 정지보다 낫다는 판단).
     """
     if not settings.rcp_msr_gather_enabled or not recipe_id or not RCP_MSR_DOWNLOADER_AVAILABLE:
         return False
 
     # recipe_id = '<class>/<recipe>' 라 ALIGN_IMAGES_DIR/<eqp>/<class>/<recipe> 로 3단 중첩.
     dest_dir = ALIGN_IMAGES_DIR / eqp_id / recipe_id
-    try:
-        n_images = _DOWNLOADER.download_rcp_msr(
-            eqp_id, recipe_id, dest_dir=dest_dir, include_msr=include_msr
-        )
-        kind = "rcp+msr" if include_msr else "rcp"
-        print(f"[INFO] {kind} 다운로드 완료: EQP_ID={eqp_id} recipe={recipe_id} "
-              f"images={n_images} dest={dest_dir}")
-        return True
-    except Exception as exc:
-        print(f"[WARNING] rcp/msr 다운로드 예외: EQP_ID={eqp_id} recipe={recipe_id} error={exc}")
-        log_work2_event(
-            component=LOG_COMPONENT, message="gather_error", level="warning",
-            eqp_id=eqp_id, recipe_id=recipe_id, error=str(exc),
-        )
+    outcome = {"ok": False}
+
+    def _run():
+        try:
+            n_images = _DOWNLOADER.download_rcp_msr(
+                eqp_id, recipe_id, dest_dir=dest_dir, include_msr=include_msr
+            )
+            kind = "rcp+msr" if include_msr else "rcp"
+            print(f"[INFO] {kind} 다운로드 완료: EQP_ID={eqp_id} recipe={recipe_id} "
+                  f"images={n_images} dest={dest_dir}")
+            outcome["ok"] = True
+        except Exception as exc:
+            print(f"[WARNING] rcp/msr 다운로드 예외: EQP_ID={eqp_id} recipe={recipe_id} error={exc}")
+            log_work2_event(
+                component=LOG_COMPONENT, message="gather_error", level="warning",
+                eqp_id=eqp_id, recipe_id=recipe_id, error=str(exc),
+            )
+
+    key = recipe_id   # eqp 무관 - 같은 recipe 는 같은 dest 하위를 쓴다.
+    with _IN_FLIGHT_LOCK:
+        dead = [k for k, t in _IN_FLIGHT.items() if not t.is_alive()]
+        for k in dead:
+            del _IN_FLIGHT[k]
+        if key in _IN_FLIGHT and _IN_FLIGHT[key].is_alive():
+            print(f"[INFO] rcp gather 이미 진행 중(skip): EQP_ID={eqp_id} recipe={recipe_id}")
+            return False
+        thread = threading.Thread(target=_run, daemon=True)
+        _IN_FLIGHT[key] = thread
+        # start 도 lock 안에서 - 등록과 시작 사이 틈에 다른 호출자의 prune 이
+        # 미시작 thread 를 지우고 중복 fire 하는 창을 닫는다.
+        thread.start()
+
+    thread.join(timeout_sec)
+    if thread.is_alive():
+        print(f"[WARNING] rcp 다운로드 시간 초과({timeout_sec}s) - 받은 만큼으로 진행: "
+              f"EQP_ID={eqp_id} recipe={recipe_id}")
         return False
+    return outcome["ok"]
 
 
 __all__ = ["RCP_MSR_DOWNLOADER_AVAILABLE", "RcpMsrDownloader", "gather_rcp_msr"]

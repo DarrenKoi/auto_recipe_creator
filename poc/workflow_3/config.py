@@ -100,6 +100,9 @@ class Workflow3Settings(WorkflowSettings):
     # align_images 트리에 직접 적재하는 것이지만, 못 받는 환경에선 office_rcp_msr_downloader
     # 가 알람 시점에 동기로 내려받는다(cycle 이 assets 읽기 전 디스크 적재 보장).
     rcp_msr_gather_enabled: bool = True
+    # 동기 rcp 다운로드 대기 상한(초). office 호출이 걸려도 모니터가 무한 정지하지
+    # 않게 한다(F3). 초과 시 받은 만큼으로 진행 - assets 부분/부재 가능성 있음.
+    rcp_gather_timeout_sec: float = 60.0
 
     # --- consensus S-image gather ---
     gather_enabled: bool = True
@@ -212,6 +215,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         recording_max_sec=env_float("ALIGN_FAIL_RECORDING_MAX_SEC", 900.0),
         engineer_watch_sec=env_float("ALIGN_FAIL_ENGINEER_WATCH_SEC", 300.0),
         rcp_msr_gather_enabled=env_flag("ALIGN_FAIL_GATHER_RCP_MSR", default=True),
+        rcp_gather_timeout_sec=env_float("ALIGN_FAIL_RCP_GATHER_TIMEOUT_SEC", 60.0),
         gather_enabled=env_flag("ALIGN_FAIL_GATHER_SUCCESS", default=True),
         gather_max_events=env_int("ALIGN_FAIL_GATHER_MAX_EVENTS", 4),
         consensus_enabled=env_flag("ALIGN_FAIL_CONSENSUS", default=True),

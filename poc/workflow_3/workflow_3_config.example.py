@@ -93,6 +93,7 @@ CORRECTION_DRY_RUN = None
 # [6] 과거 데이터 수집 / consensus
 # ----------------------------------------------------------------------------
 GATHER_RCP_MSR = None        # 알람 시 rcp 동기 다운로드(downloader 있을 때). 1/0/None(기본 on).
+RCP_GATHER_TIMEOUT_SEC = None  # rcp 동기 다운로드 대기 상한(초). None=기본 60.
 GATHER_SUCCESS = None        # 최근 성공 S 이미지 비차단 수집. 1/0/None(기본 on).
 CONSENSUS = None             # consensus 라우팅 마스터 토글(off=순수 rcp). 1/0/None(기본 on).
 CONSENSUS_MIN_S = None       # consensus build 최소 S(바닥 3). None=기본(4).

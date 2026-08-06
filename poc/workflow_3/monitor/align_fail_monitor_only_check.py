@@ -203,7 +203,8 @@ def process_fail_rows(
             # MES 가 align_images 트리에 직접 적재하면 downloader 부재로 자동 skip.
             # 게이트(rcp_msr_gather_enabled/recipe_id/downloader)는 gather_rcp_msr 내부에서 판정.
             # (Task 7 이 여기에 timeout_sec= 를 추가한다.)
-            gather_rcp_msr(eqp_id, info["recipe_id"], settings)
+            gather_rcp_msr(eqp_id, info["recipe_id"], settings,
+                           timeout_sec=settings.rcp_gather_timeout_sec)
 
             # 점검 전용 사이클 — 접속 → 첫 화면 1장 캡처 → tool 닫기 (보정/녹화 없음).
             if settings.cycle_enabled:

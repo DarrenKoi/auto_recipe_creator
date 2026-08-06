@@ -32,6 +32,7 @@ from poc.workflow_3.debug_artifacts import save_debug_jpeg
 from poc.workflow_3.logger import log_work2_event
 from poc.workflow_3.monitor.notify import close_alert_window, notify_correction_outcome
 from poc.workflow_3.monitor.recording import RecordingSession
+from poc.workflow_3.monitor.teardown import run_teardown
 from poc.workflow_3.sem_monitor.controller import build_rcs_sem_monitor
 from poc.workflow_3.runner.workflow_runner import WorkflowRunner
 from poc.workflow_3.runner.workflow_types import (
@@ -296,6 +297,43 @@ def _exec_connect_tool(step, context, settings: Workflow3Settings) -> StepResult
     return _make_result(step, "success", started_at, settings)
 
 
+def _detect_wrong_tool_window(eqp_id: str) -> str:
+    """목표 tool 이 아닌 Remote Monitoring 창이 떠 있으면 닫고 그 제목을 돌려준다.
+
+    List 에서 옆 행을 더블클릭하면 엉뚱한 tool 창이 열리는데, teardown 의
+    `close_tool(eqp_id)` 는 제목에 우리 eqp_id 가 있어야만 닫으므로 그 창은 그대로
+    남는다(세션 누수). 여기서 발견 즉시 닫는다.
+
+    닫기 실패나 예외는 삼킨다 - 이 함수는 진단/청소용이고 접속 실패 판정을 막으면 안 된다.
+    """
+    try:
+        from poc.workflow_3.rcs.login_rcs_common import find_remote_monitoring_window
+        from poc.workflow_3.util import close_window
+    except ImportError as exc:
+        print(f"[WARNING] 오클릭 창 검사 불가(import 실패): {exc}")
+        return ""
+
+    try:
+        stray_window, stray_title, _backend = find_remote_monitoring_window("")
+    except Exception as exc:
+        print(f"[WARNING] 오클릭 창 검사 실패: {exc}")
+        return ""
+
+    if stray_window is None or not stray_title:
+        return ""
+    if (eqp_id or "").strip().lower() in stray_title.lower():
+        # 제목에 우리 ID 가 있는데 위에서 못 찾았다면 타이밍 문제 - 오클릭이 아니다.
+        return ""
+
+    print(f"[WARNING] 오클릭 감지: 다른 tool 창이 열림 title={stray_title!r} (target={eqp_id})")
+    if close_window is not None:
+        try:
+            close_window(stray_window, debug_label=f"wrong_tool_opened {stray_title!r}")
+        except Exception as exc:
+            print(f"[WARNING] 오클릭 창 닫기 실패(수동 확인 필요): {exc}")
+    return stray_title
+
+
 def _exec_wait_tool_window(step, context, settings: Workflow3Settings) -> StepResult:
     """④ tool 창 대기 — RCS 점유(select 팝업) 시 건드리지 않고 포기.
 
@@ -343,6 +381,19 @@ def _exec_wait_tool_window(step, context, settings: Workflow3Settings) -> StepRe
             ),
         )
     if window is None:
+        # 목표 tool 창이 없을 때, **다른** tool 의 Remote Monitoring 창이 떠 있으면
+        # 그건 점유가 아니라 우리가 List 에서 옆 행을 더블클릭한 것이다(오클릭).
+        # 이 둘은 증상이 같아 지금까지 전부 rcs_occupied 로 보고돼 구분이 안 됐다.
+        stray_title = _detect_wrong_tool_window(eqp_id)
+        if stray_title:
+            return _make_result(
+                step, "failed", started_at, settings,
+                failure_class="wrong_tool_opened",
+                error_message=(
+                    f"목표 tool 창은 없고 다른 tool 창이 열림: title={stray_title!r} "
+                    f"(target={eqp_id}) - List 오클릭. 열린 창은 닫았음."
+                ),
+            )
         return _make_result(
             step, "failed", started_at, settings,
             failure_class="rcs_occupied",
@@ -526,6 +577,44 @@ def _engineer_watch(
     print("[INFO] engineer watch 종료")
 
 
+def _teardown_steps(eqp_id, context, result, settings, *, input_blocked, recording):
+    """알람 사이클 teardown 단계 목록 - 순서가 계약이다.
+
+    첫 단계는 **항상** 입력 해제다: 뒤 단계가 전부 실패해도 엔지니어의 물리
+    마우스/키보드는 풀려 있어야 한다. 각 단계의 전제조건은 목록에서 빼지 않고
+    클로저 **안에서** 판정한다 - 목록 길이/순서를 일정하게 유지해야 순서 규약을
+    테스트로 검사할 수 있다.
+    """
+
+    def _unblock():
+        if input_blocked:
+            block_input(False, debug_label=f"align_fail_cycle {eqp_id}")
+
+    def _stop_recording():
+        # stop() 과 결과 필드 갱신을 함께 감싼다 - 여기서 실패하면 두 필드가
+        # 조용히 비는 대신 note 가 남고 나머지 teardown 은 계속된다.
+        sess = recording if recording is not None else context.get("recording")
+        if sess is None:
+            return
+        frames = sess.stop("cycle_teardown")
+        result.recording_dir = str(sess.out_dir)
+        result.frame_count = len(frames)
+
+    def _close_tool():
+        if context.get("tool_window") is not None and CLOSE_TOOL_AVAILABLE:
+            close_tool(eqp_id)
+
+    def _close_alert():
+        close_alert_window(timeout_sec=settings.alert_close_timeout_sec)
+
+    return [
+        ("input_unblock", _unblock),
+        ("recording_stop", _stop_recording),
+        ("close_tool", _close_tool),
+        ("close_alert", _close_alert),
+    ]
+
+
 def run_alarm_cycle(
     eqp_id: str,
     recipe_id: str,
@@ -628,24 +717,16 @@ def run_alarm_cycle(
             eqp_id=eqp_id, error=str(exc),
         )
     finally:
-        # 입력 차단 backstop — 위에서 예외로 못 풀었어도 반드시 해제(사용자 잠김 방지).
-        if input_blocked:
-            block_input(False, debug_label=f"align_fail_cycle {eqp_id}")
-            input_blocked = False
-        # teardown 보장 — 녹화 중지(manifest) → tool 닫기 → 알림 팝업 backstop.
-        recording = recording or context.get("recording")
-        if recording is not None:
-            frames = recording.stop("cycle_teardown")
-            result.recording_dir = str(recording.out_dir)
-            result.frame_count = len(frames)
-        # tool 창 닫기 — 보정 성공/실패, 그리고 engineer_done_align_adjustment 가
-        # 측정 시작(N>5 연속 2회)을 감지해 watch 가 조기 종료된 경우 모두 여기서 닫힌다.
-        if context.get("tool_window") is not None and CLOSE_TOOL_AVAILABLE:
-            try:
-                close_tool(eqp_id)
-            except Exception as exc:
-                print(f"[WARNING] tool 창 닫기 실패: {exc}")
-        close_alert_window(timeout_sec=settings.alert_close_timeout_sec)
+        # teardown 은 run_teardown 이 단계별로 보호한다 - 한 단계가 던져도 입력
+        # 해제/tool 닫기/팝업 backstop 은 반드시 실행된다.
+        failures = run_teardown(
+            _teardown_steps(
+                eqp_id, context, result, settings,
+                input_blocked=input_blocked, recording=recording,
+            ),
+            label=f"align_fail_cycle {eqp_id}",
+        )
+        result.notes.extend(f"teardown_failed:{n}: {e}" for n, e in failures)
 
     return result
 

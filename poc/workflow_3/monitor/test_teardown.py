@@ -56,9 +56,30 @@ def test_empty_list_is_noop():
     print("[OK] test_empty_list_is_noop")
 
 
+def test_alarm_cycle_teardown_unblocks_input_first():
+    """run_alarm_cycle 의 teardown 첫 단계는 반드시 입력 해제여야 한다.
+
+    뒤 단계(녹화 중지/tool 닫기/팝업)가 전부 실패해도 엔지니어의 물리 입력은
+    풀려 있어야 한다. 이것이 F1(check-only 입력 잠금) 계열의 회귀 테스트다.
+    """
+    from poc.workflow_3.config import load_workflow3_settings
+    from poc.workflow_3.monitor.cycle import CycleResult, _teardown_steps
+
+    settings = load_workflow3_settings()
+    result = CycleResult(eqp_id="EQP1", recipe_id="C/R", tag="t")
+    steps = _teardown_steps(
+        "EQP1", {}, result, settings, input_blocked=True, recording=None
+    )
+    assert steps[0][0] == "input_unblock", [n for n, _ in steps]
+    names = [n for n, _ in steps]
+    assert names == ["input_unblock", "recording_stop", "close_tool", "close_alert"], names
+    print("[OK] test_alarm_cycle_teardown_unblocks_input_first")
+
+
 if __name__ == "__main__":
     test_raising_step_does_not_block_later_steps()
     test_failures_returned_in_order_with_names()
     test_helper_never_raises()
     test_empty_list_is_noop()
+    test_alarm_cycle_teardown_unblocks_input_first()
     print("\n[OK] teardown 헬퍼 테스트 통과")

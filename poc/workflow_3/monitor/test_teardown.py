@@ -1,0 +1,64 @@
+"""guarded teardown 헬퍼 + 세 사이클의 teardown 순서 불변식 테스트.
+
+RCS/Windows 없이 도는 단위 테스트다. 사이클 전체는 Mac 에서 RCS_MODULES_AVAILABLE
+이 False 라 조기 반환하므로, teardown 목록을 만드는 함수(_teardown_steps 계열)만
+직접 호출해 순서를 검사한다.
+
+`uv run python poc/workflow_3/monitor/test_teardown.py` 로 직접 실행.
+"""
+
+from poc.workflow_3.monitor.teardown import run_teardown
+
+
+def test_raising_step_does_not_block_later_steps():
+    """한 단계가 던져도 뒤 단계는 반드시 실행된다 - teardown 의 핵심 계약."""
+    calls = []
+
+    def _boom():
+        calls.append("boom")
+        raise RuntimeError("terminate failed")
+
+    failures = run_teardown([
+        ("first", lambda: calls.append("first")),
+        ("boom", _boom),
+        ("last", lambda: calls.append("last")),
+    ])
+    assert calls == ["first", "boom", "last"], calls
+    assert [n for n, _ in failures] == ["boom"], failures
+    print("[OK] test_raising_step_does_not_block_later_steps")
+
+
+def test_failures_returned_in_order_with_names():
+    """실패는 (이름, 오류문자열) 로, 실행 순서대로 반환된다."""
+    failures = run_teardown([
+        ("a", lambda: (_ for _ in ()).throw(ValueError("va"))),
+        ("b", lambda: None),
+        ("c", lambda: (_ for _ in ()).throw(KeyError("kc"))),
+    ])
+    assert [n for n, _ in failures] == ["a", "c"], failures
+    assert "va" in failures[0][1], failures[0][1]
+    assert "ValueError" in failures[0][1], failures[0][1]
+    print("[OK] test_failures_returned_in_order_with_names")
+
+
+def test_helper_never_raises():
+    """모든 단계가 던져도 헬퍼 자체는 절대 예외를 올리지 않는다."""
+    failures = run_teardown([
+        ("x", lambda: (_ for _ in ()).throw(RuntimeError("x"))),
+        ("y", lambda: (_ for _ in ()).throw(RuntimeError("y"))),
+    ], label="unit")
+    assert len(failures) == 2, failures
+    print("[OK] test_helper_never_raises")
+
+
+def test_empty_list_is_noop():
+    assert run_teardown([]) == []
+    print("[OK] test_empty_list_is_noop")
+
+
+if __name__ == "__main__":
+    test_raising_step_does_not_block_later_steps()
+    test_failures_returned_in_order_with_names()
+    test_helper_never_raises()
+    test_empty_list_is_noop()
+    print("\n[OK] teardown 헬퍼 테스트 통과")

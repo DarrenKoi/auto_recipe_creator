@@ -57,6 +57,9 @@ class Workflow3Settings(WorkflowSettings):
     occupied_popup_detect_enabled: bool = True
     occupied_popup_vlm_service: str = "ui-venus"  # 제목 검출 후 옵션 확인용(route_slug).
     occupied_retry_cooldown_sec: float = 300.0    # 점유로 포기한 tool 재시도 유예(초).
+    # 점유 외 사유로 사이클이 실패한 tool 의 재시도 유예(초). 없으면 매 poll 재시도해
+    # 직렬화된 단일 RCS 커서를 독점하고 다른 알람을 굶긴다(F2).
+    failure_retry_cooldown_sec: float = 300.0
     keep_awake: bool = True
     # 자동 GUI 구간 동안 사용자 물리 마우스/키보드 입력 차단(Windows BlockInput).
     # 사용자가 다른 앱을 쓰면 foreground lock 으로 RCS 가 안 떠서 방해되는 문제 대응.
@@ -199,6 +202,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         occupied_popup_detect_enabled=env_flag("ALIGN_FAIL_OCCUPIED_POPUP_DETECT", default=True),
         occupied_popup_vlm_service=_env_str("ALIGN_FAIL_OCCUPIED_POPUP_SERVICE", "ui-venus"),
         occupied_retry_cooldown_sec=env_float("ALIGN_FAIL_OCCUPIED_COOLDOWN_SEC", 300.0),
+        failure_retry_cooldown_sec=env_float("ALIGN_FAIL_FAILURE_COOLDOWN_SEC", 300.0),
         rcs_recovery_enabled=env_flag("ALIGN_FAIL_RCS_RECOVERY", default=False),
         keep_awake=env_flag("ALIGN_FAIL_KEEP_AWAKE", default=True),
         block_input_enabled=env_flag("ALIGN_FAIL_BLOCK_INPUT", default=False),

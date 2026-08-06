@@ -96,3 +96,8 @@ GATHER_RCP_MSR = None        # 알람 시 rcp 동기 다운로드(downloader 있
 GATHER_SUCCESS = None        # 최근 성공 S 이미지 비차단 수집. 1/0/None(기본 on).
 CONSENSUS = None             # consensus 라우팅 마스터 토글(off=순수 rcp). 1/0/None(기본 on).
 CONSENSUS_MIN_S = None       # consensus build 최소 S(바닥 3). None=기본(4).
+
+# ============================================================================
+# [7] 재시도 정책
+# ----------------------------------------------------------------------------
+FAILURE_COOLDOWN_SEC = None  # 실패 tool 재시도 유예(초). None=기본 300.

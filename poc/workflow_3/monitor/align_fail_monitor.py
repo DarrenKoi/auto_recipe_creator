@@ -38,6 +38,7 @@ from poc.workflow_3.monitor.notify import (
 )
 from poc.workflow_3.monitor.rcp_msr_gather import gather_rcp_msr
 from poc.workflow_3.monitor.success_gather import gather_success_async
+from poc.workflow_3.logger import log_work2_event
 
 LOG_COMPONENT = "align_fail_monitor"
 
@@ -283,6 +284,18 @@ _MISCLICK_FAILURE_CLASSES = {"wrong_tool_opened"}
 _RETRY_LATER_FAILURE_CLASSES = _OCCUPIED_FAILURE_CLASSES | _MISCLICK_FAILURE_CLASSES
 
 
+def _cycle_failed(cycle) -> bool:
+    """사이클이 정상 완료되지 못했는지 - 실패 cooldown 트리거 판정.
+
+    True: 예외로 끝났거나(run_status='error') runner 가 step 실패로 중단(failed_step).
+    False: 정상 수행. **correction fallback 은 실패가 아니다** - _exec_run_correction
+    은 outcome.status 와 무관하게 success 를 반환하므로(cycle.py:468-475) fallback 은
+    run_status='completed' 로 온다. 엔지니어 인계는 정상 경로이며 이미 알람 해제까지
+    active_tools 에 머문다.
+    """
+    return cycle.run_status == "error" or bool(cycle.failed_step)
+
+
 def process_fail_rows(
     fails,
     active_tools: set[str],
@@ -294,9 +307,13 @@ def process_fail_rows(
     - 같은 EQP_ID 에서 여러 알람 code 가 와도 하나로 취급.
     - 이전 poll 에서 이미 활성이던 EQP_ID 는 다시 처리하지 않음.
     - 이번 poll 에 사라진 EQP_ID 는 `active_tools` 에서 제거 (복구 시 재처리 가능).
-    - 점유(select 팝업)로 포기한 EQP_ID 는 `active_tools` 에 넣지 않고 `occupied_cooldown`
-      에 만료시각을 기록해, cooldown 동안 재시도를 건너뛴다(점유는 일시적이므로 만료 후 또는
-      알람 해제 후 재시도 가능). `occupied_cooldown` 은 {eqp_id: 만료 epoch} dict.
+    - 점유(select 팝업)/오클릭으로 포기했거나 사이클이 실패한(run_status='error' 또는
+      failed_step) EQP_ID 는 `active_tools` 에 넣지 않고 `occupied_cooldown` 에 만료시각을
+      기록해, cooldown 동안 재시도를 건너뛴다(만료 후 또는 알람 해제 후 재시도 가능).
+      이 dict 는 점유/실패 두 사유를 함께 커버한다. `occupied_cooldown` 은
+      {eqp_id: 만료 epoch} dict.
+    - tool 1대의 처리 중 예외는 같은 poll 의 나머지 tool 처리를 막지 않는다(F5) -
+      예외를 던진 tool 도 cooldown 에 등록해 다음 poll 에 같은 예외를 반복하지 않게 한다.
 
     `active_tools`/`occupied_cooldown` 는 in-place 로 갱신된다. 새로 처리한 개수를 반환.
     """
@@ -323,68 +340,86 @@ def process_fail_rows(
 
     newly_handled = 0
     for eqp_id in sorted(new_tools):
-        info = by_tool[eqp_id]
-        alarm_time = str(info["alarm_time"] or "")
+        try:
+            info = by_tool[eqp_id]
+            alarm_time = str(info["alarm_time"] or "")
 
-        print(
-            f"[WARNING] Align Fail 감지: EQP_ID={eqp_id}, "
-            f"ALID={info['alid']}, RECIPE_ID={info['recipe_id']}, "
-            f"LOT_TYPE={info['lot_type_cd']}, 시각={alarm_time}"
-        )
-        append_alarm_record(
-            eqp_id, alarm_time, info["alarm_name"], info["alid"],
-            recipe_id=info["recipe_id"],
-            operation_desc=info["operation_desc"],
-            lot_type_cd=info["lot_type_cd"],
-        )
-        if settings.popup_enabled:
-            notify_align_fail_popup(
-                eqp_id, alarm_time, info["alarm_name"],
+            print(
+                f"[WARNING] Align Fail 감지: EQP_ID={eqp_id}, "
+                f"ALID={info['alid']}, RECIPE_ID={info['recipe_id']}, "
+                f"LOT_TYPE={info['lot_type_cd']}, 시각={alarm_time}"
+            )
+            append_alarm_record(
+                eqp_id, alarm_time, info["alarm_name"], info["alid"],
                 recipe_id=info["recipe_id"],
                 operation_desc=info["operation_desc"],
                 lot_type_cd=info["lot_type_cd"],
-                timeout_sec=settings.popup_timeout_sec,
             )
+            if settings.popup_enabled:
+                notify_align_fail_popup(
+                    eqp_id, alarm_time, info["alarm_name"],
+                    recipe_id=info["recipe_id"],
+                    operation_desc=info["operation_desc"],
+                    lot_type_cd=info["lot_type_cd"],
+                    timeout_sec=settings.popup_timeout_sec,
+                )
 
-        # consensus 재료 수집 — recipe 최근 성공(S) 이미지 stage (비차단 best-effort).
-        # 게이트(gather_enabled/recipe_id/downloader)는 gather_success_async 내부에서 판정.
-        gather_success_async(eqp_id, info["recipe_id"], settings)
+            # consensus 재료 수집 — recipe 최근 성공(S) 이미지 stage (비차단 best-effort).
+            # 게이트(gather_enabled/recipe_id/downloader)는 gather_success_async 내부에서 판정.
+            gather_success_async(eqp_id, info["recipe_id"], settings)
 
-        # rcp/msr 1차 입력 — 사이클이 assets(보정)를 읽기 전에 **동기** 다운로드.
-        # MES 가 align_images 트리에 직접 적재하면 downloader 부재로 자동 skip.
-        # 게이트(rcp_msr_gather_enabled/recipe_id/downloader)는 gather_rcp_msr 내부에서 판정.
-        gather_rcp_msr(eqp_id, info["recipe_id"], settings)
+            # rcp/msr 1차 입력 — 사이클이 assets(보정)를 읽기 전에 **동기** 다운로드.
+            # MES 가 align_images 트리에 직접 적재하면 downloader 부재로 자동 skip.
+            # 게이트(rcp_msr_gather_enabled/recipe_id/downloader)는 gather_rcp_msr 내부에서 판정.
+            gather_rcp_msr(eqp_id, info["recipe_id"], settings)
 
-        # 알람별 사이클 — RECIPE_ID 유무와 무관하게 접속+녹화는 수행(보정만 RECIPE_ID 필요).
-        # cube 알림(처리 실패 시)은 사이클 내부에서 outcome 기반으로 발송된다.
-        if settings.cycle_enabled:
-            cycle = run_alarm_cycle(
-                eqp_id,
-                info["recipe_id"],
-                settings,
-                tag=_alarm_time_to_tag(info["utc9"]),
+            # 알람별 사이클 — RECIPE_ID 유무와 무관하게 접속+녹화는 수행(보정만 RECIPE_ID 필요).
+            # cube 알림(처리 실패 시)은 사이클 내부에서 outcome 기반으로 발송된다.
+            if settings.cycle_enabled:
+                cycle = run_alarm_cycle(
+                    eqp_id,
+                    info["recipe_id"],
+                    settings,
+                    tag=_alarm_time_to_tag(info["utc9"]),
+                )
+            else:
+                cycle = CycleResult(eqp_id=eqp_id, recipe_id=info["recipe_id"], tag="")
+                cycle.run_status = "cycle_disabled"
+
+            append_cycle_manifest(info, cycle)
+
+            # 점유(select)로 포기한 경우: active 에 넣지 않고 cooldown 등록 → 만료 후 재시도.
+            if cycle.failure_class in _RETRY_LATER_FAILURE_CLASSES:
+                occupied_cooldown[eqp_id] = time.time() + settings.occupied_retry_cooldown_sec
+                reason = (
+                    "List 오클릭(다른 tool 창 열림)"
+                    if cycle.failure_class in _MISCLICK_FAILURE_CLASSES
+                    else "점유(select) 추정"
+                )
+                print(
+                    f"[INFO] EQP_ID={eqp_id} {reason} - active 미등록, "
+                    f"{settings.occupied_retry_cooldown_sec:.0f}s 후 재시도"
+                )
+            elif _cycle_failed(cycle):
+                # 실패 tool 을 매 poll 재시도하면 단일 RCS 커서를 독점한다(F2).
+                occupied_cooldown[eqp_id] = time.time() + settings.failure_retry_cooldown_sec
+                print(
+                    f"[WARNING] EQP_ID={eqp_id} 사이클 실패(status={cycle.run_status}, "
+                    f"step={cycle.failed_step or '-'}) - active 미등록, "
+                    f"{settings.failure_retry_cooldown_sec:.0f}s 후 재시도"
+                )
+            else:
+                active_tools.add(eqp_id)
+            newly_handled += 1
+        except Exception as exc:
+            # tool 1대의 예외가 같은 poll 의 나머지 tool 을 건너뛰게 하면 안 된다(F5).
+            # 던진 tool 은 cooldown 에 넣어 다음 poll 에 같은 예외를 반복하지 않게 한다.
+            occupied_cooldown[eqp_id] = time.time() + settings.failure_retry_cooldown_sec
+            print(f"[ERROR] EQP_ID={eqp_id} 처리 예외 - 나머지 tool 계속: {exc}")
+            log_work2_event(
+                component=LOG_COMPONENT, message="tool_process_error", level="error",
+                eqp_id=eqp_id, error=str(exc),
             )
-        else:
-            cycle = CycleResult(eqp_id=eqp_id, recipe_id=info["recipe_id"], tag="")
-            cycle.run_status = "cycle_disabled"
-
-        append_cycle_manifest(info, cycle)
-
-        # 점유(select)로 포기한 경우: active 에 넣지 않고 cooldown 등록 → 만료 후 재시도.
-        if cycle.failure_class in _RETRY_LATER_FAILURE_CLASSES:
-            occupied_cooldown[eqp_id] = time.time() + settings.occupied_retry_cooldown_sec
-            reason = (
-                "List 오클릭(다른 tool 창 열림)"
-                if cycle.failure_class in _MISCLICK_FAILURE_CLASSES
-                else "점유(select) 추정"
-            )
-            print(
-                f"[INFO] EQP_ID={eqp_id} {reason} - active 미등록, "
-                f"{settings.occupied_retry_cooldown_sec:.0f}s 후 재시도"
-            )
-        else:
-            active_tools.add(eqp_id)
-        newly_handled += 1
 
     return newly_handled
 

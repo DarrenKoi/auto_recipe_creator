@@ -6,6 +6,7 @@ RCS/office 없이 도는 단위 테스트다. process_fail_rows 의 의존성을
 `uv run python poc/workflow_3/monitor/test_failure_cooldown.py` 로 직접 실행.
 """
 
+import dataclasses
 import time
 
 from poc.workflow_3.monitor import align_fail_monitor as afm
@@ -137,6 +138,49 @@ def test_raising_tool_does_not_skip_remaining_tools():
     print("[OK] test_raising_tool_does_not_skip_remaining_tools")
 
 
+def test_occupied_cycle_uses_occupied_duration_not_failure_duration():
+    """점유(occupied) 사이클은 두 분기를 모두 만족한다 - 분기 순서가 정답을 가른다.
+
+    occupied 사이클은 failure_class='rcs_occupied_select' 도 세팅되고 failed_step 도
+    비어있지 않게 만들 수 있다(_cycle_failed 도 True). process_fail_rows 의
+    if/elif 순서가 바뀌면(occupied 체크가 뒤로 가면) 조용히 failure_retry_cooldown_sec
+    가 적용된다 - 두 설정 기본값이 둘 다 300.0 이라 기존 테스트(cooldown 등록 여부만
+    확인)는 이 차이를 못 잡는다. 여기서는 두 값을 뚜렷이 다르게 오버라이드해 실제로
+    OCCUPIED 값이 쓰였는지 확정한다.
+    """
+    state = {}
+    _stub_deps(state, afm, _cycle_returning(
+        run_status="aborted",
+        failed_step="wait_tool_window",
+        failure_class="rcs_occupied_select",
+    ))
+    try:
+        base_settings = afm.load_workflow3_settings()
+        occupied_sec = 1000.0
+        failure_sec = 50.0
+        settings = dataclasses.replace(
+            base_settings,
+            occupied_retry_cooldown_sec=occupied_sec,
+            failure_retry_cooldown_sec=failure_sec,
+        )
+        active, cooldown = set(), {}
+        before = time.time()
+        afm.process_fail_rows(
+            [{"eqp_id": "EQP_OCC", "recipe_id": "C/R"}], active, settings, cooldown)
+        after = time.time()
+
+        assert "EQP_OCC" in cooldown and "EQP_OCC" not in active, (cooldown, active)
+        expiry = cooldown["EQP_OCC"]
+        # occupied_sec(1000) 기준 넓은 구간 - failure_sec(50) 기준 구간과 겹치지 않는다.
+        assert before + occupied_sec - 5 <= expiry <= after + occupied_sec + 5, (
+            expiry, before, after)
+        assert not (before + failure_sec - 5 <= expiry <= after + failure_sec + 5), (
+            "failure_retry_cooldown_sec 가 적용됐다 - 분기 순서가 뒤바뀐 회귀", expiry)
+    finally:
+        _restore(state)
+    print("[OK] test_occupied_cycle_uses_occupied_duration_not_failure_duration")
+
+
 def test_check_only_monitor_registers_failure_cooldown():
     """check-only 모니터도 같은 규약 - 실패 tool 은 cooldown, 나머지는 계속(F2/F5)."""
     from poc.workflow_3.monitor import align_fail_monitor_only_check as afmc
@@ -170,5 +214,6 @@ if __name__ == "__main__":
     test_aborted_cycle_with_failed_step_registers_cooldown()
     test_correction_fallback_does_not_register_cooldown()
     test_raising_tool_does_not_skip_remaining_tools()
+    test_occupied_cycle_uses_occupied_duration_not_failure_duration()
     test_check_only_monitor_registers_failure_cooldown()
     print("\n[OK] 실패 cooldown / tool 가드 테스트 통과")

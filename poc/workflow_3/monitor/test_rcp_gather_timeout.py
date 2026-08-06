@@ -93,6 +93,44 @@ def test_in_flight_guard_skips_concurrent_same_recipe():
     print("[OK] test_in_flight_guard_skips_concurrent_same_recipe")
 
 
+def test_in_flight_guard_is_keyed_by_eqp_and_recipe():
+    """가드 키는 (eqp_id, recipe_id) 다 - recipe_id 단독이면 안 된다.
+
+    dest_dir 이 ALIGN_IMAGES_DIR/<eqp>/<recipe_id> 로 eqp-keyed 라서, 같은 recipe 라도
+    장비가 다르면 서로 다른 디렉토리에 쓴다. EQP_A 의 다운로드가 timeout 으로 아직
+    도는 중이어도 EQP_B 의 같은-recipe 다운로드는 다른 dest_dir 이라 반드시 fire 돼야
+    한다. 반면 같은 EQP_A 가 같은 recipe 로 재진입하면 여전히 skip 돼야 한다(원래
+    가드가 막으려던 진짜 경쟁).
+    """
+    calls = []
+    release = threading.Event()
+
+    def _blocking(eqp_id, recipe_id, *, dest_dir, include_msr=False):
+        calls.append(eqp_id)
+        release.wait(5.0)
+        return 1
+
+    restore = _install_downloader(_blocking)
+    try:
+        settings = load_workflow3_settings()
+        # EQP_A 다운로드 시작 - timeout 으로 포기하지만 스레드는 계속 돈다.
+        rmg.gather_rcp_msr("EQP_A", "C/R_SHARED", settings, timeout_sec=0.3)
+        assert calls == ["EQP_A"], calls
+
+        # 같은 recipe 지만 다른 장비(EQP_B) - dest_dir 이 달라 반드시 fire 돼야 한다.
+        rmg.gather_rcp_msr("EQP_B", "C/R_SHARED", settings, timeout_sec=0.3)
+        assert calls == ["EQP_A", "EQP_B"], calls
+
+        # 같은 (EQP_A, C/R_SHARED) 재진입은 여전히 skip 돼야 한다.
+        rmg.gather_rcp_msr("EQP_A", "C/R_SHARED", settings, timeout_sec=0.3)
+        assert calls == ["EQP_A", "EQP_B"], calls
+    finally:
+        release.set()
+        time.sleep(0.1)
+        restore()
+    print("[OK] test_in_flight_guard_is_keyed_by_eqp_and_recipe")
+
+
 def test_exception_in_download_returns_false():
     """다운로드 예외는 삼키고 False - 모니터 루프를 죽이지 않는다(기존 계약 유지)."""
     def _boom(eqp_id, recipe_id, *, dest_dir, include_msr=False):
@@ -111,5 +149,6 @@ if __name__ == "__main__":
     test_slow_download_returns_within_bound()
     test_fast_download_returns_true()
     test_in_flight_guard_skips_concurrent_same_recipe()
+    test_in_flight_guard_is_keyed_by_eqp_and_recipe()
     test_exception_in_download_returns_false()
     print("\n[OK] rcp gather timeout / in-flight 가드 테스트 통과")

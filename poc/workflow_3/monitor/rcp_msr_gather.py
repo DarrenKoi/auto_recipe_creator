@@ -79,9 +79,11 @@ if not RCP_MSR_DOWNLOADER_AVAILABLE:
     print("[INFO] rcp/msr downloader 없음 (개발 PC/미구현). "
           "rcp/msr 은 office MES 가 align_images 트리에 직접 적재해야 합니다.")
 
-# recipe_id -> Thread. 진행 중인 gather 가 있으면 새로 fire 하지 않는다 - timeout 으로
-# 포기한 스레드가 같은 dest_dir 에 계속 쓰는 동안 새 스레드가 겹쳐 쓰면 부분읽기
-# 경쟁이 난다(success_gather 와 같은 규약).
+# (eqp_id, recipe_id) -> Thread. 진행 중인 gather 가 있으면 새로 fire 하지 않는다 - timeout 으로
+# 포기한 스레드가 같은 dest_dir 에 계속 쓰는 동안 같은 (eqp, recipe) 로 새 스레드가 겹쳐
+# 쓰면 부분읽기 경쟁이 난다. dest_dir 이 eqp-keyed 라 success_gather(recipe 단독 키, consensus
+# 캐시가 eqp 무관)와는 키 구성이 다르다 - 여기서 recipe_id 단독 키를 쓰면 서로 다른
+# dest_dir 에 쓰는 다른 장비의 다운로드까지 잘못 skip 된다.
 _IN_FLIGHT_LOCK = threading.Lock()
 _IN_FLIGHT: dict = {}
 
@@ -128,7 +130,14 @@ def gather_rcp_msr(
                 eqp_id=eqp_id, recipe_id=recipe_id, error=str(exc),
             )
 
-    key = recipe_id   # eqp 무관 - 같은 recipe 는 같은 dest 하위를 쓴다.
+    # (eqp_id, recipe_id) 쌍으로 키를 잡는다. success_gather 의 consensus 캐시와 달리
+    # 이 모듈의 dest_dir 은 ALIGN_IMAGES_DIR/<eqp>/<recipe_id> 로 eqp-keyed 다 - 같은
+    # recipe 라도 장비가 다르면 서로 다른 디렉토리에 쓰므로 실제로는 겹쳐 쓰지 않는다.
+    # recipe_id 단독 키를 쓰면 tool A 의 다운로드가 timeout 으로 아직 살아있는 동안 같은
+    # recipe 로 알람이 난 tool B 의 다운로드가 통째로 skip 되어(다른 디렉토리인데도) B 가
+    # 참조 이미지 없이 진행하는 오탐을 낳는다. 이 가드가 실제로 막아야 하는 경쟁은 같은
+    # (eqp, recipe) 가 재진입하며 이전 다운로드가 아직 같은 dest_dir 에 쓰는 중인 경우뿐이다.
+    key = (eqp_id, recipe_id)
     with _IN_FLIGHT_LOCK:
         dead = [k for k, t in _IN_FLIGHT.items() if not t.is_alive()]
         for k in dead:

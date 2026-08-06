@@ -35,6 +35,7 @@ from poc.workflow_3.monitor.cycle import (
     close_tool,
 )
 from poc.workflow_3.monitor.notify import close_alert_window
+from poc.workflow_3.monitor.teardown import run_teardown
 from poc.workflow_3.runner.workflow_runner import WorkflowRunner
 from poc.workflow_3.runner.workflow_types import WorkflowStep
 from poc.workflow_3.util import block_input, capture_window, click_at_screen, make_timestamp_tag
@@ -156,6 +157,31 @@ _ABORT_STEP_EXECUTORS = {
 }
 
 
+def _abort_teardown_steps(eqp_id, context, settings, *, input_blocked):
+    """abort 사이클 teardown 단계 목록 - workflow_3 의 두 사이클과 같은 규약.
+
+    첫 단계는 **항상** 입력 해제. 전제조건은 목록에서 빼지 않고 클로저 안에서
+    판정한다(목록 길이/순서 고정 -> 순서 테스트 가능).
+    """
+
+    def _unblock():
+        if input_blocked:
+            block_input(False, debug_label=f"measurement_abort {eqp_id}")
+
+    def _close_tool():
+        if context.get("tool_window") is not None and CLOSE_TOOL_AVAILABLE:
+            close_tool(eqp_id)
+
+    def _close_alert():
+        close_alert_window(timeout_sec=settings.alert_close_timeout_sec)
+
+    return [
+        ("input_unblock", _unblock),
+        ("close_tool", _close_tool),
+        ("close_alert", _close_alert),
+    ]
+
+
 def run_abort_cycle(
     eqp_id: str, recipe_id: str, settings, *, tag: str | None = None, detail: str = ""
 ) -> CycleResult:
@@ -215,14 +241,11 @@ def run_abort_cycle(
             eqp_id=eqp_id, error=str(exc),
         )
     finally:
-        if input_blocked:
-            block_input(False, debug_label=f"measurement_abort {eqp_id}")
-        if context.get("tool_window") is not None and CLOSE_TOOL_AVAILABLE:
-            try:
-                close_tool(eqp_id)
-            except Exception as exc:
-                print(f"[WARNING] tool 창 닫기 실패: {exc}")
-        close_alert_window(timeout_sec=settings.alert_close_timeout_sec)
+        failures = run_teardown(
+            _abort_teardown_steps(eqp_id, context, settings, input_blocked=input_blocked),
+            label=f"measurement_abort {eqp_id}",
+        )
+        result.notes.extend(f"teardown_failed:{n}: {e}" for n, e in failures)
 
     return result
 

@@ -1,5 +1,14 @@
-"""재사용 가능한 UI-Venus + MAI-UI 2단계 타겟 로케이터."""
+"""재사용 가능한 coarse(bbox) + fine(point) 2단계 타겟 로케이터.
 
+기본 조합은 ui-venus(coarse) -> mai-ui(fine) 이지만, `VLM_LOCATOR_COMBO` env 로
+런타임에 바꿀 수 있다(형식은 bench_tool_locator 의 BENCH_COMBOS 와 동일한 "coarse>fine").
+env 를 지우면 즉시 production 기본값으로 되돌아온다 - 롤백 지점이 여기 한 곳뿐이다.
+
+    VLM_LOCATOR_COMBO="mai-ui>mai-ui"   # 양 단계 모두 mai-ui
+    VLM_LOCATOR_COMBO=""(미설정)        # ui-venus>mai-ui (production 기본)
+"""
+
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,6 +44,52 @@ from poc.workflow_3.util import (
 )
 from poc.workflow_3.util.json_utils import extract_json
 from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
+
+
+DEFAULT_COARSE_SERVICE = "ui-venus"   # coarse 단계 기본 서비스(route_slug, 모델명 아님).
+DEFAULT_REFINE_SERVICE = "mai-ui"     # fine 단계 기본 서비스(route_slug).
+LOCATOR_COMBO_ENV = "VLM_LOCATOR_COMBO"
+
+_announced_combo = None   # 콘솔에 조합을 1회만 알리기 위한 가드.
+
+
+def resolve_locator_services():
+    """(coarse_slug, refine_slug) 를 env 에서 해석한다 - 호출 시점 read.
+
+    import 시점이 아니라 호출 시점에 읽는 이유: rcs 단독 스크립트는 seed_env() 를
+    부르지 않고 shell env 로만 제어하는데, import 시점에 고정하면 나중에 주입한
+    값이 무시되어 "env 를 줬는데 안 먹는" 함정이 생긴다.
+
+    형식이 깨졌으면 경고만 하고 production 기본값으로 진행한다(로케이터가 못 뜨면
+    로그인부터 막히므로 죽이지 않는다).
+    """
+    global _announced_combo
+
+    raw = os.getenv(LOCATOR_COMBO_ENV, "").strip()
+    coarse, refine = DEFAULT_COARSE_SERVICE, DEFAULT_REFINE_SERVICE
+    if raw:
+        if ">" not in raw:
+            print(
+                f"[WARNING] {LOCATOR_COMBO_ENV}={raw!r} 에 '>' 가 없습니다 "
+                f"(형식: coarse>fine). 기본 조합으로 진행합니다."
+            )
+        else:
+            left, _, right = raw.partition(">")
+            left, right = left.strip(), right.strip()
+            if left and right:
+                coarse, refine = left, right
+            else:
+                print(
+                    f"[WARNING] {LOCATOR_COMBO_ENV}={raw!r} 파싱 실패 "
+                    f"(양쪽 모두 필요). 기본 조합으로 진행합니다."
+                )
+
+    combo = f"{coarse}>{refine}"
+    if combo != _announced_combo:
+        default_mark = "" if raw else " (기본값)"
+        print(f"[INFO] VLM locator 조합: coarse={coarse}, fine={refine}{default_mark}")
+        _announced_combo = combo
+    return coarse, refine
 
 
 @dataclass
@@ -349,7 +404,12 @@ def _run_ui_venus_coarse_bbox(
     img_h: int,
     target: TargetConfig,
 ) -> dict | None:
-    """ui-venus 로 full image coarse bbox 를 찾는다."""
+    """coarse 서비스로 full image bbox 를 찾는다(기본 ui-venus, env 로 교체 가능).
+
+    로그 라벨은 하드코딩하지 않고 client.service_slug 를 쓴다 - 조합을 바꿨을 때
+    콘솔이 실제로 어떤 모델이 답했는지 말해줘야 오피스에서 진단이 된다.
+    """
+    slug = client.service_slug
     system_message, user_text = build_ui_venus_single_element_bbox_prompt(
         target.description,
     )
@@ -359,7 +419,7 @@ def _run_ui_venus_coarse_bbox(
         user_text=user_text,
         temperature=0.0,
     )
-    _print_vlm_understanding("ui-venus", response.text, response.token_usage)
+    _print_vlm_understanding(slug, response.text, response.token_usage)
 
     base_result = {
         "response_text": response.text,
@@ -369,18 +429,18 @@ def _run_ui_venus_coarse_bbox(
     try:
         parsed = extract_json(response.text)
     except Exception as exc:
-        print(f"[WARNING] [ui-venus] coarse JSON 파싱 실패: {exc}")
+        print(f"[WARNING] [{slug}] coarse JSON 파싱 실패: {exc}")
         return {**base_result, "bbox_1000": None, "bbox_pixels": None, "center": None}
 
     bbox_1000 = normalize_bbox_1000(parsed.get("bbox"))
     if bbox_1000 is None:
-        print("[INFO] [ui-venus] coarse bbox 미검출")
+        print(f"[INFO] [{slug}] coarse bbox 미검출")
         return {**base_result, "bbox_1000": None, "bbox_pixels": None, "center": None}
 
     bbox_pixels = bbox_1000_to_pixels(bbox_1000, img_w, img_h)
     center = bbox_center(bbox_pixels)
     print(
-        f"[INFO] [ui-venus] bbox1000={bbox_1000} -> px={bbox_pixels}, "
+        f"[INFO] [{slug}] bbox1000={bbox_1000} -> px={bbox_pixels}, "
         f"center=({center['x']}, {center['y']})"
     )
     return {
@@ -398,7 +458,8 @@ def _run_mai_ui_refinement(
     zoom_h: int,
     target: TargetConfig,
 ) -> dict | None:
-    """mai-ui 로 zoom crop 안의 refined click point 를 찾는다."""
+    """fine 서비스로 zoom crop 안의 refined click point 를 찾는다(기본 mai-ui)."""
+    slug = client.service_slug
     system_message, user_text = build_mai_ui_zoom_prompt(
         target.key, target.description,
     )
@@ -408,12 +469,12 @@ def _run_mai_ui_refinement(
         user_text=user_text,
         temperature=0.0,
     )
-    _print_vlm_understanding("mai-ui", response.text, response.token_usage)
+    _print_vlm_understanding(slug, response.text, response.token_usage)
 
     try:
         parsed = extract_json(response.text)
     except Exception as exc:
-        print(f"[WARNING] [mai-ui] refine JSON 파싱 실패: {exc}")
+        print(f"[WARNING] [{slug}] refine JSON 파싱 실패: {exc}")
         return {
             "response_text": response.text,
             "token_usage": response.token_usage or {},
@@ -423,14 +484,14 @@ def _run_mai_ui_refinement(
     parsed = parse_coords(parsed, [target.key], zoom_w, zoom_h)
     point = parsed.get(target.key)
     if not isinstance(point, dict) or "x" not in point or "y" not in point:
-        print("[INFO] [mai-ui] refined point 미검출")
+        print(f"[INFO] [{slug}] refined point 미검출")
         return {
             "response_text": response.text,
             "token_usage": response.token_usage or {},
             "point": None,
         }
 
-    print(f"[INFO] [mai-ui] refined point on zoom=({point['x']}, {point['y']})")
+    print(f"[INFO] [{slug}] refined point on zoom=({point['x']}, {point['y']})")
     return {
         "response_text": response.text,
         "token_usage": response.token_usage or {},
@@ -448,8 +509,8 @@ def analyze_window_target(
     log_name: str,
     component_name: str,
     artifact_prefix: str,
-    coarse_service_slug: str = "ui-venus",
-    refine_service_slug: str = "mai-ui",
+    coarse_service_slug: str | None = None,
+    refine_service_slug: str | None = None,
     result_mode: str = "ui_venus_then_mai_ui_single_target",
     image: Image.Image | None = None,
     timeout_sec: float | None = None,
@@ -457,7 +518,14 @@ def analyze_window_target(
     """임의의 윈도우에서 지정된 타겟을 2단계로 찾는다.
 
     image 가 주어지면 창 활성화/캡처를 건너뛰고 해당 이미지를 사용한다.
+    coarse/refine slug 를 명시하지 않으면 VLM_LOCATOR_COMBO env(기본 ui-venus>mai-ui)
+    를 따른다 - 벤치만 조합을 직접 지정한다.
     """
+    if coarse_service_slug is None or refine_service_slug is None:
+        env_coarse, env_refine = resolve_locator_services()
+        coarse_service_slug = coarse_service_slug or env_coarse
+        refine_service_slug = refine_service_slug or env_refine
+
     started_at = time.time()
     debug_stamp = make_timestamp_tag(started_at)
 

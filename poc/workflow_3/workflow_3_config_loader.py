@@ -64,6 +64,8 @@ _CONST_TO_ENV = (
     ("CONSENSUS_MIN_S", "ALIGN_FAIL_CONSENSUS_MIN_S"),
     # [7] 재시도 정책
     ("FAILURE_COOLDOWN_SEC", "ALIGN_FAIL_FAILURE_COOLDOWN_SEC"),
+    # [8] VLM 로케이터 조합 (config.py 가 아니라 vlm/ui_venus_mai_locator.py 가 읽는다)
+    ("LOCATOR_COMBO", "VLM_LOCATOR_COMBO"),
 )
 
 

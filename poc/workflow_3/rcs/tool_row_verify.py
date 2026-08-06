@@ -23,20 +23,15 @@ import os
 import time
 from dataclasses import dataclass, field
 
-from poc.workflow_3.debug_artifacts import (
-    debug_image_path,
-    save_debug_json,
-    save_debug_text,
-    save_debug_webp,
-)
+from poc.workflow_3.debug_artifacts import debug_image_path, save_debug_json
 from poc.workflow_3.logger import log_work2_event
 from poc.workflow_3.rcs.tool_name_match import canonicalize
-from poc.workflow_3.util import crop_image
-from poc.workflow_3.vlm.prompts import build_ocr_assist_prompt
+from poc.workflow_3.vlm.label_verify import (
+    OCR_SERVICE_SLUG,
+    crop_box_around_point,
+    read_text_near_point,
+)
 from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
-
-OCR_SERVICE_SLUG = "paddleocr-vl-1.5"
-OCR_MAX_TOKENS = 512
 
 # 확인 정책 - config.py 가 읽는 값이 아니라 이 모듈 전용 env 다.
 #   off     : 확인하지 않음 (게이트 이전 동작)
@@ -120,40 +115,14 @@ def accepts(verdict: "RowVerdict | None", policy: str) -> bool:
 
 def build_strip_box(point: dict, image_width: int, image_height: int) -> dict:
     """클릭점 주변의 한 줄짜리 strip crop box 를 만든다."""
-    half_h = max(6, int(image_height * STRIP_HALF_HEIGHT_RATIO))
-    left_pad = max(10, int(image_width * STRIP_LEFT_RATIO))
-    right_pad = max(10, int(image_width * STRIP_RIGHT_RATIO))
-    return {
-        "left": max(0, int(point["x"]) - left_pad),
-        "top": max(0, int(point["y"]) - half_h),
-        "right": min(image_width, int(point["x"]) + right_pad),
-        "bottom": min(image_height, int(point["y"]) + half_h),
-    }
-
-
-def _upscale_strip(strip_image):
-    """OCR 가독성을 위해 strip 을 최소 높이까지 확대한다."""
-    width, height = strip_image.size
-    if height <= 0 or height >= STRIP_MIN_HEIGHT_PX:
-        return strip_image, 1.0
-    scale = min(STRIP_MAX_UPSCALE, STRIP_MIN_HEIGHT_PX / float(height))
-    if scale <= 1.0:
-        return strip_image, 1.0
-    resized = strip_image.resize(
-        (max(1, int(width * scale)), max(1, int(height * scale))),
+    return crop_box_around_point(
+        point,
+        image_width,
+        image_height,
+        left_ratio=STRIP_LEFT_RATIO,
+        right_ratio=STRIP_RIGHT_RATIO,
+        half_height_ratio=STRIP_HALF_HEIGHT_RATIO,
     )
-    return resized, scale
-
-
-def _tokens_from_text(raw_text: str) -> list[str]:
-    """OCR 평문에서 공백/개행 기준 토큰을 뽑는다."""
-    tokens: list[str] = []
-    for line in (raw_text or "").splitlines():
-        for token in line.split():
-            cleaned = token.strip()
-            if cleaned:
-                tokens.append(cleaned)
-    return tokens
 
 
 def _looks_like_tool_id(token: str) -> bool:
@@ -219,74 +188,36 @@ def verify_tool_row_at_point(
     normalized = (tool_name or "").strip()
     width, height = image.size
     strip_box = build_strip_box(point, width, height)
-    strip_image = crop_image(image, strip_box)
-    strip_image, upscale = _upscale_strip(strip_image)
 
-    strip_path = debug_image_path(
-        debug_image_dir,
-        f"{artifact_label}_strip.webp",
-        model_name=OCR_SERVICE_SLUG,
+    read = read_text_near_point(
+        image,
+        strip_box,
+        debug_image_dir=debug_image_dir,
         timestamp_tag=timestamp_tag,
+        artifact_label=f"{artifact_label}_strip",
+        log_name=log_name,
+        min_height_px=STRIP_MIN_HEIGHT_PX,
+        max_upscale=STRIP_MAX_UPSCALE,
+        client=client,
     )
-    save_debug_webp(strip_image, strip_path, quality=90)
-
-    ocr_client = client
-    if ocr_client is None:
-        try:
-            ocr_client = Workflow1VLMClient(
-                service_slug=OCR_SERVICE_SLUG,
-                timeout_sec=30.0,
-                log_name=log_name,
-            )
-        except Exception as exc:
-            print(f"[WARNING] row 확인 OCR client 생성 실패(확인 보류): {exc}")
-            return RowVerdict(
-                status="error",
-                target_tool_name=normalized,
-                strip_box=strip_box,
-                strip_image_path=str(strip_path),
-                elapsed_sec=time.time() - started_at,
-            )
-
-    system_message, user_text = build_ocr_assist_prompt(*strip_image.size)
-    try:
-        response = ocr_client.chat_with_image_path(
-            image_path=strip_path,
-            system_message=system_message,
-            user_text=user_text,
-            image_mime="image/webp",
-            temperature=0.0,
-            max_tokens=OCR_MAX_TOKENS,
-        )
-    except Exception as exc:
-        print(f"[WARNING] row 확인 OCR 호출 실패(확인 보류): {exc}")
+    if not read.ok:
         log_work2_event(
             component=component_name,
             message="row_verify_ocr_failed",
             level="warning",
             log_name=log_name,
             target_tool_name=normalized,
-            error=exc,
+            error=read.error,
         )
         return RowVerdict(
             status="error",
             target_tool_name=normalized,
             strip_box=strip_box,
-            strip_image_path=str(strip_path),
+            strip_image_path=read.crop_image_path,
             elapsed_sec=time.time() - started_at,
         )
 
-    raw_text = (response.text or "").strip()
-    tokens = _tokens_from_text(raw_text)
-    status, mismatch_token = classify_tokens(tokens, normalized)
-
-    response_path = debug_image_path(
-        debug_image_dir,
-        f"{artifact_label}_strip_ocr.txt",
-        model_name=OCR_SERVICE_SLUG,
-        timestamp_tag=timestamp_tag,
-    )
-    save_debug_text(response_path, raw_text)
+    status, mismatch_token = classify_tokens(read.tokens, normalized)
     save_debug_json(
         debug_image_path(
             debug_image_dir,
@@ -298,9 +229,9 @@ def verify_tool_row_at_point(
             "target_tool_name": normalized,
             "point": point,
             "strip_box": strip_box,
-            "strip_upscale": upscale,
-            "raw_text": raw_text,
-            "tokens": tokens,
+            "strip_upscale": read.upscale,
+            "raw_text": read.raw_text,
+            "tokens": read.tokens,
             "status": status,
             "mismatch_token": mismatch_token,
         },
@@ -320,20 +251,20 @@ def verify_tool_row_at_point(
             log_name=log_name,
             target_tool_name=normalized,
             read_token=mismatch_token,
-            raw_text=raw_text[:200],
+            raw_text=read.raw_text[:200],
         )
     else:
-        print(f"[INFO] row 확인 보류(strip 판독 불가): raw={raw_text[:60]!r}")
+        print(f"[INFO] row 확인 보류(strip 판독 불가): raw={read.raw_text[:60]!r}")
 
     return RowVerdict(
         status=status,
         target_tool_name=normalized,
-        read_text=raw_text,
-        read_tokens=tokens,
+        read_text=read.raw_text,
+        read_tokens=read.tokens,
         mismatch_token=mismatch_token,
         strip_box=strip_box,
-        strip_image_path=str(strip_path),
-        response_path=str(response_path),
+        strip_image_path=read.crop_image_path,
+        response_path=read.response_path,
         elapsed_sec=time.time() - started_at,
     )
 

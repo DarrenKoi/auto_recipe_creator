@@ -134,10 +134,15 @@ uv run python poc/workflow_3/align/matching/test_ensemble.py
 uv run python poc/workflow_3/align/diagnostics/test_match_on_captured_frames.py  # needs office capture fixtures
 uv run python poc/workflow_3/rcs/test_tool_name_match.py              # 9/9
 uv run python poc/workflow_3/rcs/test_tool_row_verify.py              # 42/42 (row confirm gate + crop tightness)
+uv run python poc/workflow_3/vlm/test_label_verify.py                 # 23/23 (shared point->label OCR verifier)
 
 # tool locator VLM combo bench (office; RCS logged in, List tab visible; no alarm, no clicking)
 uv run python poc/workflow_3/rcs/bench_tool_locator.py
 BENCH_REPEATS=1 uv run python poc/workflow_3/rcs/bench_tool_locator.py   # smoke first (48 runs); full default = 4 combos x 12 tools x 3 = 144 runs / ~432 VLM calls
+
+# tool WINDOW reader bench (office; a tool already open). buttons arm = no click, no mouse move.
+uv run python poc/workflow_3/rcs/bench_tool_window_reader.py
+BENCH_CURSOR_ARM=1 SAFE_MODE=0 uv run python poc/workflow_3/rcs/bench_tool_window_reader.py  # + cursor-tracking arm (moves mouse, never clicks)
 
 # recording_filter — offline frame-filter unit tests (pytest-style, 18 tests)
 uv run pytest poc/workflow_3/recording_filter

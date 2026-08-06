@@ -59,6 +59,9 @@ class TargetConfig:
     vertical_pad_ratio: float = 1.6
     min_crop_width: int = 320
     min_crop_height: int = 120
+    # 세로 여백의 하한(px). 촘촘한 리스트 행처럼 bbox 가 얇을 때는 이 하한이 비율보다
+    # 커서 crop 이 위아래 행까지 삼킨다. 그런 타겟은 하한을 낮춰 잡아야 한다.
+    vertical_pad_min_px: int = 28
 
 
 EXIT_SUCCESS = "success"
@@ -101,7 +104,7 @@ def _build_crop_box(
     bbox_h = max(1, coarse_bbox["bottom"] - coarse_bbox["top"])
     left_pad = max(96, int(round(bbox_w * target.left_pad_ratio)))
     right_pad = max(48, int(round(bbox_w * target.right_pad_ratio)))
-    vertical_pad = max(28, int(round(bbox_h * target.vertical_pad_ratio)))
+    vertical_pad = max(target.vertical_pad_min_px, int(round(bbox_h * target.vertical_pad_ratio)))
 
     crop_left = max(0, coarse_bbox["left"] - left_pad)
     crop_top = max(0, coarse_bbox["top"] - vertical_pad)

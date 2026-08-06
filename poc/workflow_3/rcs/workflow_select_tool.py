@@ -22,6 +22,12 @@ from poc.workflow_3.rcs.login_rcs_common import RCS_MAIN_WINDOW_TITLE_PREFIX, wa
 from poc.workflow_3.vlm.ocr_spotting import parse_spotting_items
 from poc.workflow_3.vlm.prompts import build_ocr_assist_prompt, build_spotting_prompt
 from poc.workflow_3.rcs.tool_name_match import best_match
+from poc.workflow_3.rcs.tool_row_verify import (
+    CONFIRM_POLICY_OFF,
+    accepts as row_verdict_accepts,
+    load_confirm_policy,
+    verify_tool_row_at_point,
+)
 from poc.workflow_3.vlm.ui_venus_mai_locator import (
     EXIT_SUCCESS as DETECT_SUCCESS,
     TargetConfig,
@@ -137,6 +143,22 @@ FULL_GUARD_BOTTOM_RATIO = _env_float("SELECT_TOOL_FULL_GUARD_BOTTOM_RATIO", 0.99
 # coarse(ui-venus)→fine(mai-ui)→confirm(OCR) 사이클 반복 횟수. VLM 추론의 run-to-run
 # 변동을 흡수하기 위해 같은 프레임에서 짧게 반복한다(OCR 게이트가 오클릭을 막아줌).
 COARSE_FINE_MAX_ITERS = int(_env_float("SELECT_TOOL_COARSE_FINE_MAX_ITERS", 2))
+
+# coarse bbox 를 fine 모델에 넘길 때 세로로 얼마나 여유를 둘지. 여유가 크면 crop 안에
+# 위/아래 행이 통째로 들어오고, fine 모델이 옆 행 ID 를 골라도 아무 가드에 걸리지 않는다
+# (오클릭 경로). 행 하나만 담기게 좁힌다.
+#
+# 세 값이 **모두** 작아야 효과가 있다. 비율만 줄이면 아래 두 하한이 그대로 살아나서
+# 실제 crop 높이는 하나도 안 줄어든다:
+#   - vertical_pad_min_px : 여백 하한. list 행 높이가 20~30px 라 기본 28 은 이미 옆 행이다.
+#   - min_crop_height     : crop 높이 하한. 기본 120 은 행 높이의 약 5배(= 5행)다.
+TOOL_ROW_VERTICAL_PAD_RATIO = _env_float("SELECT_TOOL_ROW_VERTICAL_PAD_RATIO", 0.35)
+TOOL_ROW_VERTICAL_PAD_MIN_PX = int(_env_float("SELECT_TOOL_ROW_VERTICAL_PAD_MIN_PX", 10))
+TOOL_ROW_MIN_CROP_HEIGHT = int(_env_float("SELECT_TOOL_ROW_MIN_CROP_HEIGHT", 56))
+
+# coarse/fine 에 쓸 VLM 서비스 - bench_tool_locator.py 가 조합을 바꿔가며 재사용한다.
+DEFAULT_COARSE_SERVICE_SLUG = os.getenv("SELECT_TOOL_COARSE_SERVICE", "ui-venus").strip() or "ui-venus"
+DEFAULT_REFINE_SERVICE_SLUG = os.getenv("SELECT_TOOL_REFINE_SERVICE", "mai-ui").strip() or "mai-ui"
 MAX_SCROLL_ITERS = int(_env_float("SELECT_TOOL_MAX_SCROLL_ITERS", 8))
 SCROLL_WHEEL_DY = int(_env_float("SELECT_TOOL_SCROLL_DY", -5))
 LIST_CHANGE_THRESHOLD = _env_float("SELECT_TOOL_LIST_CHANGE_THRESHOLD", 2.0)
@@ -203,9 +225,10 @@ def _tool_row_target(tool_name: str) -> TargetConfig:
         ),
         left_pad_ratio=0.7,
         right_pad_ratio=1.8,
-        vertical_pad_ratio=1.0,
+        vertical_pad_ratio=TOOL_ROW_VERTICAL_PAD_RATIO,
         min_crop_width=360,
-        min_crop_height=120,
+        min_crop_height=TOOL_ROW_MIN_CROP_HEIGHT,
+        vertical_pad_min_px=TOOL_ROW_VERTICAL_PAD_MIN_PX,
     )
 
 
@@ -958,16 +981,26 @@ def _locate_tool_via_vlm(
     log_name: str,
     component_name: str,
     timestamp_tag: str,
+    coarse_service_slug: str = DEFAULT_COARSE_SERVICE_SLUG,
+    refine_service_slug: str = DEFAULT_REFINE_SERVICE_SLUG,
+    confirm_policy: str | None = None,
+    verify_client=None,
 ) -> tuple[dict | None, dict]:
-    """coarse(ui-venus)→fine(mai-ui)로 tool row 의 정밀 클릭점을 잡는다.
+    """coarse→fine 2단계 VLM 으로 tool row 의 정밀 클릭점을 잡고, 행을 확인한다.
 
-    PaddleOCR 확인 게이트는 쓰지 않는다: 이 list UI 에서 Spotting 응답이 garbage 라
-    정상 검출을 막기만 했다. 두 VLM(coarse→fine)이 서로 독립적으로 같은 행에
-    동의하는 것을 신뢰하고 mai-ui fine point 를 클릭점으로 쓴다. VLM 이 refusal 하면
-    같은 프레임에서 짧게 재시도한다(run-to-run 변동 흡수).
+    coarse(기본 ui-venus)가 bbox 를 주고 fine(기본 mai-ui)이 그 bbox crop 안에서
+    클릭점을 고른다. 두 모델은 **독립 투표가 아니다** — fine 은 coarse 가 준 crop 안
+    에서만 보므로 coarse 가 행을 틀리면 fine 도 같이 틀린다. 그래서 마지막에
+    `verify_tool_row_at_point` 로 그 지점의 텍스트를 좁은 strip OCR 로 읽어 목표 ID
+    인지 확인한다(옛 게이트처럼 list 전체를 Spotting 하지 않는다 - 그 방식은 응답이
+    garbage 라 정상 검출까지 막았다).
+
+    확인에서 거부되거나 VLM 이 refusal 하면 같은 프레임에서 짧게 재시도한다
+    (run-to-run 변동 흡수).
 
     (located | None, attempt_record) 를 반환한다.
     """
+    policy = confirm_policy if confirm_policy is not None else load_confirm_policy()
     normalized = _normalize_tool_text(tool_name).lower() or "tool"
 
     # 장비 ID 는 화면 왼쪽 MC ID 컬럼에만 있으므로, VLM 입력을 왼쪽 list 영역으로
@@ -983,10 +1016,16 @@ def _locate_tool_via_vlm(
     )
     region_image = crop_image(current_image, region_box)
 
-    attempt_record: dict = {"region_box": region_box, "iters": []}
+    attempt_record: dict = {
+        "region_box": region_box,
+        "coarse_service": coarse_service_slug,
+        "refine_service": refine_service_slug,
+        "confirm_policy": policy,
+        "iters": [],
+    }
 
     for iter_idx in range(1, COARSE_FINE_MAX_ITERS + 1):
-        # coarse(ui-venus) → fine(mai-ui): 정밀 클릭점.
+        # coarse → fine: 정밀 클릭점.
         target_result = analyze_window_target(
             main_window,
             window_title,
@@ -996,6 +1035,8 @@ def _locate_tool_via_vlm(
             log_name=log_name,
             component_name=component_name,
             artifact_prefix=f"workflow_select_tool_{normalized}_vlm_it{iter_idx}",
+            coarse_service_slug=coarse_service_slug,
+            refine_service_slug=refine_service_slug,
             result_mode="ui_venus_then_mai_ui_tool_list",
             image=region_image,
         )
@@ -1014,12 +1055,39 @@ def _locate_tool_via_vlm(
             "y": region_box["top"] + target_result.point["y"],
         }
         iter_rec["fine_point"] = fine_point
+
+        # 확인 게이트: 그 지점의 텍스트가 정말 목표 ID 인가 (좁은 strip OCR).
+        verdict = None
+        if policy != CONFIRM_POLICY_OFF:
+            verdict = verify_tool_row_at_point(
+                current_image,
+                fine_point,
+                tool_name,
+                debug_image_dir=debug_image_dir,
+                timestamp_tag=timestamp_tag,
+                log_name=log_name,
+                component_name=component_name,
+                artifact_label=f"workflow_select_tool_{normalized}_it{iter_idx}",
+                client=verify_client,
+            )
+            iter_rec["row_verify_status"] = verdict.status
+            iter_rec["row_verify_read_text"] = verdict.read_text
+            iter_rec["row_verify_mismatch_token"] = verdict.mismatch_token
+        if not row_verdict_accepts(verdict, policy):
+            print(
+                f"[WARNING] row 확인 거부(policy={policy}) → 같은 프레임에서 재시도: "
+                f"iter={iter_idx}"
+            )
+            iter_rec["rejected_by_confirm"] = True
+            continue
+
         return {
             "full_image_point": fine_point,
-            "matched_text": None,
+            "matched_text": verdict.read_text if (verdict and verdict.confirmed) else None,
             "detection_source": f"coarse_fine_it{iter_idx}",
             "verify_crop_box": region_box,
             "coarse_center": fine_point,
+            "row_verify_status": verdict.status if verdict else "off",
         }, attempt_record
 
     # VLM 미검출: 추측 클릭하지 않는다(상위에서 최대화/스크롤 재시도).
@@ -1039,6 +1107,9 @@ def select_tool_from_main_window(
     debug_image_dir=None,
     log_name: str = LOG_NAME,
     component_name: str = COMPONENT_NAME,
+    coarse_service_slug: str = DEFAULT_COARSE_SERVICE_SLUG,
+    refine_service_slug: str = DEFAULT_REFINE_SERVICE_SLUG,
+    confirm_policy: str | None = None,
 ) -> ToolSelectionResult:
     """현재 List 탭에서 지정 Tool 이름을 찾아 더블클릭한다."""
     resolved_debug_dir = debug_image_dir or DEBUG_ARTIFACT_DIR
@@ -1082,6 +1153,9 @@ def select_tool_from_main_window(
             log_name=log_name,
             component_name=component_name,
             timestamp_tag=timestamp_tag,
+            coarse_service_slug=coarse_service_slug,
+            refine_service_slug=refine_service_slug,
+            confirm_policy=confirm_policy,
         )
 
     locate_attempts: list[dict] = []
@@ -1264,6 +1338,9 @@ def select_tool_from_main_window(
             "backend": backend,
             "target_tool_name": normalized_tool_name,
             "detection_source": detection_source,
+            "coarse_service": coarse_service_slug,
+            "refine_service": refine_service_slug,
+            "row_verify_status": located.get("row_verify_status"),
             "verify_crop_box": list_crop_box,
             "coarse_center": located.get("coarse_center"),
             "ocr_target_visible": ocr_target_visible,

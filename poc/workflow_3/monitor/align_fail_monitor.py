@@ -277,6 +277,10 @@ def _set_keep_awake(enable: bool) -> None:
 
 # 점유(다른 사용자 사용 중)로 접속을 포기한 사이클의 failure_class — active 미등록 + cooldown.
 _OCCUPIED_FAILURE_CLASSES = {"rcs_occupied", "rcs_occupied_select"}
+# List 오클릭(다른 tool 창이 열림)도 재시도 대상 — 장비 탓이 아니라 우리 인식 실패라
+# active 로 굳혀 버리면 이 알람은 영영 처리되지 않는다. cooldown 은 점유와 공유한다.
+_MISCLICK_FAILURE_CLASSES = {"wrong_tool_opened"}
+_RETRY_LATER_FAILURE_CLASSES = _OCCUPIED_FAILURE_CLASSES | _MISCLICK_FAILURE_CLASSES
 
 
 def process_fail_rows(
@@ -367,10 +371,15 @@ def process_fail_rows(
         append_cycle_manifest(info, cycle)
 
         # 점유(select)로 포기한 경우: active 에 넣지 않고 cooldown 등록 → 만료 후 재시도.
-        if cycle.failure_class in _OCCUPIED_FAILURE_CLASSES:
+        if cycle.failure_class in _RETRY_LATER_FAILURE_CLASSES:
             occupied_cooldown[eqp_id] = time.time() + settings.occupied_retry_cooldown_sec
+            reason = (
+                "List 오클릭(다른 tool 창 열림)"
+                if cycle.failure_class in _MISCLICK_FAILURE_CLASSES
+                else "점유(select) 추정"
+            )
             print(
-                f"[INFO] EQP_ID={eqp_id} 점유(select) 추정 - active 미등록, "
+                f"[INFO] EQP_ID={eqp_id} {reason} - active 미등록, "
                 f"{settings.occupied_retry_cooldown_sec:.0f}s 후 재시도"
             )
         else:

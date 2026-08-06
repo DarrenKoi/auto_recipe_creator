@@ -61,7 +61,7 @@ verifier 는 rank_error 버킷만 고칠 수 있다 — 버킷 크기가 이 실
                                             route3 이고 OM 손실 없으면 SEM=ecc/OM=prod_mind 포팅.
     ALIGN_REG_OVERLAY_MAX / REG_OVERLAY_MAX top-1 이 바뀐 행 overlay 저장 상한 (기본 60)
   골든 루트/MIN_S/CLEAN_FRAME 등은 consensus 드라이버와 동일 env 를 그대로 따른다.
-출력: stdout 표 + [DIGEST] 한 줄 + DEBUG_IMAGE_DIR/golden_registration_eval_cond/<ts>/
+출력: stdout 표 + [DIGEST] 블록(헤더 1줄 + arm 당 1줄) + DEBUG_IMAGE_DIR/golden_registration_eval_cond/<ts>/
       {rows.jsonl, summary.json, digest.txt, reregister_candidates.json, overlays/, consensus/}
 재등록 후보(reregister_candidates.json): proposer_miss(후보에 GT 없음 = 매칭 근본 실패)가
 있는 recipe 를 worst-first 로. 이 벤치가 프로덕션과 동일 매칭(consensus + SEM=ecc/OM=mind
@@ -677,16 +677,28 @@ def _print_reregister_worklist(rows, top=25):
 
 
 def _digest_line(acc, arm_stats, n_sampled, n_total):
+    """복사-붙여넣기용 요약 블록 — 헤더 1줄 + 들여쓴 항목줄들(arm 당 1줄).
+
+    한 줄 ' | ' 연결이던 것을 여러 줄로 바꿨다(2026-08-06): arm 이 8종까지 늘어
+    콘솔에서 줄바꿈돼 판독이 어려웠다. 첫 줄만 `[DIGEST]` 접두어를 유지하므로
+    grep 은 그대로 걸리고, 이어지는 줄은 2칸 들여쓰기라 `grep -A` 로 한 덩어리로
+    읽힌다. arm 이름은 좌측 정렬 패딩해 r1/d/ci 열이 세로로 맞는다.
+    """
     om = sum(acc.buckets.get("om", Counter()).values())
     sem = sum(acc.buckets.get("sem", Counter()).values())
     bt = Counter()
     for c in acc.buckets.values():
         bt.update(c)
     n = max(1, acc.n_points)
-    parts = [f"reg recipes={n_sampled}/{n_total} pts={acc.n_points} (om={om} sem={sem})",
-             f"buckets miss={bt['proposer_miss'] / n:.2f} "
+    head = f"reg recipes={n_sampled}/{n_total} pts={acc.n_points} (om={om} sem={sem})"
+    # arm 이름 폭 = 가장 긴 이름(route_sw/prod_mind 등)에 맞춰 열 정렬.
+    w = max([len(a) for a in arm_stats] + [7])
+    lines = [f"{'buckets':<{w}} miss={bt['proposer_miss'] / n:.2f} "
              f"rank_err={bt['rank_error'] / n:.2f} rank1={bt['rank1_ok'] / n:.2f}"]
     for arm, s in arm_stats.items():
+        if s["delta_ref"] is None:
+            lines.append(f"{arm:<{w}} n=0")
+            continue
         ci = s["delta_ci95"]
         ci_s = (f"ci[{ci[0]:+.3f},{ci[1]:+.3f}]"
                 if ci and ci[0] is not None else "ci[nan]")
@@ -696,21 +708,21 @@ def _digest_line(acc, arm_stats, n_sampled, n_total):
             if r["arm_r1_ref"] is not None and r["b0_r1"] is not None:
                 mod_parts.append(f"{m}{r['arm_r1_ref'] - r['b0_r1']:+.3f}")
         mod_s = f" [{'/'.join(mod_parts)}]" if mod_parts else ""
-        parts.append(f"{arm} r1={s['arm_r1_ref']} d={s['delta_ref']:+.3f}{mod_s} {ci_s} "
-                     f"p/r={s['promote']}/{s['regress']}"
-                     if s["delta_ref"] is not None else f"{arm} n=0")
+        r1 = ("  n/a" if s["arm_r1_ref"] is None else f"{s['arm_r1_ref']:.3f}")
+        lines.append(f"{arm:<{w}} r1={r1} d={s['delta_ref']:+.3f}{mod_s} {ci_s} "
+                     f"p/r={s['promote']}/{s['regress']}")
     # 커버리지: oracle(도달 상한) + all_miss 를 재등록 몫(pm)/verifier 여지(re)로 분해.
     cov = Counter()
     for c in acc.coverage.values():
         cov.update(c)
-    parts.append(f"oracle={_rate(cov['oracle_hit'], n)} "
+    lines.append(f"{'coverage':<{w}} oracle={_rate(cov['oracle_hit'], n)} "
                  f"allmiss[pm={int(cov.get('miss_proposer_miss', 0))}/"
                  f"re={int(cov.get('miss_rank_error', 0))}]")
     if acc.n_mismatch:
-        parts.append(f"MISMATCH={acc.n_mismatch}")
+        lines.append(f"{'WARN':<{w}} MISMATCH={acc.n_mismatch}")
     if acc.n_hook_err:
-        parts.append(f"HOOK_ERR={acc.n_hook_err}")
-    return "[DIGEST] " + " | ".join(parts)
+        lines.append(f"{'WARN':<{w}} HOOK_ERR={acc.n_hook_err}")
+    return "\n".join([f"[DIGEST] {head}"] + [f"  {ln}" for ln in lines])
 
 
 def run() -> str:

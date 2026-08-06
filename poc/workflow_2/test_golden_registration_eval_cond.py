@@ -13,6 +13,7 @@
 import io
 import json
 import math
+import re
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +21,11 @@ import numpy as np
 from poc.workflow_2 import registration_lab as reg
 import poc.workflow_2.golden_registration_eval_cond as gre
 from poc.workflow_3.align.matching.engine import build_template
+
+
+def _has_arm_line(digest, arm):
+    """digest 블록에 해당 arm 의 항목줄이 있는지 — 이름은 열 정렬용으로 패딩된다."""
+    return re.search(rf"^\s*{re.escape(arm)}\s+r1=", digest, re.M) is not None
 
 
 # --- _median -------------------------------------------------------------------------
@@ -132,7 +138,7 @@ def test_prod_arm_replicates_production_selection():
     # digest 에도 pseudo-arm 이 실린다.
     stats = {a: gre._arm_summary(acc, a) for a in acc.report_arms}
     line = gre._digest_line(acc, stats, 1, 1)
-    assert "prod r1=" in line and "prod_mind r1=" in line
+    assert _has_arm_line(line, "prod") and _has_arm_line(line, "prod_mind")
 
 
 def test_prod_arm_off_keeps_report_arms():
@@ -207,6 +213,19 @@ def test_digest_has_oracle_and_allmiss():
     stats = {a: gre._arm_summary(acc, a) for a in acc.report_arms}
     line = gre._digest_line(acc, stats, 1, 1)
     assert "oracle=" in line and "allmiss[pm=" in line and "/re=" in line
+
+
+def test_digest_is_multiline_block_with_grepable_header():
+    """digest = `[DIGEST]` 헤더 1줄 + 들여쓴 항목줄들(arm 당 1줄, 열 정렬)."""
+    acc = gre._RegAccum(io.StringIO(), None, ("mind",), fuse=True, prod=True)
+    acc(_make_ctx())
+    stats = {a: gre._arm_summary(acc, a) for a in acc.report_arms}
+    lines = gre._digest_line(acc, stats, 1, 1).splitlines()
+    assert lines[0].startswith("[DIGEST] reg recipes=")
+    assert len(lines) >= 2 + len(stats)          # 헤더 + buckets + arm 들 + oracle.
+    assert all(ln.startswith("  ") for ln in lines[1:])
+    for arm in stats:
+        assert _has_arm_line("\n".join(lines), arm)
 
 
 # --- 재등록 후보 worklist -----------------------------------------------------------

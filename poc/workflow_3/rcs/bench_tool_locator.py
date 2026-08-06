@@ -23,8 +23,9 @@
   BENCH_TOOL_NAMES    쉼표 구분 tool ID 목록 (기본 MCDN01,MCDA01,MDSK10)
   BENCH_COMBOS        쉼표 구분 "coarse>fine" 조합 (기본 아래 DEFAULT_COMBOS)
   BENCH_REPEATS       조합x tool 당 반복 횟수 (기본 3)
-  BENCH_RESULT_JSON   지정하면 **측정하지 않고** 그 결과 JSON 으로 digest 만 재출력
-                      (RCS/VLM 불필요 - digest 형식이 바뀌었을 때 재측정 회피)
+
+저장된 결과로 digest 만 다시 보고 싶으면 아래 `REPLAY_RESULT_JSON` 상수에 결과 JSON
+경로를 적고 실행한다 (측정/RCS/VLM 불필요). 다 보고 나면 다시 "" 로 비운다.
 
 사용법:
   uv run python poc/workflow_3/rcs/bench_tool_locator.py
@@ -82,6 +83,11 @@ DEFAULT_COMBOS = [
     ("mai-ui", "ui-venus"),
 ]
 PRODUCTION_COMBO = ("ui-venus", "mai-ui")
+
+# 여기에 결과 JSON 경로를 적으면 **측정하지 않고** 그 결과로 digest 만 다시 출력한다.
+# digest 형식이 바뀌었을 때 20~30분짜리 벤치를 다시 돌리지 않으려는 용도.
+# 예: "poc/workflow_3/debug_images/bench_tool_locator/260806_1500_bench_result.json"
+REPLAY_RESULT_JSON = ""
 # 실제 List 탭 장비 ID. 길이(6/8자)와 접두(MCD/CCDM/RKHV/숫자 시작)가 섞여 있어야
 # 로케이터가 특정 ID 모양에만 강한 것인지 드러난다. MCDN01/MCDN02, MCDC12/MCDC22
 # 처럼 **한 글자만 다른 쌍**이 옆 행 오클릭을 잡아내는 핵심 케이스다.
@@ -496,11 +502,10 @@ def _reprint_from_json(path_text: str) -> str:
 def main() -> str:
     """List 탭 프레임 1장을 캡처해 모든 VLM 조합을 채점한다.
 
-    BENCH_RESULT_JSON 이 있으면 측정하지 않고 그 결과로 digest 만 다시 낸다.
+    REPLAY_RESULT_JSON 상수가 비어 있지 않으면 측정하지 않고 그 결과로 digest 만 낸다.
     """
-    replay_json = os.getenv("BENCH_RESULT_JSON", "").strip()
-    if replay_json:
-        return _reprint_from_json(replay_json)
+    if REPLAY_RESULT_JSON.strip():
+        return _reprint_from_json(REPLAY_RESULT_JSON.strip())
 
     tool_names = _load_tool_names()
     combos = _load_combos()

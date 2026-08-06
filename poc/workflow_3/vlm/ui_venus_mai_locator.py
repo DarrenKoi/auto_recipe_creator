@@ -1,11 +1,11 @@
 """재사용 가능한 coarse(bbox) + fine(point) 2단계 타겟 로케이터.
 
-기본 조합은 ui-venus(coarse) -> mai-ui(fine) 이지만, `VLM_LOCATOR_COMBO` env 로
-런타임에 바꿀 수 있다(형식은 bench_tool_locator 의 BENCH_COMBOS 와 동일한 "coarse>fine").
-env 를 지우면 즉시 production 기본값으로 되돌아온다 - 롤백 지점이 여기 한 곳뿐이다.
+코드 기본 조합은 아래 DEFAULT_* 상수(현재 mai-ui>mai-ui)이고, `VLM_LOCATOR_COMBO`
+env 로 런타임에 덮어쓸 수 있다(형식은 bench_tool_locator 의 BENCH_COMBOS 와 동일한
+"coarse>fine"). env 는 어디까지나 임시 오버라이드고, 상시 동작은 상수가 정한다.
 
-    VLM_LOCATOR_COMBO="mai-ui>mai-ui"   # 양 단계 모두 mai-ui
-    VLM_LOCATOR_COMBO=""(미설정)        # ui-venus>mai-ui (production 기본)
+    (env 미설정)                        # DEFAULT_* 상수 = mai-ui>mai-ui
+    VLM_LOCATOR_COMBO="ui-venus>mai-ui" # 옛 production 조합으로 임시 복귀
 """
 
 import os
@@ -46,7 +46,16 @@ from poc.workflow_3.util.json_utils import extract_json
 from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
 
 
-DEFAULT_COARSE_SERVICE = "ui-venus"   # coarse 단계 기본 서비스(route_slug, 모델명 아님).
+# ---------------------------------------------------------------------------
+# 코드 기본 조합. env 없이도 이 값으로 돈다 - 롤백은 아래 두 줄을 되돌리면 끝.
+#
+#   2026-08-07: coarse 를 ui-venus -> mai-ui 로 전환(mai-ui>mai-ui A/B).
+#               tool selection 벤치에서 mai-ui__mai-ui 가 좋았고, 로그인/List 탭/
+#               tool 선택/PM 버튼 전부 같은 조합으로 검증하기로 함.
+#   롤백:       DEFAULT_COARSE_SERVICE = "ui-venus"  (원래 production 값)
+#               또는 git revert 로 이 커밋만 되돌리기.
+# ---------------------------------------------------------------------------
+DEFAULT_COARSE_SERVICE = "mai-ui"     # coarse 단계 기본 서비스(route_slug, 모델명 아님).
 DEFAULT_REFINE_SERVICE = "mai-ui"     # fine 단계 기본 서비스(route_slug).
 LOCATOR_COMBO_ENV = "VLM_LOCATOR_COMBO"
 

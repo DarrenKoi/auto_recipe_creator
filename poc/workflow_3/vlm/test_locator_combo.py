@@ -33,8 +33,9 @@ def main():
     ok = True
     default = (loc.DEFAULT_COARSE_SERVICE, loc.DEFAULT_REFINE_SERVICE)
 
-    ok &= _check("미설정 -> production 기본(ui-venus>mai-ui)",
-                 _resolve(None) == ("ui-venus", "mai-ui"))
+    # 기본값은 코드 상수(DEFAULT_*)가 정한다 - 상수를 바꿔도 이 테스트는 살아있어야
+    # 하므로 리터럴이 아니라 상수와 비교한다.
+    ok &= _check("미설정 -> 코드 기본 상수", _resolve(None) == default)
     ok &= _check("빈 문자열 -> 기본", _resolve("") == default)
     ok &= _check("공백만 -> 기본", _resolve("   ") == default)
 
@@ -43,6 +44,8 @@ def main():
     ok &= _check("주변 공백 허용", _resolve(" mai-ui > mai-ui ") == ("mai-ui", "mai-ui"))
     ok &= _check("비대칭 조합 그대로 반영",
                  _resolve("mai-ui>ui-venus") == ("mai-ui", "ui-venus"))
+    ok &= _check("옛 production 조합으로 되돌리기",
+                 _resolve("ui-venus>mai-ui") == ("ui-venus", "mai-ui"))
 
     # 깨진 입력은 죽지 않고 기본값으로 - 로케이터가 못 뜨면 로그인부터 막힌다.
     ok &= _check("'>' 없음 -> 기본", _resolve("mai-ui") == default)
@@ -58,12 +61,12 @@ def main():
 
     # --- 시작 로그 문구: 실제 적용값을 보여줘야 한다 ---
     ok &= _check("describe: 빈 값 -> 기본 표기",
-                 loc.describe_locator_combo("") == "ui-venus>mai-ui (기본)")
+                 loc.describe_locator_combo("") == f"{default[0]}>{default[1]} (기본)")
     ok &= _check("describe: 설정값 그대로",
-                 loc.describe_locator_combo("mai-ui>mai-ui") == "mai-ui>mai-ui")
+                 loc.describe_locator_combo("ui-venus>mai-ui") == "ui-venus>mai-ui")
     # 깨진 값을 그대로 찍으면 "설정대로 돌고 있다" 고 오독한다 - 적용값을 보여줘야 한다.
     ok &= _check("describe: 깨진 값 -> 실제 적용될 기본 조합",
-                 loc.describe_locator_combo("mai-ui") == "ui-venus>mai-ui")
+                 loc.describe_locator_combo("mai-ui") == f"{default[0]}>{default[1]}")
 
     # --- config.py 미러링: settings 필드가 같은 env 를 읽는가 ---
     from poc.workflow_3.config import load_workflow3_settings

@@ -175,6 +175,16 @@ class Workflow3Settings(WorkflowSettings):
     # fail-frame 재보정 대상 · matcher 의 0.94 visibility 게이트(max_second_ratio)와는 별개.
     reregister_second_ratio_threshold: float = 0.98
 
+    # --- VLM 2단계 로케이터 조합 (로그인 / List 탭 / tool 선택 / PM 버튼 공통) ---
+    # "coarse>fine" route_slug 조합. 빈 문자열 = production 기본(ui-venus>mai-ui).
+    # A/B 시험 예: "mai-ui>mai-ui". env 이름은 ALIGN_FAIL_* 가 아니라 VLM_LOCATOR_COMBO 다
+    # (모니터 루프뿐 아니라 rcs/ 단독 스크립트도 같은 스위치를 쓰기 때문).
+    #
+    # 주의: 실제 actuator 는 vlm/ui_venus_mai_locator.resolve_locator_services() 이고,
+    # 그쪽이 호출 시점에 env 를 직접 읽는다. 이 필드는 같은 env 를 읽어 미러링하는
+    # 선언/가시성용이라, 이 필드만 코드에서 바꿔 써도 로케이터는 안 바뀐다.
+    locator_combo: str = ""
+
     # --- cond box-crop template (Tier 1.1) ---
     # True(기본): cond.box_ltrb 로 box-crop template + decoupled offset(office 검증 rank1 +0.16~0.18).
     # False: whole-template(구 동작) 롤백 — env ALIGN_FAIL_COND_BOX_CROP=0.
@@ -255,6 +265,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         engineer_done_ocr_service=_env_str("ALIGN_FAIL_ENGINEER_DONE_OCR_SERVICE", "paddleocr-vl-1.5"),
         reregister_second_ratio_threshold=env_float("ALIGN_FAIL_REREGISTER_RATIO", 0.98),
         cond_box_crop=env_flag("ALIGN_FAIL_COND_BOX_CROP", default=True),
+        locator_combo=_env_str("VLM_LOCATOR_COMBO", ""),
     )
 
 

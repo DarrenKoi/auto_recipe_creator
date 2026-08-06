@@ -453,6 +453,10 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
     )
     print(f"[INFO] 알람 로그: {ALARM_LOG_PATH}")
     print(f"[INFO] 사이클 manifest: {CYCLE_MANIFEST_PATH}")
+    # 로케이터 조합은 로그인/List 탭/tool 선택/PM 버튼을 한 번에 바꾸는 광역 스위치라,
+    # 시작 로그에 실제 적용값을 남겨야 사후에 어떤 조합으로 돈 세션인지 판별된다.
+    from poc.workflow_3.vlm.ui_venus_mai_locator import describe_locator_combo
+    print(f"[INFO] VLM 로케이터 조합: {describe_locator_combo(settings.locator_combo)}")
     # 관리자 권한 진단 — production 도 BlockInput·강제 전면화에 의존하므로 비elevated 경고 필요.
     from poc.workflow_3.util.window_utils import print_elevation_status
     print_elevation_status()

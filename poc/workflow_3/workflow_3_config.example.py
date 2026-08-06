@@ -109,4 +109,9 @@ FAILURE_COOLDOWN_SEC = None  # 실패 tool 재시도 유예(초). None=기본 30
 # 2단계 로케이터의 coarse>fine 서비스 조합(route_slug, 모델명 아님).
 # None = production 기본 "ui-venus>mai-ui". A/B 시험 예: "mai-ui>mai-ui".
 # 되돌리려면 이 줄을 None 으로 바꾸기만 하면 된다(코드 수정 불필요).
+#
+# env 이름은 VLM_LOCATOR_COMBO (ALIGN_FAIL_* 아님 - rcs/ 단독 스크립트도 같은 스위치를
+# 쓴다). config.py 의 Workflow3Settings.locator_combo 로 미러링되어 모니터 시작 로그에
+# 찍힌다. 다만 이 파일은 모니터 2종에만 적용되므로, rcs/ 단독 스크립트를 돌릴 때는
+# shell 에서 직접 줘야 한다:  $env:VLM_LOCATOR_COMBO = "mai-ui>mai-ui"
 LOCATOR_COMBO = None

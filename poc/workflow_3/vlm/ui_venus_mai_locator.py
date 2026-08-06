@@ -53,36 +53,60 @@ LOCATOR_COMBO_ENV = "VLM_LOCATOR_COMBO"
 _announced_combo = None   # 콘솔에 조합을 1회만 알리기 위한 가드.
 
 
+def parse_locator_combo(raw, *, warn=True):
+    """"coarse>fine" 문자열을 (coarse_slug, refine_slug) 로 판다.
+
+    형식이 깨졌으면 경고만 하고 production 기본값을 돌려준다(로케이터가 못 뜨면
+    로그인부터 막히므로 죽이지 않는다). warn=False 는 조회 전용 호출(시작 로그 등)
+    에서 같은 경고를 두 번 찍지 않게 하려는 것이다.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return DEFAULT_COARSE_SERVICE, DEFAULT_REFINE_SERVICE
+
+    if ">" not in raw:
+        if warn:
+            print(
+                f"[WARNING] {LOCATOR_COMBO_ENV}={raw!r} 에 '>' 가 없습니다 "
+                f"(형식: coarse>fine). 기본 조합으로 진행합니다."
+            )
+        return DEFAULT_COARSE_SERVICE, DEFAULT_REFINE_SERVICE
+
+    left, _, right = raw.partition(">")
+    left, right = left.strip(), right.strip()
+    if not (left and right):
+        if warn:
+            print(
+                f"[WARNING] {LOCATOR_COMBO_ENV}={raw!r} 파싱 실패 "
+                f"(양쪽 모두 필요). 기본 조합으로 진행합니다."
+            )
+        return DEFAULT_COARSE_SERVICE, DEFAULT_REFINE_SERVICE
+
+    return left, right
+
+
+def describe_locator_combo(raw=""):
+    """시작 로그 한 줄 - 실제로 적용될 조합을 보여준다.
+
+    raw 를 그대로 되돌리지 않고 파싱을 거치는 이유: 형식이 깨진 값을 그대로 찍으면
+    "설정한 대로 돌고 있다" 고 오독하게 된다. 실제 적용값을 보여줘야 진단이 된다.
+    """
+    coarse, refine = parse_locator_combo(raw, warn=False)
+    suffix = "" if (raw or "").strip() else " (기본)"
+    return f"{coarse}>{refine}{suffix}"
+
+
 def resolve_locator_services():
     """(coarse_slug, refine_slug) 를 env 에서 해석한다 - 호출 시점 read.
 
     import 시점이 아니라 호출 시점에 읽는 이유: rcs 단독 스크립트는 seed_env() 를
     부르지 않고 shell env 로만 제어하는데, import 시점에 고정하면 나중에 주입한
     값이 무시되어 "env 를 줬는데 안 먹는" 함정이 생긴다.
-
-    형식이 깨졌으면 경고만 하고 production 기본값으로 진행한다(로케이터가 못 뜨면
-    로그인부터 막히므로 죽이지 않는다).
     """
     global _announced_combo
 
     raw = os.getenv(LOCATOR_COMBO_ENV, "").strip()
-    coarse, refine = DEFAULT_COARSE_SERVICE, DEFAULT_REFINE_SERVICE
-    if raw:
-        if ">" not in raw:
-            print(
-                f"[WARNING] {LOCATOR_COMBO_ENV}={raw!r} 에 '>' 가 없습니다 "
-                f"(형식: coarse>fine). 기본 조합으로 진행합니다."
-            )
-        else:
-            left, _, right = raw.partition(">")
-            left, right = left.strip(), right.strip()
-            if left and right:
-                coarse, refine = left, right
-            else:
-                print(
-                    f"[WARNING] {LOCATOR_COMBO_ENV}={raw!r} 파싱 실패 "
-                    f"(양쪽 모두 필요). 기본 조합으로 진행합니다."
-                )
+    coarse, refine = parse_locator_combo(raw)
 
     combo = f"{coarse}>{refine}"
     if combo != _announced_combo:

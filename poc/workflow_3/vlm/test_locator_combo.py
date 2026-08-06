@@ -56,6 +56,38 @@ def main():
                  loc.resolve_locator_services() == ("mai-ui", "mai-ui"))
     os.environ.pop(loc.LOCATOR_COMBO_ENV, None)
 
+    # --- 시작 로그 문구: 실제 적용값을 보여줘야 한다 ---
+    ok &= _check("describe: 빈 값 -> 기본 표기",
+                 loc.describe_locator_combo("") == "ui-venus>mai-ui (기본)")
+    ok &= _check("describe: 설정값 그대로",
+                 loc.describe_locator_combo("mai-ui>mai-ui") == "mai-ui>mai-ui")
+    # 깨진 값을 그대로 찍으면 "설정대로 돌고 있다" 고 오독한다 - 적용값을 보여줘야 한다.
+    ok &= _check("describe: 깨진 값 -> 실제 적용될 기본 조합",
+                 loc.describe_locator_combo("mai-ui") == "ui-venus>mai-ui")
+
+    # --- config.py 미러링: settings 필드가 같은 env 를 읽는가 ---
+    from poc.workflow_3.config import load_workflow3_settings
+    os.environ.pop(loc.LOCATOR_COMBO_ENV, None)
+    ok &= _check("settings.locator_combo 기본은 빈 문자열",
+                 load_workflow3_settings().locator_combo == "")
+    os.environ[loc.LOCATOR_COMBO_ENV] = "mai-ui>mai-ui"
+    ok &= _check("settings.locator_combo 가 env 를 반영",
+                 load_workflow3_settings().locator_combo == "mai-ui>mai-ui")
+    os.environ.pop(loc.LOCATOR_COMBO_ENV, None)
+
+    # --- workflow_3_config.py -> env 브리지 ---
+    import types
+    from poc.workflow_3 import workflow_3_config_loader as cfg_loader
+    saved_cfg = cfg_loader._cfg
+    try:
+        cfg_loader._cfg = types.SimpleNamespace(LOCATOR_COMBO="mai-ui>mai-ui")
+        cfg_loader.seed_env()
+        ok &= _check("workflow_3_config.LOCATOR_COMBO -> VLM_LOCATOR_COMBO 브리지",
+                     os.environ.get(loc.LOCATOR_COMBO_ENV) == "mai-ui>mai-ui")
+    finally:
+        cfg_loader._cfg = saved_cfg
+        os.environ.pop(loc.LOCATOR_COMBO_ENV, None)
+
     print(f"\n[{'PASS' if ok else 'FAIL'}] test_locator_combo")
     return 0 if ok else 1
 

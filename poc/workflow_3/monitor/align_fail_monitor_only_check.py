@@ -322,6 +322,10 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
     )
     print(f"[INFO] 알람 로그: {ALARM_LOG_PATH}")
     print(f"[INFO] 점검 manifest: {CYCLE_MANIFEST_PATH}")
+    # 조합 A/B 는 이 점검 모니터에서 먼저 돌리게 되므로, 어떤 조합의 산출물인지
+    # 시작 로그에 남긴다(debug_images 하위 디렉터리명과 대조용).
+    from poc.workflow_3.vlm.ui_venus_mai_locator import describe_locator_combo
+    print(f"[INFO] VLM 로케이터 조합: {describe_locator_combo(settings.locator_combo)}")
     _report_data_paths()
     print(
         "[INFO] 각 신규 Align Fail: RCS 확보 → 접속 → 첫 화면 1장 캡처 → tool 닫기 → "

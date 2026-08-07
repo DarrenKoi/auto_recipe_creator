@@ -9,6 +9,18 @@ PC 에만 존재한다. 해석 순서:
 
 본 모듈은 "알람 rows 를 어떻게 얻는가" 만 책임지고, 윈도우 필터/edge-trigger 는
 호출부(`align_fail_monitor`)가 담당한다.
+
+replay 사용법 (실알람을 기다리지 않고 사이클을 1회 강제 - tool 창 안쪽 VLM 경로
+검증에 쓴다). `replay_fixture.example.csv` 를 복사해 EQP_ID/RECIPE_ID 만 실제 값으로
+바꾼 뒤:
+
+    $env:ALIGN_FAIL_ALARM_SOURCE = "replay"
+    $env:ALIGN_FAIL_REPLAY_CSV = "poc/workflow_3/monitor/replay_fixture.csv"
+    uv run python poc/workflow_3/monitor/align_fail_monitor_only_check.py
+
+컬럼은 EQP_ID / RECIPE_ID / ALID / UTC9 (+ALARM_NAME/OPERATION_DESC/LOT_TYPE_CD 선택).
+ALID 는 9006 이어야 필터를 통과하고, UTC9 는 poll 시 현재 시각으로 재기록되므로
+값 자체는 자리표시자여도 된다. rows 는 **첫 poll 에 한 번만** 방출된다.
 """
 
 import os

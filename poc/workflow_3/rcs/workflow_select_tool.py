@@ -32,6 +32,7 @@ from poc.workflow_3.vlm.ui_venus_mai_locator import (
     EXIT_SUCCESS as DETECT_SUCCESS,
     TargetConfig,
     analyze_window_target,
+    resolve_locator_services,
 )
 from poc.workflow_3.util import (
     activate_window,
@@ -157,8 +158,11 @@ TOOL_ROW_VERTICAL_PAD_MIN_PX = int(_env_float("SELECT_TOOL_ROW_VERTICAL_PAD_MIN_
 TOOL_ROW_MIN_CROP_HEIGHT = int(_env_float("SELECT_TOOL_ROW_MIN_CROP_HEIGHT", 56))
 
 # coarse/fine 에 쓸 VLM 서비스 - bench_tool_locator.py 가 조합을 바꿔가며 재사용한다.
-DEFAULT_COARSE_SERVICE_SLUG = os.getenv("SELECT_TOOL_COARSE_SERVICE", "ui-venus").strip() or "ui-venus"
-DEFAULT_REFINE_SERVICE_SLUG = os.getenv("SELECT_TOOL_REFINE_SERVICE", "mai-ui").strip() or "mai-ui"
+# 미설정이면 None 을 흘려보내 로케이터의 DEFAULT_*/VLM_LOCATOR_COMBO 가 정하게 한다.
+# 여기에 "ui-venus" 를 하드코딩하면 tool 선택만 조합 전환에서 빠져, 같은 스크립트의
+# 두 grounding 경로가 서로 다른 모델로 도는 상태가 조용히 생긴다(2026-08-07 발견).
+DEFAULT_COARSE_SERVICE_SLUG = os.getenv("SELECT_TOOL_COARSE_SERVICE", "").strip() or None
+DEFAULT_REFINE_SERVICE_SLUG = os.getenv("SELECT_TOOL_REFINE_SERVICE", "").strip() or None
 MAX_SCROLL_ITERS = int(_env_float("SELECT_TOOL_MAX_SCROLL_ITERS", 8))
 SCROLL_WHEEL_DY = int(_env_float("SELECT_TOOL_SCROLL_DY", -5))
 LIST_CHANGE_THRESHOLD = _env_float("SELECT_TOOL_LIST_CHANGE_THRESHOLD", 2.0)
@@ -981,8 +985,8 @@ def _locate_tool_via_vlm(
     log_name: str,
     component_name: str,
     timestamp_tag: str,
-    coarse_service_slug: str = DEFAULT_COARSE_SERVICE_SLUG,
-    refine_service_slug: str = DEFAULT_REFINE_SERVICE_SLUG,
+    coarse_service_slug: str | None = DEFAULT_COARSE_SERVICE_SLUG,
+    refine_service_slug: str | None = DEFAULT_REFINE_SERVICE_SLUG,
     confirm_policy: str | None = None,
     verify_client=None,
 ) -> tuple[dict | None, dict]:
@@ -1015,6 +1019,14 @@ def _locate_tool_via_vlm(
         LIST_REGION_BOTTOM_RATIO,
     )
     region_image = crop_image(current_image, region_box)
+
+    # 미지정(None)이면 로케이터 기본/VLM_LOCATOR_COMBO 로 해석해 둔다. analyze_window_target
+    # 도 같은 해석을 하지만, 여기서 먼저 확정해야 아래 기록 dict 에 "실제 쓴 모델" 이 남는다
+    # (None 이 그대로 기록되면 사후에 어떤 조합의 결과인지 판별할 수 없다).
+    if coarse_service_slug is None or refine_service_slug is None:
+        _env_coarse, _env_refine = resolve_locator_services()
+        coarse_service_slug = coarse_service_slug or _env_coarse
+        refine_service_slug = refine_service_slug or _env_refine
 
     attempt_record: dict = {
         "region_box": region_box,
@@ -1107,8 +1119,8 @@ def select_tool_from_main_window(
     debug_image_dir=None,
     log_name: str = LOG_NAME,
     component_name: str = COMPONENT_NAME,
-    coarse_service_slug: str = DEFAULT_COARSE_SERVICE_SLUG,
-    refine_service_slug: str = DEFAULT_REFINE_SERVICE_SLUG,
+    coarse_service_slug: str | None = DEFAULT_COARSE_SERVICE_SLUG,
+    refine_service_slug: str | None = DEFAULT_REFINE_SERVICE_SLUG,
     confirm_policy: str | None = None,
 ) -> ToolSelectionResult:
     """현재 List 탭에서 지정 Tool 이름을 찾아 더블클릭한다."""
@@ -1124,6 +1136,14 @@ def select_tool_from_main_window(
             exit_code=EXIT_INVALID_MAIN_WINDOW,
             target_tool_name=normalized_tool_name,
         )
+
+    # 미지정(None)이면 로케이터 기본/VLM_LOCATOR_COMBO 로 해석해 둔다. analyze_window_target
+    # 도 같은 해석을 하지만, 여기서 먼저 확정해야 아래 기록 dict 에 "실제 쓴 모델" 이 남는다
+    # (None 이 그대로 기록되면 사후에 어떤 조합의 결과인지 판별할 수 없다).
+    if coarse_service_slug is None or refine_service_slug is None:
+        _env_coarse, _env_refine = resolve_locator_services()
+        coarse_service_slug = coarse_service_slug or _env_coarse
+        refine_service_slug = refine_service_slug or _env_refine
 
     started_at = time.time()
     timestamp_tag = make_timestamp_tag(started_at)

@@ -64,6 +64,10 @@ _CONST_TO_ENV = (
     ("CONSENSUS_MIN_S", "ALIGN_FAIL_CONSENSUS_MIN_S"),
     # [7] 재시도 정책
     ("FAILURE_COOLDOWN_SEC", "ALIGN_FAIL_FAILURE_COOLDOWN_SEC"),
+    # [7.5] 상시 녹화 / 엔지니어 watch (production 모니터)
+    ("RECORDING_MAX_SEC", "ALIGN_FAIL_RECORDING_MAX_SEC"),
+    ("ENGINEER_WATCH_SEC", "ALIGN_FAIL_ENGINEER_WATCH_SEC"),
+    ("ENGINEER_DONE_DETECT", "ALIGN_FAIL_ENGINEER_DONE_DETECT"),
     # [8] VLM 로케이터 조합 (config.py 가 아니라 vlm/ui_venus_mai_locator.py 가 읽는다)
     ("LOCATOR_COMBO", "VLM_LOCATOR_COMBO"),
 )

@@ -6,7 +6,7 @@ from poc.workflow_3.util import env_float, env_int
 from poc.workflow_3.vlm.flask_vlm import UI_VENUS_MODEL_NAME
 
 # 기본 VLM service slug.
-_DEFAULT_SERVICE = "ui-venus"
+_DEFAULT_SERVICE = "mai-ui"
 
 
 @dataclass

@@ -55,7 +55,7 @@ class Workflow3Settings(WorkflowSettings):
     rcs_recovery_enabled: bool = False  # RCS 재실행+재로그인 복구(검증 전 기본 off).
     # 점유 'select' 팝업(타 사용자 사용 중) 검출 — 떠 있으면 접속 포기 + cooldown 후 재시도.
     occupied_popup_detect_enabled: bool = True
-    occupied_popup_vlm_service: str = "ui-venus"  # 제목 검출 후 옵션 확인용(route_slug).
+    occupied_popup_vlm_service: str = "mai-ui"  # 제목 검출 후 옵션 확인용(route_slug).
     occupied_retry_cooldown_sec: float = 300.0    # 점유로 포기한 tool 재시도 유예(초).
     # 점유 외 사유로 사이클이 실패한 tool 의 재시도 유예(초). 없으면 매 poll 재시도해
     # 직렬화된 단일 RCS 커서를 독점하고 다른 알람을 굶긴다(F2).
@@ -88,8 +88,8 @@ class Workflow3Settings(WorkflowSettings):
     engineer_done_roi_pad_x: float = 0.03  # grounding 점 -> crop 확장 비율(가로, 창 대비).
     engineer_done_roi_pad_y: float = 0.02  # grounding 점 -> crop 확장 비율(세로, 창 대비).
     # 주의: Workflow1VLMClient 는 모델명이 아니라 flask_vlm 의 route_slug 를 받는다
-    # ("ui-venus" O, "ui-venus-1.5-8b" X - workflow_2 스크립트들과 동일 규약).
-    engineer_done_vlm_service: str = "ui-venus"  # grounding 서비스 slug.
+    # ("mai-ui" O, "mai-ui-8b" X - workflow_2 스크립트들과 동일 규약).
+    engineer_done_vlm_service: str = "mai-ui"  # grounding 서비스 slug.
     engineer_done_ocr_service: str = "paddleocr-vl-1.5"  # 분자 OCR 서비스 slug.
 
     # --- rcp 입력 이미지 office 다운로드 ---
@@ -126,7 +126,7 @@ class Workflow3Settings(WorkflowSettings):
     # OM/SEM modality 를 정하고 (2) box 안쪽만 매칭한 뒤 align point 를 풀프레임으로
     # 되돌리고 (3) box 를 overlay 에 그릴지. off 면 기존 전체 창 매칭으로 폴백한다.
     sem_box_detect_enabled: bool = True
-    sem_box_vlm_service: str = "ui-venus"  # route_slug (모델명 "ui-venus-1.5-8b" 아님).
+    sem_box_vlm_service: str = "mai-ui"  # route_slug (모델명 "mai-ui-8b" 아님).
     # PM 모드 읽기 2단계: off(기본)=단일 호출의 inline pm_box_text. on=같은 호출이 준 PM
     # 위치를 crop 해 PaddleOCR 로 재독(작은 영역 정확도↑). PM crop 은 항상 디버그 저장된다.
     pm_two_stage_ocr_enabled: bool = False
@@ -164,7 +164,7 @@ class Workflow3Settings(WorkflowSettings):
     # --- CV 보정 ---
     correction_enabled: bool = True
     correction_dry_run: bool = True  # False 는 SAFE_MODE off + env 명시(0)일 때만.
-    ok_button_vlm_service: str = "ui-venus"  # route_slug (모델명 "ui-venus-1.5-8b" 아님).
+    ok_button_vlm_service: str = "mai-ui"  # route_slug (모델명 "mai-ui-8b" 아님).
     sem_mode_default: str = "SEM"
     sem_controller_settle_sec: float = 0.5
     zoom_scroll_dy: int = 1
@@ -214,7 +214,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         connect_window_timeout_sec=env_int("ALIGN_FAIL_CONNECT_WINDOW_TIMEOUT_SEC", 3),
         rcs_window_max_trials=env_int("ALIGN_FAIL_RCS_WINDOW_MAX_TRIALS", 3),
         occupied_popup_detect_enabled=env_flag("ALIGN_FAIL_OCCUPIED_POPUP_DETECT", default=True),
-        occupied_popup_vlm_service=_env_str("ALIGN_FAIL_OCCUPIED_POPUP_SERVICE", "ui-venus"),
+        occupied_popup_vlm_service=_env_str("ALIGN_FAIL_OCCUPIED_POPUP_SERVICE", "mai-ui"),
         occupied_retry_cooldown_sec=env_float("ALIGN_FAIL_OCCUPIED_COOLDOWN_SEC", 300.0),
         failure_retry_cooldown_sec=env_float("ALIGN_FAIL_FAILURE_COOLDOWN_SEC", 300.0),
         rcs_recovery_enabled=env_flag("ALIGN_FAIL_RCS_RECOVERY", default=False),
@@ -236,7 +236,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         feasibility_mark_enabled=env_flag("ALIGN_FAIL_FEASIBILITY_MARK", default=True),
         reposition_preview_enabled=env_flag("ALIGN_FAIL_REPOSITION_PREVIEW", default=False),
         sem_box_detect_enabled=env_flag("ALIGN_FAIL_SEM_BOX_DETECT", default=True),
-        sem_box_vlm_service=_env_str("ALIGN_FAIL_SEM_BOX_SERVICE", "ui-venus"),
+        sem_box_vlm_service=_env_str("ALIGN_FAIL_SEM_BOX_SERVICE", "mai-ui"),
         pm_two_stage_ocr_enabled=env_flag("ALIGN_FAIL_PM_TWO_STAGE_OCR", default=False),
         pm_ocr_service=_env_str("ALIGN_FAIL_PM_OCR_SERVICE", "paddleocr-vl-1.5"),
         zoom_probe_enabled=env_flag("ALIGN_FAIL_ZOOM_PROBE", default=True),
@@ -250,7 +250,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         zoom_method=os.environ.get("ALIGN_FAIL_ZOOM_METHOD", "auto").strip().lower() or "auto",
         correction_enabled=env_flag("ALIGN_FAIL_CORRECTION", default=True),
         correction_dry_run=correction_dry_run,
-        ok_button_vlm_service=_env_str("ALIGN_OK_BUTTON_VLM_SERVICE", "ui-venus"),
+        ok_button_vlm_service=_env_str("ALIGN_OK_BUTTON_VLM_SERVICE", "mai-ui"),
         sem_mode_default=_env_str("ALIGN_SEM_MODE_DEFAULT", "SEM"),
         sem_controller_settle_sec=env_float("ALIGN_SEM_SETTLE_SEC", 0.5),
         zoom_scroll_dy=env_int("ALIGN_SEM_ZOOM_SCROLL_DY", 1),
@@ -262,7 +262,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         engineer_done_reground_sec=env_float("ALIGN_FAIL_ENGINEER_DONE_REGROUND_SEC", 30.0),
         engineer_done_roi_pad_x=env_float("ALIGN_FAIL_ENGINEER_DONE_ROI_PAD_X", 0.03),
         engineer_done_roi_pad_y=env_float("ALIGN_FAIL_ENGINEER_DONE_ROI_PAD_Y", 0.02),
-        engineer_done_vlm_service=_env_str("ALIGN_FAIL_ENGINEER_DONE_VLM_SERVICE", "ui-venus"),
+        engineer_done_vlm_service=_env_str("ALIGN_FAIL_ENGINEER_DONE_VLM_SERVICE", "mai-ui"),
         engineer_done_ocr_service=_env_str("ALIGN_FAIL_ENGINEER_DONE_OCR_SERVICE", "paddleocr-vl-1.5"),
         reregister_second_ratio_threshold=env_float("ALIGN_FAIL_REREGISTER_RATIO", 0.98),
         cond_box_crop=env_flag("ALIGN_FAIL_COND_BOX_CROP", default=True),

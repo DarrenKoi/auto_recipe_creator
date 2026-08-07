@@ -24,6 +24,10 @@ from poc.workflow_3.vlm.prompts.prompt_recipe_monitor_counter import (
 )
 
 
+# 기본 grounding 서비스 slug - Workflow3Settings 의 dataclass 기본값에서 읽는다.
+_DEFAULT_VLM_SERVICE = Workflow3Settings.engineer_done_vlm_service
+
+
 def _check(name: str, condition: bool) -> bool:
     """단건 검증 결과를 출력하고 통과 여부를 반환한다."""
     status = "PASS" if condition else "FAIL"
@@ -42,7 +46,12 @@ def test_settings_defaults() -> bool:
     ok &= _check("relocalize_after_miss default 3", s.engineer_done_relocalize_after_miss == 3)
     ok &= _check("roi_pad_x default 0.03", s.engineer_done_roi_pad_x == 0.03)
     ok &= _check("roi_pad_y default 0.02", s.engineer_done_roi_pad_y == 0.02)
-    ok &= _check("vlm_service default ui-venus", s.engineer_done_vlm_service == "ui-venus")
+    # 서비스 slug 는 A/B 로 왕복하는 값이라 리터럴 대신 dataclass 기본값과 비교한다
+    # (모델을 바꿀 때마다 무관한 테스트가 따라 깨지면 전환 비용이 붙는다).
+    ok &= _check(
+        f"vlm_service default {_DEFAULT_VLM_SERVICE}",
+        s.engineer_done_vlm_service == _DEFAULT_VLM_SERVICE,
+    )
     ok &= _check("ocr_service default paddleocr", s.engineer_done_ocr_service == "paddleocr-vl-1.5")
     ok &= _check("reground_sec default 30.0", s.engineer_done_reground_sec == 30.0)
     return ok
@@ -65,12 +74,16 @@ def test_settings_env_load_path() -> bool:
     ok &= _check("env path detect_enabled False", s.engineer_done_detect_enabled is False)
     ok &= _check("env path poll_sec 8.0", s.engineer_done_poll_sec == 8.0)
     ok &= _check("env path min_count 6", s.engineer_done_min_count == 6)
-    ok &= _check("env path services", s.engineer_done_vlm_service == "ui-venus" and s.engineer_done_ocr_service == "paddleocr-vl-1.5")
+    ok &= _check(
+        "env path services",
+        s.engineer_done_vlm_service == _DEFAULT_VLM_SERVICE
+        and s.engineer_done_ocr_service == "paddleocr-vl-1.5",
+    )
     return ok
 
 
 def test_counter_prompt() -> bool:
-    """ui-venus 공식 단일요소 형식([x,y], [-1,-1] 거부)을 따른다."""
+    """grounding 모델의 공식 단일요소 형식([x,y], [-1,-1] 거부)을 따른다."""
     system_message, user_text = build_recipe_monitor_counter_prompt()
     ok = True
     ok &= _check("system empty (official format)", system_message == "")
@@ -81,7 +94,7 @@ def test_counter_prompt() -> bool:
 
 
 def test_parse_point_1000() -> bool:
-    """ui-venus [x,y] 응답 파싱 — 거부/범위밖/없음은 None."""
+    """grounding [x,y] 응답 파싱 — 거부/범위밖/없음은 None."""
     ok = True
     ok &= _check("valid point", parse_point_1000("[525, 550]") == (525, 550))
     ok &= _check("point in prose", parse_point_1000("the point is [10,20].") == (10, 20))

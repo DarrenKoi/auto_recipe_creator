@@ -13,7 +13,7 @@ def test_defaults_match_spec():
     assert s.min_change_area_px == 5000
     assert s.cursor_click_window_px == 200
     assert s.click_min_changed_px == 1500
-    assert s.vlm_service == "ui-venus"
+    assert s.vlm_service == "mai-ui"
     assert s.vlm_request_delay_sec == 1.0
     assert s.max_vlm_calls == 0
 

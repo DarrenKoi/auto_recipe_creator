@@ -31,7 +31,7 @@ class Workflow3eSettings(Workflow3Settings):
     meas_fail_abort_enabled: bool = True       # 잡 마스터 토글(검출+알림).
     meas_fail_alid: str = ""                   # 임계 알람 ALID(오피스 확인 필요, 빈값=비활성).
     abort_action_dry_run: bool = True          # 클릭 게이트. 실제 abort 는 SAFE_MODE off + 0 일 때만.
-    abort_button_vlm_service: str = "ui-venus" # Abort 버튼 locator route_slug(모델명 아님).
+    abort_button_vlm_service: str = "mai-ui" # Abort 버튼 locator route_slug(모델명 아님).
 
 
 def load_workflow3e_settings() -> Workflow3eSettings:
@@ -48,7 +48,7 @@ def load_workflow3e_settings() -> Workflow3eSettings:
         meas_fail_abort_enabled=env_flag("MEAS_FAIL_ABORT_ENABLED", default=True),
         meas_fail_alid=_env_str("MEAS_FAIL_ALID", ""),
         abort_action_dry_run=abort_action_dry_run,
-        abort_button_vlm_service=_env_str("MEAS_FAIL_ABORT_BUTTON_SERVICE", "ui-venus"),
+        abort_button_vlm_service=_env_str("MEAS_FAIL_ABORT_BUTTON_SERVICE", "mai-ui"),
     )
 
 

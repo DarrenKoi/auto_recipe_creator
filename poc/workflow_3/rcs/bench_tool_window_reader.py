@@ -422,9 +422,10 @@ def _run_cursor_arm(
             action_enabled=True,
         )
         time.sleep(0.4)
-        frame = capture_window(window, window_title, backend)
-        if frame is None:
-            print(f"[WARNING] probe{probe_idx}: 캡처 실패 - 건너뜁니다.")
+        try:
+            frame = capture_window(window)
+        except Exception as exc:
+            print(f"[WARNING] probe{probe_idx}: 캡처 실패 - 건너뜁니다: {exc}")
             continue
         timestamp_tag = make_timestamp_tag(time.time())
         save_debug_jpeg(frame, DEBUG_ARTIFACT_DIR / f"{timestamp_tag}_cursor_probe{probe_idx}.jpg")
@@ -611,9 +612,11 @@ def main() -> str:
         return "tool_window_not_found"
     print(f"[INFO] tool 창: title={window_title!r} backend={backend}")
 
-    image = capture_window(window, window_title, backend)
-    if image is None:
-        print("[ERROR] tool 창 캡처 실패")
+    # capture_window(window) 한 인자만 받고, 실패하면 None 이 아니라 예외를 던진다.
+    try:
+        image = capture_window(window)
+    except Exception as exc:
+        print(f"[ERROR] tool 창 캡처 실패: {exc}")
         return "capture_failed"
 
     run_tag = make_timestamp_tag(time.time())

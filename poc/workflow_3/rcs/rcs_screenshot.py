@@ -214,8 +214,26 @@ def connect_capture_close(
         print("[ERROR] connect_to_tool 비활성 — 독립 실행 불가 (office Windows 에서 실행하세요).")
         return []
     if not eqp_id:
-        print("[ERROR] EQP_ID 가 비어 있습니다 (ALIGN_CAPTURE_EQP_ID).")
+        # 지정 경로가 둘(코드 상수 / env)이라 어느 쪽을 채워야 하는지 같이 알려준다.
+        print(
+            "[ERROR] EQP_ID 가 비어 있습니다. 둘 중 하나를 채우세요:\n"
+            "  (1) 이 파일 상단 EQP_ID_OVERRIDE / RECIPE_ID_OVERRIDE 에 직접 입력\n"
+            '      EQP_ID_OVERRIDE = r"MCD916"\n'
+            '      RECIPE_ID_OVERRIDE = r"RJ1BXXX/Z_RJ1B_CBLHM2_FULL"\n'
+            "  (2) 환경변수 (PowerShell)\n"
+            '      $env:ALIGN_CAPTURE_EQP_ID = "MCD916"\n'
+            '      $env:ALIGN_CAPTURE_RECIPE_ID = "RJ1BXXX/Z_RJ1B_CBLHM2_FULL"'
+        )
         return []
+    if not recipe_id:
+        # 없어도 캡처 자체는 되지만 저장 경로가 <eqp>/captured_img_from_rcs 로 납작해져
+        # class/recipe 별 분류가 사라진다. 조용히 넘어가면 나중에 어느 recipe 의
+        # 캡처인지 알 수 없게 되므로 경고한다.
+        print(
+            "[WARNING] RECIPE_ID 가 비어 있습니다 - 캡처는 진행하되 "
+            "align_images 하위 class/recipe 분류 없이 저장됩니다 "
+            '(형식: "<class>/<recipe>").'
+        )
 
     print(f"[INFO] RCS 접속 시도: EQP_ID={eqp_id}")
     result = connect_to_tool(

@@ -86,6 +86,20 @@ class ToolListVisibilityResult:
 
 
 OCR_SERVICE_SLUG = "paddleocr-vl-1.5"
+
+# ====================================================================
+# 단독 실행 테스트용 - 코드 안에서 직접 대상 tool 지정 (env 보다 우선).
+# rcs_screenshot.py 의 EQP_ID_OVERRIDE 와 같은 패턴이며, 이 값은
+# load_target_tool_name() 을 통해 workflow_close_tool / workflow_login 의
+# 단독 실행에도 함께 적용된다(한 tool 로 체인 전체를 돌릴 때 한 곳만 고치면 됨).
+#
+#   TARGET_TOOL_NAME_OVERRIDE = r"MCD916"
+#
+# 비워두면 env(ACTION_TARGET_TOOL_NAME 등) -> DEFAULT_TARGET_TOOL_NAME 순으로 폴백.
+# 주의: production 루프는 알람에서 받은 eqp_id 를 인자로 넘기므로 영향받지 않는다.
+# ====================================================================
+TARGET_TOOL_NAME_OVERRIDE = r""
+
 DEFAULT_TARGET_TOOL_NAME = "MCD630"
 DEBUG_ARTIFACT_DIR = DEBUG_IMAGE_DIR / "workflow_select_tool"
 LOG_NAME = "workflow_select_tool"
@@ -193,7 +207,16 @@ def _step_image_path(debug_dir, filename: str, **kwargs):
 
 
 def load_target_tool_name(default: str = "") -> str:
-    """환경변수에서 목표 Tool 이름을 읽는다."""
+    """목표 Tool 이름을 읽는다 - 코드 오버라이드 > env > default 순.
+
+    오버라이드를 env 보다 앞에 두는 이유: 오피스에서는 shell 을 새로 열 때마다
+    env 가 날아가고 PowerShell 따옴표 함정도 있어서, 코드 한 줄로 고정할 수 있는
+    경로가 실수를 덜 만든다(rcs_screenshot.py 와 동일 규약).
+    """
+    override = (TARGET_TOOL_NAME_OVERRIDE or "").strip()
+    if override:
+        return override
+
     for env_name in (
         "ACTION_TARGET_TOOL_NAME",
         "ACTION_SELECT_TOOL_NAME",
@@ -1561,6 +1584,15 @@ def main() -> str:
     """현재 List 탭에서 지정 Tool 이름을 찾아 더블클릭한다."""
     started_at = time.time()
     target_tool_name = load_target_tool_name(DEFAULT_TARGET_TOOL_NAME)
+    # 어느 경로로 정해진 이름인지 같이 찍는다 - 엉뚱한 tool 을 더블클릭한 뒤에
+    # "왜 이 창이 열렸지" 를 되짚는 것보다 실행 전에 보이는 편이 싸다.
+    if (TARGET_TOOL_NAME_OVERRIDE or "").strip():
+        name_source = "코드 TARGET_TOOL_NAME_OVERRIDE"
+    elif target_tool_name != DEFAULT_TARGET_TOOL_NAME:
+        name_source = "env(ACTION_TARGET_TOOL_NAME 등)"
+    else:
+        name_source = "DEFAULT_TARGET_TOOL_NAME"
+    print(f"[INFO] 대상 tool={target_tool_name!r} (출처: {name_source})")
 
     main_window, window_title, backend = wait_for_rcs_main_window()
     if main_window is None:

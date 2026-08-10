@@ -8,7 +8,11 @@
 import os
 from contextlib import contextmanager
 
-from poc.workflow_3e.config import load_workflow3e_settings
+from poc.workflow_3e.config import Workflow3eSettings, load_workflow3e_settings
+
+# locator slug 기본값은 dataclass 에서 읽는다 - 모델 A/B 왕복(ui-venus <-> mai-ui) 때
+# 무관한 테스트가 따라 깨지지 않아야 한다.
+_DEFAULT_ABORT_SERVICE = Workflow3eSettings.abort_button_vlm_service
 
 
 @contextmanager
@@ -30,12 +34,13 @@ def _env(**kv):
 
 
 def test_defaults():
-    """기본값: 잡 on, ALID 빈값, 클릭 dry-run, locator slug ui-venus."""
+    """기본값: 잡 on, ALID 빈값, 클릭 dry-run, locator slug = dataclass 기본값."""
     with _env(SAFE_MODE="1", MEAS_FAIL_ABORT_ENABLED=None, MEAS_FAIL_ALID=None,
               MEAS_FAIL_ABORT_DRY_RUN=None, MEAS_FAIL_ABORT_BUTTON_SERVICE=None):
         s = load_workflow3e_settings()
     ok = (s.meas_fail_abort_enabled is True and s.meas_fail_alid == ""
-          and s.abort_action_dry_run is True and s.abort_button_vlm_service == "ui-venus")
+          and s.abort_action_dry_run is True
+          and s.abort_button_vlm_service == _DEFAULT_ABORT_SERVICE)
     print(f"[{'PASS' if ok else 'FAIL'}] defaults: enabled={s.meas_fail_abort_enabled} "
           f"alid={s.meas_fail_alid!r} dry_run={s.abort_action_dry_run}")
     return ok

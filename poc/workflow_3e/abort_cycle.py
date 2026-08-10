@@ -39,10 +39,28 @@ from poc.workflow_3.monitor.teardown import run_teardown
 from poc.workflow_3.runner.workflow_runner import WorkflowRunner
 from poc.workflow_3.runner.workflow_types import WorkflowStep
 from poc.workflow_3.util import block_input, capture_window, click_at_screen, make_timestamp_tag
-from poc.workflow_3e.abort_button import locate_abort_button, locate_abort_confirm
+from poc.workflow_3 import DEBUG_IMAGE_DIR
+from poc.workflow_3e.abort_button import (
+    ABORT_BUTTON_LABELS,
+    ABORT_LABEL_POLICY_OFF,
+    CONFIRM_BUTTON_LABELS,
+    accepts_label,
+    load_abort_label_policy,
+    locate_abort_button,
+    locate_abort_confirm,
+    verify_button_label_at_point,
+)
 from poc.workflow_3e.notify import notify_abort_outcome
 
 LOG_COMPONENT = "measurement_abort_cycle"
+DEBUG_ARTIFACT_DIR = DEBUG_IMAGE_DIR / "measurement_abort"
+
+
+def _make_abort_vlm_client(settings):
+    """abort 버튼 locate 용 VLM client. 실패는 호출부가 abort_vlm_error 로 처리한다."""
+    from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
+
+    return Workflow1VLMClient(settings.abort_button_vlm_service, timeout_sec=15.0)
 
 
 def build_abort_steps(eqp_id: str) -> list[WorkflowStep]:
@@ -98,9 +116,7 @@ def _exec_abort_measurement(step, context, settings) -> "object":
         )
 
     try:
-        from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
-
-        client = Workflow1VLMClient(settings.abort_button_vlm_service, timeout_sec=15.0)
+        client = _make_abort_vlm_client(settings)
     except Exception as exc:
         context["abort_outcome"] = "abort_error"
         return _make_result(
@@ -108,7 +124,8 @@ def _exec_abort_measurement(step, context, settings) -> "object":
             failure_class="abort_vlm_error", error_message=f"{type(exc).__name__}: {exc}",
         )
 
-    frame = np.array(capture_window(tool_window))
+    image = capture_window(tool_window)
+    frame = np.array(image)
     xy = locate_abort_button(frame_bgr=frame, client=client)
     if xy is None:
         context["abort_outcome"] = "abort_button_not_found"
@@ -118,24 +135,78 @@ def _exec_abort_measurement(step, context, settings) -> "object":
             failure_class="abort_button_not_found", error_message="Stop/Abort 버튼 미검출",
         )
 
+    # --- 라벨 확인 게이트: 그 좌표가 정말 Stop/Abort 인가 (좁은 crop OCR) ---
+    # 무장 여부와 무관하게 항상 읽는다. notify-only 로 도는 동안 오피스가 게이트 판정을
+    # 눈으로 볼 수 있어야, 무장 전에 라벨 집합/crop 크기를 교정할 수 있다.
+    policy = load_abort_label_policy()
+    verdict = None
+    if policy != ABORT_LABEL_POLICY_OFF:
+        verdict = verify_button_label_at_point(
+            image,
+            xy,
+            ABORT_BUTTON_LABELS,
+            debug_image_dir=DEBUG_ARTIFACT_DIR,
+            timestamp_tag=str(context.get("tag") or make_timestamp_tag()),
+            artifact_label=f"abort_button_{eqp_id}",
+        )
+    verdict_status = getattr(verdict, "status", "skipped" if policy == ABORT_LABEL_POLICY_OFF else "unavailable")
+    context["abort_label_verdict"] = verdict_status
+
     armed = settings.action_enabled and not settings.abort_action_dry_run
     if not armed:
         context["abort_outcome"] = "abort_dry_run"
         print(
-            f"[INFO] [DRY-RUN] Abort 버튼 검출 screen=({xy[0]},{xy[1]}) - 클릭 생략 "
+            f"[INFO] [DRY-RUN] Abort 버튼 검출 screen=({xy[0]},{xy[1]}) "
+            f"label={verdict_status}(policy={policy}) - 클릭 생략 "
             f"(SAFE_MODE/abort_dry_run 게이트). EQP_ID={eqp_id}"
         )
         return _make_result(step, "success", started_at, settings)
+
+    if not accepts_label(verdict, policy):
+        context["abort_outcome"] = "abort_label_unconfirmed"
+        read_text = getattr(verdict, "raw_text", "")
+        print(
+            f"[WARNING] Abort 버튼 라벨 미확인({verdict_status}, policy={policy}) - "
+            f"클릭 금지, 엔지니어 직접 처리. EQP_ID={eqp_id} "
+            f"screen=({xy[0]},{xy[1]}) read={read_text!r}"
+        )
+        return _make_result(
+            step, "failed", started_at, settings,
+            failure_class="abort_label_unconfirmed",
+            error_message=f"Stop/Abort 라벨 확인 실패({verdict_status})",
+        )
 
     # --- 무장 상태: 클릭 + 확인 다이얼로그 ---
     try:
         click_at_screen({"x": xy[0], "y": xy[1]}, "abort_button", action_enabled=True)
         if _CHECK_CAPTURE_SETTLE_SEC > 0:
             time.sleep(_CHECK_CAPTURE_SETTLE_SEC)
-        confirm_frame = np.array(capture_window(tool_window))
-        cxy = locate_abort_confirm(frame_bgr=confirm_frame, client=client)
+        confirm_image = capture_window(tool_window)
+        cxy = locate_abort_confirm(frame_bgr=np.array(confirm_image), client=client)
         if cxy is not None:
-            click_at_screen({"x": cxy[0], "y": cxy[1]}, "abort_confirm", action_enabled=True)
+            # 확인 다이얼로그의 Yes/확인 도 같은 게이트를 통과해야 누른다. 막히면 다이얼로그가
+            # 열린 채 남고 엔지니어가 마무리한다 - No/취소 를 잘못 누르는 것보다 낫다.
+            cverdict = None
+            if policy != ABORT_LABEL_POLICY_OFF:
+                cverdict = verify_button_label_at_point(
+                    confirm_image,
+                    cxy,
+                    CONFIRM_BUTTON_LABELS,
+                    debug_image_dir=DEBUG_ARTIFACT_DIR,
+                    timestamp_tag=str(context.get("tag") or make_timestamp_tag()),
+                    artifact_label=f"abort_confirm_{eqp_id}",
+                )
+            context["abort_confirm_verdict"] = getattr(
+                cverdict, "status", "skipped" if policy == ABORT_LABEL_POLICY_OFF else "unavailable"
+            )
+            if accepts_label(cverdict, policy):
+                click_at_screen({"x": cxy[0], "y": cxy[1]}, "abort_confirm", action_enabled=True)
+            else:
+                print(
+                    "[WARNING] abort 확인 버튼 라벨 미확인 - 클릭 생략(다이얼로그는 열린 채 "
+                    f"엔지니어 처리). EQP_ID={eqp_id} confirm=({cxy[0]},{cxy[1]})"
+                )
+                cxy = None
         context["abort_outcome"] = "aborted"
         print(f"[INFO] 측정 abort 실행: EQP_ID={eqp_id} button=({xy[0]},{xy[1]}) confirm={cxy}")
     except Exception as exc:

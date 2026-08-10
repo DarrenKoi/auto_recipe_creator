@@ -22,7 +22,7 @@
 - **CLI 인자 금지** — `argparse`/플래그 없음. 설정은 모듈 상수 + env 오버라이드. 스크립트는 `uv run python <script>.py` 만으로 실행돼야 한다.
 - **이미지 포맷** — 로컬 저장은 JPEG, VLM 전송은 WebP(quality=90).
 - **VLM service 는 route slug** — `Workflow1VLMClient("mai-ui")` 가 맞고 `"mai-ui-8b"` 는 틀리다.
-- **`RecordingSession` (`monitor/recording.py`) 은 수정하지 않는다** — 감싸기만 한다. 알람 사이클 동작에 영향이 가면 안 된다.
+- **`RecordingSession` (`monitor/recording.py`) 의 동작을 바꾸지 않는다** — 감싸는 것이 원칙이다. 유일한 예외는 Task 3 의 `jpeg_quality` 기본값 인자(기본 95 라 알람 사이클은 바이트 동일하게 동작)이며, 그 외 로직/시그니처 변경은 금지한다.
 - **테스트 실행 방식이 패키지마다 다르다** — `recording_filter/` 는 pytest (`uv run pytest poc/workflow_3/recording_filter`), `monitor/` 는 직접 실행 스크립트 (`uv run python poc/workflow_3/monitor/test_xxx.py`, 파일 끝에 `if __name__ == "__main__":` 로 전체 호출). 각 태스크가 지시하는 쪽을 따른다.
 - **Windows 전용 코드는 Mac 에서 import 가능해야 한다** — `os.name != "nt"` 조기 반환 또는 try/except ImportError + `AVAILABLE` 플래그 패턴. Mac 에서 테스트가 돌아야 하기 때문이다.
 - **커밋은 pathspec 으로** — 병렬 세션이 같은 저장소를 편집하므로 `git add -A` / `commit -a` 금지. 건드린 파일만 명시한다.
@@ -565,6 +565,7 @@ git commit -m "feat(workflow_3): 수동 녹화 프레임 사이드카 메타(가
 - Modify: `poc/workflow_3/monitor/manual_record.py` (Task 1 파일에 추가)
 - Modify: `poc/workflow_3/monitor/test_manual_record.py` (테스트 추가)
 - Modify: `poc/workflow_3/debug_artifacts.py:31-35` (`save_debug_jpeg` 에 quality 인자)
+- Modify: `poc/workflow_3/monitor/recording.py` (`jpeg_quality` 기본값 인자만 — 다른 변경 금지)
 - Modify: `poc/workflow_3/README.md` (사용법 절 추가)
 
 **Interfaces:**
@@ -791,7 +792,43 @@ def save_debug_jpeg(image: "Image.Image", out_path: Path, *, quality: int = 95) 
     debug_img.save(out_path, format="JPEG", quality=int(quality))
 ```
 
-- [ ] **Step 6: 런처 본체(Windows 경로)를 구현한다**
+- [ ] **Step 6: `RecordingSession` 에 `jpeg_quality` 기본값 인자를 배선한다**
+
+`poc/workflow_3/monitor/recording.py` 를 세 곳 고친다. 기본값이 95 라 알람 사이클
+(`monitor/cycle.py:423` 의 생성 호출)은 바이트 동일하게 동작한다. 이것이 이 파일에
+허용된 **유일한** 변경이다.
+
+(a) `__init__` 시그니처의 `max_sec` 다음에 추가:
+
+```python
+        max_sec: float = 900.0,
+        jpeg_quality: int = 95,
+        capture_fn=None,
+```
+
+(b) 같은 함수 본문의 `self.max_sec = float(max_sec)` 다음에 추가:
+
+```python
+        self.jpeg_quality = int(jpeg_quality)
+```
+
+(c) `_run` 의 저장 호출(`recording.py:169`)을 바꾼다:
+
+```python
+                    save_debug_jpeg(image, out_path, quality=self.jpeg_quality)
+```
+
+(d) `_write_manifest` 의 manifest dict 에 `"change_min_px"` 다음 줄로 추가한다 —
+나중에 프레임 용량을 해석할 때 어떤 품질로 저장됐는지 알아야 한다:
+
+```python
+            "jpeg_quality": self.jpeg_quality,
+```
+
+기존 알람 녹화 테스트가 없으므로, 회귀 확인은 Step 7 의 import 검사와
+`uv run python -c` 스모크로 갈음한다.
+
+- [ ] **Step 7: 런처 본체(Windows 경로)를 구현한다**
 
 `poc/workflow_3/monitor/manual_record.py` 끝에 추가한다. 이 부분은 Mac 에서 실행할 수
 없으므로(창이 없음) 단위 테스트 대상이 아니다. import 는 성공해야 한다.
@@ -821,7 +858,7 @@ def _collect_monitoring_rows():
     return rows
 
 
-def _make_capture_fn(tool_window, meta_writer, settings, started_at, our_handles):
+def _make_capture_fn(tool_window, meta_writer, started_at, our_handles):
     """RecordingSession 에 주입할 capture_fn 을 만든다(캡처 + 사이드카 기록).
 
     RecordingSession 은 수정하지 않는다. 캡처 함수를 감싸는 것만으로 프레임과
@@ -904,8 +941,9 @@ def main() -> int:
         heartbeat_sec=settings.heartbeat_sec,
         change_min_px=settings.change_min_px,
         max_sec=settings.max_sec,
+        jpeg_quality=settings.jpeg_quality,
         capture_fn=_make_capture_fn(
-            tool_window, meta_writer, settings, started_at, {handle},
+            tool_window, meta_writer, started_at, {handle},
         ),
     )
     session.start()
@@ -943,14 +981,10 @@ if __name__ == "__main__":
 capture 순번과 파일 seq 가 어긋난다. Task 6 에서 분석기가 사이드카를 **`t_sec` 최근접
 매칭**으로 조인하는 이유가 이것이다.
 
-주의 2: `settings.jpeg_quality` 는 이 시점에 아직 배선되지 않았다. `RecordingSession`
-이 `save_debug_jpeg(image, out_path)` 를 직접 부르기 때문이다(`recording.py:169`).
-`RecordingSession` 무수정 원칙을 지키기 위해, 런처는 `capture_fn` 이 돌려주는 PIL
-이미지를 그대로 두고 **품질 조정은 하지 않는다.** `MANUAL_RECORD_JPEG_QUALITY` 는
-Task 6 에서 후처리(분석 전 재압축)로 쓰거나, 필요해지면 별도 스펙에서 다룬다.
-계획 단계의 이 타협을 README 에 명시한다.
+주의 2: 품질은 Step 6 에서 `RecordingSession(jpeg_quality=...)` 로 배선되므로 런처는
+PIL 이미지를 그대로 돌려주기만 하면 된다. `capture_fn` 은 캡처와 메타 기록만 한다.
 
-- [ ] **Step 7: 테스트를 다시 돌려 회귀가 없는지 확인한다**
+- [ ] **Step 8: 테스트를 다시 돌려 회귀가 없는지 확인한다**
 
 Run: `uv run python poc/workflow_3/monitor/test_manual_record.py`
 Expected: PASS — 28개 `[OK]` (신규 Windows 코드는 import 만 되고 실행되지 않는다)
@@ -958,7 +992,10 @@ Expected: PASS — 28개 `[OK]` (신규 Windows 코드는 import 만 되고 실�
 Run: `uv run python -c "import poc.workflow_3.monitor.manual_record"`
 Expected: 오류 없이 종료 (Mac 에서 import 가능해야 한다)
 
-- [ ] **Step 8: README 에 사용법을 추가한다**
+Run: `uv run python -c "from poc.workflow_3.monitor.recording import RecordingSession; s=RecordingSession(None,'/tmp/x',tag='t'); print(s.jpeg_quality)"`
+Expected: `95` (알람 사이클 기본 경로가 바뀌지 않았음을 확인)
+
+- [ ] **Step 9: README 에 사용법을 추가한다**
 
 `poc/workflow_3/README.md` 에 절을 추가한다.
 
@@ -977,7 +1014,7 @@ uv run python poc/workflow_3/monitor/manual_record.py
 - Ctrl+C 로 종료. 창을 닫아도 자동 종료된다.
 - 저장 경로: `align_images/<EQP>/_manual/<tag>/recording/`
 - 분석은 별도 실행: `RECORDING_FILTER_INPUT_DIR=<경로> uv run python poc/workflow_3/recording_filter/filter_recording.py`
-- 알려진 제약: 프레임 JPEG 품질은 `RecordingSession` 기본값(95)을 따른다. `MANUAL_RECORD_JPEG_QUALITY` 는 아직 배선되지 않았다.
+- 프레임 JPEG 품질은 기본 85 다(`MANUAL_RECORD_JPEG_QUALITY`). 알람 사이클 녹화는 종전대로 95 를 쓴다.
 
 | env | 기본값 | 역할 |
 |-----|--------|------|
@@ -989,11 +1026,12 @@ uv run python poc/workflow_3/monitor/manual_record.py
 | `MANUAL_RECORD_META` | 1 | 사이드카 메타 기록 |
 ```
 
-- [ ] **Step 9: 커밋**
+- [ ] **Step 10: 커밋**
 
 ```bash
 git add poc/workflow_3/monitor/manual_record.py poc/workflow_3/monitor/test_manual_record.py \
-        poc/workflow_3/debug_artifacts.py poc/workflow_3/README.md
+        poc/workflow_3/debug_artifacts.py poc/workflow_3/monitor/recording.py \
+        poc/workflow_3/README.md
 git commit -m "feat(workflow_3): 수동 녹화 런처 본체 - 창 탐색/예산 감시/세션 수명주기"
 ```
 
@@ -2075,5 +2113,4 @@ Mac 에서 검증할 수 없는 항목이다. 구현 완료 후 오피스에서 
 ## 범위 밖 (스펙 §11 재확인)
 
 재생기(replay), 키보드 입력 검출, 여러 장비 창 동시 녹화, 툴 상태 요약,
-`RecordingSession` 수정. `MANUAL_RECORD_JPEG_QUALITY` 배선도 Task 3 Step 6 주의 2 에
-따라 이번 범위에서 제외한다(README 에 명시).
+`RecordingSession` 의 동작 변경(`jpeg_quality` 기본값 인자 배선은 예외로 포함).

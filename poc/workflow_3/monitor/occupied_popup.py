@@ -40,6 +40,10 @@ def _vlm_confirm_select(vlm_client) -> "bool | None":
 
     True=점유 팝업 확실, False=다른 창(오검출), None=확인 불가(캡처/호출 실패 → 호출부가
     제목만으로 폴백). 좌표가 아니라 yes/no 만 묻는다.
+
+    False 는 모델이 **is_select_popup 을 불리언 false 로 명시**했을 때만 낸다. 키가 없거나
+    타입이 다르면(모델 교체로 스키마가 흔들리는 경우) '아님'이 아니라 '모름'(None)이다 -
+    '아님'으로 읽으면 점유 가드가 조용히 꺼져 점유된 tool 에 그대로 진입한다.
     """
     if not callable(find_window_by_title_prefix) or capture_window is None:
         return None
@@ -58,7 +62,14 @@ def _vlm_confirm_select(vlm_client) -> "bool | None":
             temperature=0.0,
         )
         parsed = extract_json(response.text)
-        return parsed.get("is_select_popup") is True
+        verdict = parsed.get("is_select_popup")
+        if not isinstance(verdict, bool):
+            print(
+                "[WARNING] select 팝업 VLM 응답에 is_select_popup 불리언 없음"
+                f"(제목만으로 판단): {parsed!r}"
+            )
+            return None
+        return verdict
     except Exception as exc:
         print(f"[WARNING] select 팝업 VLM 확인 실패(제목만으로 판단): {exc}")
         return None

@@ -37,6 +37,13 @@ def _fake_vlm(is_popup: bool):
     )
 
 
+def _fake_vlm_raw(text: str):
+    """응답 본문을 그대로 지정하는 stub (스키마 드리프트/비JSON 재현용)."""
+    return SimpleNamespace(
+        chat_with_image_b64=lambda **kw: SimpleNamespace(text=text)
+    )
+
+
 # ------------------------------------------------------------------
 # 1) _is_select_title.
 # ------------------------------------------------------------------
@@ -99,6 +106,56 @@ def test_detect_vlm_rejects():
     finally:
         _restore(state)
     print("[OK] test_detect_vlm_rejects")
+
+
+def _stub_select_window(state):
+    """'select' 제목 창 + 캡처를 stub 해 VLM 확인 단계까지 도달시킨다."""
+    _swap(state, op, "collect_window_rows", lambda: [SimpleNamespace(title="select")])
+    _swap(state, op, "find_window_by_title_prefix", lambda *a, **k: object())
+    _swap(state, op, "capture_window", lambda win: Image.new("RGB", (80, 40)))
+
+
+def test_detect_vlm_schema_drift_is_conservative():
+    """JSON 은 파싱되지만 is_select_popup 키가 없으면 '모름'이지 '아님'이 아니다.
+
+    모델을 갈아끼우면(ui-venus -> mai-ui) 자유형 스키마 준수도가 달라져 다른 키로 답할 수
+    있다. 이때 '아님'으로 읽으면 점유 가드가 조용히 꺼져 점유된 tool 에 진입한다.
+    """
+    state = {}
+    _stub_select_window(state)
+    try:
+        # 키 자체가 없음 — 판정 불가.
+        assert op.detect_select_popup(_fake_vlm_raw('{"answer": "yes"}')) is True
+        # 키는 있으나 불리언이 아님 — 판정 불가.
+        assert op.detect_select_popup(_fake_vlm_raw('{"is_select_popup": "true"}')) is True
+        # grounding 모델이 좌표 dict 로 답한 경우 — 판정 불가.
+        assert op.detect_select_popup(_fake_vlm_raw('{"x": 12, "y": 34}')) is True
+    finally:
+        _restore(state)
+    print("[OK] test_detect_vlm_schema_drift_is_conservative")
+
+
+def test_detect_vlm_non_json_is_conservative():
+    """비JSON 응답(grounding 포인트 등)도 '모름' -> 제목만으로 점유 판단."""
+    state = {}
+    _stub_select_window(state)
+    try:
+        assert op.detect_select_popup(_fake_vlm_raw("[123,456]")) is True
+        assert op.detect_select_popup(_fake_vlm_raw("[-1,-1]")) is True
+    finally:
+        _restore(state)
+    print("[OK] test_detect_vlm_non_json_is_conservative")
+
+
+def test_detect_vlm_explicit_false_still_rejects():
+    """명시적 is_select_popup=false 만 오검출로 보고 접속을 계속한다(가드 완화 유지)."""
+    state = {}
+    _stub_select_window(state)
+    try:
+        assert op.detect_select_popup(_fake_vlm_raw('{"is_select_popup": false}')) is False
+    finally:
+        _restore(state)
+    print("[OK] test_detect_vlm_explicit_false_still_rejects")
 
 
 def test_detect_vlm_unavailable_fallback():
@@ -210,8 +267,11 @@ if __name__ == "__main__":
     test_detect_title_no_vlm()
     test_detect_vlm_confirms()
     test_detect_vlm_rejects()
+    test_detect_vlm_schema_drift_is_conservative()
+    test_detect_vlm_non_json_is_conservative()
+    test_detect_vlm_explicit_false_still_rejects()
     test_detect_vlm_unavailable_fallback()
     test_wait_abort_check_short_circuits()
     test_process_fail_rows_occupied_cooldown()
     test_process_fail_rows_success_marks_active()
-    print("\n=== occupied_popup: 9/9 통과 ===")
+    print("\n=== occupied_popup: 12/12 통과 ===")

@@ -194,6 +194,60 @@ def test_meta_writer_survives_write_failure():
     print("[OK] test_meta_writer_survives_write_failure")
 
 
+def test_meta_writer_disables_after_write_failure():
+    """쓰기 시점 실패도 이후 append 를 영구히 막는다 - 유효한 값도 써지면 안 된다."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out_dir = Path(tmp)
+        writer = FrameMetaWriter(out_dir)
+        writer.append({"frame": "a.jpg", "bad": object()})  # json.dumps 가 터진다.
+        writer.append({"frame": "b.jpg"})  # 유효해도 이후는 전부 막혀야 한다.
+        writer.close()
+
+        meta_path = out_dir / "frame_meta.jsonl"
+        content = meta_path.read_text(encoding="utf-8") if meta_path.exists() else ""
+        lines = [line for line in content.strip().split("\n") if line]
+        assert lines == [], lines
+    print("[OK] test_meta_writer_disables_after_write_failure")
+
+
+def test_meta_writer_warns_only_once_on_repeated_failures():
+    """지속 장애에서도 경고는 최초 1회만 찍는다 - 콘솔 도배 방지."""
+    import contextlib
+    import io
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out_dir = Path(tmp)
+        writer = FrameMetaWriter(out_dir)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            writer.append({"frame": "a.jpg", "bad": object()})
+            writer.append({"frame": "b.jpg", "bad": object()})
+            writer.append({"frame": "c.jpg", "bad": object()})
+        writer.close()
+        assert buf.getvalue().count("[WARNING]") == 1, buf.getvalue()
+    print("[OK] test_meta_writer_warns_only_once_on_repeated_failures")
+
+
+def test_meta_writer_write_failure_raises_nothing():
+    """실패하는 append 가 연속으로 호출돼도 예외가 밖으로 새지 않는다."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out_dir = Path(tmp)
+        writer = FrameMetaWriter(out_dir)
+        writer.append({"frame": "a.jpg", "bad": object()})
+        writer.append({"frame": "b.jpg", "bad": object()})
+        writer.append({"frame": "c.jpg", "bad": object()})
+        writer.close()
+    print("[OK] test_meta_writer_write_failure_raises_nothing")
+
+
 if __name__ == "__main__":
     test_parse_eqp_from_plain_title()
     test_parse_eqp_strips_surrounding_whitespace()
@@ -216,4 +270,7 @@ if __name__ == "__main__":
     test_probe_points_handles_tiny_rect()
     test_meta_writer_appends_one_json_per_line()
     test_meta_writer_survives_write_failure()
+    test_meta_writer_disables_after_write_failure()
+    test_meta_writer_warns_only_once_on_repeated_failures()
+    test_meta_writer_write_failure_raises_nothing()
     print("\n[OK] manual_record 파싱/경로 테스트 통과")

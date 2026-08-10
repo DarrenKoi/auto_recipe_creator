@@ -151,7 +151,15 @@ class FrameMetaWriter:
             print(f"[WARNING] frame_meta 기록 비활성화(열기 실패): {exc}")
 
     def append(self, record) -> None:
-        """레코드 1건을 기록한다. 어떤 실패도 밖으로 던지지 않는다."""
+        """레코드 1건을 기록한다. 어떤 실패도 밖으로 던지지 않는다.
+
+        열기 실패든 쓰기 실패든 한 번 _failed 가 서면 이후 append 는 즉시
+        반환한다 - 재시도도, 재경고도 하지 않는다. 5초 단위로 몇 분씩 도는
+        루프에서 지속 장애가 나면 프레임마다 경고를 찍어 콘솔을 도배하는 것을
+        막기 위함이다(경고는 최초 1회만).
+        """
+        if self._failed:
+            return
         self._ensure_open()
         if self._handle is None:
             return

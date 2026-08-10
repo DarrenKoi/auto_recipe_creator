@@ -13,6 +13,7 @@ from poc.workflow_3.monitor.manual_record import (
     parse_eqp_from_title,
     pick_window_row,
     sanitize_eqp_for_path,
+    _watch_until_stop,
 )
 from poc.workflow_3.monitor.frame_meta import (
     FrameMetaWriter,
@@ -335,6 +336,63 @@ def test_pick_window_row_disambiguates_by_eqp():
     print("[OK] test_pick_window_row_disambiguates_by_eqp")
 
 
+def test_pick_window_row_ambiguous_prefix_returns_none():
+    """부분 문자열이 여러 창에 매칭되면 첫 번째를 임의 채택하지 않는다(FINDING 1)."""
+    rows = [
+        ("Remote Monitoring System - MCD916", 10),
+        ("Remote Monitoring System - MCD917", 11),
+    ]
+    assert pick_window_row(rows, "MCD91") is None
+    print("[OK] test_pick_window_row_ambiguous_prefix_returns_none")
+
+
+def test_pick_window_row_exact_enough_substring_still_resolves():
+    """정확히 한 창에만 매칭되는 부분 문자열은 여전히 그 창을 고른다."""
+    rows = [
+        ("Remote Monitoring System - MCD916", 10),
+        ("Remote Monitoring System - MCD917", 11),
+    ]
+    assert pick_window_row(rows, "MCD916") == rows[0]
+    print("[OK] test_pick_window_row_exact_enough_substring_still_resolves")
+
+
+def test_watch_until_stop_returns_watch_error_and_lets_caller_teardown():
+    """감시 루프 중 예기치 못한 예외가 나도 사유를 반환해 teardown 을 이어가게 한다(FINDING 2).
+
+    is_alive() 가 두 번째 호출에서 터지는 가짜 세션으로, 예외가 밖으로 새지
+    않고 "watch_error" 로 잡히는지, 그리고 그 반환값으로 호출부(main 이
+    실제로 하는 것과 동일하게) session.stop() 을 계속 부를 수 있는지 확인한다.
+    """
+    from pathlib import Path
+
+    class _FakeSession:
+        def __init__(self):
+            self.calls = 0
+            self.frames = []
+            self.stopped_with = None
+
+        def is_alive(self):
+            self.calls += 1
+            if self.calls >= 2:
+                raise RuntimeError("boom")
+            return True
+
+        def stop(self, reason):
+            self.stopped_with = reason
+            return self.frames
+
+    fake = _FakeSession()
+    settings = ManualRecordSettings(watch_interval_sec=0.0)
+    reason = _watch_until_stop(fake, Path("/tmp"), settings)
+    assert reason == "watch_error", reason
+
+    # main() 은 반환된 사유로 무조건 session.stop() 을 부른다 - 그 계약을
+    # 여기서 재현해 teardown 이 실제로 도달함을 확인한다.
+    fake.stop(reason)
+    assert fake.stopped_with == "watch_error"
+    print("[OK] test_watch_until_stop_returns_watch_error_and_lets_caller_teardown")
+
+
 if __name__ == "__main__":
     test_parse_eqp_from_plain_title()
     test_parse_eqp_strips_surrounding_whitespace()
@@ -370,4 +428,7 @@ if __name__ == "__main__":
     test_pick_window_row_none_when_empty()
     test_pick_window_row_requires_eqp_when_ambiguous()
     test_pick_window_row_disambiguates_by_eqp()
+    test_pick_window_row_ambiguous_prefix_returns_none()
+    test_pick_window_row_exact_enough_substring_still_resolves()
+    test_watch_until_stop_returns_watch_error_and_lets_caller_teardown()
     print("\n[OK] manual_record 파싱/경로 테스트 통과")

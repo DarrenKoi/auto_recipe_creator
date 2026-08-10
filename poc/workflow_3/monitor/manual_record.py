@@ -132,14 +132,18 @@ def pick_window_row(rows, wanted_eqp):
 
     rows 는 (title, handle) 튜플 목록이다. 후보가 여럿인데 EQP 지정이 없으면
     None 을 돌려준다 - 엉뚱한 장비를 녹화하느니 다시 실행하는 편이 낫다.
+    EQP 를 줬어도 그 부분 문자열에 매칭되는 창이 둘 이상이면(예: "MCD91" 이
+    MCD916 과 MCD917 모두에 매칭) 첫 번째를 임의로 채택하지 않고 마찬가지로
+    None 을 돌려준다 - 그렇지 않으면 엉뚱한 장비가 조용히 선택된다
+    (2026-08-10 리뷰 FINDING 1).
     """
     if not rows:
         return None
     wanted = (wanted_eqp or "").strip().lower()
     if wanted:
-        for row in rows:
-            if wanted in (row[0] or "").lower():
-                return row
+        matches = [row for row in rows if wanted in (row[0] or "").lower()]
+        if len(matches) == 1:
+            return matches[0]
         return None
     if len(rows) == 1:
         return rows[0]
@@ -212,6 +216,34 @@ def _make_capture_fn(tool_window, meta_writer, started_at, our_handles):
     return _capture
 
 
+def _watch_until_stop(session, out_dir, settings) -> str:
+    """세션이 끝나거나 예산/중단 신호가 올 때까지 감시하고 중지 사유를 돌려준다.
+
+    이 함수는 session 을 직접 멈추지 않는다 - 관찰만 하고 사유 문자열을
+    리턴한다. 그래야 호출부(main)가 반환값과 무관하게 항상
+    session.stop()/meta_writer.close() 를 실행할 수 있다("teardown 은 항상
+    완료된다"는 저장소 규칙, 2026-08-10 리뷰 FINDING 2). KeyboardInterrupt 는
+    기존과 동일하게 "user_interrupt" 다. 그 외의 예기치 못한 예외
+    (is_alive/sleep/budget_stop_reason/dir_size_mb 어디서든 날 수 있다) 는
+    "watch_error" 로 잡아 삼킨다 - 그러지 않으면 예외가 main() 밖으로 새어나가
+    녹화 스레드가 계속 돌고 manifest 도 안 써지는 채로 프로세스가 끝난다.
+    """
+    try:
+        while session.is_alive():
+            time.sleep(settings.watch_interval_sec)
+            reason = budget_stop_reason(len(session.frames), dir_size_mb(out_dir), settings)
+            if reason:
+                print(f"[WARNING] ===== 예산 상한 도달({reason}) - 녹화를 종료합니다 =====")
+                return reason
+    except KeyboardInterrupt:
+        print("\n[INFO] Ctrl+C 감지 - 녹화를 종료합니다.")
+        return "user_interrupt"
+    except Exception as exc:
+        print(f"[WARNING] 감시 루프에서 예기치 못한 오류(녹화는 종료합니다): {exc}")
+        return "watch_error"
+    return "stopped"
+
+
 def main() -> int:
     """수동 녹화 세션을 실행한다. 종료 코드 0=정상, 1=시작 실패."""
     settings = load_manual_record_settings()
@@ -222,7 +254,13 @@ def main() -> int:
 
     chosen = pick_window_row(rows, settings.eqp_id)
     if chosen is None:
-        print(f"[ERROR] 모니터링 창이 {len(rows)}개 있습니다. MANUAL_RECORD_EQP_ID 로 지정하세요:")
+        if settings.eqp_id:
+            print(
+                f"[ERROR] MANUAL_RECORD_EQP_ID={settings.eqp_id!r} 로 특정 창 하나를 "
+                f"고를 수 없습니다(매칭 0개 또는 여러 개). 후보:"
+            )
+        else:
+            print(f"[ERROR] 모니터링 창이 {len(rows)}개 있습니다. MANUAL_RECORD_EQP_ID 로 지정하세요:")
         for title, handle in rows:
             print(f"        - {title}  (handle={handle})")
         return 1
@@ -261,18 +299,7 @@ def main() -> int:
     session.start()
     print("[INFO] 녹화 중입니다. 중지하려면 Ctrl+C 를 누르세요.")
 
-    stop_reason = "stopped"
-    try:
-        while session.is_alive():
-            time.sleep(settings.watch_interval_sec)
-            reason = budget_stop_reason(len(session.frames), dir_size_mb(out_dir), settings)
-            if reason:
-                print(f"[WARNING] ===== 예산 상한 도달({reason}) - 녹화를 종료합니다 =====")
-                stop_reason = reason
-                break
-    except KeyboardInterrupt:
-        print("\n[INFO] Ctrl+C 감지 - 녹화를 종료합니다.")
-        stop_reason = "user_interrupt"
+    stop_reason = _watch_until_stop(session, out_dir, settings)
 
     frames = session.stop(stop_reason)
     if meta_writer is not None:

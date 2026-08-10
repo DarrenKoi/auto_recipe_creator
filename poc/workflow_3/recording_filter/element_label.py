@@ -27,24 +27,36 @@ class ElementLabel:
 
 
 def crop_box_around(x, y, side, width, height) -> dict:
-    """클릭 지점을 중심으로 한 정사각 crop 박스를 이미지 안으로 클램프해 만든다."""
+    """클릭 지점을 중심으로 한 정사각 crop 박스를 이미지 안으로 클램프해 만든다.
+
+    업스트림 커서 좌표(Task 6 의 VLM 검출 등)는 프레임을 살짝 벗어나거나 아주
+    멀리 벗어날 수 있다. 그런 입력에서도 항상 이미지 안의 유효한 박스
+    (0 <= left < right <= width, 0 <= top < bottom <= height) 를 돌려준다 -
+    상한과 하한을 모두 클램프해야 하며, 하한만 클램프하면 x/y 가 프레임보다
+    한참 클 때 left 가 width 를 넘어선 채로 남아 right<=left 오류가 난다.
+    """
+    width = max(1, int(width))
+    height = max(1, int(height))
     half = max(1, int(side) // 2)
-    left = max(0, int(x) - half)
-    top = max(0, int(y) - half)
-    right = min(int(width), int(x) + half)
-    bottom = min(int(height), int(y) + half)
-    if right <= left:
-        right = min(int(width), left + 1)
-    if bottom <= top:
-        bottom = min(int(height), top + 1)
+
+    def _clamp_range(center, size):
+        left = int(center) - half
+        right = int(center) + half
+        left = max(0, min(left, size - 1))
+        right = max(left + 1, min(right, size))
+        return left, right
+
+    left, right = _clamp_range(x, width)
+    top, bottom = _clamp_range(y, height)
     return {"left": left, "top": top, "right": right, "bottom": bottom}
 
 
 def pick_nearest_item(items, click_xy, crop_origin):
     """OCR 항목 중 클릭 지점에 가장 가까운 것을 고른다(crop 좌표계로 환산해 비교).
 
-    `parse_spotting_items` 의 실제 반환 키는 `bbox` 이지만, 손으로 만든 테스트/
-    호출부는 `box` 를 쓰기도 하므로 두 키를 모두 받아들인다.
+    box 키는 `bbox` 하나만 받는다 - `parse_spotting_items` (poc/workflow_3/vlm/
+    ocr_spotting.py) 가 실제로 내보내는 키가 `bbox` 뿐이기 때문이다. 존재하지
+    않는 `box` 키까지 받아주면 실제로는 없는 계약을 코드에 남기게 된다.
     """
     if not items:
         return None
@@ -52,7 +64,7 @@ def pick_nearest_item(items, click_xy, crop_origin):
     cy = int(click_xy[1]) - int(crop_origin[1])
 
     def _distance(item):
-        box = item.get("box") or item.get("bbox") or {}
+        box = item.get("bbox") or {}
         try:
             mx = (int(box["left"]) + int(box["right"])) / 2.0
             my = (int(box["top"]) + int(box["bottom"])) / 2.0

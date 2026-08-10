@@ -123,4 +123,10 @@ def monitor_loop(settings: Workflow3eSettings | None = None) -> None:
 
 
 if __name__ == "__main__":
+    # 실편집 workflow_3_config.py 의 토글을 env 로 브리지(있으면). load_workflow3e_settings
+    # 가 env 를 읽기 전에 호출해야 적용된다. 실제 OS env 가 우선(setdefault).
+    # 빠뜨리면 파일에 적어둔 안전 토글(SAFE_MODE 등)이 이 진입점에서만 조용히 무시된다.
+    from poc.workflow_3.workflow_3_config_loader import seed_env
+
+    seed_env()
     monitor_loop()

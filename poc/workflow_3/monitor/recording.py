@@ -85,6 +85,7 @@ class RecordingSession:
         heartbeat_sec: float = 5.0,
         change_min_px: int = 4,
         max_sec: float = 900.0,
+        jpeg_quality: int = 95,
         capture_fn=None,
     ):
         self.tool_window = tool_window
@@ -94,6 +95,7 @@ class RecordingSession:
         self.heartbeat_sec = max(self.poll_sec, float(heartbeat_sec))
         self.change_min_px = max(1, int(change_min_px))
         self.max_sec = float(max_sec)
+        self.jpeg_quality = int(jpeg_quality)
         # 테스트 주입점 — 기본은 실제 창 캡처.
         self._capture_fn = capture_fn or (lambda: capture_window(self.tool_window))
         self.frames: list[Path] = []
@@ -166,7 +168,7 @@ class RecordingSession:
                 if changed or heartbeat_due:
                     elapsed_ms = int(elapsed * 1000)
                     out_path = self.out_dir / f"{self.tag}_rcs_{seq:04d}_{elapsed_ms:08d}ms.jpg"
-                    save_debug_jpeg(image, out_path)
+                    save_debug_jpeg(image, out_path, quality=self.jpeg_quality)
                     self.frames.append(out_path)
                     seq += 1
                     prev_gray = gray
@@ -197,6 +199,7 @@ class RecordingSession:
             "poll_sec": self.poll_sec,
             "heartbeat_sec": self.heartbeat_sec,
             "change_min_px": self.change_min_px,
+            "jpeg_quality": self.jpeg_quality,
             "stop_reason": self.stop_reason,
         }
         try:

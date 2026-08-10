@@ -28,11 +28,15 @@ def debug_image_path(
     )
 
 
-def save_debug_jpeg(image: "Image.Image", out_path: Path) -> None:
-    """원본 스크린샷을 JPEG 로 저장한다."""
+def save_debug_jpeg(image: "Image.Image", out_path: Path, *, quality: int = 95) -> None:
+    """원본 스크린샷을 JPEG 로 저장한다.
+
+    quality 기본값 95 는 단발 캡처 기준이다. 연속 녹화처럼 장수가 많은 경우
+    호출부가 낮춰 쓴다(수동 녹화 세션은 85).
+    """
     out_path.parent.mkdir(parents=True, exist_ok=True)
     debug_img = image.convert("RGB") if image.mode != "RGB" else image
-    debug_img.save(out_path, format="JPEG", quality=95)
+    debug_img.save(out_path, format="JPEG", quality=int(quality))
 
 
 def save_debug_webp(

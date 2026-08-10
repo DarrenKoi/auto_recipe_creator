@@ -72,6 +72,31 @@ uv run python poc/workflow_3/monitor/engineer_done_align_adjustment.py
 - 캘리브레이션 의도는 **threshold 가 아니라 grounding/CV/OCR 체인 검증**이다. 분자가 6 까지 오르길 기다리면 길어질 수 있으니, 빠른 검증에는 `ALIGN_FAIL_ENGINEER_DONE_MIN_COUNT=2 ALIGN_DONE_CALIB_SEC=180` 처럼 임시로 낮춰 done=True 까지 확인한 뒤, 운영 `.env` 에는 기본 6 을 쓴다.
 - 체인이 정상(ROI 로그 → tick 마다 `changed=True` + `n` 증가)인데 시간 내 done 만 안 나면 임계/시간 문제이지 grounding 실패가 아니다.
 
+### 엔지니어 수동 조작 녹화 (알람 불필요)
+
+엔지니어와 약속한 뒤, 이미 열려 있는 Remote Monitoring 창을 그 자리에서 녹화한다.
+접속(tool 더블클릭)은 하지 않는다.
+
+```bash
+uv run python poc/workflow_3/monitor/manual_record.py
+```
+
+- 모니터링 창이 여러 개면 목록을 출력하고 종료한다. `MANUAL_RECORD_EQP_ID` 로 지정한다.
+- 기본 상한은 **600초(10분)**. 프레임 4000장 / 2000MB 는 백스톱이라 정상이면 걸리지 않는다.
+- Ctrl+C 로 종료. 창을 닫아도 자동 종료된다.
+- 저장 경로: `align_images/<EQP>/_manual/<tag>/recording/`
+- 분석은 별도 실행: `RECORDING_FILTER_INPUT_DIR=<경로> uv run python poc/workflow_3/recording_filter/filter_recording.py`
+- 프레임 JPEG 품질은 기본 85 다(`MANUAL_RECORD_JPEG_QUALITY`). 알람 사이클 녹화는 종전대로 95 를 쓴다.
+
+| env | 기본값 | 역할 |
+|-----|--------|------|
+| `MANUAL_RECORD_MAX_SEC` | 600 | 시간 상한(0=무제한) |
+| `MANUAL_RECORD_MAX_FRAMES` | 4000 | 프레임 백스톱 |
+| `MANUAL_RECORD_MAX_DISK_MB` | 2000 | 디스크 백스톱 |
+| `MANUAL_RECORD_POLL_SEC` | 0.2 | 샘플링 요청 간격 |
+| `MANUAL_RECORD_EQP_ID` | (빈값) | 창이 여럿일 때 지정 |
+| `MANUAL_RECORD_META` | 1 | 사이드카 메타 기록 |
+
 ## 주요 env (기존 이름 유지)
 
 | env | 기본 | 의미 |

@@ -6,8 +6,12 @@
 import json
 
 from poc.workflow_3.monitor.manual_record import (
+    ManualRecordSettings,
+    budget_stop_reason,
+    dir_size_mb,
     manual_recording_dir,
     parse_eqp_from_title,
+    pick_window_row,
     sanitize_eqp_for_path,
 )
 from poc.workflow_3.monitor.frame_meta import (
@@ -248,6 +252,89 @@ def test_meta_writer_write_failure_raises_nothing():
     print("[OK] test_meta_writer_write_failure_raises_nothing")
 
 
+def test_budget_ok_when_under_all_limits():
+    """상한 아래면 빈 문자열(계속 진행)."""
+    s = ManualRecordSettings(max_frames=4000, max_disk_mb=2000)
+    assert budget_stop_reason(100, 10.0, s) == ""
+    print("[OK] test_budget_ok_when_under_all_limits")
+
+
+def test_budget_stops_on_frame_limit():
+    """프레임 상한 도달 시 frame_budget."""
+    s = ManualRecordSettings(max_frames=100, max_disk_mb=2000)
+    assert budget_stop_reason(100, 10.0, s) == "frame_budget"
+    assert budget_stop_reason(101, 10.0, s) == "frame_budget"
+    print("[OK] test_budget_stops_on_frame_limit")
+
+
+def test_budget_stops_on_disk_limit():
+    """디스크 상한 도달 시 disk_budget."""
+    s = ManualRecordSettings(max_frames=4000, max_disk_mb=50)
+    assert budget_stop_reason(10, 50.0, s) == "disk_budget"
+    print("[OK] test_budget_stops_on_disk_limit")
+
+
+def test_budget_frame_limit_wins_when_both_exceeded():
+    """둘 다 넘으면 프레임을 먼저 보고한다(사유가 하나여야 manifest 가 명확)."""
+    s = ManualRecordSettings(max_frames=10, max_disk_mb=10)
+    assert budget_stop_reason(999, 999.0, s) == "frame_budget"
+    print("[OK] test_budget_frame_limit_wins_when_both_exceeded")
+
+
+def test_budget_zero_means_unlimited():
+    """0 은 무제한 - max_sec 과 같은 규약."""
+    s = ManualRecordSettings(max_frames=0, max_disk_mb=0)
+    assert budget_stop_reason(10 ** 9, 10.0 ** 9, s) == ""
+    print("[OK] test_budget_zero_means_unlimited")
+
+
+def test_dir_size_mb_counts_files():
+    """폴더 용량을 MB 로 센다."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "a.jpg").write_bytes(b"x" * (1024 * 1024))
+        (root / "b.jpg").write_bytes(b"x" * (1024 * 512))
+        assert 1.4 < dir_size_mb(root) < 1.6, dir_size_mb(root)
+    print("[OK] test_dir_size_mb_counts_files")
+
+
+def test_pick_window_row_single_match():
+    """모니터링 창이 하나면 그대로 채택한다."""
+    rows = [("Remote Monitoring System - MCD916", 10)]
+    assert pick_window_row(rows, "") == rows[0]
+    print("[OK] test_pick_window_row_single_match")
+
+
+def test_pick_window_row_none_when_empty():
+    """하나도 없으면 None."""
+    assert pick_window_row([], "") is None
+    print("[OK] test_pick_window_row_none_when_empty")
+
+
+def test_pick_window_row_requires_eqp_when_ambiguous():
+    """여러 개인데 EQP 지정이 없으면 None - 임의 선택하지 않는다."""
+    rows = [
+        ("Remote Monitoring System - MCD916", 10),
+        ("Remote Monitoring System - MCD917", 11),
+    ]
+    assert pick_window_row(rows, "") is None
+    print("[OK] test_pick_window_row_requires_eqp_when_ambiguous")
+
+
+def test_pick_window_row_disambiguates_by_eqp():
+    """EQP 를 주면 그 창을 고른다(대소문자 무시)."""
+    rows = [
+        ("Remote Monitoring System - MCD916", 10),
+        ("Remote Monitoring System - MCD917", 11),
+    ]
+    assert pick_window_row(rows, "mcd917") == rows[1]
+    assert pick_window_row(rows, "MCD918") is None
+    print("[OK] test_pick_window_row_disambiguates_by_eqp")
+
+
 if __name__ == "__main__":
     test_parse_eqp_from_plain_title()
     test_parse_eqp_strips_surrounding_whitespace()
@@ -273,4 +360,14 @@ if __name__ == "__main__":
     test_meta_writer_disables_after_write_failure()
     test_meta_writer_warns_only_once_on_repeated_failures()
     test_meta_writer_write_failure_raises_nothing()
+    test_budget_ok_when_under_all_limits()
+    test_budget_stops_on_frame_limit()
+    test_budget_stops_on_disk_limit()
+    test_budget_frame_limit_wins_when_both_exceeded()
+    test_budget_zero_means_unlimited()
+    test_dir_size_mb_counts_files()
+    test_pick_window_row_single_match()
+    test_pick_window_row_none_when_empty()
+    test_pick_window_row_requires_eqp_when_ambiguous()
+    test_pick_window_row_disambiguates_by_eqp()
     print("\n[OK] manual_record 파싱/경로 테스트 통과")

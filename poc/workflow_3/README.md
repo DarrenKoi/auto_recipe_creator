@@ -97,6 +97,24 @@ uv run python poc/workflow_3/monitor/manual_record.py
 | `MANUAL_RECORD_EQP_ID` | (빈값) | 창이 여럿일 때 지정 |
 | `MANUAL_RECORD_META` | 1 | 사이드카 메타 기록 |
 
+#### 첫 오피스 분석 실행 권장 설정 (VLM 호출 상한)
+
+수동 세션 분석은 Stage 2a(커서 VLM)의 호출 예산이 기본 무제한(`RECORDING_FILTER_MAX_VLM_CALLS=0`)
+이다. 엔지니어 커서가 라이브 SEM 박스 위에 머무는 동안은 프레임마다 승격되므로, 10분
+세션이면 프록시 호출이 500~2000 회 / 30~120분까지 늘어날 수 있다. 기본값은 그대로 둔다
+(줄이면 기존 알람 사이클 분석이 조용히 잘린다). 대신 **첫 실행만** 상한을 걸고 감을 잡는다:
+
+```bash
+RECORDING_FILTER_INPUT_DIR=<녹화 경로> RECORDING_FILTER_MAX_VLM_CALLS=300 \
+  uv run python poc/workflow_3/recording_filter/filter_recording.py
+```
+
+상한에 걸려 잘린 분량은 숨기지 않는다 - `summary.json` 의 `truncated` / `skipped_due_to_cap`
+에 그대로 남고, 실제 호출량은 `vlm_calls_stage1_5_region_map` / `vlm_calls_stage2a_cursor` /
+`vlm_calls_stage2c_label_estimate` / `vlm_calls_total_estimate` 로 스테이지별로 확인한다.
+게이트/가림이 이벤트를 전부 걷어내면 상태가 `all_events_discarded` 로 끝나며(exit 1),
+`ambient_events_dropped` / `occluded_events_excluded` 로 원인을 가른다.
+
 ## 주요 env (기존 이름 유지)
 
 | env | 기본 | 의미 |

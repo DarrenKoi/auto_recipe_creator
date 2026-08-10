@@ -1,9 +1,8 @@
 """recording_filter 실행 파라미터 — env 주도 dataclass (CLI 인자 없음)."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from poc.workflow_3.util import env_flag, env_float, env_int
-from poc.workflow_3.vlm.flask_vlm import UI_VENUS_MODEL_NAME
 
 # 기본 VLM service slug.
 _DEFAULT_SERVICE = "mai-ui"
@@ -22,8 +21,10 @@ class RecordingFilterSettings:
     click_min_changed_px: int = 1500    # ROI 안 변화 픽셀 임계(클릭 조건)
     click_diff_threshold: int = 25      # native diff 마스크 임계
     # ---- VLM ----
+    # service 는 route slug 다. 모델명은 서비스 엔트리가 들고 있으므로 여기서
+    # 따로 두지 않는다 - 예전 vlm_model 필드는 mai-ui 라우트에 ui-venus 모델명을
+    # 실어 보내는 불일치를 만들었다(2026-08-10 최종 리뷰 FINDING 4).
     vlm_service: str = _DEFAULT_SERVICE
-    vlm_model: str = field(default_factory=lambda: UI_VENUS_MODEL_NAME)
     vlm_request_delay_sec: float = 1.0  # 프록시 과부하 방지 간격
     max_vlm_calls: int = 0              # 0 = 생존 전체 처리(샘플링 없음)
     # ---- Stage 1.5: 영역 게이트 ----

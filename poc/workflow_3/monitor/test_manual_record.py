@@ -12,6 +12,7 @@ from poc.workflow_3.monitor.manual_record import (
     manual_recording_dir,
     parse_eqp_from_title,
     pick_window_row,
+    resolve_capture_handles,
     sanitize_eqp_for_path,
     _watch_until_stop,
 )
@@ -19,6 +20,7 @@ from poc.workflow_3.monitor.frame_meta import (
     FrameMetaWriter,
     build_meta_record,
     classify_occlusion,
+    normalize_hits_to_root,
     probe_points,
 )
 
@@ -133,6 +135,112 @@ def test_classify_occlusion_unknown_when_no_hits():
     """조회 자체가 실패해 표본이 없으면 판정하지 않는다."""
     assert classify_occlusion([], {10}) == "unknown"
     print("[OK] test_classify_occlusion_unknown_when_no_hits")
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-10 최종 리뷰 FINDING 1 - WindowFromPoint 는 자식 컨트롤 핸들을 준다.
+# root 로 정규화하지 않으면 MFC 계열인 RCS 창은 항상 "full" 로 찍혀 분석에서
+# 모든 프레임이 폐기된다. NULL(0) 결과도 "남의 창" 이 아니라 "정보 없음" 이다.
+# ---------------------------------------------------------------------------
+
+def test_classify_occlusion_unknown_when_all_hits_are_zero():
+    """WindowFromPoint 가 전부 NULL(0) 이면 판정하지 않는다(full 아님)."""
+    assert classify_occlusion([0, 0, 0, 0, 0], {10}) == "unknown"
+    print("[OK] test_classify_occlusion_unknown_when_all_hits_are_zero")
+
+
+def test_classify_occlusion_ignores_zero_hits_among_valid_ones():
+    """0 은 표본에서 빠지고 나머지로 판정한다."""
+    assert classify_occlusion([0, 10, 10, 0, 10], {10}) == "none"
+    print("[OK] test_classify_occlusion_ignores_zero_hits_among_valid_ones")
+
+
+def test_normalize_hits_to_root_maps_child_handles_to_our_root():
+    """자식 컨트롤 핸들을 root 로 올리면 우리 창으로 인식된다(가림 없음)."""
+    child_hits = [201, 202, 203, 204, 205]      # 원시 WindowFromPoint 결과
+    normalized = normalize_hits_to_root(child_hits, lambda _handle: 10)
+    assert normalized == [10, 10, 10, 10, 10], normalized
+    assert classify_occlusion(normalized, {10}) == "none"
+    print("[OK] test_normalize_hits_to_root_maps_child_handles_to_our_root")
+
+
+def test_normalize_hits_to_root_detects_foreign_window():
+    """남의 창 위 표본은 root 로 올려도 우리 창이 아니다(진짜 가림은 여전히 잡힌다)."""
+    normalized = normalize_hits_to_root([301, 302], lambda _handle: 99)
+    assert classify_occlusion(normalized, {10}) == "full"
+    print("[OK] test_normalize_hits_to_root_detects_foreign_window")
+
+
+def test_normalize_hits_to_root_keeps_zero_as_no_information():
+    """0/None 입력은 root 조회 없이 None(정보 없음)으로 남는다."""
+    normalized = normalize_hits_to_root([0, None, 0], lambda _handle: 10)
+    assert normalized == [None, None, None], normalized
+    assert classify_occlusion(normalized, {10}) == "unknown"
+    print("[OK] test_normalize_hits_to_root_keeps_zero_as_no_information")
+
+
+def test_normalize_hits_to_root_treats_resolver_failure_as_unknown():
+    """root 조회가 실패(예외/0)하면 원시 핸들로 되돌리지 않고 판정 불가로 둔다."""
+    def _boom(_handle):
+        raise OSError("GetAncestor 실패")
+
+    assert normalize_hits_to_root([201, 202], _boom) == [None, None]
+    assert normalize_hits_to_root([201, 202], lambda _handle: 0) == [None, None]
+    print("[OK] test_normalize_hits_to_root_treats_resolver_failure_as_unknown")
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-10 최종 리뷰 FINDING 5 - 가림 판정 핸들은 실제 캡처하는 창에서 뽑는다.
+# ---------------------------------------------------------------------------
+
+def test_resolve_capture_handles_uses_resolved_window_handle():
+    """고른 창과 캡처 창이 같으면 그 핸들 하나를 쓴다(경고 없음)."""
+    import contextlib
+    import io
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        handles = resolve_capture_handles(object(), 10, extract_fn=lambda _w: 10)
+    assert handles == {10}, handles
+    assert "[WARNING]" not in buf.getvalue(), buf.getvalue()
+    print("[OK] test_resolve_capture_handles_uses_resolved_window_handle")
+
+
+def test_resolve_capture_handles_warns_and_prefers_capture_window_on_mismatch():
+    """선택 핸들과 캡처 창 핸들이 다르면 경고하고 캡처 창 기준으로 판정한다."""
+    import contextlib
+    import io
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        handles = resolve_capture_handles(
+            object(), 10, "Remote Monitoring System - MCD917",
+            "Remote Monitoring System - MCD916", extract_fn=lambda _w: 77,
+        )
+    assert handles == {77}, handles
+    output = buf.getvalue()
+    assert "[WARNING]" in output, output
+    assert "MCD916" in output and "MCD917" in output, output
+    print("[OK] test_resolve_capture_handles_warns_and_prefers_capture_window_on_mismatch")
+
+
+def test_resolve_capture_handles_falls_back_to_picked_handle():
+    """캡처 창 핸들을 못 얻으면 고른 핸들로 폴백한다(경고 후 계속 진행)."""
+    import contextlib
+    import io
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        handles = resolve_capture_handles(object(), 10, extract_fn=lambda _w: None)
+    assert handles == {10}, handles
+    assert "[WARNING]" in buf.getvalue(), buf.getvalue()
+
+    def _boom(_window):
+        raise RuntimeError("추출 실패")
+
+    handles = resolve_capture_handles(object(), 10, extract_fn=_boom)
+    assert handles == {10}, handles
+    print("[OK] test_resolve_capture_handles_falls_back_to_picked_handle")
 
 
 def test_probe_points_are_inside_rect():
@@ -411,6 +519,15 @@ if __name__ == "__main__":
     test_classify_occlusion_partial_when_mixed()
     test_classify_occlusion_accepts_child_handles()
     test_classify_occlusion_unknown_when_no_hits()
+    test_classify_occlusion_unknown_when_all_hits_are_zero()
+    test_classify_occlusion_ignores_zero_hits_among_valid_ones()
+    test_normalize_hits_to_root_maps_child_handles_to_our_root()
+    test_normalize_hits_to_root_detects_foreign_window()
+    test_normalize_hits_to_root_keeps_zero_as_no_information()
+    test_normalize_hits_to_root_treats_resolver_failure_as_unknown()
+    test_resolve_capture_handles_uses_resolved_window_handle()
+    test_resolve_capture_handles_warns_and_prefers_capture_window_on_mismatch()
+    test_resolve_capture_handles_falls_back_to_picked_handle()
     test_probe_points_are_inside_rect()
     test_probe_points_handles_tiny_rect()
     test_meta_writer_appends_one_json_per_line()

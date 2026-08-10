@@ -150,6 +150,53 @@ def pick_window_row(rows, wanted_eqp):
     return None
 
 
+def resolve_capture_handles(
+    tool_window, picked_handle, resolved_title="", picked_title="", *, extract_fn=None
+):
+    """가림 판정에 쓸 핸들 집합을 **실제 캡처 대상 창**에서 뽑는다.
+
+    (2026-08-10 최종 리뷰 FINDING 5) 창 선택(pick_window_row)과 캡처 대상 해석
+    (find_remote_monitoring_window)은 각자 독립적으로 제목을 매칭한다. 둘이
+    다른 창으로 갈리면 캡처는 A, 가림 판정은 B 가 되어 모든 프레임이 경고 없이
+    "full" 로 찍히고 분석에서 전량 폐기된다.
+
+    resolved 핸들을 못 얻으면 고른 핸들로 폴백하고, 두 핸들이 다르면 둘 다
+    이름을 찍어 경고한 뒤 **resolved 핸들**(실제 캡처하는 창)로 진행한다.
+    extract_fn 은 테스트 주입용이다(window_utils 는 Windows 전용이라 Mac 에서
+    import 자체가 실패한다).
+    """
+    extractor = extract_fn
+    if extractor is None:
+        try:
+            from poc.workflow_3.util.window_utils import _extract_window_handle
+
+            extractor = _extract_window_handle
+        except Exception as exc:
+            print(f"[WARNING] 창 핸들 추출 유틸을 쓸 수 없습니다(고른 핸들 사용): {exc}")
+
+    resolved_handle = None
+    if extractor is not None:
+        try:
+            resolved_handle = extractor(tool_window)
+        except Exception as exc:
+            print(f"[WARNING] 캡처 대상 창의 핸들 추출 실패(고른 핸들 사용): {exc}")
+
+    if not resolved_handle:
+        print(
+            "[WARNING] 캡처 대상 창의 핸들을 얻지 못했습니다 - 목록에서 고른 핸들로 "
+            f"가림을 판정합니다(handle={picked_handle})."
+        )
+        return {int(picked_handle)} if picked_handle else set()
+
+    if picked_handle and int(resolved_handle) != int(picked_handle):
+        print(
+            "[WARNING] 선택한 창과 실제 캡처 창이 다릅니다 - 캡처 창 기준으로 "
+            f"가림을 판정합니다. 선택={picked_title!r}(handle={picked_handle}), "
+            f"캡처={resolved_title!r}(handle={int(resolved_handle)})"
+        )
+    return {int(resolved_handle)}
+
+
 from poc.workflow_3.monitor.frame_meta import (
     FrameMetaWriter,
     build_meta_record,
@@ -283,6 +330,12 @@ def main() -> int:
         print(f"[ERROR] 창 핸들을 얻지 못했습니다: {title!r}")
         return 1
 
+    # (2026-08-10 최종 리뷰 FINDING 5) 가림 판정 기준 핸들은 **실제로 캡처하는 창**
+    # 에서 뽑는다. pick_window_row 가 고른 handle 과 find_remote_monitoring_window
+    # 가 독립적으로 찾은 창이 어긋나면, 캡처는 A 를 하면서 가림은 B 로 재는 셈이라
+    # 모든 프레임이 조용히 "full"(=분석 전량 폐기)로 찍힌다.
+    our_handles = resolve_capture_handles(tool_window, handle, resolved_title, title)
+
     meta_writer = FrameMetaWriter(out_dir) if settings.meta_enabled else None
     started_at = time.time()
     session = RecordingSession(
@@ -293,7 +346,7 @@ def main() -> int:
         max_sec=settings.max_sec,
         jpeg_quality=settings.jpeg_quality,
         capture_fn=_make_capture_fn(
-            tool_window, meta_writer, started_at, {handle},
+            tool_window, meta_writer, started_at, our_handles,
         ),
     )
     session.start()

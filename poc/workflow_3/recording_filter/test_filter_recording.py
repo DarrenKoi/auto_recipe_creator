@@ -183,3 +183,174 @@ def test_run_filter_survives_element_label_failure(tmp_path, monkeypatch):
 
     assert summary["element_label_errors"] == 1, summary
     assert summary["labeled"] == 0, summary
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-10 최종 리뷰 FINDING 1/2/3/6/7 - 게이트/가림/region/집계/복사량.
+# ---------------------------------------------------------------------------
+
+class _StubDetection:
+    """detect_sem_box 대역 - 라이브 박스를 고정 좌표로 준다."""
+
+    def __init__(self, bbox_px):
+        self.detected = bbox_px is not None
+        self.bbox_px = bbox_px
+
+
+def _write_sidecar(rec, records):
+    """frame_meta.jsonl 을 녹화 루트에 쓴다(FrameMetaWriter 와 같은 위치/형식)."""
+    lines = [json.dumps(rec_item, ensure_ascii=False) for rec_item in records]
+    (rec / "frame_meta.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _stub_sem_box(monkeypatch, bbox_px):
+    """region_gate 가 함수 안에서 import 하는 detect_sem_box 를 바꿔치기한다."""
+    import poc.workflow_3.sem_monitor.sem_box_detect as sem_box_detect_mod
+
+    monkeypatch.setattr(
+        sem_box_detect_mod, "detect_sem_box",
+        lambda _image, _client, **_kwargs: _StubDetection(bbox_px),
+    )
+
+
+def test_click_inside_live_box_is_reported_as_live_image(tmp_path, monkeypatch):
+    """라이브 SEM 영상 안 클릭은 target_kind="live_image" 로 나와야 한다.
+
+    두 가지를 한 번에 건다.
+    - FINDING 3: region 을 verdict 에서 파생하면 살아남는 이벤트는 전부 candidate
+      라 region 이 항상 "ui" 가 되고 live_image 분기가 죽는다.
+    - FINDING 2: 사이드카 rect(480x320) 와 프레임(600x400) 이 1.25배 차이나므로,
+      배율 보정이 없으면 커서 프레임좌표가 (240,160) 으로 계산돼 라이브 박스
+      (left=280) 밖으로 오판된다.
+    """
+    rec = _recording_dir(tmp_path)
+    _stub_sem_box(monkeypatch, {"left": 280, "top": 100, "right": 600, "bottom": 400})
+    # rect 는 480x320(논리) / 프레임은 600x400(물리) -> 125% 배율.
+    rect = {"left": 0, "top": 0, "right": 480, "bottom": 320}
+    _write_sidecar(rec, [
+        {"frame": f"seq_{i}", "t_sec": t, "window_rect": rect,
+         "foreground_title": "Remote Monitoring System - MCD916",
+         "occlusion": "none", "cursor_screen_xy": [240, 160], "cursor_in_window": True}
+        for i, t in enumerate((0.0, 0.3, 0.6))
+    ])
+
+    settings = RecordingFilterSettings(
+        vlm_request_delay_sec=0.0, min_change_area_px=5000, element_label_enabled=False,
+    )
+    status = run_filter(input_dir=rec, settings=settings, client=_FakeClient())
+    assert status == "success", status
+
+    out_dir = rec.parent / "recording_filter"
+    timeline = json.loads((out_dir / "interaction_timeline.json").read_text(encoding="utf-8"))
+    assert len(timeline["events"]) == 1, timeline
+    event = timeline["events"][0]
+    assert event["region"] == "live_image", event
+    assert event["target_kind"] == "live_image", event
+
+    # FINDING 6 - VLM 호출 집계는 스테이지별로 분해되어 있어야 한다.
+    summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
+    assert "vlm_calls" not in summary, summary
+    assert summary["vlm_calls_stage1_5_region_map"] == 1, summary
+    assert summary["vlm_calls_stage2a_cursor"] == 1, summary
+    assert summary["vlm_calls_total_estimate"] == 2, summary
+
+
+def test_run_filter_reports_when_occlusion_discards_everything(tmp_path, monkeypatch):
+    """가림으로 이벤트가 전멸하면 성공 형태 상태를 돌려주면 안 된다(FINDING 1).
+
+    수정 전에는 timeline 이 비어도 "no_clicks"(exit 0) 라, 사이드카 버그로 모든
+    프레임이 "full" 로 찍힌 세션이 조용히 성공처럼 끝났다.
+    """
+    rec = _recording_dir(tmp_path)
+    _stub_sem_box(monkeypatch, None)
+    rect = {"left": 0, "top": 0, "right": 600, "bottom": 400}
+    _write_sidecar(rec, [
+        {"frame": f"seq_{i}", "t_sec": t, "window_rect": rect,
+         "foreground_title": "Notepad", "occlusion": "full",
+         "cursor_screen_xy": [10, 10], "cursor_in_window": False}
+        for i, t in enumerate((0.0, 0.3, 0.6))
+    ])
+
+    settings = RecordingFilterSettings(
+        vlm_request_delay_sec=0.0, min_change_area_px=5000, element_label_enabled=False,
+    )
+    status = run_filter(input_dir=rec, settings=settings, client=_FakeClient())
+    assert status == "all_events_discarded", status
+
+    out_dir = rec.parent / "recording_filter"
+    summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary["occluded_events_excluded"] == 1, summary
+    assert summary["total_change_events"] == 1, summary
+    assert summary["gate_passed"] == 0, summary
+
+    # 감사 추적(change_events.json)은 Stage 1 전체를 유지한다.
+    change_events = json.loads((out_dir / "change_events.json").read_text(encoding="utf-8"))
+    assert len(change_events["events"]) == 1, change_events
+    # FINDING 7 - 게이트가 버린 프레임은 디스크로 복사하지 않는다.
+    assert list((out_dir / "change_events").glob("*.jpg")) == []
+
+
+def test_change_event_copies_only_gate_survivors(tmp_path, monkeypatch):
+    """게이트를 통과한 프레임만 change_events/ 로 복사된다(FINDING 7).
+
+    Stage 1 은 2건(ambient 1 + candidate 1)을 내고 게이트가 1건을 걷어낸다.
+    복사가 게이트 앞에 있으면 2장이 복사돼 이 테스트가 실패한다.
+    """
+    rec = tmp_path / "tag_copy" / "recording"
+    live_box = {"left": 300, "top": 200, "right": 600, "bottom": 400}
+    base = np.full((400, 600), 30, dtype=np.uint8)
+    in_live = base.copy()
+    in_live[240:350, 340:500] = 255           # 라이브 박스 안에서만 변화 -> ambient
+    in_ui = in_live.copy()
+    in_ui[20:120, 20:180] = 255               # UI 영역 변화 -> candidate
+    _write(rec / "tag_rcs_0000_00000000ms.jpg", base)
+    _write(rec / "tag_rcs_0001_00000300ms.jpg", in_live)
+    _write(rec / "tag_rcs_0002_00000600ms.jpg", in_live.copy())   # 변화 없음
+    _write(rec / "tag_rcs_0003_00000900ms.jpg", in_ui)
+
+    rect = {"left": 0, "top": 0, "right": 600, "bottom": 400}     # 100% 배율
+    _write_sidecar(rec, [
+        {"frame": f"seq_{i}", "t_sec": t, "window_rect": rect,
+         "foreground_title": "x", "occlusion": "none",
+         "cursor_screen_xy": [10, 10], "cursor_in_window": True}   # 커서는 라이브 박스 밖
+        for i, t in enumerate((0.0, 0.3, 0.6, 0.9))
+    ])
+    _stub_sem_box(monkeypatch, live_box)
+
+    settings = RecordingFilterSettings(
+        vlm_request_delay_sec=0.0, min_change_area_px=5000, element_label_enabled=False,
+    )
+    # 클릭으로 이어질지는 이 테스트의 관심사가 아니다(게이트 통과분이 있으면 충분).
+    status = run_filter(input_dir=rec, settings=settings, client=_FakeClient())
+    assert status in {"success", "no_clicks"}, status
+
+    out_dir = rec.parent / "recording_filter"
+    summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary["total_change_events"] == 2, summary
+    assert summary["ambient_events_dropped"] == 1, summary
+    assert summary["gate_passed"] == 1, summary
+
+    copied = list((out_dir / "change_events").glob("*.jpg"))
+    assert len(copied) == 1, copied
+    # 감사 추적은 Stage 1 전체(2건)를 유지한다.
+    change_events = json.loads((out_dir / "change_events.json").read_text(encoding="utf-8"))
+    assert len(change_events["events"]) == 2, change_events
+
+
+def test_run_filter_finds_sidecar_in_capture_root_when_frames_are_nested(tmp_path, monkeypatch):
+    """frames/ 하위에 프레임이 있어도 사이드카는 녹화 루트에서 찾는다(FINDING 8)."""
+    from poc.workflow_3.recording_filter.filter_recording import _resolve_meta_dir
+
+    rec = tmp_path / "tag_nested" / "recording"
+    frames = rec / "frames"
+    base = np.full((400, 600), 30, dtype=np.uint8)
+    _write(frames / "tag_rcs_0000_00000000ms.jpg", base)
+    _write(frames / "tag_rcs_0001_00000300ms.jpg", base)
+    _write_sidecar(rec, [
+        {"frame": "seq_0", "t_sec": 0.0,
+         "window_rect": {"left": 0, "top": 0, "right": 600, "bottom": 400},
+         "foreground_title": "x", "occlusion": "none",
+         "cursor_screen_xy": [10, 10], "cursor_in_window": True},
+    ])
+
+    assert _resolve_meta_dir(rec, frames) == rec

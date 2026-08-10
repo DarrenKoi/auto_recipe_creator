@@ -145,6 +145,74 @@ def _box_contains(outer, inner) -> bool:
     )
 
 
+def read_frame_size(frame_path):
+    """프레임 JPEG 의 픽셀 크기 (width, height) 를 읽는다. 실패하면 None.
+
+    PIL 의 open 은 지연 로딩이라 .size 만 보면 헤더만 파싱한다(디코딩 없음).
+    """
+    if not _PIL_AVAILABLE:
+        return None
+    try:
+        with Image.open(frame_path) as image:
+            width, height = image.size
+        return (int(width), int(height))
+    except Exception:
+        return None
+
+
+def screen_point_to_frame(cursor_xy, rect, frame_wh):
+    """화면 절대 좌표 커서를 프레임 픽셀 좌표로 옮긴다. 불가능하면 None.
+
+    (2026-08-10 최종 리뷰 FINDING 2) 단순 뺄셈(cursor - rect.left)은 좌표계를
+    섞는다. cursor(GetCursorPos)/rect(GetWindowRect)는 rect 공간이고 live_box 는
+    프레임(mss 물리 픽셀) 공간인데, 오피스 PC 는 125/150% 배율이라 둘의 크기가
+    다르다. 보정하지 않으면 계산된 좌표가 실제보다 왼쪽/위로 밀려, 라이브 박스
+    안쪽 20% 대역에서 커서가 "박스 밖"으로 오판되고 -> 진짜 조작이 ambient 로
+    조용히 폐기된다.
+
+    변환 방향은 util/window_utils.py:image_point_to_screen 과 정확히 역이다
+    (그쪽은 screen = rect.left + image * rect/image, 여기는 그 역수).
+    100% 배율(frame 크기 == rect 크기)에서는 배율 1.0 이라 무영향이다.
+
+    rect 가 0/음수 크기이거나 프레임 크기를 못 얻으면 None 을 돌려준다 -
+    호출부는 이를 "커서 판정 불가"로 보고 candidate 를 강제해야 한다.
+    """
+    if not cursor_xy or not rect or not frame_wh:
+        return None
+    try:
+        rect_w = int(rect["right"]) - int(rect["left"])
+        rect_h = int(rect["bottom"]) - int(rect["top"])
+        frame_w, frame_h = int(frame_wh[0]), int(frame_wh[1])
+        if rect_w <= 0 or rect_h <= 0 or frame_w <= 0 or frame_h <= 0:
+            return None
+        scale_x = frame_w / rect_w
+        scale_y = frame_h / rect_h
+        fx = (float(cursor_xy[0]) - int(rect["left"])) * scale_x
+        fy = (float(cursor_xy[1]) - int(rect["top"])) * scale_y
+    except Exception:
+        return None
+    return (fx, fy)
+
+
+def gate_region(change_bbox, live_box, cursor_in_live) -> str:
+    """변화 위치를 영역 지도 값으로 환산한다: live_image | ui | unknown.
+
+    (2026-08-10 최종 리뷰 FINDING 3) region 은 게이트 판정(verdict)의 파생물이
+    아니라 **기하 그 자체**다. 예전처럼 verdict 로 region 을 만들면 타임라인에
+    남는 이벤트는 전부 candidate 라 region 이 항상 "ui" 가 되고, 라이브 SEM
+    영상 안 클릭까지 "라벨로 다른 장비에서 재현 가능한 UI 컨트롤"로 보고된다.
+
+    커서가 라이브 박스 안이면(= ambient 예외로 살아남은 그 클릭) live_image 다.
+    """
+    if live_box is None:
+        return "unknown"
+    if cursor_in_live:
+        return "live_image"
+    if change_bbox and _box_contains(live_box, change_bbox):
+        return "live_image"
+    return "ui"
+
+
 def gate_verdict(change_bbox, live_box, cursor_in_live, has_meta) -> str:
     """변화 bbox 를 ambient / candidate 로 판정한다.
 
@@ -228,16 +296,25 @@ def _generation_for(gen_by_time, t_sec) -> int:
     return generation
 
 
-def apply_region_gate(events, metas, region_maps) -> list:
-    """변화 이벤트마다 (event, generation, verdict, occlusion) 을 계산한다.
+def apply_region_gate(events, metas, region_maps, *, frame_size_fn=None) -> list:
+    """변화 이벤트마다 (event, generation, verdict, occlusion, region) 을 계산한다.
 
     has_meta 는 세션에 사이드카가 존재했는지가 아니라 **이 이벤트에 실제로 조인된
     레코드가 있는지**를 뜻한다(FINDING 2) - nearest_meta 가 거리 상한을 넘겨 None 을
     돌려주면(사이드카가 죽었거나 처음부터 없던 것과 동일하게) has_meta 도 False 가
     되어 gate_verdict 가 안전하게 candidate 로 강제한다.
+
+    region 은 verdict 파생이 아니라 기하로 계산한다(최종 리뷰 FINDING 3).
+    커서 좌표 변환은 DPI 배율을 보정한다(FINDING 2) - 그래서 프레임 픽셀 크기가
+    필요하며, 기본값은 이벤트의 frame_path 헤더를 읽는다(frame_size_fn 은
+    테스트/호출부 주입용). 크기를 못 얻으면 커서를 판정 불가로 두어 candidate 를
+    강제한다.
     """
     generations = assign_generations(metas)
     gen_by_time = list(zip([m.t_sec for m in metas], generations))
+    size_fn = frame_size_fn or read_frame_size
+    size_cache = {}
+    unreadable_frames = 0
     results = []
     for event in events:
         generation = _generation_for(gen_by_time, event.timestamp_sec)
@@ -261,21 +338,35 @@ def apply_region_gate(events, metas, region_maps) -> list:
                 # 방법이 없다 - "밖" 으로 단정하지 않고 판정 불가로 candidate 강제.
                 cursor_unresolved = True
             elif live_box is not None:
-                # 화면 좌표 -> 프레임 좌표로 옮긴 뒤 라이브 박스 포함 여부를 본다.
-                fx = int(meta.cursor_xy[0]) - int(meta.rect["left"])
-                fy = int(meta.cursor_xy[1]) - int(meta.rect["top"])
-                cursor_in_live = (
-                    live_box["left"] <= fx <= live_box["right"]
-                    and live_box["top"] <= fy <= live_box["bottom"]
+                # 화면 좌표 -> 프레임 좌표(배율 보정) 로 옮긴 뒤 포함 여부를 본다.
+                if event.frame_path not in size_cache:
+                    size_cache[event.frame_path] = size_fn(event.frame_path)
+                point = screen_point_to_frame(
+                    meta.cursor_xy, meta.rect, size_cache[event.frame_path]
                 )
+                if point is None:
+                    cursor_unresolved = True
+                    unreadable_frames += 1
+                else:
+                    fx, fy = point
+                    cursor_in_live = (
+                        live_box["left"] <= fx <= live_box["right"]
+                        and live_box["top"] <= fy <= live_box["bottom"]
+                    )
             # live_box 가 None 이면 커서 판정과 무관하게 gate_verdict 가 candidate 로
             # 처리하므로(아래) cursor_in_live=False 그대로 둬도 안전하다.
         if cursor_unresolved:
             verdict = "candidate"
         else:
             verdict = gate_verdict(event.change_bbox, live_box, cursor_in_live, has_meta)
-        results.append((event, generation, verdict, occlusion))
+        region = gate_region(event.change_bbox, live_box, cursor_in_live)
+        results.append((event, generation, verdict, occlusion, region))
 
-    n_ambient = sum(1 for _e, _g, v, _o in results if v == "ambient")
+    if unreadable_frames:
+        print(
+            f"[WARNING] 프레임 크기/커서 변환 불가 {unreadable_frames} 건 - "
+            "해당 이벤트는 안전하게 candidate 로 승격했습니다."
+        )
+    n_ambient = sum(1 for item in results if item[2] == "ambient")
     print(f"[INFO] Stage 1.5 완료: ambient={n_ambient} / 전체={len(results)}")
     return results

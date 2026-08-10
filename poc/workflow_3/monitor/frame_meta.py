@@ -19,6 +19,8 @@ from pathlib import Path
 FRAME_META_FILENAME = "frame_meta.jsonl"
 # 가림 표본점 수 (중앙 + 사분면).
 _PROBE_COUNT = 5
+# GetAncestor(hwnd, GA_ROOT) - 자식 컨트롤 핸들을 그 창의 최상위 창으로 올린다.
+GA_ROOT = 2
 
 
 def classify_occlusion(hit_handles, our_handles) -> str:
@@ -26,8 +28,14 @@ def classify_occlusion(hit_handles, our_handles) -> str:
 
     반환: "none"(전부 우리 창) | "partial"(일부) | "full"(하나도 아님) |
           "unknown"(표본 없음 - 조회 실패라 판정하지 않는다).
+
+    (2026-08-10 최종 리뷰 FINDING 1) None 뿐 아니라 0 도 "정보 없음"으로 버린다.
+    WindowFromPoint 는 실패 시 NULL(=0) 을 돌려주는데, 이를 "남의 창"으로 세면
+    조회가 전부 실패한 프레임이 "full" 로 확정되어 분석 단계에서 통째로
+    버려진다 - 재현 불가능한 녹화에서 가장 나쁜 실패 형태다. 전부 0 이면
+    "unknown" 이어야 한다.
     """
-    hits = [h for h in (hit_handles or []) if h is not None]
+    hits = [h for h in (hit_handles or []) if h]
     if not hits:
         return "unknown"
     ours = sum(1 for h in hits if h in (our_handles or set()))
@@ -93,16 +101,52 @@ def read_cursor_screen_xy():
     return None
 
 
+def normalize_hits_to_root(raw_hits, resolve_root) -> list:
+    """WindowFromPoint 결과를 최상위(root) 창 핸들로 정규화한다.
+
+    (2026-08-10 최종 리뷰 FINDING 1) WindowFromPoint 는 그 지점의 **자식 컨트롤**
+    핸들을 돌려준다. RCS Remote Monitoring 은 MFC 계열이라 창 안이 온통 자식
+    컨트롤이고, 그래서 원시 핸들을 top-level 핸들 집합과 비교하면 5점 모두
+    불일치 -> 모든 프레임이 "full" 로 찍혀 분석에서 전량 폐기됐다.
+
+    resolve_root 는 핸들 하나를 받아 root 핸들을 돌려주는 콜러블이다
+    (Windows 에서는 GetAncestor(hwnd, GA_ROOT)). GetAncestor 를 Mac 에서 부를 수
+    없어 순수 함수로 분리해 두었다 - 정규화 규칙 자체는 여기서 테스트한다.
+
+    0/None(정보 없음)은 그대로 None 으로 남기고, resolve_root 가 실패하거나
+    0 을 돌려줘도 원시 핸들로 되돌리지 않고 None 으로 둔다 - "판정 불가" 가
+    "남의 창" 으로 둔갑해 프레임을 잃는 것보다 낫다.
+    """
+    normalized = []
+    for hit in (raw_hits or []):
+        if not hit:
+            normalized.append(None)
+            continue
+        try:
+            root = resolve_root(int(hit))
+        except Exception:
+            root = None
+        normalized.append(int(root) if root else None)
+    return normalized
+
+
 def probe_occlusion(rect, our_handles) -> str:
-    """rect 표본점에서 WindowFromPoint 를 찍어 가림 정도를 판정한다."""
+    """rect 표본점에서 WindowFromPoint 를 찍어 가림 정도를 판정한다.
+
+    원시 결과는 자식 컨트롤 핸들이므로 GetAncestor(GA_ROOT) 로 최상위 창까지
+    올린 뒤에 우리 창인지 비교한다(FINDING 1).
+    """
     if os.name != "nt" or not rect:
         return "unknown"
     try:
         user32 = ctypes.windll.user32
         point_type = _win_point_type()
-        hits = []
+        raw_hits = []
         for x, y in probe_points(rect):
-            hits.append(int(user32.WindowFromPoint(point_type(x, y))))
+            raw_hits.append(int(user32.WindowFromPoint(point_type(x, y))))
+        hits = normalize_hits_to_root(
+            raw_hits, lambda handle: int(user32.GetAncestor(handle, GA_ROOT))
+        )
     except Exception as exc:
         print(f"[WARNING] 가림 판정 실패(unknown 으로 기록): {exc}")
         return "unknown"

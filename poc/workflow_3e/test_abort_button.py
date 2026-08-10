@@ -10,14 +10,23 @@ import os
 import numpy as np
 
 from poc.workflow_3e.abort_button import (
+    ABORT_BUTTON_LABELS,
     ABORT_LABEL_POLICY_LENIENT,
     ABORT_LABEL_POLICY_OFF,
     ABORT_LABEL_POLICY_STRICT,
+    ABORT_TARGET_ABORT,
+    ABORT_TARGET_QUEUE,
+    QUEUE_BUTTON_LABELS,
     accepts_label,
     classify_button_tokens,
+    expected_labels_for_target,
+    is_click_armed,
+    is_rehearsal_target,
     load_abort_label_policy,
+    load_abort_target,
     locate_abort_button,
     locate_abort_confirm,
+    locate_queue_button,
 )
 
 
@@ -175,6 +184,95 @@ def test_policy_defaults_to_strict_and_reads_env():
     return ok
 
 
+# ------------------------------------------------------------------
+# 클릭 대상 전환 - 검증 중에는 Stop/Abort 대신 인접한 Queue 버튼을 겨눈다.
+# 같은 창 같은 영역이라 로케이트+라벨확인 파이프라인은 동일하게 검증되지만, 오클릭
+# 대가가 '측정 중단' 이 아니라 '큐 화면 열림' 이다.
+# ------------------------------------------------------------------
+
+
+def test_target_defaults_to_queue_rehearsal():
+    """검증 단계 기본값 - 실제 abort 는 명시적으로 골라야 한다."""
+    prev = os.environ.pop("MEAS_FAIL_ABORT_TARGET", None)
+    try:
+        default_ok = load_abort_target() == ABORT_TARGET_QUEUE
+        os.environ["MEAS_FAIL_ABORT_TARGET"] = "  ABORT  "
+        env_ok = load_abort_target() == ABORT_TARGET_ABORT
+        os.environ["MEAS_FAIL_ABORT_TARGET"] = "nonsense"
+        bad_ok = load_abort_target() == ABORT_TARGET_QUEUE
+    finally:
+        os.environ.pop("MEAS_FAIL_ABORT_TARGET", None)
+        if prev is not None:
+            os.environ["MEAS_FAIL_ABORT_TARGET"] = prev
+    ok = default_ok and env_ok and bad_ok
+    print(f"[{'PASS' if ok else 'FAIL'}] target_defaults_to_queue_rehearsal")
+    return ok
+
+
+def test_only_abort_target_is_not_rehearsal():
+    ok = (
+        is_rehearsal_target(ABORT_TARGET_QUEUE) is True
+        and is_rehearsal_target(ABORT_TARGET_ABORT) is False
+    )
+    print(f"[{'PASS' if ok else 'FAIL'}] only_abort_target_is_not_rehearsal")
+    return ok
+
+
+def test_expected_labels_follow_target():
+    ok = (
+        expected_labels_for_target(ABORT_TARGET_QUEUE) == QUEUE_BUTTON_LABELS
+        and expected_labels_for_target(ABORT_TARGET_ABORT) == ABORT_BUTTON_LABELS
+    )
+    print(f"[{'PASS' if ok else 'FAIL'}] expected_labels_follow_target")
+    return ok
+
+
+def test_queue_label_confirms_and_stop_does_not():
+    """Queue 를 겨눴는데 Stop 이 읽히면 mismatch - 인접 버튼이라 반드시 구분돼야 한다."""
+    good = classify_button_tokens(["Queue"], QUEUE_BUTTON_LABELS)
+    bad = classify_button_tokens(["Stop"], QUEUE_BUTTON_LABELS)
+    ok = good.status == "confirmed" and bad.status == "mismatch"
+    print(f"[{'PASS' if ok else 'FAIL'}] queue_label_confirms_and_stop_does_not: {good.status}/{bad.status}")
+    return ok
+
+
+def test_queue_locator_parses_own_schema():
+    frame = np.zeros((500, 1000, 3), dtype=np.uint8)
+    client = _FakeClient(
+        '{"queue_button_visible": true, "coord_system": "relative_1000", '
+        '"queue_button_bbox": {"left": 200, "top": 600, "right": 400, "bottom": 700}}'
+    )
+    xy = locate_queue_button(frame_bgr=frame, client=client)
+    # center rel (300, 650) -> px (300, 325)
+    ok = xy is not None and abs(xy[0] - 300) <= 2 and abs(xy[1] - 325) <= 2
+    print(f"[{'PASS' if ok else 'FAIL'}] queue_locator_parses_own_schema: xy={xy}")
+    return ok
+
+
+def test_click_armed_requires_real_abort_target():
+    """시작 배너의 [ARMED] 판정. rehearsal 대상이면 무장일 수 없다.
+
+    target=queue + dry_run=0 조합에서 [ARMED] 를 찍으면, 검증 중에 '지금 진짜 누르는
+    모드구나' 로 오독한다. 배너는 실제 클릭 가능성과 일치해야 한다.
+    """
+    ok = (
+        is_click_armed(enabled=True, dry_run=False, target=ABORT_TARGET_ABORT) is True
+        and is_click_armed(enabled=True, dry_run=False, target=ABORT_TARGET_QUEUE) is False
+        and is_click_armed(enabled=True, dry_run=True, target=ABORT_TARGET_ABORT) is False
+        and is_click_armed(enabled=False, dry_run=False, target=ABORT_TARGET_ABORT) is False
+    )
+    print(f"[{'PASS' if ok else 'FAIL'}] click_armed_requires_real_abort_target")
+    return ok
+
+
+def test_queue_locator_not_visible_returns_none():
+    frame = np.zeros((500, 1000, 3), dtype=np.uint8)
+    client = _FakeClient('{"queue_button_visible": false, "queue_button_bbox": null}')
+    ok = locate_queue_button(frame_bgr=frame, client=client) is None
+    print(f"[{'PASS' if ok else 'FAIL'}] queue_locator_not_visible_returns_none")
+    return ok
+
+
 def main():
     print("[INFO] abort_button self-test 시작")
     results = [
@@ -191,6 +289,13 @@ def main():
         test_off_accepts_all_including_none(),
         test_missing_verdict_rejected_under_strict(),
         test_policy_defaults_to_strict_and_reads_env(),
+        test_target_defaults_to_queue_rehearsal(),
+        test_only_abort_target_is_not_rehearsal(),
+        test_expected_labels_follow_target(),
+        test_queue_label_confirms_and_stop_does_not(),
+        test_queue_locator_parses_own_schema(),
+        test_queue_locator_not_visible_returns_none(),
+        test_click_armed_requires_real_abort_target(),
     ]
     passed = sum(1 for r in results if r)
     print(f"[INFO] {passed}/{len(results)} cases passed")

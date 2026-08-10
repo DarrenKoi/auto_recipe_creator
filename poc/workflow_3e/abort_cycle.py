@@ -41,13 +41,15 @@ from poc.workflow_3.runner.workflow_types import WorkflowStep
 from poc.workflow_3.util import block_input, capture_window, click_at_screen, make_timestamp_tag
 from poc.workflow_3 import DEBUG_IMAGE_DIR
 from poc.workflow_3e.abort_button import (
-    ABORT_BUTTON_LABELS,
     ABORT_LABEL_POLICY_OFF,
     CONFIRM_BUTTON_LABELS,
     accepts_label,
+    expected_labels_for_target,
+    is_rehearsal_target,
     load_abort_label_policy,
-    locate_abort_button,
+    load_abort_target,
     locate_abort_confirm,
+    locate_for_target,
     verify_button_label_at_point,
 )
 from poc.workflow_3e.notify import notify_abort_outcome
@@ -124,15 +126,20 @@ def _exec_abort_measurement(step, context, settings) -> "object":
             failure_class="abort_vlm_error", error_message=f"{type(exc).__name__}: {exc}",
         )
 
+    # 클릭 대상: 검증 단계에는 Stop/Abort 대신 인접한 Queue 를 겨눈다(rehearsal).
+    target = load_abort_target()
+    rehearsal = is_rehearsal_target(target)
+    context["abort_target"] = target
+
     image = capture_window(tool_window)
     frame = np.array(image)
-    xy = locate_abort_button(frame_bgr=frame, client=client)
+    xy = locate_for_target(target, frame_bgr=frame, client=client)
     if xy is None:
         context["abort_outcome"] = "abort_button_not_found"
-        print(f"[WARNING] Abort 버튼을 찾지 못함 - 엔지니어 직접 처리 (EQP_ID={eqp_id})")
+        print(f"[WARNING] {target} 버튼을 찾지 못함 - 엔지니어 직접 처리 (EQP_ID={eqp_id})")
         return _make_result(
             step, "failed", started_at, settings,
-            failure_class="abort_button_not_found", error_message="Stop/Abort 버튼 미검출",
+            failure_class="abort_button_not_found", error_message=f"{target} 버튼 미검출",
         )
 
     # --- 라벨 확인 게이트: 그 좌표가 정말 Stop/Abort 인가 (좁은 crop OCR) ---
@@ -144,13 +151,24 @@ def _exec_abort_measurement(step, context, settings) -> "object":
         verdict = verify_button_label_at_point(
             image,
             xy,
-            ABORT_BUTTON_LABELS,
+            expected_labels_for_target(target),
             debug_image_dir=DEBUG_ARTIFACT_DIR,
             timestamp_tag=str(context.get("tag") or make_timestamp_tag()),
-            artifact_label=f"abort_button_{eqp_id}",
+            artifact_label=f"{target}_button_{eqp_id}",
         )
     verdict_status = getattr(verdict, "status", "skipped" if policy == ABORT_LABEL_POLICY_OFF else "unavailable")
     context["abort_label_verdict"] = verdict_status
+
+    # rehearsal 대상이면 무장 여부와 무관하게 여기서 끝난다. 로케이트 + 라벨확인이라는
+    # 검증 목적은 이미 달성했고, 실제 abort 가 아닌 버튼을 누를 이유는 없다.
+    if rehearsal:
+        context["abort_outcome"] = "abort_rehearsal"
+        print(
+            f"[INFO] [REHEARSAL:{target}] 버튼 검출 screen=({xy[0]},{xy[1]}) "
+            f"label={verdict_status}(policy={policy}) - 클릭 생략(검증 전용 대상). "
+            f"실제 abort 는 MEAS_FAIL_ABORT_TARGET=abort. EQP_ID={eqp_id}"
+        )
+        return _make_result(step, "success", started_at, settings)
 
     armed = settings.action_enabled and not settings.abort_action_dry_run
     if not armed:

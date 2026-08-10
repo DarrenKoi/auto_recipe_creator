@@ -27,6 +27,11 @@ from poc.workflow_3.monitor.align_fail_monitor import (
     process_fail_rows,
 )
 from poc.workflow_3.monitor.notify import ALARM_LOG_PATH
+from poc.workflow_3e.abort_button import (
+    is_click_armed,
+    is_rehearsal_target,
+    load_abort_target,
+)
 from poc.workflow_3e.config import Workflow3eSettings, load_workflow3e_settings
 from poc.workflow_3e.dispatch import ABORT_MANIFEST_PATH, process_abort_rows
 from poc.workflow_3e.meas_alarm_source import MEAS_PROVIDER_AVAILABLE, measurement_fail_rows
@@ -52,12 +57,22 @@ def monitor_loop(settings: Workflow3eSettings | None = None) -> None:
         f"보정={'on' if settings.correction_enabled else 'off'}"
         f"{'(dry-run)' if settings.correction_enabled and settings.correction_dry_run else ''})"
     )
-    armed = settings.meas_fail_abort_enabled and not settings.abort_action_dry_run
+    abort_target = load_abort_target()
+    armed = is_click_armed(
+        enabled=settings.meas_fail_abort_enabled,
+        dry_run=settings.abort_action_dry_run,
+        target=abort_target,
+    )
     meas_src = "office provider" if MEAS_PROVIDER_AVAILABLE else f"ALID 필터({settings.meas_fail_alid or '미설정'})"
+    if is_rehearsal_target(abort_target):
+        mode = f" (REHEARSAL:{abort_target} - 클릭 없음)"
+    elif not armed:
+        mode = " (notify-only, dry-run)"
+    else:
+        mode = " [ARMED]"
     print(
         f"[INFO] 측정 실패 abort 잡: {'on' if settings.meas_fail_abort_enabled else 'off'}"
-        f"{' (notify-only, dry-run)' if settings.meas_fail_abort_enabled and not armed else ''}"
-        f"{' [ARMED]' if armed else ''}, 소스={meas_src}"
+        f"{mode if settings.meas_fail_abort_enabled else ''}, 대상={abort_target}, 소스={meas_src}"
     )
     print(f"[INFO] 알람 로그: {ALARM_LOG_PATH}")
     print(f"[INFO] align manifest: {CYCLE_MANIFEST_PATH}")

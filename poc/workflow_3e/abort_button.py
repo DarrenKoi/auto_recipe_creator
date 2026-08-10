@@ -49,6 +49,19 @@ _VALID_LABEL_POLICIES = {
 # 확인에 인정할 버튼 라벨. 프롬프트가 찾으라고 지시한 것과 같은 집합을 쓴다.
 ABORT_BUTTON_LABELS = ("Stop", "Abort", "중지", "정지")
 CONFIRM_BUTTON_LABELS = ("Yes", "OK", "확인")
+QUEUE_BUTTON_LABELS = ("Queue",)
+
+# --- 클릭 대상(rehearsal) ---
+# 오피스 검증 단계에서는 Stop/Abort 대신 같은 tool 창의 인접 버튼인 Queue 를 겨눈다.
+# 위치·크기·주변 UI 가 비슷해 로케이트 + 라벨확인 파이프라인은 동일하게 검증되지만,
+# 오클릭 대가가 '진행 중인 측정 중단' 이 아니라 '큐 화면 열림' 이다.
+#
+# rehearsal 대상일 때는 코드가 클릭을 **항상** 막는다. 무장 플래그를 아무리 켜도
+# 마찬가지다 - "검증용 대상을 겨눈 채 무장" 이라는 상태가 존재하면 안 된다(그 조합은
+# 실제 abort 도 못 하면서 엉뚱한 버튼만 누르는, 가장 나쁜 상태다).
+ABORT_TARGET_ABORT = "abort"
+ABORT_TARGET_QUEUE = "queue"
+_VALID_TARGETS = {ABORT_TARGET_ABORT, ABORT_TARGET_QUEUE}
 
 # 버튼 크기 crop(점 주변). tool 행 strip 과 달리 가로로 길 필요가 없다.
 LABEL_CROP_LEFT_RATIO = 0.04
@@ -83,6 +96,37 @@ def _abort_button_user_prompt() -> str:
         "}\n"
         "abort_button_bbox must tightly enclose the Stop/Abort button only. "
         "If none is clearly visible, set abort_button_visible=false, abort_button_bbox=null."
+    )
+
+
+def _queue_button_system_prompt() -> str:
+    """Queue 버튼 탐지 시스템 프롬프트(rehearsal 대상).
+
+    Stop/Abort 와 인접해 있으므로 '눌러도 측정에 영향이 없는 Queue 쪽' 임을 명시한다.
+    """
+    return (
+        "You analyse a screenshot of a CD-SEM / VeritySEM metrology tool window.\n"
+        "Locate the 'Queue' button - the control that opens the measurement QUEUE / job "
+        "list view. It sits in the same button area as Stop and PM. Do NOT return the "
+        "'Stop' / 'Abort' / '중지' button, the 'PM' button, the window close (X) button, "
+        "menu items, or the SEM image itself.\n"
+        "Return strict JSON only. If no such Queue button is clearly visible, say so "
+        "rather than guessing."
+    )
+
+
+def _queue_button_user_prompt() -> str:
+    """Queue 버튼 사용자 프롬프트(전용 스키마 키)."""
+    return (
+        "Return JSON with this exact schema:\n"
+        "{\n"
+        '  "queue_button_visible": true,\n'
+        '  "coord_system": "relative_1000",\n'
+        '  "queue_button_bbox": {"left": 0, "top": 0, "right": 0, "bottom": 0},\n'
+        '  "confidence": 0.0\n'
+        "}\n"
+        "queue_button_bbox must tightly enclose the Queue button only. "
+        "If none is clearly visible, set queue_button_visible=false, queue_button_bbox=null."
     )
 
 
@@ -132,10 +176,12 @@ def _frame_to_webp_b64(frame_bgr: np.ndarray) -> tuple[str, int, int]:
     return encode_image_webp(image, quality=90)
 
 
-def _locate(frame_bgr, client, system_prompt, user_prompt):
+def _locate(frame_bgr, client, system_prompt, user_prompt, key_prefix="abort_button"):
     """공통 locate: 프레임 -> VLM -> bbox -> screen 중심 좌표. 없으면 None.
 
-    스키마 키는 두 프롬프트가 동일하게 abort_button_visible / abort_button_bbox 를 쓴다.
+    key_prefix 로 스키마 키를 정한다("<prefix>_visible" / "<prefix>_bbox"). Stop/Abort 와
+    확인 다이얼로그는 abort_button 키를 공유하고, Queue 는 전용 키를 쓴다 - 프롬프트가
+    무엇을 찾으라 했는지와 응답 키가 어긋나지 않게.
     """
     image_b64, w, h = _frame_to_webp_b64(frame_bgr)
     response = client.chat_with_image_b64(
@@ -146,9 +192,9 @@ def _locate(frame_bgr, client, system_prompt, user_prompt):
         temperature=0.0,
     )
     parsed = extract_json(response.text)
-    if parsed.get("abort_button_visible") is not True:
+    if parsed.get(f"{key_prefix}_visible") is not True:
         return None
-    bbox_px = bbox_to_pixels(parsed.get("abort_button_bbox"), w, h, parsed.get("coord_system"))
+    bbox_px = bbox_to_pixels(parsed.get(f"{key_prefix}_bbox"), w, h, parsed.get("coord_system"))
     if bbox_px is None:
         return None
     center = bbox_center(bbox_px)
@@ -256,17 +302,77 @@ def locate_abort_confirm(*, frame_bgr: np.ndarray, client: Workflow1VLMClient) -
     return _locate(frame_bgr, client, _confirm_system_prompt(), _confirm_user_prompt())
 
 
+def locate_queue_button(*, frame_bgr: np.ndarray, client: Workflow1VLMClient) -> tuple[int, int] | None:
+    """Queue 버튼 중심의 SCREEN 좌표를 반환(없으면 None). rehearsal 대상."""
+    return _locate(
+        frame_bgr, client,
+        _queue_button_system_prompt(), _queue_button_user_prompt(),
+        key_prefix="queue_button",
+    )
+
+
+def load_abort_target(default: str = ABORT_TARGET_QUEUE) -> str:
+    """`MEAS_FAIL_ABORT_TARGET` 에서 클릭 대상을 읽는다. 미지정/오타면 default(=queue).
+
+    기본값이 rehearsal 인 이유: 지금은 오피스 검증 단계이고, 실제 abort 는 '명시적으로
+    고르는' 행위여야 한다. 되돌리려면 MEAS_FAIL_ABORT_TARGET=abort.
+    """
+    raw = (os.environ.get("MEAS_FAIL_ABORT_TARGET") or "").strip().lower()
+    if raw in _VALID_TARGETS:
+        return raw
+    if raw:
+        print(f"[WARNING] 알 수 없는 abort 대상 '{raw}' - '{default}' 사용")
+    return default
+
+
+def is_rehearsal_target(target: str) -> bool:
+    """실제 abort 대상이 아니면 True(= 클릭 금지 대상)."""
+    return target != ABORT_TARGET_ABORT
+
+
+def is_click_armed(*, enabled: bool, dry_run: bool, target: str) -> bool:
+    """실제 클릭이 일어날 수 있는 상태인지. 시작 배너의 [ARMED] 판정과 같은 규칙.
+
+    rehearsal 대상이면 무장일 수 없다 - 배너가 실제 클릭 가능성과 어긋나면 검증 중에
+    '지금 진짜 누르는 모드' 로 오독한다.
+    """
+    return bool(enabled) and not dry_run and not is_rehearsal_target(target)
+
+
+def expected_labels_for_target(target: str) -> tuple:
+    """대상별 라벨 확인 집합."""
+    if target == ABORT_TARGET_QUEUE:
+        return QUEUE_BUTTON_LABELS
+    return ABORT_BUTTON_LABELS
+
+
+def locate_for_target(target: str, *, frame_bgr, client) -> "tuple[int, int] | None":
+    """대상별 로케이터 디스패치."""
+    if target == ABORT_TARGET_QUEUE:
+        return locate_queue_button(frame_bgr=frame_bgr, client=client)
+    return locate_abort_button(frame_bgr=frame_bgr, client=client)
+
+
 __all__ = [
     "ABORT_BUTTON_LABELS",
     "ABORT_LABEL_POLICY_LENIENT",
     "ABORT_LABEL_POLICY_OFF",
     "ABORT_LABEL_POLICY_STRICT",
+    "ABORT_TARGET_ABORT",
+    "ABORT_TARGET_QUEUE",
     "ButtonLabelVerdict",
     "CONFIRM_BUTTON_LABELS",
+    "QUEUE_BUTTON_LABELS",
     "accepts_label",
     "classify_button_tokens",
+    "expected_labels_for_target",
+    "is_click_armed",
+    "is_rehearsal_target",
     "load_abort_label_policy",
+    "load_abort_target",
     "locate_abort_button",
     "locate_abort_confirm",
+    "locate_for_target",
+    "locate_queue_button",
     "verify_button_label_at_point",
 ]

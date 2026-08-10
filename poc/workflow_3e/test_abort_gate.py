@@ -34,18 +34,26 @@ def _armed_settings():
     )
 
 
-def _run_gate(verdict, policy, clicks, *, confirm_xy=None, confirm_verdict=None):
+def _run_gate(
+    verdict, policy, clicks, *,
+    confirm_xy=None, confirm_verdict=None,
+    target=ab.ABORT_TARGET_ABORT, seen_labels=None,
+):
     """스텁을 걸고 _exec_abort_measurement 를 1회 실행한다. (context, result) 반환.
 
     confirm_xy 를 주면 abort 클릭 뒤 확인 다이얼로그가 뜬 상황을 재현한다. 이때 라벨 확인은
     expected_labels 로 어느 게이트인지 구분해 confirm_verdict 를 돌려준다.
+    seen_labels 리스트를 주면 라벨 확인에 쓰인 집합을 기록한다(대상별 라벨 검증용).
     """
     state = {}
     _swap(state, ac, "capture_window", lambda win: Image.new("RGB", (1000, 500)))
-    _swap(state, ac, "locate_abort_button", lambda **kw: (500, 400))
+    _swap(state, ac, "locate_for_target", lambda t, **kw: (500, 400))
     _swap(state, ac, "locate_abort_confirm", lambda **kw: confirm_xy)
+    _swap(state, ac, "load_abort_target", lambda: target)
 
     def fake_verify(image, point_xy, expected_labels, **kw):
+        if seen_labels is not None:
+            seen_labels.append(expected_labels)
         if expected_labels is ab.CONFIRM_BUTTON_LABELS:
             return confirm_verdict
         return verdict
@@ -161,6 +169,57 @@ def test_confirm_dialog_confirmed_allows_confirm_click():
     return ok
 
 
+# ------------------------------------------------------------------
+# rehearsal 대상(Queue) - 검증은 하되 절대 누르지 않는다.
+# ------------------------------------------------------------------
+
+
+def test_rehearsal_target_never_clicks_even_when_armed_and_confirmed():
+    """가장 중요한 불변식 - '검증용 대상을 겨눈 채 무장' 상태는 존재하면 안 된다.
+
+    이 조합이 뚫리면 실제 abort 도 못 하면서 엉뚱한 버튼만 누르는, 가장 나쁜 상태가 된다.
+    """
+    clicks = []
+    verdict = ab.classify_button_tokens(["Queue"], ab.QUEUE_BUTTON_LABELS)
+    context, result = _run_gate(
+        verdict, ab.ABORT_LABEL_POLICY_STRICT, clicks, target=ab.ABORT_TARGET_QUEUE
+    )
+    ok = (
+        clicks == []
+        and context["abort_outcome"] == "abort_rehearsal"
+        and result.status == "success"
+    )
+    print(f"[{'PASS' if ok else 'FAIL'}] rehearsal_target_never_clicks_even_when_armed_and_confirmed: "
+          f"clicks={clicks} outcome={context.get('abort_outcome')}")
+    return ok
+
+
+def test_rehearsal_target_still_runs_label_verification():
+    """누르지 않더라도 로케이트+라벨확인은 돌아야 한다 - 그게 검증의 목적이다."""
+    clicks, seen = [], []
+    verdict = ab.classify_button_tokens(["Queue"], ab.QUEUE_BUTTON_LABELS)
+    context, _ = _run_gate(
+        verdict, ab.ABORT_LABEL_POLICY_STRICT, clicks,
+        target=ab.ABORT_TARGET_QUEUE, seen_labels=seen,
+    )
+    ok = seen == [ab.QUEUE_BUTTON_LABELS] and context.get("abort_label_verdict") == "confirmed"
+    print(f"[{'PASS' if ok else 'FAIL'}] rehearsal_target_still_runs_label_verification: "
+          f"labels={seen} verdict={context.get('abort_label_verdict')}")
+    return ok
+
+
+def test_abort_target_uses_abort_labels():
+    clicks, seen = [], []
+    verdict = ab.classify_button_tokens(["Stop"], ab.ABORT_BUTTON_LABELS)
+    _run_gate(
+        verdict, ab.ABORT_LABEL_POLICY_STRICT, clicks,
+        target=ab.ABORT_TARGET_ABORT, seen_labels=seen,
+    )
+    ok = seen == [ab.ABORT_BUTTON_LABELS]
+    print(f"[{'PASS' if ok else 'FAIL'}] abort_target_uses_abort_labels: labels={seen}")
+    return ok
+
+
 def main():
     print("[INFO] abort 라벨 게이트 배선 테스트 시작")
     results = [
@@ -171,6 +230,9 @@ def main():
         test_policy_off_allows_click_without_verification(),
         test_confirm_dialog_mismatch_blocks_confirm_click(),
         test_confirm_dialog_confirmed_allows_confirm_click(),
+        test_rehearsal_target_never_clicks_even_when_armed_and_confirmed(),
+        test_rehearsal_target_still_runs_label_verification(),
+        test_abort_target_uses_abort_labels(),
     ]
     passed = sum(1 for r in results if r)
     print(f"[INFO] {passed}/{len(results)} cases passed")

@@ -16,17 +16,20 @@ from poc.workflow_3e.abort_button import (
     ABORT_LABEL_POLICY_STRICT,
     ABORT_TARGET_ABORT,
     ABORT_TARGET_QUEUE,
+    LABEL_CROP_HALF_HEIGHT_RATIO,
+    LABEL_CROP_LEFT_RATIO,
+    LABEL_CROP_RIGHT_RATIO,
     QUEUE_BUTTON_LABELS,
     accepts_label,
+    button_label_for_target,
+    button_target_config,
     classify_button_tokens,
     expected_labels_for_target,
     is_click_armed,
     is_rehearsal_target,
     load_abort_label_policy,
     load_abort_target,
-    locate_abort_button,
     locate_abort_confirm,
-    locate_queue_button,
 )
 
 
@@ -43,28 +46,6 @@ class _FakeClient:
         return _FakeResp(self._text)
 
 
-def test_visible_center_relative_1000():
-    """relative_1000 bbox 중심이 프레임 픽셀로 환산된다(1000x500 프레임)."""
-    frame = np.zeros((500, 1000, 3), dtype=np.uint8)
-    client = _FakeClient(
-        '{"abort_button_visible": true, "coord_system": "relative_1000", '
-        '"abort_button_bbox": {"left": 400, "top": 800, "right": 600, "bottom": 900}, '
-        '"confidence": 0.9}'
-    )
-    xy = locate_abort_button(frame_bgr=frame, client=client)
-    # center rel (500, 850) -> px (500, 425)
-    ok = xy is not None and abs(xy[0] - 500) <= 2 and abs(xy[1] - 425) <= 2
-    print(f"[{'PASS' if ok else 'FAIL'}] visible_center_relative_1000: xy={xy}")
-    return ok
-
-
-def test_not_visible_returns_none():
-    frame = np.zeros((500, 1000, 3), dtype=np.uint8)
-    client = _FakeClient('{"abort_button_visible": false, "abort_button_bbox": null}')
-    xy = locate_abort_button(frame_bgr=frame, client=client)
-    ok = xy is None
-    print(f"[{'PASS' if ok else 'FAIL'}] not_visible_returns_none: xy={xy}")
-    return ok
 
 
 def test_confirm_locator_shares_schema():
@@ -236,16 +217,42 @@ def test_queue_label_confirms_and_stop_does_not():
     return ok
 
 
-def test_queue_locator_parses_own_schema():
-    frame = np.zeros((500, 1000, 3), dtype=np.uint8)
-    client = _FakeClient(
-        '{"queue_button_visible": true, "coord_system": "relative_1000", '
-        '"queue_button_bbox": {"left": 200, "top": 600, "right": 400, "bottom": 700}}'
+
+def test_button_geometry_matches_proven_bench():
+    """버튼 로케이트/라벨확인 기하는 오피스 벤치에서 acc=1.000 으로 입증된 값과 같아야 한다.
+
+    bench_tool_window_reader 가 Stop/Queue/PM 을 그 값으로 1.000 을 냈다. 여기서 임의로
+    다른 값을 쓰면 '입증된 설정' 이라는 근거가 사라진다. 한쪽만 바뀌면 이 테스트가 깨진다.
+    """
+    from poc.workflow_3.rcs import bench_tool_window_reader as bench
+
+    crop_ok = (
+        LABEL_CROP_LEFT_RATIO == bench.LABEL_LEFT_RATIO
+        and LABEL_CROP_RIGHT_RATIO == bench.LABEL_RIGHT_RATIO
+        and LABEL_CROP_HALF_HEIGHT_RATIO == bench.LABEL_HALF_HEIGHT_RATIO
     )
-    xy = locate_queue_button(frame_bgr=frame, client=client)
-    # center rel (300, 650) -> px (300, 325)
-    ok = xy is not None and abs(xy[0] - 300) <= 2 and abs(xy[1] - 325) <= 2
-    print(f"[{'PASS' if ok else 'FAIL'}] queue_locator_parses_own_schema: xy={xy}")
+    mine = button_target_config("Queue")
+    theirs = bench._button_target("Queue")
+    geom_ok = (
+        mine.left_pad_ratio == theirs.left_pad_ratio
+        and mine.right_pad_ratio == theirs.right_pad_ratio
+        and mine.vertical_pad_ratio == theirs.vertical_pad_ratio
+        and mine.min_crop_width == theirs.min_crop_width
+        and mine.min_crop_height == theirs.min_crop_height
+        and mine.vertical_pad_min_px == theirs.vertical_pad_min_px
+    )
+    ok = crop_ok and geom_ok
+    print(f"[{'PASS' if ok else 'FAIL'}] button_geometry_matches_proven_bench: crop={crop_ok} target={geom_ok}")
+    return ok
+
+
+def test_target_label_maps_to_button_name():
+    """대상 -> 실제로 찾을 버튼 이름(로케이터 hint 와 라벨확인이 같은 것을 가리켜야)."""
+    ok = (
+        button_label_for_target(ABORT_TARGET_QUEUE) == "Queue"
+        and button_label_for_target(ABORT_TARGET_ABORT) == "Stop"
+    )
+    print(f"[{'PASS' if ok else 'FAIL'}] target_label_maps_to_button_name")
     return ok
 
 
@@ -265,19 +272,10 @@ def test_click_armed_requires_real_abort_target():
     return ok
 
 
-def test_queue_locator_not_visible_returns_none():
-    frame = np.zeros((500, 1000, 3), dtype=np.uint8)
-    client = _FakeClient('{"queue_button_visible": false, "queue_button_bbox": null}')
-    ok = locate_queue_button(frame_bgr=frame, client=client) is None
-    print(f"[{'PASS' if ok else 'FAIL'}] queue_locator_not_visible_returns_none")
-    return ok
-
 
 def main():
     print("[INFO] abort_button self-test 시작")
     results = [
-        test_visible_center_relative_1000(),
-        test_not_visible_returns_none(),
         test_confirm_locator_shares_schema(),
         test_classify_confirmed_on_expected_label(),
         test_classify_confirmed_ignores_case_and_noise(),
@@ -293,9 +291,9 @@ def main():
         test_only_abort_target_is_not_rehearsal(),
         test_expected_labels_follow_target(),
         test_queue_label_confirms_and_stop_does_not(),
-        test_queue_locator_parses_own_schema(),
-        test_queue_locator_not_visible_returns_none(),
         test_click_armed_requires_real_abort_target(),
+        test_button_geometry_matches_proven_bench(),
+        test_target_label_maps_to_button_name(),
     ]
     passed = sum(1 for r in results if r)
     print(f"[INFO] {passed}/{len(results)} cases passed")

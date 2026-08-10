@@ -38,7 +38,13 @@ from poc.workflow_3.monitor.notify import close_alert_window
 from poc.workflow_3.monitor.teardown import run_teardown
 from poc.workflow_3.runner.workflow_runner import WorkflowRunner
 from poc.workflow_3.runner.workflow_types import WorkflowStep
-from poc.workflow_3.util import block_input, capture_window, click_at_screen, make_timestamp_tag
+from poc.workflow_3.util import (
+    block_input,
+    capture_window,
+    click_at_screen,
+    image_point_to_screen,
+    make_timestamp_tag,
+)
 from poc.workflow_3 import DEBUG_IMAGE_DIR
 from poc.workflow_3e.abort_button import (
     ABORT_LABEL_POLICY_OFF,
@@ -132,8 +138,15 @@ def _exec_abort_measurement(step, context, settings) -> "object":
     context["abort_target"] = target
 
     image = capture_window(tool_window)
-    frame = np.array(image)
-    xy = locate_for_target(target, frame_bgr=frame, client=client)
+    # xy 는 **창-이미지 좌표**다. 라벨 확인은 이 좌표계에서 crop 하고, 클릭 직전에만
+    # image_point_to_screen 으로 스크린 좌표를 만든다(두 좌표계를 섞지 않는다).
+    xy = locate_for_target(
+        target,
+        window=tool_window,
+        window_title=str(context.get("tool_window_title") or ""),
+        backend=str(context.get("tool_window_backend") or ""),
+        image=image,
+    )
     if xy is None:
         context["abort_outcome"] = "abort_button_not_found"
         print(f"[WARNING] {target} 버튼을 찾지 못함 - 엔지니어 직접 처리 (EQP_ID={eqp_id})")
@@ -164,7 +177,7 @@ def _exec_abort_measurement(step, context, settings) -> "object":
     if rehearsal:
         context["abort_outcome"] = "abort_rehearsal"
         print(
-            f"[INFO] [REHEARSAL:{target}] 버튼 검출 screen=({xy[0]},{xy[1]}) "
+            f"[INFO] [REHEARSAL:{target}] 버튼 검출 img=({xy[0]},{xy[1]}) "
             f"label={verdict_status}(policy={policy}) - 클릭 생략(검증 전용 대상). "
             f"실제 abort 는 MEAS_FAIL_ABORT_TARGET=abort. EQP_ID={eqp_id}"
         )
@@ -174,7 +187,7 @@ def _exec_abort_measurement(step, context, settings) -> "object":
     if not armed:
         context["abort_outcome"] = "abort_dry_run"
         print(
-            f"[INFO] [DRY-RUN] Abort 버튼 검출 screen=({xy[0]},{xy[1]}) "
+            f"[INFO] [DRY-RUN] {target} 버튼 검출 img=({xy[0]},{xy[1]}) "
             f"label={verdict_status}(policy={policy}) - 클릭 생략 "
             f"(SAFE_MODE/abort_dry_run 게이트). EQP_ID={eqp_id}"
         )
@@ -186,7 +199,7 @@ def _exec_abort_measurement(step, context, settings) -> "object":
         print(
             f"[WARNING] Abort 버튼 라벨 미확인({verdict_status}, policy={policy}) - "
             f"클릭 금지, 엔지니어 직접 처리. EQP_ID={eqp_id} "
-            f"screen=({xy[0]},{xy[1]}) read={read_text!r}"
+            f"img=({xy[0]},{xy[1]}) read={read_text!r}"
         )
         return _make_result(
             step, "failed", started_at, settings,
@@ -195,8 +208,19 @@ def _exec_abort_measurement(step, context, settings) -> "object":
         )
 
     # --- 무장 상태: 클릭 + 확인 다이얼로그 ---
+    screen_xy = image_point_to_screen(
+        tool_window, {"x": xy[0], "y": xy[1]}, image_size=image.size
+    )
+    if screen_xy is None:
+        context["abort_outcome"] = "abort_error"
+        return _make_result(
+            step, "failed", started_at, settings,
+            failure_class="abort_coord_error",
+            error_message="창-이미지 -> 스크린 좌표 변환 실패",
+        )
+
     try:
-        click_at_screen({"x": xy[0], "y": xy[1]}, "abort_button", action_enabled=True)
+        click_at_screen(screen_xy, "abort_button", action_enabled=True)
         if _CHECK_CAPTURE_SETTLE_SEC > 0:
             time.sleep(_CHECK_CAPTURE_SETTLE_SEC)
         confirm_image = capture_window(tool_window)
@@ -217,16 +241,19 @@ def _exec_abort_measurement(step, context, settings) -> "object":
             context["abort_confirm_verdict"] = getattr(
                 cverdict, "status", "skipped" if policy == ABORT_LABEL_POLICY_OFF else "unavailable"
             )
-            if accepts_label(cverdict, policy):
-                click_at_screen({"x": cxy[0], "y": cxy[1]}, "abort_confirm", action_enabled=True)
+            confirm_screen = image_point_to_screen(
+                tool_window, {"x": cxy[0], "y": cxy[1]}, image_size=confirm_image.size
+            )
+            if accepts_label(cverdict, policy) and confirm_screen is not None:
+                click_at_screen(confirm_screen, "abort_confirm", action_enabled=True)
             else:
                 print(
                     "[WARNING] abort 확인 버튼 라벨 미확인 - 클릭 생략(다이얼로그는 열린 채 "
-                    f"엔지니어 처리). EQP_ID={eqp_id} confirm=({cxy[0]},{cxy[1]})"
+                    f"엔지니어 처리). EQP_ID={eqp_id} confirm_img=({cxy[0]},{cxy[1]})"
                 )
                 cxy = None
         context["abort_outcome"] = "aborted"
-        print(f"[INFO] 측정 abort 실행: EQP_ID={eqp_id} button=({xy[0]},{xy[1]}) confirm={cxy}")
+        print(f"[INFO] 측정 abort 실행: EQP_ID={eqp_id} button_screen={screen_xy} confirm_img={cxy}")
     except Exception as exc:
         context["abort_outcome"] = "abort_error"
         return _make_result(

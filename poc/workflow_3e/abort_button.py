@@ -31,7 +31,13 @@ from poc.workflow_3.vlm.label_verify import (
     label_matches,
     read_text_near_point,
 )
+from poc.workflow_3.vlm.ui_venus_mai_locator import TargetConfig, analyze_window_target
 from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
+
+from poc.workflow_3 import DEBUG_IMAGE_DIR
+
+LOG_NAME = "measurement_abort"
+DEBUG_ARTIFACT_DIR = DEBUG_IMAGE_DIR / "measurement_abort"
 
 # --- 라벨 확인 정책 ---
 #   off     : 게이트 비활성(검증 전 롤백 경로)
@@ -63,71 +69,27 @@ ABORT_TARGET_ABORT = "abort"
 ABORT_TARGET_QUEUE = "queue"
 _VALID_TARGETS = {ABORT_TARGET_ABORT, ABORT_TARGET_QUEUE}
 
-# 버튼 크기 crop(점 주변). tool 행 strip 과 달리 가로로 길 필요가 없다.
-LABEL_CROP_LEFT_RATIO = 0.04
-LABEL_CROP_RIGHT_RATIO = 0.04
-LABEL_CROP_HALF_HEIGHT_RATIO = 0.02
+# 버튼 라벨 확인 crop. 임의값이 아니라 bench_tool_window_reader 가 오피스에서 Stop/Queue/PM
+# 을 acc=1.000 으로 읽은 값과 동일하게 맞춘다(test_abort_button 이 둘의 일치를 못박는다).
+LABEL_CROP_LEFT_RATIO = 0.035
+LABEL_CROP_RIGHT_RATIO = 0.035
+LABEL_CROP_HALF_HEIGHT_RATIO = 0.018
+
+# tool 창 버튼 grounding 힌트. 벤치가 쓴 문구와 같은 내용을 쓴다.
+BUTTON_HINTS = {
+    "Stop": (
+        "the 'Stop' button that stops/aborts the running measurement. It sits in the "
+        "operation button row."
+    ),
+    "Queue": (
+        "the 'Queue' button that opens the measurement queue / job list. It sits in the "
+        "operation button row."
+    ),
+}
 
 
-def _abort_button_system_prompt() -> str:
-    """Abort/Stop 버튼 탐지 시스템 프롬프트."""
-    return (
-        "You analyse a screenshot of a CD-SEM / VeritySEM metrology tool that is RUNNING "
-        "a measurement recipe. The operator needs to STOP / ABORT the in-progress "
-        "measurement run because too many points have failed.\n"
-        "Locate the button that STOPS or ABORTS the running measurement. It is a "
-        "clickable control, usually labelled 'Stop', 'Abort', '중지', or '정지'. Do NOT "
-        "return a 'Pause', a 'Cancel' on an unrelated dialog, the window close (X) button, "
-        "menu items, or the SEM image itself.\n"
-        "Return strict JSON only. If no such Stop/Abort button is clearly visible, say so "
-        "rather than guessing."
-    )
 
 
-def _abort_button_user_prompt() -> str:
-    """Abort 버튼 탐지 사용자 프롬프트(엄격한 JSON 스키마)."""
-    return (
-        "Return JSON with this exact schema:\n"
-        "{\n"
-        '  "abort_button_visible": true,\n'
-        '  "coord_system": "relative_1000",\n'
-        '  "abort_button_bbox": {"left": 0, "top": 0, "right": 0, "bottom": 0},\n'
-        '  "confidence": 0.0\n'
-        "}\n"
-        "abort_button_bbox must tightly enclose the Stop/Abort button only. "
-        "If none is clearly visible, set abort_button_visible=false, abort_button_bbox=null."
-    )
-
-
-def _queue_button_system_prompt() -> str:
-    """Queue 버튼 탐지 시스템 프롬프트(rehearsal 대상).
-
-    Stop/Abort 와 인접해 있으므로 '눌러도 측정에 영향이 없는 Queue 쪽' 임을 명시한다.
-    """
-    return (
-        "You analyse a screenshot of a CD-SEM / VeritySEM metrology tool window.\n"
-        "Locate the 'Queue' button - the control that opens the measurement QUEUE / job "
-        "list view. It sits in the same button area as Stop and PM. Do NOT return the "
-        "'Stop' / 'Abort' / '중지' button, the 'PM' button, the window close (X) button, "
-        "menu items, or the SEM image itself.\n"
-        "Return strict JSON only. If no such Queue button is clearly visible, say so "
-        "rather than guessing."
-    )
-
-
-def _queue_button_user_prompt() -> str:
-    """Queue 버튼 사용자 프롬프트(전용 스키마 키)."""
-    return (
-        "Return JSON with this exact schema:\n"
-        "{\n"
-        '  "queue_button_visible": true,\n'
-        '  "coord_system": "relative_1000",\n'
-        '  "queue_button_bbox": {"left": 0, "top": 0, "right": 0, "bottom": 0},\n'
-        '  "confidence": 0.0\n'
-        "}\n"
-        "queue_button_bbox must tightly enclose the Queue button only. "
-        "If none is clearly visible, set queue_button_visible=false, queue_button_bbox=null."
-    )
 
 
 def _confirm_system_prompt() -> str:
@@ -292,23 +254,11 @@ def verify_button_label_at_point(
     return verdict
 
 
-def locate_abort_button(*, frame_bgr: np.ndarray, client: Workflow1VLMClient) -> tuple[int, int] | None:
-    """전체 화면 프레임에서 Stop/Abort 버튼 중심의 SCREEN 픽셀 좌표를 반환(없으면 None)."""
-    return _locate(frame_bgr, client, _abort_button_system_prompt(), _abort_button_user_prompt())
-
 
 def locate_abort_confirm(*, frame_bgr: np.ndarray, client: Workflow1VLMClient) -> tuple[int, int] | None:
     """abort 확인 다이얼로그의 Yes/확인 버튼 중심 SCREEN 좌표를 반환(없으면 None)."""
     return _locate(frame_bgr, client, _confirm_system_prompt(), _confirm_user_prompt())
 
-
-def locate_queue_button(*, frame_bgr: np.ndarray, client: Workflow1VLMClient) -> tuple[int, int] | None:
-    """Queue 버튼 중심의 SCREEN 좌표를 반환(없으면 None). rehearsal 대상."""
-    return _locate(
-        frame_bgr, client,
-        _queue_button_system_prompt(), _queue_button_user_prompt(),
-        key_prefix="queue_button",
-    )
 
 
 def load_abort_target(default: str = ABORT_TARGET_QUEUE) -> str:
@@ -346,11 +296,59 @@ def expected_labels_for_target(target: str) -> tuple:
     return ABORT_BUTTON_LABELS
 
 
-def locate_for_target(target: str, *, frame_bgr, client) -> "tuple[int, int] | None":
-    """대상별 로케이터 디스패치."""
-    if target == ABORT_TARGET_QUEUE:
-        return locate_queue_button(frame_bgr=frame_bgr, client=client)
-    return locate_abort_button(frame_bgr=frame_bgr, client=client)
+def button_label_for_target(target: str) -> str:
+    """대상 -> 실제로 찾을 버튼 이름(로케이터 hint 와 라벨확인이 같은 것을 가리키게)."""
+    return "Queue" if target == ABORT_TARGET_QUEUE else "Stop"
+
+
+def button_target_config(label: str) -> TargetConfig:
+    """tool 창 버튼용 2단계 로케이터 타겟.
+
+    기하값은 bench_tool_window_reader._button_target 와 동일하다 - 그 설정으로 오피스에서
+    Stop/Queue/PM acc=1.000 이 나왔다. 여기서 임의로 다르게 잡으면 '입증된 설정' 이라는
+    근거가 사라진다(test_abort_button 이 일치를 검사한다).
+    """
+    hint = BUTTON_HINTS.get(label, f"the '{label}' button in this CD-SEM tool control window")
+    return TargetConfig(
+        key=f"button_{label.lower()}",
+        description=(
+            f"{hint} Return a safe click point on the button surface itself, not on "
+            f"nearby labels, readouts, or the live image."
+        ),
+        left_pad_ratio=0.8,
+        right_pad_ratio=0.8,
+        vertical_pad_ratio=0.8,
+        min_crop_width=320,
+        min_crop_height=96,
+        vertical_pad_min_px=16,
+    )
+
+
+def locate_for_target(
+    target: str, *, window, window_title: str, backend: str, image
+) -> "tuple[int, int] | None":
+    """대상 버튼을 2단계 로케이터로 찾는다. 반환은 **창-이미지 좌표**(스크린 아님).
+
+    스크린 변환은 클릭 직전에 image_point_to_screen 이 한다 - 라벨 확인은 이미지 좌표로
+    crop 해야 하므로 두 좌표계를 섞지 않는다.
+    """
+    label = button_label_for_target(target)
+    result = analyze_window_target(
+        window,
+        window_title,
+        backend,
+        button_target_config(label),
+        debug_image_dir=DEBUG_ARTIFACT_DIR,
+        log_name=LOG_NAME,
+        component_name=LOG_NAME,
+        artifact_prefix=f"abort_{label.lower()}",
+        image=image,
+        timeout_sec=15.0,
+    )
+    point = getattr(result, "point", None)
+    if not point:
+        return None
+    return int(point["x"]), int(point["y"])
 
 
 __all__ = [
@@ -364,15 +362,15 @@ __all__ = [
     "CONFIRM_BUTTON_LABELS",
     "QUEUE_BUTTON_LABELS",
     "accepts_label",
+    "button_label_for_target",
+    "button_target_config",
     "classify_button_tokens",
     "expected_labels_for_target",
     "is_click_armed",
     "is_rehearsal_target",
     "load_abort_label_policy",
     "load_abort_target",
-    "locate_abort_button",
     "locate_abort_confirm",
     "locate_for_target",
-    "locate_queue_button",
     "verify_button_label_at_point",
 ]

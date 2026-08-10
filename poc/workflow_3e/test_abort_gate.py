@@ -48,6 +48,11 @@ def _run_gate(
     state = {}
     _swap(state, ac, "capture_window", lambda win: Image.new("RGB", (1000, 500)))
     _swap(state, ac, "locate_for_target", lambda t, **kw: (500, 400))
+    # 창-이미지 좌표 -> 스크린 좌표. 창이 (40,60) 에 있는 상황을 재현한다.
+    _swap(
+        state, ac, "image_point_to_screen",
+        lambda window, point, image_size=None: {"x": point["x"] + 40, "y": point["y"] + 60},
+    )
     _swap(state, ac, "locate_abort_confirm", lambda **kw: confirm_xy)
     _swap(state, ac, "load_abort_target", lambda: target)
 
@@ -113,11 +118,17 @@ def test_ocr_unavailable_blocks_click_under_strict():
 
 
 def test_confirmed_allows_click():
+    """클릭 좌표는 창-이미지 좌표가 아니라 **스크린 좌표**여야 한다.
+
+    로케이터/라벨확인은 capture_window 이미지 좌표계에서 돌고, click_at_screen 은 스크린
+    절대 좌표를 받는다. 변환을 빠뜨리면 창이 (0,0) 이 아니거나 DPI 배율이 걸릴 때 클릭이
+    엉뚱한 곳에 떨어진다(cycle.py 는 같은 상황에서 image_point_to_screen 을 쓴다).
+    """
     clicks = []
     verdict = ab.classify_button_tokens(["Stop"], ab.ABORT_BUTTON_LABELS)
     context, result = _run_gate(verdict, ab.ABORT_LABEL_POLICY_STRICT, clicks)
     ok = (
-        [c[0] for c in clicks] == ["abort_button"]
+        clicks == [("abort_button", 540, 460)]   # (500,400) 이미지 -> (+40,+60) 스크린
         and context["abort_outcome"] == "aborted"
         and result.status == "success"
     )
@@ -164,7 +175,7 @@ def test_confirm_dialog_confirmed_allows_confirm_click():
         ok_verdict, ab.ABORT_LABEL_POLICY_STRICT, clicks,
         confirm_xy=(600, 300), confirm_verdict=good_confirm,
     )
-    ok = [c[0] for c in clicks] == ["abort_button", "abort_confirm"]
+    ok = clicks == [("abort_button", 540, 460), ("abort_confirm", 640, 360)]
     print(f"[{'PASS' if ok else 'FAIL'}] confirm_dialog_confirmed_allows_confirm_click: clicks={clicks}")
     return ok
 

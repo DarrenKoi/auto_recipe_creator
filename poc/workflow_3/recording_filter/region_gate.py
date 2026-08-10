@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from poc.workflow_3.debug_artifacts import save_marked_bboxes
+from poc.workflow_3.util import env_float
 
 try:
     from PIL import Image
@@ -27,6 +28,18 @@ except ImportError:
     _PIL_AVAILABLE = False
 
 FRAME_META_FILENAME = "frame_meta.jsonl"
+
+# (2026-08-10 리뷰 FINDING 2) 최근접 조인 최대 허용 간격(초).
+# 레코더는 poll_sec(기본 0.2s)마다 캡처하고, 사이드카는 프레임 저장 여부와 무관하게
+# 캡처마다 한 줄씩 남긴다(monitor/frame_meta.py, manual_record.py:_make_capture_fn) -
+# 그래서 writer 가 살아있는 한 어떤 이벤트 시각에도 매우 가까운(대개 1초 이내) 레코드가
+# 있어야 정상이다. 반대로 writer 는 쓰기 실패 시 영구적으로 자기 자신을 끈다
+# (monitor/frame_meta.py FrameMetaWriter, Task 2 의 확정 동작) - 10분 세션 중 30초 만에
+# 죽으면 이후 모든 이벤트가 "그래도 제일 가깝다"는 이유로 죽기 직전 레코드에 세션 끝까지
+# 계속 join 되어, rect/cursor/generation 이 몇 분째 그대로인 채 확신에 찬 ambient 판정이
+# 나온다. 그래서 이 상한은 정상 폴링 간격(0.2~1초대)보다는 넉넉하게, 사이드카가 죽은 뒤
+# 방치되는 시간(수십 초~수 분)보다는 훨씬 타이트하게 잡는다.
+META_MAX_JOIN_GAP_SEC = env_float("RECORDING_FILTER_META_MAX_JOIN_GAP_SEC", 10.0)
 
 
 @dataclass
@@ -76,14 +89,21 @@ def load_frame_meta(capture_dir) -> list:
 
 
 def nearest_meta(metas, t_sec):
-    """t_sec 에 가장 가까운 FrameMeta 를 돌려준다(없으면 None).
+    """t_sec 에 가장 가까운 FrameMeta 를 돌려준다(없거나 너무 멀면 None).
 
     capture 호출 순번과 저장된 프레임 seq 는 어긋난다(변화 없는 샘플은 저장되지
     않는다). 그래서 순번이 아니라 시각으로 조인한다.
+
+    (FINDING 2) 가장 가까운 레코드라도 META_MAX_JOIN_GAP_SEC 보다 멀면 조인하지
+    않는다 - 죽은 사이드카의 마지막 레코드에 세션 끝까지 계속 달라붙는 것을 막기
+    위함이다. 호출부는 None 을 "사이드카 없음"과 동일하게 취급해야 한다.
     """
     if not metas:
         return None
-    return min(metas, key=lambda m: abs(m.t_sec - float(t_sec)))
+    best = min(metas, key=lambda m: abs(m.t_sec - float(t_sec)))
+    if abs(best.t_sec - float(t_sec)) > META_MAX_JOIN_GAP_SEC:
+        return None
+    return best
 
 
 def _rect_key(rect):
@@ -193,28 +213,54 @@ def build_region_maps(events, metas, client, out_dir) -> dict:
 
 
 def _generation_for(gen_by_time, t_sec) -> int:
-    """시각으로 세대 번호를 찾는다(사이드카 없으면 항상 0)."""
+    """시각으로 세대 번호를 찾는다(사이드카 없거나 가장 가까운 기록도 너무 멀면 0).
+
+    (FINDING 2) nearest_meta 와 동일한 META_MAX_JOIN_GAP_SEC 상한을 적용한다.
+    그렇지 않으면 죽은 사이드카의 마지막 세대 번호가 세션 끝까지 그대로 남아,
+    region_map 조회가 몇 분 전 레이아웃의 live_box 를 계속 골라 쓰게 된다.
+    사이드카가 비어 있을 때와 동일하게 0(폴백)으로 되돌린다.
+    """
     if not gen_by_time:
         return 0
-    return min(gen_by_time, key=lambda pair: abs(pair[0] - float(t_sec)))[1]
+    nearest_t, generation = min(gen_by_time, key=lambda pair: abs(pair[0] - float(t_sec)))
+    if abs(nearest_t - float(t_sec)) > META_MAX_JOIN_GAP_SEC:
+        return 0
+    return generation
 
 
 def apply_region_gate(events, metas, region_maps) -> list:
-    """변화 이벤트마다 (event, generation, verdict, occlusion) 을 계산한다."""
+    """변화 이벤트마다 (event, generation, verdict, occlusion) 을 계산한다.
+
+    has_meta 는 세션에 사이드카가 존재했는지가 아니라 **이 이벤트에 실제로 조인된
+    레코드가 있는지**를 뜻한다(FINDING 2) - nearest_meta 가 거리 상한을 넘겨 None 을
+    돌려주면(사이드카가 죽었거나 처음부터 없던 것과 동일하게) has_meta 도 False 가
+    되어 gate_verdict 가 안전하게 candidate 로 강제한다.
+    """
     generations = assign_generations(metas)
     gen_by_time = list(zip([m.t_sec for m in metas], generations))
-    has_meta = bool(metas)
     results = []
     for event in events:
         generation = _generation_for(gen_by_time, event.timestamp_sec)
         region_map = region_maps.get(generation)
         live_box = region_map.live_box if region_map else None
         meta = nearest_meta(metas, event.timestamp_sec)
+        has_meta = meta is not None
         cursor_in_live = False
+        cursor_unresolved = False
         occlusion = "unknown"
         if meta is not None:
             occlusion = meta.occlusion
-            if meta.cursor_xy and meta.rect and live_box:
+            if meta.cursor_xy is None:
+                # (FINDING 1) cursor_xy=None 은 "커서가 라이브 박스 밖" 이 아니라
+                # GetCursorPos 실패/미지원 플랫폼을 뜻한다(monitor/frame_meta.py
+                # read_cursor_screen_xy). 확인된 부재가 아니라 판정 불가이므로
+                # ambient 후보에서 제외한다.
+                cursor_unresolved = True
+            elif meta.rect is None:
+                # (FINDING 1) rect 가 없으면 화면 좌표 커서를 프레임 좌표로 옮길
+                # 방법이 없다 - "밖" 으로 단정하지 않고 판정 불가로 candidate 강제.
+                cursor_unresolved = True
+            elif live_box is not None:
                 # 화면 좌표 -> 프레임 좌표로 옮긴 뒤 라이브 박스 포함 여부를 본다.
                 fx = int(meta.cursor_xy[0]) - int(meta.rect["left"])
                 fy = int(meta.cursor_xy[1]) - int(meta.rect["top"])
@@ -222,7 +268,12 @@ def apply_region_gate(events, metas, region_maps) -> list:
                     live_box["left"] <= fx <= live_box["right"]
                     and live_box["top"] <= fy <= live_box["bottom"]
                 )
-        verdict = gate_verdict(event.change_bbox, live_box, cursor_in_live, has_meta)
+            # live_box 가 None 이면 커서 판정과 무관하게 gate_verdict 가 candidate 로
+            # 처리하므로(아래) cursor_in_live=False 그대로 둬도 안전하다.
+        if cursor_unresolved:
+            verdict = "candidate"
+        else:
+            verdict = gate_verdict(event.change_bbox, live_box, cursor_in_live, has_meta)
         results.append((event, generation, verdict, occlusion))
 
     n_ambient = sum(1 for _e, _g, v, _o in results if v == "ambient")

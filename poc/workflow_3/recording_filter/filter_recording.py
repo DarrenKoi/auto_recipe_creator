@@ -13,8 +13,9 @@ import time
 from pathlib import Path
 
 from poc.workflow_3 import ALIGN_IMAGES_DIR
-from poc.workflow_3.debug_artifacts import save_debug_json
+from poc.workflow_3.debug_artifacts import save_debug_jpeg, save_debug_json
 from poc.workflow_3.recording_filter.click_detect import detect_clicks
+from poc.workflow_3.recording_filter.element_label import crop_box_around
 from poc.workflow_3.recording_filter.frame_reduce import collect_frame_paths, reduce_frames
 from poc.workflow_3.recording_filter.settings import (
     RecordingFilterSettings,
@@ -51,6 +52,7 @@ def _resolve_input_dir() -> Path | None:
         [
             *ALIGN_IMAGES_DIR.glob("*/*/*/captured_img_from_rcs/*/recording"),
             *ALIGN_IMAGES_DIR.glob("*/_unregistered/*/recording"),
+            *ALIGN_IMAGES_DIR.glob("*/_manual/*/recording"),
         ],
         key=lambda p: p.stat().st_mtime,
         reverse=True,
@@ -127,6 +129,7 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
 
     # ---- Stage 1 ----
     change_events = reduce_frames(frames_dir, settings)
+    stage1_total = len(change_events)  # Stage 1.5 가 change_events 를 걸러 덮어쓰기 전 원본 건수.
     _copy_change_events(change_events, out_dir / "change_events")
     save_debug_json(
         out_dir / "change_events.json",
@@ -140,6 +143,36 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
         },
     )
 
+    # ---- Stage 1.5: 영역 게이트 ----
+    from poc.workflow_3.recording_filter.region_gate import (
+        apply_region_gate,
+        build_region_maps,
+        load_frame_meta,
+    )
+
+    metas = load_frame_meta(frames_dir)
+    gate_info = {}
+    if settings.region_gate_enabled:
+        if client is None:
+            from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
+
+            client = Workflow1VLMClient(settings.vlm_service, model_name=settings.vlm_model)
+        region_maps = build_region_maps(change_events, metas, client, out_dir)
+        gated = apply_region_gate(change_events, metas, region_maps)
+        for event, generation, verdict, occlusion in gated:
+            gate_info[event.rank] = {
+                "generation": generation,
+                "region": "live_image" if verdict == "ambient" else "ui",
+                "occlusion": occlusion,
+                "verdict": verdict,
+            }
+        # ambient 와 가려진 프레임은 비싼 Stage 2a 에 태우지 않는다.
+        change_events = [
+            event for event, _g, verdict, occlusion in gated
+            if verdict == "candidate" and occlusion != "full"
+        ]
+        print(f"[INFO] Stage 1.5 통과: {len(change_events)} 건이 Stage 2a 로 갑니다.")
+
     # ---- Stage 2a ----
     if client is None:
         from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
@@ -149,7 +182,41 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
     write_click_overlays(
         [ce for ce in click_events if ce.is_click], out_dir / "click_events"
     )
-    timeline = build_timeline(click_events)
+
+    # ---- Stage 2c: 요소 라벨링 ----
+    from poc.workflow_3.recording_filter.element_label import label_element
+
+    labels = {}
+    if settings.element_label_enabled:
+        from PIL import Image
+
+        from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
+
+        ocr_client = Workflow1VLMClient(settings.element_ocr_service)
+        label_vlm = Workflow1VLMClient(settings.element_vlm_service)
+        crops_dir = out_dir / "element_crops"
+        crops_dir.mkdir(parents=True, exist_ok=True)
+        for ce in click_events:
+            if not ce.is_click or not ce.cursor_xy:
+                continue
+            frame_image = Image.open(ce.frame_path).convert("RGB")
+            label = label_element(
+                frame_image, (ce.cursor_xy[0], ce.cursor_xy[1]), settings,
+                ocr_client=ocr_client, vlm_client=label_vlm,
+            )
+            labels[ce.rank] = label
+            box = crop_box_around(
+                ce.cursor_xy[0], ce.cursor_xy[1], settings.element_crop_px,
+                frame_image.size[0], frame_image.size[1],
+            )
+            save_debug_jpeg(
+                frame_image.crop((box["left"], box["top"], box["right"], box["bottom"])),
+                crops_dir / f"{ce.rank:03d}_{label.source}.jpg",
+            )
+        n_labeled = sum(1 for lb in labels.values() if lb.source != "none")
+        print(f"[INFO] Stage 2c 완료: 라벨 {n_labeled} / {len(labels)}")
+
+    timeline = build_timeline(click_events, gate_info=gate_info, labels=labels)
     save_debug_json(
         out_dir / "interaction_timeline.json",
         {"capture_dir": str(capture_dir), "events": timeline},
@@ -161,7 +228,7 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
         {
             "capture_dir": str(capture_dir),
             "output_dir": str(out_dir),
-            "total_change_events": len(change_events),
+            "total_change_events": stage1_total,
             "processed_for_click": len(click_events),
             "clicks": sum(1 for ce in click_events if ce.is_click),
             "timeline_events": len(timeline),
@@ -169,6 +236,9 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
             "truncated": truncated > 0,
             "skipped_due_to_cap": max(0, truncated),
             "max_vlm_calls": settings.max_vlm_calls,
+            "generations": len({info["generation"] for info in gate_info.values()}) if gate_info else 0,
+            "gate_passed": len(change_events),
+            "labeled": sum(1 for lb in labels.values() if lb.source != "none"),
             "elapsed": format_elapsed_ms(started_at),
         },
     )

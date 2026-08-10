@@ -5,7 +5,7 @@ from PIL import Image
 
 from poc.workflow_3.recording_filter.click_detect import ClickEvent
 from poc.workflow_3.recording_filter.frame_reduce import ChangeEvent
-from poc.workflow_3.recording_filter.timeline import build_timeline, write_click_overlays
+from poc.workflow_3.recording_filter.timeline import build_timeline, derive_target_kind, write_click_overlays
 
 
 def _click_event(tmp_path, rank, t_sec, is_click=True):
@@ -59,3 +59,86 @@ def test_write_click_overlays_creates_files(tmp_path):
     paths = write_click_overlays(events, out_dir)
     assert len(paths) == 1
     assert paths[0].exists()
+
+
+def test_derive_target_kind_ui_control():
+    """ui 영역 + 라벨 있음 -> 이식 가능한 ui_control."""
+    assert derive_target_kind("ui", "ocr") == "ui_control"
+    assert derive_target_kind("ui", "vlm") == "ui_control"
+
+
+def test_derive_target_kind_live_image():
+    """라이브 영상 위 조작은 라벨 유무와 무관하게 live_image."""
+    assert derive_target_kind("live_image", "ocr") == "live_image"
+    assert derive_target_kind("live_image", "none") == "live_image"
+
+
+def test_derive_target_kind_unknown():
+    """라벨이 없으면 사람이 봐야 한다."""
+    assert derive_target_kind("ui", "none") == "unknown"
+    assert derive_target_kind("unknown", "none") == "unknown"
+
+
+class _Change:
+    def __init__(self, rank, t):
+        self.rank = rank
+        self.frame_path = f"/tmp/f{rank}.jpg"
+        self.prev_frame_path = f"/tmp/f{rank - 1}.jpg"
+        self.timestamp_sec = t
+
+
+class _Click:
+    def __init__(self, rank, t):
+        self.change = _Change(rank, t)
+        self.status = "click"
+        self.is_click = True
+        self.cursor_xy = [100, 200]
+        self.confidence = 0.8
+
+    @property
+    def frame_path(self):
+        return self.change.frame_path
+
+    @property
+    def prev_frame_path(self):
+        return self.change.prev_frame_path
+
+    @property
+    def timestamp_sec(self):
+        return self.change.timestamp_sec
+
+    @property
+    def rank(self):
+        return self.change.rank
+
+
+def test_timeline_carries_new_fields():
+    """게이트/라벨 정보가 이벤트에 실린다."""
+    from poc.workflow_3.recording_filter.element_label import ElementLabel
+
+    clicks = [_Click(rank=0, t=1.0)]
+    gate_info = {0: {"generation": 2, "region": "ui", "occlusion": "none"}}
+    labels = {0: ElementLabel(text="Start", source="ocr", confidence=1.0)}
+
+    events = build_timeline(clicks, gate_info=gate_info, labels=labels)
+
+    assert len(events) == 1
+    ev = events[0]
+    assert ev["element"] == "Start"
+    assert ev["element_source"] == "ocr"
+    assert ev["target_kind"] == "ui_control"
+    assert ev["region"] == "ui"
+    assert ev["generation"] == 2
+    assert ev["occlusion"] == "none"
+
+
+def test_timeline_defaults_without_gate_or_labels():
+    """게이트/라벨 정보가 없어도 기존 스키마로 동작한다(하위 호환)."""
+    events = build_timeline([_Click(rank=0, t=1.0)])
+    ev = events[0]
+    assert ev["element"] is None
+    assert ev["element_source"] == "none"
+    assert ev["target_kind"] == "unknown"
+    assert ev["region"] == "unknown"
+    assert ev["generation"] == 0
+    assert ev["occlusion"] == "unknown"

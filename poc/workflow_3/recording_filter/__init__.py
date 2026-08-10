@@ -7,8 +7,14 @@ docs/superpowers/specs/2026-06-11-recording-filter-design.md 참고.
 """
 
 from poc.workflow_3.recording_filter.click_detect import ClickEvent, detect_clicks
+from poc.workflow_3.recording_filter.element_label import ElementLabel, label_element
 from poc.workflow_3.recording_filter.filter_recording import run_filter
 from poc.workflow_3.recording_filter.frame_reduce import ChangeEvent, reduce_frames
+from poc.workflow_3.recording_filter.region_gate import (
+    apply_region_gate,
+    build_region_maps,
+    load_frame_meta,
+)
 from poc.workflow_3.recording_filter.settings import (
     RecordingFilterSettings,
     load_recording_filter_settings,
@@ -22,6 +28,11 @@ __all__ = [
     "reduce_frames",
     "ClickEvent",
     "detect_clicks",
+    "load_frame_meta",
+    "build_region_maps",
+    "apply_region_gate",
+    "ElementLabel",
+    "label_element",
     "build_timeline",
     "run_filter",
 ]

@@ -163,9 +163,9 @@ CLI 인자 없음 규칙에 따라 모듈 상수 + env 오버라이드로 둔다
 | 설정 | 기본값 | 역할 |
 |------|--------|------|
 | `MANUAL_RECORD_MAX_SEC` | `600` | **실질 상한.** `0` 이면 무제한 (`RecordingSession` 이 `max_sec > 0` 일 때만 검사) |
-| `MANUAL_RECORD_MAX_FRAMES` | `1500` | 백스톱 (정상이면 안 걸림) |
-| `MANUAL_RECORD_MAX_DISK_MB` | `800` | 백스톱 (정상이면 안 걸림) |
-| `MANUAL_RECORD_POLL_SEC` | `0.5` | 샘플링 간격 (알람용 0.3 보다 완화) |
+| `MANUAL_RECORD_MAX_FRAMES` | `4000` | 백스톱 (정상이면 안 걸림) |
+| `MANUAL_RECORD_MAX_DISK_MB` | `2000` | 백스톱 (정상이면 안 걸림) |
+| `MANUAL_RECORD_POLL_SEC` | `0.2` | 샘플링 간격 (알람용 0.3 보다 촘촘 — 커서 궤적 추적 밀도 우선) |
 | `MANUAL_RECORD_JPEG_QUALITY` | `85` | q95 대비 용량 약 절반 |
 | `MANUAL_RECORD_EQP_ID` | `""` | 모니터링 창이 여럿일 때만 필요 |
 | `MANUAL_RECORD_META` | `1` | 사이드카 기록 on/off |
@@ -173,6 +173,17 @@ CLI 인자 없음 규칙에 따라 모듈 상수 + env 오버라이드로 둔다
 백스톱을 실질 상한보다 넉넉히 잡은 이유는, 이것들이 걸린다는 것이 **예상 못 한 일이
 벌어졌다는 신호**여야 하기 때문이다. 시간 상한과 비슷하게 잡으면 manifest 만 보고
 원인을 구분할 수 없다.
+
+**예산 산정 근거** — 600s / 0.2s = 최대 3000 샘플. 전부 저장되는 최악의 경우에도
+q85 기준 약 750MB 이므로, 백스톱 4000 프레임 / 2000MB 는 시간 상한보다 먼저 걸리지
+않는다. `poll_sec` 을 바꿀 때는 이 두 값도 함께 재계산해야 한다.
+
+**`poll_sec` 은 요청 간격이지 실제 주기가 아니다.** `RecordingSession._run` 은 캡처와
+diff 를 끝낸 *뒤* `wait(poll_sec)` 하므로(`recording.py:182`), 실제 주기는
+`처리시간 + poll_sec` 이다. 창이 크거나 디스크가 느리면 자연히 느려지는 자기 조절
+성질이 있어 0.2s 로 내려도 폭주하지 않는다. 대신 실측 주기는 manifest 의
+`sampled_count / 경과시간` 으로 확인한다 — 첫 세션에서 이 값이 목표(5/s)에 크게 못
+미치면 창 크기나 JPEG 품질을 조정할 신호다.
 
 정지 사유는 manifest 에 기록된다:
 

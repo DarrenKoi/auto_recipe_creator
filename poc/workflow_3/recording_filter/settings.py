@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 
-from poc.workflow_3.util import env_float, env_int
+from poc.workflow_3.util import env_flag, env_float, env_int
 from poc.workflow_3.vlm.flask_vlm import UI_VENUS_MODEL_NAME
 
 # 기본 VLM service slug.
@@ -26,6 +26,13 @@ class RecordingFilterSettings:
     vlm_model: str = field(default_factory=lambda: UI_VENUS_MODEL_NAME)
     vlm_request_delay_sec: float = 1.0  # 프록시 과부하 방지 간격
     max_vlm_calls: int = 0              # 0 = 생존 전체 처리(샘플링 없음)
+    # ---- Stage 1.5: 영역 게이트 ----
+    region_gate_enabled: bool = True     # 0 이면 게이트 없이 전부 candidate.
+    # ---- Stage 2c: 요소 라벨링 ----
+    element_crop_px: int = 260           # 클릭 지점 주변 crop 한 변.
+    element_ocr_service: str = "paddleocr-vl-1.5"
+    element_vlm_service: str = "mai-ui"
+    element_label_enabled: bool = True
 
 
 def load_recording_filter_settings() -> RecordingFilterSettings:
@@ -39,4 +46,7 @@ def load_recording_filter_settings() -> RecordingFilterSettings:
         click_diff_threshold=env_int("RECORDING_FILTER_CLICK_DIFF_THRESHOLD", 25),
         vlm_request_delay_sec=env_float("RECORDING_FILTER_VLM_REQUEST_DELAY_SEC", 1.0),
         max_vlm_calls=env_int("RECORDING_FILTER_MAX_VLM_CALLS", 0),
+        region_gate_enabled=env_flag("RECORDING_FILTER_REGION_GATE", True),
+        element_crop_px=env_int("RECORDING_FILTER_ELEMENT_CROP_PX", 260),
+        element_label_enabled=env_flag("RECORDING_FILTER_ELEMENT_LABEL", True),
     )

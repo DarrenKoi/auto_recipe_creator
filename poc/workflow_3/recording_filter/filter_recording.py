@@ -15,7 +15,7 @@ from pathlib import Path
 from poc.workflow_3 import ALIGN_IMAGES_DIR
 from poc.workflow_3.debug_artifacts import save_debug_jpeg, save_debug_json
 from poc.workflow_3.recording_filter.click_detect import detect_clicks
-from poc.workflow_3.recording_filter.element_label import crop_box_around
+from poc.workflow_3.recording_filter.element_label import crop_box_around, label_element
 from poc.workflow_3.recording_filter.frame_reduce import collect_frame_paths, reduce_frames
 from poc.workflow_3.recording_filter.settings import (
     RecordingFilterSettings,
@@ -109,6 +109,61 @@ def _change_events_payload(change_events) -> list[dict]:
     ]
 
 
+def _label_one_click(ce, settings, *, ocr_client, vlm_client, crops_dir):
+    """단일 클릭 이벤트의 요소 라벨을 계산하고 crop 을 저장한다.
+
+    label_element 자체는 OCR/VLM 실패를 삼켜 source="none" 으로 돌아오지만,
+    이 함수가 여는 프레임 파일(Image.open)이나 crop 저장(save_debug_jpeg)은
+    방어되어 있지 않다 - 손상/누락된 프레임이면 예외를 그대로 던진다. 호출부
+    (_label_click_events)가 이벤트 단위로 잡아야 한다는 계약이다.
+    """
+    from PIL import Image
+
+    frame_image = Image.open(ce.frame_path).convert("RGB")
+    label = label_element(
+        frame_image, (ce.cursor_xy[0], ce.cursor_xy[1]), settings,
+        ocr_client=ocr_client, vlm_client=vlm_client,
+    )
+    box = crop_box_around(
+        ce.cursor_xy[0], ce.cursor_xy[1], settings.element_crop_px,
+        frame_image.size[0], frame_image.size[1],
+    )
+    save_debug_jpeg(
+        frame_image.crop((box["left"], box["top"], box["right"], box["bottom"])),
+        crops_dir / f"{ce.rank:03d}_{label.source}.jpg",
+    )
+    return label
+
+
+def _label_click_events(click_events, settings, crops_dir, *, ocr_client, vlm_client):
+    """클릭 이벤트 목록을 순회하며 라벨링한다(Stage 2c 본체, (labels, label_errors) 반환).
+
+    한 이벤트가 실패(프레임 손상/누락, crop 저장 실패 등)해도 나머지 이벤트 처리와
+    interaction_timeline.json/summary.json 기록을 막지 않는다 - 재현 불가능한 실제
+    녹화 세션에서 프레임 하나가 나쁘다고 세션 전체 라벨을 잃는 것은 가장 나쁜 실패
+    형태다. 실패한 이벤트는 labels 에서 빠지고, build_timeline 이 문서화된 기본값
+    (element=None, element_source="none", target_kind는 derive_target_kind 규칙대로)
+    으로 채운다.
+    """
+    labels = {}
+    label_errors = 0
+    crops_dir.mkdir(parents=True, exist_ok=True)
+    for ce in click_events:
+        if not ce.is_click or not ce.cursor_xy:
+            continue
+        try:
+            labels[ce.rank] = _label_one_click(
+                ce, settings, ocr_client=ocr_client, vlm_client=vlm_client, crops_dir=crops_dir,
+            )
+        except Exception as exc:
+            label_errors += 1
+            print(
+                f"[WARNING] Stage 2c 라벨링 실패(건너뜀, rank={ce.rank}, "
+                f"frame={ce.frame_path}): {exc}"
+            )
+    return labels, label_errors
+
+
 def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, client=None) -> str:
     """필터 파이프라인을 실행하고 상태 문자열을 반환한다."""
     started_at = time.time()
@@ -184,37 +239,22 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
     )
 
     # ---- Stage 2c: 요소 라벨링 ----
-    from poc.workflow_3.recording_filter.element_label import label_element
-
     labels = {}
+    label_errors = 0
     if settings.element_label_enabled:
-        from PIL import Image
-
         from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
 
         ocr_client = Workflow1VLMClient(settings.element_ocr_service)
         label_vlm = Workflow1VLMClient(settings.element_vlm_service)
-        crops_dir = out_dir / "element_crops"
-        crops_dir.mkdir(parents=True, exist_ok=True)
-        for ce in click_events:
-            if not ce.is_click or not ce.cursor_xy:
-                continue
-            frame_image = Image.open(ce.frame_path).convert("RGB")
-            label = label_element(
-                frame_image, (ce.cursor_xy[0], ce.cursor_xy[1]), settings,
-                ocr_client=ocr_client, vlm_client=label_vlm,
-            )
-            labels[ce.rank] = label
-            box = crop_box_around(
-                ce.cursor_xy[0], ce.cursor_xy[1], settings.element_crop_px,
-                frame_image.size[0], frame_image.size[1],
-            )
-            save_debug_jpeg(
-                frame_image.crop((box["left"], box["top"], box["right"], box["bottom"])),
-                crops_dir / f"{ce.rank:03d}_{label.source}.jpg",
-            )
+        labels, label_errors = _label_click_events(
+            click_events, settings, out_dir / "element_crops",
+            ocr_client=ocr_client, vlm_client=label_vlm,
+        )
         n_labeled = sum(1 for lb in labels.values() if lb.source != "none")
-        print(f"[INFO] Stage 2c 완료: 라벨 {n_labeled} / {len(labels)}")
+        print(
+            f"[INFO] Stage 2c 완료: 라벨 {n_labeled} / {len(labels)} "
+            f"(건너뜀 {label_errors} 건)"
+        )
 
     timeline = build_timeline(click_events, gate_info=gate_info, labels=labels)
     save_debug_json(
@@ -239,6 +279,7 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
             "generations": len({info["generation"] for info in gate_info.values()}) if gate_info else 0,
             "gate_passed": len(change_events),
             "labeled": sum(1 for lb in labels.values() if lb.source != "none"),
+            "element_label_errors": label_errors,
             "elapsed": format_elapsed_ms(started_at),
         },
     )

@@ -63,6 +63,26 @@ def test_sanitize_falls_back_for_empty():
     print("[OK] test_sanitize_falls_back_for_empty")
 
 
+def test_sanitize_rejects_dot_only_path_escape():
+    """"..", ".", "..." 처럼 온통 점으로만 된 결과는 상위 디렉터리 탈출로 이어지므로 폴백한다."""
+    assert sanitize_eqp_for_path("..") == "unknown_eqp"
+    assert sanitize_eqp_for_path(".") == "unknown_eqp"
+    assert sanitize_eqp_for_path("...") == "unknown_eqp"
+    print("[OK] test_sanitize_rejects_dot_only_path_escape")
+
+
+def test_sanitize_keeps_unicode_word_chars():
+    """한글 등 유니코드 단어 문자는 깎이지 않는다 - 서로 다른 EQP 명이 충돌하면 안 된다."""
+    assert sanitize_eqp_for_path("장비1") == "장비1"
+    print("[OK] test_sanitize_keeps_unicode_word_chars")
+
+
+def test_sanitize_strips_trailing_dot():
+    """Windows 가 잘못 처리하는 끝 "." 은 잘라낸다."""
+    assert sanitize_eqp_for_path("MCD916.") == "MCD916"
+    print("[OK] test_sanitize_strips_trailing_dot")
+
+
 def test_manual_recording_dir_shape():
     """경로는 <root>/<eqp>/_manual/<tag>/recording 형태다."""
     from poc.workflow_3 import ALIGN_IMAGES_DIR
@@ -81,5 +101,8 @@ if __name__ == "__main__":
     test_parse_eqp_is_case_insensitive_on_prefix()
     test_sanitize_replaces_path_hostile_chars()
     test_sanitize_falls_back_for_empty()
+    test_sanitize_rejects_dot_only_path_escape()
+    test_sanitize_keeps_unicode_word_chars()
+    test_sanitize_strips_trailing_dot()
     test_manual_recording_dir_shape()
     print("\n[OK] manual_record 파싱/경로 테스트 통과")

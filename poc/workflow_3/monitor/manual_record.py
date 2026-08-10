@@ -17,7 +17,12 @@ from poc.workflow_3 import ALIGN_IMAGES_DIR
 from poc.workflow_3.rcs.login_rcs_common import REMOTE_MONITORING_WINDOW_TITLE_PREFIX
 
 # 폴더명으로 쓸 수 없는 문자(Windows 예약 문자 + 공백/괄호)를 밑줄로 바꾼다.
-_PATH_HOSTILE_RE = re.compile(r"[^A-Za-z0-9._-]+")
+# \w 는 유니코드 단어 문자(한글 포함)까지 허용한다 - ASCII 로 한정하면 "장비1" 같은
+# 한글 EQP 명이 전부 "1" 처럼 깎여나가 서로 다른 장비가 같은 폴더로 충돌한다
+# (2026-08-10 코디네이터 리뷰 FINDING 2). "." 는 여기서 허용 문자라 정규식만으로는
+# ".."(부모 디렉터리 이동) 를 걸러내지 못한다 - 그건 sanitize_eqp_for_path 의
+# 후처리(양끝 "._- " 트림 + 빈 결과 폴백)가 담당한다 (FINDING 1).
+_PATH_HOSTILE_RE = re.compile(r"[^\w.-]+", re.UNICODE)
 # EQP 를 못 읽었을 때의 대체 폴더명 - 프레임을 잃는 것보다 낫다.
 UNKNOWN_EQP = "unknown_eqp"
 # 수동 세션 전용 하위 폴더명 (알람 캡처의 captured_img_from_rcs 와 구분).
@@ -41,8 +46,16 @@ def parse_eqp_from_title(title) -> str:
 
 
 def sanitize_eqp_for_path(eqp) -> str:
-    """EQP 문자열을 폴더명으로 안전한 형태로 바꾼다. 비면 UNKNOWN_EQP."""
-    cleaned = _PATH_HOSTILE_RE.sub("_", (eqp or "").strip()).strip("_")
+    """EQP 문자열을 폴더명으로 안전한 형태로 바꾼다. 비면 UNKNOWN_EQP.
+
+    양끝의 "." / "-" / "_" / 공백은 잘라낸다 - Windows 는 이름 끝의 "." 를
+    잘못 처리하고("MCD916." 같은 폴더), 입력이 온통 "."/".."로만 되어 있으면
+    (".", "..", "...") 트림 후 빈 문자열이 되어 자동으로 UNKNOWN_EQP 로 폴백한다.
+    이 폴백이 없으면 manual_recording_dir 가 ALIGN_IMAGES_DIR / ".." 를 만들어
+    의도한 루트 밖에 쓰게 된다.
+    """
+    cleaned = _PATH_HOSTILE_RE.sub("_", (eqp or "").strip())
+    cleaned = cleaned.strip("._- \t")
     return cleaned or UNKNOWN_EQP
 
 

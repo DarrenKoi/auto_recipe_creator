@@ -45,7 +45,7 @@
 - Test: `poc/workflow_3/recording_filter/test_click_detect.py`
 
 **Interfaces:**
-- Consumes: `region_gate.nearest_meta(metas, t_sec) -> FrameMeta|None`, `region_gate.screen_point_to_frame(cursor_xy, rect, frame_wh) -> dict|None` (반환 `{"x":int,"y":int}`), `region_gate.read_frame_size(frame_path) -> (w,h)|None`
+- Consumes: `region_gate.nearest_meta(metas, t_sec) -> FrameMeta|None`, `region_gate.screen_point_to_frame(cursor_xy, rect, frame_wh) -> tuple|None` (반환 `(fx, fy)` 튜플), `region_gate.read_frame_size(frame_path) -> (w,h)|None`
 - Produces: `resolve_sidecar_cursor(change, metas, frame_wh) -> list|None`, `detect_clicks(..., metas=None)`, `ClickEvent.cursor_source: str`
 
 - [ ] **Step 1: 실패하는 테스트를 쓴다**
@@ -124,7 +124,8 @@ def resolve_sidecar_cursor(change, metas, frame_wh):
     point = screen_point_to_frame(meta.cursor_xy, meta.rect, frame_wh)
     if point is None:
         return None
-    return [int(point["x"]), int(point["y"])]
+    fx, fy = point   # screen_point_to_frame 은 (fx, fy) 튜플을 돌려준다(dict 아님).
+    return [int(fx), int(fy)]
 ```
 
 파일 상단 import 에 추가:

@@ -43,10 +43,15 @@ def _diagnose_read_failure(path):
     if not p.is_file():
         return None
     try:
-        json.loads(p.read_text(encoding="utf-8"))
-        return "원인을 다시 파악하지 못했습니다(일시적 문제일 수 있음)"
+        payload = json.loads(p.read_text(encoding="utf-8"))
     except Exception as exc:
         return str(exc)
+    # 파싱은 성공했는데 호출부가 None/falsy 를 받은 경우 - 내용이 {} / [] / null 이라
+    # `if not payload` 에 걸린 것이다. 이때 "손상되었을 수 있습니다" 는 거짓말이고,
+    # 정직한 진단 함수가 유일하게 거짓말하는 자리였다(2026-08-11 리뷰 낮은 우선순위).
+    if not payload:
+        return f"JSON 은 정상인데 내용이 비어 있습니다({payload!r}) - 파일 손상이 아닙니다"
+    return "원인을 다시 파악하지 못했습니다(일시적 문제일 수 있음)"
 
 
 def _resolve_input_dir():
@@ -168,17 +173,28 @@ def _load_changes(out_dir):
 
 
 def _frame_size(capture_dir):
-    """프레임 하나를 열어 (w, h) 를 얻는다. 실패하면 None (R2 degrade)."""
+    """프레임 하나를 열어 (w, h) 를 얻는다. 실패하면 None (R2 degrade).
+
+    프레임은 녹화 루트에 바로 있거나 `frames/` 하위에 있다 - filter_recording
+    (`_resolve_frames_dir`)이 두 레이아웃을 모두 받으므로 이쪽도 같이 봐야 한다.
+    루트만 보면 frames/ 레이아웃에서 R2 가 조용히 꺼진다(경고는 나오지만 원인이
+    "프레임 없음" 으로만 보여, 실제 원인인 레이아웃 차이를 짚기 어렵다).
+    """
     from poc.workflow_3.recording_filter.region_gate import read_frame_size
 
     try:
-        for frame in sorted(Path(capture_dir).glob("*.jpg")):
-            size = read_frame_size(frame)
-            if size:
-                return size
+        roots = [Path(capture_dir), Path(capture_dir) / "frames"]
+        for root in roots:
+            for frame in sorted(root.glob("*.jpg")):
+                size = read_frame_size(frame)
+                if size:
+                    return size
     except Exception:
         pass
-    print("[WARNING] 프레임 크기를 얻지 못했습니다 - R2(드롭다운)가 비활성화됩니다.")
+    print(
+        f"[WARNING] 프레임 크기를 얻지 못했습니다(찾은 곳: {capture_dir} 및 그 안의 "
+        "frames/) - R2(드롭다운)가 비활성화됩니다."
+    )
     return None
 
 
@@ -214,6 +230,20 @@ def _eqp_id_from_capture_dir(capture_dir):
     return "?"
 
 
+def _event_end_sec(event) -> float:
+    """이벤트가 끝난 시각. 타이핑 구간은 t_sec_end 를 쓴다.
+
+    타이핑 이벤트는 구간이라 시작 시각 하나로는 길이를 잃는다 - 마지막 조작이 긴
+    타이핑이면 세션 길이가 그만큼 짧게 보고된다. `is not None` 으로 판정하는 이유는
+    `steps.make_step` 과 같다(정상적인 t_sec_end == 0.0 을 "없음"으로 버리지 않는다).
+    """
+    end = event.get("t_sec_end")
+    start = float(event["t_sec"])
+    if end is None:
+        return start
+    return max(start, float(end))
+
+
 def run_extract(*, input_dir=None, settings=None) -> str:
     """타임라인을 workflow.json + workflow.md 로 만든다. 상태 문자열 반환."""
     settings = settings or load_workflow_extract_settings()
@@ -226,10 +256,13 @@ def run_extract(*, input_dir=None, settings=None) -> str:
     if not timeline_payload:
         parse_error = _diagnose_read_failure(timeline_path)
         if parse_error:
+            # 원인 문구는 _diagnose_read_failure 가 실제로 관찰한 것만 말한다 -
+            # 예전에는 여기서 무조건 "손상되었을 수 있습니다" 라고 덧붙여, 내용이
+            # 비었을 뿐인 정상 JSON 에도 손상을 의심하게 만들었다.
             print(
                 f"[ERROR] interaction_timeline.json 이 있지만 읽지 못했습니다: {timeline_path}\n"
                 f"        원인: {parse_error}\n"
-                "        파일이 손상되었을 수 있습니다 - filter_recording.py 를 다시 실행하거나 파일을 확인하세요."
+                "        filter_recording.py 를 다시 실행하거나 파일을 직접 확인하세요."
             )
         else:
             print(
@@ -252,7 +285,7 @@ def run_extract(*, input_dir=None, settings=None) -> str:
     )
     steps = group_events(events, ctx)
 
-    duration = max(float(e["t_sec"]) for e in events)
+    duration = max(_event_end_sec(e) for e in events)
     session = {
         "eqp_id": _eqp_id_from_capture_dir(capture_dir),
         "tag": Path(capture_dir).parent.name if capture_dir else "?",

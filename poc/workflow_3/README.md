@@ -99,15 +99,23 @@ uv run python poc/workflow_3/monitor/manual_record.py
 
 #### 첫 오피스 분석 실행 권장 설정 (VLM 호출 상한)
 
-수동 세션 분석은 Stage 2a(커서 VLM)의 호출 예산이 기본 무제한(`RECORDING_FILTER_MAX_VLM_CALLS=0`)
-이다. 엔지니어 커서가 라이브 SEM 박스 위에 머무는 동안은 프레임마다 승격되므로, 10분
-세션이면 프록시 호출이 500~2000 회 / 30~120분까지 늘어날 수 있다. 기본값은 그대로 둔다
-(줄이면 기존 알람 사이클 분석이 조용히 잘린다). 대신 **첫 실행만** 상한을 걸고 감을 잡는다:
+`RECORDING_FILTER_MAX_VLM_CALLS` 는 **Stage 2a(커서 VLM)에만** 걸리는 상한이다
+(`click_detect.py`). 그리고 사이드카가 있는 수동 세션에서는 Stage 2a 가 커서를
+`frame_meta.jsonl` 에서 읽어 **VLM 을 아예 부르지 않으므로**, 이 상한은 수동 세션에서 사실상
+아무것도 제한하지 않는다 — 실제 비용은 Stage 1.5(세대당 1콜), Stage 2c(클릭당 1~2콜),
+Stage 2b(구간당 OCR 2콜)이고 **뒤 둘에는 상한이 없다**. 즉 "첫 실행은 300 으로 막아둔다" 는
+알람 녹화(사이드카 없음 = 프레임마다 커서 VLM)에만 유효한 조언이다:
 
 ```bash
+# 알람 녹화(사이드카 없음)를 분석할 때만 의미 있는 상한.
 RECORDING_FILTER_INPUT_DIR=<녹화 경로> RECORDING_FILTER_MAX_VLM_CALLS=300 \
   uv run python poc/workflow_3/recording_filter/filter_recording.py
 ```
+
+수동 세션의 비용을 보려면 상한이 아니라 **집계**를 본다: `summary.json` 의
+`vlm_calls_stage2a_cursor`(사이드카 세션이면 0 이어야 정상) / `cursor_from_sidecar` /
+`vlm_calls_stage2c_label_estimate` / `vlm_calls_stage2b_ocr`. Stage 2a 가 0 이 아니면
+사이드카 조인이 깨진 것이고, 그때는 위 상한이 실제로 의미를 갖는다.
 
 상한에 걸려 잘린 분량은 숨기지 않는다 - `summary.json` 의 `truncated` / `skipped_due_to_cap`
 에 그대로 남고, 실제 호출량은 `vlm_calls_stage1_5_region_map` / `vlm_calls_stage2a_cursor` /
@@ -155,8 +163,11 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 |----|------|-----------|
 | `WORKFLOW_EXTRACT_RECENTER_MIN_RATIO` | 0.40 | 라이브 박스 단발 클릭이 더블클릭(FOV 이동)으로 잘못 잡히면 올린다 |
 | `WORKFLOW_EXTRACT_REPEAT_MIN_COUNT` | 3 | 반복 조작이 하나의 step 으로 과하게 묶이면 올린다 |
-| `RECORDING_FILTER_TYPING_MIN_BURST_EVENTS` | 3 | 짧은 입력이 타이핑 구간으로 안 잡히면 내린다 |
+| `RECORDING_FILTER_TYPING_MIN_BURST_EVENTS` | 3 | 타이핑 구간으로 인정할 최소 변화 건수. **짧은 입력이 안 잡히는 원인은 보통 이 값이 아니다** — 1~3 글자 리페인트는 Stage 1 의 `RECORDING_FILTER_MIN_CHANGE_AREA_PX`(5000, 1280폭 diff 공간의 최대 blob 면적)를 못 넘어 애초에 change event 가 생기지 않는다. 먼저 `summary.json` 의 `total_change_events` 를 보고, 필요하면 그 값을 내린 뒤 이 값을 만진다 |
+| `RECORDING_FILTER_TYPING_ROI_MAX_PX` / `_AREA_PX` | 200 / 40000 | 국소성 가드: 변화가 필드 기준점(포커스 클릭 좌표 → 커서 프레임 좌표)에서 이 거리 안이어야 타이핑 구간이 된다. 진짜 타이핑이 버려지고 `[WARNING] ... 필드 기준점에서 ...px 를 벗어난 변화` 가 뜨면 올린다. **내리기 전에** 이 가드가 막는 것을 기억할 것: 커서를 세워둔 채 리페인트되는 진행률 패널이 `type_text` 가 되고 그 패널 숫자가 값으로 복원된다 |
 | `WORKFLOW_EXTRACT_DROPDOWN_MIN_ROW_GAP_PX` (`grouping.py` 의 `_DROPDOWN_MIN_ROW_GAP_PX` 모듈 상수 — `WorkflowExtractSettings` 필드 아님) | 12 | 사람이 다시 클릭할 때의 흔들림과 추정 ~24px 행 높이 사이로 blind 하게 잡은 값 — 실제 드롭다운에서 행 높이를 재본 적이 없다. PM 외 드롭다운을 놓치면 이 값을 조정한다 |
+| `WORKFLOW_EXTRACT_DROPDOWN_MAX_DROP_PX` (같은 모듈 상수) | 120 | R2 트리거의 세로 상한(추정 행 높이 ~24px 기준 5행). 진짜 드롭다운 선택이 R5 클릭 2개로 쪼개지면 올린다 — 오피스에서 실제 리스트 높이를 재고 올리는 것이 정석이다. 반대로 올리면 세로로 쌓인 폼의 두 클릭이 없던 드롭다운 선택으로 뭉치고 두 번째 클릭이 문서에서 사라진다(대가가 비대칭이라 기본값을 타이트하게 잡았다) |
+| `WORKFLOW_EXTRACT_RECENTER_*` 관련 참고 | — | R1 은 `change_events.json` 의 Stage 1.5 판정(`verdict`)이 있어야 동작한다. 판정이 없는(= 영역 게이트를 끄고 만든) 산출물에서는 R1 이 경고와 함께 비활성화된다 — ambient(라이브 영상 자율 갱신)를 FOV 이동 근거로 오인하지 않기 위한 의도적 degrade 다 |
 
 ## 주요 env (기존 이름 유지)
 

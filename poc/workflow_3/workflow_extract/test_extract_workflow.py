@@ -310,3 +310,61 @@ def test_change_events_without_verdict_disable_r1_with_warning(tmp_path, capsys)
     assert run_extract(input_dir=out) == "success"
     assert _steps(out)[0]["grouping_rule"] == "R5"
     assert "판정(verdict)이" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# 낮은 우선순위 항목 - 세션 길이, frames/ 레이아웃, 빈 payload 진단.
+# ---------------------------------------------------------------------------
+
+def test_duration_includes_trailing_typing_burst_end():
+    """마지막 조작이 긴 타이핑이면 세션 길이가 그 끝까지여야 한다.
+
+    t_sec(시작)만 보면 구간 길이를 잃어 세션이 짧게 보고된다.
+    """
+    from poc.workflow_3.workflow_extract.extract_workflow import _event_end_sec
+
+    typing = _timeline_event(0, 50.0, action="type_text")
+    typing["t_sec_end"] = 95.5
+    assert _event_end_sec(typing) == 95.5
+    assert _event_end_sec(_timeline_event(1, 20.0)) == 20.0
+
+
+def test_duration_uses_t_sec_end_end_to_end(tmp_path):
+    """workflow.json 의 duration_sec 도 구간 끝을 반영해야 한다."""
+    typing = _timeline_event(0, 50.0, action="type_text")
+    typing["t_sec_end"] = 95.5
+    out = _session(tmp_path, [typing])
+    assert run_extract(input_dir=out) == "success"
+    payload = json.loads((out / "workflow.json").read_text(encoding="utf-8"))
+    assert payload["session"]["duration_sec"] == 95.5
+
+
+def test_frame_size_found_in_nested_frames_dir(tmp_path):
+    """프레임이 `frames/` 하위에 있어도 R2 용 프레임 크기를 찾아야 한다.
+
+    filter_recording 은 두 레이아웃을 모두 받으므로(_resolve_frames_dir), 이쪽만
+    루트를 보면 frames/ 레이아웃에서 R2 가 조용히 꺼진다.
+    """
+    from PIL import Image
+
+    from poc.workflow_3.workflow_extract.extract_workflow import _frame_size
+
+    capture = tmp_path / "recording"
+    (capture / "frames").mkdir(parents=True)
+    Image.new("RGB", (640, 480), "white").save(capture / "frames" / "f0.jpg", format="JPEG")
+    assert _frame_size(capture) == (640, 480)
+
+
+def test_empty_payload_is_not_reported_as_corrupted(tmp_path, capsys):
+    """내용이 `{}` 인 파일은 "손상" 이 아니라 "비어 있음" 으로 보고해야 한다.
+
+    정직한 진단을 담당하는 헬퍼가 유일하게 거짓말하던 자리다 - `if not payload`
+    갈래는 파싱 실패와 빈 내용을 함께 받는다.
+    """
+    out = tmp_path / "recording_filter"
+    _write(out / "interaction_timeline.json", {})
+
+    assert run_extract(input_dir=out) == "timeline_not_found"
+    captured = capsys.readouterr()
+    assert "내용이 비어 있습니다" in captured.out
+    assert "손상되었을 수 있습니다" not in captured.out

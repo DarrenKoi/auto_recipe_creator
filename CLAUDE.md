@@ -191,7 +191,7 @@ Pure-CV and synthetic-data work in `workflow_3/align` (e.g. `diagnostics/compare
 VLM calls route through a Flask proxy at the company server, which provides unified health discovery and per-service routing.
 
 - **Service registry (server side)**: `flask_api/vlm_serve/config.py`, one `VLMServiceEntry` dataclass per model.
-- **Registered services**: ui-venus (8001), mai-ui (8002), ui-tars (8003, disabled), paddleocr-vl-1.5 (8004), got-ocr (8005).
+- **Registered services**: mai-ui (8002) + paddleocr-vl-1.5 (8004) are the only ones **enabled and served**; ui-venus (8001), ui-tars (8003), got-ocr (8005) are `enabled=False` and not started (2026-08-11). Disabled entries stay in `ALL_VLM_SERVICES` so slugs still resolve client-side, but their blueprints aren't registered and `/health` doesn't advertise them — a call to a disabled slug 404s.
 - **Health endpoint**: `GET /api/vlm_serve/health`.
 - **Proxy URL pattern**: `{flask_base}/api/vlm_serve/{service_slug}/v1/chat/completions`.
 
@@ -199,7 +199,7 @@ VLM calls route through a Flask proxy at the company server, which provides unif
 
 Defines `ALL_VLM_SERVICES` (a `list[VLMServiceEntry]`) plus `DEFAULT_*` service/model constants. Two connection modes:
 
-- **`proxy`** — Flask-routed UI/OCR models: `mai-ui-8b` (**primary grounding model — all VLM defaults, 2026-08-07**), `ui-venus-1.5-8b` (still registered/served; reachable only via explicit env override), `paddleocr-vl-1.5` (OCR assist), `got-ocr`.
+- **`proxy`** — Flask-routed UI/OCR models: `mai-ui-8b` (**primary grounding model — all VLM defaults, 2026-08-07**), `paddleocr-vl-1.5` (OCR assist). `ui-venus-1.5-8b` / `got-ocr` remain in the client's `ALL_VLM_SERVICES` (slugs resolve, URLs build) but are **no longer served** — the `*_SERVICE` rollback env vars now point at a dead port until the model is restarted server-side.
 - **`direct`** — company LLM gateway (`http://common.llm.skhynix.com/v1`): `Kimi-K2.5`, `Qwen3-VL-30B-Instruct`.
 
 Helpers: `get_service_by_slug()`, `resolve_service_proxy_url()`, `resolve_service_api_key()`. Per-model debug dirs live under `debug_images/<model-slug>/` (slug via `resolve_debug_model_name()` in `poc/workflow_3/__init__.py`).

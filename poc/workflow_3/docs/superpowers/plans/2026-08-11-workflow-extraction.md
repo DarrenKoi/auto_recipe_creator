@@ -2032,7 +2032,9 @@ def _describe(step) -> str:
     else:
         parts.append("**(라벨 없음)**")
     parts.append(action)
-    if value:
+    # `if value:` 로 쓰면 안 된다 - 필드에 입력했다가 지운 경우의 복원값 ""(정상값)이
+    # 사라진다. "없음"과 "빈 문자열"을 섞지 않는다.
+    if value is not None:
         parts.append(f"-> `{value}`")
     if step.get("count"):
         parts.append(f"({step['count']}회)")

@@ -219,9 +219,14 @@ def test_r2_does_not_group_when_too_slow():
 
 
 def test_r2_does_not_group_click_outside_dropdown_region():
-    """아래가 아니라 옆을 눌렀으면 드롭다운이 아니다."""
+    """아래가 아니라 옆을 눌렀으면 드롭다운이 아니다.
+
+    dy=100 은 수직 가드(_DROPDOWN_MIN_ROW_GAP_PX=12)와 행 높이(~24px) 를 한참
+    넘어서므로 수직 가드는 이 케이스의 판정에 관여하지 않는다 - 실제로 막는 건
+    x=200 이 드롭다운 폭 밖이라는 `_point_in_region` 의 가로 범위 검사다.
+    """
     open_ev = _event(0, 10.0, element="PM", coords={"x": 800, "y": 300})
-    pick_ev = _event(1, 12.0, element="OK", coords={"x": 200, "y": 310})
+    pick_ev = _event(1, 12.0, element="OK", coords={"x": 200, "y": 400})
     assert len(group_events([open_ev, pick_ev], _ctx())) == 2
 
 

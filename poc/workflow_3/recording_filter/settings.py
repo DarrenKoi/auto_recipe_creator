@@ -34,6 +34,13 @@ class RecordingFilterSettings:
     element_ocr_service: str = "paddleocr-vl-1.5"
     element_vlm_service: str = "mai-ui"
     element_label_enabled: bool = True
+    # ---- Stage 2b: 타이핑 구간 ----
+    typing_detect_enabled: bool = True
+    typing_cursor_still_px: int = 8       # 이 이상 움직이면 구간이 끊긴다.
+    typing_min_burst_events: int = 3      # 구간으로 인정할 최소 change event 수.
+    typing_burst_idle_sec: float = 1.5    # 변화가 이 시간 없으면 구간 종료.
+    typing_focus_max_sec: float = 2.0     # 구간 직전 이 시간 안의 클릭을 필드로 본다.
+    typing_ocr_service: str = "paddleocr-vl-1.5"
 
 
 def load_recording_filter_settings() -> RecordingFilterSettings:
@@ -50,4 +57,9 @@ def load_recording_filter_settings() -> RecordingFilterSettings:
         region_gate_enabled=env_flag("RECORDING_FILTER_REGION_GATE", True),
         element_crop_px=env_int("RECORDING_FILTER_ELEMENT_CROP_PX", 260),
         element_label_enabled=env_flag("RECORDING_FILTER_ELEMENT_LABEL", True),
+        typing_detect_enabled=env_flag("RECORDING_FILTER_TYPING_DETECT", True),
+        typing_cursor_still_px=env_int("RECORDING_FILTER_TYPING_CURSOR_STILL_PX", 8),
+        typing_min_burst_events=env_int("RECORDING_FILTER_TYPING_MIN_BURST_EVENTS", 3),
+        typing_burst_idle_sec=env_float("RECORDING_FILTER_TYPING_BURST_IDLE_SEC", 1.5),
+        typing_focus_max_sec=env_float("RECORDING_FILTER_TYPING_FOCUS_MAX_SEC", 2.0),
     )

@@ -11,6 +11,7 @@ Addressing2 / Measurement) x 7행으로 최신 7회 측정의 썸네일과 score
 """
 
 import numpy as np
+from dataclasses import dataclass, field
 
 # 표 형태.
 ASSIST_ROWS = 7
@@ -60,9 +61,62 @@ def classify_ink(cell_rgb: np.ndarray) -> str:
     return "unknown"
 
 
+# Addressing2 는 대개 비어 있어 판정에 쓰지 않는다.
+ASSIST_CRITICAL_COLUMNS = ("Addressing1", "Measurement")
+
+
+def row_verdict(cells: dict) -> str:
+    """측정 1회(행 하나)의 성부. "ok"|"fail"|"pending"|"unknown".
+
+    pending 을 **Measurement 기준으로만** 판정하는 이유: Addressing2 는 대개 비어 있고
+    Addressing1 도 레시피에 따라 없을 수 있다. 없는 칸을 '진행 중' 으로 읽으면 그
+    레시피는 영영 done 이 되지 않는다. Measurement 가 최종 결과이므로 그것으로 완료를
+    판정하고, Addressing1 은 값이 있을 때만 실패 신호로 쓴다.
+    """
+    critical = [cells.get(name, "blank") for name in ASSIST_CRITICAL_COLUMNS]
+    if any(state == "red" for state in critical):
+        return "fail"
+    if any(state == "unknown" for state in critical):
+        return "unknown"
+    if cells.get("Measurement", "blank") == "blank":
+        return "pending"
+    return "ok"
+
+
+@dataclass
+class RowState:
+    """Assist Window 의 행 하나 - 열별 잉크 색과 그로부터 나온 성부."""
+
+    cells: dict = field(default_factory=dict)
+
+    @property
+    def verdict(self) -> str:
+        return row_verdict(self.cells)
+
+
+def ok_streak(rows: list) -> int:
+    """최신 행부터 세어 연속 정상(ok) 개수. fail/unknown 을 만나면 멈춘다.
+
+    최신 쪽의 pending(측정 진행 중)은 건너뛴다 - 아직 결과가 안 나온 행이 그 앞의 연속
+    정상 기록을 지우면 안 된다. 목록은 index 0 이 가장 오래된 행이다.
+    """
+    idx = len(rows) - 1
+    while idx >= 0 and rows[idx].verdict == "pending":
+        idx -= 1
+    streak = 0
+    while idx >= 0 and rows[idx].verdict == "ok":
+        streak += 1
+        idx -= 1
+    return streak
+
+
 __all__ = [
     "ASSIST_COLUMNS",
+    "ASSIST_CRITICAL_COLUMNS",
     "ASSIST_NEWEST_ROW_AT",
     "ASSIST_ROWS",
+    "RowState",
     "classify_ink",
+    "ok_streak",
+    "row_verdict",
 ]

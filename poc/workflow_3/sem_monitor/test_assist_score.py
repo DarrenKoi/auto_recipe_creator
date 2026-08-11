@@ -7,7 +7,12 @@
 
 import numpy as np
 
-from poc.workflow_3.sem_monitor.assist_score import classify_ink
+from poc.workflow_3.sem_monitor.assist_score import (
+    RowState,
+    classify_ink,
+    ok_streak,
+    row_verdict,
+)
 
 
 def _cell(rgb=(240, 240, 240), *, ink=None, ink_px=40):
@@ -58,6 +63,97 @@ def test_mixed_ink_is_unknown():
     return ok
 
 
+def _cells(addr1="black", addr2="blank", meas="black"):
+    return {"Addressing1": addr1, "Addressing2": addr2, "Measurement": meas}
+
+
+def test_verdict_ok_without_addressing2():
+    """Addressing2 는 대개 비어 있다. 없어도 정상 판정이어야 한다."""
+    ok = row_verdict(_cells()) == "ok"
+    print(f"[{'PASS' if ok else 'FAIL'}] verdict_ok_without_addressing2")
+    return ok
+
+
+def test_verdict_fail_on_red_measurement():
+    ok = row_verdict(_cells(meas="red")) == "fail"
+    print(f"[{'PASS' if ok else 'FAIL'}] verdict_fail_on_red_measurement")
+    return ok
+
+
+def test_verdict_fail_on_red_addressing1():
+    """Addressing1 이 빨강이어도 그 측정은 실패다."""
+    ok = row_verdict(_cells(addr1="red")) == "fail"
+    print(f"[{'PASS' if ok else 'FAIL'}] verdict_fail_on_red_addressing1")
+    return ok
+
+
+def test_verdict_pending_when_measurement_blank():
+    ok = row_verdict(_cells(meas="blank")) == "pending"
+    print(f"[{'PASS' if ok else 'FAIL'}] verdict_pending_when_measurement_blank")
+    return ok
+
+
+def test_verdict_ok_when_only_measurement_present():
+    """Addressing1 이 없는 레시피도 Measurement 로 완료를 판정한다.
+
+    없는 칸을 '진행 중' 으로 읽으면 그 레시피는 영영 done 이 되지 않는다.
+    """
+    ok = row_verdict(_cells(addr1="blank")) == "ok"
+    print(f"[{'PASS' if ok else 'FAIL'}] verdict_ok_when_only_measurement_present")
+    return ok
+
+
+def test_verdict_unknown_beats_ok():
+    ok = row_verdict(_cells(meas="unknown")) == "unknown"
+    print(f"[{'PASS' if ok else 'FAIL'}] verdict_unknown_beats_ok")
+    return ok
+
+
+def _rows(verdicts):
+    """verdict 문자열 목록을 RowState 목록으로 (index 0 = 가장 오래된 행)."""
+    mapping = {
+        "ok": _cells(),
+        "fail": _cells(meas="red"),
+        "pending": _cells(meas="blank"),
+        "unknown": _cells(meas="unknown"),
+    }
+    return [RowState(cells=dict(mapping[v])) for v in verdicts]
+
+
+def test_streak_counts_from_newest():
+    ok = ok_streak(_rows(["fail", "ok", "ok", "ok"])) == 3
+    print(f"[{'PASS' if ok else 'FAIL'}] streak_counts_from_newest")
+    return ok
+
+
+def test_streak_skips_trailing_pending():
+    """최신 행이 측정 진행 중(빈칸)이어도 그 앞의 연속 정상은 살아 있어야 한다."""
+    ok = ok_streak(_rows(["ok", "ok", "ok", "pending"])) == 3
+    print(f"[{'PASS' if ok else 'FAIL'}] streak_skips_trailing_pending")
+    return ok
+
+
+def test_streak_broken_by_fail_and_unknown():
+    ok = (
+        ok_streak(_rows(["ok", "ok", "fail", "ok"])) == 1
+        and ok_streak(_rows(["ok", "ok", "unknown", "ok"])) == 1
+    )
+    print(f"[{'PASS' if ok else 'FAIL'}] streak_broken_by_fail_and_unknown")
+    return ok
+
+
+def test_streak_all_ok_is_full_length():
+    ok = ok_streak(_rows(["ok"] * 7)) == 7
+    print(f"[{'PASS' if ok else 'FAIL'}] streak_all_ok_is_full_length")
+    return ok
+
+
+def test_streak_empty_rows_is_zero():
+    ok = ok_streak([]) == 0
+    print(f"[{'PASS' if ok else 'FAIL'}] streak_empty_rows_is_zero")
+    return ok
+
+
 def main():
     print("[INFO] assist_score self-test 시작")
     results = [
@@ -66,6 +162,17 @@ def main():
         test_blank_cell(),
         test_blank_when_ink_below_min_pixels(),
         test_mixed_ink_is_unknown(),
+        test_verdict_ok_without_addressing2(),
+        test_verdict_fail_on_red_measurement(),
+        test_verdict_fail_on_red_addressing1(),
+        test_verdict_pending_when_measurement_blank(),
+        test_verdict_ok_when_only_measurement_present(),
+        test_verdict_unknown_beats_ok(),
+        test_streak_counts_from_newest(),
+        test_streak_skips_trailing_pending(),
+        test_streak_broken_by_fail_and_unknown(),
+        test_streak_all_ok_is_full_length(),
+        test_streak_empty_rows_is_zero(),
     ]
     passed = sum(1 for r in results if r)
     print(f"[INFO] {passed}/{len(results)} cases passed")

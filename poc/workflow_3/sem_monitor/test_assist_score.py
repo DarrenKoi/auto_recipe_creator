@@ -8,7 +8,9 @@
 import numpy as np
 
 from poc.workflow_3.sem_monitor.assist_score import (
+    AssistLayout,
     RowState,
+    build_score_grid,
     classify_ink,
     ok_streak,
     row_verdict,
@@ -154,6 +156,88 @@ def test_streak_empty_rows_is_zero():
     return ok
 
 
+def _item(text, left, top, right, bottom):
+    return {"text": text, "bbox": {"left": left, "top": top, "right": right, "bottom": bottom}}
+
+
+def _panel_items():
+    """헤더 3개 + 숫자 4행(부분만 채워진 표)을 흉내낸 OCR 결과.
+
+    7행 슬롯의 top 은 40,70,...,220 (pitch 30). 표가 부분만 찼다면 채워진 행은 **아래쪽**
+    이므로 최신 4행(top=130,160,190,220)에만 숫자를 둔다. 열: 10-60 / 110-160 / 210-260.
+    """
+    items = [
+        _item("Addressing1", 10, 5, 60, 25),
+        _item("Addressing2", 110, 5, 160, 25),
+        _item("Measurement", 210, 5, 260, 25),
+    ]
+    for idx in range(4):
+        top = 130 + idx * 30
+        items.append(_item("12", 20, top, 50, top + 18))
+        items.append(_item("34", 220, top, 250, top + 18))
+    return items
+
+
+def test_grid_has_full_rows_and_columns():
+    layout = build_score_grid(_panel_items(), (300, 260))
+    ok = (
+        layout is not None
+        and len(layout.grid) == 7
+        and all(len(row) == 3 for row in layout.grid)
+    )
+    print(f"[{'PASS' if ok else 'FAIL'}] grid_has_full_rows_and_columns")
+    return ok
+
+
+def test_grid_extrapolates_missing_rows_by_pitch():
+    """표가 부분만 차 있어도 pitch 로 7행을 채운다(행 간격 30px)."""
+    layout = build_score_grid(_panel_items(), (300, 260))
+    if layout is None:
+        print("[FAIL] grid_extrapolates_missing_rows_by_pitch: layout None")
+        return False
+    tops = [row[0]["top"] for row in layout.grid]
+    diffs = {tops[i + 1] - tops[i] for i in range(len(tops) - 1)}
+    ok = diffs == {30}
+    print(f"[{'PASS' if ok else 'FAIL'}] grid_extrapolates_missing_rows_by_pitch: {sorted(diffs)}")
+    return ok
+
+
+def test_grid_columns_follow_headers():
+    layout = build_score_grid(_panel_items(), (300, 260))
+    if layout is None:
+        print("[FAIL] grid_columns_follow_headers: layout None")
+        return False
+    first = layout.grid[0]
+    ok = (
+        layout.columns == ("Addressing1", "Addressing2", "Measurement")
+        and first[0]["left"] == 10 and first[0]["right"] == 60
+        and first[2]["left"] == 210 and first[2]["right"] == 260
+    )
+    print(f"[{'PASS' if ok else 'FAIL'}] grid_columns_follow_headers")
+    return ok
+
+
+def test_grid_none_without_headers():
+    """헤더를 못 읽으면 어느 열이 무엇인지 알 수 없으므로 격자를 만들지 않는다."""
+    items = [_item("12", 20, 40, 50, 58), _item("34", 220, 40, 250, 58)]
+    ok = build_score_grid(items, (300, 260)) is None
+    print(f"[{'PASS' if ok else 'FAIL'}] grid_none_without_headers")
+    return ok
+
+
+def test_grid_none_with_single_number_row():
+    """행이 하나면 pitch 를 알 수 없다. 추정하지 않고 실패시킨다."""
+    items = [
+        _item("Addressing1", 10, 5, 60, 25),
+        _item("Addressing2", 110, 5, 160, 25),
+        _item("Measurement", 210, 5, 260, 25),
+        _item("12", 20, 40, 50, 58),
+    ]
+    ok = build_score_grid(items, (300, 260)) is None
+    print(f"[{'PASS' if ok else 'FAIL'}] grid_none_with_single_number_row")
+    return ok
+
+
 def main():
     print("[INFO] assist_score self-test 시작")
     results = [
@@ -173,6 +257,11 @@ def main():
         test_streak_broken_by_fail_and_unknown(),
         test_streak_all_ok_is_full_length(),
         test_streak_empty_rows_is_zero(),
+        test_grid_has_full_rows_and_columns(),
+        test_grid_extrapolates_missing_rows_by_pitch(),
+        test_grid_columns_follow_headers(),
+        test_grid_none_without_headers(),
+        test_grid_none_with_single_number_row(),
     ]
     passed = sum(1 for r in results if r)
     print(f"[INFO] {passed}/{len(results)} cases passed")

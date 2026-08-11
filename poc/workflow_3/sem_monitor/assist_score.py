@@ -110,12 +110,125 @@ def ok_streak(rows: list) -> int:
     return streak
 
 
+# 헤더 텍스트 매칭용 - 영숫자만 남기고 소문자 비교(OCR 공백/기호 흔들림 흡수).
+def _normalize(text: str) -> str:
+    """열 이름 비교용 정규화."""
+    return "".join(ch for ch in (text or "").lower() if ch.isalnum())
+
+
+def _is_score_text(text: str) -> bool:
+    """score 로 볼 텍스트인지(숫자만)."""
+    stripped = (text or "").strip()
+    return bool(stripped) and all(ch.isdigit() for ch in stripped)
+
+
+@dataclass
+class AssistLayout:
+    """Assist 패널의 score 셀 격자. 1회 만들어 캐시한다."""
+
+    panel_box: dict
+    grid: list        # grid[row][col] = {"left","top","right","bottom"} (패널 crop 좌표계)
+    columns: tuple
+
+
+def build_score_grid(items: list, panel_size: tuple, *, rows: int = ASSIST_ROWS):
+    """OCR spotting 항목에서 score 셀 격자를 만든다. 실패 시 None.
+
+    열은 헤더 텍스트로 잡는다(순서로 추정하지 않는다 - Addressing2 가 비어 있으면 숫자
+    덩어리가 2개뿐이라 어느 것이 Measurement 인지 알 수 없다). 행은 숫자 항목의 y 중심을
+    모아 pitch 를 구한 뒤 rows 개로 외삽한다.
+
+    items 는 패널 crop 좌표계여야 한다. panel_size 는 (width, height).
+    """
+    if not items:
+        return None
+
+    # --- 열: 헤더 텍스트로 x 범위 확정 ---
+    header_boxes = {}
+    for item in items:
+        name = _normalize(item.get("text", ""))
+        for column in ASSIST_COLUMNS:
+            if name == _normalize(column) and column not in header_boxes:
+                header_boxes[column] = item.get("bbox") or {}
+    if len(header_boxes) != len(ASSIST_COLUMNS):
+        print(f"[WARNING] Assist 헤더 인식 부족({sorted(header_boxes)}) - 격자 생성 실패")
+        return None
+
+    # --- 행: 숫자 항목의 y 중심 -> pitch -> 외삽 ---
+    header_bottom = max(int(box.get("bottom", 0)) for box in header_boxes.values())
+    centers = []
+    heights = []
+    for item in items:
+        if not _is_score_text(item.get("text", "")):
+            continue
+        box = item.get("bbox") or {}
+        top = int(box.get("top", 0))
+        bottom = int(box.get("bottom", 0))
+        if bottom <= header_bottom:
+            continue
+        centers.append((top + bottom) / 2.0)
+        heights.append(max(1, bottom - top))
+    if not centers:
+        print("[WARNING] Assist 숫자 항목 없음 - 격자 생성 실패")
+        return None
+
+    cell_h = int(round(sorted(heights)[len(heights) // 2]))
+    band_centers = _cluster_1d(sorted(centers), tolerance=cell_h)
+    if len(band_centers) < 2:
+        print("[WARNING] Assist 행이 2개 미만 - pitch 를 알 수 없어 격자 생성 실패")
+        return None
+
+    pitch = (band_centers[-1] - band_centers[0]) / float(len(band_centers) - 1)
+    if pitch <= 0:
+        return None
+
+    # 최신 행이 맨 아래이므로 가장 아래 띠를 마지막 행에 맞추고 위로 채운다.
+    last_center = band_centers[-1]
+    panel_h = panel_size[1]
+    grid = []
+    for row_idx in range(rows):
+        center = last_center - pitch * (rows - 1 - row_idx)
+        top = int(round(center - cell_h / 2.0))
+        bottom = int(round(center + cell_h / 2.0))
+        row_boxes = []
+        for column in ASSIST_COLUMNS:
+            box = header_boxes[column]
+            row_boxes.append({
+                "left": int(box.get("left", 0)),
+                "right": int(box.get("right", 0)),
+                "top": max(0, top),
+                "bottom": min(panel_h, bottom),
+            })
+        grid.append(row_boxes)
+
+    return AssistLayout(
+        panel_box={"left": 0, "top": 0, "right": panel_size[0], "bottom": panel_size[1]},
+        grid=grid,
+        columns=tuple(ASSIST_COLUMNS),
+    )
+
+
+def _cluster_1d(values: list, *, tolerance: int) -> list:
+    """정렬된 1D 값들을 tolerance 이내로 묶어 각 묶음의 평균을 돌려준다."""
+    if not values:
+        return []
+    clusters = [[values[0]]]
+    for value in values[1:]:
+        if value - clusters[-1][-1] <= tolerance:
+            clusters[-1].append(value)
+        else:
+            clusters.append([value])
+    return [sum(group) / float(len(group)) for group in clusters]
+
+
 __all__ = [
     "ASSIST_COLUMNS",
     "ASSIST_CRITICAL_COLUMNS",
     "ASSIST_NEWEST_ROW_AT",
     "ASSIST_ROWS",
+    "AssistLayout",
     "RowState",
+    "build_score_grid",
     "classify_ink",
     "ok_streak",
     "row_verdict",

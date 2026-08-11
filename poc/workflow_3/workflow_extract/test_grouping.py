@@ -134,3 +134,79 @@ def test_default_rule_is_last_in_rule_list():
     """R5(fallback) 가 마지막이어야 종료 보장이 성립한다 - 나중에 R1-R4 를
     추가할 때 실수로 R5 뒤에 붙이면 이 불변식이 조용히 깨진다."""
     assert grouping._RULES[-1] is grouping._rule_default
+
+
+_LIVE_BOX = {"left": 200, "top": 100, "right": 1000, "bottom": 700}
+
+
+def _change(t_sec, bbox):
+    return {"timestamp_sec": t_sec, "change_bbox": bbox}
+
+
+def test_r1_fires_on_live_image_click_with_recenter_change():
+    """라이브 박스 클릭 직후 박스 대부분이 다시 그려지면 FOV 이동 더블클릭."""
+    events = [_event(0, 10.0, region="live_image", target_kind="live_image", element=None)]
+    changes = [_change(10.4, dict(_LIVE_BOX))]
+    steps = group_events(events, _ctx(live_boxes={0: _LIVE_BOX}, changes=changes))
+    assert steps[0]["action"] == "double_click"
+    assert steps[0]["grouping_rule"] == "R1"
+    assert steps[0]["intent"] == "fov_move"
+    assert steps[0]["inferred"] is True
+
+
+def test_r1_does_not_fire_on_small_local_change():
+    """라이브 박스 안이라도 국소 변화면 단발 클릭(마커/선택)이다."""
+    events = [_event(0, 10.0, region="live_image", target_kind="live_image", element=None)]
+    small = {"left": 300, "top": 200, "right": 340, "bottom": 240}
+    steps = group_events(events, _ctx(live_boxes={0: _LIVE_BOX}, changes=[_change(10.4, small)]))
+    assert steps[0]["action"] == "click"
+    assert steps[0]["grouping_rule"] == "R5"
+
+
+def test_r1_does_not_fire_outside_live_region():
+    """UI 컨트롤 클릭은 뒤에 큰 변화가 와도 더블클릭이 아니다."""
+    events = [_event(0, 10.0, region="ui")]
+    steps = group_events(
+        events, _ctx(live_boxes={0: _LIVE_BOX}, changes=[_change(10.4, dict(_LIVE_BOX))])
+    )
+    assert steps[0]["grouping_rule"] == "R5"
+
+
+def test_r1_ignores_change_outside_time_window():
+    """1.5초 창 밖의 변화는 이 클릭의 결과로 보지 않는다."""
+    events = [_event(0, 10.0, region="live_image", target_kind="live_image", element=None)]
+    steps = group_events(
+        events, _ctx(live_boxes={0: _LIVE_BOX}, changes=[_change(20.0, dict(_LIVE_BOX))])
+    )
+    assert steps[0]["grouping_rule"] == "R5"
+
+
+def test_r1_degrades_without_live_box():
+    """region_map.json 이 없으면 비율을 못 재므로 평범한 click 으로 degrade."""
+    events = [_event(0, 10.0, region="live_image", target_kind="live_image", element=None)]
+    steps = group_events(events, _ctx(live_boxes={}, changes=[_change(10.4, dict(_LIVE_BOX))]))
+    assert steps[0]["grouping_rule"] == "R5"
+
+
+def test_r1_sets_normalized_coords_in_live_box():
+    """live_image step 은 창 픽셀이 아니라 라이브 박스 내부 정규화 좌표를 든다."""
+    events = [_event(0, 10.0, region="live_image", target_kind="live_image",
+                     element=None, coords={"x": 600, "y": 400})]
+    steps = group_events(
+        events, _ctx(live_boxes={0: _LIVE_BOX}, changes=[_change(10.4, dict(_LIVE_BOX))])
+    )
+    assert steps[0]["coords_in_live_box"] == [0.5, 0.5]
+
+
+def test_r5_live_image_click_also_gets_normalized_coords():
+    """더블클릭이 아닌 라이브 박스 단발 클릭도 정규화 좌표를 들어야 한다.
+
+    스펙 §6 은 'live_image step' 전체에 coords_in_live_box 를 요구한다. R1 만
+    채우면 마커/선택 클릭이 창 픽셀만 든 채 남아, 소비자가 두 종류의 live_image
+    step 을 서로 다르게 다뤄야 한다.
+    """
+    events = [_event(0, 10.0, region="live_image", target_kind="live_image",
+                     element=None, coords={"x": 600, "y": 400})]
+    steps = group_events(events, _ctx(live_boxes={0: _LIVE_BOX}, changes=[]))
+    assert steps[0]["grouping_rule"] == "R5"
+    assert steps[0]["coords_in_live_box"] == [0.5, 0.5]

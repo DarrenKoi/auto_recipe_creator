@@ -21,16 +21,89 @@ class GroupingContext:
     frame_wh: tuple = None                           # (w, h). None 이면 R2 degrade.
 
 
-def _rule_default(events, i, ctx):
-    """R5 - 위 규칙에 안 걸린 이벤트를 1:1 step 으로 만든다."""
+def box_overlap_ratio(bbox, live_box) -> float:
+    """bbox 와 live_box 의 교집합 면적을 live_box 면적으로 나눈 비율."""
+    if not bbox or not live_box:
+        return 0.0
+    left = max(int(bbox["left"]), int(live_box["left"]))
+    top = max(int(bbox["top"]), int(live_box["top"]))
+    right = min(int(bbox["right"]), int(live_box["right"]))
+    bottom = min(int(bbox["bottom"]), int(live_box["bottom"]))
+    if right <= left or bottom <= top:
+        return 0.0
+    live_area = (int(live_box["right"]) - int(live_box["left"])) * (
+        int(live_box["bottom"]) - int(live_box["top"])
+    )
+    if live_area <= 0:
+        return 0.0
+    return ((right - left) * (bottom - top)) / float(live_area)
+
+
+def normalized_in_live_box(coords, live_box):
+    """클릭 좌표를 라이브 박스 내부 0~1 좌표로 바꾼다. 불가하면 None.
+
+    창 위치/크기에 독립적이고, '좌표가 아니라 영상 내용에 의존한다'는 것을
+    스키마 자체로 드러낸다.
+    """
+    if not coords or not live_box:
+        return None
+    width = int(live_box["right"]) - int(live_box["left"])
+    height = int(live_box["bottom"]) - int(live_box["top"])
+    if width <= 0 or height <= 0:
+        return None
+    nx = (float(coords["x"]) - int(live_box["left"])) / width
+    ny = (float(coords["y"]) - int(live_box["top"])) / height
+    return [round(nx, 4), round(ny, 4)]
+
+
+def _has_recenter_change(t_sec, live_box, ctx) -> bool:
+    """클릭 직후 창 안에서 라이브 박스 대부분이 다시 그려졌는지 본다."""
+    for change in ctx.changes or []:
+        delta = float(change.get("timestamp_sec") or 0.0) - float(t_sec)
+        if delta < 0 or delta > ctx.settings.recenter_window_sec:
+            continue
+        if box_overlap_ratio(change.get("change_bbox"), live_box) >= ctx.settings.recenter_min_ratio:
+            return True
+    return False
+
+
+def _rule_double_click(events, i, ctx):
+    """R1 - 라이브 박스 클릭 + recenter 시그니처 = FOV 이동 더블클릭(추론).
+
+    프레임 주기(~3-4fps)로는 두 번의 누름을 시간으로 분리할 수 없다. 대신 결과를
+    본다 - recenter 는 라이브 박스 전체를 다시 그리고, 단발 클릭은 국소 변화만
+    남긴다. 관측이 아니라 추론이므로 inferred=True 를 남긴다.
+    """
     event = events[i]
+    if event.get("action") != "click" or event.get("region") != "live_image":
+        return None
+    live_box = (ctx.live_boxes or {}).get(int(event.get("generation") or 0))
+    if not live_box:
+        return None
+    if not _has_recenter_change(event["t_sec"], live_box, ctx):
+        return None
     return make_step(
-        [event], action="click", rule="R5",
-        target=event.get("element"), value=None,
+        [event], action="double_click", rule="R1", intent="fov_move", inferred=True,
+        target=event.get("element"), target_kind="live_image",
+        coords_in_live_box=normalized_in_live_box(event.get("coords"), live_box),
     ), 1
 
 
-_RULES = [_rule_default]
+def _rule_default(events, i, ctx):
+    """R5 - 위 규칙에 안 걸린 이벤트를 1:1 step 으로 만든다."""
+    event = events[i]
+    live_box = (ctx.live_boxes or {}).get(int(event.get("generation") or 0))
+    normalized = None
+    if event.get("region") == "live_image" and live_box:
+        normalized = normalized_in_live_box(event.get("coords"), live_box)
+    return make_step(
+        [event], action="click", rule="R5",
+        target=event.get("element"), value=None,
+        coords_in_live_box=normalized,
+    ), 1
+
+
+_RULES = [_rule_double_click, _rule_default]
 
 
 def group_events(events, ctx) -> list:

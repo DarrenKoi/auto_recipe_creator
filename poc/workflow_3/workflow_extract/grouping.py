@@ -161,6 +161,12 @@ def _rule_dropdown(events, i, ctx):
        라벨/좌표 어느 쪽으로 판정되든 막히므로 행 높이에 의존하지 않는다.
     2. 수직 거리를 _DROPDOWN_MAX_DROP_PX 로 제한한다 - crop 기하의 0.45*높이 띠는
        화면 절반이라 세로로 쌓인 폼 전체가 후보가 된다.
+
+    (2026-08-12 리뷰 최종점검) 가드를 다 통과해도 "드롭다운이 열렸다"는 직접 증거는
+    끝내 없다 - R1 의 더블클릭과 마찬가지로 결과(클릭 두 개의 상대 위치)로부터의
+    추론이므로 inferred=True 를 남긴다. 세로로 쌓인 컨트롤 두 개를 진짜로 순서대로
+    누른 경우도 이 기하를 통과할 수 있으니, 절차서를 읽는 엔지니어가 "관측"과
+    "추론"을 구분할 수 있어야 한다.
     """
     from poc.workflow_3.sem_monitor.pm_dropdown import dropdown_region_below
 
@@ -187,7 +193,7 @@ def _rule_dropdown(events, i, ctx):
     if region is None or not _point_in_region(picker.get("coords"), region):
         return None
     return make_step(
-        [opener, picker], action="select_from_dropdown", rule="R2",
+        [opener, picker], action="select_from_dropdown", rule="R2", inferred=True,
         target=opener.get("element"), target_kind="ui_control",
         value=picker.get("element"),
         value_source=picker.get("element_source") or "none",

@@ -49,6 +49,13 @@ def test_footer_lists_limitations():
         assert token in md
 
 
+def test_footer_mentions_dropdown_inference_caveat():
+    """드롭다운 선택도 R1 더블클릭과 같은 기하 추론이다 - 열렸다는 증거가 없다는
+    한계가 문서에 남아야 한다(2026-08-12 리뷰)."""
+    md = render_markdown([_step(0, "select_from_dropdown")], _SESSION)
+    assert "드롭다운" in md
+
+
 def test_coverage_table_reports_rule_distribution():
     """어떤 규칙이 몇 개를 만들었는지 보여야 오작동 규칙을 지목할 수 있다.
 

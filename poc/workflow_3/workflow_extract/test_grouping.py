@@ -211,6 +211,16 @@ def test_r2_groups_open_and_select():
     assert steps[0]["raw_events"] == [0, 1]
 
 
+def test_r2_marks_output_as_inferred():
+    """R2 는 기하 추론일 뿐 드롭다운이 실제로 열렸다는 증거가 없다 - R1 과 같은 이유로
+    inferred=True 를 남겨야 절차서에서 관측과 구분된다(2026-08-12 리뷰)."""
+    open_ev = _event(0, 10.0, element="PM", coords={"x": 800, "y": 300})
+    pick_ev = _event(1, 12.0, element="210", coords={"x": 810, "y": 420})
+    steps = group_events([open_ev, pick_ev], _ctx())
+    assert steps[0]["action"] == "select_from_dropdown"
+    assert steps[0]["inferred"] is True
+
+
 def test_r2_does_not_group_when_too_slow():
     """5초를 넘으면 별개 조작이다."""
     open_ev = _event(0, 10.0, element="PM", coords={"x": 800, "y": 300})

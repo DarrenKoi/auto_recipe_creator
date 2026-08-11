@@ -27,6 +27,28 @@ def _read_json(path):
         return None
 
 
+def _diagnose_read_failure(path):
+    """_read_json 이 None 을 돌려준 이유를 "없음"과 "있는데 못 읽음"으로 가른다.
+
+    _read_json 자체는 두 실패를 하나로 뭉뚱그린다 - 호출부가 결정해야 하는 것은
+    어차피 "degrade 할지 여부" 하나뿐이라 그걸로 충분하다. 하지만 사람에게 보여줄
+    진단 문구는 다르다. 파일이 있는데 깨졌을 때 "없습니다"라고 알리면, 사람은 있지도
+    않은 파일을 찾아 헤매고 실제 원인(손상된 JSON)은 못 보고 지나간다 - 실제로
+    일어난 일을 정직하게 보고한다는 이 프로젝트 컨벤션 위반이다.
+
+    반환값: 파일이 정말 없으면 None(호출부가 기존 "없습니다" 문구를 그대로 쓴다),
+    있는데 읽기/파싱에 실패했으면 그 예외 메시지 문자열.
+    """
+    p = Path(path)
+    if not p.is_file():
+        return None
+    try:
+        json.loads(p.read_text(encoding="utf-8"))
+        return "원인을 다시 파악하지 못했습니다(일시적 문제일 수 있음)"
+    except Exception as exc:
+        return str(exc)
+
+
 def _resolve_input_dir():
     """분석할 recording_filter/ 폴더를 결정한다(env -> 자동탐색)."""
     env_path = os.getenv("WORKFLOW_EXTRACT_INPUT_DIR", "").strip()
@@ -58,9 +80,17 @@ def _load_live_boxes(out_dir):
     `int(... or 0)` 폴백은 "없음"과 "명시적 0" 을 같은 결과(0)로 수렴시키기 위한
     것이지, 0 을 걸러내려는 게 아니다.
     """
-    payload = _read_json(Path(out_dir) / "region_map.json")
+    path = Path(out_dir) / "region_map.json"
+    payload = _read_json(path)
     if not payload:
-        print("[WARNING] region_map.json 이 없습니다 - R1(FOV 더블클릭)이 비활성화됩니다.")
+        parse_error = _diagnose_read_failure(path)
+        if parse_error:
+            print(
+                f"[WARNING] region_map.json 이 있지만 읽지 못했습니다({parse_error}) - "
+                "R1(FOV 더블클릭)이 비활성화됩니다."
+            )
+        else:
+            print("[WARNING] region_map.json 이 없습니다 - R1(FOV 더블클릭)이 비활성화됩니다.")
         return {}
     boxes = {}
     for entry in payload.get("maps") or []:
@@ -71,9 +101,17 @@ def _load_live_boxes(out_dir):
 
 def _load_changes(out_dir):
     """change_events.json 의 events 를 돌려준다. 없으면 빈 목록."""
-    payload = _read_json(Path(out_dir) / "change_events.json")
+    path = Path(out_dir) / "change_events.json"
+    payload = _read_json(path)
     if not payload:
-        print("[WARNING] change_events.json 이 없습니다 - R1(FOV 더블클릭)이 비활성화됩니다.")
+        parse_error = _diagnose_read_failure(path)
+        if parse_error:
+            print(
+                f"[WARNING] change_events.json 이 있지만 읽지 못했습니다({parse_error}) - "
+                "R1(FOV 더블클릭)이 비활성화됩니다."
+            )
+        else:
+            print("[WARNING] change_events.json 이 없습니다 - R1(FOV 더블클릭)이 비활성화됩니다.")
         return []
     return payload.get("events") or []
 
@@ -132,12 +170,21 @@ def run_extract(*, input_dir=None, settings=None) -> str:
     if out_dir is None:
         return "input_not_found"
 
-    timeline_payload = _read_json(out_dir / "interaction_timeline.json")
+    timeline_path = out_dir / "interaction_timeline.json"
+    timeline_payload = _read_json(timeline_path)
     if not timeline_payload:
-        print(
-            f"[ERROR] interaction_timeline.json 이 없습니다: {out_dir}\n"
-            "        먼저 filter_recording.py 를 실행하세요."
-        )
+        parse_error = _diagnose_read_failure(timeline_path)
+        if parse_error:
+            print(
+                f"[ERROR] interaction_timeline.json 이 있지만 읽지 못했습니다: {timeline_path}\n"
+                f"        원인: {parse_error}\n"
+                "        파일이 손상되었을 수 있습니다 - filter_recording.py 를 다시 실행하거나 파일을 확인하세요."
+            )
+        else:
+            print(
+                f"[ERROR] interaction_timeline.json 이 없습니다: {out_dir}\n"
+                "        먼저 filter_recording.py 를 실행하세요."
+            )
         return "timeline_not_found"
 
     events = timeline_payload.get("events") or []
@@ -176,6 +223,19 @@ def run_extract(*, input_dir=None, settings=None) -> str:
     return "success"
 
 
+def _exit_code(status: str) -> int:
+    """상태 문자열을 프로세스 종료 코드로 매핑한다("success" 만 0, 그 외 전부 1).
+
+    이 매핑을 `__main__` 안에 인라인으로 두면 아무도 직접 테스트할 수 없다 - 나중에
+    누군가 실수로 뒤집거나(`SystemExit(0)` 로 고정) "success" 집합에 상태를 잘못
+    추가해도 상태 문자열만 검사하는 테스트는 전부 통과한 채로 파이프라인이 빈
+    절차서를 만들어 놓고 종료 코드 0(성공)을 돌려주는, degrade 계약이 막으려는
+    바로 그 실패 모드가 조용히 통과한다. 이름 붙은 함수로 빼서 subprocess 없이
+    직접 고정할 수 있게 한다.
+    """
+    return 0 if status == "success" else 1
+
+
 if __name__ == "__main__":
     result = run_extract()
-    raise SystemExit(0 if result == "success" else 1)
+    raise SystemExit(_exit_code(result))

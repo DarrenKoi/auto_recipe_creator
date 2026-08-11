@@ -766,8 +766,10 @@ def _ocr_text_in_box(image, box, ocr_client) -> str:
         image_mime="image/webp", temperature=0.0,
     )
     items = parse_spotting_items((response.text or "").strip())
+    # parse_spotting_items 는 항상 {"text", "bbox"} 로 정규화해 돌려준다("box" 는 입력
+    # 쪽에서만 허용되는 별칭이다). bbox 는 리스트가 아니라 left/top/right/bottom dict 다.
     try:
-        items = sorted(items, key=lambda it: float((it.get("box") or [0])[0]))
+        items = sorted(items, key=lambda it: float(it["bbox"]["left"]))
     except Exception:
         pass
     return " ".join(str(it.get("text") or "").strip() for it in items).strip()

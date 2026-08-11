@@ -253,3 +253,81 @@ def test_r5_live_image_click_also_gets_normalized_coords():
     steps = group_events(events, _ctx(live_boxes={0: _LIVE_BOX}, changes=[]))
     assert steps[0]["grouping_rule"] == "R5"
     assert steps[0]["coords_in_live_box"] == [0.5, 0.5]
+
+
+def test_r3_absorbs_focus_click():
+    """필드 클릭 직후 타이핑이면 클릭은 포커스로 흡수돼 1 step 이 된다."""
+    click = _event(0, 10.0, element="Recipe Name")
+    typing = _event(1, 11.0, action="type_text", element="Recipe Name", text="MCD916")
+    steps = group_events([click, typing], _ctx())
+    assert len(steps) == 1
+    assert steps[0]["action"] == "type_text"
+    assert steps[0]["value"] == "MCD916"
+    assert steps[0]["raw_events"] == [0, 1]
+
+
+def test_r3_standalone_typing_without_focus_click():
+    """Tab 포커스면 직전 클릭이 없어도 type_text step 이 나온다."""
+    typing = _event(0, 11.0, action="type_text", element=None, text="MCD916")
+    steps = group_events([typing], _ctx())
+    assert steps[0]["action"] == "type_text"
+    assert steps[0]["target"] is None
+    assert steps[0]["raw_events"] == [0]
+
+
+def test_r3_does_not_absorb_distant_click():
+    """포커스 창(2초)을 넘긴 클릭은 별개 조작이다."""
+    click = _event(0, 10.0, element="Recipe Name")
+    typing = _event(1, 20.0, action="type_text", element="Recipe Name", text="MCD916")
+    assert len(group_events([click, typing], _ctx())) == 2
+
+
+def test_r4_groups_repeated_clicks_on_same_label():
+    """같은 라벨을 3회 이상 누르면 반복 1 step."""
+    events = [_event(i, 10.0 + i, element="Zoom In") for i in range(3)]
+    steps = group_events(events, _ctx())
+    assert len(steps) == 1
+    assert steps[0]["action"] == "click_repeat"
+    assert steps[0]["count"] == 3
+    assert steps[0]["raw_events"] == [0, 1, 2]
+
+
+def test_r4_needs_min_count():
+    """2회는 반복으로 묶지 않는다."""
+    events = [_event(i, 10.0 + i, element="Zoom In") for i in range(2)]
+    assert len(group_events(events, _ctx())) == 2
+
+
+def test_r4_matches_by_coords_when_label_missing():
+    """라벨이 없으면 좌표 근접(24px)으로 동일 대상을 판정한다."""
+    events = [
+        _event(i, 10.0 + i, element=None, coords={"x": 100 + i * 5, "y": 200})
+        for i in range(3)
+    ]
+    steps = group_events(events, _ctx())
+    assert steps[0]["action"] == "click_repeat"
+
+
+def test_r4_does_not_mix_label_and_coords():
+    """한쪽만 라벨이 있으면 묶지 않는다 - 묶임이 OCR 운에 좌우되면 재현되지 않는다."""
+    events = [
+        _event(0, 10.0, element="Zoom In"),
+        _event(1, 11.0, element=None),
+        _event(2, 12.0, element="Zoom In"),
+    ]
+    assert len(group_events(events, _ctx())) == 3
+
+
+def test_invariant_holds_across_all_rules():
+    """R1~R5 가 섞여도 불변식이 유지된다."""
+    events = [
+        _event(0, 10.0, element="PM", coords={"x": 800, "y": 300}),
+        _event(1, 11.0, element="210", coords={"x": 810, "y": 420}),
+        _event(2, 20.0, action="type_text", element=None, text="abc"),
+        _event(3, 40.0, element="Zoom In"),
+        _event(4, 41.0, element="Zoom In"),
+        _event(5, 42.0, element="Zoom In"),
+    ]
+    steps = group_events(events, _ctx())
+    seen = [r for s in steps for r in s["raw_events"]]
+    assert sorted(seen) == [0, 1, 2, 3, 4, 5]

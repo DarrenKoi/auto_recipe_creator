@@ -15,7 +15,7 @@ class WorkflowExtractSettings:
     focus_max_sec: float = 2.0          # R3: 포커스 클릭으로 흡수할 최대 간격.
     repeat_window_sec: float = 6.0      # R4: 반복 클릭으로 묶을 시간 창.
     repeat_min_count: int = 3           # R4: 반복으로 인정할 최소 횟수.
-    same_target_px: int = 24            # R4: 라벨이 없을 때 동일 대상 판정 거리.
+    same_target_px: int = 24            # R2/R4: 라벨이 없을 때(R4) 또는 오프너와 겹치는지(R2) 판정하는 거리.
     thumbnails_enabled: bool = True     # step 별 표시 프레임 저장 on/off.
 
 

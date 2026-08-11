@@ -121,6 +121,12 @@ def _rule_dropdown(events, i, ctx):
 
     바로 다음 이벤트만 본다 - 사이에 다른 조작이 끼면 묶지 않는다. 비인접 이벤트를
     소비하면 사이 이벤트가 건너뛰어져 불변식이 깨진다.
+
+    피커가 오프너와 사실상 같은 지점(same_target_px 이내)이면 드롭다운으로 보지
+    않는다 - 드롭다운 행은 버튼 아래 별도 위치에 그려지므로 실제 선택 클릭이
+    버튼 자신의 픽셀과 겹칠 수 없다(top_gap=0 설정 때문에 영역 상단이 버튼 지점과
+    맞닿아 있어, 이 가드가 없으면 같은 버튼을 다시 누른 R4 반복 클릭 패턴을 R2 가
+    선점해 버린다).
     """
     from poc.workflow_3.sem_monitor.pm_dropdown import dropdown_region_below
 
@@ -136,6 +142,10 @@ def _rule_dropdown(events, i, ctx):
         return None
     if float(picker["t_sec"]) - float(opener["t_sec"]) > ctx.settings.dropdown_max_sec:
         return None
+    dx = float(picker["coords"]["x"]) - float(opener["coords"]["x"])
+    dy = float(picker["coords"]["y"]) - float(opener["coords"]["y"])
+    if dx * dx + dy * dy <= float(ctx.settings.same_target_px) ** 2:
+        return None
     region = dropdown_region_below(
         {"x": int(opener["coords"]["x"]), "y": int(opener["coords"]["y"])}, ctx.frame_wh
     )
@@ -149,7 +159,82 @@ def _rule_dropdown(events, i, ctx):
     ), 2
 
 
-_RULES = [_rule_double_click, _rule_dropdown, _rule_default]
+def same_target(a, b, settings) -> bool:
+    """두 클릭이 같은 대상을 눌렀는지 본다.
+
+    라벨이 둘 다 있으면 라벨로, 둘 다 없으면 좌표 근접으로 판정한다. 한쪽만 있는
+    경우는 같다고 보지 않는다 - 같은 버튼을 두 번 눌렀는데 한 번만 OCR 이 성공한
+    경우를 억지로 묶으면 묶임 여부가 OCR 운에 좌우되어 재현되지 않는다.
+    """
+    label_a = (a.get("element") or "").strip()
+    label_b = (b.get("element") or "").strip()
+    if label_a and label_b:
+        return label_a == label_b
+    if label_a or label_b:
+        return False
+    ca, cb = a.get("coords"), b.get("coords")
+    if not ca or not cb:
+        return False
+    dx = float(ca["x"]) - float(cb["x"])
+    dy = float(ca["y"]) - float(cb["y"])
+    return (dx * dx + dy * dy) <= float(settings.same_target_px) ** 2
+
+
+def _rule_type_text(events, i, ctx):
+    """R3 - 타이핑 구간. 직전 필드 클릭이 있으면 포커스로 흡수한다."""
+    event = events[i]
+    if event.get("action") == "type_text":
+        return make_step(
+            [event], action="type_text", rule="R3", target=event.get("element"),
+            target_kind="ui_control", value=event.get("text"),
+            value_source=event.get("element_source") or "none",
+        ), 1
+
+    if event.get("action") != "click" or i + 1 >= len(events):
+        return None
+    typing = events[i + 1]
+    if typing.get("action") != "type_text":
+        return None
+    if float(typing["t_sec"]) - float(event["t_sec"]) > ctx.settings.focus_max_sec:
+        return None
+    return make_step(
+        [event, typing], action="type_text", rule="R3",
+        target=typing.get("element") or event.get("element"),
+        target_kind="ui_control", value=typing.get("text"),
+        value_source=typing.get("element_source") or "none",
+    ), 2
+
+
+def _rule_click_repeat(events, i, ctx):
+    """R4 - 같은 대상을 짧은 창 안에 여러 번 누른 것을 하나로 묶는다."""
+    first = events[i]
+    if first.get("action") != "click":
+        return None
+    group = [first]
+    for j in range(i + 1, len(events)):
+        nxt = events[j]
+        if nxt.get("action") != "click":
+            break
+        if float(nxt["t_sec"]) - float(first["t_sec"]) > ctx.settings.repeat_window_sec:
+            break
+        if not same_target(first, nxt, ctx.settings):
+            break
+        group.append(nxt)
+    if len(group) < ctx.settings.repeat_min_count:
+        return None
+    return make_step(
+        group, action="click_repeat", rule="R4", target=first.get("element"),
+        count=len(group),
+    ), len(group)
+
+
+_RULES = [
+    _rule_double_click,   # R1
+    _rule_dropdown,       # R2
+    _rule_type_text,      # R3
+    _rule_click_repeat,   # R4
+    _rule_default,        # R5
+]
 
 
 def group_events(events, ctx) -> list:

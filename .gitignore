@@ -94,3 +94,6 @@ poc/workflow_3/workflow_3_config.py
 
 # session scratch (humanize-korean pipeline output, etc.)
 _workspace/
+
+# superpowers SDD 세션 스크래치(ledger/brief/report) - 커밋 대상 아님
+.superpowers/

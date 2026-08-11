@@ -92,10 +92,13 @@ def test_blank_when_ink_below_min_pixels():
 
 
 def test_mixed_ink_is_unknown():
-    """흑/적이 반반이면 판정 불가. streak 을 끊어야 하므로 unknown."""
+    """빨강 비율이 흑도 적도 아닌 구간(0.10~0.30)이면 판정 불가 -> unknown.
+
+    streak 을 끊어야 하는 상태다. 애매함이 done 판정으로 새면 엔지니어 작업 중에 창이 닫힌다.
+    """
     cell = _cell(ink=(20, 20, 20), ink_px=40)
     flat = cell.reshape(-1, 3)
-    flat[20:40] = (200, 20, 20)
+    flat[:8] = (200, 20, 20)   # 잉크 40px 중 8px 만 빨강 -> 비율 0.2
     ok = classify_ink(cell) == "unknown"
     print(f"[{'PASS' if ok else 'FAIL'}] mixed_ink_is_unknown")
     return ok
@@ -449,7 +452,8 @@ def _item(text, left, top, right, bottom):
 def _panel_items():
     """헤더 3개 + 숫자 4행(부분만 채워진 표)을 흉내낸 OCR 결과.
 
-    행 pitch 30px, 첫 숫자행 top=40. 열: 10-60 / 110-160 / 210-260.
+    7행 슬롯의 top 은 40,70,...,220 (pitch 30). 표가 부분만 찼다면 채워진 행은 **아래쪽**
+    이므로 최신 4행(top=130,160,190,220)에만 숫자를 둔다. 열: 10-60 / 110-160 / 210-260.
     """
     items = [
         _item("Addressing1", 10, 5, 60, 25),
@@ -457,7 +461,7 @@ def _panel_items():
         _item("Measurement", 210, 5, 260, 25),
     ]
     for idx in range(4):
-        top = 40 + idx * 30
+        top = 130 + idx * 30
         items.append(_item("12", 20, top, 50, top + 18))
         items.append(_item("34", 220, top, 250, top + 18))
     return items

@@ -11,6 +11,7 @@ from PIL import Image
 from poc.workflow_3.sem_monitor.assist_score import (
     AssistLayout,
     RowState,
+    assist_panel_target,
     build_score_grid,
     classify_ink,
     ok_streak,
@@ -363,6 +364,25 @@ def test_grid_none_with_single_number_row():
     return ok
 
 
+def test_panel_target_uses_proven_button_geometry():
+    """패널 로케이트도 오피스에서 검증된 2단계 로케이터 기하를 따른다.
+
+    bench_tool_window_reader 가 같은 tool 창에서 acc=1.000 을 낸 설정이다. 여기서 임의로
+    다른 값을 쓰면 '입증된 설정' 이라는 근거가 사라진다.
+    """
+    from poc.workflow_3.rcs import bench_tool_window_reader as bench
+
+    mine = assist_panel_target()
+    theirs = bench._button_target("Queue")
+    ok = (
+        mine.min_crop_width == theirs.min_crop_width
+        and mine.vertical_pad_min_px == theirs.vertical_pad_min_px
+        and "Assist" in mine.description
+    )
+    print(f"[{'PASS' if ok else 'FAIL'}] panel_target_uses_proven_button_geometry")
+    return ok
+
+
 def main():
     print("[INFO] assist_score self-test 시작")
     results = [
@@ -392,6 +412,7 @@ def main():
         test_read_rows_blank_is_pending(),
         test_read_rows_returns_empty_without_layout(),
         test_read_rows_clamps_boxes_outside_panel(),
+        test_panel_target_uses_proven_button_geometry(),
     ]
     passed = sum(1 for r in results if r)
     print(f"[INFO] {passed}/{len(results)} cases passed")

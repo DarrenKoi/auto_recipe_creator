@@ -13,6 +13,24 @@ Addressing2 / Measurement) x 7행으로 최신 7회 측정의 썸네일과 score
 import numpy as np
 from dataclasses import dataclass, field
 
+from poc.workflow_3 import DEBUG_IMAGE_DIR
+from poc.workflow_3.util import crop_image
+from poc.workflow_3.util.image_utils import encode_image_webp
+from poc.workflow_3.vlm.ocr_spotting import parse_spotting_items
+from poc.workflow_3.vlm.prompts import build_spotting_prompt
+from poc.workflow_3.vlm.ui_venus_mai_locator import TargetConfig, analyze_window_target
+from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
+
+LOG_NAME = "assist_score"
+DEBUG_ARTIFACT_DIR = DEBUG_IMAGE_DIR / "assist_score"
+OCR_SERVICE_SLUG = "paddleocr-vl-1.5"
+
+# 패널 crop 여유 - 로케이터가 준 점 주변을 넉넉히 잘라 표 전체를 담는다.
+PANEL_LEFT_RATIO = 0.22
+PANEL_RIGHT_RATIO = 0.22
+PANEL_TOP_RATIO = 0.14
+PANEL_BOTTOM_RATIO = 0.22
+
 # 표 형태.
 ASSIST_ROWS = 7
 ASSIST_NEWEST_ROW_AT = "bottom"  # tool 버전이 다르면 "top".
@@ -246,6 +264,89 @@ def read_row_states(image, layout) -> list:
     return rows
 
 
+def assist_panel_target() -> TargetConfig:
+    """Assist 패널 grounding 타겟.
+
+    기하는 bench_tool_window_reader._button_target 와 같은 계열이다 - 같은 tool 창에서
+    오피스 acc=1.000 이 나온 설정이라 근거 없는 값을 새로 만들지 않는다.
+    """
+    return TargetConfig(
+        key="assist_panel",
+        description=(
+            "the Recipe Monitor Assist panel inside this CD-SEM tool window - the table "
+            "that lists recent measurements with Addressing1 / Addressing2 / Measurement "
+            "thumbnails and their score numbers stacked vertically. Return a point at the "
+            "centre of that table, not on the live SEM image and not on the button row."
+        ),
+        left_pad_ratio=0.8,
+        right_pad_ratio=0.8,
+        vertical_pad_ratio=0.8,
+        min_crop_width=320,
+        min_crop_height=96,
+        vertical_pad_min_px=16,
+    )
+
+
+def locate_assist_layout(window, window_title: str, backend: str, image):
+    """Assist 패널을 찾아 score 격자를 만든다. 실패 시 None.
+
+    watch 당 1회만 돈다(이후 폴링은 read_row_states 가 캐시된 격자를 쓴다). 반환은
+    (panel_box, AssistLayout) 이며 panel_box 는 창-이미지 좌표계다.
+    """
+    try:
+        result = analyze_window_target(
+            window, window_title, backend, assist_panel_target(),
+            debug_image_dir=DEBUG_ARTIFACT_DIR,
+            log_name=LOG_NAME,
+            component_name=LOG_NAME,
+            artifact_prefix="assist_panel",
+            image=image,
+            timeout_sec=15.0,
+        )
+    except Exception as exc:
+        print(f"[WARNING] Assist 패널 grounding 실패: {exc}")
+        return None
+
+    point = getattr(result, "point", None)
+    if not point:
+        print("[WARNING] Assist 패널을 찾지 못함 - 감지 비활성(cap 대기)")
+        return None
+
+    width, height = image.size
+    panel_box = {
+        "left": max(0, int(point["x"] - width * PANEL_LEFT_RATIO)),
+        "right": min(width, int(point["x"] + width * PANEL_RIGHT_RATIO)),
+        "top": max(0, int(point["y"] - height * PANEL_TOP_RATIO)),
+        "bottom": min(height, int(point["y"] + height * PANEL_BOTTOM_RATIO)),
+    }
+    panel = crop_image(image, panel_box)
+
+    try:
+        client = Workflow1VLMClient(OCR_SERVICE_SLUG, timeout_sec=30.0, log_name=LOG_NAME)
+        image_b64, _w, _h = encode_image_webp(panel.convert("RGB"), quality=90)
+        system_message, user_text = build_spotting_prompt()
+        response = client.chat_with_image_b64(
+            image_b64=image_b64,
+            system_message=system_message,
+            user_text=user_text,
+            image_mime="image/webp",
+            temperature=0.0,
+        )
+        items = parse_spotting_items(response.text)
+    except Exception as exc:
+        print(f"[WARNING] Assist 패널 OCR 실패: {exc}")
+        return None
+
+    layout = build_score_grid(items, panel.size)
+    if layout is None:
+        return None
+    print(
+        f"[INFO] Assist 격자 확보: panel={panel_box} rows={len(layout.grid)} "
+        f"columns={layout.columns}"
+    )
+    return panel_box, layout
+
+
 __all__ = [
     "ASSIST_COLUMNS",
     "ASSIST_CRITICAL_COLUMNS",
@@ -253,8 +354,10 @@ __all__ = [
     "ASSIST_ROWS",
     "AssistLayout",
     "RowState",
+    "assist_panel_target",
     "build_score_grid",
     "classify_ink",
+    "locate_assist_layout",
     "ok_streak",
     "read_row_states",
     "row_verdict",

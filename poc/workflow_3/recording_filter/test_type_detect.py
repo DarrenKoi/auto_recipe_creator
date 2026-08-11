@@ -112,11 +112,11 @@ def _fake_loader(path):
     return Image.new("RGB", (800, 500), "white")
 
 
-def _click_event_for_focus(t_sec):
-    """포커스 클릭 역할의 ClickEvent 를 만든다(rank=99, 라벨은 labels dict 로 전달)."""
+def _click_event_for_focus(t_sec, rank=99):
+    """포커스 클릭 역할의 ClickEvent 를 만든다(기본 rank=99, 라벨은 labels dict 로 전달)."""
     from poc.workflow_3.recording_filter.click_detect import ClickEvent
 
-    change = _ev(99, t_sec)
+    change = _ev(rank, t_sec)
     return ClickEvent(
         change=change, is_click=True, status="click", cursor_visible=True,
         cursor_kind="sidecar", cursor_bbox=None, cursor_xy=[200, 110],
@@ -165,6 +165,28 @@ def test_focus_click_supplies_target_label():
     assert events[0]["element"] == "Recipe Name"
 
 
+def test_focus_click_uses_latest_qualifying_click():
+    """포커스 창 안에 클릭이 둘이면 더 늦은(구간에 더 가까운) 클릭의 라벨이 이긴다.
+
+    최초 클릭을 고르는 회귀가 있어도 클릭이 하나뿐인 테스트로는 드러나지 않으므로,
+    서로 다른 시각의 두 후보를 넣어 "가장 늦은 클릭"을 실제로 검증한다.
+    """
+    from poc.workflow_3.recording_filter.element_label import ElementLabel
+
+    ocr = _StubOCR(["", "value"])
+    earlier = _click_event_for_focus(t_sec=8.0, rank=98)
+    later = _click_event_for_focus(t_sec=9.5, rank=99)
+    events = resolve_typing_events(
+        [_burst()], [earlier, later], RecordingFilterSettings(),
+        ocr_client=ocr, image_loader=_fake_loader,
+        labels={
+            98: ElementLabel(text="Wrong Field", source="ocr", confidence=1.0),
+            99: ElementLabel(text="Recipe Name", source="ocr", confidence=1.0),
+        },
+    )
+    assert events[0]["element"] == "Recipe Name"
+
+
 def test_target_none_when_no_focus_click():
     """Tab 포커스 등으로 직전 클릭이 없으면 target 은 null 이다(추측 금지)."""
     ocr = _StubOCR(["", "value"])
@@ -189,3 +211,47 @@ def test_ocr_failure_yields_event_without_value():
     )
     assert events[0]["text"] is None
     assert events[0]["element_source"] == "none"
+
+
+def test_both_reads_empty_still_emits_event_without_value():
+    """양쪽 OCR 판독이 다 빈 문자열이면 캐럿이 아니라 OCR 실패로 취급해 남긴다.
+
+    before == after 만으로 캐럿을 판정하면 '둘 다 빈 문자열'도 같은 취급을 받아
+    조용히 버려진다 - 그러나 이는 ROI 정렬 오류/판독 실패일 수 있고, OCR 이
+    값 복원의 유일한 경로이므로 이 실패를 캐럿과 혼동하면 안 된다.
+    """
+    ocr = _StubOCR(["", ""])
+    events = resolve_typing_events(
+        [_burst()], [], RecordingFilterSettings(),
+        ocr_client=ocr, image_loader=_fake_loader,
+    )
+    assert len(events) == 1
+    assert events[0]["text"] is None
+    assert events[0]["element_source"] == "none"
+
+
+def test_both_reads_nonempty_and_equal_still_rejected_as_caret():
+    """양쪽이 비어 있지 않고 같으면 여전히 캐럿 깜빡임으로 버려야 한다(회귀 가드)."""
+    ocr = _StubOCR(["same", "same"])
+    assert resolve_typing_events(
+        [_burst()], [], RecordingFilterSettings(),
+        ocr_client=ocr, image_loader=_fake_loader,
+    ) == []
+
+
+def test_ocr_failure_event_has_unknown_target_kind():
+    """OCR 실패 이벤트는 다른 장비로 이식 가능한지 알 수 없으므로 target_kind=unknown.
+
+    element_source 가 ocr/vlm 이 아닐 때만 ui_control 이 아닌 unknown 을 돌려주는
+    timeline.derive_target_kind 규칙을 이 모듈도 따라야 한다(하드코딩 금지).
+    """
+
+    class _Boom:
+        def chat_with_image_b64(self, **kwargs):
+            raise RuntimeError("ocr down")
+
+    events = resolve_typing_events(
+        [_burst()], [], RecordingFilterSettings(),
+        ocr_client=_Boom(), image_loader=_fake_loader,
+    )
+    assert events[0]["target_kind"] == "unknown"

@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from poc.workflow_3.recording_filter.region_gate import nearest_meta
+from poc.workflow_3.recording_filter.timeline import derive_target_kind
 
 
 @dataclass
@@ -168,9 +169,12 @@ def resolve_typing_events(
 ) -> list:
     """구간별로 OCR 2회를 돌려 타임라인 스키마의 type_text 이벤트를 만든다.
 
-    before == after 인 구간은 캐럿 깜빡임으로 보고 버린다. OCR 이 실패하면 값을
-    비운 채로 이벤트는 남긴다 - '여기서 무언가를 입력했다'는 사실 자체가 절차의
-    일부이기 때문이다.
+    before == after 이면서 둘 다 비어 있지 않은 구간만 캐럿 깜빡임으로 보고
+    버린다. OCR 예외, 그리고 양쪽 다 빈 문자열(ROI 정렬 오류/판독 실패)은 같은
+    실패로 취급해 값을 비운 채로 이벤트를 남긴다 - '여기서 무언가를 입력했다'는
+    사실 자체가 절차의 일부이기 때문이다. target_kind 는 element_source 에서
+    파생한다(`timeline.derive_target_kind`) - OCR 실패 이벤트는 다른 장비로
+    이식 가능한지 알 수 없으므로 unknown 이 맞다.
     """
     loader = image_loader or _default_image_loader
     events = []
@@ -184,11 +188,22 @@ def resolve_typing_events(
             print(f"[WARNING] 타이핑 구간 OCR 실패(값 없이 기록): {exc}")
 
         if source == "ocr" and before == after:
-            print(
-                f"[INFO] 캐럿 깜빡임으로 판단해 구간을 버립니다 "
-                f"(t={burst.start_t_sec:.1f}s, 텍스트 변화 없음)"
-            )
-            continue
+            if before == "" and after == "":
+                # 양쪽 다 빈 문자열은 캐럿 깜빡임과 겉모습이 같지만 원인이 다르다 -
+                # OCR 이 ROI 정렬 오류/판독 실패로 아무것도 못 읽은 것이다. 캐럿과
+                # 혼동해 버리면 값 복원의 유일한 경로가 조용히 소실되므로, OCR 실패
+                # 경로와 동일하게 값 없이 구간을 남긴다.
+                print(
+                    f"[WARNING] 타이핑 구간 OCR 이 양쪽 다 빈 텍스트를 읽었습니다 "
+                    f"(t={burst.start_t_sec:.1f}s, ROI 정렬/판독 확인 필요) - 값 없이 기록"
+                )
+                source = "none"
+            else:
+                print(
+                    f"[INFO] 캐럿 깜빡임으로 판단해 구간을 버립니다 "
+                    f"(t={burst.start_t_sec:.1f}s, 텍스트 변화 없음)"
+                )
+                continue
 
         events.append({
             "t_sec": burst.start_t_sec,
@@ -198,7 +213,7 @@ def resolve_typing_events(
             if burst.cursor_xy else None,
             "element": _focus_label(burst, click_events, labels, settings),
             "element_source": source,
-            "target_kind": "ui_control",
+            "target_kind": derive_target_kind("ui", source),
             "region": "ui",
             "generation": 0,
             "occlusion": "unknown",

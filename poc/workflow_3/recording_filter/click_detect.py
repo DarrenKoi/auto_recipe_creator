@@ -16,6 +16,11 @@ from poc.workflow_3.recording_filter.cursor_prompt import (
     cursor_user_prompt,
 )
 from poc.workflow_3.recording_filter.frame_reduce import ChangeEvent
+from poc.workflow_3.recording_filter.region_gate import (
+    nearest_meta,
+    read_frame_size,
+    screen_point_to_frame,
+)
 from poc.workflow_3.recording_filter.settings import RecordingFilterSettings
 from poc.workflow_3.util import encode_image_webp
 from poc.workflow_3.util.json_utils import (
@@ -47,6 +52,7 @@ class ClickEvent:
     changed_in_window_px: int
     confidence: float
     evidence: str
+    cursor_source: str = "none"   # sidecar | vlm | none
 
     # 편의 접근자 (timeline 에서 사용).
     @property
@@ -103,6 +109,28 @@ def _count_changed_in_window(mask, window: dict) -> int:
     return int(cv2.countNonZero(crop))
 
 
+def resolve_sidecar_cursor(change, metas, frame_wh):
+    """사이드카에서 이 프레임의 커서 프레임 좌표를 얻는다. 불가하면 None.
+
+    수동 녹화 세션의 로컬 커서(GetCursorPos)는 엔지니어의 커서 그 자체라
+    VLM 추정보다 정확하고 콜이 들지 않는다. 알람 녹화는 사이드카가 없어
+    항상 None 이 나오고 호출부가 기존 VLM 경로로 폴백한다.
+
+    좌표 변환은 region_gate.screen_point_to_frame 을 쓴다 - 단순 뺄셈은
+    오피스 125/150% 배율에서 좌표계를 섞는다(2026-08-10 FINDING 2).
+    """
+    if not metas or not frame_wh:
+        return None
+    meta = nearest_meta(metas, change.timestamp_sec)
+    if meta is None or meta.cursor_xy is None or meta.rect is None:
+        return None
+    point = screen_point_to_frame(meta.cursor_xy, meta.rect, frame_wh)
+    if point is None:
+        return None
+    fx, fy = point
+    return [int(fx), int(fy)]
+
+
 def _locate_cursor(client, frame_path: Path):
     """프레임에서 커서 coarse bbox(native px) 를 탐지한다.
 
@@ -134,13 +162,53 @@ def _unavailable_event(change: ChangeEvent) -> ClickEvent:
     )
 
 
+# 사이드카 좌표에는 bbox 가 없다. 오버레이(write_click_overlays)가 bbox 없는
+# 이벤트를 건너뛰므로, 점 주위에 합성 bbox 를 만들어 클릭 오버레이가 계속
+# 그려지게 한다 - 안 만들면 수동 세션의 오버레이가 통째로 사라진다.
+SIDECAR_CURSOR_BBOX_PX = 32
+
+
+def _sidecar_event(change, cursor_xy, frame_wh, settings) -> ClickEvent:
+    """사이드카 커서로 ROI 변화를 세어 클릭을 판정한다(VLM 콜 없음)."""
+    width, height = frame_wh
+    mask = _diff_mask(
+        Path(change.prev_frame_path), Path(change.frame_path), settings.click_diff_threshold
+    )
+    if mask is None:
+        event = _unavailable_event(change)
+        event.cursor_source = "sidecar"
+        return event
+    window = _window_around(
+        cursor_xy[0], cursor_xy[1], settings.cursor_click_window_px, width, height
+    )
+    changed = _count_changed_in_window(mask, window)
+    is_click = changed >= settings.click_min_changed_px
+    return ClickEvent(
+        change=change, is_click=is_click,
+        status="click" if is_click else "no_click",
+        cursor_visible=True, cursor_kind="sidecar",
+        cursor_bbox=_window_around(
+            cursor_xy[0], cursor_xy[1], SIDECAR_CURSOR_BBOX_PX, width, height
+        ),
+        cursor_xy=list(cursor_xy), click_window=window,
+        changed_in_window_px=changed, confidence=1.0,
+        evidence="sidecar cursor", cursor_source="sidecar",
+    )
+
+
 def detect_clicks(
     change_events: list[ChangeEvent],
     settings: RecordingFilterSettings,
     *,
     client,
+    metas=None,
 ) -> list[ClickEvent]:
-    """생존 프레임마다 커서를 찾아 ROI 변화로 클릭을 판정한다."""
+    """생존 프레임마다 커서를 찾아 ROI 변화로 클릭을 판정한다.
+
+    metas 가 주어지면(수동 녹화 세션 사이드카) 프레임별로 먼저 사이드카 커서를
+    시도한다 - 얻으면 VLM 을 부르지 않고 바로 판정한다. 사이드카가 없거나
+    조인 불가면 오늘과 동일한 VLM 경로로 폴백한다(알람 녹화는 항상 이 경로).
+    """
     if not _PIL_AVAILABLE:
         raise RuntimeError("Pillow 가 필요합니다(PIL import 실패).")
 
@@ -150,6 +218,14 @@ def detect_clicks(
         if settings.max_vlm_calls and calls >= settings.max_vlm_calls:
             print(f"[WARNING] max_vlm_calls={settings.max_vlm_calls} 도달 -> 이후 생존 분류 중단")
             break
+
+        frame_wh = read_frame_size(change.frame_path) if metas else None
+        sidecar_xy = resolve_sidecar_cursor(change, metas, frame_wh)
+        if sidecar_xy is not None:
+            results.append(
+                _sidecar_event(change, sidecar_xy, frame_wh, settings)
+            )
+            continue
 
         try:
             parsed, cursor_px, width, height = _locate_cursor(client, Path(change.frame_path))
@@ -170,6 +246,7 @@ def detect_clicks(
                     changed_in_window_px=0,
                     confidence=float(parsed.get("confidence") or 0.0),
                     evidence=str(parsed.get("evidence") or ""),
+                    cursor_source="vlm",
                 )
             )
             _sleep(settings.vlm_request_delay_sec)
@@ -195,6 +272,7 @@ def detect_clicks(
                 click_window=window, changed_in_window_px=changed,
                 confidence=float(parsed.get("confidence") or 0.0),
                 evidence=str(parsed.get("evidence") or ""),
+                cursor_source="vlm",
             )
         )
         _sleep(settings.vlm_request_delay_sec)

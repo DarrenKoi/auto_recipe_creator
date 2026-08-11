@@ -58,6 +58,7 @@ def build_timeline(click_events, typing_events=None, *, gate_info=None, labels=N
                 "region": region,
                 "generation": int(gate.get("generation") or 0),
                 "occlusion": str(gate.get("occlusion") or "unknown"),
+                "cursor_source": getattr(ce, "cursor_source", "none"),
                 "text": None,              # 예약: 타이핑 텍스트 (Stage 2b)
                 "confidence": ce.confidence,
                 "frame": Path(ce.frame_path).name,

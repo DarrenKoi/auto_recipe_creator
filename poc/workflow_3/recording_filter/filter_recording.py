@@ -287,7 +287,7 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
         from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
 
         client = Workflow1VLMClient(settings.vlm_service)
-    click_events = detect_clicks(change_events, settings, client=client)
+    click_events = detect_clicks(change_events, settings, client=client, metas=metas)
     write_click_overlays(
         [ce for ce in click_events if ce.is_click], out_dir / "click_events"
     )

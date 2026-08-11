@@ -493,6 +493,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'poc.workflow_3.recordi
 """
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from poc.workflow_3.recording_filter.region_gate import nearest_meta
 
@@ -839,7 +840,7 @@ def resolve_typing_events(
             "occlusion": "unknown",
             "text": after or None,
             "confidence": 1.0 if source == "ocr" else 0.0,
-            "frame": burst.end_frame_path.split("/")[-1].split("\\")[-1],
+            "frame": Path(burst.end_frame_path).name,
             "source_frames": {"prev": burst.frame_path, "curr": burst.end_frame_path},
             "cursor_source": "sidecar",
             "t_sec_end": burst.end_t_sec,
@@ -1031,6 +1032,14 @@ def test_make_step_single_event_repeats_timestamp():
     assert step["t_sec"] == [13.0, 13.0]
 
 
+def test_make_step_uses_t_sec_end_for_typing_burst():
+    """타이핑 이벤트는 구간이므로 끝 시각을 잃으면 안 된다(Stage 2b 가 t_sec_end 를 싣는다)."""
+    typing = _event(3, action="type_text", text="abc")
+    typing["t_sec_end"] = 20.0
+    step = make_step([typing], action="type_text", rule="R3")
+    assert step["t_sec"] == [13.0, 20.0]
+
+
 def test_make_step_defaults_are_explicit_nulls():
     """스키마 필드는 항상 존재해야 한다 - 소비자가 키 유무를 분기하면 안 된다."""
     step = make_step([_event(3)], action="click", rule="R5")
@@ -1132,6 +1141,9 @@ def make_step(events, *, action, rule, target=None, target_kind=None, value=None
     first, last = events[0], events[-1]
     if target_kind is None:
         target_kind = first.get("target_kind") or "unknown"
+    # 타이핑 이벤트는 구간이라 시작 시각 하나로는 길이를 잃는다. Stage 2b 가 실은
+    # t_sec_end 를 우선 쓴다(클릭 이벤트에는 없으므로 t_sec 로 폴백).
+    end_t = float(last.get("t_sec_end") or last["t_sec"])
     return {
         "seq": 0,   # 그룹핑 패스가 마지막에 다시 매긴다.
         "action": action,
@@ -1140,7 +1152,7 @@ def make_step(events, *, action, rule, target=None, target_kind=None, value=None
         "value": value,
         "value_source": value_source,
         "coords_in_live_box": coords_in_live_box,
-        "t_sec": [float(first["t_sec"]), float(last["t_sec"])],
+        "t_sec": [float(first["t_sec"]), end_t],
         "generation": int(first.get("generation") or 0),
         "grouping_rule": rule,
         "inferred": bool(inferred),

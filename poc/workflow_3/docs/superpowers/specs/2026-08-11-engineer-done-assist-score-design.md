@@ -88,8 +88,9 @@ sem_monitor/assist_score.py                                     [신규]
       VLM 1회. 패널 박스 + 열 박스(Addressing1/Addressing2/Measurement). 캐시된다.
   read_row_states(image, layout) -> list[RowState]
       순수 CV. 행 분할(수평 투영) -> 열별 잉크 색 분류.
-  classify_ink(crop) -> "black" | "red" | "blank"
+  classify_ink(cell) -> "black" | "red" | "blank" | "unknown"
       chroma 기반. sem_box_detect 의 grey/chroma 판정과 같은 계열.
+      "unknown" 은 흑/적 경계에 걸린 경우 - streak 을 끊는다.
   ok_streak(rows) -> int
       최신 행부터 연속 ok 개수. 순수 함수.
 
@@ -97,12 +98,17 @@ monitor/engineer_done_align_adjustment.py                       [개조]
   ROI grounding + 카운터 OCR 경로는 유지. 판정식만 교체.
 ```
 
-`RowState` = `{addr1, addr2, meas: "black"|"red"|"blank"}` + 파생 `verdict`:
+`RowState` = 열별 잉크 색 `{Addressing1, Addressing2, Measurement}` + 파생 `verdict`:
 
-- `fail` — addr1 또는 meas 가 red
-- `pending` — 판정에 필요한 칸이 blank (측정 진행 중)
-- `ok` — 그 외 (addr2 는 비어 있어도 무방)
-- `unknown` — 색 분류가 흑/적 경계에 걸림
+- `fail` — Addressing1 또는 Measurement 가 red
+- `unknown` — 둘 중 하나가 unknown (색 분류가 경계에 걸림)
+- `pending` — Measurement 가 blank (측정이 아직 안 끝남)
+- `ok` — 그 외
+
+`pending` 을 **Measurement 기준으로만** 판정하는 이유: Addressing2 는 대개 비어 있고,
+Addressing1 도 레시피에 따라 없을 수 있다. 없는 칸을 "진행 중"으로 읽으면 그 레시피는
+영영 done 이 되지 않는다. Measurement 가 최종 결과이므로 그것으로 완료를 판정하고,
+Addressing1 은 값이 있을 때만 실패 신호로 쓴다.
 
 ## 알고리즘
 

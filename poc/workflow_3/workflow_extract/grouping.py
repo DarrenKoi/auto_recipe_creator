@@ -20,6 +20,18 @@ from poc.workflow_3.workflow_extract.steps import make_step
 # 오판하지 않는다. 확정값 아님 - 오피스 첫 실측 녹화로 확인 필요.
 _DROPDOWN_MIN_ROW_GAP_PX = env_float("WORKFLOW_EXTRACT_DROPDOWN_MIN_ROW_GAP_PX", 12.0)
 
+# R2 전용 - 오프너에서 피커까지 허용하는 최대 수직 거리(px).
+# (2026-08-11 리뷰 C3) dropdown_region_below 는 PM 드롭다운 **crop** 용 기하라
+# 아래로 프레임 높이의 0.45 배(1080 에서 486px, 화면 절반)를 잡는다. 그 띠를 트리거로
+# 쓰면 세로로 쌓인 평범한 폼에서 서로 다른 두 컨트롤 클릭이 한 개의 드롭다운 선택으로
+# 뭉쳐지고, 두 번째 진짜 클릭은 문서에서 사라진다. 그래서 트리거 쪽에만 별도로
+# "그럴듯한 리스트 높이" 상한을 둔다(crop 기하 자체는 건드리지 않는다).
+# 값 120 은 이 UI 의 행 높이 추정(~24px) 기준 5행이다 - 실측 아님. 타이트하게 잡는
+# 이유는 두 실패의 대가가 비대칭이기 때문이다: 놓치면 정직한 클릭 2개(R5)로
+# degrade 하지만, 잘못 발화하면 없던 값이 생기고 진짜 클릭이 없어진다. 오피스에서
+# 실제 리스트 높이를 재고 나면 env 로 올린다.
+_DROPDOWN_MAX_DROP_PX = env_float("WORKFLOW_EXTRACT_DROPDOWN_MAX_DROP_PX", 120.0)
+
 
 @dataclass
 class GroupingContext:
@@ -139,6 +151,16 @@ def _rule_dropdown(events, i, ctx):
     검사(dx²+dy²)를 쓰면 그 경계가 이 UI 의 드롭다운 첫 행 높이(~24px)와 겹쳐 진짜
     첫 항목 선택까지 오검(false reject)한다 - x 방향은 이미 아래 point_in_region 이
     영역 폭으로 걸러주므로 여기서는 y 방향만 본다.
+
+    (2026-08-11 리뷰 C3) 여기에 가드 둘을 더 건다. 이 규칙에는 "드롭다운이 실제로
+    열렸다"는 증거가 없고 기하만 있어서, 평범한 연속 클릭이 없던 선택을 만들어 내고
+    두 번째 클릭을 삼켰다.
+    1. 오프너와 피커가 **같은 대상**이면 거부한다 - 드롭다운이 자기 오프너의 라벨을
+       고르는 일은 없다. 같은 버튼을 사람이 다시 누를 때의 지터(수십 px)가
+       _DROPDOWN_MIN_ROW_GAP_PX(12px)만 넘으면 R4 반복 클릭이 R2 에 선점당했다.
+       라벨/좌표 어느 쪽으로 판정되든 막히므로 행 높이에 의존하지 않는다.
+    2. 수직 거리를 _DROPDOWN_MAX_DROP_PX 로 제한한다 - crop 기하의 0.45*높이 띠는
+       화면 절반이라 세로로 쌓인 폼 전체가 후보가 된다.
     """
     from poc.workflow_3.sem_monitor.pm_dropdown import dropdown_region_below
 
@@ -154,8 +176,10 @@ def _rule_dropdown(events, i, ctx):
         return None
     if float(picker["t_sec"]) - float(opener["t_sec"]) > ctx.settings.dropdown_max_sec:
         return None
+    if same_target(opener, picker, ctx.settings):
+        return None
     dy = float(picker["coords"]["y"]) - float(opener["coords"]["y"])
-    if dy < _DROPDOWN_MIN_ROW_GAP_PX:
+    if dy < _DROPDOWN_MIN_ROW_GAP_PX or dy > _DROPDOWN_MAX_DROP_PX:
         return None
     region = dropdown_region_below(
         {"x": int(opener["coords"]["x"]), "y": int(opener["coords"]["y"])}, ctx.frame_wh
@@ -192,12 +216,20 @@ def same_target(a, b, settings) -> bool:
 
 
 def _rule_type_text(events, i, ctx):
-    """R3 - 타이핑 구간. 직전 필드 클릭이 있으면 포커스로 흡수한다."""
+    """R3 - 타이핑 구간. 직전 필드 클릭이 있으면 포커스로 흡수한다.
+
+    (2026-08-11 리뷰 I2) target_kind 는 하드코딩하지 않고 **타이핑 이벤트에서
+    승계**한다(스펙 6: "타임라인에서 그대로 승계"). Stage 2b 는 OCR 이 라벨을
+    못 읽으면 unknown 을 싣는데, 여기서 ui_control 로 덮으면 라벨을 읽은 적도 없는
+    step 이 "다른 장비에서 라벨로 다시 찾을 수 있다"고 주장한다. 흡수 갈래에서는
+    events[0] 이 클릭이라 make_step 의 first 기반 폴백이 클릭의 값을 집으므로
+    타이핑 이벤트의 값을 명시적으로 넘긴다.
+    """
     event = events[i]
     if event.get("action") == "type_text":
         return make_step(
             [event], action="type_text", rule="R3", target=event.get("element"),
-            target_kind="ui_control", value=event.get("text"),
+            target_kind=event.get("target_kind") or "unknown", value=event.get("text"),
             value_source=event.get("element_source") or "none",
         ), 1
 
@@ -211,7 +243,7 @@ def _rule_type_text(events, i, ctx):
     return make_step(
         [event, typing], action="type_text", rule="R3",
         target=typing.get("element") or event.get("element"),
-        target_kind="ui_control", value=typing.get("text"),
+        target_kind=typing.get("target_kind") or "unknown", value=typing.get("text"),
         value_source=typing.get("element_source") or "none",
     ), 2
 

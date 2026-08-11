@@ -373,3 +373,140 @@ def test_invariant_holds_across_all_rules():
     steps = group_events(events, _ctx())
     seen = [r for s in steps for r in s["raw_events"]]
     assert sorted(seen) == [0, 1, 2, 3, 4, 5]
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-11 최종 리뷰 C3/I2 - R2 오발화, R3 target_kind 승계, 규칙 상호작용.
+# ---------------------------------------------------------------------------
+
+def test_r2_does_not_steal_repeat_clicks_with_human_jitter():
+    """같은 버튼을 3회 누를 때의 지터(18px)는 드롭다운이 아니라 R4 반복 클릭이다.
+
+    (리뷰 C3 Case A) dy>=12 가드는 dy 가 거의 0 인 경우만 막았다. 사람이 같은
+    버튼을 다시 누르면 보통 10~20px 어긋나므로 두 번째 클릭이 곧바로
+    "드롭다운에서 자기 오프너와 같은 라벨을 선택" 이 되고, 세 번째 클릭만 R5 로
+    남았다. 드롭다운이 자기 오프너의 라벨을 고르는 일은 없다.
+    """
+    events = [
+        _event(0, 10.0, element="Zoom In", coords={"x": 800, "y": 300}),
+        _event(1, 11.0, element="Zoom In", coords={"x": 803, "y": 318}),
+        _event(2, 12.0, element="Zoom In", coords={"x": 800, "y": 301}),
+    ]
+    steps = group_events(events, _ctx())
+    assert [s["grouping_rule"] for s in steps] == ["R4"], steps
+    assert steps[0]["count"] == 3
+
+
+def test_r2_does_not_steal_repeat_clicks_without_labels():
+    """라벨이 없어도(OCR 실패) 좌표 근접 판정으로 같은 대상이면 R2 가 아니다.
+
+    dy=12 는 수직 가드(_DROPDOWN_MIN_ROW_GAP_PX)를 정확히 통과하는 값이라, 좌표
+    기반 same_target 가드가 없으면 첫 두 클릭이 R2 에 선점된다.
+    """
+    events = [
+        _event(i, 10.0 + i, element=None, coords={"x": 800, "y": 300 + i * 12})
+        for i in range(3)
+    ]
+    steps = group_events(events, _ctx())
+    assert [s["grouping_rule"] for s in steps] == ["R4"], steps
+
+
+def test_r2_does_not_group_click_on_lower_control():
+    """세로로 쌓인 폼에서 아래 컨트롤을 누른 것은 드롭다운 선택이 아니다.
+
+    (리뷰 C3 Case B) crop 기하의 세로 띠는 프레임 높이의 0.45 배(1080 에서 486px)라
+    폼 절반이 후보였다. 두 진짜 클릭이 한 step 으로 뭉치면 값이 조작되고 두 번째
+    클릭은 문서에서 사라진다 - 되돌릴 수는 있어도(raw_events) 읽는 사람은 속는다.
+    트리거 상한(_DROPDOWN_MAX_DROP_PX)을 넘으면 각자 R5 로 남아야 한다.
+    """
+    open_ev = _event(0, 10.0, element="Recipe", coords={"x": 600, "y": 300})
+    pick_ev = _event(1, 12.0, element="Load", coords={"x": 650, "y": 440})
+    steps = group_events([open_ev, pick_ev], _ctx())
+    assert [s["grouping_rule"] for s in steps] == ["R5", "R5"], steps
+
+
+def test_no_dropdown_step_ever_has_target_equal_to_value():
+    """어떤 조합에서도 target == value 인 select_from_dropdown 은 나오면 안 된다.
+
+    이것은 R2 의 의미 자체에서 나오는 불변식이다 - 오프너 라벨과 선택값이 같으면
+    그건 드롭다운 선택이 아니라 같은 것을 두 번 누른 것이다.
+    """
+    events = [
+        _event(0, 10.0, element="Zoom In", coords={"x": 800, "y": 300}),
+        _event(1, 10.6, element="Zoom In", coords={"x": 802, "y": 316}),
+        _event(2, 11.2, element="Zoom In", coords={"x": 799, "y": 302}),
+        _event(3, 20.0, element="PM", coords={"x": 800, "y": 300}),
+        _event(4, 21.0, element="210", coords={"x": 810, "y": 360}),
+        _event(5, 40.0, element="Recipe", coords={"x": 600, "y": 300}),
+        _event(6, 41.0, element="Load", coords={"x": 650, "y": 460}),
+    ]
+    steps = group_events(events, _ctx())
+    dropdowns = [s for s in steps if s["action"] == "select_from_dropdown"]
+    assert dropdowns, steps          # 진짜 드롭다운 1건은 여전히 잡혀야 한다
+    for step in steps:
+        if step["action"] == "select_from_dropdown":
+            assert step["target"] != step["value"], step
+    seen = [r for s in steps for r in s["raw_events"]]
+    assert sorted(seen) == list(range(7))
+
+
+def test_r3_inherits_unknown_target_kind_from_typing_event():
+    """OCR 이 실패한 타이핑은 이식 가능성을 알 수 없으므로 unknown 을 유지해야 한다.
+
+    (리뷰 I2) 하드코딩된 ui_control 은 Task 4 가 Stage 2b 에서 파생하도록 고친 값을
+    다시 덮어써, 라벨을 읽은 적 없는 step 이 "다른 장비에서 라벨로 다시 찾을 수
+    있다"고 주장하게 만들었다.
+    """
+    typing = _event(0, 11.0, action="type_text", element=None, text=None,
+                    target_kind="unknown")
+    typing["element_source"] = "none"
+    steps = group_events([typing], _ctx())
+    assert steps[0]["target_kind"] == "unknown", steps[0]
+    assert steps[0]["value_source"] == "none"
+
+
+def test_r3_absorb_branch_inherits_target_kind_from_typing_not_click():
+    """흡수 갈래에서도 클릭(events[0])이 아니라 타이핑 이벤트의 값을 승계한다."""
+    click = _event(0, 10.0, element="Recipe Name")          # target_kind=ui_control
+    typing = _event(1, 11.0, action="type_text", element=None, text=None,
+                    target_kind="unknown")
+    typing["element_source"] = "none"
+    steps = group_events([click, typing], _ctx())
+    assert len(steps) == 1
+    assert steps[0]["target_kind"] == "unknown", steps[0]
+
+
+def test_group_events_consumes_a_real_build_timeline_payload():
+    """실제 build_timeline 산출물을 그대로 그룹핑할 수 있어야 한다(모듈 간 계약).
+
+    R1/R2 테스트가 손으로 쓴 dict 만 먹였기 때문에, 생산자와 소비자의 스키마가
+    어긋났는지 아무 테스트도 몰랐다(같은 종류의 사고가 C1 이었다).
+    """
+    from poc.workflow_3.recording_filter.click_detect import ClickEvent
+    from poc.workflow_3.recording_filter.frame_reduce import ChangeEvent
+    from poc.workflow_3.recording_filter.timeline import build_timeline
+
+    def _click(rank, t_sec, xy):
+        change = ChangeEvent(
+            rank=rank, frame_path=f"/tmp/f_{rank}.jpg", prev_frame_path=f"/tmp/p_{rank}.jpg",
+            timestamp_sec=t_sec, frame_index=rank,
+            change_bbox={"left": 0, "top": 0, "right": 10, "bottom": 10},
+            largest_blob_area_px=9000, changed_pixels=9000,
+        )
+        return ClickEvent(
+            change=change, is_click=True, status="click", cursor_visible=True,
+            cursor_kind="sidecar", cursor_bbox=None, cursor_xy=list(xy),
+            click_window=None, changed_in_window_px=9000, confidence=1.0,
+            evidence="", cursor_source="sidecar",
+        )
+
+    gate_info = {
+        0: {"generation": 0, "region": "ui", "occlusion": "none", "verdict": "candidate"},
+        1: {"generation": 0, "region": "ui", "occlusion": "none", "verdict": "candidate"},
+    }
+    timeline = build_timeline(
+        [_click(0, 10.0, (800, 300)), _click(1, 11.0, (810, 360))], gate_info=gate_info
+    )
+    steps = group_events(timeline, _ctx())
+    seen = [r for s in steps for r in s["raw_events"]]
+    assert sorted(seen) == [0, 1], steps

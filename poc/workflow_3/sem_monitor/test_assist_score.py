@@ -5,9 +5,12 @@
     uv run python poc/workflow_3/sem_monitor/test_assist_score.py
 """
 
+from types import SimpleNamespace
+
 import numpy as np
 from PIL import Image
 
+from poc.workflow_3.sem_monitor import assist_score as asc
 from poc.workflow_3.sem_monitor.assist_score import (
     AssistLayout,
     RowState,
@@ -383,6 +386,120 @@ def test_panel_target_uses_proven_button_geometry():
     return ok
 
 
+def _swap_asc(state, name, value):
+    """assist_score 모듈 속성을 교체하고 원복용으로 저장한다."""
+    state[name] = getattr(asc, name)
+    setattr(asc, name, value)
+
+
+def _restore_asc(state):
+    for name, orig in state.items():
+        setattr(asc, name, orig)
+
+
+def _stub_ocr_client(items):
+    """parse_spotting_items 가 items 를 돌려주도록 VLM 왕복을 통째로 대체한다."""
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        def chat_with_image_b64(self, **kwargs):
+            return SimpleNamespace(text="stub")
+
+    return _Client
+
+
+def _locate_with(state, *, point, items=None, ocr_raises=False, locator_raises=False):
+    """스텁을 걸고 locate_assist_layout 을 1회 호출한다."""
+    def fake_locator(*a, **k):
+        if locator_raises:
+            raise RuntimeError("locator boom")
+        return SimpleNamespace(point=point)
+
+    def fake_parse(_raw):
+        if ocr_raises:
+            raise RuntimeError("ocr boom")
+        return items if items is not None else _panel_items()
+
+    _swap_asc(state, "analyze_window_target", fake_locator)
+    _swap_asc(state, "Workflow1VLMClient", _stub_ocr_client(items))
+    _swap_asc(state, "parse_spotting_items", fake_parse)
+    return asc.locate_assist_layout(None, "", "", Image.new("RGB", (300, 260), (240, 240, 240)))
+
+
+def test_locate_returns_layout_on_happy_path():
+    state = {}
+    try:
+        result = _locate_with(state, point={"x": 150, "y": 130})
+    finally:
+        _restore_asc(state)
+    ok = result is not None and len(result[1].grid) == 7
+    print(f"[{'PASS' if ok else 'FAIL'}] locate_returns_layout_on_happy_path")
+    return ok
+
+
+def test_locate_none_when_point_outside_image():
+    """grounding 점이 창 밖이면 crop 박스가 뒤집힌다. 예외 없이 None 이어야 한다.
+
+    analyze_window_target 은 crop 오프셋을 더할 때 전체 이미지 경계로 다시 clamp 하지
+    않으므로 이런 점이 실제로 나올 수 있다. 여기서 예외가 나면 폴링 루프가 죽는다.
+    """
+    state = {}
+    try:
+        result = _locate_with(state, point={"x": -400, "y": 130})
+    finally:
+        _restore_asc(state)
+    ok = result is None
+    print(f"[{'PASS' if ok else 'FAIL'}] locate_none_when_point_outside_image")
+    return ok
+
+
+def test_locate_none_when_locator_raises():
+    state = {}
+    try:
+        result = _locate_with(state, point={"x": 150, "y": 130}, locator_raises=True)
+    finally:
+        _restore_asc(state)
+    ok = result is None
+    print(f"[{'PASS' if ok else 'FAIL'}] locate_none_when_locator_raises")
+    return ok
+
+
+def test_locate_none_when_no_point():
+    state = {}
+    try:
+        result = _locate_with(state, point=None)
+    finally:
+        _restore_asc(state)
+    ok = result is None
+    print(f"[{'PASS' if ok else 'FAIL'}] locate_none_when_no_point")
+    return ok
+
+
+def test_locate_none_when_ocr_raises():
+    state = {}
+    try:
+        result = _locate_with(state, point={"x": 150, "y": 130}, ocr_raises=True)
+    finally:
+        _restore_asc(state)
+    ok = result is None
+    print(f"[{'PASS' if ok else 'FAIL'}] locate_none_when_ocr_raises")
+    return ok
+
+
+def test_locate_none_when_grid_cannot_be_built():
+    """헤더가 없어 격자를 못 만들면 None. 나쁜 격자를 캐시하는 것이 최악이다."""
+    state = {}
+    try:
+        result = _locate_with(state, point={"x": 150, "y": 130},
+                              items=[_item("12", 20, 40, 50, 58)])
+    finally:
+        _restore_asc(state)
+    ok = result is None
+    print(f"[{'PASS' if ok else 'FAIL'}] locate_none_when_grid_cannot_be_built")
+    return ok
+
+
 def main():
     print("[INFO] assist_score self-test 시작")
     results = [
@@ -413,6 +530,12 @@ def main():
         test_read_rows_returns_empty_without_layout(),
         test_read_rows_clamps_boxes_outside_panel(),
         test_panel_target_uses_proven_button_geometry(),
+        test_locate_returns_layout_on_happy_path(),
+        test_locate_none_when_point_outside_image(),
+        test_locate_none_when_locator_raises(),
+        test_locate_none_when_no_point(),
+        test_locate_none_when_ocr_raises(),
+        test_locate_none_when_grid_cannot_be_built(),
     ]
     passed = sum(1 for r in results if r)
     print(f"[INFO] {passed}/{len(results)} cases passed")

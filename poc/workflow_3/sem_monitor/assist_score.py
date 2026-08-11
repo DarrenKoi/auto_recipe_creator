@@ -319,7 +319,14 @@ def locate_assist_layout(window, window_title: str, backend: str, image):
         "top": max(0, int(point["y"] - height * PANEL_TOP_RATIO)),
         "bottom": min(height, int(point["y"] + height * PANEL_BOTTOM_RATIO)),
     }
-    panel = crop_image(image, panel_box)
+    if panel_box["right"] <= panel_box["left"] or panel_box["bottom"] <= panel_box["top"]:
+        print(f"[WARNING] Assist 패널 crop 영역이 비정상(grounding 점이 창 밖) - point={point}")
+        return None
+    try:
+        panel = crop_image(image, panel_box)
+    except Exception as exc:
+        print(f"[WARNING] Assist 패널 crop 실패: {exc}")
+        return None
 
     try:
         client = Workflow1VLMClient(OCR_SERVICE_SLUG, timeout_sec=30.0, log_name=LOG_NAME)

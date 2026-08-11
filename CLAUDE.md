@@ -18,14 +18,14 @@ alarm detection (ALID=9006) → connect to tool via RCS → CV align-fail correc
 
 Subpackages — 4-layer DAG: `util` (leaf) → `{vlm, runner}` (services) → `{align, rcs, sem_monitor, recording_filter}` (capabilities) → `monitor` (orchestrator). workflow_3 never imports workflow_1/2.
 
-- **`monitor/`** — the loop. `align_fail_monitor.py` (primary entry: polling + edge-trigger + manifest), `align_fail_monitor_only_check.py` (light "check-only" variant: connect → capture one frame → close, no correction actuation / no recording / no engineer watch), `cycle.py` (per-alarm WorkflowRunner steps + guaranteed teardown; also the check-only cycle), `recording.py` (always-on RecordingSession), `notify.py` (popup + outcome-based cube notify), `engineer_done_align_adjustment.py` (detects engineer finishing manual align via Recipe Monitor measurement counter N→ stops recording early so teardown closes the tool), `success_gather.py` (non-blocking office glue around `align.consensus_gather`), `alarm_source.py` (office module 2-stage fallback + replay CSV), `integration_loader.py` (office adapter loading logs).
+- **`monitor/`** — the loop. `align_fail_monitor.py` (primary entry: polling + edge-trigger + manifest), `align_fail_monitor_only_check.py` (light "check-only" variant: connect → capture one frame → close, no correction actuation / no recording / no engineer watch), `cycle.py` (per-alarm WorkflowRunner steps + guaranteed teardown; also the check-only cycle), `recording.py` (always-on RecordingSession), `notify.py` (popup + outcome-based cube notify), `engineer_done_align_adjustment.py` (detects engineer finishing manual align via Recipe Monitor measurement counter N→ stops recording early so teardown closes the tool), `success_gather.py` (non-blocking office glue around `align.consensus_gather`), `alarm_source.py` (office module 2-stage fallback + replay CSV), `integration_loader.py` (office adapter loading logs), `manual_record.py` + `frame_meta.py` (**alarm-free manual recording session**, see below).
 - **`rcs/`** — RCS GUI automation: open/login (`login_rcs_common`, `login_rcs_ui_venus_mai`)/tool select+match (`tool_name_match`)/close/screenshot. Tool-row click is coarse→fine 2-VLM (coarse bbox → fine point; **both stages default to `mai-ui`** since 2026-08-07) + a **row confirm gate** (`tool_row_verify`): the two VLMs are *not* independent votes (fine only sees the crop coarse chose), so after the point is picked a **single-row strip** is cropped and OCR'd to confirm the text is the target ID. Policy via `SELECT_TOOL_ROW_CONFIRM` = `lenient` (default; reject only on reading a *different* ID) | `strict` (require confirmation) | `off`. Crop tightness needs all three of `SELECT_TOOL_ROW_VERTICAL_PAD_RATIO` (0.35) / `SELECT_TOOL_ROW_VERTICAL_PAD_MIN_PX` (10) / `SELECT_TOOL_ROW_MIN_CROP_HEIGHT` (56) — lowering only the ratio is a no-op because the two floors dominate (list rows are ~24px). A mis-click now reports `failure_class="wrong_tool_opened"` (was indistinguishable from `rcs_occupied`), closes the stray tool window, and retries after the occupied cooldown. Model choice is benchmarked by `bench_tool_locator.py` (no alarm, no clicking).
 - **`align/`** — Align fail correction domain. Flat domain modules + two subpackages:
   - `matching/` — coordinate authority: `engine` (match engine, `AlignKeyTemplate`/`build_template`), `ensemble`.
   - `diagnostics/` — offline review/compare entrypoints (`compare_align_images`, `crosshair_detect`, `search_align_key`, `align_review`, `feasibility_check`, `verify_cond_box_crop`, `test_match_on_captured_frames`).
   - domain: `assets` (reads the `align_images/...` tree), `correction` (primary entry: `correct_align_fail_auto(controller, ...) -> CorrectionOutcome`), `live_search` (fallback + `SEMMonitorController` Protocol + Mac mock), `templates` (recipe align image → `AlignKeyTemplate`, cond-aware), `ok_button` (VLM OK-button locator), `search_pattern` (square-spiral pan primitive), `cond_file`/`cond_template`/`clean_align_image`/`consensus_gather` (cond + consensus helpers).
 - **`sem_monitor/`** — `panel_locator.py` (SEM Monitor panel locator) + `controller.py` (real `RCSSEMMonitor` adapter skeleton — double-click recenter / wheel zoom / OK click, uncalibrated).
-- **`recording_filter/`** — offline, on-demand frame-filter package (NOT in the loop hot path). Turns `RecordingSession` frames into `interaction_timeline.json` via cv2 change-detection (`frame_reduce`) + VLM cursor-based click detection (`click_detect`); `run_filter` orchestrates, `settings` = `RecordingFilterSettings`.
+- **`recording_filter/`** — offline, on-demand frame-filter package (NOT in the loop hot path). Turns `RecordingSession` frames into `interaction_timeline.json`; `run_filter` orchestrates, `settings` = `RecordingFilterSettings`. Four stages: **1** `frame_reduce` (cv2 change-detection) → **1.5** `region_gate` (**VLM-free per frame**: demotes changes confined to the live SEM box to `ambient`; live-box location detected once per *layout generation*, so cost scales with generations, not frames) → **2a** `click_detect` (VLM cursor locate + ROI change → click) → **2c** `element_label` (click-point crop → PaddleOCR, VLM fallback → *what* was clicked). Stage 1.5/2c exist for the manual-recording use case (see below) and degrade to no-ops on sidecar-less alarm recordings.
 - **`vlm/`** — Flask VLM client/config/prompts (`flask_vlm`, `vlm_client`, `ui_venus_mai_locator`, `ocr_spotting`). **`runner/`** — WorkflowRunner/step types/settings. **`util/`** — shared helpers. Top-level: `config.py` (`Workflow3Settings`), `logger.py` (audit trail), `debug_artifacts.py` (debug-file saver, no per-save console spam).
 
 **Extension:** `poc/workflow_3e/` adds new MES-alarm jobs *on top of* workflow_3 without editing its core (imports workflow_3 one-way). First job: **measurement-fail abort** (MES fires a consecutive-fail threshold alarm → connect + abort the running measurement). Runs via a **unified supervisor** (`poc/workflow_3e/monitor.py`) that polls MES once and dispatches align rows to workflow_3's `process_fail_rows` and abort rows to workflow_3e's `process_abort_rows` — one process, so the single RCS cursor stays serialized (no lock; abort "can queue"). Ships **notify-only** behind a double gate (`SAFE_MODE=0` **and** `MEAS_FAIL_ABORT_DRY_RUN=0` to actually click). `MEAS_FAIL_*` env namespace (not `ALIGN_FAIL_*`). See `poc/workflow_3e/README.md` + spec/plan under `poc/workflow_3/docs/superpowers/`.
@@ -60,10 +60,10 @@ align_images/<eqp_id>/<class>/<recipe>/
 
 ```
 poc/workflow_3/          # PRODUCTION: real-time align-fail monitoring loop
-poc/workflow_3/monitor/  #   loop entry (+ check-only variant) + per-alarm cycle + recording + notify + engineer-done + office integrations
+poc/workflow_3/monitor/  #   loop entry (+ check-only variant) + per-alarm cycle + recording + notify + engineer-done + manual recording + office integrations
 poc/workflow_3/rcs/      #   RCS GUI automation (open/login/select/close/screenshot)
 poc/workflow_3/align/    #   align correction domain root; align/matching (engine+ensemble), align/diagnostics (offline review) + smoke tests
-poc/workflow_3/recording_filter/ # offline frame-filter: RecordingSession frames -> interaction timeline (change-detect + VLM cursor)
+poc/workflow_3/recording_filter/ # offline frame-filter: frames -> interaction timeline (change-detect + region gate + VLM cursor + element label)
 poc/workflow_3/sem_monitor/ # SEM Monitor panel_locator + real RCSSEMMonitor controller adapter
 poc/workflow_3/vlm/      #   Flask VLM client, service registry, prompt builders
 poc/workflow_3/runner/   #   WorkflowRunner, step/condition types, WorkflowSettings
@@ -100,6 +100,11 @@ uv run python poc/workflow_3/monitor/align_fail_monitor_only_check.py  # Check-o
 # dev-PC dry-run (no office modules; replay one synthetic alarm through the cycle)
 SAFE_MODE=1 ALIGN_FAIL_ALARM_SOURCE=replay ALIGN_FAIL_REPLAY_CSV=<fixture.csv> \
   uv run python poc/workflow_3/monitor/align_fail_monitor.py
+
+# workflow_3 — 엔지니어 수동 조작 녹화 (알람 불필요; office Windows, tool 창을 먼저 열어둘 것)
+uv run python poc/workflow_3/monitor/manual_record.py        # 열린 Remote Monitoring 창에 붙어 녹화 (기본 600s)
+RECORDING_FILTER_INPUT_DIR=<recording 경로> RECORDING_FILTER_MAX_VLM_CALLS=300 \
+  uv run python poc/workflow_3/recording_filter/filter_recording.py   # 녹화 -> interaction_timeline.json
 
 # workflow_3 — RCS building blocks (office Windows; each runnable standalone)
 uv run python poc/workflow_3/rcs/open_rcs.py                 # Start RcsMainHD.exe only
@@ -144,12 +149,13 @@ BENCH_REPEATS=1 uv run python poc/workflow_3/rcs/bench_tool_locator.py   # smoke
 uv run python poc/workflow_3/rcs/bench_tool_window_reader.py
 BENCH_CURSOR_ARM=1 SAFE_MODE=0 uv run python poc/workflow_3/rcs/bench_tool_window_reader.py  # + cursor-tracking arm (moves mouse, never clicks)
 
-# recording_filter — offline frame-filter unit tests (pytest-style, 18 tests)
+# recording_filter — offline frame-filter unit tests (pytest-style, 71 tests: Stage 1/1.5/2a/2c + wiring)
 uv run pytest poc/workflow_3/recording_filter
 
-# monitor — engineer-done + success-gather smoke tests (run directly)
+# monitor — engineer-done + success-gather + manual-record smoke tests (run directly)
 uv run python poc/workflow_3/monitor/test_engineer_done_align_adjustment.py
 uv run python poc/workflow_3/monitor/test_success_gather.py
+uv run python poc/workflow_3/monitor/test_manual_record.py                    # 47 (EQP 파싱/예산/가림 판정/teardown)
 
 # Video frame parser unit tests
 uv run pytest test/video_frame_parser/tests/
@@ -205,6 +211,14 @@ Run/step tuning lives in `Workflow3Settings` (`poc/workflow_3/config.py`, extend
 **VLM 모델 통일 (2026-08-07):** every VLM default is now **`mai-ui`** — the project goal is to retire `ui-venus`. Switched in two steps: the 2-stage locator (`vlm/ui_venus_mai_locator.py` `DEFAULT_COARSE_SERVICE`/`DEFAULT_REFINE_SERVICE`, commit `64ef936`) and then every single-call service (`sem_box`/`ok_button`/`occupied_popup`/`engineer_done`/3e `abort_button`, `d0b0a8a`). Office-verified with `SAFE_MODE=0`: login / View→List tabs / select tool / screenshot / close tool, both benches (`bench_tool_locator`, `bench_tool_window_reader` acc=1.000), and a replay check-only cycle (SEM box + PM box/modality correct). Still unexercised: OK button, occupied popup, engineer-done counter, 3e abort — each needs its situation to occur. **Rollback** is per-scope, no code edit needed: `VLM_LOCATOR_COMBO="ui-venus>mai-ui"` for the locator, `ALIGN_FAIL_{SEM_BOX,OCCUPIED_POPUP,ENGINEER_DONE_VLM}_SERVICE` / `ALIGN_OK_BUTTON_VLM_SERVICE` / `MEAS_FAIL_ABORT_BUTTON_SERVICE` per service (ui-venus stays registered in `ALL_VLM_SERVICES`). Note `VLM_LOCATOR_COMBO` is read at call time and `rcs/` standalone scripts never call `seed_env()`, so for those it must come from real shell env, not `workflow_3_config.py`.
 
 **Replay dry-run without a real alarm** (the only way to exercise in-tool VLM paths on demand): copy `poc/workflow_3/monitor/replay_fixture.example.csv`, set `EQP_ID`/`RECIPE_ID`, then `ALIGN_FAIL_ALARM_SOURCE=replay` + `ALIGN_FAIL_REPLAY_CSV=<path>`. `ALID` must be `9006`; rows are emitted on the **first poll only** (then empty, so the edge-trigger release path runs too).
+
+**엔지니어 수동 조작 녹화 (2026-08-10, `MANUAL_RECORD_*` env namespace):** 알람과 무관한 별도 진입점. 엔지니어와 "지금부터 녹화하겠다"고 약속한 뒤 **이미 열려 있는** Remote Monitoring 창에 붙어 수동 작업을 녹화한다 — 접속(tool 더블클릭)은 하지 않는다. 목적은 모방 학습/절차 분석용 원천 데이터 확보이며, 지금 단계의 산출물은 자동화가 아니라 **"의미 있는 데이터가 나오는가"에 대한 판단 근거**다. 설계/계획: `docs/superpowers/{specs,plans}/2026-08-10-manual-recording-session*.md`.
+
+- **런처** `monitor/manual_record.py` — 창 제목 `"Remote Monitoring System - <EQP>"` 에서 EQP 를 뽑아 `align_images/<EQP>/_manual/<tag>/recording/` 에 적재. 창이 2개 이상이면 목록만 출력하고 종료한다(`MANUAL_RECORD_EQP_ID` 로 지정; **부분 일치가 모호하면 임의 선택하지 않고 거부** — 엉뚱한 장비를 10분 녹화하느니 다시 실행하는 편이 낫다). `RecordingSession` 은 **감싸기만** 하고 동작을 바꾸지 않는다(`capture_fn` 주입점). 상한: `MANUAL_RECORD_MAX_SEC` (600, 실질 상한) / `MAX_FRAMES` (4000) / `MAX_DISK_MB` (2000) — 뒤 둘은 백스톱이라 정상이면 안 걸린다. 그 외 `POLL_SEC` (0.2), `JPEG_QUALITY` (85; 알람 녹화는 종전대로 95), `META` (1). 정지 사유는 manifest 에 `user_interrupt`/`max_sec`/`window_gone`/`frame_budget`/`disk_budget`/`watch_error` 로 남고, **어느 경로로 끝나도 teardown 은 완료된다**.
+- **사이드카** `monitor/frame_meta.py` → `frame_meta.jsonl` (프레임당 1줄: 창 rect, 전면 창 제목, 가림 여부, 로컬 커서 좌표). `capture_window` 가 창 핸들이 아니라 **창 rect 의 mss 스크린 그랩**이라 다른 앱이 위에 뜨면 그 앱이 찍히므로, 가림을 프레임 단위로 기록해 분석에서 걸러낸다. 가림 판정은 창 영역 5점에서 `WindowFromPoint` → **`GetAncestor(.., GA_ROOT)` 로 정규화 후** 우리 창인지 비교(정규화를 빼면 자식 컨트롤 HWND 가 잡혀 **전 프레임이 `full` 로 오판**된다). 커서는 `GetCursorPos` 폴링이며 **입력 후킹이 아니다 — 키 입력은 기록하지 않는다**. 기록 실패는 1회 경고 후 영구 비활성화(초당 5회 호출이라 콘솔 범람 방지).
+- **분석 접합** — 사이드카와 프레임은 **`t_sec` 최근접**으로 조인한다(캡처 순번과 저장 seq 는 어긋난다: 변화 없는 샘플은 저장되지 않음). 조인 상한 `META_MAX_JOIN_GAP_SEC` (10.0) 를 넘으면 meta 없음으로 취급 — 사이드카가 중간에 죽어도 낡은 rect/커서에 영구히 조인되지 않는다. **화면→프레임 커서 변환은 반드시 frame/rect 배율 보정**을 거친다(오피스 125/150% 배율에서 단순 뺄셈은 어긋나 라이브 박스 좌·상단 20% 구간의 실제 조작이 `ambient` 로 버려진다; `util/window_utils.image_point_to_screen` 과 같은 규약). 사이드카가 없는 기존 알람 녹화는 게이트가 전량 통과로 degrade 한다(실패 아님).
+- **타임라인 스키마** (`interaction_timeline.json`) — `element` / `element_source` (`ocr`|`vlm`|`none`) / `target_kind` (`ui_control`|`live_image`|`unknown`) / `region` / `generation` / `occlusion`. `target_kind` 는 **A 장비 → B 장비 이식 가능성** 표시다: 같은 RCS exe 라 라벨은 재탐색 가능하지만 좌표는 창 위치가 달라 무의미하고, 라이브 영상 위 조작은 CV 재해석이 필요하다. `element_source` 를 따로 두는 이유는 OCR 로 읽은 라벨과 VLM 이 서술한 라벨의 신뢰 수준이 다르기 때문(이식성 판단 시 `ocr` 만 신뢰하는 식으로 필터 가능).
+- **첫 오피스 실행 시 주의** — Stage 2a 는 `max_vlm_calls` 기본 0(무제한)이라 10분 세션이 수백~수천 콜이 될 수 있다. 첫 회는 `RECORDING_FILTER_MAX_VLM_CALLS=300` 으로 상한을 걸 것(잘린 양은 `summary.json` 의 `truncated`/`skipped_due_to_cap` 에 정직하게 보고된다). 확인 포인트 3가지: manifest 의 `sampled_count/경과시간` (실측 샘플링 주기, 목표 ~5/s), `region_map_gen0.jpg` 의 시안 박스가 실제 라이브 SEM 영역과 맞는지(**틀리면 이후 게이팅 전부 무효 — 여기서 멈출 것**), `summary.json` 의 `gate_passed/total_change_events` (90%+ 제거면 정상, 0% 면 사이드카 조인 의심). 전량 폐기 시 `run_filter` 는 성공이 아닌 상태를 반환한다.
 
 Recently added env flags (all `Workflow3Settings` fields unless noted; defaults in parens):
 

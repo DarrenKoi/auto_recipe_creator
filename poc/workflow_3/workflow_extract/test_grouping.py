@@ -198,6 +198,49 @@ def test_r1_sets_normalized_coords_in_live_box():
     assert steps[0]["coords_in_live_box"] == [0.5, 0.5]
 
 
+def test_r2_groups_open_and_select():
+    """PM 클릭 -> 바로 아래 영역 클릭 = 드롭다운 선택 1 step."""
+    open_ev = _event(0, 10.0, element="PM", coords={"x": 800, "y": 300})
+    pick_ev = _event(1, 12.0, element="210", coords={"x": 810, "y": 420})
+    steps = group_events([open_ev, pick_ev], _ctx())
+    assert len(steps) == 1
+    assert steps[0]["action"] == "select_from_dropdown"
+    assert steps[0]["target"] == "PM"
+    assert steps[0]["value"] == "210"
+    assert steps[0]["value_source"] == "ocr"
+    assert steps[0]["raw_events"] == [0, 1]
+
+
+def test_r2_does_not_group_when_too_slow():
+    """5초를 넘으면 별개 조작이다."""
+    open_ev = _event(0, 10.0, element="PM", coords={"x": 800, "y": 300})
+    pick_ev = _event(1, 30.0, element="210", coords={"x": 810, "y": 420})
+    assert len(group_events([open_ev, pick_ev], _ctx())) == 2
+
+
+def test_r2_does_not_group_click_outside_dropdown_region():
+    """아래가 아니라 옆을 눌렀으면 드롭다운이 아니다."""
+    open_ev = _event(0, 10.0, element="PM", coords={"x": 800, "y": 300})
+    pick_ev = _event(1, 12.0, element="OK", coords={"x": 200, "y": 310})
+    assert len(group_events([open_ev, pick_ev], _ctx())) == 2
+
+
+def test_r2_degrades_without_frame_size():
+    """frame_wh 를 모르면 드롭다운 기하를 계산할 수 없어 degrade."""
+    open_ev = _event(0, 10.0, element="PM", coords={"x": 800, "y": 300})
+    pick_ev = _event(1, 12.0, element="210", coords={"x": 810, "y": 420})
+    steps = group_events([open_ev, pick_ev], _ctx(frame_wh=None))
+    assert [s["grouping_rule"] for s in steps] == ["R5", "R5"]
+
+
+def test_r2_requires_ui_control_opener():
+    """라이브 영상 위 클릭은 드롭다운 여는 동작이 아니다."""
+    open_ev = _event(0, 10.0, region="live_image", target_kind="live_image",
+                     element=None, coords={"x": 800, "y": 300})
+    pick_ev = _event(1, 12.0, element="210", coords={"x": 810, "y": 420})
+    assert len(group_events([open_ev, pick_ev], _ctx())) == 2
+
+
 def test_r5_live_image_click_also_gets_normalized_coords():
     """더블클릭이 아닌 라이브 박스 단발 클릭도 정규화 좌표를 들어야 한다.
 

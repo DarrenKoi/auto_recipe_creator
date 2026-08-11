@@ -103,7 +103,53 @@ def _rule_default(events, i, ctx):
     ), 1
 
 
-_RULES = [_rule_double_click, _rule_default]
+def _point_in_region(coords, region) -> bool:
+    """(l, t, r, b) 튜플 영역 안에 점이 있는지 본다."""
+    if not coords or not region:
+        return False
+    left, top, right, bottom = region
+    return left <= float(coords["x"]) <= right and top <= float(coords["y"]) <= bottom
+
+
+def _rule_dropdown(events, i, ctx):
+    """R2 - ui_control 클릭 직후 그 아래 영역 클릭 = 드롭다운 선택.
+
+    기하는 sem_monitor.pm_dropdown.dropdown_region_below 를 그대로 쓴다. PM 드롭다운
+    실행기가 이미 쓰는 함수라, 관측이 인식하는 드롭다운과 실행기가 수행할 수 있는
+    드롭다운이 어긋날 수 없다. 다만 그 비율 상수는 PM 전용 보정이라 더 넓은
+    드롭다운은 놓칠 수 있다(첫 실측 후 일반 비율셋 필요 여부를 판단한다).
+
+    바로 다음 이벤트만 본다 - 사이에 다른 조작이 끼면 묶지 않는다. 비인접 이벤트를
+    소비하면 사이 이벤트가 건너뛰어져 불변식이 깨진다.
+    """
+    from poc.workflow_3.sem_monitor.pm_dropdown import dropdown_region_below
+
+    opener = events[i]
+    if opener.get("action") != "click" or opener.get("target_kind") != "ui_control":
+        return None
+    if not opener.get("coords") or not ctx.frame_wh:
+        return None
+    if i + 1 >= len(events):
+        return None
+    picker = events[i + 1]
+    if picker.get("action") != "click" or not picker.get("coords"):
+        return None
+    if float(picker["t_sec"]) - float(opener["t_sec"]) > ctx.settings.dropdown_max_sec:
+        return None
+    region = dropdown_region_below(
+        {"x": int(opener["coords"]["x"]), "y": int(opener["coords"]["y"])}, ctx.frame_wh
+    )
+    if region is None or not _point_in_region(picker.get("coords"), region):
+        return None
+    return make_step(
+        [opener, picker], action="select_from_dropdown", rule="R2",
+        target=opener.get("element"), target_kind="ui_control",
+        value=picker.get("element"),
+        value_source=picker.get("element_source") or "none",
+    ), 2
+
+
+_RULES = [_rule_double_click, _rule_dropdown, _rule_default]
 
 
 def group_events(events, ctx) -> list:

@@ -100,3 +100,13 @@ AI-powered automation system for CD-SEM/VeritySEM recipe setup. The project comb
 - Keep commits scoped to one logical change.
 - PRs should include purpose, key changes, affected paths, test evidence, and screenshots or log snippets for GUI automation changes.
 - Note platform constraints for Windows-only behavior in `poc/workflow_1/` and live SEM Monitor behavior in `poc/workflow_2/`.
+
+<!-- OPENWIKI:START -->
+
+## OpenWiki
+
+This repository uses OpenWiki for recurring code documentation. Start with `openwiki/quickstart.md`, then follow its links to architecture, workflows, domain concepts, operations, integrations, testing guidance, and source maps.
+
+The scheduled OpenWiki GitHub Actions workflow refreshes the repository wiki. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and letting OpenWiki regenerate.
+
+<!-- OPENWIKI:END -->

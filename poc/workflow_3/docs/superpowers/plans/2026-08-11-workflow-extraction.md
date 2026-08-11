@@ -1285,6 +1285,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'poc.workflow_3.workflo
 raw_events 에 들어간다(패스 끝에서 assert 로 확인한다).
 """
 
+from collections import Counter
 from dataclasses import dataclass, field
 
 from poc.workflow_3.workflow_extract.steps import make_step
@@ -1344,9 +1345,15 @@ def _assert_invariant(events, steps) -> None:
     expected = sorted(int(e["seq"]) for e in events)
     seen = sorted(r for step in steps for r in step["raw_events"])
     if seen != expected:
+        # 중복은 집합 차집합으로 잡히지 않는다 - 입력에 있는 seq 가 두 step 에 겹쳐
+        # 들어가면 seen 이자 expected 라 양쪽 차집합에서 사라진다. 가장 흔한 실패
+        # 형태가 바로 그것이므로 Counter 로 따로 센다.
+        missing = sorted(set(expected) - set(seen))
+        unexpected = sorted(set(seen) - set(expected))
+        duplicated = sorted(s for s, n in Counter(seen).items() if n > 1)
         raise AssertionError(
             f"그룹핑 불변식 위반: 입력 {len(expected)} 건, raw_events {len(seen)} 건. "
-            f"누락={sorted(set(expected) - set(seen))}, 중복/과잉={sorted(set(seen) - set(expected))}"
+            f"누락={missing}, 중복={duplicated}, 입력에 없는 seq={unexpected}"
         )
 ```
 

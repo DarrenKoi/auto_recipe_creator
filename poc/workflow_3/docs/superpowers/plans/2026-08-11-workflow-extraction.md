@@ -1182,7 +1182,7 @@ def make_step(events, *, action, rule, target=None, target_kind=None, value=None
 - [ ] **Step 4: 테스트 통과 확인**
 
 Run: `uv run pytest poc/workflow_3/workflow_extract/test_steps.py -v`
-Expected: PASS (6 passed)
+Expected: PASS (7 passed)
 
 - [ ] **Step 5: 커밋**
 

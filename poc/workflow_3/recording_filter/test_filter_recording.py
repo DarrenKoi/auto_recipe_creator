@@ -337,6 +337,36 @@ def test_change_event_copies_only_gate_survivors(tmp_path, monkeypatch):
     assert len(change_events["events"]) == 2, change_events
 
 
+def test_summary_reports_typing_counts(tmp_path):
+    """summary.json 이 Stage 2b 건수를 보고해야 한다(조용한 누락 금지).
+
+    사이드카가 없는 합성 세션이라 구간은 0건이지만, 필드 자체는 존재해야 한다 -
+    없으면 소비자가 '타이핑이 0건'과 '스테이지가 안 돌았다'를 구분할 수 없다.
+    """
+    rec = _recording_dir(tmp_path)
+    settings = RecordingFilterSettings(vlm_request_delay_sec=0.0, min_change_area_px=5000)
+    assert run_filter(input_dir=rec, settings=settings, client=_FakeClient()) == "success"
+
+    out_dir = rec.parent / "recording_filter"
+    summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary["typing_bursts"] == 0
+    assert summary["typing_events"] == 0
+    assert summary["vlm_calls_stage2b_ocr"] == 0
+
+
+def test_typing_disabled_by_env_still_reports_zero(monkeypatch, tmp_path):
+    """RECORDING_FILTER_TYPING_DETECT=0 이어도 필드는 남아야 한다."""
+    rec = _recording_dir(tmp_path)
+    settings = RecordingFilterSettings(
+        vlm_request_delay_sec=0.0, min_change_area_px=5000, typing_detect_enabled=False
+    )
+    assert run_filter(input_dir=rec, settings=settings, client=_FakeClient()) == "success"
+    summary = json.loads(
+        (rec.parent / "recording_filter" / "summary.json").read_text(encoding="utf-8")
+    )
+    assert summary["typing_bursts"] == 0
+
+
 def test_run_filter_finds_sidecar_in_capture_root_when_frames_are_nested(tmp_path, monkeypatch):
     """frames/ 하위에 프레임이 있어도 사이드카는 녹화 루트에서 찾는다(FINDING 8)."""
     from poc.workflow_3.recording_filter.filter_recording import _resolve_meta_dir

@@ -310,7 +310,32 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
             f"(건너뜀 {label_errors} 건)"
         )
 
-    timeline = build_timeline(click_events, gate_info=gate_info, labels=labels)
+    # ---- Stage 2b: 타이핑 구간 ----
+    typing_events = []
+    typing_bursts = []
+    if settings.typing_detect_enabled:
+        from poc.workflow_3.recording_filter.type_detect import (
+            find_typing_bursts,
+            resolve_typing_events,
+        )
+
+        typing_bursts = find_typing_bursts(change_events, metas, settings)
+        if typing_bursts:
+            from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
+
+            typing_ocr = Workflow1VLMClient(settings.typing_ocr_service)
+            typing_events = resolve_typing_events(
+                typing_bursts, click_events, settings,
+                ocr_client=typing_ocr, labels=labels,
+            )
+        print(
+            f"[INFO] Stage 2b 완료: 구간 {len(typing_bursts)} 건 -> "
+            f"타이핑 이벤트 {len(typing_events)} 건"
+        )
+
+    timeline = build_timeline(
+        click_events, typing_events, gate_info=gate_info, labels=labels
+    )
     save_debug_json(
         out_dir / "interaction_timeline.json",
         {"capture_dir": str(capture_dir), "events": timeline},
@@ -332,7 +357,12 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
             "vlm_calls_stage1_5_region_map": region_map_calls,
             "vlm_calls_stage2a_cursor": len(click_events),
             "vlm_calls_stage2c_label_estimate": label_calls,
-            "vlm_calls_total_estimate": region_map_calls + len(click_events) + label_calls,
+            "typing_bursts": len(typing_bursts),
+            "typing_events": len(typing_events),
+            "vlm_calls_stage2b_ocr": len(typing_bursts) * 2,
+            "vlm_calls_total_estimate": (
+                region_map_calls + len(click_events) + label_calls + len(typing_bursts) * 2
+            ),
             "truncated": truncated > 0,
             "skipped_due_to_cap": max(0, truncated),
             "max_vlm_calls": settings.max_vlm_calls,

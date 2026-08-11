@@ -1,11 +1,16 @@
-"""등록된 5개 VLM 모델을 모두 시작한다.
+"""등록된 VLM 모델을 모두 시작한다.
 
-GPU 배분 (H200 140GB × 2):
-  GPU 0: ui-venus (8B, port 8001) + ui-tars (7B, port 8003)
-  GPU 1: mai-ui (8B, port 8002) + paddleocr-vl-1.5 (0.9B, port 8004) + got-ocr (port 8005)
+GPU 배분 (H200 140GB × 2), 2026-08-11 단일 grounding 모델 체제:
+  GPU 0: mai-ui (8B, port 8002) 단독 - grounding 전용, 경합 없음
+  GPU 1: paddleocr-vl-1.5 (0.9B, port 8004) 단독 - OCR 보조
 
-vLLM 모델 4개는 start_model.py를 통해 백그라운드로 실행하고,
-GOT-OCR은 serve_got_ocr.py를 별도 프로세스로 실행한다.
+ui-venus(8001) / ui-tars(8003) / got-ocr(8005) 는 더 이상 기동하지 않는다.
+호스트 RAM 이 16GB 뿐이라 프로세스 수 자체가 제약이므로, 미사용 모델을
+띄워두지 않는 것이 GPU 배분보다 큰 레버다.
+env 파일은 남겨두므로 VLLM_MODELS 에 이름만 되돌리면 롤백된다.
+
+vLLM 모델은 serve_vlm.py를 통해 백그라운드로 실행한다.
+GOT-OCR(transformers 기반)은 필요해지면 serve_got_ocr.py 를 직접 실행한다.
 
 사용법:
   python start_all.py
@@ -22,13 +27,9 @@ STARTUP_POLL_SEC = 2.0
 INTER_MODEL_DELAY_SEC = 10.0
 
 VLLM_MODELS = [
-    "ui-venus",
-    "ui-tars",
     "mai-ui",
     "paddleocr-vl-1.5",
 ]
-
-GOT_OCR_INSTANCE = "got-ocr-2.0-hf"
 
 
 def log(msg: str) -> None:
@@ -83,13 +84,6 @@ def print_gpu_plan(config_root: Path) -> None:
         entry = f"  {served_name:<25s} port={port:<5s} {mem_info} (vLLM)"
         gpu_map.setdefault(f"GPU {gpu_id}", []).append(entry)
 
-    # GOT-OCR
-    got_env_path = config_root / "models" / f"{GOT_OCR_INSTANCE}.env"
-    got_gpu_id = read_env_value(got_env_path, "GPU_ID") or "?"
-    got_port = read_env_value(got_env_path, "PORT") or "8005"
-    entry = f"  {'got-ocr-2.0-hf':<25s} port={got_port:<5s} ~4GiB (transformers)"
-    gpu_map.setdefault(f"GPU {got_gpu_id}", []).append(entry)
-
     for gpu_label in sorted(gpu_map):
         log(f"{gpu_label}:")
         for line in gpu_map[gpu_label]:
@@ -140,40 +134,6 @@ def start_vllm_model(script_dir: Path, deploy_vlms_root: Path, instance: str) ->
     return True
 
 
-def start_got_ocr(script_dir: Path, deploy_vlms_root: Path) -> bool:
-    """GOT-OCR 서버를 백그라운드로 시작한다. 성공 시 True."""
-    instance = GOT_OCR_INSTANCE
-    cmd = [sys.executable, str(script_dir / "serve_got_ocr.py")]
-    log_path, pid_path = resolve_runtime_paths(deploy_vlms_root, instance)
-
-    env = os.environ.copy()
-    env["PYTHONUNBUFFERED"] = "1"
-
-    with log_path.open("a", encoding="utf-8") as log_file:
-        launched_at = time.strftime("%Y-%m-%d %H:%M:%S")
-        log_file.write(f"\n[INFO] Launch requested at {launched_at} for instance={instance}\n")
-        log_file.flush()
-        proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-            env=env,
-        )
-
-    time.sleep(STARTUP_POLL_SEC)
-    return_code = proc.poll()
-    if return_code is not None:
-        pid_path.unlink(missing_ok=True)
-        warn(f"{instance} exited during startup (rc={return_code}). Check log: {log_path}")
-        return False
-
-    pid_path.write_text(f"{proc.pid}\n", encoding="utf-8")
-    log(f"Started {instance}: PID={proc.pid}, LOG={log_path}")
-    return True
-
-
 def main() -> None:
     script_dir = Path(__file__).resolve().parent
     deploy_vlms_root = Path(os.environ.get("DEPLOY_VLMS_ROOT", "").strip() or script_dir.parent)
@@ -184,7 +144,7 @@ def main() -> None:
     succeeded = []
     failed = []
 
-    # GPU 0 모델 먼저 (ui-venus, ui-tars), 그 다음 GPU 1 모델 (mai-ui, paddleocr-vl, got-ocr)
+    # GPU 0 (mai-ui) 먼저, 그 다음 GPU 1 (paddleocr-vl)
     for instance in VLLM_MODELS:
         log(f"Starting {instance}...")
         if start_vllm_model(script_dir, deploy_vlms_root, instance):
@@ -192,13 +152,6 @@ def main() -> None:
         else:
             failed.append(instance)
         time.sleep(INTER_MODEL_DELAY_SEC)
-
-    # GOT-OCR (transformers 기반, 별도 실행)
-    log(f"Starting {GOT_OCR_INSTANCE}...")
-    if start_got_ocr(script_dir, deploy_vlms_root):
-        succeeded.append(GOT_OCR_INSTANCE)
-    else:
-        failed.append(GOT_OCR_INSTANCE)
 
     # 결과 요약
     log("=" * 60)
@@ -219,7 +172,7 @@ def main() -> None:
         log(f"전체 종료: python {script_dir / 'stop_model.py'} all")
         sys.exit(1)
 
-    log(f"5개 모델 모두 시작 완료")
+    log(f"{len(succeeded)}개 모델 모두 시작 완료")
     log(f"전체 종료: python {script_dir / 'stop_model.py'} all")
 
 

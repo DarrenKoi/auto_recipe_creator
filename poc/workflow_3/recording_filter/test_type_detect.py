@@ -17,7 +17,11 @@ def _ev(rank, t_sec, bbox=None):
     return ChangeEvent(
         rank=rank, frame_path=f"/tmp/t_{rank}.jpg", prev_frame_path=f"/tmp/t_prev_{rank}.jpg",
         timestamp_sec=t_sec, frame_index=rank, change_bbox=bbox or dict(_FIELD),
-        largest_blob_area_px=500, changed_pixels=500,
+        # Stage 1 의 생존 조건은 최대 blob 면적 >= min_change_area_px(기본 5000, 1280폭
+        # diff 공간)다 - 예전 픽스처의 500 은 Stage 1 이 애초에 내보낼 수 없는 값이라
+        # "이 정도 작은 변화도 구간이 된다" 는 잘못된 인상을 준다(Stage 2b 는 이 필드를
+        # 읽지 않으므로 판정에는 영향이 없다).
+        largest_blob_area_px=9000, changed_pixels=9000,
     )
 
 

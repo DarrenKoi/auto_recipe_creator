@@ -98,10 +98,23 @@ recording/  (frames + frame_meta.jsonl + manifest)
 1회 국소 변화)의 정확한 반대다.
 
 ```
-구간 시작 조건:  cursor_xy 가 고정(이동 ≤ cursor_still_px)
+구간 시작 조건:  cursor_xy 가 고정(**구간 시작 기준** 이동 ≤ cursor_still_px)
                 + 연속 change event 가 같은 작은 영역에 반복(≥ min_burst_events)
-구간 종료 조건:  커서 이동, 또는 change 없음이 burst_idle_sec 이상 지속
+                + 그 영역이 **필드 기준점 근처**(≤ typing_roi_max_px)
+구간 종료 조건:  커서 이동, change 없음이 burst_idle_sec 이상 지속,
+                또는 변화가 필드 기준점을 벗어남 / ROI 합집합 면적 상한 초과
 ```
+
+**국소성 결속 (2026-08-11 최종 리뷰 C2에서 추가):** 커서 정지와 시간 간격만으로는
+"필드에 글자를 입력한다"와 "커서를 세워둔 채 화면 어딘가가 반복해 바뀐다"를 구분할 수
+없다. 후자의 대표가 진행률/상태 패널 리페인트이고, 그 경우 OCR 이 패널의 숫자를 값으로
+복원해 `value_source="ocr"`, `confidence=1.0` 인 완전한 허구 step 이 절차서에 실린다.
+그래서 변화 bbox 는 **필드 기준점**(1순위 포커스 클릭 좌표 = §5.3, 2순위 사이드카 커서를
+프레임 좌표로 옮긴 값)에서 `typing_roi_max_px`(200) 안에 있어야 하고, 구간 ROI 합집합
+면적도 `typing_roi_max_area_px`(40000) 를 넘지 않아야 한다. 기준점을 정할 수 없으면
+구간을 발행하지 않는다(값의 출처를 보증할 수 없기 때문 - 경고로 건수를 남긴다).
+커서 정지 판정도 직전 이벤트가 아니라 **구간 시작** 기준이다(스텝마다 still_px 미만으로
+움직이는 커서가 영원히 정지로 남는 것을 막는다).
 
 ### 5.2 커서 깜빡임(caret blink) 배제
 
@@ -176,7 +189,21 @@ Tab/단축키로 포커스를 옮긴 경우 직전 클릭이 없다. 이때는 `
 |------|------|---------|
 | `interaction_timeline.json` | step 의 원천 이벤트 | 에러 종료 (§8) |
 | `region_map.json` | 세대별 `live_box` — R1 의 면적 비율, `coords_in_live_box` 정규화 | R1 degrade + 정규화 좌표 생략 (§8) |
-| `change_events.json` | R1 이 클릭 직후의 변화 면적을 재는 데 쓴다 (Stage 1 통계) | R1 degrade (§8) |
+| `change_events.json` | R1 이 클릭 직후의 변화 면적을 재는 데 쓴다 (Stage 1 전체 + Stage 1.5 판정) | R1 degrade (§8) |
+
+**두 파일의 키/필드는 생산자와 공유한다 (2026-08-11 최종 리뷰 C1/I1):**
+
+- `region_map.json` 최상위 키는 `recording_filter.region_gate.REGION_MAP_KEY` 상수
+  하나로 읽고 쓴다. 양쪽이 문자열을 각자 적어 두었던 동안 R1 은 **모든 실행에서**
+  live_box 를 하나도 못 얻었고, 파일이 정상 파싱되므로 degrade 경고조차 없었다.
+  파싱은 됐는데 박스가 0개인 경우도 경고 대상이다.
+- `change_events.json` 의 각 이벤트는 Stage 1.5 판정(`verdict` / `region` /
+  `occlusion` / `generation`)을 함께 싣는다. R1 은 `verdict == "candidate"` 이고
+  가려지지 않은 이벤트만 recenter 근거로 쓴다 - 이 파일은 감사 추적용으로 Stage 1
+  **전체**를 담고 그 대부분(README 기준 90%+)이 `ambient`(라이브 SEM 영상의 자율
+  갱신)인데, ambient 전면 리페인트는 면적 비율이 ~1.0 이라 recenter 시그니처와
+  겉모습이 같다. 판정 필드가 없는 산출물에서는 R1 을 끈다(전부 통과로 degrade 하지
+  않는다 - 그쪽이 사람이 하지 않은 조작을 만들어 내기 때문이다).
 
 **`coords_in_live_box` 를 창 픽셀 대신 정규화 좌표로 두는 이유:** 창 위치·크기에
 독립적이고, 동시에 "이건 좌표가 아니라 영상 내용에 의존한다 → 재생하려면 CV 재해석이
@@ -190,7 +217,7 @@ Tab/단축키로 포커스를 옮긴 경우 직전 클릭이 없다. 이때는 `
 | # | 규칙 | 트리거 | 산출 |
 |---|------|--------|------|
 | R1 | `double_click` (FOV 이동) | `region == "live_image"` 클릭 + 직후 `recenter_window_sec`(1.5s) 안의 change event 중 하나라도 **`change_bbox ∩ live_box` 면적이 `live_box` 면적의 `recenter_min_ratio`(0.40) 이상** | `action=double_click, intent=fov_move, inferred=true` |
-| R2 | `select_from_dropdown` | ui_control **A** 클릭 → `dropdown_max_sec`(5.0) 안에 `dropdown_region_below(A)` 내부를 클릭한 **B** | `target=A.element, value=B.element` |
+| R2 | `select_from_dropdown` | ui_control **A** 클릭 → `dropdown_max_sec`(5.0) 안에 `dropdown_region_below(A)` 내부를 클릭한 **B**. 단 A/B 가 `same_target` 이면 거부하고, 수직 거리는 `_DROPDOWN_MAX_DROP_PX`(120) 이내여야 한다(§7.2) | `target=A.element, value=B.element` |
 | R3 | `type_text` | Stage 2b 구간. 직전 `focus_max_sec`(2.0) 안의 같은 필드 클릭을 **포커스로 흡수** | `target, value, value_source` |
 | R4 | `click_repeat` | **동일 대상**을 `repeat_window_sec`(6.0) 안에 `repeat_min_count`(3)회 이상 클릭 | `count=N` |
 | R5 | `click` | 위에 안 걸린 나머지 | 1:1 |
@@ -221,7 +248,18 @@ PM 드롭다운 실행기가 이미 쓰는 함수다. 관측이 인식할 수 �
 없다.
 
 **단, 그 비율 상수는 PM 전용으로 보정돼 있다** (`PM_DD_LEFT_RATIO=0.04`,
-`RIGHT=0.12`, `DOWN=0.45`). 더 넓은 다른 드롭다운은 놓칠 수 있다. 첫 실측 후 일반
+`RIGHT=0.12`, `DOWN=0.45`). 더 넓은 다른 드롭다운은 놓칠 수 있다.
+
+**그리고 crop 기하를 트리거로 그대로 쓸 수는 없다 (2026-08-11 최종 리뷰 C3):** 세로로
+`0.45 * 프레임 높이`(1080 에서 486px)는 화면 절반이라, 세로로 쌓인 평범한 폼에서 서로
+다른 두 컨트롤 클릭이 한 개의 드롭다운 선택으로 뭉치고 두 번째 클릭이 문서에서
+사라졌다. 또 오프너와 피커가 같은 대상이면(같은 버튼을 사람이 다시 누른 R4 패턴,
+지터 10~20px) 드롭다운일 수 없다. 그래서 **crop 기하는 그대로 두고 트리거만** 좁힌다:
+`same_target(opener, picker)` 이면 거부, 수직 거리는 `_DROPDOWN_MAX_DROP_PX`(120,
+추정 행 높이 ~24px 기준 5행) 이내. 상한을 타이트하게 잡은 이유는 두 실패의 대가가
+비대칭이기 때문이다 - 놓치면 정직한 R5 클릭 2개로 degrade 하지만, 잘못 발화하면 없던
+값이 생기고 진짜 클릭이 사라진다. 실제 리스트 높이는 여전히 미실측이며, 오피스 첫
+세션에서 재고 나서 올린다. 첫 실측 후 일반
 비율셋이 필요한지 판단한다 — 지금 일반화하지 않는 이유는 실제로 어떤 드롭다운이
 쓰이는지 데이터가 없기 때문이다.
 

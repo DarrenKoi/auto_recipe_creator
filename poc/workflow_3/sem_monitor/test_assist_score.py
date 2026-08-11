@@ -180,6 +180,25 @@ def _panel_items():
     return items
 
 
+def _top_heavy_items():
+    """숫자가 표 맨 위 2행에만 있는 OCR 결과.
+
+    7행으로 외삽하면 위쪽 행들의 좌표가 패널 밖(음수)으로 나간다. build_score_grid 는
+    일부러 clamp 하지 않으므로, 그 음수 박스를 read_row_states 가 제대로 잘라내는지
+    확인하는 데 쓴다.
+    """
+    items = [
+        _item("Addressing1", 10, 5, 60, 25),
+        _item("Addressing2", 110, 5, 160, 25),
+        _item("Measurement", 210, 5, 260, 25),
+    ]
+    for idx in range(2):
+        top = 40 + idx * 30
+        items.append(_item("12", 20, top, 50, top + 18))
+        items.append(_item("34", 220, top, 250, top + 18))
+    return items
+
+
 def _synth_panel(row_specs):
     """행별 (addr1, meas) 색 지정으로 합성 패널 이미지를 만든다.
 
@@ -224,6 +243,30 @@ def test_read_rows_blank_is_pending():
 def test_read_rows_returns_empty_without_layout():
     ok = read_row_states(_synth_panel([("black", "black")] * 7), None) == []
     print(f"[{'PASS' if ok else 'FAIL'}] read_rows_returns_empty_without_layout")
+    return ok
+
+
+def test_read_rows_clamps_boxes_outside_panel():
+    """패널 밖으로 나간 행은 빈칸(pending)이 되어야 한다 - 다른 영역을 읽으면 안 된다.
+
+    numpy 는 음수 인덱스를 뒤에서부터 세므로, clamp 를 빼면 예외 없이 **이미지 아래쪽**을
+    조용히 샘플링한다. 거기에 잉크가 있으면 없는 측정을 정상으로 읽는다.
+    """
+    layout = build_score_grid(_top_heavy_items(), (300, 260))
+    if layout is None:
+        print("[FAIL] read_rows_clamps_boxes_outside_panel: layout None")
+        return False
+    if layout.grid[0][0]["top"] >= 0:
+        print("[FAIL] read_rows_clamps_boxes_outside_panel: 픽스처가 음수 좌표를 못 만듦")
+        return False
+    rows = read_row_states(_synth_panel([("black", "black")] * 7), layout)
+    ok = (
+        len(rows) == 7
+        and rows[0].verdict == "pending"   # 패널 밖 -> 빈칸
+        and rows[6].verdict == "ok"        # 패널 안 행은 그대로 읽힌다
+    )
+    print(f"[{'PASS' if ok else 'FAIL'}] read_rows_clamps_boxes_outside_panel: "
+          f"{[r.verdict for r in rows]}")
     return ok
 
 
@@ -348,6 +391,7 @@ def main():
         test_read_rows_marks_black_and_red(),
         test_read_rows_blank_is_pending(),
         test_read_rows_returns_empty_without_layout(),
+        test_read_rows_clamps_boxes_outside_panel(),
     ]
     passed = sum(1 for r in results if r)
     print(f"[INFO] {passed}/{len(results)} cases passed")

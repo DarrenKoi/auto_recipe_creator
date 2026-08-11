@@ -250,11 +250,15 @@ def test_click_inside_live_box_is_reported_as_live_image(tmp_path, monkeypatch):
     assert event["target_kind"] == "live_image", event
 
     # FINDING 6 - VLM 호출 집계는 스테이지별로 분해되어 있어야 한다.
+    # (2026-08-11 리뷰 I3) 이 세션은 사이드카가 있어 Stage 2a 가 VLM 을 부르지
+    # 않는다 - 예전 집계(len(click_events))는 일어나지 않은 콜 1건을 청구했다.
+    # 실제 콜은 Stage 1.5 영역 지도 1건뿐이다.
     summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
     assert "vlm_calls" not in summary, summary
     assert summary["vlm_calls_stage1_5_region_map"] == 1, summary
-    assert summary["vlm_calls_stage2a_cursor"] == 1, summary
-    assert summary["vlm_calls_total_estimate"] == 2, summary
+    assert summary["vlm_calls_stage2a_cursor"] == 0, summary
+    assert summary["cursor_from_sidecar"] == 1, summary
+    assert summary["vlm_calls_total_estimate"] == 1, summary
 
 
 def test_run_filter_reports_when_occlusion_discards_everything(tmp_path, monkeypatch):
@@ -400,80 +404,118 @@ class _CropAwareVlmClient:
         return _FakeResponse(json.dumps(payload))
 
 
-def test_typing_event_carries_stage2c_label_pinning_ordering(tmp_path, monkeypatch):
-    """type_text 이벤트가 Stage 2c 라벨을 실어야 한다 - Stage 2b가 2c *뒤*에 돌아야만
-    성립하는 유일한 단언이다.
+def _typing_session(tmp_path, *, typing_box, times, cursor_after_click):
+    """클릭 1건 + 같은 자리에서 3회 변화하는 합성 세션을 만든다.
 
-    합성 세션을 3막으로 구성한다:
-    1) 클릭 1건(커서 (300,130) 근처 큰 변화) - Stage 2c 가 "Start" 로 라벨링한다.
-    2) 커서가 (500,50) 로 이동해 8px 이내로 멈춘 채, 멀리 떨어진 작은 영역이
-       연속 3번 바뀐다(typing_min_burst_events=3 충족) - Stage 2b 가 타이핑
-       구간으로 잡는다. 채움 값이 90->150->210 으로 바뀌므로 OCR 이 읽는
-       전/후 텍스트가 달라 캐럿 깜빡임으로 버려지지 않는다.
-    3) 구간 시작(0.8s) 은 클릭(0.3s) 로부터 0.5s 뒤라 typing_focus_max_sec(2.0s)
-       안에 들어 _focus_label 이 그 클릭의 라벨을 붙인다.
-
-    Stage 2b 블록이 Stage 2c 블록보다 앞으로 옮겨지면 이 시점의 `labels` 는
-    비어 있거나(NameError 로 죽거나) 최소한 "Start" 를 담고 있지 않으므로
-    이 단언은 실패한다 - 즉 통과 여부가 실제로 배선 순서에 달려 있다.
+    typing_box 는 (top, bottom, left, right) native 픽셀. 채움 값이 90->150->210 으로
+    바뀌므로 ROI OCR 대역이 전/후를 밝기로 구분할 수 있다.
     """
-    rec = tmp_path / "typing_tag" / "recording"
+    rec = tmp_path / "recording"
     width, height = 600, 400
     base = np.full((height, width), 30, dtype=np.uint8)
 
     click = base.copy()
     click[80:180, 250:360] = 255                      # 클릭 변화(F0->F1)
 
-    typing1 = click.copy()
-    typing1[300:370, 430:530] = 90                     # 타이핑 변화 1(F1->F2)
+    top, bottom, left, right = typing_box
+    frames = [base, click]
+    prev = click
+    for fill in (90, 150, 210):
+        nxt = prev.copy()
+        nxt[top:bottom, left:right] = fill
+        frames.append(nxt)
+        prev = nxt
 
-    typing2 = typing1.copy()
-    typing2[300:370, 430:530] = 150                    # 타이핑 변화 2(F2->F3)
-
-    typing3 = typing2.copy()
-    typing3[300:370, 430:530] = 210                    # 타이핑 변화 3(F3->F4)
-
-    _write(rec / "tag_rcs_0000_00000000ms.jpg", base)
-    _write(rec / "tag_rcs_0001_00000300ms.jpg", click)
-    _write(rec / "tag_rcs_0002_00000800ms.jpg", typing1)
-    _write(rec / "tag_rcs_0003_00001000ms.jpg", typing2)
-    _write(rec / "tag_rcs_0004_00001200ms.jpg", typing3)
+    for i, (frame, t_sec) in enumerate(zip(frames, times)):
+        _write(rec / f"tag_rcs_{i:04d}_{int(t_sec * 1000):08d}ms.jpg", frame)
 
     rect = {"left": 0, "top": 0, "right": width, "bottom": height}   # 100% 배율
+    cursors = [[300, 130], [300, 130]] + [list(cursor_after_click)] * 3
     _write_sidecar(rec, [
-        {"frame": "seq_0", "t_sec": 0.0, "window_rect": rect, "foreground_title": "x",
-         "occlusion": "none", "cursor_screen_xy": [300, 130], "cursor_in_window": True},
-        {"frame": "seq_1", "t_sec": 0.3, "window_rect": rect, "foreground_title": "x",
-         "occlusion": "none", "cursor_screen_xy": [300, 130], "cursor_in_window": True},
-        {"frame": "seq_2", "t_sec": 0.8, "window_rect": rect, "foreground_title": "x",
-         "occlusion": "none", "cursor_screen_xy": [500, 50], "cursor_in_window": True},
-        {"frame": "seq_3", "t_sec": 1.0, "window_rect": rect, "foreground_title": "x",
-         "occlusion": "none", "cursor_screen_xy": [500, 50], "cursor_in_window": True},
-        {"frame": "seq_4", "t_sec": 1.2, "window_rect": rect, "foreground_title": "x",
-         "occlusion": "none", "cursor_screen_xy": [500, 50], "cursor_in_window": True},
+        {"frame": f"seq_{i}", "t_sec": t_sec, "window_rect": rect, "foreground_title": "x",
+         "occlusion": "none", "cursor_screen_xy": cursor, "cursor_in_window": True}
+        for i, (t_sec, cursor) in enumerate(zip(times, cursors))
     ])
+    return rec
 
+
+def test_typing_burst_rejected_when_change_is_far_from_focus_click(tmp_path, monkeypatch):
+    """커서가 멈춘 채 **멀리 떨어진** 영역이 반복 변화하면 타이핑이 아니다(리뷰 C2).
+
+    이 테스트는 예전에 정반대를 단언했다: 커서를 (500,50) 에 세워 두고 250px 떨어진
+    영역을 3번 바꾼 뒤 `type_text(element="Start", text="after456")` 가 나오기를
+    기대했다. 그것이 바로 최악의 실패 형태다 - 엔지니어가 **Start 를 누르고 지켜보는**
+    동안 진행률 패널이 리페인트되면, 문서에 "Start 값 입력 -> 7 / 20" 이 value_source
+    "ocr", confidence 1.0 으로 실린다. 하지도 않은 조작이 가장 확신에 찬 얼굴로.
+
+    이제는 변화가 필드 기준점(포커스 클릭 좌표) 근처여야 하므로 구간이 생기지 않고,
+    버린 사실을 경고로 남긴다.
+    """
+    rec = _typing_session(
+        tmp_path, typing_box=(300, 370, 430, 530),
+        times=(0.0, 0.3, 0.8, 1.0, 1.2), cursor_after_click=(500, 50),
+    )
     monkeypatch.setattr(
         "poc.workflow_3.vlm.vlm_client.Workflow1VLMClient", _CropAwareVlmClient
     )
     settings = RecordingFilterSettings(
         vlm_request_delay_sec=0.0, min_change_area_px=3000, region_gate_enabled=False,
     )
-    status = run_filter(input_dir=rec, settings=settings, client=_FakeClient())
-    assert status == "success", status
+    assert run_filter(input_dir=rec, settings=settings, client=_FakeClient()) == "success"
+
+    out_dir = rec.parent / "recording_filter"
+    summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary["typing_bursts"] == 0, summary
+    assert summary["typing_events"] == 0, summary
+    assert summary["vlm_calls_stage2b_ocr"] == 0, summary
+
+    timeline = json.loads((out_dir / "interaction_timeline.json").read_text(encoding="utf-8"))
+    assert [ev["action"] for ev in timeline["events"] if ev["action"] == "type_text"] == []
+
+
+def test_typing_burst_accepted_when_change_overlaps_focus_click(tmp_path, monkeypatch):
+    """필드를 클릭한 자리에서 변화가 반복되면 타이핑 구간이 된다(C2 긍정 경로).
+
+    동시에 두 가지를 더 못박는다.
+    - Stage 2b 가 Stage 2c **뒤**에 돌아야만 성립하는 단언(element="Start"). 순서가
+      바뀌면 이 시점의 labels 가 비어 있어 라벨이 붙지 않는다.
+    - 리뷰 I4: 타이핑 구간 프레임들은 커서 ROI 변화 임계도 함께 넘겨 Stage 2a 가
+      클릭으로도 판정한다. 억제하지 않으면 같은 구간이 "값 입력" 1건 +
+      "반복 클릭 3회" 로 두 번 보고된다. 타임라인에는 진짜 필드 클릭 1건과
+      type_text 1건만 남아야 한다.
+    """
+    rec = _typing_session(
+        tmp_path, typing_box=(100, 170, 250, 360),
+        # 클릭(0.3s) 과 타이핑 시작(2.0s) 사이를 idle 상한(1.5s) 보다 벌려, 클릭
+        # 프레임이 구간에 흡수되지 않고 자체 이벤트로 남게 한다.
+        times=(0.0, 0.3, 2.0, 2.3, 2.6), cursor_after_click=(300, 130),
+    )
+    monkeypatch.setattr(
+        "poc.workflow_3.vlm.vlm_client.Workflow1VLMClient", _CropAwareVlmClient
+    )
+    settings = RecordingFilterSettings(
+        vlm_request_delay_sec=0.0, min_change_area_px=3000, region_gate_enabled=False,
+    )
+    assert run_filter(input_dir=rec, settings=settings, client=_FakeClient()) == "success"
 
     out_dir = rec.parent / "recording_filter"
     summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
     assert summary["typing_bursts"] == 1, summary
     assert summary["typing_events"] == 1, summary
     assert summary["vlm_calls_stage2b_ocr"] == 2, summary
+    assert summary["clicks_superseded_by_typing"] == 3, summary
+    # 사이드카 세션이므로 Stage 2a 는 VLM 을 부르지 않는다(리뷰 I3).
+    assert summary["vlm_calls_stage2a_cursor"] == 0, summary
 
     timeline = json.loads((out_dir / "interaction_timeline.json").read_text(encoding="utf-8"))
-    typing_events = [ev for ev in timeline["events"] if ev["action"] == "type_text"]
-    assert len(typing_events) == 1, timeline
-    event = typing_events[0]
-    assert event["element"] == "Start", event   # Stage 2c 라벨이 실려 있어야 한다.
-    assert event["text"] == "after456", event
+    actions = [ev["action"] for ev in timeline["events"]]
+    assert actions.count("type_text") == 1, timeline
+    assert actions.count("click") == 1, timeline
+    typing = next(ev for ev in timeline["events"] if ev["action"] == "type_text")
+    assert typing["element"] == "Start", typing     # Stage 2c 라벨이 실려 있어야 한다.
+    assert typing["text"] == "after456", typing
+    # 타이핑 coords 는 클릭과 같은 프레임 좌표계여야 한다(화면 좌표 혼입 금지).
+    assert typing["coords"] == {"x": 300, "y": 130}, typing
 
 
 def test_run_filter_finds_sidecar_in_capture_root_when_frames_are_nested(tmp_path, monkeypatch):

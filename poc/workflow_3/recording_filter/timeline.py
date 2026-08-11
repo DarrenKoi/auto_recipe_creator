@@ -41,6 +41,12 @@ def build_timeline(click_events, typing_events=None, *, gate_info=None, labels=N
     for ce in click_events:
         if ce.status != "click" or not ce.is_click:
             continue
+        if getattr(ce, "superseded_by_typing", False):
+            # Stage 2b 가 같은 프레임을 타이핑 구간으로 가져갔다 - 클릭으로도 싣지
+            # 않는다(같은 구간이 "값 입력" + "반복 클릭" 으로 두 번 보고되는 것을
+            # 막는다, 2026-08-11 리뷰 I4). ClickEvent 자체는 남아 있어 오버레이와
+            # summary 집계로 추적 가능하다.
+            continue
         coords = {"x": ce.cursor_xy[0], "y": ce.cursor_xy[1]} if ce.cursor_xy else None
         gate = gate_info.get(ce.rank) or {}
         label = labels.get(ce.rank)

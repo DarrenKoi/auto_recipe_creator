@@ -53,6 +53,9 @@ class ClickEvent:
     confidence: float
     evidence: str
     cursor_source: str = "none"   # sidecar | vlm | none
+    # Stage 2b 가 이 프레임을 타이핑 구간으로 가져갔으면 True - 타임라인에서는
+    # type_text 하나로만 보고한다(중복 보고 방지, 2026-08-11 리뷰 I4).
+    superseded_by_typing: bool = False
 
     # 편의 접근자 (timeline 에서 사용).
     @property

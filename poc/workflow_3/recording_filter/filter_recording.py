@@ -216,6 +216,26 @@ def _label_click_events(click_events, settings, crops_dir, *, ocr_client, vlm_cl
     return labels, label_errors
 
 
+def _supersede_typing_clicks(click_events, typing_ranks) -> int:
+    """타이핑 구간이 소비한 프레임의 클릭을 타임라인에서 빼도록 표시한다(건수 반환).
+
+    (2026-08-11 리뷰 I4) Stage 2a 와 Stage 2b 는 같은 게이트 통과 이벤트를 본다.
+    필드 위에 커서를 세워둔 채 타이핑하면 캐럿/글자 변화가 커서 ROI 안의 변화
+    픽셀 임계도 함께 넘겨 매 프레임이 클릭으로도 판정된다 - 그러면 같은 구간이
+    "값 입력" 1건과 "반복 클릭 N회" 로 두 번 보고돼, 그럴듯하지만 틀린 절차가
+    나온다. 삭제하지 않고 표시만 하는 이유는 감사 추적(click_events/ 오버레이,
+    summary 집계)을 잃지 않기 위함이다.
+    """
+    if not typing_ranks:
+        return 0
+    superseded = 0
+    for ce in click_events:
+        if ce.is_click and ce.rank in typing_ranks:
+            ce.superseded_by_typing = True
+            superseded += 1
+    return superseded
+
+
 def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, client=None) -> str:
     """필터 파이프라인을 실행하고 상태 문자열을 반환한다."""
     started_at = time.time()
@@ -335,24 +355,29 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
     # ---- Stage 2b: 타이핑 구간 ----
     typing_events = []
     typing_bursts = []
+    superseded_clicks = 0
     if settings.typing_detect_enabled:
         from poc.workflow_3.recording_filter.type_detect import (
             find_typing_bursts,
             resolve_typing_events,
         )
 
-        typing_bursts = find_typing_bursts(change_events, metas, settings)
+        typing_bursts = find_typing_bursts(
+            change_events, metas, settings, click_events=click_events
+        )
         if typing_bursts:
             from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
 
             typing_ocr = Workflow1VLMClient(settings.typing_ocr_service)
-            typing_events = resolve_typing_events(
+            typing_events, typing_ranks = resolve_typing_events(
                 typing_bursts, click_events, settings,
                 ocr_client=typing_ocr, labels=labels,
             )
+            superseded_clicks = _supersede_typing_clicks(click_events, typing_ranks)
         print(
             f"[INFO] Stage 2b 완료: 구간 {len(typing_bursts)} 건 -> "
             f"타이핑 이벤트 {len(typing_events)} 건"
+            f"(같은 프레임에서 나온 클릭 {superseded_clicks} 건은 타이핑으로 대체)"
         )
 
     timeline = build_timeline(
@@ -365,6 +390,11 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
 
     truncated = len(change_events) - len(click_events)
     label_calls = _estimate_label_vlm_calls(labels)
+    # (2026-08-11 리뷰 I3) Stage 2a 의 VLM 콜은 "처리한 이벤트 수" 가 아니라
+    # **커서를 VLM 으로 찾은 이벤트 수** 다. 사이드카 경로는 client 를 건드리지도
+    # 않고 continue 하므로(click_detect), 수동 세션 500 프레임을 처리하면 예전
+    # 집계는 일어나지 않은 500 콜을 청구했고 총합 추정까지 같이 부풀렸다.
+    cursor_calls = sum(1 for ce in click_events if ce.cursor_source == "vlm")
     save_debug_json(
         out_dir / "summary.json",
         {
@@ -377,13 +407,17 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
             # (FINDING 6) 예전 "vlm_calls" 는 Stage 2a 만 세면서 전체처럼 읽혔다.
             # 스테이지별로 분해하고 합계를 따로 둔다(2c 는 OCR/VLM 폴백 규칙 기반 추정).
             "vlm_calls_stage1_5_region_map": region_map_calls,
-            "vlm_calls_stage2a_cursor": len(click_events),
+            "vlm_calls_stage2a_cursor": cursor_calls,
+            "cursor_from_sidecar": sum(
+                1 for ce in click_events if ce.cursor_source == "sidecar"
+            ),
             "vlm_calls_stage2c_label_estimate": label_calls,
             "typing_bursts": len(typing_bursts),
             "typing_events": len(typing_events),
+            "clicks_superseded_by_typing": superseded_clicks,
             "vlm_calls_stage2b_ocr": len(typing_bursts) * 2,
             "vlm_calls_total_estimate": (
-                region_map_calls + len(click_events) + label_calls + len(typing_bursts) * 2
+                region_map_calls + cursor_calls + label_calls + len(typing_bursts) * 2
             ),
             "truncated": truncated > 0,
             "skipped_due_to_cap": max(0, truncated),

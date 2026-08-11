@@ -41,6 +41,12 @@ class RecordingFilterSettings:
     typing_burst_idle_sec: float = 1.5    # 변화가 이 시간 없으면 구간 종료.
     typing_focus_max_sec: float = 2.0     # 구간 직전 이 시간 안의 클릭을 필드로 본다.
     typing_ocr_service: str = "paddleocr-vl-1.5"
+    # 국소성(locality) 가드 - 2026-08-11 리뷰 C2. 변화가 "필드 근처"에서 일어났음을
+    # 요구하지 않으면, 커서를 세워둔 채 화면 아무 데나 반복해 바뀌는 것(예: 진행률
+    # 패널 리페인트)이 전부 타이핑 구간이 되고 OCR 이 그 패널의 숫자를 값으로
+    # 복원해 낸다 - value_source="ocr", confidence=1.0 인 완전한 허구 step 이다.
+    typing_roi_max_px: int = 200           # 필드 기준점에서 change_bbox 중심까지 최대 거리.
+    typing_roi_max_area_px: int = 40000    # 구간 ROI(합집합) 최대 면적(200x200 상당).
 
 
 def load_recording_filter_settings() -> RecordingFilterSettings:
@@ -62,4 +68,6 @@ def load_recording_filter_settings() -> RecordingFilterSettings:
         typing_min_burst_events=env_int("RECORDING_FILTER_TYPING_MIN_BURST_EVENTS", 3),
         typing_burst_idle_sec=env_float("RECORDING_FILTER_TYPING_BURST_IDLE_SEC", 1.5),
         typing_focus_max_sec=env_float("RECORDING_FILTER_TYPING_FOCUS_MAX_SEC", 2.0),
+        typing_roi_max_px=env_int("RECORDING_FILTER_TYPING_ROI_MAX_PX", 200),
+        typing_roi_max_area_px=env_int("RECORDING_FILTER_TYPING_ROI_MAX_AREA_PX", 40000),
     )

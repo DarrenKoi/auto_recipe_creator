@@ -15,7 +15,11 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from poc.workflow_3.recording_filter.region_gate import nearest_meta
+from poc.workflow_3.recording_filter.region_gate import (
+    nearest_meta,
+    read_frame_size,
+    screen_point_to_frame,
+)
 from poc.workflow_3.recording_filter.timeline import derive_target_kind
 
 
@@ -30,6 +34,13 @@ class TypingBurst:
     cursor_xy: list = field(default_factory=list)   # 프레임 좌표가 아니라 화면 좌표
     frame_path: str = ""        # 구간 시작 프레임
     end_frame_path: str = ""    # 구간 종료 프레임
+    # 필드 기준점(프레임 좌표) - 국소성 판정의 원점. 포커스 클릭 좌표가 1순위,
+    # 사이드카 커서를 프레임 좌표로 옮긴 값이 2순위다.
+    anchor_xy: list = field(default_factory=list)
+    anchor_source: str = "none"      # focus_click | cursor | none
+    # 커서의 **프레임** 좌표. cursor_xy(화면 좌표)와 좌표계가 달라 별도 필드로 둔다 -
+    # 타임라인의 click 이벤트 coords 가 프레임 좌표이므로 type_text 도 같아야 한다.
+    cursor_frame_xy: list = field(default_factory=list)
 
 
 def _union_box(a, b):
@@ -46,13 +57,74 @@ def _union_box(a, b):
     }
 
 
-def _cursor_moved(prev_xy, curr_xy, still_px) -> bool:
-    """두 화면 좌표 사이 이동이 still_px 를 넘는지 본다."""
-    if prev_xy is None or curr_xy is None:
+def _cursor_moved(start_xy, curr_xy, still_px) -> bool:
+    """구간 **시작** 커서에서 지금 커서까지의 이동이 still_px 를 넘는지 본다.
+
+    (2026-08-11 리뷰 C2) 직전 이벤트와 비교하면 매 스텝 still_px 미만으로 조금씩
+    움직이는 커서가 영원히 "정지"로 남는다 - 한 스텝 7px 씩 20 프레임이면 140px 를
+    이동했는데도 구간이 끊기지 않는다. 정지의 기준점은 구간 시작이어야 한다.
+    """
+    if start_xy is None or curr_xy is None:
         return True
-    dx = float(curr_xy[0]) - float(prev_xy[0])
-    dy = float(curr_xy[1]) - float(prev_xy[1])
+    dx = float(curr_xy[0]) - float(start_xy[0])
+    dy = float(curr_xy[1]) - float(start_xy[1])
     return (dx * dx + dy * dy) > (float(still_px) ** 2)
+
+
+def _box_center(box):
+    """bbox 중심 (x, y). 없으면 None."""
+    if not box:
+        return None
+    return (
+        (float(box["left"]) + float(box["right"])) / 2.0,
+        (float(box["top"]) + float(box["bottom"])) / 2.0,
+    )
+
+
+def _box_area(box) -> float:
+    """bbox 면적(음수 폭/높이는 0 으로 클램프)."""
+    if not box:
+        return 0.0
+    width = float(box["right"]) - float(box["left"])
+    height = float(box["bottom"]) - float(box["top"])
+    return max(0.0, width) * max(0.0, height)
+
+
+def _near_anchor(box, anchor, max_px) -> bool:
+    """bbox 중심이 기준점에서 max_px 안에 있는지 본다."""
+    center = _box_center(box)
+    if center is None or not anchor:
+        return False
+    dx = center[0] - float(anchor[0])
+    dy = center[1] - float(anchor[1])
+    return (dx * dx + dy * dy) <= float(max_px) ** 2
+
+
+def _focus_click(start_t_sec, click_events, settings):
+    """구간 시작 직전 focus_max_sec 안의 가장 늦은 클릭. 없으면 None.
+
+    라벨(_focus_label)과 좌표(_burst_anchor)가 **같은 클릭**을 가리켜야 한다 -
+    한쪽만 다른 클릭을 고르면 문서의 필드 이름과 값이 서로 다른 필드에서 온다.
+    """
+    best = None
+    for ce in click_events or []:
+        if not ce.is_click:
+            continue
+        gap = float(start_t_sec) - float(ce.timestamp_sec)
+        if 0 <= gap <= settings.typing_focus_max_sec:
+            if best is None or ce.timestamp_sec > best.timestamp_sec:
+                best = ce
+    return best
+
+
+def _cursor_frame_point(event, meta, frame_wh_fn):
+    """사이드카 커서(화면 좌표)를 프레임 좌표로 옮긴다. 불가하면 None."""
+    if meta is None or meta.cursor_xy is None or meta.rect is None:
+        return None
+    point = screen_point_to_frame(meta.cursor_xy, meta.rect, frame_wh_fn(event.frame_path))
+    if point is None:
+        return None
+    return (float(point[0]), float(point[1]))
 
 
 def _flush(current, settings, out):
@@ -61,51 +133,125 @@ def _flush(current, settings, out):
         out.append(current)
 
 
-def find_typing_bursts(change_events, metas, settings) -> list:
-    """커서 정지 + 국소 반복 변화로 타이핑 구간을 찾는다(OCR 없음).
+def _start_burst(event, meta, cursor, click_events, settings, frame_wh_fn):
+    """이 이벤트로 새 구간을 시작한다. 불가하면 (None, 사유) 를 돌려준다.
+
+    (2026-08-11 리뷰 C2) 필드 기준점 없이는 "커서를 세워둔 채 화면 어딘가가 반복해
+    바뀐다"와 "필드에 글자를 입력한다"를 구분할 수 없다. 스펙 5.3 은 필드 ROI 를
+    **포커스 클릭 좌표 주변**으로 정의하므로 그 좌표를 1순위 기준점으로 쓰고,
+    포커스 클릭이 없으면(Tab 포커스) 사이드카 커서의 프레임 좌표를 쓴다. 둘 다
+    없으면 구간을 만들지 않는다 - 기준점 없는 구간은 화면 어디에서 온 값인지
+    보증할 수 없고, 그 값이 절차서에 confidence=1.0 으로 실린다.
+    """
+    cursor_frame = _cursor_frame_point(event, meta, frame_wh_fn)
+    focus = _focus_click(event.timestamp_sec, click_events, settings)
+    if focus is not None and focus.cursor_xy:
+        anchor = (float(focus.cursor_xy[0]), float(focus.cursor_xy[1]))
+        anchor_source = "focus_click"
+    elif cursor_frame is not None:
+        anchor = cursor_frame
+        anchor_source = "cursor"
+    else:
+        return None, "no_anchor"
+
+    if not _near_anchor(event.change_bbox, anchor, settings.typing_roi_max_px):
+        return None, "not_local"
+    if _box_area(event.change_bbox) > settings.typing_roi_max_area_px:
+        return None, "not_local"
+
+    return TypingBurst(
+        ranks=[event.rank], start_t_sec=event.timestamp_sec,
+        end_t_sec=event.timestamp_sec, roi=dict(event.change_bbox or {}),
+        cursor_xy=list(cursor), frame_path=event.frame_path,
+        end_frame_path=event.frame_path,
+        anchor_xy=[anchor[0], anchor[1]], anchor_source=anchor_source,
+        cursor_frame_xy=list(cursor_frame) if cursor_frame is not None else [],
+    ), ""
+
+
+def _extends_burst(burst, event, settings) -> bool:
+    """이 변화가 같은 필드의 연장인지 본다(기준점 근처 + ROI 면적 상한)."""
+    if not _near_anchor(event.change_bbox, burst.anchor_xy, settings.typing_roi_max_px):
+        return False
+    union = _union_box(burst.roi, event.change_bbox)
+    return _box_area(union) <= settings.typing_roi_max_area_px
+
+
+def find_typing_bursts(
+    change_events, metas, settings, *, click_events=None, frame_size_fn=None
+) -> list:
+    """커서 정지 + 필드 근처 반복 변화로 타이핑 구간을 찾는다(OCR 없음).
 
     사이드카가 없으면 커서 정지를 알 수 없으므로 빈 목록을 돌려준다 - 알람 녹화는
     이 단계를 통째로 건너뛴다.
+
+    시간/커서 조건만으로는 부족하다(2026-08-11 리뷰 C2). 변화가 필드 기준점
+    (포커스 클릭 좌표 또는 커서의 프레임 좌표) 근처여야 하고, 구간 ROI 합집합
+    면적도 상한을 넘지 않아야 한다 - 그러지 않으면 커서를 세워둔 채 리페인트되는
+    진행률 패널이 구간이 되고, OCR 이 그 패널의 숫자를 "입력값" 으로 복원한다.
+
+    frame_size_fn 은 프레임 픽셀 크기 조회(커서 좌표계 변환용) 주입점이다.
     """
     if not metas or not change_events:
         return []
 
+    size_fn = frame_size_fn or read_frame_size
+    size_cache = {}
+
+    def _frame_wh(path):
+        if path not in size_cache:
+            size_cache[path] = size_fn(path)
+        return size_cache[path]
+
     bursts: list = []
     current = None
-    prev_cursor = None
     prev_t = None
+    dropped = {"no_anchor": 0, "not_local": 0}
 
     for event in change_events:
         meta = nearest_meta(metas, event.timestamp_sec)
         cursor = meta.cursor_xy if meta is not None else None
         if cursor is None:
             _flush(current, settings, bursts)
-            current, prev_cursor, prev_t = None, None, None
+            current, prev_t = None, None
             continue
 
         idle_broken = (
             prev_t is not None
             and (event.timestamp_sec - prev_t) > settings.typing_burst_idle_sec
         )
-        if current is None or idle_broken or _cursor_moved(
-            prev_cursor, cursor, settings.typing_cursor_still_px
-        ):
+        moved = current is not None and _cursor_moved(
+            current.cursor_xy, cursor, settings.typing_cursor_still_px
+        )
+        left_field = current is not None and not _extends_burst(current, event, settings)
+        if current is None or idle_broken or moved or left_field:
             _flush(current, settings, bursts)
-            current = TypingBurst(
-                ranks=[event.rank], start_t_sec=event.timestamp_sec,
-                end_t_sec=event.timestamp_sec, roi=dict(event.change_bbox or {}),
-                cursor_xy=list(cursor), frame_path=event.frame_path,
-                end_frame_path=event.frame_path,
+            current, reason = _start_burst(
+                event, meta, cursor, click_events, settings, _frame_wh
             )
+            if reason:
+                dropped[reason] += 1
         else:
             current.ranks.append(event.rank)
             current.end_t_sec = event.timestamp_sec
             current.roi = _union_box(current.roi, event.change_bbox)
             current.end_frame_path = event.frame_path
 
-        prev_cursor, prev_t = cursor, event.timestamp_sec
+        prev_t = event.timestamp_sec
 
     _flush(current, settings, bursts)
+
+    if dropped["not_local"]:
+        print(
+            f"[WARNING] 커서는 멈췄지만 필드 기준점에서 "
+            f"{settings.typing_roi_max_px}px 를 벗어난 변화 {dropped['not_local']} 건을 "
+            "타이핑 후보에서 제외했습니다(진행률/상태 패널 리페인트로 보입니다)."
+        )
+    if dropped["no_anchor"]:
+        print(
+            f"[WARNING] 필드 기준점(포커스 클릭/커서 프레임 좌표)을 정할 수 없어 변화 "
+            f"{dropped['no_anchor']} 건을 타이핑 후보에서 제외했습니다."
+        )
     return bursts
 
 
@@ -143,14 +289,7 @@ def _focus_label(burst, click_events, labels, settings):
     Tab/단축키로 포커스를 옮기면 직전 클릭이 없다. 그때는 라벨을 추측하지 않는다 -
     추측 라벨은 새 오차원이고, 값은 라벨 없이도 쓸모가 있다.
     """
-    best = None
-    for ce in click_events or []:
-        if not ce.is_click:
-            continue
-        gap = burst.start_t_sec - ce.timestamp_sec
-        if 0 <= gap <= settings.typing_focus_max_sec:
-            if best is None or ce.timestamp_sec > best.timestamp_sec:
-                best = ce
+    best = _focus_click(burst.start_t_sec, click_events, settings)
     if best is None:
         return None
     label = (labels or {}).get(best.rank)
@@ -166,8 +305,14 @@ def _default_image_loader(path):
 
 def resolve_typing_events(
     bursts, click_events, settings, *, ocr_client, image_loader=None, labels=None
-) -> list:
+):
     """구간별로 OCR 2회를 돌려 타임라인 스키마의 type_text 이벤트를 만든다.
+
+    반환값은 `(events, consumed_ranks)` 다. consumed_ranks 는 **실제로 이벤트가 된**
+    구간이 소비한 change event rank 집합이다(캐럿으로 버린 구간은 포함하지 않는다).
+    호출부는 이 rank 들에서 나온 클릭을 타임라인에서 억제해야 한다 - 그러지 않으면
+    타이핑 중 캐럿/글자 변화가 Stage 2a 의 ROI 임계도 함께 넘겨, 같은 구간이
+    "값 입력" 1건 + "반복 클릭 N회" 로 두 번 보고된다(2026-08-11 리뷰 I4).
 
     before == after 이면서 둘 다 비어 있지 않은 구간만 캐럿 깜빡임으로 보고
     버린다. OCR 예외, 그리고 양쪽 다 빈 문자열(ROI 정렬 오류/판독 실패)은 같은
@@ -178,6 +323,7 @@ def resolve_typing_events(
     """
     loader = image_loader or _default_image_loader
     events = []
+    consumed_ranks = set()
     for burst in bursts:
         before, after, source = "", "", "none"
         try:
@@ -205,23 +351,32 @@ def resolve_typing_events(
                 )
                 continue
 
+        consumed_ranks.update(burst.ranks)
         events.append({
             "t_sec": burst.start_t_sec,
             "seq": 0,
             "action": "type_text",
-            "coords": {"x": int(burst.cursor_xy[0]), "y": int(burst.cursor_xy[1])}
-            if burst.cursor_xy else None,
+            # 클릭 이벤트의 coords 와 같은 **프레임** 좌표만 싣는다. 화면 좌표
+            # (burst.cursor_xy)를 그대로 쓰면 오피스 125/150% 배율에서 한 필드에
+            # 두 좌표계가 섞인다. 변환 불가면 null 이 정직하다.
+            "coords": {"x": int(burst.cursor_frame_xy[0]), "y": int(burst.cursor_frame_xy[1])}
+            if burst.cursor_frame_xy else None,
             "element": _focus_label(burst, click_events, labels, settings),
             "element_source": source,
             "target_kind": derive_target_kind("ui", source),
             "region": "ui",
             "generation": 0,
             "occlusion": "unknown",
-            "text": after or None,
+            # (2026-08-11 리뷰 E1) `after or None` 은 "입력했다가 지운 빈 필드"를
+            # "값 없음"으로 붕괴시킨다 - 그러면서 element_source 는 "ocr",
+            # confidence 는 1.0 으로 남아 value=null / value_source="ocr" 라는
+            # 스펙 8 위반 조합이 산출물에 실린다. 판독이 성공했으면 빈 문자열도
+            # 값이고, 실패했을 때만 null 이다.
+            "text": after if source == "ocr" else None,
             "confidence": 1.0 if source == "ocr" else 0.0,
             "frame": Path(burst.end_frame_path).name,
             "source_frames": {"prev": burst.frame_path, "curr": burst.end_frame_path},
             "cursor_source": "sidecar",
             "t_sec_end": burst.end_t_sec,
         })
-    return events
+    return events, consumed_ranks

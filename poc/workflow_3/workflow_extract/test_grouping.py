@@ -318,6 +318,43 @@ def test_r4_does_not_mix_label_and_coords():
     assert len(group_events(events, _ctx())) == 3
 
 
+def test_same_target_treats_empty_string_element_as_no_label():
+    """빈 문자열 라벨(element="")도 None 과 동일하게 '라벨 없음'으로 취급돼야 한다.
+
+    OCR 이 라벨을 못 읽으면 파이프라인 어딘가에서 None 대신 "" 을 돌려줄 수 있다 -
+    두 표현이 같은 판정 경로를 타지 않으면 어느 쪽이 오느냐에 따라 그룹핑 결과가
+    갈리는데, 그건 same_target 이 정확히 막으려던 "OCR 운" 문제의 재발이다.
+    """
+    a = _event(0, 10.0, element="", coords={"x": 100, "y": 200})
+    b = _event(1, 11.0, element=None, coords={"x": 105, "y": 200})
+    assert grouping.same_target(a, b, WorkflowExtractSettings()) is True
+
+
+def test_r3_preserves_empty_string_typed_value():
+    """타이핑 후 지운 값(text="")은 실제 이벤트이지 '값 없음'이 아니다.
+
+    `event.get("text") or None` 같은 폴백으로 "단순화"하면 지운 값과 애초에 값이
+    없던 경우가 똑같이 None 이 되어 조용히 구분이 사라진다.
+    """
+    click = _event(0, 10.0, element="Recipe Name")
+    typing = _event(1, 11.0, action="type_text", element="Recipe Name", text="")
+    steps = group_events([click, typing], _ctx())
+    assert steps[0]["value"] == ""
+
+
+def test_r2_groups_first_row_pick_just_below_opener():
+    """드롭다운 첫 행처럼 오프너 바로 아래(15~20px)인 피커도 여전히 R2 로 묶여야 한다.
+
+    가드가 반경(radial) 검사였다면 이 구간(첫 행 높이 근처)이 오검(false reject)돼
+    진짜 드롭다운 선택이 disconnected 한 R5 클릭 2개로 깨졌을 것이다 - 방향성
+    (수직 간격) 검사여야 이 경계를 살릴 수 있다.
+    """
+    open_ev = _event(0, 10.0, element="PM", coords={"x": 800, "y": 300})
+    pick_ev = _event(1, 11.0, element="210", coords={"x": 805, "y": 317})
+    steps = group_events([open_ev, pick_ev], _ctx())
+    assert steps[0]["action"] == "select_from_dropdown"
+
+
 def test_invariant_holds_across_all_rules():
     """R1~R5 가 섞여도 불변식이 유지된다."""
     events = [

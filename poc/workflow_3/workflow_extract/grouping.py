@@ -8,7 +8,17 @@ raw_events 에 들어간다(패스 끝에서 assert 로 확인한다).
 from collections import Counter
 from dataclasses import dataclass, field
 
+from poc.workflow_3.util import env_float
 from poc.workflow_3.workflow_extract.steps import make_step
+
+# R2 전용 - 피커가 오프너보다 "충분히 아래"인지 보는 최소 수직 간격(px). same_target_px
+# (R4 의 "라벨 없을 때 동일 대상" 판정용)와 의미가 다르므로 별도 상수로 둔다 - 나중에
+# 한쪽만 오피스 실측으로 튜닝하면 다른 쪽 경계가 조용히 같이 움직여선 안 된다.
+# 값 12 는 두 경계 사이 절충치다: 이 UI 의 드롭다운 행 높이(~24px, 실측 아니라 추정)
+# 보다는 작아야 진짜 첫 행 선택을 억지로 R5 로 떨어뜨리지 않고, 사람이 같은 버튼을
+# 다시 누를 때의 재클릭 지터(보통 몇 px)보다는 커야 반복 클릭을 드롭다운으로
+# 오판하지 않는다. 확정값 아님 - 오피스 첫 실측 녹화로 확인 필요.
+_DROPDOWN_MIN_ROW_GAP_PX = env_float("WORKFLOW_EXTRACT_DROPDOWN_MIN_ROW_GAP_PX", 12.0)
 
 
 @dataclass
@@ -122,11 +132,13 @@ def _rule_dropdown(events, i, ctx):
     바로 다음 이벤트만 본다 - 사이에 다른 조작이 끼면 묶지 않는다. 비인접 이벤트를
     소비하면 사이 이벤트가 건너뛰어져 불변식이 깨진다.
 
-    피커가 오프너와 사실상 같은 지점(same_target_px 이내)이면 드롭다운으로 보지
-    않는다 - 드롭다운 행은 버튼 아래 별도 위치에 그려지므로 실제 선택 클릭이
-    버튼 자신의 픽셀과 겹칠 수 없다(top_gap=0 설정 때문에 영역 상단이 버튼 지점과
-    맞닿아 있어, 이 가드가 없으면 같은 버튼을 다시 누른 R4 반복 클릭 패턴을 R2 가
-    선점해 버린다).
+    피커가 오프너보다 충분히(_DROPDOWN_MIN_ROW_GAP_PX 이상) 아래에 있지 않으면
+    드롭다운으로 보지 않는다 - 방향성 검사이지 거리 검사가 아니다. dropdown_region_below
+    는 top_gap=0 이라 영역 상단이 버튼 지점과 맞닿아 있어, 수직 간격을 걸지 않으면
+    같은 버튼을 다시 누른 R4 반복 클릭 패턴(dx≈0, dy≈0)이 R2 에 선점당한다. 반경
+    검사(dx²+dy²)를 쓰면 그 경계가 이 UI 의 드롭다운 첫 행 높이(~24px)와 겹쳐 진짜
+    첫 항목 선택까지 오검(false reject)한다 - x 방향은 이미 아래 point_in_region 이
+    영역 폭으로 걸러주므로 여기서는 y 방향만 본다.
     """
     from poc.workflow_3.sem_monitor.pm_dropdown import dropdown_region_below
 
@@ -142,9 +154,8 @@ def _rule_dropdown(events, i, ctx):
         return None
     if float(picker["t_sec"]) - float(opener["t_sec"]) > ctx.settings.dropdown_max_sec:
         return None
-    dx = float(picker["coords"]["x"]) - float(opener["coords"]["x"])
     dy = float(picker["coords"]["y"]) - float(opener["coords"]["y"])
-    if dx * dx + dy * dy <= float(ctx.settings.same_target_px) ** 2:
+    if dy < _DROPDOWN_MIN_ROW_GAP_PX:
         return None
     region = dropdown_region_below(
         {"x": int(opener["coords"]["x"]), "y": int(opener["coords"]["y"])}, ctx.frame_wh

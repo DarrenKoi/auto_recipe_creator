@@ -18,6 +18,7 @@ from poc.workflow_3.monitor.engineer_done_align_adjustment import (
     parse_point_1000,
     point_to_roi_ratios,
 )
+from poc.workflow_3.sem_monitor.assist_score import RowState
 from poc.workflow_3.vlm.prompts.prompt_recipe_monitor_counter import (
     RECIPE_MONITOR_NUMERATOR_INSTRUCTION,
     build_recipe_monitor_counter_prompt,
@@ -174,6 +175,7 @@ def _settings(**overrides):
         engineer_done_roi_pad_x=0.05,
         engineer_done_roi_pad_y=0.05,
         engineer_done_min_delta=2,
+        engineer_done_ok_streak=2,
         engineer_done_relocalize_after_miss=3,
         engineer_done_reground_sec=0.0,
     )
@@ -197,16 +199,26 @@ def test_detector_static_no_ocr() -> bool:
 
 
 def test_detector_two_read_confirm() -> bool:
-    """변화 + OCR 2 -> 3: 첫 읽기는 확인 대기(False), 두 번째에 done."""
+    """변화 + OCR 2 -> 4: 첫 읽기는 baseline 확정(False), 두 번째에 delta+streak 충족 -> done.
+
+    옛 판정("2 -> 3, 비감소면 done")에서 새 판정(delta>=min_delta and streak>=ok_streak)
+    으로 바뀌며 두 번째 읽기 값을 3에서 4로 올렸다 - delta(=4-2=2)가 _settings() 의
+    min_delta=2 를 충족해야 하기 때문. rows_fn 은 ok_streak=2 를 충족하는 연속 정상
+    2행을 공급한다(Assist streak 없이는 delta 만으론 done 이 안 된다).
+    """
     capture = _SeqCapture([
         _frame(1),            # grounding 캡처
         _frame(1),            # baseline (첫 샘플, OCR 안 함)
-        _frame(2),            # 변화 1 -> OCR '2' (last 없음 -> 확인 대기)
-        _frame(3),            # 변화 2 -> OCR '3' (3>=2, 3>=2 -> done)
+        _frame(2),            # 변화 1 -> OCR '2' (baseline_n 확정)
+        _frame(3),            # 변화 2 -> OCR '4' (delta=2>=2, streak=2>=2 -> done)
     ])
     ground = _CountingFn([(525, 550)])
-    ocr = _CountingFn(["2/350", "3/350"])
-    detector = EngineerDoneDetector(None, _settings(), capture_fn=capture, ground_fn=ground, ocr_fn=ocr)
+    ocr = _CountingFn(["2/350", "4/350"])
+    rows = _rows_all_ok(2)
+    detector = EngineerDoneDetector(
+        None, _settings(), capture_fn=capture, ground_fn=ground, ocr_fn=ocr,
+        rows_fn=lambda: rows,
+    )
     results = [detector(), detector(), detector()]
     ok = True
     ok &= _check("baseline False", results[0] is False)
@@ -262,18 +274,25 @@ def test_detector_ground_blank_then_found() -> bool:
 
     오피스 관찰: re-align 진행 중에는 N/M 칸이 빈칸이라 VLM 이 거부한다.
     측정이 시작되면 숫자가 나타나므로 grounding 재시도가 성공해야 한다.
+    두 번째 OCR 값을 3 -> 4 로 올린 이유는 test_detector_two_read_confirm 과 같다
+    (delta=4-2=2 가 _settings() 의 min_delta=2 를 충족해야 함). rows_fn 도 같은
+    이유로 추가했다(streak 없이는 delta 만으론 done 이 안 됨).
     """
     capture = _SeqCapture([
         _frame(1),            # grounding 시도 1 (blank 가정 -> 거부)
         _frame(1),            # grounding 시도 2 (거부)
         _frame(1),            # grounding 시도 3 (성공)
         _frame(1),            # baseline crop (첫 샘플)
-        _frame(2),            # 변화 1 -> OCR '2'
-        _frame(3),            # 변화 2 -> OCR '3' -> done
+        _frame(2),            # 변화 1 -> OCR '2' (baseline_n 확정)
+        _frame(3),            # 변화 2 -> OCR '4' (delta=2>=2, streak=2>=2 -> done)
     ])
     ground = _CountingFn([None, None, (525, 550)])
-    ocr = _CountingFn(["2/350", "3/350"])
-    detector = EngineerDoneDetector(None, _settings(), capture_fn=capture, ground_fn=ground, ocr_fn=ocr)
+    ocr = _CountingFn(["2/350", "4/350"])
+    rows = _rows_all_ok(2)
+    detector = EngineerDoneDetector(
+        None, _settings(), capture_fn=capture, ground_fn=ground, ocr_fn=ocr,
+        rows_fn=lambda: rows,
+    )
     results = [detector(), detector(), detector(), detector(), detector()]
     ok = True
     ok &= _check("blank phase all False", results[:3] == [False, False, False])
@@ -383,6 +402,122 @@ def test_settings_use_delta_and_streak_not_absolute_count() -> bool:
     return ok
 
 
+def _rows_all_ok(count=7):
+    cells = {"Addressing1": "black", "Addressing2": "blank", "Measurement": "black"}
+    return [RowState(cells=dict(cells)) for _ in range(count)]
+
+
+def _detector_with(counter_values, rows):
+    """카운터 값을 순서대로 돌려주는 detector 를 만든다.
+
+    브리프 원안은 capture_fn 이 매번 동일한 상수 이미지를 돌려줬다. 그러면
+    `__call__` 의 기존 CV 변화게이트(첫 샘플은 무조건 OCR 미호출, 이후로도 프레임이
+    안 바뀌면 미호출 - `test_detector_static_no_ocr` 가 지키는 기존 동작)에 걸려
+    OCR 이 영원히 불리지 않아 delta/streak 판정 자체가 발화하지 않는다(테스트가
+    "통과"는 하지만 검증하려는 로직을 실제로 거치지 않는 공허한 통과가 된다). 매
+    호출 색조를 바꿔 실제로 매 회차 변화가 감지되게 한다 - counter_values/ocr_fn/
+    rows_fn 은 브리프 그대로다.
+    """
+    settings = load_workflow3_settings()
+    ocr_state = {"i": 0}
+
+    def ocr_fn(_crop):
+        idx = min(ocr_state["i"], len(counter_values) - 1)
+        ocr_state["i"] += 1
+        return f"{counter_values[idx]}/350"
+
+    # 1000x500 - 기본 roi_pad(x=0.03,y=0.02)로 crop 해도 변화게이트의 4x 다운샘플
+    # 후 픽셀 수가 min_changed_px(기본 4) 를 넘도록 충분히 크게 잡는다(작은 crop 은
+    # 다운샘플 후 표본이 3개뿐이라 색이 달라도 절대 "changed" 로 잡히지 않는다).
+    capture_state = {"i": -1}
+
+    def capture_fn():
+        capture_state["i"] += 1
+        shade = (capture_state["i"] * 20) % 256
+        return Image.new("RGB", (1000, 500), (shade, shade, shade))
+
+    detector = EngineerDoneDetector(
+        None, settings,
+        capture_fn=capture_fn,
+        ground_fn=lambda _img: (500, 500),
+        ocr_fn=ocr_fn,
+        rows_fn=lambda: rows,
+    )
+    return detector
+
+
+def test_leftover_counter_does_not_fire():
+    """watch 시작 시 7행 전부 검정 + 카운터가 안 움직이면 done 이 아니다.
+
+    옛 판정(n >= 6 and n >= _last_n)이 즉시 True 를 내던 바로 그 상황이다.
+    3회 호출 = 1) CV 게이트의 gray baseline 샘플(OCR 미호출) 2) 첫 실제 OCR
+    (baseline_n=350 확정) 3) 같은 값 재확인(delta=0) - 세 번째 호출에서 비로소
+    delta 로직이 실행되고 0 이 나와 통과한다.
+    """
+    detector = _detector_with([350, 350, 350], _rows_all_ok())
+    results = [detector() for _ in range(3)]
+    ok = not any(results)
+    print(f"[{'PASS' if ok else 'FAIL'}] leftover_counter_does_not_fire: {results}")
+    return ok
+
+
+def test_delta_reached_but_streak_short():
+    """새 측정을 충분히 채워도(delta 충족) 연속 정상이 모자라면(streak) done 이 아니다.
+
+    브리프 원안은 2회 호출이었으나, 1회차는 CV 게이트의 gray baseline 샘플(OCR
+    미호출)·2회차는 그 뒤의 첫 실제 OCR 로 baseline_n 을 확정하는 자리라 항상
+    False 다(값과 무관) - delta/streak 판정 자체가 아직 실행되지 않는다. 3회차를
+    추가해야 delta=10(>=6)·streak=1(<6) 조합이 실제로 평가된다.
+    """
+    rows = _rows_all_ok(7)
+    rows[-2].cells["Measurement"] = "red"   # 최신에서 두 번째가 실패 -> streak = 1
+    detector = _detector_with([10, 20], rows)
+    results = [detector(), detector(), detector()]
+    ok = not any(results)
+    print(f"[{'PASS' if ok else 'FAIL'}] delta_reached_but_streak_short: {results}")
+    return ok
+
+
+def test_done_when_delta_and_streak_both_met():
+    """delta 와 streak 을 모두 채우면 done.
+
+    브리프 원안은 2회 호출로 두 번째에 done 을 기대했으나, 1회차(gray baseline,
+    OCR 미호출)·2회차(첫 실제 OCR, baseline_n=10 확정 - 값과 무관하게 항상 False)
+    까지는 구조적으로 delta 를 계산할 수 없다. 3회차에서 n=20 을 읽어 delta=10
+    (>=6)·streak=7(>=6) 이 모두 만족되어 True 가 나온다.
+    """
+    detector = _detector_with([10, 20], _rows_all_ok())
+    first = detector()      # gray baseline 샘플 -> False (OCR 미호출)
+    second = detector()     # 첫 실제 OCR: n=10 -> baseline_n 확정 -> False
+    third = detector()      # 두 번째 OCR: n=20, delta=10, streak=7 -> True
+    ok = (first is False) and (second is False) and (third is True)
+    print(
+        f"[{'PASS' if ok else 'FAIL'}] done_when_delta_and_streak_both_met: "
+        f"{first},{second},{third}"
+    )
+    return ok
+
+
+def test_baseline_cleared_on_relocalize():
+    """재grounding 하면 baseline 도 무효화한다.
+
+    옛 구현은 _last_n 만 살려둬서 옛 ROI 값과 새 ROI 값을 비교했다. 같은 실수를 막는다.
+    브리프 원안은 1회 호출 뒤 바로 리셋을 확인했으나, 1회차는 CV 게이트의 gray
+    baseline 샘플이라 OCR 이 아예 안 불려 baseline_n 이 애초에 None 이다(리셋이
+    실제로 뭔가를 지우는지 증명하지 못하는 공허한 검증) - 2회차를 더해 baseline_n
+    이 진짜 값을 갖게 한 뒤에 리셋으로 지워지는지 확인한다.
+    """
+    detector = _detector_with([10, 20], _rows_all_ok())
+    detector()              # gray baseline 샘플 -> baseline_n 여전히 None
+    detector()              # 첫 실제 OCR -> baseline_n = 10 (None 아님)
+    had_baseline = detector._baseline_n is not None
+    detector._roi_ratios = None       # 재grounding 예약 상태를 흉내낸다
+    detector._reset_baseline()
+    ok = had_baseline and detector._baseline_n is None
+    print(f"[{'PASS' if ok else 'FAIL'}] baseline_cleared_on_relocalize (had_baseline={had_baseline})")
+    return ok
+
+
 def main() -> int:
     """전체 케이스를 실행하고 통과 여부를 반환한다."""
     tests = [
@@ -405,6 +540,10 @@ def main() -> int:
         test_watch_early_exit_on_done,
         test_watch_detector_exception_safe,
         test_watch_no_detector_unchanged,
+        test_leftover_counter_does_not_fire,
+        test_delta_reached_but_streak_short,
+        test_done_when_delta_and_streak_both_met,
+        test_baseline_cleared_on_relocalize,
     ]
     results = [test() for test in tests]
     passed = sum(1 for r in results if r)

@@ -46,6 +46,7 @@ from dataclasses import replace
 
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
 from poc.workflow_3.monitor.recording import _frame_changed, _to_diff_gray
+from poc.workflow_3.sem_monitor.assist_score import ok_streak
 from poc.workflow_3.util import capture_window
 
 _POINT_RE = re.compile(r"\[\s*(-?\d+)\s*,\s*(-?\d+)\s*\]")
@@ -107,6 +108,7 @@ class EngineerDoneDetector:
         capture_fn=None,
         ground_fn=None,
         ocr_fn=None,
+        rows_fn=None,
         debug_dir=None,
     ):
         self.tool_window = tool_window
@@ -114,11 +116,12 @@ class EngineerDoneDetector:
         self._capture_fn = capture_fn or (lambda: capture_window(self.tool_window))
         self._ground_fn = ground_fn
         self._ocr_fn = ocr_fn
+        self._rows_fn = rows_fn
         self.debug_dir = debug_dir
         self._roi_ratios: tuple[float, float, float, float] | None = None
         self._next_localize_at = 0.0  # 거부(blank) 후 재시도 가능 시각 (throttle).
         self._prev_gray = None
-        self._last_n: int | None = None
+        self._baseline_n: int | None = None
         self._ocr_miss_streak = 0
         self._debug_seq = 0
         self.last_debug: dict = {}
@@ -161,22 +164,31 @@ class EngineerDoneDetector:
                 self._next_localize_at = 0.0  # 즉시 재grounding 허용.
                 self._ocr_miss_streak = 0
                 self._prev_gray = None
+                self._reset_baseline()
             return False
 
         self._ocr_miss_streak = 0
-        # 연속 2회 확인: 직전 읽기가 있어야 하고 비감소 + min_delta 이상.
+
+        if self._baseline_n is None:
+            # watch 시작 기준점. 이전 런의 잔존 카운터를 여기서 흡수한다.
+            self._baseline_n = n
+            self.last_debug["baseline_n"] = n
+            return False
+
+        delta = n - self._baseline_n
+        rows = self._read_rows()
+        streak = ok_streak(rows)
+        self.last_debug.update({"n": n, "delta": delta, "streak": streak})
+
         is_done = (
-            n >= self.s.engineer_done_min_delta
-            and self._last_n is not None
-            and n >= self._last_n
+            delta >= self.s.engineer_done_min_delta
+            and streak >= self.s.engineer_done_ok_streak
         )
-        self.last_debug["n"] = n
-        self._last_n = n
         if is_done:
             print(
-                f"[INFO] 측정 카운터 확인: N={n} "
-                f"(>= {self.s.engineer_done_min_delta}, 연속 2회) - align 완료 판정, "
-                f"watch 조기 종료 후 tool 창 닫기 진행"
+                f"[INFO] 측정 진행 확인: 새 측정 {delta}회, 연속 정상 {streak}회 "
+                f"(>= {self.s.engineer_done_min_delta}/{self.s.engineer_done_ok_streak}) "
+                f"- align 완료 판정, watch 조기 종료 후 tool 창 닫기 진행"
             )
         return is_done
 
@@ -239,6 +251,24 @@ class EngineerDoneDetector:
             print(f"[WARNING] engineer-done OCR 실패(회차 미판정): {exc}")
             return None
         return extract_numerator(text)
+
+    def _read_rows(self) -> list:
+        """Assist 행 상태를 읽는다. 실패는 빈 목록(= streak 0 = 아직 아님)."""
+        if self._rows_fn is None:
+            return []
+        try:
+            return self._rows_fn() or []
+        except Exception as exc:
+            print(f"[WARNING] Assist 행 판독 실패(이번 회차 미판정): {exc}")
+            return []
+
+    def _reset_baseline(self) -> None:
+        """baseline 을 무효화한다. ROI 가 바뀌면 반드시 함께 호출한다.
+
+        옛 구현은 재grounding 때 _last_n 만 살려둬서 옛 ROI 값과 새 ROI 값을 비교했다.
+        폴링 간 상태를 baseline 하나로 줄이고, 그 하나를 여기서 확실히 지운다.
+        """
+        self._baseline_n = None
 
     def _save_debug_crop(self, crop) -> None:
         """debug_dir 설정 시 변화-발화 crop 을 저장한다 (실패 무시)."""

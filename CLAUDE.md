@@ -64,6 +64,7 @@ poc/workflow_3/monitor/  #   loop entry (+ check-only variant) + per-alarm cycle
 poc/workflow_3/rcs/      #   RCS GUI automation (open/login/select/close/screenshot)
 poc/workflow_3/align/    #   align correction domain root; align/matching (engine+ensemble), align/diagnostics (offline review) + smoke tests
 poc/workflow_3/recording_filter/ # offline frame-filter: frames -> interaction timeline (change-detect + region gate + VLM cursor + element label)
+poc/workflow_3/workflow_extract/ # offline: interaction timeline -> 의미 단위 workflow.json + 한국어 절차서 (VLM 콜 0)
 poc/workflow_3/sem_monitor/ # SEM Monitor panel_locator + real RCSSEMMonitor controller adapter
 poc/workflow_3/vlm/      #   Flask VLM client, service registry, prompt builders
 poc/workflow_3/runner/   #   WorkflowRunner, step/condition types, WorkflowSettings
@@ -105,6 +106,8 @@ SAFE_MODE=1 ALIGN_FAIL_ALARM_SOURCE=replay ALIGN_FAIL_REPLAY_CSV=<fixture.csv> \
 uv run python poc/workflow_3/monitor/manual_record.py        # 열린 Remote Monitoring 창에 붙어 녹화 (기본 600s)
 RECORDING_FILTER_INPUT_DIR=<recording 경로> RECORDING_FILTER_MAX_VLM_CALLS=300 \
   uv run python poc/workflow_3/recording_filter/filter_recording.py   # 녹화 -> interaction_timeline.json
+WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 경로> \
+  uv run python poc/workflow_3/workflow_extract/extract_workflow.py   # timeline -> workflow.json + workflow.md
 
 # workflow_3 — RCS building blocks (office Windows; each runnable standalone)
 uv run python poc/workflow_3/rcs/open_rcs.py                 # Start RcsMainHD.exe only
@@ -151,6 +154,9 @@ BENCH_CURSOR_ARM=1 SAFE_MODE=0 uv run python poc/workflow_3/rcs/bench_tool_windo
 
 # recording_filter — offline frame-filter unit tests (pytest-style, 71 tests: Stage 1/1.5/2a/2c + wiring)
 uv run pytest poc/workflow_3/recording_filter
+
+# workflow_extract — 그룹핑/렌더 단위 테스트 (VLM 불필요, Mac 실행 가능)
+uv run pytest poc/workflow_3/workflow_extract
 
 # monitor — engineer-done + success-gather + manual-record smoke tests (run directly)
 uv run python poc/workflow_3/monitor/test_engineer_done_align_adjustment.py
@@ -216,6 +222,11 @@ Run/step tuning lives in `Workflow3Settings` (`poc/workflow_3/config.py`, extend
 
 - **런처** `monitor/manual_record.py` — 창 제목 `"Remote Monitoring System - <EQP>"` 에서 EQP 를 뽑아 `align_images/<EQP>/_manual/<tag>/recording/` 에 적재. 창이 2개 이상이면 목록만 출력하고 종료한다(`MANUAL_RECORD_EQP_ID` 로 지정; **부분 일치가 모호하면 임의 선택하지 않고 거부** — 엉뚱한 장비를 10분 녹화하느니 다시 실행하는 편이 낫다). `RecordingSession` 은 **감싸기만** 하고 동작을 바꾸지 않는다(`capture_fn` 주입점). 상한: `MANUAL_RECORD_MAX_SEC` (600, 실질 상한) / `MAX_FRAMES` (4000) / `MAX_DISK_MB` (2000) — 뒤 둘은 백스톱이라 정상이면 안 걸린다. 그 외 `POLL_SEC` (0.2), `JPEG_QUALITY` (85; 알람 녹화는 종전대로 95), `META` (1). 정지 사유는 manifest 에 `user_interrupt`/`max_sec`/`window_gone`/`frame_budget`/`disk_budget`/`watch_error` 로 남고, **어느 경로로 끝나도 teardown 은 완료된다**.
 - **사이드카** `monitor/frame_meta.py` → `frame_meta.jsonl` (프레임당 1줄: 창 rect, 전면 창 제목, 가림 여부, 로컬 커서 좌표). `capture_window` 가 창 핸들이 아니라 **창 rect 의 mss 스크린 그랩**이라 다른 앱이 위에 뜨면 그 앱이 찍히므로, 가림을 프레임 단위로 기록해 분석에서 걸러낸다. 가림 판정은 창 영역 5점에서 `WindowFromPoint` → **`GetAncestor(.., GA_ROOT)` 로 정규화 후** 우리 창인지 비교(정규화를 빼면 자식 컨트롤 HWND 가 잡혀 **전 프레임이 `full` 로 오판**된다). 커서는 `GetCursorPos` 폴링이며 **입력 후킹이 아니다 — 키 입력은 기록하지 않는다**. 기록 실패는 1회 경고 후 영구 비활성화(초당 5회 호출이라 콘솔 범람 방지).
+- **Stage 2a 사이드카 커서 + Stage 2b 타이핑** (2026-08-11) — 사이드카에 커서가 있으면
+  Stage 2a 가 VLM 커서 탐지를 건너뛴다(`cursor_source` 필드로 구분; 알람 녹화는 사이드카가
+  없어 기존 VLM 경로 그대로). Stage 2b 는 **커서 정지 + 국소 반복 변화**로 타이핑 구간을 찾아
+  구간 시작/끝 OCR 2콜로 값을 복원하고, before == after 면 캐럿 깜빡임으로 보고 버린다.
+  `MANUAL_RECORD_*` 가 아니라 `RECORDING_FILTER_TYPING_*` 네임스페이스다.
 - **분석 접합** — 사이드카와 프레임은 **`t_sec` 최근접**으로 조인한다(캡처 순번과 저장 seq 는 어긋난다: 변화 없는 샘플은 저장되지 않음). 조인 상한 `META_MAX_JOIN_GAP_SEC` (10.0) 를 넘으면 meta 없음으로 취급 — 사이드카가 중간에 죽어도 낡은 rect/커서에 영구히 조인되지 않는다. **화면→프레임 커서 변환은 반드시 frame/rect 배율 보정**을 거친다(오피스 125/150% 배율에서 단순 뺄셈은 어긋나 라이브 박스 좌·상단 20% 구간의 실제 조작이 `ambient` 로 버려진다; `util/window_utils.image_point_to_screen` 과 같은 규약). 사이드카가 없는 기존 알람 녹화는 게이트가 전량 통과로 degrade 한다(실패 아님).
 - **타임라인 스키마** (`interaction_timeline.json`) — `element` / `element_source` (`ocr`|`vlm`|`none`) / `target_kind` (`ui_control`|`live_image`|`unknown`) / `region` / `generation` / `occlusion`. `target_kind` 는 **A 장비 → B 장비 이식 가능성** 표시다: 같은 RCS exe 라 라벨은 재탐색 가능하지만 좌표는 창 위치가 달라 무의미하고, 라이브 영상 위 조작은 CV 재해석이 필요하다. `element_source` 를 따로 두는 이유는 OCR 로 읽은 라벨과 VLM 이 서술한 라벨의 신뢰 수준이 다르기 때문(이식성 판단 시 `ocr` 만 신뢰하는 식으로 필터 가능).
 - **첫 오피스 실행 시 주의** — Stage 2a 는 `max_vlm_calls` 기본 0(무제한)이라 10분 세션이 수백~수천 콜이 될 수 있다. 첫 회는 `RECORDING_FILTER_MAX_VLM_CALLS=300` 으로 상한을 걸 것(잘린 양은 `summary.json` 의 `truncated`/`skipped_due_to_cap` 에 정직하게 보고된다). 확인 포인트 3가지: manifest 의 `sampled_count/경과시간` (실측 샘플링 주기, 목표 ~5/s), `region_map_gen0.jpg` 의 시안 박스가 실제 라이브 SEM 영역과 맞는지(**틀리면 이후 게이팅 전부 무효 — 여기서 멈출 것**), `summary.json` 의 `gate_passed/total_change_events` (90%+ 제거면 정상, 0% 면 사이드카 조인 의심). 전량 폐기 시 `run_filter` 는 성공이 아닌 상태를 반환한다.

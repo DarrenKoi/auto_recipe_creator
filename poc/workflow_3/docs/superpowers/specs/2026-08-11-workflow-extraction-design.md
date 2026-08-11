@@ -240,6 +240,13 @@ OCR 운에 좌우되어 재현되지 않는다.
 `inferred=true` 를 남기는 이유: 이것은 여전히 결과로부터의 추론이다. "버튼이 두 번
 내려가는 것을 봤다"와 "그림이 움직였으니 아마 더블클릭"은 재생기가 구분할 수 있어야 한다.
 
+**2026-08-12 리뷰 - 잔여 한계, 수용(accepted).** `region_gate.gate_verdict` 는
+`cursor_in_live` 면 무조건 `candidate` 를 강제하는데 이것이 R1 의 전제 조건과 겹쳐,
+커서가 라이브 박스 안에 머문 채 일어나는 평범한 SEM 전체 갱신도 `double_click` 으로
+잘못 추론될 수 있다. 고치려면 production 알람 루프도 함께 쓰는 `region_gate` 의 게이트
+동작 자체를 바꿔야 하므로, 이번 첫 오피스 실행 범위에서는 고치지 않고 수용하기로
+결정했다 - 대신 §10 오피스 실행 순서에서 엔지니어가 직접 대조하도록 안내한다.
+
 ### 7.2 R2 — 관측자와 실행기가 같은 기하를 쓴다
 
 `sem_monitor/pm_dropdown.dropdown_region_below(button_xy, frame_wh)` 를 그대로 쓴다.

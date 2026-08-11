@@ -136,7 +136,8 @@ def build_score_grid(items: list, panel_size: tuple, *, rows: int = ASSIST_ROWS)
 
     열은 헤더 텍스트로 잡는다(순서로 추정하지 않는다 - Addressing2 가 비어 있으면 숫자
     덩어리가 2개뿐이라 어느 것이 Measurement 인지 알 수 없다). 행은 숫자 항목의 y 중심을
-    모아 pitch 를 구한 뒤 rows 개로 외삽한다.
+    모아 띠(band) 간 간격의 중앙값으로 pitch 를 구한 뒤 rows 개로 외삽한다 - 중간 띠 하나가
+    누락돼도 다수결로 버틴다.
 
     items 는 패널 crop 좌표계여야 한다. panel_size 는 (width, height).
     """
@@ -178,13 +179,13 @@ def build_score_grid(items: list, panel_size: tuple, *, rows: int = ASSIST_ROWS)
         print("[WARNING] Assist 행이 2개 미만 - pitch 를 알 수 없어 격자 생성 실패")
         return None
 
-    pitch = (band_centers[-1] - band_centers[0]) / float(len(band_centers) - 1)
+    gaps = sorted(band_centers[i + 1] - band_centers[i] for i in range(len(band_centers) - 1))
+    pitch = gaps[len(gaps) // 2]
     if pitch <= 0:
         return None
 
     # 최신 행이 맨 아래이므로 가장 아래 띠를 마지막 행에 맞추고 위로 채운다.
     last_center = band_centers[-1]
-    panel_h = panel_size[1]
     grid = []
     for row_idx in range(rows):
         center = last_center - pitch * (rows - 1 - row_idx)
@@ -196,8 +197,8 @@ def build_score_grid(items: list, panel_size: tuple, *, rows: int = ASSIST_ROWS)
             row_boxes.append({
                 "left": int(box.get("left", 0)),
                 "right": int(box.get("right", 0)),
-                "top": max(0, top),
-                "bottom": min(panel_h, bottom),
+                "top": top,
+                "bottom": bottom,
             })
         grid.append(row_boxes)
 

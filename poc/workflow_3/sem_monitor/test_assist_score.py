@@ -217,6 +217,27 @@ def test_grid_columns_follow_headers():
     return ok
 
 
+def test_grid_columns_ignore_header_order_in_items():
+    """헤더가 items 안에서 x 순서와 다르게 나와도 텍스트로 열을 잡아야 한다.
+
+    위치 순서로 열을 배정하면 이 테스트가 깨진다. 실제 tool 에서는 Addressing2 가 비어
+    숫자 덩어리가 2개뿐이라, 위치 추정은 Measurement 를 잘못 고를 수 있다.
+    """
+    items = list(_panel_items())
+    items[0], items[2] = items[2], items[0]   # Measurement 헤더가 목록 앞에 오게 뒤섞는다
+    layout = build_score_grid(items, (300, 260))
+    if layout is None:
+        print("[FAIL] grid_columns_ignore_header_order_in_items: layout None")
+        return False
+    first = layout.grid[0]
+    ok = (
+        first[0]["left"] == 10 and first[0]["right"] == 60
+        and first[2]["left"] == 210 and first[2]["right"] == 260
+    )
+    print(f"[{'PASS' if ok else 'FAIL'}] grid_columns_ignore_header_order_in_items")
+    return ok
+
+
 def test_grid_none_without_headers():
     """헤더를 못 읽으면 어느 열이 무엇인지 알 수 없으므로 격자를 만들지 않는다."""
     items = [_item("12", 20, 40, 50, 58), _item("34", 220, 40, 250, 58)]
@@ -260,6 +281,7 @@ def main():
         test_grid_has_full_rows_and_columns(),
         test_grid_extrapolates_missing_rows_by_pitch(),
         test_grid_columns_follow_headers(),
+        test_grid_columns_ignore_header_order_in_items(),
         test_grid_none_without_headers(),
         test_grid_none_with_single_number_row(),
     ]

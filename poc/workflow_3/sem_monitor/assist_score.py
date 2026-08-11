@@ -46,6 +46,12 @@ RED_DOMINANCE_MIN = 40  # R - max(G,B) 가 이 이상이면 붉은 계열.
 RED_RATIO_MIN = 0.30    # 잉크 중 빨강 비율이 이 이상이면 red.
 BLACK_RATIO_MAX = 0.10  # 이 이하면 black. 사이는 unknown.
 
+# 숫자 글자는 셀 면적 대비 성글다(1~2 자리 score 숫자가 촘촘한 crop 에서도 대개 20~30%
+# 안팎). SEM 썸네일처럼 셀 대부분이 어두운 픽셀로 덮이면 글자가 아니라 이미지다 - 이
+# 비율을 넘으면 무조건 unknown 으로 돌려 streak 을 끊는다(검정으로 오판정하는 것보다
+# 안전한 방향). 0.55 는 두 자리 숫자가 셀을 거의 채워도 여유 있게 통과시키는 값이다.
+INK_DENSE_MAX_RATIO = 0.55
+
 
 def classify_ink(cell_rgb: np.ndarray) -> str:
     """셀 하나의 잉크 색을 판정한다. "black"|"red"|"blank"|"unknown".
@@ -68,6 +74,13 @@ def classify_ink(cell_rgb: np.ndarray) -> str:
     ink_count = int(ink.sum())
     if ink_count < INK_MIN_PIXELS:
         return "blank"
+
+    total_px = int(ink.size)
+    if total_px > 0 and (ink_count / total_px) > INK_DENSE_MAX_RATIO:
+        # 잉크가 셀 대부분을 덮음 - 글자가 아니라 썸네일(그레이스케일 SEM 이미지) 등
+        # 밀집 영역일 가능성이 크다. black 으로 잘못 읽어 streak 을 부풀리는 것보다
+        # 여기서 끊는 게 안전하다.
+        return "unknown"
 
     chroma = arr[:, :, :3].max(axis=2) - arr[:, :, :3].min(axis=2)
     dominance = red_c - np.maximum(green_c, blue_c)
@@ -118,8 +131,22 @@ def ok_streak(rows: list) -> int:
     """최신 행부터 세어 연속 정상(ok) 개수. fail/unknown 을 만나면 멈춘다.
 
     최신 쪽의 pending(측정 진행 중)은 건너뛴다 - 아직 결과가 안 나온 행이 그 앞의 연속
-    정상 기록을 지우면 안 된다. 목록은 index 0 이 가장 오래된 행이다.
+    정상 기록을 지우면 안 된다. rows 는 물리적 위(index 0)에서 아래(index 끝) 순서다.
+    `ASSIST_NEWEST_ROW_AT` 이 "bottom"(기본)이면 index 끝이 최신이라 뒤에서 앞으로
+    걷고, "top" 이면 index 0 이 최신이라 앞에서 뒤로 걷는다 - `build_score_grid` 의
+    행 anchoring 과 반드시 짝을 맞춰야 한다(하나만 뒤집으면 조용히 반대로 읽는다).
     """
+    if ASSIST_NEWEST_ROW_AT == "top":
+        idx = 0
+        n = len(rows)
+        while idx < n and rows[idx].verdict == "pending":
+            idx += 1
+        streak = 0
+        while idx < n and rows[idx].verdict == "ok":
+            streak += 1
+            idx += 1
+        return streak
+
     idx = len(rows) - 1
     while idx >= 0 and rows[idx].verdict == "pending":
         idx -= 1
@@ -128,6 +155,83 @@ def ok_streak(rows: list) -> int:
         streak += 1
         idx -= 1
     return streak
+
+
+# 정규화 후 패널 crop 안에 남은 항목이 이보다 적으면(헤더 최소 요구치 미달) 격자를
+# 만들 근거가 없다고 보고 즉시 포기한다. build_score_grid 도 자체적으로 같은 상황을
+# 걸러내지만, 좌표계 오판정으로 항목 대부분이 통째로 버려지는 것을 여기서 먼저
+# 눈에 띄게 로그한다.
+MIN_USABLE_SPOTTING_ITEMS = 4  # 헤더 3개 + 숫자 1개가 최소.
+
+
+def _resolve_item_coord_space(items: list, panel_size: tuple) -> tuple:
+    """OCR spotting 항목 bbox 가 어느 좌표계인지 판정해 (sx, sy, space) 를 돌려준다.
+
+    PaddleOCR-VL 의 ``Spotting:`` 이 패널 crop 픽셀 좌표를 돌려준다고 가정하지만,
+    모델이 대신 0-1 비율이나 0-1000 정규화 좌표를 줄 수 있다(pm_dropdown.py 의
+    같은 서비스/같은 창에서 실제로 관찰됨). 텍스트 매칭은 좌표와 무관하므로 헤더는
+    어느 좌표계든 그대로 잡히고, 격자도 만들어진다 - 좌표계를 안 맞추면 셀이 실제
+    글자가 아니라 엉뚱한 자리(예: 회색조 SEM 썸네일)를 가리키는 조용한 오류가 된다.
+    bbox 최대값으로 좌표계를 추정한다(패널 crop 자체가 리사이즈되지 않으므로
+    crop_px 가 기본 가정).
+    """
+    pw, ph = panel_size
+    max_coord = 0.0
+    for item in items:
+        bbox = item.get("bbox")
+        if bbox:
+            max_coord = max(max_coord, float(bbox.get("right", 0)), float(bbox.get("bottom", 0)))
+    if items and max_coord <= 1.5:
+        return float(pw), float(ph), "frac01"
+    if max_coord <= max(pw, ph) * 1.05:
+        return 1.0, 1.0, "crop_px"
+    return pw / 1000.0, ph / 1000.0, "norm1000"
+
+
+def normalize_spotting_items_to_panel(items: list, panel_size: tuple) -> list:
+    """OCR spotting 항목의 bbox 를 패널 crop 픽셀 좌표계로 맞추고, 범위를 벗어난 항목은
+    버린다.
+
+    `locate_assist_layout` 이 `build_score_grid` 를 부르기 **전에** 반드시 거쳐야 한다.
+    안 거치면 0-1000/0-1 좌표가 crop 픽셀인 것처럼 그대로 들어가고, 텍스트 매칭은
+    좌표 무관이라 헤더는 여전히 잡히므로 격자가 "성공적으로" 만들어진다 - 다만 셀이
+    실제 숫자가 아니라 회색조 썸네일 위에 놓여, classify_ink 가 어두운 무채색을
+    black 으로 읽어 streak 이 허위로 쌓인다.
+
+    패널 밖으로 매핑된 항목은 좌표계 오판정이거나 OCR 오검출이므로 버린다(그런 항목이
+    셀 계산에 섞이면 잘못된 곳을 가리키는 셀이 나온다).
+    """
+    if not items:
+        return []
+    pw, ph = panel_size
+    sx, sy, space = _resolve_item_coord_space(items, panel_size)
+    if space != "crop_px":
+        print(f"[INFO] Assist 좌표계 보정: {space} (panel={pw}x{ph})")
+
+    out = []
+    for item in items:
+        bbox = item.get("bbox")
+        if not bbox:
+            continue
+        try:
+            left = float(bbox.get("left", 0)) * sx
+            top = float(bbox.get("top", 0)) * sy
+            right = float(bbox.get("right", 0)) * sx
+            bottom = float(bbox.get("bottom", 0)) * sy
+        except (TypeError, ValueError):
+            continue
+        if right <= left or bottom <= top:
+            continue
+        # 패널 crop 밖으로 나간 항목은 버린다(썸네일/다른 패널을 셀로 오인 방지).
+        if left < 0 or top < 0 or right > pw or bottom > ph:
+            continue
+        out.append({
+            **item,
+            "bbox": {
+                "left": left, "top": top, "right": right, "bottom": bottom,
+            },
+        })
+    return out
 
 
 # 헤더 텍스트 매칭용 - 영숫자만 남기고 소문자 비교(OCR 공백/기호 흔들림 흡수).
@@ -146,25 +250,51 @@ def _is_score_text(text: str) -> bool:
 class AssistLayout:
     """Assist 패널의 score 셀 격자. 1회 만들어 캐시한다."""
 
-    panel_box: dict
     grid: list        # grid[row][col] = {"left","top","right","bottom"} (패널 crop 좌표계)
     columns: tuple
+
+
+def _assign_number_column(cx: float, header_boxes: dict):
+    """숫자 항목의 x 중심이 속하는(또는 가장 가까운) 헤더 열을 고른다.
+
+    헤더 x 범위 안에 들어오면 그 열로 확정한다. 어느 범위에도 안 들어오면(칼럼 사이
+    간격 등) 가장 가까운 헤더로 배정한다 - 배정을 포기하면 그 숫자는 어느 열의 x 범위
+    계산에도 기여하지 못해 헤더 폴백으로 새어버린다.
+    """
+    best_column = None
+    best_dist = None
+    for column, box in header_boxes.items():
+        left = float(box.get("left", 0))
+        right = float(box.get("right", 0))
+        if left <= cx <= right:
+            return column
+        dist = min(abs(cx - left), abs(cx - right))
+        if best_dist is None or dist < best_dist:
+            best_dist = dist
+            best_column = column
+    return best_column
 
 
 def build_score_grid(items: list, panel_size: tuple, *, rows: int = ASSIST_ROWS):
     """OCR spotting 항목에서 score 셀 격자를 만든다. 실패 시 None.
 
-    열은 헤더 텍스트로 잡는다(순서로 추정하지 않는다 - Addressing2 가 비어 있으면 숫자
-    덩어리가 2개뿐이라 어느 것이 Measurement 인지 알 수 없다). 행은 숫자 항목의 y 중심을
-    모아 띠(band) 간 간격의 중앙값으로 pitch 를 구한 뒤 rows 개로 외삽한다 - 중간 띠 하나가
-    누락돼도 다수결로 버틴다.
+    열은 헤더 텍스트로 식별한다(순서로 추정하지 않는다 - Addressing2 가 비어 있으면 숫자
+    덩어리가 2개뿐이라 어느 것이 Measurement 인지 알 수 없다). 단, 각 열의 **x 범위**는
+    헤더 bbox 가 아니라 그 열에 배정된 **숫자 bbox 들의 합집합**으로 잡는다 - 헤더가
+    썸네일까지 덮는 넓은 칼럼 위에 놓이면 헤더 x 범위를 그대로 쓴 셀이 썸네일과 겹쳐
+    회색조 이미지를 글자로 오판정할 수 있다. 그 열에 숫자가 하나도 안 잡히면(예:
+    Addressing2 가 대개 비어 있음) 헤더 x 범위로 폴백한다.
 
-    items 는 패널 crop 좌표계여야 한다. panel_size 는 (width, height).
+    행은 숫자 항목의 y 중심을 모아 띠(band) 간 간격의 중앙값으로 pitch 를 구한 뒤 rows
+    개로 외삽한다 - 중간 띠 하나가 누락돼도 다수결로 버틴다.
+
+    items 는 패널 crop 좌표계여야 한다(호출부는 `normalize_spotting_items_to_panel` 로
+    먼저 좌표계를 맞춰야 한다). panel_size 는 (width, height).
     """
     if not items:
         return None
 
-    # --- 열: 헤더 텍스트로 x 범위 확정 ---
+    # --- 열: 헤더 텍스트로 식별 ---
     header_boxes = {}
     for item in items:
         name = _normalize(item.get("text", ""))
@@ -175,20 +305,32 @@ def build_score_grid(items: list, panel_size: tuple, *, rows: int = ASSIST_ROWS)
         print(f"[WARNING] Assist 헤더 인식 부족({sorted(header_boxes)}) - 격자 생성 실패")
         return None
 
-    # --- 행: 숫자 항목의 y 중심 -> pitch -> 외삽 ---
+    # --- 행: 숫자 항목의 y 중심 -> pitch -> 외삽. 동시에 숫자를 열에 배정해 x 범위를 모은다 ---
     header_bottom = max(int(box.get("bottom", 0)) for box in header_boxes.values())
+    number_x_ranges = {column: None for column in ASSIST_COLUMNS}
     centers = []
     heights = []
     for item in items:
         if not _is_score_text(item.get("text", "")):
             continue
         box = item.get("bbox") or {}
-        top = int(box.get("top", 0))
-        bottom = int(box.get("bottom", 0))
+        top = float(box.get("top", 0))
+        bottom = float(box.get("bottom", 0))
         if bottom <= header_bottom:
             continue
+        left = float(box.get("left", 0))
+        right = float(box.get("right", 0))
         centers.append((top + bottom) / 2.0)
-        heights.append(max(1, bottom - top))
+        heights.append(max(1.0, bottom - top))
+
+        column = _assign_number_column((left + right) / 2.0, header_boxes)
+        if column is not None:
+            current = number_x_ranges[column]
+            if current is None:
+                number_x_ranges[column] = [left, right]
+            else:
+                current[0] = min(current[0], left)
+                current[1] = max(current[1], right)
     if not centers:
         print("[WARNING] Assist 숫자 항목 없음 - 격자 생성 실패")
         return None
@@ -204,26 +346,51 @@ def build_score_grid(items: list, panel_size: tuple, *, rows: int = ASSIST_ROWS)
     if pitch <= 0:
         return None
 
-    # 최신 행이 맨 아래이므로 가장 아래 띠를 마지막 행에 맞추고 위로 채운다.
-    last_center = band_centers[-1]
+    # 열별 x 범위 확정: 숫자가 배정됐으면 그 합집합, 아니면 헤더 폴백.
+    column_x_ranges = {}
+    for column in ASSIST_COLUMNS:
+        span = number_x_ranges[column]
+        if span is not None:
+            column_x_ranges[column] = (int(round(span[0])), int(round(span[1])))
+        else:
+            box = header_boxes[column]
+            column_x_ranges[column] = (int(box.get("left", 0)), int(box.get("right", 0)))
+
+    newest_at = ASSIST_NEWEST_ROW_AT
+    if newest_at not in ("top", "bottom"):
+        print(f"[WARNING] ASSIST_NEWEST_ROW_AT 값 이상({newest_at!r}) - bottom 으로 처리")
+        newest_at = "bottom"
+
+    if newest_at == "top":
+        # 최신 행이 맨 위이므로 가장 위 띠를 첫 행(index 0)에 맞추고 아래로 채운다.
+        anchor_center = band_centers[0]
+
+        def _center_for(row_idx):
+            return anchor_center + pitch * row_idx
+    else:
+        # 최신 행이 맨 아래이므로 가장 아래 띠를 마지막 행에 맞추고 위로 채운다.
+        anchor_center = band_centers[-1]
+
+        def _center_for(row_idx):
+            return anchor_center - pitch * (rows - 1 - row_idx)
+
     grid = []
     for row_idx in range(rows):
-        center = last_center - pitch * (rows - 1 - row_idx)
+        center = _center_for(row_idx)
         top = int(round(center - cell_h / 2.0))
         bottom = int(round(center + cell_h / 2.0))
         row_boxes = []
         for column in ASSIST_COLUMNS:
-            box = header_boxes[column]
+            left, right = column_x_ranges[column]
             row_boxes.append({
-                "left": int(box.get("left", 0)),
-                "right": int(box.get("right", 0)),
+                "left": left,
+                "right": right,
                 "top": top,
                 "bottom": bottom,
             })
         grid.append(row_boxes)
 
     return AssistLayout(
-        panel_box={"left": 0, "top": 0, "right": panel_size[0], "bottom": panel_size[1]},
         grid=grid,
         columns=tuple(ASSIST_COLUMNS),
     )
@@ -346,6 +513,14 @@ def locate_assist_layout(window, window_title: str, backend: str, image):
         print(f"[WARNING] Assist 패널 OCR 실패: {exc}")
         return None
 
+    items = normalize_spotting_items_to_panel(items, panel.size)
+    if len(items) < MIN_USABLE_SPOTTING_ITEMS:
+        print(
+            f"[WARNING] Assist 좌표 정규화 후 사용 가능 항목 부족({len(items)}) - "
+            "격자 생성 포기(확신 없는 격자보다 안전)"
+        )
+        return None
+
     layout = build_score_grid(items, panel.size)
     if layout is None:
         return None
@@ -399,6 +574,7 @@ __all__ = [
     "build_score_grid",
     "classify_ink",
     "locate_assist_layout",
+    "normalize_spotting_items_to_panel",
     "ok_streak",
     "read_row_states",
     "row_verdict",

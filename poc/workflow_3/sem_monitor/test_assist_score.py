@@ -19,6 +19,7 @@ from poc.workflow_3.sem_monitor.assist_score import (
     assist_panel_target,
     build_score_grid,
     classify_ink,
+    normalize_spotting_items_to_panel,
     ok_streak,
     read_row_states,
     row_verdict,
@@ -71,6 +72,28 @@ def test_mixed_ink_is_unknown():
     flat[:8] = (200, 20, 20)   # 잉크 40px 중 8px 만 빨강 -> 비율 0.2
     ok = classify_ink(cell) == "unknown"
     print(f"[{'PASS' if ok else 'FAIL'}] mixed_ink_is_unknown")
+    return ok
+
+
+def test_dense_dark_cell_is_unknown_not_black():
+    """(C2(b)) 셀 대부분이 어두운 픽셀로 덮이면 - 예: 헤더 x 범위가 그레이스케일 SEM
+    썸네일과 겹친 경우 - 숫자가 아니라 unknown 이어야 한다.
+
+    수정 전에는 chroma/dominance 로만 흑/적을 갈랐으므로 무채색(그레이) 썸네일이
+    black 으로 오판정돼 streak 이 허위로 쌓였다. 이 테스트는 그 실패 시나리오를
+    재현한다: 셀 전체(20x40=800px)를 무채색 어두운 픽셀로 채우면(ink 비율 100%)
+    black 이 아니라 unknown 이 나와야 streak 이 끊긴다.
+    """
+    dense_cell = _cell(ink=(30, 30, 30), ink_px=800)  # 셀 전체를 잉크로 채움(밀집)
+    ok = classify_ink(dense_cell) == "unknown"
+    print(f"[{'PASS' if ok else 'FAIL'}] dense_dark_cell_is_unknown_not_black")
+    return ok
+
+
+def test_normal_digit_density_still_classifies():
+    """밀집 가드가 정상 숫자(성긴 잉크)까지 unknown 으로 끊어버리면 안 된다."""
+    ok = classify_ink(_cell(ink=(20, 20, 20), ink_px=40)) == "black"  # 40/800 = 5%
+    print(f"[{'PASS' if ok else 'FAIL'}] normal_digit_density_still_classifies")
     return ok
 
 
@@ -165,6 +188,25 @@ def test_streak_empty_rows_is_zero():
     return ok
 
 
+def test_streak_top_anchor_when_newest_row_at_top():
+    """(I9) ASSIST_NEWEST_ROW_AT="top" 이면 ok_streak 도 앞(index 0)에서부터 걸어야 한다.
+
+    같은 rows 목록을 "bottom" 관례로 읽으면(뒤에서부터) fail 을 먼저 만나 streak=0
+    이지만, "top" 관례로 읽으면(앞에서부터) 선행 pending 을 건너뛴 뒤 ok 3개를 센다 -
+    둘 중 하나만 뒤집히면 이 결과가 정반대로 나온다.
+    """
+    rows = _rows(["pending", "ok", "ok", "ok", "fail"])
+    state = {}
+    try:
+        _swap_asc(state, "ASSIST_NEWEST_ROW_AT", "top")
+        streak = ok_streak(rows)
+    finally:
+        _restore_asc(state)
+    ok = streak == 3
+    print(f"[{'PASS' if ok else 'FAIL'}] streak_top_anchor_when_newest_row_at_top: {streak}")
+    return ok
+
+
 def _item(text, left, top, right, bottom):
     return {"text": text, "bbox": {"left": left, "top": top, "right": right, "bottom": bottom}}
 
@@ -228,6 +270,142 @@ def _synth_panel(row_specs):
 
 def _layout_for_synth():
     return build_score_grid(_panel_items(), (300, 260))
+
+
+def _scale_bbox(bbox, sx, sy):
+    return {
+        "left": bbox["left"] * sx, "top": bbox["top"] * sy,
+        "right": bbox["right"] * sx, "bottom": bbox["bottom"] * sy,
+    }
+
+
+def _items_in_norm1000(panel_size):
+    """`_panel_items()` 를 0-1000 정규화 좌표로 표현한 OCR 응답을 흉내낸다.
+
+    panel_size 픽셀 위치 p 에 대해 정규화 좌표는 p * 1000/dim 이다 - 실제 모델이
+    crop 픽셀 대신 0-1000 좌표를 돌려주면 이렇게 나온다.
+    """
+    pw, ph = panel_size
+    sx, sy = 1000.0 / pw, 1000.0 / ph
+    return [
+        {"text": item["text"], "bbox": _scale_bbox(item["bbox"], sx, sy)}
+        for item in _panel_items()
+    ]
+
+
+def test_resolve_coord_space_detects_frac01():
+    items = [_item("Addressing1", 0.05, 0.02, 0.2, 0.1)]
+    sx, sy, space = asc._resolve_item_coord_space(items, (300, 260))
+    ok = space == "frac01" and abs(sx - 300) < 1e-6 and abs(sy - 260) < 1e-6
+    print(f"[{'PASS' if ok else 'FAIL'}] resolve_coord_space_detects_frac01")
+    return ok
+
+
+def test_resolve_coord_space_detects_crop_px():
+    sx, sy, space = asc._resolve_item_coord_space(_panel_items(), (300, 260))
+    ok = space == "crop_px" and sx == 1.0 and sy == 1.0
+    print(f"[{'PASS' if ok else 'FAIL'}] resolve_coord_space_detects_crop_px")
+    return ok
+
+
+def test_resolve_coord_space_detects_norm1000():
+    items = _items_in_norm1000((300, 260))
+    sx, sy, space = asc._resolve_item_coord_space(items, (300, 260))
+    ok = space == "norm1000" and abs(sx - 300 / 1000.0) < 1e-6 and abs(sy - 260 / 1000.0) < 1e-6
+    print(f"[{'PASS' if ok else 'FAIL'}] resolve_coord_space_detects_norm1000")
+    return ok
+
+
+def test_normalize_scales_norm1000_items_back_into_panel_px():
+    """(C1) 0-1000 좌표 항목이 정규화 후 원래 crop 픽셀 위치로 되돌아와야 한다.
+
+    이게 없으면(수정 전) 0-1000 bbox 가 crop 픽셀인 것처럼 그대로 build_score_grid 에
+    들어간다 - 텍스트 매칭은 좌표 무관이라 헤더는 여전히 잡히고 격자도 "성공"하지만,
+    셀은 실제 숫자가 아니라 엉뚱한(대개 훨씬 작은 좌표 범위 밖 또는 다른 영역) 자리를
+    가리킨다.
+    """
+    items_1000 = _items_in_norm1000((300, 260))
+    normalized = normalize_spotting_items_to_panel(items_1000, (300, 260))
+    header = next(it for it in normalized if it["text"] == "Addressing1")
+    original = next(it for it in _panel_items() if it["text"] == "Addressing1")
+    bb, ob = header["bbox"], original["bbox"]
+    ok = (
+        len(normalized) == len(items_1000)
+        and abs(bb["left"] - ob["left"]) <= 1
+        and abs(bb["right"] - ob["right"]) <= 1
+        and abs(bb["top"] - ob["top"]) <= 1
+        and abs(bb["bottom"] - ob["bottom"]) <= 1
+    )
+    print(f"[{'PASS' if ok else 'FAIL'}] normalize_scales_norm1000_items_back_into_panel_px: "
+          f"{bb} vs {ob}")
+    return ok
+
+
+def test_normalize_drops_items_outside_panel_bounds():
+    """패널 밖으로 매핑된 항목은 버려야 한다 - 좌표계 오판정/OCR 오검출 방지.
+
+    Ghost 의 bbox(right=310, bottom=290)는 crop_px 판정 임계(<= max(300,260)*1.05=315)
+    안에 들어 좌표계 판정 자체는 안 바뀌지만(panel(300,260)을 살짝 벗어남), 패널 경계를
+    넘으므로 버려져야 한다.
+    """
+    items = [
+        _item("Addressing1", 10, 5, 60, 25),
+        _item("Ghost", 295, 235, 310, 290),  # panel(300,260) 살짝 밖
+    ]
+    normalized = normalize_spotting_items_to_panel(items, (300, 260))
+    ok = len(normalized) == 1 and normalized[0]["text"] == "Addressing1"
+    print(f"[{'PASS' if ok else 'FAIL'}] normalize_drops_items_outside_panel_bounds")
+    return ok
+
+
+def test_normalize_empty_items_returns_empty():
+    ok = normalize_spotting_items_to_panel([], (300, 260)) == []
+    print(f"[{'PASS' if ok else 'FAIL'}] normalize_empty_items_returns_empty")
+    return ok
+
+
+def test_build_score_grid_with_norm1000_items_lands_on_real_cells():
+    """(C1) 실패 시나리오 재현: 0-1000 좌표 OCR 응답이 정규화 없이 들어가면 셀이
+    회색조 썸네일 위에 놓일 수 있다. locate_assist_layout 과 동일하게 정규화를 거친
+    뒤 build_score_grid 에 넣으면 _panel_items() 와 (반올림 오차 이내로) 같은 격자가
+    나와야 한다.
+    """
+    items_1000 = _items_in_norm1000((300, 260))
+    normalized = normalize_spotting_items_to_panel(items_1000, (300, 260))
+    layout = build_score_grid(normalized, (300, 260))
+    baseline = build_score_grid(_panel_items(), (300, 260))
+    if layout is None or baseline is None:
+        print("[FAIL] build_score_grid_with_norm1000_items_lands_on_real_cells: layout None")
+        return False
+    ok = all(
+        abs(layout.grid[r][c][k] - baseline.grid[r][c][k]) <= 1
+        for r in range(len(layout.grid))
+        for c in range(len(layout.grid[r]))
+        for k in ("left", "right", "top", "bottom")
+    )
+    print(f"[{'PASS' if ok else 'FAIL'}] build_score_grid_with_norm1000_items_lands_on_real_cells")
+    return ok
+
+
+def test_grid_top_anchor_when_newest_row_at_top():
+    """(I9) ASSIST_NEWEST_ROW_AT="top" 이면 build_score_grid 도 anchoring 방향을 뒤집어야
+    한다 - 최신 데이터가 있는 맨 위 띠를 index 0 에 맞추고 아래로(빈 슬롯 방향) 채운다.
+    """
+    state = {}
+    try:
+        _swap_asc(state, "ASSIST_NEWEST_ROW_AT", "top")
+        layout = build_score_grid(_top_heavy_items(), (300, 260))
+    finally:
+        _restore_asc(state)
+    if layout is None:
+        print("[FAIL] grid_top_anchor_when_newest_row_at_top: layout None")
+        return False
+    tops = [row[0]["top"] for row in layout.grid]
+    # 맨 위(index 0)가 실제 숫자 띠(top=40 부근)에 고정되고, 아래로 pitch(30)씩 증가해야
+    # 한다 - bottom 기본값이면 index 0 은 음수(외삽된 빈 슬롯)가 된다.
+    ok = tops[0] >= 0 and all(tops[i + 1] - tops[i] == 30 for i in range(len(tops) - 1))
+    print(f"[{'PASS' if ok else 'FAIL'}] grid_top_anchor_when_newest_row_at_top: {tops}")
+    return ok
 
 
 def test_read_rows_marks_black_and_red():
@@ -302,6 +480,13 @@ def test_grid_extrapolates_missing_rows_by_pitch():
 
 
 def test_grid_columns_follow_headers():
+    """열 판별은 헤더 텍스트로 하지만, x 범위는 그 열에 배정된 숫자의 합집합을 쓴다
+    (C2(a)) - Addressing2 처럼 숫자가 없는 열만 헤더 x 범위로 폴백한다.
+
+    _panel_items() 의 숫자는 Addressing1 열에 20-50, Measurement 열에 220-250 이다
+    (각각 헤더 범위 10-60 / 210-260 안에 들어간다). Addressing2 는 숫자가 없으므로
+    헤더 범위(110-160)를 그대로 쓴다.
+    """
     layout = build_score_grid(_panel_items(), (300, 260))
     if layout is None:
         print("[FAIL] grid_columns_follow_headers: layout None")
@@ -309,10 +494,27 @@ def test_grid_columns_follow_headers():
     first = layout.grid[0]
     ok = (
         layout.columns == ("Addressing1", "Addressing2", "Measurement")
-        and first[0]["left"] == 10 and first[0]["right"] == 60
-        and first[2]["left"] == 210 and first[2]["right"] == 260
+        and first[0]["left"] == 20 and first[0]["right"] == 50   # 숫자 합집합
+        and first[1]["left"] == 110 and first[1]["right"] == 160  # 헤더 폴백(숫자 없음)
+        and first[2]["left"] == 220 and first[2]["right"] == 250  # 숫자 합집합
     )
     print(f"[{'PASS' if ok else 'FAIL'}] grid_columns_follow_headers")
+    return ok
+
+
+def test_grid_columns_fallback_to_header_when_no_numbers():
+    """숫자가 하나도 안 잡힌 열은 헤더 x 범위로 폴백해야 한다 (C2(a) 명시 요구사항).
+
+    _panel_items() 는 Addressing2 열에 숫자를 두지 않는다 - 실제 tool 에서 이 열이
+    대개 비어 있는 상황과 같다.
+    """
+    layout = build_score_grid(_panel_items(), (300, 260))
+    if layout is None:
+        print("[FAIL] grid_columns_fallback_to_header_when_no_numbers: layout None")
+        return False
+    addr2 = layout.grid[0][1]
+    ok = addr2["left"] == 110 and addr2["right"] == 160
+    print(f"[{'PASS' if ok else 'FAIL'}] grid_columns_fallback_to_header_when_no_numbers")
     return ok
 
 
@@ -339,10 +541,13 @@ def test_grid_columns_ignore_header_order_in_items():
         print("[FAIL] grid_columns_ignore_header_order_in_items: layout None")
         return False
     first = layout.grid[0]
-    # grid 열 순서는 ASSIST_COLUMNS 고정: [Addressing1, Addressing2, Measurement]
+    # grid 열 순서는 ASSIST_COLUMNS 고정: [Addressing1, Addressing2, Measurement].
+    # 헤더 순서가 뒤섞여도(Measurement 가 Addressing2 보다 왼쪽) 숫자는 자신이 겹치는
+    # 헤더 x 범위로 배정된다: "12"(20-50)는 Addressing1(10-60) 아래, "34"(220-250)는
+    # Addressing2(210-260) 아래. Measurement(110-160)는 숫자가 없어 헤더 폴백.
     ok = (
-        first[0]["left"] == 10 and first[0]["right"] == 60
-        and first[1]["left"] == 210 and first[1]["right"] == 260
+        first[0]["left"] == 20 and first[0]["right"] == 50
+        and first[1]["left"] == 220 and first[1]["right"] == 250
         and first[2]["left"] == 110 and first[2]["right"] == 160
     )
     print(f"[{'PASS' if ok else 'FAIL'}] grid_columns_ignore_header_order_in_items")
@@ -412,7 +617,26 @@ def _stub_ocr_client(items):
     return _Client
 
 
-def _locate_with(state, *, point, items=None, ocr_raises=False, locator_raises=False):
+# locate_assist_layout 의 기본 통합 테스트용 이미지 크기/점 - _panel_items() 의 좌표가
+# (max x=260, max y=238) 이므로, 크롭된 패널이 그보다 확실히 커야 정규화 후 항목이
+# 패널 밖으로 안 잘린다(정규화가 patch 밖 항목을 버리는 동작을 이 테스트에서 우연히
+# 건드리지 않기 위함 - 그건 별도 테스트가 전담한다).
+_LOCATE_IMAGE_SIZE = (1000, 1000)
+_LOCATE_POINT = {"x": 500, "y": 500}
+
+
+def _expected_panel_size(image_size, point):
+    """locate_assist_layout 의 panel_box 계산과 같은 식으로 패널 crop 크기를 구한다."""
+    width, height = image_size
+    left = max(0, int(point["x"] - width * asc.PANEL_LEFT_RATIO))
+    right = min(width, int(point["x"] + width * asc.PANEL_RIGHT_RATIO))
+    top = max(0, int(point["y"] - height * asc.PANEL_TOP_RATIO))
+    bottom = min(height, int(point["y"] + height * asc.PANEL_BOTTOM_RATIO))
+    return right - left, bottom - top
+
+
+def _locate_with(state, *, point, items=None, image_size=_LOCATE_IMAGE_SIZE,
+                  ocr_raises=False, locator_raises=False):
     """스텁을 걸고 locate_assist_layout 을 1회 호출한다."""
     def fake_locator(*a, **k):
         if locator_raises:
@@ -427,17 +651,67 @@ def _locate_with(state, *, point, items=None, ocr_raises=False, locator_raises=F
     _swap_asc(state, "analyze_window_target", fake_locator)
     _swap_asc(state, "Workflow1VLMClient", _stub_ocr_client(items))
     _swap_asc(state, "parse_spotting_items", fake_parse)
-    return asc.locate_assist_layout(None, "", "", Image.new("RGB", (300, 260), (240, 240, 240)))
+    return asc.locate_assist_layout(
+        None, "", "", Image.new("RGB", image_size, (240, 240, 240))
+    )
 
 
 def test_locate_returns_layout_on_happy_path():
     state = {}
     try:
-        result = _locate_with(state, point={"x": 150, "y": 130})
+        result = _locate_with(state, point=_LOCATE_POINT)
     finally:
         _restore_asc(state)
     ok = result is not None and len(result[1].grid) == 7
     print(f"[{'PASS' if ok else 'FAIL'}] locate_returns_layout_on_happy_path")
+    return ok
+
+
+def test_locate_with_norm1000_items_still_produces_grid():
+    """(C1) 실제 배선 경로(locate_assist_layout) 를 통째로 거쳐도, OCR 이 0-1000
+    정규화 좌표를 돌려주면 여전히 정상 격자가 나와야 한다(수정 전에는 좌표계를 안
+    맞춰 잘못된 자리를 가리키는 격자를 - 혹은 항목이 패널 밖으로 튀어 아예 격자를 -
+    만들었을 수 있다).
+    """
+    panel_size = _expected_panel_size(_LOCATE_IMAGE_SIZE, _LOCATE_POINT)
+    items_1000 = _items_in_norm1000(panel_size)
+    state = {}
+    try:
+        result = _locate_with(state, point=_LOCATE_POINT, items=items_1000)
+    finally:
+        _restore_asc(state)
+    baseline = build_score_grid(_panel_items(), panel_size)
+    ok = (
+        result is not None
+        and baseline is not None
+        and len(result[1].grid) == 7
+        and all(
+            abs(result[1].grid[r][c][k] - baseline.grid[r][c][k]) <= 1
+            for r in range(7)
+            for c in range(3)
+            for k in ("left", "right", "top", "bottom")
+        )
+    )
+    print(f"[{'PASS' if ok else 'FAIL'}] locate_with_norm1000_items_still_produces_grid")
+    return ok
+
+
+def test_locate_none_when_too_few_items_survive_normalization():
+    """(C1) 정규화 후(패널 밖 제거) 항목이 부족하면 확신 없는 격자를 만들지 않고 None."""
+    # 패널(대략 440x360) 훨씬 밖으로 나가는 좌표 - crop_px 로 해석되면 전부 버려진다.
+    far_outside = [
+        _item("Addressing1", 5000, 5000, 5060, 5020),
+        _item("Addressing2", 5100, 5000, 5160, 5020),
+        _item("Measurement", 5200, 5000, 5260, 5020),
+        _item("12", 5000, 5100, 5030, 5118),
+    ]
+    state = {}
+    try:
+        result = _locate_with(state, point=_LOCATE_POINT, items=far_outside)
+    finally:
+        _restore_asc(state)
+    ok = result is None
+    print(f"[{'PASS' if ok else 'FAIL'}] locate_none_when_too_few_items_survive_normalization")
     return ok
 
 
@@ -524,6 +798,8 @@ def main():
         test_blank_cell(),
         test_blank_when_ink_below_min_pixels(),
         test_mixed_ink_is_unknown(),
+        test_dense_dark_cell_is_unknown_not_black(),
+        test_normal_digit_density_still_classifies(),
         test_verdict_ok_without_addressing2(),
         test_verdict_fail_on_red_measurement(),
         test_verdict_fail_on_red_addressing1(),
@@ -535,18 +811,30 @@ def main():
         test_streak_broken_by_fail_and_unknown(),
         test_streak_all_ok_is_full_length(),
         test_streak_empty_rows_is_zero(),
+        test_streak_top_anchor_when_newest_row_at_top(),
         test_grid_has_full_rows_and_columns(),
         test_grid_extrapolates_missing_rows_by_pitch(),
         test_grid_columns_follow_headers(),
+        test_grid_columns_fallback_to_header_when_no_numbers(),
         test_grid_columns_ignore_header_order_in_items(),
         test_grid_none_without_headers(),
         test_grid_none_with_single_number_row(),
+        test_grid_top_anchor_when_newest_row_at_top(),
+        test_resolve_coord_space_detects_frac01(),
+        test_resolve_coord_space_detects_crop_px(),
+        test_resolve_coord_space_detects_norm1000(),
+        test_normalize_scales_norm1000_items_back_into_panel_px(),
+        test_normalize_drops_items_outside_panel_bounds(),
+        test_normalize_empty_items_returns_empty(),
+        test_build_score_grid_with_norm1000_items_lands_on_real_cells(),
         test_read_rows_marks_black_and_red(),
         test_read_rows_blank_is_pending(),
         test_read_rows_returns_empty_without_layout(),
         test_read_rows_clamps_boxes_outside_panel(),
         test_panel_target_uses_proven_button_geometry(),
         test_locate_returns_layout_on_happy_path(),
+        test_locate_with_norm1000_items_still_produces_grid(),
+        test_locate_none_when_too_few_items_survive_normalization(),
         test_locate_none_when_point_outside_image(),
         test_locate_none_when_locator_raises(),
         test_locate_none_when_no_point(),

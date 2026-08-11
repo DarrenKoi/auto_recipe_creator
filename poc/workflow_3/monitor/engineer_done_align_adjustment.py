@@ -1,40 +1,56 @@
-"""엔지니어 수동 align 보정 완료 감지 — Recipe Monitor 측정 카운터 기반.
+"""엔지니어 수동 align 보정 완료 감지 — 측정 카운터 delta + Assist score streak,
+두 조건 모두 충족.
 
-**align fail 관리 전용** 모듈이다. 미보정 engineer watch 동안 "측정이 시작됐다"
-(= align 보정 완료)를 감지해 녹화를 조기 종료하고, 그 결과 cycle teardown 이
-tool 창을 자동으로 닫는다. 신호는 tool 창 Recipe Monitor 의 측정 점 카운터
-분자(N/M 의 N)가 증가하는 것 (1/350 -> 2/350 -> ...).
+**align fail 관리 전용** 모듈이다. 미보정 engineer watch 동안 "align 보정이 끝나고
+본 측정이 정상적으로 진행 중이다"를 감지해 녹화를 조기 종료하고, 그 결과 cycle
+teardown 이 tool 창을 자동으로 닫는다. done 판정은 **두 조건을 모두** 요구한다:
 
-분자 N 이 `engineer_done_min_delta` 이상(기본 6 = "5보다 큼")까지 올라간 것을
-연속 2회 확인하면 done 으로 판정한다 — 측정 초반의 일시적 1~2 점이 아니라
-재정렬이 끝나고 본 측정이 충분히 진행됐음을 보고 닫기 위해 임계를 높게 둔다
-(re-align 직후 카운터가 잠깐 보였다 사라지는 false-start 회피).
+  1. 카운터 delta: tool 창 Recipe Monitor 의 측정 점 카운터 분자(N/M 의 N)가
+     watch 시작 시점 대비 `engineer_done_min_delta`(기본 6) 이상 늘어났다 —
+     측정이 실제로 진행 중이라는 신호.
+  2. Assist streak: Recipe Monitor Assist Window 가 연속 정상(검정) 측정을
+     `engineer_done_ok_streak`(기본 6) 회 이상 보여준다 — 그 측정들이 실제로
+     성공하고 있다는 신호. 색 판정은 `sem_monitor/assist_score.py` 담당.
+
+카운터만 보던 옛 판정(N 이 임계 이상까지 오른 것을 연속 2회 확인)은 잔존 카운터
+(이전 런의 350/350 등)에 즉시 속아 미보정 상태에서도 done 을 냈다 — delta 로
+바꿔 "watch 시작 이후 새로 늘었는가"를 보게 했고, 거기에 Assist streak 을 더해
+"늘기만 하고 아직 다 실패 중"인 상태로 너무 일찍 닫히는 것도 막는다. 재정렬
+직후 카운터가 잠깐 보였다 사라지는 false-start 회피를 위해 두 임계 모두 높게
+잡는다.
 
 done 판정 시 `cycle._engineer_watch` 가 조기 종료하고, `run_alarm_cycle` 의
 teardown(finally)이 `close_tool(eqp_id)` 로 tool 창을 닫는다 (별도 닫기 호출
 없이 기존 teardown 경로 재사용 — close 동작은 workflow_2 에서 확립됨).
 
-hybrid 파이프라인 (grounding 은 성공 시 1회 캐시):
-  1. grounding(성공 시 캐시): VLM(ui-venus)으로 분자 위치를 찾아 tool-window
+파이프라인 (grounding 은 성공 시 1회 캐시):
+  1. grounding(성공 시 캐시): VLM(mai-ui)으로 분자 위치를 찾아 tool-window
      상대비율 ROI 로 캐시한다 (tool 마다/드래그로 위치가 달라 고정 ROI 불가).
      **오피스 관찰(2026-06-11): re-align 진행 중에는 카운터(N/M)가 빈칸**이라
      grounding 거부([-1,-1])가 정상 상태다. 따라서 거부는 영구 포기가 아니라
      `reground_sec` 간격 재시도 — 측정이 시작되면 숫자가 나타나 성공한다.
   2. CV gate(매 호출): ROI crop 변화감지 — align-fix 중엔 카운터가 정적이라
      OCR 호출이 0회로 유지된다 (recording.py 의 다운샘플+delta 로직 재사용).
-  3. OCR confirm(변화 시에만): paddleocr 로 분자 N 을 읽어
-     N >= min_count 이고 직전 읽기 대비 비감소(연속 2회 확인)면 done.
-     연속 2회 확인은 단일 프레임 OCR 오독(분모 등)으로 끊기는 것을 막는다.
+  3. OCR confirm(변화 시에만): paddleocr 로 분자 N 을 읽어 baseline 대비 delta 를
+     구한다. baseline 은 watch 시작 후 첫 성공 OCR 값이지만, 이후 읽기가 그보다
+     낮게 나오면(카운터 역행 = 새 측정 런이 시작됐다는 뜻) 그 값으로 baseline 을
+     다시 잡는다 — 안 그러면 잔존 값이 baseline 이 된 채 영원히 delta 가 음수로
+     남아 done 이 나올 수 없다.
      OCR 연속 미검출(숫자 -> blank 전환 = 새 재정렬 시작 가능)은 ROI 재grounding.
+  4. Assist streak(delta 확정마다): `assist_score.locate_assist_layout` 으로
+     score 격자를 1회 잡아 캐시하고, 이후 `read_row_states` + `ok_streak` 로
+     연속 정상 횟수를 구한다. 격자 로케이트 자체도 재시도가 실패할 때마다
+     `reground_sec` 로 throttle 한다(안 그러면 VLM+OCR 왕복이 매 폴링마다 반복돼
+     watch 루프가 막힌다).
 
 실패는 전부 graceful: grounding 거부/OCR 실패/예외 -> False -> watch 의
 engineer_watch_sec cap 이 안전망. (CLAUDE.md 규칙: VLM 은 위치만, 전이 판정의
-정량 근거는 CV 변화 + OCR 숫자.)
+정량 근거는 CV 변화 + OCR 숫자 + Assist 색.)
 
 오피스 캘리브레이션 (단독 실행):
   지금 측정 중인 tool 의 Remote Monitoring 창을 열어 두고 실행하면 — 측정
-  중에는 분자가 실제로 증가하므로 — grounding/gate/OCR 전 체인을 align fail
-  없이 즉시 검증할 수 있다.
+  중에는 분자가 실제로 증가하므로 — grounding/gate/OCR/Assist 전 체인을 align
+  fail 없이 즉시 검증할 수 있다.
 
   uv run python poc/workflow_3/monitor/engineer_done_align_adjustment.py
 """
@@ -181,6 +197,17 @@ class EngineerDoneDetector:
             self._baseline_n = n
             self.last_debug["baseline_n"] = n
             return False
+
+        if n < self._baseline_n:
+            # 카운터가 baseline 아래로 내려갔다 = 새 측정 런이 시작됐다는 뜻(예:
+            # baseline 이 분모나 이전 런의 잔존 값을 잘못 흡수한 경우 포함). 옛
+            # baseline 을 계속 쓰면 delta 가 영원히 음수라 이 watch 내내 done 이
+            # 나올 수 없다 - 이 값을 새 baseline 으로 채택해 그 함정을 벗어난다.
+            print(
+                f"[INFO] 측정 카운터 역행 감지(n={n} < baseline={self._baseline_n}) - "
+                "새 측정 런 시작으로 보고 baseline 재설정"
+            )
+            self._baseline_n = n
 
         delta = n - self._baseline_n
         rows = self._read_rows()
@@ -336,11 +363,15 @@ def _make_ocr_fn(settings):
     return ocr
 
 
-def _make_rows_fn(tool_window, *, debug_dir=None):
+def _make_rows_fn(tool_window, settings, *, debug_dir=None):
     """Assist 행 판독 클로저. 격자는 첫 성공 때 1회만 만들고 캐시한다.
 
-    로케이트에 실패하면 None 을 캐시하지 않고 매번 재시도하되, 실패 로그는 1회만 낸다
-    (watch 내내 같은 경고가 반복되면 콘솔이 쓸모없어진다).
+    로케이트에 실패하면 None 을 캐시하지 않고 재시도하되, 실패 로그는 1회만 낸다
+    (watch 내내 같은 경고가 반복되면 콘솔이 쓸모없어진다). 재시도 자체도
+    `settings.engineer_done_reground_sec` 로 throttle 한다 - 카운터 grounding
+    (`EngineerDoneDetector._localize`)이 이미 같은 간격으로 재시도를 절제하는 것과
+    같은 이유다: 로케이트 실패마다 2단계 VLM(15s timeout) + PaddleOCR(30s timeout)
+    왕복이 매 결정 폴링마다 반복되면 watch 루프 전체가 그만큼 막힌다.
     """
     from poc.workflow_3.sem_monitor.assist_score import (
         locate_assist_layout,
@@ -351,18 +382,24 @@ def _make_rows_fn(tool_window, *, debug_dir=None):
 
     state = {"panel_box": None, "layout": None, "warned": False, "last_verdicts": None,
              "seq": 0, "all_blank_streak": 0, "blank_relocates": 0,
-             "blank_relocate_limit_logged": False}
+             "blank_relocate_limit_logged": False, "next_locate_at": 0.0}
 
     def rows_fn():
         # 호출부(EngineerDoneDetector._read_rows)가 이미 예외를 삼키지만, 이 클로저는
         # 어디서 호출되든 안전해야 한다 - 그 안전은 여기서 스스로 보장한다.
         try:
+            if state["layout"] is None and time.time() < state["next_locate_at"]:
+                return []
+
             image = capture_window(tool_window)
             if state["layout"] is None:
                 # window_title/backend 는 빈 문자열로 넘긴다. image 를 함께 주면
                 # analyze_window_target 이 창 활성화/재캡처를 건너뛰므로 쓰이지 않는다.
                 located = locate_assist_layout(tool_window, "", "", image)
                 if located is None:
+                    state["next_locate_at"] = time.time() + max(
+                        settings.engineer_done_reground_sec, 0.0
+                    )
                     if not state["warned"]:
                         print("[WARNING] Assist 격자 확보 실패 - 이번 watch 는 done 판정 없이 cap 대기")
                         state["warned"] = True
@@ -432,7 +469,7 @@ def build_engineer_done_detector(tool_window, settings, *, vlm_client=None, debu
     except Exception as exc:
         print(f"[WARNING] engineer-done 클라이언트 생성 실패(고정 timeout 폴백): {exc}")
         return None
-    rows_fn = _make_rows_fn(tool_window, debug_dir=debug_dir)
+    rows_fn = _make_rows_fn(tool_window, settings, debug_dir=debug_dir)
     return EngineerDoneDetector(
         tool_window, settings, ground_fn=ground_fn, ocr_fn=ocr_fn, rows_fn=rows_fn,
         debug_dir=debug_dir,
@@ -506,7 +543,9 @@ def run_calibration() -> bool:
 
     print(
         f"[INFO] 캘리브레이션 시작: 최대 {duration_sec:.0f}s, "
-        f"poll={settings.engineer_done_poll_sec}s, min_delta={settings.engineer_done_min_delta}, "
+        f"poll={settings.engineer_done_poll_sec}s, "
+        f"min_delta={settings.engineer_done_min_delta}, "
+        f"ok_streak={settings.engineer_done_ok_streak}, "
         f"debug={debug_dir}"
     )
     deadline = time.time() + duration_sec
@@ -517,7 +556,8 @@ def run_calibration() -> bool:
         dbg = detector.last_debug
         print(
             f"[INFO] tick {tick}: changed={dbg.get('changed')}, "
-            f"n={dbg.get('n')}, miss={dbg.get('ocr_miss_streak', 0)}, done={done}"
+            f"n={dbg.get('n')}, delta={dbg.get('delta')}, streak={dbg.get('streak')}, "
+            f"miss={dbg.get('ocr_miss_streak', 0)}, done={done}"
         )
         if done:
             print("[INFO] 캘리브레이션 성공: 측정 중 tool 에서 done 감지 체인 검증 완료")
@@ -526,13 +566,18 @@ def run_calibration() -> bool:
         time.sleep(settings.engineer_done_poll_sec)
 
     last_n = detector.last_debug.get("n")
+    last_delta = detector.last_debug.get("delta")
+    last_streak = detector.last_debug.get("streak")
     print(
-        "[WARNING] duration 내 done 미감지. 원인 구분:\n"
-        f"  - tick 로그에 changed=True + n 증가가 보였다면 체인은 정상이고, "
-        f"분자가 min_delta(={settings.engineer_done_min_delta}, N>5) 까지 못 올랐을 뿐 "
-        f"(마지막 n={last_n}). 빠른 검증엔 ALIGN_FAIL_ENGINEER_DONE_MIN_DELTA=2 또는 "
-        f"ALIGN_DONE_CALIB_SEC 상향 후 재실행.\n"
-        "  - n 이 계속 None/blank 면 grounding/OCR 문제 - debug crop 으로 ROI 확인 후 "
+        "[WARNING] duration 내 done 미감지. 원인 구분 - 카운터(delta)와 Assist(streak) "
+        "중 어느 조건이 못 채워졌는지가 핵심이다(두 조건 모두 필요):\n"
+        f"  - delta 가 min_delta(={settings.engineer_done_min_delta}) 미달이면(마지막 "
+        f"delta={last_delta}, n={last_n}) 카운터 자체가 아직 덜 오른 것 - 빠른 검증엔 "
+        "ALIGN_FAIL_ENGINEER_DONE_MIN_DELTA=2 또는 ALIGN_DONE_CALIB_SEC 상향 후 재실행.\n"
+        f"  - delta 는 충분한데 streak 이 ok_streak(={settings.engineer_done_ok_streak}) "
+        f"미달이면(마지막 streak={last_streak}) Assist Window 격자/색 판정 문제 - "
+        "debug_images/engineer_done_calib/.../assist_*.jpg 오버레이로 열 매핑/색 임계 확인.\n"
+        "  - n 이 계속 None/blank 면 카운터 grounding/OCR 문제 - debug crop 으로 ROI 확인 후 "
         "grounding 문구(RECIPE_MONITOR_NUMERATOR_INSTRUCTION)/ROI pad 조정."
     )
     return False

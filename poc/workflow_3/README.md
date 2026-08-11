@@ -130,7 +130,7 @@ RECORDING_FILTER_INPUT_DIR=<녹화 경로> RECORDING_FILTER_MAX_VLM_CALLS=300 \
 | `ALIGN_FAIL_RECORDING_CHANGE_MIN_PX` | 4 | 변화 판정: delta>15 인 다운샘플 픽셀 최소 개수 (커서 이동도 감지) |
 | `ALIGN_FAIL_RECORDING_MAX_SEC` | 900 | 녹화 상한 |
 | `ALIGN_FAIL_ENGINEER_WATCH_SEC` | 300 | 미보정 시 엔지니어 조작 녹화 대기 상한(5분) |
-| `ALIGN_FAIL_ENGINEER_DONE_DETECT` | 0 | 측정-시작(Recipe Monitor 분자) 감지로 engineer watch 조기 종료 + cycle teardown 의 tool 창 자동 닫기. 캘리브레이션(`monitor/engineer_done_align_adjustment.py` 단독 실행, 측정 중 tool 대상) 검증 후 `1`. |
+| `ALIGN_FAIL_ENGINEER_DONE_DETECT` | 0 | 측정 카운터 delta + Assist Window 연속 정상(streak) 두 조건을 모두 충족하면 engineer watch 조기 종료 + cycle teardown 의 tool 창 자동 닫기. 캘리브레이션(`monitor/engineer_done_align_adjustment.py` 단독 실행, 측정 중 tool 대상) 검증 후 `1`. |
 | `ALIGN_FAIL_ENGINEER_DONE_POLL_SEC` | 8.0 | watch 안 감지기 호출 간격 |
 | `ALIGN_FAIL_ENGINEER_DONE_MIN_DELTA` | 6 | done 조건 1/2 - watch 시작 이후 측정 카운터 분자가 이만큼 늘어야 함 |
 | `ALIGN_FAIL_ENGINEER_DONE_OK_STREAK` | 6 | done 조건 2/2 - Assist Window 연속 정상(검정) 측정이 이만큼 있어야 함 (둘 다 충족 시 watch 종료+tool 닫기) |

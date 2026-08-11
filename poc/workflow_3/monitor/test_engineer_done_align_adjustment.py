@@ -609,7 +609,7 @@ def test_rows_fn_locates_layout_only_once():
     """격자는 한 번만 잡고 캐시한다 - 폴링마다 VLM 을 부르면 안 된다."""
     ok = _rows_of(["ok"] * 3)
     with _RowsFnHarness([ok, ok, ok]) as h:
-        fn = _make_rows_fn(object(), debug_dir=None)
+        fn = _make_rows_fn(object(), _settings(), debug_dir=None)
         for _ in range(3):
             fn()
     passed = h.locate_calls == 1
@@ -620,7 +620,7 @@ def test_rows_fn_locates_layout_only_once():
 def test_rows_fn_warns_once_on_locate_failure():
     """로케이트가 계속 실패해도 경고는 한 번만 - watch 내내 반복되면 콘솔이 쓸모없어진다."""
     with _RowsFnHarness([], locate_ok=False) as h:
-        fn = _make_rows_fn(object(), debug_dir=None)
+        fn = _make_rows_fn(object(), _settings(), debug_dir=None)
         buf = io.StringIO()
         with redirect_stdout(buf):
             first, second, third = fn(), fn(), fn()
@@ -635,12 +635,29 @@ def test_rows_fn_warns_once_on_locate_failure():
     return passed
 
 
+def test_rows_fn_throttles_locate_retry_after_failure():
+    """(I5) 로케이트 실패 후 재시도는 reground_sec 로 throttle 돼야 한다.
+
+    수정 전에는 실패마다 캐시를 안 하고 매 결정 폴링마다 2단계 VLM(15s timeout) +
+    PaddleOCR(30s timeout) 왕복을 반복해 watch 루프를 막았다. reground_sec 를 크게
+    잡으면 두 번째 호출은 throttle 되어 locate 를 다시 시도하지 않아야 한다.
+    """
+    settings = _settings(engineer_done_reground_sec=3600.0)
+    with _RowsFnHarness([], locate_ok=False) as h:
+        fn = _make_rows_fn(object(), settings, debug_dir=None)
+        first, second, third = fn(), fn(), fn()
+    passed = first == [] and second == [] and third == [] and h.locate_calls == 1
+    print(f"[{'PASS' if passed else 'FAIL'}] rows_fn_throttles_locate_retry_after_failure: "
+          f"locates={h.locate_calls}")
+    return passed
+
+
 def test_rows_fn_overlay_only_on_verdict_change():
     """오버레이는 판정이 바뀔 때만 - 폴링마다 저장하면 디스크가 찬다."""
     same = _rows_of(["ok", "ok"])
     changed = _rows_of(["ok", "fail"])
     with _RowsFnHarness([same, list(same), changed]) as h:
-        fn = _make_rows_fn(object(), debug_dir=Path("/tmp/nonexistent-overlay-dir"))
+        fn = _make_rows_fn(object(), _settings(), debug_dir=Path("/tmp/nonexistent-overlay-dir"))
         fn(); fn(); fn()
     passed = h.overlay_calls == 2
     print(f"[{'PASS' if passed else 'FAIL'}] rows_fn_overlay_only_on_verdict_change: {h.overlay_calls}")
@@ -651,7 +668,7 @@ def test_rows_fn_relocates_after_all_blank_streak():
     """전 행이 계속 빈칸이면 패널 이동으로 보고 격자를 다시 잡는다."""
     blanks = [_rows_of(["pending"] * 3) for _ in range(ALL_BLANK_RELOCATE_AFTER)]
     with _RowsFnHarness(blanks) as h:
-        fn = _make_rows_fn(object(), debug_dir=None)
+        fn = _make_rows_fn(object(), _settings(), debug_dir=None)
         results = [fn() for _ in range(ALL_BLANK_RELOCATE_AFTER)]
     passed = h.locate_calls == 1 and results[-1] == []
     print(f"[{'PASS' if passed else 'FAIL'}] rows_fn_relocates_after_all_blank_streak: "
@@ -676,6 +693,37 @@ def test_baseline_cleared_on_relocalize():
     detector._reset_baseline()
     ok = had_baseline and detector._baseline_n is None
     print(f"[{'PASS' if ok else 'FAIL'}] baseline_cleared_on_relocalize (had_baseline={had_baseline})")
+    return ok
+
+
+def test_baseline_adopts_lower_reading_as_new_run():
+    """(I3) baseline 확정 후 더 낮은 값이 읽히면(카운터 역행) 그 값을 새 baseline 으로
+    채택해야 한다.
+
+    옛 구현은 baseline 이 한 번 확정되면(watch 시작 시 잔존 카운터를 잘못 흡수한
+    경우 포함) 절대 바뀌지 않았다 - 이후 실제 새 측정이 낮은 값에서 다시 시작해도
+    delta 가 영원히 음수가 되어(OCR 은 계속 성공하므로 재grounding 도 안 걸림) 이
+    watch 내내 done 이 나올 수 없었다. counter_values=[350, 5, 15]: baseline=350
+    확정 -> n=5(<350, 역행) -> baseline 재설정=5, delta=0(아직 done 아님) -> n=15,
+    delta=10(>=6), streak=7(>=6) -> done.
+    """
+    detector = _detector_with([350, 5, 15], _rows_all_ok())
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        first = detector()   # gray baseline 샘플
+        second = detector()  # n=350 -> baseline 확정
+        third = detector()   # n=5 -> 역행 감지, baseline=5 로 재설정
+        fourth = detector()  # n=15 -> delta=10, streak=7 -> done
+    text = buf.getvalue()
+    ok = (
+        first is False and second is False and third is False and fourth is True
+        and detector._baseline_n == 5
+        and "역행" in text
+    )
+    print(
+        f"[{'PASS' if ok else 'FAIL'}] baseline_adopts_lower_reading_as_new_run: "
+        f"{first},{second},{third},{fourth} baseline={detector._baseline_n}"
+    )
     return ok
 
 
@@ -707,9 +755,11 @@ def main() -> int:
         test_rows_fn_exception_returns_false,
         test_rows_fn_locates_layout_only_once,
         test_rows_fn_warns_once_on_locate_failure,
+        test_rows_fn_throttles_locate_retry_after_failure,
         test_rows_fn_overlay_only_on_verdict_change,
         test_rows_fn_relocates_after_all_blank_streak,
         test_baseline_cleared_on_relocalize,
+        test_baseline_adopts_lower_reading_as_new_run,
     ]
     results = [test() for test in tests]
     passed = sum(1 for r in results if r)

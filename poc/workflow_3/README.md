@@ -156,7 +156,7 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 | `WORKFLOW_EXTRACT_RECENTER_MIN_RATIO` | 0.40 | 라이브 박스 단발 클릭이 더블클릭(FOV 이동)으로 잘못 잡히면 올린다 |
 | `WORKFLOW_EXTRACT_REPEAT_MIN_COUNT` | 3 | 반복 조작이 하나의 step 으로 과하게 묶이면 올린다 |
 | `RECORDING_FILTER_TYPING_MIN_BURST_EVENTS` | 3 | 짧은 입력이 타이핑 구간으로 안 잡히면 내린다 |
-| `_DROPDOWN_MIN_ROW_GAP_PX` (`grouping.py` 모듈 상수, 12) | 12 | 사람이 다시 클릭할 때의 흔들림과 추정 ~24px 행 높이 사이로 blind 하게 잡은 값 — 실제 드롭다운에서 행 높이를 재본 적이 없다. PM 외 드롭다운을 놓치면 이 값을 조정한다 |
+| `WORKFLOW_EXTRACT_DROPDOWN_MIN_ROW_GAP_PX` (`grouping.py` 의 `_DROPDOWN_MIN_ROW_GAP_PX` 모듈 상수 — `WorkflowExtractSettings` 필드 아님) | 12 | 사람이 다시 클릭할 때의 흔들림과 추정 ~24px 행 높이 사이로 blind 하게 잡은 값 — 실제 드롭다운에서 행 높이를 재본 적이 없다. PM 외 드롭다운을 놓치면 이 값을 조정한다 |
 
 ## 주요 env (기존 이름 유지)
 

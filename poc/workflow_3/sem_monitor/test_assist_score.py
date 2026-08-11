@@ -218,21 +218,33 @@ def test_grid_columns_follow_headers():
 
 
 def test_grid_columns_ignore_header_order_in_items():
-    """헤더가 items 안에서 x 순서와 다르게 나와도 텍스트로 열을 잡아야 한다.
+    """헤더의 x 위치가 ASSIST_COLUMNS 순서와 어긋나도 텍스트로 열을 잡아야 한다.
 
-    위치 순서로 열을 배정하면 이 테스트가 깨진다. 실제 tool 에서는 Addressing2 가 비어
-    숫자 덩어리가 2개뿐이라, 위치 추정은 Measurement 를 잘못 고를 수 있다.
+    여기서는 Measurement 헤더를 Addressing2 보다 왼쪽에 둔다. 헤더를 x 로 정렬해
+    ASSIST_COLUMNS 에 순서대로 배정하는 구현이면 Measurement 열을 210-260 으로 잘못
+    잡아 이 테스트가 깨진다. 실제 tool 에서 Addressing2 는 대개 비어 있어 위치 추정이
+    Measurement 를 잘못 고를 수 있다 - 그걸 막는 게 텍스트 매칭의 존재 이유다.
     """
-    items = list(_panel_items())
-    items[0], items[2] = items[2], items[0]   # Measurement 헤더가 목록 앞에 오게 뒤섞는다
+    items = [
+        _item("Addressing1", 10, 5, 60, 25),
+        _item("Measurement", 110, 5, 160, 25),
+        _item("Addressing2", 210, 5, 260, 25),
+    ]
+    for idx in range(4):
+        top = 130 + idx * 30
+        items.append(_item("12", 20, top, 50, top + 18))
+        items.append(_item("34", 220, top, 250, top + 18))
+
     layout = build_score_grid(items, (300, 260))
     if layout is None:
         print("[FAIL] grid_columns_ignore_header_order_in_items: layout None")
         return False
     first = layout.grid[0]
+    # grid 열 순서는 ASSIST_COLUMNS 고정: [Addressing1, Addressing2, Measurement]
     ok = (
         first[0]["left"] == 10 and first[0]["right"] == 60
-        and first[2]["left"] == 210 and first[2]["right"] == 260
+        and first[1]["left"] == 210 and first[1]["right"] == 260
+        and first[2]["left"] == 110 and first[2]["right"] == 160
     )
     print(f"[{'PASS' if ok else 'FAIL'}] grid_columns_ignore_header_order_in_items")
     return ok

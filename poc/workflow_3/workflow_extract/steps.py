@@ -18,8 +18,11 @@ def make_step(events, *, action, rule, target=None, target_kind=None, value=None
     if target_kind is None:
         target_kind = first.get("target_kind") or "unknown"
     # 타이핑 이벤트는 구간이라 시작 시각 하나로는 길이를 잃는다. Stage 2b 가 실은
-    # t_sec_end 를 우선 쓴다(클릭 이벤트에는 없으므로 t_sec 로 폴백).
-    end_t = float(last.get("t_sec_end") or last["t_sec"])
+    # t_sec_end 를 우선 쓴다(클릭 이벤트에는 없으므로 t_sec 로 폴백). 폴백 판정은
+    # `is not None` 이어야 한다 - `or` 로 falsiness 를 쓰면 정상적인 t_sec_end == 0.0
+    # 값이 "없음"과 같이 취급되어 버려진다.
+    t_sec_end = last.get("t_sec_end")
+    end_t = float(t_sec_end) if t_sec_end is not None else float(last["t_sec"])
     return {
         "seq": 0,   # 그룹핑 패스가 마지막에 다시 매긴다.
         "action": action,

@@ -1157,9 +1157,12 @@ def make_step(events, *, action, rule, target=None, target_kind=None, value=None
     first, last = events[0], events[-1]
     if target_kind is None:
         target_kind = first.get("target_kind") or "unknown"
-    # 타이핑 이벤트는 구간이라 시작 시각 하나로는 길이를 잃는다. Stage 2b 가 실은
+    # 타이핑 이벤트는 구간이라 시작 시각 하나로는 길이를 잃는다. Stage 2b 가 싣는
     # t_sec_end 를 우선 쓴다(클릭 이벤트에는 없으므로 t_sec 로 폴백).
-    end_t = float(last.get("t_sec_end") or last["t_sec"])
+    # `or` 가 아니라 `is not None` 인 이유: 정상값 0.0 이 falsy 라서 `or` 를 쓰면
+    # 있는 값을 버리고 폴백해버린다("없음"과 "0"을 섞지 않는다).
+    raw_end = last.get("t_sec_end")
+    end_t = float(raw_end if raw_end is not None else last["t_sec"])
     return {
         "seq": 0,   # 그룹핑 패스가 마지막에 다시 매긴다.
         "action": action,

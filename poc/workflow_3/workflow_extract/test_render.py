@@ -50,12 +50,22 @@ def test_footer_lists_limitations():
 
 
 def test_coverage_table_reports_rule_distribution():
-    """어떤 규칙이 몇 개를 만들었는지 보여야 오작동 규칙을 지목할 수 있다."""
+    """어떤 규칙이 몇 개를 만들었는지 보여야 오작동 규칙을 지목할 수 있다.
+
+    (2026-08-11 리뷰 E3) 예전에는 `"R5" in md` 만 봤다 - 이 표는 "규칙 X 가 과다
+    발화했다"를 알아채는 오피스의 유일한 계기이고(C3, I1 이 정확히 그 실패다),
+    숫자가 검증되지 않은 계기는 계기가 아니다. 규칙별 행과 **건수**를 함께 고정한다.
+    """
     md = render_markdown(
-        [_step(0, "click", grouping_rule="R5"), _step(1, "click", grouping_rule="R5")],
+        [
+            _step(0, "click", grouping_rule="R5"),
+            _step(1, "click", grouping_rule="R5"),
+            _step(2, "double_click", grouping_rule="R1"),
+        ],
         _SESSION,
     )
-    assert "R5" in md
+    assert "| R5 | 2 |" in md, md
+    assert "| R1 | 1 |" in md, md
 
 
 def test_empty_steps_still_renders_header():

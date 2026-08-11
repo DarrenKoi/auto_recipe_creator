@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from poc.workflow_3.util import env_flag, env_float, env_int
+from poc.workflow_3.util import env_float, env_int
 
 
 @dataclass
@@ -16,7 +16,11 @@ class WorkflowExtractSettings:
     repeat_window_sec: float = 6.0      # R4: 반복 클릭으로 묶을 시간 창.
     repeat_min_count: int = 3           # R4: 반복으로 인정할 최소 횟수.
     same_target_px: int = 24            # R4: 라벨이 없을 때 동일 대상 판정 거리.
-    thumbnails_enabled: bool = True     # step 별 표시 프레임 저장 on/off.
+    # (2026-08-11 리뷰 I5) thumbnails_enabled 를 제거했다 - steps/*.jpg 를 쓰는
+    # 코드가 없는데도 asdict(settings) 가 workflow.json 에 실려 산출물이
+    # "thumbnails_enabled: true" 라고 광고했다. 없는 기능을 켜져 있다고 말하는 것은
+    # 이 파이프라인이 가장 경계하는 실패 형태(조용한 허위 보고)의 축소판이다.
+    # 썸네일이 필요해지면 그때 기능과 플래그를 같이 넣는다.
 
 
 def load_workflow_extract_settings() -> WorkflowExtractSettings:
@@ -29,5 +33,4 @@ def load_workflow_extract_settings() -> WorkflowExtractSettings:
         repeat_window_sec=env_float("WORKFLOW_EXTRACT_REPEAT_WINDOW_SEC", 6.0),
         repeat_min_count=env_int("WORKFLOW_EXTRACT_REPEAT_MIN_COUNT", 3),
         same_target_px=env_int("WORKFLOW_EXTRACT_SAME_TARGET_PX", 24),
-        thumbnails_enabled=env_flag("WORKFLOW_EXTRACT_THUMBNAILS", True),
     )

@@ -50,9 +50,9 @@ recording/  (frames + frame_meta.jsonl + manifest)
           settings.py      WorkflowExtractSettings (WORKFLOW_EXTRACT_* env)
           steps.py         WorkflowStep dataclass + 스키마
           grouping.py      timeline events → steps  (순수 함수, I/O 없음, VLM 없음)
-          render.py        steps → 한국어 markdown + step 별 표시 프레임
+          render.py        steps → 한국어 markdown
           extract_workflow.py   엔트리포인트
-          └─▶ workflow.json + workflow.md + steps/*.jpg
+          └─▶ workflow.json + workflow.md
 ```
 
 **Stage 2b 가 `recording_filter` 에 있는 이유:** 프레임 단위 탐지이기 때문이다.

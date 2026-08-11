@@ -42,9 +42,34 @@ def test_typing_settings_defaults():
 
 
 def test_typing_settings_env_override(monkeypatch):
-    """env 로 임계값을 바꿀 수 있어야 한다(CLI 인자 없음 규칙)."""
+    """env 로 임계값을 바꿀 수 있어야 한다(CLI 인자 없음 규칙).
+
+    (2026-08-11 리뷰 E2) 5개 필드 중 2개만 덮여 있었다. 오피스는 첫 실행 뒤 이
+    knob 들을 눈으로 못 보고(=코드 없이) 튜닝하며, 국소성 가드(C2) 이후에는 이들이
+    타이핑 탐지의 주요 레버다 - env 이름에 오타가 있으면 조용히 기본값이 유지되고
+    엔지니어는 "임계값을 바꿨는데 아무 변화가 없다"만 보게 된다.
+    """
     monkeypatch.setenv("RECORDING_FILTER_TYPING_MIN_BURST_EVENTS", "5")
     monkeypatch.setenv("RECORDING_FILTER_TYPING_DETECT", "0")
+    monkeypatch.setenv("RECORDING_FILTER_TYPING_CURSOR_STILL_PX", "16")
+    monkeypatch.setenv("RECORDING_FILTER_TYPING_BURST_IDLE_SEC", "2.5")
+    monkeypatch.setenv("RECORDING_FILTER_TYPING_FOCUS_MAX_SEC", "3.5")
     s = load_recording_filter_settings()
     assert s.typing_min_burst_events == 5
     assert s.typing_detect_enabled is False
+    assert s.typing_cursor_still_px == 16
+    assert s.typing_burst_idle_sec == 2.5
+    assert s.typing_focus_max_sec == 3.5
+
+
+def test_typing_locality_settings_defaults_and_env_override(monkeypatch):
+    """국소성 가드(리뷰 C2)의 두 임계값도 기본값 + env 를 고정한다."""
+    s = RecordingFilterSettings()
+    assert s.typing_roi_max_px == 200
+    assert s.typing_roi_max_area_px == 40000
+
+    monkeypatch.setenv("RECORDING_FILTER_TYPING_ROI_MAX_PX", "120")
+    monkeypatch.setenv("RECORDING_FILTER_TYPING_ROI_MAX_AREA_PX", "20000")
+    loaded = load_recording_filter_settings()
+    assert loaded.typing_roi_max_px == 120
+    assert loaded.typing_roi_max_area_px == 20000

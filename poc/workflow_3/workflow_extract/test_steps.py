@@ -72,7 +72,6 @@ def test_settings_defaults_match_spec():
     assert s.repeat_window_sec == 6.0
     assert s.repeat_min_count == 3
     assert s.same_target_px == 24
-    assert s.thumbnails_enabled is True
 
 
 def test_settings_env_override(monkeypatch):
@@ -80,6 +79,10 @@ def test_settings_env_override(monkeypatch):
     assert load_workflow_extract_settings().recenter_min_ratio == 0.6
 
 
-def test_settings_env_override_thumbnails_enabled(monkeypatch):
-    monkeypatch.setenv("WORKFLOW_EXTRACT_THUMBNAILS", "0")
-    assert load_workflow_extract_settings().thumbnails_enabled is False
+def test_settings_has_no_thumbnail_flag():
+    """구현이 없는 기능의 플래그를 산출물에 광고하지 않는다(2026-08-11 리뷰 I5).
+
+    workflow.json 은 asdict(settings) 를 그대로 싣기 때문에, 죽은 플래그는 그 자체로
+    거짓 보고다 - "thumbnails_enabled: true" 인데 steps/*.jpg 는 어디에도 없었다.
+    """
+    assert not hasattr(WorkflowExtractSettings(), "thumbnails_enabled")

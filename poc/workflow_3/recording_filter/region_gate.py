@@ -29,6 +29,14 @@ except ImportError:
 
 FRAME_META_FILENAME = "frame_meta.jsonl"
 
+# region_map.json 최상위 키. 생산자(build_region_maps)와 소비자
+# (workflow_extract.extract_workflow._load_live_boxes)가 **같은 상수**를 읽어야 한다 -
+# 예전에는 생산자가 "generations" 를 쓰고 소비자가 "maps" 를 읽어, 파일이 정상적으로
+# 파싱되는데도 라이브 박스가 하나도 안 나와 R1(FOV 더블클릭)이 전 실행에서 죽어 있었다.
+# 그런데도 경고 한 줄 없이 status=success 였다(2026-08-11 최종 리뷰 C1). 문자열을 양쪽에
+# 각자 적어 두면 같은 사고가 반복되므로 이름 붙인 상수 하나로 묶는다.
+REGION_MAP_KEY = "generations"
+
 # (2026-08-10 리뷰 FINDING 2) 최근접 조인 최대 허용 간격(초).
 # 레코더는 poll_sec(기본 0.2s)마다 캡처하고, 사이드카는 프레임 저장 여부와 무관하게
 # 캡처마다 한 줄씩 남긴다(monitor/frame_meta.py, manual_record.py:_make_capture_fn) -
@@ -270,7 +278,7 @@ def build_region_maps(events, metas, client, out_dir) -> dict:
     save_debug_json(
         out_dir / "region_map.json",
         {
-            "generations": [
+            REGION_MAP_KEY: [
                 {"generation": gen, "live_box": region_map.live_box}
                 for gen, region_map in sorted(maps.items())
             ]

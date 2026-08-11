@@ -73,13 +73,22 @@ def _resolve_input_dir():
 def _load_live_boxes(out_dir):
     """region_map.json 에서 {generation: live_box} 를 만든다. 없으면 빈 dict.
 
+    최상위 키는 생산자와 공유하는 상수(`region_gate.REGION_MAP_KEY`)로 읽는다 -
+    예전에는 이쪽만 "maps" 라고 적어 두어, 파일이 정상 파싱되는데도 박스가 0개라
+    R1 이 모든 실행에서 죽어 있었는데 경고조차 없었다(2026-08-11 리뷰 C1).
+
     entry 의 live_box 는 그 세대의 detect_sem_box 가 실패했으면 None 이다 - "탐지
     실패로 없음"이지 "박스가 존재하되 falsy 인 값"이 아니므로 `is not None` 으로만
     걸러낸다(단순 truthy 체크도 결과는 같지만, 의도가 "None=결측"임을 코드에서
     분명히 하기 위해 명시적으로 쓴다). generation 은 0 이 가장 흔한 정상 값이라
     `int(... or 0)` 폴백은 "없음"과 "명시적 0" 을 같은 결과(0)로 수렴시키기 위한
     것이지, 0 을 걸러내려는 게 아니다.
+
+    파싱은 됐는데 박스가 0개인 경우에도 경고한다 - "박스 없음"을 조용히 빈 dict 로
+    돌려주는 것이 C1 을 13개 태스크 동안 안 보이게 만든 원인이다.
     """
+    from poc.workflow_3.recording_filter.region_gate import REGION_MAP_KEY
+
     path = Path(out_dir) / "region_map.json"
     payload = _read_json(path)
     if not payload:
@@ -92,15 +101,37 @@ def _load_live_boxes(out_dir):
         else:
             print("[WARNING] region_map.json 이 없습니다 - R1(FOV 더블클릭)이 비활성화됩니다.")
         return {}
+    entries = payload.get(REGION_MAP_KEY) or []
     boxes = {}
-    for entry in payload.get("maps") or []:
+    for entry in entries:
         if entry.get("live_box") is not None:
             boxes[int(entry.get("generation") or 0)] = entry["live_box"]
+    if not boxes:
+        print(
+            f"[WARNING] region_map.json 을 읽었지만 live_box 가 0개입니다"
+            f"(키 '{REGION_MAP_KEY}' 항목 {len(entries)} 건) - R1(FOV 더블클릭)이 "
+            "비활성화되고 coords_in_live_box 가 전부 null 이 됩니다. "
+            "region_map_gen0.jpg 와 detect_sem_box 결과를 먼저 확인하세요."
+        )
     return boxes
 
 
 def _load_changes(out_dir):
-    """change_events.json 의 events 를 돌려준다. 없으면 빈 목록."""
+    """change_events.json 에서 R1 이 근거로 쓸 변화 이벤트만 돌려준다.
+
+    (2026-08-11 리뷰 I1) 이 파일은 Stage 1 전체를 담는다 - Stage 1.5 가 걷어낸
+    `ambient`(라이브 박스 안에서만 변했고 커서는 밖 = 라이브 SEM 영상의 자율 갱신)
+    까지 들어 있고, README 기준 그쪽이 90% 이상이다. R1 의 recenter 시그니처는
+    "라이브 박스 대부분이 다시 그려졌다"인데 ambient 전면 리페인트는 그 비율이 ~1.0
+    이라 구분이 불가능하다 - 걸러내지 않으면 라이브 박스 근처 클릭이 평범한 영상
+    갱신 때문에 `double_click(intent=fov_move, inferred=true)` 로 승격된다. 비율
+    임계(recenter_min_ratio)를 올려서는 막을 수 없다.
+
+    그래서 Stage 1.5 가 이미 계산해 둔 판정을 그대로 쓴다(filter_recording 이
+    change_events.json 의 각 이벤트에 verdict/occlusion 을 함께 적는다). 판정
+    필드가 아예 없는 예전 형식은 "전부 통과"로 degrade 하지 않고 R1 을 끈다 -
+    ambient 를 근거로 삼는 것보다 규칙이 안 도는 편이 낫고, 대신 경고를 남긴다.
+    """
     path = Path(out_dir) / "change_events.json"
     payload = _read_json(path)
     if not payload:
@@ -113,7 +144,27 @@ def _load_changes(out_dir):
         else:
             print("[WARNING] change_events.json 이 없습니다 - R1(FOV 더블클릭)이 비활성화됩니다.")
         return []
-    return payload.get("events") or []
+    events = payload.get("events") or []
+    if not events:
+        return []
+    with_verdict = [ev for ev in events if ev.get("verdict")]
+    if not with_verdict:
+        print(
+            f"[WARNING] change_events.json 의 {len(events)} 건에 Stage 1.5 판정(verdict)이 "
+            "없습니다(예전 형식이거나 영역 게이트를 끄고 돌린 산출물) - ambient 를 "
+            "recenter 근거로 오인하지 않도록 R1(FOV 더블클릭)을 비활성화합니다. "
+            "filter_recording.py 를 다시 실행하세요."
+        )
+        return []
+    candidates = [
+        ev for ev in with_verdict
+        if ev["verdict"] == "candidate" and ev.get("occlusion") != "full"
+    ]
+    print(
+        f"[INFO] R1 근거 변화 이벤트: {len(candidates)} / {len(events)} 건"
+        f"(ambient/가림 {len(events) - len(candidates)} 건 제외)"
+    )
+    return candidates
 
 
 def _frame_size(capture_dir):

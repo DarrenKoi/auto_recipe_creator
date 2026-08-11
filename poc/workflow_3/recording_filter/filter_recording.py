@@ -127,9 +127,21 @@ def _copy_change_events(change_events, out_dir: Path) -> None:
         shutil.copy2(src, dst)
 
 
-def _change_events_payload(change_events) -> list[dict]:
-    return [
-        {
+def _change_events_payload(change_events, gate_info=None) -> list[dict]:
+    """Stage 1 이벤트 전체를 JSON 으로 만든다(있으면 Stage 1.5 판정을 함께 싣는다).
+
+    (2026-08-11 리뷰 I1) 이 파일은 감사 추적용으로 Stage 1 **전체**를 담는데,
+    workflow_extract 의 R1 이 여기서 recenter 근거를 찾는다. 판정 없이 내보내면
+    소비자가 ambient(라이브 SEM 영상 자율 갱신)를 사람의 FOV 이동 근거로 오인한다 -
+    게이트가 이미 계산해 둔 verdict/region/occlusion 을 이벤트마다 같이 적어
+    소비자가 스스로 걸러낼 수 있게 한다. 게이트를 끄고 돌리면 판정 필드가 아예
+    없으므로(소비자가 "판정 없음"을 degrade 사유로 구분할 수 있다) 빈 값으로
+    채워 "candidate 인 척" 하지 않는다.
+    """
+    gate_info = gate_info or {}
+    payload = []
+    for ev in change_events:
+        item = {
             "rank": ev.rank,
             "frame_path": ev.frame_path,
             "prev_frame_path": ev.prev_frame_path,
@@ -139,8 +151,14 @@ def _change_events_payload(change_events) -> list[dict]:
             "largest_blob_area_px": ev.largest_blob_area_px,
             "changed_pixels": ev.changed_pixels,
         }
-        for ev in change_events
-    ]
+        gate = gate_info.get(ev.rank)
+        if gate:
+            item["verdict"] = gate.get("verdict")
+            item["region"] = gate.get("region")
+            item["occlusion"] = gate.get("occlusion")
+            item["generation"] = gate.get("generation")
+        payload.append(item)
+    return payload
 
 
 def _label_one_click(ce, settings, *, ocr_client, vlm_client, crops_dir):
@@ -217,19 +235,9 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # ---- Stage 1 ----
-    change_events = reduce_frames(frames_dir, settings)
-    stage1_total = len(change_events)  # Stage 1.5 가 change_events 를 걸러 덮어쓰기 전 원본 건수.
-    save_debug_json(
-        out_dir / "change_events.json",
-        {
-            "capture_dir": str(capture_dir),
-            "frames_dir": str(frames_dir),
-            "min_change_area_px": settings.min_change_area_px,
-            "diff_threshold": settings.diff_threshold,
-            "resize_width": settings.resize_width,
-            "events": _change_events_payload(change_events),
-        },
-    )
+    stage1_events = reduce_frames(frames_dir, settings)
+    change_events = stage1_events
+    stage1_total = len(stage1_events)  # Stage 1.5 가 change_events 를 걸러 덮어쓰기 전 원본 건수.
 
     # ---- Stage 1.5: 영역 게이트 ----
     from poc.workflow_3.recording_filter.region_gate import (
@@ -278,6 +286,20 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
                 "Stage 2a 에서 제외했습니다(summary.json 의 occluded_events_excluded)."
             )
         print(f"[INFO] Stage 1.5 통과: {len(change_events)} 건이 Stage 2a 로 갑니다.")
+
+    # change_events.json 은 Stage 1 전체(감사 추적) + 게이트 판정을 담는다. 게이트
+    # 뒤에 쓰는 이유는 소비자(R1)가 ambient 를 걸러낼 수 있어야 하기 때문이다(I1).
+    save_debug_json(
+        out_dir / "change_events.json",
+        {
+            "capture_dir": str(capture_dir),
+            "frames_dir": str(frames_dir),
+            "min_change_area_px": settings.min_change_area_px,
+            "diff_threshold": settings.diff_threshold,
+            "resize_width": settings.resize_width,
+            "events": _change_events_payload(stage1_events, gate_info),
+        },
+    )
 
     # 게이트 통과분만 디스크에 복사한다(FINDING 7 - 원본 옆 GB 단위 중복 방지).
     _copy_change_events(change_events, out_dir / "change_events")

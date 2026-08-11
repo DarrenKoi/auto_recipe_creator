@@ -2,7 +2,13 @@
 
 import json
 
-from poc.workflow_3.workflow_extract.extract_workflow import _exit_code, run_extract
+from poc.workflow_3.recording_filter.region_gate import REGION_MAP_KEY
+from poc.workflow_3.workflow_extract.extract_workflow import (
+    _exit_code,
+    _load_changes,
+    _load_live_boxes,
+    run_extract,
+)
 
 
 def _write(path, payload):
@@ -23,7 +29,7 @@ def _session(tmp_path, events):
     out = tmp_path / "recording_filter"
     _write(out / "interaction_timeline.json",
            {"capture_dir": str(tmp_path / "recording"), "events": events})
-    _write(out / "region_map.json", {"maps": [{"generation": 0, "live_box": None}]})
+    _write(out / "region_map.json", {REGION_MAP_KEY: [{"generation": 0, "live_box": None}]})
     _write(out / "change_events.json", {"events": []})
     return out
 
@@ -73,7 +79,7 @@ def test_eqp_id_from_manual_layout_path(tmp_path):
     capture_dir = tmp_path / "EQP123" / "_manual" / "tag001" / "recording"
     _write(out / "interaction_timeline.json",
            {"capture_dir": str(capture_dir), "events": [_timeline_event(0, 10.0)]})
-    _write(out / "region_map.json", {"maps": [{"generation": 0, "live_box": None}]})
+    _write(out / "region_map.json", {REGION_MAP_KEY: [{"generation": 0, "live_box": None}]})
     _write(out / "change_events.json", {"events": []})
 
     assert run_extract(input_dir=out) == "success"
@@ -87,7 +93,7 @@ def test_eqp_id_falls_back_to_unknown_without_manual_marker(tmp_path):
     capture_dir = tmp_path / "EQP1" / "CLASS" / "RECIPE" / "captured_img_from_rcs" / "tag001" / "recording"
     _write(out / "interaction_timeline.json",
            {"capture_dir": str(capture_dir), "events": [_timeline_event(0, 10.0)]})
-    _write(out / "region_map.json", {"maps": [{"generation": 0, "live_box": None}]})
+    _write(out / "region_map.json", {REGION_MAP_KEY: [{"generation": 0, "live_box": None}]})
     _write(out / "change_events.json", {"events": []})
 
     assert run_extract(input_dir=out) == "success"
@@ -149,3 +155,158 @@ def test_malformed_region_map_reports_parse_failure_not_missing(tmp_path, capsys
     assert run_extract(input_dir=out) == "success"
     captured = capsys.readouterr()
     assert "region_map.json 이 있지만 읽지 못했습니다" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-11 최종 리뷰 C1/I1 - 생산자 산출물 <-> 소비자 리더 계약.
+# ---------------------------------------------------------------------------
+
+_LIVE_BOX = {"left": 200, "top": 100, "right": 1000, "bottom": 700}
+
+
+def _real_region_map(tmp_path, live_box=None):
+    """실제 build_region_maps 를 돌려 region_map.json 을 만든다(detect_sem_box 만 대역).
+
+    C1 을 놓친 이유가 "픽스처가 소비자 쪽 키를 직접 적어 둔 것" 이므로, 이 테스트는
+    문자열을 손으로 적지 않고 **생산자 함수가 실제로 쓴 파일**을 소비자에게 먹인다.
+    """
+    from PIL import Image
+
+    import poc.workflow_3.sem_monitor.sem_box_detect as sem_box_detect_mod
+    from poc.workflow_3.recording_filter.frame_reduce import ChangeEvent
+    from poc.workflow_3.recording_filter.region_gate import FrameMeta, build_region_maps
+
+    frame = tmp_path / "frame_0.jpg"
+    Image.new("RGB", (1200, 800), "white").save(frame, format="JPEG")
+    event = ChangeEvent(
+        rank=0, frame_path=str(frame), prev_frame_path=str(frame), timestamp_sec=1.0,
+        frame_index=0, change_bbox=dict(_LIVE_BOX), largest_blob_area_px=9000,
+        changed_pixels=9000,
+    )
+    meta = FrameMeta(
+        t_sec=1.0, rect={"left": 0, "top": 0, "right": 1200, "bottom": 800},
+        occlusion="none", cursor_xy=[500, 400], cursor_in_window=True,
+    )
+
+    class _Detection:
+        def __init__(self, bbox):
+            self.detected = bbox is not None
+            self.bbox_px = bbox
+
+    original = sem_box_detect_mod.detect_sem_box
+    sem_box_detect_mod.detect_sem_box = lambda _img, _client, **_kw: _Detection(live_box)
+    try:
+        out = tmp_path / "recording_filter"
+        build_region_maps([event], [meta], object(), out)
+    finally:
+        sem_box_detect_mod.detect_sem_box = original
+    return out
+
+
+def test_producer_region_map_is_readable_by_consumer(tmp_path):
+    """build_region_maps 가 쓴 region_map.json 을 _load_live_boxes 가 실제로 읽어야 한다.
+
+    이것이 C1(생산자 "generations" vs 소비자 "maps") 을 잡는 테스트다 - 두 모듈이
+    같은 키 상수를 공유하지 않으면 여기서 빈 dict 가 나온다.
+    """
+    out = _real_region_map(tmp_path, live_box=dict(_LIVE_BOX))
+    boxes = _load_live_boxes(out)
+    assert boxes == {0: _LIVE_BOX}, boxes
+
+
+def test_load_live_boxes_warns_when_payload_has_zero_boxes(tmp_path, capsys):
+    """파싱은 됐는데 박스가 0개면 조용히 빈 dict 를 돌려주면 안 된다(C1 을 숨긴 침묵)."""
+    out = _real_region_map(tmp_path, live_box=None)   # detect 실패 -> live_box=None
+    assert _load_live_boxes(out) == {}
+    captured = capsys.readouterr()
+    assert "live_box 가 0개" in captured.out
+
+
+def _change_events_file(out, records):
+    """filter_recording 의 실제 payload 생성기로 change_events.json 을 만든다."""
+    from poc.workflow_3.recording_filter.filter_recording import _change_events_payload
+    from poc.workflow_3.recording_filter.frame_reduce import ChangeEvent
+
+    events, gate_info = [], {}
+    for rank, (t_sec, bbox, verdict, occlusion) in enumerate(records):
+        events.append(ChangeEvent(
+            rank=rank, frame_path=f"/tmp/f_{rank}.jpg", prev_frame_path=f"/tmp/f_{rank}p.jpg",
+            timestamp_sec=t_sec, frame_index=rank, change_bbox=bbox,
+            largest_blob_area_px=9000, changed_pixels=9000,
+        ))
+        if verdict is not None:
+            gate_info[rank] = {
+                "generation": 0, "region": "live_image",
+                "occlusion": occlusion, "verdict": verdict,
+            }
+    _write(out / "change_events.json", {"events": _change_events_payload(events, gate_info)})
+
+
+def test_producer_change_events_are_readable_by_consumer(tmp_path):
+    """filter_recording 이 쓴 change_events.json 에서 candidate 만 골라 읽어야 한다."""
+    out = tmp_path / "recording_filter"
+    _change_events_file(out, [
+        (10.4, dict(_LIVE_BOX), "candidate", "none"),
+        (10.5, dict(_LIVE_BOX), "ambient", "none"),
+        (10.6, dict(_LIVE_BOX), "candidate", "full"),
+    ])
+    loaded = _load_changes(out)
+    assert [ev["timestamp_sec"] for ev in loaded] == [10.4], loaded
+
+
+def _live_click(seq, t_sec):
+    event = _timeline_event(seq, t_sec, element=None)
+    event.update({"region": "live_image", "target_kind": "live_image",
+                  "element_source": "none", "coords": {"x": 600, "y": 400}})
+    return event
+
+
+def _live_session(tmp_path, change_records):
+    out = tmp_path / "recording_filter"
+    _write(out / "interaction_timeline.json",
+           {"capture_dir": str(tmp_path / "EQP1" / "_manual" / "tag" / "recording"),
+            "events": [_live_click(0, 10.0)]})
+    _write(out / "region_map.json",
+           {REGION_MAP_KEY: [{"generation": 0, "live_box": dict(_LIVE_BOX)}]})
+    _change_events_file(out, change_records)
+    return out
+
+
+def _steps(out):
+    return json.loads((out / "workflow.json").read_text(encoding="utf-8"))["steps"]
+
+
+def test_loaded_live_box_and_candidate_change_produce_double_click(tmp_path):
+    """region_map.json -> live_box -> R1 -> double_click 경로 전체를 한 번에 건다.
+
+    기존 R1 테스트는 live_boxes 를 직접 주입해 로더를 우회했기 때문에, R1 이 실제
+    실행에서 100% 죽어 있다는 사실(C1)이 드러나지 않았다.
+    """
+    out = _live_session(tmp_path, [(10.4, dict(_LIVE_BOX), "candidate", "none")])
+    assert run_extract(input_dir=out) == "success"
+    step = _steps(out)[0]
+    assert step["action"] == "double_click", step
+    assert step["grouping_rule"] == "R1"
+    assert step["coords_in_live_box"] == [0.5, 0.5]
+
+
+def test_ambient_live_box_repaint_does_not_produce_double_click(tmp_path):
+    """ambient(라이브 영상 자율 갱신)는 FOV 이동 근거가 될 수 없다(I1).
+
+    ambient 전면 리페인트는 비율이 ~1.0 이라 recenter 시그니처와 겉모습이 같다 -
+    걸러내지 않으면 평범한 영상 갱신이 `double_click(inferred)` 로 승격돼, 문서에
+    엔지니어가 하지 않은 조작이 확신에 찬 얼굴로 실린다.
+    """
+    out = _live_session(tmp_path, [(10.4, dict(_LIVE_BOX), "ambient", "none")])
+    assert run_extract(input_dir=out) == "success"
+    step = _steps(out)[0]
+    assert step["action"] == "click", step
+    assert step["grouping_rule"] == "R5"
+
+
+def test_change_events_without_verdict_disable_r1_with_warning(tmp_path, capsys):
+    """판정 필드가 없는 예전 산출물은 "전부 통과"가 아니라 R1 비활성화 + 경고다."""
+    out = _live_session(tmp_path, [(10.4, dict(_LIVE_BOX), None, None)])
+    assert run_extract(input_dir=out) == "success"
+    assert _steps(out)[0]["grouping_rule"] == "R5"
+    assert "판정(verdict)이" in capsys.readouterr().out

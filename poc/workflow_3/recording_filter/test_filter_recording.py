@@ -1,5 +1,7 @@
 """filter_recording e2e — 합성 녹화 폴더 + 가짜 client 로 산출물 검증."""
 
+import base64
+import io
 import json
 
 import numpy as np
@@ -365,6 +367,113 @@ def test_typing_disabled_by_env_still_reports_zero(monkeypatch, tmp_path):
         (rec.parent / "recording_filter" / "summary.json").read_text(encoding="utf-8")
     )
     assert summary["typing_bursts"] == 0
+
+
+class _CropAwareVlmClient:
+    """Stage 2c/2b 가 내부에서 만드는 실제 Workflow1VLMClient 를 대체한다.
+
+    filter_recording 은 Stage 2c/2b 의 OCR client 를 함수 안에서 직접
+    `Workflow1VLMClient(service_slug)` 로 만들기 때문에(run_filter 의 `client`
+    인자로는 주입되지 않는다), 이 클래스로 그 심볼 자체를 monkeypatch 한다.
+    호출마다 다른 이미지를 받으므로, crop 크기/평균 밝기로 어느 스테이지의
+    어느 콜인지 구분해 응답한다 - 몇 번째 호출인지에 의존하면 스테이지 순서가
+    바뀌어도 우연히 통과할 수 있어 순서를 못 박지 못한다.
+    """
+
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def chat_with_image_b64(self, *, image_b64, **_kwargs):
+        raw = base64.b64decode(image_b64)
+        image = Image.open(io.BytesIO(raw))
+        width, height = image.size
+        if (width, height) == (260, 260):
+            # Stage 2c 의 요소 crop(settings.element_crop_px=260, 클램프 없음).
+            payload = [
+                {"text": "Start", "bbox": {"left": 100, "top": 100, "right": 160, "bottom": 130}},
+            ]
+        else:
+            # Stage 2b 의 타이핑 ROI crop - 채움 값(밝기)으로 전/후를 가른다.
+            mean = float(np.array(image.convert("L")).mean())
+            text = "before123" if mean < 128 else "after456"
+            payload = [{"text": text, "bbox": {"left": 0, "top": 0, "right": 20, "bottom": 20}}]
+        return _FakeResponse(json.dumps(payload))
+
+
+def test_typing_event_carries_stage2c_label_pinning_ordering(tmp_path, monkeypatch):
+    """type_text 이벤트가 Stage 2c 라벨을 실어야 한다 - Stage 2b가 2c *뒤*에 돌아야만
+    성립하는 유일한 단언이다.
+
+    합성 세션을 3막으로 구성한다:
+    1) 클릭 1건(커서 (300,130) 근처 큰 변화) - Stage 2c 가 "Start" 로 라벨링한다.
+    2) 커서가 (500,50) 로 이동해 8px 이내로 멈춘 채, 멀리 떨어진 작은 영역이
+       연속 3번 바뀐다(typing_min_burst_events=3 충족) - Stage 2b 가 타이핑
+       구간으로 잡는다. 채움 값이 90->150->210 으로 바뀌므로 OCR 이 읽는
+       전/후 텍스트가 달라 캐럿 깜빡임으로 버려지지 않는다.
+    3) 구간 시작(0.8s) 은 클릭(0.3s) 로부터 0.5s 뒤라 typing_focus_max_sec(2.0s)
+       안에 들어 _focus_label 이 그 클릭의 라벨을 붙인다.
+
+    Stage 2b 블록이 Stage 2c 블록보다 앞으로 옮겨지면 이 시점의 `labels` 는
+    비어 있거나(NameError 로 죽거나) 최소한 "Start" 를 담고 있지 않으므로
+    이 단언은 실패한다 - 즉 통과 여부가 실제로 배선 순서에 달려 있다.
+    """
+    rec = tmp_path / "typing_tag" / "recording"
+    width, height = 600, 400
+    base = np.full((height, width), 30, dtype=np.uint8)
+
+    click = base.copy()
+    click[80:180, 250:360] = 255                      # 클릭 변화(F0->F1)
+
+    typing1 = click.copy()
+    typing1[300:370, 430:530] = 90                     # 타이핑 변화 1(F1->F2)
+
+    typing2 = typing1.copy()
+    typing2[300:370, 430:530] = 150                    # 타이핑 변화 2(F2->F3)
+
+    typing3 = typing2.copy()
+    typing3[300:370, 430:530] = 210                    # 타이핑 변화 3(F3->F4)
+
+    _write(rec / "tag_rcs_0000_00000000ms.jpg", base)
+    _write(rec / "tag_rcs_0001_00000300ms.jpg", click)
+    _write(rec / "tag_rcs_0002_00000800ms.jpg", typing1)
+    _write(rec / "tag_rcs_0003_00001000ms.jpg", typing2)
+    _write(rec / "tag_rcs_0004_00001200ms.jpg", typing3)
+
+    rect = {"left": 0, "top": 0, "right": width, "bottom": height}   # 100% 배율
+    _write_sidecar(rec, [
+        {"frame": "seq_0", "t_sec": 0.0, "window_rect": rect, "foreground_title": "x",
+         "occlusion": "none", "cursor_screen_xy": [300, 130], "cursor_in_window": True},
+        {"frame": "seq_1", "t_sec": 0.3, "window_rect": rect, "foreground_title": "x",
+         "occlusion": "none", "cursor_screen_xy": [300, 130], "cursor_in_window": True},
+        {"frame": "seq_2", "t_sec": 0.8, "window_rect": rect, "foreground_title": "x",
+         "occlusion": "none", "cursor_screen_xy": [500, 50], "cursor_in_window": True},
+        {"frame": "seq_3", "t_sec": 1.0, "window_rect": rect, "foreground_title": "x",
+         "occlusion": "none", "cursor_screen_xy": [500, 50], "cursor_in_window": True},
+        {"frame": "seq_4", "t_sec": 1.2, "window_rect": rect, "foreground_title": "x",
+         "occlusion": "none", "cursor_screen_xy": [500, 50], "cursor_in_window": True},
+    ])
+
+    monkeypatch.setattr(
+        "poc.workflow_3.vlm.vlm_client.Workflow1VLMClient", _CropAwareVlmClient
+    )
+    settings = RecordingFilterSettings(
+        vlm_request_delay_sec=0.0, min_change_area_px=3000, region_gate_enabled=False,
+    )
+    status = run_filter(input_dir=rec, settings=settings, client=_FakeClient())
+    assert status == "success", status
+
+    out_dir = rec.parent / "recording_filter"
+    summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary["typing_bursts"] == 1, summary
+    assert summary["typing_events"] == 1, summary
+    assert summary["vlm_calls_stage2b_ocr"] == 2, summary
+
+    timeline = json.loads((out_dir / "interaction_timeline.json").read_text(encoding="utf-8"))
+    typing_events = [ev for ev in timeline["events"] if ev["action"] == "type_text"]
+    assert len(typing_events) == 1, timeline
+    event = typing_events[0]
+    assert event["element"] == "Start", event   # Stage 2c 라벨이 실려 있어야 한다.
+    assert event["text"] == "after456", event
 
 
 def test_run_filter_finds_sidecar_in_capture_root_when_frames_are_nested(tmp_path, monkeypatch):

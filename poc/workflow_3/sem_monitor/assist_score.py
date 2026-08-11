@@ -46,11 +46,20 @@ RED_DOMINANCE_MIN = 40  # R - max(G,B) 가 이 이상이면 붉은 계열.
 RED_RATIO_MIN = 0.30    # 잉크 중 빨강 비율이 이 이상이면 red.
 BLACK_RATIO_MAX = 0.10  # 이 이하면 black. 사이는 unknown.
 
-# 숫자 글자는 셀 면적 대비 성글다(1~2 자리 score 숫자가 촘촘한 crop 에서도 대개 20~30%
-# 안팎). SEM 썸네일처럼 셀 대부분이 어두운 픽셀로 덮이면 글자가 아니라 이미지다 - 이
-# 비율을 넘으면 무조건 unknown 으로 돌려 streak 을 끊는다(검정으로 오판정하는 것보다
-# 안전한 방향). 0.55 는 두 자리 숫자가 셀을 거의 채워도 여유 있게 통과시키는 값이다.
-INK_DENSE_MAX_RATIO = 0.55
+# SEM 썸네일처럼 셀 대부분이 어두운 픽셀로 덮이면 글자가 아니라 이미지다 - 이 비율을
+# 넘으면 무조건 unknown 으로 돌려 streak 을 끊는다(검정으로 오판정하는 것보다 안전한
+# 방향).
+#
+# 값의 근거(0.85):
+#   - 실제 숫자를 자기 tight bbox 안에서 재면 잉크 비율이 0.44~0.74(중앙값 0.58)다
+#     (Arial/Arial Bold/Helvetica/Verdana Bold, 11/13/16px 렌더 측정).
+#   - 썸네일로 덮인 셀은 0.95~1.0 이다.
+#   - 게다가 `build_score_grid` 가 셀을 글자 bbox 보다 넉넉히(축당 CELL_PAD_*_RATIO)
+#     키우므로 실제 숫자는 배경 위에 놓여 위 tight bbox 값보다 훨씬 더 성글어진다.
+# 즉 0.85 는 정상 숫자 분포 전체보다 위, 썸네일 분포보다 아래에 있다. 이전 값 0.55 는
+# 숫자 분포 한가운데(중앙값 0.58 바로 아래)라, 셀이 글자에 딱 붙던 시절 정상 숫자까지
+# unknown 으로 끊어 기능이 통째로 무력화됐다.
+INK_DENSE_MAX_RATIO = 0.85
 
 
 def classify_ink(cell_rgb: np.ndarray) -> str:
@@ -163,6 +172,10 @@ def ok_streak(rows: list) -> int:
 # 눈에 띄게 로그한다.
 MIN_USABLE_SPOTTING_ITEMS = 4  # 헤더 3개 + 숫자 1개가 최소.
 
+# 0-1000 정규화 좌표 판정용 띠. 정규화 응답은 가장 큰 좌표가 1000 부근에 붙는다.
+NORM1000_BAND_LO = 950.0
+NORM1000_BAND_HI = 1005.0
+
 
 def _resolve_item_coord_space(items: list, panel_size: tuple) -> tuple:
     """OCR spotting 항목 bbox 가 어느 좌표계인지 판정해 (sx, sy, space) 를 돌려준다.
@@ -183,6 +196,14 @@ def _resolve_item_coord_space(items: list, panel_size: tuple) -> tuple:
             max_coord = max(max_coord, float(bbox.get("right", 0)), float(bbox.get("bottom", 0)))
     if items and max_coord <= 1.5:
         return float(pw), float(ph), "frac01"
+    if NORM1000_BAND_LO <= max_coord <= NORM1000_BAND_HI:
+        # 최대 좌표가 1000 바로 언저리면 패널 크기와 무관하게 0-1000 정규화로 본다.
+        # crop 픽셀 좌표가 하필 이 좁은 띠 안에서 최대값을 찍을 확률은 사실상 없지만,
+        # 큰 모니터(패널 crop 이 1000px 을 넘음)에서는 아래의 크기 의존 임계가 진짜
+        # 0-1000 좌표를 crop 픽셀로 오판정한다 - 그러면 셀이 썸네일 위에 놓여 모든 행이
+        # black 으로 읽히고 streak 이 7 에 고정되는(이 검출을 도입한 이유였던) 버그가
+        # 조용히 되살아난다.
+        return pw / 1000.0, ph / 1000.0, "norm1000"
     if max_coord <= max(pw, ph) * 1.05:
         return 1.0, 1.0, "crop_px"
     return pw / 1000.0, ph / 1000.0, "norm1000"
@@ -232,6 +253,24 @@ def normalize_spotting_items_to_panel(items: list, panel_size: tuple) -> list:
             },
         })
     return out
+
+
+# 셀 여유(padding). 셀 x 범위를 숫자 bbox 합집합으로 잡으면 글자가 셀을 꽉 채워
+# classify_ink 의 밀집 가드(INK_DENSE_MAX_RATIO)를 건드린다 - 글자가 배경 위에 놓이도록
+# 축당 이만큼 키운다(각 변에 폭/높이의 35%).
+CELL_PAD_X_RATIO = 0.35
+CELL_PAD_Y_RATIO = 0.35
+
+# 세로 여유는 행 pitch 를 넘으면 안 된다 - 넘으면 셀이 위/아래 이웃 행의 숫자를 함께
+# 담아 색 판정이 섞인다(글자 높이가 pitch 의 큰 부분을 차지하는 표에서 실제로 발생).
+# 패딩 후 높이를 pitch 의 이 비율로 잘라 행 사이에 눈에 보이는 틈을 남긴다.
+CELL_MAX_PITCH_RATIO = 0.9
+
+
+def _pad_span(low: float, high: float, ratio: float) -> tuple:
+    """[low, high] 구간을 폭의 ratio 만큼 양쪽으로 넓힌다."""
+    pad = (high - low) * ratio
+    return low - pad, high + pad
 
 
 # 헤더 텍스트 매칭용 - 영숫자만 남기고 소문자 비교(OCR 공백/기호 흔들림 흡수).
@@ -287,6 +326,10 @@ def build_score_grid(items: list, panel_size: tuple, *, rows: int = ASSIST_ROWS)
 
     행은 숫자 항목의 y 중심을 모아 띠(band) 간 간격의 중앙값으로 pitch 를 구한 뒤 rows
     개로 외삽한다 - 중간 띠 하나가 누락돼도 다수결로 버틴다.
+
+    셀은 글자 bbox 에 딱 붙이지 않고 축당 `CELL_PAD_*_RATIO` 만큼 키운다 - 글자가 셀을
+    꽉 채우면 `classify_ink` 의 밀집 가드가 정상 숫자를 썸네일로 오인해 기능이 통째로
+    죽는다. 세로는 `CELL_MAX_PITCH_RATIO` 로 pitch 안에 가둬 이웃 행을 물지 않게 한다.
 
     items 는 패널 crop 좌표계여야 한다(호출부는 `normalize_spotting_items_to_panel` 로
     먼저 좌표계를 맞춰야 한다). panel_size 는 (width, height).
@@ -346,15 +389,30 @@ def build_score_grid(items: list, panel_size: tuple, *, rows: int = ASSIST_ROWS)
     if pitch <= 0:
         return None
 
-    # 열별 x 범위 확정: 숫자가 배정됐으면 그 합집합, 아니면 헤더 폴백.
+    # 열별 x 범위 확정: 숫자가 배정됐으면 그 합집합, 아니면 헤더 폴백. 어느 쪽이든
+    # 좌우로 여유를 줘 글자가 셀을 꽉 채우지 않게 한다(밀집 가드 오작동 방지).
     column_x_ranges = {}
     for column in ASSIST_COLUMNS:
         span = number_x_ranges[column]
         if span is not None:
-            column_x_ranges[column] = (int(round(span[0])), int(round(span[1])))
+            raw = (float(span[0]), float(span[1]))
         else:
             box = header_boxes[column]
-            column_x_ranges[column] = (int(box.get("left", 0)), int(box.get("right", 0)))
+            raw = (float(box.get("left", 0)), float(box.get("right", 0)))
+        left, right = _pad_span(raw[0], raw[1], CELL_PAD_X_RATIO)
+        column_x_ranges[column] = (int(round(left)), int(round(right)))
+
+    # 세로 여유: 글자 높이의 CELL_PAD_Y_RATIO 를 위아래로 더하되, pitch 안에 확실히
+    # 머무르도록 자른다. cell_h 가 pitch 의 큰 부분을 차지하면 패딩만 믿었다가 이웃 행을
+    # 물어 들인다.
+    padded_h = cell_h * (1.0 + 2.0 * CELL_PAD_Y_RATIO)
+    max_h = pitch * CELL_MAX_PITCH_RATIO
+    if padded_h > max_h:
+        padded_h = max_h
+    cell_h_padded = max(1, int(round(padded_h)))
+    if cell_h_padded >= pitch:
+        # 반올림이 pitch 를 건드리는 극단(pitch 가 아주 작은 표)에서도 틈을 보장한다.
+        cell_h_padded = max(1, int(pitch) - 1)
 
     newest_at = ASSIST_NEWEST_ROW_AT
     if newest_at not in ("top", "bottom"):
@@ -377,8 +435,8 @@ def build_score_grid(items: list, panel_size: tuple, *, rows: int = ASSIST_ROWS)
     grid = []
     for row_idx in range(rows):
         center = _center_for(row_idx)
-        top = int(round(center - cell_h / 2.0))
-        bottom = int(round(center + cell_h / 2.0))
+        top = int(round(center - cell_h_padded / 2.0))
+        bottom = top + cell_h_padded
         row_boxes = []
         for column in ASSIST_COLUMNS:
             left, right = column_x_ranges[column]

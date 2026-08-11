@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 from poc.workflow_3.sem_monitor import assist_score as asc
 from poc.workflow_3.sem_monitor.assist_score import (
@@ -485,7 +485,11 @@ def test_grid_columns_follow_headers():
 
     _panel_items() 의 숫자는 Addressing1 열에 20-50, Measurement 열에 220-250 이다
     (각각 헤더 범위 10-60 / 210-260 안에 들어간다). Addressing2 는 숫자가 없으므로
-    헤더 범위(110-160)를 그대로 쓴다.
+    헤더 범위(110-160)를 폴백으로 쓴다.
+
+    (F1) 어느 쪽이든 좌우로 폭의 CELL_PAD_X_RATIO(0.35)만큼 넓혀야 한다 - 글자가 셀을
+    꽉 채우면 classify_ink 의 밀집 가드가 정상 숫자를 썸네일로 오인한다. 그래서 기대값은
+    20-50 -> 10-60, 110-160 -> 92-178, 220-250 -> 210-260 이다.
     """
     layout = build_score_grid(_panel_items(), (300, 260))
     if layout is None:
@@ -494,9 +498,9 @@ def test_grid_columns_follow_headers():
     first = layout.grid[0]
     ok = (
         layout.columns == ("Addressing1", "Addressing2", "Measurement")
-        and first[0]["left"] == 20 and first[0]["right"] == 50   # 숫자 합집합
-        and first[1]["left"] == 110 and first[1]["right"] == 160  # 헤더 폴백(숫자 없음)
-        and first[2]["left"] == 220 and first[2]["right"] == 250  # 숫자 합집합
+        and first[0]["left"] == 10 and first[0]["right"] == 60    # 숫자 합집합 20-50 + pad
+        and first[1]["left"] == 92 and first[1]["right"] == 178   # 헤더 폴백 110-160 + pad
+        and first[2]["left"] == 210 and first[2]["right"] == 260  # 숫자 합집합 220-250 + pad
     )
     print(f"[{'PASS' if ok else 'FAIL'}] grid_columns_follow_headers")
     return ok
@@ -506,14 +510,15 @@ def test_grid_columns_fallback_to_header_when_no_numbers():
     """숫자가 하나도 안 잡힌 열은 헤더 x 범위로 폴백해야 한다 (C2(a) 명시 요구사항).
 
     _panel_items() 는 Addressing2 열에 숫자를 두지 않는다 - 실제 tool 에서 이 열이
-    대개 비어 있는 상황과 같다.
+    대개 비어 있는 상황과 같다. 헤더 범위 110-160 에 (F1) 좌우 패딩(폭의 0.35)이 붙어
+    92-178 이 된다.
     """
     layout = build_score_grid(_panel_items(), (300, 260))
     if layout is None:
         print("[FAIL] grid_columns_fallback_to_header_when_no_numbers: layout None")
         return False
     addr2 = layout.grid[0][1]
-    ok = addr2["left"] == 110 and addr2["right"] == 160
+    ok = addr2["left"] == 92 and addr2["right"] == 178
     print(f"[{'PASS' if ok else 'FAIL'}] grid_columns_fallback_to_header_when_no_numbers")
     return ok
 
@@ -545,12 +550,250 @@ def test_grid_columns_ignore_header_order_in_items():
     # 헤더 순서가 뒤섞여도(Measurement 가 Addressing2 보다 왼쪽) 숫자는 자신이 겹치는
     # 헤더 x 범위로 배정된다: "12"(20-50)는 Addressing1(10-60) 아래, "34"(220-250)는
     # Addressing2(210-260) 아래. Measurement(110-160)는 숫자가 없어 헤더 폴백.
+    # (F1) 각 범위에 좌우 패딩(폭의 0.35)이 붙는다.
     ok = (
-        first[0]["left"] == 20 and first[0]["right"] == 50
-        and first[1]["left"] == 220 and first[1]["right"] == 250
-        and first[2]["left"] == 110 and first[2]["right"] == 160
+        first[0]["left"] == 10 and first[0]["right"] == 60
+        and first[1]["left"] == 210 and first[1]["right"] == 260
+        and first[2]["left"] == 92 and first[2]["right"] == 178
     )
     print(f"[{'PASS' if ok else 'FAIL'}] grid_columns_ignore_header_order_in_items")
+    return ok
+
+
+DIGIT_PANEL_SIZE = (300, 280)
+DIGIT_ROW_PITCH = 30
+DIGIT_FIRST_TOP = 45
+DIGIT_COLUMN_LEFTS = {"Addressing1": 20, "Measurement": 220}
+
+
+def _digit_headers():
+    """렌더 패널용 헤더 항목 3개(숫자 띠보다 위에 있어야 한다)."""
+    return [
+        _item("Addressing1", 10, 5, 60, 25),
+        _item("Addressing2", 110, 5, 160, 25),
+        _item("Measurement", 210, 5, 260, 25),
+    ]
+
+
+def _ink_mask(rgb):
+    """classify_ink 와 같은 기준(채널 평균 < INK_MEAN_MAX)으로 잉크 마스크를 만든다."""
+    arr = np.array(rgb).astype(np.int16)
+    return arr[:, :, :3].mean(axis=2) < asc.INK_MEAN_MAX
+
+
+def _tight_bbox(image, region):
+    """region(left, top, right, bottom) 안에서 실제 잉크의 tight bbox 를 찾는다."""
+    left, top, right, bottom = region
+    mask = _ink_mask(image.crop((left, top, right, bottom)))
+    ys, xs = np.nonzero(mask)
+    if len(xs) == 0:
+        return None
+    return (
+        left + int(xs.min()), top + int(ys.min()),
+        left + int(xs.max()) + 1, top + int(ys.max()) + 1,
+    )
+
+
+def _cell_ink_ratio(image, box):
+    """격자 셀 하나의 잉크 비율(= classify_ink 의 밀집 가드가 보는 값)."""
+    crop = image.crop((box["left"], box["top"], box["right"], box["bottom"]))
+    mask = _ink_mask(crop)
+    return float(mask.sum()) / float(mask.size)
+
+
+def _digit_font():
+    """PIL 기본 비트맵 폰트. size 인자를 지원하지 않는 구버전도 그대로 돈다."""
+    try:
+        return ImageFont.load_default(size=15)
+    except TypeError:
+        return ImageFont.load_default()
+
+
+def _draw_rect_glyph(draw, left, top, *, width=12, height=18, stroke=2, bar=3,
+                     fill=(20, 20, 20)):
+    """실측 숫자와 같은 잉크 밀도(tight bbox 대비 약 0.59)를 갖는 글자 모양을 그린다.
+
+    PIL 기본 폰트의 글자 metric 은 Pillow 버전마다 흔들리므로, 밀도를 **설계값으로**
+    고정해야 하는 테스트에서는 사각 링 + 가운데 바(= '8' 모양)로 그린다. 리뷰어가 실제
+    폰트(Arial/Helvetica/Verdana, 11~16px)에서 잰 0.44~0.74(중앙값 0.58) 한가운데를
+    노린 값이라, 옛 임계 0.55 + 무패딩 조합이면 이 글자는 unknown 으로 끊긴다.
+    """
+    draw.rectangle([left, top, left + width - 1, top + height - 1], fill=fill)
+    draw.rectangle(
+        [left + stroke, top + stroke, left + width - 1 - stroke, top + height - 1 - stroke],
+        fill=(240, 240, 240),
+    )
+    mid = top + (height - bar) // 2
+    draw.rectangle([left + stroke, mid, left + width - 1 - stroke, mid + bar - 1], fill=fill)
+
+
+def _render_digit_panel(*, use_font, rows=7, ink=(20, 20, 20)):
+    """실제 글자(또는 글자 모양)를 그린 합성 Assist 패널과 그 OCR 항목을 만든다.
+
+    OCR 항목의 bbox 는 **실제로 그려진 잉크의 tight bbox** 다 - PaddleOCR 이 돌려주는
+    것과 같은 성격의 좌표라, build_score_grid 의 패딩과 classify_ink 의 밀집 가드가
+    실제 배선 그대로 상호작용한다.
+    """
+    image = Image.new("RGB", DIGIT_PANEL_SIZE, (240, 240, 240))
+    draw = ImageDraw.Draw(image)
+    font = _digit_font() if use_font else None
+
+    items = _digit_headers()
+    tight_ratios = []
+    for row_idx in range(rows):
+        top = DIGIT_FIRST_TOP + row_idx * DIGIT_ROW_PITCH
+        for column, left in DIGIT_COLUMN_LEFTS.items():
+            if use_font:
+                draw.text((left, top), "18", fill=ink, font=font)
+            else:
+                # 두 자리 숫자처럼 붙여 그린다(합쳐진 tight bbox 가 OCR bbox 에 해당).
+                _draw_rect_glyph(draw, left, top, fill=ink)
+                _draw_rect_glyph(draw, left + 12, top, fill=ink)
+            box = _tight_bbox(image, (left - 4, top - 6, left + 44, top + DIGIT_ROW_PITCH - 4))
+            if box is None:
+                continue
+            items.append(_item("18", box[0], box[1], box[2], box[3]))
+            mask = _ink_mask(image.crop(box))
+            tight_ratios.append(float(mask.sum()) / float(mask.size))
+    return image, items, tight_ratios
+
+
+def _digit_panel_streak(use_font):
+    """렌더 패널을 실제 build_score_grid + read_row_states 로 통과시킨다."""
+    image, items, tight_ratios = _render_digit_panel(use_font=use_font)
+    layout = build_score_grid(items, DIGIT_PANEL_SIZE)
+    if layout is None:
+        return None, None, None, tight_ratios, image
+    rows = read_row_states(image, layout)
+    ratios = [_cell_ink_ratio(image, layout.grid[r][c]) for r in range(len(layout.grid))
+              for c in (0, 2)]
+    return layout, rows, ratios, tight_ratios, image
+
+
+def test_rendered_digits_read_ok_end_to_end():
+    """(F3) 진짜 글자를 그린 패널을 실제 격자 생성 + 판독 경로로 통과시킨다.
+
+    기존 밀도 테스트는 800px 셀에 잉크 40px(5%) 짜리 합성 블록만 써서 경계 근처를 전혀
+    건드리지 않았다 - 그래서 "셀을 글자 bbox 에 딱 맞춤(F1 이전)" + "밀집 임계 0.55(F2
+    이전)" 의 충돌(정상 숫자가 전부 unknown 이 되어 streak 이 영영 0)을 못 잡았다.
+    이 테스트는 패딩과 밀집 가드를 **함께** 지나가므로 그 조합이 깨지면 바로 빨개진다.
+    """
+    layout, rows, ratios, tight_ratios, _img = _digit_panel_streak(use_font=True)
+    if layout is None:
+        print("[FAIL] rendered_digits_read_ok_end_to_end: layout None")
+        return False
+    verdicts = [r.verdict for r in rows]
+    streak = ok_streak(rows)
+    max_ratio = max(ratios)
+    ok = (
+        verdicts == ["ok"] * 7
+        and streak == 7
+        and max_ratio < asc.INK_DENSE_MAX_RATIO
+    )
+    print(f"[{'PASS' if ok else 'FAIL'}] rendered_digits_read_ok_end_to_end: streak={streak} "
+          f"tight_ink={min(tight_ratios):.3f}~{max(tight_ratios):.3f} "
+          f"cell_ink_max={max_ratio:.3f} (< {asc.INK_DENSE_MAX_RATIO}) {verdicts}")
+    return ok
+
+
+def test_realistic_glyph_density_survives_density_guard():
+    """(F3) 실제 숫자와 같은 밀도(tight bbox 대비 0.4~0.7)의 글자 모양도 ok 로 읽혀야 한다.
+
+    PIL 폰트 metric 에 의존하지 않는 결정적 버전이다 - 글자의 tight bbox 밀도를 여기서
+    직접 재서 "현실적인 밀도를 시험하고 있음" 자체를 단언한다(5% 블록이면 이 단언이
+    먼저 깨진다).
+    """
+    layout, rows, ratios, tight_ratios, _img = _digit_panel_streak(use_font=False)
+    if layout is None:
+        print("[FAIL] realistic_glyph_density_survives_density_guard: layout None")
+        return False
+    streak = ok_streak(rows)
+    tight = max(tight_ratios)
+    ok = (
+        0.40 <= min(tight_ratios) and tight <= 0.70          # 진짜 숫자다운 밀도인가
+        and [r.verdict for r in rows] == ["ok"] * 7
+        and streak == 7
+        and max(ratios) < asc.INK_DENSE_MAX_RATIO
+    )
+    print(f"[{'PASS' if ok else 'FAIL'}] realistic_glyph_density_survives_density_guard: "
+          f"streak={streak} tight_ink={tight:.3f} cell_ink_max={max(ratios):.3f}")
+    return ok
+
+
+def test_thumbnail_dense_cells_read_unknown_end_to_end():
+    """(F3) 임계를 0.85 로 올려도 썸네일(셀의 95%+ 가 어두움)은 여전히 unknown 이어야 한다.
+
+    가드가 변별력을 잃지 않았다는 증거다 - 여기서 black 이 나오면 없는 측정을 정상으로
+    읽어 streak 이 허위로 쌓이고, 엔지니어 작업 중에 tool 창이 닫힌다.
+    """
+    image, items, _tight = _render_digit_panel(use_font=False)
+    layout = build_score_grid(items, DIGIT_PANEL_SIZE)
+    if layout is None:
+        print("[FAIL] thumbnail_dense_cells_read_unknown_end_to_end: layout None")
+        return False
+    draw = ImageDraw.Draw(image)
+    for row_boxes in layout.grid:
+        for col_idx in (0, 2):
+            box = row_boxes[col_idx]
+            draw.rectangle([box["left"], box["top"], box["right"] - 1, box["bottom"] - 1],
+                           fill=(60, 60, 60))
+            # 셀의 아주 일부만 배경으로 남겨 밀도를 1.0 이 아닌 0.95 안팎으로 만든다.
+            draw.rectangle([box["left"], box["top"], box["right"] - 1, box["top"]],
+                           fill=(240, 240, 240))
+    rows = read_row_states(image, layout)
+    ratios = [_cell_ink_ratio(image, layout.grid[r][c]) for r in range(7) for c in (0, 2)]
+    streak = ok_streak(rows)
+    ok = (
+        all(r.verdict == "unknown" for r in rows)
+        and streak == 0
+        and 0.90 <= min(ratios) <= 1.0
+    )
+    print(f"[{'PASS' if ok else 'FAIL'}] thumbnail_dense_cells_read_unknown_end_to_end: "
+          f"streak={streak} cell_ink={min(ratios):.3f}~{max(ratios):.3f}")
+    return ok
+
+
+def test_padded_cell_height_stays_within_row_pitch():
+    """(F1) 세로 패딩이 이웃 행을 물면 안 된다.
+
+    기존 픽스처는 pitch 30 / 글자 높이 18 이라, 패딩을 무작정 35%씩 더하면 30.6 이 되어
+    위아래 행의 숫자를 함께 담는다. pitch 안으로 잘려 눈에 보이는 틈이 남아야 한다.
+    """
+    layout = build_score_grid(_panel_items(), (300, 260))
+    if layout is None:
+        print("[FAIL] padded_cell_height_stays_within_row_pitch: layout None")
+        return False
+    heights = {row[0]["bottom"] - row[0]["top"] for row in layout.grid}
+    tops = [row[0]["top"] for row in layout.grid]
+    pitch = tops[1] - tops[0]
+    height = max(heights)
+    ok = len(heights) == 1 and height < pitch and height > 18  # 원래 글자 높이보단 커야
+    print(f"[{'PASS' if ok else 'FAIL'}] padded_cell_height_stays_within_row_pitch: "
+          f"height={height} pitch={pitch}")
+    return ok
+
+
+def test_resolve_coord_space_norm1000_on_large_panel():
+    """(F4) 패널 crop 이 1000px 을 넘어도 0-1000 좌표를 crop 픽셀로 오판정하면 안 된다.
+
+    큰 모니터(2560 폭)에서 패널 crop 은 대략 1126x518 이라 크기 의존 임계는 1182 가
+    된다 - 진짜 0-1000 좌표가 그 아래라 crop 픽셀로 읽히고, 셀이 썸네일 위에 놓여 모든
+    행이 black 으로 읽히는(streak 이 7 에 고정되는) 원래 버그가 되살아난다.
+    """
+    panel = (1126, 518)
+    items = [
+        _item("Addressing1", 20, 40, 200, 90),
+        _item("Addressing2", 400, 40, 580, 90),
+        _item("Measurement", 780, 40, 1000, 90),
+        _item("18", 60, 200, 140, 260),
+    ]
+    sx, sy, space = asc._resolve_item_coord_space(items, panel)
+    ok = (
+        space == "norm1000"
+        and abs(sx - 1126 / 1000.0) < 1e-6
+        and abs(sy - 518 / 1000.0) < 1e-6
+    )
+    print(f"[{'PASS' if ok else 'FAIL'}] resolve_coord_space_norm1000_on_large_panel: {space}")
     return ok
 
 
@@ -820,6 +1063,11 @@ def main():
         test_grid_none_without_headers(),
         test_grid_none_with_single_number_row(),
         test_grid_top_anchor_when_newest_row_at_top(),
+        test_padded_cell_height_stays_within_row_pitch(),
+        test_rendered_digits_read_ok_end_to_end(),
+        test_realistic_glyph_density_survives_density_guard(),
+        test_thumbnail_dense_cells_read_unknown_end_to_end(),
+        test_resolve_coord_space_norm1000_on_large_panel(),
         test_resolve_coord_space_detects_frac01(),
         test_resolve_coord_space_detects_crop_px(),
         test_resolve_coord_space_detects_norm1000(),

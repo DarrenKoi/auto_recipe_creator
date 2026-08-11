@@ -9,7 +9,7 @@ import time as _time
 import numpy as np
 from PIL import Image
 
-from poc.workflow_3.config import Workflow3Settings
+from poc.workflow_3.config import Workflow3Settings, load_workflow3_settings
 from poc.workflow_3.monitor.cycle import _engineer_watch
 from poc.workflow_3.monitor.engineer_done_align_adjustment import (
     EngineerDoneDetector,
@@ -41,7 +41,7 @@ def test_settings_defaults() -> bool:
     ok = True
     ok &= _check("detect_enabled default False", s.engineer_done_detect_enabled is False)
     ok &= _check("poll_sec default 8.0", s.engineer_done_poll_sec == 8.0)
-    ok &= _check("min_count default 6", s.engineer_done_min_count == 6)
+    ok &= _check("min_delta default 6", s.engineer_done_min_delta == 6)
     ok &= _check("change_min_px default 4", s.engineer_done_change_min_px == 4)
     ok &= _check("relocalize_after_miss default 3", s.engineer_done_relocalize_after_miss == 3)
     ok &= _check("roi_pad_x default 0.03", s.engineer_done_roi_pad_x == 0.03)
@@ -73,7 +73,7 @@ def test_settings_env_load_path() -> bool:
     ok = True
     ok &= _check("env path detect_enabled False", s.engineer_done_detect_enabled is False)
     ok &= _check("env path poll_sec 8.0", s.engineer_done_poll_sec == 8.0)
-    ok &= _check("env path min_count 6", s.engineer_done_min_count == 6)
+    ok &= _check("env path min_delta 6", s.engineer_done_min_delta == 6)
     ok &= _check(
         "env path services",
         s.engineer_done_vlm_service == _DEFAULT_VLM_SERVICE
@@ -173,7 +173,7 @@ def _settings(**overrides):
         engineer_done_detect_enabled=True,
         engineer_done_roi_pad_x=0.05,
         engineer_done_roi_pad_y=0.05,
-        engineer_done_min_count=2,
+        engineer_done_min_delta=2,
         engineer_done_relocalize_after_miss=3,
         engineer_done_reground_sec=0.0,
     )
@@ -368,11 +368,27 @@ def test_watch_no_detector_unchanged() -> bool:
     return _check("exits on recording death", recording.checks >= 3)
 
 
+def test_settings_use_delta_and_streak_not_absolute_count() -> bool:
+    """절대값 기준(min_count)은 제거됐다.
+
+    잔존 카운터 오탐의 근원이었다 - 이전 런의 350/350 이 떠 있으면 즉시 조건을 만족했다.
+    """
+    settings = load_workflow3_settings()
+    ok = (
+        settings.engineer_done_ok_streak == 6
+        and settings.engineer_done_min_delta == 6
+        and not hasattr(settings, "engineer_done_min_count")
+    )
+    print(f"[{'PASS' if ok else 'FAIL'}] settings_use_delta_and_streak_not_absolute_count")
+    return ok
+
+
 def main() -> int:
     """전체 케이스를 실행하고 통과 여부를 반환한다."""
     tests = [
         test_settings_defaults,
         test_settings_env_load_path,
+        test_settings_use_delta_and_streak_not_absolute_count,
         test_counter_prompt,
         test_parse_point_1000,
         test_point_to_roi_ratios,

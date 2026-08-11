@@ -79,7 +79,11 @@ class Workflow3Settings(WorkflowSettings):
     # 녹화를 조기 종료한다. VLM grounding 1회 + CV gate + OCR confirm(연속 2회).
     engineer_done_detect_enabled: bool = False  # 오피스 캘리브레이션 검증 전 기본 off.
     engineer_done_poll_sec: float = 8.0  # watch 안 detector 호출 간격.
-    engineer_done_min_count: int = 6  # done(=watch 종료+tool 닫기 트리거) 최소 분자값 — N>5 까지 측정 확인 후 닫기.
+    # 판정: (watch 시작 이후 새 측정 >= min_delta) and (화면상 최신 연속 정상 >= ok_streak).
+    # 앞 조건이 이전 런의 잔존 카운터를 걷어내고, 뒤 조건이 측정 품질을 본다.
+    # 절대값 기준(옛 engineer_done_min_count)은 잔존 카운터를 통과시켜 제거했다.
+    engineer_done_ok_streak: int = 6   # Assist score 연속 정상(검정) 요구 횟수.
+    engineer_done_min_delta: int = 6   # watch 시작 이후 최소 새 측정 횟수.
     engineer_done_change_min_px: int = 4  # CV gate 변화 픽셀 임계(다운샘플).
     engineer_done_relocalize_after_miss: int = 3  # 변화 후 OCR 연속 미검출 시 재grounding.
     # 재정렬 진행 중에는 카운터(N/M)가 빈칸이라 grounding 이 거부될 수 있다(정상).
@@ -256,7 +260,8 @@ def load_workflow3_settings() -> Workflow3Settings:
         zoom_scroll_dy=env_int("ALIGN_SEM_ZOOM_SCROLL_DY", 1),
         engineer_done_detect_enabled=env_flag("ALIGN_FAIL_ENGINEER_DONE_DETECT", default=False),
         engineer_done_poll_sec=env_float("ALIGN_FAIL_ENGINEER_DONE_POLL_SEC", 8.0),
-        engineer_done_min_count=env_int("ALIGN_FAIL_ENGINEER_DONE_MIN_COUNT", 6),
+        engineer_done_ok_streak=env_int("ALIGN_FAIL_ENGINEER_DONE_OK_STREAK", 6),
+        engineer_done_min_delta=env_int("ALIGN_FAIL_ENGINEER_DONE_MIN_DELTA", 6),
         engineer_done_change_min_px=env_int("ALIGN_FAIL_ENGINEER_DONE_CHANGE_MIN_PX", 4),
         engineer_done_relocalize_after_miss=env_int("ALIGN_FAIL_ENGINEER_DONE_RELOCALIZE_MISS", 3),
         engineer_done_reground_sec=env_float("ALIGN_FAIL_ENGINEER_DONE_REGROUND_SEC", 30.0),

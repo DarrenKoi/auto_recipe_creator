@@ -5,7 +5,7 @@
 tool 창을 자동으로 닫는다. 신호는 tool 창 Recipe Monitor 의 측정 점 카운터
 분자(N/M 의 N)가 증가하는 것 (1/350 -> 2/350 -> ...).
 
-분자 N 이 `engineer_done_min_count` 이상(기본 6 = "5보다 큼")까지 올라간 것을
+분자 N 이 `engineer_done_min_delta` 이상(기본 6 = "5보다 큼")까지 올라간 것을
 연속 2회 확인하면 done 으로 판정한다 — 측정 초반의 일시적 1~2 점이 아니라
 재정렬이 끝나고 본 측정이 충분히 진행됐음을 보고 닫기 위해 임계를 높게 둔다
 (re-align 직후 카운터가 잠깐 보였다 사라지는 false-start 회피).
@@ -164,9 +164,9 @@ class EngineerDoneDetector:
             return False
 
         self._ocr_miss_streak = 0
-        # 연속 2회 확인: 직전 읽기가 있어야 하고 비감소 + min_count 이상.
+        # 연속 2회 확인: 직전 읽기가 있어야 하고 비감소 + min_delta 이상.
         is_done = (
-            n >= self.s.engineer_done_min_count
+            n >= self.s.engineer_done_min_delta
             and self._last_n is not None
             and n >= self._last_n
         )
@@ -175,7 +175,7 @@ class EngineerDoneDetector:
         if is_done:
             print(
                 f"[INFO] 측정 카운터 확인: N={n} "
-                f"(>= {self.s.engineer_done_min_count}, 연속 2회) - align 완료 판정, "
+                f"(>= {self.s.engineer_done_min_delta}, 연속 2회) - align 완료 판정, "
                 f"watch 조기 종료 후 tool 창 닫기 진행"
             )
         return is_done
@@ -387,7 +387,7 @@ def run_calibration() -> bool:
 
     print(
         f"[INFO] 캘리브레이션 시작: 최대 {duration_sec:.0f}s, "
-        f"poll={settings.engineer_done_poll_sec}s, min_count={settings.engineer_done_min_count}, "
+        f"poll={settings.engineer_done_poll_sec}s, min_delta={settings.engineer_done_min_delta}, "
         f"debug={debug_dir}"
     )
     deadline = time.time() + duration_sec
@@ -410,8 +410,8 @@ def run_calibration() -> bool:
     print(
         "[WARNING] duration 내 done 미감지. 원인 구분:\n"
         f"  - tick 로그에 changed=True + n 증가가 보였다면 체인은 정상이고, "
-        f"분자가 min_count(={settings.engineer_done_min_count}, N>5) 까지 못 올랐을 뿐 "
-        f"(마지막 n={last_n}). 빠른 검증엔 ALIGN_FAIL_ENGINEER_DONE_MIN_COUNT=2 또는 "
+        f"분자가 min_delta(={settings.engineer_done_min_delta}, N>5) 까지 못 올랐을 뿐 "
+        f"(마지막 n={last_n}). 빠른 검증엔 ALIGN_FAIL_ENGINEER_DONE_MIN_DELTA=2 또는 "
         f"ALIGN_DONE_CALIB_SEC 상향 후 재실행.\n"
         "  - n 이 계속 None/blank 면 grounding/OCR 문제 - debug crop 으로 ROI 확인 후 "
         "grounding 문구(RECIPE_MONITOR_NUMERATOR_INSTRUCTION)/ROI pad 조정."

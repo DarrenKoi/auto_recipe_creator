@@ -6,6 +6,7 @@
 """
 
 import numpy as np
+from PIL import Image
 
 from poc.workflow_3.sem_monitor.assist_score import (
     AssistLayout,
@@ -13,6 +14,7 @@ from poc.workflow_3.sem_monitor.assist_score import (
     build_score_grid,
     classify_ink,
     ok_streak,
+    read_row_states,
     row_verdict,
 )
 
@@ -178,6 +180,53 @@ def _panel_items():
     return items
 
 
+def _synth_panel(row_specs):
+    """행별 (addr1, meas) 색 지정으로 합성 패널 이미지를 만든다.
+
+    row_specs 는 길이 7. 각 원소는 ("black"|"red"|None, "black"|"red"|None).
+    None 은 빈칸(잉크 없음).
+    """
+    image = Image.new("RGB", (300, 260), (240, 240, 240))
+    pixels = image.load()
+    ink = {"black": (20, 20, 20), "red": (200, 20, 20)}
+    for row_idx, (addr1, meas) in enumerate(row_specs):
+        top = 40 + row_idx * 30
+        for column_left, state in ((20, addr1), (220, meas)):
+            if state is None:
+                continue
+            for dx in range(20):
+                for dy in range(10):
+                    pixels[column_left + dx, top + dy] = ink[state]
+    return image
+
+
+def _layout_for_synth():
+    return build_score_grid(_panel_items(), (300, 260))
+
+
+def test_read_rows_marks_black_and_red():
+    specs = [("black", "black")] * 6 + [("black", "red")]
+    rows = read_row_states(_synth_panel(specs), _layout_for_synth())
+    ok = len(rows) == 7 and rows[-1].verdict == "fail" and rows[0].verdict == "ok"
+    print(f"[{'PASS' if ok else 'FAIL'}] read_rows_marks_black_and_red: "
+          f"{[r.verdict for r in rows]}")
+    return ok
+
+
+def test_read_rows_blank_is_pending():
+    specs = [("black", "black")] * 6 + [("black", None)]
+    rows = read_row_states(_synth_panel(specs), _layout_for_synth())
+    ok = rows[-1].verdict == "pending" and ok_streak(rows) == 6
+    print(f"[{'PASS' if ok else 'FAIL'}] read_rows_blank_is_pending: streak={ok_streak(rows)}")
+    return ok
+
+
+def test_read_rows_returns_empty_without_layout():
+    ok = read_row_states(_synth_panel([("black", "black")] * 7), None) == []
+    print(f"[{'PASS' if ok else 'FAIL'}] read_rows_returns_empty_without_layout")
+    return ok
+
+
 def test_grid_has_full_rows_and_columns():
     layout = build_score_grid(_panel_items(), (300, 260))
     ok = (
@@ -296,6 +345,9 @@ def main():
         test_grid_columns_ignore_header_order_in_items(),
         test_grid_none_without_headers(),
         test_grid_none_with_single_number_row(),
+        test_read_rows_marks_black_and_red(),
+        test_read_rows_blank_is_pending(),
+        test_read_rows_returns_empty_without_layout(),
     ]
     passed = sum(1 for r in results if r)
     print(f"[INFO] {passed}/{len(results)} cases passed")

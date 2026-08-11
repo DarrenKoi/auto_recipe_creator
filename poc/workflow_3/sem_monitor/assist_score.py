@@ -222,6 +222,30 @@ def _cluster_1d(values: list, *, tolerance: int) -> list:
     return [sum(group) / float(len(group)) for group in clusters]
 
 
+def read_row_states(image, layout) -> list:
+    """패널 이미지에서 행별 상태를 읽는다. layout 이 없으면 빈 목록.
+
+    image 는 패널 crop 된 PIL Image 다(격자 좌표계와 같아야 한다). 폴링마다 호출되며
+    VLM/OCR 을 쓰지 않는다 - 셀 박스는 이미 격자에 있고 필요한 건 색뿐이다.
+    """
+    if layout is None or image is None:
+        return []
+    frame = np.array(image.convert("RGB"))
+    height, width = frame.shape[:2]
+
+    rows = []
+    for row_boxes in layout.grid:
+        cells = {}
+        for column, box in zip(layout.columns, row_boxes):
+            left = max(0, min(width, int(box["left"])))
+            right = max(left, min(width, int(box["right"])))
+            top = max(0, min(height, int(box["top"])))
+            bottom = max(top, min(height, int(box["bottom"])))
+            cells[column] = classify_ink(frame[top:bottom, left:right])
+        rows.append(RowState(cells=cells))
+    return rows
+
+
 __all__ = [
     "ASSIST_COLUMNS",
     "ASSIST_CRITICAL_COLUMNS",
@@ -232,5 +256,6 @@ __all__ = [
     "build_score_grid",
     "classify_ink",
     "ok_streak",
+    "read_row_states",
     "row_verdict",
 ]

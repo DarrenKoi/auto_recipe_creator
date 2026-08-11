@@ -822,7 +822,17 @@ def resolve_typing_events(
         except Exception as exc:
             print(f"[WARNING] 타이핑 구간 OCR 실패(값 없이 기록): {exc}")
 
-        if source == "ocr" and before == after:
+        # 양쪽이 다 비어 있으면 "변화 없음"이 아니라 "OCR 이 아무것도 못 읽음"이다.
+        # 이 둘을 같이 취급하면 ROI 가 어긋난 오독이 캐럿 깜빡임과 구별되지 않아
+        # 실제 타이핑이 조용히 사라진다. §8 의 "OCR 실패도 구간은 발행" 규칙을 따른다.
+        if source == "ocr" and not before and not after:
+            print(
+                f"[WARNING] 구간 양끝 OCR 이 모두 빈 텍스트입니다(값 없이 기록) "
+                f"(t={burst.start_t_sec:.1f}s)"
+            )
+            source = "none"
+            after = ""
+        elif source == "ocr" and before == after:
             print(
                 f"[INFO] 캐럿 깜빡임으로 판단해 구간을 버립니다 "
                 f"(t={burst.start_t_sec:.1f}s, 텍스트 변화 없음)"
@@ -837,7 +847,10 @@ def resolve_typing_events(
             if burst.cursor_xy else None,
             "element": _focus_label(burst, click_events, labels, settings),
             "element_source": source,
-            "target_kind": "ui_control",
+            # 하드코딩하지 않는다 - 라벨 출처가 없으면 이 패키지의 규칙
+            # (timeline.derive_target_kind)에 따라 "unknown" 이어야 한다. 그러지 않으면
+            # OCR 이 실패한 타이핑이 "다른 장비로 이식 가능"하다고 잘못 주장한다.
+            "target_kind": derive_target_kind("ui", source),
             "region": "ui",
             "generation": 0,
             "occlusion": "unknown",

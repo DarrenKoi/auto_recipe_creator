@@ -110,11 +110,24 @@ recording/  (frames + frame_meta.jsonl + manifest)
 ```
 구간 시작 프레임의 필드 ROI → OCR → before
 구간 종료 프레임의 필드 ROI → OCR → after
-before == after  → 타이핑 아님(캐럿 깜빡임). 구간 폐기, 원본 이벤트는 클릭 판정으로 되돌림
-before != after  → 진짜 타이핑. value = after
+
+before, after 둘 다 비어 있음 → 캐럿 아님. **OCR 이 아무것도 못 읽은 것**이다.
+                                 구간은 발행하고 값만 비운다(value_source="none")
+before == after (둘 다 비지 않음) → 타이핑 아님(캐럿 깜빡임). 구간 폐기
+before != after                   → 진짜 타이핑. value = after
 ```
 
 구간당 OCR 2콜. 캐럿 판별과 값 복원을 같은 두 콜로 동시에 해결한다.
+
+**빈 문자열 두 개를 "변화 없음"으로 묶지 않는 이유** (2026-08-11 Task 4 리뷰): ROI 가
+어긋나거나 OCR 이 오독하면 양끝이 모두 `""` 로 나온다. 이것을 캐럿 깜빡임과 같이
+취급하면 **실제 타이핑이 조용히 사라진다** — OCR 이 타이핑 값을 얻는 유일한 경로이므로
+이 모듈에서 가장 비싼 실패 형태다. §8 의 "OCR 실패도 구간은 발행" 규칙과 같은 취지다.
+
+또한 타이핑 이벤트의 `target_kind` 는 하드코딩하지 않고
+`timeline.derive_target_kind(region, element_source)` 로 파생한다. 라벨 출처가 없으면
+`unknown` 이어야 한다 - 그러지 않으면 OCR 이 실패한 타이핑이 "다른 장비로 이식 가능한
+UI 컨트롤"이라고 잘못 주장한다.
 
 ### 5.3 필드 지정 (포커스 연결)
 

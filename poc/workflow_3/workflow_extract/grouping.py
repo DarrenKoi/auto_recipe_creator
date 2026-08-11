@@ -43,6 +43,16 @@ def group_events(events, ctx) -> list:
             result = rule(ordered, i, ctx)
             if result is not None:
                 step, consumed = result
+                if consumed <= 0:
+                    # consumed <= 0 이면 i 가 전진하지 않아 while 이 영원히 돈다 -
+                    # 크래시도, 로그도 없이 그냥 멈춘 것처럼 보이는 최악의 실패
+                    # 모드다. R1-R4 가 여러 개(N>=1) 이벤트를 소비하게 되면
+                    # 규칙 구현 실수가 여기로 흘러들 수 있으므로, 전진을 보장하지
+                    # 못하는 규칙은 어떤 규칙이 몇을 반환했는지 못박아 즉시 멈춘다.
+                    raise AssertionError(
+                        f"규칙이 이벤트를 소비하지 않았습니다: rule={getattr(rule, '__name__', rule)}, "
+                        f"consumed={consumed!r} (양수여야 함), seq={ordered[i]['seq']}"
+                    )
                 steps.append(step)
                 i += consumed
                 break

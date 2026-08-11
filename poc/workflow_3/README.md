@@ -115,6 +115,49 @@ RECORDING_FILTER_INPUT_DIR=<녹화 경로> RECORDING_FILTER_MAX_VLM_CALLS=300 \
 게이트/가림이 이벤트를 전부 걷어내면 상태가 `all_events_discarded` 로 끝나며(exit 1),
 `ambient_events_dropped` / `occluded_events_excluded` 로 원인을 가른다.
 
+### workflow_extract — 타임라인 -> 절차서 (알람 불필요, VLM 콜 0)
+
+`recording_filter` 가 만든 `interaction_timeline.json` 을 의미 단위 step 으로 묶어
+`workflow.json`(기계 판독용 truth) + `workflow.md`(엔지니어에게 보여주고 확인받을 한국어
+절차서)로 만드는 offline 패키지. **VLM 을 전혀 호출하지 않는다** — 이미 만들어진 타임라인 위에서
+순수 규칙(그룹핑 임계값)만으로 동작하므로, 아래 threshold 는 비용 걱정 없이 몇 번이고
+재실행하며 튜닝할 수 있다.
+
+```bash
+WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
+  uv run python poc/workflow_3/workflow_extract/extract_workflow.py
+```
+
+같은 디렉터리에서 파일 3개를 읽는다:
+
+- `interaction_timeline.json` — **필수**. 없으면 즉시 에러로 중단한다.
+- `region_map.json` / `change_events.json` — **선택**. 둘 다 없어도 실행은 되지만, 없으면
+  R1(FOV 이동 더블클릭 판정)이 비활성화되고 정규화 좌표도 나오지 않는다 — degrade 이지 실패가
+  아니다.
+
+산출물(`workflow.json`, `workflow.md`)은 입력과 같은 디렉터리에 쓰인다.
+
+**오피스 실행 순서** (각 단계는 앞 단계가 정상일 때만 의미가 있다):
+
+1. `RECORDING_FILTER_MAX_VLM_CALLS=300 uv run python poc/workflow_3/recording_filter/filter_recording.py`
+2. **`region_map_gen0.jpg` 의 시안 박스가 실제 라이브 SEM 영역과 맞는지 확인한다. 틀리면 여기서
+   멈춘다** — 이후 게이팅 판정 전부와 workflow_extract 의 R1 FOV 규칙이 이 박스에 의존한다.
+3. `summary.json` 을 확인한다 — `gate_passed / total_change_events`(90%+ 제거가 정상),
+   신규 `typing_bursts` / `typing_events` 카운트, 그리고 타임라인의 `cursor_source` 분포(수동
+   세션인데 `vlm` 이 대부분이면 사이드카 조인이 깨진 것이다).
+4. `uv run python poc/workflow_3/workflow_extract/extract_workflow.py`
+5. `workflow.md` 를 엔지니어와 함께 읽고 묻는다: "이게 당신이 한 절차가 맞습니까?" 이 패키지의
+   산출물은 자동화가 아니라 이 질문에 대한 답이다.
+
+**첫 실측 전까지는 아래 값 전부 blind 로 정한 추정치다** — 첫 오피스 세션 결과를 보고 조정한다:
+
+| 값 | 기본 | 조정 신호 |
+|----|------|-----------|
+| `WORKFLOW_EXTRACT_RECENTER_MIN_RATIO` | 0.40 | 라이브 박스 단발 클릭이 더블클릭(FOV 이동)으로 잘못 잡히면 올린다 |
+| `WORKFLOW_EXTRACT_REPEAT_MIN_COUNT` | 3 | 반복 조작이 하나의 step 으로 과하게 묶이면 올린다 |
+| `RECORDING_FILTER_TYPING_MIN_BURST_EVENTS` | 3 | 짧은 입력이 타이핑 구간으로 안 잡히면 내린다 |
+| `_DROPDOWN_MIN_ROW_GAP_PX` (`grouping.py` 모듈 상수, 12) | 12 | 사람이 다시 클릭할 때의 흔들림과 추정 ~24px 행 높이 사이로 blind 하게 잡은 값 — 실제 드롭다운에서 행 높이를 재본 적이 없다. PM 외 드롭다운을 놓치면 이 값을 조정한다 |
+
 ## 주요 env (기존 이름 유지)
 
 | env | 기본 | 의미 |

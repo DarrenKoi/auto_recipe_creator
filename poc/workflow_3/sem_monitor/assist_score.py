@@ -12,8 +12,10 @@ Addressing2 / Measurement) x 7행으로 최신 7회 측정의 썸네일과 score
 
 import numpy as np
 from dataclasses import dataclass, field
+from PIL import ImageDraw
 
 from poc.workflow_3 import DEBUG_IMAGE_DIR
+from poc.workflow_3.debug_artifacts import save_debug_jpeg
 from poc.workflow_3.util import crop_image
 from poc.workflow_3.util.image_utils import encode_image_webp
 from poc.workflow_3.vlm.ocr_spotting import parse_spotting_items
@@ -354,6 +356,38 @@ def locate_assist_layout(window, window_title: str, backend: str, image):
     return panel_box, layout
 
 
+_VERDICT_COLORS = {
+    "ok": (0, 200, 0),
+    "fail": (255, 0, 0),
+    "pending": (128, 128, 128),
+    "unknown": (255, 160, 0),
+}
+
+
+def save_assist_overlay(image, layout, rows: list, out_path) -> None:
+    """판독 결과를 패널 이미지 위에 그려 저장한다 (실패 무시).
+
+    오피스가 행 방향(최신이 아래인지) / 열 매핑 / 색 임계를 한 장으로 검증할 수 있게
+    한다. 폴링마다가 아니라 판정이 바뀔 때만 부른다.
+    """
+    try:
+        canvas = image.convert("RGB").copy()
+        draw = ImageDraw.Draw(canvas)
+        for row_idx, row_boxes in enumerate(layout.grid):
+            verdict = rows[row_idx].verdict if row_idx < len(rows) else "unknown"
+            color = _VERDICT_COLORS.get(verdict, (255, 160, 0))
+            for box in row_boxes:
+                draw.rectangle(
+                    [box["left"], box["top"], box["right"], box["bottom"]],
+                    outline=color, width=2,
+                )
+            label = f"{row_idx}:{verdict}"
+            draw.text((row_boxes[0]["left"], max(0, row_boxes[0]["top"] - 12)), label, fill=color)
+        save_debug_jpeg(canvas, out_path)
+    except Exception as exc:
+        print(f"[WARNING] Assist 오버레이 저장 실패: {exc}")
+
+
 __all__ = [
     "ASSIST_COLUMNS",
     "ASSIST_CRITICAL_COLUMNS",
@@ -368,4 +402,5 @@ __all__ = [
     "ok_streak",
     "read_row_states",
     "row_verdict",
+    "save_assist_overlay",
 ]

@@ -52,6 +52,9 @@ from poc.workflow_3.util import capture_window
 _POINT_RE = re.compile(r"\[\s*(-?\d+)\s*,\s*(-?\d+)\s*\]")
 _INT_RE = re.compile(r"\d+")
 
+# Assist 전 행이 연속으로 이만큼 빈칸이면 패널이 이동한 것으로 보고 격자를 다시 잡는다.
+ALL_BLANK_RELOCATE_AFTER = 3
+
 
 def parse_point_1000(text: str) -> tuple[int, int] | None:
     """ui-venus 응답에서 첫 [x,y](0-1000)를 파싱한다.
@@ -329,6 +332,65 @@ def _make_ocr_fn(settings):
     return ocr
 
 
+def _make_rows_fn(tool_window, *, debug_dir=None):
+    """Assist 행 판독 클로저. 격자는 첫 성공 때 1회만 만들고 캐시한다.
+
+    로케이트에 실패하면 None 을 캐시하지 않고 매번 재시도하되, 실패 로그는 1회만 낸다
+    (watch 내내 같은 경고가 반복되면 콘솔이 쓸모없어진다).
+    """
+    from poc.workflow_3.sem_monitor.assist_score import (
+        locate_assist_layout,
+        read_row_states,
+        save_assist_overlay,
+    )
+    from poc.workflow_3.util import capture_window, crop_image
+
+    state = {"panel_box": None, "layout": None, "warned": False, "last_verdicts": None,
+             "seq": 0, "all_blank_streak": 0}
+
+    def rows_fn():
+        image = capture_window(tool_window)
+        if state["layout"] is None:
+            # window_title/backend 는 빈 문자열로 넘긴다. image 를 함께 주면
+            # analyze_window_target 이 창 활성화/재캡처를 건너뛰므로 쓰이지 않는다.
+            located = locate_assist_layout(tool_window, "", "", image)
+            if located is None:
+                if not state["warned"]:
+                    print("[WARNING] Assist 격자 확보 실패 - 이번 watch 는 done 판정 없이 cap 대기")
+                    state["warned"] = True
+                return []
+            state["panel_box"], state["layout"] = located
+            state["all_blank_streak"] = 0
+
+        panel = crop_image(image, state["panel_box"])
+        rows = read_row_states(panel, state["layout"])
+
+        # 패널이 이동/리사이즈되면 빈 영역을 샘플링해 모든 행이 pending 으로 나온다.
+        # 실제로 전 행이 비는 일은 거의 없으므로, 연속으로 그러면 격자를 버리고 다시 잡는다.
+        if rows and all(row.verdict == "pending" for row in rows):
+            state["all_blank_streak"] += 1
+            if state["all_blank_streak"] >= ALL_BLANK_RELOCATE_AFTER:
+                print("[INFO] Assist 전 행이 계속 빈칸 - 패널 이동 가능성, 격자 재확보 예약")
+                state["layout"] = None
+                state["panel_box"] = None
+                state["all_blank_streak"] = 0
+                return []
+        else:
+            state["all_blank_streak"] = 0
+
+        verdicts = [row.verdict for row in rows]
+        if debug_dir is not None and verdicts != state["last_verdicts"]:
+            state["seq"] += 1
+            save_assist_overlay(
+                panel, state["layout"], rows,
+                debug_dir / f"assist_{state['seq']:03d}.jpg",
+            )
+            state["last_verdicts"] = verdicts
+        return rows
+
+    return rows_fn
+
+
 def build_engineer_done_detector(tool_window, settings, *, vlm_client=None, debug_dir=None):
     """설정 게이트 확인 후 실 VLM/OCR 배선된 detector 를 만든다.
 
@@ -345,8 +407,10 @@ def build_engineer_done_detector(tool_window, settings, *, vlm_client=None, debu
     except Exception as exc:
         print(f"[WARNING] engineer-done 클라이언트 생성 실패(고정 timeout 폴백): {exc}")
         return None
+    rows_fn = _make_rows_fn(tool_window, debug_dir=debug_dir)
     return EngineerDoneDetector(
-        tool_window, settings, ground_fn=ground_fn, ocr_fn=ocr_fn, debug_dir=debug_dir
+        tool_window, settings, ground_fn=ground_fn, ocr_fn=ocr_fn, rows_fn=rows_fn,
+        debug_dir=debug_dir,
     )
 
 

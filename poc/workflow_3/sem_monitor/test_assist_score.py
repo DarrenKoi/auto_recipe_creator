@@ -5,6 +5,8 @@
     uv run python poc/workflow_3/sem_monitor/test_assist_score.py
 """
 
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -20,6 +22,7 @@ from poc.workflow_3.sem_monitor.assist_score import (
     ok_streak,
     read_row_states,
     row_verdict,
+    save_assist_overlay,
 )
 
 
@@ -500,6 +503,19 @@ def test_locate_none_when_grid_cannot_be_built():
     return ok
 
 
+def test_overlay_writes_a_file():
+    """오버레이는 오피스가 행 방향/열 매핑/색 임계를 한 장으로 검증하는 수단이다."""
+    layout = _layout_for_synth()
+    image = _synth_panel([("black", "black")] * 7)
+    rows = read_row_states(image, layout)
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "overlay.jpg"
+        save_assist_overlay(image, layout, rows, out)
+        ok = out.exists() and out.stat().st_size > 0
+    print(f"[{'PASS' if ok else 'FAIL'}] overlay_writes_a_file")
+    return ok
+
+
 def main():
     print("[INFO] assist_score self-test 시작")
     results = [
@@ -536,6 +552,7 @@ def main():
         test_locate_none_when_no_point(),
         test_locate_none_when_ocr_raises(),
         test_locate_none_when_grid_cannot_be_built(),
+        test_overlay_writes_a_file(),
     ]
     passed = sum(1 for r in results if r)
     print(f"[INFO] {passed}/{len(results)} cases passed")

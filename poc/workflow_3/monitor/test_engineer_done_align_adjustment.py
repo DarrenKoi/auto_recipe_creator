@@ -498,6 +498,49 @@ def test_done_when_delta_and_streak_both_met():
     return ok
 
 
+def test_rows_fn_exception_returns_false() -> bool:
+    """rows_fn 이 예외를 던져도 삼켜지고 streak 0(= 아직 아님)으로 처리돼 False 를 낸다.
+
+    `_read_rows` 가 예외를 삼키지 않으면 폴링 루프까지 예외가 전파돼 detector 가 그
+    시점에서 죽는다. delta/streak 판정이 실제로 실행되는 3회차까지 호출해 검증한다
+    (1회차=CV 게이트 gray baseline, 2회차=첫 실제 OCR 로 baseline_n 확정).
+    """
+    settings = load_workflow3_settings()
+    counter_values = [10, 20]
+    ocr_state = {"i": 0}
+
+    def ocr_fn(_crop):
+        idx = min(ocr_state["i"], len(counter_values) - 1)
+        ocr_state["i"] += 1
+        return f"{counter_values[idx]}/350"
+
+    capture_state = {"i": -1}
+
+    def capture_fn():
+        capture_state["i"] += 1
+        shade = (capture_state["i"] * 20) % 256
+        return Image.new("RGB", (1000, 500), (shade, shade, shade))
+
+    def rows_fn():
+        raise RuntimeError("rows boom")
+
+    detector = EngineerDoneDetector(
+        None, settings,
+        capture_fn=capture_fn,
+        ground_fn=lambda _img: (500, 500),
+        ocr_fn=ocr_fn,
+        rows_fn=rows_fn,
+    )
+    try:
+        results = [detector() for _ in range(3)]
+    except Exception as exc:
+        print(f"[FAIL] rows_fn_exception_returns_false: 예외 전파됨 ({exc})")
+        return False
+    ok = not any(results)
+    print(f"[{'PASS' if ok else 'FAIL'}] rows_fn_exception_returns_false: {results}")
+    return ok
+
+
 def test_baseline_cleared_on_relocalize():
     """재grounding 하면 baseline 도 무효화한다.
 
@@ -543,6 +586,7 @@ def main() -> int:
         test_leftover_counter_does_not_fire,
         test_delta_reached_but_streak_short,
         test_done_when_delta_and_streak_both_met,
+        test_rows_fn_exception_returns_false,
         test_baseline_cleared_on_relocalize,
     ]
     results = [test() for test in tests]

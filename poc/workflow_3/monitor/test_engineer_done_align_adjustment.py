@@ -3,21 +3,29 @@
 `uv run python poc/workflow_3/monitor/test_engineer_done_align_adjustment.py` 로 실행한다.
 """
 
+import io
 import sys
 import time as _time
+from contextlib import redirect_stdout
+from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 from PIL import Image
 
+from poc.workflow_3 import util as w3util
 from poc.workflow_3.config import Workflow3Settings, load_workflow3_settings
 from poc.workflow_3.monitor.cycle import _engineer_watch
 from poc.workflow_3.monitor.engineer_done_align_adjustment import (
+    ALL_BLANK_RELOCATE_AFTER,
     EngineerDoneDetector,
+    _make_rows_fn,
     build_engineer_done_detector,
     extract_numerator,
     parse_point_1000,
     point_to_roi_ratios,
 )
+from poc.workflow_3.sem_monitor import assist_score as asc
 from poc.workflow_3.sem_monitor.assist_score import RowState
 from poc.workflow_3.vlm.prompts.prompt_recipe_monitor_counter import (
     RECIPE_MONITOR_NUMERATOR_INSTRUCTION,
@@ -541,6 +549,116 @@ def test_rows_fn_exception_returns_false() -> bool:
     return ok
 
 
+def _rows_of(verdicts):
+    """verdict 목록을 RowState 목록으로 (Measurement 만으로 성부가 갈리게 구성)."""
+    mapping = {
+        "ok": {"Addressing1": "black", "Addressing2": "blank", "Measurement": "black"},
+        "fail": {"Addressing1": "black", "Addressing2": "blank", "Measurement": "red"},
+        "pending": {"Addressing1": "blank", "Addressing2": "blank", "Measurement": "blank"},
+    }
+    return [asc.RowState(cells=dict(mapping[v])) for v in verdicts]
+
+
+class _RowsFnHarness:
+    """_make_rows_fn 의 스텁 배선. locate/overlay 호출 횟수를 센다.
+
+    _make_rows_fn 은 함수 본문 안에서 import 하므로 engineer_done_align_adjustment
+    모듈 속성을 패치해도 가로채지 못한다 - 원본 모듈(assist_score, util)을 패치해야
+    내부의 `from X import Y` 가 스텁에 바인딩된다.
+    """
+
+    def __init__(self, rows_seq, locate_ok=True):
+        self.rows_seq = list(rows_seq)
+        self.locate_ok = locate_ok
+        self.locate_calls = 0
+        self.overlay_calls = 0
+        self._saved = {}
+
+    def _locate(self, *a, **k):
+        self.locate_calls += 1
+        if not self.locate_ok:
+            return None
+        layout = SimpleNamespace(grid=[[{}]], columns=asc.ASSIST_COLUMNS)
+        return ({"left": 0, "top": 0, "right": 10, "bottom": 10}, layout)
+
+    def _read(self, image, layout):
+        return self.rows_seq.pop(0) if self.rows_seq else []
+
+    def _overlay(self, *a, **k):
+        self.overlay_calls += 1
+
+    def __enter__(self):
+        for mod, name, fn in (
+            (asc, "locate_assist_layout", self._locate),
+            (asc, "read_row_states", self._read),
+            (asc, "save_assist_overlay", self._overlay),
+            (w3util, "capture_window", lambda win: Image.new("RGB", (20, 20))),
+            (w3util, "crop_image", lambda img, box: img),
+        ):
+            self._saved[(mod, name)] = getattr(mod, name)
+            setattr(mod, name, fn)
+        return self
+
+    def __exit__(self, *exc):
+        for (mod, name), orig in self._saved.items():
+            setattr(mod, name, orig)
+        return False
+
+
+def test_rows_fn_locates_layout_only_once():
+    """격자는 한 번만 잡고 캐시한다 - 폴링마다 VLM 을 부르면 안 된다."""
+    ok = _rows_of(["ok"] * 3)
+    with _RowsFnHarness([ok, ok, ok]) as h:
+        fn = _make_rows_fn(object(), debug_dir=None)
+        for _ in range(3):
+            fn()
+    passed = h.locate_calls == 1
+    print(f"[{'PASS' if passed else 'FAIL'}] rows_fn_locates_layout_only_once: {h.locate_calls}")
+    return passed
+
+
+def test_rows_fn_warns_once_on_locate_failure():
+    """로케이트가 계속 실패해도 경고는 한 번만 - watch 내내 반복되면 콘솔이 쓸모없어진다."""
+    with _RowsFnHarness([], locate_ok=False) as h:
+        fn = _make_rows_fn(object(), debug_dir=None)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            first, second, third = fn(), fn(), fn()
+    text = buf.getvalue()
+    passed = (
+        first == [] and second == [] and third == []
+        and text.count("[WARNING]") == 1
+        and h.locate_calls == 3
+    )
+    print(f"[{'PASS' if passed else 'FAIL'}] rows_fn_warns_once_on_locate_failure: "
+          f"warns={text.count('[WARNING]')} locates={h.locate_calls}")
+    return passed
+
+
+def test_rows_fn_overlay_only_on_verdict_change():
+    """오버레이는 판정이 바뀔 때만 - 폴링마다 저장하면 디스크가 찬다."""
+    same = _rows_of(["ok", "ok"])
+    changed = _rows_of(["ok", "fail"])
+    with _RowsFnHarness([same, list(same), changed]) as h:
+        fn = _make_rows_fn(object(), debug_dir=Path("/tmp/nonexistent-overlay-dir"))
+        fn(); fn(); fn()
+    passed = h.overlay_calls == 2
+    print(f"[{'PASS' if passed else 'FAIL'}] rows_fn_overlay_only_on_verdict_change: {h.overlay_calls}")
+    return passed
+
+
+def test_rows_fn_relocates_after_all_blank_streak():
+    """전 행이 계속 빈칸이면 패널 이동으로 보고 격자를 다시 잡는다."""
+    blanks = [_rows_of(["pending"] * 3) for _ in range(ALL_BLANK_RELOCATE_AFTER)]
+    with _RowsFnHarness(blanks) as h:
+        fn = _make_rows_fn(object(), debug_dir=None)
+        results = [fn() for _ in range(ALL_BLANK_RELOCATE_AFTER)]
+    passed = h.locate_calls == 1 and results[-1] == []
+    print(f"[{'PASS' if passed else 'FAIL'}] rows_fn_relocates_after_all_blank_streak: "
+          f"locates={h.locate_calls} last={results[-1]}")
+    return passed
+
+
 def test_baseline_cleared_on_relocalize():
     """재grounding 하면 baseline 도 무효화한다.
 
@@ -587,6 +705,10 @@ def main() -> int:
         test_delta_reached_but_streak_short,
         test_done_when_delta_and_streak_both_met,
         test_rows_fn_exception_returns_false,
+        test_rows_fn_locates_layout_only_once,
+        test_rows_fn_warns_once_on_locate_failure,
+        test_rows_fn_overlay_only_on_verdict_change,
+        test_rows_fn_relocates_after_all_blank_streak,
         test_baseline_cleared_on_relocalize,
     ]
     results = [test() for test in tests]

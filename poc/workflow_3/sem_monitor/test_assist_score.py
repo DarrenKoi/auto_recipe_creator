@@ -5,6 +5,7 @@
     uv run python poc/workflow_3/sem_monitor/test_assist_score.py
 """
 
+import json
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -879,7 +880,7 @@ def _expected_panel_size(image_size, point):
 
 
 def _locate_with(state, *, point, items=None, image_size=_LOCATE_IMAGE_SIZE,
-                  ocr_raises=False, locator_raises=False):
+                  ocr_raises=False, locator_raises=False, debug_dir=None):
     """스텁을 걸고 locate_assist_layout 을 1회 호출한다."""
     def fake_locator(*a, **k):
         if locator_raises:
@@ -895,7 +896,7 @@ def _locate_with(state, *, point, items=None, image_size=_LOCATE_IMAGE_SIZE,
     _swap_asc(state, "Workflow1VLMClient", _stub_ocr_client(items))
     _swap_asc(state, "parse_spotting_items", fake_parse)
     return asc.locate_assist_layout(
-        None, "", "", Image.new("RGB", image_size, (240, 240, 240))
+        None, "", "", Image.new("RGB", image_size, (240, 240, 240)), debug_dir=debug_dir
     )
 
 
@@ -1020,6 +1021,60 @@ def test_locate_none_when_grid_cannot_be_built():
     return ok
 
 
+def test_locate_failure_leaves_evidence_on_disk():
+    """격자 확보 실패 시 crop 이미지 + OCR 항목 덤프가 남아야 한다.
+
+    오피스는 콘솔 한 줄과 디스크 산출물로만 디버깅한다(2026-08-12 실측: 실패했는데
+    폴더가 비어 있어 원인을 좁힐 수 없었다). 조용한 실패로 되돌아가는 회귀를 막는다.
+    """
+    state = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        debug_dir = Path(tmp)
+        try:
+            # 항목 수는 충분하지만(too_few_items 를 통과) 헤더가 없어 격자 단계에서 실패.
+            numbers = [_item("12", 20, 40 + i * 30, 50, 58 + i * 30) for i in range(5)]
+            result = _locate_with(
+                state, point={"x": 150, "y": 130}, items=numbers, debug_dir=debug_dir,
+            )
+        finally:
+            _restore_asc(state)
+        jpgs = list(debug_dir.glob("locate_fail_*.jpg"))
+        jsons = list(debug_dir.glob("locate_fail_*.json"))
+        payload = json.loads(jsons[0].read_text(encoding="utf-8")) if jsons else {}
+        ok = (
+            result is None
+            and len(jpgs) == 1 and jpgs[0].stat().st_size > 0
+            and len(jsons) == 1
+            and payload.get("reason") == "grid_build"
+            and payload.get("item_count") == len(numbers)
+            # OCR 이 실제로 읽은 텍스트가 남아야 원인 규명이 된다.
+            and payload.get("items", [{}])[0].get("text") == "12"
+        )
+    print(
+        f"[{'PASS' if ok else 'FAIL'}] locate_failure_leaves_evidence: "
+        f"jpg={len(jpgs)} json={len(jsons)} reason={payload.get('reason')}"
+    )
+    return ok
+
+
+def test_locate_failure_evidence_survives_missing_debug_dir():
+    """debug_dir 미지정이어도 증거는 기본 폴더로 떨어진다(호출부가 안 넘겨도 잃지 않는다)."""
+    state = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        fallback = Path(tmp) / "assist_score"
+        _swap_asc(state, "DEBUG_ARTIFACT_DIR", fallback)
+        try:
+            result = _locate_with(
+                state, point={"x": 150, "y": 130},
+                items=[_item("12", 20, 40, 50, 58)],
+            )
+        finally:
+            _restore_asc(state)
+        ok = result is None and len(list(fallback.glob("locate_fail_*.json"))) == 1
+    print(f"[{'PASS' if ok else 'FAIL'}] locate_failure_evidence_default_dir")
+    return ok
+
+
 def test_overlay_writes_a_file():
     """오버레이는 오피스가 행 방향/열 매핑/색 임계를 한 장으로 검증하는 수단이다."""
     layout = _layout_for_synth()
@@ -1088,6 +1143,8 @@ def main():
         test_locate_none_when_no_point(),
         test_locate_none_when_ocr_raises(),
         test_locate_none_when_grid_cannot_be_built(),
+        test_locate_failure_leaves_evidence_on_disk(),
+        test_locate_failure_evidence_survives_missing_debug_dir(),
         test_overlay_writes_a_file(),
     ]
     passed = sum(1 for r in results if r)

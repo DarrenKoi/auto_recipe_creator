@@ -395,7 +395,7 @@ def _make_rows_fn(tool_window, settings, *, debug_dir=None):
             if state["layout"] is None:
                 # window_title/backend 는 빈 문자열로 넘긴다. image 를 함께 주면
                 # analyze_window_target 이 창 활성화/재캡처를 건너뛰므로 쓰이지 않는다.
-                located = locate_assist_layout(tool_window, "", "", image)
+                located = locate_assist_layout(tool_window, "", "", image, debug_dir=debug_dir)
                 if located is None:
                     state["next_locate_at"] = time.time() + max(
                         settings.engineer_done_reground_sec, 0.0

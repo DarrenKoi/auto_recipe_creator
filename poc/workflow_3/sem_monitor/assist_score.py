@@ -10,6 +10,7 @@ Addressing2 / Measurement) x 7행으로 최신 7회 측정의 썸네일과 score
 틀릴 수 없다.
 """
 
+import json
 import numpy as np
 from dataclasses import dataclass, field
 from PIL import ImageDraw
@@ -335,6 +336,7 @@ def build_score_grid(items: list, panel_size: tuple, *, rows: int = ASSIST_ROWS)
     먼저 좌표계를 맞춰야 한다). panel_size 는 (width, height).
     """
     if not items:
+        print("[WARNING] Assist OCR 항목 0개 - 격자 생성 실패")
         return None
 
     # --- 열: 헤더 텍스트로 식별 ---
@@ -345,7 +347,14 @@ def build_score_grid(items: list, panel_size: tuple, *, rows: int = ASSIST_ROWS)
             if name == _normalize(column) and column not in header_boxes:
                 header_boxes[column] = item.get("bbox") or {}
     if len(header_boxes) != len(ASSIST_COLUMNS):
-        print(f"[WARNING] Assist 헤더 인식 부족({sorted(header_boxes)}) - 격자 생성 실패")
+        # 무엇을 못 읽었는지가 아니라 무엇을 *읽었는지* 가 원인 규명의 단서다.
+        # (엉뚱한 영역을 crop 했으면 전혀 다른 텍스트가, 헤더가 잘렸으면 숫자만 나온다.)
+        seen = [str(item.get("text", "")).strip() for item in items if str(item.get("text", "")).strip()]
+        print(
+            f"[WARNING] Assist 헤더 인식 부족(찾음={sorted(header_boxes)}, "
+            f"기대={list(ASSIST_COLUMNS)}) - 격자 생성 실패. OCR 이 읽은 텍스트 "
+            f"{len(seen)}개: {seen[:20]}"
+        )
         return None
 
     # --- 행: 숫자 항목의 y 중심 -> pitch -> 외삽. 동시에 숫자를 열에 배정해 x 범위를 모은다 ---
@@ -387,6 +396,10 @@ def build_score_grid(items: list, panel_size: tuple, *, rows: int = ASSIST_ROWS)
     gaps = sorted(band_centers[i + 1] - band_centers[i] for i in range(len(band_centers) - 1))
     pitch = gaps[len(gaps) // 2]
     if pitch <= 0:
+        print(
+            f"[WARNING] Assist 행 간격이 0 이하(pitch={pitch}) - 같은 높이에 두 띠가 "
+            f"잡힘(열을 행으로 오인?) - 격자 생성 실패. band_centers={band_centers[:8]}"
+        )
         return None
 
     # 열별 x 범위 확정: 숫자가 배정됐으면 그 합집합, 아니면 헤더 폴백. 어느 쪽이든
@@ -514,11 +527,44 @@ def assist_panel_target() -> TargetConfig:
     )
 
 
-def locate_assist_layout(window, window_title: str, backend: str, image):
+def _save_locate_evidence(panel, items, reason: str, debug_dir) -> None:
+    """격자 확보 실패 시 '무엇을 보고 실패했는지' 를 디스크에 남긴다 (실패 무시).
+
+    성공했을 때만 오버레이를 저장하던 탓에, 실패하면 오피스에 남는 게 콘솔 한 줄뿐이라
+    원인을 좁힐 수 없었다(2026-08-12 실측). crop 한 패널 이미지와 OCR 이 읽은 항목을
+    함께 남겨, 잘못 자른 것인지 / OCR 이 못 읽은 것인지 / 격자 규칙이 안 맞는 것인지를
+    이미지 한 장과 JSON 한 개로 가릴 수 있게 한다.
+    """
+    target = debug_dir if debug_dir is not None else DEBUG_ARTIFACT_DIR
+    try:
+        stamp = f"locate_fail_{reason}"
+        if panel is not None:
+            save_debug_jpeg(panel.convert("RGB"), target / f"{stamp}.jpg")
+        payload = {
+            "reason": reason,
+            "panel_size": list(panel.size) if panel is not None else None,
+            "item_count": len(items or []),
+            "items": [
+                {"text": item.get("text"), "bbox": item.get("bbox")}
+                for item in (items or [])[:60]
+            ],
+        }
+        path = target / f"{stamp}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"[INFO] Assist 실패 증거 저장: {target} (reason={reason})")
+    except Exception as exc:
+        print(f"[WARNING] Assist 실패 증거 저장 실패(무시): {exc}")
+
+
+def locate_assist_layout(window, window_title: str, backend: str, image, *, debug_dir=None):
     """Assist 패널을 찾아 score 격자를 만든다. 실패 시 None.
 
     watch 당 1회만 돈다(이후 폴링은 read_row_states 가 캐시된 격자를 쓴다). 반환은
     (panel_box, AssistLayout) 이며 panel_box 는 창-이미지 좌표계다.
+
+    실패 시에는 `debug_dir`(미지정이면 DEBUG_ARTIFACT_DIR)에 crop 한 패널 이미지와
+    OCR 항목 덤프를 남긴다 - 실패가 조용하면 오피스에서 고칠 수 없기 때문이다.
     """
     try:
         result = analyze_window_target(
@@ -537,6 +583,9 @@ def locate_assist_layout(window, window_title: str, backend: str, image):
     point = getattr(result, "point", None)
     if not point:
         print("[WARNING] Assist 패널을 찾지 못함 - 감지 비활성(cap 대기)")
+        # VLM 이 거부([-1,-1])했을 때는 crop 이 없으므로 입력 전체를 남긴다 - 그 프레임에
+        # 패널이 실제로 보였는지(가려짐/스크롤/탭 전환)를 사람이 바로 판별할 수 있다.
+        _save_locate_evidence(image, [], "no_panel_point", debug_dir)
         return None
 
     width, height = image.size
@@ -577,10 +626,13 @@ def locate_assist_layout(window, window_title: str, backend: str, image):
             f"[WARNING] Assist 좌표 정규화 후 사용 가능 항목 부족({len(items)}) - "
             "격자 생성 포기(확신 없는 격자보다 안전)"
         )
+        _save_locate_evidence(panel, items, "too_few_items", debug_dir)
         return None
 
     layout = build_score_grid(items, panel.size)
     if layout is None:
+        # build_score_grid 가 이유별로 경고를 찍는다. 여기서는 그 판단의 입력을 보존한다.
+        _save_locate_evidence(panel, items, "grid_build", debug_dir)
         return None
     print(
         f"[INFO] Assist 격자 확보: panel={panel_box} rows={len(layout.grid)} "

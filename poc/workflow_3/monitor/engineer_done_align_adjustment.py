@@ -1,23 +1,18 @@
-"""엔지니어 수동 align 보정 완료 감지 — 측정 카운터 delta + Assist score streak,
-두 조건 모두 충족.
+"""엔지니어 수동 align 보정 완료 감지 — Assist 우선, 측정 카운터 fallback.
 
 **align fail 관리 전용** 모듈이다. 미보정 engineer watch 동안 "align 보정이 끝나고
 본 측정이 정상적으로 진행 중이다"를 감지해 녹화를 조기 종료하고, 그 결과 cycle
-teardown 이 tool 창을 자동으로 닫는다. done 판정은 **두 조건을 모두** 요구한다:
+teardown 이 tool 창을 자동으로 닫는다. done 판정 우선순위는 다음과 같다:
 
-  1. 카운터 delta: tool 창 Recipe Monitor 의 측정 점 카운터 분자(N/M 의 N)가
-     watch 시작 시점 대비 `engineer_done_min_delta`(기본 6) 이상 늘어났다 —
-     측정이 실제로 진행 중이라는 신호.
-  2. Assist streak: Recipe Monitor Assist Window 가 연속 정상(검정) 측정을
-     `engineer_done_ok_streak`(기본 6) 회 이상 보여준다 — 그 측정들이 실제로
-     성공하고 있다는 신호. 색 판정은 `sem_monitor/assist_score.py` 담당.
+  1. Assist primary: watch 시작 뒤 Measurement 패널 fingerprint 가 새로 바뀌고,
+     Recipe Monitor Assist Window 가 연속 정상(검정) 측정을
+     `engineer_done_ok_streak`(기본 6) 회 이상 보여주면 완료다.
+  2. 분자 fallback: Assist 가 연속 3회 unusable 이고 이 watch 에서 Assist fail 을
+     한 번도 보지 않았을 때만, 분자 N 이 3회 엄격히 증가하면 완료다.
 
-카운터만 보던 옛 판정(N 이 임계 이상까지 오른 것을 연속 2회 확인)은 잔존 카운터
-(이전 런의 350/350 등)에 즉시 속아 미보정 상태에서도 done 을 냈다 — delta 로
-바꿔 "watch 시작 이후 새로 늘었는가"를 보게 했고, 거기에 Assist streak 을 더해
-"늘기만 하고 아직 다 실패 중"인 상태로 너무 일찍 닫히는 것도 막는다. 재정렬
-직후 카운터가 잠깐 보였다 사라지는 false-start 회피를 위해 두 임계 모두 높게
-잡는다.
+Assist 는 분자보다 먼저 같은 캡처 프레임에서 평가한다. 분자는 Assist 판독 자체가
+불가능할 때만 쓰는 보수적 fallback 이며, usable Assist 에서 한 번이라도 fail 을
+보면 해당 watch 동안 fallback 을 영구 차단한다.
 
 done 판정 시 `cycle._engineer_watch` 가 조기 종료하고, `run_alarm_cycle` 의
 teardown(finally)이 `close_tool(eqp_id)` 로 tool 창을 닫는다 (별도 닫기 호출
@@ -31,13 +26,10 @@ teardown(finally)이 `close_tool(eqp_id)` 로 tool 창을 닫는다 (별도 닫�
      `reground_sec` 간격 재시도 — 측정이 시작되면 숫자가 나타나 성공한다.
   2. CV gate(매 호출): ROI crop 변화감지 — align-fix 중엔 카운터가 정적이라
      OCR 호출이 0회로 유지된다 (recording.py 의 다운샘플+delta 로직 재사용).
-  3. OCR confirm(변화 시에만): paddleocr 로 분자 N 을 읽어 baseline 대비 delta 를
-     구한다. baseline 은 watch 시작 후 첫 성공 OCR 값이지만, 이후 읽기가 그보다
-     낮게 나오면(카운터 역행 = 새 측정 런이 시작됐다는 뜻) 그 값으로 baseline 을
-     다시 잡는다 — 안 그러면 잔존 값이 baseline 이 된 채 영원히 delta 가 음수로
-     남아 done 이 나올 수 없다.
+  3. OCR confirm(변화 시에만): paddleocr 로 분자 N 을 읽고 엄격히 증가하는 최근
+     3개 표본만 유지한다. 같은 값/감소는 새 시퀀스를 시작하고 OCR miss 는 지운다.
      OCR 연속 미검출(숫자 -> blank 전환 = 새 재정렬 시작 가능)은 ROI 재grounding.
-  4. Assist streak(delta 확정마다): `assist_score.locate_assist_layout` 으로
+  4. Assist primary(매 호출, 분자보다 먼저): `assist_score.locate_assist_layout` 으로
      score 격자를 1회 잡아 캐시하고, 이후 `read_row_states` + `ok_streak` 로
      연속 정상 횟수를 구한다. 격자 로케이트 자체도 재시도가 실패할 때마다
      `reground_sec` 로 throttle 한다(안 그러면 VLM+OCR 왕복이 매 폴링마다 반복돼
@@ -58,11 +50,11 @@ engineer_watch_sec cap 이 안전망. (CLAUDE.md 규칙: VLM 은 위치만, 전�
 import os
 import re
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
 from poc.workflow_3.monitor.recording import _frame_changed, _to_diff_gray
-from poc.workflow_3.sem_monitor.assist_score import ok_streak
+from poc.workflow_3.sem_monitor.assist_score import AssistObservation, ok_streak
 from poc.workflow_3.util import capture_window
 
 _POINT_RE = re.compile(r"\[\s*(-?\d+)\s*,\s*(-?\d+)\s*\]")
@@ -112,11 +104,19 @@ def extract_numerator(text: str) -> int | None:
     return int(match.group(0))
 
 
-class EngineerDoneDetector:
-    """Recipe Monitor 분자 기반 측정-시작 감지기 (watch iteration 마다 호출).
+@dataclass(frozen=True)
+class NumeratorObservation:
+    sampled: bool
+    value: int | None = None
+    reason: str = ""
 
-    capture_fn/ground_fn/ocr_fn 은 테스트 주입점 (RecordingSession 의 capture_fn
-    패턴). 실배선은 build_engineer_done_detector 가 담당한다.
+
+class EngineerDoneDetector:
+    """Assist 우선 측정-시작 감지기 (watch iteration 마다 호출).
+
+    capture_fn/ground_fn/ocr_fn/assist_fn/numerator_fn 은 테스트 주입점
+    (RecordingSession 의 capture_fn 패턴). 실배선은 build_engineer_done_detector 가
+    담당한다.
 
       capture_fn() -> PIL.Image          (기본: util.capture_window(tool_window))
       ground_fn(image) -> (x,y) 0-1000 | None   (VLM grounding, 거부 시 None)
@@ -131,7 +131,8 @@ class EngineerDoneDetector:
         capture_fn=None,
         ground_fn=None,
         ocr_fn=None,
-        rows_fn=None,
+        assist_fn=None,
+        numerator_fn=None,
         debug_dir=None,
     ):
         self.tool_window = tool_window
@@ -139,102 +140,100 @@ class EngineerDoneDetector:
         self._capture_fn = capture_fn or (lambda: capture_window(self.tool_window))
         self._ground_fn = ground_fn
         self._ocr_fn = ocr_fn
-        self._rows_fn = rows_fn
+        self._assist_fn = assist_fn
+        self._numerator_fn = numerator_fn
         self.debug_dir = debug_dir
         self._roi_ratios: tuple[float, float, float, float] | None = None
         self._next_localize_at = 0.0  # 거부(blank) 후 재시도 가능 시각 (throttle).
         self._prev_gray = None
-        self._baseline_n: int | None = None
         self._ocr_miss_streak = 0
         self._debug_seq = 0
+        self._assist_unusable_streak = 0
+        self._assist_baseline_fingerprint = None
+        self._assist_changed_since_start = False
+        self._assist_failure_seen = False
+        self._numerator_sequence: list[int] = []
         self.last_debug: dict = {}
 
     def __call__(self) -> bool:
         """측정 시작이 확인되면 True. 모든 실패/미확정은 False (cap 이 안전망)."""
         self.last_debug = {}
-        if self._roi_ratios is None:
-            now = time.time()
-            if now < self._next_localize_at:
-                return False
-            self._roi_ratios = self._localize()
-            if self._roi_ratios is None:
-                # 재정렬 중 카운터 blank 면 거부가 정상 — throttle 후 재시도.
-                self._next_localize_at = now + max(self.s.engineer_done_reground_sec, 0.0)
-                return False
-
-        crop = self._crop_numerator()
-        if crop is None:
+        try:
+            image = self._capture_fn()
+        except Exception as exc:
+            print(f"[WARNING] engineer-done 캡처 실패(회차 skip): {exc}")
             return False
 
-        gray = _to_diff_gray(crop)
-        first_sample = self._prev_gray is None
-        changed = (not first_sample) and _frame_changed(
-            self._prev_gray, gray, self.s.engineer_done_change_min_px
+        assist = (
+            self._assist_fn(image)
+            if self._assist_fn is not None
+            else AssistObservation(status="unusable", reason="assist_fn_missing")
         )
-        self._prev_gray = gray
-        self.last_debug.update({"changed": changed, "first_sample": first_sample})
-        if not changed:
-            return False
+        if assist.status == "usable":
+            self._assist_unusable_streak = 0
+            verdicts = [row.verdict for row in assist.rows]
+            if "fail" in verdicts:
+                self._assist_failure_seen = True
+            if self._assist_baseline_fingerprint is None:
+                self._assist_baseline_fingerprint = assist.panel_fingerprint
+            elif assist.panel_fingerprint != self._assist_baseline_fingerprint:
+                self._assist_changed_since_start = True
+            streak = ok_streak(assist.rows)
+            self.last_debug.update({
+                "assist_status": assist.status,
+                "assist_changed": self._assist_changed_since_start,
+                "assist_failure_seen": self._assist_failure_seen,
+                "streak": streak,
+            })
+            if (
+                self._assist_changed_since_start
+                and streak >= self.s.engineer_done_ok_streak
+            ):
+                print(
+                    f"[INFO] Assist 새 측정 진행 + 연속 정상 {streak}회 "
+                    f"(>= {self.s.engineer_done_ok_streak}) - align 완료 판정, "
+                    "watch 조기 종료 후 tool 창 닫기 진행"
+                )
+                return True
+        else:
+            self._assist_unusable_streak += 1
+            self.last_debug.update({
+                "assist_status": assist.status,
+                "assist_unusable_streak": self._assist_unusable_streak,
+                "assist_failure_seen": self._assist_failure_seen,
+            })
 
-        self._save_debug_crop(crop)
-        n = self._read_numerator(crop)
-        if n is None:
-            self._ocr_miss_streak += 1
-            self.last_debug["ocr_miss_streak"] = self._ocr_miss_streak
-            if self._ocr_miss_streak >= self.s.engineer_done_relocalize_after_miss:
-                print("[INFO] OCR 연속 미검출 - ROI 재grounding 예약(패널 이동/카운터 blank 가능성)")
-                self._roi_ratios = None
-                self._next_localize_at = 0.0  # 즉시 재grounding 허용.
-                self._ocr_miss_streak = 0
-                self._prev_gray = None
-                self._reset_baseline()
-            return False
-
-        self._ocr_miss_streak = 0
-
-        if self._baseline_n is None:
-            # watch 시작 기준점. 이전 런의 잔존 카운터를 여기서 흡수한다.
-            self._baseline_n = n
-            self.last_debug["baseline_n"] = n
-            return False
-
-        if n < self._baseline_n:
-            # 카운터가 baseline 아래로 내려갔다 = 새 측정 런이 시작됐다는 뜻(예:
-            # baseline 이 분모나 이전 런의 잔존 값을 잘못 흡수한 경우 포함). 옛
-            # baseline 을 계속 쓰면 delta 가 영원히 음수라 이 watch 내내 done 이
-            # 나올 수 없다 - 이 값을 새 baseline 으로 채택해 그 함정을 벗어난다.
-            print(
-                f"[INFO] 측정 카운터 역행 감지(n={n} < baseline={self._baseline_n}) - "
-                "새 측정 런 시작으로 보고 baseline 재설정"
-            )
-            self._baseline_n = n
-
-        delta = n - self._baseline_n
-        rows = self._read_rows()
-        streak = ok_streak(rows)
-        self.last_debug.update({"n": n, "delta": delta, "streak": streak})
-
-        is_done = (
-            delta >= self.s.engineer_done_min_delta
-            and streak >= self.s.engineer_done_ok_streak
+        numerator = (
+            self._numerator_fn(image)
+            if self._numerator_fn is not None
+            else self._observe_numerator(image)
         )
-        if is_done:
-            print(
-                f"[INFO] 측정 진행 확인: 새 측정 {delta}회, 연속 정상 {streak}회 "
-                f"(>= {self.s.engineer_done_min_delta}/{self.s.engineer_done_ok_streak}) "
-                f"- align 완료 판정, watch 조기 종료 후 tool 창 닫기 진행"
-            )
-        return is_done
+        self._update_numerator_sequence(numerator)
+        self.last_debug.update({
+            "numerator_sampled": numerator.sampled,
+            "n": numerator.value,
+            "numerator_reason": numerator.reason,
+            "numerator_sequence": list(self._numerator_sequence),
+        })
+        fallback_open = (
+            self._assist_unusable_streak
+            >= self.s.engineer_done_assist_unusable_after
+            and not self._assist_failure_seen
+        )
+        return (
+            fallback_open
+            and len(self._numerator_sequence)
+            >= self.s.engineer_done_numerator_increase_reads
+        )
 
     # ---- 내부 ----
 
-    def _localize(self):
+    def _localize(self, image):
         """VLM grounding - 분자 위치를 상대비율 ROI 로. 실패/거부 시 None(재시도 가능)."""
         if self._ground_fn is None:
             print("[WARNING] engineer-done grounding fn 없음 - 감지 비활성(cap 대기)")
             return None
         try:
-            image = self._capture_fn()
             point = self._ground_fn(image)
         except Exception as exc:
             print(f"[WARNING] engineer-done grounding 실패(재시도 예정): {exc}")
@@ -258,13 +257,8 @@ class EngineerDoneDetector:
         )
         return ratios
 
-    def _crop_numerator(self):
-        """tool 창 재캡처 후 캐시된 상대비율 ROI 로 분자 셀을 crop 한다."""
-        try:
-            image = self._capture_fn()
-        except Exception as exc:
-            print(f"[WARNING] engineer-done 캡처 실패(회차 skip): {exc}")
-            return None
+    def _crop_numerator(self, image):
+        """이미 캡처한 tool 창에서 캐시된 상대비율 ROI 로 분자 셀을 crop 한다."""
         left, top, right, bottom = self._roi_ratios
         width, height = image.size
         box = (
@@ -274,6 +268,62 @@ class EngineerDoneDetector:
             max(int(top * height) + 1, int(bottom * height)),
         )
         return image.crop(box)
+
+    def _observe_numerator(self, image) -> NumeratorObservation:
+        """같은 poll 프레임에서 분자 변화/OCR 표본을 만든다."""
+        if self._roi_ratios is None:
+            now = time.time()
+            if now < self._next_localize_at:
+                return NumeratorObservation(False, reason="localize_throttled")
+            self._roi_ratios = self._localize(image)
+            if self._roi_ratios is None:
+                self._next_localize_at = now + max(
+                    self.s.engineer_done_reground_sec, 0.0
+                )
+                return NumeratorObservation(False, reason="roi_unavailable")
+            self._numerator_sequence.clear()
+
+        crop = self._crop_numerator(image)
+        gray = _to_diff_gray(crop)
+        first_sample = self._prev_gray is None
+        changed = (not first_sample) and _frame_changed(
+            self._prev_gray, gray, self.s.engineer_done_change_min_px
+        )
+        self._prev_gray = gray
+        self.last_debug.update({"changed": changed, "first_sample": first_sample})
+        if not changed:
+            return NumeratorObservation(False, reason="no_change")
+
+        self._save_debug_crop(crop)
+        n = self._read_numerator(crop)
+        if n is None:
+            self._ocr_miss_streak += 1
+            self.last_debug["ocr_miss_streak"] = self._ocr_miss_streak
+            if self._ocr_miss_streak >= self.s.engineer_done_relocalize_after_miss:
+                print("[INFO] OCR 연속 미검출 - ROI 재grounding 예약(패널 이동/카운터 blank 가능성)")
+                self._roi_ratios = None
+                self._next_localize_at = 0.0
+                self._ocr_miss_streak = 0
+                self._prev_gray = None
+                self._numerator_sequence.clear()
+            return NumeratorObservation(True, None, "ocr_miss")
+
+        self._ocr_miss_streak = 0
+        return NumeratorObservation(True, n, "read")
+
+    def _update_numerator_sequence(self, observation: NumeratorObservation) -> None:
+        if not observation.sampled:
+            return
+        n = observation.value
+        if n is None:
+            self._numerator_sequence.clear()
+            return
+        if self._numerator_sequence and n > self._numerator_sequence[-1]:
+            self._numerator_sequence.append(n)
+        else:
+            self._numerator_sequence = [n]
+        keep = max(1, self.s.engineer_done_numerator_increase_reads)
+        self._numerator_sequence = self._numerator_sequence[-keep:]
 
     def _read_numerator(self, crop) -> int | None:
         """분자 crop 을 OCR 해 정수 N 을 얻는다. 실패는 None."""
@@ -285,24 +335,6 @@ class EngineerDoneDetector:
             print(f"[WARNING] engineer-done OCR 실패(회차 미판정): {exc}")
             return None
         return extract_numerator(text)
-
-    def _read_rows(self) -> list:
-        """Assist 행 상태를 읽는다. 실패는 빈 목록(= streak 0 = 아직 아님)."""
-        if self._rows_fn is None:
-            return []
-        try:
-            return self._rows_fn() or []
-        except Exception as exc:
-            print(f"[WARNING] Assist 행 판독 실패(이번 회차 미판정): {exc}")
-            return []
-
-    def _reset_baseline(self) -> None:
-        """baseline 을 무효화한다. ROI 가 바뀌면 반드시 함께 호출한다.
-
-        옛 구현은 재grounding 때 _last_n 만 살려둬서 옛 ROI 값과 새 ROI 값을 비교했다.
-        폴링 간 상태를 baseline 하나로 줄이고, 그 하나를 여기서 확실히 지운다.
-        """
-        self._baseline_n = None
 
     def _save_debug_crop(self, crop) -> None:
         """debug_dir 설정 시 변화-발화 crop 을 저장한다 (실패 무시)."""
@@ -387,8 +419,7 @@ def _make_assist_fn(tool_window, settings, *, debug_dir=None):
              "blank_relocate_limit_logged": False, "next_locate_at": 0.0}
 
     def assist_fn(image):
-        # 호출부(EngineerDoneDetector._read_rows)가 이미 예외를 삼키지만, 이 클로저는
-        # 어디서 호출되든 안전해야 한다 - 그 안전은 여기서 스스로 보장한다.
+        # detector 밖에서 직접 호출돼도 이 클로저 자체가 안전해야 한다.
         try:
             if state["layout"] is None and time.time() < state["next_locate_at"]:
                 return AssistObservation(status="unusable", reason="locate_throttled")
@@ -402,7 +433,7 @@ def _make_assist_fn(tool_window, settings, *, debug_dir=None):
                         settings.engineer_done_reground_sec, 0.0
                     )
                     if not state["warned"]:
-                        print("[WARNING] Assist 격자 확보 실패 - 이번 watch 는 done 판정 없이 cap 대기")
+                        print("[WARNING] Assist 격자 확보 실패 - 분자 fallback 판정 대기")
                         state["warned"] = True
                     return AssistObservation(status="unusable", reason="layout_unavailable")
                 state["panel_box"], state["layout"] = located
@@ -475,28 +506,29 @@ def _make_assist_fn(tool_window, settings, *, debug_dir=None):
 def build_engineer_done_detector(tool_window, settings, *, vlm_client=None, debug_dir=None):
     """설정 게이트 확인 후 실 VLM/OCR 배선된 detector 를 만든다.
 
-    비활성/창 없음/클라이언트 생성 실패 -> None (호출부는 고정 timeout 폴백).
-    cycle 의 OK-버튼용 vlm_client 가 같은 서비스면 재사용한다.
+    비활성/창 없음 -> None (호출부는 고정 timeout 폴백). 분자 fallback 클라이언트
+    생성이 실패해도 Assist primary 는 유지한다. cycle 의 OK-버튼용 vlm_client 가
+    같은 서비스면 재사용한다.
     """
     if not settings.engineer_done_detect_enabled:
         return None
     if tool_window is None:
         return None
+    assist_fn = _make_assist_fn(tool_window, settings, debug_dir=debug_dir)
     try:
         ground_fn = _make_ground_fn(settings, vlm_client=vlm_client)
         ocr_fn = _make_ocr_fn(settings)
     except Exception as exc:
-        print(f"[WARNING] engineer-done 클라이언트 생성 실패(고정 timeout 폴백): {exc}")
-        return None
-    assist_fn = _make_assist_fn(tool_window, settings, debug_dir=debug_dir)
-
-    # Task 4가 detector의 한 프레임 capture를 assist_fn에도 전달하도록 이 경로를
-    # 교체한다. 그 전까지 기존 rows_fn 주입 계약을 보존한다.
-    def rows_fn():
-        return assist_fn(capture_window(tool_window)).rows
+        print(f"[WARNING] numerator fallback client 생성 실패(Assist primary 유지): {exc}")
+        ground_fn = None
+        ocr_fn = None
 
     return EngineerDoneDetector(
-        tool_window, settings, ground_fn=ground_fn, ocr_fn=ocr_fn, rows_fn=rows_fn,
+        tool_window,
+        settings,
+        ground_fn=ground_fn,
+        ocr_fn=ocr_fn,
+        assist_fn=assist_fn,
         debug_dir=debug_dir,
     )
 
@@ -569,8 +601,9 @@ def run_calibration() -> bool:
     print(
         f"[INFO] 캘리브레이션 시작: 최대 {duration_sec:.0f}s, "
         f"poll={settings.engineer_done_poll_sec}s, "
-        f"min_delta={settings.engineer_done_min_delta}, "
         f"ok_streak={settings.engineer_done_ok_streak}, "
+        f"assist_unusable_after={settings.engineer_done_assist_unusable_after}, "
+        f"numerator_reads={settings.engineer_done_numerator_increase_reads}, "
         f"debug={debug_dir}"
     )
     deadline = time.time() + duration_sec
@@ -580,8 +613,10 @@ def run_calibration() -> bool:
         done = detector()
         dbg = detector.last_debug
         print(
-            f"[INFO] tick {tick}: changed={dbg.get('changed')}, "
-            f"n={dbg.get('n')}, delta={dbg.get('delta')}, streak={dbg.get('streak')}, "
+            f"[INFO] tick {tick}: assist={dbg.get('assist_status')}, "
+            f"fresh={dbg.get('assist_changed')}, streak={dbg.get('streak')}, "
+            f"changed={dbg.get('changed')}, n={dbg.get('n')}, "
+            f"sequence={dbg.get('numerator_sequence')}, "
             f"miss={dbg.get('ocr_miss_streak', 0)}, done={done}"
         )
         if done:
@@ -590,18 +625,15 @@ def run_calibration() -> bool:
             return True
         time.sleep(settings.engineer_done_poll_sec)
 
-    last_n = detector.last_debug.get("n")
-    last_delta = detector.last_debug.get("delta")
-    last_streak = detector.last_debug.get("streak")
     print(
-        "[WARNING] duration 내 done 미감지. 원인 구분 - 카운터(delta)와 Assist(streak) "
-        "중 어느 조건이 못 채워졌는지가 핵심이다(두 조건 모두 필요):\n"
-        f"  - delta 가 min_delta(={settings.engineer_done_min_delta}) 미달이면(마지막 "
-        f"delta={last_delta}, n={last_n}) 카운터 자체가 아직 덜 오른 것 - 빠른 검증엔 "
-        "ALIGN_FAIL_ENGINEER_DONE_MIN_DELTA=2 또는 ALIGN_DONE_CALIB_SEC 상향 후 재실행.\n"
-        f"  - delta 는 충분한데 streak 이 ok_streak(={settings.engineer_done_ok_streak}) "
-        f"미달이면(마지막 streak={last_streak}) Assist Window 격자/색 판정 문제 - "
-        "debug_images/engineer_done_calib/.../assist_*.jpg 오버레이로 열 매핑/색 임계 확인.\n"
+        "[WARNING] duration 내 done 미감지. 원인 구분:\n"
+        f"  - Assist 는 watch 시작 뒤 fingerprint 변화와 ok_streak="
+        f"{settings.engineer_done_ok_streak} 충족이 모두 필요하다. Assist fail 을 한 번이라도 "
+        "보면 분자 fallback 은 이 watch 동안 차단된다.\n"
+        f"  - Assist 가 연속 {settings.engineer_done_assist_unusable_after}회 unusable 일 때만 "
+        f"분자 {settings.engineer_done_numerator_increase_reads}회 엄격 증가 fallback 을 쓴다.\n"
+        "  - Assist 격자/색 문제는 debug_images/engineer_done_calib/.../assist_*.jpg "
+        "오버레이로 열 매핑/색 임계를 확인한다.\n"
         "  - n 이 계속 None/blank 면 카운터 grounding/OCR 문제 - debug crop 으로 ROI 확인 후 "
         "grounding 문구(RECIPE_MONITOR_NUMERATOR_INSTRUCTION)/ROI pad 조정."
     )
@@ -614,6 +646,7 @@ if __name__ == "__main__":
 
 __all__ = [
     "EngineerDoneDetector",
+    "NumeratorObservation",
     "build_engineer_done_detector",
     "extract_numerator",
     "parse_point_1000",

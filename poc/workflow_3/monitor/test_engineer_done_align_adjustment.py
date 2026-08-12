@@ -19,6 +19,7 @@ from poc.workflow_3.monitor.cycle import _engineer_watch
 from poc.workflow_3.monitor.engineer_done_align_adjustment import (
     ALL_BLANK_RELOCATE_AFTER,
     EngineerDoneDetector,
+    NumeratorObservation,
     _make_assist_fn,
     build_engineer_done_detector,
     extract_numerator,
@@ -50,7 +51,14 @@ def test_settings_defaults() -> bool:
     ok = True
     ok &= _check("detect_enabled default False", s.engineer_done_detect_enabled is False)
     ok &= _check("poll_sec default 8.0", s.engineer_done_poll_sec == 8.0)
-    ok &= _check("min_delta default 6", s.engineer_done_min_delta == 6)
+    ok &= _check(
+        "assist_unusable_after default 3",
+        s.engineer_done_assist_unusable_after == 3,
+    )
+    ok &= _check(
+        "numerator_increase_reads default 3",
+        s.engineer_done_numerator_increase_reads == 3,
+    )
     ok &= _check("change_min_px default 4", s.engineer_done_change_min_px == 4)
     ok &= _check("relocalize_after_miss default 3", s.engineer_done_relocalize_after_miss == 3)
     ok &= _check("roi_pad_x default 0.03", s.engineer_done_roi_pad_x == 0.03)
@@ -67,7 +75,7 @@ def test_settings_defaults() -> bool:
 
 
 def test_settings_env_load_path() -> bool:
-    """load_workflow3_settings() env 경로로도 engineer_done 기본값이 동일하다."""
+    """load_workflow3_settings() 가 priority 설정 env 이름을 읽는다."""
     import os
 
     from poc.workflow_3.config import load_workflow3_settings
@@ -76,13 +84,21 @@ def test_settings_env_load_path() -> bool:
     keys = [k for k in os.environ if k.startswith("ALIGN_FAIL_ENGINEER_DONE")]
     saved = {k: os.environ.pop(k) for k in keys}
     try:
+        os.environ["ALIGN_FAIL_ENGINEER_DONE_ASSIST_UNUSABLE_AFTER"] = "5"
+        os.environ["ALIGN_FAIL_ENGINEER_DONE_NUMERATOR_READS"] = "4"
         s = load_workflow3_settings()
     finally:
+        for key in [k for k in os.environ if k.startswith("ALIGN_FAIL_ENGINEER_DONE")]:
+            os.environ.pop(key)
         os.environ.update(saved)
     ok = True
     ok &= _check("env path detect_enabled False", s.engineer_done_detect_enabled is False)
     ok &= _check("env path poll_sec 8.0", s.engineer_done_poll_sec == 8.0)
-    ok &= _check("env path min_delta 6", s.engineer_done_min_delta == 6)
+    ok &= _check(
+        "env path priority settings",
+        s.engineer_done_assist_unusable_after == 5
+        and s.engineer_done_numerator_increase_reads == 4,
+    )
     ok &= _check(
         "env path services",
         s.engineer_done_vlm_service == _DEFAULT_VLM_SERVICE
@@ -182,8 +198,9 @@ def _settings(**overrides):
         engineer_done_detect_enabled=True,
         engineer_done_roi_pad_x=0.05,
         engineer_done_roi_pad_y=0.05,
-        engineer_done_min_delta=2,
         engineer_done_ok_streak=2,
+        engineer_done_assist_unusable_after=1,
+        engineer_done_numerator_increase_reads=2,
         engineer_done_relocalize_after_miss=3,
         engineer_done_reground_sec=0.0,
     )
@@ -207,25 +224,16 @@ def test_detector_static_no_ocr() -> bool:
 
 
 def test_detector_two_read_confirm() -> bool:
-    """변화 + OCR 2 -> 4: 첫 읽기는 baseline 확정(False), 두 번째에 delta+streak 충족 -> done.
-
-    옛 판정("2 -> 3, 비감소면 done")에서 새 판정(delta>=min_delta and streak>=ok_streak)
-    으로 바뀌며 두 번째 읽기 값을 3에서 4로 올렸다 - delta(=4-2=2)가 _settings() 의
-    min_delta=2 를 충족해야 하기 때문. rows_fn 은 ok_streak=2 를 충족하는 연속 정상
-    2행을 공급한다(Assist streak 없이는 delta 만으론 done 이 안 된다).
-    """
+    """Assist unusable 상태에서 변화 + OCR 2 -> 4 두 표본은 fallback done."""
     capture = _SeqCapture([
-        _frame(1),            # grounding 캡처
-        _frame(1),            # baseline (첫 샘플, OCR 안 함)
-        _frame(2),            # 변화 1 -> OCR '2' (baseline_n 확정)
-        _frame(3),            # 변화 2 -> OCR '4' (delta=2>=2, streak=2>=2 -> done)
+        _frame(1),            # grounding + CV baseline (OCR 안 함)
+        _frame(2),            # 변화 1 -> OCR '2'
+        _frame(3),            # 변화 2 -> OCR '4' (두 번째 엄격 증가 표본 -> done)
     ])
     ground = _CountingFn([(525, 550)])
     ocr = _CountingFn(["2/350", "4/350"])
-    rows = _rows_all_ok(2)
     detector = EngineerDoneDetector(
         None, _settings(), capture_fn=capture, ground_fn=ground, ocr_fn=ocr,
-        rows_fn=lambda: rows,
     )
     results = [detector(), detector(), detector()]
     ok = True
@@ -237,8 +245,8 @@ def test_detector_two_read_confirm() -> bool:
 
 
 def test_detector_below_min_not_done() -> bool:
-    """N < min_count 면 변화가 있어도 done 아님."""
-    capture = _SeqCapture([_frame(0), _frame(0), _frame(1), _frame(2)])
+    """같은 OCR 값은 엄격 증가 시퀀스를 만들지 못한다."""
+    capture = _SeqCapture([_frame(0), _frame(1), _frame(2)])
     ground = _CountingFn([(525, 550)])
     ocr = _CountingFn(["1/350", "1/350"])
     detector = EngineerDoneDetector(None, _settings(), capture_fn=capture, ground_fn=ground, ocr_fn=ocr)
@@ -281,25 +289,20 @@ def test_detector_ground_blank_then_found() -> bool:
     """재정렬 중 blank(거부 2회) -> 측정 시작으로 카운터 등장 -> 정상 done 경로.
 
     오피스 관찰: re-align 진행 중에는 N/M 칸이 빈칸이라 VLM 이 거부한다.
-    측정이 시작되면 숫자가 나타나므로 grounding 재시도가 성공해야 한다.
-    두 번째 OCR 값을 3 -> 4 로 올린 이유는 test_detector_two_read_confirm 과 같다
-    (delta=4-2=2 가 _settings() 의 min_delta=2 를 충족해야 함). rows_fn 도 같은
-    이유로 추가했다(streak 없이는 delta 만으론 done 이 안 됨).
+    측정이 시작되면 숫자가 나타나므로 grounding 재시도가 성공하고 두 번의 엄격
+    증가 OCR 표본으로 fallback 완료해야 한다.
     """
     capture = _SeqCapture([
         _frame(1),            # grounding 시도 1 (blank 가정 -> 거부)
         _frame(1),            # grounding 시도 2 (거부)
-        _frame(1),            # grounding 시도 3 (성공)
-        _frame(1),            # baseline crop (첫 샘플)
-        _frame(2),            # 변화 1 -> OCR '2' (baseline_n 확정)
-        _frame(3),            # 변화 2 -> OCR '4' (delta=2>=2, streak=2>=2 -> done)
+        _frame(1),            # grounding 시도 3 성공 + CV baseline
+        _frame(2),            # 변화 1 -> OCR '2'
+        _frame(3),            # 변화 2 -> OCR '4' (fallback done)
     ])
     ground = _CountingFn([None, None, (525, 550)])
     ocr = _CountingFn(["2/350", "4/350"])
-    rows = _rows_all_ok(2)
     detector = EngineerDoneDetector(
         None, _settings(), capture_fn=capture, ground_fn=ground, ocr_fn=ocr,
-        rows_fn=lambda: rows,
     )
     results = [detector(), detector(), detector(), detector(), detector()]
     ok = True
@@ -395,18 +398,15 @@ def test_watch_no_detector_unchanged() -> bool:
     return _check("exits on recording death", recording.checks >= 3)
 
 
-def test_settings_use_delta_and_streak_not_absolute_count() -> bool:
-    """절대값 기준(min_count)은 제거됐다.
-
-    잔존 카운터 오탐의 근원이었다 - 이전 런의 350/350 이 떠 있으면 즉시 조건을 만족했다.
-    """
+def test_settings_use_priority_signals() -> bool:
+    """Assist 우선과 엄격 증가 fallback 설정만 노출한다."""
     settings = load_workflow3_settings()
     ok = (
         settings.engineer_done_ok_streak == 6
-        and settings.engineer_done_min_delta == 6
-        and not hasattr(settings, "engineer_done_min_count")
+        and settings.engineer_done_assist_unusable_after == 3
+        and settings.engineer_done_numerator_increase_reads == 3
     )
-    print(f"[{'PASS' if ok else 'FAIL'}] settings_use_delta_and_streak_not_absolute_count")
+    print(f"[{'PASS' if ok else 'FAIL'}] settings_use_priority_signals")
     return ok
 
 
@@ -415,137 +415,209 @@ def _rows_all_ok(count=7):
     return [RowState(cells=dict(cells)) for _ in range(count)]
 
 
-def _detector_with(counter_values, rows):
-    """카운터 값을 순서대로 돌려주는 detector 를 만든다.
-
-    브리프 원안은 capture_fn 이 매번 동일한 상수 이미지를 돌려줬다. 그러면
-    `__call__` 의 기존 CV 변화게이트(첫 샘플은 무조건 OCR 미호출, 이후로도 프레임이
-    안 바뀌면 미호출 - `test_detector_static_no_ocr` 가 지키는 기존 동작)에 걸려
-    OCR 이 영원히 불리지 않아 delta/streak 판정 자체가 발화하지 않는다(테스트가
-    "통과"는 하지만 검증하려는 로직을 실제로 거치지 않는 공허한 통과가 된다). 매
-    호출 색조를 바꿔 실제로 매 회차 변화가 감지되게 한다 - counter_values/ocr_fn/
-    rows_fn 은 브리프 그대로다.
-    """
-    settings = load_workflow3_settings()
-    ocr_state = {"i": 0}
-
-    def ocr_fn(_crop):
-        idx = min(ocr_state["i"], len(counter_values) - 1)
-        ocr_state["i"] += 1
-        return f"{counter_values[idx]}/350"
-
-    # 1000x500 - 기본 roi_pad(x=0.03,y=0.02)로 crop 해도 변화게이트의 4x 다운샘플
-    # 후 픽셀 수가 min_changed_px(기본 4) 를 넘도록 충분히 크게 잡는다(작은 crop 은
-    # 다운샘플 후 표본이 3개뿐이라 색이 달라도 절대 "changed" 로 잡히지 않는다).
-    capture_state = {"i": -1}
-
-    def capture_fn():
-        capture_state["i"] += 1
-        shade = (capture_state["i"] * 20) % 256
-        return Image.new("RGB", (1000, 500), (shade, shade, shade))
-
-    detector = EngineerDoneDetector(
-        None, settings,
-        capture_fn=capture_fn,
-        ground_fn=lambda _img: (500, 500),
-        ocr_fn=ocr_fn,
-        rows_fn=lambda: rows,
+def _assist_ok(fingerprint):
+    return asc.AssistObservation(
+        status="usable",
+        rows=_rows_all_ok(7),
+        panel_fingerprint=fingerprint,
+        reason="ok",
     )
-    return detector
+
+
+def _assist_fail(fingerprint):
+    rows = _rows_all_ok(7)
+    rows[-1].cells["Measurement"] = "red"
+    return asc.AssistObservation(
+        status="usable",
+        rows=rows,
+        panel_fingerprint=fingerprint,
+        reason="ok",
+    )
+
+
+def _assist_unusable():
+    return asc.AssistObservation(
+        status="unusable",
+        rows=[],
+        panel_fingerprint=None,
+        reason="layout_unavailable",
+    )
+
+
+def _priority_detector(*, assist, numerators):
+    observations = [
+        NumeratorObservation(
+            sampled=True,
+            value=value,
+            reason="read" if value is not None else "ocr_miss",
+        )
+        for value in numerators
+    ] or [NumeratorObservation(sampled=False, reason="no_change")]
+    return EngineerDoneDetector(
+        None,
+        _settings(
+            engineer_done_ok_streak=6,
+            engineer_done_assist_unusable_after=3,
+            engineer_done_numerator_increase_reads=3,
+        ),
+        capture_fn=lambda: Image.new("RGB", (400, 200), (0, 0, 0)),
+        assist_fn=assist,
+        numerator_fn=_CountingFn(observations),
+    )
+
+
+def _run_numerator_sequence(values):
+    assist = _CountingFn([_assist_unusable()] * len(values))
+    detector = _priority_detector(assist=assist, numerators=values)
+    return [detector() for _ in values][-1]
+
+
+def test_assist_needs_fresh_change_after_watch_start():
+    assist = _CountingFn([
+        _assist_ok("same"),
+        _assist_ok("same"),
+        _assist_ok("changed"),
+    ])
+    detector = _priority_detector(assist=assist, numerators=[])
+    assert [detector(), detector(), detector()] == [False, False, True]
+
+
+def test_red_assist_permanently_blocks_numerator_fallback():
+    assist = _CountingFn([
+        _assist_fail("red"),
+        _assist_unusable(),
+        _assist_unusable(),
+        _assist_unusable(),
+    ])
+    detector = _priority_detector(assist=assist, numerators=[10, 11, 12])
+    assert [detector(), detector(), detector(), detector()] == [False] * 4
+
+
+def test_numerator_fallback_requires_three_unusable_assist_observations():
+    assist = _CountingFn([
+        _assist_unusable(),
+        _assist_unusable(),
+        _assist_unusable(),
+    ])
+    detector = _priority_detector(assist=assist, numerators=[10, 11, 12])
+    assert [detector(), detector(), detector()] == [False, False, True]
+
+
+def test_invalid_numerator_sequences_do_not_finish():
+    for values in ([10, 10, 11], [10, 12, None], [10, 9, 10]):
+        assert not _run_numerator_sequence(values)
+
+
+def test_usable_assist_resets_unusable_streak():
+    assist = _CountingFn([
+        _assist_unusable(),
+        _assist_unusable(),
+        _assist_ok("same"),
+    ])
+    detector = _priority_detector(assist=assist, numerators=[10, 11, 12])
+
+    assert [detector(), detector(), detector()] == [False, False, False]
+    assert detector._assist_unusable_streak == 0
+
+
+def test_detector_captures_one_frame_per_poll():
+    capture = _SeqCapture([
+        Image.new("RGB", (400, 200), (0, 0, 0)),
+        Image.new("RGB", (400, 200), (1, 1, 1)),
+    ])
+    detector = EngineerDoneDetector(
+        None,
+        _settings(),
+        capture_fn=capture,
+        assist_fn=_CountingFn([_assist_unusable(), _assist_unusable()]),
+        numerator_fn=_CountingFn([
+            NumeratorObservation(sampled=False, reason="no_change"),
+        ]),
+    )
+
+    detector()
+    detector()
+
+    assert capture.calls == 2
+
+
+def test_assist_primary_finishes_before_numerator_evaluation():
+    numerator = _CountingFn([
+        NumeratorObservation(sampled=True, value=10, reason="read"),
+    ])
+    detector = EngineerDoneDetector(
+        None,
+        _settings(engineer_done_ok_streak=6),
+        capture_fn=lambda: Image.new("RGB", (400, 200), (0, 0, 0)),
+        assist_fn=_CountingFn([_assist_ok("same"), _assist_ok("changed")]),
+        numerator_fn=numerator,
+    )
+
+    assert [detector(), detector()] == [False, True]
+    assert numerator.calls == 1
+
+
+def test_builder_keeps_assist_when_numerator_clients_fail():
+    import poc.workflow_3.monitor.engineer_done_align_adjustment as module
+
+    saved = (module._make_ground_fn, module._make_ocr_fn, module._make_assist_fn)
+    try:
+        module._make_ground_fn = lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("numerator grounding unavailable")
+        )
+        module._make_ocr_fn = lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("numerator OCR unavailable")
+        )
+        module._make_assist_fn = lambda *args, **kwargs: (
+            lambda image: _assist_ok("fresh")
+        )
+        detector = module.build_engineer_done_detector(object(), _settings())
+    finally:
+        module._make_ground_fn, module._make_ocr_fn, module._make_assist_fn = saved
+    assert detector is not None
 
 
 def test_leftover_counter_does_not_fire():
-    """watch 시작 시 7행 전부 검정 + 카운터가 안 움직이면 done 이 아니다.
-
-    옛 판정(n >= 6 and n >= _last_n)이 즉시 True 를 내던 바로 그 상황이다.
-    3회 호출 = 1) CV 게이트의 gray baseline 샘플(OCR 미호출) 2) 첫 실제 OCR
-    (baseline_n=350 확정) 3) 같은 값 재확인(delta=0) - 세 번째 호출에서 비로소
-    delta 로직이 실행되고 0 이 나와 통과한다.
-    """
-    detector = _detector_with([350, 350, 350], _rows_all_ok())
+    """잔존 분자 값이 반복되면 fallback 완료로 오인하지 않는다."""
+    assist = _CountingFn([_assist_unusable()] * 3)
+    detector = _priority_detector(assist=assist, numerators=[350, 350, 350])
     results = [detector() for _ in range(3)]
     ok = not any(results)
     print(f"[{'PASS' if ok else 'FAIL'}] leftover_counter_does_not_fire: {results}")
     return ok
 
 
-def test_delta_reached_but_streak_short():
-    """새 측정을 충분히 채워도(delta 충족) 연속 정상이 모자라면(streak) done 이 아니다.
-
-    브리프 원안은 2회 호출이었으나, 1회차는 CV 게이트의 gray baseline 샘플(OCR
-    미호출)·2회차는 그 뒤의 첫 실제 OCR 로 baseline_n 을 확정하는 자리라 항상
-    False 다(값과 무관) - delta/streak 판정 자체가 아직 실행되지 않는다. 3회차를
-    추가해야 delta=10(>=6)·streak=1(<6) 조합이 실제로 평가된다.
-    """
+def test_assist_fresh_but_streak_short():
+    """Measurement 가 새로 바뀌어도 연속 정상 6행 미만이면 완료가 아니다."""
     rows = _rows_all_ok(7)
     rows[-2].cells["Measurement"] = "red"   # 최신에서 두 번째가 실패 -> streak = 1
-    detector = _detector_with([10, 20], rows)
-    results = [detector(), detector(), detector()]
+    assist = _CountingFn([
+        _assist_ok("same"),
+        asc.AssistObservation(
+            status="usable",
+            rows=rows,
+            panel_fingerprint="changed",
+            reason="ok",
+        ),
+    ])
+    detector = _priority_detector(assist=assist, numerators=[])
+    results = [detector(), detector()]
     ok = not any(results)
-    print(f"[{'PASS' if ok else 'FAIL'}] delta_reached_but_streak_short: {results}")
+    print(f"[{'PASS' if ok else 'FAIL'}] assist_fresh_but_streak_short: {results}")
     return ok
 
 
-def test_done_when_delta_and_streak_both_met():
-    """delta 와 streak 을 모두 채우면 done.
-
-    브리프 원안은 2회 호출로 두 번째에 done 을 기대했으나, 1회차(gray baseline,
-    OCR 미호출)·2회차(첫 실제 OCR, baseline_n=10 확정 - 값과 무관하게 항상 False)
-    까지는 구조적으로 delta 를 계산할 수 없다. 3회차에서 n=20 을 읽어 delta=10
-    (>=6)·streak=7(>=6) 이 모두 만족되어 True 가 나온다.
-    """
-    detector = _detector_with([10, 20], _rows_all_ok())
-    first = detector()      # gray baseline 샘플 -> False (OCR 미호출)
-    second = detector()     # 첫 실제 OCR: n=10 -> baseline_n 확정 -> False
-    third = detector()      # 두 번째 OCR: n=20, delta=10, streak=7 -> True
-    ok = (first is False) and (second is False) and (third is True)
+def test_done_when_assist_is_fresh_and_streak_met():
+    """새 Measurement fingerprint 와 연속 정상 6행이면 primary 완료다."""
+    assist = _CountingFn([_assist_ok("same"), _assist_ok("changed")])
+    detector = _priority_detector(assist=assist, numerators=[])
+    first = detector()
+    second = detector()
+    ok = (first is False) and (second is True)
     print(
-        f"[{'PASS' if ok else 'FAIL'}] done_when_delta_and_streak_both_met: "
-        f"{first},{second},{third}"
+        f"[{'PASS' if ok else 'FAIL'}] done_when_assist_is_fresh_and_streak_met: "
+        f"{first},{second}"
     )
-    return ok
-
-
-def test_rows_fn_exception_returns_false() -> bool:
-    """rows_fn 이 예외를 던져도 삼켜지고 streak 0(= 아직 아님)으로 처리돼 False 를 낸다.
-
-    `_read_rows` 가 예외를 삼키지 않으면 폴링 루프까지 예외가 전파돼 detector 가 그
-    시점에서 죽는다. delta/streak 판정이 실제로 실행되는 3회차까지 호출해 검증한다
-    (1회차=CV 게이트 gray baseline, 2회차=첫 실제 OCR 로 baseline_n 확정).
-    """
-    settings = load_workflow3_settings()
-    counter_values = [10, 20]
-    ocr_state = {"i": 0}
-
-    def ocr_fn(_crop):
-        idx = min(ocr_state["i"], len(counter_values) - 1)
-        ocr_state["i"] += 1
-        return f"{counter_values[idx]}/350"
-
-    capture_state = {"i": -1}
-
-    def capture_fn():
-        capture_state["i"] += 1
-        shade = (capture_state["i"] * 20) % 256
-        return Image.new("RGB", (1000, 500), (shade, shade, shade))
-
-    def rows_fn():
-        raise RuntimeError("rows boom")
-
-    detector = EngineerDoneDetector(
-        None, settings,
-        capture_fn=capture_fn,
-        ground_fn=lambda _img: (500, 500),
-        ocr_fn=ocr_fn,
-        rows_fn=rows_fn,
-    )
-    try:
-        results = [detector() for _ in range(3)]
-    except Exception as exc:
-        print(f"[FAIL] rows_fn_exception_returns_false: 예외 전파됨 ({exc})")
-        return False
-    ok = not any(results)
-    print(f"[{'PASS' if ok else 'FAIL'}] rows_fn_exception_returns_false: {results}")
     return ok
 
 
@@ -592,7 +664,10 @@ class _RowsFnHarness:
         return ({"left": 0, "top": 0, "right": 20, "bottom": 20}, layout)
 
     def _read(self, image, layout):
-        return self.rows_seq.pop(0) if self.rows_seq else []
+        value = self.rows_seq.pop(0) if self.rows_seq else []
+        if isinstance(value, Exception):
+            raise value
+        return value
 
     def _overlay(self, *a, **k):
         self.overlay_calls += 1
@@ -613,6 +688,16 @@ class _RowsFnHarness:
         for (mod, name), orig in self._saved.items():
             setattr(mod, name, orig)
         return False
+
+
+def test_assist_fn_exception_returns_unusable() -> bool:
+    """Assist 판독 예외는 unusable 관측값으로 닫히고 호출자에게 전파되지 않는다."""
+    with _RowsFnHarness([RuntimeError("rows boom")], locate_ok=True):
+        assist_fn = _make_assist_fn(object(), _settings(), debug_dir=None)
+        observation = assist_fn(Image.new("RGB", (20, 20), (240, 240, 240)))
+    ok = observation.status == "unusable" and observation.reason == "exception"
+    print(f"[{'PASS' if ok else 'FAIL'}] assist_fn_exception_returns_unusable")
+    return ok
 
 
 def test_assist_fn_distinguishes_unusable_from_pending():
@@ -735,53 +820,41 @@ def test_rows_fn_relocates_after_all_blank_streak():
     return passed
 
 
-def test_baseline_cleared_on_relocalize():
-    """재grounding 하면 baseline 도 무효화한다.
-
-    옛 구현은 _last_n 만 살려둬서 옛 ROI 값과 새 ROI 값을 비교했다. 같은 실수를 막는다.
-    브리프 원안은 1회 호출 뒤 바로 리셋을 확인했으나, 1회차는 CV 게이트의 gray
-    baseline 샘플이라 OCR 이 아예 안 불려 baseline_n 이 애초에 None 이다(리셋이
-    실제로 뭔가를 지우는지 증명하지 못하는 공허한 검증) - 2회차를 더해 baseline_n
-    이 진짜 값을 갖게 한 뒤에 리셋으로 지워지는지 확인한다.
-    """
-    detector = _detector_with([10, 20], _rows_all_ok())
-    detector()              # gray baseline 샘플 -> baseline_n 여전히 None
-    detector()              # 첫 실제 OCR -> baseline_n = 10 (None 아님)
-    had_baseline = detector._baseline_n is not None
-    detector._roi_ratios = None       # 재grounding 예약 상태를 흉내낸다
-    detector._reset_baseline()
-    ok = had_baseline and detector._baseline_n is None
-    print(f"[{'PASS' if ok else 'FAIL'}] baseline_cleared_on_relocalize (had_baseline={had_baseline})")
+def test_numerator_sequence_cleared_on_relocalize():
+    """OCR miss 로 ROI 를 무효화하면 이전 분자 증가 시퀀스도 지운다."""
+    capture = _SeqCapture([_frame(0), _frame(1), _frame(2)])
+    detector = EngineerDoneDetector(
+        None,
+        _settings(
+            engineer_done_assist_unusable_after=99,
+            engineer_done_numerator_increase_reads=3,
+            engineer_done_relocalize_after_miss=1,
+        ),
+        capture_fn=capture,
+        ground_fn=lambda _image: (525, 550),
+        ocr_fn=_CountingFn(["10/350", ""]),
+    )
+    detector()
+    detector()
+    had_sequence = detector._numerator_sequence == [10]
+    detector()
+    ok = had_sequence and detector._numerator_sequence == [] and detector._roi_ratios is None
+    print(
+        f"[{'PASS' if ok else 'FAIL'}] numerator_sequence_cleared_on_relocalize "
+        f"(had_sequence={had_sequence})"
+    )
     return ok
 
 
-def test_baseline_adopts_lower_reading_as_new_run():
-    """(I3) baseline 확정 후 더 낮은 값이 읽히면(카운터 역행) 그 값을 새 baseline 으로
-    채택해야 한다.
-
-    옛 구현은 baseline 이 한 번 확정되면(watch 시작 시 잔존 카운터를 잘못 흡수한
-    경우 포함) 절대 바뀌지 않았다 - 이후 실제 새 측정이 낮은 값에서 다시 시작해도
-    delta 가 영원히 음수가 되어(OCR 은 계속 성공하므로 재grounding 도 안 걸림) 이
-    watch 내내 done 이 나올 수 없었다. counter_values=[350, 5, 15]: baseline=350
-    확정 -> n=5(<350, 역행) -> baseline 재설정=5, delta=0(아직 done 아님) -> n=15,
-    delta=10(>=6), streak=7(>=6) -> done.
-    """
-    detector = _detector_with([350, 5, 15], _rows_all_ok())
-    buf = io.StringIO()
-    with redirect_stdout(buf):
-        first = detector()   # gray baseline 샘플
-        second = detector()  # n=350 -> baseline 확정
-        third = detector()   # n=5 -> 역행 감지, baseline=5 로 재설정
-        fourth = detector()  # n=15 -> delta=10, streak=7 -> done
-    text = buf.getvalue()
-    ok = (
-        first is False and second is False and third is False and fourth is True
-        and detector._baseline_n == 5
-        and "역행" in text
-    )
+def test_lower_numerator_restarts_sequence():
+    """낮아진 분자 값은 새 증가 시퀀스를 시작해 이전 높은 값을 이어 쓰지 않는다."""
+    assist = _CountingFn([_assist_unusable()] * 3)
+    detector = _priority_detector(assist=assist, numerators=[350, 5, 15])
+    results = [detector(), detector(), detector()]
+    ok = not any(results) and detector._numerator_sequence == [5, 15]
     print(
-        f"[{'PASS' if ok else 'FAIL'}] baseline_adopts_lower_reading_as_new_run: "
-        f"{first},{second},{third},{fourth} baseline={detector._baseline_n}"
+        f"[{'PASS' if ok else 'FAIL'}] lower_numerator_restarts_sequence: "
+        f"{results} sequence={detector._numerator_sequence}"
     )
     return ok
 
@@ -791,7 +864,7 @@ def main() -> int:
     tests = [
         test_settings_defaults,
         test_settings_env_load_path,
-        test_settings_use_delta_and_streak_not_absolute_count,
+        test_settings_use_priority_signals,
         test_counter_prompt,
         test_parse_point_1000,
         test_point_to_roi_ratios,
@@ -809,9 +882,9 @@ def main() -> int:
         test_watch_detector_exception_safe,
         test_watch_no_detector_unchanged,
         test_leftover_counter_does_not_fire,
-        test_delta_reached_but_streak_short,
-        test_done_when_delta_and_streak_both_met,
-        test_rows_fn_exception_returns_false,
+        test_assist_fresh_but_streak_short,
+        test_done_when_assist_is_fresh_and_streak_met,
+        test_assist_fn_exception_returns_unusable,
         test_assist_fn_distinguishes_unusable_from_pending,
         test_assist_fn_ignores_addressing_fail_when_measurement_unreadable,
         test_rows_fn_locates_layout_only_once,
@@ -819,8 +892,8 @@ def main() -> int:
         test_rows_fn_throttles_locate_retry_after_failure,
         test_rows_fn_overlay_only_on_verdict_change,
         test_rows_fn_relocates_after_all_blank_streak,
-        test_baseline_cleared_on_relocalize,
-        test_baseline_adopts_lower_reading_as_new_run,
+        test_numerator_sequence_cleared_on_relocalize,
+        test_lower_numerator_restarts_sequence,
     ]
     results = [test() for test in tests]
     passed = sum(1 for r in results if r)

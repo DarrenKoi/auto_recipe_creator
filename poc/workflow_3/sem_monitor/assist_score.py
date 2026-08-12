@@ -390,11 +390,18 @@ def _assign_number_column(cx: float, header_boxes: dict):
 def _number_column_for(cx: float, header_boxes: dict, active_columns: tuple):
     """활성 열 헤더를 기준으로 score 항목을 배정한다."""
     if len(active_columns) > 1:
-        for column in active_columns:
-            box = header_boxes[column]
-            if float(box["left"]) <= cx <= float(box["right"]):
-                return column
-        return None
+        # Ignore scores inside an inactive header's expected span before applying
+        # nearest-column matching to active headers. This keeps Addressing2 OCR
+        # out of active x geometry while retaining tolerance for score/header bbox
+        # offsets in legitimate active columns.
+        for column, box in header_boxes.items():
+            if column in active_columns:
+                continue
+            width = max(1.0, float(box["right"]) - float(box["left"]))
+            if float(box["left"]) - width * 0.5 <= cx <= float(box["right"]) + width * 0.5:
+                return None
+        active_headers = {name: header_boxes[name] for name in active_columns}
+        return _assign_number_column(cx, active_headers)
 
     column = active_columns[0]
     box = header_boxes[column]
@@ -458,17 +465,17 @@ def build_score_grid(items: list, panel_size: tuple, *, rows: int = ASSIST_ROWS)
             continue
         left = float(box.get("left", 0))
         right = float(box.get("right", 0))
+        column = _number_column_for((left + right) / 2.0, header_boxes, active_columns)
+        if column is None:
+            continue
         centers.append((top + bottom) / 2.0)
         heights.append(max(1.0, bottom - top))
-
-        column = _number_column_for((left + right) / 2.0, header_boxes, active_columns)
-        if column is not None:
-            current = number_x_ranges[column]
-            if current is None:
-                number_x_ranges[column] = [left, right]
-            else:
-                current[0] = min(current[0], left)
-                current[1] = max(current[1], right)
+        current = number_x_ranges[column]
+        if current is None:
+            number_x_ranges[column] = [left, right]
+        else:
+            current[0] = min(current[0], left)
+            current[1] = max(current[1], right)
     if not centers:
         print("[WARNING] Assist 숫자 항목 없음 - 격자 생성 실패")
         return None

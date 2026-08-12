@@ -276,6 +276,43 @@ def test_addressing2_score_does_not_change_active_grid_or_verdict():
     assert rows[-1].verdict == "ok"
 
 
+def test_addressing2_anomalous_row_does_not_change_active_grid_or_verdict():
+    headers = [
+        _item("Addressing1", 10, 5, 60, 25),
+        _item("Addressing2", 110, 5, 160, 25),
+        _item("Measurement", 210, 5, 260, 25),
+    ]
+    active_scores = [
+        _item("12", 20, 130, 50, 148),
+        _item("34", 220, 130, 250, 148),
+        _item("12", 20, 160, 50, 178),
+        _item("34", 220, 160, 250, 178),
+    ]
+    baseline = build_score_grid(headers + active_scores, (300, 260))
+    items = headers + active_scores + [_item("77", 120, 55, 150, 115)]
+    layout = build_score_grid(items, (300, 260))
+    assert baseline is not None
+    assert layout is not None
+    assert layout.columns == baseline.columns
+    assert layout.grid == baseline.grid
+
+    image = _synth_panel([("black", "black")] * 7)
+    baseline_rows = read_row_states(image, baseline)
+    draw = ImageDraw.Draw(image)
+    draw.rectangle([120, 55, 150, 114], fill=(200, 20, 20))
+    rows = read_row_states(image, layout)
+    assert [row.verdict for row in rows] == [row.verdict for row in baseline_rows]
+
+
+def test_active_score_just_outside_header_uses_nearest_active_column():
+    items = _panel_items() + [_item("56", 65, 220, 95, 238)]
+    layout = build_score_grid(items, (300, 260))
+    assert layout is not None
+    assert layout.columns == ("Addressing1", "Measurement")
+    assert layout.grid[0][0]["left"] == -6
+    assert layout.grid[0][0]["right"] == 121
+
+
 def test_measurement_header_accepts_five_character_clip_only():
     assert asc._header_column_for("Measu") == "Measurement"
     assert asc._header_column_for("Meas") is None

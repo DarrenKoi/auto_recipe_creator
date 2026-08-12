@@ -715,7 +715,7 @@ def analyze_window_target(
             {
                 "mode": result_mode,
                 "status": EXIT_VLM_NO_DETECTION,
-                "failure_stage": "ui_venus",
+                "failure_stage": "coarse" if service_artifacts else "ui_venus",
                 "target_key": target.key,
                 "target_description": target.description,
                 "image_width": full_w,
@@ -854,7 +854,7 @@ def analyze_window_target(
             {
                 "mode": result_mode,
                 "status": EXIT_VLM_NO_DETECTION,
-                "failure_stage": "mai_ui",
+                "failure_stage": "refine" if service_artifacts else "mai_ui",
                 "target_key": target.key,
                 "target_description": target.description,
                 "image_width": full_w,

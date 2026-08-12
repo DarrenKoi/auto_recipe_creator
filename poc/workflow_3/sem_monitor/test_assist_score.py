@@ -1438,6 +1438,7 @@ def main():
         test_read_rows_clamps_boxes_outside_panel(),
         test_panel_target_uses_proven_button_geometry(),
         test_locate_returns_layout_on_happy_path(),
+        test_locate_uses_run_dir_and_saves_panel_crop() is None,
         test_locate_with_norm1000_items_still_produces_grid(),
         test_locate_none_when_too_few_items_survive_normalization(),
         test_locate_none_when_point_outside_image(),
@@ -1455,7 +1456,6 @@ def main():
         test_locate_failure_evidence_survives_missing_debug_dir(),
         test_overlay_writes_a_file(),
     ]
-    test_locate_uses_run_dir_and_saves_panel_crop()
     passed = sum(1 for r in results if r)
     print(f"[INFO] {passed}/{len(results)} cases passed")
     return 0 if passed == len(results) else 1

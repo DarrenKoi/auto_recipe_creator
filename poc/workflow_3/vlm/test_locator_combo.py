@@ -9,7 +9,12 @@
 실행: uv run python poc/workflow_3/vlm/test_locator_combo.py
 """
 
+import json
 import os
+import tempfile
+from pathlib import Path
+
+from PIL import Image
 
 from poc.workflow_3.vlm import ui_venus_mai_locator as loc
 
@@ -24,6 +29,81 @@ def test_service_artifact_names_use_actual_route_slugs():
 def test_legacy_artifact_names_remain_default():
     names = loc._artifact_names("assist_panel", "mai-ui", "mai-ui", mode="legacy")
     assert names["coarse_response"] == "assist_panel_ui_venus_response.txt"
+
+
+class _FakeLocatorClient:
+    def __init__(self, service_slug, **_kwargs):
+        self.service_slug = service_slug
+        self.model_name = service_slug
+
+
+def _failure_payload(*, artifact_naming, failure_stage):
+    """실제 locator failure JSON을 만들되 네트워크 호출만 고립한다."""
+    saved = {
+        "Workflow1VLMClient": loc.Workflow1VLMClient,
+        "_run_ui_venus_coarse_bbox": loc._run_ui_venus_coarse_bbox,
+        "_run_mai_ui_refinement": loc._run_mai_ui_refinement,
+        "log_work2_event": loc.log_work2_event,
+    }
+    coarse_result = {
+        "response_text": "coarse",
+        "token_usage": {},
+        "bbox_1000": {"left": 200, "top": 200, "right": 800, "bottom": 800},
+        "bbox_pixels": {"left": 20, "top": 16, "right": 80, "bottom": 64},
+        "center": {"x": 50, "y": 40},
+    }
+    try:
+        loc.Workflow1VLMClient = _FakeLocatorClient
+        loc._run_ui_venus_coarse_bbox = (
+            (lambda *_args, **_kwargs: None)
+            if failure_stage == "coarse"
+            else (lambda *_args, **_kwargs: coarse_result)
+        )
+        loc._run_mai_ui_refinement = lambda *_args, **_kwargs: {
+            "response_text": "refine",
+            "token_usage": {},
+            "point": None,
+        }
+        loc.log_work2_event = lambda **_kwargs: None
+        with tempfile.TemporaryDirectory() as tmp:
+            result = loc.analyze_window_target(
+                None,
+                "",
+                "",
+                loc.TargetConfig(key="assist_panel", description="Assist panel"),
+                debug_image_dir=Path(tmp),
+                log_name="test",
+                component_name="test",
+                artifact_prefix="assist_panel",
+                coarse_service_slug="mai-ui",
+                refine_service_slug="mai-ui",
+                artifact_naming=artifact_naming,
+                image=Image.new("RGB", (100, 80), (240, 240, 240)),
+            )
+            return json.loads(
+                Path(result.artifacts["result_json"]).read_text(encoding="utf-8")
+            )
+    finally:
+        for name, value in saved.items():
+            setattr(loc, name, value)
+
+
+def test_service_failure_payloads_use_neutral_stage_names():
+    assert _failure_payload(
+        artifact_naming="service", failure_stage="coarse"
+    )["failure_stage"] == "coarse"
+    assert _failure_payload(
+        artifact_naming="service", failure_stage="refine"
+    )["failure_stage"] == "refine"
+
+
+def test_legacy_failure_payloads_keep_stage_names():
+    assert _failure_payload(
+        artifact_naming="legacy", failure_stage="coarse"
+    )["failure_stage"] == "ui_venus"
+    assert _failure_payload(
+        artifact_naming="legacy", failure_stage="refine"
+    )["failure_stage"] == "mai_ui"
 
 
 def _resolve(raw):
@@ -47,6 +127,8 @@ def main():
 
     test_service_artifact_names_use_actual_route_slugs()
     test_legacy_artifact_names_remain_default()
+    test_service_failure_payloads_use_neutral_stage_names()
+    test_legacy_failure_payloads_keep_stage_names()
 
     # 기본값은 코드 상수(DEFAULT_*)가 정한다 - 상수를 바꿔도 이 테스트는 살아있어야
     # 하므로 리터럴이 아니라 상수와 비교한다.

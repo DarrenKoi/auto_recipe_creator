@@ -32,6 +32,34 @@ def _env_alarm_source() -> str:
     return value
 
 
+_ENGINEER_DONE_POSITIVE_SETTINGS = (
+    ("engineer_done_ok_streak", "ALIGN_FAIL_ENGINEER_DONE_OK_STREAK"),
+    (
+        "engineer_done_assist_unusable_after",
+        "ALIGN_FAIL_ENGINEER_DONE_ASSIST_UNUSABLE_AFTER",
+    ),
+    (
+        "engineer_done_numerator_increase_reads",
+        "ALIGN_FAIL_ENGINEER_DONE_NUMERATOR_READS",
+    ),
+)
+
+
+def validate_engineer_done_priority_settings(settings) -> None:
+    """engineer-done 완료 임계값이 모두 양수인지 확인한다."""
+    invalid = [
+        f"{env_name}={getattr(settings, field_name, None)!r}"
+        for field_name, env_name in _ENGINEER_DONE_POSITIVE_SETTINGS
+        if not isinstance(getattr(settings, field_name, None), int)
+        or getattr(settings, field_name) <= 0
+    ]
+    if invalid:
+        raise ValueError(
+            "engineer-done priority thresholds must be positive: "
+            + ", ".join(invalid)
+        )
+
+
 @dataclass(frozen=True)
 class Workflow3Settings(WorkflowSettings):
     """align fail 모니터링 루프 설정."""
@@ -95,6 +123,9 @@ class Workflow3Settings(WorkflowSettings):
     # ("mai-ui" O, "mai-ui-8b" X - workflow_2 스크립트들과 동일 규약).
     engineer_done_vlm_service: str = "mai-ui"  # grounding 서비스 slug.
     engineer_done_ocr_service: str = "paddleocr-vl-1.5"  # 분자 OCR 서비스 slug.
+
+    def __post_init__(self) -> None:
+        validate_engineer_done_priority_settings(self)
 
     # --- rcp 입력 이미지 office 다운로드 ---
     # align_img_from_rcp(등록 align key)는 보정/점검의 런타임 입력이다. 보정/feasibility 는
@@ -291,4 +322,8 @@ def load_workflow3_settings() -> Workflow3Settings:
     )
 
 
-__all__ = ["Workflow3Settings", "load_workflow3_settings"]
+__all__ = [
+    "Workflow3Settings",
+    "load_workflow3_settings",
+    "validate_engineer_done_priority_settings",
+]

@@ -52,7 +52,8 @@ import re
 import time
 from dataclasses import dataclass, replace
 
-from poc.workflow_3.debug_artifacts import save_debug_jpeg
+from poc.workflow_3.config import validate_engineer_done_priority_settings
+from poc.workflow_3.debug_artifacts import save_debug_jpeg, save_debug_json
 from poc.workflow_3.monitor.recording import _frame_changed, _to_diff_gray
 from poc.workflow_3.sem_monitor.assist_score import AssistObservation, ok_streak
 from poc.workflow_3.util import capture_window
@@ -109,6 +110,7 @@ class NumeratorObservation:
     sampled: bool
     value: int | None = None
     reason: str = ""
+    reset_reason: str = ""
 
 
 class EngineerDoneDetector:
@@ -153,11 +155,22 @@ class EngineerDoneDetector:
         self._assist_changed_since_start = False
         self._assist_failure_seen = False
         self._numerator_sequence: list[int] = []
+        self._numerator_decision_seq = 0
         self.last_debug: dict = {}
+        try:
+            validate_engineer_done_priority_settings(settings)
+        except ValueError as exc:
+            self._configuration_error = str(exc)
+            print(f"[ERROR] engineer-done 설정 오류 - detector fail-closed: {exc}")
+        else:
+            self._configuration_error = ""
 
     def __call__(self) -> bool:
         """측정 시작이 확인되면 True. 모든 실패/미확정은 False (cap 이 안전망)."""
         self.last_debug = {}
+        if self._configuration_error:
+            self.last_debug["configuration_error"] = self._configuration_error
+            return False
         try:
             image = self._capture_fn()
         except Exception as exc:
@@ -169,17 +182,15 @@ class EngineerDoneDetector:
             if self._assist_fn is not None
             else AssistObservation(status="unusable", reason="assist_fn_missing")
         )
+        verdicts = [row.verdict for row in assist.rows]
+        if "fail" in verdicts:
+            self._assist_failure_seen = True
         if assist.status == "usable":
             self._assist_unusable_streak = 0
-            verdicts = [row.verdict for row in assist.rows]
-            if "fail" in verdicts:
-                self._assist_failure_seen = True
             if self._assist_baseline_fingerprint is None:
                 self._assist_baseline_fingerprint = assist.panel_fingerprint
-            else:
-                self._assist_changed_since_start = (
-                    assist.panel_fingerprint != self._assist_baseline_fingerprint
-                )
+            elif assist.panel_fingerprint != self._assist_baseline_fingerprint:
+                self._assist_changed_since_start = True
             streak = ok_streak(assist.rows)
             self.last_debug.update({
                 "assist_status": assist.status,
@@ -210,23 +221,31 @@ class EngineerDoneDetector:
             if self._numerator_fn is not None
             else self._observe_numerator(image)
         )
-        self._update_numerator_sequence(numerator)
+        reset_reason = self._update_numerator_sequence(numerator)
         self.last_debug.update({
             "numerator_sampled": numerator.sampled,
             "n": numerator.value,
             "numerator_reason": numerator.reason,
             "numerator_sequence": list(self._numerator_sequence),
+            "numerator_reset_reason": reset_reason,
         })
         fallback_open = (
             self._assist_unusable_streak
             >= self.s.engineer_done_assist_unusable_after
             and not self._assist_failure_seen
         )
-        return (
+        done = (
             fallback_open
             and len(self._numerator_sequence)
             >= self.s.engineer_done_numerator_increase_reads
         )
+        self._save_numerator_decision(
+            numerator,
+            reset_reason=reset_reason,
+            fallback_open=fallback_open,
+            done=done,
+        )
+        return done
 
     # ---- 내부 ----
 
@@ -273,6 +292,7 @@ class EngineerDoneDetector:
 
     def _observe_numerator(self, image) -> NumeratorObservation:
         """같은 poll 프레임에서 분자 변화/OCR 표본을 만든다."""
+        regrounded = False
         if self._roi_ratios is None:
             now = time.time()
             if now < self._next_localize_at:
@@ -283,7 +303,7 @@ class EngineerDoneDetector:
                     self.s.engineer_done_reground_sec, 0.0
                 )
                 return NumeratorObservation(False, reason="roi_unavailable")
-            self._numerator_sequence.clear()
+            regrounded = True
 
         crop = self._crop_numerator(image)
         gray = _to_diff_gray(crop)
@@ -294,7 +314,11 @@ class EngineerDoneDetector:
         self._prev_gray = gray
         self.last_debug.update({"changed": changed, "first_sample": first_sample})
         if not changed:
-            return NumeratorObservation(False, reason="no_change")
+            return NumeratorObservation(
+                False,
+                reason="no_change",
+                reset_reason="reground" if regrounded else "",
+            )
 
         self._save_debug_crop(crop)
         n = self._read_numerator(crop)
@@ -307,25 +331,74 @@ class EngineerDoneDetector:
                 self._next_localize_at = 0.0
                 self._ocr_miss_streak = 0
                 self._prev_gray = None
-                self._numerator_sequence.clear()
+                return NumeratorObservation(
+                    True,
+                    None,
+                    "ocr_miss",
+                    reset_reason="reground",
+                )
             return NumeratorObservation(True, None, "ocr_miss")
 
         self._ocr_miss_streak = 0
         return NumeratorObservation(True, n, "read")
 
-    def _update_numerator_sequence(self, observation: NumeratorObservation) -> None:
+    def _update_numerator_sequence(
+        self,
+        observation: NumeratorObservation,
+    ) -> str | None:
+        if observation.reset_reason:
+            self._numerator_sequence.clear()
+            reset_reason = observation.reset_reason
+        else:
+            reset_reason = None
         if not observation.sampled:
-            return
+            return reset_reason
         n = observation.value
         if n is None:
             self._numerator_sequence.clear()
-            return
+            return reset_reason or "ocr_miss"
         if self._numerator_sequence and n > self._numerator_sequence[-1]:
             self._numerator_sequence.append(n)
+        elif self._numerator_sequence:
+            self._numerator_sequence = [n]
+            reset_reason = "equal_or_decrease"
         else:
             self._numerator_sequence = [n]
         keep = max(1, self.s.engineer_done_numerator_increase_reads)
         self._numerator_sequence = self._numerator_sequence[-keep:]
+        return reset_reason
+
+    def _save_numerator_decision(
+        self,
+        observation: NumeratorObservation,
+        *,
+        reset_reason: str | None,
+        fallback_open: bool,
+        done: bool,
+    ) -> None:
+        """평가한 numerator 표본과 sequence 결정을 run 폴더에 poll별로 저장한다."""
+        if self.debug_dir is None:
+            return
+        try:
+            self._numerator_decision_seq += 1
+            save_debug_json(
+                self.debug_dir
+                / f"numerator_decision_{self._numerator_decision_seq:03d}.json",
+                {
+                    "poll": self._numerator_decision_seq,
+                    "reading": observation.reason,
+                    "sampled": observation.sampled,
+                    "value": observation.value,
+                    "sequence": list(self._numerator_sequence),
+                    "reset_reason": reset_reason,
+                    "assist_unusable_streak": self._assist_unusable_streak,
+                    "assist_failure_seen": self._assist_failure_seen,
+                    "fallback_open": fallback_open,
+                    "done": done,
+                },
+            )
+        except Exception as exc:
+            print(f"[WARNING] numerator decision 저장 실패: {exc}")
 
     def _read_numerator(self, crop) -> int | None:
         """분자 crop 을 OCR 해 정수 N 을 얻는다. 실패는 None."""

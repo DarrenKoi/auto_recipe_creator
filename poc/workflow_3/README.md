@@ -74,7 +74,7 @@ uv run python poc/workflow_3/monitor/engineer_done_align_adjustment.py
 3. Assist 3회 연속 판독 불가 + numerator OCR 3회 연속 증가 → fallback 종료
 4. 불확정 → `ALIGN_FAIL_ENGINEER_WATCH_SEC` cap까지 대기
 
-`ALIGN_FAIL_ENGINEER_WATCH_SEC=300`(5분)은 마지막 경우의 backstop cap이다. 캘리브레이션의 목적은 threshold 조정이 아니라 grounding/CV/OCR 체인 검증이다. 오피스 Windows에서 `ALIGN_FAIL_ENGINEER_DONE_DETECT=1`을 켜기 전에 실행하고, 생성된 run 디렉터리의 `assist_panel_crop_region.jpg`, locator/OCR/grid overlay, numerator readings, 최종 completion reason을 남긴다.
+`ALIGN_FAIL_ENGINEER_WATCH_SEC=300`(5분)은 마지막 경우의 backstop cap이다. 캘리브레이션의 목적은 threshold 조정이 아니라 grounding/CV/OCR 체인 검증이다. 오피스 Windows에서 `ALIGN_FAIL_ENGINEER_DONE_DETECT=1`을 켜기 전에 실행하고, 생성된 run 디렉터리의 `assist_panel_crop_region.jpg`, locator/OCR/grid overlay, numerator crop 이미지, poll별 `numerator_decision_###.json`(reading/value/sequence/reset reason), 최종 completion reason을 남긴다.
 
 ### 엔지니어 수동 조작 녹화 (알람 불필요)
 

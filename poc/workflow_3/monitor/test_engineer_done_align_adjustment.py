@@ -107,6 +107,39 @@ def test_settings_env_load_path() -> bool:
     return ok
 
 
+def test_settings_reject_non_positive_priority_thresholds() -> bool:
+    """완료 임계값 3종은 env 에서 0/음수가 들어오면 설정 로드를 거부한다."""
+    import os
+
+    cases = [
+        ("ALIGN_FAIL_ENGINEER_DONE_OK_STREAK", "0"),
+        ("ALIGN_FAIL_ENGINEER_DONE_ASSIST_UNUSABLE_AFTER", "-1"),
+        ("ALIGN_FAIL_ENGINEER_DONE_NUMERATOR_READS", "0"),
+    ]
+    keys = [name for name, _value in cases]
+    saved = {name: os.environ.get(name) for name in keys}
+    ok = True
+    try:
+        for name, value in cases:
+            for key in keys:
+                os.environ.pop(key, None)
+            os.environ[name] = value
+            try:
+                load_workflow3_settings()
+            except ValueError as exc:
+                ok &= name in str(exc)
+            else:
+                ok = False
+    finally:
+        for name in keys:
+            os.environ.pop(name, None)
+        for name, value in saved.items():
+            if value is not None:
+                os.environ[name] = value
+    _check("settings reject non-positive priority thresholds", ok)
+    assert ok
+
+
 def test_counter_prompt() -> bool:
     """grounding 모델의 공식 단일요소 형식([x,y], [-1,-1] 거부)을 따른다."""
     system_message, user_text = build_recipe_monitor_counter_prompt()
@@ -466,6 +499,19 @@ def _assist_unusable():
     )
 
 
+def _assist_unusable_with_addressing_failure():
+    return asc.AssistObservation(
+        status="unusable",
+        rows=[RowState(cells={
+            "Addressing1": "red",
+            "Addressing2": "blank",
+            "Measurement": "blank",
+        })],
+        panel_fingerprint="unreadable-measurement",
+        reason="measurement_unreadable",
+    )
+
+
 def _priority_detector(*, assist, numerators):
     observations = [
         NumeratorObservation(
@@ -504,7 +550,8 @@ def test_assist_needs_fresh_change_after_watch_start():
     assert [detector(), detector(), detector()] == [False, False, True]
 
 
-def test_assist_reversion_to_baseline_is_not_fresh():
+def test_assist_change_stays_fresh_after_fingerprint_returns_to_baseline():
+    """첫 usable baseline 뒤 한 번 바뀐 사실은 A→B→A에서도 watch 동안 유지한다."""
     not_ready = asc.AssistObservation(
         status="usable",
         rows=_rows_all_ok(5),
@@ -518,7 +565,7 @@ def test_assist_reversion_to_baseline_is_not_fresh():
     ])
     detector = _priority_detector(assist=assist, numerators=[])
 
-    assert [detector(), detector(), detector()] == [False, False, False]
+    assert [detector(), detector(), detector()] == [False, False, True]
 
 
 def test_red_assist_permanently_blocks_numerator_fallback():
@@ -530,6 +577,19 @@ def test_red_assist_permanently_blocks_numerator_fallback():
     ])
     detector = _priority_detector(assist=assist, numerators=[10, 11, 12, 13])
     assert [detector(), detector(), detector(), detector()] == [False] * 4
+
+
+def test_unusable_assist_red_rows_block_increasing_numerator_fallback():
+    """Measurement 미판독이어도 보인 Addressing1 red는 fallback을 영구 차단한다."""
+    assist = _CountingFn([
+        _assist_unusable_with_addressing_failure(),
+        _assist_unusable(),
+        _assist_unusable(),
+    ])
+    detector = _priority_detector(assist=assist, numerators=[10, 11, 12])
+
+    assert [detector(), detector(), detector()] == [False, False, False]
+    assert detector._assist_failure_seen is True
 
 
 def test_numerator_fallback_requires_three_unusable_assist_observations():
@@ -661,6 +721,100 @@ def test_builder_keeps_assist_when_numerator_clients_fail():
     finally:
         module._make_ground_fn, module._make_ocr_fn, module._make_assist_fn = saved
     assert detector is not None
+
+
+def test_detector_fails_closed_for_each_non_positive_priority_threshold():
+    """설정 객체 검증을 우회한 잘못된 값도 detector 완료를 허용하지 않는다."""
+    for name, value in (
+        ("engineer_done_ok_streak", 0),
+        ("engineer_done_assist_unusable_after", -1),
+        ("engineer_done_numerator_increase_reads", 0),
+    ):
+        values = vars(_settings()).copy()
+        values[name] = value
+        invalid_settings = SimpleNamespace(**values)
+        detector = EngineerDoneDetector(
+            None,
+            invalid_settings,
+            capture_fn=lambda: Image.new("RGB", (400, 200), (0, 0, 0)),
+            assist_fn=_CountingFn([
+                _assist_ok("baseline"),
+                _assist_ok("changed"),
+                _assist_unusable(),
+            ]),
+            numerator_fn=_CountingFn([
+                NumeratorObservation(sampled=True, value=10, reason="read"),
+                NumeratorObservation(sampled=True, value=11, reason="read"),
+                NumeratorObservation(sampled=True, value=12, reason="read"),
+            ]),
+        )
+
+        assert [detector(), detector(), detector()] == [False, False, False]
+
+
+def test_numerator_decisions_are_saved_for_every_evaluated_observation():
+    """no-change/read/equal/miss도 run 폴더에 poll별 결정 JSON으로 남는다."""
+    import json
+    import tempfile
+
+    observations = [
+        NumeratorObservation(sampled=False, reason="no_change"),
+        NumeratorObservation(sampled=True, value=10, reason="read"),
+        NumeratorObservation(sampled=True, value=10, reason="read"),
+        NumeratorObservation(sampled=True, value=None, reason="ocr_miss"),
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        debug_dir = Path(tmp)
+        detector = EngineerDoneDetector(
+            None,
+            _settings(engineer_done_assist_unusable_after=99),
+            capture_fn=lambda: Image.new("RGB", (400, 200), (0, 0, 0)),
+            assist_fn=_CountingFn([_assist_unusable()] * len(observations)),
+            numerator_fn=_CountingFn(observations),
+            debug_dir=debug_dir,
+        )
+        assert [detector() for _ in observations] == [False] * len(observations)
+        payloads = [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted(debug_dir.glob("numerator_decision_*.json"))
+        ]
+
+    assert [payload["poll"] for payload in payloads] == [1, 2, 3, 4]
+    assert [payload["reading"] for payload in payloads] == [
+        "no_change", "read", "read", "ocr_miss",
+    ]
+    assert [payload["value"] for payload in payloads] == [None, 10, 10, None]
+    assert [payload["sequence"] for payload in payloads] == [[], [10], [10], []]
+    assert [payload["reset_reason"] for payload in payloads] == [
+        None, None, "equal_or_decrease", "ocr_miss",
+    ]
+
+
+def test_numerator_decision_records_reground_reset():
+    """새 ROI grounding은 기존 증가 sequence를 지우고 그 이유를 JSON에 남긴다."""
+    import json
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        debug_dir = Path(tmp)
+        detector = EngineerDoneDetector(
+            None,
+            _settings(engineer_done_assist_unusable_after=99),
+            capture_fn=lambda: _frame(1),
+            ground_fn=lambda _image: (525, 550),
+            ocr_fn=lambda _crop: "10/350",
+            assist_fn=_CountingFn([_assist_unusable()]),
+            debug_dir=debug_dir,
+        )
+        detector._numerator_sequence = [8, 9]
+
+        assert detector() is False
+        decision_path = debug_dir / "numerator_decision_001.json"
+        payload = json.loads(decision_path.read_text(encoding="utf-8"))
+
+    assert payload["reading"] == "no_change"
+    assert payload["sequence"] == []
+    assert payload["reset_reason"] == "reground"
 
 
 def test_leftover_counter_does_not_fire():

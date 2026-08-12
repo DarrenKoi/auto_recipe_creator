@@ -230,6 +230,32 @@ def _panel_items():
     return items
 
 
+def _measurement_only_items():
+    items = [_item("Measuremen", 210, 5, 260, 25)]
+    for idx in range(4):
+        top = 130 + idx * 30
+        items.append(_item("34", 220, top, 250, top + 18))
+    return items
+
+
+def test_grid_builds_without_addressing2():
+    items = [item for item in _panel_items() if item["text"] != "Addressing2"]
+    layout = build_score_grid(items, (300, 260))
+    assert layout is not None
+    assert layout.columns == ("Addressing1", "Measurement")
+
+
+def test_grid_builds_with_measurement_only():
+    layout = build_score_grid(_measurement_only_items(), (300, 260))
+    assert layout is not None
+    assert layout.columns == ("Measurement",)
+
+
+def test_measurement_header_accepts_five_character_clip_only():
+    assert asc._header_column_for("Measu") == "Measurement"
+    assert asc._header_column_for("Meas") is None
+
+
 def _top_heavy_items():
     """숫자가 표 맨 위 2행에만 있는 OCR 결과.
 
@@ -461,7 +487,7 @@ def test_grid_has_full_rows_and_columns():
     ok = (
         layout is not None
         and len(layout.grid) == 7
-        and all(len(row) == 3 for row in layout.grid)
+        and all(len(row) == 2 for row in layout.grid)
     )
     print(f"[{'PASS' if ok else 'FAIL'}] grid_has_full_rows_and_columns")
     return ok
@@ -481,16 +507,15 @@ def test_grid_extrapolates_missing_rows_by_pitch():
 
 
 def test_grid_columns_follow_headers():
-    """열 판별은 헤더 텍스트로 하지만, x 범위는 그 열에 배정된 숫자의 합집합을 쓴다
-    (C2(a)) - Addressing2 처럼 숫자가 없는 열만 헤더 x 범위로 폴백한다.
+    """열 판별은 헤더 텍스트로 하지만, x 범위는 그 열에 배정된 숫자의 합집합을 쓴다.
 
     _panel_items() 의 숫자는 Addressing1 열에 20-50, Measurement 열에 220-250 이다
-    (각각 헤더 범위 10-60 / 210-260 안에 들어간다). Addressing2 는 숫자가 없으므로
-    헤더 범위(110-160)를 폴백으로 쓴다.
+    (각각 헤더 범위 10-60 / 210-260 안에 들어간다). Addressing2 는 인식되더라도
+    score grid 의 활성 열에는 포함하지 않는다.
 
     (F1) 어느 쪽이든 좌우로 폭의 CELL_PAD_X_RATIO(0.35)만큼 넓혀야 한다 - 글자가 셀을
     꽉 채우면 classify_ink 의 밀집 가드가 정상 숫자를 썸네일로 오인한다. 그래서 기대값은
-    20-50 -> 10-60, 110-160 -> 92-178, 220-250 -> 210-260 이다.
+    20-50 -> 10-60, 220-250 -> 210-260 이다.
     """
     layout = build_score_grid(_panel_items(), (300, 260))
     if layout is None:
@@ -498,38 +523,39 @@ def test_grid_columns_follow_headers():
         return False
     first = layout.grid[0]
     ok = (
-        layout.columns == ("Addressing1", "Addressing2", "Measurement")
+        layout.columns == ("Addressing1", "Measurement")
         and first[0]["left"] == 10 and first[0]["right"] == 60    # 숫자 합집합 20-50 + pad
-        and first[1]["left"] == 92 and first[1]["right"] == 178   # 헤더 폴백 110-160 + pad
-        and first[2]["left"] == 210 and first[2]["right"] == 260  # 숫자 합집합 220-250 + pad
+        and first[1]["left"] == 210 and first[1]["right"] == 260  # 숫자 합집합 220-250 + pad
     )
     print(f"[{'PASS' if ok else 'FAIL'}] grid_columns_follow_headers")
     return ok
 
 
 def test_grid_columns_fallback_to_header_when_no_numbers():
-    """숫자가 하나도 안 잡힌 열은 헤더 x 범위로 폴백해야 한다 (C2(a) 명시 요구사항).
+    """세 헤더가 모두 인식되어도 Addressing2 는 score grid 에서 제외한다.
 
-    _panel_items() 는 Addressing2 열에 숫자를 두지 않는다 - 실제 tool 에서 이 열이
-    대개 비어 있는 상황과 같다. 헤더 범위 110-160 에 (F1) 좌우 패딩(폭의 0.35)이 붙어
-    92-178 이 된다.
+    Addressing2 는 대개 비어 있으므로 active columns 에 포함하지 않는다. Measurement 는
+    여전히 필수 열이자 authoritative score 열이다.
     """
     layout = build_score_grid(_panel_items(), (300, 260))
     if layout is None:
         print("[FAIL] grid_columns_fallback_to_header_when_no_numbers: layout None")
         return False
-    addr2 = layout.grid[0][1]
-    ok = addr2["left"] == 92 and addr2["right"] == 178
+    ok = (
+        "Addressing2" in asc._match_header_boxes(_panel_items())
+        and layout.columns == ("Addressing1", "Measurement")
+        and len(layout.grid[0]) == 2
+    )
     print(f"[{'PASS' if ok else 'FAIL'}] grid_columns_fallback_to_header_when_no_numbers")
     return ok
 
 
 def test_grid_columns_ignore_header_order_in_items():
-    """헤더의 x 위치가 ASSIST_COLUMNS 순서와 어긋나도 텍스트로 열을 잡아야 한다.
+    """헤더의 x 위치가 뒤섞여도 활성 열은 텍스트로 잡아야 한다.
 
     여기서는 Measurement 헤더를 Addressing2 보다 왼쪽에 둔다. 헤더를 x 로 정렬해
-    ASSIST_COLUMNS 에 순서대로 배정하는 구현이면 Measurement 열을 210-260 으로 잘못
-    잡아 이 테스트가 깨진다. 실제 tool 에서 Addressing2 는 대개 비어 있어 위치 추정이
+    ASSIST_SCORE_COLUMNS 에 순서대로 배정하는 구현이면 Measurement 열을 잘못 잡아
+    이 테스트가 깨진다. 실제 tool 에서 Addressing2 는 대개 비어 있어 위치 추정이
     Measurement 를 잘못 고를 수 있다 - 그걸 막는 게 텍스트 매칭의 존재 이유다.
     """
     items = [
@@ -547,15 +573,15 @@ def test_grid_columns_ignore_header_order_in_items():
         print("[FAIL] grid_columns_ignore_header_order_in_items: layout None")
         return False
     first = layout.grid[0]
-    # grid 열 순서는 ASSIST_COLUMNS 고정: [Addressing1, Addressing2, Measurement].
+    # grid 열 순서는 활성 열 고정: [Addressing1, Measurement].
     # 헤더 순서가 뒤섞여도(Measurement 가 Addressing2 보다 왼쪽) 숫자는 자신이 겹치는
-    # 헤더 x 범위로 배정된다: "12"(20-50)는 Addressing1(10-60) 아래, "34"(220-250)는
-    # Addressing2(210-260) 아래. Measurement(110-160)는 숫자가 없어 헤더 폴백.
-    # (F1) 각 범위에 좌우 패딩(폭의 0.35)이 붙는다.
+    # 헤더 x 범위로 배정된다: "12"(20-50)는 Addressing1(10-60) 아래, Addressing2 는
+    # 비활성이라 "34"(220-250)는 활성 열 중 가장 가까운 Measurement 에
+    # 배정된다. (F1) 각 범위에 좌우 패딩(폭의 0.35)이 붙는다.
     ok = (
-        first[0]["left"] == 10 and first[0]["right"] == 60
+        layout.columns == ("Addressing1", "Measurement")
+        and first[0]["left"] == 10 and first[0]["right"] == 60
         and first[1]["left"] == 210 and first[1]["right"] == 260
-        and first[2]["left"] == 92 and first[2]["right"] == 178
     )
     print(f"[{'PASS' if ok else 'FAIL'}] grid_columns_ignore_header_order_in_items")
     return ok
@@ -667,7 +693,7 @@ def _digit_panel_streak(use_font):
         return None, None, None, tight_ratios, image
     rows = read_row_states(image, layout)
     ratios = [_cell_ink_ratio(image, layout.grid[r][c]) for r in range(len(layout.grid))
-              for c in (0, 2)]
+              for c in (0, 1)]
     return layout, rows, ratios, tight_ratios, image
 
 
@@ -734,7 +760,7 @@ def test_thumbnail_dense_cells_read_unknown_end_to_end():
         return False
     draw = ImageDraw.Draw(image)
     for row_boxes in layout.grid:
-        for col_idx in (0, 2):
+        for col_idx in (0, 1):
             box = row_boxes[col_idx]
             draw.rectangle([box["left"], box["top"], box["right"] - 1, box["bottom"] - 1],
                            fill=(60, 60, 60))
@@ -742,7 +768,7 @@ def test_thumbnail_dense_cells_read_unknown_end_to_end():
             draw.rectangle([box["left"], box["top"], box["right"] - 1, box["top"]],
                            fill=(240, 240, 240))
     rows = read_row_states(image, layout)
-    ratios = [_cell_ink_ratio(image, layout.grid[r][c]) for r in range(7) for c in (0, 2)]
+    ratios = [_cell_ink_ratio(image, layout.grid[r][c]) for r in range(7) for c in (0, 1)]
     streak = ok_streak(rows)
     ok = (
         all(r.verdict == "unknown" for r in rows)
@@ -932,7 +958,7 @@ def test_locate_with_norm1000_items_still_produces_grid():
         and all(
             abs(result[1].grid[r][c][k] - baseline.grid[r][c][k]) <= 1
             for r in range(7)
-            for c in range(3)
+            for c in range(len(baseline.grid[r]))
             for k in ("left", "right", "top", "bottom")
         )
     )

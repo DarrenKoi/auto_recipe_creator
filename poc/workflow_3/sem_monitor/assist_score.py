@@ -38,6 +38,8 @@ PANEL_BOTTOM_RATIO = 0.22
 ASSIST_ROWS = 7
 ASSIST_NEWEST_ROW_AT = "bottom"  # tool 버전이 다르면 "top".
 ASSIST_COLUMNS = ("Addressing1", "Addressing2", "Measurement")
+ASSIST_SCORE_COLUMNS = ("Addressing1", "Measurement")
+ASSIST_REQUIRED_COLUMNS = ("Measurement",)
 
 # 색 분류 임계. 배경은 밝고 잉크(글자)는 어둡다는 전제.
 INK_MEAN_MAX = 200      # 채널 평균이 이보다 어두우면 잉크로 본다.
@@ -385,6 +387,20 @@ def _assign_number_column(cx: float, header_boxes: dict):
     return best_column
 
 
+def _number_column_for(cx: float, header_boxes: dict, active_columns: tuple):
+    """활성 열 헤더를 기준으로 score 항목을 배정한다."""
+    if len(active_columns) > 1:
+        active_headers = {name: header_boxes[name] for name in active_columns}
+        return _assign_number_column(cx, active_headers)
+
+    column = active_columns[0]
+    box = header_boxes[column]
+    width = max(1.0, float(box["right"]) - float(box["left"]))
+    if float(box["left"]) - width * 0.5 <= cx <= float(box["right"]) + width * 0.5:
+        return column
+    return None
+
+
 def build_score_grid(items: list, panel_size: tuple, *, rows: int = ASSIST_ROWS):
     """OCR spotting 항목에서 score 셀 격자를 만든다. 실패 시 None.
 
@@ -411,20 +427,22 @@ def build_score_grid(items: list, panel_size: tuple, *, rows: int = ASSIST_ROWS)
 
     # --- 열: 헤더 텍스트로 식별(접두/분리 인식 허용) ---
     header_boxes = _match_header_boxes(items)
-    if len(header_boxes) != len(ASSIST_COLUMNS):
+    missing = [name for name in ASSIST_REQUIRED_COLUMNS if name not in header_boxes]
+    if missing:
         # 무엇을 못 읽었는지가 아니라 무엇을 *읽었는지* 가 원인 규명의 단서다.
         # (엉뚱한 영역을 crop 했으면 전혀 다른 텍스트가, 헤더가 잘렸으면 숫자만 나온다.)
         seen = [str(item.get("text", "")).strip() for item in items if str(item.get("text", "")).strip()]
         print(
-            f"[WARNING] Assist 헤더 인식 부족(찾음={sorted(header_boxes)}, "
-            f"기대={list(ASSIST_COLUMNS)}) - 격자 생성 실패. OCR 이 읽은 텍스트 "
+            f"[WARNING] Assist 필수 헤더 누락({missing}) - 격자 생성 실패. "
+            f"찾음={sorted(header_boxes)}. OCR 이 읽은 텍스트 "
             f"{len(seen)}개: {seen[:20]}"
         )
         return None
+    active_columns = tuple(name for name in ASSIST_SCORE_COLUMNS if name in header_boxes)
 
     # --- 행: 숫자 항목의 y 중심 -> pitch -> 외삽. 동시에 숫자를 열에 배정해 x 범위를 모은다 ---
     header_bottom = max(int(box.get("bottom", 0)) for box in header_boxes.values())
-    number_x_ranges = {column: None for column in ASSIST_COLUMNS}
+    number_x_ranges = {column: None for column in active_columns}
     centers = []
     heights = []
     for item in items:
@@ -440,7 +458,7 @@ def build_score_grid(items: list, panel_size: tuple, *, rows: int = ASSIST_ROWS)
         centers.append((top + bottom) / 2.0)
         heights.append(max(1.0, bottom - top))
 
-        column = _assign_number_column((left + right) / 2.0, header_boxes)
+        column = _number_column_for((left + right) / 2.0, header_boxes, active_columns)
         if column is not None:
             current = number_x_ranges[column]
             if current is None:
@@ -470,7 +488,7 @@ def build_score_grid(items: list, panel_size: tuple, *, rows: int = ASSIST_ROWS)
     # 열별 x 범위 확정: 숫자가 배정됐으면 그 합집합, 아니면 헤더 폴백. 어느 쪽이든
     # 좌우로 여유를 줘 글자가 셀을 꽉 채우지 않게 한다(밀집 가드 오작동 방지).
     column_x_ranges = {}
-    for column in ASSIST_COLUMNS:
+    for column in active_columns:
         span = number_x_ranges[column]
         if span is not None:
             raw = (float(span[0]), float(span[1]))
@@ -516,7 +534,7 @@ def build_score_grid(items: list, panel_size: tuple, *, rows: int = ASSIST_ROWS)
         top = int(round(center - cell_h_padded / 2.0))
         bottom = top + cell_h_padded
         row_boxes = []
-        for column in ASSIST_COLUMNS:
+        for column in active_columns:
             left, right = column_x_ranges[column]
             row_boxes.append({
                 "left": left,
@@ -528,7 +546,7 @@ def build_score_grid(items: list, panel_size: tuple, *, rows: int = ASSIST_ROWS)
 
     return AssistLayout(
         grid=grid,
-        columns=tuple(ASSIST_COLUMNS),
+        columns=active_columns,
     )
 
 

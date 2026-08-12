@@ -4,6 +4,7 @@ import base64
 import io
 import json
 
+import cv2
 import numpy as np
 from PIL import Image
 
@@ -31,6 +32,19 @@ class _FakeClient:
         return _FakeResponse(json.dumps(payload))
 
 
+class _NoCursorClient:
+    """닫기 후보에서 커서가 합쳐져 보이지 않는 Stage 2a 응답."""
+
+    def chat_with_image_b64(self, **kwargs):
+        return _FakeResponse(json.dumps({
+            "cursor_visible": False,
+            "cursor_kind": None,
+            "cursor_bbox": None,
+            "confidence": 0.0,
+            "evidence": "cursor merged with title-bar edge",
+        }))
+
+
 def _write(path, array):
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(array.astype(np.uint8), mode="L").save(path, format="JPEG", quality=95)
@@ -44,6 +58,24 @@ def _recording_dir(tmp_path):
     _write(rec / "tag_rcs_0000_00000000ms.jpg", base)
     _write(rec / "tag_rcs_0001_00000300ms.jpg", f1)
     _write(rec / "tag_rcs_0002_00000600ms.jpg", f1.copy())   # 변화 없음 -> 탈락
+    return rec
+
+
+def _close_candidate_recording(tmp_path):
+    """Task 1의 세 gate를 만족하는 닫기 후보 녹화를 만든다."""
+    rec = tmp_path / "close_candidate" / "recording"
+    rec.mkdir(parents=True)
+    prev = np.full((400, 600), 240, dtype=np.uint8)
+    cv2.line(prev, (580, 10), (590, 20), 40, 2)
+    cv2.line(prev, (590, 10), (580, 20), 40, 2)
+    curr = prev.copy()
+    cv2.line(curr, (560, 12), (578, 30), 10, 3)
+    cv2.line(curr, (578, 12), (560, 30), 10, 3)
+    cv2.imwrite(str(rec / "tag_rcs_0000_00000000ms.jpg"), prev)
+    cv2.imwrite(str(rec / "tag_rcs_0001_00000300ms.jpg"), curr)
+    (rec / "recording_manifest.json").write_text(
+        json.dumps({"stop_reason": "window_gone"}), encoding="utf-8"
+    )
     return rec
 
 
@@ -62,6 +94,42 @@ def test_run_filter_produces_artifacts(tmp_path):
     timeline = json.loads((out_dir / "interaction_timeline.json").read_text(encoding="utf-8"))
     assert len(timeline["events"]) == 1
     assert timeline["events"][0]["action"] == "click"
+
+
+def test_timeline_keeps_probable_close_distinct_and_non_replayable():
+    inferred = {
+        "t_sec": 9.0,
+        "seq": 0,
+        "action": "probable_close_click",
+        "replayable": False,
+        "confidence": 0.35,
+    }
+
+    timeline = build_timeline([], inferred_events=[inferred])
+
+    assert [event["action"] for event in timeline] == ["probable_close_click"]
+    assert timeline[0]["replayable"] is False
+
+
+def test_run_filter_records_probable_close_click(tmp_path):
+    rec = _close_candidate_recording(tmp_path)
+    out_dir = rec.parent / "recording_filter"
+    settings = RecordingFilterSettings(
+        vlm_request_delay_sec=0.0,
+        min_change_area_px=20,
+        region_gate_enabled=False,
+        element_label_enabled=False,
+        typing_detect_enabled=False,
+    )
+
+    assert run_filter(input_dir=rec, settings=settings, client=_NoCursorClient()) == "success"
+
+    timeline = json.loads((out_dir / "interaction_timeline.json").read_text())["events"]
+    assert [event["action"] for event in timeline] == ["probable_close_click"]
+    assert timeline[0]["replayable"] is False
+    assert (out_dir / "close_click_evidence" / "probable_close_click.json").exists()
+    summary = json.loads((out_dir / "summary.json").read_text())
+    assert summary["probable_close_clicks"] == 1
 
 
 def test_run_filter_not_enough_frames(tmp_path):

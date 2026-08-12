@@ -15,6 +15,10 @@ from pathlib import Path
 from poc.workflow_3 import ALIGN_IMAGES_DIR
 from poc.workflow_3.debug_artifacts import save_debug_jpeg, save_debug_json
 from poc.workflow_3.recording_filter.click_detect import detect_clicks
+from poc.workflow_3.recording_filter.close_click_evidence import (
+    infer_probable_close_click,
+    write_close_click_evidence,
+)
 from poc.workflow_3.recording_filter.element_label import crop_box_around, label_element
 from poc.workflow_3.recording_filter.frame_reduce import collect_frame_paths, reduce_frames
 from poc.workflow_3.recording_filter.settings import (
@@ -406,8 +410,19 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
             f"(같은 프레임에서 나온 클릭 {superseded_clicks} 건은 타이핑으로 대체)"
         )
 
+    probable_close = infer_probable_close_click(capture_dir, change_events, click_events)
+    inferred_events = [probable_close] if probable_close is not None else []
+    if probable_close is not None:
+        write_close_click_evidence(
+            probable_close, change_events[-1], out_dir / "close_click_evidence"
+        )
+
     timeline = build_timeline(
-        click_events, typing_events, gate_info=gate_info, labels=labels
+        click_events,
+        typing_events,
+        gate_info=gate_info,
+        labels=labels,
+        inferred_events=inferred_events,
     )
     save_debug_json(
         out_dir / "interaction_timeline.json",
@@ -429,6 +444,7 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
             "total_change_events": stage1_total,
             "processed_for_click": len(click_events),
             "clicks": sum(1 for ce in click_events if ce.is_click),
+            "probable_close_clicks": len(inferred_events),
             "timeline_events": len(timeline),
             # (FINDING 6) 예전 "vlm_calls" 는 Stage 2a 만 세면서 전체처럼 읽혔다.
             # 스테이지별로 분해하고 합계를 따로 둔다(2c 는 OCR/VLM 폴백 규칙 기반 추정).

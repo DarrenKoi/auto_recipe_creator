@@ -29,8 +29,10 @@ def derive_target_kind(region, element_source) -> str:
     return "unknown"
 
 
-def build_timeline(click_events, typing_events=None, *, gate_info=None, labels=None) -> list[dict]:
-    """클릭(+미래 타이핑) 이벤트를 시간순 정렬된 dict 목록으로 만든다.
+def build_timeline(
+    click_events, typing_events=None, *, gate_info=None, labels=None, inferred_events=None
+) -> list[dict]:
+    """클릭/타이핑/비재생 추론 이벤트를 시간순 정렬된 dict 목록으로 만든다.
 
     gate_info / labels 는 rank 키의 dict 다(없으면 기본값으로 채운다). 알람 사이클
     녹화처럼 Stage 1.5/2c 를 돌리지 않은 입력도 그대로 처리된다.
@@ -76,6 +78,10 @@ def build_timeline(click_events, typing_events=None, *, gate_info=None, labels=N
         )
     for te in (typing_events or []):
         events.append(te)  # 이미 동일 스키마 dict 라고 가정(Stage 2b).
+    for inferred in (inferred_events or []):
+        event = dict(inferred)
+        event["replayable"] = False
+        events.append(event)
 
     events.sort(key=lambda e: e["t_sec"])
     for i, event in enumerate(events):

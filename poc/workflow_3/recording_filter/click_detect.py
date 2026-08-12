@@ -212,6 +212,59 @@ def _sidecar_event(change, cursor_xy, frame_wh, settings) -> ClickEvent:
     )
 
 
+def flag_static_cursor_detections(results, settings) -> int:
+    """여러 프레임에서 같은 자리에 계속 잡힌 "커서"를 정적 UI 아이콘으로 보고 무효화한다.
+
+    (2026-08-12) 이 툴은 'Full Size' 버튼과 라이브 SEM 영상 사이에 **손바닥 모양
+    아이콘**을 항상 그려 둔다. VLM 이 이걸 커서로 착각하면 모든 프레임에서 같은
+    좌표를 확신 있게 돌려주는데, 산출물만 보면 성공과 구분되지 않는다. 게다가 그
+    자리는 라이브 박스 테두리/버튼 리페인트로 실제 픽셀이 바뀌는 구역이라 ROI 변화
+    임계를 넘겨 **없던 클릭을 만들어낸다** - 클릭 0건보다 나쁘다.
+
+    판별은 VLM 없이 된다: 진짜 커서는 움직이고 정적 아이콘은 안 움직인다. 같은
+    좌표(허용 오차 안)가 전체 탐지의 static_cursor_min_ratio 이상을 차지하고 최소
+    반복 횟수를 넘으면 그 무리를 통째로 무효화한다.
+
+    엔지니어가 마우스를 한 자리에 세워둔 채 같은 버튼을 반복 클릭하는 정상 상황과
+    구분하기 위해 비율 하한을 높게 잡는다(기본 0.5) - 10분 세션의 절반을 1픽셀도
+    안 움직이는 커서는 커서가 아니다. 무효화된 이벤트는 지우지 않고 status 를
+    바꿔 감사 추적에 남긴다.
+
+    반환: 무효화한 이벤트 수.
+    """
+    detected = [r for r in results if r.cursor_xy and r.cursor_source == "vlm"]
+    if len(detected) < settings.static_cursor_min_repeats:
+        return 0
+
+    tolerance = settings.static_cursor_tolerance_px
+    clusters = []          # [(anchor_xy, [event, ...]), ...]
+    for event in detected:
+        x, y = event.cursor_xy[0], event.cursor_xy[1]
+        for anchor, members in clusters:
+            if abs(anchor[0] - x) <= tolerance and abs(anchor[1] - y) <= tolerance:
+                members.append(event)
+                break
+        else:
+            clusters.append(((x, y), [event]))
+
+    flagged = 0
+    for anchor, members in clusters:
+        if len(members) < settings.static_cursor_min_repeats:
+            continue
+        if len(members) / len(detected) < settings.static_cursor_min_ratio:
+            continue
+        print(
+            f"[WARNING] 정적 커서 후보 {anchor} 에서 {len(members)}/{len(detected)} 건이 "
+            "잡혔습니다 - 커서가 아니라 고정 UI 아이콘(예: 라이브 SEM 영상 옆 손바닥 "
+            "버튼)일 가능성이 높아 무효화합니다."
+        )
+        for event in members:
+            event.is_click = False
+            event.status = "cursor_static_decoy"
+            flagged += 1
+    return flagged
+
+
 def detect_clicks(
     change_events: list[ChangeEvent],
     settings: RecordingFilterSettings,
@@ -295,6 +348,9 @@ def detect_clicks(
             )
         )
         _sleep(settings.vlm_request_delay_sec)
+
+    if settings.static_cursor_reject:
+        flag_static_cursor_detections(results, settings)
 
     n_click = sum(1 for r in results if r.is_click)
     if sidecar_rejected:

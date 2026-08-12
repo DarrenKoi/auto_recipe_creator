@@ -5,7 +5,11 @@ import json
 import numpy as np
 from PIL import Image
 
-from poc.workflow_3.recording_filter.click_detect import ClickEvent, detect_clicks
+from poc.workflow_3.recording_filter.click_detect import (
+    ClickEvent,
+    detect_clicks,
+    flag_static_cursor_detections,
+)
 from poc.workflow_3.recording_filter.frame_reduce import ChangeEvent
 from poc.workflow_3.recording_filter.settings import RecordingFilterSettings
 
@@ -273,3 +277,68 @@ def test_detect_clicks_still_prefers_usable_sidecar(monkeypatch):
         client=_ExplodingClient(), metas=metas,
     )
     assert events[0].cursor_source == "sidecar"
+
+
+def _vlm_click_event(rank, xy, *, is_click=True):
+    """VLM 경로로 커서를 잡은 ClickEvent 를 만든다(정적 오탐 필터 테스트용)."""
+    return ClickEvent(
+        change=_change_event(rank, t_sec=float(rank)),
+        is_click=is_click, status="click" if is_click else "no_click",
+        cursor_visible=True, cursor_kind="hand",
+        cursor_bbox={"left": xy[0] - 8, "top": xy[1] - 8, "right": xy[0] + 8, "bottom": xy[1] + 8},
+        cursor_xy=list(xy), click_window={"left": 0, "top": 0, "right": 10, "bottom": 10},
+        changed_in_window_px=9999, confidence=0.9, evidence="", cursor_source="vlm",
+    )
+
+
+def test_static_cursor_cluster_is_rejected():
+    """전 프레임 같은 자리에 잡힌 '커서'는 고정 UI 아이콘으로 보고 무효화한다.
+
+    이 툴은 'Full Size' 버튼과 라이브 SEM 영상 사이에 손바닥 아이콘을 늘 그려 둔다.
+    그 자리는 라이브 박스 테두리 변화로 ROI 임계를 넘기 쉬워, 그대로 두면 없던
+    클릭이 대량으로 만들어진다.
+    """
+    events = [_vlm_click_event(i, (500, 400)) for i in range(12)]
+    flagged = flag_static_cursor_detections(events, RecordingFilterSettings())
+    assert flagged == 12
+    assert all(not e.is_click for e in events)
+    assert all(e.status == "cursor_static_decoy" for e in events)
+
+
+def test_static_cursor_tolerates_small_jitter():
+    """VLM bbox 는 프레임마다 몇 px 흔들린다 - 허용 오차 안이면 같은 자리로 본다."""
+    events = [_vlm_click_event(i, (500 + (i % 3), 400 - (i % 2))) for i in range(12)]
+    assert flag_static_cursor_detections(events, RecordingFilterSettings()) == 12
+
+
+def test_moving_cursor_is_not_rejected():
+    """실제로 움직인 커서는 건드리지 않는다(음성 대조군)."""
+    events = [_vlm_click_event(i, (100 + i * 60, 200 + i * 40)) for i in range(12)]
+    assert flag_static_cursor_detections(events, RecordingFilterSettings()) == 0
+    assert all(e.is_click for e in events)
+
+
+def test_static_cursor_needs_majority_not_just_repeats():
+    """한 자리에 몇 번 머무는 정상 조작(반복 클릭)은 무효화하지 않는다.
+
+    10회 반복이라도 전체 탐지의 절반에 못 미치면 정적 아이콘으로 단정하지 않는다.
+    """
+    events = [_vlm_click_event(i, (500, 400)) for i in range(10)]
+    events += [_vlm_click_event(100 + i, (100 + i * 50, 700)) for i in range(15)]
+    assert flag_static_cursor_detections(events, RecordingFilterSettings()) == 0
+
+
+def test_static_cursor_reject_ignores_sidecar_events():
+    """사이드카 좌표는 VLM 오탐이 아니다 - 정적이어도 이 필터의 대상이 아니다."""
+    events = [_vlm_click_event(i, (500, 400)) for i in range(12)]
+    for event in events:
+        event.cursor_source = "sidecar"
+    assert flag_static_cursor_detections(events, RecordingFilterSettings()) == 0
+
+
+def test_static_cursor_reject_can_be_disabled():
+    """킬 스위치 - 정적 판정이 정상 조작을 먹는 세션에서 즉시 끌 수 있어야 한다."""
+    events = [_vlm_click_event(i, (500, 400)) for i in range(12)]
+    settings = RecordingFilterSettings(static_cursor_reject=False, vlm_request_delay_sec=0.0)
+    detect_clicks([], settings, client=object(), metas=None)   # 배선 확인용(빈 입력).
+    assert all(e.is_click for e in events)

@@ -20,6 +20,11 @@ class RecordingFilterSettings:
     cursor_click_window_px: int = 200   # 커서 중심 정사각 ROI 한 변
     click_min_changed_px: int = 1500    # ROI 안 변화 픽셀 임계(클릭 조건)
     click_diff_threshold: int = 25      # native diff 마스크 임계
+    # 정적 UI 아이콘(라이브 SEM 영상 옆 손바닥 버튼 등)을 커서로 오탐한 무리를 걷어낸다.
+    static_cursor_reject: bool = True
+    static_cursor_tolerance_px: int = 12    # 같은 자리로 볼 좌표 허용 오차.
+    static_cursor_min_repeats: int = 10     # 이 횟수 미만이면 판단하지 않는다.
+    static_cursor_min_ratio: float = 0.5    # 전체 탐지 중 이 비율 이상이어야 정적으로 본다.
     # ---- VLM ----
     # service 는 route slug 다. 모델명은 서비스 엔트리가 들고 있으므로 여기서
     # 따로 두지 않는다 - 예전 vlm_model 필드는 mai-ui 라우트에 ui-venus 모델명을
@@ -58,6 +63,10 @@ def load_recording_filter_settings() -> RecordingFilterSettings:
         cursor_click_window_px=env_int("RECORDING_FILTER_CLICK_WINDOW_PX", 200),
         click_min_changed_px=env_int("RECORDING_FILTER_CLICK_MIN_CHANGED_PX", 1500),
         click_diff_threshold=env_int("RECORDING_FILTER_CLICK_DIFF_THRESHOLD", 25),
+        static_cursor_reject=env_flag("RECORDING_FILTER_STATIC_CURSOR_REJECT", True),
+        static_cursor_tolerance_px=env_int("RECORDING_FILTER_STATIC_CURSOR_TOLERANCE_PX", 12),
+        static_cursor_min_repeats=env_int("RECORDING_FILTER_STATIC_CURSOR_MIN_REPEATS", 10),
+        static_cursor_min_ratio=env_float("RECORDING_FILTER_STATIC_CURSOR_MIN_RATIO", 0.5),
         vlm_request_delay_sec=env_float("RECORDING_FILTER_VLM_REQUEST_DELAY_SEC", 1.0),
         max_vlm_calls=env_int("RECORDING_FILTER_MAX_VLM_CALLS", 0),
         region_gate_enabled=env_flag("RECORDING_FILTER_REGION_GATE", True),

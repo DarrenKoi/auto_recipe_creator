@@ -40,3 +40,22 @@ def test_user_prompt_allows_unlisted_cursor_shapes():
 def test_system_prompt_size_hint_admits_larger_glyphs():
     """손/대기 커서는 화살표보다 크다 - 32px 상한이 그것들을 배제했다."""
     assert "12-48" in cursor_system_prompt()
+
+
+def test_system_prompt_names_the_static_palm_icon_decoy():
+    """라이브 SEM 영상 옆 손바닥 아이콘을 커서로 보고하지 않도록 명시한다.
+
+    이 아이콘은 모든 프레임의 같은 자리에 있어, 모델이 한 번 물면 세션 전체에서
+    일관되게 틀린 커서 트랙을 만든다 - 산출물만 봐서는 성공과 구분되지 않는다.
+    """
+    sys = cursor_system_prompt().lower()
+    assert "full size" in sys
+    assert "palm" in sys
+    assert "never report it" in sys
+
+
+def test_system_prompt_distinguishes_pointing_hand_from_palm():
+    """손가락 하나 편 커서 vs 손바닥 아이콘을 형태로 구분하게 한다."""
+    sys = cursor_system_prompt().lower()
+    assert "index finger" in sys
+    assert "open palm" in sys

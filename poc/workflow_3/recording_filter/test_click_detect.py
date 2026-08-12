@@ -197,3 +197,79 @@ def test_detect_clicks_falls_back_to_vlm_without_sidecar(monkeypatch):
     )
     assert len(calls) == 1
     assert events[0].cursor_source == "vlm"
+
+
+def _offscreen_meta(t_sec, cursor_xy):
+    """포인터가 창 밖인 사이드카 레코드(창 rect 자체는 정상)."""
+    return FrameMeta(
+        t_sec=t_sec, rect={"left": 0, "top": 0, "right": 1600, "bottom": 1000},
+        occlusion="none", cursor_xy=cursor_xy, cursor_in_window=False,
+    )
+
+
+def test_resolve_sidecar_cursor_none_when_pointer_maps_outside_frame():
+    """프레임 밖으로 매핑되는 포인터는 커서 관측이 아니다(2026-08-12).
+
+    RCS Remote Monitoring 창은 장비 화면을 비추는 뷰라, 프레임에 그려진 커서와
+    로컬 포인터(GetCursorPos)는 별개다. 실제 세션에서 포인터가 내내 창 밖이었는데
+    이 함수가 화면 밖 좌표를 돌려주는 바람에 호출부가 VLM 을 건너뛰고 빈 ROI 만
+    세어 클릭이 전멸했다.
+    """
+    change = _change_event(rank=0, t_sec=10.0)
+    metas = [_offscreen_meta(10.0, [4000, 3000])]     # rect(1600x1000) 밖.
+    assert resolve_sidecar_cursor(change, metas, (800, 500)) is None
+
+
+def test_resolve_sidecar_cursor_none_when_pointer_is_negative():
+    """창 왼쪽/위로 벗어난 포인터도 마찬가지로 관측 실패다."""
+    change = _change_event(rank=0, t_sec=10.0)
+    metas = [_offscreen_meta(10.0, [-500, -400])]
+    assert resolve_sidecar_cursor(change, metas, (800, 500)) is None
+
+
+def test_detect_clicks_falls_back_to_vlm_when_sidecar_cursor_is_offscreen(monkeypatch):
+    """사이드카가 있어도 커서가 프레임 밖이면 VLM 경로로 되돌아간다.
+
+    이것이 50% -> 0% 회귀의 수정 지점이다. 사이드카 도입 전에는 VLM 이 프레임에
+    그려진 커서를 봤고(약 50% 성공), 도입 후에는 아예 호출되지 않았다.
+    """
+    change = _change_event(rank=0, t_sec=10.0)
+    metas = [_offscreen_meta(10.0, [4000, 3000])]
+    calls = []
+
+    def _fake_locate(client, frame_path):
+        calls.append(frame_path)
+        return {"cursor_visible": False}, None, 800, 500
+
+    monkeypatch.setattr(
+        "poc.workflow_3.recording_filter.click_detect.read_frame_size",
+        lambda path: (800, 500),
+    )
+    monkeypatch.setattr(
+        "poc.workflow_3.recording_filter.click_detect._locate_cursor", _fake_locate
+    )
+    events = detect_clicks(
+        [change], RecordingFilterSettings(vlm_request_delay_sec=0.0),
+        client=object(), metas=metas,
+    )
+    assert len(calls) == 1, "사이드카가 쓸모없으면 VLM 을 불러야 한다"
+    assert events[0].cursor_source == "vlm"
+
+
+def test_detect_clicks_still_prefers_usable_sidecar(monkeypatch):
+    """포인터가 프레임 안이면 종전대로 사이드카를 쓰고 VLM 을 부르지 않는다(음성 대조군)."""
+    change = _change_event(rank=0, t_sec=10.0)
+    metas = [_typing_meta(10.0, [400, 200])]
+    monkeypatch.setattr(
+        "poc.workflow_3.recording_filter.click_detect.read_frame_size",
+        lambda path: (800, 500),
+    )
+    monkeypatch.setattr(
+        "poc.workflow_3.recording_filter.click_detect._diff_mask",
+        lambda prev, curr, thr: None,
+    )
+    events = detect_clicks(
+        [change], RecordingFilterSettings(vlm_request_delay_sec=0.0),
+        client=_ExplodingClient(), metas=metas,
+    )
+    assert events[0].cursor_source == "sidecar"

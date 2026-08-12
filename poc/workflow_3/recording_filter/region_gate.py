@@ -202,6 +202,13 @@ def screen_point_to_frame(cursor_xy, rect, frame_wh):
     return (fx, fy)
 
 
+def _point_in_frame(point, frame_wh) -> bool:
+    """프레임 픽셀 좌표가 이미지 안에 있는지 본다(크기를 모르면 판정 불가로 False)."""
+    if not point or not frame_wh:
+        return False
+    return 0 <= point[0] < int(frame_wh[0]) and 0 <= point[1] < int(frame_wh[1])
+
+
 def gate_region(change_bbox, live_box, cursor_in_live) -> str:
     """변화 위치를 영역 지도 값으로 환산한다: live_image | ui | unknown.
 
@@ -355,6 +362,13 @@ def apply_region_gate(events, metas, region_maps, *, frame_size_fn=None) -> list
                 if point is None:
                     cursor_unresolved = True
                     unreadable_frames += 1
+                elif not _point_in_frame(point, size_cache[event.frame_path]):
+                    # (2026-08-12) 프레임 밖으로 매핑된 포인터는 "라이브 박스 밖"이
+                    # 아니라 관측 실패다. RCS 창은 장비 화면을 비추는 뷰라 로컬
+                    # 포인터가 창 밖이어도 프레임에는 커서가 그려져 있다 - 이때
+                    # cursor_in_live=False 로 단정하면 사람이 라이브 영상 위에서 한
+                    # 조작까지 ambient 로 강등돼 조용히 사라진다.
+                    cursor_unresolved = True
                 else:
                     fx, fy = point
                     cursor_in_live = (

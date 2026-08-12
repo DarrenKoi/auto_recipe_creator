@@ -5,19 +5,31 @@ DVR / RCS / RCS-on-SEM-Monitor 세 가지 커서 변형을 모두 인지하도�
 
 
 def cursor_system_prompt() -> str:
-    """커서 coarse 탐지 시스템 프롬프트."""
+    """커서 coarse 탐지 시스템 프롬프트.
+
+    (2026-08-12) 손 모양(pointing hand) 커서를 추가했다. 예전 프롬프트는 커서가
+    "세 가지 형태 중 하나" 라고 못박고 크기를 12-32 px 로 한정해, 버튼/링크 위에서
+    손 모양으로 바뀌는 프레임을 모델이 커서 아님으로 처리했다 - 오피스 실측에서
+    탐지율이 약 50% 에 머문 원인이다. 형태를 열거하되 "표준 Windows 커서면 무엇이든"
+    으로 열어 두는 편이, 못 보던 글리프를 침묵으로 버리는 것보다 낫다.
+    """
     return (
         "You locate the mouse cursor inside a screenshot of CD-SEM tooling. "
-        "The cursor can appear in one of three forms depending on which window the pointer is over:\n"
+        "The pointer takes whatever shape Windows is currently showing. Common forms here:\n"
         "  1) DVR camera feed: a small black 'X' (crosshair) glyph, ~10-20 px on each side.\n"
         "  2) RCS application (default Windows pointer): a small black arrow with a thin white outline.\n"
         "  3) RCS SEM Monitor box (the dark live-SEM image area): the same arrow inverted to "
         "white with a thin black outline so it stays visible against the dark background.\n"
+        "  4) Pointing hand: over buttons, links and other clickable controls the arrow becomes a "
+        "hand with the index finger extended upward. It is chunkier than the arrow and is very often "
+        "the shape visible at the exact moment of a click, so never dismiss it as an icon.\n"
+        "Any other standard Windows cursor may also appear (I-beam text caret, busy/hourglass or "
+        "spinning ring, four-way move, or resize arrows). Report whichever one you see.\n"
         "Return strict JSON only. Locate ONLY the mouse cursor; do not confuse it with similar-looking "
         "but static UI artifacts such as SEM crosshair reticles, alignment-key marks, toolbar icon glyphs, "
         "or measurement annotations. A real cursor sits on top of the underlying content, is small "
-        "(typically 12-32 px on a side), and never has anti-aliased text or numbers attached to it. "
-        "If no cursor is visible, say so."
+        "(typically 12-48 px on a side, hand and busy shapes at the larger end), and never has "
+        "anti-aliased text or numbers attached to it. If no cursor is visible, say so."
     )
 
 
@@ -27,15 +39,18 @@ def cursor_user_prompt() -> str:
         "Return JSON with this exact schema:\n"
         "{\n"
         '  "cursor_visible": true,\n'
-        '  "cursor_kind": "dvr_x | rcs_black_arrow | rcs_white_arrow",\n'
+        '  "cursor_kind": "dvr_x | rcs_black_arrow | rcs_white_arrow | hand | other",\n'
         '  "coord_system": "relative_1000",\n'
         '  "cursor_bbox": {"left": 0, "top": 0, "right": 0, "bottom": 0},\n'
         '  "confidence": 0.0,\n'
         '  "evidence": "short string describing the glyph and where it sits"\n'
         "}\n"
         "The bbox must tightly enclose the entire visible cursor glyph (X for dvr_x, "
-        "the full arrow shape for rcs_black_arrow / rcs_white_arrow). "
-        "Set cursor_kind to whichever of the three variants you actually see; if you cannot tell, "
-        'set it to "unknown". '
+        "the full arrow shape for rcs_black_arrow / rcs_white_arrow, the whole hand including the "
+        "extended finger for hand). "
+        "Set cursor_kind to whichever variant you actually see; use \"other\" for any standard "
+        "Windows cursor not listed (I-beam, busy, move, resize). Report the location even when the "
+        "shape is unfamiliar - an unlisted shape is still a cursor. If you truly cannot tell which "
+        'kind it is, set it to "unknown" but still return the bbox. '
         "If no cursor is visible, set cursor_visible=false, cursor_bbox=null, and cursor_kind=null."
     )

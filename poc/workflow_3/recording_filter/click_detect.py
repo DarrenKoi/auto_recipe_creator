@@ -115,12 +115,22 @@ def _count_changed_in_window(mask, window: dict) -> int:
 def resolve_sidecar_cursor(change, metas, frame_wh):
     """사이드카에서 이 프레임의 커서 프레임 좌표를 얻는다. 불가하면 None.
 
-    수동 녹화 세션의 로컬 커서(GetCursorPos)는 엔지니어의 커서 그 자체라
-    VLM 추정보다 정확하고 콜이 들지 않는다. 알람 녹화는 사이드카가 없어
-    항상 None 이 나오고 호출부가 기존 VLM 경로로 폴백한다.
+    수동 녹화 세션의 로컬 커서(GetCursorPos)가 프레임 안에 있으면 VLM 추정보다
+    정확하고 콜이 들지 않는다. 알람 녹화는 사이드카가 없어 항상 None 이 나오고
+    호출부가 기존 VLM 경로로 폴백한다.
 
     좌표 변환은 region_gate.screen_point_to_frame 을 쓴다 - 단순 뺄셈은
     오피스 125/150% 배율에서 좌표계를 섞는다(2026-08-10 FINDING 2).
+
+    (2026-08-12) **프레임 밖으로 매핑되면 커서 관측이 아니다.** 로컬 포인터
+    (GetCursorPos)와 프레임에 그려진 커서는 같은 것이 아니다 - RCS Remote
+    Monitoring 창은 장비 화면을 비추는 뷰라, 커서 글리프는 그 영상 안에 그려져
+    있고 우리 포인터가 창 위에 없어도 프레임에는 멀쩡히 보인다. 실제 오피스
+    세션에서 포인터가 내내 창 밖(410/410)이었는데도 이 함수가 화면 밖 좌표를
+    자신 있게 돌려주는 바람에, 호출부가 VLM 경로를 통째로 건너뛰고 빈 ROI 만
+    세어 클릭이 237건 중 0건이 됐다(사이드카 도입 전 같은 작업은 약 50% 를
+    잡았다). 범위를 벗어나면 None 을 돌려 VLM 폴백으로 되돌린다 - 틀린 확신보다
+    비싼 관측이 낫다.
     """
     if not metas or not frame_wh:
         return None
@@ -131,6 +141,9 @@ def resolve_sidecar_cursor(change, metas, frame_wh):
     if point is None:
         return None
     fx, fy = point
+    frame_w, frame_h = int(frame_wh[0]), int(frame_wh[1])
+    if not (0 <= fx < frame_w and 0 <= fy < frame_h):
+        return None
     return [int(fx), int(fy)]
 
 
@@ -217,6 +230,7 @@ def detect_clicks(
 
     results: list[ClickEvent] = []
     calls = 0
+    sidecar_rejected = 0     # 사이드카는 있는데 커서가 프레임 밖 -> VLM 폴백.
     for change in change_events:
         if settings.max_vlm_calls and calls >= settings.max_vlm_calls:
             print(f"[WARNING] max_vlm_calls={settings.max_vlm_calls} 도달 -> 이후 생존 분류 중단")
@@ -229,6 +243,8 @@ def detect_clicks(
                 _sidecar_event(change, sidecar_xy, frame_wh, settings)
             )
             continue
+        if metas:
+            sidecar_rejected += 1
 
         try:
             parsed, cursor_px, width, height = _locate_cursor(client, Path(change.frame_path))
@@ -281,6 +297,13 @@ def detect_clicks(
         _sleep(settings.vlm_request_delay_sec)
 
     n_click = sum(1 for r in results if r.is_click)
+    if sidecar_rejected:
+        # 폴백은 비용(콜 수)이 달라지는 사건이라 조용히 넘어가지 않는다.
+        print(
+            f"[WARNING] 사이드카 커서가 프레임 밖이라 {sidecar_rejected} 건은 VLM 으로 "
+            "찾았습니다 - RCS 창은 장비 화면을 비추는 뷰라 로컬 포인터가 창 밖이어도 "
+            "프레임에는 커서가 그려져 있습니다(그 경우 VLM 이 유일한 관측입니다)."
+        )
     print(f"[INFO] Stage 2a 완료: clicks={n_click} / processed={len(results)}")
     return results
 

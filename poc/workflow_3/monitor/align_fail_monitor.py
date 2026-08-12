@@ -365,12 +365,13 @@ def process_fail_rows(
                     timeout_sec=settings.popup_timeout_sec,
                 )
 
-            # 감지 시점 cube 알림 — 엔지니어가 "지금 자동화가 이 장비에 들어간다"를 먼저
-            # 알아야 화면이 저절로 움직여도 놀라지 않는다(입회 테스트 전제). 처리 결과
-            # 알림은 사이클 종료 후 outcome 기반으로 따로 나간다(둘은 목적이 다름).
-            # rich_notify_enabled=off 면 내부에서 조용히 skip.
+            # 감지 시점 cube 사전 고지 — 기본 off. 켜면 알람 1건당 cube 가 2회 나간다
+            # (여기 + 사이클 종료 후 outcome). 반자동 모드는 결과 알림이 항상 발송되므로
+            # (awaiting_engineer_ok) 사전 고지는 중복으로 체감된다. 화면이 저절로 움직이는
+            # 것을 미리 알려야 하는 상황에서만 ALIGN_FAIL_DETECTION_NOTIFY=1 로 켠다.
             send_detection_notify_async(
-                eqp_id, info["recipe_id"], enabled=settings.rich_notify_enabled,
+                eqp_id, info["recipe_id"],
+                enabled=settings.rich_notify_enabled and settings.detection_notify_enabled,
             )
 
             # consensus 재료 수집 — recipe 최근 성공(S) 이미지 stage (비차단 best-effort).
@@ -455,10 +456,19 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
         f"[INFO] Align Fail 모니터링 시작 (소스={source.kind}, "
         f"주기={settings.poll_interval_sec}s, 윈도우={settings.detection_window_sec}s, "
         f"팝업={'on' if settings.popup_enabled else 'off'}, "
-        f"cube알림={'on' if settings.rich_notify_enabled else 'off'}, "
+        f"cube알림={'on' if settings.rich_notify_enabled else 'off'}"
+        f"{'+사전고지' if settings.rich_notify_enabled and settings.detection_notify_enabled else ''}, "
         f"사이클={'on' if settings.cycle_enabled else 'off'}, "
         f"보정={'on' if settings.correction_enabled else 'off'}"
-        f"{'(dry-run)' if settings.correction_enabled and settings.correction_dry_run else ''})"
+        f"{'(dry-run)' if settings.correction_enabled and settings.correction_dry_run else ''}"
+        f"{'' if not settings.correction_enabled else (', OK클릭=on' if settings.ok_click_enabled else ', OK클릭=off(엔지니어)')})"
+    )
+    # 녹화 종료 조건은 사후에 "왜 300s 를 다 채웠나" 를 가르는 값이라 시작 로그에 남긴다.
+    # done 감지가 off 면 창 닫힘 또는 watch cap 만이 종료 조건이다.
+    print(
+        f"[INFO] engineer watch: 상한={settings.engineer_watch_sec:.0f}s, "
+        f"작업완료 감지(카운터+Assist)="
+        f"{'on' if settings.engineer_done_detect_enabled else 'off - cap/창닫힘까지 녹화'}"
     )
     print(f"[INFO] 알람 로그: {ALARM_LOG_PATH}")
     print(f"[INFO] 사이클 manifest: {CYCLE_MANIFEST_PATH}")

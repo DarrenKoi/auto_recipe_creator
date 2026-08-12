@@ -46,6 +46,10 @@ class Workflow3Settings(WorkflowSettings):
     popup_timeout_sec: int = 60
     alert_close_timeout_sec: int = 3
     rich_notify_enabled: bool = True
+    # 감지 시점 cube 사전 고지("이 장비 들어갑니다"). 기본 off — 켜면 알람 1건당 cube 가
+    # 2회 나간다(감지 + 결과). 반자동 모드는 결과 알림이 항상 발송되므로(awaiting_engineer_ok)
+    # 사전 고지까지 켜면 매번 2건이다. 행동을 요구하는 쪽은 결과 알림이라 그쪽을 기본으로 둔다.
+    detection_notify_enabled: bool = False
 
     # --- 알람별 사이클 ---
     cycle_enabled: bool = True
@@ -221,6 +225,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         popup_timeout_sec=env_int("ALIGN_FAIL_POPUP_TIMEOUT_SEC", 60),
         alert_close_timeout_sec=env_int("ALIGN_FAIL_ALERT_CLOSE_TIMEOUT_SEC", 3),
         rich_notify_enabled=env_flag("ALIGN_FAIL_RICH_NOTIFY", default=True),
+        detection_notify_enabled=env_flag("ALIGN_FAIL_DETECTION_NOTIFY", default=False),
         cycle_enabled=env_flag("ALIGN_FAIL_RECORD_CYCLE", default=True),
         connect_action_enabled=env_flag("ALIGN_FAIL_CONNECT_ACTION", default=True),
         connect_window_timeout_sec=env_int("ALIGN_FAIL_CONNECT_WINDOW_TIMEOUT_SEC", 3),

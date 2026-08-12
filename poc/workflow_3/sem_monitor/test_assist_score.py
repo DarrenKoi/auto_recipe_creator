@@ -1038,8 +1038,8 @@ def test_locate_failure_leaves_evidence_on_disk():
             )
         finally:
             _restore_asc(state)
-        jpgs = list(debug_dir.glob("locate_fail_*.jpg"))
-        jsons = list(debug_dir.glob("locate_fail_*.json"))
+        jpgs = list(debug_dir.glob("assist_ocr_read_fail_*.jpg"))
+        jsons = list(debug_dir.glob("assist_ocr_read_fail_*.json"))
         payload = json.loads(jsons[0].read_text(encoding="utf-8")) if jsons else {}
         ok = (
             result is None
@@ -1053,6 +1053,87 @@ def test_locate_failure_leaves_evidence_on_disk():
     print(
         f"[{'PASS' if ok else 'FAIL'}] locate_failure_leaves_evidence: "
         f"jpg={len(jpgs)} json={len(jsons)} reason={payload.get('reason')}"
+    )
+    return ok
+
+
+def test_score_text_accepts_decimal_and_signed():
+    """소수점/부호 score 를 숫자로 인정해야 한다.
+
+    구 구현(all(isdigit))은 "0.85" 를 버려 숫자 항목이 0개가 됐고, 그 결과 세 열의
+    score 를 하나도 못 읽었다(2026-08-12 오피스). 값은 쓰지 않고 위치만 쓰므로
+    관대해도 위험이 없다.
+    """
+    accepted = ["12", "0.85", "-3.2", "+7", "1,234", " 42 "]
+    rejected = ["", ".", "-", "Addressing1", "1.2.3", "N/A"]
+    ok = all(asc._is_score_text(t) for t in accepted) and not any(
+        asc._is_score_text(t) for t in rejected
+    )
+    bad = [t for t in accepted if not asc._is_score_text(t)] + [
+        t for t in rejected if asc._is_score_text(t)
+    ]
+    print(f"[{'PASS' if ok else 'FAIL'}] score_text_accepts_decimal_and_signed: 오분류={bad}")
+    return ok
+
+
+def test_header_match_survives_ocr_variants():
+    """공백/구두점/잘림 변형도 헤더로 인식해야 한다 (완전 일치는 실전에서 무너진다)."""
+    cases = {
+        "Addressing1": "Addressing1", "Addressing 1": "Addressing1",
+        "Measurement:": "Measurement", "Measuremen": "Measurement",
+        "Addressing2": "Addressing2",
+    }
+    ok = all(asc._header_column_for(text) == column for text, column in cases.items())
+    # 무관한 텍스트를 헤더로 오인하면 격자가 엉뚱한 x 범위로 선다.
+    ok = ok and asc._header_column_for("Point") is None and asc._header_column_for("12") is None
+    got = {t: asc._header_column_for(t) for t in cases}
+    print(f"[{'PASS' if ok else 'FAIL'}] header_match_survives_ocr_variants: {got}")
+    return ok
+
+
+def test_split_addressing_headers_assigned_by_x_order():
+    """OCR 이 "Addressing"+"1" 로 쪼개 읽으면 x 순서로 1/2 를 배정한다.
+
+    쪼개진 "Addressing" 은 그 자체로 1인지 2인지 알 수 없다. 표의 열 순서가 고정이므로
+    왼쪽이 Addressing1 이다. 이 배정이 없으면 헤더 3개를 못 채워 격자가 통째로 실패한다.
+    """
+    items = [
+        _item("Addressing", 110, 5, 155, 25),   # 오른쪽 -> Addressing2
+        _item("Addressing", 10, 5, 55, 25),     # 왼쪽   -> Addressing1
+        _item("Measurement", 210, 5, 260, 25),
+    ]
+    boxes = asc._match_header_boxes(items)
+    ok = (
+        set(boxes) == set(asc.ASSIST_COLUMNS)
+        and boxes["Addressing1"]["left"] == 10
+        and boxes["Addressing2"]["left"] == 110
+    )
+    print(
+        f"[{'PASS' if ok else 'FAIL'}] split_addressing_headers_by_x: "
+        f"{ {k: v.get('left') for k, v in boxes.items()} }"
+    )
+    return ok
+
+
+def test_grid_builds_with_decimal_scores_and_split_headers():
+    """실전형 OCR 출력(쪼개진 헤더 + 소수점 score)으로도 격자가 서야 한다.
+
+    두 수정이 함께 동작해야 의미가 있다 - 하나만 고치면 여전히 격자가 안 선다.
+    """
+    items = [
+        _item("Addressing", 10, 5, 55, 25),
+        _item("Addressing", 110, 5, 155, 25),
+        _item("Measurement", 210, 5, 260, 25),
+    ]
+    for idx in range(4):
+        top = 130 + idx * 30
+        items.append(_item("0.85", 20, top, 50, top + 18))
+        items.append(_item("-1.20", 220, top, 250, top + 18))
+    layout = build_score_grid(items, (300, 260))
+    ok = layout is not None and len(layout.grid) == asc.ASSIST_ROWS
+    print(
+        f"[{'PASS' if ok else 'FAIL'}] grid_with_decimal_and_split_headers: "
+        f"rows={len(layout.grid) if layout else None}"
     )
     return ok
 
@@ -1071,8 +1152,8 @@ def test_locate_success_also_saves_ocr_overlay():
             result = _locate_with(state, point=_LOCATE_POINT, debug_dir=debug_dir)
         finally:
             _restore_asc(state)
-        jpgs = list(debug_dir.glob("locate_ok.jpg"))
-        jsons = list(debug_dir.glob("locate_ok.json"))
+        jpgs = list(debug_dir.glob("assist_ocr_read_ok.jpg"))
+        jsons = list(debug_dir.glob("assist_ocr_read_ok.json"))
         payload = json.loads(jsons[0].read_text(encoding="utf-8")) if jsons else {}
         roles = {item.get("role") for item in payload.get("items", [])}
         ok = (
@@ -1121,7 +1202,7 @@ def test_locate_failure_evidence_survives_missing_debug_dir():
             )
         finally:
             _restore_asc(state)
-        ok = result is None and len(list(fallback.glob("locate_fail_*.json"))) == 1
+        ok = result is None and len(list(fallback.glob("assist_ocr_read_fail_*.json"))) == 1
     print(f"[{'PASS' if ok else 'FAIL'}] locate_failure_evidence_default_dir")
     return ok
 
@@ -1195,6 +1276,10 @@ def main():
         test_locate_none_when_ocr_raises(),
         test_locate_none_when_grid_cannot_be_built(),
         test_locate_failure_leaves_evidence_on_disk(),
+        test_score_text_accepts_decimal_and_signed(),
+        test_header_match_survives_ocr_variants(),
+        test_split_addressing_headers_assigned_by_x_order(),
+        test_grid_builds_with_decimal_scores_and_split_headers(),
         test_locate_success_also_saves_ocr_overlay(),
         test_ocr_overlay_marks_roles_distinctly(),
         test_locate_failure_evidence_survives_missing_debug_dir(),

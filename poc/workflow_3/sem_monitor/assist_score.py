@@ -281,9 +281,79 @@ def _normalize(text: str) -> str:
 
 
 def _is_score_text(text: str) -> bool:
-    """score 로 볼 텍스트인지(숫자만)."""
-    stripped = (text or "").strip()
-    return bool(stripped) and all(ch.isdigit() for ch in stripped)
+    """score 로 볼 텍스트인지.
+
+    정수만 허용하면(구 구현: all(isdigit)) 소수점 score("0.85")나 부호가 붙은 값을
+    전부 버려 숫자 항목이 0개가 되고, 격자가 통째로 안 선다(2026-08-12 오피스 실측:
+    세 열의 score 를 하나도 못 읽음). 부호/소수점/천단위 쉼표까지 숫자로 인정한다.
+    단, 값 자체는 쓰지 않으므로(색만 본다) 관대해도 위험이 없다 - 이 판정의 용도는
+    "이 항목이 행 pitch 계산에 쓸 숫자 덩어리인가" 뿐이다.
+    """
+    stripped = (text or "").strip().replace(",", "").replace(" ", "")
+    if stripped[:1] in ("+", "-"):
+        stripped = stripped[1:]
+    if not stripped or stripped.count(".") > 1:
+        return False
+    core = stripped.replace(".", "")
+    return bool(core) and core.isdigit()
+
+
+# 헤더 접두 매칭 최소 길이 - 이보다 짧은 조각("Ad", "Me")으로 열을 확정하면 오탐이 는다.
+_HEADER_PREFIX_MIN = 5
+
+
+def _header_column_for(text: str):
+    """OCR 텍스트가 어느 열 헤더인지. 모호("Addressing")면 "" , 아니면 None.
+
+    완전 일치만 인정하면 OCR 변형에 전부 무너진다 - 실제로는 "Addressing 1"(공백),
+    "Measurement:"(구두점), "Measuremen"(잘림), "Addressing"+"1"(분리 인식)이 흔하다.
+    정규화는 영숫자만 남기므로 공백/구두점은 이미 흡수되고, 여기서는 **접두 일치**로
+    잘림과 분리를 흡수한다. 분리 인식된 "addressing" 은 1/2 를 가릴 수 없으므로
+    ""(모호)를 돌려주고, 호출부가 x 순서로 배정한다.
+    """
+    name = _normalize(text or "")
+    if not name:
+        return None
+    for column in ASSIST_COLUMNS:
+        if name == _normalize(column):
+            return column
+    base = _normalize("Addressing")
+    if name == base:
+        return ""  # Addressing1/2 구분 불가 - x 순서로 배정해야 한다.
+    for column in ASSIST_COLUMNS:
+        target = _normalize(column)
+        # 양방향 접두: OCR 이 덧붙였거나(예: "measurementscore") 잘랐거나("measuremen").
+        if len(name) >= _HEADER_PREFIX_MIN and (
+            name.startswith(target) or target.startswith(name)
+        ):
+            return column
+    return None
+
+
+def _match_header_boxes(items: list) -> dict:
+    """OCR 항목에서 열 헤더 bbox 를 찾는다. {column: bbox} (누락 열은 키 없음)."""
+    header_boxes: dict = {}
+    ambiguous: list = []
+    for item in items:
+        column = _header_column_for(item.get("text", ""))
+        if column is None:
+            continue
+        box = item.get("bbox") or {}
+        if column == "":
+            ambiguous.append(box)
+        elif column not in header_boxes:
+            header_boxes[column] = box
+
+    # 분리 인식된 "Addressing" 들은 왼쪽부터 Addressing1, Addressing2 로 배정한다
+    # (표의 열 순서는 고정이므로 x 순서가 곧 열 순서다).
+    if ambiguous:
+        ambiguous.sort(key=lambda box: float(box.get("left", 0)))
+        for box in ambiguous:
+            for column in ("Addressing1", "Addressing2"):
+                if column not in header_boxes:
+                    header_boxes[column] = box
+                    break
+    return header_boxes
 
 
 @dataclass
@@ -339,13 +409,8 @@ def build_score_grid(items: list, panel_size: tuple, *, rows: int = ASSIST_ROWS)
         print("[WARNING] Assist OCR 항목 0개 - 격자 생성 실패")
         return None
 
-    # --- 열: 헤더 텍스트로 식별 ---
-    header_boxes = {}
-    for item in items:
-        name = _normalize(item.get("text", ""))
-        for column in ASSIST_COLUMNS:
-            if name == _normalize(column) and column not in header_boxes:
-                header_boxes[column] = item.get("bbox") or {}
+    # --- 열: 헤더 텍스트로 식별(접두/분리 인식 허용) ---
+    header_boxes = _match_header_boxes(items)
     if len(header_boxes) != len(ASSIST_COLUMNS):
         # 무엇을 못 읽었는지가 아니라 무엇을 *읽었는지* 가 원인 규명의 단서다.
         # (엉뚱한 영역을 crop 했으면 전혀 다른 텍스트가, 헤더가 잘렸으면 숫자만 나온다.)
@@ -536,9 +601,12 @@ _OCR_ROLE_COLORS = {
 
 
 def _ocr_item_role(text: str) -> str:
-    """OCR 항목이 격자 생성에서 어떤 역할로 쓰이는지 (header/score/other)."""
-    name = _normalize(text or "")
-    if any(name == _normalize(column) for column in ASSIST_COLUMNS):
+    """OCR 항목이 격자 생성에서 어떤 역할로 쓰이는지 (header/score/other).
+
+    격자 생성과 **같은 규칙**(_header_column_for / _is_score_text)을 써야 한다 -
+    그림의 색과 실제 판정이 어긋나면 오버레이가 사람을 속인다.
+    """
+    if _header_column_for(text) is not None:
         return "header"
     return "score" if _is_score_text(text or "") else "other"
 
@@ -573,7 +641,7 @@ def save_ocr_items_overlay(panel, items, out_path, *, scale: int = 2) -> None:
         print(f"[WARNING] Assist OCR 오버레이 저장 실패(무시): {exc}")
 
 
-def _save_locate_evidence(panel, items, reason: str, debug_dir) -> None:
+def _save_locate_evidence(panel, items, reason: str, debug_dir, *, raw_response: str = "") -> None:
     """이번 locate 시도가 '무엇을 보고 무엇을 읽었는지' 를 디스크에 남긴다 (실패 무시).
 
     성공했을 때만 오버레이를 저장하던 탓에, 실패하면 오피스에 남는 게 콘솔 한 줄뿐이라
@@ -585,14 +653,21 @@ def _save_locate_evidence(panel, items, reason: str, debug_dir) -> None:
     """
     target = debug_dir if debug_dir is not None else DEBUG_ARTIFACT_DIR
     try:
-        stamp = f"locate_{reason}" if reason == "ok" else f"locate_fail_{reason}"
+        # 파일 이름에 assist_ocr_read 를 붙인다 - 같은 폴더의 assist_panel_*(VLM 로케이터
+        # 산출물)와 헷갈리면 엉뚱한 그림을 보고 판단하게 된다(2026-08-12 실제 혼동).
+        stamp = "assist_ocr_read_ok" if reason == "ok" else f"assist_ocr_read_fail_{reason}"
+        image_path = target / f"{stamp}.jpg"
         if panel is not None:
             if items:
-                save_ocr_items_overlay(panel, items, target / f"{stamp}.jpg")
+                save_ocr_items_overlay(panel, items, image_path)
             else:
-                save_debug_jpeg(panel.convert("RGB"), target / f"{stamp}.jpg")
+                save_debug_jpeg(panel.convert("RGB"), image_path)
+            print(f"[INFO] Assist OCR 판독 오버레이: {image_path}")
         payload = {
             "reason": reason,
+            # 파싱 전 원문. items 가 비면 모델이 아무것도 안 준 것인지, 형식이 달라
+            # 파싱에서 버려진 것인지를 이 필드로만 가릴 수 있다.
+            "raw_response": (raw_response or "")[:4000],
             "panel_size": list(panel.size) if panel is not None else None,
             "item_count": len(items or []),
             # role 을 함께 적는다 - 같은 텍스트라도 header 로 잡혔는지 score 로 잡혔는지가
@@ -661,6 +736,7 @@ def locate_assist_layout(window, window_title: str, backend: str, image, *, debu
         print(f"[WARNING] Assist 패널 crop 실패: {exc}")
         return None
 
+    raw_response = ""
     try:
         client = Workflow1VLMClient(OCR_SERVICE_SLUG, timeout_sec=30.0, log_name=LOG_NAME)
         image_b64, _w, _h = encode_image_webp(panel.convert("RGB"), quality=90)
@@ -672,9 +748,11 @@ def locate_assist_layout(window, window_title: str, backend: str, image, *, debu
             image_mime="image/webp",
             temperature=0.0,
         )
-        items = parse_spotting_items(response.text)
+        raw_response = getattr(response, "text", "") or ""
+        items = parse_spotting_items(raw_response)
     except Exception as exc:
         print(f"[WARNING] Assist 패널 OCR 실패: {exc}")
+        _save_locate_evidence(panel, [], "ocr_error", debug_dir, raw_response=str(exc))
         return None
 
     items = normalize_spotting_items_to_panel(items, panel.size)
@@ -695,7 +773,7 @@ def locate_assist_layout(window, window_title: str, backend: str, image, *, debu
         if layout is None:
             # build_score_grid 가 이유별로 경고를 찍는다. 여기서는 그 판단의 입력을 보존한다.
             reason = "grid_build"
-    _save_locate_evidence(panel, items, reason or "ok", debug_dir)
+    _save_locate_evidence(panel, items, reason or "ok", debug_dir, raw_response=raw_response)
     if layout is None:
         return None
     print(

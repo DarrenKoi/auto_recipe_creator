@@ -97,3 +97,6 @@ _workspace/
 
 # superpowers SDD 세션 스크래치(ledger/brief/report) - 커밋 대상 아님
 .superpowers/
+
+# Local isolated implementation worktrees
+.worktrees/

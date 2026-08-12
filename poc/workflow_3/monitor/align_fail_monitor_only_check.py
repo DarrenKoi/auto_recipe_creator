@@ -20,6 +20,15 @@ SEM panel 확보 / engineer watch 는 전부 뺀다. 과거 데이터 수집은 
 로그/manifest 골격은 production 과 동일하며, 알람별 사이클만 `run_check_only_cycle` 로
 교체한다.
 
+**두 진입점의 역할 분담(의도적)** — 목적이 다르면 기본값도 달라야 한다:
+
+  * `align_fail_monitor.py` = 실운전. `_apply_live_mode_defaults()` 로 SAFE_MODE=0 +
+    ALIGN_FAIL_CORRECTION_DRY_RUN=0 을 진입점에서 못박아, 매번 env 를 붙이지 않아도
+    실클릭으로 뜬다.
+  * 이 모듈 = 점검. **같은 기본값을 여기에 복사하지 말 것.** 접속/캡처/닫기만 하므로
+    보정 게이트가 애초에 무의미하고, "안전하게 한 번 보고 싶다" 는 요구는 이 진입점이
+    받는다. 실클릭이 필요하면 그건 production 쪽 일이다.
+
 사용법:
   uv run python poc/workflow_3/monitor/align_fail_monitor_only_check.py
 

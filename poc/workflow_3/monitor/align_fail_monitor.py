@@ -521,10 +521,49 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
     print("[INFO] 감지 종료")
 
 
+def _apply_live_mode_defaults() -> None:
+    """실장비 운전 기본값(SAFE_MODE=0 + 보정 dry-run off)을 진입점에서 못박는다.
+
+    이 모니터는 "실제로 보정하는 루프"가 존재 이유이므로, 매 실행마다 env 두 개를
+    손으로 붙이지 않아도 실클릭 모드로 뜨게 한다. 대신 되돌릴 수 없는 조작을 기본으로
+    켜는 셈이라 두 가지 안전장치를 함께 둔다.
+
+      * setdefault 라 **실제 셸 env 가 항상 이긴다** - 점검만 하려면
+        `SAFE_MODE=1 uv run python ...` 로 실행하면 클릭이 전부 막힌다.
+      * 시작 시 배너로 현재 운전 모드를 크게 남긴다(로그만 봐도 그 세션이 실클릭이었는지
+        판별되어야 한다).
+
+    seed_env() 보다 **먼저** 불러야 한다. 그래야 오피스 PC 의 workflow_3_config.py 사본에
+    남아 있을 수 있는 CORRECTION_DRY_RUN=1 이 이 기본값을 덮지 않는다(seed_env 도
+    setdefault 라 먼저 잡은 쪽이 이긴다). 그 결과 우선순위는
+    셸 env > 이 기본값 > workflow_3_config.py > config.py 기본값 이며,
+    무시된 config 값은 seed_env 가 콘솔에 그대로 보고한다.
+    """
+    import os
+
+    os.environ.setdefault("SAFE_MODE", "0")
+    os.environ.setdefault("ALIGN_FAIL_CORRECTION_DRY_RUN", "0")
+
+    safe_mode = os.environ.get("SAFE_MODE", "0")
+    dry_run = os.environ.get("ALIGN_FAIL_CORRECTION_DRY_RUN", "0")
+    live = safe_mode == "0" and dry_run == "0"
+    print("=" * 70)
+    if live:
+        print("[WARNING] 실운전 모드: 실제 마우스 클릭이 발생합니다 "
+              "(접속 더블클릭 + align point reposition).")
+        print("[WARNING] 점검만 하려면 중단 후 'SAFE_MODE=1' 을 붙여 다시 실행하세요.")
+    else:
+        print(f"[INFO] 점검 모드: SAFE_MODE={safe_mode}, "
+              f"ALIGN_FAIL_CORRECTION_DRY_RUN={dry_run} (셸 env 가 기본값을 덮었습니다)")
+    print("=" * 70)
+
+
 if __name__ == "__main__":
-    # 실편집 workflow_3_config.py 의 토글을 env 로 브리지(있으면). load_workflow3_settings
-    # 가 env 를 읽기 전에 호출해야 적용된다. 실제 OS env 가 우선(setdefault).
+    # 실장비 운전 기본값을 먼저 못박고(셸 env 는 그대로 우선), 그 다음 실편집
+    # workflow_3_config.py 의 나머지 토글을 env 로 브리지한다. 둘 다 setdefault 이며
+    # load_workflow3_settings 가 env 를 읽기 전에 끝나야 적용된다.
     from poc.workflow_3.workflow_3_config_loader import seed_env
 
+    _apply_live_mode_defaults()
     seed_env()
     monitor_loop()

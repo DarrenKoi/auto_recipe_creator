@@ -326,6 +326,22 @@ def test_offset_active_score_isolated_from_addressing2_pixels():
     assert rows[-1].verdict == "ok"
 
 
+def test_shifted_addressing2_score_does_not_contaminate_offset_active_score():
+    items = _panel_items() + [
+        _item("56", 65, 220, 75, 238),
+        _item("77", 90, 220, 120, 238),
+    ]
+    layout = build_score_grid(items, (300, 260))
+    assert layout is not None
+    image = Image.new("RGB", (300, 260), (240, 240, 240))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle([65, 220, 70, 225], fill=(20, 20, 20))
+    draw.rectangle([220, 220, 225, 225], fill=(20, 20, 20))
+    draw.rectangle([100, 220, 109, 237], fill=(200, 20, 20))
+    rows = read_row_states(image, layout)
+    assert rows[-1].verdict == "ok"
+
+
 def test_measurement_header_accepts_five_character_clip_only():
     assert asc._header_column_for("Measu") == "Measurement"
     assert asc._header_column_for("Meas") is None

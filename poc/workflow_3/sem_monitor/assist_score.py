@@ -397,7 +397,8 @@ def _number_column_for(cx: float, header_boxes: dict, active_columns: tuple):
         for column, box in header_boxes.items():
             if column in active_columns:
                 continue
-            if float(box["left"]) <= cx <= float(box["right"]):
+            width = max(1.0, float(box["right"]) - float(box["left"]))
+            if float(box["left"]) - width * 0.5 <= cx <= float(box["right"]) + width * 0.5:
                 return None
         active_headers = {name: header_boxes[name] for name in active_columns}
         return _assign_number_column(cx, active_headers)

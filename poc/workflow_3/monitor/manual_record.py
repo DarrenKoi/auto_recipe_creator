@@ -82,7 +82,6 @@ class ManualRecordSettings:
     eqp_id: str = ""              # 모니터링 창이 여럿일 때만 필요.
     meta_enabled: bool = True     # 사이드카 기록 on/off.
     watch_interval_sec: float = 5.0   # 예산 감시 주기.
-    cursor_alert_sec: float = 30.0    # 커서가 계속 창 밖이면 이 시간 뒤 1회 경고. 0=끔.
 
 
 def load_manual_record_settings() -> ManualRecordSettings:
@@ -100,43 +99,6 @@ def load_manual_record_settings() -> ManualRecordSettings:
         eqp_id=os.getenv("MANUAL_RECORD_EQP_ID", "").strip(),
         meta_enabled=env_flag("MANUAL_RECORD_META", True),
         watch_interval_sec=env_float("MANUAL_RECORD_WATCH_INTERVAL_SEC", 5.0),
-        cursor_alert_sec=env_float("MANUAL_RECORD_CURSOR_ALERT_SEC", 30.0),
-    )
-
-
-# 경고를 내기 전에 최소한 이만큼의 표본은 봐야 한다(폴링 0.2s 기준 몇 초).
-_CURSOR_ALERT_MIN_SAMPLES = 20
-
-
-def cursor_absence_alert(total, in_window, elapsed_sec, settings) -> str:
-    """커서가 한 번도 창 안에 없으면 경고 문구를 만든다(정상이면 빈 문자열).
-
-    (2026-08-12) 실제로 10분 세션 하나를 통째로 잃고 추가했다. 사이드카는
-    410 프레임 내내 cursor_in_window=False 였는데 - 즉 엔지니어의 마우스가 녹화
-    대상 창 위에 단 한 번도 없었는데 - 녹화도, 뒤이은 recording_filter 도 아무
-    말 없이 정상 종료했다. 그 사실은 filter 를 다 돌리고 진단 스크립트를 두 개
-    돌린 뒤에야 드러났다.
-
-    capture_window 는 창 핸들이 아니라 **창 rect 의 스크린 그랩**이라(frame_meta
-    상단 주석), 엔지니어가 다른 창(별도 팝업/다른 모니터)에서 작업하면 캡처에는
-    라이브 SEM 영상이 자기 혼자 갱신되는 장면만 남는다. 그림은 멀쩡해 보이므로
-    사람이 화면만 봐서는 눈치채기 어렵다 - 그래서 기계가 말해야 한다.
-
-    유예(grace)를 두는 이유는 녹화 시작 직후 엔지니어가 아직 창으로 손을 옮기지
-    않은 정상 구간이 있기 때문이다. 표본 수 하한도 같은 이유다(폴링이 느린
-    환경에서 몇 장 만으로 단정하지 않는다).
-    """
-    if settings.cursor_alert_sec <= 0:
-        return ""
-    if in_window > 0:
-        return ""
-    if elapsed_sec < settings.cursor_alert_sec or total < _CURSOR_ALERT_MIN_SAMPLES:
-        return ""
-    return (
-        f"커서가 {int(elapsed_sec)}초 동안({total} 프레임) 녹화 대상 창 안에 "
-        "한 번도 없었습니다. 다른 창에서 작업 중이라면 지금 녹화되는 것은 "
-        "라이브 영상의 자율 갱신뿐이고, 분석 단계에서 클릭이 0 건으로 나옵니다. "
-        "대상 창에서 조작하거나, Ctrl+C 로 멈추고 올바른 창으로 다시 시작하세요."
     )
 
 
@@ -259,7 +221,7 @@ def _collect_monitoring_rows():
     return rows
 
 
-def _make_capture_fn(tool_window, meta_writer, started_at, our_handles, settings=None):
+def _make_capture_fn(tool_window, meta_writer, started_at, our_handles):
     """RecordingSession 에 주입할 capture_fn 을 만든다(캡처 + 사이드카 기록).
 
     RecordingSession 은 수정하지 않는다. 캡처 함수를 감싸는 것만으로 프레임과
@@ -268,7 +230,7 @@ def _make_capture_fn(tool_window, meta_writer, started_at, our_handles, settings
     """
     from poc.workflow_3.util import capture_window
 
-    state = {"seq": 0, "in_window": 0, "alerted": False}
+    state = {"seq": 0}
 
     def _capture():
         image = capture_window(tool_window)
@@ -285,28 +247,15 @@ def _make_capture_fn(tool_window, meta_writer, started_at, our_handles, settings
             _fg_handle, fg_title = (
                 read_foreground_window_info() if read_foreground_window_info else (None, "")
             )
-            elapsed = time.time() - started_at
-            record = build_meta_record(
+            meta_writer.append(build_meta_record(
                 frame_name=f"seq_{state['seq']:04d}",
-                t_sec=elapsed,
+                t_sec=time.time() - started_at,
                 rect=rect,
                 foreground_title=fg_title,
                 occlusion=probe_occlusion(rect, our_handles),
                 cursor_xy=read_cursor_screen_xy(),
-            )
-            meta_writer.append(record)
+            ))
             state["seq"] += 1
-            if record.get("cursor_in_window"):
-                state["in_window"] += 1
-            # 커서가 계속 창 밖이면 세션을 다 버리기 전에 알린다(1회만).
-            if settings is not None and not state["alerted"]:
-                message = cursor_absence_alert(
-                    state["seq"], state["in_window"], elapsed, settings
-                )
-                if message:
-                    state["alerted"] = True
-                    print(f"[WARNING] ===== {message} =====")
-                    print(f"[WARNING] 현재 전면 창: {fg_title!r}")
         except Exception as exc:
             print(f"[WARNING] frame_meta 수집 실패(계속 진행): {exc}")
         return image
@@ -397,7 +346,7 @@ def main() -> int:
         max_sec=settings.max_sec,
         jpeg_quality=settings.jpeg_quality,
         capture_fn=_make_capture_fn(
-            tool_window, meta_writer, started_at, our_handles, settings,
+            tool_window, meta_writer, started_at, our_handles,
         ),
     )
     session.start()

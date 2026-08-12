@@ -267,15 +267,6 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
     )
 
     metas = load_frame_meta(_resolve_meta_dir(capture_dir, frames_dir))
-    cursor_in_window = sum(1 for m in metas if m.cursor_in_window)
-    if metas and cursor_in_window == 0:
-        # (2026-08-12) 커서가 창 안에 한 번도 없던 세션은 클릭이 나올 수 없다.
-        # 임계나 게이트 문제로 오해하지 않도록 시작부터 분명히 말한다.
-        print(
-            f"[WARNING] 사이드카 {len(metas)} 건 전부 cursor_in_window=False 입니다 - "
-            "엔지니어의 커서가 녹화 대상 창 위에 한 번도 없었습니다. 이 녹화에는 "
-            "사람의 조작이 담겨 있지 않으므로 클릭이 0 건으로 끝납니다."
-        )
     gate_info = {}
     ambient_dropped = 0
     occluded_excluded = 0
@@ -435,8 +426,6 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
             "gate_passed": len(change_events),
             "ambient_events_dropped": ambient_dropped,
             "occluded_events_excluded": occluded_excluded,
-            "sidecar_records": len(metas),
-            "cursor_in_window_records": cursor_in_window,
             "labeled": sum(1 for lb in labels.values() if lb.source != "none"),
             "element_label_errors": label_errors,
             "elapsed": format_elapsed_ms(started_at),
@@ -461,17 +450,6 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
             "먼저 보세요."
         )
         return "all_events_discarded"
-    # (2026-08-12) 클릭 0 건인데 커서가 내내 창 밖이었다면 그것은 "클릭이 없는
-    # 세션"(no_clicks, exit 0)이 아니라 **잘못 녹화된 세션**이다. 둘을 같은 상태로
-    # 돌려주면 조치가 정반대인 두 상황이 구분되지 않는다 - 전자는 임계/게이트를
-    # 보는 게 맞고, 후자는 아무리 필터를 손봐도 없는 조작을 만들어낼 수 없다.
-    if not timeline and metas and cursor_in_window == 0:
-        print(
-            "[ERROR] 커서가 녹화 대상 창 안에 한 번도 없었습니다 - 필터 문제가 "
-            "아니라 녹화 문제입니다. 엔지니어가 조작하는 그 창을 대상으로 다시 "
-            "녹화하세요(manual_record 가 30초 뒤 같은 경고를 냅니다)."
-        )
-        return "cursor_never_in_window"
     return "success" if timeline else "no_clicks"
 
 

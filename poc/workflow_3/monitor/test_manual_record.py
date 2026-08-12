@@ -8,7 +8,6 @@ import json
 from poc.workflow_3.monitor.manual_record import (
     ManualRecordSettings,
     budget_stop_reason,
-    cursor_absence_alert,
     dir_size_mb,
     manual_recording_dir,
     parse_eqp_from_title,
@@ -502,38 +501,6 @@ def test_watch_until_stop_returns_watch_error_and_lets_caller_teardown():
     print("[OK] test_watch_until_stop_returns_watch_error_and_lets_caller_teardown")
 
 
-
-def test_cursor_alert_silent_while_cursor_enters_window():
-    """한 번이라도 창 안에 들어왔으면 경고하지 않는다."""
-    settings = ManualRecordSettings(cursor_alert_sec=30.0)
-    assert cursor_absence_alert(500, 1, 120.0, settings) == ""
-
-
-def test_cursor_alert_silent_during_grace_period():
-    """녹화 직후에는 아직 손을 옮기지 않았을 수 있어 유예를 준다."""
-    settings = ManualRecordSettings(cursor_alert_sec=30.0)
-    assert cursor_absence_alert(100, 0, 10.0, settings) == ""
-
-
-def test_cursor_alert_silent_when_too_few_samples():
-    """표본이 몇 장 없으면 단정하지 않는다(폴링이 느린 환경)."""
-    settings = ManualRecordSettings(cursor_alert_sec=30.0)
-    assert cursor_absence_alert(5, 0, 120.0, settings) == ""
-
-
-def test_cursor_alert_fires_when_cursor_never_in_window():
-    """유예를 넘겨도 커서가 계속 창 밖이면 경고 문구를 만든다."""
-    settings = ManualRecordSettings(cursor_alert_sec=30.0)
-    message = cursor_absence_alert(400, 0, 120.0, settings)
-    assert message
-    assert "120" in message
-
-
-def test_cursor_alert_can_be_disabled():
-    """cursor_alert_sec=0 이면 완전히 끈다."""
-    settings = ManualRecordSettings(cursor_alert_sec=0.0)
-    assert cursor_absence_alert(400, 0, 120.0, settings) == ""
-
 if __name__ == "__main__":
     test_parse_eqp_from_plain_title()
     test_parse_eqp_strips_surrounding_whitespace()
@@ -581,9 +548,4 @@ if __name__ == "__main__":
     test_pick_window_row_ambiguous_prefix_returns_none()
     test_pick_window_row_exact_enough_substring_still_resolves()
     test_watch_until_stop_returns_watch_error_and_lets_caller_teardown()
-    test_cursor_alert_silent_while_cursor_enters_window()
-    test_cursor_alert_silent_during_grace_period()
-    test_cursor_alert_silent_when_too_few_samples()
-    test_cursor_alert_fires_when_cursor_never_in_window()
-    test_cursor_alert_can_be_disabled()
     print("\n[OK] manual_record 파싱/경로 테스트 통과")

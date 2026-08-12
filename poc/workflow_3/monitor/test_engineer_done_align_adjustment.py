@@ -634,6 +634,31 @@ def test_assist_fn_distinguishes_unusable_from_pending():
     return True
 
 
+def test_assist_fn_ignores_addressing_fail_when_measurement_unreadable():
+    """Addressing1 실패만으로 Measurement 미판독 프레임을 usable 로 올리지 않는다."""
+    unreadable_rows = [
+        RowState(cells={
+            "Addressing1": "red",
+            "Addressing2": "blank",
+            "Measurement": "blank",
+        }),
+        RowState(cells={
+            "Addressing1": "red",
+            "Addressing2": "blank",
+            "Measurement": "unknown",
+        }),
+    ]
+    with _RowsFnHarness([unreadable_rows], locate_ok=True):
+        assist_fn = _make_assist_fn(object(), _settings(), debug_dir=None)
+        observation = assist_fn(Image.new("RGB", (20, 20), (240, 240, 240)))
+
+    assert observation.status == "unusable"
+    assert observation.reason == "measurement_unreadable"
+    assert observation.rows == unreadable_rows
+    assert [row.verdict for row in observation.rows] == ["fail", "fail"]
+    return True
+
+
 def test_rows_fn_locates_layout_only_once():
     """격자는 한 번만 잡고 캐시한다 - 폴링마다 VLM 을 부르면 안 된다."""
     ok = _rows_of(["ok"] * 3)
@@ -788,6 +813,7 @@ def main() -> int:
         test_done_when_delta_and_streak_both_met,
         test_rows_fn_exception_returns_false,
         test_assist_fn_distinguishes_unusable_from_pending,
+        test_assist_fn_ignores_addressing_fail_when_measurement_unreadable,
         test_rows_fn_locates_layout_only_once,
         test_rows_fn_warns_once_on_locate_failure,
         test_rows_fn_throttles_locate_retry_after_failure,

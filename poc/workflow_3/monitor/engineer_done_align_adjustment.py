@@ -449,7 +449,10 @@ def _make_assist_fn(tool_window, settings, *, debug_dir=None):
                     debug_dir / f"assist_{state['seq']:03d}.jpg",
                 )
                 state["last_verdicts"] = verdicts
-            if not any(row.verdict in {"ok", "fail"} for row in rows):
+            measurement_states = [
+                row.cells.get("Measurement", "blank") for row in rows
+            ]
+            if all(state in {"blank", "unknown"} for state in measurement_states):
                 return AssistObservation(
                     status="unusable",
                     rows=rows,

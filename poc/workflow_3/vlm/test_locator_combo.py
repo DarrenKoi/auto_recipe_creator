@@ -14,6 +14,18 @@ import os
 from poc.workflow_3.vlm import ui_venus_mai_locator as loc
 
 
+def test_service_artifact_names_use_actual_route_slugs():
+    names = loc._artifact_names("assist_panel", "mai-ui", "mai-ui", mode="service")
+    assert names["coarse_response"] == "assist_panel_coarse_mai_ui_response.txt"
+    assert names["refine_response"] == "assist_panel_refine_mai_ui_response.txt"
+    assert names["result_json"] == "assist_panel_locator_result.json"
+
+
+def test_legacy_artifact_names_remain_default():
+    names = loc._artifact_names("assist_panel", "mai-ui", "mai-ui", mode="legacy")
+    assert names["coarse_response"] == "assist_panel_ui_venus_response.txt"
+
+
 def _resolve(raw):
     """raw(None=미설정)를 env 에 넣고 조합을 해석한다."""
     if raw is None:
@@ -32,6 +44,9 @@ def _check(label, ok):
 def main():
     ok = True
     default = (loc.DEFAULT_COARSE_SERVICE, loc.DEFAULT_REFINE_SERVICE)
+
+    test_service_artifact_names_use_actual_route_slugs()
+    test_legacy_artifact_names_remain_default()
 
     # 기본값은 코드 상수(DEFAULT_*)가 정한다 - 상수를 바꿔도 이 테스트는 살아있어야
     # 하므로 리터럴이 아니라 상수와 비교한다.

@@ -9,6 +9,7 @@ env 로 런타임에 덮어쓸 수 있다(형식은 bench_tool_locator 의 BENCH
 """
 
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -168,6 +169,62 @@ OVERLAY_COLORS = {
     "crop": "white",
     "refined": "deepskyblue",
 }
+
+
+def _slug_token(value: str) -> str:
+    """route slug 를 artifact/overlay 에 쓸 안전한 토큰으로 바꾼다."""
+    return "_".join(
+        part for part in re.split(r"[^a-zA-Z0-9]+", value or "") if part
+    ).lower()
+
+
+def _artifact_names(
+    prefix: str,
+    coarse_service: str,
+    refine_service: str,
+    *,
+    mode: str = "legacy",
+) -> dict[str, str]:
+    """로케이터 artifact 파일명을 mode 별로 정한다."""
+    if mode != "service":
+        return {
+            "coarse_response": f"{prefix}_ui_venus_response.txt",
+            "refine_response": f"{prefix}_mai_ui_response.txt",
+            "result_json": f"{prefix}_ui_venus_mai_result.json",
+            "overlay": f"{prefix}_ui_venus_mai_overlay.jpg",
+            "zoom_overlay": f"{prefix}_ui_venus_mai_zoom_overlay.jpg",
+        }
+
+    coarse = _slug_token(coarse_service)
+    refine = _slug_token(refine_service)
+    return {
+        "coarse_response": f"{prefix}_coarse_{coarse}_response.txt",
+        "refine_response": f"{prefix}_refine_{refine}_response.txt",
+        "result_json": f"{prefix}_locator_result.json",
+        "overlay": f"{prefix}_locator_overlay.jpg",
+        "zoom_overlay": f"{prefix}_locator_zoom_overlay.jpg",
+    }
+
+
+def _overlay_labels(
+    target: TargetConfig,
+    coarse_service_slug: str,
+    refine_service_slug: str,
+    *,
+    artifact_naming: str,
+) -> tuple[str, str, str]:
+    """overlay 라벨도 artifact 이름과 같은 서비스 정체성을 가진다."""
+    if artifact_naming == "service":
+        return (
+            f"coarse_{_slug_token(coarse_service_slug)}_bbox",
+            f"{target.key}_crop_region",
+            f"refine_{_slug_token(refine_service_slug)}_point",
+        )
+    return (
+        f"{target.key}_ui_venus",
+        f"{target.key}_crop_region",
+        f"{target.key}_mai_ui",
+    )
 
 
 def _print_vlm_understanding(service_slug: str, response_text: str, token_usage: dict | None) -> None:
@@ -347,14 +404,19 @@ def _save_full_pipeline_overlay(
     debug_stamp: str,
     *,
     debug_image_dir: Path,
-    artifact_prefix: str,
-    filename_suffix: str = "ui_venus_mai_overlay",
+    artifact_filename: str,
+    coarse_service_slug: str,
+    refine_service_slug: str,
+    artifact_naming: str,
 ) -> Path:
     """full image 위에 UI-Venus bbox 와 MAI-UI point 를 마킹한다."""
     full_w, full_h = image.size
-    coarse_key = f"{target.key}_ui_venus"
-    crop_key = f"{target.key}_crop_region"
-    refined_key = f"{target.key}_mai_ui"
+    coarse_key, crop_key, refined_key = _overlay_labels(
+        target,
+        coarse_service_slug,
+        refine_service_slug,
+        artifact_naming=artifact_naming,
+    )
     overlay_colors = {
         coarse_key: OVERLAY_COLORS["coarse"],
         crop_key: OVERLAY_COLORS["crop"],
@@ -377,7 +439,7 @@ def _save_full_pipeline_overlay(
 
     overlay_path = debug_image_path(
         debug_image_dir,
-        f"{artifact_prefix}_{filename_suffix}.jpg",
+        artifact_filename,
         model_name=pipeline_model_name,
         timestamp_tag=debug_stamp,
     )
@@ -395,13 +457,19 @@ def _save_zoom_pipeline_overlay(
     debug_stamp: str,
     *,
     debug_image_dir: Path,
-    artifact_prefix: str,
-    filename_suffix: str = "ui_venus_mai_zoom_overlay",
+    artifact_filename: str,
+    coarse_service_slug: str,
+    refine_service_slug: str,
+    artifact_naming: str,
 ) -> Path:
     """MAI-UI zoom crop 위에 coarse bbox 와 refined point 를 마킹한다."""
     zoom_w, zoom_h = zoom_image.size
-    coarse_key = f"{target.key}_ui_venus"
-    refined_key = f"{target.key}_mai_ui"
+    coarse_key, _crop_key, refined_key = _overlay_labels(
+        target,
+        coarse_service_slug,
+        refine_service_slug,
+        artifact_naming=artifact_naming,
+    )
     overlay_colors = {
         coarse_key: OVERLAY_COLORS["coarse"],
         refined_key: OVERLAY_COLORS["refined"],
@@ -422,7 +490,7 @@ def _save_zoom_pipeline_overlay(
 
     overlay_path = debug_image_path(
         debug_image_dir,
-        f"{artifact_prefix}_{filename_suffix}.jpg",
+        artifact_filename,
         model_name=pipeline_model_name,
         timestamp_tag=debug_stamp,
     )
@@ -544,6 +612,7 @@ def analyze_window_target(
     artifact_prefix: str,
     coarse_service_slug: str | None = None,
     refine_service_slug: str | None = None,
+    artifact_naming: str = "legacy",
     result_mode: str = "ui_venus_then_mai_ui_single_target",
     image: Image.Image | None = None,
     timeout_sec: float | None = None,
@@ -551,13 +620,22 @@ def analyze_window_target(
     """임의의 윈도우에서 지정된 타겟을 2단계로 찾는다.
 
     image 가 주어지면 창 활성화/캡처를 건너뛰고 해당 이미지를 사용한다.
-    coarse/refine slug 를 명시하지 않으면 VLM_LOCATOR_COMBO env(기본 ui-venus>mai-ui)
-    를 따른다 - 벤치만 조합을 직접 지정한다.
+    coarse/refine slug 를 명시하지 않으면 VLM_LOCATOR_COMBO env(기본 mai-ui>mai-ui)
+    를 따른다 - 벤치만 조합을 직접 지정한다. artifact_naming="service" 는 실제
+    route slug 를 artifact 이름/overlay 라벨에 쓰며, 기본 legacy 는 기존 산출물을 보존한다.
     """
     if coarse_service_slug is None or refine_service_slug is None:
         env_coarse, env_refine = resolve_locator_services()
         coarse_service_slug = coarse_service_slug or env_coarse
         refine_service_slug = refine_service_slug or env_refine
+
+    artifact_names = _artifact_names(
+        artifact_prefix,
+        coarse_service_slug,
+        refine_service_slug,
+        mode=artifact_naming,
+    )
+    service_artifacts = artifact_naming == "service"
 
     started_at = time.time()
     debug_stamp = make_timestamp_tag(started_at)
@@ -613,7 +691,7 @@ def analyze_window_target(
         )
         coarse_response_path = debug_image_path(
             debug_image_dir,
-            f"{artifact_prefix}_ui_venus_response.txt",
+            artifact_names["coarse_response"],
             model_name=pipeline_model_name,
             timestamp_tag=debug_stamp,
         )
@@ -623,13 +701,13 @@ def analyze_window_target(
         )
         result_json_path = debug_image_path(
             debug_image_dir,
-            f"{artifact_prefix}_ui_venus_mai_result.json",
+            artifact_names["result_json"],
             model_name=pipeline_model_name,
             timestamp_tag=debug_stamp,
         )
         artifacts = {
             "capture": str(capture_path),
-            "ui_venus_response": str(coarse_response_path),
+            "coarse_response" if service_artifacts else "ui_venus_response": str(coarse_response_path),
             "result_json": str(result_json_path),
         }
         save_debug_json(
@@ -690,13 +768,13 @@ def analyze_window_target(
     )
     coarse_response_path = debug_image_path(
         debug_image_dir,
-        f"{artifact_prefix}_ui_venus_response.txt",
+        artifact_names["coarse_response"],
         model_name=pipeline_model_name,
         timestamp_tag=debug_stamp,
     )
     refine_response_path = debug_image_path(
         debug_image_dir,
-        f"{artifact_prefix}_mai_ui_response.txt",
+        artifact_names["refine_response"],
         model_name=pipeline_model_name,
         timestamp_tag=debug_stamp,
     )
@@ -704,6 +782,16 @@ def analyze_window_target(
     if refine_result is not None:
         save_debug_text(refine_response_path, refine_result["response_text"])
     if refine_result is None or refine_result["point"] is None:
+        partial_overlay_filename = (
+            artifact_names["overlay"]
+            if service_artifacts
+            else f"{artifact_prefix}_ui_venus_partial_overlay.jpg"
+        )
+        partial_zoom_overlay_filename = (
+            artifact_names["zoom_overlay"]
+            if service_artifacts
+            else f"{artifact_prefix}_ui_venus_partial_zoom_overlay.jpg"
+        )
         overlay_path = _save_full_pipeline_overlay(
             image=image,
             target=target,
@@ -713,8 +801,10 @@ def analyze_window_target(
             pipeline_model_name=pipeline_model_name,
             debug_stamp=debug_stamp,
             debug_image_dir=debug_image_dir,
-            artifact_prefix=artifact_prefix,
-            filename_suffix="ui_venus_partial_overlay",
+            artifact_filename=partial_overlay_filename,
+            coarse_service_slug=coarse_service_slug,
+            refine_service_slug=refine_service_slug,
+            artifact_naming=artifact_naming,
         )
         zoom_overlay_path = _save_zoom_pipeline_overlay(
             zoom_image=zoom_image,
@@ -725,24 +815,40 @@ def analyze_window_target(
             pipeline_model_name=pipeline_model_name,
             debug_stamp=debug_stamp,
             debug_image_dir=debug_image_dir,
-            artifact_prefix=artifact_prefix,
-            filename_suffix="ui_venus_partial_zoom_overlay",
+            artifact_filename=partial_zoom_overlay_filename,
+            coarse_service_slug=coarse_service_slug,
+            refine_service_slug=refine_service_slug,
+            artifact_naming=artifact_naming,
         )
         result_json_path = debug_image_path(
             debug_image_dir,
-            f"{artifact_prefix}_ui_venus_mai_result.json",
+            artifact_names["result_json"],
             model_name=pipeline_model_name,
             timestamp_tag=debug_stamp,
         )
         artifacts = {
             "capture": str(input_paths["capture"]),
             "zoom_capture": str(input_paths["zoom_capture"]),
-            "ui_venus_response": str(coarse_response_path),
-            "mai_ui_response": str(refine_response_path),
-            "partial_overlay": str(overlay_path),
-            "partial_zoom_overlay": str(zoom_overlay_path),
             "result_json": str(result_json_path),
         }
+        if service_artifacts:
+            artifacts.update(
+                {
+                    "coarse_response": str(coarse_response_path),
+                    "refine_response": str(refine_response_path),
+                    "overlay": str(overlay_path),
+                    "zoom_overlay": str(zoom_overlay_path),
+                }
+            )
+        else:
+            artifacts.update(
+                {
+                    "ui_venus_response": str(coarse_response_path),
+                    "mai_ui_response": str(refine_response_path),
+                    "partial_overlay": str(overlay_path),
+                    "partial_zoom_overlay": str(zoom_overlay_path),
+                }
+            )
         save_debug_json(
             result_json_path,
             {
@@ -800,7 +906,10 @@ def analyze_window_target(
         pipeline_model_name=pipeline_model_name,
         debug_stamp=debug_stamp,
         debug_image_dir=debug_image_dir,
-        artifact_prefix=artifact_prefix,
+        artifact_filename=artifact_names["overlay"],
+        coarse_service_slug=coarse_service_slug,
+        refine_service_slug=refine_service_slug,
+        artifact_naming=artifact_naming,
     )
     zoom_overlay_path = _save_zoom_pipeline_overlay(
         zoom_image=zoom_image,
@@ -811,7 +920,10 @@ def analyze_window_target(
         pipeline_model_name=pipeline_model_name,
         debug_stamp=debug_stamp,
         debug_image_dir=debug_image_dir,
-        artifact_prefix=artifact_prefix,
+        artifact_filename=artifact_names["zoom_overlay"],
+        coarse_service_slug=coarse_service_slug,
+        refine_service_slug=refine_service_slug,
+        artifact_naming=artifact_naming,
     )
 
     result_payload = {
@@ -838,15 +950,15 @@ def analyze_window_target(
         "artifacts": {
             "capture": str(input_paths["capture"]),
             "zoom_capture": str(input_paths["zoom_capture"]),
-            "ui_venus_response": str(coarse_response_path),
-            "mai_ui_response": str(refine_response_path),
+            ("coarse_response" if service_artifacts else "ui_venus_response"): str(coarse_response_path),
+            ("refine_response" if service_artifacts else "mai_ui_response"): str(refine_response_path),
             "overlay": str(overlay_path),
             "zoom_overlay": str(zoom_overlay_path),
         },
     }
     result_json_path = debug_image_path(
         debug_image_dir,
-        f"{artifact_prefix}_ui_venus_mai_result.json",
+        artifact_names["result_json"],
         model_name=pipeline_model_name,
         timestamp_tag=debug_stamp,
     )

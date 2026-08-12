@@ -1046,6 +1046,39 @@ def test_locate_returns_layout_on_happy_path():
     return ok
 
 
+def test_locate_uses_run_dir_and_saves_panel_crop():
+    """Assist locator/OCR 증거는 watch run 폴더에 함께 남아야 한다."""
+    state = {}
+    calls = []
+
+    def fake_locator(*args, **kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(point=_LOCATE_POINT)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        debug_dir = Path(tmp)
+        try:
+            _swap_asc(state, "analyze_window_target", fake_locator)
+            _swap_asc(state, "Workflow1VLMClient", _stub_ocr_client(None))
+            _swap_asc(state, "parse_spotting_items", lambda _raw: _panel_items())
+            result = asc.locate_assist_layout(
+                None,
+                "",
+                "",
+                Image.new("RGB", _LOCATE_IMAGE_SIZE, (240, 240, 240)),
+                debug_dir=debug_dir,
+            )
+        finally:
+            _restore_asc(state)
+
+        assert result is not None
+        assert len(calls) == 1
+        call = calls[0]
+        assert call["debug_image_dir"] == debug_dir
+        assert call["artifact_naming"] == "service"
+        assert (debug_dir / "assist_panel_crop_region.jpg").exists()
+
+
 def test_locate_with_norm1000_items_still_produces_grid():
     """(C1) 실제 배선 경로(locate_assist_layout) 를 통째로 거쳐도, OCR 이 0-1000
     정규화 좌표를 돌려주면 여전히 정상 격자가 나와야 한다(수정 전에는 좌표계를 안
@@ -1422,6 +1455,7 @@ def main():
         test_locate_failure_evidence_survives_missing_debug_dir(),
         test_overlay_writes_a_file(),
     ]
+    test_locate_uses_run_dir_and_saves_panel_crop()
     passed = sum(1 for r in results if r)
     print(f"[INFO] {passed}/{len(results)} cases passed")
     return 0 if passed == len(results) else 1

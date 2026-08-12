@@ -771,13 +771,15 @@ def locate_assist_layout(window, window_title: str, backend: str, image, *, debu
     실패 시에는 `debug_dir`(미지정이면 DEBUG_ARTIFACT_DIR)에 crop 한 패널 이미지와
     OCR 항목 덤프를 남긴다 - 실패가 조용하면 오피스에서 고칠 수 없기 때문이다.
     """
+    artifact_dir = debug_dir if debug_dir is not None else DEBUG_ARTIFACT_DIR
     try:
         result = analyze_window_target(
             window, window_title, backend, assist_panel_target(),
-            debug_image_dir=DEBUG_ARTIFACT_DIR,
+            debug_image_dir=artifact_dir,
             log_name=LOG_NAME,
             component_name=LOG_NAME,
             artifact_prefix="assist_panel",
+            artifact_naming="service",
             image=image,
             timeout_sec=15.0,
         )
@@ -790,7 +792,7 @@ def locate_assist_layout(window, window_title: str, backend: str, image, *, debu
         print("[WARNING] Assist 패널을 찾지 못함 - 감지 비활성(cap 대기)")
         # VLM 이 거부([-1,-1])했을 때는 crop 이 없으므로 입력 전체를 남긴다 - 그 프레임에
         # 패널이 실제로 보였는지(가려짐/스크롤/탭 전환)를 사람이 바로 판별할 수 있다.
-        _save_locate_evidence(image, [], "no_panel_point", debug_dir)
+        _save_locate_evidence(image, [], "no_panel_point", artifact_dir)
         return None
 
     width, height = image.size
@@ -805,6 +807,7 @@ def locate_assist_layout(window, window_title: str, backend: str, image, *, debu
         return None
     try:
         panel = crop_image(image, panel_box)
+        save_debug_jpeg(panel.convert("RGB"), artifact_dir / "assist_panel_crop_region.jpg")
     except Exception as exc:
         print(f"[WARNING] Assist 패널 crop 실패: {exc}")
         return None
@@ -825,7 +828,7 @@ def locate_assist_layout(window, window_title: str, backend: str, image, *, debu
         items = parse_spotting_items(raw_response)
     except Exception as exc:
         print(f"[WARNING] Assist 패널 OCR 실패: {exc}")
-        _save_locate_evidence(panel, [], "ocr_error", debug_dir, raw_response=str(exc))
+        _save_locate_evidence(panel, [], "ocr_error", artifact_dir, raw_response=str(exc))
         return None
 
     items = normalize_spotting_items_to_panel(items, panel.size)
@@ -846,7 +849,7 @@ def locate_assist_layout(window, window_title: str, backend: str, image, *, debu
         if layout is None:
             # build_score_grid 가 이유별로 경고를 찍는다. 여기서는 그 판단의 입력을 보존한다.
             reason = "grid_build"
-    _save_locate_evidence(panel, items, reason or "ok", debug_dir, raw_response=raw_response)
+    _save_locate_evidence(panel, items, reason or "ok", artifact_dir, raw_response=raw_response)
     if layout is None:
         return None
     print(

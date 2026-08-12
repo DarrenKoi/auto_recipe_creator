@@ -176,8 +176,10 @@ class EngineerDoneDetector:
                 self._assist_failure_seen = True
             if self._assist_baseline_fingerprint is None:
                 self._assist_baseline_fingerprint = assist.panel_fingerprint
-            elif assist.panel_fingerprint != self._assist_baseline_fingerprint:
-                self._assist_changed_since_start = True
+            else:
+                self._assist_changed_since_start = (
+                    assist.panel_fingerprint != self._assist_baseline_fingerprint
+                )
             streak = ok_streak(assist.rows)
             self.last_debug.update({
                 "assist_status": assist.status,

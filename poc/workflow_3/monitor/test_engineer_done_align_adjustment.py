@@ -482,6 +482,23 @@ def test_assist_needs_fresh_change_after_watch_start():
     assert [detector(), detector(), detector()] == [False, False, True]
 
 
+def test_assist_reversion_to_baseline_is_not_fresh():
+    not_ready = asc.AssistObservation(
+        status="usable",
+        rows=_rows_all_ok(5),
+        panel_fingerprint="changed",
+        reason="ok",
+    )
+    assist = _CountingFn([
+        _assist_ok("baseline"),
+        not_ready,
+        _assist_ok("baseline"),
+    ])
+    detector = _priority_detector(assist=assist, numerators=[])
+
+    assert [detector(), detector(), detector()] == [False, False, False]
+
+
 def test_red_assist_permanently_blocks_numerator_fallback():
     assist = _CountingFn([
         _assist_fail("red"),
@@ -489,7 +506,7 @@ def test_red_assist_permanently_blocks_numerator_fallback():
         _assist_unusable(),
         _assist_unusable(),
     ])
-    detector = _priority_detector(assist=assist, numerators=[10, 11, 12])
+    detector = _priority_detector(assist=assist, numerators=[10, 11, 12, 13])
     assert [detector(), detector(), detector(), detector()] == [False] * 4
 
 
@@ -506,6 +523,53 @@ def test_numerator_fallback_requires_three_unusable_assist_observations():
 def test_invalid_numerator_sequences_do_not_finish():
     for values in ([10, 10, 11], [10, 12, None], [10, 9, 10]):
         assert not _run_numerator_sequence(values)
+
+
+def test_ocr_miss_clears_prior_numerator_evidence():
+    assist = _CountingFn([_assist_unusable()] * 5)
+    detector = _priority_detector(
+        assist=assist,
+        numerators=[10, 11, None, 12, 13],
+    )
+
+    assert [detector() for _ in range(5)] == [False] * 5
+    assert detector._numerator_sequence == [12, 13]
+
+
+def test_unchanged_crop_preserves_partial_numerator_sequence():
+    capture = _SeqCapture([_frame(0), _frame(1), _frame(1), _frame(2)])
+    ocr = _CountingFn(["10/350", "11/350"])
+    detector = EngineerDoneDetector(
+        None,
+        _settings(
+            engineer_done_assist_unusable_after=99,
+            engineer_done_numerator_increase_reads=3,
+        ),
+        capture_fn=capture,
+        ground_fn=lambda _image: (525, 550),
+        ocr_fn=ocr,
+    )
+
+    results = []
+    sequences = []
+    for _ in range(4):
+        results.append(detector())
+        sequences.append(list(detector._numerator_sequence))
+
+    assert results == [False] * 4
+    assert sequences == [[], [10], [10], [10, 11]]
+    assert ocr.calls == 2
+
+
+def test_prior_assist_failure_allows_later_fresh_primary_completion():
+    assist = _CountingFn([
+        _assist_fail("baseline"),
+        _assist_ok("fresh"),
+    ])
+    detector = _priority_detector(assist=assist, numerators=[])
+
+    assert [detector(), detector()] == [False, True]
+    assert detector._assist_failure_seen is True
 
 
 def test_usable_assist_resets_unusable_streak():

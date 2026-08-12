@@ -235,6 +235,8 @@ def _measurement_only_items():
     for idx in range(4):
         top = 130 + idx * 30
         items.append(_item("34", 220, top, 250, top + 18))
+        # 다른 패널 영역의 숫자는 Measurement 셀 범위에 영향을 주면 안 된다.
+        items.append(_item("99", 20, top, 50, top + 18))
     return items
 
 
@@ -249,6 +251,29 @@ def test_grid_builds_with_measurement_only():
     layout = build_score_grid(_measurement_only_items(), (300, 260))
     assert layout is not None
     assert layout.columns == ("Measurement",)
+    assert layout.grid[0][0]["left"] == 210
+    assert layout.grid[0][0]["right"] == 260
+
+
+def test_addressing2_score_does_not_change_active_grid_or_verdict():
+    items = _panel_items()
+    for idx in range(4):
+        top = 130 + idx * 30
+        items.append(_item("77", 120, top, 150, top + 18))
+
+    layout = build_score_grid(items, (300, 260))
+    assert layout is not None
+    assert layout.columns == ("Addressing1", "Measurement")
+    assert layout.grid[0][0]["left"] == 10
+    assert layout.grid[0][0]["right"] == 60
+    assert layout.grid[0][1]["left"] == 210
+    assert layout.grid[0][1]["right"] == 260
+
+    image = _synth_panel([("black", "black")] * 7)
+    draw = ImageDraw.Draw(image)
+    draw.rectangle([120, 220, 150, 237], fill=(200, 20, 20))
+    rows = read_row_states(image, layout)
+    assert rows[-1].verdict == "ok"
 
 
 def test_measurement_header_accepts_five_character_clip_only():
@@ -575,13 +600,13 @@ def test_grid_columns_ignore_header_order_in_items():
     first = layout.grid[0]
     # grid 열 순서는 활성 열 고정: [Addressing1, Measurement].
     # 헤더 순서가 뒤섞여도(Measurement 가 Addressing2 보다 왼쪽) 숫자는 자신이 겹치는
-    # 헤더 x 범위로 배정된다: "12"(20-50)는 Addressing1(10-60) 아래, Addressing2 는
-    # 비활성이라 "34"(220-250)는 활성 열 중 가장 가까운 Measurement 에
-    # 배정된다. (F1) 각 범위에 좌우 패딩(폭의 0.35)이 붙는다.
+    # 헤더 x 범위로 배정된다: "12"(20-50)는 Addressing1(10-60) 아래, "34"(220-250)는
+    # Addressing2(210-260) 아래이므로 무시된다. Measurement(110-160)는 숫자가 없어
+    # 헤더 폴백을 쓴다. (F1) 각 범위에 좌우 패딩(폭의 0.35)이 붙는다.
     ok = (
         layout.columns == ("Addressing1", "Measurement")
         and first[0]["left"] == 10 and first[0]["right"] == 60
-        and first[1]["left"] == 210 and first[1]["right"] == 260
+        and first[1]["left"] == 92 and first[1]["right"] == 178
     )
     print(f"[{'PASS' if ok else 'FAIL'}] grid_columns_ignore_header_order_in_items")
     return ok

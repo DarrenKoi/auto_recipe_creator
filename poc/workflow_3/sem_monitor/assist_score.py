@@ -390,8 +390,11 @@ def _assign_number_column(cx: float, header_boxes: dict):
 def _number_column_for(cx: float, header_boxes: dict, active_columns: tuple):
     """활성 열 헤더를 기준으로 score 항목을 배정한다."""
     if len(active_columns) > 1:
-        active_headers = {name: header_boxes[name] for name in active_columns}
-        return _assign_number_column(cx, active_headers)
+        for column in active_columns:
+            box = header_boxes[column]
+            if float(box["left"]) <= cx <= float(box["right"]):
+                return column
+        return None
 
     column = active_columns[0]
     box = header_boxes[column]

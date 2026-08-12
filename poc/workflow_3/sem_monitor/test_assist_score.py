@@ -1057,6 +1057,57 @@ def test_locate_failure_leaves_evidence_on_disk():
     return ok
 
 
+def test_locate_success_also_saves_ocr_overlay():
+    """성공해도 OCR 판독 오버레이가 남아야 한다.
+
+    헤더 3개만 맞으면 격자는 서므로, 숫자를 엉뚱하게 읽어도 '성공' 으로 보인다.
+    판독 품질은 성공 여부와 별개로 눈으로 검증해야 한다는 요구(2026-08-12).
+    role 이 함께 기록되어 header/score 해석까지 JSON 으로 재구성 가능해야 한다.
+    """
+    state = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        debug_dir = Path(tmp)
+        try:
+            result = _locate_with(state, point=_LOCATE_POINT, debug_dir=debug_dir)
+        finally:
+            _restore_asc(state)
+        jpgs = list(debug_dir.glob("locate_ok.jpg"))
+        jsons = list(debug_dir.glob("locate_ok.json"))
+        payload = json.loads(jsons[0].read_text(encoding="utf-8")) if jsons else {}
+        roles = {item.get("role") for item in payload.get("items", [])}
+        ok = (
+            result is not None                      # 성공 경로임을 확인.
+            and len(jpgs) == 1 and jpgs[0].stat().st_size > 0
+            and payload.get("reason") == "ok"
+            and "header" in roles and "score" in roles
+        )
+    print(
+        f"[{'PASS' if ok else 'FAIL'}] locate_success_saves_ocr_overlay: "
+        f"jpg={len(jpgs)} roles={sorted(roles)}"
+    )
+    return ok
+
+
+def test_ocr_overlay_marks_roles_distinctly():
+    """오버레이가 header/score/other 를 서로 다른 색으로 그린다 (한눈에 구분 가능).
+
+    색이 같으면 '무엇으로 해석됐는지' 를 그림에서 읽을 수 없어 오버레이의 목적이 사라진다.
+    """
+    colors = {asc._ocr_item_role(t) for t in ("Addressing1", "123", "Point No.")}
+    distinct = len({asc._OCR_ROLE_COLORS[r] for r in colors}) == len(colors)
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "ocr.jpg"
+        asc.save_ocr_items_overlay(
+            Image.new("RGB", (200, 100), (240, 240, 240)),
+            [_item("Addressing1", 5, 5, 60, 20), _item("12", 5, 40, 30, 55)],
+            out,
+        )
+        written = out.exists() and out.stat().st_size > 0
+    ok = distinct and written and colors == {"header", "score", "other"}
+    print(f"[{'PASS' if ok else 'FAIL'}] ocr_overlay_marks_roles_distinctly: roles={sorted(colors)}")
+    return ok
+
+
 def test_locate_failure_evidence_survives_missing_debug_dir():
     """debug_dir 미지정이어도 증거는 기본 폴더로 떨어진다(호출부가 안 넘겨도 잃지 않는다)."""
     state = {}
@@ -1144,6 +1195,8 @@ def main():
         test_locate_none_when_ocr_raises(),
         test_locate_none_when_grid_cannot_be_built(),
         test_locate_failure_leaves_evidence_on_disk(),
+        test_locate_success_also_saves_ocr_overlay(),
+        test_ocr_overlay_marks_roles_distinctly(),
         test_locate_failure_evidence_survives_missing_debug_dir(),
         test_overlay_writes_a_file(),
     ]

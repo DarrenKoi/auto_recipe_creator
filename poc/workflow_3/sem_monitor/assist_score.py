@@ -13,7 +13,7 @@ Addressing2 / Measurement) x 7행으로 최신 7회 측정의 썸네일과 score
 import json
 import numpy as np
 from dataclasses import dataclass, field
-from PIL import ImageDraw
+from PIL import Image, ImageDraw
 
 from poc.workflow_3 import DEBUG_IMAGE_DIR
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
@@ -527,25 +527,82 @@ def assist_panel_target() -> TargetConfig:
     )
 
 
+# OCR 판독 오버레이 색: 무엇으로 해석됐는지가 한눈에 보여야 한다.
+_OCR_ROLE_COLORS = {
+    "header": (0, 170, 0),   # 열 헤더로 매칭됨 - 격자의 기준.
+    "score": (0, 120, 255),  # 점수 숫자로 인식됨 - 행 pitch 의 재료.
+    "other": (255, 140, 0),  # 어느 쪽도 아님 - 무시되는 텍스트.
+}
+
+
+def _ocr_item_role(text: str) -> str:
+    """OCR 항목이 격자 생성에서 어떤 역할로 쓰이는지 (header/score/other)."""
+    name = _normalize(text or "")
+    if any(name == _normalize(column) for column in ASSIST_COLUMNS):
+        return "header"
+    return "score" if _is_score_text(text or "") else "other"
+
+
+def save_ocr_items_overlay(panel, items, out_path, *, scale: int = 2) -> None:
+    """OCR 이 읽은 텍스트를 패널 crop 위에 bbox + 글자로 그려 저장한다 (실패 무시).
+
+    "격자가 섰다" 와 "글자를 옳게 읽었다" 는 다른 문제다. 헤더 3개만 맞으면 격자는
+    서므로, 숫자를 엉뚱하게 읽어도 성공처럼 보인다. 이 오버레이는 각 항목이 무엇으로
+    해석됐는지(header/score/other)를 색으로 구분해, 오피스가 판독 품질 자체를 눈으로
+    검증할 수 있게 한다. 패널 crop 은 작아서 글자가 겹치므로 scale 배 확대해 그린다.
+    """
+    try:
+        base = panel.convert("RGB")
+        width, height = base.size
+        canvas = base.resize((width * scale, height * scale), Image.LANCZOS)
+        draw = ImageDraw.Draw(canvas)
+        for item in items or []:
+            box = item.get("bbox") or {}
+            text = str(item.get("text", ""))
+            color = _OCR_ROLE_COLORS[_ocr_item_role(text)]
+            left = int(box.get("left", 0)) * scale
+            top = int(box.get("top", 0)) * scale
+            right = int(box.get("right", 0)) * scale
+            bottom = int(box.get("bottom", 0)) * scale
+            draw.rectangle([left, top, right, bottom], outline=color, width=2)
+            # 글자는 박스 위에, 자리가 없으면 아래에 - 잘려 나가면 검증이 안 된다.
+            label_y = top - 11 if top >= 12 else bottom + 1
+            draw.text((left, label_y), text, fill=color)
+        save_debug_jpeg(canvas, out_path)
+    except Exception as exc:
+        print(f"[WARNING] Assist OCR 오버레이 저장 실패(무시): {exc}")
+
+
 def _save_locate_evidence(panel, items, reason: str, debug_dir) -> None:
-    """격자 확보 실패 시 '무엇을 보고 실패했는지' 를 디스크에 남긴다 (실패 무시).
+    """이번 locate 시도가 '무엇을 보고 무엇을 읽었는지' 를 디스크에 남긴다 (실패 무시).
 
     성공했을 때만 오버레이를 저장하던 탓에, 실패하면 오피스에 남는 게 콘솔 한 줄뿐이라
-    원인을 좁힐 수 없었다(2026-08-12 실측). crop 한 패널 이미지와 OCR 이 읽은 항목을
-    함께 남겨, 잘못 자른 것인지 / OCR 이 못 읽은 것인지 / 격자 규칙이 안 맞는 것인지를
-    이미지 한 장과 JSON 한 개로 가릴 수 있게 한다.
+    원인을 좁힐 수 없었다(2026-08-12 실측). crop 한 패널에 OCR 판독을 그린 이미지와
+    항목 JSON 을 함께 남겨, 잘못 자른 것인지 / OCR 이 잘못 읽은 것인지 / 격자 규칙이
+    안 맞는 것인지를 이미지 한 장과 JSON 한 개로 가릴 수 있게 한다.
+
+    reason="ok"(성공)일 때도 남긴다 - 판독 품질은 성공 여부와 별개로 확인해야 한다.
     """
     target = debug_dir if debug_dir is not None else DEBUG_ARTIFACT_DIR
     try:
-        stamp = f"locate_fail_{reason}"
+        stamp = f"locate_{reason}" if reason == "ok" else f"locate_fail_{reason}"
         if panel is not None:
-            save_debug_jpeg(panel.convert("RGB"), target / f"{stamp}.jpg")
+            if items:
+                save_ocr_items_overlay(panel, items, target / f"{stamp}.jpg")
+            else:
+                save_debug_jpeg(panel.convert("RGB"), target / f"{stamp}.jpg")
         payload = {
             "reason": reason,
             "panel_size": list(panel.size) if panel is not None else None,
             "item_count": len(items or []),
+            # role 을 함께 적는다 - 같은 텍스트라도 header 로 잡혔는지 score 로 잡혔는지가
+            # 격자 성패를 가르므로, JSON 만 봐도 판독 해석을 재구성할 수 있어야 한다.
             "items": [
-                {"text": item.get("text"), "bbox": item.get("bbox")}
+                {
+                    "text": item.get("text"),
+                    "role": _ocr_item_role(str(item.get("text", ""))),
+                    "bbox": item.get("bbox"),
+                }
                 for item in (items or [])[:60]
             ],
         }
@@ -621,18 +678,25 @@ def locate_assist_layout(window, window_title: str, backend: str, image, *, debu
         return None
 
     items = normalize_spotting_items_to_panel(items, panel.size)
+
+    # 성공/실패와 무관하게 **매 시도마다** OCR 판독 결과를 그림+JSON 으로 남긴다.
+    # 격자가 만들어졌다고 해서 글자를 옳게 읽었다는 보장은 없다(헤더 3개만 맞으면
+    # 격자는 선다). 오피스가 "OCR 이 각 줄을 제대로 읽었는가" 를 직접 확인해야 한다.
+    layout = None
+    reason = None
     if len(items) < MIN_USABLE_SPOTTING_ITEMS:
         print(
             f"[WARNING] Assist 좌표 정규화 후 사용 가능 항목 부족({len(items)}) - "
             "격자 생성 포기(확신 없는 격자보다 안전)"
         )
-        _save_locate_evidence(panel, items, "too_few_items", debug_dir)
-        return None
-
-    layout = build_score_grid(items, panel.size)
+        reason = "too_few_items"
+    else:
+        layout = build_score_grid(items, panel.size)
+        if layout is None:
+            # build_score_grid 가 이유별로 경고를 찍는다. 여기서는 그 판단의 입력을 보존한다.
+            reason = "grid_build"
+    _save_locate_evidence(panel, items, reason or "ok", debug_dir)
     if layout is None:
-        # build_score_grid 가 이유별로 경고를 찍는다. 여기서는 그 판단의 입력을 보존한다.
-        _save_locate_evidence(panel, items, "grid_build", debug_dir)
         return None
     print(
         f"[INFO] Assist 격자 확보: panel={panel_box} rows={len(layout.grid)} "

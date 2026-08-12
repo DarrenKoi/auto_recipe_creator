@@ -363,8 +363,8 @@ def _make_ocr_fn(settings):
     return ocr
 
 
-def _make_rows_fn(tool_window, settings, *, debug_dir=None):
-    """Assist 행 판독 클로저. 격자는 첫 성공 때 1회만 만들고 캐시한다.
+def _make_assist_fn(tool_window, settings, *, debug_dir=None):
+    """캡처 프레임 하나에서 Assist 관측값을 만드는 클로저.
 
     로케이트에 실패하면 None 을 캐시하지 않고 재시도하되, 실패 로그는 1회만 낸다
     (watch 내내 같은 경고가 반복되면 콘솔이 쓸모없어진다). 재시도 자체도
@@ -374,24 +374,25 @@ def _make_rows_fn(tool_window, settings, *, debug_dir=None):
     왕복이 매 결정 폴링마다 반복되면 watch 루프 전체가 그만큼 막힌다.
     """
     from poc.workflow_3.sem_monitor.assist_score import (
+        AssistObservation,
         locate_assist_layout,
+        measurement_fingerprint,
         read_row_states,
         save_assist_overlay,
     )
-    from poc.workflow_3.util import capture_window, crop_image
+    from poc.workflow_3.util import crop_image
 
     state = {"panel_box": None, "layout": None, "warned": False, "last_verdicts": None,
              "seq": 0, "all_blank_streak": 0, "blank_relocates": 0,
              "blank_relocate_limit_logged": False, "next_locate_at": 0.0}
 
-    def rows_fn():
+    def assist_fn(image):
         # 호출부(EngineerDoneDetector._read_rows)가 이미 예외를 삼키지만, 이 클로저는
         # 어디서 호출되든 안전해야 한다 - 그 안전은 여기서 스스로 보장한다.
         try:
             if state["layout"] is None and time.time() < state["next_locate_at"]:
-                return []
+                return AssistObservation(status="unusable", reason="locate_throttled")
 
-            image = capture_window(tool_window)
             if state["layout"] is None:
                 # window_title/backend 는 빈 문자열로 넘긴다. image 를 함께 주면
                 # analyze_window_target 이 창 활성화/재캡처를 건너뛰므로 쓰이지 않는다.
@@ -403,12 +404,15 @@ def _make_rows_fn(tool_window, settings, *, debug_dir=None):
                     if not state["warned"]:
                         print("[WARNING] Assist 격자 확보 실패 - 이번 watch 는 done 판정 없이 cap 대기")
                         state["warned"] = True
-                    return []
+                    return AssistObservation(status="unusable", reason="layout_unavailable")
                 state["panel_box"], state["layout"] = located
                 state["all_blank_streak"] = 0
 
             panel = crop_image(image, state["panel_box"])
             rows = read_row_states(panel, state["layout"])
+            if not rows:
+                return AssistObservation(status="unusable", reason="rows_empty")
+            fingerprint = measurement_fingerprint(panel, state["layout"])
 
             # 패널이 이동/리사이즈되면 빈 영역을 샘플링해 모든 행이 pending 으로 나온다.
             # 실제로 전 행이 비는 일은 거의 없으므로, 연속으로 그러면 격자를 버리고 다시 잡는다.
@@ -426,13 +430,13 @@ def _make_rows_fn(tool_window, settings, *, debug_dir=None):
                         state["layout"] = None
                         state["panel_box"] = None
                         state["all_blank_streak"] = 0
-                        return []
-                    if not state["blank_relocate_limit_logged"]:
-                        print(
-                            f"[INFO] Assist 재확보 상한({MAX_BLANK_RELOCATES}) 도달 - 표가 원래 "
-                            "비어 있는 tool 로 보고 더는 재확보하지 않음"
-                        )
-                        state["blank_relocate_limit_logged"] = True
+                    else:
+                        if not state["blank_relocate_limit_logged"]:
+                            print(
+                                f"[INFO] Assist 재확보 상한({MAX_BLANK_RELOCATES}) 도달 - 표가 원래 "
+                                "비어 있는 tool 로 보고 더는 재확보하지 않음"
+                            )
+                            state["blank_relocate_limit_logged"] = True
                     state["all_blank_streak"] = 0
             else:
                 state["all_blank_streak"] = 0
@@ -445,12 +449,24 @@ def _make_rows_fn(tool_window, settings, *, debug_dir=None):
                     debug_dir / f"assist_{state['seq']:03d}.jpg",
                 )
                 state["last_verdicts"] = verdicts
-            return rows
+            if not any(row.verdict in {"ok", "fail"} for row in rows):
+                return AssistObservation(
+                    status="unusable",
+                    rows=rows,
+                    panel_fingerprint=fingerprint,
+                    reason="measurement_unreadable",
+                )
+            return AssistObservation(
+                status="usable",
+                rows=rows,
+                panel_fingerprint=fingerprint,
+                reason="ok",
+            )
         except Exception as exc:
             print(f"[WARNING] Assist 행 판독 클로저 예외(이번 회차 미판정): {exc}")
-            return []
+            return AssistObservation(status="unusable", reason="exception")
 
-    return rows_fn
+    return assist_fn
 
 
 def build_engineer_done_detector(tool_window, settings, *, vlm_client=None, debug_dir=None):
@@ -469,7 +485,13 @@ def build_engineer_done_detector(tool_window, settings, *, vlm_client=None, debu
     except Exception as exc:
         print(f"[WARNING] engineer-done 클라이언트 생성 실패(고정 timeout 폴백): {exc}")
         return None
-    rows_fn = _make_rows_fn(tool_window, settings, debug_dir=debug_dir)
+    assist_fn = _make_assist_fn(tool_window, settings, debug_dir=debug_dir)
+
+    # Task 4가 detector의 한 프레임 capture를 assist_fn에도 전달하도록 이 경로를
+    # 교체한다. 그 전까지 기존 rows_fn 주입 계약을 보존한다.
+    def rows_fn():
+        return assist_fn(capture_window(tool_window)).rows
+
     return EngineerDoneDetector(
         tool_window, settings, ground_fn=ground_fn, ocr_fn=ocr_fn, rows_fn=rows_fn,
         debug_dir=debug_dir,

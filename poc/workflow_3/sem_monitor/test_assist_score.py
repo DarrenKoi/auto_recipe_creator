@@ -390,6 +390,24 @@ def _layout_for_synth():
     return build_score_grid(_panel_items(), (300, 260))
 
 
+def test_measurement_fingerprint_ignores_addressing_changes():
+    layout = build_score_grid(_panel_items(), (300, 260))
+    before = _synth_panel([("black", "black")] * 7)
+    after = before.copy()
+    ImageDraw.Draw(after).rectangle((15, 40, 55, 55), fill=(200, 20, 20))
+    assert asc.measurement_fingerprint(before, layout) == asc.measurement_fingerprint(after, layout)
+    return True
+
+
+def test_measurement_fingerprint_changes_with_measurement_cells():
+    layout = build_score_grid(_panel_items(), (300, 260))
+    before = _synth_panel([("black", "black")] * 7)
+    after = before.copy()
+    ImageDraw.Draw(after).rectangle((215, 40, 255, 55), fill=(200, 20, 20))
+    assert asc.measurement_fingerprint(before, layout) != asc.measurement_fingerprint(after, layout)
+    return True
+
+
 def _scale_bbox(bbox, sx, sy):
     return {
         "left": bbox["left"] * sx, "top": bbox["top"] * sy,
@@ -1379,6 +1397,8 @@ def main():
         test_normalize_drops_items_outside_panel_bounds(),
         test_normalize_empty_items_returns_empty(),
         test_build_score_grid_with_norm1000_items_lands_on_real_cells(),
+        test_measurement_fingerprint_ignores_addressing_changes(),
+        test_measurement_fingerprint_changes_with_measurement_cells(),
         test_read_rows_marks_black_and_red(),
         test_read_rows_blank_is_pending(),
         test_read_rows_returns_empty_without_layout(),

@@ -19,7 +19,7 @@ from poc.workflow_3.monitor.cycle import _engineer_watch
 from poc.workflow_3.monitor.engineer_done_align_adjustment import (
     ALL_BLANK_RELOCATE_AFTER,
     EngineerDoneDetector,
-    _make_rows_fn,
+    _make_assist_fn,
     build_engineer_done_detector,
     extract_numerator,
     parse_point_1000,
@@ -560,9 +560,9 @@ def _rows_of(verdicts):
 
 
 class _RowsFnHarness:
-    """_make_rows_fn 의 스텁 배선. locate/overlay 호출 횟수를 센다.
+    """_make_assist_fn 의 스텁 배선. locate/overlay 호출 횟수를 센다.
 
-    _make_rows_fn 은 함수 본문 안에서 import 하므로 engineer_done_align_adjustment
+    _make_assist_fn 은 함수 본문 안에서 import 하므로 engineer_done_align_adjustment
     모듈 속성을 패치해도 가로채지 못한다 - 원본 모듈(assist_score, util)을 패치해야
     내부의 `from X import Y` 가 스텁에 바인딩된다.
     """
@@ -578,8 +578,18 @@ class _RowsFnHarness:
         self.locate_calls += 1
         if not self.locate_ok:
             return None
-        layout = SimpleNamespace(grid=[[{}]], columns=asc.ASSIST_COLUMNS)
-        return ({"left": 0, "top": 0, "right": 10, "bottom": 10}, layout)
+        grid = []
+        for row_idx in range(7):
+            top = 1 + row_idx * 2
+            grid.append([
+                {"left": 1, "top": top, "right": 7, "bottom": top + 1},
+                {"left": 12, "top": top, "right": 18, "bottom": top + 1},
+            ])
+        layout = SimpleNamespace(
+            grid=grid,
+            columns=("Addressing1", "Measurement"),
+        )
+        return ({"left": 0, "top": 0, "right": 20, "bottom": 20}, layout)
 
     def _read(self, image, layout):
         return self.rows_seq.pop(0) if self.rows_seq else []
@@ -605,13 +615,32 @@ class _RowsFnHarness:
         return False
 
 
+def test_assist_fn_distinguishes_unusable_from_pending():
+    image = Image.new("RGB", (20, 20), (240, 240, 240))
+    with _RowsFnHarness([], locate_ok=False):
+        failed_fn = _make_assist_fn(object(), _settings(), debug_dir=None)
+        failed = failed_fn(image)
+
+    pending_rows = _rows_of(["pending"] * 7)
+    with _RowsFnHarness([pending_rows], locate_ok=True):
+        pending_fn = _make_assist_fn(object(), _settings(), debug_dir=None)
+        pending = pending_fn(image)
+
+    assert failed.status == "unusable"
+    assert failed.reason == "layout_unavailable"
+    assert pending.status == "unusable"
+    assert pending.reason == "measurement_unreadable"
+    assert [row.verdict for row in pending.rows] == ["pending"] * 7
+    return True
+
+
 def test_rows_fn_locates_layout_only_once():
     """격자는 한 번만 잡고 캐시한다 - 폴링마다 VLM 을 부르면 안 된다."""
     ok = _rows_of(["ok"] * 3)
     with _RowsFnHarness([ok, ok, ok]) as h:
-        fn = _make_rows_fn(object(), _settings(), debug_dir=None)
+        fn = _make_assist_fn(object(), _settings(), debug_dir=None)
         for _ in range(3):
-            fn()
+            fn(Image.new("RGB", (20, 20)))
     passed = h.locate_calls == 1
     print(f"[{'PASS' if passed else 'FAIL'}] rows_fn_locates_layout_only_once: {h.locate_calls}")
     return passed
@@ -620,13 +649,13 @@ def test_rows_fn_locates_layout_only_once():
 def test_rows_fn_warns_once_on_locate_failure():
     """로케이트가 계속 실패해도 경고는 한 번만 - watch 내내 반복되면 콘솔이 쓸모없어진다."""
     with _RowsFnHarness([], locate_ok=False) as h:
-        fn = _make_rows_fn(object(), _settings(), debug_dir=None)
+        fn = _make_assist_fn(object(), _settings(), debug_dir=None)
         buf = io.StringIO()
         with redirect_stdout(buf):
-            first, second, third = fn(), fn(), fn()
+            first, second, third = (fn(Image.new("RGB", (20, 20))) for _ in range(3))
     text = buf.getvalue()
     passed = (
-        first == [] and second == [] and third == []
+        all(result.reason == "layout_unavailable" for result in (first, second, third))
         and text.count("[WARNING]") == 1
         and h.locate_calls == 3
     )
@@ -644,9 +673,13 @@ def test_rows_fn_throttles_locate_retry_after_failure():
     """
     settings = _settings(engineer_done_reground_sec=3600.0)
     with _RowsFnHarness([], locate_ok=False) as h:
-        fn = _make_rows_fn(object(), settings, debug_dir=None)
-        first, second, third = fn(), fn(), fn()
-    passed = first == [] and second == [] and third == [] and h.locate_calls == 1
+        fn = _make_assist_fn(object(), settings, debug_dir=None)
+        first, second, third = (fn(Image.new("RGB", (20, 20))) for _ in range(3))
+    passed = (
+        first.reason == "layout_unavailable"
+        and second.reason == third.reason == "locate_throttled"
+        and h.locate_calls == 1
+    )
     print(f"[{'PASS' if passed else 'FAIL'}] rows_fn_throttles_locate_retry_after_failure: "
           f"locates={h.locate_calls}")
     return passed
@@ -657,8 +690,9 @@ def test_rows_fn_overlay_only_on_verdict_change():
     same = _rows_of(["ok", "ok"])
     changed = _rows_of(["ok", "fail"])
     with _RowsFnHarness([same, list(same), changed]) as h:
-        fn = _make_rows_fn(object(), _settings(), debug_dir=Path("/tmp/nonexistent-overlay-dir"))
-        fn(); fn(); fn()
+        fn = _make_assist_fn(object(), _settings(), debug_dir=Path("/tmp/nonexistent-overlay-dir"))
+        for _ in range(3):
+            fn(Image.new("RGB", (20, 20)))
     passed = h.overlay_calls == 2
     print(f"[{'PASS' if passed else 'FAIL'}] rows_fn_overlay_only_on_verdict_change: {h.overlay_calls}")
     return passed
@@ -668,9 +702,9 @@ def test_rows_fn_relocates_after_all_blank_streak():
     """전 행이 계속 빈칸이면 패널 이동으로 보고 격자를 다시 잡는다."""
     blanks = [_rows_of(["pending"] * 3) for _ in range(ALL_BLANK_RELOCATE_AFTER)]
     with _RowsFnHarness(blanks) as h:
-        fn = _make_rows_fn(object(), _settings(), debug_dir=None)
-        results = [fn() for _ in range(ALL_BLANK_RELOCATE_AFTER)]
-    passed = h.locate_calls == 1 and results[-1] == []
+        fn = _make_assist_fn(object(), _settings(), debug_dir=None)
+        results = [fn(Image.new("RGB", (20, 20))) for _ in range(ALL_BLANK_RELOCATE_AFTER)]
+    passed = h.locate_calls == 1 and results[-1].reason == "measurement_unreadable"
     print(f"[{'PASS' if passed else 'FAIL'}] rows_fn_relocates_after_all_blank_streak: "
           f"locates={h.locate_calls} last={results[-1]}")
     return passed
@@ -753,6 +787,7 @@ def main() -> int:
         test_delta_reached_but_streak_short,
         test_done_when_delta_and_streak_both_met,
         test_rows_fn_exception_returns_false,
+        test_assist_fn_distinguishes_unusable_from_pending,
         test_rows_fn_locates_layout_only_once,
         test_rows_fn_warns_once_on_locate_failure,
         test_rows_fn_throttles_locate_retry_after_failure,

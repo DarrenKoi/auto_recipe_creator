@@ -10,6 +10,7 @@ Addressing2 / Measurement) x 7행으로 최신 7회 측정의 썸네일과 score
 틀릴 수 없다.
 """
 
+import hashlib
 import json
 import numpy as np
 from dataclasses import dataclass, field
@@ -137,6 +138,38 @@ class RowState:
     @property
     def verdict(self) -> str:
         return row_verdict(self.cells)
+
+
+@dataclass(frozen=True)
+class AssistObservation:
+    """한 캡처 프레임에서 읽은 Assist 패널 상태."""
+
+    status: str
+    rows: list[RowState] = field(default_factory=list)
+    panel_fingerprint: str | None = None
+    reason: str = ""
+
+
+def measurement_fingerprint(image, layout) -> str | None:
+    """Measurement 셀만 양자화해 현재 패널의 신선도 지문을 만든다."""
+    if image is None or layout is None or "Measurement" not in layout.columns:
+        return None
+    column_idx = layout.columns.index("Measurement")
+    gray = np.array(image.convert("L"), dtype=np.uint8)
+    height, width = gray.shape
+    chunks = []
+    for row in layout.grid:
+        box = row[column_idx]
+        left = max(0, min(width, int(box["left"])))
+        right = max(left, min(width, int(box["right"])))
+        top = max(0, min(height, int(box["top"])))
+        bottom = max(top, min(height, int(box["bottom"])))
+        cell = gray[top:bottom, left:right]
+        if cell.size:
+            chunks.append((cell // 16).tobytes())
+    if not chunks:
+        return None
+    return hashlib.sha256(b"".join(chunks)).hexdigest()
 
 
 def ok_streak(rows: list) -> int:

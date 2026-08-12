@@ -111,7 +111,9 @@ FAILURE_COOLDOWN_SEC = None  # 실패 tool 재시도 유예(초). None=기본 30
 RECORDING_MAX_SEC = None     # 녹화 하드 상한(초). None=기본 900.
 ENGINEER_WATCH_SEC = None    # 미보정 watch 상한(초). None=기본 300. 엔지니어 조작을
                              # 끝까지 담고 싶으면 RECORDING_MAX_SEC 와 함께 올린다.
-ENGINEER_DONE_DETECT = None  # 측정 카운터 N 증가를 보고 watch 조기 종료. 1/0/None(기본 off).
+ENGINEER_DONE_DETECT = None  # 우선순위 완료 신호(창 닫힘/Assist/분자 fallback)로 watch 조기 종료. 1/0/None(기본 off).
+                            # fallback 임계는 환경변수로만 조정: ALIGN_FAIL_ENGINEER_DONE_ASSIST_UNUSABLE_AFTER=3,
+                            # ALIGN_FAIL_ENGINEER_DONE_NUMERATOR_READS=3. 모듈 상수는 추가하지 않는다.
 
 # ============================================================================
 # [8] VLM 로케이터 조합 (로그인 / List 탭 / tool 선택 / PM 버튼 공통)

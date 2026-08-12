@@ -600,6 +600,11 @@ def _engineer_watch(
                 print(f"[WARNING] done detector 예외(무시, cap 으로 진행): {exc}")
             next_check = time.time() + max(poll_sec, 0.0)
         time.sleep(2.0)
+    reason = getattr(recording, "stop_reason", "")
+    if reason == "window_gone":
+        print("[INFO] 엔지니어가 Remote Monitoring 창을 닫음 - 명시적 완료로 watch 종료")
+    elif reason:
+        print(f"[INFO] 녹화 세션 종료로 watch 종료: reason={reason}")
     print("[INFO] engineer watch 종료")
 
 

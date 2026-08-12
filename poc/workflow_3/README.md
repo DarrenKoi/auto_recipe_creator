@@ -67,10 +67,14 @@ uv run python poc/workflow_3/monitor/engineer_done_align_adjustment.py
 
 측정 중 tool 로 done-감지 체인(grounding/CV/OCR) 즉시 검증. `ALIGN_DONE_CALIB_EQP_ID` 로 대상 tool 지정 (기본: 열려 있는 아무 Remote Monitoring 창). debug crop 은 run 별로 `debug_images/engineer_done_calib/<tool>_<yymmdd_HHMMSS>/` 에 보존된다 (운영 cycle 은 `debug_images/engineer_done/<eqp>_<tag>/`). 참고: 캘리브레이션 tick 간격은 `poll_sec` 그대로지만, 운영 watch 에서는 내부 2s sleep 이 더해져 실제 감지 주기가 `poll_sec + OCR 지연 + 2s` 정도로 약간 길다.
 
-기본값(2026-08-11~): done 판정은 **두 조건을 모두** 요구한다 — `ALIGN_FAIL_ENGINEER_DONE_MIN_DELTA=6`(watch 시작 이후 측정 카운터 분자가 최소 6 회 늘어야 함) **그리고** `ALIGN_FAIL_ENGINEER_DONE_OK_STREAK=6`(Assist Window 가 현재 연속 정상(검정) 측정 6 회를 보여야 함). 재정렬 직후 카운터가 잠깐 보였다 사라지는 false-start 나, 카운터만 오르고 Assist 는 아직 안 좋은 상태로 너무 일찍 닫히지 않게 두 임계를 함께 높였다. **`ALIGN_FAIL_ENGINEER_WATCH_SEC=300`**(5분) 은 done 미감지 시의 backstop cap 이다 — 측정이 시작되면 그 전에 조기 종료한다.
+엔지니어 watch는 다음 우선순위 신호에서 처음 충족한 조건으로 종료한다.
 
-- 캘리브레이션 의도는 **threshold 가 아니라 grounding/CV/OCR 체인 검증**이다. 분자가 6 까지 오르고 Assist 연속 정상이 6 을 채우길 기다리면 길어질 수 있으니, 빠른 검증에는 `ALIGN_FAIL_ENGINEER_DONE_MIN_DELTA=2 ALIGN_FAIL_ENGINEER_DONE_OK_STREAK=2 ALIGN_DONE_CALIB_SEC=180` 처럼 임시로 낮춰 done=True 까지 확인한 뒤, 운영 `.env` 에는 기본 6/6 을 쓴다.
-- 체인이 정상(ROI 로그 → tick 마다 `changed=True` + `n` 증가)인데 시간 내 done 만 안 나면 임계/시간 문제이지 grounding 실패가 아니다.
+1. 엔지니어가 Remote Monitoring 창의 X를 눌러 닫음 (`window_gone`) → 즉시 종료
+2. Assist Measurement 최신 정상 6행 + watch 이후 새 화면 변화 → 종료
+3. Assist 3회 연속 판독 불가 + numerator OCR 3회 연속 증가 → fallback 종료
+4. 불확정 → `ALIGN_FAIL_ENGINEER_WATCH_SEC` cap까지 대기
+
+`ALIGN_FAIL_ENGINEER_WATCH_SEC=300`(5분)은 마지막 경우의 backstop cap이다. 캘리브레이션의 목적은 threshold 조정이 아니라 grounding/CV/OCR 체인 검증이다. 오피스 Windows에서 `ALIGN_FAIL_ENGINEER_DONE_DETECT=1`을 켜기 전에 실행하고, 생성된 run 디렉터리의 `assist_panel_crop_region.jpg`, locator/OCR/grid overlay, numerator readings, 최종 completion reason을 남긴다.
 
 ### 엔지니어 수동 조작 녹화 (알람 불필요)
 
@@ -208,11 +212,12 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 | `ALIGN_FAIL_RECORDING_CHANGE_MIN_PX` | 4 | 변화 판정: delta>15 인 다운샘플 픽셀 최소 개수 (커서 이동도 감지) |
 | `ALIGN_FAIL_RECORDING_MAX_SEC` | 900 | 녹화 상한 |
 | `ALIGN_FAIL_ENGINEER_WATCH_SEC` | 300 | 미보정 시 엔지니어 조작 녹화 대기 상한(5분) |
-| `ALIGN_FAIL_ENGINEER_DONE_DETECT` | 0 | 측정 카운터 delta + Assist Window 연속 정상(streak) 두 조건을 모두 충족하면 engineer watch 조기 종료 + cycle teardown 의 tool 창 자동 닫기. 캘리브레이션(`monitor/engineer_done_align_adjustment.py` 단독 실행, 측정 중 tool 대상) 검증 후 `1`. |
+| `ALIGN_FAIL_ENGINEER_DONE_DETECT` | 0 | 우선순위 완료 신호 감지를 켠다. 오피스 Windows 캘리브레이션(`monitor/engineer_done_align_adjustment.py` 단독 실행, 측정 중 tool 대상) 검증 후 `1`. |
 | `ALIGN_FAIL_ENGINEER_DONE_POLL_SEC` | 8.0 | watch 안 감지기 호출 간격 |
-| `ALIGN_FAIL_ENGINEER_DONE_MIN_DELTA` | 6 | done 조건 1/2 - watch 시작 이후 측정 카운터 분자가 이만큼 늘어야 함 |
-| `ALIGN_FAIL_ENGINEER_DONE_OK_STREAK` | 6 | done 조건 2/2 - Assist Window 연속 정상(검정) 측정이 이만큼 있어야 함 (둘 다 충족 시 watch 종료+tool 닫기) |
-| `ALIGN_FAIL_ENGINEER_DONE_VLM_SERVICE` | `ui-venus` | 분자 위치 grounding 서비스 (route_slug, 모델명 아님) |
+| `ALIGN_FAIL_ENGINEER_DONE_ASSIST_UNUSABLE_AFTER` | 3 | Assist 판독 불가가 이 횟수 연속일 때만 numerator fallback을 연다 |
+| `ALIGN_FAIL_ENGINEER_DONE_NUMERATOR_READS` | 3 | fallback 완료로 인정할 엄격 증가 numerator OCR 표본 수 |
+| `ALIGN_FAIL_ENGINEER_DONE_OK_STREAK` | 6 | Assist Measurement 최신 정상 6행 + watch 이후 새 화면 변화 완료 신호 |
+| `ALIGN_FAIL_ENGINEER_DONE_VLM_SERVICE` | `mai-ui` | 분자 위치 grounding 서비스 (route_slug, 모델명 아님) |
 | `ALIGN_FAIL_ENGINEER_DONE_OCR_SERVICE` | `paddleocr-vl-1.5` | 분자 OCR 서비스 |
 | `ALIGN_FAIL_ENGINEER_DONE_CHANGE_MIN_PX` | 4 | CV gate 변화 픽셀 임계(다운샘플) - 감지가 둔하면 낮추고 과민하면 올린다 |
 | `ALIGN_FAIL_ENGINEER_DONE_RELOCALIZE_MISS` | 3 | 변화 후 OCR 연속 미검출 N회 시 ROI 재grounding(패널 드래그 대비) |

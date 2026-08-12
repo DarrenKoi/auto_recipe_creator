@@ -360,8 +360,9 @@ def test_builder_gates() -> bool:
 class _FakeRecording:
     """is_alive 만 흉내내는 fake (n번째 확인 후 사망 옵션)."""
 
-    def __init__(self, alive_checks: int = 10**6):
+    def __init__(self, alive_checks: int = 10**6, stop_reason: str = ""):
         self.alive_checks = alive_checks
+        self.stop_reason = stop_reason
         self.checks = 0
 
     def is_alive(self) -> bool:
@@ -396,6 +397,27 @@ def test_watch_no_detector_unchanged() -> bool:
     recording = _FakeRecording(alive_checks=3)
     _engineer_watch(recording, 60.0, done_detector=None, poll_sec=0.0)
     return _check("exits on recording death", recording.checks >= 3)
+
+
+def test_watch_logs_manual_completion_only_for_window_gone():
+    """창 닫힘 종료만 엔지니어의 명시적 완료로 기록한다."""
+    recording = _FakeRecording(alive_checks=0, stop_reason="window_gone")
+    output = io.StringIO()
+    with redirect_stdout(output):
+        _engineer_watch(recording, 60.0, poll_sec=0.0)
+    assert "엔지니어가 Remote Monitoring 창을 닫음" in output.getvalue()
+    return True
+
+
+def test_watch_does_not_call_max_sec_manual_completion():
+    """녹화 상한 종료를 수동 창 닫힘으로 오인하지 않는다."""
+    recording = _FakeRecording(alive_checks=0, stop_reason="max_sec")
+    output = io.StringIO()
+    with redirect_stdout(output):
+        _engineer_watch(recording, 60.0, poll_sec=0.0)
+    assert "엔지니어가 Remote Monitoring 창을 닫음" not in output.getvalue()
+    assert "max_sec" in output.getvalue()
+    return True
 
 
 def test_settings_use_priority_signals() -> bool:
@@ -945,6 +967,8 @@ def main() -> int:
         test_watch_early_exit_on_done,
         test_watch_detector_exception_safe,
         test_watch_no_detector_unchanged,
+        test_watch_logs_manual_completion_only_for_window_gone,
+        test_watch_does_not_call_max_sec_manual_completion,
         test_leftover_counter_does_not_fire,
         test_assist_fresh_but_streak_short,
         test_done_when_assist_is_fresh_and_streak_met,

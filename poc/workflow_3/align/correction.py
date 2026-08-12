@@ -78,6 +78,11 @@ class CorrectionConfig:
 
     click_margin_ratio: float = 0.12  # best_xy 를 FOV 안쪽으로 clamp (live search 와 공유).
     require_ok_button: bool = True  # OK 위치 확인 실패 시 corrected 대신 escalate.
+    # OK 버튼을 실제로 누를지. False 면 reposition 까지만 하고 OK 는 엔지니어에게 넘긴다
+    # (status=awaiting_engineer_ok -> cube 알림 발송). 실전 투입 초기의 반자동 모드로,
+    # 잘못된 좌표가 그대로 측정으로 확정되는 것을 사람이 막을 수 있게 한다.
+    # 라이브러리 기본은 설계된 전체 동작(True); 운영 루프 기본값은 Workflow3Settings 참조.
+    ok_click_enabled: bool = True
     settle_sec: float = 0.0  # 제스처 후 대기(실장비 안정화).
     cond_box_crop: bool = True  # cond.box_ltrb 기반 box-crop template(+decoupled offset). False -> whole-template(구 동작) 롤백.
     # 만성 모호 키 게이트(Tier 0.1). second_ratio 가 이 값을 넘으면 present 라도 auto-act 대신
@@ -95,8 +100,8 @@ class CorrectionConfig:
 class CorrectionOutcome:
     """보정 결과. 어느 경로로 끝났는지 + 좌표/decision 기록."""
 
-    # "corrected" | "fallback_<status>" | "escalated_ambiguous_key" | "escalated_no_ok"
-    # | "ok_detect_error" | "no_assets"
+    # "corrected" | "awaiting_engineer_ok" | "fallback_<status>" | "escalated_ambiguous_key"
+    # | "escalated_no_ok" | "ok_detect_error" | "no_assets"
     status: str
     path: str  # "primary" | "fallback"
     key_decision: str  # 가시성 게이트 판정에 쓰인 matcher decision.
@@ -365,6 +370,36 @@ def correct_align_fail(
             message="ok_locator_missing",
             level="warning",
             key_decision=result.decision,
+        )
+
+    # 반자동 모드: reposition 은 했지만 OK 는 누르지 않는다. 좌표 확정 권한을 사람에게
+    # 남기는 경로라 status 를 corrected 와 반드시 구분해야 한다 — notify 는 corrected 면
+    # cube 를 생략하므로, 여기서 corrected 를 돌려주면 "OK 눌러달라"는 알림이 사라진다.
+    # OK 탐지 결과(좌표/예외)는 나중에 자동 클릭을 켤 때의 근거로 그대로 실어 보낸다.
+    if not config.ok_click_enabled:
+        ok_txt = f"screen={ok_xy}" if ok_xy is not None else f"미검출({ok_error or 'not found'})"
+        print(f"[INFO] OK 클릭 보류(ok_click_enabled=false) - 엔지니어 확인 필요: {ok_txt}")
+        log_work2_event(
+            component=LOG_COMPONENT,
+            message="awaiting_engineer_ok",
+            level="warning",
+            key_decision=result.decision,
+            best_xy=f"({cx},{cy})",
+            ok_xy=str(ok_xy),
+            error=ok_error or "",
+        )
+        return _with_key_ambiguity(
+            CorrectionOutcome(
+                status="awaiting_engineer_ok",
+                path="primary",
+                key_decision=result.decision,
+                best_xy=(cx, cy),
+                ok_screen_xy=ok_xy,
+                fallback=None,
+                error=ok_error,
+                history=history,
+            ),
+            result,
         )
 
     # OK 탐지 *예외* → 정상 escalate 와 구분해 surface(견고성: 실제 버그를 숨기지 않음).

@@ -11,14 +11,19 @@ Mac mock(`_MockSEMMonitor`)과 동일 시그니처라 `correct_align_fail` /
                        click_screen 이 받는 좌표다 (창 이미지 좌표 = "screen" 계약)
   * click_screen()   — capture_screen 프레임 좌표를 화면 절대 좌표로 변환해 single click
   * zoom()           — panel 중심에서 wheel 1단계 (FOV-centered zoom)
-  * read_mode()      — v0: env ALIGN_SEM_MODE_OVERRIDE > 생성자 mode_default.
-                       OCR(모드 라벨 crop + paddleocr)/픽셀 휴리스틱(OM 밝기 분포)은
-                       오피스 캘리브레이션 단계의 후속 작업.
+  * read_mode()      — env ALIGN_SEM_MODE_OVERRIDE > mode_hint(PM 박스 판독) >
+                       mode_default(경고). mode_hint 는 build_rcs_sem_monitor 가
+                       detect_sem_box 의 pm_mode 를 그대로 주입한다.
+
+panel ROI 확보 경로는 2 단이다(build_rcs_sem_monitor):
+  1. **VLM live SEM box** — detect_sem_box(mai-ui). check-only 모니터에서 오피스
+     검증된 경로이며, 장비별 사전 캘리브레이션이 필요 없다(기본).
+  2. **landmark 템플릿 매칭** — templates/sem_panel_landmarks/<model_id>/.
+     VLM 을 못 쓰거나 검출이 실패했을 때의 폴백(현재 대부분 미캘리브레이션).
 
 미캘리브레이션 항목(오피스 검증 전):
   * wheel 1단계 ↔ 배율 비율 (zoom_scroll_dy)
   * 더블클릭 recenter 의 실제 이동량/settle 시간
-  * panel ROI landmark (templates/sem_panel_landmarks/<model_id>/)
 
 모든 actuation 은 util.mouse_utils 의 action_enabled dry-run 게이트를 그대로
 통과하므로, SAFE_MODE/dry-run 에서는 좌표 로그만 남고 실제 마우스는 움직이지
@@ -80,6 +85,7 @@ class RCSSEMMonitor:
         settle_sec: float = 0.5,
         zoom_scroll_dy: int = 1,
         mode_default: str = "SEM",
+        mode_hint: str | None = None,
     ):
         self.tool_window = tool_window
         self.panel = panel
@@ -87,6 +93,8 @@ class RCSSEMMonitor:
         self.settle_sec = settle_sec
         self.zoom_scroll_dy = zoom_scroll_dy
         self.mode_default = mode_default
+        # 화면에서 읽은 modality("OM"|"SEM"). None 이면 판독 실패 -> mode_default 경고 경로.
+        self.mode_hint = (mode_hint or "").strip().upper() or None
         # image_point_to_screen 의 DPI 보정에 쓰는 캡처 프레임 크기 (w, h).
         self._last_frame_size: tuple[int, int] | None = None
         # 캡처 시점의 창 rect 크기(논리 px) — 제스처 직전 리사이즈 드리프트 감지용.
@@ -209,23 +217,75 @@ class RCSSEMMonitor:
     # ---- 상태 ----
 
     def read_mode(self) -> str:
-        """monitor mode label ('OM' | 'SEM' | 'unknown').
+        """monitor mode label ('OM' | 'SEM').
 
-        v0: env ALIGN_SEM_MODE_OVERRIDE > mode_default. 실제 판독(모드 라벨 OCR
-        또는 픽셀 휴리스틱)은 오피스 캘리브레이션 단계에서 채운다.
+        우선순위: env ALIGN_SEM_MODE_OVERRIDE > mode_hint(PM 박스 판독) > mode_default.
+        mode_hint 는 생성 시점의 PM 판독값이다 — align fail 은 장비가 멈춘 정지 화면이라
+        (project memory: SEM monitor static at align fail) 사이클 도중 modality 가 바뀌지
+        않으므로 매 호출 재판독하지 않는다.
         """
         override = os.environ.get("ALIGN_SEM_MODE_OVERRIDE", "").strip().upper()
         if override:
             return override
+        if self.mode_hint:
+            return self.mode_hint
         if not self._mode_warned:
-            print(f"[WARNING] read_mode 미구현 - 기본값 {self.mode_default!r} 사용 (v0)")
+            print(
+                f"[WARNING] modality 판독값 없음(PM 미검출) - 기본값 {self.mode_default!r} 사용. "
+                f"OM step 실패였다면 잘못된 template 로 매칭될 수 있음."
+            )
             self._mode_warned = True
         return self.mode_default
+
+
+def _panel_from_vlm_box(
+    tool_window, vlm_client, *, ocr_client=None, two_stage: bool = False
+) -> tuple[SEMPanelMatch, str | None] | None:
+    """detect_sem_box 로 live SEM box 를 잡아 (SEMPanelMatch, pm_mode) 로 변환한다.
+
+    check-only 모니터가 쓰는 것과 같은 검출기라 장비별 사전 캘리브레이션이 필요 없다.
+    VLM 부재/검출 실패/예외는 모두 None 으로 돌려 호출부가 landmark 폴백을 타게 한다
+    (개발 PC 에서 import 조차 실패할 수 있어 함수 안에서 import 한다).
+    """
+    if vlm_client is None:
+        return None
+    try:
+        from poc.workflow_3.sem_monitor.sem_box_detect import detect_sem_box
+
+        detection = detect_sem_box(
+            capture_window(tool_window), vlm_client,
+            ocr_client=ocr_client, two_stage=two_stage,
+        )
+    except Exception as exc:
+        print(f"[WARNING] live SEM box 검출 실패(landmark 폴백 시도): {exc}")
+        return None
+
+    bbox = getattr(detection, "bbox_px", None)
+    if not detection.detected or not bbox:
+        print("[WARNING] live SEM box 미검출(landmark 폴백 시도)")
+        return None
+    left, top = int(bbox["left"]), int(bbox["top"])
+    width, height = int(bbox["right"]) - left, int(bbox["bottom"]) - top
+    if width <= 0 or height <= 0:
+        print(f"[WARNING] live SEM box 크기 이상(landmark 폴백 시도): {bbox}")
+        return None
+
+    panel = SEMPanelMatch(
+        model_id="vlm_live_box",
+        panel_roi=(left, top, width, height),
+        landmark_xy=(left, top),  # landmark 없음 - ROI 원점을 그대로 둔다.
+        confidence=float(detection.confidence or 0.0),
+        nm_per_pixel=None,
+    )
+    return panel, detection.pm_mode
 
 
 def build_rcs_sem_monitor(
     tool_window,
     *,
+    vlm_client=None,
+    ocr_client=None,
+    pm_two_stage: bool = False,
     landmarks_dir=DEFAULT_LANDMARKS_DIR,
     action_enabled: bool = False,
     settle_sec: float = 0.5,
@@ -234,21 +294,30 @@ def build_rcs_sem_monitor(
 ) -> RCSSEMMonitor | None:
     """tool 창에서 SEM panel 을 찾아 RCSSEMMonitor 를 만든다. 실패 시 None.
 
-    landmark 가 없거나(`templates/sem_panel_landmarks/` 미캘리브레이션) 신뢰도가
-    낮으면 None 을 반환해 호출부가 panel_not_found 로 처리하게 한다.
+    panel ROI 는 (1) vlm_client 가 있으면 detect_sem_box 의 live SEM box, 실패 시
+    (2) landmark 템플릿 매칭 순으로 확보한다. 둘 다 실패하면 None 을 반환해 호출부가
+    panel_not_found 로 처리하게 한다. VLM 경로일 때는 같은 검출의 PM 판독값(pm_mode)을
+    mode_hint 로 주입하므로 read_mode 가 OM/SEM 을 화면에서 읽은 값으로 답한다.
     """
-    landmarks = load_landmarks(landmarks_dir)
-    if not landmarks:
-        print(f"[WARNING] SEM panel landmark 없음(미캘리브레이션): {landmarks_dir}")
-        return None
-    frame = _to_gray(capture_window(tool_window))
-    panel = locate_panel(frame, landmarks)
-    if panel is None:
-        print("[WARNING] SEM panel 을 찾지 못함 (landmark 신뢰도 부족)")
-        return None
+    mode_hint: str | None = None
+    resolved = _panel_from_vlm_box(
+        tool_window, vlm_client, ocr_client=ocr_client, two_stage=pm_two_stage
+    )
+    if resolved is not None:
+        panel, mode_hint = resolved
+    else:
+        landmarks = load_landmarks(landmarks_dir)
+        if not landmarks:
+            print(f"[WARNING] SEM panel landmark 없음(미캘리브레이션): {landmarks_dir}")
+            return None
+        frame = _to_gray(capture_window(tool_window))
+        panel = locate_panel(frame, landmarks)
+        if panel is None:
+            print("[WARNING] SEM panel 을 찾지 못함 (landmark 신뢰도 부족)")
+            return None
     print(
         f"[INFO] SEM panel 확보: model={panel.model_id}, roi={panel.panel_roi}, "
-        f"conf={panel.confidence:.3f}"
+        f"conf={panel.confidence:.3f}, mode={mode_hint or '-'}"
     )
     return RCSSEMMonitor(
         tool_window,
@@ -257,6 +326,7 @@ def build_rcs_sem_monitor(
         settle_sec=settle_sec,
         zoom_scroll_dy=zoom_scroll_dy,
         mode_default=mode_default,
+        mode_hint=mode_hint,
     )
 
 

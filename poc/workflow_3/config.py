@@ -169,6 +169,14 @@ class Workflow3Settings(WorkflowSettings):
     correction_enabled: bool = True
     correction_dry_run: bool = True  # False 는 SAFE_MODE off + env 명시(0)일 때만.
     ok_button_vlm_service: str = "mai-ui"  # route_slug (모델명 "mai-ui-8b" 아님).
+    # OK 버튼 자동 클릭. 기본 off = 반자동(reposition 까지만 자동, OK 는 엔지니어).
+    # 좌표가 틀린 채 OK 가 눌리면 잘못된 위치로 측정이 확정되므로, 실전 신뢰가 쌓이기
+    # 전까지는 사람이 마지막 확정을 쥔다. 켜려면 ALIGN_FAIL_OK_CLICK=1.
+    ok_click_enabled: bool = False
+    # PM 판독으로 OM/SEM 을 확정하지 못했을 때 보정을 보류할지(기본 on).
+    # modality 를 틀리면 다른 template(IMAP0001 OM vs IMAP0002 SEM)로 매칭해 좌표가
+    # 근본적으로 틀리므로, 추측해서 누르느니 엔지니어에게 넘긴다. off 면 sem_mode_default 사용.
+    require_pm_mode: bool = True
     sem_mode_default: str = "SEM"
     sem_controller_settle_sec: float = 0.5
     zoom_scroll_dy: int = 1
@@ -255,6 +263,8 @@ def load_workflow3_settings() -> Workflow3Settings:
         correction_enabled=env_flag("ALIGN_FAIL_CORRECTION", default=True),
         correction_dry_run=correction_dry_run,
         ok_button_vlm_service=_env_str("ALIGN_OK_BUTTON_VLM_SERVICE", "mai-ui"),
+        ok_click_enabled=env_flag("ALIGN_FAIL_OK_CLICK", default=False),
+        require_pm_mode=env_flag("ALIGN_FAIL_REQUIRE_PM_MODE", default=True),
         sem_mode_default=_env_str("ALIGN_SEM_MODE_DEFAULT", "SEM"),
         sem_controller_settle_sec=env_float("ALIGN_SEM_SETTLE_SEC", 0.5),
         zoom_scroll_dy=env_int("ALIGN_SEM_ZOOM_SCROLL_DY", 1),

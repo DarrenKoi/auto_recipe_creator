@@ -35,6 +35,7 @@ from poc.workflow_3.monitor.cycle import CycleResult, run_alarm_cycle
 from poc.workflow_3.monitor.notify import (
     ALARM_LOG_PATH,
     notify_align_fail_popup,
+    send_detection_notify_async,
 )
 from poc.workflow_3.monitor.rcp_msr_gather import gather_rcp_msr
 from poc.workflow_3.monitor.success_gather import gather_success_async
@@ -364,6 +365,14 @@ def process_fail_rows(
                     timeout_sec=settings.popup_timeout_sec,
                 )
 
+            # 감지 시점 cube 알림 — 엔지니어가 "지금 자동화가 이 장비에 들어간다"를 먼저
+            # 알아야 화면이 저절로 움직여도 놀라지 않는다(입회 테스트 전제). 처리 결과
+            # 알림은 사이클 종료 후 outcome 기반으로 따로 나간다(둘은 목적이 다름).
+            # rich_notify_enabled=off 면 내부에서 조용히 skip.
+            send_detection_notify_async(
+                eqp_id, info["recipe_id"], enabled=settings.rich_notify_enabled,
+            )
+
             # consensus 재료 수집 — recipe 최근 성공(S) 이미지 stage (비차단 best-effort).
             # 게이트(gather_enabled/recipe_id/downloader)는 gather_success_async 내부에서 판정.
             gather_success_async(eqp_id, info["recipe_id"], settings)
@@ -458,8 +467,14 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
     from poc.workflow_3.vlm.ui_venus_mai_locator import describe_locator_combo
     print(f"[INFO] VLM 로케이터 조합: {describe_locator_combo(settings.locator_combo)}")
     # 관리자 권한 진단 — production 도 BlockInput·강제 전면화에 의존하므로 비elevated 경고 필요.
-    from poc.workflow_3.util.window_utils import print_elevation_status
-    print_elevation_status()
+    # window_utils 는 pywinauto 를 요구하므로 개발 PC(replay dry-run)에서는 없을 수 있다.
+    # 진단 한 줄 때문에 dry-run 자체가 죽으면 안 된다.
+    try:
+        from poc.workflow_3.util.window_utils import print_elevation_status
+
+        print_elevation_status()
+    except ImportError as exc:
+        print(f"[INFO] 권한 진단 생략(Windows 전용 의존성 없음): {exc}")
     print(
         "[INFO] 각 신규 Align Fail: RCS 확보 → 접속 → 상시 녹화 → SEM panel → CV 보정 "
         "→ (실패 시 cube 알림 + 엔지니어 watch) → tool 닫기. 중복 알람은 한 번만 처리."

@@ -175,7 +175,12 @@ def build_outcome_summary(
     if outcome is None:
         parts = ["자동 보정 미수행(사이클 중단 또는 RECIPE_ID 없음) - 직접 확인 필요"]
     else:
-        parts = [f"status={outcome.status}", f"path={outcome.path}", f"decision={outcome.key_decision}"]
+        parts = []
+        if outcome.status == "awaiting_engineer_ok":
+            # 반자동 모드의 요구 행동을 맨 앞에 둔다 — status= 로 시작하면 엔지니어가
+            # 무엇을 해야 하는지 알림 끝까지 읽어야 알 수 있다.
+            parts.append("align point 로 이동 완료 - 위치 확인 후 OK 를 눌러주세요")
+        parts += [f"status={outcome.status}", f"path={outcome.path}", f"decision={outcome.key_decision}"]
         if outcome.best_xy is not None:
             parts.append(f"best_xy={outcome.best_xy}")
         fallback = getattr(outcome, "fallback", None)
@@ -264,7 +269,11 @@ def notify_correction_outcome(
 
 
 def send_detection_notify_async(eqp_id: str, recipe_id: str, *, enabled: bool = True) -> None:
-    """감지 시점 cube 알림(기존 동작 호환, 기본 루프에서는 미사용)."""
+    """감지 시점 cube 알림 — "지금 이 장비에 자동화가 들어간다"는 사전 고지.
+
+    두 모니터(align_fail_monitor / align_fail_monitor_only_check)가 알람을 잡은 직후
+    호출한다. 처리 *결과* 알림(notify_correction_outcome)과는 목적이 달라 둘 다 나간다.
+    """
     if not enabled or not RICH_NOTIFY_AVAILABLE:
         return
 

@@ -150,6 +150,65 @@ def test_primary_path() -> bool:
     return ok
 
 
+def test_awaiting_engineer_ok() -> bool:
+    """ok_click_enabled=False → reposition 은 하되 OK 는 안 누르고 awaiting_engineer_ok.
+
+    corrected 로 끝나면 notify 가 cube 를 생략해 "OK 눌러달라"는 알림이 사라지므로,
+    status 가 corrected 와 구분되는지까지 검증한다(침묵 회귀 방지).
+    """
+    monitor, templates = _make_primary_demo()
+    fake = _FakeController(monitor.capture(), monitor.capture_screen(), mode="SEM")
+
+    outcome = correct_align_fail(
+        fake,
+        templates,
+        ok_locator=lambda _s: (690, 560),
+        dry_run=False,
+        config=CorrectionConfig(ok_click_enabled=False),
+    )
+    ok = (
+        outcome.status == "awaiting_engineer_ok"
+        and outcome.path == "primary"
+        and len(fake.move_calls) == 1  # reposition 은 수행.
+        and len(fake.screen_clicks) == 0  # OK 는 누르지 않음.
+        and outcome.ok_screen_xy == (690, 560)  # 위치는 근거로 기록.
+        and outcome.best_xy is not None
+    )
+    print(
+        f"[{'PASS' if ok else 'FAIL'}] awaiting_ok: status={outcome.status} "
+        f"moves={len(fake.move_calls)} clicks={len(fake.screen_clicks)} ok_xy={outcome.ok_screen_xy}"
+    )
+    return ok
+
+
+def test_awaiting_engineer_ok_without_locator() -> bool:
+    """OK 를 못 찾아도 반자동 모드는 escalated_no_ok 가 아니라 awaiting_engineer_ok.
+
+    OK 클릭이 우리 일이 아닌 모드에서 'OK 미검출'은 실패가 아니다 - reposition 결과는
+    유효하므로 엔지니어에게 같은 행동(확인 후 OK)을 요청한다.
+    """
+    monitor, templates = _make_primary_demo()
+    fake = _FakeController(monitor.capture(), monitor.capture_screen(), mode="SEM")
+
+    outcome = correct_align_fail(
+        fake,
+        templates,
+        ok_locator=lambda _s: None,
+        dry_run=False,
+        config=CorrectionConfig(ok_click_enabled=False, require_ok_button=True),
+    )
+    ok = (
+        outcome.status == "awaiting_engineer_ok"
+        and outcome.ok_screen_xy is None
+        and len(fake.screen_clicks) == 0
+    )
+    print(
+        f"[{'PASS' if ok else 'FAIL'}] awaiting_ok(no locator): status={outcome.status} "
+        f"ok_xy={outcome.ok_screen_xy}"
+    )
+    return ok
+
+
 def test_fallback_path() -> bool:
     """key 없음 → gate low → fallback 위임. stateful mock 으로 실제 pan/zoom 전이를 exercise(#7)."""
     # key_in_view=False → featureless. _MockSEMMonitor 는 stateful(pan 하면 capture 변화).
@@ -572,6 +631,8 @@ def main() -> int:
     results = [
         test_gate(),
         test_primary_path(),
+        test_awaiting_engineer_ok(),
+        test_awaiting_engineer_ok_without_locator(),
         test_fallback_path(),
         test_fallback_notify(),
         test_ok_detect_error(),

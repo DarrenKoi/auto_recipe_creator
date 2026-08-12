@@ -440,12 +440,30 @@ def _exec_start_recording(step, context, settings: Workflow3Settings) -> StepRes
 
 
 def _exec_locate_sem_panel(step, context, settings: Workflow3Settings) -> StepResult:
-    """⑥ SEM panel ROI → RCSSEMMonitor — landmark 미캘리브레이션이면 panel_not_found."""
+    """⑥ SEM panel ROI → RCSSEMMonitor.
+
+    panel ROI 는 live SEM box(VLM, check-only 에서 검증된 경로)를 우선 쓰고 실패 시
+    landmark 로 폴백한다. 같은 검출의 PM 판독으로 OM/SEM 도 확정하는데, 판독이 모호하면
+    (require_pm_mode) 보정을 진행하지 않는다 — 틀린 modality 는 틀린 template 을 뜻하고,
+    그 좌표로 recenter 하면 화면이 엉뚱한 곳으로 간다.
+    """
     started_at = time.time()
     controller_action = settings.action_enabled and not settings.correction_dry_run
+
+    sem_box_client = None
+    if settings.sem_box_detect_enabled:
+        try:
+            from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
+
+            sem_box_client = Workflow1VLMClient(settings.sem_box_vlm_service)
+        except Exception as exc:
+            print(f"[WARNING] SEM box VLM 클라이언트 생성 실패 - landmark 경로만 시도: {exc}")
+
     try:
         controller = build_rcs_sem_monitor(
             context["tool_window"],
+            vlm_client=sem_box_client,
+            pm_two_stage=settings.pm_two_stage_ocr_enabled,
             action_enabled=controller_action,
             settle_sec=settings.sem_controller_settle_sec,
             zoom_scroll_dy=settings.zoom_scroll_dy,
@@ -460,7 +478,13 @@ def _exec_locate_sem_panel(step, context, settings: Workflow3Settings) -> StepRe
         return _make_result(
             step, "failed", started_at, settings,
             failure_class="panel_not_found",
-            error_message="SEM panel landmark 미캘리브레이션/신뢰도 부족 - 보정 생략",
+            error_message="live SEM box 미검출 + landmark 미캘리브레이션/신뢰도 부족 - 보정 생략",
+        )
+    if settings.require_pm_mode and not getattr(controller, "mode_hint", None):
+        return _make_result(
+            step, "failed", started_at, settings,
+            failure_class="pm_mode_unknown",
+            error_message="PM 박스에서 OM/SEM 을 확정하지 못함 - 잘못된 template 매칭 방지 위해 보정 보류",
         )
     context["controller"] = controller
     return _make_result(step, "success", started_at, settings)
@@ -505,6 +529,8 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
                 reregister_ratio_threshold=settings.reregister_second_ratio_threshold,
                 # cond box-crop template(Tier 1.1; env ALIGN_FAIL_COND_BOX_CROP 로 롤백 가능).
                 cond_box_crop=settings.cond_box_crop,
+                # OK 자동 클릭(기본 off = reposition 까지만, OK 는 엔지니어).
+                ok_click_enabled=settings.ok_click_enabled,
                 # consensus 라우팅 설정(Workflow3Settings 에서 주입).
                 consensus_enabled=settings.consensus_enabled,
                 consensus_min_s=settings.consensus_min_s,

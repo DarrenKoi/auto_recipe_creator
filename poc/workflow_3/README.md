@@ -127,6 +127,12 @@ RECORDING_FILTER_INPUT_DIR=<녹화 경로> RECORDING_FILTER_MAX_VLM_CALLS=300 \
 게이트/가림이 이벤트를 전부 걷어내면 상태가 `all_events_discarded` 로 끝나며(exit 1),
 `ambient_events_dropped` / `occluded_events_excluded` 로 원인을 가른다.
 
+- `probable_close_click`: `recording_manifest.json`이 `window_gone`이고, 마지막 변화가
+  우상단이며, cursor VLM이 해당 프레임에서 커서를 못 찾은 경우에만 기록하는
+  low-confidence 사후 증거입니다. 원격 화면 가장자리에서 아래쪽 절반만 보이는 X/커서를
+  복원하기 위한 last resort이며 `replayable=false`입니다. 이 이벤트는 live 완료 판정,
+  자동 클릭, workflow 재생에 사용하지 않습니다.
+
 ### workflow_extract — 타임라인 -> 절차서 (알람 불필요, VLM 콜 0)
 
 `recording_filter` 가 만든 `interaction_timeline.json` 을 의미 단위 step 으로 묶어

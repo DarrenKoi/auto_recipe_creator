@@ -42,20 +42,37 @@ def test_system_prompt_size_hint_admits_larger_glyphs():
     assert "12-48" in cursor_system_prompt()
 
 
-def test_system_prompt_names_the_static_palm_icon_decoy():
-    """라이브 SEM 영상 옆 손바닥 아이콘을 커서로 보고하지 않도록 명시한다.
+def test_system_prompt_names_all_three_static_decoys():
+    """이 창의 고정 그래픽 셋을 위치와 함께 배제한다(2026-08-12 사용자 확인).
 
-    이 아이콘은 모든 프레임의 같은 자리에 있어, 모델이 한 번 물면 세션 전체에서
-    일관되게 틀린 커서 트랙을 만든다 - 산출물만 봐서는 성공과 구분되지 않는다.
+    A) 'Full Size' 버튼과 라이브 SEM 영상 사이의 손바닥 아이콘
+    B) 우상단 타이틀바의 닫기 'X' 버튼
+    C) 라이브 SEM 박스 좌상단 안쪽의 '>' 마크
+
+    셋 다 모든 프레임의 같은 자리에 있어, 모델이 진짜 커서를 못 찾을 때 되돌아가는
+    자리다 - 한 번 물면 세션 내내 일관되게 틀린 트랙이 나온다.
     """
     sys = cursor_system_prompt().lower()
     assert "full size" in sys
-    assert "palm" in sys
-    assert "never report it" in sys
+    assert "open-palm" in sys or "open palm" in sys
+    assert "close button" in sys
+    assert "top-right" in sys
+    assert "'>'" in sys or "chevron" in sys
+    assert "top-left" in sys
+
+
+def test_system_prompt_handles_pointer_over_the_close_button():
+    """커서가 닫기 X 위에 있을 때 화살표를 보고하게 한다(가장 잦은 실패 케이스).
+
+    이 순간 모델은 화살표와 X 를 분리하지 못하고 손바닥/'>' 로 되돌아갔다.
+    """
+    sys = cursor_system_prompt().lower()
+    assert "arrow" in sys
+    assert "cursor_visible=false" in sys
 
 
 def test_system_prompt_distinguishes_pointing_hand_from_palm():
     """손가락 하나 편 커서 vs 손바닥 아이콘을 형태로 구분하게 한다."""
     sys = cursor_system_prompt().lower()
     assert "index finger" in sys
-    assert "open palm" in sys
+    assert "open-palm" in sys or "open palm" in sys

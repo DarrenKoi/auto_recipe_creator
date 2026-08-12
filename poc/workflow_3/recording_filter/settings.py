@@ -25,6 +25,9 @@ class RecordingFilterSettings:
     static_cursor_tolerance_px: int = 12    # 같은 자리로 볼 좌표 허용 오차.
     static_cursor_min_repeats: int = 10     # 이 횟수 미만이면 판단하지 않는다.
     static_cursor_min_ratio: float = 0.5    # 전체 탐지 중 이 비율 이상이어야 정적으로 본다.
+    static_cursor_min_span_sec: float = 60.0  # 이 시간 폭 이상 같은 자리면 과반이 아니어도 정적으로 본다.
+    static_cursor_retry_masked: bool = True # 오탐 영역을 가리고 1회 재질의(가려진 진짜 커서 회수).
+    static_cursor_mask_pad_px: int = 16     # 가릴 영역 여유(아이콘 가장자리가 남으면 다시 물린다).
     # ---- VLM ----
     # service 는 route slug 다. 모델명은 서비스 엔트리가 들고 있으므로 여기서
     # 따로 두지 않는다 - 예전 vlm_model 필드는 mai-ui 라우트에 ui-venus 모델명을
@@ -67,6 +70,9 @@ def load_recording_filter_settings() -> RecordingFilterSettings:
         static_cursor_tolerance_px=env_int("RECORDING_FILTER_STATIC_CURSOR_TOLERANCE_PX", 12),
         static_cursor_min_repeats=env_int("RECORDING_FILTER_STATIC_CURSOR_MIN_REPEATS", 10),
         static_cursor_min_ratio=env_float("RECORDING_FILTER_STATIC_CURSOR_MIN_RATIO", 0.5),
+        static_cursor_min_span_sec=env_float("RECORDING_FILTER_STATIC_CURSOR_MIN_SPAN_SEC", 60.0),
+        static_cursor_retry_masked=env_flag("RECORDING_FILTER_STATIC_CURSOR_RETRY", True),
+        static_cursor_mask_pad_px=env_int("RECORDING_FILTER_STATIC_CURSOR_MASK_PAD_PX", 16),
         vlm_request_delay_sec=env_float("RECORDING_FILTER_VLM_REQUEST_DELAY_SEC", 1.0),
         max_vlm_calls=env_int("RECORDING_FILTER_MAX_VLM_CALLS", 0),
         region_gate_enabled=env_flag("RECORDING_FILTER_REGION_GATE", True),

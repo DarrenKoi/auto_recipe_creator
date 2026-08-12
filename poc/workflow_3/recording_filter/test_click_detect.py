@@ -188,7 +188,7 @@ def test_detect_clicks_falls_back_to_vlm_without_sidecar(monkeypatch):
     change = _change_event(rank=0, t_sec=10.0)
     calls = []
 
-    def _fake_locate(client, frame_path):
+    def _fake_locate(client, frame_path, mask_boxes=None):
         calls.append(frame_path)
         return {"cursor_visible": False}, None, 800, 500
 
@@ -241,7 +241,7 @@ def test_detect_clicks_falls_back_to_vlm_when_sidecar_cursor_is_offscreen(monkey
     metas = [_offscreen_meta(10.0, [4000, 3000])]
     calls = []
 
-    def _fake_locate(client, frame_path):
+    def _fake_locate(client, frame_path, mask_boxes=None):
         calls.append(frame_path)
         return {"cursor_visible": False}, None, 800, 500
 
@@ -299,8 +299,9 @@ def test_static_cursor_cluster_is_rejected():
     클릭이 대량으로 만들어진다.
     """
     events = [_vlm_click_event(i, (500, 400)) for i in range(12)]
-    flagged = flag_static_cursor_detections(events, RecordingFilterSettings())
-    assert flagged == 12
+    decoys = flag_static_cursor_detections(events, RecordingFilterSettings())
+    assert len(decoys) == 1
+    assert decoys[0]["count"] == 12
     assert all(not e.is_click for e in events)
     assert all(e.status == "cursor_static_decoy" for e in events)
 
@@ -308,13 +309,13 @@ def test_static_cursor_cluster_is_rejected():
 def test_static_cursor_tolerates_small_jitter():
     """VLM bbox 는 프레임마다 몇 px 흔들린다 - 허용 오차 안이면 같은 자리로 본다."""
     events = [_vlm_click_event(i, (500 + (i % 3), 400 - (i % 2))) for i in range(12)]
-    assert flag_static_cursor_detections(events, RecordingFilterSettings()) == 12
+    assert len(flag_static_cursor_detections(events, RecordingFilterSettings())) == 1
 
 
 def test_moving_cursor_is_not_rejected():
     """실제로 움직인 커서는 건드리지 않는다(음성 대조군)."""
     events = [_vlm_click_event(i, (100 + i * 60, 200 + i * 40)) for i in range(12)]
-    assert flag_static_cursor_detections(events, RecordingFilterSettings()) == 0
+    assert flag_static_cursor_detections(events, RecordingFilterSettings()) == []
     assert all(e.is_click for e in events)
 
 
@@ -325,7 +326,7 @@ def test_static_cursor_needs_majority_not_just_repeats():
     """
     events = [_vlm_click_event(i, (500, 400)) for i in range(10)]
     events += [_vlm_click_event(100 + i, (100 + i * 50, 700)) for i in range(15)]
-    assert flag_static_cursor_detections(events, RecordingFilterSettings()) == 0
+    assert flag_static_cursor_detections(events, RecordingFilterSettings()) == []
 
 
 def test_static_cursor_reject_ignores_sidecar_events():
@@ -333,7 +334,7 @@ def test_static_cursor_reject_ignores_sidecar_events():
     events = [_vlm_click_event(i, (500, 400)) for i in range(12)]
     for event in events:
         event.cursor_source = "sidecar"
-    assert flag_static_cursor_detections(events, RecordingFilterSettings()) == 0
+    assert flag_static_cursor_detections(events, RecordingFilterSettings()) == []
 
 
 def test_static_cursor_reject_can_be_disabled():
@@ -342,3 +343,115 @@ def test_static_cursor_reject_can_be_disabled():
     settings = RecordingFilterSettings(static_cursor_reject=False, vlm_request_delay_sec=0.0)
     detect_clicks([], settings, client=object(), metas=None)   # 배선 확인용(빈 입력).
     assert all(e.is_click for e in events)
+
+
+def _vlm_event_at(rank, xy, t_sec):
+    """지정 시각의 VLM 탐지 이벤트(정적 판정의 시간 폭 테스트용)."""
+    event = _vlm_click_event(rank, xy)
+    event.change.timestamp_sec = t_sec
+    return event
+
+
+def test_three_decoys_are_all_flagged_by_time_span():
+    """오탐원이 셋으로 갈려 어느 것도 과반이 아니어도 전부 잡는다.
+
+    (2026-08-12) 이 창의 고정 그래픽은 셋이다(손바닥 / 우상단 닫기 X / 라이브 박스
+    좌상단 '>'). 폴백이 셋으로 나뉘면 각 무리는 33% 라, "과반" 기준만으로는 하나도
+    못 잡는다. 정적 아이콘은 세션 내내 같은 자리에 나타난다는 점(시간 폭)으로 잡는다.
+    """
+    events = []
+    for i in range(12):
+        events.append(_vlm_event_at(i, (500, 400), t_sec=i * 30.0))          # 손바닥
+        events.append(_vlm_event_at(100 + i, (1900, 20), t_sec=i * 30.0))    # 닫기 X
+        events.append(_vlm_event_at(200 + i, (960, 300), t_sec=i * 30.0))    # '>' 마크
+    decoys = flag_static_cursor_detections(events, RecordingFilterSettings())
+    assert len(decoys) == 3, decoys
+    assert all(e.status == "cursor_static_decoy" for e in events)
+
+
+def test_short_burst_at_one_spot_is_not_a_decoy():
+    """같은 버튼을 짧은 구간에 반복 클릭하는 정상 조작은 살린다(음성 대조군).
+
+    시간 폭 기준을 넣으면서 이 케이스가 무너지지 않는지가 핵심이다 - 12번 눌러도
+    몇 초 안에 몰려 있으면 정적 아이콘이 아니다.
+    """
+    events = [_vlm_event_at(i, (500, 400), t_sec=i * 0.4) for i in range(12)]
+    events += [_vlm_event_at(100 + i, (100 + i * 50, 700), t_sec=100.0 + i) for i in range(15)]
+    assert flag_static_cursor_detections(events, RecordingFilterSettings()) == []
+
+
+class _MaskAwareClient:
+    """가리기 전에는 오탐 자리를, 가린 뒤에는 진짜 커서를 돌려주는 대역."""
+
+    def __init__(self):
+        self.masked_calls = 0
+
+    def locate(self, client, frame_path, mask_boxes=None):
+        if mask_boxes:
+            self.masked_calls += 1
+            # 가려졌으니 창 우상단(닫기 버튼 옆)의 진짜 화살표를 찾아낸다.
+            return ({"cursor_visible": True, "cursor_kind": "rcs_black_arrow",
+                     "confidence": 0.8, "evidence": "arrow by the close button"},
+                    {"left": 1880, "top": 8, "right": 1904, "bottom": 32}, 1920, 1080)
+        return ({"cursor_visible": True, "cursor_kind": "hand", "confidence": 0.9,
+                 "evidence": "palm"},
+                {"left": 492, "top": 392, "right": 508, "bottom": 408}, 1920, 1080)
+
+
+def test_masked_retry_recovers_the_real_cursor(monkeypatch):
+    """오탐 자리를 가리고 다시 물으면 진짜 커서를 회수한다.
+
+    (2026-08-12) 커서가 우상단 닫기 버튼 근처에 있을 때 모델이 손바닥/'>' 로
+    되돌아갔다. 그 프레임을 그냥 버리면 **창 가장자리 조작만 골라서** 사라져
+    무작위 손실보다 나쁘다(계통적 편향).
+    """
+    fake = _MaskAwareClient()
+    monkeypatch.setattr(
+        "poc.workflow_3.recording_filter.click_detect._locate_cursor", fake.locate
+    )
+    monkeypatch.setattr(
+        "poc.workflow_3.recording_filter.click_detect._diff_mask",
+        lambda prev, curr, thr: np.zeros((1080, 1920), dtype=np.uint8),
+    )
+    changes = [_change_event(i, t_sec=i * 30.0) for i in range(12)]
+    settings = RecordingFilterSettings(vlm_request_delay_sec=0.0)
+    events = detect_clicks(changes, settings, client=object(), metas=None)
+
+    assert fake.masked_calls == 12, "무효화된 이벤트마다 가린 재질의가 있어야 한다"
+    # 회수된 이벤트는 오탐 자리가 아니라 진짜 커서 좌표를 들고 있어야 한다.
+    assert all(e.cursor_source == "vlm_masked" for e in events), [e.cursor_source for e in events]
+    assert all(e.cursor_xy[0] > 1800 for e in events), [e.cursor_xy for e in events]
+
+
+def test_masked_retry_respects_call_budget(monkeypatch):
+    """재질의도 max_vlm_calls 예산 안에서만 한다(상한이 뚫리면 안 된다)."""
+    fake = _MaskAwareClient()
+    monkeypatch.setattr(
+        "poc.workflow_3.recording_filter.click_detect._locate_cursor", fake.locate
+    )
+    monkeypatch.setattr(
+        "poc.workflow_3.recording_filter.click_detect._diff_mask",
+        lambda prev, curr, thr: None,
+    )
+    changes = [_change_event(i, t_sec=i * 30.0) for i in range(12)]
+    settings = RecordingFilterSettings(vlm_request_delay_sec=0.0, max_vlm_calls=12)
+    detect_clicks(changes, settings, client=object(), metas=None)
+    assert fake.masked_calls == 0, "1차 탐지로 예산을 다 썼으면 재질의는 없다"
+
+
+def test_masked_retry_can_be_disabled(monkeypatch):
+    """킬 스위치 - 재질의 콜을 원치 않으면 끌 수 있다."""
+    fake = _MaskAwareClient()
+    monkeypatch.setattr(
+        "poc.workflow_3.recording_filter.click_detect._locate_cursor", fake.locate
+    )
+    monkeypatch.setattr(
+        "poc.workflow_3.recording_filter.click_detect._diff_mask",
+        lambda prev, curr, thr: None,
+    )
+    changes = [_change_event(i, t_sec=i * 30.0) for i in range(12)]
+    settings = RecordingFilterSettings(
+        vlm_request_delay_sec=0.0, static_cursor_retry_masked=False
+    )
+    detect_clicks(changes, settings, client=object(), metas=None)
+    assert fake.masked_calls == 0

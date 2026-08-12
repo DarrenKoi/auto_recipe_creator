@@ -147,13 +147,40 @@ def resolve_sidecar_cursor(change, metas, frame_wh):
     return [int(fx), int(fy)]
 
 
-def _locate_cursor(client, frame_path: Path):
+def _mask_regions(image, mask_boxes):
+    """이미 정체가 드러난 오탐 영역을 프레임에서 지운다(중성 회색으로 덮는다).
+
+    (2026-08-12) 프롬프트로 "저 손바닥 아이콘은 커서가 아니다" 라고 말해도, 창
+    가장자리에서 커서가 X 로 바뀌는 등 **모델이 진짜 커서를 확신하지 못하는 순간**
+    이면 화면에서 가장 커서처럼 생긴 것(= 늘 같은 자리에 있는 손바닥)으로 되돌아
+    간다. 지시는 요청이지 제약이 아니다. 이미 정적 오탐으로 확인된 영역은 아예
+    보이지 않게 만드는 편이 확실하다.
+
+    검정이 아니라 중성 회색으로 덮는 이유는, 검은 사각형 자체가 어두운 UI 에서
+    또 하나의 눈에 띄는 도형이 되어 모델의 시선을 끌기 때문이다.
+    """
+    if not mask_boxes:
+        return image
+    from PIL import ImageDraw
+
+    masked = image.copy()
+    draw = ImageDraw.Draw(masked)
+    for box in mask_boxes:
+        draw.rectangle(
+            [int(box["left"]), int(box["top"]), int(box["right"]), int(box["bottom"])],
+            fill=(128, 128, 128),
+        )
+    return masked
+
+
+def _locate_cursor(client, frame_path: Path, mask_boxes=None):
     """프레임에서 커서 coarse bbox(native px) 를 탐지한다.
 
+    mask_boxes 가 있으면 그 영역을 가린 뒤 질의한다(확인된 오탐 영역 제거).
     반환: (parsed_dict, cursor_px_bbox|None, img_w, img_h).
     """
     image = Image.open(frame_path).convert("RGB")
-    image_b64, width, height = encode_image_webp(image)
+    image_b64, width, height = encode_image_webp(_mask_regions(image, mask_boxes))
     response = client.chat_with_image_b64(
         image_b64=image_b64,
         system_message=cursor_system_prompt(),
@@ -230,11 +257,13 @@ def flag_static_cursor_detections(results, settings) -> int:
     안 움직이는 커서는 커서가 아니다. 무효화된 이벤트는 지우지 않고 status 를
     바꿔 감사 추적에 남긴다.
 
-    반환: 무효화한 이벤트 수.
+    반환: 오탐 무리 목록 [{"anchor", "count", "mask_box"}] (없으면 빈 목록).
+    mask_box 는 그 무리의 커서 bbox 합집합에 여유를 준 영역으로, 재질의 때
+    가릴 자리다.
     """
     detected = [r for r in results if r.cursor_xy and r.cursor_source == "vlm"]
     if len(detected) < settings.static_cursor_min_repeats:
-        return 0
+        return []
 
     tolerance = settings.static_cursor_tolerance_px
     clusters = []          # [(anchor_xy, [event, ...]), ...]
@@ -247,22 +276,176 @@ def flag_static_cursor_detections(results, settings) -> int:
         else:
             clusters.append(((x, y), [event]))
 
-    flagged = 0
+    decoys = []
     for anchor, members in clusters:
         if len(members) < settings.static_cursor_min_repeats:
             continue
-        if len(members) / len(detected) < settings.static_cursor_min_ratio:
+        # (2026-08-12) 이 창에는 오탐원이 셋이다(손바닥 아이콘 / 우상단 닫기 X /
+        # 라이브 박스 좌상단 '>'). 폴백이 셋으로 갈리면 어느 하나도 과반을 넘지
+        # 못해 "과반" 기준만으로는 전부 놓친다. 그래서 시간 폭을 함께 본다:
+        # 정적 아이콘은 세션 내내 같은 자리에 나타나고, 같은 버튼을 반복 클릭하는
+        # 정상 조작은 짧은 구간에 몰린다.
+        span = _time_span_sec(members)
+        by_ratio = len(members) / len(detected) >= settings.static_cursor_min_ratio
+        by_span = span >= settings.static_cursor_min_span_sec
+        if not (by_ratio or by_span):
             continue
         print(
-            f"[WARNING] 정적 커서 후보 {anchor} 에서 {len(members)}/{len(detected)} 건이 "
-            "잡혔습니다 - 커서가 아니라 고정 UI 아이콘(예: 라이브 SEM 영상 옆 손바닥 "
-            "버튼)일 가능성이 높아 무효화합니다."
+            f"[WARNING] 정적 커서 후보 {anchor} 에서 {len(members)}/{len(detected)} 건 "
+            f"(시간 폭 {span:.0f}s) - 커서가 아니라 고정 UI 그래픽(손바닥 아이콘 / "
+            "우상단 닫기 X / 라이브 박스 좌상단 '>')일 가능성이 높아 무효화합니다."
         )
         for event in members:
             event.is_click = False
             event.status = "cursor_static_decoy"
-            flagged += 1
-    return flagged
+        decoys.append({
+            "anchor": anchor,
+            "count": len(members),
+            "mask_box": _union_bbox(
+                [e.cursor_bbox for e in members if e.cursor_bbox],
+                fallback_xy=anchor,
+                pad=settings.static_cursor_mask_pad_px,
+            ),
+        })
+    return decoys
+
+
+def _time_span_sec(events) -> float:
+    """이벤트 무리가 걸쳐 있는 시간 폭(초). 1건이면 0."""
+    times = [float(e.timestamp_sec) for e in events]
+    if len(times) < 2:
+        return 0.0
+    return max(times) - min(times)
+
+
+def _union_bbox(boxes, *, fallback_xy, pad) -> dict:
+    """bbox 목록의 합집합에 여유(pad)를 준다. 목록이 비면 좌표 주변 정사각형.
+
+    여유를 주는 이유는 VLM bbox 가 글리프를 빠듯하게 잡을 때가 있어서다 - 아이콘
+    가장자리가 몇 px 남으면 모델이 다시 그걸 붙잡는다.
+    """
+    if not boxes:
+        return {
+            "left": int(fallback_xy[0]) - pad, "top": int(fallback_xy[1]) - pad,
+            "right": int(fallback_xy[0]) + pad, "bottom": int(fallback_xy[1]) + pad,
+        }
+    return {
+        "left": min(int(b["left"]) for b in boxes) - pad,
+        "top": min(int(b["top"]) for b in boxes) - pad,
+        "right": max(int(b["right"]) for b in boxes) + pad,
+        "bottom": max(int(b["bottom"]) for b in boxes) + pad,
+    }
+
+
+def _vlm_event(change, settings, *, client, mask_boxes=None) -> ClickEvent:
+    """VLM 으로 커서를 찾아 ROI 변화로 클릭을 판정한 ClickEvent 를 만든다.
+
+    mask_boxes 는 질의 전에 가릴 영역이다(확인된 정적 오탐 제거용). 실패는 모두
+    이벤트로 흡수한다 - 한 프레임 때문에 세션 전체가 죽으면 안 된다.
+    """
+    try:
+        parsed, cursor_px, width, height = _locate_cursor(
+            client, Path(change.frame_path), mask_boxes=mask_boxes
+        )
+    except Exception as exc:
+        print(f"[WARNING] 커서 탐지 실패(cursor_unavailable): {change.frame_path}: {exc}")
+        return _unavailable_event(change)
+
+    if cursor_px is None:
+        return ClickEvent(
+            change=change, is_click=False, status="no_click",
+            cursor_visible=False, cursor_kind=parsed.get("cursor_kind"),
+            cursor_bbox=None, cursor_xy=None, click_window=None,
+            changed_in_window_px=0,
+            confidence=float(parsed.get("confidence") or 0.0),
+            evidence=str(parsed.get("evidence") or ""),
+            cursor_source="vlm",
+        )
+
+    center = bbox_center(cursor_px)
+    mask = _diff_mask(
+        Path(change.prev_frame_path), Path(change.frame_path), settings.click_diff_threshold
+    )
+    if mask is None:
+        return _unavailable_event(change)
+    window = _window_around(
+        center["x"], center["y"], settings.cursor_click_window_px, width, height
+    )
+    changed = _count_changed_in_window(mask, window)
+    is_click = changed >= settings.click_min_changed_px
+    return ClickEvent(
+        change=change, is_click=is_click,
+        status="click" if is_click else "no_click",
+        cursor_visible=True, cursor_kind=parsed.get("cursor_kind"),
+        cursor_bbox=cursor_px, cursor_xy=[center["x"], center["y"]],
+        click_window=window, changed_in_window_px=changed,
+        confidence=float(parsed.get("confidence") or 0.0),
+        evidence=str(parsed.get("evidence") or ""),
+        cursor_source="vlm",
+    )
+
+
+def _point_in_box(xy, box) -> bool:
+    """좌표가 bbox 안인지 본다(둘 중 하나라도 없으면 False)."""
+    if not xy or not box:
+        return False
+    return (
+        box["left"] <= xy[0] <= box["right"] and box["top"] <= xy[1] <= box["bottom"]
+    )
+
+
+def _retry_decoy_events(results, decoys, settings, *, client, calls_used) -> int:
+    """정적 오탐으로 무효화된 이벤트를 오탐 영역을 가린 채 다시 물어본다.
+
+    (2026-08-12) 창 가장자리에서 커서가 X 모양으로 바뀌면 모델이 그것을 커서로
+    확신하지 못하고, 화면에서 가장 커서처럼 생긴 것(늘 같은 자리의 손바닥 아이콘)
+    으로 되돌아간다. 그 프레임들을 그냥 버리면 **가장자리 근처 조작만 골라서**
+    타임라인에서 사라진다 - 무작위 손실이 아니라 계통적 편향이라 더 나쁘다.
+
+    오탐 영역을 회색으로 덮고 한 번 더 물으면 모델에게는 되돌아갈 자리가 없어
+    진짜 커서(X 포함)를 찾거나 "없음"이라고 답한다. 재질의 결과가 여전히 오탐
+    영역 안이면 원래대로 무효 상태를 유지한다.
+
+    남은 콜 예산(max_vlm_calls)을 넘기지 않는다. 반환: 실제로 쓴 콜 수.
+    """
+    mask_boxes = [d["mask_box"] for d in decoys]
+    flagged = [r for r in results if r.status == "cursor_static_decoy"]
+    if not flagged:
+        return 0
+
+    budget = None
+    if settings.max_vlm_calls:
+        budget = max(0, settings.max_vlm_calls - calls_used)
+        if budget == 0:
+            print(
+                f"[WARNING] 콜 예산이 남지 않아 정적 오탐 {len(flagged)} 건의 재질의를 "
+                "건너뜁니다(그대로 무효 유지)."
+            )
+            return 0
+
+    used = 0
+    recovered = 0
+    for event in flagged:
+        if budget is not None and used >= budget:
+            print(f"[WARNING] 재질의 콜 예산 소진 - 남은 {len(flagged) - used} 건은 무효 유지")
+            break
+        retried = _vlm_event(event.change, settings, client=client, mask_boxes=mask_boxes)
+        used += 1
+        _sleep(settings.vlm_request_delay_sec)
+        if retried.cursor_xy is None:
+            continue                      # 가리고 나니 커서가 없다 - 무효 유지가 맞다.
+        if any(_point_in_box(retried.cursor_xy, box) for box in mask_boxes):
+            continue                      # 여전히 오탐 자리 - 신뢰하지 않는다.
+        index = results.index(event)
+        retried.cursor_source = "vlm_masked"
+        results[index] = retried
+        recovered += 1
+
+    print(
+        f"[INFO] 정적 오탐 재질의: {used} 콜로 {recovered} 건 회수 "
+        f"(가린 영역 {len(mask_boxes)} 곳)."
+    )
+    return used
 
 
 def detect_clicks(
@@ -299,58 +482,17 @@ def detect_clicks(
         if metas:
             sidecar_rejected += 1
 
-        try:
-            parsed, cursor_px, width, height = _locate_cursor(client, Path(change.frame_path))
-            calls += 1
-        except Exception as exc:
-            calls += 1
-            print(f"[WARNING] 커서 탐지 실패(cursor_unavailable): {change.frame_path}: {exc}")
-            results.append(_unavailable_event(change))
-            _sleep(settings.vlm_request_delay_sec)
-            continue
-
-        if cursor_px is None:
-            results.append(
-                ClickEvent(
-                    change=change, is_click=False, status="no_click",
-                    cursor_visible=False, cursor_kind=parsed.get("cursor_kind"),
-                    cursor_bbox=None, cursor_xy=None, click_window=None,
-                    changed_in_window_px=0,
-                    confidence=float(parsed.get("confidence") or 0.0),
-                    evidence=str(parsed.get("evidence") or ""),
-                    cursor_source="vlm",
-                )
-            )
-            _sleep(settings.vlm_request_delay_sec)
-            continue
-
-        center = bbox_center(cursor_px)
-        mask = _diff_mask(
-            Path(change.prev_frame_path), Path(change.frame_path), settings.click_diff_threshold
-        )
-        if mask is None:
-            results.append(_unavailable_event(change))
-            _sleep(settings.vlm_request_delay_sec)
-            continue
-        window = _window_around(center["x"], center["y"], settings.cursor_click_window_px, width, height)
-        changed = _count_changed_in_window(mask, window)
-        is_click = changed >= settings.click_min_changed_px
-        results.append(
-            ClickEvent(
-                change=change, is_click=is_click,
-                status="click" if is_click else "no_click",
-                cursor_visible=True, cursor_kind=parsed.get("cursor_kind"),
-                cursor_bbox=cursor_px, cursor_xy=[center["x"], center["y"]],
-                click_window=window, changed_in_window_px=changed,
-                confidence=float(parsed.get("confidence") or 0.0),
-                evidence=str(parsed.get("evidence") or ""),
-                cursor_source="vlm",
-            )
-        )
+        event = _vlm_event(change, settings, client=client)
+        calls += 1
+        results.append(event)
         _sleep(settings.vlm_request_delay_sec)
 
     if settings.static_cursor_reject:
-        flag_static_cursor_detections(results, settings)
+        decoys = flag_static_cursor_detections(results, settings)
+        if decoys and settings.static_cursor_retry_masked:
+            calls += _retry_decoy_events(
+                results, decoys, settings, client=client, calls_used=calls
+            )
 
     n_click = sum(1 for r in results if r.is_click)
     if sidecar_rejected:

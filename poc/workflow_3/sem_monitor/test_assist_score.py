@@ -310,7 +310,20 @@ def test_active_score_just_outside_header_uses_nearest_active_column():
     assert layout is not None
     assert layout.columns == ("Addressing1", "Measurement")
     assert layout.grid[0][0]["left"] == -6
-    assert layout.grid[0][0]["right"] == 121
+    assert layout.grid[0][0]["right"] == 110
+
+
+def test_offset_active_score_isolated_from_addressing2_pixels():
+    items = _panel_items() + [_item("56", 65, 220, 95, 238)]
+    layout = build_score_grid(items, (300, 260))
+    assert layout is not None
+    image = Image.new("RGB", (300, 260), (240, 240, 240))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle([65, 220, 70, 225], fill=(20, 20, 20))
+    draw.rectangle([220, 220, 225, 225], fill=(20, 20, 20))
+    draw.rectangle([120, 220, 150, 237], fill=(200, 20, 20))
+    rows = read_row_states(image, layout)
+    assert rows[-1].verdict == "ok"
 
 
 def test_measurement_header_accepts_five_character_clip_only():

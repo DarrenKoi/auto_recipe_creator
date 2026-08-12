@@ -397,8 +397,7 @@ def _number_column_for(cx: float, header_boxes: dict, active_columns: tuple):
         for column, box in header_boxes.items():
             if column in active_columns:
                 continue
-            width = max(1.0, float(box["right"]) - float(box["left"]))
-            if float(box["left"]) - width * 0.5 <= cx <= float(box["right"]) + width * 0.5:
+            if float(box["left"]) <= cx <= float(box["right"]):
                 return None
         active_headers = {name: header_boxes[name] for name in active_columns}
         return _assign_number_column(cx, active_headers)
@@ -506,6 +505,18 @@ def build_score_grid(items: list, panel_size: tuple, *, rows: int = ASSIST_ROWS)
             box = header_boxes[column]
             raw = (float(box.get("left", 0)), float(box.get("right", 0)))
         left, right = _pad_span(raw[0], raw[1], CELL_PAD_X_RATIO)
+        active_box = header_boxes[column]
+        active_center = (float(active_box["left"]) + float(active_box["right"])) / 2.0
+        for inactive, inactive_box in header_boxes.items():
+            if inactive in active_columns:
+                continue
+            inactive_left = float(inactive_box["left"])
+            inactive_right = float(inactive_box["right"])
+            inactive_center = (inactive_left + inactive_right) / 2.0
+            if active_center < inactive_center:
+                right = min(right, inactive_left)
+            else:
+                left = max(left, inactive_right)
         column_x_ranges[column] = (int(round(left)), int(round(right)))
 
     # 세로 여유: 글자 높이의 CELL_PAD_Y_RATIO 를 위아래로 더하되, pitch 안에 확실히

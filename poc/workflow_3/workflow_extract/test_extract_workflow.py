@@ -52,6 +52,27 @@ def test_writes_workflow_json_and_markdown(tmp_path):
     assert (out / "workflow.md").is_file()
 
 
+def test_probable_close_evidence_is_not_emitted_as_workflow_click(tmp_path):
+    """비재생 닫기 추정은 절차 동작이 아니며, 실제 클릭은 그대로 남는다."""
+    probable_close = _timeline_event(
+        0, 9.0, action="probable_close_click", element="Remote Monitoring close button"
+    )
+    probable_close["replayable"] = False
+    real_click = _timeline_event(1, 10.0, element="OK")
+    out = _session(tmp_path, [probable_close, real_click])
+
+    assert run_extract(input_dir=out) == "success"
+
+    payload = json.loads((out / "workflow.json").read_text(encoding="utf-8"))
+    assert len(payload["steps"]) == 1
+    assert payload["steps"][0]["action"] == "click"
+    assert payload["steps"][0]["target"] == "OK"
+    assert payload["steps"][0]["raw_events"] == [1]
+    markdown = (out / "workflow.md").read_text(encoding="utf-8")
+    assert "probable_close_click" not in markdown
+    assert "Remote Monitoring close button" not in markdown
+
+
 def test_degrades_without_region_map(tmp_path):
     """region_map.json 이 없어도 실패하지 않고 R1 만 degrade 한다."""
     out = _session(tmp_path, [_timeline_event(0, 10.0)])

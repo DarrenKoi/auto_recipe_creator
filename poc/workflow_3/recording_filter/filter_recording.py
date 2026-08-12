@@ -95,6 +95,19 @@ def _resolve_output_dir(capture_dir: Path) -> Path:
     return (capture_dir.parent / "recording_filter").resolve()
 
 
+def _reset_close_click_evidence(out_dir: Path) -> None:
+    """이번 실행 전용 닫기 정황 폴더만 지워 이전 양성 결과를 무효화한다.
+
+    경로는 output 아래 고정 이름 하나로만 만든다. 심볼릭 링크는 따라가지 않고 링크
+    자체를 지워, 잘못된 링크가 output 바깥의 디렉터리 삭제로 이어지지 않게 한다.
+    """
+    evidence_dir = Path(out_dir) / "close_click_evidence"
+    if evidence_dir.is_symlink() or evidence_dir.is_file():
+        evidence_dir.unlink()
+    elif evidence_dir.is_dir():
+        shutil.rmtree(evidence_dir)
+
+
 def _resolve_meta_dir(capture_dir: Path, frames_dir: Path) -> Path:
     """사이드카(frame_meta.jsonl) 를 찾을 디렉터리를 고른다(캡처 루트 우선).
 
@@ -283,6 +296,7 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
 
     out_dir = _resolve_output_dir(capture_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    _reset_close_click_evidence(out_dir)
 
     # ---- Stage 1 ----
     stage1_events = reduce_frames(frames_dir, settings)
@@ -410,11 +424,16 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
             f"(같은 프레임에서 나온 클릭 {superseded_clicks} 건은 타이핑으로 대체)"
         )
 
-    probable_close = infer_probable_close_click(capture_dir, change_events, click_events)
+    # 닫기 정황의 "마지막"은 Stage 1.5 생존 목록이 아니라 녹화의 마지막 raw
+    # Stage 1 변화다. 진짜 마지막 이벤트가 ambient/occlusion 으로 빠졌거나 Stage 2a
+    # 상한에 잘렸다면 그 exact rank 의 cursor 결과가 없으므로 classifier 가 None 으로
+    # fail closed 한다. 생존 목록의 끝을 넘기면 더 오래된 우상단 후보가 terminal 로
+    # 승격될 수 있다.
+    probable_close = infer_probable_close_click(capture_dir, stage1_events, click_events)
     inferred_events = [probable_close] if probable_close is not None else []
     if probable_close is not None:
         write_close_click_evidence(
-            probable_close, change_events[-1], out_dir / "close_click_evidence"
+            probable_close, stage1_events[-1], out_dir / "close_click_evidence"
         )
 
     timeline = build_timeline(

@@ -112,8 +112,14 @@ def _rule_double_click(events, i, ctx):
 
 
 def _rule_default(events, i, ctx):
-    """R5 - 위 규칙에 안 걸린 이벤트를 1:1 step 으로 만든다."""
+    """R5 - 다른 규칙에 안 걸린 실제 click 만 1:1 step 으로 만든다.
+
+    unknown/evidence action 을 click 으로 승격하면 관측하지 않은 재생 동작을 만든다.
+    호출부 경계가 그런 이벤트를 거르지만, R5 자체도 fail closed 해야 한다.
+    """
     event = events[i]
+    if event.get("action") != "click" or event.get("replayable") is False:
+        return None
     live_box = (ctx.live_boxes or {}).get(int(event.get("generation") or 0))
     normalized = None
     if event.get("region") == "live_image" and live_box:

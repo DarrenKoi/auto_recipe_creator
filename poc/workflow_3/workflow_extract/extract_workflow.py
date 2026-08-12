@@ -244,6 +244,22 @@ def _event_end_sec(event) -> float:
     return max(start, float(end))
 
 
+def _workflow_action_events(events) -> list:
+    """타임라인에서 사람이 재현할 수 있는 workflow action 만 고른다.
+
+    recording_filter 타임라인에는 클릭/타이핑 외에도 사후 분석용 증거가 들어갈 수
+    있다. 특히 ``probable_close_click`` 은 명시적으로 비재생 추론이므로 grouping
+    입력 경계를 넘겨서는 안 된다. action allowlist 와 replayable=false 를 함께
+    확인해, 미래의 다른 evidence 종류도 R5 기본 클릭으로 바뀌지 않게 한다.
+    """
+    return [
+        event
+        for event in (events or [])
+        if event.get("action") in {"click", "type_text"}
+        and event.get("replayable") is not False
+    ]
+
+
 def run_extract(*, input_dir=None, settings=None) -> str:
     """타임라인을 workflow.json + workflow.md 로 만든다. 상태 문자열 반환."""
     settings = settings or load_workflow_extract_settings()
@@ -271,10 +287,18 @@ def run_extract(*, input_dir=None, settings=None) -> str:
             )
         return "timeline_not_found"
 
-    events = timeline_payload.get("events") or []
-    if not events:
+    timeline_events = timeline_payload.get("events") or []
+    if not timeline_events:
         print("[ERROR] 타임라인에 이벤트가 0건입니다 - 추출할 절차가 없습니다.")
         return "no_events"
+
+    events = _workflow_action_events(timeline_events)
+    if not events:
+        print("[ERROR] 타임라인에 재현 가능한 동작이 0건입니다 - 추출할 절차가 없습니다.")
+        return "no_events"
+    evidence_count = len(timeline_events) - len(events)
+    if evidence_count:
+        print(f"[INFO] 비재생/증거 이벤트 {evidence_count} 건을 workflow 입력에서 제외했습니다.")
 
     capture_dir = timeline_payload.get("capture_dir") or ""
     ctx = GroupingContext(

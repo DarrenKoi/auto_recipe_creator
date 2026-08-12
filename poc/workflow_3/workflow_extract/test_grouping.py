@@ -34,6 +34,15 @@ def test_lone_clicks_become_r5_steps():
     assert [s["action"] for s in steps] == ["click", "click"]
 
 
+def test_r5_rejects_non_click_evidence_instead_of_fabricating_click():
+    """입력 경계를 우회한 증거도 R5가 click으로 바꾸지 않고 fail closed 한다."""
+    evidence = _event(0, 10.0, action="probable_close_click")
+    evidence["replayable"] = False
+
+    with pytest.raises(AssertionError, match="처리할 규칙"):
+        group_events([evidence], _ctx())
+
+
 def test_steps_are_renumbered_sequentially():
     events = [_event(0, 10.0), _event(1, 30.0, element="OK")]
     steps = group_events(events, _ctx())

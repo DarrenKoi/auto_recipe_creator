@@ -132,6 +132,81 @@ def test_run_filter_records_probable_close_click(tmp_path):
     assert summary["probable_close_clicks"] == 1
 
 
+def test_negative_rerun_removes_stale_close_click_evidence(tmp_path):
+    """같은 출력 경로의 양성→음성 재실행에서 예전 JSON/JPEG가 남지 않는다."""
+    rec = _close_candidate_recording(tmp_path)
+    out_dir = rec.parent / "recording_filter"
+    evidence_dir = out_dir / "close_click_evidence"
+    settings = RecordingFilterSettings(
+        vlm_request_delay_sec=0.0,
+        min_change_area_px=20,
+        region_gate_enabled=False,
+        element_label_enabled=False,
+        typing_detect_enabled=False,
+    )
+
+    assert run_filter(input_dir=rec, settings=settings, client=_NoCursorClient()) == "success"
+    assert (evidence_dir / "probable_close_click.json").is_file()
+    assert (evidence_dir / "probable_close_click.jpg").is_file()
+
+    (rec / "recording_manifest.json").write_text(
+        json.dumps({"stop_reason": "max_sec"}), encoding="utf-8"
+    )
+    assert run_filter(input_dir=rec, settings=settings, client=_NoCursorClient()) == "no_clicks"
+
+    summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary["probable_close_clicks"] == 0
+    assert not evidence_dir.exists()
+
+
+def test_probable_close_uses_final_raw_change_not_last_gate_survivor(tmp_path, monkeypatch):
+    """더 최신 raw 변화가 게이트에서 빠졌다면 이전 우상단 후보를 닫기로 추론하지 않는다."""
+    from poc.workflow_3.recording_filter import region_gate
+
+    rec = tmp_path / "filtered_terminal" / "recording"
+    rec.mkdir(parents=True)
+    base = np.full((400, 600), 240, dtype=np.uint8)
+    cv2.line(base, (580, 10), (590, 20), 40, 2)
+    cv2.line(base, (590, 10), (580, 20), 40, 2)
+    close_candidate = base.copy()
+    cv2.line(close_candidate, (560, 12), (578, 30), 10, 3)
+    cv2.line(close_candidate, (578, 12), (560, 30), 10, 3)
+    newer_change = close_candidate.copy()
+    cv2.rectangle(newer_change, (100, 200), (180, 280), 10, -1)
+    cv2.imwrite(str(rec / "tag_rcs_0000_00000000ms.jpg"), base)
+    cv2.imwrite(str(rec / "tag_rcs_0001_00000300ms.jpg"), close_candidate)
+    cv2.imwrite(str(rec / "tag_rcs_0002_00000600ms.jpg"), newer_change)
+    (rec / "recording_manifest.json").write_text(
+        json.dumps({"stop_reason": "window_gone"}), encoding="utf-8"
+    )
+
+    monkeypatch.setattr(region_gate, "build_region_maps", lambda *_args, **_kwargs: {})
+
+    def _keep_only_older(events, *_args, **_kwargs):
+        assert len(events) == 2
+        return [
+            (events[0], 0, "candidate", "none", "ui"),
+            (events[1], 0, "ambient", "none", "live_image"),
+        ]
+
+    monkeypatch.setattr(region_gate, "apply_region_gate", _keep_only_older)
+    settings = RecordingFilterSettings(
+        vlm_request_delay_sec=0.0,
+        min_change_area_px=20,
+        element_label_enabled=False,
+        typing_detect_enabled=False,
+    )
+
+    assert run_filter(input_dir=rec, settings=settings, client=_NoCursorClient()) == "no_clicks"
+
+    out_dir = rec.parent / "recording_filter"
+    summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary["total_change_events"] == 2
+    assert summary["gate_passed"] == 1
+    assert summary["probable_close_clicks"] == 0
+    assert not (out_dir / "close_click_evidence").exists()
+
+
 def test_run_filter_not_enough_frames(tmp_path):
     rec = tmp_path / "tag" / "recording"
     _write(rec / "tag_rcs_0000_00000000ms.jpg", np.full((400, 600), 30, dtype=np.uint8))

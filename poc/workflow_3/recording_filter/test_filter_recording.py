@@ -535,3 +535,63 @@ def test_run_filter_finds_sidecar_in_capture_root_when_frames_are_nested(tmp_pat
     ])
 
     assert _resolve_meta_dir(rec, frames) == rec
+
+
+def test_run_filter_flags_session_where_cursor_never_entered_window(tmp_path, monkeypatch):
+    """커서가 내내 창 밖이면 no_clicks(exit 0) 가 아니라 별도 상태로 끝난다.
+
+    (2026-08-12) 실제 오피스 세션에서 사이드카 410 건이 전부
+    cursor_in_window=False 였다 - 엔지니어가 녹화 대상이 아닌 다른 창에서
+    작업한 것이다. 그런데도 필터는 조용히 "no_clicks" 로 끝나 click_events/ 와
+    element_crops/ 만 비어 있었고, 원인이 임계/게이트인지 녹화인지 구분할 수
+    없었다. 조치가 정반대이므로 상태를 갈라 둔다.
+    """
+    rec = _recording_dir(tmp_path)
+    _stub_sem_box(monkeypatch, None)          # 라이브 박스 없음 -> 게이트는 전량 통과.
+    rect = {"left": 0, "top": 0, "right": 600, "bottom": 400}
+    _write_sidecar(rec, [
+        {"frame": f"seq_{i}", "t_sec": t, "window_rect": rect,
+         "foreground_title": "Recipe Monitor", "occlusion": "none",
+         "cursor_screen_xy": [5000, 5000], "cursor_in_window": False}
+        for i, t in enumerate((0.0, 0.3, 0.6))
+    ])
+
+    settings = RecordingFilterSettings(
+        vlm_request_delay_sec=0.0, min_change_area_px=5000, element_label_enabled=False,
+    )
+    status = run_filter(input_dir=rec, settings=settings, client=_FakeClient())
+    assert status == "cursor_never_in_window", status
+
+    summary = json.loads(
+        (rec.parent / "recording_filter" / "summary.json").read_text(encoding="utf-8")
+    )
+    assert summary["sidecar_records"] == 3, summary
+    assert summary["cursor_in_window_records"] == 0, summary
+    # 게이트가 걷어낸 것이 아니라 조작 자체가 없었음을 구분할 수 있어야 한다.
+    assert summary["gate_passed"] == 1, summary
+    assert summary["clicks"] == 0, summary
+
+
+def test_run_filter_does_not_flag_session_with_cursor_in_window(tmp_path, monkeypatch):
+    """커서가 창 안에 있었던 세션은 새 상태로 오분류되지 않는다(음성 대조군)."""
+    rec = _recording_dir(tmp_path)
+    _stub_sem_box(monkeypatch, None)
+    rect = {"left": 0, "top": 0, "right": 600, "bottom": 400}
+    _write_sidecar(rec, [
+        {"frame": f"seq_{i}", "t_sec": t, "window_rect": rect,
+         "foreground_title": "Remote Monitoring System - MCD916", "occlusion": "none",
+         "cursor_screen_xy": [300, 120], "cursor_in_window": True}
+        for i, t in enumerate((0.0, 0.3, 0.6))
+    ])
+
+    settings = RecordingFilterSettings(
+        vlm_request_delay_sec=0.0, min_change_area_px=5000, element_label_enabled=False,
+    )
+    status = run_filter(input_dir=rec, settings=settings, client=_FakeClient())
+    assert status == "success", status
+
+    summary = json.loads(
+        (rec.parent / "recording_filter" / "summary.json").read_text(encoding="utf-8")
+    )
+    assert summary["cursor_in_window_records"] == 3, summary
+    assert summary["clicks"] == 1, summary

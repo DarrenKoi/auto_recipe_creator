@@ -2,6 +2,7 @@
 
 import json
 import math
+from collections.abc import Mapping
 from pathlib import Path
 
 import cv2
@@ -17,9 +18,12 @@ PROBABLE_CLOSE_CONFIDENCE = 0.35
 def _load_stop_reason(capture_dir: Path) -> str:
     path = Path(capture_dir) / "recording_manifest.json"
     try:
-        return str(json.loads(path.read_text(encoding="utf-8")).get("stop_reason") or "")
+        manifest = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError):
         return ""
+    if not isinstance(manifest, Mapping):
+        return ""
+    return str(manifest.get("stop_reason") or "")
 
 
 def _cursor_missing_for(change, click_events) -> bool:
@@ -94,8 +98,7 @@ def _has_diagonal_pair(mask) -> bool:
 
 def _difference_mask(prev_frame, curr_frame):
     if prev_frame.shape != curr_frame.shape:
-        target = (curr_frame.shape[1], curr_frame.shape[0])
-        prev_frame = cv2.resize(prev_frame, target, interpolation=cv2.INTER_AREA)
+        return None
     diff = cv2.absdiff(prev_frame, curr_frame)
     _, mask = cv2.threshold(diff, 24, 255, cv2.THRESH_BINARY)
     return mask
@@ -125,6 +128,8 @@ def infer_probable_close_click(capture_dir, change_events, click_events) -> dict
         return None
 
     mask = _difference_mask(prev_frame, curr_frame)
+    if mask is None:
+        return None
     candidate_mask = mask[
         candidate_box["top"]:candidate_box["bottom"],
         candidate_box["left"]:candidate_box["right"],

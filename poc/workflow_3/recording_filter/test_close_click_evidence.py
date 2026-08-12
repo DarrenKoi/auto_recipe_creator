@@ -2,6 +2,7 @@ import json
 
 import cv2
 import numpy as np
+import pytest
 
 from poc.workflow_3.recording_filter.click_detect import ClickEvent
 from poc.workflow_3.recording_filter.close_click_evidence import (
@@ -80,6 +81,16 @@ def test_no_inference_without_window_gone(tmp_path):
     assert infer_probable_close_click(rec, [change], [click]) is None
 
 
+@pytest.mark.parametrize("manifest_body", [[], None, "window_gone"])
+def test_no_inference_for_non_object_manifest(tmp_path, manifest_body):
+    rec, change, click = _close_candidate_fixture(tmp_path)
+    (rec / "recording_manifest.json").write_text(
+        json.dumps(manifest_body), encoding="utf-8"
+    )
+
+    assert infer_probable_close_click(rec, [change], [click]) is None
+
+
 def test_no_inference_when_cursor_was_found(tmp_path):
     rec, change, click = _close_candidate_fixture(tmp_path, cursor_visible=True)
 
@@ -94,6 +105,29 @@ def test_no_inference_when_change_is_not_top_right(tmp_path):
 
 def test_no_inference_for_static_close_x_without_diagonal_change(tmp_path):
     rec, change, click = _close_candidate_fixture(tmp_path, diagonal=False)
+
+    assert infer_probable_close_click(rec, [change], [click]) is None
+
+
+def test_no_inference_when_static_x_inside_candidate_crop_is_unchanged(tmp_path):
+    rec, change, click = _close_candidate_fixture(tmp_path, diagonal=False)
+    prev = np.full((400, 600), 240, dtype=np.uint8)
+    cv2.line(prev, (562, 14), (570, 22), 40, 2)
+    cv2.line(prev, (570, 14), (562, 22), 40, 2)
+    curr = prev.copy()
+    cv2.rectangle(curr, (572, 25), (578, 30), 10, -1)
+    cv2.imwrite(change.prev_frame_path, prev)
+    cv2.imwrite(change.frame_path, curr)
+
+    difference = cv2.absdiff(prev, curr)
+    assert cv2.countNonZero(difference[14:23, 562:571]) == 0
+    assert infer_probable_close_click(rec, [change], [click]) is None
+
+
+def test_no_inference_for_mismatched_frame_dimensions(tmp_path):
+    rec, change, click = _close_candidate_fixture(tmp_path)
+    prev = cv2.imread(change.prev_frame_path, cv2.IMREAD_GRAYSCALE)
+    cv2.imwrite(change.prev_frame_path, prev[:-1, :])
 
     assert infer_probable_close_click(rec, [change], [click]) is None
 

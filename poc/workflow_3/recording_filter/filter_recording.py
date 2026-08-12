@@ -27,6 +27,13 @@ from poc.workflow_3.util import format_elapsed_ms
 # 분석할 recording/ 폴더를 직접 적어 쓸 수 있다(가장 우선). 비우면 env/자동탐색.
 INPUT_DIR_OVERRIDE = r""
 
+# Stage 2a VLM 콜 상한. 0 = 무제한(생존 이벤트 전부 처리).
+#
+# 수동 세션은 10분에 수백~수천 이벤트가 나올 수 있어 무제한은 첫 실행에서 위험하다.
+# 잘린 양은 summary.json 의 truncated / skipped_due_to_cap 에 정직하게 보고된다.
+# 실제 콜 수를 보고 올리거나(예: 1000), 전량 처리하려면 0 으로 둔다.
+MAX_VLM_CALLS = 300
+
 
 def _resolve_input_dir() -> Path | None:
     """분석할 recording/ 폴더를 결정한다(override -> env -> 자동탐색)."""
@@ -236,10 +243,29 @@ def _supersede_typing_clicks(click_events, typing_ranks) -> int:
     return superseded
 
 
+def _load_settings_with_call_cap() -> RecordingFilterSettings:
+    """설정을 읽고 모듈 상수 MAX_VLM_CALLS 를 적용한다(env 가 있으면 env 가 이긴다).
+
+    저장소 규칙대로 실제 shell env 가 항상 최우선이다 - 모듈 상수는 "매번 긴 env
+    한 줄을 치지 않기 위한" 기본값일 뿐이라, env 를 조용히 덮으면 오피스에서
+    한 번 실행할 때만 상한을 바꾸는 방법이 사라진다.
+    """
+    settings = load_recording_filter_settings()
+    if not os.getenv("RECORDING_FILTER_MAX_VLM_CALLS", "").strip():
+        settings.max_vlm_calls = MAX_VLM_CALLS
+    return settings
+
+
 def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, client=None) -> str:
-    """필터 파이프라인을 실행하고 상태 문자열을 반환한다."""
+    """필터 파이프라인을 실행하고 상태 문자열을 반환한다.
+
+    settings 를 직접 주면 그대로 쓴다(테스트/호출부 주입) - 모듈 상수 상한은
+    적용하지 않는다.
+    """
     started_at = time.time()
-    settings = settings or load_recording_filter_settings()
+    settings = settings or _load_settings_with_call_cap()
+    if settings.max_vlm_calls:
+        print(f"[INFO] Stage 2a VLM 콜 상한: {settings.max_vlm_calls} (0 = 무제한)")
 
     capture_dir = Path(input_dir).resolve() if input_dir else _resolve_input_dir()
     if capture_dir is None:

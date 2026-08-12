@@ -535,3 +535,48 @@ def test_run_filter_finds_sidecar_in_capture_root_when_frames_are_nested(tmp_pat
     ])
 
     assert _resolve_meta_dir(rec, frames) == rec
+
+
+def test_module_call_cap_applies_without_env(monkeypatch):
+    """env 없이 실행하면 모듈 상수 MAX_VLM_CALLS 가 상한이 된다(긴 env 한 줄 불필요)."""
+    from poc.workflow_3.recording_filter import filter_recording as fr
+
+    monkeypatch.delenv("RECORDING_FILTER_MAX_VLM_CALLS", raising=False)
+    monkeypatch.setattr(fr, "MAX_VLM_CALLS", 300)
+    assert fr._load_settings_with_call_cap().max_vlm_calls == 300
+
+
+def test_env_call_cap_beats_module_constant(monkeypatch):
+    """실제 shell env 는 항상 이긴다 - 한 번만 다르게 돌릴 방법이 남아야 한다."""
+    from poc.workflow_3.recording_filter import filter_recording as fr
+
+    monkeypatch.setenv("RECORDING_FILTER_MAX_VLM_CALLS", "50")
+    monkeypatch.setattr(fr, "MAX_VLM_CALLS", 300)
+    assert fr._load_settings_with_call_cap().max_vlm_calls == 50
+
+
+def test_env_zero_can_restore_unlimited(monkeypatch):
+    """env 로 0(무제한)을 명시하면 모듈 상수가 그걸 덮지 않는다."""
+    from poc.workflow_3.recording_filter import filter_recording as fr
+
+    monkeypatch.setenv("RECORDING_FILTER_MAX_VLM_CALLS", "0")
+    monkeypatch.setattr(fr, "MAX_VLM_CALLS", 300)
+    assert fr._load_settings_with_call_cap().max_vlm_calls == 0
+
+
+def test_injected_settings_are_not_capped(tmp_path, monkeypatch):
+    """settings 를 주입하면 모듈 상수를 적용하지 않는다(주입값이 곧 계약)."""
+    from poc.workflow_3.recording_filter import filter_recording as fr
+
+    monkeypatch.delenv("RECORDING_FILTER_MAX_VLM_CALLS", raising=False)
+    monkeypatch.setattr(fr, "MAX_VLM_CALLS", 300)
+    rec = _recording_dir(tmp_path)
+    settings = RecordingFilterSettings(
+        vlm_request_delay_sec=0.0, min_change_area_px=5000,
+        element_label_enabled=False, max_vlm_calls=0,
+    )
+    run_filter(input_dir=rec, settings=settings, client=_FakeClient())
+    summary = json.loads(
+        (rec.parent / "recording_filter" / "summary.json").read_text(encoding="utf-8")
+    )
+    assert summary["max_vlm_calls"] == 0, summary

@@ -104,15 +104,22 @@ def _difference_mask(prev_frame, curr_frame):
     return mask
 
 
-def infer_probable_close_click(capture_dir, change_events, click_events) -> dict | None:
+def infer_probable_close_click(capture_dir, candidate_events, click_events) -> dict | None:
     """세 보수적 gate가 모두 성립할 때만 비재생용 닫기 정황을 반환한다.
 
     이 함수는 녹화 후처리용 증거를 만들 뿐, ClickEvent나 실행 신호를 생성하지 않는다.
+
+    candidate_events 는 마지막 원소만 본다. 호출부(run_filter)는 Stage 1.5 게이트
+    생존 목록이 아니라 raw Stage 1 목록을 넘긴다 - 녹화의 진짜 마지막 변화가
+    ambient/가림으로 빠졌거나 Stage 2a 상한에 잘렸을 수 있고, 생존 목록의 끝을
+    쓰면 더 오래된 우상단 후보가 terminal 로 승격되기 때문이다. 그래서 이름이
+    change_events 가 아니다. 넓은 입력이 gate 를 느슨하게 만들지는 않는다 -
+    _cursor_missing_for 가 그 rank 의 cursor 결과가 없으면 fail closed 한다.
     """
-    if _load_stop_reason(Path(capture_dir)) != "window_gone" or not change_events:
+    if _load_stop_reason(Path(capture_dir)) != "window_gone" or not candidate_events:
         return None
 
-    change = change_events[-1]
+    change = candidate_events[-1]
     if not _cursor_missing_for(change, click_events):
         return None
 

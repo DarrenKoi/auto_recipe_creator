@@ -52,10 +52,12 @@ As-built additions (2026-08-13), not anticipated when this plan was written:
 **Interfaces:**
 - Consumes: `capture_dir: Path`, `change_events: list[ChangeEvent]`, `click_events: list[ClickEvent]`.
 - Produces: `infer_probable_close_click(capture_dir, change_events, click_events) -> dict | None` in the common timeline schema.
-  **As-built (2026-08-13):** the signature is unchanged, but `run_filter` passes the raw Stage 1 list
-  rather than the gate survivors (see Task 2 Step 5), so the `change_events` parameter name now reads
-  narrower than what it receives. The function only ever uses `change_events[-1]`, and the cursor
-  lookup fails closed when that exact rank has no cursor result, so the wider input cannot loosen a gate.
+  **As-built (2026-08-13):** the second parameter shipped as `candidate_events`, not `change_events`.
+  `run_filter` passes the raw Stage 1 list rather than the gate survivors (see Task 2 Step 5), and
+  `change_events` is the established name for the gate-surviving list everywhere else in this
+  package - keeping it here would have named the parameter after the one input it must not receive.
+  The function only ever uses `candidate_events[-1]`, and the cursor lookup fails closed when that
+  exact rank has no cursor result, so the wider input cannot loosen a gate.
 - Produces: `write_close_click_evidence(event: dict, change: ChangeEvent, out_dir: Path) -> list[Path]`.
 
 - [ ] **Step 1: Write a synthetic positive test**

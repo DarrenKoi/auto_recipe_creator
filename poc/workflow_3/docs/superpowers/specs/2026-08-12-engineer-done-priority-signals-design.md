@@ -120,6 +120,13 @@ Assist 에서 `fail` 을 한 번이라도 실제로 관측하면 `assist_failure
 유지한다. 이 상태에서는 numerator fallback 을 사용하지 않는다. 이후 Assist 가 다시 읽혀
 최신 정상 6행을 직접 확인한 경우에만 primary 경로로 완료할 수 있다.
 
+여기서 "실제로 관측" 은 **`status == "usable"` 인 관측만** 뜻한다(2026-08-13 명확화).
+`unusable` 회차의 verdict 는 판독 실패의 부산물이다 - 예를 들어 Measurement 열이 전부
+blank 라 `measurement_unreadable` 로 떨어진 프레임에서도 Addressing1 이 붉으면 행 verdict 는
+`fail` 로 계산된다. 그 한 장까지 세면 실제 측정 실패가 없었는데도 numerator fallback 이
+watch 내내 닫혀, Assist 가 계속 안 읽히는 상황에서 완료를 영영 감지하지 못한다.
+`assist_failure_seen` 은 되돌릴 수 없는 상태이므로 판독을 신뢰할 수 있는 회차에서만 세운다.
+
 ### 3. numerator fallback
 
 Assist 가 다음 이유로 **3회 연속 unusable** 일 때만 fallback 을 연다.
@@ -222,6 +229,14 @@ assist_ocr_read_<reason>.jpg
 assist_ocr_read_<reason>.json
 assist_grid_<seq>.jpg
 ```
+
+이 "한 폴더에 평평하게" 는 2026-08-13 에 완성됐다. 전역 `debug_images/assist_score` 대 run 별
+폴더의 분리는 먼저 해결됐지만, 로케이터 산출물만 `analyze_window_target` 안에서
+`debug_image_path(model_name=...)` 를 타는 바람에 같은 run 안에서도
+`<run>/<coarse>__<refine>/` 와 `<run>/` 로 한 번 더 갈렸다. `analyze_window_target` 에
+`artifact_model_subdir` 를 추가하고(기본 `True` 라 다른 호출부는 그대로) Assist 만 `False` 로
+넘겨 해결한다. 모델 하위 폴더는 여러 모델을 비교할 때 필요한 것이지, 한 run 의 증거를
+대조할 때는 방해만 된다.
 
 locator overlay 에는 다음을 서로 다른 색과 label 로 한 장에 그린다.
 

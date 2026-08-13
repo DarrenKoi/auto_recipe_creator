@@ -29,6 +29,18 @@
 - `poc/workflow_3/recording_filter/test_filter_recording.py`: end-to-end artifact/timeline proof.
 - `poc/workflow_3/README.md`: operator meaning and safety boundary.
 
+As-built additions (2026-08-13), not anticipated when this plan was written:
+
+- `poc/workflow_3/workflow_extract/grouping.py` + `extract_workflow.py`: the downstream consumer
+  must also refuse to treat an inferred event as a performed action. Filtering only inside
+  `recording_filter` was not enough - `workflow_extract` reads the timeline and would have rendered
+  `probable_close_click` into a Korean procedure step as though the engineer had really clicked it.
+  `_workflow_action_events` drops non-`replayable` events before grouping; `grouping.py` carries the
+  matching R5 guard.
+- `poc/workflow_3/recording_filter/filter_recording.py:_reset_close_click_evidence`: clears a stale
+  `close_click_evidence/` directory at the start of a run. Without it, a re-run that infers nothing
+  leaves the previous run's evidence images on disk, which reads as "this run found a close click".
+
 ---
 
 ### Task 1: Build a Conservative Close-Click Evidence Classifier
@@ -40,6 +52,10 @@
 **Interfaces:**
 - Consumes: `capture_dir: Path`, `change_events: list[ChangeEvent]`, `click_events: list[ClickEvent]`.
 - Produces: `infer_probable_close_click(capture_dir, change_events, click_events) -> dict | None` in the common timeline schema.
+  **As-built (2026-08-13):** the signature is unchanged, but `run_filter` passes the raw Stage 1 list
+  rather than the gate survivors (see Task 2 Step 5), so the `change_events` parameter name now reads
+  narrower than what it receives. The function only ever uses `change_events[-1]`, and the cursor
+  lookup fails closed when that exact rank has no cursor result, so the wider input cannot loosen a gate.
 - Produces: `write_close_click_evidence(event: dict, change: ChangeEvent, out_dir: Path) -> list[Path]`.
 
 - [ ] **Step 1: Write a synthetic positive test**
@@ -360,11 +376,11 @@ from poc.workflow_3.recording_filter.close_click_evidence import (
     write_close_click_evidence,
 )
 
-probable_close = infer_probable_close_click(capture_dir, change_events, click_events)
+probable_close = infer_probable_close_click(capture_dir, stage1_events, click_events)
 inferred_events = [probable_close] if probable_close is not None else []
 if probable_close is not None:
     write_close_click_evidence(
-        probable_close, change_events[-1], out_dir / "close_click_evidence"
+        probable_close, stage1_events[-1], out_dir / "close_click_evidence"
     )
 
 timeline = build_timeline(
@@ -377,6 +393,18 @@ timeline = build_timeline(
 ```
 
 Add `"probable_close_clicks": len(inferred_events)` to `summary.json`. Because the timeline may now contain evidence without a true click, retain return status `success` when the timeline is non-empty.
+
+> **As-built (2026-08-13):** inference reads `stage1_events` (the raw Stage 1 list), not the
+> gate-surviving `change_events` shown in earlier drafts of this step. The real last event of a
+> recording may have been dropped as `ambient`/occluded or cut by the Stage 2a cap; walking the
+> survivor list instead would promote an older top-right candidate to "terminal". The classifier
+> fails closed when the exact rank has no cursor result, so the wider input does not loosen any gate.
+>
+> This decoupling is why the `success` sentence above needed enforcing rather than just stating:
+> "gate discarded everything" and "timeline is empty" are no longer the same condition, so
+> `run_filter` must check `timeline` itself before returning `all_events_discarded`. Shipped in
+> `filter_recording.py:514` with regression test
+> `test_run_filter_reports_success_when_only_inferred_event_survives`.
 
 - [ ] **Step 6: Run recording-filter regressions and verify GREEN**
 
@@ -434,6 +462,17 @@ rg -n "close_click_evidence|probable_close_click" \
 ```
 
 Expected: no Python imports or action handling in live layers. A README mention is acceptable.
+
+> **As-built (2026-08-13):** the live-layer sweep above is necessary but not sufficient. Extend it to
+> the offline consumer, which must not render inferred evidence as a performed step:
+>
+> ```bash
+> rg -n "replayable|probable_close_click" poc/workflow_3/workflow_extract
+> ```
+>
+> Expected: `extract_workflow.py` and `grouping.py` both filter on `replayable is False` before an
+> event can become a procedure action. "Evidence-only" is a property of the whole chain from
+> timeline to Korean procedure, not of `recording_filter` alone.
 
 - [ ] **Step 3: Run full focused verification**
 

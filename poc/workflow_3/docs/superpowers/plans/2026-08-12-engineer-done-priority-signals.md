@@ -131,6 +131,16 @@ def _number_column_for(cx, header_boxes, active_columns):
 
 Build row boxes and `AssistLayout.columns` from `active_columns`, not all three legacy columns. Leave `row_verdict` unchanged because missing Addressing1 already defaults to blank and Measurement remains authoritative.
 
+> **As-built (2026-08-13):** the shipped `_number_column_for` also guards the `len(active_columns) > 1`
+> branch, which the snippet above left as plain nearest-header matching. Office capture showed
+> Addressing2 scores landing inside the active columns' x geometry: nearest-header matching has no
+> notion of "this number belongs to a column we are not scoring", so an Addressing2 digit was
+> silently attributed to Addressing1 or Measurement and corrupted the verdict. The implementation
+> rejects a number whose center falls inside an **inactive** header's expected span (same
+> half-header-width tolerance) before running nearest-column matching, and clamps the per-column
+> `number_x_ranges` away from inactive header spans. See `sem_monitor/assist_score.py:423-443` and
+> `:541-552`. Tolerance for legitimate score/header bbox offsets inside active columns is unchanged.
+
 - [ ] **Step 4: Run the whole Assist suite and verify GREEN**
 
 Run:
@@ -750,6 +760,23 @@ engineer_done_numerator_increase_reads=env_int(
 ```
 
 Remove `engineer_done_min_delta` and `ALIGN_FAIL_ENGINEER_DONE_MIN_DELTA` references from executable code and current README. Do not edit the historical 2026-08-11 spec/plan.
+
+> **As-built (2026-08-13):** replacing the fields was not enough on its own. These three settings are
+> the only thing standing between "engineer finished" and "close the tool window", and every one of
+> them fails **open** if misconfigured: `ok_streak=0` completes on the first poll,
+> `numerator_increase_reads=0` completes without any counter growth. Env vars are typed by hand at
+> the office, so a typo silently disarms the detector instead of erroring.
+>
+> Shipped alongside the field replacement:
+>
+> - `validate_engineer_done_priority_settings` (`config.py:48`), called from
+>   `Workflow3Settings.__post_init__` (`config.py:127`) so an invalid combination cannot be
+>   constructed at all.
+> - A `_configuration_error` fail-closed path in the detector
+>   (`engineer_done_align_adjustment.py:169-182`). With the frozen dataclass validating on
+>   construction this branch is unreachable in production and only fires for hand-built test
+>   doubles - kept deliberately, because the detector must never silently complete on a settings
+>   object it did not construct.
 
 - [ ] **Step 6: Run the complete detector suite and verify GREEN**
 

@@ -107,6 +107,15 @@ def extract_numerator(text: str) -> int | None:
 
 @dataclass(frozen=True)
 class NumeratorObservation:
+    """Recipe Monitor 카운터 N 을 한 회차 관측한 결과.
+
+    sampled=False 는 이번 회차에 읽기를 시도하지 않았다는 뜻이고(throttle/우선순위상
+    Assist 로 충분했던 경우), sampled=True 인데 value 가 None 이면 읽으려 했으나
+    실패한 것이다 - 이 둘을 섞으면 "못 읽었다" 와 "안 읽었다" 가 구분되지 않아
+    fallback 판정이 무너진다. reason 은 그 사유, reset_reason 은 이 관측이
+    누적 상태를 되돌리게 만든 사유다.
+    """
+
     sampled: bool
     value: int | None = None
     reason: str = ""
@@ -182,10 +191,13 @@ class EngineerDoneDetector:
             if self._assist_fn is not None
             else AssistObservation(status="unusable", reason="assist_fn_missing")
         )
-        verdicts = [row.verdict for row in assist.rows]
-        if "fail" in verdicts:
-            self._assist_failure_seen = True
         if assist.status == "usable":
+            # fail 은 '판독 가능한' 관측에서만 인정한다. unusable(예: Measurement 열이
+            # 전부 blank) 회차의 verdict 는 판독 실패의 부산물이라, 그것까지 세면
+            # Addressing1 이 붉은 프레임 한 장만으로 numerator fallback 이 영구히
+            # 닫힌다(design 3절 "실제로 관측하면").
+            if "fail" in [row.verdict for row in assist.rows]:
+                self._assist_failure_seen = True
             self._assist_unusable_streak = 0
             if self._assist_baseline_fingerprint is None:
                 self._assist_baseline_fingerprint = assist.panel_fingerprint
@@ -552,13 +564,13 @@ def _make_assist_fn(tool_window, settings, *, debug_dir=None):
                 state["seq"] += 1
                 save_assist_overlay(
                     panel, state["layout"], rows,
-                    debug_dir / f"assist_{state['seq']:03d}.jpg",
+                    debug_dir / f"assist_grid_{state['seq']:03d}.jpg",
                 )
                 state["last_verdicts"] = verdicts
             measurement_states = [
                 row.cells.get("Measurement", "blank") for row in rows
             ]
-            if all(state in {"blank", "unknown"} for state in measurement_states):
+            if all(cell in {"blank", "unknown"} for cell in measurement_states):
                 return AssistObservation(
                     status="unusable",
                     rows=rows,

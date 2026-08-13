@@ -510,7 +510,16 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
             "녹화 창 핸들/가림 판정을, ambient 가 대부분이면 영역 지도(region_map.json)를 "
             "먼저 보세요."
         )
-        return "all_events_discarded"
+        if not timeline:
+            return "all_events_discarded"
+        # 게이트가 Stage 1 변화를 전부 걷어냈어도, 닫기 정황은 생존 목록이 아니라 raw
+        # Stage 1 tail 에서 추론하므로 타임라인이 비어 있지 않을 수 있다. 산출물이 남은
+        # 실행을 실패 상태로 돌려주면 __main__ 이 exit 1 로 끝나 정상 결과가 실패로
+        # 읽힌다(plan 2 Task 2 Step 5: 타임라인이 비지 않으면 success 를 유지한다).
+        print(
+            "[INFO] 게이트 생존 이벤트는 없지만 추론된 이벤트가 있어 "
+            "타임라인은 비어 있지 않습니다 - success 로 보고합니다."
+        )
     return "success" if timeline else "no_clicks"
 
 

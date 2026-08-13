@@ -347,7 +347,7 @@ def _scale_bbox_to_resized_crop(bbox: dict, crop_box: dict, resized_w: int, resi
 def _save_pipeline_inputs(
     image: Image.Image,
     zoom_image: Image.Image,
-    pipeline_model_name: str,
+    artifact_model_name: str | None,
     debug_stamp: str,
     *,
     debug_image_dir: Path,
@@ -358,13 +358,13 @@ def _save_pipeline_inputs(
     capture_path = debug_image_path(
         debug_image_dir,
         f"{artifact_prefix}_capture.jpg",
-        model_name=pipeline_model_name,
+        model_name=artifact_model_name,
         timestamp_tag=debug_stamp,
     )
     zoom_capture_path = debug_image_path(
         debug_image_dir,
         f"{artifact_prefix}_zoom_crop.jpg",
-        model_name=pipeline_model_name,
+        model_name=artifact_model_name,
         timestamp_tag=debug_stamp,
     )
     save_debug_jpeg(image, capture_path)
@@ -377,7 +377,7 @@ def _save_pipeline_inputs(
 
 def _save_pipeline_failure_capture(
     image: Image.Image,
-    pipeline_model_name: str,
+    artifact_model_name: str | None,
     debug_stamp: str,
     *,
     debug_image_dir: Path,
@@ -387,7 +387,7 @@ def _save_pipeline_failure_capture(
     capture_path = debug_image_path(
         debug_image_dir,
         f"{artifact_prefix}_capture.jpg",
-        model_name=pipeline_model_name,
+        model_name=artifact_model_name,
         timestamp_tag=debug_stamp,
     )
     save_debug_jpeg(image, capture_path)
@@ -400,7 +400,7 @@ def _save_full_pipeline_overlay(
     coarse_result: dict,
     crop_box: dict | None,
     refined_full_point: dict | None,
-    pipeline_model_name: str,
+    artifact_model_name: str | None,
     debug_stamp: str,
     *,
     debug_image_dir: Path,
@@ -440,7 +440,7 @@ def _save_full_pipeline_overlay(
     overlay_path = debug_image_path(
         debug_image_dir,
         artifact_filename,
-        model_name=pipeline_model_name,
+        model_name=artifact_model_name,
         timestamp_tag=debug_stamp,
     )
     save_marked_bboxes(image, overlay_items, overlay_colors, overlay_path)
@@ -453,7 +453,7 @@ def _save_zoom_pipeline_overlay(
     coarse_bbox_pixels: dict,
     crop_box: dict,
     refine_point: dict | None,
-    pipeline_model_name: str,
+    artifact_model_name: str | None,
     debug_stamp: str,
     *,
     debug_image_dir: Path,
@@ -491,7 +491,7 @@ def _save_zoom_pipeline_overlay(
     overlay_path = debug_image_path(
         debug_image_dir,
         artifact_filename,
-        model_name=pipeline_model_name,
+        model_name=artifact_model_name,
         timestamp_tag=debug_stamp,
     )
     save_marked_bboxes(zoom_image, overlay_items, overlay_colors, overlay_path)
@@ -613,6 +613,7 @@ def analyze_window_target(
     coarse_service_slug: str | None = None,
     refine_service_slug: str | None = None,
     artifact_naming: str = "legacy",
+    artifact_model_subdir: bool = True,
     result_mode: str = "ui_venus_then_mai_ui_single_target",
     image: Image.Image | None = None,
     timeout_sec: float | None = None,
@@ -623,6 +624,8 @@ def analyze_window_target(
     coarse/refine slug 를 명시하지 않으면 VLM_LOCATOR_COMBO env(기본 mai-ui>mai-ui)
     를 따른다 - 벤치만 조합을 직접 지정한다. artifact_naming="service" 는 실제
     route slug 를 artifact 이름/overlay 라벨에 쓰며, 기본 legacy 는 기존 산출물을 보존한다.
+    artifact_model_subdir=False 는 debug_image_dir 아래 모델 하위 폴더를 만들지 않는다 -
+    호출부가 이미 run 전용 폴더를 넘겨 한 run 의 산출물을 한곳에 모으려는 경우다.
     """
     if coarse_service_slug is None or refine_service_slug is None:
         env_coarse, env_refine = resolve_locator_services()
@@ -675,7 +678,12 @@ def analyze_window_target(
         _client_kw["timeout_sec"] = timeout_sec
     coarse_client = Workflow1VLMClient(service_slug=coarse_service_slug, **_client_kw)
     refine_client = Workflow1VLMClient(service_slug=refine_service_slug, **_client_kw)
-    pipeline_model_name = f"{coarse_client.model_name}__{refine_client.model_name}"
+    artifact_model_name = f"{coarse_client.model_name}__{refine_client.model_name}"
+    if not artifact_model_subdir:
+        # 호출부가 이미 run 전용 debug_dir 을 넘긴 경우다. 그 아래에 모델 하위 폴더를
+        # 또 파면 한 run 의 산출물이 로케이터/OCR 로 갈라져, 어느 그림이 어느 회차의
+        # 것인지 대조할 수 없다. None 이면 debug_image_path 가 하위 폴더를 만들지 않는다.
+        artifact_model_name = None
 
     full_b64, full_w, full_h = encode_image_webp(image)
     coarse_result = _run_ui_venus_coarse_bbox(
@@ -684,7 +692,7 @@ def analyze_window_target(
     if coarse_result is None or coarse_result["bbox_pixels"] is None:
         capture_path = _save_pipeline_failure_capture(
             image=image,
-            pipeline_model_name=pipeline_model_name,
+            artifact_model_name=artifact_model_name,
             debug_stamp=debug_stamp,
             debug_image_dir=debug_image_dir,
             artifact_prefix=artifact_prefix,
@@ -692,7 +700,7 @@ def analyze_window_target(
         coarse_response_path = debug_image_path(
             debug_image_dir,
             artifact_names["coarse_response"],
-            model_name=pipeline_model_name,
+            model_name=artifact_model_name,
             timestamp_tag=debug_stamp,
         )
         save_debug_text(
@@ -702,7 +710,7 @@ def analyze_window_target(
         result_json_path = debug_image_path(
             debug_image_dir,
             artifact_names["result_json"],
-            model_name=pipeline_model_name,
+            model_name=artifact_model_name,
             timestamp_tag=debug_stamp,
         )
         artifacts = {
@@ -760,7 +768,7 @@ def analyze_window_target(
     input_paths = _save_pipeline_inputs(
         image=image,
         zoom_image=zoom_image,
-        pipeline_model_name=pipeline_model_name,
+        artifact_model_name=artifact_model_name,
         debug_stamp=debug_stamp,
         debug_image_dir=debug_image_dir,
         log_name=log_name,
@@ -769,13 +777,13 @@ def analyze_window_target(
     coarse_response_path = debug_image_path(
         debug_image_dir,
         artifact_names["coarse_response"],
-        model_name=pipeline_model_name,
+        model_name=artifact_model_name,
         timestamp_tag=debug_stamp,
     )
     refine_response_path = debug_image_path(
         debug_image_dir,
         artifact_names["refine_response"],
-        model_name=pipeline_model_name,
+        model_name=artifact_model_name,
         timestamp_tag=debug_stamp,
     )
     save_debug_text(coarse_response_path, coarse_result["response_text"])
@@ -798,7 +806,7 @@ def analyze_window_target(
             coarse_result=coarse_result,
             crop_box=crop_box,
             refined_full_point=None,
-            pipeline_model_name=pipeline_model_name,
+            artifact_model_name=artifact_model_name,
             debug_stamp=debug_stamp,
             debug_image_dir=debug_image_dir,
             artifact_filename=partial_overlay_filename,
@@ -812,7 +820,7 @@ def analyze_window_target(
             coarse_bbox_pixels=coarse_result["bbox_pixels"],
             crop_box=crop_box,
             refine_point=None,
-            pipeline_model_name=pipeline_model_name,
+            artifact_model_name=artifact_model_name,
             debug_stamp=debug_stamp,
             debug_image_dir=debug_image_dir,
             artifact_filename=partial_zoom_overlay_filename,
@@ -823,7 +831,7 @@ def analyze_window_target(
         result_json_path = debug_image_path(
             debug_image_dir,
             artifact_names["result_json"],
-            model_name=pipeline_model_name,
+            model_name=artifact_model_name,
             timestamp_tag=debug_stamp,
         )
         artifacts = {
@@ -903,7 +911,7 @@ def analyze_window_target(
         coarse_result=coarse_result,
         crop_box=crop_box,
         refined_full_point=refined_full_point,
-        pipeline_model_name=pipeline_model_name,
+        artifact_model_name=artifact_model_name,
         debug_stamp=debug_stamp,
         debug_image_dir=debug_image_dir,
         artifact_filename=artifact_names["overlay"],
@@ -917,7 +925,7 @@ def analyze_window_target(
         coarse_bbox_pixels=coarse_result["bbox_pixels"],
         crop_box=crop_box,
         refine_point=refine_result["point"],
-        pipeline_model_name=pipeline_model_name,
+        artifact_model_name=artifact_model_name,
         debug_stamp=debug_stamp,
         debug_image_dir=debug_image_dir,
         artifact_filename=artifact_names["zoom_overlay"],
@@ -959,7 +967,7 @@ def analyze_window_target(
     result_json_path = debug_image_path(
         debug_image_dir,
         artifact_names["result_json"],
-        model_name=pipeline_model_name,
+        model_name=artifact_model_name,
         timestamp_tag=debug_stamp,
     )
     result_payload["artifacts"]["result_json"] = str(result_json_path)

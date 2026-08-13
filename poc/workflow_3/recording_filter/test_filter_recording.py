@@ -439,6 +439,48 @@ def test_run_filter_reports_when_occlusion_discards_everything(tmp_path, monkeyp
     assert list((out_dir / "change_events").glob("*.jpg")) == []
 
 
+def test_run_filter_reports_success_when_only_inferred_event_survives(tmp_path, monkeypatch):
+    """게이트가 전멸시켜도 추론 이벤트로 타임라인이 남으면 success 다.
+
+    닫기 정황은 게이트 생존 목록이 아니라 raw Stage 1 tail 에서 추론하므로, 게이트가
+    모든 변화를 걷어낸 실행에서도 타임라인이 비지 않을 수 있다. 그때 실패 상태를
+    돌려주면 __main__ 이 exit 1 로 끝나 정상 산출물이 실패로 읽힌다
+    (plan 2 Task 2 Step 5: 타임라인이 비지 않으면 success 를 유지한다).
+    """
+    from poc.workflow_3.recording_filter import filter_recording as fr
+
+    rec = _recording_dir(tmp_path)
+    _stub_sem_box(monkeypatch, None)
+    rect = {"left": 0, "top": 0, "right": 600, "bottom": 400}
+    _write_sidecar(rec, [
+        {"frame": f"seq_{i}", "t_sec": t, "window_rect": rect,
+         "foreground_title": "Notepad", "occlusion": "full",
+         "cursor_screen_xy": [10, 10], "cursor_in_window": False}
+        for i, t in enumerate((0.0, 0.3, 0.6))
+    ])
+
+    # 게이트는 그대로 전멸시키되, 닫기 정황 추론만 1건 성공한 상황을 만든다.
+    monkeypatch.setattr(
+        fr, "infer_probable_close_click",
+        lambda capture_dir, events, clicks: {
+            "t_sec": 0.6, "kind": "probable_close_click", "element": "close_button",
+        },
+    )
+    monkeypatch.setattr(fr, "write_close_click_evidence", lambda *a, **k: None)
+
+    settings = RecordingFilterSettings(
+        vlm_request_delay_sec=0.0, min_change_area_px=5000, element_label_enabled=False,
+    )
+    status = run_filter(input_dir=rec, settings=settings, client=_FakeClient())
+    assert status == "success", status
+
+    out_dir = rec.parent / "recording_filter"
+    timeline = json.loads((out_dir / "interaction_timeline.json").read_text(encoding="utf-8"))
+    events = timeline["events"] if isinstance(timeline, dict) else timeline
+    assert len(events) == 1, timeline
+    assert events[0]["replayable"] is False, timeline
+
+
 def test_change_event_copies_only_gate_survivors(tmp_path, monkeypatch):
     """게이트를 통과한 프레임만 change_events/ 로 복사된다(FINDING 7).
 

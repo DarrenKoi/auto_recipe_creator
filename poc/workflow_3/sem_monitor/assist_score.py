@@ -423,10 +423,9 @@ def _assign_number_column(cx: float, header_boxes: dict):
 def _number_column_for(cx: float, header_boxes: dict, active_columns: tuple):
     """활성 열 헤더를 기준으로 score 항목을 배정한다."""
     if len(active_columns) > 1:
-        # Ignore scores inside an inactive header's expected span before applying
-        # nearest-column matching to active headers. This keeps Addressing2 OCR
-        # out of active x geometry while retaining tolerance for score/header bbox
-        # offsets in legitimate active columns.
+        # 비활성 헤더의 예상 구간 안에 들어온 score 는 최근접 열 매칭 전에 버린다.
+        # Addressing2 의 OCR 이 활성 열 x 기하로 새어 들어오는 것을 막으면서,
+        # 정상 활성 열에서는 score/header bbox 어긋남에 대한 여유를 그대로 남긴다.
         for column, box in header_boxes.items():
             if column in active_columns:
                 continue
@@ -780,6 +779,9 @@ def locate_assist_layout(window, window_title: str, backend: str, image, *, debu
             component_name=LOG_NAME,
             artifact_prefix="assist_panel",
             artifact_naming="service",
+            # 한 run 의 Assist 산출물(로케이터/crop/OCR/격자)을 debug_dir 한 곳에
+            # 평평하게 모은다 - 모델 하위 폴더로 갈리면 대조가 안 된다(design 디버그 산출물 절).
+            artifact_model_subdir=False,
             image=image,
             timeout_sec=15.0,
         )

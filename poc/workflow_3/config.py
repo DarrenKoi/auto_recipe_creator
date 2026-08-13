@@ -100,9 +100,9 @@ class Workflow3Settings(WorkflowSettings):
     block_input_enabled: bool = False
 
     # --- 상시 녹화 (변화 감지 기반 적응 캡처) ---
-    recording_poll_sec: float = 0.3  # 샘플링 간격 — 조작 중 커서 궤적 추적 밀도.
+    recording_poll_sec: float = 0.05  # 샘플링 간격 — 조작 중 커서 궤적 추적 밀도.
     recording_heartbeat_sec: float = 5.0  # 변화 없어도 이 간격마다 1장 저장.
-    recording_change_min_px: int = 4  # 변화 판정: delta>15 인 다운샘플 픽셀 최소 개수.
+    recording_change_min_px: int = 2  # 변화 판정: delta>10 인 다운샘플 픽셀 최소 개수.
     recording_max_sec: float = 900.0
     engineer_watch_sec: float = 300.0  # 미보정 watch 상한(cap, 5분) - done 감지 시 조기 종료.
 
@@ -268,9 +268,9 @@ def load_workflow3_settings() -> Workflow3Settings:
         rcs_recovery_enabled=env_flag("ALIGN_FAIL_RCS_RECOVERY", default=False),
         keep_awake=env_flag("ALIGN_FAIL_KEEP_AWAKE", default=True),
         block_input_enabled=env_flag("ALIGN_FAIL_BLOCK_INPUT", default=False),
-        recording_poll_sec=env_float("ALIGN_FAIL_RECORDING_POLL_SEC", 0.3),
+        recording_poll_sec=env_float("ALIGN_FAIL_RECORDING_POLL_SEC", 0.05),
         recording_heartbeat_sec=env_float("ALIGN_FAIL_RECORDING_HEARTBEAT_SEC", 5.0),
-        recording_change_min_px=env_int("ALIGN_FAIL_RECORDING_CHANGE_MIN_PX", 4),
+        recording_change_min_px=env_int("ALIGN_FAIL_RECORDING_CHANGE_MIN_PX", 2),
         recording_max_sec=env_float("ALIGN_FAIL_RECORDING_MAX_SEC", 900.0),
         engineer_watch_sec=env_float("ALIGN_FAIL_ENGINEER_WATCH_SEC", 300.0),
         rcp_msr_gather_enabled=env_flag("ALIGN_FAIL_GATHER_RCP_MSR", default=True),

@@ -10,10 +10,10 @@ RCS 는 원격 접속 프로그램이라 장비 측 마우스 커서/움직임�
 ``filter_frames_by_change`` 의 선례를 따라 **빠른 샘플링 + 변화 감지 저장** 으로
 동작한다:
 
-  * ``poll_sec``(기본 0.3s) 간격으로 캡처해 직전 저장 프레임과 비교한다.
-    지표는 1/4 다운샘플 grayscale 에서 **변화 폭이 노이즈 바닥(픽셀 delta>15)을
+  * ``poll_sec``(기본 0.05s) 간격으로 캡처해 직전 저장 프레임과 비교한다.
+    지표는 1/4 다운샘플 grayscale 에서 **변화 폭이 노이즈 바닥(픽셀 delta>10)을
     넘는 픽셀의 개수** — 평균 차이는 작은 커서 이동에 둔감해서 쓰지 않는다.
-  * 변화 픽셀이 ``change_min_px``(기본 4) 이상이면 저장 — 조작 중에는 ~3fps 로
+  * 변화 픽셀이 ``change_min_px``(기본 2) 이상이면 저장 — 조작 중에는 ~20fps 로
     커서 움직임/메뉴/다이얼로그 전이를 촘촘히 따라간다.
   * 변화가 없으면 ``heartbeat_sec``(기본 5s)마다 1장만 저장 — idle 구간의
     디스크 낭비를 막으면서 "이 구간엔 아무 일도 없었다"는 증거를 남긴다.
@@ -44,7 +44,7 @@ FAILURE_WINDOW_SEC = 5.0
 # 변화 비교용 다운샘플 간격 (양 축 1/4 → 픽셀 1/16, 커서 이동도 충분히 감지됨).
 _DIFF_DOWNSAMPLE = 4
 # 픽셀 변화로 인정하는 최소 delta — RCS 스트림/JPEG 압축 노이즈 바닥값 위.
-_PIXEL_DELTA_MIN = 15.0
+_PIXEL_DELTA_MIN = 10.0
 
 
 # 아래 두 함수는 monitor/engineer_done_align_adjustment.py 의 분자 변화 감지에서도 재사용된다.
@@ -81,9 +81,9 @@ class RecordingSession:
         out_dir: Path,
         *,
         tag: str,
-        poll_sec: float = 0.3,
+        poll_sec: float = 0.05,
         heartbeat_sec: float = 5.0,
-        change_min_px: int = 4,
+        change_min_px: int = 2,
         max_sec: float = 900.0,
         jpeg_quality: int = 95,
         capture_fn=None,
@@ -91,7 +91,7 @@ class RecordingSession:
         self.tool_window = tool_window
         self.out_dir = Path(out_dir)
         self.tag = tag
-        self.poll_sec = max(0.1, float(poll_sec))
+        self.poll_sec = max(0.01, float(poll_sec))
         self.heartbeat_sec = max(self.poll_sec, float(heartbeat_sec))
         self.change_min_px = max(1, int(change_min_px))
         self.max_sec = float(max_sec)

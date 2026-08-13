@@ -75,9 +75,9 @@ class ManualRecordSettings:
     max_sec: float = 600.0        # 실질 상한. 0 이면 무제한.
     max_frames: int = 4000        # 백스톱. 정상이면 안 걸린다. 0 이면 무제한.
     max_disk_mb: float = 2000.0   # 백스톱. 0 이면 무제한.
-    poll_sec: float = 0.2         # 샘플링 요청 간격(실제 주기는 처리시간 + 이 값).
+    poll_sec: float = 0.05        # 샘플링 요청 간격(실제 주기는 처리시간 + 이 값).
     heartbeat_sec: float = 5.0    # 변화가 없어도 이 간격마다 1장.
-    change_min_px: int = 4        # 변화 판정 임계(알람 녹화와 동일).
+    change_min_px: int = 2        # 변화 판정 임계(알람 녹화와 동일).
     jpeg_quality: int = 85        # q95 대비 용량 약 절반.
     eqp_id: str = ""              # 모니터링 창이 여럿일 때만 필요.
     meta_enabled: bool = True     # 사이드카 기록 on/off.
@@ -92,9 +92,9 @@ def load_manual_record_settings() -> ManualRecordSettings:
         max_sec=env_float("MANUAL_RECORD_MAX_SEC", 600.0),
         max_frames=env_int("MANUAL_RECORD_MAX_FRAMES", 4000),
         max_disk_mb=env_float("MANUAL_RECORD_MAX_DISK_MB", 2000.0),
-        poll_sec=env_float("MANUAL_RECORD_POLL_SEC", 0.2),
+        poll_sec=env_float("MANUAL_RECORD_POLL_SEC", 0.05),
         heartbeat_sec=env_float("MANUAL_RECORD_HEARTBEAT_SEC", 5.0),
-        change_min_px=env_int("MANUAL_RECORD_CHANGE_MIN_PX", 4),
+        change_min_px=env_int("MANUAL_RECORD_CHANGE_MIN_PX", 2),
         jpeg_quality=env_int("MANUAL_RECORD_JPEG_QUALITY", 85),
         eqp_id=os.getenv("MANUAL_RECORD_EQP_ID", "").strip(),
         meta_enabled=env_flag("MANUAL_RECORD_META", True),

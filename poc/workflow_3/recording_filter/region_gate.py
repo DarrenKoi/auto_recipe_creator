@@ -38,7 +38,7 @@ FRAME_META_FILENAME = "frame_meta.jsonl"
 REGION_MAP_KEY = "generations"
 
 # (2026-08-10 리뷰 FINDING 2) 최근접 조인 최대 허용 간격(초).
-# 레코더는 poll_sec(기본 0.2s)마다 캡처하고, 사이드카는 프레임 저장 여부와 무관하게
+# 레코더는 poll_sec(기본 0.05s)마다 캡처하고, 사이드카는 프레임 저장 여부와 무관하게
 # 캡처마다 한 줄씩 남긴다(monitor/frame_meta.py, manual_record.py:_make_capture_fn) -
 # 그래서 writer 가 살아있는 한 어떤 이벤트 시각에도 매우 가까운(대개 1초 이내) 레코드가
 # 있어야 정상이다. 반대로 writer 는 쓰기 실패 시 영구적으로 자기 자신을 끈다

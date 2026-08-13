@@ -4,36 +4,39 @@
 본 측정이 정상적으로 진행 중이다"를 감지해 녹화를 조기 종료하고, 그 결과 cycle
 teardown 이 tool 창을 자동으로 닫는다. done 판정 우선순위는 다음과 같다:
 
-  1. Assist primary: watch 시작 뒤 Measurement 패널 fingerprint 가 새로 바뀌고,
-     Recipe Monitor Assist Window 가 연속 정상(검정) 측정을
-     `engineer_done_ok_streak`(기본 6) 회 이상 보여주면 완료다.
-  2. 분자 fallback: Assist 가 연속 3회 unusable 이고 이 watch 에서 Assist fail 을
-     한 번도 보지 않았을 때만, 분자 N 이 3회 엄격히 증가하면 완료다.
+  1. Assist primary: Recipe Monitor Assist 표에 붉은(실패) 숫자가 하나도 없고,
+     정상(검정)으로 끝난 측정 행이 `engineer_done_min_ok_rows`(기본 5) 이상이면 완료다.
+  2. 분자 fallback: Assist 가 연속 3회 unusable 일 때만, Recipe Monitor 분자 N 이
+     3회 엄격히 증가하면 완료다.
 
 Assist 는 분자보다 먼저 같은 캡처 프레임에서 평가한다. 분자는 Assist 판독 자체가
-불가능할 때만 쓰는 보수적 fallback 이며, usable Assist 에서 한 번이라도 fail 을
-보면 해당 watch 동안 fallback 을 영구 차단한다.
+불가능할 때만 쓰는 보수적 fallback 이다.
+
+**표는 새 측정이 시작될 때 초기화된다**(스크롤 아님, 2026-08-13 확인). 이 사실 덕분에
+"지금 표에 붉은 숫자가 있다 = 이번 사이클에서 측정이 실패했다" 가 성립하고, 행 순서나
+패널 fingerprint 변화를 추적할 필요가 없다. red 가 하나라도 있으면 done 을 막는 보수적
+정책이며, 놓쳐도 `engineer_watch_sec` cap 이 안전망이다 - 엔지니어 작업 중에 창을
+잘못 닫는 쪽이 훨씬 비싸다.
 
 done 판정 시 `cycle._engineer_watch` 가 조기 종료하고, `run_alarm_cycle` 의
 teardown(finally)이 `close_tool(eqp_id)` 로 tool 창을 닫는다 (별도 닫기 호출
 없이 기존 teardown 경로 재사용 — close 동작은 workflow_2 에서 확립됨).
 
-파이프라인 (grounding 은 성공 시 1회 캐시):
-  1. grounding(성공 시 캐시): VLM(mai-ui)으로 분자 위치를 찾아 tool-window
+파이프라인:
+  1. Assist primary(매 호출, 분자보다 먼저): `assist_score.locate_assist_panel` 으로
+     패널 박스를 1회 잡아 캐시하고, 이후 폴링은 `read_assist_state` 가 그 박스로 crop 한
+     **픽셀만** 본다 - VLM/OCR 왕복이 0회다. 로케이트 실패는 `reground_sec` 로 throttle
+     한다(안 그러면 15s timeout VLM 왕복이 매 폴링 반복돼 watch 루프가 막힌다).
+  2. 분자 grounding(성공 시 캐시): VLM(mai-ui)으로 분자 위치를 찾아 tool-window
      상대비율 ROI 로 캐시한다 (tool 마다/드래그로 위치가 달라 고정 ROI 불가).
      **오피스 관찰(2026-06-11): re-align 진행 중에는 카운터(N/M)가 빈칸**이라
      grounding 거부([-1,-1])가 정상 상태다. 따라서 거부는 영구 포기가 아니라
      `reground_sec` 간격 재시도 — 측정이 시작되면 숫자가 나타나 성공한다.
-  2. CV gate(매 호출): ROI crop 변화감지 — align-fix 중엔 카운터가 정적이라
+  3. CV gate(매 호출): ROI crop 변화감지 — align-fix 중엔 카운터가 정적이라
      OCR 호출이 0회로 유지된다 (recording.py 의 다운샘플+delta 로직 재사용).
-  3. OCR confirm(변화 시에만): paddleocr 로 분자 N 을 읽고 엄격히 증가하는 최근
+  4. OCR confirm(변화 시에만): paddleocr 로 분자 N 을 읽고 엄격히 증가하는 최근
      3개 표본만 유지한다. 같은 값/감소는 새 시퀀스를 시작하고 OCR miss 는 지운다.
      OCR 연속 미검출(숫자 -> blank 전환 = 새 재정렬 시작 가능)은 ROI 재grounding.
-  4. Assist primary(매 호출, 분자보다 먼저): `assist_score.locate_assist_layout` 으로
-     score 격자를 1회 잡아 캐시하고, 이후 `read_row_states` + `ok_streak` 로
-     연속 정상 횟수를 구한다. 격자 로케이트 자체도 재시도가 실패할 때마다
-     `reground_sec` 로 throttle 한다(안 그러면 VLM+OCR 왕복이 매 폴링마다 반복돼
-     watch 루프가 막힌다).
 
 실패는 전부 graceful: grounding 거부/OCR 실패/예외 -> False -> watch 의
 engineer_watch_sec cap 이 안전망. (CLAUDE.md 규칙: VLM 은 위치만, 전이 판정의
@@ -41,8 +44,8 @@ engineer_watch_sec cap 이 안전망. (CLAUDE.md 규칙: VLM 은 위치만, 전�
 
 오피스 캘리브레이션 (단독 실행):
   지금 측정 중인 tool 의 Remote Monitoring 창을 열어 두고 실행하면 — 측정
-  중에는 분자가 실제로 증가하므로 — grounding/gate/OCR/Assist 전 체인을 align
-  fail 없이 즉시 검증할 수 있다.
+  중에는 표가 채워지고 분자가 증가하므로 — Assist/grounding/gate/OCR 전 체인을
+  align fail 없이 즉시 검증할 수 있다.
 
   uv run python poc/workflow_3/monitor/engineer_done_align_adjustment.py
 """
@@ -55,19 +58,11 @@ from dataclasses import dataclass, replace
 from poc.workflow_3.config import validate_engineer_done_priority_settings
 from poc.workflow_3.debug_artifacts import save_debug_jpeg, save_debug_json
 from poc.workflow_3.monitor.recording import _frame_changed, _to_diff_gray
-from poc.workflow_3.sem_monitor.assist_score import AssistObservation, ok_streak
+from poc.workflow_3.sem_monitor.assist_score import AssistObservation
 from poc.workflow_3.util import capture_window
 
 _POINT_RE = re.compile(r"\[\s*(-?\d+)\s*,\s*(-?\d+)\s*\]")
 _INT_RE = re.compile(r"\d+")
-
-# Assist 전 행이 연속으로 이만큼 빈칸이면 패널이 이동한 것으로 보고 격자를 다시 잡는다.
-ALL_BLANK_RELOCATE_AFTER = 3
-
-# 전 행 빈칸으로 격자를 다시 잡는 횟수 상한. 표가 원래 비어 있는 tool 에서 watch 내내
-# VLM 을 반복 호출하지 않게 한다.
-MAX_BLANK_RELOCATES = 2
-
 
 def parse_point_1000(text: str) -> tuple[int, int] | None:
     """ui-venus 응답에서 첫 [x,y](0-1000)를 파싱한다.
@@ -160,9 +155,6 @@ class EngineerDoneDetector:
         self._ocr_miss_streak = 0
         self._debug_seq = 0
         self._assist_unusable_streak = 0
-        self._assist_baseline_fingerprint = None
-        self._assist_changed_since_start = False
-        self._assist_failure_seen = False
         self._numerator_sequence: list[int] = []
         self._numerator_decision_seq = 0
         self.last_debug: dict = {}
@@ -192,32 +184,23 @@ class EngineerDoneDetector:
             else AssistObservation(status="unusable", reason="assist_fn_missing")
         )
         if assist.status == "usable":
-            # fail 은 '판독 가능한' 관측에서만 인정한다. unusable(예: Measurement 열이
-            # 전부 blank) 회차의 verdict 는 판독 실패의 부산물이라, 그것까지 세면
-            # Addressing1 이 붉은 프레임 한 장만으로 numerator fallback 이 영구히
-            # 닫힌다(design 3절 "실제로 관측하면").
-            if "fail" in [row.verdict for row in assist.rows]:
-                self._assist_failure_seen = True
             self._assist_unusable_streak = 0
-            if self._assist_baseline_fingerprint is None:
-                self._assist_baseline_fingerprint = assist.panel_fingerprint
-            elif assist.panel_fingerprint != self._assist_baseline_fingerprint:
-                self._assist_changed_since_start = True
-            streak = ok_streak(assist.rows)
             self.last_debug.update({
                 "assist_status": assist.status,
-                "assist_changed": self._assist_changed_since_start,
-                "assist_failure_seen": self._assist_failure_seen,
-                "streak": streak,
+                "assist_rows": assist.ok_row_count,
+                "assist_red": assist.has_red,
             })
+            # 표는 새 측정이 시작될 때 초기화된다(2026-08-13 확인). 따라서 지금 보이는
+            # 붉은 숫자는 이번 사이클의 실패이며, 하나라도 있으면 done 이 아니다.
+            # 놓쳐도 engineer_watch_sec cap 이 안전망이고, 잘못 닫는 쪽이 훨씬 비싸다.
             if (
-                self._assist_changed_since_start
-                and streak >= self.s.engineer_done_ok_streak
+                not assist.has_red
+                and assist.ok_row_count >= self.s.engineer_done_min_ok_rows
             ):
                 print(
-                    f"[INFO] Assist 새 측정 진행 + 연속 정상 {streak}회 "
-                    f"(>= {self.s.engineer_done_ok_streak}) - align 완료 판정, "
-                    "watch 조기 종료 후 tool 창 닫기 진행"
+                    f"[INFO] Assist 정상 측정 {assist.ok_row_count}행 "
+                    f"(>= {self.s.engineer_done_min_ok_rows}), 실패 없음 - align 완료 "
+                    "판정, watch 조기 종료 후 tool 창 닫기 진행"
                 )
                 return True
         else:
@@ -225,7 +208,6 @@ class EngineerDoneDetector:
             self.last_debug.update({
                 "assist_status": assist.status,
                 "assist_unusable_streak": self._assist_unusable_streak,
-                "assist_failure_seen": self._assist_failure_seen,
             })
 
         numerator = (
@@ -244,7 +226,6 @@ class EngineerDoneDetector:
         fallback_open = (
             self._assist_unusable_streak
             >= self.s.engineer_done_assist_unusable_after
-            and not self._assist_failure_seen
         )
         done = (
             fallback_open
@@ -404,7 +385,6 @@ class EngineerDoneDetector:
                     "sequence": list(self._numerator_sequence),
                     "reset_reason": reset_reason,
                     "assist_unusable_streak": self._assist_unusable_streak,
-                    "assist_failure_seen": self._assist_failure_seen,
                     "fallback_open": fallback_open,
                     "done": done,
                 },
@@ -485,106 +465,66 @@ def _make_ocr_fn(settings):
 def _make_assist_fn(tool_window, settings, *, debug_dir=None):
     """캡처 프레임 하나에서 Assist 관측값을 만드는 클로저.
 
-    로케이트에 실패하면 None 을 캐시하지 않고 재시도하되, 실패 로그는 1회만 낸다
-    (watch 내내 같은 경고가 반복되면 콘솔이 쓸모없어진다). 재시도 자체도
-    `settings.engineer_done_reground_sec` 로 throttle 한다 - 카운터 grounding
-    (`EngineerDoneDetector._localize`)이 이미 같은 간격으로 재시도를 절제하는 것과
-    같은 이유다: 로케이트 실패마다 2단계 VLM(15s timeout) + PaddleOCR(30s timeout)
-    왕복이 매 결정 폴링마다 반복되면 watch 루프 전체가 그만큼 막힌다.
+    패널 박스는 watch 당 1회만 VLM 으로 잡고 캐시한다. 이후 폴링은 그 박스로 crop 한
+    픽셀만 보므로 VLM/OCR 왕복이 0회다. 로케이트에 실패하면 None 을 캐시하지 않고
+    재시도하되 `settings.engineer_done_reground_sec` 로 throttle 하고, 경고는 1회만
+    낸다(watch 내내 같은 경고가 반복되면 콘솔이 쓸모없어진다).
+
+    한계: 엔지니어가 패널을 옮기면 캐시된 박스가 어긋난 자리를 읽어 행 수가 0 에
+    머문다. 그 경우 done 이 안 뜨고 `engineer_watch_sec` cap 이 받는다 - 잘못된 위치를
+    읽고 done 을 내는 것보다 안전한 방향이다.
     """
     from poc.workflow_3.sem_monitor.assist_score import (
         AssistObservation,
-        locate_assist_layout,
-        measurement_fingerprint,
-        read_row_states,
-        save_assist_overlay,
+        locate_assist_panel,
+        read_assist_state,
     )
     from poc.workflow_3.util import crop_image
 
-    state = {"panel_box": None, "layout": None, "warned": False, "last_verdicts": None,
-             "seq": 0, "all_blank_streak": 0, "blank_relocates": 0,
-             "blank_relocate_limit_logged": False, "next_locate_at": 0.0}
+    state = {"panel_box": None, "warned": False, "next_locate_at": 0.0,
+             "seq": 0, "last_reading": None}
 
     def assist_fn(image):
         # detector 밖에서 직접 호출돼도 이 클로저 자체가 안전해야 한다.
         try:
-            if state["layout"] is None and time.time() < state["next_locate_at"]:
+            if state["panel_box"] is None and time.time() < state["next_locate_at"]:
                 return AssistObservation(status="unusable", reason="locate_throttled")
 
-            if state["layout"] is None:
+            if state["panel_box"] is None:
                 # window_title/backend 는 빈 문자열로 넘긴다. image 를 함께 주면
                 # analyze_window_target 이 창 활성화/재캡처를 건너뛰므로 쓰이지 않는다.
-                located = locate_assist_layout(tool_window, "", "", image, debug_dir=debug_dir)
-                if located is None:
+                box = locate_assist_panel(tool_window, "", "", image, debug_dir=debug_dir)
+                if box is None:
                     state["next_locate_at"] = time.time() + max(
                         settings.engineer_done_reground_sec, 0.0
                     )
                     if not state["warned"]:
-                        print("[WARNING] Assist 격자 확보 실패 - 분자 fallback 판정 대기")
+                        print("[WARNING] Assist 패널 확보 실패 - 분자 fallback 판정 대기")
                         state["warned"] = True
-                    return AssistObservation(status="unusable", reason="layout_unavailable")
-                state["panel_box"], state["layout"] = located
-                state["all_blank_streak"] = 0
+                    return AssistObservation(status="unusable", reason="panel_unavailable")
+                state["panel_box"] = box
 
             panel = crop_image(image, state["panel_box"])
-            rows = read_row_states(panel, state["layout"])
-            if not rows:
-                return AssistObservation(status="unusable", reason="rows_empty")
-            fingerprint = measurement_fingerprint(panel, state["layout"])
+            observation = read_assist_state(panel)
 
-            # 패널이 이동/리사이즈되면 빈 영역을 샘플링해 모든 행이 pending 으로 나온다.
-            # 실제로 전 행이 비는 일은 거의 없으므로, 연속으로 그러면 격자를 버리고 다시 잡는다.
-            # 단, 표가 원래 비어 있는 tool 이면 이 재확보가 watch 내내 반복돼 VLM 을
-            # 계속 호출하므로 MAX_BLANK_RELOCATES 회로 상한을 둔다.
-            if rows and all(row.verdict == "pending" for row in rows):
-                state["all_blank_streak"] += 1
-                if state["all_blank_streak"] >= ALL_BLANK_RELOCATE_AFTER:
-                    if state["blank_relocates"] < MAX_BLANK_RELOCATES:
-                        state["blank_relocates"] += 1
-                        print(
-                            "[INFO] Assist 전 행이 계속 빈칸 - 패널 이동 가능성, 격자 재확보 "
-                            f"({state['blank_relocates']}/{MAX_BLANK_RELOCATES})"
-                        )
-                        state["layout"] = None
-                        state["panel_box"] = None
-                        state["all_blank_streak"] = 0
-                    else:
-                        if not state["blank_relocate_limit_logged"]:
-                            print(
-                                f"[INFO] Assist 재확보 상한({MAX_BLANK_RELOCATES}) 도달 - 표가 원래 "
-                                "비어 있는 tool 로 보고 더는 재확보하지 않음"
-                            )
-                            state["blank_relocate_limit_logged"] = True
-                    state["all_blank_streak"] = 0
-            else:
-                state["all_blank_streak"] = 0
-
-            verdicts = [row.verdict for row in rows]
-            if debug_dir is not None and verdicts != state["last_verdicts"]:
+            # 판독값이 바뀔 때만 패널 crop 을 남긴다 - 오피스가 "행 수/red 를 옳게 읽었나"
+            # 를 눈으로 검증할 유일한 근거이고, 매 폴링 저장은 디스크만 먹는다.
+            reading = (observation.ok_row_count, observation.has_red)
+            if debug_dir is not None and reading != state["last_reading"]:
                 state["seq"] += 1
-                save_assist_overlay(
-                    panel, state["layout"], rows,
-                    debug_dir / f"assist_grid_{state['seq']:03d}.jpg",
-                )
-                state["last_verdicts"] = verdicts
-            measurement_states = [
-                row.cells.get("Measurement", "blank") for row in rows
-            ]
-            if all(cell in {"blank", "unknown"} for cell in measurement_states):
-                return AssistObservation(
-                    status="unusable",
-                    rows=rows,
-                    panel_fingerprint=fingerprint,
-                    reason="measurement_unreadable",
-                )
-            return AssistObservation(
-                status="usable",
-                rows=rows,
-                panel_fingerprint=fingerprint,
-                reason="ok",
-            )
+                try:
+                    save_debug_jpeg(
+                        panel.convert("RGB"),
+                        debug_dir / f"assist_panel_{state['seq']:03d}"
+                        f"_rows{observation.ok_row_count}"
+                        f"_red{int(observation.has_red)}.jpg",
+                    )
+                except Exception as exc:
+                    print(f"[WARNING] Assist 패널 디버그 저장 실패(무시): {exc}")
+                state["last_reading"] = reading
+            return observation
         except Exception as exc:
-            print(f"[WARNING] Assist 행 판독 클로저 예외(이번 회차 미판정): {exc}")
+            print(f"[WARNING] Assist 판독 클로저 예외(이번 회차 미판정): {exc}")
             return AssistObservation(status="unusable", reason="exception")
 
     return assist_fn
@@ -688,7 +628,7 @@ def run_calibration() -> bool:
     print(
         f"[INFO] 캘리브레이션 시작: 최대 {duration_sec:.0f}s, "
         f"poll={settings.engineer_done_poll_sec}s, "
-        f"ok_streak={settings.engineer_done_ok_streak}, "
+        f"min_ok_rows={settings.engineer_done_min_ok_rows}, "
         f"assist_unusable_after={settings.engineer_done_assist_unusable_after}, "
         f"numerator_reads={settings.engineer_done_numerator_increase_reads}, "
         f"debug={debug_dir}"
@@ -714,13 +654,12 @@ def run_calibration() -> bool:
 
     print(
         "[WARNING] duration 내 done 미감지. 원인 구분:\n"
-        f"  - Assist 는 watch 시작 뒤 fingerprint 변화와 ok_streak="
-        f"{settings.engineer_done_ok_streak} 충족이 모두 필요하다. Assist fail 을 한 번이라도 "
-        "보면 분자 fallback 은 이 watch 동안 차단된다.\n"
+        f"  - Assist 는 red 가 하나도 없고 정상 행이 "
+        f"{settings.engineer_done_min_ok_rows} 개 이상이어야 완료로 본다.\n"
         f"  - Assist 가 연속 {settings.engineer_done_assist_unusable_after}회 unusable 일 때만 "
         f"분자 {settings.engineer_done_numerator_increase_reads}회 엄격 증가 fallback 을 쓴다.\n"
-        "  - Assist 격자/색 문제는 debug_images/engineer_done_calib/.../assist_*.jpg "
-        "오버레이로 열 매핑/색 임계를 확인한다.\n"
+        "  - Assist 판독 문제는 debug_images/engineer_done_calib/.../assist_panel_*.jpg "
+        "(파일명에 rows/red 가 박혀 있다)로 crop 위치와 색 임계를 확인한다.\n"
         "  - n 이 계속 None/blank 면 카운터 grounding/OCR 문제 - debug crop 으로 ROI 확인 후 "
         "grounding 문구(RECIPE_MONITOR_NUMERATOR_INSTRUCTION)/ROI pad 조정."
     )

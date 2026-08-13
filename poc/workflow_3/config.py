@@ -33,7 +33,7 @@ def _env_alarm_source() -> str:
 
 
 _ENGINEER_DONE_POSITIVE_SETTINGS = (
-    ("engineer_done_ok_streak", "ALIGN_FAIL_ENGINEER_DONE_OK_STREAK"),
+    ("engineer_done_min_ok_rows", "ALIGN_FAIL_ENGINEER_DONE_MIN_OK_ROWS"),
     (
         "engineer_done_assist_unusable_after",
         "ALIGN_FAIL_ENGINEER_DONE_ASSIST_UNUSABLE_AFTER",
@@ -109,7 +109,11 @@ class Workflow3Settings(WorkflowSettings):
     # --- engineer watch 측정-시작 감지 (Assist 우선, Recipe Monitor 카운터 fallback) ---
     engineer_done_detect_enabled: bool = False  # 오피스 캘리브레이션 검증 전 기본 off.
     engineer_done_poll_sec: float = 8.0  # watch 안 detector 호출 간격.
-    engineer_done_ok_streak: int = 6   # Assist score 연속 정상(검정) 요구 횟수.
+    # Assist 표에서 정상(검정)으로 끝난 측정 행이 이만큼 쌓이면 완료로 본다.
+    # 이름/의미가 구 engineer_done_ok_streak(연속 정상 횟수)과 다르므로 env 이름도
+    # 새로 뒀다 - 같은 이름을 재사용하면 오피스에 남은 기존 값이 새 의미로 조용히
+    # 해석된다.
+    engineer_done_min_ok_rows: int = 5
     engineer_done_assist_unusable_after: int = 3  # 분자 fallback 개방 전 unusable 횟수.
     engineer_done_numerator_increase_reads: int = 3  # 엄격 증가 분자 표본 요구 횟수.
     engineer_done_change_min_px: int = 4  # CV gate 변화 픽셀 임계(다운샘플).
@@ -302,7 +306,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         zoom_scroll_dy=env_int("ALIGN_SEM_ZOOM_SCROLL_DY", 1),
         engineer_done_detect_enabled=env_flag("ALIGN_FAIL_ENGINEER_DONE_DETECT", default=False),
         engineer_done_poll_sec=env_float("ALIGN_FAIL_ENGINEER_DONE_POLL_SEC", 8.0),
-        engineer_done_ok_streak=env_int("ALIGN_FAIL_ENGINEER_DONE_OK_STREAK", 6),
+        engineer_done_min_ok_rows=env_int("ALIGN_FAIL_ENGINEER_DONE_MIN_OK_ROWS", 5),
         engineer_done_assist_unusable_after=env_int(
             "ALIGN_FAIL_ENGINEER_DONE_ASSIST_UNUSABLE_AFTER", 3
         ),

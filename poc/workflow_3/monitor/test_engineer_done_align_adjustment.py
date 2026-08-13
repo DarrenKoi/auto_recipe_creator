@@ -17,7 +17,6 @@ from poc.workflow_3 import util as w3util
 from poc.workflow_3.config import Workflow3Settings, load_workflow3_settings
 from poc.workflow_3.monitor.cycle import _engineer_watch
 from poc.workflow_3.monitor.engineer_done_align_adjustment import (
-    ALL_BLANK_RELOCATE_AFTER,
     EngineerDoneDetector,
     NumeratorObservation,
     _make_assist_fn,
@@ -27,7 +26,6 @@ from poc.workflow_3.monitor.engineer_done_align_adjustment import (
     point_to_roi_ratios,
 )
 from poc.workflow_3.sem_monitor import assist_score as asc
-from poc.workflow_3.sem_monitor.assist_score import RowState
 from poc.workflow_3.vlm.prompts.prompt_recipe_monitor_counter import (
     RECIPE_MONITOR_NUMERATOR_INSTRUCTION,
     build_recipe_monitor_counter_prompt,
@@ -112,7 +110,7 @@ def test_settings_reject_non_positive_priority_thresholds() -> bool:
     import os
 
     cases = [
-        ("ALIGN_FAIL_ENGINEER_DONE_OK_STREAK", "0"),
+        ("ALIGN_FAIL_ENGINEER_DONE_MIN_OK_ROWS", "0"),
         ("ALIGN_FAIL_ENGINEER_DONE_ASSIST_UNUSABLE_AFTER", "-1"),
         ("ALIGN_FAIL_ENGINEER_DONE_NUMERATOR_READS", "0"),
     ]
@@ -231,7 +229,7 @@ def _settings(**overrides):
         engineer_done_detect_enabled=True,
         engineer_done_roi_pad_x=0.05,
         engineer_done_roi_pad_y=0.05,
-        engineer_done_ok_streak=2,
+        engineer_done_min_ok_rows=2,
         engineer_done_assist_unusable_after=1,
         engineer_done_numerator_increase_reads=2,
         engineer_done_relocalize_after_miss=3,
@@ -457,7 +455,7 @@ def test_settings_use_priority_signals() -> bool:
     """Assist 우선과 엄격 증가 fallback 설정만 노출한다."""
     settings = load_workflow3_settings()
     ok = (
-        settings.engineer_done_ok_streak == 6
+        settings.engineer_done_min_ok_rows == 5
         and settings.engineer_done_assist_unusable_after == 3
         and settings.engineer_done_numerator_increase_reads == 3
     )
@@ -465,51 +463,49 @@ def test_settings_use_priority_signals() -> bool:
     return ok
 
 
-def _rows_all_ok(count=7):
-    cells = {"Addressing1": "black", "Addressing2": "blank", "Measurement": "black"}
-    return [RowState(cells=dict(cells)) for _ in range(count)]
-
-
-def _assist_ok(fingerprint):
+def _assist_count(ok_rows, *, red=False, status="usable"):
+    """행 수/red 만 담은 신규 관측 (격자 없는 CV counting 판정용)."""
     return asc.AssistObservation(
-        status="usable",
-        rows=_rows_all_ok(7),
-        panel_fingerprint=fingerprint,
-        reason="ok",
+        status=status, ok_row_count=ok_rows, has_red=red, reason="ok",
     )
 
 
-def _assist_fail(fingerprint):
-    rows = _rows_all_ok(7)
-    rows[-1].cells["Measurement"] = "red"
-    return asc.AssistObservation(
-        status="usable",
-        rows=rows,
-        panel_fingerprint=fingerprint,
-        reason="ok",
+def _count_detector(observations, *, min_ok_rows=5):
+    return EngineerDoneDetector(
+        None,
+        _settings(engineer_done_min_ok_rows=min_ok_rows),
+        capture_fn=lambda: Image.new("RGB", (400, 200), (0, 0, 0)),
+        assist_fn=_CountingFn(observations),
+        numerator_fn=_CountingFn([
+            NumeratorObservation(sampled=False, reason="no_change")
+        ] * len(observations)),
     )
+
+
+def test_done_when_enough_ok_rows_and_no_red():
+    detector = _count_detector([_assist_count(5)])
+    ok = detector() is True
+    print(f"[{'PASS' if ok else 'FAIL'}] done_when_enough_ok_rows_and_no_red")
+    return ok
+
+
+def test_red_blocks_done_even_with_enough_rows():
+    """보수적 정책(2026-08-13): 표는 새 측정마다 초기화되므로 red 는 이번 사이클의 실패다."""
+    detector = _count_detector([_assist_count(7, red=True)])
+    ok = detector() is False
+    print(f"[{'PASS' if ok else 'FAIL'}] red_blocks_done_even_with_enough_rows")
+    return ok
+
+
+def test_not_done_below_min_ok_rows():
+    detector = _count_detector([_assist_count(4)])
+    ok = detector() is False
+    print(f"[{'PASS' if ok else 'FAIL'}] not_done_below_min_ok_rows")
+    return ok
 
 
 def _assist_unusable():
-    return asc.AssistObservation(
-        status="unusable",
-        rows=[],
-        panel_fingerprint=None,
-        reason="layout_unavailable",
-    )
-
-
-def _assist_unusable_with_addressing_failure():
-    return asc.AssistObservation(
-        status="unusable",
-        rows=[RowState(cells={
-            "Addressing1": "red",
-            "Addressing2": "blank",
-            "Measurement": "blank",
-        })],
-        panel_fingerprint="unreadable-measurement",
-        reason="measurement_unreadable",
-    )
+    return asc.AssistObservation(status="unusable", reason="panel_unavailable")
 
 
 def _priority_detector(*, assist, numerators):
@@ -524,7 +520,7 @@ def _priority_detector(*, assist, numerators):
     return EngineerDoneDetector(
         None,
         _settings(
-            engineer_done_ok_streak=6,
+            engineer_done_min_ok_rows=6,
             engineer_done_assist_unusable_after=3,
             engineer_done_numerator_increase_reads=3,
         ),
@@ -538,58 +534,6 @@ def _run_numerator_sequence(values):
     assist = _CountingFn([_assist_unusable()] * len(values))
     detector = _priority_detector(assist=assist, numerators=values)
     return [detector() for _ in values][-1]
-
-
-def test_assist_needs_fresh_change_after_watch_start():
-    assist = _CountingFn([
-        _assist_ok("same"),
-        _assist_ok("same"),
-        _assist_ok("changed"),
-    ])
-    detector = _priority_detector(assist=assist, numerators=[])
-    assert [detector(), detector(), detector()] == [False, False, True]
-
-
-def test_assist_change_stays_fresh_after_fingerprint_returns_to_baseline():
-    """첫 usable baseline 뒤 한 번 바뀐 사실은 A→B→A에서도 watch 동안 유지한다."""
-    not_ready = asc.AssistObservation(
-        status="usable",
-        rows=_rows_all_ok(5),
-        panel_fingerprint="changed",
-        reason="ok",
-    )
-    assist = _CountingFn([
-        _assist_ok("baseline"),
-        not_ready,
-        _assist_ok("baseline"),
-    ])
-    detector = _priority_detector(assist=assist, numerators=[])
-
-    assert [detector(), detector(), detector()] == [False, False, True]
-
-
-def test_red_assist_permanently_blocks_numerator_fallback():
-    assist = _CountingFn([
-        _assist_fail("red"),
-        _assist_unusable(),
-        _assist_unusable(),
-        _assist_unusable(),
-    ])
-    detector = _priority_detector(assist=assist, numerators=[10, 11, 12, 13])
-    assert [detector(), detector(), detector(), detector()] == [False] * 4
-
-
-def test_unusable_assist_red_rows_block_increasing_numerator_fallback():
-    """Measurement 미판독이어도 보인 Addressing1 red는 fallback을 영구 차단한다."""
-    assist = _CountingFn([
-        _assist_unusable_with_addressing_failure(),
-        _assist_unusable(),
-        _assist_unusable(),
-    ])
-    detector = _priority_detector(assist=assist, numerators=[10, 11, 12])
-
-    assert [detector(), detector(), detector()] == [False, False, False]
-    assert detector._assist_failure_seen is True
 
 
 def test_numerator_fallback_requires_three_unusable_assist_observations():
@@ -643,22 +587,11 @@ def test_unchanged_crop_preserves_partial_numerator_sequence():
     assert ocr.calls == 2
 
 
-def test_prior_assist_failure_allows_later_fresh_primary_completion():
-    assist = _CountingFn([
-        _assist_fail("baseline"),
-        _assist_ok("fresh"),
-    ])
-    detector = _priority_detector(assist=assist, numerators=[])
-
-    assert [detector(), detector()] == [False, True]
-    assert detector._assist_failure_seen is True
-
-
 def test_usable_assist_resets_unusable_streak():
     assist = _CountingFn([
         _assist_unusable(),
         _assist_unusable(),
-        _assist_ok("same"),
+        _assist_count(1),
     ])
     detector = _priority_detector(assist=assist, numerators=[10, 11, 12])
 
@@ -693,9 +626,9 @@ def test_assist_primary_finishes_before_numerator_evaluation():
     ])
     detector = EngineerDoneDetector(
         None,
-        _settings(engineer_done_ok_streak=6),
+        _settings(engineer_done_min_ok_rows=6),
         capture_fn=lambda: Image.new("RGB", (400, 200), (0, 0, 0)),
-        assist_fn=_CountingFn([_assist_ok("same"), _assist_ok("changed")]),
+        assist_fn=_CountingFn([_assist_count(1), _assist_count(6)]),
         numerator_fn=numerator,
     )
 
@@ -715,7 +648,7 @@ def test_builder_keeps_assist_when_numerator_clients_fail():
             RuntimeError("numerator OCR unavailable")
         )
         module._make_assist_fn = lambda *args, **kwargs: (
-            lambda image: _assist_ok("fresh")
+            lambda image: _assist_count(1)
         )
         detector = module.build_engineer_done_detector(object(), _settings())
     finally:
@@ -726,7 +659,7 @@ def test_builder_keeps_assist_when_numerator_clients_fail():
 def test_detector_fails_closed_for_each_non_positive_priority_threshold():
     """설정 객체 검증을 우회한 잘못된 값도 detector 완료를 허용하지 않는다."""
     for name, value in (
-        ("engineer_done_ok_streak", 0),
+        ("engineer_done_min_ok_rows", 0),
         ("engineer_done_assist_unusable_after", -1),
         ("engineer_done_numerator_increase_reads", 0),
     ):
@@ -738,8 +671,8 @@ def test_detector_fails_closed_for_each_non_positive_priority_threshold():
             invalid_settings,
             capture_fn=lambda: Image.new("RGB", (400, 200), (0, 0, 0)),
             assist_fn=_CountingFn([
-                _assist_ok("baseline"),
-                _assist_ok("changed"),
+                _assist_count(6),
+                _assist_count(6),
                 _assist_unusable(),
             ]),
             numerator_fn=_CountingFn([
@@ -827,237 +760,104 @@ def test_leftover_counter_does_not_fire():
     return ok
 
 
-def test_assist_fresh_but_streak_short():
-    """Measurement 가 새로 바뀌어도 연속 정상 6행 미만이면 완료가 아니다."""
-    rows = _rows_all_ok(7)
-    rows[-2].cells["Measurement"] = "red"   # 최신에서 두 번째가 실패 -> streak = 1
-    assist = _CountingFn([
-        _assist_ok("same"),
-        asc.AssistObservation(
-            status="usable",
-            rows=rows,
-            panel_fingerprint="changed",
-            reason="ok",
-        ),
-    ])
-    detector = _priority_detector(assist=assist, numerators=[])
-    results = [detector(), detector()]
-    ok = not any(results)
-    print(f"[{'PASS' if ok else 'FAIL'}] assist_fresh_but_streak_short: {results}")
-    return ok
+class _PanelFnHarness:
+    """assist_score 의 패널 로케이트/판독을 갈아끼운다 (원복 보장).
 
-
-def test_done_when_assist_is_fresh_and_streak_met():
-    """새 Measurement fingerprint 와 연속 정상 6행이면 primary 완료다."""
-    assist = _CountingFn([_assist_ok("same"), _assist_ok("changed")])
-    detector = _priority_detector(assist=assist, numerators=[])
-    first = detector()
-    second = detector()
-    ok = (first is False) and (second is True)
-    print(
-        f"[{'PASS' if ok else 'FAIL'}] done_when_assist_is_fresh_and_streak_met: "
-        f"{first},{second}"
-    )
-    return ok
-
-
-def _rows_of(verdicts):
-    """verdict 목록을 RowState 목록으로 (Measurement 만으로 성부가 갈리게 구성)."""
-    mapping = {
-        "ok": {"Addressing1": "black", "Addressing2": "blank", "Measurement": "black"},
-        "fail": {"Addressing1": "black", "Addressing2": "blank", "Measurement": "red"},
-        "pending": {"Addressing1": "blank", "Addressing2": "blank", "Measurement": "blank"},
-    }
-    return [asc.RowState(cells=dict(mapping[v])) for v in verdicts]
-
-
-class _RowsFnHarness:
-    """_make_assist_fn 의 스텁 배선. locate/overlay 호출 횟수를 센다.
-
-    _make_assist_fn 은 함수 본문 안에서 import 하므로 engineer_done_align_adjustment
-    모듈 속성을 패치해도 가로채지 못한다 - 원본 모듈(assist_score, util)을 패치해야
-    내부의 `from X import Y` 가 스텁에 바인딩된다.
+    _make_assist_fn 이 함수 안에서 import 하므로 원본 모듈(asc) 속성을 패치해야
+    가로챌 수 있다 - 클로저가 이미 잡은 참조를 바꾸는 게 아니다.
     """
 
-    def __init__(self, rows_seq, locate_ok=True):
-        self.rows_seq = list(rows_seq)
-        self.locate_ok = locate_ok
+    def __init__(self, *, locate_results, read_results=None):
+        self._locate_results = list(locate_results)
+        self._read_results = list(read_results or [])
         self.locate_calls = 0
-        self.overlay_calls = 0
         self._saved = {}
 
-    def _locate(self, *a, **k):
+    def _locate(self, *args, **kwargs):
         self.locate_calls += 1
-        if not self.locate_ok:
-            return None
-        grid = []
-        for row_idx in range(7):
-            top = 1 + row_idx * 2
-            grid.append([
-                {"left": 1, "top": top, "right": 7, "bottom": top + 1},
-                {"left": 12, "top": top, "right": 18, "bottom": top + 1},
-            ])
-        layout = SimpleNamespace(
-            grid=grid,
-            columns=("Addressing1", "Measurement"),
-        )
-        return ({"left": 0, "top": 0, "right": 20, "bottom": 20}, layout)
-
-    def _read(self, image, layout):
-        value = self.rows_seq.pop(0) if self.rows_seq else []
+        value = self._locate_results.pop(0) if self._locate_results else None
         if isinstance(value, Exception):
             raise value
         return value
 
-    def _overlay(self, *a, **k):
-        self.overlay_calls += 1
+    def _read(self, _panel):
+        value = self._read_results.pop(0) if self._read_results else _assist_count(0)
+        if isinstance(value, Exception):
+            raise value
+        return value
 
     def __enter__(self):
-        for mod, name, fn in (
-            (asc, "locate_assist_layout", self._locate),
-            (asc, "read_row_states", self._read),
-            (asc, "save_assist_overlay", self._overlay),
-            (w3util, "capture_window", lambda win: Image.new("RGB", (20, 20))),
-            (w3util, "crop_image", lambda img, box: img),
-        ):
-            self._saved[(mod, name)] = getattr(mod, name)
-            setattr(mod, name, fn)
+        for name, value in (("locate_assist_panel", self._locate),
+                            ("read_assist_state", self._read)):
+            self._saved[name] = getattr(asc, name)
+            setattr(asc, name, value)
         return self
 
     def __exit__(self, *exc):
-        for (mod, name), orig in self._saved.items():
-            setattr(mod, name, orig)
+        for name, value in self._saved.items():
+            setattr(asc, name, value)
         return False
+
+
+_PANEL_BOX = {"left": 0, "top": 0, "right": 20, "bottom": 20}
+
+
+def _blank_frame():
+    return Image.new("RGB", (20, 20), (240, 240, 240))
 
 
 def test_assist_fn_exception_returns_unusable() -> bool:
     """Assist 판독 예외는 unusable 관측값으로 닫히고 호출자에게 전파되지 않는다."""
-    with _RowsFnHarness([RuntimeError("rows boom")], locate_ok=True):
+    with _PanelFnHarness(locate_results=[_PANEL_BOX],
+                         read_results=[RuntimeError("read boom")]):
         assist_fn = _make_assist_fn(object(), _settings(), debug_dir=None)
-        observation = assist_fn(Image.new("RGB", (20, 20), (240, 240, 240)))
+        observation = assist_fn(_blank_frame())
     ok = observation.status == "unusable" and observation.reason == "exception"
     print(f"[{'PASS' if ok else 'FAIL'}] assist_fn_exception_returns_unusable")
     return ok
 
 
-def test_assist_fn_distinguishes_unusable_from_pending():
-    image = Image.new("RGB", (20, 20), (240, 240, 240))
-    with _RowsFnHarness([], locate_ok=False):
-        failed_fn = _make_assist_fn(object(), _settings(), debug_dir=None)
-        failed = failed_fn(image)
-
-    pending_rows = _rows_of(["pending"] * 7)
-    with _RowsFnHarness([pending_rows], locate_ok=True):
-        pending_fn = _make_assist_fn(object(), _settings(), debug_dir=None)
-        pending = pending_fn(image)
-
-    assert failed.status == "unusable"
-    assert failed.reason == "layout_unavailable"
-    assert pending.status == "unusable"
-    assert pending.reason == "measurement_unreadable"
-    assert [row.verdict for row in pending.rows] == ["pending"] * 7
-    return True
-
-
-def test_assist_fn_ignores_addressing_fail_when_measurement_unreadable():
-    """Addressing1 실패만으로 Measurement 미판독 프레임을 usable 로 올리지 않는다."""
-    unreadable_rows = [
-        RowState(cells={
-            "Addressing1": "red",
-            "Addressing2": "blank",
-            "Measurement": "blank",
-        }),
-        RowState(cells={
-            "Addressing1": "red",
-            "Addressing2": "blank",
-            "Measurement": "unknown",
-        }),
-    ]
-    with _RowsFnHarness([unreadable_rows], locate_ok=True):
+def test_assist_fn_locates_panel_only_once() -> bool:
+    """패널 박스는 watch 당 1회만 잡는다 - 이후 폴링에 VLM 왕복이 없어야 한다."""
+    with _PanelFnHarness(locate_results=[_PANEL_BOX],
+                         read_results=[_assist_count(3), _assist_count(4)]) as harness:
         assist_fn = _make_assist_fn(object(), _settings(), debug_dir=None)
-        observation = assist_fn(Image.new("RGB", (20, 20), (240, 240, 240)))
-
-    assert observation.status == "unusable"
-    assert observation.reason == "measurement_unreadable"
-    assert observation.rows == unreadable_rows
-    assert [row.verdict for row in observation.rows] == ["fail", "fail"]
-    return True
-
-
-def test_rows_fn_locates_layout_only_once():
-    """격자는 한 번만 잡고 캐시한다 - 폴링마다 VLM 을 부르면 안 된다."""
-    ok = _rows_of(["ok"] * 3)
-    with _RowsFnHarness([ok, ok, ok]) as h:
-        fn = _make_assist_fn(object(), _settings(), debug_dir=None)
-        for _ in range(3):
-            fn(Image.new("RGB", (20, 20)))
-    passed = h.locate_calls == 1
-    print(f"[{'PASS' if passed else 'FAIL'}] rows_fn_locates_layout_only_once: {h.locate_calls}")
-    return passed
-
-
-def test_rows_fn_warns_once_on_locate_failure():
-    """로케이트가 계속 실패해도 경고는 한 번만 - watch 내내 반복되면 콘솔이 쓸모없어진다."""
-    with _RowsFnHarness([], locate_ok=False) as h:
-        fn = _make_assist_fn(object(), _settings(), debug_dir=None)
-        buf = io.StringIO()
-        with redirect_stdout(buf):
-            first, second, third = (fn(Image.new("RGB", (20, 20))) for _ in range(3))
-    text = buf.getvalue()
-    passed = (
-        all(result.reason == "layout_unavailable" for result in (first, second, third))
-        and text.count("[WARNING]") == 1
-        and h.locate_calls == 3
+        first = assist_fn(_blank_frame())
+        second = assist_fn(_blank_frame())
+    ok = (
+        harness.locate_calls == 1
+        and first.ok_row_count == 3
+        and second.ok_row_count == 4
     )
-    print(f"[{'PASS' if passed else 'FAIL'}] rows_fn_warns_once_on_locate_failure: "
-          f"warns={text.count('[WARNING]')} locates={h.locate_calls}")
-    return passed
+    print(
+        f"[{'PASS' if ok else 'FAIL'}] assist_fn_locates_panel_only_once: "
+        f"locate_calls={harness.locate_calls}"
+    )
+    return ok
 
 
-def test_rows_fn_throttles_locate_retry_after_failure():
-    """(I5) 로케이트 실패 후 재시도는 reground_sec 로 throttle 돼야 한다.
+def test_assist_fn_throttles_locate_retry_after_failure() -> bool:
+    """로케이트 실패 후에는 reground_sec 안에 다시 VLM 을 부르지 않는다.
 
-    수정 전에는 실패마다 캐시를 안 하고 매 결정 폴링마다 2단계 VLM(15s timeout) +
-    PaddleOCR(30s timeout) 왕복을 반복해 watch 루프를 막았다. reground_sec 를 크게
-    잡으면 두 번째 호출은 throttle 되어 locate 를 다시 시도하지 않아야 한다.
+    throttle 이 없으면 실패할 때마다 15s timeout VLM 왕복이 매 폴링 반복돼 watch
+    루프 전체가 막힌다.
     """
-    settings = _settings(engineer_done_reground_sec=3600.0)
-    with _RowsFnHarness([], locate_ok=False) as h:
-        fn = _make_assist_fn(object(), settings, debug_dir=None)
-        first, second, third = (fn(Image.new("RGB", (20, 20))) for _ in range(3))
-    passed = (
-        first.reason == "layout_unavailable"
-        and second.reason == third.reason == "locate_throttled"
-        and h.locate_calls == 1
+    with _PanelFnHarness(locate_results=[None, _PANEL_BOX]) as harness:
+        assist_fn = _make_assist_fn(
+            object(), _settings(engineer_done_reground_sec=300.0), debug_dir=None
+        )
+        first = assist_fn(_blank_frame())
+        second = assist_fn(_blank_frame())
+    ok = (
+        harness.locate_calls == 1
+        and first.reason == "panel_unavailable"
+        and second.reason == "locate_throttled"
     )
-    print(f"[{'PASS' if passed else 'FAIL'}] rows_fn_throttles_locate_retry_after_failure: "
-          f"locates={h.locate_calls}")
-    return passed
-
-
-def test_rows_fn_overlay_only_on_verdict_change():
-    """오버레이는 판정이 바뀔 때만 - 폴링마다 저장하면 디스크가 찬다."""
-    same = _rows_of(["ok", "ok"])
-    changed = _rows_of(["ok", "fail"])
-    with _RowsFnHarness([same, list(same), changed]) as h:
-        fn = _make_assist_fn(object(), _settings(), debug_dir=Path("/tmp/nonexistent-overlay-dir"))
-        for _ in range(3):
-            fn(Image.new("RGB", (20, 20)))
-    passed = h.overlay_calls == 2
-    print(f"[{'PASS' if passed else 'FAIL'}] rows_fn_overlay_only_on_verdict_change: {h.overlay_calls}")
-    return passed
-
-
-def test_rows_fn_relocates_after_all_blank_streak():
-    """전 행이 계속 빈칸이면 패널 이동으로 보고 격자를 다시 잡는다."""
-    blanks = [_rows_of(["pending"] * 3) for _ in range(ALL_BLANK_RELOCATE_AFTER)]
-    with _RowsFnHarness(blanks) as h:
-        fn = _make_assist_fn(object(), _settings(), debug_dir=None)
-        results = [fn(Image.new("RGB", (20, 20))) for _ in range(ALL_BLANK_RELOCATE_AFTER)]
-    passed = h.locate_calls == 1 and results[-1].reason == "measurement_unreadable"
-    print(f"[{'PASS' if passed else 'FAIL'}] rows_fn_relocates_after_all_blank_streak: "
-          f"locates={h.locate_calls} last={results[-1]}")
-    return passed
+    print(
+        f"[{'PASS' if ok else 'FAIL'}] assist_fn_throttles_locate_retry_after_failure: "
+        f"locate_calls={harness.locate_calls}, reasons=({first.reason}, {second.reason})"
+    )
+    return ok
 
 
 def test_numerator_sequence_cleared_on_relocalize():
@@ -1124,20 +924,37 @@ def main() -> int:
         test_watch_logs_manual_completion_only_for_window_gone,
         test_watch_does_not_call_max_sec_manual_completion,
         test_leftover_counter_does_not_fire,
-        test_assist_fresh_but_streak_short,
-        test_done_when_assist_is_fresh_and_streak_met,
         test_assist_fn_exception_returns_unusable,
-        test_assist_fn_distinguishes_unusable_from_pending,
-        test_assist_fn_ignores_addressing_fail_when_measurement_unreadable,
-        test_rows_fn_locates_layout_only_once,
-        test_rows_fn_warns_once_on_locate_failure,
-        test_rows_fn_throttles_locate_retry_after_failure,
-        test_rows_fn_overlay_only_on_verdict_change,
-        test_rows_fn_relocates_after_all_blank_streak,
+        test_assist_fn_locates_panel_only_once,
+        test_assist_fn_throttles_locate_retry_after_failure,
+        test_done_when_enough_ok_rows_and_no_red,
+        test_red_blocks_done_even_with_enough_rows,
+        test_not_done_below_min_ok_rows,
         test_numerator_sequence_cleared_on_relocalize,
         test_lower_numerator_restarts_sequence,
+        test_assist_primary_finishes_before_numerator_evaluation,
+        test_builder_keeps_assist_when_numerator_clients_fail,
+        test_detector_captures_one_frame_per_poll,
+        test_detector_fails_closed_for_each_non_positive_priority_threshold,
+        test_invalid_numerator_sequences_do_not_finish,
+        test_numerator_decision_records_reground_reset,
+        test_numerator_decisions_are_saved_for_every_evaluated_observation,
+        test_numerator_fallback_requires_three_unusable_assist_observations,
+        test_ocr_miss_clears_prior_numerator_evidence,
+        test_settings_reject_non_positive_priority_thresholds,
+        test_unchanged_crop_preserves_partial_numerator_sequence,
+        test_usable_assist_resets_unusable_streak,
     ]
-    results = [test() for test in tests]
+    # 이 파일은 bool 반환형과 assert 형이 섞여 있다. assert 형은 통과 시 None 을
+    # 돌려주므로 "falsy = 실패" 로 세면 멀쩡한 테스트가 실패로 잡힌다. 실패 신호는
+    # 명시적 False 이거나 예외다.
+    results = []
+    for test in tests:
+        try:
+            results.append(test() is not False)
+        except AssertionError as exc:
+            print(f"[FAIL] {test.__name__}: {exc}")
+            results.append(False)
     passed = sum(1 for r in results if r)
     total = len(results)
     print(f"\n[INFO] engineer_done 테스트: {passed}/{total} 통과")

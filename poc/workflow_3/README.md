@@ -222,7 +222,7 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 | `ALIGN_FAIL_ENGINEER_DONE_POLL_SEC` | 8.0 | watch 안 감지기 호출 간격 |
 | `ALIGN_FAIL_ENGINEER_DONE_ASSIST_UNUSABLE_AFTER` | 3 | Assist 판독 불가가 이 횟수 연속일 때만 numerator fallback을 연다 |
 | `ALIGN_FAIL_ENGINEER_DONE_NUMERATOR_READS` | 3 | fallback 완료로 인정할 엄격 증가 numerator OCR 표본 수 |
-| `ALIGN_FAIL_ENGINEER_DONE_OK_STREAK` | 6 | Assist Measurement 최신 정상 6행 + watch 이후 새 화면 변화 완료 신호 |
+| `ALIGN_FAIL_ENGINEER_DONE_MIN_OK_ROWS` | 5 | Assist 표에 red 가 없고 정상(검정) 측정 행이 이만큼이면 완료 판정 |
 | `ALIGN_FAIL_ENGINEER_DONE_VLM_SERVICE` | `mai-ui` | 분자 위치 grounding 서비스 (route_slug, 모델명 아님) |
 | `ALIGN_FAIL_ENGINEER_DONE_OCR_SERVICE` | `paddleocr-vl-1.5` | 분자 OCR 서비스 |
 | `ALIGN_FAIL_ENGINEER_DONE_CHANGE_MIN_PX` | 4 | CV gate 변화 픽셀 임계(다운샘플) - 감지가 둔하면 낮추고 과민하면 올린다 |

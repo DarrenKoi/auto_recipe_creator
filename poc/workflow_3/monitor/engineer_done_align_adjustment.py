@@ -57,7 +57,7 @@ from dataclasses import dataclass, replace
 
 from poc.workflow_3.config import validate_engineer_done_priority_settings
 from poc.workflow_3.debug_artifacts import save_debug_jpeg, save_debug_json
-from poc.workflow_3.monitor.recording import _frame_changed, _to_diff_gray
+from poc.workflow_3.monitor.recording import frame_changed, to_diff_gray
 from poc.workflow_3.sem_monitor.assist_score import AssistObservation
 from poc.workflow_3.util import capture_window
 
@@ -299,10 +299,13 @@ class EngineerDoneDetector:
             regrounded = True
 
         crop = self._crop_numerator(image)
-        gray = _to_diff_gray(crop)
+        gray = to_diff_gray(crop)
         first_sample = self._prev_gray is None
-        changed = (not first_sample) and _frame_changed(
-            self._prev_gray, gray, self.s.engineer_done_change_min_px
+        changed = (not first_sample) and frame_changed(
+            self._prev_gray,
+            gray,
+            self.s.engineer_done_change_min_px,
+            pixel_delta_min=self.s.engineer_done_pixel_delta_min,
         )
         self._prev_gray = gray
         self.last_debug.update({"changed": changed, "first_sample": first_sample})
@@ -474,8 +477,9 @@ def _make_assist_fn(tool_window, settings, *, debug_dir=None):
     머문다. 그 경우 done 이 안 뜨고 `engineer_watch_sec` cap 이 받는다 - 잘못된 위치를
     읽고 done 을 내는 것보다 안전한 방향이다.
     """
+    # 함수 안 import 인 이유: 테스트가 이 두 함수를 모듈 속성으로 patch 한다.
+    # AssistObservation 은 생성만 하므로 patch 대상이 아니고, 모듈 상단에 이미 있다.
     from poc.workflow_3.sem_monitor.assist_score import (
-        AssistObservation,
         locate_assist_panel,
         read_assist_state,
     )
@@ -514,7 +518,7 @@ def _make_assist_fn(tool_window, settings, *, debug_dir=None):
                 state["seq"] += 1
                 try:
                     save_debug_jpeg(
-                        panel.convert("RGB"),
+                        panel,
                         debug_dir / f"assist_panel_{state['seq']:03d}"
                         f"_rows{observation.ok_row_count}"
                         f"_red{int(observation.has_red)}.jpg",
@@ -641,7 +645,8 @@ def run_calibration() -> bool:
         dbg = detector.last_debug
         print(
             f"[INFO] tick {tick}: assist={dbg.get('assist_status')}, "
-            f"fresh={dbg.get('assist_changed')}, streak={dbg.get('streak')}, "
+            f"rows={dbg.get('assist_rows')}, red={dbg.get('assist_red')}, "
+            f"unusable={dbg.get('assist_unusable_streak')}, "
             f"changed={dbg.get('changed')}, n={dbg.get('n')}, "
             f"sequence={dbg.get('numerator_sequence')}, "
             f"miss={dbg.get('ocr_miss_streak', 0)}, done={done}"

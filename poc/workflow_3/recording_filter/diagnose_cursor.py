@@ -27,12 +27,11 @@ from poc.workflow_3.recording_filter.click_detect import _window_around, resolve
 from poc.workflow_3.recording_filter.frame_reduce import reduce_frames
 from poc.workflow_3.recording_filter.region_gate import (
     REGION_MAP_KEY,
-    _generation_for,
+    _MetaIndex,
     assign_generations,
     load_frame_meta,
     nearest_meta,
     read_frame_size,
-    screen_point_to_frame,
 )
 from poc.workflow_3.recording_filter.settings import load_recording_filter_settings
 
@@ -102,7 +101,7 @@ def diagnose(input_dir=None) -> dict:
     metas = load_frame_meta(_resolve_meta_dir(capture_dir, frames_dir))
     live_boxes = _load_live_boxes(out_dir)
     generations = assign_generations(metas)
-    gen_by_time = list(zip([m.t_sec for m in metas], generations))
+    meta_index = _MetaIndex(metas, generations)
 
     if not events:
         print("[ERROR] Stage 1 이벤트가 없습니다.")
@@ -145,7 +144,7 @@ def diagnose(input_dir=None) -> dict:
         cursor_ys.append(cy)
         if not (0 <= cx < width and 0 <= cy < height):
             cursor_out_of_frame += 1
-        gen = _generation_for(gen_by_time, ev.timestamp_sec)
+        _meta, gen = meta_index.lookup(ev.timestamp_sec)
         live = live_boxes.get(gen)
         if _point_in_box(cx, cy, live):
             cursor_in_live += 1

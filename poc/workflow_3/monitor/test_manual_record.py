@@ -4,11 +4,11 @@
 """
 
 import json
+from pathlib import Path
 
 from poc.workflow_3.monitor.manual_record import (
     ManualRecordSettings,
-    budget_stop_reason,
-    dir_size_mb,
+    frame_backstop,
     manual_recording_dir,
     parse_eqp_from_title,
     pick_window_row,
@@ -16,6 +16,7 @@ from poc.workflow_3.monitor.manual_record import (
     sanitize_eqp_for_path,
     _watch_until_stop,
 )
+from poc.workflow_3.monitor.recording import RecordingSession
 from poc.workflow_3.monitor.frame_meta import (
     FrameMetaWriter,
     build_meta_record,
@@ -361,53 +362,70 @@ def test_meta_writer_write_failure_raises_nothing():
     print("[OK] test_meta_writer_write_failure_raises_nothing")
 
 
+def _budget_session(max_frames, max_disk_mb, *, frames=0, disk_mb=0.0):
+    """예산 판정만 시험하기 위한 RecordingSession (스레드는 띄우지 않는다)."""
+    import tempfile
+
+    session = RecordingSession(
+        None, tempfile.gettempdir(), tag="t",
+        max_frames=max_frames, max_disk_mb=max_disk_mb,
+    )
+    session.frames = [Path(f"f{i}.jpg") for i in range(frames)]
+    session._disk_bytes = int(disk_mb * 1024 * 1024)
+    return session
+
+
 def test_budget_ok_when_under_all_limits():
     """상한 아래면 빈 문자열(계속 진행)."""
-    s = ManualRecordSettings(max_frames=4000, max_disk_mb=2000)
-    assert budget_stop_reason(100, 10.0, s) == ""
+    s = _budget_session(4000, 2000, frames=100, disk_mb=10.0)
+    assert s._budget_stop_reason() == ""
     print("[OK] test_budget_ok_when_under_all_limits")
 
 
 def test_budget_stops_on_frame_limit():
     """프레임 상한 도달 시 frame_budget."""
-    s = ManualRecordSettings(max_frames=100, max_disk_mb=2000)
-    assert budget_stop_reason(100, 10.0, s) == "frame_budget"
-    assert budget_stop_reason(101, 10.0, s) == "frame_budget"
+    assert _budget_session(100, 2000, frames=100)._budget_stop_reason() == "frame_budget"
+    assert _budget_session(100, 2000, frames=101)._budget_stop_reason() == "frame_budget"
     print("[OK] test_budget_stops_on_frame_limit")
 
 
 def test_budget_stops_on_disk_limit():
     """디스크 상한 도달 시 disk_budget."""
-    s = ManualRecordSettings(max_frames=4000, max_disk_mb=50)
-    assert budget_stop_reason(10, 50.0, s) == "disk_budget"
+    s = _budget_session(4000, 50, frames=10, disk_mb=50.0)
+    assert s._budget_stop_reason() == "disk_budget"
     print("[OK] test_budget_stops_on_disk_limit")
 
 
 def test_budget_frame_limit_wins_when_both_exceeded():
     """둘 다 넘으면 프레임을 먼저 보고한다(사유가 하나여야 manifest 가 명확)."""
-    s = ManualRecordSettings(max_frames=10, max_disk_mb=10)
-    assert budget_stop_reason(999, 999.0, s) == "frame_budget"
+    s = _budget_session(10, 10, frames=999, disk_mb=999.0)
+    assert s._budget_stop_reason() == "frame_budget"
     print("[OK] test_budget_frame_limit_wins_when_both_exceeded")
 
 
 def test_budget_zero_means_unlimited():
     """0 은 무제한 - max_sec 과 같은 규약."""
-    s = ManualRecordSettings(max_frames=0, max_disk_mb=0)
-    assert budget_stop_reason(10 ** 9, 10.0 ** 9, s) == ""
+    s = _budget_session(0, 0, frames=10 ** 5, disk_mb=10.0 ** 5)
+    assert s._budget_stop_reason() == ""
     print("[OK] test_budget_zero_means_unlimited")
 
 
-def test_dir_size_mb_counts_files():
-    """폴더 용량을 MB 로 센다."""
-    import tempfile
-    from pathlib import Path
+def test_frame_backstop_does_not_bind_before_max_sec():
+    """파생 백스톱은 '매 샘플 저장' 최악의 경우에도 max_sec 보다 먼저 걸리지 않는다.
 
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        (root / "a.jpg").write_bytes(b"x" * (1024 * 1024))
-        (root / "b.jpg").write_bytes(b"x" * (1024 * 512))
-        assert 1.4 < dir_size_mb(root) < 1.6, dir_size_mb(root)
-    print("[OK] test_dir_size_mb_counts_files")
+    고정 상수(4000)를 쓰던 시절 poll_sec 이 0.2 -> 0.05 로 바뀌자 10분 세션이
+    약 3분에 frame_budget 으로 끊겼다. 이 시험은 그 회귀를 막는다.
+    """
+    for poll_sec in (0.05, 0.2, 0.3):
+        worst_case = int(600.0 / poll_sec)
+        assert frame_backstop(600.0, poll_sec) > worst_case, poll_sec
+    print("[OK] test_frame_backstop_does_not_bind_before_max_sec")
+
+
+def test_frame_backstop_unlimited_when_no_time_cap():
+    """max_sec 가 무제한이면 파생 백스톱도 걸지 않는다."""
+    assert frame_backstop(0.0, 0.05) == 0
+    print("[OK] test_frame_backstop_unlimited_when_no_time_cap")
 
 
 def test_pick_window_row_single_match():
@@ -471,7 +489,6 @@ def test_watch_until_stop_returns_watch_error_and_lets_caller_teardown():
     않고 "watch_error" 로 잡히는지, 그리고 그 반환값으로 호출부(main 이
     실제로 하는 것과 동일하게) session.stop() 을 계속 부를 수 있는지 확인한다.
     """
-    from pathlib import Path
 
     class _FakeSession:
         def __init__(self):
@@ -491,7 +508,7 @@ def test_watch_until_stop_returns_watch_error_and_lets_caller_teardown():
 
     fake = _FakeSession()
     settings = ManualRecordSettings(watch_interval_sec=0.0)
-    reason = _watch_until_stop(fake, Path("/tmp"), settings)
+    reason = _watch_until_stop(fake, settings)
     assert reason == "watch_error", reason
 
     # main() 은 반환된 사유로 무조건 session.stop() 을 부른다 - 그 계약을
@@ -540,7 +557,8 @@ if __name__ == "__main__":
     test_budget_stops_on_disk_limit()
     test_budget_frame_limit_wins_when_both_exceeded()
     test_budget_zero_means_unlimited()
-    test_dir_size_mb_counts_files()
+    test_frame_backstop_does_not_bind_before_max_sec()
+    test_frame_backstop_unlimited_when_no_time_cap()
     test_pick_window_row_single_match()
     test_pick_window_row_none_when_empty()
     test_pick_window_row_requires_eqp_when_ambiguous()

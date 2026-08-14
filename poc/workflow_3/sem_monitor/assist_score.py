@@ -15,12 +15,12 @@ Addressing2 / Measurement)로 최근 측정의 썸네일과 score 가 쌓이고,
 (구 구현은 OCR 로 열 헤더를 매칭해 격자를 세웠고, 헤더 한 글자만 잘려도 통째로 실패했다.)
 """
 
-import json
 import numpy as np
 from dataclasses import dataclass
 
 from poc.workflow_3 import DEBUG_IMAGE_DIR
-from poc.workflow_3.debug_artifacts import save_debug_jpeg
+from poc.workflow_3.debug_artifacts import save_debug_jpeg, save_debug_json
+from poc.workflow_3.sem_monitor.sem_box_detect import true_runs
 from poc.workflow_3.util import crop_image
 from poc.workflow_3.vlm.ui_venus_mai_locator import TargetConfig, analyze_window_target
 
@@ -68,21 +68,6 @@ class AssistObservation:
     reason: str = ""
 
 
-def _ink_bands(line_has_ink) -> list:
-    """불리언 1D 배열에서 True 가 연속된 덩어리를 (start, end) 목록으로 돌려준다."""
-    bands = []
-    start = None
-    for idx, present in enumerate(line_has_ink):
-        if present and start is None:
-            start = idx
-        elif not present and start is not None:
-            bands.append((start, idx))
-            start = None
-    if start is not None:
-        bands.append((start, len(line_has_ink)))
-    return bands
-
-
 def _drop_tall_bands(bands: list) -> list:
     """글자 줄로 보기엔 지나치게 두꺼운 띠를 버린다.
 
@@ -107,18 +92,19 @@ def read_assist_state(panel_image) -> AssistObservation:
     """
     if panel_image is None:
         return AssistObservation(status="unusable", reason="no_image")
+    # convert("RGB") 가 3채널을 보장하므로 남은 이상 상태는 빈 이미지뿐이다.
     frame = np.array(panel_image.convert("RGB")).astype(np.int16)
-    if frame.ndim != 3 or frame.shape[2] < 3 or frame.size == 0:
+    if frame.size == 0:
         return AssistObservation(status="unusable", reason="bad_image")
 
-    ink = frame[:, :, :3].mean(axis=2) < INK_MEAN_MAX
-    chroma = frame[:, :, :3].max(axis=2) - frame[:, :, :3].min(axis=2)
+    ink = frame.mean(axis=2) < INK_MEAN_MAX
+    chroma = frame.max(axis=2) - frame.min(axis=2)
     dominance = frame[:, :, 0] - np.maximum(frame[:, :, 1], frame[:, :, 2])
     red = ink & (chroma >= RED_CHROMA_MIN) & (dominance >= RED_DOMINANCE_MIN)
     black = ink & ~red
 
-    has_red = bool(red.sum() >= INK_MIN_PIXELS)
-    bands = _ink_bands(black.sum(axis=1) >= ROW_MIN_INK_PX)
+    has_red = bool(np.count_nonzero(red) >= INK_MIN_PIXELS)
+    bands = true_runs(black.sum(axis=1) >= ROW_MIN_INK_PX)
     row_bands = _drop_tall_bands(bands[HEADER_BAND_COUNT:])
     return AssistObservation(
         status="usable",
@@ -163,20 +149,14 @@ def _save_locate_evidence(image, reason: str, debug_dir) -> None:
         stamp = f"assist_locate_fail_{reason}"
         if image is not None:
             image_path = target / f"{stamp}.jpg"
-            save_debug_jpeg(image.convert("RGB"), image_path)
+            save_debug_jpeg(image, image_path)
             print(f"[INFO] Assist locate 실패 프레임: {image_path}")
-        path = target / f"{stamp}.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(
-                {
-                    "reason": reason,
-                    "image_size": list(image.size) if image is not None else None,
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
+        save_debug_json(
+            target / f"{stamp}.json",
+            {
+                "reason": reason,
+                "image_size": list(image.size) if image is not None else None,
+            },
         )
     except Exception as exc:
         print(f"[WARNING] Assist 실패 증거 저장 실패(무시): {exc}")
@@ -225,7 +205,7 @@ def locate_assist_panel(window, window_title: str, backend: str, image, *, debug
         return None
     try:
         panel = crop_image(image, panel_box)
-        save_debug_jpeg(panel.convert("RGB"), artifact_dir / "assist_panel_crop_region.jpg")
+        save_debug_jpeg(panel, artifact_dir / "assist_panel_crop_region.jpg")
     except Exception as exc:
         print(f"[WARNING] Assist 패널 crop 실패: {exc}")
         return None

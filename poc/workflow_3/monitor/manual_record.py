@@ -14,9 +14,13 @@
 import re
 import time
 from dataclasses import dataclass
-from pathlib import Path
 
 from poc.workflow_3 import ALIGN_IMAGES_DIR
+from poc.workflow_3.config import (
+    DEFAULT_RECORDING_CHANGE_MIN_PX,
+    DEFAULT_RECORDING_HEARTBEAT_SEC,
+    DEFAULT_RECORDING_POLL_SEC,
+)
 from poc.workflow_3.rcs.login_rcs_common import REMOTE_MONITORING_WINDOW_TITLE_PREFIX
 from poc.workflow_3.util import env_flag, env_float, env_int, make_timestamp_tag
 
@@ -31,6 +35,8 @@ _PATH_HOSTILE_RE = re.compile(r"[^\w.-]+", re.UNICODE)
 UNKNOWN_EQP = "unknown_eqp"
 # 수동 세션 전용 하위 폴더명 (알람 캡처의 captured_img_from_rcs 와 구분).
 MANUAL_DIRNAME = "_manual"
+# 파생 프레임 백스톱의 여유 배수 (frame_backstop 참조).
+_BACKSTOP_HEADROOM = 1.25
 
 
 def parse_eqp_from_title(title) -> str:
@@ -73,58 +79,55 @@ class ManualRecordSettings:
     """수동 녹화 세션 파라미터 (CLI 인자 없음 - 모듈 상수 + env 오버라이드)."""
 
     max_sec: float = 600.0        # 실질 상한. 0 이면 무제한.
-    max_frames: int = 4000        # 백스톱. 정상이면 안 걸린다. 0 이면 무제한.
-    max_disk_mb: float = 2000.0   # 백스톱. 0 이면 무제한.
-    poll_sec: float = 0.05        # 샘플링 요청 간격(실제 주기는 처리시간 + 이 값).
-    heartbeat_sec: float = 5.0    # 변화가 없어도 이 간격마다 1장.
-    change_min_px: int = 2        # 변화 판정 임계(알람 녹화와 동일).
+    # 백스톱. 0 이면 무제한. 기본값은 max_sec/poll_sec 에서 파생한다 - 아래
+    # frame_backstop() 참조. 고정 숫자로 두면 샘플링 주기를 올릴 때마다 백스톱이
+    # 실질 상한보다 먼저 걸려 "정상이면 안 걸린다"는 전제가 조용히 깨진다.
+    max_frames: int = 0
+    max_disk_mb: float = 0.0      # 백스톱. 0 이면 무제한.
+    poll_sec: float = DEFAULT_RECORDING_POLL_SEC            # 샘플링 요청 간격.
+    heartbeat_sec: float = DEFAULT_RECORDING_HEARTBEAT_SEC  # 변화 없어도 이 간격마다 1장.
+    change_min_px: int = DEFAULT_RECORDING_CHANGE_MIN_PX    # 변화 판정 임계(알람 녹화와 동일).
     jpeg_quality: int = 85        # q95 대비 용량 약 절반.
     eqp_id: str = ""              # 모니터링 창이 여럿일 때만 필요.
     meta_enabled: bool = True     # 사이드카 기록 on/off.
     watch_interval_sec: float = 5.0   # 예산 감시 주기.
 
 
+def frame_backstop(max_sec: float, poll_sec: float) -> int:
+    """max_sec 동안 매 샘플을 저장해도 걸리지 않는 프레임 백스톱을 계산한다.
+
+    백스톱의 목적은 폭주 방지지 세션 단축이 아니다. 따라서 "정상 최악"(모든 샘플이
+    변화로 판정되어 저장되는 경우 = max_sec/poll_sec)보다 넉넉히 위여야 한다.
+    고정 상수로 두면 poll_sec 을 6배로 올린 순간 백스톱이 max_sec 보다 먼저 걸려,
+    10분을 녹화하려던 세션이 3분에 frame_budget 으로 끝난다.
+    """
+    if max_sec <= 0 or poll_sec <= 0:
+        return 0  # 무제한 세션에는 파생 백스톱을 걸지 않는다.
+    return int((max_sec / poll_sec) * _BACKSTOP_HEADROOM)
+
+
 def load_manual_record_settings() -> ManualRecordSettings:
     """env 오버라이드를 적용한 설정을 만든다."""
     import os
 
+    max_sec = env_float("MANUAL_RECORD_MAX_SEC", 600.0)
+    poll_sec = env_float("MANUAL_RECORD_POLL_SEC", DEFAULT_RECORDING_POLL_SEC)
     return ManualRecordSettings(
-        max_sec=env_float("MANUAL_RECORD_MAX_SEC", 600.0),
-        max_frames=env_int("MANUAL_RECORD_MAX_FRAMES", 4000),
-        max_disk_mb=env_float("MANUAL_RECORD_MAX_DISK_MB", 2000.0),
-        poll_sec=env_float("MANUAL_RECORD_POLL_SEC", 0.05),
-        heartbeat_sec=env_float("MANUAL_RECORD_HEARTBEAT_SEC", 5.0),
-        change_min_px=env_int("MANUAL_RECORD_CHANGE_MIN_PX", 2),
+        max_sec=max_sec,
+        max_frames=env_int("MANUAL_RECORD_MAX_FRAMES", frame_backstop(max_sec, poll_sec)),
+        max_disk_mb=env_float("MANUAL_RECORD_MAX_DISK_MB", 4000.0),
+        poll_sec=poll_sec,
+        heartbeat_sec=env_float(
+            "MANUAL_RECORD_HEARTBEAT_SEC", DEFAULT_RECORDING_HEARTBEAT_SEC
+        ),
+        change_min_px=env_int(
+            "MANUAL_RECORD_CHANGE_MIN_PX", DEFAULT_RECORDING_CHANGE_MIN_PX
+        ),
         jpeg_quality=env_int("MANUAL_RECORD_JPEG_QUALITY", 85),
         eqp_id=os.getenv("MANUAL_RECORD_EQP_ID", "").strip(),
         meta_enabled=env_flag("MANUAL_RECORD_META", True),
         watch_interval_sec=env_float("MANUAL_RECORD_WATCH_INTERVAL_SEC", 5.0),
     )
-
-
-def budget_stop_reason(frame_count, disk_mb, settings) -> str:
-    """프레임/디스크 예산 초과 사유를 돌려준다. 여유가 있으면 빈 문자열.
-
-    사유는 하나만 돌려준다 - manifest 만 보고 원인을 구분할 수 있어야 하기 때문이다.
-    0 은 무제한을 뜻하며 max_sec 규약과 같다.
-    """
-    if settings.max_frames > 0 and frame_count >= settings.max_frames:
-        return "frame_budget"
-    if settings.max_disk_mb > 0 and disk_mb >= settings.max_disk_mb:
-        return "disk_budget"
-    return ""
-
-
-def dir_size_mb(path) -> float:
-    """폴더 안 파일 용량 합계를 MB 로 돌려준다(실패는 0.0)."""
-    total = 0
-    try:
-        for item in Path(path).rglob("*"):
-            if item.is_file():
-                total += item.stat().st_size
-    except Exception:
-        return 0.0
-    return total / (1024.0 * 1024.0)
 
 
 def pick_window_row(rows, wanted_eqp):
@@ -228,7 +231,7 @@ def _make_capture_fn(tool_window, meta_writer, started_at, our_handles):
     같은 시각의 창 rect/가림/커서를 남길 수 있다. 사이드카 기록 실패는 삼켜
     캡처 자체를 방해하지 않는다.
     """
-    from poc.workflow_3.util import capture_window
+    from poc.workflow_3.util import capture_window, read_foreground_window_info
 
     state = {"seq": 0}
 
@@ -242,8 +245,6 @@ def _make_capture_fn(tool_window, meta_writer, started_at, our_handles):
                 "left": int(rect_obj.left), "top": int(rect_obj.top),
                 "right": int(rect_obj.right), "bottom": int(rect_obj.bottom),
             }
-            from poc.workflow_3.util import read_foreground_window_info
-
             _fg_handle, fg_title = (
                 read_foreground_window_info() if read_foreground_window_info else (None, "")
             )
@@ -263,25 +264,25 @@ def _make_capture_fn(tool_window, meta_writer, started_at, our_handles):
     return _capture
 
 
-def _watch_until_stop(session, out_dir, settings) -> str:
-    """세션이 끝나거나 예산/중단 신호가 올 때까지 감시하고 중지 사유를 돌려준다.
+def _watch_until_stop(session, settings) -> str:
+    """세션이 끝나거나 중단 신호가 올 때까지 감시하고 중지 사유를 돌려준다.
 
     이 함수는 session 을 직접 멈추지 않는다 - 관찰만 하고 사유 문자열을
     리턴한다. 그래야 호출부(main)가 반환값과 무관하게 항상
     session.stop()/meta_writer.close() 를 실행할 수 있다("teardown 은 항상
     완료된다"는 저장소 규칙, 2026-08-10 리뷰 FINDING 2). KeyboardInterrupt 는
-    기존과 동일하게 "user_interrupt" 다. 그 외의 예기치 못한 예외
-    (is_alive/sleep/budget_stop_reason/dir_size_mb 어디서든 날 수 있다) 는
-    "watch_error" 로 잡아 삼킨다 - 그러지 않으면 예외가 main() 밖으로 새어나가
-    녹화 스레드가 계속 돌고 manifest 도 안 써지는 채로 프로세스가 끝난다.
+    기존과 동일하게 "user_interrupt" 다. 그 외의 예기치 못한 예외(is_alive/sleep
+    어디서든 날 수 있다)는 "watch_error" 로 잡아 삼킨다 - 그러지 않으면 예외가
+    main() 밖으로 새어나가 녹화 스레드가 계속 돌고 manifest 도 안 써지는 채로
+    프로세스가 끝난다.
+
+    프레임/디스크 예산은 여기서 재지 않는다 - RecordingSession 이 프레임을 쓰는
+    바로 그 자리에서 판정하고 스스로 멈춘다. 5초짜리 감시 주기로 재면 20fps 에서
+    최대 100 프레임을 초과 저장한 뒤에야 알아차린다.
     """
     try:
         while session.is_alive():
             time.sleep(settings.watch_interval_sec)
-            reason = budget_stop_reason(len(session.frames), dir_size_mb(out_dir), settings)
-            if reason:
-                print(f"[WARNING] ===== 예산 상한 도달({reason}) - 녹화를 종료합니다 =====")
-                return reason
     except KeyboardInterrupt:
         print("\n[INFO] Ctrl+C 감지 - 녹화를 종료합니다.")
         return "user_interrupt"
@@ -344,6 +345,8 @@ def main() -> int:
         heartbeat_sec=settings.heartbeat_sec,
         change_min_px=settings.change_min_px,
         max_sec=settings.max_sec,
+        max_frames=settings.max_frames,
+        max_disk_mb=settings.max_disk_mb,
         jpeg_quality=settings.jpeg_quality,
         capture_fn=_make_capture_fn(
             tool_window, meta_writer, started_at, our_handles,
@@ -352,7 +355,7 @@ def main() -> int:
     session.start()
     print("[INFO] 녹화 중입니다. 중지하려면 Ctrl+C 를 누르세요.")
 
-    stop_reason = _watch_until_stop(session, out_dir, settings)
+    stop_reason = _watch_until_stop(session, settings)
 
     frames = session.stop(stop_reason)
     if meta_writer is not None:

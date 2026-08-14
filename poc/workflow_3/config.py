@@ -17,6 +17,17 @@ from poc.workflow_3.runner.workflow_config import WorkflowSettings, load_workflo
 from poc.workflow_3.util import env_flag, env_float, env_int
 
 
+# --- 녹화 샘플링 기본값의 단일 출처 ---
+# 알람 녹화(Workflow3Settings + ALIGN_FAIL_*)와 수동 녹화(ManualRecordSettings +
+# MANUAL_RECORD_*)는 env 네임스페이스가 다르지만 **같은 캡처 메커니즘**을 쓰므로
+# 기본값이 갈리면 안 된다. 예전에는 같은 숫자가 dataclass 기본값 2곳 + env 로더
+# 2곳 + RecordingSession 생성자에 흩어져 있어, 한 번 튜닝하려면 다섯 곳을 맞춰
+# 고쳐야 했고 하나를 놓치면 두 녹화 경로의 샘플링 주기가 조용히 달라졌다.
+DEFAULT_RECORDING_POLL_SEC = 0.05
+DEFAULT_RECORDING_HEARTBEAT_SEC = 5.0
+DEFAULT_RECORDING_CHANGE_MIN_PX = 2
+
+
 def _env_str(name: str, default: str) -> str:
     """공백 제거한 문자열 env (비어 있으면 default)."""
     value = os.environ.get(name, "").strip()
@@ -100,9 +111,9 @@ class Workflow3Settings(WorkflowSettings):
     block_input_enabled: bool = False
 
     # --- 상시 녹화 (변화 감지 기반 적응 캡처) ---
-    recording_poll_sec: float = 0.05  # 샘플링 간격 — 조작 중 커서 궤적 추적 밀도.
-    recording_heartbeat_sec: float = 5.0  # 변화 없어도 이 간격마다 1장 저장.
-    recording_change_min_px: int = 2  # 변화 판정: delta>10 인 다운샘플 픽셀 최소 개수.
+    recording_poll_sec: float = DEFAULT_RECORDING_POLL_SEC  # 샘플링 간격.
+    recording_heartbeat_sec: float = DEFAULT_RECORDING_HEARTBEAT_SEC  # 변화 없어도 이 간격마다 1장.
+    recording_change_min_px: int = DEFAULT_RECORDING_CHANGE_MIN_PX  # 변화 판정 픽셀 최소 개수.
     recording_max_sec: float = 900.0
     engineer_watch_sec: float = 300.0  # 미보정 watch 상한(cap, 5분) - done 감지 시 조기 종료.
 
@@ -117,6 +128,10 @@ class Workflow3Settings(WorkflowSettings):
     engineer_done_assist_unusable_after: int = 3  # 분자 fallback 개방 전 unusable 횟수.
     engineer_done_numerator_increase_reads: int = 3  # 엄격 증가 분자 표본 요구 횟수.
     engineer_done_change_min_px: int = 4  # CV gate 변화 픽셀 임계(다운샘플).
+    # 변화로 인정할 픽셀 delta 하한. 개수(위)와 하한(여기)은 한 판정의 두 반쪽인데
+    # 예전에는 개수만 env 로 노출되고 하한은 recording.py 의 모듈 상수라, 오피스에서
+    # 민감도를 조정할 방법이 반쪽뿐이었다(그리고 녹화 쪽을 튜닝하면 이쪽이 같이 움직였다).
+    engineer_done_pixel_delta_min: float = 10.0
     engineer_done_relocalize_after_miss: int = 3  # 변화 후 OCR 연속 미검출 시 재grounding.
     # 재정렬 진행 중에는 카운터(N/M)가 빈칸이라 grounding 이 거부될 수 있다(정상).
     # 거부/실패 후 이 간격으로 재시도한다 (VLM 호출 폭주 방지 throttle).
@@ -268,9 +283,15 @@ def load_workflow3_settings() -> Workflow3Settings:
         rcs_recovery_enabled=env_flag("ALIGN_FAIL_RCS_RECOVERY", default=False),
         keep_awake=env_flag("ALIGN_FAIL_KEEP_AWAKE", default=True),
         block_input_enabled=env_flag("ALIGN_FAIL_BLOCK_INPUT", default=False),
-        recording_poll_sec=env_float("ALIGN_FAIL_RECORDING_POLL_SEC", 0.05),
-        recording_heartbeat_sec=env_float("ALIGN_FAIL_RECORDING_HEARTBEAT_SEC", 5.0),
-        recording_change_min_px=env_int("ALIGN_FAIL_RECORDING_CHANGE_MIN_PX", 2),
+        recording_poll_sec=env_float(
+            "ALIGN_FAIL_RECORDING_POLL_SEC", DEFAULT_RECORDING_POLL_SEC
+        ),
+        recording_heartbeat_sec=env_float(
+            "ALIGN_FAIL_RECORDING_HEARTBEAT_SEC", DEFAULT_RECORDING_HEARTBEAT_SEC
+        ),
+        recording_change_min_px=env_int(
+            "ALIGN_FAIL_RECORDING_CHANGE_MIN_PX", DEFAULT_RECORDING_CHANGE_MIN_PX
+        ),
         recording_max_sec=env_float("ALIGN_FAIL_RECORDING_MAX_SEC", 900.0),
         engineer_watch_sec=env_float("ALIGN_FAIL_ENGINEER_WATCH_SEC", 300.0),
         rcp_msr_gather_enabled=env_flag("ALIGN_FAIL_GATHER_RCP_MSR", default=True),
@@ -314,6 +335,9 @@ def load_workflow3_settings() -> Workflow3Settings:
             "ALIGN_FAIL_ENGINEER_DONE_NUMERATOR_READS", 3
         ),
         engineer_done_change_min_px=env_int("ALIGN_FAIL_ENGINEER_DONE_CHANGE_MIN_PX", 4),
+        engineer_done_pixel_delta_min=env_float(
+            "ALIGN_FAIL_ENGINEER_DONE_PIXEL_DELTA_MIN", 10.0
+        ),
         engineer_done_relocalize_after_miss=env_int("ALIGN_FAIL_ENGINEER_DONE_RELOCALIZE_MISS", 3),
         engineer_done_reground_sec=env_float("ALIGN_FAIL_ENGINEER_DONE_REGROUND_SEC", 30.0),
         engineer_done_roi_pad_x=env_float("ALIGN_FAIL_ENGINEER_DONE_ROI_PAD_X", 0.03),

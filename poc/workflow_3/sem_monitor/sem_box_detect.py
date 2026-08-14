@@ -204,19 +204,36 @@ def grey_frame_mask(bgr: np.ndarray) -> np.ndarray:
     return mask.astype(np.uint8)
 
 
+def true_runs(mask_1d) -> list:
+    """1D 불리언 배열에서 연속 True 덩어리를 (start, end) 목록으로 돌려준다.
+
+    end 는 파이썬 슬라이스 규약대로 배타적이다. 경계는 양끝에 0 을 덧대 diff 로
+    찾는다 - 인덱스를 파이썬 for 로 도는 방식보다 빠르고, 배열 끝에서 끝나는
+    run 을 따로 처리할 필요가 없다.
+
+    프레임 변 판정(_longest_true_run)과 Assist 표의 글자 줄 세기(assist_score)가
+    같은 primitive 를 쓴다.
+    """
+    mask = np.asarray(mask_1d)
+    if mask.size == 0 or not mask.any():
+        return []
+    padded = np.concatenate(([0], mask.astype(np.int8), [0]))
+    diff = np.diff(padded)
+    starts = np.flatnonzero(diff == 1)
+    ends = np.flatnonzero(diff == -1)
+    return [(int(start), int(end)) for start, end in zip(starts, ends)]
+
+
 def _longest_true_run(mask_1d: np.ndarray) -> int:
     """1D 불리언 배열에서 연속 True 의 최대 길이.
 
     단순 합(sum)은 흩어진 회색 픽셀(내부 텍스처·인접 패널)도 높게 세지만, 최대
     연속 run 은 진짜 직선만 크게 잡으므로 변 판정의 변별력이 훨씬 높다.
     """
-    if not mask_1d.any():
+    runs = true_runs(mask_1d)
+    if not runs:
         return 0
-    padded = np.concatenate(([0], mask_1d.astype(np.int8), [0]))
-    diff = np.diff(padded)
-    starts = np.flatnonzero(diff == 1)
-    ends = np.flatnonzero(diff == -1)
-    return int((ends - starts).max())
+    return max(end - start for start, end in runs)
 
 
 def snap_box_to_edges(gray: np.ndarray, grey_mask: np.ndarray, bbox: dict) -> dict:

@@ -13,7 +13,6 @@ from types import SimpleNamespace
 import numpy as np
 from PIL import Image
 
-from poc.workflow_3 import util as w3util
 from poc.workflow_3.config import Workflow3Settings, load_workflow3_settings
 from poc.workflow_3.monitor.cycle import _engineer_watch
 from poc.workflow_3.monitor.engineer_done_align_adjustment import (

@@ -16,7 +16,9 @@ from poc.workflow_3.sem_monitor.assist_score import assist_panel_target
 DIGIT_PANEL_SIZE = (300, 280)
 DIGIT_ROW_PITCH = 30
 DIGIT_FIRST_TOP = 45
-DIGIT_COLUMN_LEFTS = {"Addressing1": 20, "Measurement": 220}
+# 숫자를 그릴 x 위치. 판독기는 열을 구분하지 않으므로(한 행에 검정 숫자가 하나라도
+# 있으면 측정 1회) 열 이름은 더 이상 의미가 없다 - 위치만 남긴다.
+DIGIT_COLUMN_LEFTS = (20, 220)
 
 
 def _digit_font():
@@ -27,22 +29,14 @@ def _digit_font():
         return ImageFont.load_default()
 
 
-def _draw_rect_glyph(draw, left, top, *, width=12, height=18, stroke=2, bar=3,
-                     fill=(20, 20, 20)):
-    """실측 숫자와 같은 잉크 밀도(tight bbox 대비 약 0.59)를 갖는 글자 모양을 그린다.
+def _draw_rect_glyph(draw, left, top, *, width=12, height=18, fill=(20, 20, 20)):
+    """숫자 한 글자 자리를 채우는 잉크 사각형을 그린다.
 
-    PIL 기본 폰트의 글자 metric 은 Pillow 버전마다 흔들리므로, 밀도를 **설계값으로**
-    고정해야 하는 테스트에서는 사각 링 + 가운데 바(= '8' 모양)로 그린다. 리뷰어가 실제
-    폰트(Arial/Helvetica/Verdana, 11~16px)에서 잰 0.44~0.74(중앙값 0.58) 한가운데를
-    노린 값이라, 옛 임계 0.55 + 무패딩 조합이면 이 글자는 unknown 으로 끊긴다.
+    현재 판독기는 잉크 밀도를 보지 않는다 - 픽셀이 어두운지, 띠가 얼마나 두꺼운지만
+    본다. 그래서 예전의 링+바('8' 모양) 구성은 필요 없다. 폰트 metric 에 기대지 않고
+    높이를 설계값으로 고정하는 것만이 이 헬퍼의 목적이다(띠 높이 판정이 그것에 의존).
     """
     draw.rectangle([left, top, left + width - 1, top + height - 1], fill=fill)
-    draw.rectangle(
-        [left + stroke, top + stroke, left + width - 1 - stroke, top + height - 1 - stroke],
-        fill=(240, 240, 240),
-    )
-    mid = top + (height - bar) // 2
-    draw.rectangle([left + stroke, mid, left + width - 1 - stroke, mid + bar - 1], fill=fill)
 
 
 def test_panel_target_uses_proven_button_geometry():
@@ -75,16 +69,14 @@ def _restore_asc(state):
         setattr(asc, name, orig)
 
 
-# locate_assist_layout 의 기본 통합 테스트용 이미지 크기/점 - _panel_items() 의 좌표가
-# (max x=260, max y=238) 이므로, 크롭된 패널이 그보다 확실히 커야 정규화 후 항목이
-# 패널 밖으로 안 잘린다(정규화가 patch 밖 항목을 버리는 동작을 이 테스트에서 우연히
-# 건드리지 않기 위함 - 그건 별도 테스트가 전담한다).
+# locate_assist_panel 통합 테스트용 이미지 크기/점. 크기 자체에 의미는 없고, 패널
+# 비율(PANEL_*_RATIO)을 적용한 crop 이 이미지 경계에 걸려 잘리지 않을 만큼 크면 된다.
 _LOCATE_IMAGE_SIZE = (1000, 1000)
 _LOCATE_POINT = {"x": 500, "y": 500}
 
 
 def _expected_panel_size(image_size, point):
-    """locate_assist_layout 의 panel_box 계산과 같은 식으로 패널 crop 크기를 구한다."""
+    """locate_assist_panel 의 panel_box 계산과 같은 식으로 패널 crop 크기를 구한다."""
     width, height = image_size
     left = max(0, int(point["x"] - width * asc.PANEL_LEFT_RATIO))
     right = min(width, int(point["x"] + width * asc.PANEL_RIGHT_RATIO))
@@ -116,7 +108,7 @@ def _render_count_panel(row_colors, *, header=True, size=DIGIT_PANEL_SIZE):
             continue
         fill = (20, 20, 20) if color == "black" else (200, 20, 20)
         top = DIGIT_FIRST_TOP + row_idx * DIGIT_ROW_PITCH
-        for left in DIGIT_COLUMN_LEFTS.values():
+        for left in DIGIT_COLUMN_LEFTS:
             _draw_rect_glyph(draw, left, top, fill=fill)
             _draw_rect_glyph(draw, left + 12, top, fill=fill)
     return image
@@ -153,13 +145,29 @@ def test_count_state_flags_red_and_excludes_it_from_rows():
     return ok
 
 
-def test_count_state_does_not_count_header_as_a_row():
-    """헤더 텍스트도 검정 잉크라 띠로 잡힌다 - 행으로 세면 항상 1을 부풀린다."""
-    state = asc.read_assist_state(_render_count_panel(["black"] * 3))
-    ok = state.ok_row_count == 3
+def test_count_state_drops_exactly_one_leading_band_as_header():
+    """헤더 텍스트도 검정 잉크라 띠로 잡힌다 - 맨 위 띠 하나는 항상 버린다.
+
+    같은 3행을 헤더 유/무로 그려 **차이**를 본다. 헤더가 있으면 4띠에서 1을 버려 3,
+    없으면 3띠에서 1을 버려 2다. 헤더 있는 경우만 단독으로 확인하면 정상 계수
+    테스트와 완전히 같은 단언이 되어(둘 다 rows==3) HEADER_BAND_COUNT 가 0 이 되어도
+    한쪽은 통과한다 - 실제로 그렇게 중복돼 있었다.
+
+    후자(2)는 버그가 아니라 문서화된 한계다: crop 이 헤더를 잘라내면 데이터 행 하나를
+    잃지만, 과소 계수 -> done 지연은 안전한 방향이다.
+    """
+    with_header = asc.read_assist_state(_render_count_panel(["black"] * 3, header=True))
+    without_header = asc.read_assist_state(_render_count_panel(["black"] * 3, header=False))
+    ok = (
+        with_header.ok_row_count == 3
+        and without_header.ok_row_count == 2
+        and with_header.ok_row_count - without_header.ok_row_count
+        == asc.HEADER_BAND_COUNT
+    )
     print(
-        f"[{'PASS' if ok else 'FAIL'}] count_state_does_not_count_header_as_a_row: "
-        f"rows={state.ok_row_count} (기대 3)"
+        f"[{'PASS' if ok else 'FAIL'}] count_state_drops_exactly_one_leading_band_as_header: "
+        f"header={with_header.ok_row_count} (기대 3), "
+        f"no_header={without_header.ok_row_count} (기대 2)"
     )
     return ok
 
@@ -245,7 +253,7 @@ def main():
     results = [
         test_count_state_counts_black_ink_bands(),
         test_count_state_flags_red_and_excludes_it_from_rows(),
-        test_count_state_does_not_count_header_as_a_row(),
+        test_count_state_drops_exactly_one_leading_band_as_header(),
         test_count_state_empty_table_is_zero_rows(),
         test_count_state_ignores_dense_dark_block(),
         test_locate_panel_returns_box_without_ocr(),

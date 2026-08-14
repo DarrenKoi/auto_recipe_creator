@@ -34,6 +34,11 @@ from pathlib import Path
 
 import numpy as np
 
+from poc.workflow_3.config import (
+    DEFAULT_RECORDING_CHANGE_MIN_PX,
+    DEFAULT_RECORDING_HEARTBEAT_SEC,
+    DEFAULT_RECORDING_POLL_SEC,
+)
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
 from poc.workflow_3.util import capture_window
 
@@ -47,28 +52,55 @@ _DIFF_DOWNSAMPLE = 4
 _PIXEL_DELTA_MIN = 10.0
 
 
-# 아래 두 함수는 monitor/engineer_done_align_adjustment.py 의 분자 변화 감지에서도 재사용된다.
-def _to_diff_gray(image) -> np.ndarray:
-    """캡처 이미지를 변화 비교용 저해상 grayscale float 배열로 변환한다."""
+def to_diff_gray(image) -> np.ndarray:
+    """캡처 이미지를 변화 비교용 저해상 grayscale float 배열로 변환한다.
+
+    **반드시 `[::4, ::4]` 격자 그대로 뽑는다.** 전체 해상도 convert("L") 를 피하려고
+    `resize((w//4, h//4), NEAREST)` 로 바꾸고 싶어지지만, 그건 같은 연산이 아니다
+    (2026-08-15 리뷰에서 확인):
+
+      * NEAREST resize 는 출력 셀의 **중심**을 되짚어 입력 픽셀 4i+2 를 고른다.
+        8x8 램프에서 이 격자는 [0,4,32,36] 이 아니라 [18,22,50,54] 를 뽑는다 -
+        면적은 같아도 표본이 완전히 다른 픽셀이다.
+      * 변의 길이가 4의 배수가 아니면 모양까지 달라진다(내림 vs 올림). 1367x769
+        crop 은 (193,342) 가 아니라 (192,341) 이 된다. engineer-done CV gate 는
+        1920x1080 프레임이 아니라 **임의 크기 분자 ROI crop** 에 걸리므로 바로
+        이 경우에 해당한다.
+
+    표본이 바뀌면 `frame_changed` 의 changed_px 가 바뀌고, 그건 곧
+    `change_min_px`/`engineer_done_change_min_px` 민감도를 조용히 재튜닝하는 것이다.
+    prev/current 가 같은 변환을 타므로 깨지지는 않지만, 오피스 검증이 없는 CV 게이트의
+    임계를 성능 최적화의 부수효과로 옮기면 안 된다. 여기서 아끼는 건 프레임당 0.3ms 로,
+    캡처 경로의 PNG 왕복(234ms)을 걷어낸 지금은 폴링 예산(50ms) 대비 무의미하다.
+    """
     array = np.asarray(image.convert("L") if hasattr(image, "convert") else image)
     if array.ndim == 3:
         array = array.mean(axis=2)
     return array[::_DIFF_DOWNSAMPLE, ::_DIFF_DOWNSAMPLE].astype(np.float32)
 
 
-# engineer_done_align_adjustment.py 의 CV gate 에서도 호출됨 (인트라-패키지 결합).
-def _frame_changed(prev: np.ndarray | None, current: np.ndarray, min_changed_px: int) -> bool:
+def frame_changed(
+    prev: np.ndarray | None,
+    current: np.ndarray,
+    min_changed_px: int,
+    *,
+    pixel_delta_min: float = _PIXEL_DELTA_MIN,
+) -> bool:
     """직전 저장 프레임 대비 '확실히 변한' 다운샘플 픽셀 수가 임계 이상인지.
 
     평균 절대차는 작은 커서(화면의 수백분의 일)가 움직여도 임계를 못 넘는다.
     개수 기반은 커서 한 칸 이동(이전 위치 복원 + 새 위치 등장 = 수 픽셀, delta 큼)
-    도 잡고, 압축 노이즈(넓지만 delta 작음)는 _PIXEL_DELTA_MIN 으로 걸러진다.
+    도 잡고, 압축 노이즈(넓지만 delta 작음)는 ``pixel_delta_min`` 으로 걸러진다.
+
+    ``pixel_delta_min`` 이 인자인 이유: 이 함수는 녹화 저장 게이트와 engineer-done
+    카운터 CV 게이트 양쪽이 쓰는데, 두 판정의 목적이 달라 민감도도 갈릴 수 있다.
+    모듈 상수로 두면 한쪽을 튜닝할 때 다른 쪽이 조용히 같이 움직인다.
     """
     if prev is None:
         return True
     if prev.shape != current.shape:
         return True  # 창 리사이즈 등 — 변화로 간주.
-    changed_px = int((np.abs(current - prev) > _PIXEL_DELTA_MIN).sum())
+    changed_px = int((np.abs(current - prev) > pixel_delta_min).sum())
     return changed_px >= min_changed_px
 
 
@@ -81,10 +113,12 @@ class RecordingSession:
         out_dir: Path,
         *,
         tag: str,
-        poll_sec: float = 0.05,
-        heartbeat_sec: float = 5.0,
-        change_min_px: int = 2,
+        poll_sec: float = DEFAULT_RECORDING_POLL_SEC,
+        heartbeat_sec: float = DEFAULT_RECORDING_HEARTBEAT_SEC,
+        change_min_px: int = DEFAULT_RECORDING_CHANGE_MIN_PX,
         max_sec: float = 900.0,
+        max_frames: int = 0,
+        max_disk_mb: float = 0.0,
         jpeg_quality: int = 95,
         capture_fn=None,
     ):
@@ -95,6 +129,12 @@ class RecordingSession:
         self.heartbeat_sec = max(self.poll_sec, float(heartbeat_sec))
         self.change_min_px = max(1, int(change_min_px))
         self.max_sec = float(max_sec)
+        # 프레임/디스크 백스톱. 0 = 무제한 (max_sec 규약과 같다). 예산은 샘플링 주기를
+        # 정하는 곳과 같은 깊이에 있어야 한다 - poll_sec 을 6배로 올리면 같은 시간에
+        # 6배의 프레임이 쌓이므로, 예산이 호출부에만 있으면 그 호출부만 보호받는다.
+        self.max_frames = max(0, int(max_frames))
+        self.max_disk_mb = max(0.0, float(max_disk_mb))
+        self._disk_bytes = 0
         self.jpeg_quality = int(jpeg_quality)
         # 테스트 주입점 — 기본은 실제 창 캡처.
         self._capture_fn = capture_fn or (lambda: capture_window(self.tool_window))
@@ -144,6 +184,21 @@ class RecordingSession:
 
     # ---- 내부 ----
 
+    def disk_mb(self) -> float:
+        """이 세션이 지금까지 쓴 프레임 용량 합계(MB) - 증분 누적값."""
+        return self._disk_bytes / (1024.0 * 1024.0)
+
+    def _budget_stop_reason(self) -> str:
+        """프레임/디스크 예산 초과 사유. 여유가 있으면 빈 문자열.
+
+        사유는 하나만 돌려준다 - manifest 만 보고 원인을 구분할 수 있어야 한다.
+        """
+        if self.max_frames > 0 and len(self.frames) >= self.max_frames:
+            return "frame_budget"
+        if self.max_disk_mb > 0 and self.disk_mb() >= self.max_disk_mb:
+            return "disk_budget"
+        return ""
+
     def _run(self) -> None:
         seq = 0
         started = self._started_at or time.time()
@@ -162,8 +217,8 @@ class RecordingSession:
                 first_failure_at = None
                 self.sampled_count += 1
 
-                gray = _to_diff_gray(image)
-                changed = _frame_changed(prev_gray, gray, self.change_min_px)
+                gray = to_diff_gray(image)
+                changed = frame_changed(prev_gray, gray, self.change_min_px)
                 heartbeat_due = (now - last_saved_at) >= self.heartbeat_sec
                 if changed or heartbeat_due:
                     elapsed_ms = int(elapsed * 1000)
@@ -173,6 +228,16 @@ class RecordingSession:
                     seq += 1
                     prev_gray = gray
                     last_saved_at = now
+                    # 방금 쓴 파일 크기만 누적한다 - 폴더 전체를 다시 훑으면 저장
+                    # 프레임 수에 비례하는 비용이 매번 들어 O(n^2) 이 된다.
+                    try:
+                        self._disk_bytes += out_path.stat().st_size
+                    except OSError:
+                        pass
+                    budget = self._budget_stop_reason()
+                    if budget:
+                        self.stop_reason = budget
+                        break
             except Exception as exc:
                 if first_failure_at is None:
                     first_failure_at = now
@@ -200,6 +265,9 @@ class RecordingSession:
             "heartbeat_sec": self.heartbeat_sec,
             "change_min_px": self.change_min_px,
             "jpeg_quality": self.jpeg_quality,
+            "max_frames": self.max_frames,
+            "max_disk_mb": self.max_disk_mb,
+            "disk_mb": round(self.disk_mb(), 2),
             "stop_reason": self.stop_reason,
         }
         try:
@@ -215,4 +283,9 @@ class RecordingSession:
         )
 
 
-__all__ = ["RecordingSession", "FAILURE_WINDOW_SEC"]
+__all__ = [
+    "RecordingSession",
+    "FAILURE_WINDOW_SEC",
+    "frame_changed",
+    "to_diff_gray",
+]

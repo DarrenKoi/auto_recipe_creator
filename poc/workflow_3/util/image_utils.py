@@ -7,7 +7,6 @@ from PIL import Image
 
 try:
     import mss
-    import mss.tools
 
     MSS_AVAILABLE = True
 except ImportError:
@@ -15,7 +14,13 @@ except ImportError:
 
 
 def capture_window(window) -> "Image.Image":
-    """pywinauto 창 영역을 mss로 캡처하여 PIL Image로 반환한다."""
+    """pywinauto 창 영역을 mss로 캡처하여 PIL Image로 반환한다.
+
+    raw BGRA 버퍼를 PIL 로 직접 감싼다. PNG 로 인코딩했다가 곧바로 디코딩하는
+    왕복은 같은 픽셀을 얻으려고 zlib 압축/해제를 두 번 하는 순수 낭비이며,
+    녹화 세션은 이 함수를 초당 20회 부르므로(poll_sec=0.05) 그 왕복이 폴링
+    예산(50ms) 자체를 잡아먹는다.
+    """
     if not MSS_AVAILABLE:
         raise ImportError("mss 라이브러리가 필요합니다.")
 
@@ -28,10 +33,8 @@ def capture_window(window) -> "Image.Image":
     }
     with mss.mss() as sct:
         shot = sct.grab(region)
-        png_data = mss.tools.to_png(shot.rgb, shot.size)
-
-    image = Image.open(BytesIO(png_data))
-    return image
+        # mss 는 BGRA 를 주고 X 는 패딩 바이트다 - "BGRX" 로 알파를 버리며 RGB 로 읽는다.
+        return Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
 
 
 def encode_image_webp(

@@ -14,6 +14,7 @@
 detect_sem_box 가 그 장비의 실제 프레임을 보고 찾으므로 자동으로 흡수된다.
 """
 
+import bisect
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -252,12 +253,12 @@ def build_region_maps(events, metas, client, out_dir) -> dict:
     from poc.workflow_3.sem_monitor.sem_box_detect import detect_sem_box
 
     generations = assign_generations(metas)
-    gen_by_time = list(zip([m.t_sec for m in metas], generations))
+    meta_index = _MetaIndex(metas, generations)
     maps = {}
     out_dir = Path(out_dir)
 
     for event in events:
-        generation = _generation_for(gen_by_time, event.timestamp_sec)
+        _meta, generation = meta_index.lookup(event.timestamp_sec)
         if generation in maps:
             continue
         try:
@@ -295,20 +296,46 @@ def build_region_maps(events, metas, client, out_dir) -> dict:
     return maps
 
 
-def _generation_for(gen_by_time, t_sec) -> int:
-    """시각으로 세대 번호를 찾는다(사이드카 없거나 가장 가까운 기록도 너무 멀면 0).
+class _MetaIndex:
+    """t_sec 로 정렬한 사이드카 색인 - 이벤트당 이분 탐색 1회로 조인한다.
 
-    (FINDING 2) nearest_meta 와 동일한 META_MAX_JOIN_GAP_SEC 상한을 적용한다.
-    그렇지 않으면 죽은 사이드카의 마지막 세대 번호가 세션 끝까지 그대로 남아,
-    region_map 조회가 몇 분 전 레이아웃의 live_box 를 계속 골라 쓰게 된다.
-    사이드카가 비어 있을 때와 동일하게 0(폴백)으로 되돌린다.
+    이벤트마다 전체 meta 를 훑으면 O(이벤트 x meta) 다. 샘플링이 0.3s -> 0.05s 로
+    빨라지면서 양쪽이 함께 6배가 되어 같은 녹화를 거르는 비용이 36배로 늘었다.
+    사이드카는 시간순으로 append 되지만 그 가정에 기대지 않고 여기서 한 번 정렬한다.
+
+    세대와 meta 를 함께 들고 있는 이유는 둘의 조회 키가 **같은 t_sec** 이기 때문이다
+    - 따로 찾으면 같은 이분 탐색을 두 번 한다.
     """
-    if not gen_by_time:
-        return 0
-    nearest_t, generation = min(gen_by_time, key=lambda pair: abs(pair[0] - float(t_sec)))
-    if abs(nearest_t - float(t_sec)) > META_MAX_JOIN_GAP_SEC:
-        return 0
-    return generation
+
+    def __init__(self, metas, generations):
+        paired = sorted(
+            zip([float(m.t_sec) for m in metas], range(len(metas))),
+            key=lambda pair: pair[0],
+        )
+        self._times = [t for t, _idx in paired]
+        self._metas = [metas[idx] for _t, idx in paired]
+        self._generations = [generations[idx] for _t, idx in paired]
+
+    def _nearest_pos(self, t_sec):
+        """t_sec 에 가장 가까운 항목의 위치. 상한을 넘으면 None."""
+        if not self._times:
+            return None
+        target = float(t_sec)
+        pos = bisect.bisect_left(self._times, target)
+        # 삽입 위치의 좌/우 이웃만 후보다 - 정렬돼 있으므로 그 둘보다 가까운 항목은 없다.
+        # _times 가 비어 있지 않으면 둘 중 최소 하나는 항상 범위 안이라 후보는 반드시 있다.
+        candidates = [i for i in (pos - 1, pos) if 0 <= i < len(self._times)]
+        gap, best = min((abs(self._times[i] - target), i) for i in candidates)
+        if gap > META_MAX_JOIN_GAP_SEC:
+            return None
+        return best
+
+    def lookup(self, t_sec):
+        """(meta, generation) 을 돌려준다. 조인 실패는 (None, 0) - 폴백 규약."""
+        pos = self._nearest_pos(t_sec)
+        if pos is None:
+            return None, 0
+        return self._metas[pos], self._generations[pos]
 
 
 def apply_region_gate(events, metas, region_maps, *, frame_size_fn=None) -> list:
@@ -326,16 +353,15 @@ def apply_region_gate(events, metas, region_maps, *, frame_size_fn=None) -> list
     강제한다.
     """
     generations = assign_generations(metas)
-    gen_by_time = list(zip([m.t_sec for m in metas], generations))
+    meta_index = _MetaIndex(metas, generations)
     size_fn = frame_size_fn or read_frame_size
     size_cache = {}
     unreadable_frames = 0
     results = []
     for event in events:
-        generation = _generation_for(gen_by_time, event.timestamp_sec)
+        meta, generation = meta_index.lookup(event.timestamp_sec)
         region_map = region_maps.get(generation)
         live_box = region_map.live_box if region_map else None
-        meta = nearest_meta(metas, event.timestamp_sec)
         has_meta = meta is not None
         cursor_in_live = False
         cursor_unresolved = False

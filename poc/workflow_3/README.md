@@ -70,11 +70,11 @@ uv run python poc/workflow_3/monitor/engineer_done_align_adjustment.py
 엔지니어 watch는 다음 우선순위 신호에서 처음 충족한 조건으로 종료한다.
 
 1. 엔지니어가 Remote Monitoring 창의 X를 눌러 닫음 (`window_gone`) → 즉시 종료
-2. Assist Measurement 최신 정상 6행 + watch 이후 새 화면 변화 → 종료
+2. Assist 표에 red(실패) 없음 + 정상(검정) 측정 행 `ALIGN_FAIL_ENGINEER_DONE_MIN_OK_ROWS`(기본 5) 이상 → 종료
 3. Assist 3회 연속 판독 불가 + numerator OCR 3회 연속 증가 → fallback 종료
 4. 불확정 → `ALIGN_FAIL_ENGINEER_WATCH_SEC` cap까지 대기
 
-`ALIGN_FAIL_ENGINEER_WATCH_SEC=300`(5분)은 마지막 경우의 backstop cap이다. 캘리브레이션의 목적은 threshold 조정이 아니라 grounding/CV/OCR 체인 검증이다. 오피스 Windows에서 `ALIGN_FAIL_ENGINEER_DONE_DETECT=1`을 켜기 전에 실행하고, 생성된 run 디렉터리의 `assist_panel_crop_region.jpg`, locator/OCR/grid overlay, numerator crop 이미지, poll별 `numerator_decision_###.json`(reading/value/sequence/reset reason), 최종 completion reason을 남긴다.
+`ALIGN_FAIL_ENGINEER_WATCH_SEC=300`(5분)은 마지막 경우의 backstop cap이다. 캘리브레이션의 목적은 threshold 조정이 아니라 grounding/CV/OCR 체인 검증이다. 오피스 Windows에서 `ALIGN_FAIL_ENGINEER_DONE_DETECT=1`을 켜기 전에 실행하고, 생성된 run 디렉터리의 `assist_panel_crop_region.jpg`, 판독이 바뀔 때마다 남는 `assist_panel_###_rows<N>_red<0|1>.jpg`, numerator crop 이미지, poll별 `numerator_decision_###.json`(reading/value/sequence/reset reason), 최종 completion reason을 남긴다.
 
 ### 엔지니어 수동 조작 녹화 (알람 불필요)
 
@@ -95,9 +95,9 @@ uv run python poc/workflow_3/monitor/manual_record.py
 | env | 기본값 | 역할 |
 |-----|--------|------|
 | `MANUAL_RECORD_MAX_SEC` | 600 | 시간 상한(0=무제한) |
-| `MANUAL_RECORD_MAX_FRAMES` | 4000 | 프레임 백스톱 |
-| `MANUAL_RECORD_MAX_DISK_MB` | 2000 | 디스크 백스톱 |
-| `MANUAL_RECORD_POLL_SEC` | 0.2 | 샘플링 요청 간격 |
+| `MANUAL_RECORD_MAX_FRAMES` | `max_sec/poll_sec x 1.25` (기본 15000) | 프레임 백스톱. 샘플링 주기에서 파생되므로 정상 세션에서는 걸리지 않는다 |
+| `MANUAL_RECORD_MAX_DISK_MB` | 4000 | 디스크 백스톱 |
+| `MANUAL_RECORD_POLL_SEC` | 0.05 | 샘플링 요청 간격 |
 | `MANUAL_RECORD_EQP_ID` | (빈값) | 창이 여럿일 때 지정 |
 | `MANUAL_RECORD_META` | 1 | 사이드카 메타 기록 |
 
@@ -213,9 +213,9 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 | `ALIGN_FAIL_RCS_RECOVERY` | 0 | RCS 메인 창 부재 시 재실행+재로그인 복구 |
 | `ALIGN_FAIL_BLOCK_INPUT` | 0 | 자동 GUI 구간 동안 사용자 물리 마우스/키보드 차단(Win32 BlockInput). 사용자가 다른 앱을 쓰면 foreground lock 으로 RCS 가 안 떠서 방해되는 문제 대응. SAFE_MODE=0 일 때만 적용, engineer watch 구간은 제외, Ctrl+Alt+Del 로 항상 해제. 합성 클릭(자동화)은 차단 중에도 통과 |
 | `ALIGN_FAIL_POLL_SEC` / `ALIGN_FAIL_WINDOW_SEC` | 10 / 60 | 폴링 주기 / 감지 look-back |
-| `ALIGN_FAIL_RECORDING_POLL_SEC` | 0.3 | 녹화 샘플링 간격 (변화 감지용 빠른 폴링) |
+| `ALIGN_FAIL_RECORDING_POLL_SEC` | 0.05 | 녹화 샘플링 간격 (변화 감지용 빠른 폴링) |
 | `ALIGN_FAIL_RECORDING_HEARTBEAT_SEC` | 5.0 | 변화 없어도 이 간격마다 1장 저장 |
-| `ALIGN_FAIL_RECORDING_CHANGE_MIN_PX` | 4 | 변화 판정: delta>15 인 다운샘플 픽셀 최소 개수 (커서 이동도 감지) |
+| `ALIGN_FAIL_RECORDING_CHANGE_MIN_PX` | 2 | 변화 판정: delta>10 인 다운샘플 픽셀 최소 개수 (커서 이동도 감지) |
 | `ALIGN_FAIL_RECORDING_MAX_SEC` | 900 | 녹화 상한 |
 | `ALIGN_FAIL_ENGINEER_WATCH_SEC` | 300 | 미보정 시 엔지니어 조작 녹화 대기 상한(5분) |
 | `ALIGN_FAIL_ENGINEER_DONE_DETECT` | 0 | 우선순위 완료 신호 감지를 켠다. 오피스 Windows 캘리브레이션(`monitor/engineer_done_align_adjustment.py` 단독 실행, 측정 중 tool 대상) 검증 후 `1`. |
@@ -226,6 +226,7 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 | `ALIGN_FAIL_ENGINEER_DONE_VLM_SERVICE` | `mai-ui` | 분자 위치 grounding 서비스 (route_slug, 모델명 아님) |
 | `ALIGN_FAIL_ENGINEER_DONE_OCR_SERVICE` | `paddleocr-vl-1.5` | 분자 OCR 서비스 |
 | `ALIGN_FAIL_ENGINEER_DONE_CHANGE_MIN_PX` | 4 | CV gate 변화 픽셀 임계(다운샘플) - 감지가 둔하면 낮추고 과민하면 올린다 |
+| `ALIGN_FAIL_ENGINEER_DONE_PIXEL_DELTA_MIN` | 10.0 | CV gate 에서 변화로 인정할 픽셀 delta 하한. 위 개수와 한 쌍이며, 녹화 쪽 민감도와 독립이다 |
 | `ALIGN_FAIL_ENGINEER_DONE_RELOCALIZE_MISS` | 3 | 변화 후 OCR 연속 미검출 N회 시 ROI 재grounding(패널 드래그 대비) |
 | `ALIGN_FAIL_ENGINEER_DONE_REGROUND_SEC` | 30.0 | grounding 거부 후 재시도 간격. 재정렬 중에는 카운터(N/M)가 빈칸이라 거부가 정상 - 측정 시작 시 재시도가 성공한다 |
 | `ALIGN_DONE_CALIB_EQP_ID` | (빈값) | 캘리브레이션 대상 tool (빈값=열려있는 아무 Remote Monitoring 창) |

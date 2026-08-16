@@ -17,7 +17,7 @@ from collections import Counter, defaultdict
 
 from poc.workflow_3.align.assets import load_gray
 from poc.workflow_3.align.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
-from poc.workflow_3.align.cond_file import load_cond, msr_modality
+from poc.workflow_3.align.cond_file import cond_for_image, load_cond, msr_modality
 from poc.workflow_3.align.consensus_cv import _matched_crop, coregister_crops
 from poc.workflow_3.align.consensus_gather import _events_dir_for
 from poc.workflow_3.align.templates import build_templates_from_assets
@@ -51,7 +51,13 @@ def _cond_crosshair_xy(cond):
 
 
 def _cond_consensus_crop(gray, cond, size_wh):
-    """crosshair(=align point) 중심·고정 size 의 정제된(crosshair 제거) crop. 없으면 None."""
+    """crosshair(=align point) 중심·고정 size 의 정제된(crosshair 제거) crop. 없으면 None.
+
+    cond.Pixel != 로드 크기면 cursor 좌표를 먼저 보정한다(cond_for_image, 멱등) —
+    안 하면 모든 S crop 이 같은 오차로 어긋나 co-registration/blur 게이트가 못 잡는
+    계통 오프셋이 consensus 중심(=align point)에 박힌다.
+    """
+    cond = cond_for_image(cond, gray.shape[:2])
     xy = _cond_crosshair_xy(cond)
     if xy is None:
         return None

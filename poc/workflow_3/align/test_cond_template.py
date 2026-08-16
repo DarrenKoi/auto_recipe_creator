@@ -103,6 +103,33 @@ def test_check_warn_for_moderately_offcenter_box():
     assert OFFSET_WARN < onorm <= OFFSET_SKIP
 
 
+def test_load_template_normalizes_pixel_mismatch(tmp_path):
+    # cond.txt 는 512 기준(cursor ×10)인데 이미지는 1024 로 저장된 rcp — 실 producer
+    # 포맷(.<파일명>/cond.txt) 그대로 기록해 load_template 경로 전체를 검증한다.
+    # 512-기준 box px (100,100)-(300,300) → 1024 에선 (200,200)-(600,600), 400px box.
+    # offset = image_center(512,512) - box_center(400,400) = (112,112) (512-기준 (56,56)의 2배).
+    from poc.workflow_3.align.templates import load_template
+
+    gray = np.full((1024, 1024), 110, dtype=np.uint8)
+    cv2.rectangle(gray, (200, 200), (600, 600), 255, 1)
+    img_path = tmp_path / "IMAP0001.png"
+    assert cv2.imwrite(str(img_path), gray)
+    cond_dir = tmp_path / f".{img_path.name}"
+    cond_dir.mkdir()
+    (cond_dir / "cond.txt").write_text(
+        "Scope OM\n"
+        "Pixel 512,512\n"
+        "!Cursor_info 0,0,0,0,-1,-1,1000,1000,3000,3000\n",
+        encoding="utf-8",
+    )
+
+    tpl = load_template(img_path, recipe_id="R", key_type="om", cond_box_crop=True)
+    assert tpl.align_offset_xy == (112, 112), tpl.align_offset_xy
+    # box 400px - 대칭 inset 2*CROP_INSET_PX → crop 변 396.
+    expected = 400 - 2 * CROP_INSET_PX
+    assert tpl.raw_image.shape == (expected, expected), tpl.raw_image.shape
+
+
 def test_build_template_carries_align_offset():
     gray = np.full((64, 64), 120, dtype=np.uint8)
     tpl = build_template(gray, recipe_id="R", version="v0", key_type="om",

@@ -578,6 +578,51 @@ def test_offset_applied_to_reposition() -> bool:
     return ok
 
 
+def test_scale_pinned_flag_in_history() -> bool:
+    """best_scale 가 PAUSED_SCALES 양끝 밴드에 박히면 history 에 scale_pinned=True.
+
+    scale band(0.7~1.4)가 live box/template 실제 비율을 못 덮으면 매칭이 끝 밴드에
+    고정된다 — 오피스 검증에서 이 신호로 밴드 커버리지를 판정한다(mis-scale 리스크).
+    """
+    import poc.workflow_3.align.correction as afc
+    from poc.workflow_3.align.correction import PAUSED_SCALES
+
+    frame = np.zeros((600, 800, 3), dtype=np.uint8)
+    screen = np.zeros((600, 800), dtype=np.uint8)
+
+    def _controlled(best_scale):
+        return AlignKeyMatchResult(
+            score=0.9, chamfer_score=0.9, orb_inlier_ratio=0.0,
+            best_xy=(400, 300), best_scale=best_scale, decision="match",
+            debug_overlay=np.zeros((4, 4, 3), dtype=np.uint8), distinctive=True,
+        )
+
+    def _run(best_scale):
+        tpl = build_template(np.full((32, 32), 120, dtype=np.uint8),
+                             recipe_id="R", version="v0", key_type="sem")
+        fake = _FakeController(frame, screen, mode="SEM")
+        orig = afc.compute_align_key_score_ensemble
+        afc.compute_align_key_score_ensemble = lambda *a, **k: _controlled(best_scale)
+        try:
+            out = correct_align_fail(fake, {"SEM": tpl},
+                                     ok_locator=lambda _s: (10, 10), dry_run=True)
+        finally:
+            afc.compute_align_key_score_ensemble = orig
+        return out.history[0]
+
+    hi = _run(max(PAUSED_SCALES))    # 1.4 — 상단 끝 밴드.
+    lo = _run(min(PAUSED_SCALES))    # 0.7 — 하단 끝 밴드.
+    mid = _run(1.0)                  # 내부 밴드.
+
+    ok = (hi.get("scale_pinned") is True and lo.get("scale_pinned") is True
+          and mid.get("scale_pinned") is False)
+    print(
+        f"[{'PASS' if ok else 'FAIL'}] scale_pinned_flag: "
+        f"hi={hi.get('scale_pinned')} lo={lo.get('scale_pinned')} mid={mid.get('scale_pinned')}"
+    )
+    return ok
+
+
 def test_correct_auto_uses_resolver() -> bool:
     """correct_align_fail_auto 가 resolve_templates 를 호출해 라우팅 dict 을 받는다."""
     import poc.workflow_3.align.correction as corr
@@ -643,6 +688,7 @@ def main() -> int:
         test_engineer_review_route(),
         test_load_template_branches(),
         test_offset_applied_to_reposition(),
+        test_scale_pinned_flag_in_history(),
         test_correct_auto_uses_resolver(),
     ]
     passed = sum(1 for r in results if r)

@@ -7,11 +7,12 @@ import sys
 import numpy as np
 
 import poc.workflow_3.align.consensus_crops as cc
+from poc.workflow_3.align.cond_file import CondInfo
 
 
-class _FakeCond:
-    def __init__(self, xy):
-        self.crosshair_xy = xy  # cursor frame ×10 좌표(없으면 None)
+def _cond(xy, pixel=None):
+    """실 producer 타입(CondInfo)으로 픽스처를 만든다 — 손으로 빚은 fake 금지."""
+    return CondInfo(pixel=pixel, crosshair_xy=xy)
 
 
 class _FakeTpl:
@@ -45,8 +46,8 @@ def _events(tmp, n, prefix="20260612_0900"):
 def test_resolve_mod_falls_back_to_recipe_mod():
     restore = _patch({"msr_modality": lambda cond: None})
     try:
-        assert cc._resolve_mod(_FakeCond((1, 1)), "sem") == "sem"
-        assert cc._resolve_mod(_FakeCond((1, 1)), None) is None
+        assert cc._resolve_mod(_cond((1, 1)), "sem") == "sem"
+        assert cc._resolve_mod(_cond((1, 1)), None) is None
     finally:
         restore()
 
@@ -55,7 +56,7 @@ def test_load_coregistered_crops_groups_and_caps(tmp_path):
     gray = (np.random.RandomState(0).rand(200, 200) * 255).astype(np.uint8)
     restore = _patch({
         "load_gray": lambda p: gray,
-        "load_cond": lambda p: _FakeCond((1000, 1000)),    # 중앙 crosshair(×10 → 100,100)
+        "load_cond": lambda p: _cond((1000, 1000)),        # 중앙 crosshair(×10 → 100,100)
         "clean_image": lambda g, cond: g,                  # 정제 no-op (테스트)
         "cursor_to_image": lambda xy, oversample=10: (xy[0] / 10.0, xy[1] / 10.0),
         "msr_modality": lambda cond: "sem",
@@ -75,7 +76,7 @@ def test_missing_crosshair_dropped(tmp_path):
     gray = np.zeros((200, 200), np.uint8)
     restore = _patch({
         "load_gray": lambda p: gray,
-        "load_cond": lambda p: _FakeCond(None),   # crosshair 없음 → drop
+        "load_cond": lambda p: _cond(None),       # crosshair 없음 → drop
         "clean_image": lambda g, cond: g,
         "cursor_to_image": lambda xy, oversample=10: (0, 0),
         "msr_modality": lambda cond: "sem",
@@ -85,6 +86,28 @@ def test_missing_crosshair_dropped(tmp_path):
         center = {"sem": (_FakeTpl(40, 32), (0, 0))}
         out = cc.load_coregistered_crops(tmp_path, "E1", "c/r", center, max_events=8)
         assert out.get("sem", []) == []           # 전부 drop
+    finally:
+        restore()
+
+
+def test_pixel_mismatch_recenters_crop(tmp_path):
+    # cond 는 100px 기준(crosshair cursor (500,500) → 100-기준 (50,50))인데 이미지는
+    # 200 으로 로드 — 정규화 후 crop 중심은 (100,100)이어야 한다. 고정 /10 만 쓰면
+    # (50,50) 중심의 엉뚱한 crop 이 나오고, 모든 S 가 같은 오차라 blur 게이트도 못 잡는다.
+    gray = (np.random.RandomState(1).rand(200, 200) * 255).astype(np.uint8)
+    restore = _patch({
+        "load_gray": lambda p: gray,
+        "load_cond": lambda p: _cond((500, 500), pixel=(100, 100)),
+        "clean_image": lambda g, cond: g,          # 정제 no-op → 내용 비교 가능.
+        "msr_modality": lambda cond: "sem",
+    })
+    try:
+        _events(tmp_path, 1)
+        center = {"sem": (_FakeTpl(40, 32), (0, 0))}
+        out = cc.load_coregistered_crops(tmp_path, "E1", "c/r", center, max_events=4)
+        assert len(out.get("sem", [])) == 1
+        expected = gray[100 - 16:100 + 16, 100 - 20:100 + 20]   # (100,100) 중심 40x32.
+        assert np.array_equal(out["sem"][0], expected), "crop 이 정규화된 crosshair 중심이 아님"
     finally:
         restore()
 

@@ -16,7 +16,7 @@ cond.txt 한 줄 형식: ``key  값,값,...`` (key 와 값 사이는 공백/탭,
 """
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 # !Cursor_info 요소 인덱스 (0-base). 좌표는 cursor oversample 프레임 기준 raw 값.
@@ -101,6 +101,39 @@ def parse_cond(text: str) -> CondInfo:
         crosshair_xy=crosshair_xy,
         raw=raw,
     )
+
+
+def cond_for_image(cond: "CondInfo | None", shape_hw) -> "CondInfo | None":
+    """cursor 좌표를 *로드된 이미지 크기* 에 맞춘 CondInfo 사본을 돌려준다.
+
+    cursor 프레임은 ``Pixel × 10`` 기준이므로, 로드된 이미지가 cond.pixel 과 다른
+    해상도면(리사이즈 저장 등) 고정 /10 변환이 좌표를 어긋나게 한다 — 그 오차는
+    모든 프레임에 동일하게 걸려 blur 게이트로도 못 잡는 계통 오차가 된다. 여기서
+    box/crosshair 를 loaded/pixel 비율로 축별 보정하고 pixel 을 로드 크기로 갱신해
+    **멱등**으로 만든다(여러 레이어에서 겹쳐 불러도 이중 보정 없음). pixel 이 없거나
+    0 이하, 또는 이미 로드 크기와 같으면 원본을 그대로 반환한다(기존 동작 불변).
+    """
+    if cond is None or cond.pixel is None:
+        return cond
+    pw, ph = cond.pixel
+    h, w = int(shape_hw[0]), int(shape_hw[1])
+    if pw <= 0 or ph <= 0 or w <= 0 or h <= 0 or (pw == w and ph == h):
+        return cond
+    sx, sy = w / pw, h / ph
+    print(
+        f"[WARNING] cond.Pixel({pw}x{ph}) != 로드 이미지({w}x{h}) - "
+        f"cursor 좌표를 x{sx:.3f}/x{sy:.3f} 보정"
+    )
+    box = cond.box_ltrb
+    if box is not None:
+        box = (
+            int(round(box[0] * sx)), int(round(box[1] * sy)),
+            int(round(box[2] * sx)), int(round(box[3] * sy)),
+        )
+    xh = cond.crosshair_xy
+    if xh is not None:
+        xh = (int(round(xh[0] * sx)), int(round(xh[1] * sy)))
+    return replace(cond, pixel=(w, h), box_ltrb=box, crosshair_xy=xh)
 
 
 def cond_path_for(image_path) -> Path:

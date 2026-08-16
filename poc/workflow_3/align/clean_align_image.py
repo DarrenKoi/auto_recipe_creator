@@ -23,7 +23,7 @@ cond.txt 의 cursor 좌표는 Pixel 의 **10배 oversample** 프레임이다 →
 import cv2
 import numpy as np
 
-from poc.workflow_3.align.cond_file import CondInfo
+from poc.workflow_3.align.cond_file import CondInfo, cond_for_image
 
 # cursor 좌표 → 이미지 px 축소 비율 (cursor frame = Pixel × OVERSAMPLE).
 OVERSAMPLE = 10
@@ -94,7 +94,10 @@ def clean_image(
     """CondInfo 의 box/crosshair 선을 inpaint 로 지운 이미지를 돌려준다.
 
     지울 게 없으면(box·crosshair 모두 None) 원본을 그대로 반환한다.
+    cond.pixel 과 이미지 크기가 다르면 cursor 좌표를 로드 크기로 먼저 보정한다
+    (cond_for_image — 멱등이라 상위 레이어가 이미 보정했어도 무해).
     """
+    cond = cond_for_image(cond, image.shape[:2])
     mask = build_removal_mask(
         image.shape[:2],
         box_ltrb=cond.box_ltrb,

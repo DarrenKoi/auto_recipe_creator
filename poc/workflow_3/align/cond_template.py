@@ -17,7 +17,7 @@ cursor_to_image 를 재사용한다(중복 생성 금지). 의존 방향: lab �
 import numpy as np
 
 from poc.workflow_3.align.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
-from poc.workflow_3.align.cond_file import CondInfo
+from poc.workflow_3.align.cond_file import CondInfo, cond_for_image
 
 # box-없음 fallback 의 center-area crop 비율(검증된 center arm; lab CENTER_AREA_RATIO 동일 값).
 CENTER_AREA_RATIO = 0.15
@@ -98,6 +98,9 @@ def cond_template_crop(gray, cond, *, inset=CROP_INSET_PX):
     *실제 내용* 이므로 inpaint 하면 매칭 신호가 깎인다 → crosshair_xy=None 으로 마스킹해
     box 테두리만 제거한다(msr 프레임의 crosshair 제거는 별개 — 거기선 distractor 라 지움).
     """
+    # 직접 호출자(진단 스크립트 등) 방어: cond.Pixel 과 gray 크기가 다르면 먼저 보정.
+    # load_template 경로는 이미 보정된 cond 를 주므로 멱등 no-op 이다.
+    cond = cond_for_image(cond, gray.shape)
     box_only = CondInfo(scope=cond.scope, pixel=cond.pixel,
                         box_ltrb=cond.box_ltrb, crosshair_xy=None)
     cleaned = clean_image(gray, box_only)        # 튜닝된 1/1/2 로 box stroke 만 제거.

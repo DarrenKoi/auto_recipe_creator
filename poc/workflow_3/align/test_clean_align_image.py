@@ -60,6 +60,20 @@ def test_clean_image_changes_only_masked_pixels():
     assert np.array_equal(out[mask == 0], img[mask == 0]), "마스크 밖이 바뀌었다"
 
 
+def test_clean_image_normalizes_pixel_mismatch():
+    # cond 는 512 기준(cursor ×10 = 5120 프레임)인데 이미지는 1024 로 로드된 경우.
+    # crosshair (2560,2560) 은 512-기준 중심 → 1024 이미지에선 (512,512) 가 정답.
+    # 고정 /10 만 쓰면 (256,256) 에 inpaint 하는 계통 오차가 난다.
+    rng = np.random.default_rng(1)
+    img = rng.integers(0, 255, (1024, 1024), dtype=np.uint8)
+    cond = CondInfo(scope="OM", pixel=(512, 512), crosshair_xy=(2560, 2560))
+    out = clean_image(img, cond)
+    assert not np.array_equal(out[512, :], img[512, :]), "정답 위치(512)가 inpaint 안 됨"
+    # 잘못된 위치(256)의 선에서 먼 지점은 원본 그대로여야 한다(이중/오위치 마스크 금지).
+    assert np.array_equal(out[256, 100:200], img[256, 100:200]), "오위치(256)가 inpaint 됨"
+    assert np.array_equal(out[100:200, 256], img[100:200, 256]), "오위치(x=256)가 inpaint 됨"
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

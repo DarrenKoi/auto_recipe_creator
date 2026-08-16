@@ -245,6 +245,18 @@ def correct_align_fail(
     result = compute_align_key_score_ensemble(
         template, frame, scales=PAUSED_SCALES, policy=STRUCTURE_POLICY
     )
+    # 끝 밴드 고정 = scale band 가 live box/template 실제 비율을 못 덮는다는 신호.
+    # 후보가 있었을 때만 의미가 있다(no_candidates 는 best_scale=1.0 기본값).
+    scale_pinned = bool(
+        result.reject_reason != "no_candidates"
+        and result.best_scale in (min(PAUSED_SCALES), max(PAUSED_SCALES))
+    )
+    if scale_pinned:
+        print(
+            f"[WARNING] best_scale={result.best_scale:.2f} 가 scale band "
+            f"({min(PAUSED_SCALES)}~{max(PAUSED_SCALES)}) 끝에 고정 - band 가 "
+            f"live box/template 비율을 못 덮을 수 있음 (좌표 신뢰도 확인 필요)"
+        )
     history.append(
         {
             "stage": "paused_match",
@@ -255,6 +267,7 @@ def correct_align_fail(
             "orb": float(result.orb_inlier_ratio),
             "best_scale": float(result.best_scale),
             "best_xy": [int(result.best_xy[0]), int(result.best_xy[1])],
+            "scale_pinned": scale_pinned,
         }
     )
     print(

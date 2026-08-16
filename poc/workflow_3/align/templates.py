@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from poc.workflow_3.align.assets import AlignFailAssets, load_gray
-from poc.workflow_3.align.cond_file import load_cond
+from poc.workflow_3.align.cond_file import cond_for_image, load_cond
 from poc.workflow_3.align.cond_template import (
     CENTER_AREA_RATIO,
     centered_area_crop,
@@ -22,7 +22,9 @@ def load_template(
     if not cond_box_crop:
         crop, offset = gray, (0, 0)
     else:
-        cond = load_cond(path)
+        # cond.Pixel 과 로드 크기가 다르면 cursor 좌표를 먼저 보정한다(멱등) —
+        # 안 하면 box crop/offset 이 계통적으로 어긋난 채 confident 하게 내려간다.
+        cond = cond_for_image(load_cond(path), gray.shape)
         box_ltrb = cond.box_ltrb if cond is not None else None
         if box_ltrb is None:
             status = "skip"

@@ -2,6 +2,9 @@
 
 > VLM-GUI 기반 Auto Recipe Creation — 1차 PoC(Align Fail 대응 자동화). 그동안의 작업(VLM 배포·운영, GUI 자동화, CV 정확도 벤치, 실시간 통합 루프) 정리.
 
+> 최종 갱신: **2026-08-16** (직전 갱신 2026-07-07). 갱신 범위: 00 요약(성과·현황·허들),
+> 01 VLM 운영 구성 2종 정리, 03 촬영 모드별 재순위 채택, 04 실장비 반자동 개통·루프 하드닝·지식 자산화.
+
 이 폴더는 사내 보고용 진행 보고서의 **원본(source of truth)** 입니다. 본문 Markdown을 근거로
 Word(.docx) 보고서와 시각 부록(`_appendix.html`)을 생성합니다. (보고서 본문은 경어체로 작성합니다.)
 
@@ -10,10 +13,10 @@ Word(.docx) 보고서와 시각 부록(`_appendix.html`)을 생성합니다. (�
 | # | 문서 | 한 줄 요약 |
 |---|------|-----------|
 | 00 | [00_executive_summary.md](00_executive_summary.md) | **요약** — 목적(정량 효과 포함), PoC 방향(VLM↔CV 역할 분리), 설계 흐름, 성과, 확장성·효과 |
-| 01 | [01_vlm_deployment.md](01_vlm_deployment.md) | **VLM 인프라 확보** — 자사 HCP에 SOTA 오픈소스 소형 모델 5종(VLM 3 + OCR 2) 배포, 단일 모델 Action 한계 → coarse→fine 2단계 + OCR 검증, HCP 제약·확보 역량 |
+| 01 | [01_vlm_deployment.md](01_vlm_deployment.md) | **VLM 인프라 확보** — 자사 HCP에 SOTA 오픈소스 소형 모델 5종(VLM 3 + OCR 2) 배포·평가, 단일 모델 Action 한계 → coarse→fine 2단계 + OCR 검증, 벤치 비교 후 **2종 상시 운영**으로 정리, HCP 제약·확보 역량 |
 | 02 | [02_workflow_1.md](02_workflow_1.md) | **GUI 자동화 검증 (workflow 1)** — RCS 자동 조작 + CCTV 캡처 PoC. As-Is→To-Be, 핵심 확보 기술(클릭·타이핑 90%+·재시도/fallback·rescale), 데이터 자산화, CCTV 한계, 동결 사유 |
 | 03 | [03_workflow_2.md](03_workflow_2.md) | **정렬 위치 재조정 CV 정확도 평가 (workflow 2)** — Recipe 200개 오프라인 벤치. As-Is→To-Be(등록 1장 → consensus), in_topk·rank1·OM/SEM 결과, 아이디어별 실험과 결정/남은 평가 |
-| 04 | [04_workflow_3.md](04_workflow_3.md) | **실시간 Align Fail 자동 대응 Agent (workflow 3)** — As-Is→To-Be(수동 5분 → 무인 1분), 10초 알람 감지(9006)→RCS 접속→자동 보정, consensus gather 병렬, 오측 감지 시 측정 중단·Cube 알람, 지식 자산화, **진행 현황·예상 허들과 대응·향후 일정**(현재 주력) |
+| 04 | [04_workflow_3.md](04_workflow_3.md) | **실시간 Align Fail 자동 대응 Agent (workflow 3)** — As-Is→To-Be(수동 5분 → 무인 1분), 10초 알람 감지(9006)→RCS 접속→자동 보정, **실장비 보정 반자동 개통(2026-08)**, 루프 실패 경로 하드닝, consensus gather 병렬, 오측 감지 시 측정 중단·Cube 알람, **지식 자산화(수동 녹화 → 절차서 추출)**, **진행 현황·예상 허들과 대응·향후 일정**(현재 주력) |
 
 ## 산출물 생성
 

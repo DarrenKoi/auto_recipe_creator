@@ -51,6 +51,10 @@ align fail 이 나면 장비는 엔지니어가 개입할 때까지 멈춰 있�
 - RCS 메인 창 / List 탭 / **tool 더블클릭**(`connect_tool` 은 녹화 시작 *이전*이다)
 - cube 알림이 도착하는 화면
 
+> 앞의 두 개는 **로그 패널(§5)로 상당 부분 되살릴 수 있다** - 화면 그림은 못 되살리지만
+> "그 시각에 시스템이 무슨 판단을 했는가" 는 프레임 옆에 텍스트로 붙는다. 이미 지나간
+> 실알람 녹화에도 소급 적용되므로, 화면 녹화를 못 걸어둔 건에 대한 유일한 수단이다.
+
 ### 결론: 대체가 아니라 역할 분담
 
 | | 실알람 자동 녹화 | replay 촬영 |
@@ -309,6 +313,47 @@ DEMO_VIDEO_START_SEC=120 DEMO_VIDEO_END_SEC=180 DEMO_VIDEO_SPEED=2 \
 
 주요 env 는 스크립트 docstring 참고 (`SPEED`/`FPS`/`MAX_HOLD_SEC`/`START_SEC`/
 `END_SEC`/`MAX_WIDTH`/`OVERLAY`/`LABEL`).
+
+### 로그 패널 - 프레임에 없는 콘솔을 되살린다
+
+녹화 프레임은 **tool 창 rect** 만 담으므로 터미널이 절대 찍히지 않는다(§0.5).
+`DEMO_VIDEO_LOG_PANEL=1` 을 켜면 프레임 오른쪽에 그 시각의 로그를 합성한다.
+
+```
+DEMO_VIDEO_INPUT_DIR=<recording 경로> \
+DEMO_VIDEO_LOG_PANEL=1 \
+DEMO_VIDEO_RUN_DIR=poc/workflow_3/logs/workflow_runs/<run_id>_align_fail_cycle_<EQP> \
+  uv run python poc/workflow_3/monitor/make_demo_video.py
+```
+
+시각 정합은 `recording_manifest.json` 의 `started_at` + 파일명의 `elapsed_ms` 로 잡는다.
+녹화 시작 **30초 전**까지 포함하므로, 프레임에 원리상 없는 `connect_tool`(더블클릭)
+구간도 패널에는 나온다.
+
+읽는 소스 3종:
+
+| 소스 | env | 성격 |
+|---|---|---|
+| 감사 로그 `logs/work2.log` | `DEMO_VIDEO_LOG_FILE` | 기본값. **소급 적용 가능** - 이미 녹화된 알람에도 쓸 수 있다 |
+| 실행 저널 `step_*.json` | `DEMO_VIDEO_RUN_DIR` | `STEP connect_tool [success]` - 데모에서 가장 읽기 좋은 줄 |
+| 콘솔 tee 파일 | `DEMO_VIDEO_CONSOLE_LOG` | 진짜 stdout 전사. 촬영 전에 걸어둬야 한다 |
+
+> **감사 로그는 stdout 전사가 아니다.** 의미 있는 이벤트(step 결과, 보정 outcome,
+> 알림)는 다 있지만 콘솔의 모든 `[INFO]` 줄이 있지는 않다. 콘솔 원문 그대로가
+> 필요하면 촬영 시 **줄마다 시각을 붙여** tee 한다(시각이 없으면 정합 불가):
+>
+> ```powershell
+> uv run python poc/workflow_3/monitor/align_fail_monitor.py 2>&1 |
+>   ForEach-Object { "{0:HH:mm:ss} {1}" -f (Get-Date), $_ } |
+>   Tee-Object -FilePath console.log
+> ```
+
+한글은 PIL+TrueType 으로 그리므로 정상 출력된다(좌하단 burn-in 은 cv2 라 ASCII 만 -
+두 경로가 다르다). 폰트 자동 탐색이 실패하면 `DEMO_VIDEO_FONT` 로 지정한다.
+
+패널을 못 붙이는 조건은 **조용히 넘어가지 않고 사유를 남긴다**: manifest 의
+`started_at` 이 없거나, 녹화 구간에 걸치는 로그 줄이 0이면 경고 후 패널 없이 영상만
+만든다(시각이 어긋난 로그를 붙이면 없느니만 못하기 때문).
 
 ---
 

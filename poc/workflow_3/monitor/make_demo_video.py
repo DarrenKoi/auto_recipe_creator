@@ -35,8 +35,26 @@
   DEMO_VIDEO_LABEL        좌상단 고정 라벨 (ASCII 만, 기본 없음)
   DEMO_VIDEO_TAIL_HOLD_SEC 마지막 프레임 유지 (기본 2.0)
 
+로그 패널 (프레임 옆에 '그때 콘솔에 뭐가 찍혔는지' 합성; `demo_log_panel` 참고):
+  DEMO_VIDEO_LOG_PANEL       패널 켜기 (기본 0)
+  DEMO_VIDEO_LOG_FILE        감사 로그 (기본 logs/work2.log)
+  DEMO_VIDEO_CONSOLE_LOG     콘솔 tee 파일 (선택; 줄마다 시각이 있어야 함)
+  DEMO_VIDEO_RUN_DIR         실행 저널 폴더 logs/workflow_runs/<run> (선택)
+  DEMO_VIDEO_LOG_PANEL_WIDTH 패널 폭 px (기본 520)
+  DEMO_VIDEO_LOG_LINES       패널에 보일 최대 줄 수 (기본 14)
+  DEMO_VIDEO_FONT            한글 TrueType 경로 (미지정 시 자동 탐색)
+
+  녹화 프레임은 **tool 창 rect** 만 담기므로 터미널이 절대 찍히지 않는다. 패널은
+  `recording_manifest.json` 의 started_at 을 기준점으로 로그를 시간 정렬해 그 공백을
+  메운다. 감사 로그는 stdout 전사가 아니므로, 콘솔 원문이 필요하면 촬영 시 시각을
+  붙여 tee 한 뒤 DEMO_VIDEO_CONSOLE_LOG 로 넘긴다. PowerShell 예:
+
+    uv run python poc/workflow_3/monitor/align_fail_monitor.py 2>&1 |
+      ForEach-Object { "{0:HH:mm:ss} {1}" -f (Get-Date), $_ } |
+      Tee-Object -FilePath console.log
+
 주의: burn-in 문자는 cv2.putText 라 **ASCII 만** 렌더링된다(한글은 깨진다).
-      한글 자막이 필요하면 편집 도구에서 얹을 것.
+      로그 패널은 PIL+TrueType 이라 한글이 나온다(두 경로가 다르다).
 """
 
 import os
@@ -48,7 +66,13 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from poc.workflow_3 import ALIGN_IMAGES_DIR
+from poc.workflow_3 import ALIGN_IMAGES_DIR, LOG_DIR
+from poc.workflow_3.monitor.demo_log_panel import (
+    LogPanel,
+    load_log_entries,
+    load_step_entries,
+    read_recording_start,
+)
 
 # RecordingSession 이 쓰는 파일명 규약. seq 는 4자리 기준이지만 9999 를 넘으면
 # 자릿수가 늘어나므로 하한만 걸고 받는다(경과시간은 항상 8자리 고정).
@@ -264,6 +288,51 @@ def draw_overlay(
     return image
 
 
+def build_log_panel(
+    input_dir: Path, frames: list[tuple[float, Path]], height: int
+) -> LogPanel | None:
+    """로그 패널을 만든다 (비활성/기준점 없음/로그 없음이면 None).
+
+    기준점은 `recording_manifest.json` 의 started_at 이다. 그게 없으면 로그를 프레임에
+    맞출 방법이 없으므로 **패널을 조용히 붙이지 않고** 사유를 남기고 포기한다 -
+    시각이 어긋난 로그를 붙이면 없느니만 못하다.
+    """
+    if not _env_flag("DEMO_VIDEO_LOG_PANEL", False):
+        return None
+
+    base = read_recording_start(input_dir)
+    if base is None:
+        print("[WARNING] recording_manifest.json 의 started_at 이 없어 로그 패널을 생략합니다")
+        return None
+
+    log_paths = []
+    audit = os.environ.get("DEMO_VIDEO_LOG_FILE", "").strip()
+    log_paths.append(Path(audit).expanduser() if audit else LOG_DIR / "work2.log")
+    console = os.environ.get("DEMO_VIDEO_CONSOLE_LOG", "").strip()
+    if console:
+        log_paths.append(Path(console).expanduser())
+
+    span = frames[-1][0] - frames[0][0]
+    entries = load_log_entries(log_paths, base, span)
+
+    run_dir = os.environ.get("DEMO_VIDEO_RUN_DIR", "").strip()
+    if run_dir:
+        entries.extend(load_step_entries(Path(run_dir).expanduser(), base))
+        entries.sort(key=lambda entry: entry.t_sec)
+
+    if not entries:
+        print("[WARNING] 녹화 구간에 걸치는 로그 줄이 없어 패널을 생략합니다 "
+              "(로그 파일 경로/시각을 확인하세요)")
+        return None
+
+    width = max(240, _env_int("DEMO_VIDEO_LOG_PANEL_WIDTH", 520))
+    width -= width % 2
+    print(f"[INFO] 로그 패널: {len(entries)}줄, 폭 {width}px, 기준 {base:%Y-%m-%d %H:%M:%S}")
+    return LogPanel(
+        entries, width, height, max_lines=_env_int("DEMO_VIDEO_LOG_LINES", 14)
+    )
+
+
 # ------------------------------------------------------------------
 # 인코딩.
 # ------------------------------------------------------------------
@@ -296,6 +365,7 @@ def open_writer(out_path: Path, fps: float, size: tuple[int, int]):
 def render(
     frames: list[tuple[float, Path]],
     out_path: Path,
+    input_dir: Path,
     *,
     fps: float,
     speed: float,
@@ -323,9 +393,13 @@ def render(
     size = target_size(first, max_width)
     if size[0] <= 0 or size[1] <= 0:
         return f"해상도 계산 실패: {first.shape}"
-    print(f"[INFO] 출력 해상도: {size[0]}x{size[1]}, fps={fps:g}")
 
-    writer, actual_path = open_writer(out_path, fps, size)
+    # 패널은 프레임과 같은 높이로 옆에 붙으므로 출력 폭이 늘어난다.
+    panel = build_log_panel(input_dir, frames, size[1])
+    out_size = (size[0] + panel.width, size[1]) if panel else size
+    print(f"[INFO] 출력 해상도: {out_size[0]}x{out_size[1]}, fps={fps:g}")
+
+    writer, actual_path = open_writer(out_path, fps, out_size)
     if writer is None:
         return "VideoWriter 를 열지 못했습니다 (코덱 없음)"
 
@@ -356,6 +430,8 @@ def render(
                     cached_image.copy(), frames[index][0], index, len(frames),
                     skipped[index], label,
                 )
+            if panel is not None:
+                frame = np.hstack((frame, panel.render(frames[index][0])))
             writer.write(frame)
             written += 1
             if written % 300 == 0:
@@ -395,6 +471,7 @@ def main() -> str:
     return render(
         frames,
         out_path,
+        input_dir,
         fps=max(1.0, _env_float("DEMO_VIDEO_FPS", 15.0)),
         speed=max(0.1, _env_float("DEMO_VIDEO_SPEED", 1.0)),
         max_hold_sec=max(0.0, _env_float("DEMO_VIDEO_MAX_HOLD_SEC", 2.0)),

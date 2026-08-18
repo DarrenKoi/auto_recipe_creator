@@ -137,9 +137,51 @@ def test_notify_failure_carries_recommendation() -> bool:
     return ok
 
 
+def test_summary_names_failed_stage() -> bool:
+    """보정 미수행 + 실패 step → 어느 단계에서 멈췄는지 한국어 라벨로 나온다.
+
+    엔지니어의 다음 행동이 갈리는 지점이라 필요하다: 접속 실패면 tool 을 직접 열어야
+    하고, 보정 실패면 이미 열린 창에서 align point 만 잡으면 된다.
+    """
+    s = build_outcome_summary(
+        None, failed_step="wait_tool_window", failure_class="rcs_occupied_select",
+    )
+    ok = "접속" in s and "wait_tool_window" in s and "rcs_occupied_select" in s
+    print(f"[{'PASS' if ok else 'FAIL'}] summary_names_failed_stage: {s!r}")
+    return ok
+
+
+def test_summary_names_correction_stage() -> bool:
+    """보정 단계에서 실패 → '접속' 이 아니라 보정 단계로 읽혀야 한다."""
+    s = build_outcome_summary(None, failed_step="run_correction", failure_class="")
+    ok = "보정" in s and "run_correction" in s and "접속" not in s
+    print(f"[{'PASS' if ok else 'FAIL'}] summary_names_correction_stage: {s!r}")
+    return ok
+
+
+def test_summary_unknown_step_still_reported() -> bool:
+    """라벨 없는 step 이름도 원문 그대로 실려야 한다(모르는 단계를 숨기지 않는다)."""
+    s = build_outcome_summary(None, failed_step="brand_new_step")
+    ok = "brand_new_step" in s
+    print(f"[{'PASS' if ok else 'FAIL'}] summary_unknown_step_still_reported: {s!r}")
+    return ok
+
+
+def test_summary_omits_stage_when_absent() -> bool:
+    """실패 step 이 없으면(정상 완주/구 호출부) 단계 줄 자체가 없다."""
+    s = build_outcome_summary(_outcome("awaiting_engineer_ok"))
+    ok = "실패단계" not in s
+    print(f"[{'PASS' if ok else 'FAIL'}] summary_omits_stage_when_absent: {s!r}")
+    return ok
+
+
 def main() -> int:
     print("[INFO] notify self-test 시작")
     results = [
+        test_summary_names_failed_stage(),
+        test_summary_names_correction_stage(),
+        test_summary_unknown_step_still_reported(),
+        test_summary_omits_stage_when_absent(),
         test_summary_recommends_when_ambiguous(),
         test_summary_no_recommend_when_distinct(),
         test_summary_omits_when_none(),

@@ -15,10 +15,17 @@ tool 닫기·알림 발송은 step 이 아니라 `run_alarm_cycle` 의 후처리
   7. run_correction     — correct_align_fail_auto (CV 가 좌표 결정, dry-run 게이트)
 
 후처리(런 종료 후 항상):
-  * notify_correction_outcome — status != corrected 면 cube 알림(outcome 요약)
+  * CycleNotifier.notify_outcome — status != corrected 면 cube 알림(outcome 요약)
   * engineer watch — 미보정 시 창이 닫히거나 watch 시간이 끝날 때까지 대기
     (녹화 스레드가 엔지니어 수동 조작을 계속 캡처)
-  * finally: 녹화 중지(manifest) → tool 닫기 → 알림 팝업 backstop
+  * finally: 결과 통보 backstop → 녹화 중지(manifest) → tool 닫기 → 알림 팝업 backstop
+
+알림 순서 규약(결과-후-알림): 감지 즉시 cube 를 보내지 않는다. 접속 → 판정 →
+보정 시도까지 끝낸 뒤 결과를 통보한다 — 알림을 보고 즉시 반응하는 엔지니어가
+단일 RCS 커서를 두고 자동화와 경합하면 사이클이 `rcs_occupied` 로 깨지기 때문이다.
+그 대가로 "사이클이 죽으면 아무 통보도 없다" 는 위험이 생기므로 두 장치를 둔다:
+  * CycleNotifier 게이트 — 본문과 finally 가 모두 통보를 시도하고 1회만 발송.
+  * watchdog — `notify_delay_sec` 를 넘기면 '진행 중' 을 1회 고지(무한 침묵 금지).
 """
 
 import json
@@ -30,7 +37,11 @@ from poc.workflow_3 import ALIGN_IMAGES_DIR, DEBUG_IMAGE_DIR
 from poc.workflow_3.config import Workflow3Settings
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
 from poc.workflow_3.logger import log_work2_event
-from poc.workflow_3.monitor.notify import close_alert_window, notify_correction_outcome
+from poc.workflow_3.monitor.notify import (
+    CycleNotifier,
+    close_alert_window,
+    notify_correction_outcome,
+)
 from poc.workflow_3.monitor.recording import RecordingSession
 from poc.workflow_3.monitor.teardown import run_teardown
 from poc.workflow_3.sem_monitor.controller import build_rcs_sem_monitor
@@ -682,6 +693,14 @@ def run_alarm_cycle(
 
     recording: RecordingSession | None = None
     input_blocked = False
+    # 알람 1건의 cube 게이트 - 본문과 finally 가 모두 통보를 시도하고, 먼저 부른 쪽만
+    # 실제로 나간다. watchdog 은 사이클이 오래 끌 때 '진행 중' 을 1회 고지한다.
+    notifier = CycleNotifier(
+        eqp_id, recipe_id,
+        enabled=settings.rich_notify_enabled,
+        reregister_ratio_threshold=settings.reregister_second_ratio_threshold,
+    )
+    notifier.start_watchdog(settings.notify_delay_sec)
     try:
         # 자동 GUI 구간 동안 사용자 물리 입력 차단(opt-in) — foreground lock/클릭 방해 방지.
         if _should_block_input(settings):
@@ -705,11 +724,11 @@ def run_alarm_cycle(
                 result.best_xy = f"({outcome.best_xy[0]},{outcome.best_xy[1]})"
 
         # 처리 결과 알림 — corrected 외 전부(보정 미수행 포함) cube 발송.
+        # 접속 -> align fail 판정 -> 보정 시도까지 끝난 이 시점이 정책상 첫 통보다.
         recording_dir = str(recording.out_dir) if recording is not None else ""
-        notify_correction_outcome(
-            eqp_id, recipe_id, outcome,
-            recording_dir=recording_dir, enabled=settings.rich_notify_enabled,
-            reregister_ratio_threshold=settings.reregister_second_ratio_threshold,
+        notifier.notify_outcome(
+            outcome, recording_dir=recording_dir,
+            failed_step=result.failed_step, failure_class=result.failure_class,
         )
 
         # 자동 GUI 구간 종료 — 엔지니어 수동 조작 전에 입력 차단 해제(엔지니어가 직접 조작해야 함).
@@ -748,6 +767,17 @@ def run_alarm_cycle(
             eqp_id=eqp_id, error=str(exc),
         )
     finally:
+        # 결과 통보 backstop — 본문이 예외로 발송에 도달하지 못했으면 여기서 나간다.
+        # teardown **앞**에 둔다: teardown 한 단계가 깨져도 엔지니어는 통보를 받아야
+        # 한다. 이미 본문에서 보냈으면 게이트가 막아 중복은 생기지 않는다.
+        sess = recording if recording is not None else context.get("recording")
+        if notifier.notify_outcome(
+            context.get("outcome"),
+            recording_dir=str(sess.out_dir) if sess is not None else "",
+            failed_step=result.failed_step, failure_class=result.failure_class,
+        ):
+            print(f"[WARNING] 사이클이 결과 통보 없이 종료 - backstop 발송: EQP_ID={eqp_id}")
+
         # teardown 은 run_teardown 이 단계별로 보호한다 - 한 단계가 던져도 입력
         # 해제/tool 닫기/팝업 backstop 은 반드시 실행된다.
         failures = run_teardown(

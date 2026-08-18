@@ -163,8 +163,38 @@ def notify_align_fail_popup(
 # ------------------------------------------------------------------
 
 
+# 사이클 step id → 엔지니어가 읽을 단계 라벨. 다음 행동이 갈리는 지점이라 cube 에
+# 싣는다: 접속 단계 실패면 tool 을 직접 열어야 하고, 보정 단계 실패면 이미 열린
+# 창에서 align point 만 잡으면 된다. 목록에 없는 step 은 id 그대로 나간다.
+_STEP_LABELS = {
+    "ensure_rcs_ready": "RCS 준비(접속 전)",
+    "close_alert_popup": "감지 팝업 닫기(접속 전)",
+    "connect_tool": "tool 접속(List 탭 더블클릭)",
+    "wait_tool_window": "tool 접속(Remote Monitoring 창 대기)",
+    "start_recording": "녹화 시작",
+    "locate_sem_panel": "SEM panel 인식(보정 준비)",
+    "run_correction": "align 보정",
+}
+
+
+def _stage_note(failed_step: str, failure_class: str) -> str:
+    """실패 step/failure_class 를 '실패단계=...' 한 줄로 만든다. 없으면 빈 문자열."""
+    if not failed_step:
+        return ""
+    label = _STEP_LABELS.get(failed_step, "")
+    stage = f"{label}[{failed_step}]" if label else failed_step
+    if failure_class:
+        stage = f"{stage}/{failure_class}"
+    return f"실패단계={stage}"
+
+
 def build_outcome_summary(
-    outcome, *, recording_dir: str = "", reregister_ratio_threshold: float | None = None
+    outcome,
+    *,
+    recording_dir: str = "",
+    reregister_ratio_threshold: float | None = None,
+    failed_step: str = "",
+    failure_class: str = "",
 ) -> str:
     """CorrectionOutcome 을 엔지니어용 한 줄 요약으로 만든다.
 
@@ -195,9 +225,34 @@ def build_outcome_summary(
             parts.append(f"second_ratio={second_ratio:.3f}")
             if reregister_ratio_threshold is not None and second_ratio > reregister_ratio_threshold:
                 parts.append("재등록 권장(모호 키)")
+    stage = _stage_note(failed_step, failure_class)
+    if stage:
+        # 요약 앞쪽에 둔다 - 엔지니어가 "어디까지 갔나" 를 먼저 알아야 다음 행동이 정해진다.
+        parts.insert(1 if len(parts) > 1 else len(parts), stage)
     if recording_dir:
         parts.append(f"녹화={recording_dir}")
     return " | ".join(parts)
+
+
+def _send_cube_async(eqp_id: str, recipe_id: str, summary: str) -> None:
+    """office cube 함수를 데몬 스레드에서 호출한다(루프 비차단).
+
+    office 함수가 summary 인자를 받으면 요약을 함께 보내고, 기존 2-인자 시그니처면
+    생략한다(README: office 함수에 optional summary 추가 권장).
+    """
+    def _run():
+        try:
+            params = inspect.signature(_SEND_CUBE_FN).parameters
+            if "summary" in params or any(
+                p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+            ):
+                _SEND_CUBE_FN(eqp_id, recipe_id, summary=summary)
+            else:
+                _SEND_CUBE_FN(eqp_id, recipe_id)
+        except Exception as exc:
+            print(f"[WARNING] cube rich notify 예외: {exc}")
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def notify_correction_outcome(
@@ -208,6 +263,8 @@ def notify_correction_outcome(
     recording_dir: str = "",
     enabled: bool = True,
     reregister_ratio_threshold: float | None = None,
+    failed_step: str = "",
+    failure_class: str = "",
 ) -> None:
     """처리 실패 시 cube rich notification 을 비차단 발송한다.
 
@@ -223,6 +280,7 @@ def notify_correction_outcome(
     summary = build_outcome_summary(
         outcome, recording_dir=recording_dir,
         reregister_ratio_threshold=reregister_ratio_threshold,
+        failed_step=failed_step, failure_class=failure_class,
     )
 
     if status == "corrected":
@@ -252,20 +310,116 @@ def notify_correction_outcome(
         print(f"[INFO] cube 알림 비활성 - 요약 로그만: EQP_ID={eqp_id} | {summary}")
         return
 
-    def _run():
-        try:
-            params = inspect.signature(_SEND_CUBE_FN).parameters
-            if "summary" in params or any(
-                p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
-            ):
-                _SEND_CUBE_FN(eqp_id, recipe_id, summary=summary)
-            else:
-                _SEND_CUBE_FN(eqp_id, recipe_id)
-        except Exception as exc:
-            print(f"[WARNING] cube rich notify 예외: {exc}")
-
-    threading.Thread(target=_run, daemon=True).start()
+    _send_cube_async(eqp_id, recipe_id, summary)
     print(f"[INFO] cube 알림 발송(비차단): EQP_ID={eqp_id} | {summary}")
+
+
+def send_progress_notify(eqp_id: str, recipe_id: str, elapsed_sec: float) -> None:
+    """'자동 보정 진행 중' 중간 고지 — watchdog 전용(무한 침묵 방지).
+
+    결과 알림이 아니므로 요구 행동을 담지 않는다. 자동화가 아직 tool 을 붙들고
+    있다는 사실만 알려 엔지니어가 개입 시점을 판단하게 한다.
+    """
+    summary = (
+        f"자동 보정 진행 중({elapsed_sec:.0f}s 경과) - 결과 알림이 곧 이어집니다. "
+        f"지금 수동 조작하면 자동화와 충돌할 수 있습니다"
+    )
+    log_work2_event(
+        component=LOG_COMPONENT, message="progress_notify", level="warning",
+        eqp_id=eqp_id, recipe_id=recipe_id, elapsed_sec=f"{elapsed_sec:.1f}",
+    )
+    if not RICH_NOTIFY_AVAILABLE:
+        print(f"[INFO] cube 알림 비활성 - 진행 고지 로그만: EQP_ID={eqp_id} | {summary}")
+        return
+    _send_cube_async(eqp_id, recipe_id, summary)
+    print(f"[INFO] cube 진행 고지 발송(비차단): EQP_ID={eqp_id} | {summary}")
+
+
+class CycleNotifier:
+    """알람 1건의 cube 알림 게이트 — '정확히 1회' 발송 + 지연 watchdog.
+
+    사이클은 본문(정상 종료)과 finally(예외 종료) 양쪽에서 결과를 통보하려 하므로,
+    누가 먼저 부르든 첫 호출만 실제로 나가야 한다. 이 클래스가 그 판정을 소유한다.
+
+    watchdog 은 `start_watchdog(delay_sec)` 로 건다. 그 시간까지 결과가 나오지 않으면
+    '진행 중' 고지를 1회 보낸다 — 결과-후-알림 정책의 유일한 예외이며, 사이클이
+    멈춰도 엔지니어가 영원히 모르는 상태를 막는 안전장치다.
+    """
+
+    def __init__(
+        self,
+        eqp_id: str,
+        recipe_id: str,
+        *,
+        enabled: bool = True,
+        reregister_ratio_threshold: float | None = None,
+        timer_factory=threading.Timer,
+    ):
+        self.eqp_id = eqp_id
+        self.recipe_id = recipe_id
+        self.enabled = enabled
+        self.reregister_ratio_threshold = reregister_ratio_threshold
+        self._timer_factory = timer_factory
+        self._lock = threading.Lock()
+        self._outcome_sent = False
+        self._progress_sent = False
+        self._timer = None
+        self._started_at = time.time()
+
+    def start_watchdog(self, delay_sec: float) -> bool:
+        """delay_sec 후 '진행 중' 고지를 보낼 watchdog 을 건다. 걸었으면 True.
+
+        delay_sec <= 0 이거나 알림 자체가 꺼져 있으면 걸지 않는다.
+        """
+        if delay_sec <= 0 or not self.enabled:
+            return False
+        self._started_at = time.time()
+        timer = self._timer_factory(delay_sec, self._fire_progress)
+        timer.daemon = True
+        self._timer = timer
+        timer.start()
+        return True
+
+    def _fire_progress(self) -> None:
+        """watchdog 만료 콜백 — 결과가 아직이면 진행 고지를 1회 보낸다.
+
+        결과 발송과 경합할 수 있으므로(취소 직후 발화) 같은 락에서 판정한다.
+        """
+        with self._lock:
+            if self._outcome_sent or self._progress_sent:
+                return
+            self._progress_sent = True
+        send_progress_notify(
+            self.eqp_id, self.recipe_id, time.time() - self._started_at,
+        )
+
+    def notify_outcome(
+        self,
+        outcome,
+        *,
+        recording_dir: str = "",
+        failed_step: str = "",
+        failure_class: str = "",
+    ) -> bool:
+        """결과 알림을 1회만 발송한다. 실제로 보냈으면 True, 이미 보냈으면 False."""
+        with self._lock:
+            if self._outcome_sent:
+                return False
+            self._outcome_sent = True
+        self._cancel_timer()
+        notify_correction_outcome(
+            self.eqp_id, self.recipe_id, outcome,
+            recording_dir=recording_dir, enabled=self.enabled,
+            reregister_ratio_threshold=self.reregister_ratio_threshold,
+            failed_step=failed_step, failure_class=failure_class,
+        )
+        return True
+
+    def _cancel_timer(self) -> None:
+        timer = self._timer
+        if timer is not None:
+            timer.cancel()
+            self._timer = None
 
 
 def send_detection_notify_async(eqp_id: str, recipe_id: str, *, enabled: bool = True) -> None:
@@ -290,10 +444,12 @@ __all__ = [
     "ALARM_LOG_PATH",
     "ALERT_POPUP_TITLE",
     "RICH_NOTIFY_AVAILABLE",
+    "CycleNotifier",
     "build_outcome_summary",
     "close_alert_window",
     "notify_align_fail_popup",
     "notify_correction_outcome",
     "send_detection_notify_async",
+    "send_progress_notify",
     "show_popup_windows",
 ]

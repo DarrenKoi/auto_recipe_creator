@@ -35,6 +35,30 @@ uv run python docs/project_progress/build_report_docx.py
   2-stage 로케이터·실시간 루프·정렬 정확도·진행 현황 등)입니다. 브라우저로 열거나 인쇄(PDF)하여 docx 보고서를 보충합니다.
 - (이전 `build_report_pptx.py`/`.pptx` 산출물은 `_appendix.html` 시각 부록으로 대체되어 제거되었습니다.)
 
+### 임원 보고용 슬라이드 (본편 4장)
+
+같은 00~04 본문을 근거로 한 **경과 보고 덱**입니다. 과제명 `Align Tuning Agent`, 과제 종류 현업.
+Head Message(정량 효과 + 예상 종료) / 선정 배경·목적 / 추진 전략·성과 / 기대 효과·향후 일정의
+**본편 4장**이고, 상세 근거(모드별 정확도, 진행 현황, 예상 허들)는 **백업 2장**에 두어 질문이
+나올 때만 펼칩니다.
+
+```bash
+# Bento 판(.bento.html) - 단일 HTML, 더블클릭하면 편집기까지 뜸. 백업 2장은 클릭으로만 열림
+uv run python docs/project_progress/build_slides_bento.py
+
+# PowerPoint 판(.pptx, 흰 배경) - 백업 2장은 숨김 슬라이드(슬라이드쇼/PDF 에서 제외)
+uv run python docs/project_progress/build_slides_pptx.py
+
+# Mac 레이아웃 확인용 사본(맑은 고딕이 없어 렌더가 깨지므로 폰트만 교체해 임시 폴더에 생성)
+PREVIEW=1 uv run python docs/project_progress/build_slides_pptx.py
+```
+
+- 두 판은 **같은 1280x720 좌표계**를 씁니다(16:9 = 13.333x7.5in @96dpi 라 px 가 1:1 대응).
+  내용 수정은 `.md` -> 두 스크립트 순서로 반영합니다. 산출물을 직접 편집하지 마십시오.
+  특히 `.bento.html` 은 700KB 단일 파일에 JSON 이 한 줄로 들어 있어 git diff 로 내용을 읽을 수 없습니다.
+- `.pptx` 는 재생성할 때마다 임베디드 차트 워크북의 타임스탬프 때문에 바이트가 달라집니다.
+  내용 변경이 없으면 커밋하지 마십시오.
+
 ## 작성 원칙
 
 - 본문은 한국어 **경어체**로 작성하고 모델명·CV 기법·env·경로 등 기술 용어는 영문을 병기합니다.

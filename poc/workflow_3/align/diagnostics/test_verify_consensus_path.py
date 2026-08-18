@@ -17,6 +17,8 @@ from types import SimpleNamespace
 import numpy as np
 
 from poc.workflow_3.align import consensus_crops as cc
+from poc.workflow_3.align.clean_align_image import OVERSAMPLE
+from poc.workflow_3.align.cond_file import CondInfo
 from poc.workflow_3.align.diagnostics import verify_consensus_path as vc
 
 
@@ -26,10 +28,25 @@ def _checker(n=600, cell=8):
     return (((xx // cell + yy // cell) % 2) * 255).astype(np.uint8)
 
 
-class _FakeCond:
-    # crosshair_xy 는 cursor ×10 (OVERSAMPLE=10) → 이미지 (300,300) = 600x600 중앙.
-    crosshair_xy = (3000, 3000)
-    raw = {"accelerating_voltage": ["1"]}   # msr_modality -> 'sem'.
+def _fake_cond(n=600):
+    """`load_cond` 가 실제로 돌려주는 타입(CondInfo) 그대로 만든다.
+
+    손으로 적은 stand-in 클래스를 쓰던 자리다. 그 fake 는 consumer 가 그때 읽던 두
+    필드(crosshair_xy/raw)만 갖고 있었는데, 나중에 `cond_for_image` 가 생기면서
+    `cond.pixel` 을 읽자 AttributeError 로 깨졌다 - 실제 CondInfo 는 dataclass 라
+    그 필드를 늘 갖고 있으므로(기본 None) production 에는 없는 고장이었다.
+    producer 의 타입을 그대로 쓰면 필드가 추가돼도 따라오고, 이름이 바뀌면
+    조용히 통과하는 대신 여기서 터진다.
+
+    pixel 을 로드 크기와 같게 둬서 `cond_for_image` 는 무보정 통과다(원래 픽스처가
+    가정하던 좌표계 그대로): cursor 프레임은 Pixel x10 이라 crosshair 3000 -> 이미지
+    (300,300) = 600x600 중앙.
+    """
+    return CondInfo(
+        pixel=(n, n),
+        crosshair_xy=(n * OVERSAMPLE // 2, n * OVERSAMPLE // 2),
+        raw={"accelerating_voltage": ["1"]},   # msr_modality -> 'sem'.
+    )
 
 
 class _FakeTpl:
@@ -59,7 +76,7 @@ def _patch_io(monkey):
         monkey.append((obj, attr, orig))
         setattr(obj, attr, name)
 
-    restore_factory(lambda p: _FakeCond(), cc, "load_cond")
+    restore_factory(lambda p: _fake_cond(), cc, "load_cond")
     restore_factory(lambda p: gray.copy(), cc, "load_gray")
     restore_factory(lambda g, cond: g, cc, "clean_image")            # crosshair 제거 생략.
     restore_factory(lambda assets: {"sem": (_FakeTpl(80, 60), (0, 0))},

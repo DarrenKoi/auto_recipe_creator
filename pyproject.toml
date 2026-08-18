@@ -19,6 +19,9 @@ dependencies = [
     "python-pptx>=0.6.21",
     "python-docx>=1.1.0",
     "pymupdf>=1.24.0",
+    # RCS 프로세스 조회(open_rcs.find_existing_rcs_processes). 없으면 "안 돌고 있음" 과
+    # "알 수 없음" 이 구분되지 않아 중복 실행 가드가 조용히 무력화된다.
+    "psutil>=5.9.0",
 ]
 
 [project.optional-dependencies]

@@ -1484,6 +1484,18 @@ def execute_login_step(
     )
 
 
+def resolve_login_tool_name(target_tool_name: str | None) -> str:
+    """로그인 후 접속할 tool 이름을 정한다 - **빈 문자열은 "접속 안 함"** 이다.
+
+    `target_tool_name or load_target_tool_name()` 로 쓰면 빈 문자열이 falsy 라 env/코드
+    오버라이드로 흘러가, 접속을 원치 않는 호출부(사이클 복구 로그인)가 ""를 넘겨도
+    엉뚱한 tool 이 열린다. 미지정(None)만 env 를 본다.
+    """
+    if target_tool_name is None:
+        return load_target_tool_name().strip()
+    return target_tool_name.strip()
+
+
 def run_login_workflow(
     settings: WorkflowSettings | None = None,
     *,
@@ -1492,7 +1504,7 @@ def run_login_workflow(
     """RCS 로그인 워크플로를 실행한다."""
     resolved_settings = settings or load_workflow_settings()
     credentials = load_login_credentials()
-    resolved_tool_name = (target_tool_name or load_target_tool_name()).strip()
+    resolved_tool_name = resolve_login_tool_name(target_tool_name)
     steps = build_login_workflow_steps(
         resolved_settings,
         credentials,

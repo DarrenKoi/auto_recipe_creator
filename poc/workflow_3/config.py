@@ -117,7 +117,14 @@ class Workflow3Settings(WorkflowSettings):
     connect_action_enabled: bool = True  # tool 더블클릭 수행 여부(off=인식만 dry-run).
     connect_window_timeout_sec: int = 3
     rcs_window_max_trials: int = 3  # 점유 'select' 팝업 조기 감지가 있어 상한을 낮춤(과거 10).
-    rcs_recovery_enabled: bool = False  # RCS 재실행+재로그인 복구(검증 전 기본 off).
+    # RCS 재실행+재로그인 복구. 기본 on - RCS 가 떠 있지 않다는 이유로 알람을 통째로
+    # 놓치는 것이 복구 시도보다 나쁘다. 복구는 tool 에 접속하지 않고 메인 창까지만
+    # 간다(monitor/rcs_recovery.py). 롤백은 ALIGN_FAIL_RCS_RECOVERY=0.
+    rcs_recovery_enabled: bool = True
+    # 복구 로그인 후 메인 창 출현 대기 상한(초). connect_window_timeout_sec 와 같은
+    # 계열이라 여기 둔다 - 모듈 상수로 두면 seed_env() 보다 먼저 읽혀
+    # workflow_3_config.py 로 조정할 수 없다(셸 env 만 먹힘).
+    rcs_recovery_window_timeout_sec: float = 30.0
     # 점유 'select' 팝업(타 사용자 사용 중) 검출 — 떠 있으면 접속 포기 + cooldown 후 재시도.
     occupied_popup_detect_enabled: bool = True
     occupied_popup_vlm_service: str = "mai-ui"  # 제목 검출 후 옵션 확인용(route_slug).
@@ -317,7 +324,10 @@ def load_workflow3_settings() -> Workflow3Settings:
         share_confirm_policy=_load_share_confirm_policy(),
         share_wait_sec=env_float("ALIGN_FAIL_SHARE_WAIT_SEC", 10.0),
         share_max_attempts=env_int("ALIGN_FAIL_SHARE_MAX_ATTEMPTS", 2),
-        rcs_recovery_enabled=env_flag("ALIGN_FAIL_RCS_RECOVERY", default=False),
+        rcs_recovery_enabled=env_flag("ALIGN_FAIL_RCS_RECOVERY", default=True),
+        rcs_recovery_window_timeout_sec=env_float(
+            "ALIGN_FAIL_RCS_RECOVERY_WINDOW_SEC", 30.0
+        ),
         keep_awake=env_flag("ALIGN_FAIL_KEEP_AWAKE", default=True),
         block_input_enabled=env_flag("ALIGN_FAIL_BLOCK_INPUT", default=False),
         recording_poll_sec=env_float(

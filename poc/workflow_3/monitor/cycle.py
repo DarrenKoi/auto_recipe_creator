@@ -44,6 +44,7 @@ from poc.workflow_3.monitor.notify import (
     close_alert_window,
     notify_correction_outcome,
 )
+from poc.workflow_3.monitor.rcs_recovery import RECOVERED, recover_rcs_session
 from poc.workflow_3.monitor.recording import RecordingSession
 from poc.workflow_3.monitor.teardown import run_teardown
 from poc.workflow_3.rcs.row_occupant import OCCUPIED_BY_OTHER, UNKNOWN
@@ -243,24 +244,55 @@ def _make_result(
     )
 
 
+def _scan_rcs_processes(exe_path):
+    """RCS 프로세스 목록을 조회한다 - **조회 자체가 불가하면 None('모름')**.
+
+    `find_existing_rcs_processes` 는 psutil 이 없으면 빈 리스트를 돌려주므로 "안 돌고
+    있다" 와 "알 수 없다" 가 구분되지 않는다. 그대로 넘기면 중복 실행 가드가 조용히
+    무력화되므로 여기서 두 경우를 갈라 준다.
+    """
+    from poc.workflow_3.rcs.open_rcs import PSUTIL_AVAILABLE, find_existing_rcs_processes
+
+    if not PSUTIL_AVAILABLE:
+        return None
+    try:
+        return find_existing_rcs_processes(exe_path)
+    except Exception as exc:
+        print(f"[WARNING] RCS 프로세스 조회 실패(모름으로 처리): {exc}")
+        return None
+
+
 def _exec_ensure_rcs_ready(step, context, settings: Workflow3Settings) -> StepResult:
-    """① RCS 메인 창 확보 — 떠 있으면 전면화, 없으면(옵션) 재실행+재로그인."""
+    """① RCS 메인 창 확보 — 떠 있으면 전면화, 없으면(옵션) 재실행+재로그인.
+
+    복구 자체는 `monitor.rcs_recovery.recover_rcs_session` 이 하고 여기서는 협력자를
+    묶어 넘기고 결과를 StepResult 로 옮긴다.
+    """
     started_at = time.time()
     window, title, backend = wait_for_rcs_main_window(timeout_sec=settings.connect_window_timeout_sec)
     if window is None and settings.rcs_recovery_enabled:
         print("[WARNING] RCS 메인 창 없음 - 재실행+재로그인 복구 시도(ALIGN_FAIL_RCS_RECOVERY=on)")
-        try:
-            from poc.workflow_3.rcs.open_rcs import RCS_EXE, launch_rcs
-            from poc.workflow_3.rcs.workflow_login import run_login_workflow
+        from poc.workflow_3.rcs.open_rcs import launch_rcs
+        from poc.workflow_3.rcs.workflow_login import run_login_workflow
 
-            launch_rcs(RCS_EXE)
-            run_login_workflow(settings)
-            window, title, backend = wait_for_rcs_main_window(timeout_sec=30.0)
-        except Exception as exc:
+        recovery = recover_rcs_session(
+            settings,
+            find_processes_fn=_scan_rcs_processes,
+            launch_fn=launch_rcs,
+            login_fn=run_login_workflow,
+            wait_window_fn=wait_for_rcs_main_window,
+        )
+        if recovery.status != RECOVERED:
             return _make_result(
                 step, "failed", started_at, settings,
-                failure_class="rcs_recovery_error", error_message=f"{type(exc).__name__}: {exc}",
+                failure_class=recovery.status, error_message=recovery.error,
             )
+        # 재실행까지 했는지 남긴다 - "로그인만 다시 했다" 와 "프로세스를 새로 띄웠다" 는
+        # 오피스에서 원인이 다르다(전자는 세션 만료, 후자는 클라이언트 종료).
+        print(
+            f"[INFO] RCS 복구 성공: relaunched={recovery.launched} title={recovery.title!r}"
+        )
+        window, title, backend = recovery.window, recovery.title, recovery.backend
     if window is None:
         return _make_result(
             step, "failed", started_at, settings,

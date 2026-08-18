@@ -13,6 +13,9 @@ python-dotenv>=1.0.0
 # Windows GUI automation used by poc/work2
 pywinauto>=0.6.8
 
+# RCS 프로세스 조회 (open_rcs.find_existing_rcs_processes) — 중복 실행 가드에 필요
+psutil>=5.9.0
+
 # RAG — CCTV-based screen understanding
 # (from requirements-rag.txt)
 easyocr>=1.7.0

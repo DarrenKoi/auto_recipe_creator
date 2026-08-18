@@ -136,7 +136,7 @@ request_screen_share(vlm_client, settings) -> ShareRequestResult
 
 ### ② 승낙/거절 판별
 
-`Request` 클릭 후 `share_wait_sec`(기본 90초) 동안 폴링한다.
+`Request` 클릭 후 `share_wait_sec`(기본 45초) 동안 폴링한다.
 
 - 제목에 `eqp_id` 를 가진 Remote Monitoring 창 등장 → `accepted`
 - 시간 초과 → `denied_or_timeout`
@@ -145,27 +145,46 @@ request_screen_share(vlm_client, settings) -> ShareRequestResult
 어느 쪽이든 결론은 "그 엔지니어가 점유하는 동안 접근 불가" 로 동일해 동작이 갈리지 않기
 때문이다. 두 경우의 구분은 manifest 에 남겨 오피스 확인 후 필요하면 분리한다.
 
-`accepted` 가 아니면 팝업을 `Cancel` 로 닫고 기존 `rcs_occupied_select` cooldown 으로 간다.
+`accepted` 가 아니면 팝업을 닫고 기존 `rcs_occupied_select` cooldown 으로 간다.
 
-### ③ view-only 판별 — 이중 안전장치
+**팝업은 `Cancel` 버튼 좌표를 찍어 클릭하지 않고 `close_window()` 로 닫는다.** 좌표 클릭은
+로케이션이 방금 실패했을 수도 있는 시점에 같은 팝업을 다시 겨냥하는 것이라, 확인 게이트를
+통과하지 않은 클릭을 fail-closed 원칙을 어기고 최악의 순간에 내보내게 된다. 창 핸들은 이미
+가지고 있으므로 VLM 도 좌표도 필요 없다.
 
-| 경로 | 판별 방법 | 신뢰도 |
-|---|---|---|
-| (a) 우리가 요청 → 승낙 | 우리가 보냈으므로 확실히 안다 | 확정 |
-| (b) 팝업 없이 진입 | List 행의 점유자 ID 컬럼 OCR | 캘리브레이션 필요 |
+### ③ 점유 3-상태 판별과 view-only
 
-(b)를 위해 `select_tool` 이 이미 확정한 행 좌표를 재사용해 strip 을 조금 넓게 잘라 점유자
-컬럼을 읽는다. 새 좌표를 만들지 않으므로 "좌표는 VLM 이 정하고 OCR 은 확인만 한다" 규칙을
-지킨다. 컬럼 위치와 폭은 오피스 캘리브레이션 항목이므로 `read_row_occupant()` 한 지점에
-격리한다.
+점유는 참/거짓이 아니라 **3-상태**다. "모른다" 를 "비어 있다" 로 접으면 조용한 오보가 된다.
 
-읽기 실패 시에는 경고와 manifest 기록 후 기존 동작(보정 수행)을 유지한다. fail-closed 로
-잡으면 OCR 이 흔들릴 때 보정이 영영 돌지 않게 되는데, (b)는 우리가 요청을 보낸 이력이
-있어야 도달 가능한 상태라 (a)의 확정 판별이 대부분을 덮는다.
+| 상태 | 판별 | 보정 | outcome |
+|---|---|---|---|
+| `occupied_by_other` | 점유자 컬럼에서 ID 를 읽음, 또는 이번 사이클에서 우리가 공유 요청을 보냄 | 건너뜀 | `view_only_observation` |
+| `free` | 점유자 컬럼 읽기 성공 + 점유자 토큰 없음 | 수행 | 기존 그대로 |
+| `unknown` | 점유자 컬럼 읽기 실패 | 수행 | `corrected_unverified` |
 
-추가로 `share_grant_cache: {eqp_id: 만료 epoch}` 를 두어, 우리가 승낙받은 EQP 는 TTL 동안
-(b)로 진입해도 view-only 로 기억한다. 프로세스 재시작 시 캐시는 사라지며 그때는 List 읽기가
-유일한 신호다.
+`unknown` 에서 보정을 막지 않는 이유는, 먹지 않는 클릭 자체는 무해하고 진짜 피해는
+**"보정했다" 고 보고하며 알림을 생략하는 것**이기 때문이다. 그래서 클릭을 막는 대신
+불확실성을 outcome 에 실어 **알림이 반드시 나가게** 한다. 오피스 OCR 캘리브레이션이
+끝나기 전에도 조용한 성공이 불가능해진다.
+
+이 판별에는 **cross-cycle 기억을 두지 않는다.** 승낙 이력을 TTL 캐시로 들고 있으면, 동료가
+작업을 끝내고 tool 을 놓아준 뒤에도 그 EQP 가 view-only 로 굳어 보정·알림·재시도가 한꺼번에
+죽는다(2026-08-18 oc-discuss 에서 발견). 판별은 매 사이클 새로 한다.
+
+#### 점유자 컬럼은 반드시 별도 crop 으로 읽는다
+
+`tool_row_verify` 가 이미 하는 행 strip OCR 을 넓혀 한 번에 읽고 싶은 유혹이 있으나,
+**해서는 안 된다.** `classify_tokens` 는 목표 ID 를 못 읽은 상태에서 ID 모양 토큰
+(`_looks_like_tool_id`: 영숫자 + 글자·숫자 혼재 + 길이 범위)을 만나면 `mismatch` 를 낸다.
+점유자 ID(`KIM0234` 등)가 정확히 그 모양이다. 게다가 `accepts()` 는 `lenient` 에서도
+`mismatch` 를 거부한다. 따라서 crop 을 넓히면 지금은 무해하게 통과하던 `unreadable` 이
+`mismatch` 로 **승격**되어 정상 행의 클릭이 거부되고, 그것도 점유자 컬럼이 채워진 행에서만
+— 이 기능이 겨냥한 바로 그 케이스에서 — 발생한다. `PointTextRead.tokens` 는 좌표를 버리므로
+사후에 컬럼별로 나눌 수도 없다.
+
+따라서 `read_row_occupant()` 는 **자기 crop 과 자기 OCR 호출**을 가진다. `tool_row_verify`
+는 손대지 않는다. 비용은 접속당 OCR 1회 추가이며, 사이클이 이미 수 분 단위(녹화 300초)인
+것에 비하면 무시할 수 있다.
 
 ### ④ `cycle.py` 흐름
 
@@ -176,27 +195,46 @@ abort_check 가 Select 팝업 감지
   share_request_enabled ?
     request_screen_share()
       requested        -> wait_share_response()
-                            accepted          -> view_only=True, 창 대기 계속 -> success
-                            denied_or_timeout -> Cancel 로 닫기 -> failed(rcs_occupied_select)
-      confirm_failed   -> 팝업 미조작 -> failed(rcs_share_confirm_failed)
+                            accepted          -> occupancy=occupied_by_other
+                                                 창 대기 계속 -> success
+                            denied_or_timeout -> close_window(popup)
+                                                 -> failed(rcs_occupied_select)
+      confirm_failed   -> 팝업 미조작 + 진단 산출물 저장
+                          -> failed(rcs_share_confirm_failed)
       not_found/error  -> failed(rcs_occupied_select)
   아니면
     기존 failed(rcs_occupied_select)
 ```
 
-`run_correction` 단계는 `context["view_only"]` 가 참이면 보정을 건너뛰고
-`CorrectionOutcome(status="view_only_observation")` 을 넣는다. 이것이 이 설계에서 가장
-중요한 한 줄이다 — 없으면 위의 "문제의 핵심" 에서 서술한 조용한 오보가 그대로 발생한다.
+팝업이 뜨지 않은 정상 경로에서는 `select_tool` 단계의 `read_row_occupant()` 결과가
+`context["occupancy"]` 를 채운다. 즉 (a)는 위 분기가, (b)는 행 읽기가 채우며, 둘 다
+실패하면 `unknown` 이다.
 
-녹화와 engineer watch 는 수정하지 않는다. `view_only_observation` 은 `corrected` 가 아니므로
-기존 조건(`cycle.py`, outcome != corrected)이 그대로 watch 를 태워
-`engineer_watch_sec`(300초) cap 녹화가 돈다.
+`run_correction` 단계는 `context["occupancy"]` 에 따라 갈린다. `occupied_by_other` 면 보정을
+건너뛰고 `CorrectionOutcome(status="view_only_observation")` 을, `unknown` 이면 보정을
+수행하되 결과 status 를 `corrected_unverified` 로 바꿔 넣는다. 이것이 이 설계에서 가장
+중요한 부분이다 — 없으면 위의 "문제의 핵심" 에서 서술한 조용한 오보가 그대로 발생한다.
+
+녹화와 engineer watch 는 수정하지 않는다. 두 새 status 모두 `corrected` 가 아니므로 기존
+조건(`cycle.py:740`, `outcome.status != "corrected"`)이 그대로 watch 를 태워
+`engineer_watch_sec`(300초) cap 녹화가 돈다. 코드 확인 결과 `corrected` 비교는
+`notify.py:286` 과 `cycle.py:740` 두 곳뿐이고 **모두 정확 비교(`==`/`!=`)** 이므로 새 status
+가 접두사로 스며들 여지는 없다.
 
 ### ⑤ 알림
 
-`notify.py` 의 cube 생략 대상에 `view_only_observation` 을 추가한다. 그 엔지니어가 이미
-장비에 붙어 작업 중인 상황에서 "OK 를 눌러달라" 는 알림은 도움이 아니라 방해다. manifest 와
-audit log 에는 그대로 남긴다.
+**cube 알림을 생략하지 않는다.** 초안은 "그 엔지니어가 이미 붙어 있으니 알림은 방해" 라고
+보았으나 두 전제가 틀렸다. cube 는 **이 알람의 담당 엔지니어**에게 가는데 tool 앞의 사람은
+다른 사람일 수 있고, 점유자가 알람을 남긴 채 자리를 뜨면 아무도 통보받지 못한다. 알림 채널을
+"지금 누가 서 있는가" 라는 추측으로 바꾸는 셈이다.
+
+대신 문구를 구분한다.
+
+| status | cube |
+|---|---|
+| `corrected` | 발송 안 함 (기존) |
+| `view_only_observation` | "다른 엔지니어 점유 중 - 관전·녹화만 수행" |
+| `corrected_unverified` | "점유 여부 확인 불가 - 보정을 시도했으나 반영 여부 미확인" |
 
 ### ⑥ 상위 루프
 
@@ -204,8 +242,22 @@ audit log 에는 그대로 남긴다.
 
 - `rcs_share_confirm_failed` 를 `_RETRY_LATER_FAILURE_CLASSES` 에 추가한다. 확인 실패는
   장비 탓이 아니라 우리 인식 실패이므로 `wrong_tool_opened` 과 같은 성격이다.
-- 공유 세션 녹화가 정상 완료된 사이클은 실패가 아니므로 `active_tools` 에 등록된다. 알람이
-  해제될 때까지 같은 EQP 를 다시 붙잡지 않는다 — 한 번 녹화했으면 충분하다.
+- **outcome 기반 재시도 집합을 새로 둔다.**
+
+  ```python
+  _RETRY_LATER_OUTCOME_STATUSES = {"view_only_observation", "corrected_unverified"}
+  ```
+
+  `_cycle_failed()` 는 `run_status`/`failed_step` 만 보므로 완주한 사이클은 실패가 아니고,
+  그대로 두면 `active_tools` 에 등록되어 **알람이 해제될 때까지 영영 재시도되지 않는다.**
+  점유자가 tool 을 놓아준 뒤에도 우리는 돌아가지 않는다. 두 status 는 어디에서도 성공으로
+  등록하지 않고 cooldown 경로로 보낸다 — 그래야 tool 이 풀렸을 때 실제 보정이 돌아간다.
+
+- **재시도 상한을 둔다.** cooldown 300초 + 사이클당 녹화 300초이므로, 알람이 오래 유지되면
+  시간당 약 6회 재시도와 그만큼의 cube 가 나가고 단일 RCS 커서를 계속 점유한다.
+  EQP 별 연속 `view_only`/`unverified` 횟수를 세어 `share_max_attempts`(기본 2)를 넘으면
+  `active_tools` 로 넘겨 멈춘다. 카운터는 알람 해제 시 `active_tools`/`occupied_cooldown` 과
+  같은 시점에 정리한다.
 
 ### ⑦ 환경 변수
 
@@ -215,8 +267,12 @@ audit log 에는 그대로 남긴다.
 |---|---|---|
 | `ALIGN_FAIL_SHARE_REQUEST` | `1` | 공유 요청 발송 활성화 |
 | `ALIGN_FAIL_SHARE_CONFIRM` | `strict` | 확인 게이트 정책 |
-| `ALIGN_FAIL_SHARE_WAIT_SEC` | `90` | 승낙 대기 상한(초) |
-| `ALIGN_FAIL_SHARE_GRANT_TTL_SEC` | `7200` | 승낙 기억 TTL(초) |
+| `ALIGN_FAIL_SHARE_WAIT_SEC` | `45` | 승낙 대기 상한(초) |
+| `ALIGN_FAIL_SHARE_MAX_ATTEMPTS` | `2` | EQP 별 연속 view-only 재시도 상한 |
+
+승낙 대기를 90초에서 45초로 낮춘 이유는 이 대기가 `_exec_wait_tool_window` 안에서
+**블로킹**이고, 단일 RCS 커서를 모든 tool 의 알람이 직렬로 공유하기 때문이다. 점유 tool
+하나의 대기가 다른 모든 장비의 알람 처리 지연으로 그대로 전가된다.
 
 `SAFE_MODE=0` 은 실클릭 조건으로 계속 필요하다. `align_fail_monitor` 가 이미 그 기본값으로
 뜨므로 운영자가 추가로 할 일은 없다.
@@ -225,11 +281,16 @@ audit log 에는 그대로 남긴다.
 
 | 상황 | 동작 |
 |---|---|
-| 확인 게이트 미통과 | 클릭 없음, `rcs_share_confirm_failed`, cooldown 후 재시도 |
-| 라디오 클릭 후 `Request` 클릭 실패(예외) | `Cancel` 로 팝업 닫아 원상 복구, cooldown |
-| 승낙 대기 timeout | `Cancel` 로 닫고 `rcs_occupied_select`, cooldown |
-| 점유자 컬럼 OCR 실패 | 경고 + manifest 기록, 기존 동작 유지 |
+| 확인 게이트 미통과 | 클릭 없음 + **진단 산출물 저장**, `rcs_share_confirm_failed`, cooldown |
+| 라디오 클릭 후 `Request` 클릭 실패(예외) | `close_window()` 로 팝업 닫아 원상 복구, cooldown |
+| 승낙 대기 timeout | `close_window()` 로 닫고 `rcs_occupied_select`, cooldown |
+| 점유자 컬럼 OCR 실패 | `unknown` → 보정은 수행, outcome `corrected_unverified`, cube 발송 |
 | `share_request` 예외 | 삼키지 않고 `error` 로 반환, 사이클은 기존 포기 경로 |
+
+`strict` 를 기본값으로 두는 대가로 **확인 실패는 반드시 자기 진단이 되어야 한다.** 게이트가
+막을 때마다 팝업 crop, OCR 원문 응답, 로케이터가 찍은 좌표를 `debug_images/` 에 저장한다.
+Mac 에서는 팝업을 볼 수 없으므로, 첫 오피스 실행이 실제 문구를 알려주는 유일한 경로다. 토큰
+매칭은 대소문자 무시 부분 일치로 하고 국문 표기도 함께 받는다.
 
 ## 테스트
 
@@ -239,18 +300,35 @@ VLM 과 실장비 없이 Mac 에서 도는 순수 로직으로 작성한다 (`mo
 - 정책 3종(`strict` / `lenient` / `off`) 별 판정
 - 좌표 미검출, OCR 빈 응답, OCR 예외
 - 승낙 판별: 창 등장 → `accepted`, timeout → `denied_or_timeout`
-- `view_only` → `run_correction` skip 회귀 (`cycle` 쪽)
-- `view_only_observation` → cube 생략 회귀 (`notify` 쪽)
+- 점유 3-상태: 점유자 토큰 있음/없음/읽기 실패 → `occupied_by_other`/`free`/`unknown`
+- `occupied_by_other` → `run_correction` skip 회귀 (`cycle` 쪽)
+- `unknown` → 보정 수행하되 status 가 `corrected_unverified` 로 치환되는 회귀
+- 두 새 status 모두 cube 가 **발송되는** 회귀 (`notify` 쪽 — 생략되면 실패)
+- 두 새 status 모두 `active_tools` 가 아니라 cooldown 으로 가는 회귀 (`align_fail_monitor`)
+- 재시도 상한: 연속 `share_max_attempts` 회 후 `active_tools` 로 전환, 알람 해제 시 리셋
 
 `tdd` 스킬로 진행한다 (전역 지침의 "테스트 우선 개발" 항목).
 
 ## 오피스 확인이 필요한 항목
 
-설계는 아래 둘을 보수적 기본값으로 잡아두었으므로 틀려도 위험하지 않으나, 첫 오피스 실행에서
+설계는 아래를 보수적 기본값으로 잡아두었으므로 틀려도 위험하지 않으나, 첫 오피스 실행에서
 확인하고 조정해야 한다.
 
 1. **거절 시 RCS 화면** — 지금은 무응답과 합쳐 timeout 으로 처리한다. 거절이 별도 팝업이나
    메시지로 나타난다면 대기를 일찍 끊을 수 있다.
-2. **List 점유자 컬럼의 위치와 폭** — `read_row_occupant()` 의 crop 기하.
+2. **List 점유자 컬럼의 위치와 폭** — `read_row_occupant()` 의 crop 기하. 여기가 안 맞으면
+   대부분의 사이클이 `unknown` → `corrected_unverified` 로 떨어진다(안전하지만 시끄럽다).
 3. **확인 게이트의 실제 OCR 토큰** — 팝업 옵션 문구가 영문인지 국문인지, 줄바꿈으로 잘리는지.
-   토큰 매칭 규칙은 이에 맞춰 조정한다.
+   확인 실패 시 저장되는 진단 산출물이 이 답을 준다.
+
+## 설계 변경 이력
+
+- 2026-08-18 초안 작성.
+- 2026-08-18 `oc-discuss`(glm-5.3, 3라운드) 후 7개 항목 수정. 상세는
+  `docs/opencode/2026-08-18-occupied-share-request-debate.md`.
+  요지: view-only 판별의 fail-open 근거가 틀렸고(재시작 후 (b) 경로), grant 캐시는 해제된
+  tool 을 view-only 로 굳혔으며, cube 생략은 점유자와 알람 담당자를 동일시했고, 좌표로 Cancel
+  을 누르는 것은 fail-closed 원칙 위반이었고, 행 strip crop 확장은 기존 게이트의
+  `unreadable` 을 `mismatch` 로 승격시켜 정상 클릭을 거부했을 것이다. 추가로 새 outcome
+  status 의 재시도 생애주기가 정의되지 않아 완주 사이클이 `active_tools` 로 굳는 구멍과,
+  점유 오판독 시의 cube spam 상한이 빠져 있었다.

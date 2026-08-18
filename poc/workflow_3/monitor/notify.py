@@ -24,6 +24,13 @@ LOG_COMPONENT = "align_fail_notify"
 ALERT_POPUP_TITLE = "CD-SEM Align Fail 감지"
 ALARM_LOG_PATH = LOG_DIR / "align_fail_alarms.txt"
 
+# 점유 tool 관련 outcome status (2026-08-18). 둘 다 "corrected" 가 아니므로 engineer
+# watch(cycle.py) 와 cube 발송 분기의 기존 **정확 비교**를 그대로 통과한다 - 즉 알림이
+# 나가고 녹화도 계속된다. 이것이 의도다: 점유자와 알람 담당자는 다른 사람일 수 있고,
+# 점유자가 알람을 남긴 채 자리를 뜨면 생략된 알림은 아무에게도 도달하지 않는다.
+VIEW_ONLY_OBSERVATION = "view_only_observation"   # 다른 엔지니어 점유 - 관전·녹화만.
+CORRECTED_UNVERIFIED = "corrected_unverified"     # 점유 미상 - 보정했으나 반영 미확인.
+
 
 # ------------------------------------------------------------------
 # office_rich_notify 로딩 (정위치).
@@ -210,6 +217,13 @@ def build_outcome_summary(
             # 반자동 모드의 요구 행동을 맨 앞에 둔다 — status= 로 시작하면 엔지니어가
             # 무엇을 해야 하는지 알림 끝까지 읽어야 알 수 있다.
             parts.append("align point 로 이동 완료 - 위치 확인 후 OK 를 눌러주세요")
+        elif outcome.status == VIEW_ONLY_OBSERVATION:
+            parts.append("다른 엔지니어가 tool 점유 중 - 자동 보정 없이 관전·녹화만 수행")
+        elif outcome.status == CORRECTED_UNVERIFIED:
+            parts.append(
+                "점유 여부 확인 불가 - 보정을 시도했으나 실제 반영 여부는 미확인, "
+                "장비에서 직접 확인 필요"
+            )
         parts += [f"status={outcome.status}", f"path={outcome.path}", f"decision={outcome.key_decision}"]
         if outcome.best_xy is not None:
             parts.append(f"best_xy={outcome.best_xy}")
@@ -443,7 +457,9 @@ def send_detection_notify_async(eqp_id: str, recipe_id: str, *, enabled: bool = 
 __all__ = [
     "ALARM_LOG_PATH",
     "ALERT_POPUP_TITLE",
+    "CORRECTED_UNVERIFIED",
     "RICH_NOTIFY_AVAILABLE",
+    "VIEW_ONLY_OBSERVATION",
     "CycleNotifier",
     "build_outcome_summary",
     "close_alert_window",

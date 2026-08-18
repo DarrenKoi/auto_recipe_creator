@@ -1541,12 +1541,19 @@ def connect_to_tool(
     action_enabled: bool = True,
     debug_image_dir=None,
     main_window_timeout_sec: float = 15.0,
+    main_window=None,
+    main_window_title: str = "",
+    main_window_backend: str = "",
 ) -> ToolSelectionResult | None:
     """지정 tool(EQP_ID)로 RCS 접속 — List 탭에서 찾아 더블클릭한다.
 
     `main()` 은 환경변수/기본값으로 tool 이름을 정하지만, 본 함수는 호출부가 tool
     이름을 동적으로 넘긴다 (align fail 알람의 EQP_ID 등). RCS 가 로그인되어 메인
     창이 떠 있다고 가정한다. 메인 창을 못 찾으면 None 을 반환한다.
+
+    `main_window` 를 주면 창 탐색을 건너뛴다. 호출부가 방금 같은 창을 찾았을 때 다시
+    찾지 않기 위한 것이다 - 탐색은 전체 창 열거 + 포커스 활성화를 동반하므로, 중복되면
+    이미 전면에 있는 창을 한 번 더 낚아채 foreground 경합을 공짜로 늘린다.
     """
     normalized = (tool_name or "").strip()
     if not normalized:
@@ -1554,9 +1561,12 @@ def connect_to_tool(
         return None
 
     started_at = time.time()
-    main_window, window_title, backend = wait_for_rcs_main_window(
-        timeout_sec=main_window_timeout_sec,
-    )
+    if main_window is not None:
+        window_title, backend = main_window_title, main_window_backend
+    else:
+        main_window, window_title, backend = wait_for_rcs_main_window(
+            timeout_sec=main_window_timeout_sec,
+        )
     if main_window is None:
         print(
             f"[ERROR] connect_to_tool: 메인 RCS 창을 찾지 못해 접속 실패 "

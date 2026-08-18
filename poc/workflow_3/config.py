@@ -34,6 +34,24 @@ def _env_str(name: str, default: str) -> str:
     return value or default
 
 
+def _load_share_confirm_policy() -> str:
+    """공유 요청 확인 정책 env ("strict" | "lenient" | "off"). 그 외 값은 경고 후 strict.
+
+    오타를 조용히 흘려보내면 안 된다. 이 값은 남의 세션을 건드리는 클릭을 막는 게이트라,
+    `ALIGN_FAIL_SHARE_CONFIRM=strcit` 같은 오타가 의도치 않은 정책으로 해석되면 안전
+    장치가 사실상 꺼진 것과 같다. `SELECT_TOOL_ROW_CONFIRM` 과 같은 관용구를 쓴다.
+    """
+    valid = {"strict", "lenient", "off"}
+    value = _env_str("ALIGN_FAIL_SHARE_CONFIRM", "strict").lower()
+    if value in valid:
+        return value
+    print(
+        f"[WARNING] ALIGN_FAIL_SHARE_CONFIRM={value!r} 는 알 수 없는 값 "
+        f"({sorted(valid)}) -> 기본값 'strict' 사용"
+    )
+    return "strict"
+
+
 def _env_alarm_source() -> str:
     """알람 소스 env ("office" | "replay"). 그 외 값은 경고 후 office."""
     value = _env_str("ALIGN_FAIL_ALARM_SOURCE", "office").lower()
@@ -107,6 +125,14 @@ class Workflow3Settings(WorkflowSettings):
     # 점유 외 사유로 사이클이 실패한 tool 의 재시도 유예(초). 없으면 매 poll 재시도해
     # 직렬화된 단일 RCS 커서를 독점하고 다른 알람을 굶긴다(F2).
     failure_retry_cooldown_sec: float = 300.0
+    # --- 점유 tool 화면 공유 요청 (2026-08-18) ---
+    # 점유 'select' 팝업에서 "화면 공유"를 골라 Request 를 눌러 관전 세션을 얻는다.
+    # 안전은 env 게이트가 아니라 클릭 전 라벨 OCR 확인 게이트가 담당한다.
+    share_request_enabled: bool = True     # Select 팝업에서 화면 공유 요청 발송.
+    share_confirm_policy: str = "strict"   # strict | lenient | off - 클릭 전 라벨 확인.
+    # 승낙 대기는 블로킹이고 단일 RCS 커서를 모든 알람이 직렬 공유하므로 짧게 둔다.
+    share_wait_sec: float = 45.0
+    share_max_attempts: int = 2            # EQP 별 연속 view-only 재시도 상한.
     keep_awake: bool = True
     # 자동 GUI 구간 동안 사용자 물리 마우스/키보드 입력 차단(Windows BlockInput).
     # 사용자가 다른 앱을 쓰면 foreground lock 으로 RCS 가 안 떠서 방해되는 문제 대응.
@@ -285,6 +311,10 @@ def load_workflow3_settings() -> Workflow3Settings:
         occupied_popup_vlm_service=_env_str("ALIGN_FAIL_OCCUPIED_POPUP_SERVICE", "mai-ui"),
         occupied_retry_cooldown_sec=env_float("ALIGN_FAIL_OCCUPIED_COOLDOWN_SEC", 300.0),
         failure_retry_cooldown_sec=env_float("ALIGN_FAIL_FAILURE_COOLDOWN_SEC", 300.0),
+        share_request_enabled=env_flag("ALIGN_FAIL_SHARE_REQUEST", default=True),
+        share_confirm_policy=_load_share_confirm_policy(),
+        share_wait_sec=env_float("ALIGN_FAIL_SHARE_WAIT_SEC", 45.0),
+        share_max_attempts=env_int("ALIGN_FAIL_SHARE_MAX_ATTEMPTS", 2),
         rcs_recovery_enabled=env_flag("ALIGN_FAIL_RCS_RECOVERY", default=False),
         keep_awake=env_flag("ALIGN_FAIL_KEEP_AWAKE", default=True),
         block_input_enabled=env_flag("ALIGN_FAIL_BLOCK_INPUT", default=False),

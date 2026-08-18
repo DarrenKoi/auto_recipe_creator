@@ -29,6 +29,7 @@ from poc.workflow_3.rcs.tool_name_match import canonicalize
 from poc.workflow_3.vlm.label_verify import (
     OCR_SERVICE_SLUG,
     crop_box_around_point,
+    looks_like_id_token,
     read_text_near_point,
 )
 from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
@@ -126,22 +127,13 @@ def build_strip_box(point: dict, image_width: int, image_height: int) -> dict:
 
 
 def _looks_like_tool_id(token: str) -> bool:
-    """원문 토큰이 장비 ID 모양인지.
+    """원문 토큰이 장비 ID 모양인지 (판정은 `label_verify.looks_like_id_token` 공유).
 
-    조건: 영숫자만 + 글자와 숫자를 **모두** 포함 + 길이가 ID 범위 안.
     실제 ID 는 길이가 섞여 있다 (MCD427/CCDM21 6자, 4DCDB807/RKHV3101 8자). 그래서
     '목표와 같은 길이'로 거르면 안 된다 - 6자 목표 옆에 8자 ID 가 있으면 그 오클릭을
     놓친다. 대신 'ID 모양이면서 목표와 다르면' mismatch 로 본다.
-
-    옆 컬럼 텍스트가 strip 에 걸려도 대부분 여기서 탈락한다: IP(10.1.2.3)는 점 때문에
-    isalnum 실패, 'Status'/'Model' 은 숫자 없음, 순수 카운트 숫자는 글자 없음.
     """
-    cleaned = (token or "").strip()
-    if not cleaned or not cleaned.isalnum():
-        return False
-    if not (ID_MIN_LEN <= len(cleaned) <= ID_MAX_LEN):
-        return False
-    return any(ch.isdigit() for ch in cleaned) and any(ch.isalpha() for ch in cleaned)
+    return looks_like_id_token(token, min_len=ID_MIN_LEN, max_len=ID_MAX_LEN)
 
 
 def classify_tokens(tokens: list[str], tool_name: str) -> tuple[str, str]:

@@ -38,12 +38,15 @@ from poc.workflow_3.config import Workflow3Settings
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
 from poc.workflow_3.logger import log_work2_event
 from poc.workflow_3.monitor.notify import (
+    CORRECTED_UNVERIFIED,
+    VIEW_ONLY_OBSERVATION,
     CycleNotifier,
     close_alert_window,
     notify_correction_outcome,
 )
 from poc.workflow_3.monitor.recording import RecordingSession
 from poc.workflow_3.monitor.teardown import run_teardown
+from poc.workflow_3.rcs.row_occupant import OCCUPIED_BY_OTHER, UNKNOWN
 from poc.workflow_3.sem_monitor.controller import build_rcs_sem_monitor
 from poc.workflow_3.runner.workflow_runner import WorkflowRunner
 from poc.workflow_3.runner.workflow_types import (
@@ -281,16 +284,60 @@ def _exec_close_alert_popup(step, context, settings: Workflow3Settings) -> StepR
     return _make_result(step, "success", started_at, settings)
 
 
+def _read_row_tokens(image, box):
+    """점유자 컬럼 crop 을 OCR 로 읽는다. 판독 실패는 None(= UNKNOWN 신호)."""
+    from poc.workflow_3.vlm.label_verify import read_text_near_point, tokens_from_text
+
+    read = read_text_near_point(
+        image, box,
+        debug_image_dir=DEBUG_IMAGE_DIR / "row_occupant",
+        timestamp_tag=make_timestamp_tag(time.time()),
+        artifact_label="row_occupant",
+        log_name="row_occupant",
+    )
+    if not read.ok:
+        return None
+    return tokens_from_text(read.raw_text)
+
+
 def _exec_connect_tool(step, context, settings: Workflow3Settings) -> StepResult:
-    """③ tool 더블클릭 접속 — 알람당 1회만 느슨하게 시도(실패 시 엔지니어 직접)."""
+    """③ tool 더블클릭 접속 — 알람당 1회만 느슨하게 시도(실패 시 엔지니어 직접).
+
+    접속 직전 List 를 캡처해 두었다가, 행 좌표가 확정되면 그 자리의 점유자 컬럼을 읽어
+    `context["occupancy"]` 를 채운다. 이미 승낙되어 팝업 없이 들어가는 경우(b)를
+    잡기 위한 것이다 - 그 세션은 관전만 가능한데 겉보기에는 정상 접속과 같다.
+
+    메인 창은 여기서 **한 번만** 찾아 `connect_to_tool` 에 넘긴다. 예전처럼 양쪽이 각자
+    찾으면 창 열거와 포커스 활성화가 매 알람마다 두 번 일어나, 이 프로젝트에서 이미
+    까다로운 foreground 경합을 공짜로 한 번 더 만든다.
+    """
+    from poc.workflow_3.rcs.login_rcs_common import wait_for_rcs_main_window
+    from poc.workflow_3.rcs.row_occupant import read_occupancy
+
     started_at = time.time()
     eqp_id = context["eqp_id"]
     action_enabled = settings.action_enabled and settings.connect_action_enabled
+
+    main_window, main_title, main_backend = wait_for_rcs_main_window(
+        timeout_sec=settings.connect_window_timeout_sec,
+    )
+    # 좌표와 이미지가 같은 순간의 것이어야 crop 이 맞는다. 접속 후에는 tool 창이 List 를
+    # 덮을 수 있어 다시 잡을 수 없으므로 더블클릭 전에 찍어 둔다.
+    list_image = None
+    if main_window is not None:
+        try:
+            list_image = capture_window(main_window)
+        except Exception as exc:
+            print(f"[WARNING] 점유자 판독용 List 캡처 실패(점유 미상으로 진행): {exc}")
+
     try:
         result = connect_to_tool(
             eqp_id,
             action_enabled=action_enabled,
             main_window_timeout_sec=settings.connect_window_timeout_sec,
+            main_window=main_window,
+            main_window_title=main_title,
+            main_window_backend=main_backend,
         )
     except Exception as exc:
         return _make_result(
@@ -299,6 +346,13 @@ def _exec_connect_tool(step, context, settings: Workflow3Settings) -> StepResult
         )
     double_clicked = bool(getattr(result, "double_clicked", False))
     context["connect_result"] = result
+    occupancy = read_occupancy(
+        list_image,
+        getattr(result, "tool_point_on_full_image", None),
+        read_tokens_fn=_read_row_tokens,
+    )
+    context["occupancy"] = occupancy
+    print(f"[INFO] List 점유 판독: occupancy={occupancy} (EQP_ID={eqp_id})")
     if not double_clicked:
         return _make_result(
             step, "failed", started_at, settings,
@@ -345,22 +399,195 @@ def _detect_wrong_tool_window(eqp_id: str) -> str:
     return stray_title
 
 
+def _find_tool_window(eqp_id: str):
+    """제목에 eqp_id 를 가진 Remote Monitoring 창을 1회 탐색한다.
+
+    찾으면 `(window, title, backend)` 를, 없으면 None 을 돌려준다. 튜플을 그대로 넘기는
+    이유는 호출부가 같은 창을 다시 찾지 않게 하기 위해서다.
+    """
+    from poc.workflow_3.rcs.login_rcs_common import find_remote_monitoring_window
+
+    window, title, backend = find_remote_monitoring_window(eqp_id)
+    if window is None:
+        return None
+    return window, title, backend
+
+
+def _close_select_popup() -> None:
+    """점유 'select' 팝업을 닫는다 - 좌표 클릭이 아니라 창 핸들로.
+
+    Cancel 을 좌표로 누르는 것은 로케이션이 방금 실패했을 수도 있는 시점에 같은 팝업을
+    다시 겨냥하는 것이라, 확인 게이트를 통과하지 않은 클릭을 최악의 순간에 내보내게
+    된다. 창 핸들은 이미 있으므로 VLM 도 좌표도 필요 없다.
+    """
+    from poc.workflow_3.monitor.occupied_popup import SELECT_TITLE
+    from poc.workflow_3.util import close_window, find_window_by_title_prefix
+
+    try:
+        popup = find_window_by_title_prefix(SELECT_TITLE)
+        if popup is not None and close_window is not None:
+            close_window(popup, debug_label="select popup")
+    except Exception as exc:
+        print(f"[WARNING] select 팝업 닫기 실패(수동 확인 필요): {exc}")
+
+
+def _run_share_request(settings: Workflow3Settings, tag: str):
+    """share_request 의 주입점을 실제 VLM/OCR/클릭 구현으로 채워 호출한다.
+
+    확인 실패 시 crop 과 OCR 원문이 debug_images 에 남는다 - strict 를 기본값으로 두는
+    대가이며, Mac 에서는 팝업을 볼 수 없어 이 산출물이 실제 문구를 아는 유일한 경로다.
+    """
+    from poc.workflow_3.monitor.occupied_popup import SELECT_TITLE
+    from poc.workflow_3.monitor.share_request import request_screen_share
+    from poc.workflow_3.util import find_window_by_title_prefix
+    from poc.workflow_3.vlm.label_verify import (
+        crop_box_around_point,
+        read_text_near_point,
+        tokens_from_text,
+    )
+    from poc.workflow_3.vlm.ui_venus_mai_locator import analyze_window_target
+
+    debug_dir = DEBUG_IMAGE_DIR / "share_request" / tag
+
+    def _locate(image, target):
+        result = analyze_window_target(
+            None, SELECT_TITLE, "uia", target,
+            debug_image_dir=debug_dir,
+            log_name="share_request",
+            component_name="share_request",
+            artifact_prefix=target.key,
+            image=image,
+        )
+        return result.point
+
+    def _read_tokens(image, point, key):
+        box = crop_box_around_point(
+            point, image.width, image.height,
+            left_ratio=0.30, right_ratio=0.30, half_height_ratio=0.06,
+        )
+        read = read_text_near_point(
+            image, box,
+            debug_image_dir=debug_dir,
+            timestamp_tag=make_timestamp_tag(time.time()),
+            artifact_label=key,
+            log_name="share_request",
+        )
+        return tokens_from_text(read.raw_text) if read.ok else []
+
+    def _click(window, image, point, key):
+        """이미지 픽셀 좌표를 스크린 좌표로 변환해 클릭한다.
+
+        변환을 빼면 확인 게이트가 무의미해진다 - 라벨은 점 A 에서 읽고 클릭은 점 B 에
+        떨어져, 오피스 125/150% 배율에서 하필 옆 라디오(강제 종료)를 누를 수 있다.
+        변환 실패는 클릭하지 않고 예외로 올린다(fail-closed).
+        """
+        screen = image_point_to_screen(window, point, image_size=image.size)
+        if screen is None:
+            raise RuntimeError(f"공유 팝업 좌표 변환 실패: {key} point={point}")
+        print(
+            f"[INFO] 공유 팝업 클릭: {key} px={point} -> screen={screen}"
+            f"{'' if settings.action_enabled else ' [dry-run]'}"
+        )
+        click_at_screen(
+            screen, f"share_{key}", action_enabled=settings.action_enabled
+        )
+
+    return request_screen_share(
+        settings,
+        locate_fn=_locate,
+        read_tokens_fn=_read_tokens,
+        click_fn=_click,
+        capture_fn=capture_window,
+        find_popup_fn=lambda: find_window_by_title_prefix(SELECT_TITLE),
+    )
+
+
+def _handle_occupied_popup(step, context, settings: Workflow3Settings, started_at):
+    """점유 'select' 팝업 감지 후 화면 공유를 요청하고 결과에 따라 분기한다.
+
+    승낙되면 관전(view-only) 세션이므로 `context["occupancy"]` 를 점유로 확정한다 -
+    이후 `_exec_run_correction` 이 보정을 건너뛰고 녹화만 하게 하는 신호다.
+    """
+    from poc.workflow_3.monitor.share_request import (
+        ACCEPTED,
+        STATUS_CONFIRM_FAILED,
+        STATUS_REQUESTED,
+        wait_share_response,
+    )
+
+    eqp_id = context["eqp_id"]
+
+    if not settings.share_request_enabled:
+        return _make_result(
+            step, "failed", started_at, settings,
+            failure_class="rcs_occupied_select",
+            error_message=(
+                "점유 'select'(공유/종료) 팝업 감지 - 공유 요청 비활성(설정), 접속 포기. "
+                "다른 사용자 해제 후 cooldown 지나면 재시도."
+            ),
+        )
+
+    def _give_up(share_result):
+        """팝업을 닫고 실패 결과를 만든다 - 모든 포기 경로의 유일한 출구."""
+        _close_select_popup()
+        failure_class = (
+            "rcs_share_confirm_failed"
+            if share_result.status == STATUS_CONFIRM_FAILED
+            else "rcs_occupied_select"
+        )
+        return _make_result(
+            step, "failed", started_at, settings,
+            failure_class=failure_class,
+            error_message=(
+                f"화면 공유 요청 결과: {share_result.status} "
+                f"(radio={share_result.radio_verdict or '-'}, "
+                f"button={share_result.button_verdict or '-'}"
+                f"{', error=' + share_result.error if share_result.error else ''})"
+            ),
+        )
+
+    share = _run_share_request(settings, context["tag"])
+    if share.status != STATUS_REQUESTED:
+        return _give_up(share)
+
+    responded, found = wait_share_response(
+        eqp_id, settings.share_wait_sec, find_window_fn=_find_tool_window
+    )
+    if responded != ACCEPTED or found is None:
+        return _give_up(share)
+
+    # 대기 루프가 이미 찾은 창을 그대로 쓴다 - 다시 찾으면 전체 창 열거와 포커스
+    # 활성화가 한 번 더 일어난다(이미 전면에 있는 창을 낚아채는 셈).
+    window, title, backend = found
+    # 화면 공유는 관전만 가능하다. 여기서 확정해 두지 않으면 보정이 먹지 않는
+    # 클릭을 하고도 'corrected' 로 보고한다.
+    context["occupancy"] = OCCUPIED_BY_OTHER
+    context["tool_window"] = window
+    context["tool_window_title"] = title
+    context["tool_window_backend"] = backend
+    print(f"[INFO] 화면 공유 세션 진입 - 관전·녹화만 수행: EQP_ID={eqp_id}")
+    return _make_result(step, "success", started_at, settings)
+
+
 def _exec_wait_tool_window(step, context, settings: Workflow3Settings) -> StepResult:
-    """④ tool 창 대기 — RCS 점유(select 팝업) 시 건드리지 않고 포기.
+    """④ tool 창 대기 — RCS 점유(select 팝업) 시 화면 공유를 요청한다.
 
     점유 검출(opt-in): 매 시도 전 detect_select_popup 으로 'select' 팝업을 조기 감지해,
-    떠 있으면 창 탐색을 더 돌지 않고 즉시 포기한다(세 옵션은 클릭하지 않음). 검출은 제목
-    열거 + (가능하면) VLM 확인의 hybrid 이며, 실패해도 접속을 막지 않는다(전체 흐름은
-    기존 '미발견 → rcs_occupied' 로 폴백). 점유 조기 감지 시 failure_class 를 구분해
-    상위 루프가 cooldown 후 재시도하도록 한다.
+    떠 있으면 창 탐색을 더 돌지 않는다. 검출은 제목 열거 + (가능하면) VLM 확인의
+    hybrid 이며, 실패해도 접속을 막지 않는다(전체 흐름은 기존 '미발견 → rcs_occupied'
+    로 폴백).
+
+    팝업이 감지되면 `_handle_occupied_popup` 이 화면 공유를 요청한다(2026-08-18). 승낙
+    되면 관전 세션으로 진입해 엔지니어의 수동 작업을 녹화하고, 거절/무응답이면 기존처럼
+    포기해 상위 루프가 cooldown 후 재시도한다.
     """
     started_at = time.time()
     eqp_id = context["eqp_id"]
 
     occupied = {"select": False}
     abort_check = None
+    popup_client = None
     if settings.occupied_popup_detect_enabled:
-        popup_client = None
         try:
             from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
 
@@ -383,14 +610,7 @@ def _exec_wait_tool_window(step, context, settings: Workflow3Settings) -> StepRe
         eqp_id, max_attempts=settings.rcs_window_max_trials, abort_check=abort_check
     )
     if occupied["select"]:
-        return _make_result(
-            step, "failed", started_at, settings,
-            failure_class="rcs_occupied_select",
-            error_message=(
-                "점유 'select'(공유/종료) 팝업 감지 - 접속 포기, 옵션 미선택(사람 판단 "
-                "영역). 다른 사용자 해제 후 cooldown 지나면 재시도."
-            ),
-        )
+        return _handle_occupied_popup(step, context, settings, started_at)
     if window is None:
         # 목표 tool 창이 없을 때, **다른** tool 의 Remote Monitoring 창이 떠 있으면
         # 그건 점유가 아니라 우리가 List 에서 옆 행을 더블클릭한 것이다(오클릭).
@@ -501,10 +721,47 @@ def _exec_locate_sem_panel(step, context, settings: Workflow3Settings) -> StepRe
     return _make_result(step, "success", started_at, settings)
 
 
+def resolve_correction_outcome_status(occupancy: str, status: str) -> str:
+    """점유 상태를 반영해 최종 outcome status 를 정한다.
+
+    occupied_by_other  : 보정 자체를 건너뛰었으므로 관전 status.
+    unknown + corrected: 클릭이 실제로 먹었는지 확인할 수 없다. `correct_align_fail_auto`
+                         는 open-loop 라 반영 여부를 화면으로 되읽지 않으므로, 여기서
+                         'corrected' 로 두면 cube 가 생략되어(notify.py) 아무도 모르는
+                         미보정이 남는다. 조용한 성공을 만들지 않는 것이 요점이다.
+    그 외              : 그대로 둔다(실패/인계 경로가 담은 정보를 덮어쓰지 않는다).
+    """
+    if occupancy == OCCUPIED_BY_OTHER:
+        return VIEW_ONLY_OBSERVATION
+    if occupancy == UNKNOWN and status == "corrected":
+        return CORRECTED_UNVERIFIED
+    return status
+
+
 def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResult:
-    """⑦ CV 보정 — RECIPE_ID 가 있고 correction_enabled 일 때만."""
+    """⑦ CV 보정 — RECIPE_ID 가 있고 correction_enabled 일 때만.
+
+    다른 엔지니어가 점유 중이면(화면 공유 = view-only) 클릭이 장비에 먹지 않으므로
+    보정을 시도하지 않고 관전만 한다. 점유 여부를 확정하지 못한 경우에는 보정을 하되
+    결과 status 를 강등해 알림이 반드시 나가게 한다.
+    """
     started_at = time.time()
     eqp_id, recipe_id = context["eqp_id"], context["recipe_id"]
+    occupancy = context.get("occupancy", UNKNOWN)
+    if occupancy == OCCUPIED_BY_OTHER:
+        from poc.workflow_3.align.correction import CorrectionOutcome
+
+        print("[INFO] 다른 엔지니어 점유 중 - 보정 건너뜀, 관전·녹화만 수행")
+        context["outcome"] = CorrectionOutcome(
+            status=VIEW_ONLY_OBSERVATION,
+            path="observation",
+            key_decision="",
+            best_xy=None,
+            ok_screen_xy=None,
+            fallback=None,
+        )
+        return _make_result(step, "success", started_at, settings)
+
     if not settings.correction_enabled:
         return _make_result(step, "skipped", started_at, settings)
     if not recipe_id:
@@ -558,6 +815,14 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
             step, "failed", started_at, settings,
             failure_class="correction_error", error_message=f"{type(exc).__name__}: {exc}",
         )
+    # 점유 미확정이면 '보정 완료' 로 보고하지 않는다 - 알림이 생략되면 안 된다.
+    resolved = resolve_correction_outcome_status(occupancy, outcome.status)
+    if resolved != outcome.status:
+        print(
+            f"[WARNING] 점유 여부 미확정({occupancy}) - status 강등: "
+            f"{outcome.status} -> {resolved}"
+        )
+        outcome.status = resolved
     context["outcome"] = outcome
     print(f"[INFO] 보정 결과: status={outcome.status} path={outcome.path} decision={outcome.key_decision}")
     return _make_result(step, "success", started_at, settings)

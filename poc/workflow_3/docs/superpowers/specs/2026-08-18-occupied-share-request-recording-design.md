@@ -109,6 +109,13 @@ request_screen_share(vlm_client, settings) -> ShareRequestResult
 3. **확인 게이트** — 각 좌표 주위를 좁게 crop 해 `vlm/label_verify.py` 로 OCR 한다.
 4. 두 확인이 모두 통과할 때만 라디오 → `Request` 순으로 클릭한다.
 
+로케이터가 주는 점은 **이미지 픽셀 좌표**이므로, 클릭 직전 반드시 `image_point_to_screen`
+으로 창 rect / 이미지 크기 배율 보정을 거친다. 이 변환을 빠뜨리면 확인 게이트가
+**무의미해진다** - 점 A 의 라벨을 읽고 점 B 를 누르게 되어, 오피스 125/150% 배율에서
+어긋난 클릭이 하필 강제 종료 라디오에 떨어질 수 있다. 변환 실패는 클릭하지 않는다.
+(2026-08-18 code-review 에서 실제로 이 구멍이 잡혔다 - 주입식 `click_fn` 덕에 단위
+테스트는 전부 통과하고 있었다. 회귀: `test_share_click_converts_image_point_to_screen`.)
+
 확인 게이트 판정 규칙:
 
 | 대상 | 통과 조건 | 즉시 중단 조건 |

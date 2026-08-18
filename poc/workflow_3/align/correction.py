@@ -102,6 +102,14 @@ class CorrectionOutcome:
 
     # "corrected" | "awaiting_engineer_ok" | "fallback_<status>" | "escalated_ambiguous_key"
     # | "escalated_no_ok" | "ok_detect_error" | "no_assets"
+    #
+    # monitor 계층이 사이클 문맥을 반영해 **추가 status 로 치환**할 수 있다(2026-08-18):
+    # "view_only_observation"(다른 엔지니어 점유 - 보정 자체를 건너뜀),
+    # "corrected_unverified"(점유 미상 - 보정했으나 반영 여부 미확인). 정의는
+    # `monitor/notify.py` 에 있다 - align 은 RCS 세션 공유를 알 수 없고 monitor 를
+    # 임포트할 수도 없기 때문이다(단방향: monitor -> align).
+    # 따라서 이 필드를 소비할 때 **정확 비교(== / !=)만 쓸 것.** 접두사/부분 일치로
+    # 판정하면 치환된 status 가 조용히 다른 분기로 샌다.
     status: str
     path: str  # "primary" | "fallback"
     key_decision: str  # 가시성 게이트 판정에 쓰인 matcher decision.

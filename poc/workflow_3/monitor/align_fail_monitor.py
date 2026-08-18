@@ -34,6 +34,8 @@ from poc.workflow_3.monitor.alarm_source import load_alarm_source
 from poc.workflow_3.monitor.cycle import CycleResult, run_alarm_cycle
 from poc.workflow_3.monitor.notify import (
     ALARM_LOG_PATH,
+    CORRECTED_UNVERIFIED,
+    VIEW_ONLY_OBSERVATION,
     notify_align_fail_popup,
     send_detection_notify_async,
 )
@@ -282,7 +284,24 @@ _OCCUPIED_FAILURE_CLASSES = {"rcs_occupied", "rcs_occupied_select"}
 # List 오클릭(다른 tool 창이 열림)도 재시도 대상 — 장비 탓이 아니라 우리 인식 실패라
 # active 로 굳혀 버리면 이 알람은 영영 처리되지 않는다. cooldown 은 점유와 공유한다.
 _MISCLICK_FAILURE_CLASSES = {"wrong_tool_opened"}
-_RETRY_LATER_FAILURE_CLASSES = _OCCUPIED_FAILURE_CLASSES | _MISCLICK_FAILURE_CLASSES
+# 확인 게이트가 막아 공유 요청을 못 보낸 경우 - 장비 탓이 아니라 우리 인식 실패라
+# 오클릭과 같은 성격이다(cooldown 후 재시도).
+_SHARE_FAILURE_CLASSES = {"rcs_share_confirm_failed"}
+_RETRY_LATER_FAILURE_CLASSES = (
+    _OCCUPIED_FAILURE_CLASSES | _MISCLICK_FAILURE_CLASSES | _SHARE_FAILURE_CLASSES
+)
+
+# outcome 기반 재시도 - 사이클이 **완주했더라도** 성공으로 등록하면 안 되는 status.
+# _cycle_failed 는 run_status/failed_step 만 보므로, 이 둘을 그대로 두면 active_tools 에
+# 등록되어 알람이 해제될 때까지 재시도되지 않는다. 그러면 점유자가 tool 을 놓아준 뒤에도
+# 우리는 돌아가지 않아 실제 보정이 돌 기회를 영영 잃는다.
+_RETRY_LATER_OUTCOME_STATUSES = {VIEW_ONLY_OBSERVATION, CORRECTED_UNVERIFIED}
+
+# failure_class -> 로그에 남길 사람이 읽을 사유. 미등록 class 는 점유 추정으로 본다.
+_RETRY_LATER_REASONS = {
+    "wrong_tool_opened": "List 오클릭(다른 tool 창 열림)",
+    "rcs_share_confirm_failed": "공유 요청 라벨 확인 실패(클릭 안 함)",
+}
 
 
 def _cycle_failed(cycle) -> bool:
@@ -297,11 +316,34 @@ def _cycle_failed(cycle) -> bool:
     return cycle.run_status == "error" or bool(cycle.failed_step)
 
 
+def _defer_retry(occupied_cooldown: dict, eqp_id: str, delay_sec: float,
+                 reason: str, *, level: str = "INFO") -> None:
+    """tool 을 active 로 굳히지 않고 cooldown 에 넣는다 (사유를 한 줄로 남긴다).
+
+    실패/점유/오클릭/미확정 네 경로가 전부 같은 두 동작(만료시각 기록 + 사유 출력)을
+    하므로 한곳에 모은다. 매 poll 재시도하면 단일 RCS 커서를 독점해 다른 알람을
+    굶긴다(F2) - 그래서 어느 경로든 유예가 필요하다.
+    """
+    occupied_cooldown[eqp_id] = time.time() + delay_sec
+    print(f"[{level}] EQP_ID={eqp_id} {reason} - active 미등록, {delay_sec:.0f}s 후 재시도")
+
+
+def _should_retry_later(cycle) -> bool:
+    """이 사이클을 active 로 굳히지 않고 cooldown 재시도로 보내야 하는가.
+
+    사이클이 완주했어도(run_status='completed') outcome 이 '보정이 실제로 반영되었다'
+    를 보장하지 못하면 성공으로 등록하지 않는다. 그래야 점유가 풀렸을 때 다시 붙는다.
+    `_cycle_failed` 와 달리 **outcome** 을 본다 - 두 판정은 서로 다른 축이다.
+    """
+    return (cycle.outcome_status or "") in _RETRY_LATER_OUTCOME_STATUSES
+
+
 def process_fail_rows(
     fails,
     active_tools: set[str],
     settings: Workflow3Settings,
     occupied_cooldown: dict | None = None,
+    view_only_attempts: dict | None = None,
 ) -> int:
     """EQP_ID 기준 edge-triggered 로 신규 알람마다 사이클을 수행한다.
 
@@ -320,6 +362,8 @@ def process_fail_rows(
     """
     if occupied_cooldown is None:
         occupied_cooldown = {}
+    if view_only_attempts is None:
+        view_only_attempts = {}
     by_tool = _collapse_rows_by_tool(fails)
     current_tools = set(by_tool.keys())
 
@@ -328,6 +372,13 @@ def process_fail_rows(
     for eqp_id in list(occupied_cooldown):
         if eqp_id not in current_tools or now >= occupied_cooldown[eqp_id]:
             del occupied_cooldown[eqp_id]
+
+    # 시도 카운터는 알람이 해제되면 리셋한다(active_tools/cooldown 과 같은 생애주기).
+    # 만료 시각이 아니라 알람 유지 여부로만 지운다 - 같은 알람이 이어지는 동안의
+    # 연속 횟수를 세는 것이 목적이기 때문이다.
+    for eqp_id in list(view_only_attempts):
+        if eqp_id not in current_tools:
+            del view_only_attempts[eqp_id]
     cooling = current_tools & set(occupied_cooldown)
     for eqp_id in sorted(cooling):
         print(f"[INFO] EQP_ID={eqp_id} 점유 cooldown 중 - 이번 poll 재시도 건너뜀")
@@ -401,23 +452,35 @@ def process_fail_rows(
 
             # 점유(select)로 포기한 경우: active 에 넣지 않고 cooldown 등록 → 만료 후 재시도.
             if cycle.failure_class in _RETRY_LATER_FAILURE_CLASSES:
-                occupied_cooldown[eqp_id] = time.time() + settings.occupied_retry_cooldown_sec
-                reason = (
-                    "List 오클릭(다른 tool 창 열림)"
-                    if cycle.failure_class in _MISCLICK_FAILURE_CLASSES
-                    else "점유(select) 추정"
+                _defer_retry(
+                    occupied_cooldown, eqp_id, settings.occupied_retry_cooldown_sec,
+                    _RETRY_LATER_REASONS.get(cycle.failure_class, "점유(select) 추정"),
                 )
-                print(
-                    f"[INFO] EQP_ID={eqp_id} {reason} - active 미등록, "
-                    f"{settings.occupied_retry_cooldown_sec:.0f}s 후 재시도"
-                )
+            elif _should_retry_later(cycle):
+                # 완주했지만 보정 반영이 보장되지 않은 사이클. active 로 굳히면 알람
+                # 해제까지 재시도되지 않아, 점유가 풀려도 우리는 돌아가지 않는다.
+                attempts = view_only_attempts.get(eqp_id, 0) + 1
+                view_only_attempts[eqp_id] = attempts
+                if attempts >= settings.share_max_attempts:
+                    # 상한 도달 - 더 재시도하면 cooldown 마다 cube 가 나가고 단일 RCS
+                    # 커서를 계속 점유한다. 엔지니어는 이미 상한만큼 통보받았다.
+                    active_tools.add(eqp_id)
+                    print(
+                        f"[WARNING] EQP_ID={eqp_id} {cycle.outcome_status} "
+                        f"{attempts}회 - 상한 도달, 재시도 중단(알람 해제까지 대기)"
+                    )
+                else:
+                    _defer_retry(
+                        occupied_cooldown, eqp_id, settings.failure_retry_cooldown_sec,
+                        f"{cycle.outcome_status} "
+                        f"({attempts}/{settings.share_max_attempts})",
+                    )
             elif _cycle_failed(cycle):
-                # 실패 tool 을 매 poll 재시도하면 단일 RCS 커서를 독점한다(F2).
-                occupied_cooldown[eqp_id] = time.time() + settings.failure_retry_cooldown_sec
-                print(
-                    f"[WARNING] EQP_ID={eqp_id} 사이클 실패(status={cycle.run_status}, "
-                    f"step={cycle.failed_step or '-'}) - active 미등록, "
-                    f"{settings.failure_retry_cooldown_sec:.0f}s 후 재시도"
+                _defer_retry(
+                    occupied_cooldown, eqp_id, settings.failure_retry_cooldown_sec,
+                    f"사이클 실패(status={cycle.run_status}, "
+                    f"step={cycle.failed_step or '-'})",
+                    level="WARNING",
                 )
             else:
                 active_tools.add(eqp_id)
@@ -425,8 +488,11 @@ def process_fail_rows(
         except Exception as exc:
             # tool 1대의 예외가 같은 poll 의 나머지 tool 을 건너뛰게 하면 안 된다(F5).
             # 던진 tool 은 cooldown 에 넣어 다음 poll 에 같은 예외를 반복하지 않게 한다.
-            occupied_cooldown[eqp_id] = time.time() + settings.failure_retry_cooldown_sec
-            print(f"[ERROR] EQP_ID={eqp_id} 처리 예외 - 나머지 tool 계속: {exc}")
+            _defer_retry(
+                occupied_cooldown, eqp_id, settings.failure_retry_cooldown_sec,
+                f"처리 예외({type(exc).__name__}: {exc}) - 나머지 tool 은 계속",
+                level="ERROR",
+            )
             log_work2_event(
                 component=LOG_COMPONENT, message="tool_process_error", level="error",
                 eqp_id=eqp_id, error=str(exc),
@@ -450,6 +516,7 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
 
     active_tools: set[str] = set()
     occupied_cooldown: dict = {}  # {eqp_id: 재시도 가능 epoch} — 점유(select)로 포기한 tool.
+    view_only_attempts: dict = {}  # {eqp_id: 연속 view-only/unverified 사이클 횟수}
     idle_logged = False  # "Align Fail 없음" 은 idle 진입 시 한 번만 로깅 (poll 마다 X)
 
     print(
@@ -508,7 +575,9 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
                     idle_logged = True
             else:
                 idle_logged = False
-                count = process_fail_rows(fails, active_tools, settings, occupied_cooldown)
+                count = process_fail_rows(
+                    fails, active_tools, settings, occupied_cooldown, view_only_attempts
+                )
                 if count == 0:
                     print(
                         f"[INFO] {datetime.now().strftime('%H:%M:%S')} - "

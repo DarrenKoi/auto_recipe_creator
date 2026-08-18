@@ -212,6 +212,10 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 | `ALIGN_FAIL_CORRECTION_DRY_RUN` | 1 | 보정의 move/click 차단. 실 클릭은 SAFE_MODE=0 **그리고** 이 값=0 일 때만 |
 | `ALIGN_FAIL_RCS_RECOVERY` | 0 | RCS 메인 창 부재 시 재실행+재로그인 복구 |
 | `ALIGN_FAIL_BLOCK_INPUT` | 0 | 자동 GUI 구간 동안 사용자 물리 마우스/키보드 차단(Win32 BlockInput). 사용자가 다른 앱을 쓰면 foreground lock 으로 RCS 가 안 떠서 방해되는 문제 대응. SAFE_MODE=0 일 때만 적용, engineer watch 구간은 제외, Ctrl+Alt+Del 로 항상 해제. 합성 클릭(자동화)은 차단 중에도 통과 |
+| `ALIGN_FAIL_SHARE_REQUEST` | 1 | 점유 `Select` 팝업에서 **화면 공유 요청** 발송. 승낙되면 관전(view-only) 세션으로 들어가 엔지니어의 수동 작업을 녹화한다 |
+| `ALIGN_FAIL_SHARE_CONFIRM` | `strict` | 클릭 전 라벨 OCR 확인 정책. `strict`=확인된 것만 클릭 / `lenient`=못 읽어도 클릭 / `off`=확인 생략. **어느 값이든 `terminate`/`control`/`cancel` 이 읽히면 클릭하지 않는다** |
+| `ALIGN_FAIL_SHARE_WAIT_SEC` | 45 | 상대 승낙 대기 상한. 블로킹이고 단일 RCS 커서를 모든 알람이 직렬 공유하므로 길게 두면 다른 장비 처리가 밀린다 |
+| `ALIGN_FAIL_SHARE_MAX_ATTEMPTS` | 2 | EQP 별 연속 view-only 재시도 상한. 넘으면 `active_tools` 로 넘겨 cube 반복 발송과 커서 독점을 끊는다 |
 | `ALIGN_FAIL_POLL_SEC` / `ALIGN_FAIL_WINDOW_SEC` | 10 / 60 | 폴링 주기 / 감지 look-back |
 | `ALIGN_FAIL_RECORDING_POLL_SEC` | 0.05 | 녹화 샘플링 간격 (변화 감지용 빠른 폴링) |
 | `ALIGN_FAIL_RECORDING_HEARTBEAT_SEC` | 5.0 | 변화 없어도 이 간격마다 1장 저장 |
@@ -244,6 +248,47 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 | `ALIGN_CONSENSUS_CACHE_DIR` | `poc/workflow_3/align_consensus_cache` | staged S 이미지 캐시 루트 override |
 | `WORKFLOW3_FILE_LOG_DETAIL` | 0 | 1 이면 `logs/*.log` 에 info 이벤트/VLM 성공 호출까지 기록. 기본은 warning/error 만 파일 기록 |
 | `WORKFLOW3_LOG_LEVEL` | INFO | 파일 로거 레벨. 구버전 `WORK2_LOG_LEVEL` 도 fallback 으로 읽음 |
+
+## 점유된 tool: 화면 공유 요청 (2026-08-18)
+
+다른 엔지니어가 tool 을 쓰고 있으면 RCS 가 `Select` 팝업(제어 공유 / 화면 공유 / 강제
+종료)을 띄운다. 예전에는 검출만 하고 접속을 포기했는데, 그 순간이야말로 **엔지니어가
+align 을 수동으로 잡고 있는 시점**이라 가장 필요한 데이터를 매번 버리고 있었다. 이제는
+화면 공유를 요청하고, 승낙되면 관전 세션으로 들어가 그 작업을 녹화한다.
+
+점유 상태는 참/거짓이 아니라 3-상태로 다룬다.
+
+| 상태 | 판별 | 보정 | outcome |
+|---|---|---|---|
+| `occupied_by_other` | 우리가 공유 요청을 보내 승낙받았거나, List 점유자 컬럼에서 ID 를 읽음 | 건너뜀 | `view_only_observation` |
+| `free` | 점유자 컬럼 읽기 성공 + 점유자 없음 | 수행 | 기존 그대로 |
+| `unknown` | 점유자 컬럼 읽기 실패 | 수행 | `corrected_unverified` |
+
+`unknown` 에서 보정을 막지 않는 이유는, 먹지 않는 클릭 자체는 무해하고 진짜 피해는
+"보정했다"고 보고하며 알림을 생략하는 것이기 때문이다. `correct_align_fail_auto` 는
+open-loop 라 클릭 반영 여부를 되읽지 않으므로, 불확실하면 status 를 강등해 **cube 가
+반드시 나가게** 한다. 두 새 status 모두 `corrected` 가 아니므로 녹화와 engineer watch
+도 기존 조건 그대로 계속 돈다.
+
+안전은 env 게이트가 아니라 **확인 게이트**가 담당한다(`ALIGN_FAIL_SHARE_CONFIRM`).
+라디오와 `Request` 버튼의 좌표를 VLM 이 찍은 뒤 그 자리를 좁게 crop 해 OCR 로 라벨을
+읽고, `share`+`screen` 이 확인될 때만 클릭한다. `control` 이나 `terminat` 이 읽히면
+**정책과 무관하게** 아무것도 누르지 않는다 — 세 라디오가 세로로 붙어 있어 한 칸
+어긋나는 것이 가장 현실적인 실패이고, 그 최악이 동료의 작업을 끊는 강제 종료다.
+
+### 첫 오피스 실행에서 확인할 것
+
+1. **확인 게이트가 통과하는가.** 막히면 `debug_images/share_request/<tag>/` 에 crop 과
+   OCR 원문이 남는다. 실제 문구(영문/국문, 줄바꿈)를 보고 `share_request.py` 의
+   `SHARE_SCREEN_REQUIRED` / `REQUEST_BTN_REQUIRED` 를 조정한다.
+2. **점유자 컬럼 crop 이 맞는가.** `debug_images/row_occupant/` 확인. 어긋나면 대부분의
+   사이클이 `unknown` → `corrected_unverified` 로 떨어진다(안전하지만 알림이 시끄럽다).
+   `rcs/row_occupant.py` 의 `OCCUPANT_*_RATIO` 를 조정한다.
+3. **거절 시 RCS 화면.** 지금은 무응답과 합쳐 timeout 으로 처리한다. 거절이 별도 팝업이나
+   메시지로 나타난다면 `wait_share_response` 에서 대기를 일찍 끊을 수 있다.
+
+설계 근거와 기각된 대안은 `docs/superpowers/specs/2026-08-18-occupied-share-request-recording-design.md`,
+외부 모델 적대적 검토 기록은 `docs/opencode/2026-08-18-occupied-share-request-debate.md`.
 
 ## 산출물 경로
 

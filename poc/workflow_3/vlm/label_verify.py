@@ -89,8 +89,35 @@ def tokens_from_text(raw_text: str) -> list[str]:
     return tokens
 
 
-def _normalize_label(text: str) -> str:
-    """라벨 비교용 정규화 - 영숫자만 남기고 소문자."""
+def looks_like_id_token(token: str, *, min_len: int, max_len: int) -> bool:
+    """토큰이 ID 모양인지 - 영숫자만 + 글자와 숫자를 **모두** 포함 + 길이 범위.
+
+    장비 ID(`MCD427`, `4DCDB807`)와 사람 ID(`KIM0234`)가 같은 모양이라 판정 규칙을
+    공유한다. 길이 범위만 호출부가 정한다 - 장비 ID 와 사번은 자릿수가 다르고,
+    장비 쪽은 env 로 튜닝 가능하기 때문이다.
+
+    옆 컬럼 텍스트가 crop 에 걸려도 대부분 여기서 탈락한다: IP(10.1.2.3)와 시각
+    (12:30:05)은 구두점 때문에 isalnum 실패, 'Status'/'Idle' 은 숫자 없음, 순수 카운트
+    숫자는 글자 없음.
+
+    **canonicalize 이전 원문**으로 판정해야 한다. canonicalize 는 S->5, I->1 처럼
+    글자를 숫자로 눌러버려서 'Status' 가 '5TATU5' 가 되어 숫자를 가진 ID 처럼 보인다.
+    """
+    cleaned = (token or "").strip()
+    if not cleaned or not cleaned.isalnum():
+        return False
+    if not (min_len <= len(cleaned) <= max_len):
+        return False
+    return any(ch.isdigit() for ch in cleaned) and any(ch.isalpha() for ch in cleaned)
+
+
+def normalize_label(text: str) -> str:
+    """라벨 비교용 정규화 - 영숫자만 남기고 소문자.
+
+    구두점을 통째로 버리므로 OCR 이 붙여 온 괄호/마침표에 영향받지 않는다(화이트리스트
+    방식이라 스마트 따옴표 같은 예상 밖 문자도 함께 걸러진다). 한글 음절은 isalnum 이
+    True 라 국문 라벨도 그대로 통과한다.
+    """
     return "".join(ch for ch in (text or "").lower() if ch.isalnum())
 
 
@@ -101,11 +128,11 @@ def label_matches(tokens: list[str], expected_label: str) -> bool:
     그래서 정확 일치뿐 아니라 '토큰이 라벨을 포함' 도 인정한다. 다만 라벨이 2자 이하
     (PM 등)면 포함 매칭이 너무 헐거워지므로(예: 'PMX', 'RPM') 정확 일치만 본다.
     """
-    expected = _normalize_label(expected_label)
+    expected = normalize_label(expected_label)
     if not expected:
         return False
 
-    normalized = [_normalize_label(token) for token in tokens]
+    normalized = [normalize_label(token) for token in tokens]
     if expected in normalized:
         return True
     if len(expected) <= 2:
@@ -203,6 +230,8 @@ __all__ = [
     "PointTextRead",
     "crop_box_around_point",
     "label_matches",
+    "looks_like_id_token",
+    "normalize_label",
     "read_text_near_point",
     "tokens_from_text",
     "upscale_for_ocr",

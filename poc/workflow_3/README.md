@@ -214,7 +214,7 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 | `ALIGN_FAIL_BLOCK_INPUT` | 0 | 자동 GUI 구간 동안 사용자 물리 마우스/키보드 차단(Win32 BlockInput). 사용자가 다른 앱을 쓰면 foreground lock 으로 RCS 가 안 떠서 방해되는 문제 대응. SAFE_MODE=0 일 때만 적용, engineer watch 구간은 제외, Ctrl+Alt+Del 로 항상 해제. 합성 클릭(자동화)은 차단 중에도 통과 |
 | `ALIGN_FAIL_SHARE_REQUEST` | 1 | 점유 `Select` 팝업에서 **화면 공유 요청** 발송. 승낙되면 관전(view-only) 세션으로 들어가 엔지니어의 수동 작업을 녹화한다 |
 | `ALIGN_FAIL_SHARE_CONFIRM` | `strict` | 클릭 전 라벨 OCR 확인 정책. `strict`=확인된 것만 클릭 / `lenient`=못 읽어도 클릭 / `off`=확인 생략. **어느 값이든 `terminate`/`control`/`cancel` 이 읽히면 클릭하지 않는다** |
-| `ALIGN_FAIL_SHARE_WAIT_SEC` | 45 | 상대 승낙 대기 상한. 블로킹이고 단일 RCS 커서를 모든 알람이 직렬 공유하므로 길게 두면 다른 장비 처리가 밀린다 |
+| `ALIGN_FAIL_SHARE_WAIT_SEC` | 10 | 상대 승낙 대기 상한. 블로킹이고 단일 RCS 커서를 모든 알람이 직렬 공유하므로 길게 두면 다른 장비 처리가 밀린다. 못 받아도 알람이 유지되는 한 cooldown 후 다시 요청한다 |
 | `ALIGN_FAIL_SHARE_MAX_ATTEMPTS` | 2 | EQP 별 연속 view-only 재시도 상한. 넘으면 `active_tools` 로 넘겨 cube 반복 발송과 커서 독점을 끊는다 |
 | `ALIGN_FAIL_POLL_SEC` / `ALIGN_FAIL_WINDOW_SEC` | 10 / 60 | 폴링 주기 / 감지 look-back |
 | `ALIGN_FAIL_RECORDING_POLL_SEC` | 0.05 | 녹화 샘플링 간격 (변화 감지용 빠른 폴링) |

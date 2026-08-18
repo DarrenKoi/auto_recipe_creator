@@ -143,7 +143,7 @@ request_screen_share(vlm_client, settings) -> ShareRequestResult
 
 ### ② 승낙/거절 판별
 
-`Request` 클릭 후 `share_wait_sec`(기본 45초) 동안 폴링한다.
+`Request` 클릭 후 `share_wait_sec`(기본 10초) 동안 폴링한다.
 
 - 제목에 `eqp_id` 를 가진 Remote Monitoring 창 등장 → `accepted`
 - 시간 초과 → `denied_or_timeout`
@@ -274,12 +274,19 @@ abort_check 가 Select 팝업 감지
 |---|---|---|
 | `ALIGN_FAIL_SHARE_REQUEST` | `1` | 공유 요청 발송 활성화 |
 | `ALIGN_FAIL_SHARE_CONFIRM` | `strict` | 확인 게이트 정책 |
-| `ALIGN_FAIL_SHARE_WAIT_SEC` | `45` | 승낙 대기 상한(초) |
+| `ALIGN_FAIL_SHARE_WAIT_SEC` | `10` | 승낙 대기 상한(초) |
 | `ALIGN_FAIL_SHARE_MAX_ATTEMPTS` | `2` | EQP 별 연속 view-only 재시도 상한 |
 
-승낙 대기를 90초에서 45초로 낮춘 이유는 이 대기가 `_exec_wait_tool_window` 안에서
-**블로킹**이고, 단일 RCS 커서를 모든 tool 의 알람이 직렬로 공유하기 때문이다. 점유 tool
-하나의 대기가 다른 모든 장비의 알람 처리 지연으로 그대로 전가된다.
+승낙 대기를 90초 → 45초 → **10초**로 낮췄다(마지막은 2026-08-18 사용자 결정). 이 대기가
+`_exec_wait_tool_window` 안에서 **블로킹**이고, 단일 RCS 커서를 모든 tool 의 알람이 직렬로
+공유하기 때문이다. 점유 tool 하나의 대기가 다른 모든 장비의 알람 처리 지연으로 그대로
+전가된다.
+
+10초가 사람이 팝업을 보고 수락하기에 짧아 보일 수 있으나, **기회는 한 번이 아니다.**
+무응답은 `rcs_occupied_select` 로 cooldown 에 들어가고 알람이 유지되는 한 다음 poll 에서
+다시 요청하므로, 엔지니어는 사이클마다 새 요청을 받는다. 즉 이 값은 "엔지니어가 응답할 수
+있는 총 시간"이 아니라 "한 번의 시도에서 커서를 붙잡아 두는 시간"이다. 짧게 잡아 커서를
+빨리 놓아주고 여러 번 묻는 편이, 한 번 길게 붙잡는 것보다 다른 장비에 이롭다.
 
 `SAFE_MODE=0` 은 실클릭 조건으로 계속 필요하다. `align_fail_monitor` 가 이미 그 기본값으로
 뜨므로 운영자가 추가로 할 일은 없다.

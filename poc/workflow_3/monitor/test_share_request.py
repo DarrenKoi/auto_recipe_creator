@@ -35,13 +35,13 @@ _SHARE_ENV = (
 
 
 def test_share_settings_defaults(monkeypatch):
-    """기본값: 켜짐, strict, 45초, 2회."""
+    """기본값: 켜짐, strict, 10초, 2회."""
     for name in _SHARE_ENV:
         monkeypatch.delenv(name, raising=False)
     settings = load_workflow3_settings()
     assert settings.share_request_enabled is True
     assert settings.share_confirm_policy == "strict"
-    assert settings.share_wait_sec == 45.0
+    assert settings.share_wait_sec == 10.0
     assert settings.share_max_attempts == 2
 
 
@@ -49,12 +49,12 @@ def test_share_settings_env_override(monkeypatch):
     """env 가 기본값을 이긴다."""
     monkeypatch.setenv("ALIGN_FAIL_SHARE_REQUEST", "0")
     monkeypatch.setenv("ALIGN_FAIL_SHARE_CONFIRM", "off")
-    monkeypatch.setenv("ALIGN_FAIL_SHARE_WAIT_SEC", "10")
+    monkeypatch.setenv("ALIGN_FAIL_SHARE_WAIT_SEC", "30")
     monkeypatch.setenv("ALIGN_FAIL_SHARE_MAX_ATTEMPTS", "5")
     settings = load_workflow3_settings()
     assert settings.share_request_enabled is False
     assert settings.share_confirm_policy == "off"
-    assert settings.share_wait_sec == 10.0
+    assert settings.share_wait_sec == 30.0
     assert settings.share_max_attempts == 5
 
 

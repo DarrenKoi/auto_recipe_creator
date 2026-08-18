@@ -117,7 +117,7 @@ SHARE_REQUEST = None         # 공유 요청 발송. 1/0/None(기본 on).
 # 첫 오피스 실행에서 게이트가 계속 막히면 debug_images/share_request/ 의 OCR 원문을 보고
 # share_request.py 의 토큰을 고치는 것이 정답이다 - lenient 로 낮추는 것이 아니라.
 SHARE_CONFIRM = None
-SHARE_WAIT_SEC = None        # 상대 승낙 대기 상한(초). None=기본 45. 블로킹이라 짧게.
+SHARE_WAIT_SEC = None        # 상대 승낙 대기 상한(초). None=기본 10. 블로킹이라 짧게.
 SHARE_MAX_ATTEMPTS = None    # EQP 별 연속 view-only 재시도 상한. None=기본 2.
 
 # ============================================================================

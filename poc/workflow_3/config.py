@@ -131,7 +131,9 @@ class Workflow3Settings(WorkflowSettings):
     share_request_enabled: bool = True     # Select 팝업에서 화면 공유 요청 발송.
     share_confirm_policy: str = "strict"   # strict | lenient | off - 클릭 전 라벨 확인.
     # 승낙 대기는 블로킹이고 단일 RCS 커서를 모든 알람이 직렬 공유하므로 짧게 둔다.
-    share_wait_sec: float = 45.0
+    # 10초 안에 못 받아도 손해가 크지 않다 - 알람이 유지되는 한 cooldown 후 다시
+    # 요청하므로, 엔지니어는 다음 사이클에서 또 기회를 얻는다.
+    share_wait_sec: float = 10.0
     share_max_attempts: int = 2            # EQP 별 연속 view-only 재시도 상한.
     keep_awake: bool = True
     # 자동 GUI 구간 동안 사용자 물리 마우스/키보드 입력 차단(Windows BlockInput).
@@ -313,7 +315,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         failure_retry_cooldown_sec=env_float("ALIGN_FAIL_FAILURE_COOLDOWN_SEC", 300.0),
         share_request_enabled=env_flag("ALIGN_FAIL_SHARE_REQUEST", default=True),
         share_confirm_policy=_load_share_confirm_policy(),
-        share_wait_sec=env_float("ALIGN_FAIL_SHARE_WAIT_SEC", 45.0),
+        share_wait_sec=env_float("ALIGN_FAIL_SHARE_WAIT_SEC", 10.0),
         share_max_attempts=env_int("ALIGN_FAIL_SHARE_MAX_ATTEMPTS", 2),
         rcs_recovery_enabled=env_flag("ALIGN_FAIL_RCS_RECOVERY", default=False),
         keep_awake=env_flag("ALIGN_FAIL_KEEP_AWAKE", default=True),

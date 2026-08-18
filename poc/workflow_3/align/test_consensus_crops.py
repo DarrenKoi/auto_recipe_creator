@@ -8,6 +8,7 @@ import numpy as np
 
 import poc.workflow_3.align.consensus_crops as cc
 from poc.workflow_3.align.cond_file import CondInfo
+from poc.workflow_3.align.matching.engine import build_template
 
 
 def _cond(xy, pixel=None):
@@ -15,10 +16,17 @@ def _cond(xy, pixel=None):
     return CondInfo(pixel=pixel, crosshair_xy=xy)
 
 
-class _FakeTpl:
-    def __init__(self, w, h):
-        self.raw_image = np.zeros((h, w), np.uint8)
-        self.align_offset_xy = (0, 0)
+def _tpl(w, h):
+    """실 producer(build_template)로 center template 을 만든다 - 손으로 빚은 fake 금지.
+
+    consumer 가 읽는 것은 raw_image 크기(=crop 크기)와 align_offset_xy 뿐이지만,
+    그 두 개만 가진 stand-in 을 두면 consumer 가 다른 필드를 읽기 시작하는 순간
+    조용히 깨진다(_FakeCond 가 cond.pixel 에서 그렇게 깨졌다). 평평한 zeros 라도
+    build_template 이 edge_map/distance_transform 까지 채운 진짜 AlignKeyTemplate 이다.
+    """
+    return build_template(
+        np.zeros((h, w), np.uint8), recipe_id="c/r", version="test", key_type="sem"
+    )
 
 
 def _patch(monkeypatch_map):
@@ -63,7 +71,7 @@ def test_load_coregistered_crops_groups_and_caps(tmp_path):
     })
     try:
         _events(tmp_path, 6)
-        center = {"sem": (_FakeTpl(40, 32), (0, 0))}
+        center = {"sem": (_tpl(40, 32), (0, 0))}
         out = cc.load_coregistered_crops(tmp_path, "E1", "c/r", center, max_events=4)
         assert set(out) == {"sem"}
         assert len(out["sem"]) == 4               # cap=max_events
@@ -83,7 +91,7 @@ def test_missing_crosshair_dropped(tmp_path):
     })
     try:
         _events(tmp_path, 4)
-        center = {"sem": (_FakeTpl(40, 32), (0, 0))}
+        center = {"sem": (_tpl(40, 32), (0, 0))}
         out = cc.load_coregistered_crops(tmp_path, "E1", "c/r", center, max_events=8)
         assert out.get("sem", []) == []           # 전부 drop
     finally:
@@ -103,7 +111,7 @@ def test_pixel_mismatch_recenters_crop(tmp_path):
     })
     try:
         _events(tmp_path, 1)
-        center = {"sem": (_FakeTpl(40, 32), (0, 0))}
+        center = {"sem": (_tpl(40, 32), (0, 0))}
         out = cc.load_coregistered_crops(tmp_path, "E1", "c/r", center, max_events=4)
         assert len(out.get("sem", [])) == 1
         expected = gray[100 - 16:100 + 16, 100 - 20:100 + 20]   # (100,100) 중심 40x32.

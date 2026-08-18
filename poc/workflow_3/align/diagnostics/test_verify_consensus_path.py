@@ -20,6 +20,7 @@ from poc.workflow_3.align import consensus_crops as cc
 from poc.workflow_3.align.clean_align_image import OVERSAMPLE
 from poc.workflow_3.align.cond_file import CondInfo
 from poc.workflow_3.align.diagnostics import verify_consensus_path as vc
+from poc.workflow_3.align.matching.engine import build_template
 
 
 def _checker(n=600, cell=8):
@@ -49,9 +50,17 @@ def _fake_cond(n=600):
     )
 
 
-class _FakeTpl:
-    def __init__(self, w, h):
-        self.raw_image = np.zeros((h, w), dtype=np.uint8)   # crop size = (w,h).
+def _tpl(w, h):
+    """실 producer(build_template)로 center template 을 만든다 - crop 크기 = (w,h).
+
+    `_fake_cond` 와 같은 이유로 stand-in 클래스를 쓰지 않는다. 이 자리의 예전 fake 는
+    raw_image 하나만 갖고 있었고, 옆 파일(test_consensus_crops)의 쌍둥이 fake 는
+    consumer 가 읽기 시작한 align_offset_xy 를 나중에 얻었다 - 두 사본이 이미 서로
+    어긋나 있었다는 뜻이다. producer 를 쓰면 그 어긋남 자체가 생기지 않는다.
+    """
+    return build_template(
+        np.zeros((h, w), np.uint8), recipe_id="c/r", version="test", key_type="sem"
+    )
 
 
 def _make_events(root: Path, cls, rcp, n):
@@ -79,7 +88,7 @@ def _patch_io(monkey):
     restore_factory(lambda p: _fake_cond(), cc, "load_cond")
     restore_factory(lambda p: gray.copy(), cc, "load_gray")
     restore_factory(lambda g, cond: g, cc, "clean_image")            # crosshair 제거 생략.
-    restore_factory(lambda assets: {"sem": (_FakeTpl(80, 60), (0, 0))},
+    restore_factory(lambda assets: {"sem": (_tpl(80, 60), (0, 0))},
                     vc, "build_center_tpls_for_sizing")
 
 

@@ -232,6 +232,7 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 | `ALIGN_FAIL_CORRECTION_DRY_RUN` | 1 | 보정의 move/click 차단. 실 클릭은 SAFE_MODE=0 **그리고** 이 값=0 일 때만 |
 | `ALIGN_FAIL_RCS_RECOVERY` | 1 | RCS 메인 창 부재 시 재실행+재로그인 복구. 프로세스가 이미 있으면 재실행하지 않고(중복 실행 방지), 조회 자체가 불가하면 실행을 보류한다. 복구 로그인은 **tool 에 접속하지 않는다** — 어느 tool 인지는 알람이 정한다. 끄려면 `0` |
 | `ALIGN_FAIL_RCS_RECOVERY_WINDOW_SEC` | 30 | 복구 로그인 후 RCS 메인 창 출현 대기 상한(초). 방금 띄운 프로세스의 기동+업데이터+로그인을 기다리는 자리라 `connect_window_timeout_sec`(3s) 보다 훨씬 길다 |
+| `ALIGN_FAIL_RCS_PREFLIGHT` | 1 | 모니터 기동 시 RCS 준비(실행 → 로그인 → **List 탭**)를 루프 진입 전 1회 수행. 끄면 알람 시 복구만 남는다(첫 알람이 부팅+로그인 비용을 낸다) |
 | `ALIGN_FAIL_BLOCK_INPUT` | 0 | 자동 GUI 구간 동안 사용자 물리 마우스/키보드 차단(Win32 BlockInput). 사용자가 다른 앱을 쓰면 foreground lock 으로 RCS 가 안 떠서 방해되는 문제 대응. SAFE_MODE=0 일 때만 적용, engineer watch 구간은 제외, Ctrl+Alt+Del 로 항상 해제. 합성 클릭(자동화)은 차단 중에도 통과 |
 | `ALIGN_FAIL_SHARE_REQUEST` | 1 | 점유 `Select` 팝업에서 **화면 공유 요청** 발송. 승낙되면 관전(view-only) 세션으로 들어가 엔지니어의 수동 작업을 녹화한다 |
 | `ALIGN_FAIL_SHARE_CONFIRM` | `strict` | 클릭 전 라벨 OCR 확인 정책. `strict`=확인된 것만 클릭 / `lenient`=못 읽어도 클릭 / `off`=확인 생략. **어느 값이든 `terminate`/`control`/`cancel` 이 읽히면 클릭하지 않는다** |

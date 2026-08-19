@@ -125,6 +125,11 @@ class Workflow3Settings(WorkflowSettings):
     # 계열이라 여기 둔다 - 모듈 상수로 두면 seed_env() 보다 먼저 읽혀
     # workflow_3_config.py 로 조정할 수 없다(셸 env 만 먹힘).
     rcs_recovery_window_timeout_sec: float = 30.0
+    # 모니터 기동 시 RCS 준비(실행 -> 로그인 -> List 탭)를 루프 진입 전 1회 수행.
+    # 기본 on - 안 하면 첫 알람이 RCS 부팅+로그인 비용을 통째로 낸다(장비는 그동안
+    # 멈춰 있다). 실행/로그인 여부는 rcs_recovery_enabled 게이트도 함께 본다.
+    # 롤백은 ALIGN_FAIL_RCS_PREFLIGHT=0 (알람 시 복구는 그대로 유지된다).
+    rcs_preflight_enabled: bool = True
     # 점유 'select' 팝업(타 사용자 사용 중) 검출 — 떠 있으면 접속 포기 + cooldown 후 재시도.
     occupied_popup_detect_enabled: bool = True
     occupied_popup_vlm_service: str = "mai-ui"  # 제목 검출 후 옵션 확인용(route_slug).
@@ -358,6 +363,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         rcs_recovery_window_timeout_sec=env_float(
             "ALIGN_FAIL_RCS_RECOVERY_WINDOW_SEC", 30.0
         ),
+        rcs_preflight_enabled=env_flag("ALIGN_FAIL_RCS_PREFLIGHT", default=True),
         keep_awake=env_flag("ALIGN_FAIL_KEEP_AWAKE", default=True),
         block_input_enabled=env_flag("ALIGN_FAIL_BLOCK_INPUT", default=False),
         recording_poll_sec=env_float(

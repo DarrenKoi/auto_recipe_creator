@@ -506,6 +506,76 @@ def process_fail_rows(
 # ------------------------------------------------------------------
 
 
+def _describe_done_signals(settings: Workflow3Settings) -> str:
+    """engineer watch 종료 신호 구성을 시작 로그 한 줄로 요약한다.
+
+    "왜 watch 가 300s 를 다 채웠나 / 왜 일찍 끊겼나" 를 사후에 가르는 값이라, 그 세션이
+    어떤 신호로 돌았는지 로그만 보고 판별되어야 한다.
+    """
+    if not settings.engineer_done_detect_enabled:
+        return "off - cap/창닫힘까지 녹화"
+    signals = ["분자 N 증가"]
+    if settings.engineer_done_idle_sec > 0:
+        signals.append(f"커서 {settings.engineer_done_idle_sec:.0f}s 정지")
+    if settings.engineer_done_assist_enabled:
+        signals.append("Assist 판독")
+    return "on (" + " / ".join(signals) + ")"
+
+
+def _run_rcs_preflight(settings: Workflow3Settings):
+    """루프 진입 전 RCS 를 로그인 + List 탭까지 올려둔다. 실패해도 None/status 로 끝난다.
+
+    `open_rcs -> workflow_login -> List 탭 -> 알람 대기` 순서를 여기서 만든다. 준비를
+    안 하면 RCS 가 안 떠 있을 때 **첫 알람이 그 비용을 통째로 낸다** - 부팅 + 로그인 +
+    List 탭이 알람 처리 시간에 붙고, 그동안 장비는 멈춰 있다.
+
+    협력자 조립만 하고 판정은 `rcs_preflight.ensure_rcs_session_ready` 가 한다(그래야
+    Mac 에서 시험된다). RCS 모듈이 없는 개발 PC(replay dry-run)에서는 조용히 건너뛴다 -
+    기동 준비 때문에 Mac 검증 경로가 깨지면 안 된다.
+
+    반환: PreflightOutcome, 또는 준비를 아예 돌리지 않았으면 None.
+    """
+    if not settings.rcs_preflight_enabled:
+        print("[INFO] RCS 기동 준비 생략(ALIGN_FAIL_RCS_PREFLIGHT=0) - 알람 시 복구는 그대로.")
+        return None
+
+    try:
+        from poc.workflow_3.monitor.cycle import _scan_rcs_processes
+        from poc.workflow_3.monitor.rcs_preflight import ensure_rcs_session_ready
+        from poc.workflow_3.monitor.rcs_recovery import recover_rcs_session
+        from poc.workflow_3.rcs.login_rcs_common import wait_for_rcs_main_window
+        from poc.workflow_3.rcs.open_rcs import launch_rcs
+        from poc.workflow_3.rcs.view_list_tab_rcs import click_list_tab_in_main_window
+        from poc.workflow_3.rcs.workflow_login import run_login_workflow
+    except Exception as exc:
+        print(f"[INFO] RCS 기동 준비 생략(Windows 전용 의존성 없음): {exc}")
+        return None
+
+    def _recover():
+        return recover_rcs_session(
+            settings,
+            find_processes_fn=_scan_rcs_processes,
+            launch_fn=launch_rcs,
+            login_fn=run_login_workflow,
+            wait_window_fn=wait_for_rcs_main_window,
+        )
+
+    def _open_list(window, title, backend):
+        return click_list_tab_in_main_window(window, title, backend).exit_code
+
+    try:
+        return ensure_rcs_session_ready(
+            settings,
+            find_window_fn=wait_for_rcs_main_window,
+            recover_fn=_recover,
+            open_list_fn=_open_list,
+        )
+    except Exception as exc:
+        # 준비가 어떤 이유로 깨져도 감시는 떠야 한다 - 알람 시 복구가 다시 시도한다.
+        print(f"[WARNING] RCS 기동 준비 예외(감시는 계속): {exc}")
+        return None
+
+
 def monitor_loop(settings: Workflow3Settings | None = None) -> None:
     """메인 감지 루프 — poll 주기마다 알람을 조회해 신규 Align Fail 사이클을 돌린다."""
     settings = settings or load_workflow3_settings()
@@ -534,8 +604,7 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
     # done 감지가 off 면 창 닫힘 또는 watch cap 만이 종료 조건이다.
     print(
         f"[INFO] engineer watch: 상한={settings.engineer_watch_sec:.0f}s, "
-        f"작업완료 감지(카운터+Assist)="
-        f"{'on' if settings.engineer_done_detect_enabled else 'off - cap/창닫힘까지 녹화'}"
+        f"작업완료 감지={_describe_done_signals(settings)}"
     )
     print(f"[INFO] 알람 로그: {ALARM_LOG_PATH}")
     print(f"[INFO] 사이클 manifest: {CYCLE_MANIFEST_PATH}")
@@ -556,6 +625,11 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
         "[INFO] 각 신규 Align Fail: RCS 확보 → 접속 → 상시 녹화 → SEM panel → CV 보정 "
         "→ (실패 시 cube 알림 + 엔지니어 watch) → tool 닫기. 중복 알람은 한 번만 처리."
     )
+
+    # 알람 대기 전에 RCS 를 로그인 + List 탭까지 올려둔다(실행 -> 로그인 -> List -> 대기).
+    # best-effort 라 실패해도 루프는 뜬다 - 알람이 오면 사이클의 ensure_rcs_ready 가
+    # 같은 복구를 다시 시도하므로, 준비 실패가 곧 감시 중단이 되어서는 안 된다.
+    _run_rcs_preflight(settings)
 
     while True:
         try:

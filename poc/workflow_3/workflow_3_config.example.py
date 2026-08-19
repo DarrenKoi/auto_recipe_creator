@@ -54,6 +54,11 @@ KEEP_AWAKE = 1
 # tool 창 탐색 최대 시도(점유 'select' 팝업 조기 감지로 보통 3 이면 충분). None=기본(3).
 RCS_WINDOW_MAX_TRIALS = None
 
+# 모니터 기동 시 RCS 준비(실행 -> 로그인 -> List 탭)를 알람 대기 전에 1회 수행.
+# 1/0/None(기본 on). 끄면 알람 시 복구만 남아 첫 알람이 부팅+로그인 비용을 낸다.
+# 실행/로그인 여부는 ALIGN_FAIL_RCS_RECOVERY 게이트도 함께 본다(그쪽이 0 이면 준비도 안 함).
+RCS_PREFLIGHT = None
+
 # ============================================================================
 # [2] 알람 폴링 / 소스
 # ----------------------------------------------------------------------------
@@ -126,6 +131,13 @@ SHARE_MAX_ATTEMPTS = None    # EQP 별 연속 view-only 재시도 상한. None=�
 # align fail 마다 성공/실패 무관하게 녹화한다. 보정이 성공하지 않은 경우에만 이어서
 # 엔지니어 수동 조작을 watch 하며 녹화한다(= 보정을 끄면 항상 watch 한다).
 RECORDING_MAX_SEC = None     # 녹화 하드 상한(초). None=기본 900.
+RECORD_PRELUDE = None        # 접속 구간(RCS 실행->로그인->tool 진입)을 **화면 전체**로
+                             # 녹화한다. 1/0/None(기본 off). 시연 촬영용 - 본 녹화는
+                             # tool 창 rect 라 창이 뜨기 전 장면이 원리상 없다.
+                             # 켜면 recording/prelude/ 에 쌓이고 make_demo_video 가
+                             # 자동으로 영상 앞에 잇는다(터미널 콘솔도 같이 찍힌다).
+PRELUDE_MAX_SEC = None       # 접속 구간 녹화 상한(초). None=기본 300.
+PRELUDE_MONITOR_INDEX = None # mss 규약(0=전 모니터 합침, 1=주 모니터). None=기본 1.
 ENGINEER_WATCH_SEC = None    # 미보정 watch 상한(초). None=기본 300. 엔지니어 조작을
                              # 끝까지 담고 싶으면 RECORDING_MAX_SEC 와 함께 올린다.
 ENGINEER_DONE_DETECT = None  # 완료 신호(창 닫힘/분자 증가/커서 2분 정지)로 watch 조기 종료.

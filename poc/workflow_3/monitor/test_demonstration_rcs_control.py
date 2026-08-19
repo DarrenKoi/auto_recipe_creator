@@ -13,20 +13,19 @@ from poc.workflow_3.monitor.demonstration_rcs_control import (
     STATUS_CONNECT_FAILED,
     STATUS_CONNECTED,
     STATUS_ERROR,
-    STATUS_OPTICS_BUTTON_FAILED,
-    STATUS_OPTICS_CLOSE_FAILED,
-    STATUS_OPTICS_MEMORY_FAILED,
-    STATUS_OPTICS_OK,
-    STATUS_OPTICS_WINDOW_NOT_FOUND,
     STATUS_VIEW_OK,
     STATUS_VIEW_TAB_FAILED,
     STATUS_WINDOW_NOT_FOUND,
     DemoRunResult,
+    FlowStep,
+    InToolFlow,
     ToolVisit,
     browse_view_tab,
+    parse_flow_map,
     parse_tool_ids,
+    resolve_flow_name,
     run_demonstration,
-    run_optics_sequence,
+    run_in_tool_flow,
     visit_tool,
 )
 
@@ -77,7 +76,7 @@ class _CloseSpy:
 
 
 def _visit(tool_id="MCD019", *, connect_fn=None, wait_fn=None, close_fn=None,
-           dwell_fn=None, optics_fn=None):
+           dwell_fn=None, action_fn=None):
     return visit_tool(
         tool_id,
         connect_fn=connect_fn or (lambda t: object()),
@@ -85,7 +84,7 @@ def _visit(tool_id="MCD019", *, connect_fn=None, wait_fn=None, close_fn=None,
         close_fn=close_fn or _CloseSpy(),
         dwell_fn=dwell_fn or (lambda sec: None),
         dwell_sec=3.0,
-        optics_fn=optics_fn,
+        action_fn=action_fn,
     )
 
 
@@ -144,36 +143,44 @@ def test_visit_tool_marks_not_closed_when_close_reports_failure():
     assert visit.close_error == "close_failed"
 
 
-def test_visit_tool_runs_the_optics_sequence_before_closing_the_tool():
-    """장비 안에서 실제 조작(Optics -> Memory -> Close)을 보여준 뒤 나온다."""
+def test_visit_tool_runs_the_in_tool_flow_before_closing_the_tool():
+    """장비 안에서 실제 조작을 보여준 뒤 나온다."""
     order = []
     visit = _visit(
         close_fn=lambda t: order.append("close_tool") or "success",
-        optics_fn=lambda w, t, b: order.append("optics") or STATUS_OPTICS_OK,
+        action_fn=lambda tool_id, w, t, b: order.append("action") or "optics:ok",
     )
 
-    assert order == ["optics", "close_tool"]
-    assert visit.optics_status == STATUS_OPTICS_OK
+    assert order == ["action", "close_tool"]
+    assert visit.action_status == "optics:ok"
 
 
-def test_visit_tool_skips_optics_when_the_tool_window_never_appeared():
-    """창이 없으면 Optics 버튼을 누를 대상 자체가 없다."""
+def test_visit_tool_passes_the_tool_id_so_each_tool_gets_its_own_flow():
+    """MCD019 는 Optics, MCDC22 는 Work Sheet - 흐름 선택은 장비가 정한다."""
+    seen = []
+    _visit("MCDC22", action_fn=lambda tool_id, w, t, b: seen.append(tool_id) or "ok")
+
+    assert seen == ["MCDC22"]
+
+
+def test_visit_tool_skips_the_flow_when_the_tool_window_never_appeared():
+    """창이 없으면 누를 대상 자체가 없다."""
     called = []
     visit = _visit(
         wait_fn=lambda t: (None, "", ""),
-        optics_fn=lambda w, t, b: called.append("optics") or STATUS_OPTICS_OK,
+        action_fn=lambda tool_id, w, t, b: called.append("action") or "ok",
     )
 
     assert called == []
     assert visit.status == STATUS_WINDOW_NOT_FOUND
 
 
-def test_visit_tool_still_closes_the_tool_when_optics_raises():
+def test_visit_tool_still_closes_the_tool_when_the_flow_raises():
     closer = _CloseSpy()
-    visit = _visit(close_fn=closer, optics_fn=_raiser(RuntimeError("optics boom")))
+    visit = _visit(close_fn=closer, action_fn=_raiser(RuntimeError("flow boom")))
 
     assert closer.calls == ["MCD019"]
-    assert "optics boom" in visit.optics_status
+    assert "flow boom" in visit.action_status
 
 
 def _raiser(exc):
@@ -184,7 +191,7 @@ def _raiser(exc):
 
 
 # ------------------------------------------------------------------
-# tool 창 안 Optics 시퀀스 - Optics... -> Memory 탭 -> Close.
+# tool 창 안 조작 흐름 (Optics / Work Sheet) - 여는 버튼 -> 창 확인 -> 차례로 클릭.
 #
 # 첫 오피스 실행에서 드러난 결함이 이 절의 존재 이유다: Optics 클릭이 먹지 않았는데도
 # 시퀀스가 계속 진행돼 화면 어딘가의 **다른 Close** 를 눌렀다. 대화상자는 tool 창 안
@@ -192,16 +199,34 @@ def _raiser(exc):
 # ------------------------------------------------------------------
 
 
+class _Target:
+    """TargetConfig 대역 - 흐름 정의에는 key 만 있으면 된다."""
+
+    def __init__(self, key):
+        self.key = key
+        self.description = key
+
+
+def _flow(name="optics", opener="opener", steps=(("a", (), False), ("b", (), False))):
+    """(key, required, requires_previous) 목록으로 흐름을 만든다."""
+    return InToolFlow(
+        name=name,
+        opener=FlowStep(_Target(opener), required=(("open",),), forbidden=("cancel",)),
+        steps=[
+            FlowStep(_Target(key), required=required, forbidden=("cancel",),
+                     requires_previous=req_prev)
+            for key, required, req_prev in steps
+        ],
+    )
+
+
 class _Screen:
     """tool 창 화면 대역 - 요소별 좌표와 그 자리에서 읽히는 토큰을 흉내낸다."""
 
-    def __init__(self, tokens_by_key=None, missing=()):
-        self.tokens = tokens_by_key or {
-            "optics_button": ["Optics..."],
-            "optics_memory_tab": ["Memory"],
-            "optics_close_button": ["Close"],
-        }
+    def __init__(self, tokens_by_key=None, missing=(), click_raises=()):
+        self.tokens = tokens_by_key or {}
         self.missing = set(missing)
+        self.click_raises = set(click_raises)
         self.clicks = []
         self.events = []
 
@@ -213,17 +238,22 @@ class _Screen:
 
     def read_tokens(self, image, point, key):
         self.events.append(f"read:{key}")
-        return self.tokens.get(key, [])
+        # 지정이 없으면 그 요소의 기대 라벨이 그대로 읽힌 것으로 본다.
+        return self.tokens.get(key, ["__match__"])
 
     def click(self, window, image, point, key):
         self.events.append(f"click:{key}")
         self.clicks.append(key)
+        if key in self.click_raises:
+            raise RuntimeError(f"click boom: {key}")
 
 
-def _optics(screen=None, *, policy="strict", attempts=1):
+def _run_flow(flow=None, screen=None, *, policy="off", attempts=1):
+    """확인 정책 기본값을 off 로 둬 흐름 제어만 검사한다(라벨 판정은 별도 테스트)."""
+    flow = flow or _flow()
     screen = screen or _Screen()
-    status = run_optics_sequence(
-        object(), "Remote Monitoring System - MCD019", "uia",
+    status = run_in_tool_flow(
+        object(), "Remote Monitoring System - MCD019", "uia", flow,
         capture_fn=lambda w: object(),
         locate_fn=screen.locate,
         read_tokens_fn=screen.read_tokens,
@@ -236,141 +266,189 @@ def _optics(screen=None, *, policy="strict", attempts=1):
     return status, screen
 
 
-def test_optics_sequence_confirms_each_label_before_clicking_it():
-    status, screen = _optics()
+def test_flow_clicks_opener_then_every_step_in_order():
+    status, screen = _run_flow()
 
-    assert status == STATUS_OPTICS_OK
-    assert screen.clicks == ["optics_button", "optics_memory_tab", "optics_close_button"]
-    # 각 요소는 '좌표 -> 라벨 판독 -> 클릭' 순서를 지킨다.
-    assert screen.events[:3] == [
-        "locate:optics_button", "read:optics_button", "click:optics_button",
-    ]
+    assert status == "optics:ok"
+    assert screen.clicks == ["opener", "a", "b"]
 
 
-def test_optics_sequence_does_not_click_when_the_optics_label_is_unconfirmed():
-    status, screen = _optics(_Screen(tokens_by_key={"optics_button": ["PM"]}))
+def test_flow_confirms_each_label_before_clicking_it():
+    _, screen = _run_flow()
 
-    assert status == STATUS_OPTICS_BUTTON_FAILED
+    assert screen.events[:3] == ["locate:opener", "read:opener", "click:opener"]
+
+
+def test_flow_does_not_click_when_the_opener_is_not_found():
+    status, screen = _run_flow(screen=_Screen(missing={"opener"}))
+
+    assert status == "optics:opener_failed"
     assert screen.clicks == []
 
 
-def test_optics_sequence_does_not_click_when_the_optics_point_is_not_found():
-    status, screen = _optics(_Screen(missing={"optics_button"}))
+def test_flow_never_looks_for_later_steps_when_the_window_is_unconfirmed():
+    """첫 오피스 실행의 실제 결함 - 창이 안 떴는데 다음 요소를 찾아 다른 것을 눌렀다.
 
-    assert status == STATUS_OPTICS_BUTTON_FAILED
-    assert screen.clicks == []
-
-
-def test_optics_sequence_never_clicks_close_when_the_dialog_is_unconfirmed():
-    """첫 오피스 실행의 실제 결함 - 대화상자가 안 떴는데 다른 Close 를 눌렀다.
-
-    Memory 라벨이 읽히는 것이 '대화상자가 떴다' 는 유일한 증거다. 확인되지 않으면
-    Close 를 찾아 나서면 안 된다 - 화면 어딘가의 다른 Close 를 누르게 된다. 남은
-    대화상자는 다음 단계의 tool 창 닫기가 정리한다.
+    첫 step 의 라벨이 읽히는 것이 '창이 떴다' 는 유일한 증거다. 확인되지 않으면 뒤
+    요소를 찾아 나서면 안 된다 - 화면 어딘가의 비슷한 라벨을 누르게 된다. 남은 창은
+    다음 단계의 tool 창 닫기가 정리한다.
     """
-    status, screen = _optics(_Screen(missing={"optics_memory_tab"}))
+    status, screen = _run_flow(screen=_Screen(missing={"a"}))
 
-    assert status == STATUS_OPTICS_WINDOW_NOT_FOUND
-    assert screen.clicks == ["optics_button"]
-    assert "locate:optics_close_button" not in screen.events
-
-
-def test_optics_sequence_does_not_click_close_when_memory_label_mismatches():
-    status, screen = _optics(_Screen(tokens_by_key={
-        "optics_button": ["Optics..."], "optics_memory_tab": ["Image"],
-    }))
-
-    assert status == STATUS_OPTICS_WINDOW_NOT_FOUND
-    assert screen.clicks == ["optics_button"]
+    assert status == "optics:window_not_found"
+    assert screen.clicks == ["opener"]
+    assert "locate:b" not in screen.events
 
 
-def test_optics_sequence_retries_the_optics_click_when_the_dialog_never_appears():
+def test_flow_retries_the_opener_when_the_window_never_appears():
     """원격 뷰라 첫 클릭이 삼켜질 수 있다 - 확인이 안 되면 한 번 더 누른다."""
-    status, screen = _optics(_Screen(missing={"optics_memory_tab"}), attempts=2)
+    status, screen = _run_flow(screen=_Screen(missing={"a"}), attempts=2)
 
-    assert status == STATUS_OPTICS_WINDOW_NOT_FOUND
-    assert screen.clicks == ["optics_button", "optics_button"]
-
-
-def test_optics_sequence_stops_retrying_once_the_dialog_is_confirmed():
-    status, screen = _optics(attempts=3)
-
-    assert status == STATUS_OPTICS_OK
-    assert screen.clicks.count("optics_button") == 1
+    assert status == "optics:window_not_found"
+    assert screen.clicks == ["opener", "opener"]
 
 
-def test_optics_sequence_does_not_click_an_unconfirmed_close():
-    status, screen = _optics(_Screen(tokens_by_key={
-        "optics_button": ["Optics..."], "optics_memory_tab": ["Memory"],
-        "optics_close_button": ["Cancel"],
-    }))
+def test_flow_stops_retrying_once_the_window_is_confirmed():
+    status, screen = _run_flow(attempts=3)
 
-    assert status == STATUS_OPTICS_CLOSE_FAILED
-    assert screen.clicks == ["optics_button", "optics_memory_tab"]
+    assert screen.clicks.count("opener") == 1
 
 
-def test_optics_sequence_reports_memory_click_failure_but_still_closes():
-    """Memory 라벨이 확인됐다면 대화상자는 떠 있다 - 그때는 Close 를 눌러 정리한다."""
-    screen = _Screen()
-    calls = []
+def test_flow_continues_to_an_independent_step_after_a_failure():
+    """Optics 의 Close 는 Memory 와 무관하게 누를 수 있다 - 창이 떠 있는 건 확인됐다."""
+    status, screen = _run_flow(screen=_Screen(click_raises={"a"}))
 
-    def _click(window, image, point, key):
-        calls.append(key)
-        if key == "optics_memory_tab":
-            raise RuntimeError("click boom")
-
-    status = run_optics_sequence(
-        object(), "Remote Monitoring System - MCD019", "uia",
-        capture_fn=lambda w: object(),
-        locate_fn=screen.locate,
-        read_tokens_fn=screen.read_tokens,
-        click_fn=_click,
-        sleep_fn=lambda sec: None,
-        settle_sec=0.0,
-        confirm_policy="strict",
-        attempts=1,
-    )
-
-    assert status == STATUS_OPTICS_MEMORY_FAILED
-    assert calls == ["optics_button", "optics_memory_tab", "optics_close_button"]
+    assert screen.clicks == ["opener", "a", "b"]
+    assert status == "optics:step_failed(a)"
 
 
-def test_optics_sequence_lenient_policy_allows_unreadable_labels():
-    status, screen = _optics(
-        _Screen(tokens_by_key={"optics_button": [], "optics_memory_tab": [],
-                               "optics_close_button": []}),
-        policy="lenient",
-    )
+def test_flow_skips_a_dependent_step_when_its_predecessor_failed():
+    """Work Sheet 의 Exit 는 File 드롭다운 안에 있다 - File 이 실패하면 Exit 는 없다."""
+    flow = _flow(name="worksheet", steps=(("file", (), False), ("exit", (), True)))
+    status, screen = _run_flow(flow, _Screen(click_raises={"file"}))
 
-    assert status == STATUS_OPTICS_OK
-    assert screen.clicks == ["optics_button", "optics_memory_tab", "optics_close_button"]
+    assert screen.clicks == ["opener", "file"]
+    assert "locate:exit" not in screen.events
+    assert status == "worksheet:step_failed(file)"
 
 
-def test_optics_sequence_forbidden_label_is_rejected_even_when_lenient():
+def test_flow_skips_a_dependent_step_when_its_predecessor_was_unconfirmed():
+    flow = _flow(name="worksheet", steps=(("file", (), False), ("exit", (), True)))
+    status, screen = _run_flow(flow, _Screen(missing={"file"}))
+
+    # file 이 첫 step 이라 '창 미확인' 으로 끝나고, exit 는 아예 찾지 않는다.
+    assert status == "worksheet:window_not_found"
+    assert "locate:exit" not in screen.events
+
+
+def test_flow_rejects_a_forbidden_label_even_under_lenient_policy():
     """off/lenient 는 좌표 진단용이지, 엉뚱한 버튼을 눌러도 좋다는 뜻이 아니다."""
-    status, screen = _optics(
-        _Screen(tokens_by_key={"optics_button": ["Optics", "Cancel"]}),
+    status, screen = _run_flow(
+        screen=_Screen(tokens_by_key={"opener": ["Open", "Cancel"]}),
         policy="lenient",
     )
 
-    assert status == STATUS_OPTICS_BUTTON_FAILED
+    assert status == "optics:opener_failed"
     assert screen.clicks == []
 
 
-def test_optics_sequence_survives_a_capture_exception():
-    status = run_optics_sequence(
-        object(), "RMS", "uia",
+def test_flow_strict_policy_requires_the_expected_label():
+    flow = InToolFlow(
+        name="optics",
+        opener=FlowStep(_Target("optics_button"), required=(("optics",),), forbidden=()),
+        steps=[FlowStep(_Target("memory_tab"), required=(("memory",),), forbidden=())],
+    )
+    status, screen = _run_flow(
+        flow, _Screen(tokens_by_key={"optics_button": ["PM"]}), policy="strict",
+    )
+
+    assert status == "optics:opener_failed"
+    assert screen.clicks == []
+
+
+def test_flow_with_no_required_label_still_clicks_but_reports_tokens():
+    """라벨을 모르는 요소(Work Sheet 아래 버튼)는 forbidden 만으로 거른다."""
+    flow = InToolFlow(
+        name="worksheet",
+        opener=FlowStep(_Target("ws_button"), required=(), forbidden=("cancel",)),
+        steps=[FlowStep(_Target("file"), required=(("file",),), forbidden=())],
+    )
+    status, screen = _run_flow(
+        flow, _Screen(tokens_by_key={"ws_button": ["Sheet1"], "file": ["File"]}),
+        policy="strict",
+    )
+
+    assert status == "worksheet:ok"
+    assert screen.clicks == ["ws_button", "file"]
+
+
+def test_flow_with_no_required_label_still_rejects_forbidden_tokens():
+    flow = InToolFlow(
+        name="worksheet",
+        opener=FlowStep(_Target("ws_button"), required=(), forbidden=("cancel",)),
+        steps=[FlowStep(_Target("file"), required=(("file",),), forbidden=())],
+    )
+    status, screen = _run_flow(
+        flow, _Screen(tokens_by_key={"ws_button": ["Cancel"]}), policy="strict",
+    )
+
+    assert status == "worksheet:opener_failed"
+    assert screen.clicks == []
+
+
+def test_flow_survives_a_capture_exception():
+    status, _ = _run_flow(screen=_Screen(missing=set()), attempts=1)
+    assert status == "optics:ok"
+
+    status = run_in_tool_flow(
+        object(), "RMS", "uia", _flow(),
         capture_fn=_raiser(RuntimeError("capture boom")),
         locate_fn=lambda i, t: {"x": 1, "y": 1},
-        read_tokens_fn=lambda i, p, k: ["Optics"],
+        read_tokens_fn=lambda i, p, k: [],
         click_fn=lambda w, i, p, k: None,
         sleep_fn=lambda sec: None,
         settle_sec=0.0,
-        confirm_policy="strict",
+        confirm_policy="off",
         attempts=1,
     )
 
-    assert status == STATUS_OPTICS_BUTTON_FAILED
+    assert status == "optics:opener_failed"
+
+
+# ------------------------------------------------------------------
+# 장비별 조작 흐름 배정.
+# ------------------------------------------------------------------
+
+
+def test_parse_flow_map_reads_tool_equals_flow_pairs():
+    assert parse_flow_map("MCD019=optics,MCDC22=worksheet", {}) == {
+        "mcd019": "optics", "mcdc22": "worksheet",
+    }
+
+
+def test_parse_flow_map_falls_back_to_default_when_empty():
+    default = {"mcd019": "optics"}
+    assert parse_flow_map("", default) == default
+    assert parse_flow_map(None, default) == default
+
+
+def test_parse_flow_map_ignores_malformed_entries():
+    """시연 직전 오타로 스크립트가 죽는 것보다, 그 항목만 버리고 도는 편이 낫다."""
+    assert parse_flow_map("MCD019=optics,garbage,=x,y=", {}) == {"mcd019": "optics"}
+
+
+def test_resolve_flow_name_is_case_insensitive():
+    assert resolve_flow_name("MCDC22", {"mcdc22": "worksheet"}, "optics") == "worksheet"
+    assert resolve_flow_name("mcdc22", {"mcdc22": "worksheet"}, "optics") == "worksheet"
+
+
+def test_resolve_flow_name_uses_the_default_for_unlisted_tools():
+    assert resolve_flow_name("MCD999", {"mcdc22": "worksheet"}, "optics") == "optics"
+
+
+def test_resolve_flow_name_rejects_an_unknown_flow_name():
+    """오타난 흐름 이름이 조용히 '아무것도 안 함' 이 되면 시연에서 원인을 못 찾는다."""
+    assert resolve_flow_name("MCD019", {"mcd019": "optcis"}, "optics") == "optics"
 
 
 # ------------------------------------------------------------------

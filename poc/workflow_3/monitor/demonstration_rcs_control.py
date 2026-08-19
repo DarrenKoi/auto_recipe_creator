@@ -4,8 +4,11 @@
 재생하는 것이 목적이다. 시나리오(사용자 지정, 2026-08-19):
 
     RCS 실행 -> 로그인 -> View 탭 + 휠로 위아래 훑기 -> List 탭
-      -> MCD019 접속 -> [Optics... -> Memory 탭 -> Close] -> tool 창 닫기
-      -> MCDC22 접속 -> [Optics... -> Memory 탭 -> Close] -> tool 창 닫기
+      -> MCD019 접속 -> [Optics... -> Memory 탭 -> Close]        -> tool 창 닫기
+      -> MCDC22 접속 -> [Work Sheet 아래 버튼 -> File -> Exit]   -> tool 창 닫기
+
+장비마다 **다른 조작**을 보여주는 것이 요점이다 - 같은 동작을 반복하면 스크립트로
+보이고, 창을 열어 메뉴를 타고 들어갔다 빠져나오면 자동화로 보인다.
 
 `align_fail_monitor_only_check.py` 로도 replay CSV 를 물려 비슷한 것을 할 수 있지만,
 그쪽은 알람 사이클(manifest/cube 알림/보정 가능성 판정)을 통째로 끌고 오고 장비를
@@ -34,9 +37,11 @@ env (`DEMO_RCS_*` 네임스페이스 - 루프의 `ALIGN_FAIL_*` 과 섞지 않�
     DEMO_RCS_SCROLL_PAUSE_SEC  휠 한 눈금 사이 간격 (기본 0.6)
     DEMO_RCS_REPEAT         장비 순회 반복 횟수 (기본 1)
     DEMO_RCS_VIEW_TAB       View 탭 훑기 on/off (기본 1)
-    DEMO_RCS_OPTICS         tool 창 안 Optics 시퀀스 on/off (기본 1)
-    DEMO_RCS_OPTICS_SETTLE_SEC    대화상자가 그려질 대기 (기본 1.5)
-    DEMO_RCS_OPTICS_ATTEMPTS      Optics 클릭 재시도 횟수 (기본 2)
+    DEMO_RCS_FLOW           tool 창 안 조작 on/off (기본 1)
+    DEMO_RCS_FLOWS          장비별 흐름 배정 (기본 "MCD019=optics,MCDC22=worksheet")
+    DEMO_RCS_DEFAULT_FLOW   목록에 없는 장비의 흐름 (기본 optics)
+    DEMO_RCS_FLOW_SETTLE_SEC      창/드롭다운이 그려질 대기 (기본 1.5)
+    DEMO_RCS_FLOW_ATTEMPTS        여는 버튼 재시도 횟수 (기본 2)
     DEMO_RCS_CONFIRM        라벨 확인 정책 strict|lenient|off (기본 strict)
     DEMO_RCS_PRE_CLICK_SETTLE_SEC  커서 도착 후 클릭까지 대기 (기본 0.6)
                             원격 뷰가 커서를 따라올 시간 - 짧으면 클릭이 삼켜진다
@@ -71,13 +76,6 @@ STATUS_VIEW_OK = "view_ok"
 STATUS_VIEW_TAB_FAILED = "view_tab_failed"
 STATUS_VIEW_SKIPPED = "view_skipped"
 
-# tool 창 안 Optics 시퀀스 status.
-STATUS_OPTICS_OK = "optics_ok"
-STATUS_OPTICS_BUTTON_FAILED = "optics_button_failed"
-STATUS_OPTICS_WINDOW_NOT_FOUND = "optics_window_not_found"
-STATUS_OPTICS_MEMORY_FAILED = "optics_memory_tab_failed"
-STATUS_OPTICS_CLOSE_FAILED = "optics_close_failed"
-STATUS_OPTICS_SKIPPED = "optics_skipped"
 
 
 @dataclass
@@ -89,7 +87,7 @@ class ToolVisit:
     closed: bool = False
     close_error: str = ""
     error: str = ""
-    optics_status: str = ""
+    action_status: str = ""
     elapsed_sec: float = 0.0
 
     @property
@@ -156,16 +154,17 @@ def visit_tool(
     close_fn,
     dwell_fn,
     dwell_sec: float,
-    optics_fn=None,
+    action_fn=None,
 ) -> ToolVisit:
-    """장비 1대를 접속 -> 체류 -> Optics 조작 -> 닫기 한다. **닫기는 어떤 경로로든 시도한다.**
+    """장비 1대를 접속 -> 체류 -> 창 안 조작 -> 닫기 한다. **닫기는 어떤 경로로든 시도한다.**
 
     협력자:
       connect_fn(tool_id)     -> 결과 객체 또는 None (List 탭에서 더블클릭)
       wait_window_fn(tool_id) -> (window, title, backend)
       close_fn(tool_id)       -> exit_code 문자열 ("success" 면 닫힘)
       dwell_fn(sec)           -> None (관객이 화면을 볼 시간)
-      optics_fn(window, title, backend) -> status (없으면 접속만 보여주고 나온다)
+      action_fn(tool_id, window, title, backend) -> status
+        창 안에서 보여줄 조작(장비마다 다르다). 없으면 접속만 보여주고 나온다.
 
     닫기를 무조건 거는 이유: `connect_fn` 이 실패로 보고해도 더블클릭 자체는 먹었을
     수 있다(접속은 open-loop 다). 창을 남긴 채 다음 장비로 넘어가면 화면에 창이
@@ -190,15 +189,15 @@ def visit_tool(
                 visit.status = STATUS_CONNECTED
                 print(f"[INFO] {tool_id} 접속 완료: title={title!r} - {dwell_sec:.0f}s 체류")
                 dwell_fn(dwell_sec)
-                if optics_fn is not None:
-                    # Optics 조작이 깨져도 접속 자체는 성공한 것이고, 무엇보다 tool
+                if action_fn is not None:
+                    # 창 안 조작이 깨져도 접속 자체는 성공한 것이고, 무엇보다 tool
                     # 창은 닫고 나가야 한다. 그래서 여기서 따로 삼킨다.
                     try:
-                        visit.optics_status = optics_fn(window, title, backend)
+                        visit.action_status = action_fn(tool_id, window, title, backend)
                     except Exception as exc:
-                        visit.optics_status = f"{type(exc).__name__}: {exc}"
-                        print(f"[WARNING] {tool_id} Optics 조작 예외(창은 닫고 계속): "
-                              f"{visit.optics_status}")
+                        visit.action_status = f"{type(exc).__name__}: {exc}"
+                        print(f"[WARNING] {tool_id} 창 안 조작 예외(창은 닫고 계속): "
+                              f"{visit.action_status}")
     except Exception as exc:
         visit.status = STATUS_ERROR
         visit.error = f"{type(exc).__name__}: {exc}"
@@ -227,67 +226,60 @@ def _close_tool_window(visit: ToolVisit, close_fn) -> None:
 
 
 # ------------------------------------------------------------------
-# tool 창 안 Optics 시퀀스 - Optics... -> Memory 탭 -> Close.
+# tool 창 안 조작 흐름 - 여는 버튼 -> 창 확인 -> 안에서 차례로 클릭.
 #
 # **대화상자는 로컬 창이 아니다.** Remote Monitoring 창은 장비 화면의 원격 뷰라,
-# Optics 를 누르면 대화상자가 그 뷰 **안에** 그려진다 - 로컬 top-level 창 열거로는
-# 절대 찾을 수 없다. 첫 오피스 실행에서 창 제목으로 찾다 실패하고도 "그래도 계속"
-# 폴백이 걸려 화면 어딘가의 **다른 Close** 를 눌렀다. 그래서 확인은 창 열거가 아니라
-# **라벨 판독(OCR)** 으로 하고, 확인되지 않으면 누르지 않는다(share_request 와 같은
-# fail-closed actuator 규약).
+# Optics 나 Work Sheet 를 열면 그 창이 뷰 **안에** 그려진다 - 로컬 top-level 창
+# 열거로는 절대 찾을 수 없다. 첫 오피스 실행에서 창 제목으로 찾다 실패하고도 "그래도
+# 계속" 폴백이 걸려 화면 어딘가의 **다른 Close** 를 눌렀다. 그래서 확인은 창 열거가
+# 아니라 **라벨 판독(OCR)** 으로 하고, 확인되지 않으면 누르지 않는다(share_request 와
+# 같은 fail-closed actuator 규약).
+#
+# Optics 와 Work Sheet 는 모양이 같아 한 엔진으로 돈다:
+#   Optics    : [Optics...]  -> Memory 탭 -> Close
+#   Work Sheet: [Work Sheet 아래 버튼] -> File -> Exit
+# 차이는 **step 사이의 의존성** 하나다. Optics 의 Close 는 Memory 와 무관하게 누를 수
+# 있지만, Work Sheet 의 Exit 는 File 이 드롭다운을 열어야만 존재한다. 그래서
+# `requires_previous` 로 그 차이를 데이터에 적는다.
 # ------------------------------------------------------------------
 
-# 확인 게이트 토큰. required 는 언어별 묶음이며 한 묶음을 전부 만족해야 확인이다.
-# 오피스 실제 문구는 첫 실행의 debug_images crop/OCR 원문으로 확인한 뒤 조정한다.
-OPTICS_BUTTON_KEY = "optics_button"
-OPTICS_MEMORY_KEY = "optics_memory_tab"
-OPTICS_CLOSE_KEY = "optics_close_button"
-
-OPTICS_BUTTON_REQUIRED = (("optics",),)
-OPTICS_BUTTON_FORBIDDEN = ("cancel", "stop", "terminat", "취소")
-OPTICS_MEMORY_REQUIRED = (("memory",), ("메모리",))
-OPTICS_MEMORY_FORBIDDEN = ("cancel", "취소")
-OPTICS_CLOSE_REQUIRED = (("close",), ("닫기",))
-OPTICS_CLOSE_FORBIDDEN = ("cancel", "terminat", "logout", "abort", "취소", "종료")
+# 흐름 status(장비별 요약에 그대로 실린다). "<흐름이름>:<status>" 로 붙여서 보고한다.
+FLOW_OK = "ok"
+FLOW_OPENER_FAILED = "opener_failed"       # 여는 버튼을 확인/클릭하지 못했다.
+FLOW_WINDOW_NOT_FOUND = "window_not_found"  # 열었는데 창이 확인되지 않았다.
+FLOW_SKIPPED = "skipped"
 
 
-def _optics_targets():
-    """Optics 시퀀스 3개 요소의 VLM 타겟 정의.
+@dataclass
+class FlowStep:
+    """확인 후 클릭할 요소 하나.
 
-    설명문은 이 저장소의 규약대로 **첫 글자를 anchor** 로 잡게 쓴다(전역 프롬프트 원칙).
-    'Optics...' 는 PM 버튼 바로 위라는 위치 단서를 함께 준다 - tool 창에는 버튼이 많아
-    라벨만으로는 coarse 단계가 흔들린다.
+    `required` 가 비면 **라벨 요구 없이 forbidden 만** 본다. 오피스에서 실제 문구를
+    모르는 요소(예: 'Work Sheet' 아래 버튼)를 위한 것이다 - 읽힌 토큰은 콘솔에 찍히므로
+    첫 실행 뒤 그 값을 required 에 박으면 게이트가 온전해진다.
+
+    `requires_previous` 는 "앞 step 의 클릭이 성공해야 이 요소가 존재한다" 는 뜻이다.
+    드롭다운 항목(File -> Exit)이 그렇다. 앞이 실패했는데 찾아 나서면 열리지도 않은
+    메뉴 자리를 클릭한다.
     """
-    from poc.workflow_3.vlm.ui_venus_mai_locator import TargetConfig
 
-    optics_button = TargetConfig(
-        key="optics_button",
-        description=(
-            "the 'Optics...' button in the Remote Monitoring window's button area, "
-            "located directly above the 'PM' button. Use the first letter 'O' as the "
-            "anchor, then click safely inside the Optics button area."
-        ),
-    )
-    memory_tab = TargetConfig(
-        key="optics_memory_tab",
-        description=(
-            "the 'Memory' tab in the tab strip of the Optics dialog window. "
-            "Use the first letter 'M' as the anchor, then click safely inside the "
-            "Memory tab area."
-        ),
-    )
-    close_button = TargetConfig(
-        key="optics_close_button",
-        description=(
-            "the 'Close' button of the Optics dialog window. Use the first letter 'C' "
-            "as the anchor, then click safely inside the Close button area."
-        ),
-    )
-    return optics_button, memory_tab, close_button
+    target: object
+    required: tuple = ()
+    forbidden: tuple = ()
+    requires_previous: bool = False
+
+
+@dataclass
+class InToolFlow:
+    """tool 창 안에서 보여줄 조작 한 벌."""
+
+    name: str
+    opener: FlowStep
+    steps: list
 
 
 def _confirm_point(
-    image, target, required, forbidden,
+    image, step: FlowStep,
     *, locate_fn, read_tokens_fn, policy,
 ):
     """좌표를 찍고 그 자리 라벨을 읽어 **확인된 경우에만** 그 점을 돌려준다.
@@ -295,31 +287,41 @@ def _confirm_point(
     좌표는 VLM 이 정하고 OCR 은 확인만 한다(이 저장소의 클릭 규약). 확인이 안 되면
     None - 원격 뷰에서 한 칸 어긋난 클릭은 무엇을 눌렀는지 알 수 없다.
     클릭을 여기서 하지 않는 이유는 호출부가 "라벨은 확인됐는데 클릭이 실패했다" 와
-    "라벨부터 확인이 안 됐다" 를 구분해야 하기 때문이다 - 전자는 대화상자가 떠 있다는
-    증거라 뒤 단계를 계속해야 하고, 후자는 멈춰야 한다.
+    "라벨부터 확인이 안 됐다" 를 구분해야 하기 때문이다.
     """
     from poc.workflow_3.monitor.share_request import accepts_label, classify_label
 
-    point = locate_fn(image, target)
+    key = step.target.key
+    point = locate_fn(image, step.target)
     if point is None:
-        print(f"[WARNING] 좌표 미검출 - 클릭 안 함: {target.key}")
+        print(f"[WARNING] 좌표 미검출 - 클릭 안 함: {key}")
         return None
 
-    tokens = read_tokens_fn(image, point, target.key)
-    verdict = classify_label(tokens, required, forbidden)
+    tokens = read_tokens_fn(image, point, key)
+    if not step.required:
+        # 기대 문구를 모르는 요소 - forbidden 만 거른다. 읽힌 토큰을 반드시 남긴다
+        # (다음 실행에서 이 값을 required 로 승격하는 것이 목적이다).
+        verdict = classify_label(tokens, ((),), step.forbidden)
+        blocked = verdict == "forbidden"
+        print(f"[INFO] 라벨 요구 없음({key}) - 읽힌 토큰={tokens!r}"
+              f"{' -> 금지 토큰이라 클릭 안 함' if blocked else ''}")
+        return None if blocked else point
+
+    verdict = classify_label(tokens, step.required, step.forbidden)
     if not accepts_label(verdict, policy):
         print(
-            f"[WARNING] 라벨 확인 실패 - 클릭 안 함: {target.key} "
+            f"[WARNING] 라벨 확인 실패 - 클릭 안 함: {key} "
             f"verdict={verdict} policy={policy} tokens={tokens!r}"
         )
         return None
     return point
 
 
-def run_optics_sequence(
+def run_in_tool_flow(
     tool_window,
     tool_title: str,
     tool_backend: str,
+    flow: InToolFlow,
     *,
     capture_fn,
     locate_fn,
@@ -330,7 +332,7 @@ def run_optics_sequence(
     confirm_policy: str = "strict",
     attempts: int = 2,
 ) -> str:
-    """tool 창에서 Optics... -> Memory 탭 -> Close 를 확인하며 차례로 누른다.
+    """tool 창 안에서 흐름 한 벌을 확인하며 차례로 누른다. "<흐름>:<status>" 반환.
 
     협력자(share_request 와 같은 모양이라 배선을 그대로 재사용한다):
       capture_fn(window)                  -> image
@@ -342,87 +344,151 @@ def run_optics_sequence(
 
     ① **확인되지 않으면 누르지 않는다.** 좌표만 믿고 누르면 원격 뷰의 엉뚱한 버튼을
        누르게 된다. 실제로 첫 오피스 실행이 그렇게 깨졌다.
-    ② **Memory 라벨이 대화상자의 유일한 증거다.** 그것이 확인되기 전에는 Close 를 찾아
-       나서지 않는다 - 대화상자가 없는 화면에서 'Close' 를 찾으면 tool 창 자체의 닫기
-       같은 다른 것을 누른다. 확인 안 된 채 남은 대화상자는 다음 단계의 tool 창 닫기가
-       정리하므로, 여기서 무리하게 닫는 것보다 안 누르는 편이 낫다.
-    ③ **Memory 가 확인된 뒤에는 Close 를 반드시 시도한다.** 대화상자가 떠 있는 것이
-       확인된 상태이므로, Memory 클릭이 실패해도 닫기까지는 가 본다.
+    ② **첫 step 의 라벨이 창이 떴다는 유일한 증거다.** 그것이 확인되기 전에는 뒤
+       요소를 찾아 나서지 않는다 - 창이 없는 화면에서 'Close'/'Exit' 를 찾으면 tool 창
+       자체의 닫기 같은 다른 것을 누른다. 확인 안 된 채 남은 창은 다음 단계의 tool 창
+       닫기가 정리하므로, 여기서 무리하게 닫는 것보다 안 누르는 편이 낫다.
+    ③ **창이 확인된 뒤에는 독립 step 을 끝까지 시도한다.** 중간 step 이 실패해도
+       `requires_previous=False` 인 뒤 step(예: Optics 의 Close)은 눌러 본다.
 
-    `attempts` 는 Optics 클릭 재시도 횟수다. 원격 뷰는 커서 이동을 따라오지 못해 첫
-    클릭이 삼켜지는 일이 있어(오피스 1회차 증상: "마우스만 이동") 확인이 안 되면 한 번
-    더 누른다.
+    `attempts` 는 여는 버튼의 재시도 횟수다. 원격 뷰는 커서 이동을 따라오지 못해 첫
+    클릭이 삼켜지는 일이 있어(오피스 1회차 증상: "마우스만 이동") 창이 확인되지 않으면
+    한 번 더 누른다.
     """
-    optics_target, memory_target, close_target = _optics_targets()
     max_attempts = max(1, attempts)
 
-    def _confirm(image, target, required, forbidden):
-        return _confirm_point(
-            image, target, required, forbidden,
-            locate_fn=locate_fn, read_tokens_fn=read_tokens_fn, policy=confirm_policy,
-        )
+    def _tag(status: str) -> str:
+        return f"{flow.name}:{status}"
 
-    # --- Optics... 버튼 -> 대화상자가 떴는지 확인(= Memory 라벨 판독) ---
-    memory_point = None
+    if not flow.steps:
+        return _tag(FLOW_SKIPPED)
+
+    first_step = flow.steps[0]
+    first_point = None
+    first_image = None
+
+    # --- 여는 버튼 -> 창이 떴는지 확인(= 첫 step 의 라벨 판독) ---
     try:
         for attempt in range(1, max_attempts + 1):
-            print(f"[INFO] Optics... 버튼 확인 후 클릭 (시도 {attempt}/{max_attempts})")
+            print(f"[INFO] [{flow.name}] {flow.opener.target.key} 확인 후 클릭 "
+                  f"(시도 {attempt}/{max_attempts})")
             image = capture_fn(tool_window)
-            point = _confirm(
-                image, optics_target, OPTICS_BUTTON_REQUIRED, OPTICS_BUTTON_FORBIDDEN,
+            point = _confirm_point(
+                image, flow.opener,
+                locate_fn=locate_fn, read_tokens_fn=read_tokens_fn, policy=confirm_policy,
             )
             if point is None:
-                # 버튼 자체를 확인 못 했다면 다시 눌러도 같은 화면이다 - 즉시 포기.
-                return STATUS_OPTICS_BUTTON_FAILED
-            click_fn(tool_window, image, point, optics_target.key)
+                # 여는 버튼조차 확인 못 했다면 다시 눌러도 같은 화면이다 - 즉시 포기.
+                return _tag(FLOW_OPENER_FAILED)
+            click_fn(tool_window, image, point, flow.opener.target.key)
 
-            sleep_fn(settle_sec)  # 대화상자가 그려질 시간(원격이라 로컬보다 느리다).
+            sleep_fn(settle_sec)  # 창이 그려질 시간(원격이라 로컬보다 느리다).
 
-            print("[INFO] Optics 창 확인(Memory 탭 판독)")
+            print(f"[INFO] [{flow.name}] 창 확인({first_step.target.key} 판독)")
             image = capture_fn(tool_window)
-            memory_point = _confirm(
-                image, memory_target, OPTICS_MEMORY_REQUIRED, OPTICS_MEMORY_FORBIDDEN,
+            first_point = _confirm_point(
+                image, first_step,
+                locate_fn=locate_fn, read_tokens_fn=read_tokens_fn, policy=confirm_policy,
             )
-            if memory_point is not None:
-                memory_image = image
+            if first_point is not None:
+                first_image = image
                 break
             if attempt >= max_attempts:
-                print("[WARNING] Optics 창을 확인하지 못함 - Close 를 찾지 않습니다"
-                      "(tool 창 닫기가 정리합니다).")
-                return STATUS_OPTICS_WINDOW_NOT_FOUND
-            print("[INFO] Optics 창 미확인 - 클릭이 삼켜졌을 수 있어 다시 누릅니다")
+                print(f"[WARNING] [{flow.name}] 창을 확인하지 못함 - 이후 요소를 찾지 "
+                      "않습니다(tool 창 닫기가 정리합니다).")
+                return _tag(FLOW_WINDOW_NOT_FOUND)
+            print(f"[INFO] [{flow.name}] 창 미확인 - 클릭이 삼켜졌을 수 있어 다시 누릅니다")
     except Exception as exc:
-        print(f"[WARNING] Optics 버튼/창 확인 중 예외: {type(exc).__name__}: {exc}")
-        return STATUS_OPTICS_BUTTON_FAILED
+        print(f"[WARNING] [{flow.name}] 여는 버튼/창 확인 중 예외: {type(exc).__name__}: {exc}")
+        return _tag(FLOW_OPENER_FAILED)
 
-    # --- 여기부터 대화상자가 떠 있는 것이 확인된 상태다 ---
-    status = STATUS_OPTICS_OK
-    try:
-        print("[INFO] Memory 탭 클릭")
-        click_fn(tool_window, memory_image, memory_point, memory_target.key)
-        sleep_fn(settle_sec)
-    except Exception as exc:
-        # 대화상자는 떠 있다 - Memory 를 못 눌렀어도 Close 까지는 간다(계약 ③).
-        print(f"[WARNING] Memory 탭 클릭 예외(Close 는 계속): {type(exc).__name__}: {exc}")
-        status = STATUS_OPTICS_MEMORY_FAILED
+    # --- 여기부터 창이 떠 있는 것이 확인된 상태다 ---
+    failed_key = ""
+    previous_ok = True
+    for index, step in enumerate(flow.steps):
+        key = step.target.key
+        if step.requires_previous and not previous_ok:
+            print(f"[INFO] [{flow.name}] 앞 단계 실패로 {key} 는 건너뜁니다"
+                  "(열리지 않은 메뉴 자리를 누르지 않기 위해).")
+            break
 
-    try:
-        print("[INFO] Optics 창 Close 확인 후 클릭")
-        image = capture_fn(tool_window)
-        close_point = _confirm(
-            image, close_target, OPTICS_CLOSE_REQUIRED, OPTICS_CLOSE_FORBIDDEN,
-        )
-        if close_point is None:
-            print("[WARNING] Optics Close 를 확인하지 못함(대화상자가 남았을 수 있음)")
-            return STATUS_OPTICS_CLOSE_FAILED
-        click_fn(tool_window, image, close_point, close_target.key)
-    except Exception as exc:
-        print(f"[WARNING] Optics Close 예외(대화상자가 남았을 수 있음): "
-              f"{type(exc).__name__}: {exc}")
-        return STATUS_OPTICS_CLOSE_FAILED
+        try:
+            if index == 0:
+                image, point = first_image, first_point  # 방금 확인한 것을 다시 안 찾는다.
+            else:
+                sleep_fn(settle_sec)
+                image = capture_fn(tool_window)
+                point = _confirm_point(
+                    image, step,
+                    locate_fn=locate_fn, read_tokens_fn=read_tokens_fn,
+                    policy=confirm_policy,
+                )
+            if point is None:
+                previous_ok = False
+                failed_key = failed_key or key
+                continue
 
+            print(f"[INFO] [{flow.name}] {key} 클릭")
+            click_fn(tool_window, image, point, key)
+            previous_ok = True
+        except Exception as exc:
+            print(f"[WARNING] [{flow.name}] {key} 클릭 예외: {type(exc).__name__}: {exc}")
+            previous_ok = False
+            failed_key = failed_key or key
+
+    if failed_key:
+        return _tag(f"step_failed({failed_key})")
     sleep_fn(settle_sec)
-    return status
+    return _tag(FLOW_OK)
+
+
+# ------------------------------------------------------------------
+# 장비별 조작 흐름 배정.
+# ------------------------------------------------------------------
+
+FLOW_OPTICS = "optics"
+FLOW_WORKSHEET = "worksheet"
+KNOWN_FLOW_NAMES = (FLOW_OPTICS, FLOW_WORKSHEET)
+
+# 시연 기본 배정 - 장비마다 다른 조작을 보여줘야 "자동화" 로 보인다.
+DEFAULT_TOOL_FLOWS = {"mcd019": FLOW_OPTICS, "mcdc22": FLOW_WORKSHEET}
+
+
+def parse_flow_map(raw, default: dict) -> dict:
+    """"MCD019=optics,MCDC22=worksheet" 를 {소문자 장비: 흐름} 으로 만든다. 비면 default.
+
+    형식이 깨진 항목은 버리고 계속한다 - 시연 직전 오타로 스크립트가 죽는 것보다,
+    그 항목만 기본 흐름으로 도는 편이 낫다.
+    """
+    mapping = {}
+    for chunk in (raw or "").replace(";", ",").split(","):
+        entry = chunk.strip()
+        if not entry:
+            continue
+        if "=" not in entry:
+            print(f"[WARNING] 흐름 배정 형식 오류(무시): {entry!r} - 'TOOL=flow' 로 쓰세요")
+            continue
+        tool, _, flow_name = entry.partition("=")
+        tool, flow_name = tool.strip().lower(), flow_name.strip().lower()
+        if not tool or not flow_name:
+            print(f"[WARNING] 흐름 배정 형식 오류(무시): {entry!r}")
+            continue
+        mapping[tool] = flow_name
+    return mapping or dict(default)
+
+
+def resolve_flow_name(tool_id: str, mapping: dict, default_flow: str) -> str:
+    """장비에 배정된 흐름 이름. 미등록/오타는 default_flow.
+
+    오타난 이름을 조용히 '아무것도 안 함' 으로 만들지 않는다 - 시연에서 왜 아무 일도
+    안 일어나는지 찾을 수 없게 된다.
+    """
+    name = (mapping or {}).get((tool_id or "").strip().lower(), default_flow)
+    if name not in KNOWN_FLOW_NAMES:
+        print(f"[WARNING] 알 수 없는 흐름 이름: {name!r} (장비={tool_id}) - "
+              f"{default_flow} 로 대체. 가능한 값: {', '.join(KNOWN_FLOW_NAMES)}")
+        return default_flow
+    return name
 
 
 # ------------------------------------------------------------------
@@ -578,10 +644,10 @@ def _print_summary(result: DemoRunResult) -> None:
     )
     for visit in result.visits:
         closed = "닫힘" if visit.closed else f"닫기실패({visit.close_error or '-'})"
-        optics = f" / Optics={visit.optics_status}" if visit.optics_status else ""
+        action = f" / {visit.action_status}" if visit.action_status else ""
         detail = f" {visit.error}" if visit.error else ""
         print(
-            f"[INFO]   {visit.tool_id}: {visit.status} / {closed}{optics} / "
+            f"[INFO]   {visit.tool_id}: {visit.status} / {closed}{action} / "
             f"{visit.elapsed_sec:.1f}s{detail}"
         )
     print("=" * 70)
@@ -692,19 +758,124 @@ def _build_list_tab_fn(settings: Workflow3Settings):
     return _list_tab
 
 
-def _build_optics_fn(
+def _flow_definitions():
+    """시연 흐름 정의 - 이름 -> InToolFlow.
+
+    설명문은 이 저장소의 규약대로 **첫 글자를 anchor** 로 잡게 쓰고, 화면 안 위치
+    단서를 함께 준다(tool 창에는 버튼이 많아 라벨만으로는 coarse 단계가 흔들린다).
+    'Work Sheet' 아래 버튼은 **실제 문구를 모른다** - required 를 비워 forbidden 만
+    보게 하고, 읽힌 토큰을 콘솔에 남긴다. 첫 오피스 실행이 그 문구를 알려주면 여기에
+    박아 게이트를 온전하게 만든다.
+    """
+    from poc.workflow_3.vlm.ui_venus_mai_locator import TargetConfig
+
+    optics_flow = InToolFlow(
+        name=FLOW_OPTICS,
+        opener=FlowStep(
+            TargetConfig(
+                key="optics_button",
+                description=(
+                    "the 'Optics...' button in the Remote Monitoring window's button "
+                    "area, located directly above the 'PM' button. Use the first letter "
+                    "'O' as the anchor, then click safely inside the Optics button area."
+                ),
+            ),
+            required=(("optics",),),
+            forbidden=("cancel", "stop", "terminat", "취소"),
+        ),
+        steps=[
+            FlowStep(
+                TargetConfig(
+                    key="optics_memory_tab",
+                    description=(
+                        "the 'Memory' tab in the tab strip of the Optics window. Use the "
+                        "first letter 'M' as the anchor, then click safely inside the "
+                        "Memory tab area."
+                    ),
+                ),
+                required=(("memory",), ("메모리",)),
+                forbidden=("cancel", "취소"),
+            ),
+            FlowStep(
+                TargetConfig(
+                    key="optics_close_button",
+                    description=(
+                        "the 'Close' button of the Optics window. Use the first letter "
+                        "'C' as the anchor, then click safely inside the Close button area."
+                    ),
+                ),
+                required=(("close",), ("닫기",)),
+                forbidden=("cancel", "terminat", "logout", "abort", "취소", "종료"),
+                # Optics 의 Close 는 대화상자의 상시 버튼이라 Memory 와 무관하게 누른다.
+                requires_previous=False,
+            ),
+        ],
+    )
+
+    worksheet_flow = InToolFlow(
+        name=FLOW_WORKSHEET,
+        opener=FlowStep(
+            TargetConfig(
+                key="worksheet_button",
+                description=(
+                    "the button located directly below the 'Work Sheet' text in the "
+                    "Remote Monitoring window. Use the 'Work Sheet' text as the anchor, "
+                    "then click safely inside the button immediately below it."
+                ),
+            ),
+            # 실제 버튼 문구를 모른다 - forbidden 만 거르고 읽힌 토큰을 남긴다.
+            required=(),
+            forbidden=("cancel", "stop", "terminat", "exit", "취소", "종료"),
+        ),
+        steps=[
+            FlowStep(
+                TargetConfig(
+                    key="worksheet_file_menu",
+                    description=(
+                        "the 'File' menu in the menu bar of the Work Sheet window. Use "
+                        "the first letter 'F' as the anchor, then click safely inside "
+                        "the File menu area."
+                    ),
+                ),
+                required=(("file",), ("파일",)),
+                forbidden=("edit", "view", "help"),
+            ),
+            FlowStep(
+                TargetConfig(
+                    key="worksheet_file_exit",
+                    description=(
+                        "the 'Exit' item in the opened File dropdown menu of the Work "
+                        "Sheet window. Use the first letter 'E' as the anchor, then "
+                        "click safely inside the Exit menu item."
+                    ),
+                ),
+                required=(("exit",), ("종료",)),
+                forbidden=("export", "save", "print"),
+                # Exit 는 File 이 드롭다운을 열어야만 존재한다 - File 이 실패하면
+                # 열리지도 않은 메뉴 자리를 누르게 되므로 건너뛴다.
+                requires_previous=True,
+            ),
+        ],
+    )
+
+    return {FLOW_OPTICS: optics_flow, FLOW_WORKSHEET: worksheet_flow}
+
+
+def _build_action_fn(
     settings: Workflow3Settings,
     settle_sec: float,
     *,
+    flow_map: dict,
+    default_flow: str,
     confirm_policy: str,
     attempts: int,
     pre_click_settle_sec: float,
     tag: str,
 ):
-    """tool 창 안 Optics -> Memory -> Close 협력자 (VLM 좌표 + OCR 확인 + 클릭).
+    """장비별 창 안 조작 협력자 (VLM 좌표 + OCR 확인 + 클릭).
 
     `share_request` 의 주입점과 같은 모양이라 그 배선을 그대로 옮겨 쓴다. 확인 실패 시
-    crop 과 OCR 원문이 `debug_images/demo_rcs_optics/<tag>/` 에 남는다 - Mac 에서는 이
+    crop 과 OCR 원문이 `debug_images/demo_rcs_flow/<tag>/` 에 남는다 - Mac 에서는 이
     화면을 볼 수 없어, 오피스 실행이 실제 문구(required 토큰)를 아는 유일한 경로다.
     """
     from poc.workflow_3 import DEBUG_IMAGE_DIR
@@ -717,7 +888,8 @@ def _build_optics_fn(
     )
     from poc.workflow_3.vlm.ui_venus_mai_locator import analyze_window_target
 
-    debug_dir = DEBUG_IMAGE_DIR / "demo_rcs_optics" / tag
+    debug_dir = DEBUG_IMAGE_DIR / "demo_rcs_flow" / tag
+    flows = _flow_definitions()
 
     def _locate(image, target):
         result = analyze_window_target(
@@ -754,18 +926,20 @@ def _build_optics_fn(
         """
         screen = image_point_to_screen(window, point, image_size=image.size)
         if screen is None:
-            raise RuntimeError(f"Optics 좌표 변환 실패: {key} point={point}")
+            raise RuntimeError(f"좌표 변환 실패: {key} point={point}")
         print(
-            f"[INFO] Optics 클릭: {key} px={point} -> screen={screen}"
+            f"[INFO] 클릭: {key} px={point} -> screen={screen}"
             f"{'' if settings.action_enabled else ' [dry-run]'}"
         )
         move_cursor_to_screen(screen, f"demo_{key}", action_enabled=settings.action_enabled)
         time.sleep(max(0.0, pre_click_settle_sec))
         click_at_screen(screen, f"demo_{key}", action_enabled=settings.action_enabled)
 
-    def _optics(tool_window, tool_title, tool_backend):
-        return run_optics_sequence(
-            tool_window, tool_title, tool_backend,
+    def _action(tool_id, tool_window, tool_title, tool_backend):
+        flow_name = resolve_flow_name(tool_id, flow_map, default_flow)
+        print(f"[INFO] {tool_id} 창 안 조작 흐름: {flow_name}")
+        return run_in_tool_flow(
+            tool_window, tool_title, tool_backend, flows[flow_name],
             capture_fn=capture_window,
             locate_fn=_locate,
             read_tokens_fn=_read_tokens,
@@ -776,10 +950,10 @@ def _build_optics_fn(
             attempts=attempts,
         )
 
-    return _optics
+    return _action
 
 
-def _build_visit_fn(settings: Workflow3Settings, dwell_sec: float, optics_fn=None):
+def _build_visit_fn(settings: Workflow3Settings, dwell_sec: float, action_fn=None):
     """장비 1대 [접속 -> 체류 -> Optics -> 닫기] 협력자."""
     from poc.workflow_3.rcs.login_rcs_common import wait_for_remote_monitoring_window
     from poc.workflow_3.rcs.workflow_close_tool import close_tool
@@ -810,7 +984,7 @@ def _build_visit_fn(settings: Workflow3Settings, dwell_sec: float, optics_fn=Non
             close_fn=_close,
             dwell_fn=time.sleep,
             dwell_sec=dwell_sec,
-            optics_fn=optics_fn,
+            action_fn=action_fn,
         )
 
     return _visit
@@ -870,20 +1044,26 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
     pause_sec = _env_float("DEMO_RCS_SCROLL_PAUSE_SEC", 0.6)
     repeat = max(1, _env_int("DEMO_RCS_REPEAT", 1))
     view_enabled = _env_flag("DEMO_RCS_VIEW_TAB", True)
-    optics_enabled = _env_flag("DEMO_RCS_OPTICS", True)
-    optics_settle_sec = _env_float("DEMO_RCS_OPTICS_SETTLE_SEC", 1.5)
-    optics_attempts = max(1, _env_int("DEMO_RCS_OPTICS_ATTEMPTS", 2))
+    flow_enabled = _env_flag("DEMO_RCS_FLOW", True)
+    flow_settle_sec = _env_float("DEMO_RCS_FLOW_SETTLE_SEC", 1.5)
+    flow_attempts = max(1, _env_int("DEMO_RCS_FLOW_ATTEMPTS", 2))
+    flow_map = parse_flow_map(os.environ.get("DEMO_RCS_FLOWS"), DEFAULT_TOOL_FLOWS)
+    default_flow = os.environ.get("DEMO_RCS_DEFAULT_FLOW", FLOW_OPTICS).strip().lower()
     confirm_policy = os.environ.get("DEMO_RCS_CONFIRM", "strict").strip().lower() or "strict"
     pre_click_settle = _env_float("DEMO_RCS_PRE_CLICK_SETTLE_SEC", 0.6)
     tag = make_timestamp_tag(time.time())
 
+    assigned = ", ".join(
+        f"{tool}={resolve_flow_name(tool, flow_map, default_flow)}" for tool in tool_ids
+    )
     print(
         f"[INFO] 시연 설정: 체류={dwell_sec:.0f}s, 간격={gap_sec:.0f}s, "
         f"View훑기={'on' if view_enabled else 'off'}(휠 {notches}칸), "
-        f"Optics조작={'on' if optics_enabled else 'off'}"
-        f"(확인={confirm_policy}, 재시도={optics_attempts}, 클릭전대기={pre_click_settle:.1f}s), "
+        f"창안조작={'on' if flow_enabled else 'off'}"
+        f"(확인={confirm_policy}, 재시도={flow_attempts}, 클릭전대기={pre_click_settle:.1f}s), "
         f"반복={repeat}회"
     )
+    print(f"[INFO] 장비별 조작 흐름: {assigned or '-'}")
 
     try:
         preflight_fn = _build_preflight_fn(settings)
@@ -893,18 +1073,20 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
             else (lambda w, t, b: STATUS_VIEW_SKIPPED)
         )
         list_tab_fn = _build_list_tab_fn(settings)
-        optics_fn = (
-            _build_optics_fn(
-                settings, optics_settle_sec,
+        action_fn = (
+            _build_action_fn(
+                settings, flow_settle_sec,
+                flow_map=flow_map,
+                default_flow=default_flow,
                 confirm_policy=confirm_policy,
-                attempts=optics_attempts,
+                attempts=flow_attempts,
                 pre_click_settle_sec=pre_click_settle,
                 tag=tag,
             )
-            if optics_enabled
+            if flow_enabled
             else None
         )
-        visit_fn = _build_visit_fn(settings, dwell_sec, optics_fn)
+        visit_fn = _build_visit_fn(settings, dwell_sec, action_fn)
     except Exception as exc:
         # Mac/개발 PC 에서는 pywinauto 등이 없어 여기서 걸린다 - 무엇이 없는지 이름을 남긴다.
         print(f"[ERROR] RCS 모듈을 불러오지 못했습니다(오피스 Windows 전용): {exc}")
@@ -923,27 +1105,33 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
 
 
 __all__ = [
+    "DEFAULT_TOOL_FLOWS",
     "DEFAULT_TOOL_IDS",
+    "FLOW_OK",
+    "FLOW_OPENER_FAILED",
+    "FLOW_OPTICS",
+    "FLOW_SKIPPED",
+    "FLOW_WINDOW_NOT_FOUND",
+    "FLOW_WORKSHEET",
+    "KNOWN_FLOW_NAMES",
     "STATUS_CONNECTED",
     "STATUS_CONNECT_FAILED",
     "STATUS_ERROR",
-    "STATUS_OPTICS_BUTTON_FAILED",
-    "STATUS_OPTICS_CLOSE_FAILED",
-    "STATUS_OPTICS_MEMORY_FAILED",
-    "STATUS_OPTICS_OK",
-    "STATUS_OPTICS_SKIPPED",
-    "STATUS_OPTICS_WINDOW_NOT_FOUND",
     "STATUS_VIEW_OK",
     "STATUS_VIEW_SKIPPED",
     "STATUS_VIEW_TAB_FAILED",
     "STATUS_WINDOW_NOT_FOUND",
     "DemoRunResult",
+    "FlowStep",
+    "InToolFlow",
     "ToolVisit",
     "browse_view_tab",
     "main",
+    "parse_flow_map",
     "parse_tool_ids",
+    "resolve_flow_name",
     "run_demonstration",
-    "run_optics_sequence",
+    "run_in_tool_flow",
     "visit_tool",
 ]
 

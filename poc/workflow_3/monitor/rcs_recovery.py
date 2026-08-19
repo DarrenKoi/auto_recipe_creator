@@ -15,6 +15,7 @@ from poc.workflow_3.rcs.open_rcs import RCS_EXE
 
 # 복구 결과 status. 호출부(cycle) 가 failure_class 로 그대로 옮겨 적는다.
 RECOVERED = "recovered"
+STATUS_LAUNCH_ERROR = "rcs_recovery_launch_error"
 STATUS_LOGIN_ERROR = "rcs_recovery_error"
 STATUS_WINDOW_NOT_FOUND = "rcs_recovery_no_window"
 
@@ -44,9 +45,26 @@ def recover_rcs_session(
     running = find_processes_fn(RCS_EXE)
     if running is None:
         # 모름 - 실행을 보류한다. 빈 리스트("안 돌고 있음")와 반드시 구분해야 한다.
-        print("[WARNING] RCS 프로세스 조회 불가 - 중복 실행 방지를 위해 재실행 보류, 로그인만 시도")
+        # 이 분기가 곧 "RcsMainHD.exe 를 안 띄운다" 이므로, 왜 조회가 안 됐는지까지
+        # 짚어 준다(대개 psutil 미설치 -> `uv sync` 한 번으로 끝난다).
+        print(
+            "[WARNING] RCS 프로세스 조회 불가 - 중복 실행 방지를 위해 **재실행 보류**, "
+            "로그인만 시도합니다. psutil 이 설치돼 있는지 확인하세요(uv sync)."
+        )
     elif not running:
-        launch_fn(RCS_EXE)
+        # exe 경로 기본값은 특정 사용자 경로라 PC 가 다르면 여기서 깨진다. 어떤 경로로
+        # 띄우려 했는지 찍어야 RCS_EXE_PATH 오설정이 로그만으로 드러난다.
+        print(f"[INFO] RCS 프로세스 없음 - 실행 시도: {RCS_EXE}")
+        try:
+            launch_fn(RCS_EXE)
+        except Exception as exc:
+            # 예외로 튀면 preflight 는 '준비 예외' 한 줄로, 알람 사이클은 status="error"
+            # 로 뭉뚱그려져 "왜 RCS 가 안 떴는지" 가 manifest 에서 사라진다.
+            print(f"[ERROR] RCS 실행 실패: {RCS_EXE} error={exc}")
+            return RecoveryOutcome(
+                status=STATUS_LAUNCH_ERROR,
+                error=f"{type(exc).__name__}: {exc} (exe={RCS_EXE})",
+            )
         launched = True
     else:
         print(f"[INFO] RCS 프로세스가 이미 있음(count={len(running)}) - 재실행 없이 로그인만 시도")

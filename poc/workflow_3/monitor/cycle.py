@@ -254,6 +254,9 @@ def _scan_rcs_processes(exe_path):
     from poc.workflow_3.rcs.open_rcs import PSUTIL_AVAILABLE, find_existing_rcs_processes
 
     if not PSUTIL_AVAILABLE:
+        # 이 한 줄이 없으면 "RCS 를 왜 안 띄웠나" 가 로그에서 사라진다 - 조회 불가는
+        # 곧 재실행 보류이므로, 원인(psutil 미설치)을 여기서 이름으로 짚어 준다.
+        print("[WARNING] psutil 미설치 - RCS 프로세스 조회 불가(재실행 보류). `uv sync` 필요.")
         return None
     try:
         return find_existing_rcs_processes(exe_path)

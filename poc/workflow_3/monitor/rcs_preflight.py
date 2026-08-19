@@ -74,9 +74,12 @@ def ensure_rcs_session_ready(
         if not settings.rcs_recovery_enabled:
             # 같은 스위치가 두 경로(preflight/알람 시 복구)를 함께 꺼야 한다. 껐다고
             # 생각한 사람이 모니터 기동만으로 RCS 가 뜨는 것을 보면 안 된다.
+            # 이 status 는 **오직 이 분기** 에서만 나온다 - 복구가 실패한 경우는
+            # rcs_recovery_* status 로 나가므로, 이 값을 봤다면 스위치가 꺼진 것이다.
             print(
                 "[WARNING] RCS 메인 창 없음 - 복구 비활성(ALIGN_FAIL_RCS_RECOVERY=0)이라 "
-                "준비를 건너뜁니다. 알람 전에 RCS 를 직접 로그인해 두세요."
+                "실행/로그인을 건너뜁니다. 켜려면 ALIGN_FAIL_RCS_RECOVERY=1, "
+                "아니면 알람 전에 RCS 를 직접 로그인해 두세요."
             )
             return PreflightOutcome(status=STATUS_NO_WINDOW)
 

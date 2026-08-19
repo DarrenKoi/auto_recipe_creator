@@ -11,6 +11,7 @@ from poc.workflow_3.monitor import cycle
 from poc.workflow_3.monitor.cycle import build_cycle_steps
 from poc.workflow_3.monitor.rcs_recovery import (
     RECOVERED,
+    STATUS_LAUNCH_ERROR,
     STATUS_LOGIN_ERROR,
     STATUS_WINDOW_NOT_FOUND,
     RecoveryOutcome,
@@ -21,6 +22,15 @@ from poc.workflow_3.rcs.workflow_login import resolve_login_tool_name
 
 def _settings(**overrides) -> Workflow3Settings:
     return Workflow3Settings(**overrides)
+
+
+def _raise(exc):
+    """호출되면 exc 를 올리는 협력자 stub."""
+
+    def _fn(*args, **kwargs):
+        raise exc
+
+    return _fn
 
 
 def _window():
@@ -247,6 +257,39 @@ def test_step_does_not_recover_when_disabled(monkeypatch):
     )
     assert called == [], called
     assert result.failure_class == "rcs_unavailable", result
+
+
+def test_launch_failure_reported_as_status_not_exception():
+    """exe 실행 실패는 예외가 아니라 status 로 나가야 한다.
+
+    RCS_EXE 기본값은 특정 사용자 경로(C:\\Users\\<사번>\\...)라 PC 가 다르면
+    FileNotFoundError 가 난다. 그게 예외로 튀면 preflight 는 '준비 예외' 한 줄로,
+    알람 사이클은 run_status="error" 로 뭉뚱그려져 **왜 RCS 가 안 떴는지** 가
+    manifest 에서 사라진다.
+    """
+    outcome = recover_rcs_session(
+        _settings(),
+        find_processes_fn=lambda exe: [],          # 안 돌고 있음 -> 실행 시도
+        launch_fn=_raise(FileNotFoundError("RcsMainHD.exe 없음")),
+        login_fn=lambda settings, **kw: None,
+        wait_window_fn=lambda **kw: (object(), "RCS Main", "uia"),
+    )
+    assert outcome.status == STATUS_LAUNCH_ERROR, outcome
+    assert "RcsMainHD.exe" in outcome.error, outcome
+    assert outcome.launched is False
+
+
+def test_launch_failure_does_not_attempt_login():
+    """실행이 실패했으면 로그인은 시도하지 않는다 - 뜨지도 않은 창에 타이핑할 이유가 없다."""
+    login_calls = []
+    recover_rcs_session(
+        _settings(),
+        find_processes_fn=lambda exe: [],
+        launch_fn=_raise(OSError("실행 거부")),
+        login_fn=lambda settings, **kw: login_calls.append(1),
+        wait_window_fn=lambda **kw: (None, "", ""),
+    )
+    assert login_calls == [], login_calls
 
 
 def test_recovery_default_is_on():

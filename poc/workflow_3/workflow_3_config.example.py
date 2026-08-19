@@ -83,6 +83,7 @@ NOTIFY_DELAY_SEC = None
 # ----------------------------------------------------------------------------
 FEASIBILITY_MARK = None      # 캡처 후 보정 가능/불가 마킹(_marked.jpg). 1/0/None(기본 on).
 REPOSITION_PREVIEW = None    # align point 로 커서 이동 미리보기(SAFE_MODE=0 필요). 1/0/None(기본 off).
+OK_CLICK = None              # align OK 버튼까지 자동 클릭. 1/0/None(기본 off=반자동, 엔지니어가 OK).
 ZOOM_PROBE = None            # 모호/부재 verdict 에서 zoom in/out ladder 탐색. 1/0/None(기본 on).
 # zoom 방식: "auto"(wheel→무효 시 PM 드롭다운), "pm_dropdown"(곧장 드롭다운), "wheel"(휠만). None=기본(auto).
 ZOOM_METHOD = None

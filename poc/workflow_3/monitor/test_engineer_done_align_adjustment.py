@@ -462,6 +462,66 @@ def test_settings_use_priority_signals() -> bool:
     return ok
 
 
+def test_assist_disabled_by_default() -> bool:
+    """Assist 판독은 기본 off — 분자 단독으로 판정한다(2026-08-19).
+
+    Assist 패널 판독은 아직 손볼 곳이 많아 운영에서 신뢰할 수 없다. 켤 때는
+    ALIGN_FAIL_ENGINEER_DONE_ASSIST=1 로 명시적으로 켠다.
+    """
+    ok = Workflow3Settings().engineer_done_assist_enabled is False
+    return _check("assist_enabled default False", ok)
+
+
+def test_numerator_is_primary_when_assist_disabled() -> bool:
+    """Assist off 면 분자 판정이 곧바로 primary — unusable streak 를 기다리지 않는다.
+
+    streak 대기는 'Assist 가 primary 인데 못 읽는 중' 을 뜻한다. Assist 를 안 쓰기로
+    한 상태에서 그 대기를 남기면, 분자가 이미 3회 증가했는데도 폴링 3회(기본 24s)를
+    헛되이 흘려보낸다. unusable_after 를 도달 불가능한 99 로 두어, streak 경로가
+    아니라 '비활성' 경로로 열렸음을 증명한다.
+    """
+    detector = EngineerDoneDetector(
+        None,
+        _settings(
+            engineer_done_assist_enabled=False,
+            engineer_done_assist_unusable_after=99,
+            engineer_done_numerator_increase_reads=3,
+        ),
+        capture_fn=lambda: Image.new("RGB", (400, 200), (0, 0, 0)),
+        numerator_fn=_CountingFn([
+            NumeratorObservation(sampled=True, value=value, reason="read")
+            for value in (10, 11, 12)
+        ]),
+    )
+    verdicts = [detector() for _ in range(3)]
+    return _check(
+        "numerator primary when assist disabled",
+        verdicts == [False, False, True],
+    )
+
+
+def test_assist_not_read_when_disabled() -> bool:
+    """Assist off 면 assist_fn 을 아예 호출하지 않는다(패널 VLM grounding 비용 0)."""
+    calls = {"n": 0}
+
+    def _assist_spy(_image):
+        calls["n"] += 1
+        return _assist_count(99)   # 호출되면 즉시 done 이 되어 티가 난다.
+
+    detector = EngineerDoneDetector(
+        None,
+        _settings(engineer_done_assist_enabled=False),
+        capture_fn=lambda: Image.new("RGB", (400, 200), (0, 0, 0)),
+        assist_fn=_assist_spy,
+        numerator_fn=_CountingFn([NumeratorObservation(sampled=False, reason="no_change")]),
+    )
+    verdict = detector()
+    return _check(
+        "assist_fn not called when disabled",
+        calls["n"] == 0 and verdict is False,
+    )
+
+
 def _assist_count(ok_rows, *, red=False, status="usable"):
     """행 수/red 만 담은 신규 관측 (격자 없는 CV counting 판정용)."""
     return asc.AssistObservation(
@@ -472,7 +532,11 @@ def _assist_count(ok_rows, *, red=False, status="usable"):
 def _count_detector(observations, *, min_ok_rows=5):
     return EngineerDoneDetector(
         None,
-        _settings(engineer_done_min_ok_rows=min_ok_rows),
+        # Assist 는 기본 off 이므로 Assist 동작을 검증하는 케이스는 명시적으로 켠다.
+        _settings(
+            engineer_done_assist_enabled=True,
+            engineer_done_min_ok_rows=min_ok_rows,
+        ),
         capture_fn=lambda: Image.new("RGB", (400, 200), (0, 0, 0)),
         assist_fn=_CountingFn(observations),
         numerator_fn=_CountingFn([
@@ -519,6 +583,7 @@ def _priority_detector(*, assist, numerators):
     return EngineerDoneDetector(
         None,
         _settings(
+            engineer_done_assist_enabled=True,
             engineer_done_min_ok_rows=6,
             engineer_done_assist_unusable_after=3,
             engineer_done_numerator_increase_reads=3,
@@ -625,7 +690,7 @@ def test_assist_primary_finishes_before_numerator_evaluation():
     ])
     detector = EngineerDoneDetector(
         None,
-        _settings(engineer_done_min_ok_rows=6),
+        _settings(engineer_done_assist_enabled=True, engineer_done_min_ok_rows=6),
         capture_fn=lambda: Image.new("RGB", (400, 200), (0, 0, 0)),
         assist_fn=_CountingFn([_assist_count(1), _assist_count(6)]),
         numerator_fn=numerator,
@@ -653,6 +718,56 @@ def test_builder_keeps_assist_when_numerator_clients_fail():
     finally:
         module._make_ground_fn, module._make_ocr_fn, module._make_assist_fn = saved
     assert detector is not None
+
+
+def test_builder_skips_assist_wiring_when_disabled():
+    """Assist off 면 빌더가 _make_assist_fn 자체를 부르지 않는다.
+
+    _make_assist_fn 은 watch 첫 회차에 Assist 패널 VLM grounding(timeout 15s)을
+    걸어두는 자리다. 판독을 안 쓰기로 했는데 배선만 남기면 그 왕복 비용을 그대로
+    낸다 - '안 읽는다' 는 결정이 호출 횟수로도 지켜져야 한다.
+    """
+    import poc.workflow_3.monitor.engineer_done_align_adjustment as module
+
+    calls = {"n": 0}
+    saved = module._make_assist_fn
+    try:
+        def _spy(*args, **kwargs):
+            calls["n"] += 1
+            return lambda image: _assist_count(1)
+
+        module._make_assist_fn = _spy
+        detector = module.build_engineer_done_detector(
+            object(), _settings(engineer_done_assist_enabled=False)
+        )
+    finally:
+        module._make_assist_fn = saved
+
+    assert detector is not None, "Assist off 는 감지기 자체를 끄는 스위치가 아니다"
+    assert calls["n"] == 0, f"_make_assist_fn 이 {calls['n']}회 호출됨"
+    return True
+
+
+def test_builder_wires_assist_when_enabled():
+    """반대 방향 - 명시적으로 켜면 배선이 살아 있어야 한다(롤백 경로 보증)."""
+    import poc.workflow_3.monitor.engineer_done_align_adjustment as module
+
+    calls = {"n": 0}
+    saved = module._make_assist_fn
+    try:
+        def _spy(*args, **kwargs):
+            calls["n"] += 1
+            return lambda image: _assist_count(1)
+
+        module._make_assist_fn = _spy
+        module.build_engineer_done_detector(
+            object(), _settings(engineer_done_assist_enabled=True)
+        )
+    finally:
+        module._make_assist_fn = saved
+
+    assert calls["n"] == 1, f"_make_assist_fn 이 {calls['n']}회 호출됨"
+    return True
 
 
 def test_detector_fails_closed_for_each_non_positive_priority_threshold():
@@ -904,6 +1019,9 @@ def main() -> int:
         test_settings_defaults,
         test_settings_env_load_path,
         test_settings_use_priority_signals,
+        test_assist_disabled_by_default,
+        test_numerator_is_primary_when_assist_disabled,
+        test_assist_not_read_when_disabled,
         test_counter_prompt,
         test_parse_point_1000,
         test_point_to_roi_ratios,
@@ -933,6 +1051,8 @@ def main() -> int:
         test_lower_numerator_restarts_sequence,
         test_assist_primary_finishes_before_numerator_evaluation,
         test_builder_keeps_assist_when_numerator_clients_fail,
+        test_builder_skips_assist_wiring_when_disabled,
+        test_builder_wires_assist_when_enabled,
         test_detector_captures_one_frame_per_poll,
         test_detector_fails_closed_for_each_non_positive_priority_threshold,
         test_invalid_numerator_sequences_do_not_finish,

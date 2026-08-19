@@ -164,6 +164,12 @@ class Workflow3Settings(WorkflowSettings):
     # 새로 뒀다 - 같은 이름을 재사용하면 오피스에 남은 기존 값이 새 의미로 조용히
     # 해석된다.
     engineer_done_min_ok_rows: int = 5
+    # Assist 패널 판독 사용 여부. 기본 off (2026-08-19) - 판독이 아직 신뢰 수준에
+    # 못 미쳐, 예전처럼 Recipe Monitor 분자(N) 단독으로 판정한다. off 면 Assist 를
+    # 아예 읽지 않고(패널 VLM grounding 도 안 함) 분자 판정이 곧바로 primary 다 -
+    # unusable streak 를 기다리지 않는다(그 대기는 'Assist 가 primary 인데 못 읽는
+    # 중' 을 뜻하므로, Assist 를 안 쓰기로 한 상태에서는 의미가 없다).
+    engineer_done_assist_enabled: bool = False
     engineer_done_assist_unusable_after: int = 3  # 분자 fallback 개방 전 unusable 횟수.
     engineer_done_numerator_increase_reads: int = 3  # 엄격 증가 분자 표본 요구 횟수.
     engineer_done_change_min_px: int = 4  # CV gate 변화 픽셀 임계(다운샘플).
@@ -375,6 +381,9 @@ def load_workflow3_settings() -> Workflow3Settings:
         engineer_done_detect_enabled=env_flag("ALIGN_FAIL_ENGINEER_DONE_DETECT", default=False),
         engineer_done_poll_sec=env_float("ALIGN_FAIL_ENGINEER_DONE_POLL_SEC", 8.0),
         engineer_done_min_ok_rows=env_int("ALIGN_FAIL_ENGINEER_DONE_MIN_OK_ROWS", 5),
+        engineer_done_assist_enabled=env_flag(
+            "ALIGN_FAIL_ENGINEER_DONE_ASSIST", default=False
+        ),
         engineer_done_assist_unusable_after=env_int(
             "ALIGN_FAIL_ENGINEER_DONE_ASSIST_UNUSABLE_AFTER", 3
         ),

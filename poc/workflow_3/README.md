@@ -70,9 +70,16 @@ uv run python poc/workflow_3/monitor/engineer_done_align_adjustment.py
 엔지니어 watch는 다음 우선순위 신호에서 처음 충족한 조건으로 종료한다.
 
 1. 엔지니어가 Remote Monitoring 창의 X를 눌러 닫음 (`window_gone`) → 즉시 종료
-2. Assist 표에 red(실패) 없음 + 정상(검정) 측정 행 `ALIGN_FAIL_ENGINEER_DONE_MIN_OK_ROWS`(기본 5) 이상 → 종료
-3. Assist 3회 연속 판독 불가 + numerator OCR 3회 연속 증가 → fallback 종료
-4. 불확정 → `ALIGN_FAIL_ENGINEER_WATCH_SEC` cap까지 대기
+2. numerator OCR 3회 연속 증가 → 종료 **(기본 경로)**
+3. 불확정 → `ALIGN_FAIL_ENGINEER_WATCH_SEC` cap까지 대기
+
+**Assist 판독은 기본 off다 (2026-08-19).** 판독 정확도가 아직 신뢰 수준에 못 미쳐,
+예전처럼 Recipe Monitor 분자(N) 단독으로 판정한다. off 면 Assist 를 아예 읽지 않고
+(패널 VLM grounding 도 걸지 않는다) 분자가 곧 primary 라, `ASSIST_UNUSABLE_AFTER`
+대기 없이 바로 판정한다. 켜면(`ALIGN_FAIL_ENGINEER_DONE_ASSIST=1`) 아래 우선순위로 돌아간다:
+
+- Assist 표에 red(실패) 없음 + 정상(검정) 측정 행 `..._MIN_OK_ROWS`(기본 5) 이상 → 종료
+- Assist 가 `..._ASSIST_UNUSABLE_AFTER`(기본 3)회 연속 판독 불가일 때만 numerator fallback 개방
 
 `ALIGN_FAIL_ENGINEER_WATCH_SEC=300`(5분)은 마지막 경우의 backstop cap이다. 캘리브레이션의 목적은 threshold 조정이 아니라 grounding/CV/OCR 체인 검증이다. 오피스 Windows에서 `ALIGN_FAIL_ENGINEER_DONE_DETECT=1`을 켜기 전에 실행하고, 생성된 run 디렉터리의 `assist_panel_crop_region.jpg`, 판독이 바뀔 때마다 남는 `assist_panel_###_rows<N>_red<0|1>.jpg`, numerator crop 이미지, poll별 `numerator_decision_###.json`(reading/value/sequence/reset reason), 최종 completion reason을 남긴다.
 
@@ -225,7 +232,8 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 | `ALIGN_FAIL_ENGINEER_WATCH_SEC` | 300 | 미보정 시 엔지니어 조작 녹화 대기 상한(5분) |
 | `ALIGN_FAIL_ENGINEER_DONE_DETECT` | 0 | 우선순위 완료 신호 감지를 켠다. 오피스 Windows 캘리브레이션(`monitor/engineer_done_align_adjustment.py` 단독 실행, 측정 중 tool 대상) 검증 후 `1`. |
 | `ALIGN_FAIL_ENGINEER_DONE_POLL_SEC` | 8.0 | watch 안 감지기 호출 간격 |
-| `ALIGN_FAIL_ENGINEER_DONE_ASSIST_UNUSABLE_AFTER` | 3 | Assist 판독 불가가 이 횟수 연속일 때만 numerator fallback을 연다 |
+| `ALIGN_FAIL_ENGINEER_DONE_ASSIST` | 0 | Assist 패널 판독 사용. **기본 off** - 분자(N) 단독 판정. 판독 정확도가 확보되면 `1` |
+| `ALIGN_FAIL_ENGINEER_DONE_ASSIST_UNUSABLE_AFTER` | 3 | (Assist on 일 때만) 판독 불가가 이 횟수 연속일 때만 numerator fallback을 연다 |
 | `ALIGN_FAIL_ENGINEER_DONE_NUMERATOR_READS` | 3 | fallback 완료로 인정할 엄격 증가 numerator OCR 표본 수 |
 | `ALIGN_FAIL_ENGINEER_DONE_MIN_OK_ROWS` | 5 | Assist 표에 red 가 없고 정상(검정) 측정 행이 이만큼이면 완료 판정 |
 | `ALIGN_FAIL_ENGINEER_DONE_VLM_SERVICE` | `mai-ui` | 분자 위치 grounding 서비스 (route_slug, 모델명 아님) |

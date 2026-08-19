@@ -12,6 +12,13 @@ teardown 이 tool 창을 자동으로 닫는다. done 판정 우선순위는 다
 Assist 는 분자보다 먼저 같은 캡처 프레임에서 평가한다. 분자는 Assist 판독 자체가
 불가능할 때만 쓰는 보수적 fallback 이다.
 
+**단, `engineer_done_assist_enabled` 는 기본 off 다 (2026-08-19).** Assist 판독이
+아직 신뢰 수준에 못 미쳐, 운영에서는 위 우선순위를 쓰지 않고 **분자(N) 단독**으로
+판정한다. off 면 Assist 를 아예 읽지 않고(패널 VLM grounding 도 걸지 않는다) 분자가
+곧 primary 이므로 unusable streak 대기가 없다 - 그 대기는 "Assist 가 primary 인데 못
+읽는 중" 을 뜻하는 신호라, 안 쓰기로 한 상태에서 남겨두면 분자가 이미 조건을 채웠는데도
+폴링 3회(기본 24s)를 헛되이 흘려보낸다. 되돌리려면 `ALIGN_FAIL_ENGINEER_DONE_ASSIST=1`.
+
 **표는 새 측정이 시작될 때 초기화된다**(스크롤 아님, 2026-08-13 확인). 이 사실 덕분에
 "지금 표에 붉은 숫자가 있다 = 이번 사이클에서 측정이 실패했다" 가 성립하고, 행 순서나
 패널 fingerprint 변화를 추적할 필요가 없다. red 가 하나라도 있으면 done 을 막는 보수적
@@ -178,6 +185,14 @@ class EngineerDoneDetector:
             print(f"[WARNING] engineer-done 캡처 실패(회차 skip): {exc}")
             return False
 
+        # Assist 비활성(기본, 2026-08-19): 판독을 아예 시도하지 않고 분자 단독으로
+        # 판정한다. unusable streak 대기는 'Assist 가 primary 인데 못 읽는 중' 을 뜻하는
+        # 신호라, Assist 를 안 쓰기로 한 상태에서 그대로 두면 분자가 이미 조건을
+        # 채웠는데도 폴링 몇 회(기본 8s x 3)를 헛되이 흘려보낸다.
+        if not self.s.engineer_done_assist_enabled:
+            self.last_debug["assist_status"] = "disabled"
+            return self._evaluate_numerator(image, fallback_open=True)
+
         assist = (
             self._assist_fn(image)
             if self._assist_fn is not None
@@ -210,6 +225,21 @@ class EngineerDoneDetector:
                 "assist_unusable_streak": self._assist_unusable_streak,
             })
 
+        fallback_open = (
+            self._assist_unusable_streak
+            >= self.s.engineer_done_assist_unusable_after
+        )
+        return self._evaluate_numerator(image, fallback_open=fallback_open)
+
+    # ---- 내부 ----
+
+    def _evaluate_numerator(self, image, *, fallback_open: bool) -> bool:
+        """분자 N 을 한 회차 관측해 누적 시퀀스를 갱신하고 done 여부를 낸다.
+
+        `fallback_open` 은 "지금 분자로 판정해도 되는가" 다. Assist 가 primary 인
+        구성에서는 Assist 가 연속 unusable 일 때만 열리고, Assist 를 끈 구성에서는
+        분자가 곧 primary 이므로 항상 열려 있다.
+        """
         numerator = (
             self._numerator_fn(image)
             if self._numerator_fn is not None
@@ -223,10 +253,6 @@ class EngineerDoneDetector:
             "numerator_sequence": list(self._numerator_sequence),
             "numerator_reset_reason": reset_reason,
         })
-        fallback_open = (
-            self._assist_unusable_streak
-            >= self.s.engineer_done_assist_unusable_after
-        )
         done = (
             fallback_open
             and len(self._numerator_sequence)
@@ -239,8 +265,6 @@ class EngineerDoneDetector:
             done=done,
         )
         return done
-
-    # ---- 내부 ----
 
     def _localize(self, image):
         """VLM grounding - 분자 위치를 상대비율 ROI 로. 실패/거부 시 None(재시도 가능)."""
@@ -545,7 +569,19 @@ def build_engineer_done_detector(tool_window, settings, *, vlm_client=None, debu
         return None
     if tool_window is None:
         return None
-    assist_fn = _make_assist_fn(tool_window, settings, debug_dir=debug_dir)
+    # Assist off(기본) 면 배선 자체를 만들지 않는다 - _make_assist_fn 은 watch 첫
+    # 회차에 패널 VLM grounding(timeout 15s)을 거는 자리라, 안 읽기로 한 판독의
+    # 왕복 비용만 남는다.
+    assist_fn = (
+        _make_assist_fn(tool_window, settings, debug_dir=debug_dir)
+        if settings.engineer_done_assist_enabled
+        else None
+    )
+    if assist_fn is None:
+        print(
+            "[INFO] engineer-done: Assist 판독 off - Recipe Monitor 분자(N) 단독 판정 "
+            "(켜려면 ALIGN_FAIL_ENGINEER_DONE_ASSIST=1)"
+        )
     try:
         ground_fn = _make_ground_fn(settings, vlm_client=vlm_client)
         ocr_fn = _make_ocr_fn(settings)

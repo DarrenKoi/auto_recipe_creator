@@ -252,3 +252,95 @@ def test_step_does_not_recover_when_disabled(monkeypatch):
 def test_recovery_default_is_on():
     """기본값 on - 셸 env 없이도 복구가 돈다(롤백은 ALIGN_FAIL_RCS_RECOVERY=0)."""
     assert Workflow3Settings().rcs_recovery_enabled is True
+
+
+# ------------------------------------------------------------------
+# 복구 후 List 탭 - connect_to_tool 이 '현재 List 탭' 을 전제하는 자리.
+# ------------------------------------------------------------------
+
+
+def test_list_tab_opened_after_recovery(monkeypatch):
+    """복구 로그인 직후에는 반드시 List 탭을 연다.
+
+    복구 로그인은 target_tool_name="" 로 부르는데, workflow_login 에서 click_list_tab /
+    verify_list_tab_opened / open_target_tool 이 `if normalized_tool_name:` **한 블록**에
+    묶여 있다. 즉 'tool 은 열지 않는다' 는 계약이 List 탭 클릭까지 같이 꺼 버린다.
+    그 상태로 connect_to_tool 이 돌면 List 가 아닌 화면에서 tool 행을 찾게 된다.
+    """
+    window = _window()
+    opened = []
+    monkeypatch.setattr(cycle, "wait_for_rcs_main_window", lambda **kw: (None, "", ""))
+    monkeypatch.setattr(
+        cycle, "recover_rcs_session",
+        lambda settings, **kw: RecoveryOutcome(
+            status=RECOVERED, window=window, title="RCS Main", backend="uia"
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(cycle, "activate_window", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        cycle, "_open_list_tab",
+        lambda w, t, b: opened.append((w, t, b)) or True,
+        raising=False,
+    )
+
+    result = cycle._exec_ensure_rcs_ready(
+        _ensure_step(), {"eqp_id": "MCD916"}, _settings(rcs_recovery_enabled=True)
+    )
+    assert result.status == "success", result
+    assert opened == [(window, "RCS Main", "uia")], opened
+
+
+def test_list_tab_not_touched_when_rcs_already_up(monkeypatch):
+    """복구를 안 탄 정상 경로에서는 List 탭을 건드리지 않는다.
+
+    RCS 가 이미 List 를 띄운 채 떠 있는 것이 정상 상태다. 알람마다 탭을 다시 누르면
+    VLM 왕복과 클릭이 공짜로 늘고, 로케이터가 어긋나면 멀쩡하던 화면을 망친다.
+    """
+    window = _window()
+    opened = []
+    monkeypatch.setattr(
+        cycle, "wait_for_rcs_main_window", lambda **kw: (window, "RCS Main", "uia")
+    )
+    monkeypatch.setattr(cycle, "activate_window", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        cycle, "_open_list_tab",
+        lambda w, t, b: opened.append((w, t, b)) or True,
+        raising=False,
+    )
+
+    result = cycle._exec_ensure_rcs_ready(
+        _ensure_step(), {"eqp_id": "MCD916"}, _settings(rcs_recovery_enabled=True)
+    )
+    assert result.status == "success", result
+    assert opened == [], opened
+
+
+def test_list_tab_failure_does_not_fail_the_step(monkeypatch):
+    """List 탭 클릭이 실패해도 step 은 성공으로 둔다.
+
+    창은 확보됐고 List 가 이미 열려 있었을 수도 있다. 여기서 step 을 죽이면 확보한
+    세션을 버리고 알람을 통째로 놓친다 - 다음 step(connect)이 실제 판정을 한다.
+    """
+    window = _window()
+    monkeypatch.setattr(cycle, "wait_for_rcs_main_window", lambda **kw: (None, "", ""))
+    monkeypatch.setattr(
+        cycle, "recover_rcs_session",
+        lambda settings, **kw: RecoveryOutcome(
+            status=RECOVERED, window=window, title="RCS Main", backend="uia"
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(cycle, "activate_window", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        cycle, "_open_list_tab",
+        lambda w, t, b: (_ for _ in ()).throw(RuntimeError("VLM 없음")),
+        raising=False,
+    )
+
+    context = {"eqp_id": "MCD916"}
+    result = cycle._exec_ensure_rcs_ready(
+        _ensure_step(), context, _settings(rcs_recovery_enabled=True)
+    )
+    assert result.status == "success", result
+    assert context["rcs_main_window"] is window, "확보한 창까지 버리면 안 된다"

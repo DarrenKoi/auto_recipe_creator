@@ -262,11 +262,33 @@ def _scan_rcs_processes(exe_path):
         return None
 
 
+def _open_list_tab(window, title, backend) -> bool:
+    """메인 창의 List 탭을 클릭한다. 성공 여부만 돌려주고 예외는 올리지 않는다.
+
+    복구 로그인 직후에만 쓴다 - 왜 필요한지는 `_exec_ensure_rcs_ready` 참고.
+    """
+    from poc.workflow_3.rcs.view_list_tab_rcs import (
+        EXIT_SUCCESS,
+        click_list_tab_in_main_window,
+    )
+
+    return click_list_tab_in_main_window(window, title, backend).exit_code == EXIT_SUCCESS
+
+
 def _exec_ensure_rcs_ready(step, context, settings: Workflow3Settings) -> StepResult:
     """① RCS 메인 창 확보 — 떠 있으면 전면화, 없으면(옵션) 재실행+재로그인.
 
     복구 자체는 `monitor.rcs_recovery.recover_rcs_session` 이 하고 여기서는 협력자를
     묶어 넘기고 결과를 StepResult 로 옮긴다.
+
+    **복구를 탄 경우에만 List 탭을 연다.** 다음 step 의 `connect_to_tool` 은 "현재
+    List 탭에서" tool 행을 찾는다고 가정하는데, 복구 로그인은 `target_tool_name=""`
+    으로 부르므로 `workflow_login.build_login_workflow_steps` 의 List 클릭 step 이 아예
+    안 붙는다 - `click_list_tab`/`verify_list_tab_opened`/`open_target_tool` 이 전부
+    `if normalized_tool_name:` 한 블록에 묶여 있어, "tool 은 열지 않는다" 는 계약이
+    List 탭까지 같이 꺼 버린다. 복구를 안 탄 정상 경로에서는 누르지 않는다 - RCS 가
+    이미 List 를 띄운 채 떠 있는 것이 정상이고, 알람마다 탭을 다시 누르면 VLM 왕복과
+    클릭이 공짜로 늘 뿐 아니라 로케이터가 어긋나면 멀쩡하던 화면을 망친다.
     """
     started_at = time.time()
     window, title, backend = wait_for_rcs_main_window(timeout_sec=settings.connect_window_timeout_sec)
@@ -293,6 +315,16 @@ def _exec_ensure_rcs_ready(step, context, settings: Workflow3Settings) -> StepRe
             f"[INFO] RCS 복구 성공: relaunched={recovery.launched} title={recovery.title!r}"
         )
         window, title, backend = recovery.window, recovery.title, recovery.backend
+        # 재로그인 직후엔 List 탭이 안 열려 있다(위 docstring). 실패해도 step 은 죽이지
+        # 않는다 - 창은 확보됐고, List 가 이미 열려 있었을 수도 있으며, 실제 판정은
+        # 다음 step 의 connect 가 한다. 여기서 알람을 통째로 버리는 편이 더 비싸다.
+        try:
+            if _open_list_tab(window, title, backend):
+                print("[INFO] 복구 후 List 탭 열기 완료")
+            else:
+                print("[WARNING] 복구 후 List 탭 열기 실패 - connect 단계에서 재판정")
+        except Exception as exc:
+            print(f"[WARNING] 복구 후 List 탭 열기 예외(connect 단계에서 재판정): {exc}")
     if window is None:
         return _make_result(
             step, "failed", started_at, settings,

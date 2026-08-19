@@ -230,9 +230,26 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 | `SAFE_MODE` | 0 | 1 이면 모든 마우스/키보드 차단 (전역 dry-run) |
 | `ALIGN_FAIL_CORRECTION` | 1 | CV 보정 단계 수행 여부 |
 | `ALIGN_FAIL_CORRECTION_DRY_RUN` | 1 | 보정의 move/click 차단. 실 클릭은 SAFE_MODE=0 **그리고** 이 값=0 일 때만 |
-| `ALIGN_FAIL_RCS_RECOVERY` | 1 | RCS 메인 창 부재 시 재실행+재로그인 복구. 프로세스가 이미 있으면 재실행하지 않고(중복 실행 방지), 조회 자체가 불가하면 실행을 보류한다. 복구 로그인은 **tool 에 접속하지 않는다** — 어느 tool 인지는 알람이 정한다. 끄려면 `0` |
+| `ALIGN_FAIL_RCS_RECOVERY` | 1 | RCS 메인 창 부재 시 재실행+재로그인 복구. 프로세스가 이미 있으면 재실행하지 않고(중복 실행 방지), 조회 자체가 불가하면 실행을 보류한다. 복구 로그인은 **tool 에 접속하지 않는다** — 어느 tool 인지는 알람이 정한다. 복구를 탄 경우에만 **List 탭을 따로 연다**(아래 참고). 끄려면 `0` |
 | `ALIGN_FAIL_RCS_RECOVERY_WINDOW_SEC` | 30 | 복구 로그인 후 RCS 메인 창 출현 대기 상한(초). 방금 띄운 프로세스의 기동+업데이터+로그인을 기다리는 자리라 `connect_window_timeout_sec`(3s) 보다 훨씬 길다 |
 | `ALIGN_FAIL_RCS_PREFLIGHT` | 1 | 모니터 기동 시 RCS 준비(실행 → 로그인 → **List 탭**)를 루프 진입 전 1회 수행. 끄면 알람 시 복구만 남는다(첫 알람이 부팅+로그인 비용을 낸다) |
+
+#### 로그인 후 List 탭을 따로 여는 이유
+
+`connect_to_tool` 은 "**현재 List 탭에서**" tool 행을 찾는다고 가정한다. 그런데
+`workflow_login.build_login_workflow_steps` 에서 `click_list_tab` /
+`verify_list_tab_opened` / `open_target_tool` 이 **전부 `if normalized_tool_name:` 한
+블록**에 묶여 있다. 복구/기동 로그인은 `target_tool_name=""` 으로 부르므로(어느 tool 로
+들어갈지는 알람이 정하니까) "tool 은 열지 않는다"는 계약이 **List 탭 클릭까지 같이 꺼
+버린다**. 그래서 두 경로가 List 를 직접 연다:
+
+- 기동 준비 — `monitor/rcs_preflight.py` (창을 확보한 뒤 항상)
+- 알람 시 복구 — `cycle._exec_ensure_rcs_ready` (**복구를 탄 경우에만**)
+
+복구를 안 탄 정상 경로에서는 누르지 않는다. RCS 가 이미 List 를 띄운 채 떠 있는 것이
+정상 상태이고, 알람마다 탭을 다시 누르면 VLM 왕복·클릭이 공짜로 늘 뿐 아니라 로케이터가
+어긋나면 멀쩡하던 화면을 망친다. 두 경로 모두 List 탭 실패는 **step 을 죽이지 않는다** —
+창은 확보됐고 실제 판정은 다음 단계의 connect 가 한다.
 | `ALIGN_FAIL_BLOCK_INPUT` | 0 | 자동 GUI 구간 동안 사용자 물리 마우스/키보드 차단(Win32 BlockInput). 사용자가 다른 앱을 쓰면 foreground lock 으로 RCS 가 안 떠서 방해되는 문제 대응. SAFE_MODE=0 일 때만 적용, engineer watch 구간은 제외, Ctrl+Alt+Del 로 항상 해제. 합성 클릭(자동화)은 차단 중에도 통과 |
 | `ALIGN_FAIL_SHARE_REQUEST` | 1 | 점유 `Select` 팝업에서 **화면 공유 요청** 발송. 승낙되면 관전(view-only) 세션으로 들어가 엔지니어의 수동 작업을 녹화한다 |
 | `ALIGN_FAIL_SHARE_CONFIRM` | `strict` | 클릭 전 라벨 OCR 확인 정책. `strict`=확인된 것만 클릭 / `lenient`=못 읽어도 클릭 / `off`=확인 생략. **어느 값이든 `terminate`/`control`/`cancel` 이 읽히면 클릭하지 않는다** |

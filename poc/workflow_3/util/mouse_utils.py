@@ -58,15 +58,23 @@ def click_at_screen(
     click_count: int = 1,
     *,
     action_enabled: bool = True,
+    hold_sec: float = 0.0,
 ) -> bool:
-    """스크린 좌표에서 마우스 클릭을 수행한다."""
+    """스크린 좌표에서 마우스 클릭을 수행한다.
+
+    `hold_sec` > 0 이면 `click()` 대신 press -> 유지 -> release 로 누른다. RCS 원격
+    뷰처럼 입력을 주기적으로 샘플링해 장비로 넘기는 화면에서는, pynput 의 즉시
+    press/release 쌍이 두 샘플 사이에 통째로 들어가 **눌린 적 없는 것으로** 넘어갈 수
+    있다(2026-08-19 오피스: 커서는 버튼 위로 가는데 클릭만 안 먹음). 기본값 0.0 은
+    종전 동작 그대로라 기존 호출부에 영향이 없다.
+    """
     sx, sy = screen_point["x"], screen_point["y"]
 
     if not action_enabled or not PYNPUT_MOUSE_AVAILABLE:
         print(
             f"[INFO] [DRY-RUN] 클릭 생략: target={target_key}, screen=({sx}, {sy}), "
-            f"click_count={click_count}, action_enabled={action_enabled}, "
-            f"pynput={PYNPUT_MOUSE_AVAILABLE}"
+            f"click_count={click_count}, hold_sec={hold_sec}, "
+            f"action_enabled={action_enabled}, pynput={PYNPUT_MOUSE_AVAILABLE}"
         )
         return True
 
@@ -76,10 +84,17 @@ def click_at_screen(
     _glide_to(mouse, sx, sy)
     _jiggle(mouse, sx, sy)
     time.sleep(0.01)
-    mouse.click(Button.left, click_count)
+    if hold_sec > 0:
+        for _ in range(max(1, click_count)):
+            mouse.press(Button.left)
+            time.sleep(hold_sec)
+            mouse.release(Button.left)
+            time.sleep(0.02)
+    else:
+        mouse.click(Button.left, click_count)
     print(
         f"[INFO] 클릭 완료(glide+jiggle): target={target_key}, screen=({sx}, {sy}), "
-        f"click_count={click_count}"
+        f"click_count={click_count}, hold_sec={hold_sec}"
     )
     return True
 

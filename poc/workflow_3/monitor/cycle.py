@@ -60,6 +60,7 @@ from poc.workflow_3.runner.workflow_types import (
 from poc.workflow_3.util import (
     activate_window,
     block_input,
+    capture_screen,
     capture_window,
     click_at_screen,
     env_float,
@@ -141,6 +142,8 @@ class CycleResult:
     best_xy: str = ""
     recording_dir: str = ""
     frame_count: int = 0
+    prelude_dir: str = ""       # 접속 구간 화면 녹화(시연용, 기본 off).
+    prelude_frame_count: int = 0
     failed_step: str = ""
     failure_class: str = ""
     notes: list[str] = field(default_factory=list)
@@ -265,6 +268,25 @@ def _scan_rcs_processes(exe_path):
         return None
 
 
+def _list_process_windows(pid):
+    """PID 가 가진 보이는 top-level 창 목록. 조회 불가면 None(=판단 보류).
+
+    창 없는 좀비 RCS 를 가려내기 위한 것이다. 조회가 안 될 때 빈 리스트를 주면 "창이
+    없다"= 좀비로 오판해 멀쩡한 프로세스를 죽일 수 있으므로 예외를 올려 상위가
+    '살아 있음' 으로 처리하게 둔다(classify_existing_processes 참고).
+    """
+    from poc.workflow_3.util.window_utils import collect_window_rows
+
+    return collect_window_rows(process_id=int(pid))
+
+
+def _terminate_process(pid) -> None:
+    """PID 를 종료한다. psutil 이 없으면 예외를 올려 상위가 실패로 기록하게 한다."""
+    import psutil
+
+    psutil.Process(int(pid)).terminate()
+
+
 def _open_list_tab(window, title, backend) -> bool:
     """메인 창의 List 탭을 클릭한다. 성공 여부만 돌려주고 예외는 올리지 않는다.
 
@@ -306,6 +328,8 @@ def _exec_ensure_rcs_ready(step, context, settings: Workflow3Settings) -> StepRe
             launch_fn=launch_rcs,
             login_fn=run_login_workflow,
             wait_window_fn=wait_for_rcs_main_window,
+            list_windows_fn=_list_process_windows,
+            terminate_fn=_terminate_process,
         )
         if recovery.status != RECOVERED:
             return _make_result(
@@ -715,6 +739,67 @@ def _recording_dir_for(eqp_id: str, recipe_id: str, tag: str) -> Path:
     return ALIGN_IMAGES_DIR / eqp_id / "_unregistered" / tag / "recording"
 
 
+def start_prelude_recording(context: dict, settings: Workflow3Settings):
+    """접속 구간(RCS 실행/로그인/tool 진입)을 **화면 전체**로 녹화한다 (기본 off).
+
+    본 녹화는 tool 창 rect 를 찍으므로 창이 생기기 전 구간은 원리상 프레임이 없다.
+    시연 영상이 "RCS 를 열어 tool 로 들어가는 장면"부터 시작하려면 그 구간만은
+    창이 아니라 화면을 찍어야 한다.
+
+    저장 위치는 본 녹화 폴더의 **하위** `prelude/` 다 - recording_filter 는
+    `.../recording/*.jpg` 를 비재귀로 훑으므로, 창 rect 를 전제한 그 파이프라인에
+    화면 전체 프레임이 섞여 들어가지 않는다.
+
+    녹화 실패는 사이클을 죽이지 않는다(시연 보조물이지 보정 경로가 아니다).
+    """
+    if not settings.record_prelude_enabled:
+        return None
+    out_dir = _recording_dir_for(
+        context["eqp_id"], context["recipe_id"], context["tag"]
+    ) / "prelude"
+    monitor_index = settings.prelude_monitor_index
+    try:
+        session = RecordingSession(
+            None,
+            out_dir,
+            tag=f"{context['tag']}_pre",
+            poll_sec=settings.prelude_poll_sec,
+            heartbeat_sec=settings.recording_heartbeat_sec,
+            change_min_px=settings.recording_change_min_px,
+            max_sec=settings.prelude_max_sec,
+            max_disk_mb=settings.prelude_max_disk_mb,
+            jpeg_quality=settings.prelude_jpeg_quality,
+            capture_fn=lambda: capture_screen(monitor_index),
+            capture_source="screen",
+        ).start()
+        context["prelude_recording"] = session
+        print(f"[INFO] 접속 구간 화면 녹화 시작(시연용): {out_dir}")
+        return session
+    except Exception as exc:
+        print(f"[WARNING] prelude 녹화 시작 실패(사이클은 계속): {exc}")
+        log_work2_event(
+            component=LOG_COMPONENT, message="prelude_start_failed", level="warning",
+            error=str(exc),
+        )
+        return None
+
+
+def stop_prelude_recording(context: dict, reason: str) -> int:
+    """prelude 녹화를 멈춘다 (없으면 0). 두 번 불러도 안전 - 두 번째는 0.
+
+    정상 흐름에선 tool 창이 뜬 시점에 멈추고, teardown 은 접속이 깨진 경로만 줍는다.
+    그래서 결과 요약은 **여기서** context 에 적어 둔다 - 인계 시점에 멈춘 세션의
+    프레임 수를 teardown 이 다시 알아낼 방법이 없기 때문이다.
+    """
+    session = context.pop("prelude_recording", None)
+    if session is None:
+        return 0
+    frames = session.stop(reason)
+    context["prelude_dir"] = str(session.out_dir)
+    context["prelude_frame_count"] = len(frames)
+    return len(frames)
+
+
 def _exec_start_recording(step, context, settings: Workflow3Settings) -> StepResult:
     """⑤ 상시 녹화 시작 — 실패해도 사이클은 계속(녹화는 best-effort)."""
     started_at = time.time()
@@ -730,6 +815,11 @@ def _exec_start_recording(step, context, settings: Workflow3Settings) -> StepRes
             max_sec=settings.recording_max_sec,
         ).start()
         context["recording"] = session
+        # tool 창 녹화가 떴으니 화면 전체 녹화는 여기서 끝난다 - 두 세션이 겹쳐 돌면
+        # 같은 장면을 두 번 저장하고 폴링도 두 배가 된다.
+        handed_over = stop_prelude_recording(context, "tool_window_open")
+        if handed_over:
+            print(f"[INFO] 접속 구간 화면 녹화 종료 - {handed_over} 프레임 인계")
     except Exception as exc:
         print(f"[WARNING] 녹화 시작 실패(사이클은 계속): {exc}")
         log_work2_event(
@@ -976,6 +1066,14 @@ def _teardown_steps(eqp_id, context, result, settings, *, input_blocked, recordi
         result.recording_dir = str(sess.out_dir)
         result.frame_count = len(frames)
 
+    def _stop_prelude():
+        # 정상 흐름에선 tool 창이 뜬 시점에 이미 멈췄다. 여기 남는 건 접속이 깨진
+        # 경로(rcs_occupied 등) - 그때도 화면 녹화 스레드가 살아 있으면 안 된다.
+        stop_prelude_recording(context, "cycle_teardown")
+        if context.get("prelude_dir"):
+            result.prelude_dir = context["prelude_dir"]
+            result.prelude_frame_count = context.get("prelude_frame_count", 0)
+
     def _close_tool():
         if context.get("tool_window") is not None and CLOSE_TOOL_AVAILABLE:
             close_tool(eqp_id)
@@ -986,6 +1084,7 @@ def _teardown_steps(eqp_id, context, result, settings, *, input_blocked, recordi
     return [
         ("input_unblock", _unblock),
         ("recording_stop", _stop_recording),
+        ("prelude_stop", _stop_prelude),
         ("close_tool", _close_tool),
         ("close_alert", _close_alert),
     ]
@@ -1036,6 +1135,12 @@ def run_alarm_cycle(
     )
     notifier.start_watchdog(settings.notify_delay_sec)
     try:
+        # 시연용 접속 구간 녹화 - **step 시작 전**에 켠다. ensure_rcs_ready 가 RCS 를
+        # 재실행/재로그인하는 장면까지 담아야 "RCS 를 열어 tool 로 들어가는" 영상이 된다.
+        prelude = start_prelude_recording(context, settings)
+        if prelude is not None:
+            result.prelude_dir = str(prelude.out_dir)
+
         # 자동 GUI 구간 동안 사용자 물리 입력 차단(opt-in) — foreground lock/클릭 방해 방지.
         if _should_block_input(settings):
             input_blocked = block_input(True, debug_label=f"align_fail_cycle {eqp_id}")

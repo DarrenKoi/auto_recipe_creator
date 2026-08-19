@@ -10,11 +10,16 @@ from poc.workflow_3.config import Workflow3Settings
 from poc.workflow_3.monitor import cycle
 from poc.workflow_3.monitor.cycle import build_cycle_steps
 from poc.workflow_3.monitor.rcs_recovery import (
+    PROCESS_NONE,
+    PROCESS_STALE,
+    PROCESS_UNKNOWN,
+    PROCESS_WINDOWED,
     RECOVERED,
     STATUS_LAUNCH_ERROR,
     STATUS_LOGIN_ERROR,
     STATUS_WINDOW_NOT_FOUND,
     RecoveryOutcome,
+    classify_existing_processes,
     recover_rcs_session,
 )
 from poc.workflow_3.rcs.workflow_login import resolve_login_tool_name
@@ -387,3 +392,110 @@ def test_list_tab_failure_does_not_fail_the_step(monkeypatch):
     )
     assert result.status == "success", result
     assert context["rcs_main_window"] is window, "확보한 창까지 버리면 안 된다"
+
+
+# ------------------------------------------------------------------
+# 창 없는 좀비 프로세스 - 2026-08-19 오피스 실측.
+#
+# 작업 표시줄에는 안 보이는데 PID 만 남은 RCS 가 있었다. 중복 실행 가드가 그것을
+# "살아 있음" 으로 세는 바람에 재실행이 막혔고, 로그인만 시도하다 창이 안 떠
+# rcs_recovery_no_window 로 끝났다. 가드가 원래 막으려던 것(중복 실행)과 정반대
+# 상황에서 발목을 잡은 셈이라, 창을 가진 프로세스와 좀비를 구분해야 한다.
+# ------------------------------------------------------------------
+
+
+def test_classifies_process_without_any_window_as_stale():
+    assert classify_existing_processes(
+        [{"pid": 42}], lambda pid: [],
+    ) == PROCESS_STALE
+
+
+def test_classifies_process_with_a_window_as_alive():
+    assert classify_existing_processes(
+        [{"pid": 42}], lambda pid: [{"title": "RCS Main"}],
+    ) == PROCESS_WINDOWED
+
+
+def test_classifies_as_alive_when_any_process_has_a_window():
+    """두 개 중 하나만 정상이어도 죽이면 안 된다 - 그 하나가 엔지니어의 세션이다."""
+    assert classify_existing_processes(
+        [{"pid": 1}, {"pid": 2}],
+        lambda pid: [{"title": "RCS Main"}] if pid == 2 else [],
+    ) == PROCESS_WINDOWED
+
+
+def test_classifies_as_alive_when_window_lookup_is_unavailable():
+    """창 조회를 못 하면 '좀비' 라고 단정하지 않는다 - 종료는 되돌릴 수 없다."""
+    assert classify_existing_processes([{"pid": 42}], None) == PROCESS_WINDOWED
+
+
+def test_classifies_as_alive_when_window_lookup_raises():
+    assert classify_existing_processes(
+        [{"pid": 42}], _raise(RuntimeError("enum boom")),
+    ) == PROCESS_WINDOWED
+
+
+def test_unknown_and_none_are_reported_separately():
+    assert classify_existing_processes(None, lambda pid: []) == PROCESS_UNKNOWN
+    assert classify_existing_processes([], lambda pid: []) == PROCESS_NONE
+
+
+def test_stale_process_is_not_killed_by_default():
+    """종료는 되돌릴 수 없다 - 기본값은 보고만 하고 기존 동작(로그인 시도)을 지킨다."""
+    calls = []
+    outcome = recover_rcs_session(
+        _settings(),
+        find_processes_fn=lambda exe: [{"pid": 42}],
+        launch_fn=lambda exe: calls.append("launch"),
+        login_fn=lambda settings, target_tool_name: calls.append("login"),
+        wait_window_fn=lambda timeout_sec: (_window(), "RCS Main", "uia"),
+        list_windows_fn=lambda pid: [],
+        terminate_fn=lambda pid: calls.append(f"kill:{pid}"),
+    )
+    assert calls == ["login"], calls
+    assert outcome.launched is False
+
+
+def test_stale_process_is_killed_and_relaunched_when_enabled():
+    calls = []
+    outcome = recover_rcs_session(
+        _settings(rcs_kill_stale_enabled=True),
+        find_processes_fn=lambda exe: [{"pid": 42}],
+        launch_fn=lambda exe: calls.append("launch"),
+        login_fn=lambda settings, target_tool_name: calls.append("login"),
+        wait_window_fn=lambda timeout_sec: (_window(), "RCS Main", "uia"),
+        list_windows_fn=lambda pid: [],
+        terminate_fn=lambda pid: calls.append(f"kill:{pid}"),
+    )
+    assert calls == ["kill:42", "launch", "login"], calls
+    assert outcome.launched is True
+
+
+def test_windowed_process_is_never_killed_even_when_enabled():
+    """창이 있는 RCS 는 누군가 쓰고 있는 세션이다 - 스위치를 켜도 건드리지 않는다."""
+    calls = []
+    recover_rcs_session(
+        _settings(rcs_kill_stale_enabled=True),
+        find_processes_fn=lambda exe: [{"pid": 42}],
+        launch_fn=lambda exe: calls.append("launch"),
+        login_fn=lambda settings, target_tool_name: calls.append("login"),
+        wait_window_fn=lambda timeout_sec: (_window(), "RCS Main", "uia"),
+        list_windows_fn=lambda pid: [{"title": "RCS Main"}],
+        terminate_fn=lambda pid: calls.append(f"kill:{pid}"),
+    )
+    assert calls == ["login"], calls
+
+
+def test_relaunches_after_kill_even_if_terminate_reports_failure():
+    """종료가 실패해도 실행은 시도한다 - 어차피 창 없는 프로세스라 더 나빠질 게 없다."""
+    calls = []
+    recover_rcs_session(
+        _settings(rcs_kill_stale_enabled=True),
+        find_processes_fn=lambda exe: [{"pid": 42}],
+        launch_fn=lambda exe: calls.append("launch"),
+        login_fn=lambda settings, target_tool_name: calls.append("login"),
+        wait_window_fn=lambda timeout_sec: (_window(), "RCS Main", "uia"),
+        list_windows_fn=lambda pid: [],
+        terminate_fn=_raise(RuntimeError("access denied")),
+    )
+    assert calls == ["launch", "login"], calls

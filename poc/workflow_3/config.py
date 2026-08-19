@@ -125,6 +125,11 @@ class Workflow3Settings(WorkflowSettings):
     # 계열이라 여기 둔다 - 모듈 상수로 두면 seed_env() 보다 먼저 읽혀
     # workflow_3_config.py 로 조정할 수 없다(셸 env 만 먹힘).
     rcs_recovery_window_timeout_sec: float = 30.0
+    # 창이 하나도 없는 RCS 프로세스(작업 표시줄에 안 보이는 좀비)를 종료하고 재실행할지.
+    # 기본 off - 프로세스 종료는 되돌릴 수 없어 opt-in 이다. 켜도 **창을 가진** 프로세스는
+    # 절대 건드리지 않는다(그건 누군가 쓰는 세션이다). 2026-08-19 오피스에서 이 좀비가
+    # 중복 실행 가드에 걸려 복구가 통째로 막히는 것을 실측했다.
+    rcs_kill_stale_enabled: bool = False
     # 모니터 기동 시 RCS 준비(실행 -> 로그인 -> List 탭)를 루프 진입 전 1회 수행.
     # 기본 on - 안 하면 첫 알람이 RCS 부팅+로그인 비용을 통째로 낸다(장비는 그동안
     # 멈춰 있다). 실행/로그인 여부는 rcs_recovery_enabled 게이트도 함께 본다.
@@ -360,6 +365,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         share_wait_sec=env_float("ALIGN_FAIL_SHARE_WAIT_SEC", 10.0),
         share_max_attempts=env_int("ALIGN_FAIL_SHARE_MAX_ATTEMPTS", 2),
         rcs_recovery_enabled=env_flag("ALIGN_FAIL_RCS_RECOVERY", default=True),
+        rcs_kill_stale_enabled=env_flag("ALIGN_FAIL_RCS_KILL_STALE", default=False),
         rcs_recovery_window_timeout_sec=env_float(
             "ALIGN_FAIL_RCS_RECOVERY_WINDOW_SEC", 30.0
         ),

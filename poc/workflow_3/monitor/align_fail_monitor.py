@@ -540,7 +540,11 @@ def _run_rcs_preflight(settings: Workflow3Settings):
         return None
 
     try:
-        from poc.workflow_3.monitor.cycle import _scan_rcs_processes
+        from poc.workflow_3.monitor.cycle import (
+            _list_process_windows,
+            _scan_rcs_processes,
+            _terminate_process,
+        )
         from poc.workflow_3.monitor.rcs_preflight import ensure_rcs_session_ready
         from poc.workflow_3.monitor.rcs_recovery import recover_rcs_session
         from poc.workflow_3.rcs.login_rcs_common import wait_for_rcs_main_window
@@ -558,6 +562,8 @@ def _run_rcs_preflight(settings: Workflow3Settings):
             launch_fn=launch_rcs,
             login_fn=run_login_workflow,
             wait_window_fn=wait_for_rcs_main_window,
+            list_windows_fn=_list_process_windows,
+            terminate_fn=_terminate_process,
         )
 
     def _open_list(window, title, backend):

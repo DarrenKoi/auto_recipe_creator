@@ -24,6 +24,7 @@ from poc.workflow_3.monitor.demonstration_rcs_control import (
     build_flows,
     parse_flow_map,
     parse_tool_ids,
+    perform_remote_click,
     resolve_flow_name,
     run_demonstration,
     run_in_tool_flow,
@@ -778,6 +779,59 @@ def test_every_workflow3_import_name_exists_in_its_module():
 
     assert not missing, "엉뚱한 모듈에서 가져온 이름: " + ", ".join(missing)
     assert checked > 10, f"검사한 import 가 너무 적다({checked}) - 가드가 헛돌고 있다"
+
+
+# ------------------------------------------------------------------
+# 원격 뷰 클릭 순서 - 2026-08-19 오피스 실측.
+#
+# 커서는 Optics/Work Sheet 위로 정확히 갔는데 **클릭만 안 먹었다**. 이 저장소의 다른
+# 원격 뷰 조작(sem_monitor.controller._ensure_actionable)은 제스처마다 tool 창을
+# foreground 로 다시 잡는데, 시연 경로가 그 단계를 빠뜨렸다. 포커스 없는 창에서는 첫
+# 클릭이 창 활성화에 쓰이고 버튼에는 닿지 않는다.
+# ------------------------------------------------------------------
+
+
+def _click_calls(**overrides):
+    calls = []
+    kwargs = dict(
+        foreground_fn=lambda window: calls.append("foreground") or True,
+        move_fn=lambda screen, key: calls.append("move") or True,
+        click_fn=lambda screen, key: calls.append("click") or True,
+        sleep_fn=lambda sec: calls.append(f"sleep:{sec}"),
+    )
+    kwargs.update(overrides)
+    return calls, kwargs
+
+
+def test_remote_click_foregrounds_the_window_before_moving_and_clicking():
+    calls, kwargs = _click_calls()
+    perform_remote_click(
+        object(), {"x": 1, "y": 2}, "optics_button", settle_sec=0.6, **kwargs
+    )
+
+    assert calls == ["foreground", "move", "sleep:0.6", "click"]
+
+
+def test_remote_click_refuses_to_click_when_the_window_cannot_be_focused():
+    """포커스를 못 잡았는데 누르면 그 클릭이 어디로 가는지 알 수 없다."""
+    calls, kwargs = _click_calls(foreground_fn=lambda window: False)
+
+    with pytest.raises(RuntimeError, match="foreground"):
+        perform_remote_click(
+            object(), {"x": 1, "y": 2}, "optics_button", settle_sec=0.0, **kwargs
+        )
+
+    assert "click" not in calls
+
+
+def test_remote_click_still_clicks_when_no_foreground_helper_is_available():
+    """전면화 수단이 없는 환경에서는 막지 않는다 - 그건 게이트가 아니라 부재다."""
+    calls, kwargs = _click_calls(foreground_fn=None)
+    perform_remote_click(
+        object(), {"x": 1, "y": 2}, "optics_button", settle_sec=0.0, **kwargs
+    )
+
+    assert calls == ["move", "sleep:0.0", "click"]
 
 
 if __name__ == "__main__":

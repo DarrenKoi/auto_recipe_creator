@@ -45,6 +45,9 @@ env (`DEMO_RCS_*` 네임스페이스 - 루프의 `ALIGN_FAIL_*` 과 섞지 않�
     DEMO_RCS_CONFIRM        라벨 확인 정책 strict|lenient|off (기본 strict)
     DEMO_RCS_PRE_CLICK_SETTLE_SEC  커서 도착 후 클릭까지 대기 (기본 0.6)
                             원격 뷰가 커서를 따라올 시간 - 짧으면 클릭이 삼켜진다
+    DEMO_RCS_CLICK_HOLD_SEC 버튼을 누르고 있는 시간 (기본 0.15)
+                            즉시 press/release 는 원격 샘플링 사이로 빠져나간다
+    ALIGN_FAIL_RCS_KILL_STALE=1  창 없는 좀비 RCS 프로세스를 종료하고 재실행 (기본 off)
     SAFE_MODE=1             모든 클릭 차단 (리허설 - 화면은 안 움직인다)
 
 판정 로직은 전부 협력자 주입식이라 Mac 에서 시험된다:
@@ -442,6 +445,31 @@ def run_in_tool_flow(
     return _tag(FLOW_OK)
 
 
+def perform_remote_click(
+    window, screen_point: dict, key: str,
+    *, foreground_fn, move_fn, click_fn, sleep_fn, settle_sec: float,
+) -> None:
+    """원격 뷰의 한 지점을 실제로 눌리게 클릭한다.
+
+    순서가 계약이다: **전면화 -> 커서 이동 -> 체류 -> 누름**.
+
+      * 전면화를 빼면 포커스 없는 창의 첫 클릭이 창 활성화에 쓰이고 버튼에는 닿지
+        않는다. 2026-08-19 오피스에서 "커서는 버튼 위로 가는데 클릭이 안 먹는" 증상의
+        원인이며, 이 저장소의 다른 원격 뷰 조작(`sem_monitor.controller`)은 제스처마다
+        같은 일을 한다. 전면화에 **실패하면 누르지 않는다**(fail-closed) - 포커스가
+        어디 있는지 모르는 상태의 클릭은 어디로 갈지 모른다.
+      * 이동과 누름 사이의 체류는 원격이 커서 위치를 따라올 시간이다.
+
+    `foreground_fn` 이 None 이면(그 수단이 없는 환경) 막지 않는다 - 그건 게이트가
+    아니라 부재이고, 여기서 시연을 통째로 멈출 이유가 없다.
+    """
+    if foreground_fn is not None and not foreground_fn(window):
+        raise RuntimeError(f"tool 창 foreground 확보 실패 - 클릭하지 않음: {key}")
+    move_fn(screen_point, key)
+    sleep_fn(settle_sec)
+    click_fn(screen_point, key)
+
+
 # ------------------------------------------------------------------
 # 장비별 조작 흐름 배정.
 # ------------------------------------------------------------------
@@ -665,7 +693,11 @@ def _build_preflight_fn(settings: Workflow3Settings):
     `rcs_preflight.ensure_rcs_session_ready` 가 하고 여기서는 협력자만 묶는다.
     RCS 가 이미 로그인돼 있으면 재실행/재로그인은 생략된다(중복 프로세스 방지).
     """
-    from poc.workflow_3.monitor.cycle import _scan_rcs_processes
+    from poc.workflow_3.monitor.cycle import (
+        _list_process_windows,
+        _scan_rcs_processes,
+        _terminate_process,
+    )
     from poc.workflow_3.monitor.rcs_preflight import ensure_rcs_session_ready
     from poc.workflow_3.monitor.rcs_recovery import recover_rcs_session
     from poc.workflow_3.rcs.login_rcs_common import wait_for_rcs_main_window
@@ -680,6 +712,8 @@ def _build_preflight_fn(settings: Workflow3Settings):
             launch_fn=launch_rcs,
             login_fn=run_login_workflow,
             wait_window_fn=wait_for_rcs_main_window,
+            list_windows_fn=_list_process_windows,
+            terminate_fn=_terminate_process,
         )
 
     def _open_list(window, title, backend):
@@ -870,6 +904,7 @@ def _build_action_fn(
     confirm_policy: str,
     attempts: int,
     pre_click_settle_sec: float,
+    click_hold_sec: float,
     tag: str,
 ):
     """장비별 창 안 조작 협력자 (VLM 좌표 + OCR 확인 + 클릭).
@@ -881,7 +916,10 @@ def _build_action_fn(
     from poc.workflow_3 import DEBUG_IMAGE_DIR
     from poc.workflow_3.util.image_utils import capture_window
     from poc.workflow_3.util.mouse_utils import click_at_screen, move_cursor_to_screen
-    from poc.workflow_3.util.window_utils import image_point_to_screen
+    from poc.workflow_3.util.window_utils import (
+        foreground_window,
+        image_point_to_screen,
+    )
     from poc.workflow_3.vlm.label_verify import (
         crop_box_around_point,
         read_text_near_point,
@@ -918,13 +956,7 @@ def _build_action_fn(
         return tokens_from_text(read.raw_text) if read.ok else []
 
     def _click(window, image, point, key):
-        """이미지 픽셀 좌표를 스크린 좌표로 변환해 클릭한다.
-
-        **도착과 클릭 사이에 체류를 둔다.** tool 창은 장비 화면의 원격 뷰라 커서 이동이
-        원격에 반영되기까지 지연이 있고, 곧바로 누르면 원격 쪽 커서가 아직 이전 위치에
-        있어 클릭이 삼켜진다(오피스 1회차 증상: "마우스만 이동하고 클릭이 안 됨").
-        먼저 커서만 옮겨 원격이 따라오게 한 뒤 잠깐 쉬고 그 자리에서 누른다.
-        """
+        """이미지 픽셀 좌표를 스크린 좌표로 변환해 클릭한다(순서는 perform_remote_click)."""
         screen = image_point_to_screen(window, point, image_size=image.size)
         if screen is None:
             raise RuntimeError(f"좌표 변환 실패: {key} point={point}")
@@ -932,9 +964,23 @@ def _build_action_fn(
             f"[INFO] 클릭: {key} px={point} -> screen={screen}"
             f"{'' if settings.action_enabled else ' [dry-run]'}"
         )
-        move_cursor_to_screen(screen, f"demo_{key}", action_enabled=settings.action_enabled)
-        time.sleep(max(0.0, pre_click_settle_sec))
-        click_at_screen(screen, f"demo_{key}", action_enabled=settings.action_enabled)
+
+        def _foreground(target_window):
+            return foreground_window(target_window, debug_label=f"demo_{key}")
+
+        perform_remote_click(
+            window, screen, key,
+            foreground_fn=_foreground if callable(foreground_window) else None,
+            move_fn=lambda pt, k: move_cursor_to_screen(
+                pt, f"demo_{k}", action_enabled=settings.action_enabled,
+            ),
+            click_fn=lambda pt, k: click_at_screen(
+                pt, f"demo_{k}", action_enabled=settings.action_enabled,
+                hold_sec=click_hold_sec,
+            ),
+            sleep_fn=time.sleep,
+            settle_sec=max(0.0, pre_click_settle_sec),
+        )
 
     def _action(tool_id, tool_window, tool_title, tool_backend):
         flow_name = resolve_flow_name(tool_id, flow_map, default_flow)
@@ -1052,6 +1098,7 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
     default_flow = os.environ.get("DEMO_RCS_DEFAULT_FLOW", FLOW_OPTICS).strip().lower()
     confirm_policy = os.environ.get("DEMO_RCS_CONFIRM", "strict").strip().lower() or "strict"
     pre_click_settle = _env_float("DEMO_RCS_PRE_CLICK_SETTLE_SEC", 0.6)
+    click_hold_sec = _env_float("DEMO_RCS_CLICK_HOLD_SEC", 0.15)
     tag = make_timestamp_tag(time.time())
 
     assigned = ", ".join(
@@ -1061,7 +1108,8 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
         f"[INFO] 시연 설정: 체류={dwell_sec:.0f}s, 간격={gap_sec:.0f}s, "
         f"View훑기={'on' if view_enabled else 'off'}(휠 {notches}칸), "
         f"창안조작={'on' if flow_enabled else 'off'}"
-        f"(확인={confirm_policy}, 재시도={flow_attempts}, 클릭전대기={pre_click_settle:.1f}s), "
+        f"(확인={confirm_policy}, 재시도={flow_attempts}, "
+        f"클릭전대기={pre_click_settle:.1f}s, 누름유지={click_hold_sec:.2f}s), "
         f"반복={repeat}회"
     )
     print(f"[INFO] 장비별 조작 흐름: {assigned or '-'}")
@@ -1082,6 +1130,7 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
                 confirm_policy=confirm_policy,
                 attempts=flow_attempts,
                 pre_click_settle_sec=pre_click_settle,
+                click_hold_sec=click_hold_sec,
                 tag=tag,
             )
             if flow_enabled
@@ -1146,6 +1195,7 @@ __all__ = [
     "main",
     "parse_flow_map",
     "parse_tool_ids",
+    "perform_remote_click",
     "resolve_flow_name",
     "run_demonstration",
     "run_in_tool_flow",

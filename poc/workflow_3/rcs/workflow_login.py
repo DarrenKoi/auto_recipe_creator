@@ -460,8 +460,55 @@ def _workflow_debug_image_dir(context: dict) -> Path | None:
     return debug_dir
 
 
-def _clear_and_type(text: str, target_key: str, settings: WorkflowSettings) -> bool:
-    """선택된 입력창 내용을 backspace 로 지운 뒤 새 문자열을 입력한다."""
+# 입력창 클리어 시 누를 backspace/delete 최대 횟수. 필드에 남아 있을 수 있는 값의
+# 길이를 모르므로 넉넉한 상한을 둔다(비밀번호/사번 칸이라 수십 자를 넘지 않는다).
+# 이 값이 실제 잔여 길이보다 작으면 앞글자가 남아 새 값과 이어 붙는다 - 그게 바로
+# 2026-08-19 오피스 로그인 실패의 원인이었다(그때는 상한이 1이었다).
+LOGIN_FIELD_CLEAR_MAX_CHARS = int(
+    os.getenv("ACTION_LOGIN_FIELD_CLEAR_MAX_CHARS", "64")
+)
+
+
+def _clear_input_field(keyboard, settings: WorkflowSettings) -> None:
+    """선택된 입력창을 **길이와 무관하게** 비운다.
+
+    3중으로 시도하는 이유: RCS 는 MFC 계열이라 컨트롤마다 먹는 키가 다르다
+    (pywinauto UIA/win32 백엔드가 ComboBox/Button 을 아예 노출하지 못한 것과 같은 계열).
+    어느 하나에만 기대면 그 컨트롤에서 조용히 실패하고, **지워지지 않은 앞글자 뒤에
+    새 값이 이어 붙어** 전혀 다른 문자열이 전송된다.
+
+      1. Ctrl+A -> 선택 영역 확보 (대부분의 표준 EDIT 컨트롤)
+      2. Delete  -> 선택 영역 제거. 선택이 안 됐으면 캐럿 뒤 한 글자만 지운다.
+      3. End + backspace x N -> 캐럿을 끝으로 보내고 앞으로 훑어 지운다(최종 보루).
+
+    이미 빈 필드에서 backspace 는 무해한 no-op 이라 3단계를 항상 도는 비용은
+    키 입력 몇십 번뿐이다. 잘못된 비밀번호를 보내는 비용이 훨씬 크다.
+    """
+    try:
+        with keyboard.pressed(Key.ctrl):
+            keyboard.press("a")
+            keyboard.release("a")
+        keyboard.press(Key.delete)
+        keyboard.release(Key.delete)
+    except Exception as exc:
+        # Ctrl+A 를 안 받는 컨트롤이 있을 수 있다 - 아래 backspace 훑기가 보루다.
+        print(f"[INFO] 입력창 select-all 클리어 실패(backspace 훑기로 진행): {exc}")
+
+    keyboard.press(Key.end)
+    keyboard.release(Key.end)
+    for _ in range(max(1, LOGIN_FIELD_CLEAR_MAX_CHARS)):
+        keyboard.press(Key.backspace)
+        keyboard.release(Key.backspace)
+    time.sleep(settings.post_type_backspace_settle_sec)
+
+
+def _clear_and_type(
+    text: str, target_key: str, settings: WorkflowSettings, *, keyboard=None
+) -> bool:
+    """선택된 입력창을 완전히 비운 뒤 새 문자열을 입력한다.
+
+    `keyboard` 는 테스트 주입점이다(실행 시에는 pynput KeyboardController).
+    """
     if not settings.action_enabled or not PYNPUT_KEYBOARD_AVAILABLE:
         if target_key == "password_input":
             print(
@@ -475,10 +522,8 @@ def _clear_and_type(text: str, target_key: str, settings: WorkflowSettings) -> b
             )
         return True
 
-    keyboard = KeyboardController()
-    keyboard.press(Key.backspace)
-    keyboard.release(Key.backspace)
-    time.sleep(settings.post_type_backspace_settle_sec)
+    keyboard = keyboard if keyboard is not None else KeyboardController()
+    _clear_input_field(keyboard, settings)
 
     for ch in text:
         keyboard.type(ch)

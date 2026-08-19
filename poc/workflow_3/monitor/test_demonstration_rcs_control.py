@@ -25,7 +25,6 @@ from poc.workflow_3.monitor.demonstration_rcs_control import (
     ToolVisit,
     browse_view_tab,
     parse_tool_ids,
-    resolve_optics_window,
     run_demonstration,
     run_optics_sequence,
     visit_tool,
@@ -186,105 +185,192 @@ def _raiser(exc):
 
 # ------------------------------------------------------------------
 # tool 창 안 Optics 시퀀스 - Optics... -> Memory 탭 -> Close.
+#
+# 첫 오피스 실행에서 드러난 결함이 이 절의 존재 이유다: Optics 클릭이 먹지 않았는데도
+# 시퀀스가 계속 진행돼 화면 어딘가의 **다른 Close** 를 눌렀다. 대화상자는 tool 창 안
+# (원격 뷰)에 그려지므로 창 열거로는 확인할 수 없고, 라벨 판독으로만 확인된다.
 # ------------------------------------------------------------------
 
 
-def _optics(*, click_optics=None, find_window=None, click_memory=None, click_close=None,
-            order=None):
-    found = (object(), "Optics", "uia")
-    return run_optics_sequence(
+class _Screen:
+    """tool 창 화면 대역 - 요소별 좌표와 그 자리에서 읽히는 토큰을 흉내낸다."""
+
+    def __init__(self, tokens_by_key=None, missing=()):
+        self.tokens = tokens_by_key or {
+            "optics_button": ["Optics..."],
+            "optics_memory_tab": ["Memory"],
+            "optics_close_button": ["Close"],
+        }
+        self.missing = set(missing)
+        self.clicks = []
+        self.events = []
+
+    def locate(self, image, target):
+        self.events.append(f"locate:{target.key}")
+        if target.key in self.missing:
+            return None
+        return {"x": 10, "y": 20}
+
+    def read_tokens(self, image, point, key):
+        self.events.append(f"read:{key}")
+        return self.tokens.get(key, [])
+
+    def click(self, window, image, point, key):
+        self.events.append(f"click:{key}")
+        self.clicks.append(key)
+
+
+def _optics(screen=None, *, policy="strict", attempts=1):
+    screen = screen or _Screen()
+    status = run_optics_sequence(
         object(), "Remote Monitoring System - MCD019", "uia",
-        click_optics_fn=click_optics or (lambda w, t, b: "success"),
-        find_optics_window_fn=find_window or (lambda: found),
-        click_memory_fn=click_memory or (lambda w, t, b: "success"),
-        click_close_fn=click_close or (lambda w, t, b: "success"),
+        capture_fn=lambda w: object(),
+        locate_fn=screen.locate,
+        read_tokens_fn=screen.read_tokens,
+        click_fn=screen.click,
         sleep_fn=lambda sec: None,
         settle_sec=0.0,
+        confirm_policy=policy,
+        attempts=attempts,
+    )
+    return status, screen
+
+
+def test_optics_sequence_confirms_each_label_before_clicking_it():
+    status, screen = _optics()
+
+    assert status == STATUS_OPTICS_OK
+    assert screen.clicks == ["optics_button", "optics_memory_tab", "optics_close_button"]
+    # 각 요소는 '좌표 -> 라벨 판독 -> 클릭' 순서를 지킨다.
+    assert screen.events[:3] == [
+        "locate:optics_button", "read:optics_button", "click:optics_button",
+    ]
+
+
+def test_optics_sequence_does_not_click_when_the_optics_label_is_unconfirmed():
+    status, screen = _optics(_Screen(tokens_by_key={"optics_button": ["PM"]}))
+
+    assert status == STATUS_OPTICS_BUTTON_FAILED
+    assert screen.clicks == []
+
+
+def test_optics_sequence_does_not_click_when_the_optics_point_is_not_found():
+    status, screen = _optics(_Screen(missing={"optics_button"}))
+
+    assert status == STATUS_OPTICS_BUTTON_FAILED
+    assert screen.clicks == []
+
+
+def test_optics_sequence_never_clicks_close_when_the_dialog_is_unconfirmed():
+    """첫 오피스 실행의 실제 결함 - 대화상자가 안 떴는데 다른 Close 를 눌렀다.
+
+    Memory 라벨이 읽히는 것이 '대화상자가 떴다' 는 유일한 증거다. 확인되지 않으면
+    Close 를 찾아 나서면 안 된다 - 화면 어딘가의 다른 Close 를 누르게 된다. 남은
+    대화상자는 다음 단계의 tool 창 닫기가 정리한다.
+    """
+    status, screen = _optics(_Screen(missing={"optics_memory_tab"}))
+
+    assert status == STATUS_OPTICS_WINDOW_NOT_FOUND
+    assert screen.clicks == ["optics_button"]
+    assert "locate:optics_close_button" not in screen.events
+
+
+def test_optics_sequence_does_not_click_close_when_memory_label_mismatches():
+    status, screen = _optics(_Screen(tokens_by_key={
+        "optics_button": ["Optics..."], "optics_memory_tab": ["Image"],
+    }))
+
+    assert status == STATUS_OPTICS_WINDOW_NOT_FOUND
+    assert screen.clicks == ["optics_button"]
+
+
+def test_optics_sequence_retries_the_optics_click_when_the_dialog_never_appears():
+    """원격 뷰라 첫 클릭이 삼켜질 수 있다 - 확인이 안 되면 한 번 더 누른다."""
+    status, screen = _optics(_Screen(missing={"optics_memory_tab"}), attempts=2)
+
+    assert status == STATUS_OPTICS_WINDOW_NOT_FOUND
+    assert screen.clicks == ["optics_button", "optics_button"]
+
+
+def test_optics_sequence_stops_retrying_once_the_dialog_is_confirmed():
+    status, screen = _optics(attempts=3)
+
+    assert status == STATUS_OPTICS_OK
+    assert screen.clicks.count("optics_button") == 1
+
+
+def test_optics_sequence_does_not_click_an_unconfirmed_close():
+    status, screen = _optics(_Screen(tokens_by_key={
+        "optics_button": ["Optics..."], "optics_memory_tab": ["Memory"],
+        "optics_close_button": ["Cancel"],
+    }))
+
+    assert status == STATUS_OPTICS_CLOSE_FAILED
+    assert screen.clicks == ["optics_button", "optics_memory_tab"]
+
+
+def test_optics_sequence_reports_memory_click_failure_but_still_closes():
+    """Memory 라벨이 확인됐다면 대화상자는 떠 있다 - 그때는 Close 를 눌러 정리한다."""
+    screen = _Screen()
+    calls = []
+
+    def _click(window, image, point, key):
+        calls.append(key)
+        if key == "optics_memory_tab":
+            raise RuntimeError("click boom")
+
+    status = run_optics_sequence(
+        object(), "Remote Monitoring System - MCD019", "uia",
+        capture_fn=lambda w: object(),
+        locate_fn=screen.locate,
+        read_tokens_fn=screen.read_tokens,
+        click_fn=_click,
+        sleep_fn=lambda sec: None,
+        settle_sec=0.0,
+        confirm_policy="strict",
+        attempts=1,
     )
 
+    assert status == STATUS_OPTICS_MEMORY_FAILED
+    assert calls == ["optics_button", "optics_memory_tab", "optics_close_button"]
 
-def test_optics_sequence_happy_path():
-    order = []
-    status = _optics(
-        click_optics=lambda w, t, b: order.append("optics") or "success",
-        click_memory=lambda w, t, b: order.append("memory") or "success",
-        click_close=lambda w, t, b: order.append("close") or "success",
+
+def test_optics_sequence_lenient_policy_allows_unreadable_labels():
+    status, screen = _optics(
+        _Screen(tokens_by_key={"optics_button": [], "optics_memory_tab": [],
+                               "optics_close_button": []}),
+        policy="lenient",
     )
 
     assert status == STATUS_OPTICS_OK
-    assert order == ["optics", "memory", "close"]
+    assert screen.clicks == ["optics_button", "optics_memory_tab", "optics_close_button"]
 
 
-def test_optics_sequence_stops_when_the_optics_button_is_not_found():
-    """버튼을 못 눌렀으면 Optics 창은 안 떴다 - 그 상태로 Memory 를 누르면 오클릭이다."""
-    touched = []
-    status = _optics(
-        click_optics=lambda w, t, b: "tab_not_found",
-        click_memory=lambda w, t, b: touched.append("memory") or "success",
-        click_close=lambda w, t, b: touched.append("close") or "success",
+def test_optics_sequence_forbidden_label_is_rejected_even_when_lenient():
+    """off/lenient 는 좌표 진단용이지, 엉뚱한 버튼을 눌러도 좋다는 뜻이 아니다."""
+    status, screen = _optics(
+        _Screen(tokens_by_key={"optics_button": ["Optics", "Cancel"]}),
+        policy="lenient",
     )
 
     assert status == STATUS_OPTICS_BUTTON_FAILED
-    assert touched == []
+    assert screen.clicks == []
 
 
-def test_optics_sequence_stops_when_the_optics_window_is_not_found():
-    touched = []
-    status = _optics(
-        find_window=lambda: (None, "", ""),
-        click_memory=lambda w, t, b: touched.append("memory") or "success",
-        click_close=lambda w, t, b: touched.append("close") or "success",
+def test_optics_sequence_survives_a_capture_exception():
+    status = run_optics_sequence(
+        object(), "RMS", "uia",
+        capture_fn=_raiser(RuntimeError("capture boom")),
+        locate_fn=lambda i, t: {"x": 1, "y": 1},
+        read_tokens_fn=lambda i, p, k: ["Optics"],
+        click_fn=lambda w, i, p, k: None,
+        sleep_fn=lambda sec: None,
+        settle_sec=0.0,
+        confirm_policy="strict",
+        attempts=1,
     )
 
-    assert status == STATUS_OPTICS_WINDOW_NOT_FOUND
-    assert touched == []
-
-
-def test_optics_sequence_closes_the_dialog_even_when_the_memory_tab_fails():
-    """열어둔 대화상자를 남기면 다음 장비 접속 화면을 가린다 - Close 는 반드시 시도한다."""
-    closed = []
-    status = _optics(
-        click_memory=lambda w, t, b: "tab_not_found",
-        click_close=lambda w, t, b: closed.append("close") or "success",
-    )
-
-    assert status == STATUS_OPTICS_MEMORY_FAILED
-    assert closed == ["close"]
-
-
-def test_optics_sequence_closes_the_dialog_even_when_the_memory_tab_raises():
-    closed = []
-    status = _optics(
-        click_memory=_raiser(RuntimeError("vlm down")),
-        click_close=lambda w, t, b: closed.append("close") or "success",
-    )
-
-    assert status == STATUS_OPTICS_MEMORY_FAILED
-    assert closed == ["close"]
-
-
-def test_optics_sequence_reports_a_dialog_left_open():
-    status = _optics(click_close=lambda w, t, b: "tab_not_found")
-
-    assert status == STATUS_OPTICS_CLOSE_FAILED
-
-
-def test_optics_sequence_survives_a_close_exception():
-    status = _optics(click_close=_raiser(RuntimeError("close boom")))
-
-    assert status == STATUS_OPTICS_CLOSE_FAILED
-
-
-def test_resolve_optics_window_falls_back_to_the_tool_window():
-    """대화상자를 별도 창으로 못 찾아도, tool 창 rect 그랩에 겹쳐 찍혀 VLM 이 볼 수 있다."""
-    tool = (object(), "Remote Monitoring System - MCD019", "uia")
-    assert resolve_optics_window((None, "", ""), tool) == tool
-
-
-def test_resolve_optics_window_prefers_the_real_dialog_window():
-    tool = (object(), "Remote Monitoring System - MCD019", "uia")
-    dialog = (object(), "Optics", "uia")
-    assert resolve_optics_window(dialog, tool) == dialog
+    assert status == STATUS_OPTICS_BUTTON_FAILED
 
 
 # ------------------------------------------------------------------

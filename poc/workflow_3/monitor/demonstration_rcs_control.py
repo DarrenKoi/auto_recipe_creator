@@ -28,15 +28,18 @@ Optics 대화상자 열고 닫기 / 창 닫기뿐이다. reposition·OK 클릭�
 env (`DEMO_RCS_*` 네임스페이스 - 루프의 `ALIGN_FAIL_*` 과 섞지 않는다):
 
     DEMO_RCS_TOOL_IDS       접속할 장비 (콤마/공백 구분, 기본 "MCD019,MCDC22")
-    DEMO_RCS_DWELL_SEC      접속 화면 체류 시간 (기본 8.0) - 관객이 볼 시간
+    DEMO_RCS_DWELL_SEC      접속 화면 체류 시간 (기본 3.0) - 관객이 볼 시간
     DEMO_RCS_GAP_SEC        창을 닫고 다음 장비까지 간격 (기본 3.0)
     DEMO_RCS_SCROLL_NOTCHES View 탭에서 아래/위로 굴릴 휠 눈금 수 (기본 3)
     DEMO_RCS_SCROLL_PAUSE_SEC  휠 한 눈금 사이 간격 (기본 0.6)
     DEMO_RCS_REPEAT         장비 순회 반복 횟수 (기본 1)
     DEMO_RCS_VIEW_TAB       View 탭 훑기 on/off (기본 1)
     DEMO_RCS_OPTICS         tool 창 안 Optics 시퀀스 on/off (기본 1)
-    DEMO_RCS_OPTICS_WINDOW_TITLE  Optics 창 제목 접두 (기본 "Optic")
     DEMO_RCS_OPTICS_SETTLE_SEC    대화상자가 그려질 대기 (기본 1.5)
+    DEMO_RCS_OPTICS_ATTEMPTS      Optics 클릭 재시도 횟수 (기본 2)
+    DEMO_RCS_CONFIRM        라벨 확인 정책 strict|lenient|off (기본 strict)
+    DEMO_RCS_PRE_CLICK_SETTLE_SEC  커서 도착 후 클릭까지 대기 (기본 0.6)
+                            원격 뷰가 커서를 따라올 시간 - 짧으면 클릭이 삼켜진다
     SAFE_MODE=1             모든 클릭 차단 (리허설 - 화면은 안 움직인다)
 
 판정 로직은 전부 협력자 주입식이라 Mac 에서 시험된다:
@@ -49,6 +52,7 @@ import time
 from dataclasses import dataclass, field
 
 from poc.workflow_3.config import Workflow3Settings, load_workflow3_settings
+from poc.workflow_3.util.time_utils import make_timestamp_tag
 
 LOG_COMPONENT = "demonstration_rcs_control"
 
@@ -224,23 +228,92 @@ def _close_tool_window(visit: ToolVisit, close_fn) -> None:
 
 # ------------------------------------------------------------------
 # tool 창 안 Optics 시퀀스 - Optics... -> Memory 탭 -> Close.
+#
+# **대화상자는 로컬 창이 아니다.** Remote Monitoring 창은 장비 화면의 원격 뷰라,
+# Optics 를 누르면 대화상자가 그 뷰 **안에** 그려진다 - 로컬 top-level 창 열거로는
+# 절대 찾을 수 없다. 첫 오피스 실행에서 창 제목으로 찾다 실패하고도 "그래도 계속"
+# 폴백이 걸려 화면 어딘가의 **다른 Close** 를 눌렀다. 그래서 확인은 창 열거가 아니라
+# **라벨 판독(OCR)** 으로 하고, 확인되지 않으면 누르지 않는다(share_request 와 같은
+# fail-closed actuator 규약).
 # ------------------------------------------------------------------
 
+# 확인 게이트 토큰. required 는 언어별 묶음이며 한 묶음을 전부 만족해야 확인이다.
+# 오피스 실제 문구는 첫 실행의 debug_images crop/OCR 원문으로 확인한 뒤 조정한다.
+OPTICS_BUTTON_KEY = "optics_button"
+OPTICS_MEMORY_KEY = "optics_memory_tab"
+OPTICS_CLOSE_KEY = "optics_close_button"
 
-def resolve_optics_window(found, tool_window_info):
-    """Optics 대화상자 창을 정한다 - 못 찾으면 tool 창으로 폴백한다.
+OPTICS_BUTTON_REQUIRED = (("optics",),)
+OPTICS_BUTTON_FORBIDDEN = ("cancel", "stop", "terminat", "취소")
+OPTICS_MEMORY_REQUIRED = (("memory",), ("메모리",))
+OPTICS_MEMORY_FORBIDDEN = ("cancel", "취소")
+OPTICS_CLOSE_REQUIRED = (("close",), ("닫기",))
+OPTICS_CLOSE_FORBIDDEN = ("cancel", "terminat", "logout", "abort", "취소", "종료")
 
-    `capture_window` 는 창 핸들 그랩이 아니라 **창 rect 의 화면 그랩**이라, 대화상자를
-    별도 top-level 창으로 못 찾아도 tool 창 rect 위에 겹쳐 찍혀 VLM 이 볼 수 있다.
-    원점(rect.left/top)이 같은 좌표계이므로 image->screen 변환도 그대로 맞는다.
-    제목이 환경마다 다를 수 있어 '못 찾음 = 포기' 로 두면 시연이 매번 여기서 끊긴다.
+
+def _optics_targets():
+    """Optics 시퀀스 3개 요소의 VLM 타겟 정의.
+
+    설명문은 이 저장소의 규약대로 **첫 글자를 anchor** 로 잡게 쓴다(전역 프롬프트 원칙).
+    'Optics...' 는 PM 버튼 바로 위라는 위치 단서를 함께 준다 - tool 창에는 버튼이 많아
+    라벨만으로는 coarse 단계가 흔들린다.
     """
-    window, title, backend = found
-    if window is not None:
-        return window, title, backend
-    print("[WARNING] Optics 창을 제목으로 못 찾음 - tool 창 화면에서 이어서 찾습니다"
-          "(대화상자가 tool 창 위에 겹쳐 캡처된다).")
-    return tool_window_info
+    from poc.workflow_3.vlm.ui_venus_mai_locator import TargetConfig
+
+    optics_button = TargetConfig(
+        key="optics_button",
+        description=(
+            "the 'Optics...' button in the Remote Monitoring window's button area, "
+            "located directly above the 'PM' button. Use the first letter 'O' as the "
+            "anchor, then click safely inside the Optics button area."
+        ),
+    )
+    memory_tab = TargetConfig(
+        key="optics_memory_tab",
+        description=(
+            "the 'Memory' tab in the tab strip of the Optics dialog window. "
+            "Use the first letter 'M' as the anchor, then click safely inside the "
+            "Memory tab area."
+        ),
+    )
+    close_button = TargetConfig(
+        key="optics_close_button",
+        description=(
+            "the 'Close' button of the Optics dialog window. Use the first letter 'C' "
+            "as the anchor, then click safely inside the Close button area."
+        ),
+    )
+    return optics_button, memory_tab, close_button
+
+
+def _confirm_point(
+    image, target, required, forbidden,
+    *, locate_fn, read_tokens_fn, policy,
+):
+    """좌표를 찍고 그 자리 라벨을 읽어 **확인된 경우에만** 그 점을 돌려준다.
+
+    좌표는 VLM 이 정하고 OCR 은 확인만 한다(이 저장소의 클릭 규약). 확인이 안 되면
+    None - 원격 뷰에서 한 칸 어긋난 클릭은 무엇을 눌렀는지 알 수 없다.
+    클릭을 여기서 하지 않는 이유는 호출부가 "라벨은 확인됐는데 클릭이 실패했다" 와
+    "라벨부터 확인이 안 됐다" 를 구분해야 하기 때문이다 - 전자는 대화상자가 떠 있다는
+    증거라 뒤 단계를 계속해야 하고, 후자는 멈춰야 한다.
+    """
+    from poc.workflow_3.monitor.share_request import accepts_label, classify_label
+
+    point = locate_fn(image, target)
+    if point is None:
+        print(f"[WARNING] 좌표 미검출 - 클릭 안 함: {target.key}")
+        return None
+
+    tokens = read_tokens_fn(image, point, target.key)
+    verdict = classify_label(tokens, required, forbidden)
+    if not accepts_label(verdict, policy):
+        print(
+            f"[WARNING] 라벨 확인 실패 - 클릭 안 함: {target.key} "
+            f"verdict={verdict} policy={policy} tokens={tokens!r}"
+        )
+        return None
+    return point
 
 
 def run_optics_sequence(
@@ -248,73 +321,104 @@ def run_optics_sequence(
     tool_title: str,
     tool_backend: str,
     *,
-    click_optics_fn,
-    find_optics_window_fn,
-    click_memory_fn,
-    click_close_fn,
+    capture_fn,
+    locate_fn,
+    read_tokens_fn,
+    click_fn,
     sleep_fn,
     settle_sec: float = 1.5,
+    confirm_policy: str = "strict",
+    attempts: int = 2,
 ) -> str:
-    """tool 창에서 Optics... -> Memory 탭 -> Close 를 차례로 누른다.
+    """tool 창에서 Optics... -> Memory 탭 -> Close 를 확인하며 차례로 누른다.
 
-    협력자(모두 exit_code 문자열 반환, "success" 면 클릭됨):
-      click_optics_fn(window, title, backend)  PM 버튼 위의 'Optics...' 버튼
-      find_optics_window_fn()                  -> (window, title, backend)
-      click_memory_fn / click_close_fn         Optics 창의 Memory 탭 / Close 버튼
+    협력자(share_request 와 같은 모양이라 배선을 그대로 재사용한다):
+      capture_fn(window)                  -> image
+      locate_fn(image, target)            -> point dict | None (**이미지 픽셀 좌표**)
+      read_tokens_fn(image, point, key)   -> list[str]
+      click_fn(window, image, point, key) -> None
 
-    두 가지가 계약이다.
+    세 가지가 계약이다.
 
-    ① **앞 단계가 실패하면 다음을 누르지 않는다.** Optics 버튼을 못 눌렀으면 대화상자는
-       안 떴고, 그 상태에서 Memory 를 찾으면 VLM 은 tool 화면의 아무 데나 가리킨다 -
-       열리지도 않은 창을 상대로 클릭이 나가는 것이 가장 나쁜 결과다.
-    ② **Memory 가 실패해도 Close 는 반드시 누른다.** 열어둔 대화상자를 남기면 다음
-       장비의 접속 화면을 가려 시연이 그 자리에서 무너진다(visit_tool 의 닫기 보장과
-       같은 논리).
+    ① **확인되지 않으면 누르지 않는다.** 좌표만 믿고 누르면 원격 뷰의 엉뚱한 버튼을
+       누르게 된다. 실제로 첫 오피스 실행이 그렇게 깨졌다.
+    ② **Memory 라벨이 대화상자의 유일한 증거다.** 그것이 확인되기 전에는 Close 를 찾아
+       나서지 않는다 - 대화상자가 없는 화면에서 'Close' 를 찾으면 tool 창 자체의 닫기
+       같은 다른 것을 누른다. 확인 안 된 채 남은 대화상자는 다음 단계의 tool 창 닫기가
+       정리하므로, 여기서 무리하게 닫는 것보다 안 누르는 편이 낫다.
+    ③ **Memory 가 확인된 뒤에는 Close 를 반드시 시도한다.** 대화상자가 떠 있는 것이
+       확인된 상태이므로, Memory 클릭이 실패해도 닫기까지는 가 본다.
+
+    `attempts` 는 Optics 클릭 재시도 횟수다. 원격 뷰는 커서 이동을 따라오지 못해 첫
+    클릭이 삼켜지는 일이 있어(오피스 1회차 증상: "마우스만 이동") 확인이 안 되면 한 번
+    더 누른다.
     """
-    print("[INFO] Optics... 버튼 클릭")
+    optics_target, memory_target, close_target = _optics_targets()
+    max_attempts = max(1, attempts)
+
+    def _confirm(image, target, required, forbidden):
+        return _confirm_point(
+            image, target, required, forbidden,
+            locate_fn=locate_fn, read_tokens_fn=read_tokens_fn, policy=confirm_policy,
+        )
+
+    # --- Optics... 버튼 -> 대화상자가 떴는지 확인(= Memory 라벨 판독) ---
+    memory_point = None
     try:
-        exit_code = click_optics_fn(tool_window, tool_title, tool_backend)
+        for attempt in range(1, max_attempts + 1):
+            print(f"[INFO] Optics... 버튼 확인 후 클릭 (시도 {attempt}/{max_attempts})")
+            image = capture_fn(tool_window)
+            point = _confirm(
+                image, optics_target, OPTICS_BUTTON_REQUIRED, OPTICS_BUTTON_FORBIDDEN,
+            )
+            if point is None:
+                # 버튼 자체를 확인 못 했다면 다시 눌러도 같은 화면이다 - 즉시 포기.
+                return STATUS_OPTICS_BUTTON_FAILED
+            click_fn(tool_window, image, point, optics_target.key)
+
+            sleep_fn(settle_sec)  # 대화상자가 그려질 시간(원격이라 로컬보다 느리다).
+
+            print("[INFO] Optics 창 확인(Memory 탭 판독)")
+            image = capture_fn(tool_window)
+            memory_point = _confirm(
+                image, memory_target, OPTICS_MEMORY_REQUIRED, OPTICS_MEMORY_FORBIDDEN,
+            )
+            if memory_point is not None:
+                memory_image = image
+                break
+            if attempt >= max_attempts:
+                print("[WARNING] Optics 창을 확인하지 못함 - Close 를 찾지 않습니다"
+                      "(tool 창 닫기가 정리합니다).")
+                return STATUS_OPTICS_WINDOW_NOT_FOUND
+            print("[INFO] Optics 창 미확인 - 클릭이 삼켜졌을 수 있어 다시 누릅니다")
     except Exception as exc:
-        print(f"[WARNING] Optics 버튼 클릭 예외: {type(exc).__name__}: {exc}")
-        return STATUS_OPTICS_BUTTON_FAILED
-    if exit_code != "success":
-        print(f"[WARNING] Optics 버튼을 찾지 못함: exit_code={exit_code} (이후 단계 생략)")
+        print(f"[WARNING] Optics 버튼/창 확인 중 예외: {type(exc).__name__}: {exc}")
         return STATUS_OPTICS_BUTTON_FAILED
 
-    sleep_fn(settle_sec)  # 대화상자가 그려질 시간 - 전환 중 화면을 캡처하면 coarse 가 헛본다.
-
-    try:
-        window, title, backend = find_optics_window_fn()
-    except Exception as exc:
-        print(f"[WARNING] Optics 창 탐색 예외: {type(exc).__name__}: {exc}")
-        return STATUS_OPTICS_WINDOW_NOT_FOUND
-    if window is None:
-        print("[WARNING] Optics 창을 찾지 못함 - Memory/Close 생략")
-        return STATUS_OPTICS_WINDOW_NOT_FOUND
-
+    # --- 여기부터 대화상자가 떠 있는 것이 확인된 상태다 ---
     status = STATUS_OPTICS_OK
-    print(f"[INFO] Optics 창 확보: title={title!r} - Memory 탭 클릭")
     try:
-        memory_exit = click_memory_fn(window, title, backend)
-        if memory_exit != "success":
-            print(f"[WARNING] Memory 탭을 찾지 못함: exit_code={memory_exit}")
-            status = STATUS_OPTICS_MEMORY_FAILED
-        else:
-            sleep_fn(settle_sec)
+        print("[INFO] Memory 탭 클릭")
+        click_fn(tool_window, memory_image, memory_point, memory_target.key)
+        sleep_fn(settle_sec)
     except Exception as exc:
-        print(f"[WARNING] Memory 탭 클릭 예외: {type(exc).__name__}: {exc}")
+        # 대화상자는 떠 있다 - Memory 를 못 눌렀어도 Close 까지는 간다(계약 ③).
+        print(f"[WARNING] Memory 탭 클릭 예외(Close 는 계속): {type(exc).__name__}: {exc}")
         status = STATUS_OPTICS_MEMORY_FAILED
 
-    # 여기부터는 무슨 일이 있어도 닫는다 - 대화상자를 남기면 다음 장면이 가려진다.
-    print("[INFO] Optics 창 Close 버튼 클릭")
     try:
-        close_exit = click_close_fn(window, title, backend)
+        print("[INFO] Optics 창 Close 확인 후 클릭")
+        image = capture_fn(tool_window)
+        close_point = _confirm(
+            image, close_target, OPTICS_CLOSE_REQUIRED, OPTICS_CLOSE_FORBIDDEN,
+        )
+        if close_point is None:
+            print("[WARNING] Optics Close 를 확인하지 못함(대화상자가 남았을 수 있음)")
+            return STATUS_OPTICS_CLOSE_FAILED
+        click_fn(tool_window, image, close_point, close_target.key)
     except Exception as exc:
         print(f"[WARNING] Optics Close 예외(대화상자가 남았을 수 있음): "
               f"{type(exc).__name__}: {exc}")
-        return STATUS_OPTICS_CLOSE_FAILED
-    if close_exit != "success":
-        print(f"[WARNING] Optics Close 실패(대화상자가 남았을 수 있음): exit_code={close_exit}")
         return STATUS_OPTICS_CLOSE_FAILED
 
     sleep_fn(settle_sec)
@@ -588,76 +692,88 @@ def _build_list_tab_fn(settings: Workflow3Settings):
     return _list_tab
 
 
-def _optics_targets():
-    """Optics 시퀀스 3개 요소의 VLM 타겟 정의.
+def _build_optics_fn(
+    settings: Workflow3Settings,
+    settle_sec: float,
+    *,
+    confirm_policy: str,
+    attempts: int,
+    pre_click_settle_sec: float,
+    tag: str,
+):
+    """tool 창 안 Optics -> Memory -> Close 협력자 (VLM 좌표 + OCR 확인 + 클릭).
 
-    설명문은 이 저장소의 규약대로 **첫 글자를 anchor** 로 잡게 쓴다(전역 프롬프트 원칙).
-    'Optics...' 는 PM 버튼 바로 위라는 위치 단서를 함께 준다 - tool 창에는 버튼이 많아
-    라벨만으로는 coarse 단계가 흔들린다.
+    `share_request` 의 주입점과 같은 모양이라 그 배선을 그대로 옮겨 쓴다. 확인 실패 시
+    crop 과 OCR 원문이 `debug_images/demo_rcs_optics/<tag>/` 에 남는다 - Mac 에서는 이
+    화면을 볼 수 없어, 오피스 실행이 실제 문구(required 토큰)를 아는 유일한 경로다.
     """
-    from poc.workflow_3.vlm.ui_venus_mai_locator import TargetConfig
-
-    optics_button = TargetConfig(
-        key="optics_button",
-        description=(
-            "the 'Optics...' button in the Remote Monitoring window's button area, "
-            "located directly above the 'PM' button. Use the first letter 'O' as the "
-            "anchor, then click safely inside the Optics button area."
-        ),
+    from poc.workflow_3 import DEBUG_IMAGE_DIR
+    from poc.workflow_3.util.mouse_utils import click_at_screen, move_cursor_to_screen
+    from poc.workflow_3.util.window_utils import capture_window, image_point_to_screen
+    from poc.workflow_3.vlm.label_verify import (
+        crop_box_around_point,
+        read_text_near_point,
+        tokens_from_text,
     )
-    memory_tab = TargetConfig(
-        key="optics_memory_tab",
-        description=(
-            "the 'Memory' tab in the tab strip of the Optics dialog window. "
-            "Use the first letter 'M' as the anchor, then click safely inside the "
-            "Memory tab area."
-        ),
-    )
-    close_button = TargetConfig(
-        key="optics_close_button",
-        description=(
-            "the 'Close' button of the Optics dialog window. Use the first letter 'C' "
-            "as the anchor, then click safely inside the Close button area."
-        ),
-    )
-    return optics_button, memory_tab, close_button
+    from poc.workflow_3.vlm.ui_venus_mai_locator import analyze_window_target
 
+    debug_dir = DEBUG_IMAGE_DIR / "demo_rcs_optics" / tag
 
-def _build_optics_fn(settings: Workflow3Settings, settle_sec: float, window_title_prefix: str):
-    """tool 창 안 Optics -> Memory -> Close 협력자.
+    def _locate(image, target):
+        result = analyze_window_target(
+            None, "Remote Monitoring System", "uia", target,
+            debug_image_dir=debug_dir,
+            log_name=LOG_COMPONENT,
+            component_name=LOG_COMPONENT,
+            artifact_prefix=target.key,
+            image=image,
+        )
+        return result.point
 
-    범용 2단 로케이터(`click_main_tab`)를 그대로 쓴다 - 이름은 '탭' 이지만 실제로는
-    "지정 창에서 타겟을 찾아 1회 클릭" 이라 버튼에도 그대로 맞는다.
-    """
-    from poc.workflow_3.rcs.view_list_tab_rcs import click_main_tab
-    from poc.workflow_3.util.window_utils import find_window_by_title_prefix
+    def _read_tokens(image, point, key):
+        box = crop_box_around_point(
+            point, image.width, image.height,
+            left_ratio=0.30, right_ratio=0.30, half_height_ratio=0.05,
+        )
+        read = read_text_near_point(
+            image, box,
+            debug_image_dir=debug_dir,
+            timestamp_tag=make_timestamp_tag(time.time()),
+            artifact_label=key,
+            log_name=LOG_COMPONENT,
+        )
+        return tokens_from_text(read.raw_text) if read.ok else []
 
-    optics_button, memory_tab, close_button = _optics_targets()
+    def _click(window, image, point, key):
+        """이미지 픽셀 좌표를 스크린 좌표로 변환해 클릭한다.
 
-    def _click(target):
-        def _fn(window, title, backend):
-            return click_main_tab(
-                window, title, backend, target,
-                action_enabled=settings.action_enabled,
-            ).exit_code
-
-        return _fn
+        **도착과 클릭 사이에 체류를 둔다.** tool 창은 장비 화면의 원격 뷰라 커서 이동이
+        원격에 반영되기까지 지연이 있고, 곧바로 누르면 원격 쪽 커서가 아직 이전 위치에
+        있어 클릭이 삼켜진다(오피스 1회차 증상: "마우스만 이동하고 클릭이 안 됨").
+        먼저 커서만 옮겨 원격이 따라오게 한 뒤 잠깐 쉬고 그 자리에서 누른다.
+        """
+        screen = image_point_to_screen(window, point, image_size=image.size)
+        if screen is None:
+            raise RuntimeError(f"Optics 좌표 변환 실패: {key} point={point}")
+        print(
+            f"[INFO] Optics 클릭: {key} px={point} -> screen={screen}"
+            f"{'' if settings.action_enabled else ' [dry-run]'}"
+        )
+        move_cursor_to_screen(screen, f"demo_{key}", action_enabled=settings.action_enabled)
+        time.sleep(max(0.0, pre_click_settle_sec))
+        click_at_screen(screen, f"demo_{key}", action_enabled=settings.action_enabled)
 
     def _optics(tool_window, tool_title, tool_backend):
-        def _find_optics_window():
-            return resolve_optics_window(
-                find_window_by_title_prefix(window_title_prefix),
-                (tool_window, tool_title, tool_backend),
-            )
-
         return run_optics_sequence(
             tool_window, tool_title, tool_backend,
-            click_optics_fn=_click(optics_button),
-            find_optics_window_fn=_find_optics_window,
-            click_memory_fn=_click(memory_tab),
-            click_close_fn=_click(close_button),
+            capture_fn=capture_window,
+            locate_fn=_locate,
+            read_tokens_fn=_read_tokens,
+            click_fn=_click,
             sleep_fn=time.sleep,
             settle_sec=settle_sec,
+            confirm_policy=confirm_policy,
+            attempts=attempts,
         )
 
     return _optics
@@ -748,7 +864,7 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
     settings = settings or load_workflow3_settings()
 
     tool_ids = parse_tool_ids(os.environ.get("DEMO_RCS_TOOL_IDS"), DEFAULT_TOOL_IDS)
-    dwell_sec = _env_float("DEMO_RCS_DWELL_SEC", 8.0)
+    dwell_sec = _env_float("DEMO_RCS_DWELL_SEC", 3.0)
     gap_sec = _env_float("DEMO_RCS_GAP_SEC", 3.0)
     notches = _env_int("DEMO_RCS_SCROLL_NOTCHES", 3)
     pause_sec = _env_float("DEMO_RCS_SCROLL_PAUSE_SEC", 0.6)
@@ -756,12 +872,16 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
     view_enabled = _env_flag("DEMO_RCS_VIEW_TAB", True)
     optics_enabled = _env_flag("DEMO_RCS_OPTICS", True)
     optics_settle_sec = _env_float("DEMO_RCS_OPTICS_SETTLE_SEC", 1.5)
-    optics_title = os.environ.get("DEMO_RCS_OPTICS_WINDOW_TITLE", "Optic").strip() or "Optic"
+    optics_attempts = max(1, _env_int("DEMO_RCS_OPTICS_ATTEMPTS", 2))
+    confirm_policy = os.environ.get("DEMO_RCS_CONFIRM", "strict").strip().lower() or "strict"
+    pre_click_settle = _env_float("DEMO_RCS_PRE_CLICK_SETTLE_SEC", 0.6)
+    tag = make_timestamp_tag(time.time())
 
     print(
         f"[INFO] 시연 설정: 체류={dwell_sec:.0f}s, 간격={gap_sec:.0f}s, "
         f"View훑기={'on' if view_enabled else 'off'}(휠 {notches}칸), "
-        f"Optics조작={'on' if optics_enabled else 'off'}(창제목~{optics_title!r}), "
+        f"Optics조작={'on' if optics_enabled else 'off'}"
+        f"(확인={confirm_policy}, 재시도={optics_attempts}, 클릭전대기={pre_click_settle:.1f}s), "
         f"반복={repeat}회"
     )
 
@@ -774,7 +894,13 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
         )
         list_tab_fn = _build_list_tab_fn(settings)
         optics_fn = (
-            _build_optics_fn(settings, optics_settle_sec, optics_title)
+            _build_optics_fn(
+                settings, optics_settle_sec,
+                confirm_policy=confirm_policy,
+                attempts=optics_attempts,
+                pre_click_settle_sec=pre_click_settle,
+                tag=tag,
+            )
             if optics_enabled
             else None
         )
@@ -816,7 +942,6 @@ __all__ = [
     "browse_view_tab",
     "main",
     "parse_tool_ids",
-    "resolve_optics_window",
     "run_demonstration",
     "run_optics_sequence",
     "visit_tool",

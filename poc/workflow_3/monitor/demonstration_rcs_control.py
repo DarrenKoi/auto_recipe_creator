@@ -758,14 +758,11 @@ def _build_list_tab_fn(settings: Workflow3Settings):
     return _list_tab
 
 
-def _flow_definitions():
+def build_flows():
     """시연 흐름 정의 - 이름 -> InToolFlow.
 
     설명문은 이 저장소의 규약대로 **첫 글자를 anchor** 로 잡게 쓰고, 화면 안 위치
     단서를 함께 준다(tool 창에는 버튼이 많아 라벨만으로는 coarse 단계가 흔들린다).
-    'Work Sheet' 아래 버튼은 **실제 문구를 모른다** - required 를 비워 forbidden 만
-    보게 하고, 읽힌 토큰을 콘솔에 남긴다. 첫 오피스 실행이 그 문구를 알려주면 여기에
-    박아 게이트를 온전하게 만든다.
     """
     from poc.workflow_3.vlm.ui_venus_mai_locator import TargetConfig
 
@@ -818,13 +815,16 @@ def _flow_definitions():
             TargetConfig(
                 key="worksheet_button",
                 description=(
-                    "the button located directly below the 'Work Sheet' text in the "
-                    "Remote Monitoring window. Use the 'Work Sheet' text as the anchor, "
-                    "then click safely inside the button immediately below it."
+                    "the 'Work Sheet' button in the Remote Monitoring window's button "
+                    "area. Use the first letter 'W' as the anchor, then click safely "
+                    "inside the Work Sheet button area. If the text 'Work Sheet' "
+                    "appears more than once, choose the clickable button, which is the "
+                    "lower one, not the section label above it."
                 ),
             ),
-            # 실제 버튼 문구를 모른다 - forbidden 만 거르고 읽힌 토큰을 남긴다.
-            required=(),
+            # 버튼 문구 확인(오피스 확인: 버튼에 'Work Sheet' 라고 쓰여 있다). OCR 이
+            # 'WorkSheet' 로 붙여 읽어도 두 needle 이 모두 부분 일치해 통과한다.
+            required=(("work", "sheet"), ("워크시트",)),
             forbidden=("cancel", "stop", "terminat", "exit", "취소", "종료"),
         ),
         steps=[
@@ -889,7 +889,7 @@ def _build_action_fn(
     from poc.workflow_3.vlm.ui_venus_mai_locator import analyze_window_target
 
     debug_dir = DEBUG_IMAGE_DIR / "demo_rcs_flow" / tag
-    flows = _flow_definitions()
+    flows = build_flows()
 
     def _locate(image, target):
         result = analyze_window_target(
@@ -1126,6 +1126,7 @@ __all__ = [
     "InToolFlow",
     "ToolVisit",
     "browse_view_tab",
+    "build_flows",
     "main",
     "parse_flow_map",
     "parse_tool_ids",

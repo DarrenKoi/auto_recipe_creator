@@ -21,6 +21,7 @@ from poc.workflow_3.monitor.demonstration_rcs_control import (
     InToolFlow,
     ToolVisit,
     browse_view_tab,
+    build_flows,
     parse_flow_map,
     parse_tool_ids,
     resolve_flow_name,
@@ -449,6 +450,69 @@ def test_resolve_flow_name_uses_the_default_for_unlisted_tools():
 def test_resolve_flow_name_rejects_an_unknown_flow_name():
     """오타난 흐름 이름이 조용히 '아무것도 안 함' 이 되면 시연에서 원인을 못 찾는다."""
     assert resolve_flow_name("MCD019", {"mcd019": "optcis"}, "optics") == "optics"
+
+
+# ------------------------------------------------------------------
+# 실제 흐름 정의 - 데이터가 계약이므로 여기서 고정한다.
+# ------------------------------------------------------------------
+
+
+def _flow_keys(flow):
+    return [flow.opener.target.key] + [step.target.key for step in flow.steps]
+
+
+def test_optics_flow_is_optics_then_memory_then_close():
+    flow = build_flows()["optics"]
+
+    assert _flow_keys(flow) == [
+        "optics_button", "optics_memory_tab", "optics_close_button",
+    ]
+
+
+def test_optics_close_does_not_depend_on_the_memory_tab():
+    """Close 는 대화상자 상시 버튼이라 Memory 가 실패해도 눌러 정리한다."""
+    close_step = build_flows()["optics"].steps[-1]
+
+    assert close_step.requires_previous is False
+
+
+def test_worksheet_flow_is_button_then_file_then_exit():
+    flow = build_flows()["worksheet"]
+
+    assert _flow_keys(flow) == [
+        "worksheet_button", "worksheet_file_menu", "worksheet_file_exit",
+    ]
+
+
+def test_worksheet_exit_depends_on_the_file_menu():
+    """Exit 는 File 드롭다운 안에만 있다 - File 이 실패하면 그 자리는 빈 화면이다."""
+    exit_step = build_flows()["worksheet"].steps[-1]
+
+    assert exit_step.requires_previous is True
+
+
+def test_worksheet_button_label_is_confirmed_not_forbidden_only():
+    """오피스 확인: 버튼에 'Work Sheet' 라고 쓰여 있다 - 확인 게이트를 온전히 건다."""
+    opener = build_flows()["worksheet"].opener
+
+    assert opener.required, "required 가 비면 라벨 확인 없이 클릭한다"
+    assert ("work", "sheet") in opener.required
+
+
+def test_worksheet_button_accepts_ocr_that_joins_the_words():
+    """OCR 이 'WorkSheet' 로 붙여 읽어도 두 needle 이 부분 일치해 통과해야 한다."""
+    from poc.workflow_3.monitor.share_request import classify_label
+
+    opener = build_flows()["worksheet"].opener
+    assert classify_label(["WorkSheet"], opener.required, opener.forbidden) == "confirmed"
+    assert classify_label(["Work", "Sheet"], opener.required, opener.forbidden) == "confirmed"
+
+
+def test_worksheet_button_rejects_a_neighbouring_label():
+    from poc.workflow_3.monitor.share_request import classify_label
+
+    opener = build_flows()["worksheet"].opener
+    assert classify_label(["Recipe"], opener.required, opener.forbidden) != "confirmed"
 
 
 # ------------------------------------------------------------------

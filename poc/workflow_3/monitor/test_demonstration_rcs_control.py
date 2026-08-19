@@ -16,6 +16,7 @@ from poc.workflow_3.monitor.demonstration_rcs_control import (
     STATUS_VIEW_OK,
     STATUS_VIEW_TAB_FAILED,
     STATUS_WINDOW_NOT_FOUND,
+    DEFAULT_CONFIRM_POLICY,
     DemoRunResult,
     FlowStep,
     InToolFlow,
@@ -832,6 +833,18 @@ def test_remote_click_still_clicks_when_no_foreground_helper_is_available():
     )
 
     assert calls == ["move", "sleep:0.0", "click"]
+
+
+def test_default_confirm_policy_is_lenient_but_still_blocks_forbidden_labels():
+    """버튼이 안전하다고 확인된 뒤로는, 못 읽어서 멈추는 쪽이 더 큰 손해다.
+
+    다만 lenient 는 '못 읽음' 만 통과시킨다 - 금지 토큰은 어떤 정책에서도 막힌다.
+    """
+    from poc.workflow_3.monitor.share_request import accepts_label
+
+    assert DEFAULT_CONFIRM_POLICY == "lenient"
+    assert accepts_label("unreadable", DEFAULT_CONFIRM_POLICY) is True
+    assert accepts_label("forbidden", DEFAULT_CONFIRM_POLICY) is False
 
 
 if __name__ == "__main__":

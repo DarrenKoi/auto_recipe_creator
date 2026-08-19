@@ -42,7 +42,8 @@ env (`DEMO_RCS_*` 네임스페이스 - 루프의 `ALIGN_FAIL_*` 과 섞지 않�
     DEMO_RCS_DEFAULT_FLOW   목록에 없는 장비의 흐름 (기본 optics)
     DEMO_RCS_FLOW_SETTLE_SEC      창/드롭다운이 그려질 대기 (기본 1.5)
     DEMO_RCS_FLOW_ATTEMPTS        여는 버튼 재시도 횟수 (기본 2)
-    DEMO_RCS_CONFIRM        라벨 확인 정책 strict|lenient|off (기본 strict)
+    DEMO_RCS_CONFIRM        라벨 확인 정책 strict|lenient|off (기본 lenient)
+                            lenient 도 금지 토큰(cancel/exit 등)은 그대로 막는다
     DEMO_RCS_PRE_CLICK_SETTLE_SEC  커서 도착 후 클릭까지 대기 (기본 0.6)
                             원격 뷰가 커서를 따라올 시간 - 짧으면 클릭이 삼켜진다
     DEMO_RCS_CLICK_HOLD_SEC 버튼을 누르고 있는 시간 (기본 0.15)
@@ -67,6 +68,15 @@ LOG_COMPONENT = "demonstration_rcs_control"
 # 시연 기본 장비. env 로 덮을 수 있지만, 아무것도 안 줘도 바로 돌아야 시연 직전에
 # 셸 따옴표와 씨름하지 않는다.
 DEFAULT_TOOL_IDS = ["MCD019", "MCDC22"]
+
+# 라벨 확인 정책 기본값. 이 시연이 누르는 버튼(Optics/Memory/Close/Work Sheet/File/
+# Exit)은 **돌고 있는 장비에 영향을 주지 않는다** 고 오피스에서 확인됐다(2026-08-19).
+# 그래서 균형점이 바뀐다 - 여기서 지키려는 것은 장비 안전이 아니라 시연 흐름이고,
+# OCR 이 한 번 못 읽어 시연이 멈추는 쪽이 더 큰 손해다. lenient 는 "못 읽음" 을 통과
+# 시키되 **금지 토큰(cancel/exit/terminate 등)은 어떤 정책에서도 막는다**
+# (share_request.accepts_label). 좌표 자체를 못 찾으면 정책과 무관하게 안 누른다.
+# 라벨 문구를 확정하는 진단 실행에서는 DEMO_RCS_CONFIRM=strict 로 되돌린다.
+DEFAULT_CONFIRM_POLICY = "lenient"
 
 # 장비 1대 방문 결과 status.
 STATUS_CONNECTED = "connected"
@@ -1096,7 +1106,10 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
     flow_attempts = max(1, _env_int("DEMO_RCS_FLOW_ATTEMPTS", 2))
     flow_map = parse_flow_map(os.environ.get("DEMO_RCS_FLOWS"), DEFAULT_TOOL_FLOWS)
     default_flow = os.environ.get("DEMO_RCS_DEFAULT_FLOW", FLOW_OPTICS).strip().lower()
-    confirm_policy = os.environ.get("DEMO_RCS_CONFIRM", "strict").strip().lower() or "strict"
+    confirm_policy = (
+        os.environ.get("DEMO_RCS_CONFIRM", DEFAULT_CONFIRM_POLICY).strip().lower()
+        or DEFAULT_CONFIRM_POLICY
+    )
     pre_click_settle = _env_float("DEMO_RCS_PRE_CLICK_SETTLE_SEC", 0.6)
     click_hold_sec = _env_float("DEMO_RCS_CLICK_HOLD_SEC", 0.15)
     tag = make_timestamp_tag(time.time())

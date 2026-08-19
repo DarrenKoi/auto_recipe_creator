@@ -70,8 +70,21 @@ uv run python poc/workflow_3/monitor/engineer_done_align_adjustment.py
 엔지니어 watch는 다음 우선순위 신호에서 처음 충족한 조건으로 종료한다.
 
 1. 엔지니어가 Remote Monitoring 창의 X를 눌러 닫음 (`window_gone`) → 즉시 종료
-2. numerator OCR 3회 연속 증가 → 종료 **(기본 경로)**
-3. 불확정 → `ALIGN_FAIL_ENGINEER_WATCH_SEC` cap까지 대기
+2. numerator OCR 3회 연속 증가 → 종료 **(기본 경로, 측정이 실제로 도는 직접 증거)**
+3. 물리 마우스 커서가 `ALIGN_FAIL_ENGINEER_DONE_IDLE_SEC`(기본 120초) 동안 정지 → 종료
+4. 불확정 → `ALIGN_FAIL_ENGINEER_WATCH_SEC` cap까지 대기
+
+순서가 계약이다. 분자 증가는 "측정이 돌고 있다"는 직접 증거이고, 커서 정지는
+"엔지니어가 손을 뗐다"는 간접 추론이므로 강한 증거를 먼저 쓴다. 커서 정지는
+엔지니어가 align 만 고치고 측정을 시작하지 않은 채 자리를 뜨는 경우(분자가 영영
+안 오르는 경우)를 메우려고 있다. 읽는 것은 **로컬 물리 커서**(`GetCursorPos`)이지
+tool 창 안에 그려진 장비측 커서가 아니다. 커서를 못 읽으면 정지로 단정하지 않는다
+(fail-closed). 끄려면 `ALIGN_FAIL_ENGINEER_DONE_IDLE_SEC=0`.
+
+> **오판 방향 주의**: "정지 = 완료"는 추론이다. 화면만 보며 생각 중이거나 키보드만
+> 쓰는 중일 수도 있다. 반자동 모드(`awaiting_engineer_ok`)에서 엔지니어가 OK를 누르기
+> 전에 2분 넘게 마우스를 안 건드리면 tool이 먼저 닫힐 수 있다. 그 비용(다시 열면 됨)을
+> 받아들이고 채택한 값이며, 실사용에서 짧다고 느끼면 `IDLE_SEC`을 올린다.
 
 **Assist 판독은 기본 off다 (2026-08-19).** 판독 정확도가 아직 신뢰 수준에 못 미쳐,
 예전처럼 Recipe Monitor 분자(N) 단독으로 판정한다. off 면 Assist 를 아예 읽지 않고
@@ -230,8 +243,9 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 | `ALIGN_FAIL_RECORDING_CHANGE_MIN_PX` | 2 | 변화 판정: delta>10 인 다운샘플 픽셀 최소 개수 (커서 이동도 감지) |
 | `ALIGN_FAIL_RECORDING_MAX_SEC` | 900 | 녹화 상한 |
 | `ALIGN_FAIL_ENGINEER_WATCH_SEC` | 300 | 미보정 시 엔지니어 조작 녹화 대기 상한(5분) |
-| `ALIGN_FAIL_ENGINEER_DONE_DETECT` | 0 | 우선순위 완료 신호 감지를 켠다. 오피스 Windows 캘리브레이션(`monitor/engineer_done_align_adjustment.py` 단독 실행, 측정 중 tool 대상) 검증 후 `1`. |
+| `ALIGN_FAIL_ENGINEER_DONE_DETECT` | 1 | 완료 신호 감지. **기본 on** (2026-08-19). 끄면 watch 는 항상 cap(5분)까지 간다 |
 | `ALIGN_FAIL_ENGINEER_DONE_POLL_SEC` | 8.0 | watch 안 감지기 호출 간격 |
+| `ALIGN_FAIL_ENGINEER_DONE_IDLE_SEC` | 120.0 | 물리 마우스 커서가 이만큼 정지하면 완료 판정. `0` 이면 이 신호를 끈다 |
 | `ALIGN_FAIL_ENGINEER_DONE_ASSIST` | 0 | Assist 패널 판독 사용. **기본 off** - 분자(N) 단독 판정. 판독 정확도가 확보되면 `1` |
 | `ALIGN_FAIL_ENGINEER_DONE_ASSIST_UNUSABLE_AFTER` | 3 | (Assist on 일 때만) 판독 불가가 이 횟수 연속일 때만 numerator fallback을 연다 |
 | `ALIGN_FAIL_ENGINEER_DONE_NUMERATOR_READS` | 3 | fallback 완료로 인정할 엄격 증가 numerator OCR 표본 수 |

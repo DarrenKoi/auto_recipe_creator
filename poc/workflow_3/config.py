@@ -154,11 +154,35 @@ class Workflow3Settings(WorkflowSettings):
     recording_heartbeat_sec: float = DEFAULT_RECORDING_HEARTBEAT_SEC  # 변화 없어도 이 간격마다 1장.
     recording_change_min_px: int = DEFAULT_RECORDING_CHANGE_MIN_PX  # 변화 판정 픽셀 최소 개수.
     recording_max_sec: float = 900.0
+
+    # --- 접속 구간 prelude 녹화 (시연용, 기본 off) ---
+    # 본 녹화는 tool 창 rect 를 찍으므로 '창이 뜨기 전' 인 RCS 실행/로그인/tool 진입
+    # 구간은 원리상 프레임이 없다. prelude 는 그 구간만 **화면 전체**를 찍어
+    # recording/prelude/ 에 따로 쌓는다(하위 폴더라 recording_filter 의 비재귀
+    # glob 에는 안 걸린다 - 그 파이프라인은 tool 창 rect 를 전제한다).
+    # 기본 off: 화면 전체 그랩은 다른 앱까지 담기고 프레임도 크므로, 상시 운전이
+    # 아니라 시연 촬영 때만 켠다.
+    record_prelude_enabled: bool = False
+    prelude_poll_sec: float = 0.2  # 전체 화면은 프레임이 커서 본 녹화(0.05s)보다 성기게.
+    prelude_max_sec: float = 300.0  # 접속만 5분 넘게 끌면 시연이 아니라 사고다.
+    prelude_max_disk_mb: float = 800.0  # 백스톱 - 접속이 안 끝나도 디스크를 안 먹게.
+    prelude_jpeg_quality: int = 85
+    prelude_monitor_index: int = 1  # mss 규약(0=전 모니터 합침, 1=주 모니터).
+
     engineer_watch_sec: float = 300.0  # 미보정 watch 상한(cap, 5분) - done 감지 시 조기 종료.
 
     # --- engineer watch 측정-시작 감지 (Assist 우선, Recipe Monitor 카운터 fallback) ---
-    engineer_done_detect_enabled: bool = False  # 오피스 캘리브레이션 검증 전 기본 off.
+    engineer_done_detect_enabled: bool = True  # 기본 on (2026-08-19 사용자 결정).
     engineer_done_poll_sec: float = 8.0  # watch 안 detector 호출 간격.
+    # 커서 정지 완료 판정(초). 감지 시작 이후 물리 마우스 커서가 이만큼 안 움직이면
+    # 엔지니어가 손을 뗀 것으로 보고 완료 처리한다. 0 이하면 이 신호를 끈다.
+    # 근거: 분자(N) 증가는 '측정이 시작됐다'는 강한 증거지만, 엔지니어가 align 만
+    # 고치고 측정을 시작하지 않은 채 자리를 뜨는 경우엔 영영 안 뜬다 - 그때 tool 이
+    # watch cap(5분)까지 잡혀 있다. 커서 정지는 그 공백을 메우는 약한 증거다.
+    # 주의: '정지 = 완료' 는 추론이다. 화면만 보며 생각 중이거나 키보드만 쓰는
+    # 중일 수도 있다. 사용자가 그 오판 비용(창을 닫으면 다시 열면 된다)을 받아들이고
+    # 채택했다(2026-08-19). 되돌리려면 ALIGN_FAIL_ENGINEER_DONE_IDLE_SEC=0.
+    engineer_done_idle_sec: float = 120.0
     # Assist 표에서 정상(검정)으로 끝난 측정 행이 이만큼 쌓이면 완료로 본다.
     # 이름/의미가 구 engineer_done_ok_streak(연속 정상 횟수)과 다르므로 env 이름도
     # 새로 뒀다 - 같은 이름을 재사용하면 오피스에 남은 기존 값이 새 의미로 조용히
@@ -346,6 +370,12 @@ def load_workflow3_settings() -> Workflow3Settings:
             "ALIGN_FAIL_RECORDING_CHANGE_MIN_PX", DEFAULT_RECORDING_CHANGE_MIN_PX
         ),
         recording_max_sec=env_float("ALIGN_FAIL_RECORDING_MAX_SEC", 900.0),
+        record_prelude_enabled=env_flag("ALIGN_FAIL_RECORD_PRELUDE", False),
+        prelude_poll_sec=env_float("ALIGN_FAIL_PRELUDE_POLL_SEC", 0.2),
+        prelude_max_sec=env_float("ALIGN_FAIL_PRELUDE_MAX_SEC", 300.0),
+        prelude_max_disk_mb=env_float("ALIGN_FAIL_PRELUDE_MAX_DISK_MB", 800.0),
+        prelude_jpeg_quality=env_int("ALIGN_FAIL_PRELUDE_JPEG_QUALITY", 85),
+        prelude_monitor_index=env_int("ALIGN_FAIL_PRELUDE_MONITOR_INDEX", 1),
         engineer_watch_sec=env_float("ALIGN_FAIL_ENGINEER_WATCH_SEC", 300.0),
         rcp_msr_gather_enabled=env_flag("ALIGN_FAIL_GATHER_RCP_MSR", default=True),
         rcp_gather_timeout_sec=env_float("ALIGN_FAIL_RCP_GATHER_TIMEOUT_SEC", 60.0),
@@ -378,8 +408,9 @@ def load_workflow3_settings() -> Workflow3Settings:
         sem_mode_default=_env_str("ALIGN_SEM_MODE_DEFAULT", "SEM"),
         sem_controller_settle_sec=env_float("ALIGN_SEM_SETTLE_SEC", 0.5),
         zoom_scroll_dy=env_int("ALIGN_SEM_ZOOM_SCROLL_DY", 1),
-        engineer_done_detect_enabled=env_flag("ALIGN_FAIL_ENGINEER_DONE_DETECT", default=False),
+        engineer_done_detect_enabled=env_flag("ALIGN_FAIL_ENGINEER_DONE_DETECT", default=True),
         engineer_done_poll_sec=env_float("ALIGN_FAIL_ENGINEER_DONE_POLL_SEC", 8.0),
+        engineer_done_idle_sec=env_float("ALIGN_FAIL_ENGINEER_DONE_IDLE_SEC", 120.0),
         engineer_done_min_ok_rows=env_int("ALIGN_FAIL_ENGINEER_DONE_MIN_OK_ROWS", 5),
         engineer_done_assist_enabled=env_flag(
             "ALIGN_FAIL_ENGINEER_DONE_ASSIST", default=False

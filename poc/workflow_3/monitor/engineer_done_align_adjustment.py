@@ -1,4 +1,4 @@
-"""엔지니어 수동 align 보정 완료 감지 — Assist 우선, 측정 카운터 fallback.
+"""엔지니어 수동 align 보정 완료 감지 — 측정 카운터(N) 우선, 커서 정지 보조.
 
 **align fail 관리 전용** 모듈이다. 미보정 engineer watch 동안 "align 보정이 끝나고
 본 측정이 정상적으로 진행 중이다"를 감지해 녹화를 조기 종료하고, 그 결과 cycle
@@ -18,6 +18,16 @@ Assist 는 분자보다 먼저 같은 캡처 프레임에서 평가한다. 분�
 곧 primary 이므로 unusable streak 대기가 없다 - 그 대기는 "Assist 가 primary 인데 못
 읽는 중" 을 뜻하는 신호라, 안 쓰기로 한 상태에서 남겨두면 분자가 이미 조건을 채웠는데도
 폴링 3회(기본 24s)를 헛되이 흘려보낸다. 되돌리려면 `ALIGN_FAIL_ENGINEER_DONE_ASSIST=1`.
+
+**커서 정지 보조 신호 (2026-08-19, `engineer_done_idle_sec` 기본 120s):** 측정 신호가
+안 뜬 회차에만 물리 마우스 커서(`GetCursorPos`)를 보고, 감지 시작 이후 그만큼 안
+움직였으면 완료로 본다. 순서가 계약이다 - 분자 증가는 "측정이 돌고 있다" 는 직접
+증거이고 커서 정지는 "엔지니어가 손을 뗐다" 는 간접 추론이라, 강한 증거를 먼저 쓴다.
+이 신호가 메우는 공백은 **엔지니어가 align 만 고치고 측정을 시작하지 않은 채 자리를
+뜨는 경우** 다 - 그때 분자는 영영 안 오르고 tool 이 watch cap(5분)까지 잡혀 있다.
+읽는 것은 로컬 물리 커서이지 tool 창 안에 그려진 장비측 커서가 아니다(그쪽은 우리
+포인터와 무관하게 움직인다). 커서를 못 읽으면 정지로 단정하지 않는다(fail-closed).
+끄려면 `ALIGN_FAIL_ENGINEER_DONE_IDLE_SEC=0`.
 
 **표는 새 측정이 시작될 때 초기화된다**(스크롤 아님, 2026-08-13 확인). 이 사실 덕분에
 "지금 표에 붉은 숫자가 있다 = 이번 사이클에서 측정이 실패했다" 가 성립하고, 행 순서나
@@ -64,6 +74,7 @@ from dataclasses import dataclass, replace
 
 from poc.workflow_3.config import validate_engineer_done_priority_settings
 from poc.workflow_3.debug_artifacts import save_debug_jpeg, save_debug_json
+from poc.workflow_3.monitor.frame_meta import read_cursor_screen_xy
 from poc.workflow_3.monitor.recording import frame_changed, to_diff_gray
 from poc.workflow_3.sem_monitor.assist_score import AssistObservation
 from poc.workflow_3.util import capture_window
@@ -146,6 +157,8 @@ class EngineerDoneDetector:
         ocr_fn=None,
         assist_fn=None,
         numerator_fn=None,
+        cursor_fn=None,
+        time_fn=None,
         debug_dir=None,
     ):
         self.tool_window = tool_window
@@ -155,6 +168,11 @@ class EngineerDoneDetector:
         self._ocr_fn = ocr_fn
         self._assist_fn = assist_fn
         self._numerator_fn = numerator_fn
+        self._cursor_fn = cursor_fn or read_cursor_screen_xy
+        self._time_fn = time_fn or time.time
+        # 커서 정지 시계. 첫 호출에서 기준점을 잡는다 - "감지를 시작한 이후" 가 기준이다.
+        self._last_cursor_xy = None
+        self._last_cursor_move_at = None
         self.debug_dir = debug_dir
         self._roi_ratios: tuple[float, float, float, float] | None = None
         self._next_localize_at = 0.0  # 거부(blank) 후 재시도 가능 시각 (throttle).
@@ -185,6 +203,15 @@ class EngineerDoneDetector:
             print(f"[WARNING] engineer-done 캡처 실패(회차 skip): {exc}")
             return False
 
+        if self._evaluate_measurement(image):
+            return True
+        # 측정 신호가 안 뜬 회차에만 커서를 본다. 순서가 계약이다 - 분자 증가는
+        # "측정이 실제로 돌고 있다" 는 직접 증거이고, 커서 정지는 "엔지니어가 손을
+        # 뗐다" 는 간접 추론이다. 강한 증거를 먼저 쓴다.
+        return self._evaluate_cursor_idle()
+
+    def _evaluate_measurement(self, image) -> bool:
+        """Assist(옵션) + 분자(N) 측정 신호로 완료를 판정한다."""
         # Assist 비활성(기본, 2026-08-19): 판독을 아예 시도하지 않고 분자 단독으로
         # 판정한다. unusable streak 대기는 'Assist 가 primary 인데 못 읽는 중' 을 뜻하는
         # 신호라, Assist 를 안 쓰기로 한 상태에서 그대로 두면 분자가 이미 조건을
@@ -232,6 +259,51 @@ class EngineerDoneDetector:
         return self._evaluate_numerator(image, fallback_open=fallback_open)
 
     # ---- 내부 ----
+
+    def _evaluate_cursor_idle(self) -> bool:
+        """물리 마우스 커서가 idle_sec 동안 안 움직였으면 완료로 본다.
+
+        분자(N) 증가는 "측정이 시작됐다" 는 강한 증거지만, 엔지니어가 align 만 고치고
+        측정을 시작하지 않은 채 자리를 뜨면 영영 안 뜬다 - 그동안 tool 이 watch
+        cap(5분)까지 잡혀 있다. 커서 정지는 그 공백을 메우는 약한 증거다.
+
+        읽는 것은 **로컬 물리 커서**(GetCursorPos)다. RCS tool 창 안에 그려진 커서가
+        아니다 - 그쪽은 장비 화면 뷰라 우리 포인터와 무관하게 움직인다.
+
+        커서를 못 읽으면(비Windows/API 실패) 정지로 단정하지 않는다(fail-closed).
+        '못 읽었다' 를 '안 움직였다' 로 세면, 조회가 막힌 환경에서 idle_sec 뒤에
+        무조건 tool 이 닫힌다 - 증거 없음은 완료 근거가 아니다.
+        """
+        idle_sec = getattr(self.s, "engineer_done_idle_sec", 0.0)
+        if idle_sec <= 0:
+            return False
+
+        try:
+            xy = self._cursor_fn()
+        except Exception as exc:
+            print(f"[WARNING] 커서 좌표 조회 실패(정지 판정 skip): {exc}")
+            return False
+        if xy is None:
+            self.last_debug["cursor_idle"] = "unreadable"
+            return False
+
+        now = self._time_fn()
+        if xy != self._last_cursor_xy:
+            self._last_cursor_xy = xy
+            self._last_cursor_move_at = now
+            self.last_debug["cursor_idle_sec"] = 0.0
+            return False
+
+        idle_elapsed = now - self._last_cursor_move_at
+        self.last_debug["cursor_idle_sec"] = round(idle_elapsed, 1)
+        if idle_elapsed < idle_sec:
+            return False
+
+        print(
+            f"[INFO] 마우스 커서 {idle_elapsed:.0f}s 정지 (>= {idle_sec:.0f}s) - "
+            "엔지니어 작업 완료로 판정, watch 조기 종료 후 tool 창 닫기 진행"
+        )
+        return True
 
     def _evaluate_numerator(self, image, *, fallback_open: bool) -> bool:
         """분자 N 을 한 회차 관측해 누적 시퀀스를 갱신하고 done 여부를 낸다.

@@ -43,10 +43,10 @@ def _check(name: str, condition: bool) -> bool:
 
 
 def test_settings_defaults() -> bool:
-    """engineer_done_* 필드가 기본값과 함께 존재한다 (기본 비활성)."""
+    """engineer_done_* 필드가 기본값과 함께 존재한다 (감지 자체는 기본 on)."""
     s = Workflow3Settings()
     ok = True
-    ok &= _check("detect_enabled default False", s.engineer_done_detect_enabled is False)
+    ok &= _check("detect_enabled default True", s.engineer_done_detect_enabled is True)
     ok &= _check("poll_sec default 8.0", s.engineer_done_poll_sec == 8.0)
     ok &= _check(
         "assist_unusable_after default 3",
@@ -89,7 +89,7 @@ def test_settings_env_load_path() -> bool:
             os.environ.pop(key)
         os.environ.update(saved)
     ok = True
-    ok &= _check("env path detect_enabled False", s.engineer_done_detect_enabled is False)
+    ok &= _check("env path detect_enabled True", s.engineer_done_detect_enabled is True)
     ok &= _check("env path poll_sec 8.0", s.engineer_done_poll_sec == 8.0)
     ok &= _check(
         "env path priority settings",
@@ -470,6 +470,116 @@ def test_assist_disabled_by_default() -> bool:
     """
     ok = Workflow3Settings().engineer_done_assist_enabled is False
     return _check("assist_enabled default False", ok)
+
+
+def test_cursor_idle_settings_defaults() -> bool:
+    """커서 정지 완료 판정 기본값 — 감지 on, 정지 상한 120s(2026-08-19 사용자 결정)."""
+    s = Workflow3Settings()
+    ok = True
+    ok &= _check("detect_enabled default True", s.engineer_done_detect_enabled is True)
+    ok &= _check("idle_sec default 120.0", s.engineer_done_idle_sec == 120.0)
+    return ok
+
+
+class _FakeClock:
+    """수동으로 감는 시계 - 커서 정지 판정을 실시간 대기 없이 검증한다."""
+
+    def __init__(self, start=1000.0):
+        self.now = start
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
+def _idle_detector(cursor_fn, clock, *, idle_sec=120.0):
+    """분자로는 절대 done 이 안 되는 감지기 - 커서 정지 신호만 남긴다."""
+    return EngineerDoneDetector(
+        None,
+        _settings(engineer_done_idle_sec=idle_sec),
+        capture_fn=lambda: Image.new("RGB", (400, 200), (0, 0, 0)),
+        numerator_fn=lambda image: NumeratorObservation(sampled=False, reason="no_change"),
+        cursor_fn=cursor_fn,
+        time_fn=clock,
+    )
+
+
+def test_cursor_idle_finishes_after_threshold() -> bool:
+    """감지 시작 후 커서가 idle_sec 동안 안 움직이면 완료로 본다."""
+    clock = _FakeClock()
+    detector = _idle_detector(lambda: (100, 200), clock)
+
+    first = detector()          # 기준점 기록 회차 - 아직 정지 시간 0.
+    clock.advance(119.0)
+    before = detector()
+    clock.advance(2.0)          # 누적 121s > 120s.
+    after = detector()
+
+    return _check(
+        "cursor idle finishes after threshold",
+        (first, before, after) == (False, False, True),
+    )
+
+
+def test_cursor_movement_resets_idle_clock() -> bool:
+    """커서가 움직이면 정지 시계가 처음부터 다시 간다(작업 중인데 닫으면 안 된다)."""
+    clock = _FakeClock()
+    positions = iter([(10, 10), (10, 10), (99, 99), (99, 99)])
+    detector = _idle_detector(lambda: next(positions), clock)
+
+    detector()
+    clock.advance(119.0)
+    detector()
+    clock.advance(2.0)          # 여기서 커서가 움직였다 -> 시계 리셋.
+    moved = detector()
+    clock.advance(119.0)        # 리셋 후 119s 뿐 - 아직 임계 미만.
+    still_working = detector()
+
+    return _check(
+        "cursor movement resets idle clock",
+        (moved, still_working) == (False, False),
+    )
+
+
+def test_cursor_unreadable_never_finishes() -> bool:
+    """커서를 못 읽으면(비Windows/API 실패) 정지로 단정하지 않는다 - fail-closed.
+
+    못 읽는 상태를 '안 움직였다'로 세면, 커서 조회가 막힌 환경에서 idle_sec 뒤에
+    무조건 tool 이 닫힌다. 증거 없음은 완료 근거가 아니다.
+    """
+    clock = _FakeClock()
+    detector = _idle_detector(lambda: None, clock)
+
+    detector()
+    clock.advance(10_000.0)
+    return _check("cursor unreadable never finishes", detector() is False)
+
+
+def test_cursor_idle_disabled_by_zero() -> bool:
+    """idle_sec<=0 이면 커서 신호를 끈다(롤백 스위치)."""
+    clock = _FakeClock()
+    detector = _idle_detector(lambda: (5, 5), clock, idle_sec=0.0)
+
+    detector()
+    clock.advance(10_000.0)
+    return _check("cursor idle disabled by zero", detector() is False)
+
+
+def test_cursor_reader_wired_by_default() -> bool:
+    """cursor_fn 을 안 주면 실제 GetCursorPos 리더가 붙는다.
+
+    기본값이 None 이면 커서 신호가 조용히 죽는다 - 켜 놓은 줄 알지만 영영 안 뜨는
+    상태가 되므로, 배선을 테스트로 못박는다.
+    """
+    from poc.workflow_3.monitor.frame_meta import read_cursor_screen_xy
+
+    detector = EngineerDoneDetector(None, _settings())
+    return _check(
+        "cursor reader wired by default",
+        detector._cursor_fn is read_cursor_screen_xy,
+    )
 
 
 def test_numerator_is_primary_when_assist_disabled() -> bool:
@@ -1020,6 +1130,12 @@ def main() -> int:
         test_settings_env_load_path,
         test_settings_use_priority_signals,
         test_assist_disabled_by_default,
+        test_cursor_idle_settings_defaults,
+        test_cursor_idle_finishes_after_threshold,
+        test_cursor_movement_resets_idle_clock,
+        test_cursor_unreadable_never_finishes,
+        test_cursor_idle_disabled_by_zero,
+        test_cursor_reader_wired_by_default,
         test_numerator_is_primary_when_assist_disabled,
         test_assist_not_read_when_disabled,
         test_counter_prompt,

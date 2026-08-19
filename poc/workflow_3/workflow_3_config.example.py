@@ -128,7 +128,9 @@ SHARE_MAX_ATTEMPTS = None    # EQP 별 연속 view-only 재시도 상한. None=�
 RECORDING_MAX_SEC = None     # 녹화 하드 상한(초). None=기본 900.
 ENGINEER_WATCH_SEC = None    # 미보정 watch 상한(초). None=기본 300. 엔지니어 조작을
                              # 끝까지 담고 싶으면 RECORDING_MAX_SEC 와 함께 올린다.
-ENGINEER_DONE_DETECT = None  # 완료 신호(창 닫힘/분자 증가)로 watch 조기 종료. 1/0/None(기본 off).
+ENGINEER_DONE_DETECT = None  # 완료 신호(창 닫힘/분자 증가/커서 2분 정지)로 watch 조기 종료.
+                            # 1/0/None(기본 **on**, 2026-08-19). 끄면 항상 cap(5분)까지 간다.
+                            # 커서 정지 상한은 env ALIGN_FAIL_ENGINEER_DONE_IDLE_SEC=120 (0=끔).
                             # Assist 패널 판독은 별도 스위치이며 기본 off 다(2026-08-19) -
                             # 판독 정확도 미확보라 예전처럼 Recipe Monitor 분자(N) 단독으로 판정한다.
                             # 되돌리려면 env ALIGN_FAIL_ENGINEER_DONE_ASSIST=1.

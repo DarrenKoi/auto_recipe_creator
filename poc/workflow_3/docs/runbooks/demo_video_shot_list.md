@@ -55,6 +55,22 @@ align fail 이 나면 장비는 엔지니어가 개입할 때까지 멈춰 있�
 > "그 시각에 시스템이 무슨 판단을 했는가" 는 프레임 옆에 텍스트로 붙는다. 이미 지나간
 > 실알람 녹화에도 소급 적용되므로, 화면 녹화를 못 걸어둔 건에 대한 유일한 수단이다.
 
+### 앞으로 찍을 건이라면: 접속 구간 prelude (2026-08-19)
+
+`ALIGN_FAIL_RECORD_PRELUDE=1` 로 모니터를 띄우면 위 세 가지 중 앞의 둘이 **그림으로**
+남는다. 사이클 시작부터 tool 창이 뜰 때까지 **화면 전체**를 `recording/prelude/` 에
+따로 녹화하기 때문이다 - RCS 실행/로그인, List 탭, tool 더블클릭, 그리고 터미널 콘솔이
+그대로 프레임에 들어온다. tool 창이 뜨는 순간 기존 창 rect 녹화로 인계된다.
+
+`make_demo_video.py` 는 두 폴더를 자동으로 이어 붙인다(manifest 의 `started_epoch`
+차이로 시간축을 맞추고, 화면과 tool 창의 종횡비가 달라 letterbox 로 합성한다).
+
+- 기본은 **off** 다. 화면 전체 그랩이라 다른 앱 창까지 찍히므로, 상시 운전이 아니라
+  촬영 회차에만 켠다. 촬영 전에 화면을 정리할 것.
+- 이미 지나간 녹화에는 소급 적용되지 않는다 - 그건 여전히 로그 패널의 몫이다.
+- 상한: `ALIGN_FAIL_PRELUDE_MAX_SEC`(300s) / `ALIGN_FAIL_PRELUDE_MAX_DISK_MB`(800MB).
+  듀얼 모니터에서 특정 화면만 찍으려면 `ALIGN_FAIL_PRELUDE_MONITOR_INDEX`(1=주 모니터).
+
 ### 결론: 대체가 아니라 역할 분담
 
 | | 실알람 자동 녹화 | replay 촬영 |
@@ -121,7 +137,11 @@ ALIGN_FAIL_ALARM_SOURCE=replay
 ALIGN_FAIL_REPLAY_CSV=<작업경로>/demo_fixture.csv
 ALIGN_FAIL_POLL_SEC=5              # 기본 10s -> 감지까지 대기 단축
 ALIGN_FAIL_ENGINEER_WATCH_SEC=60   # 기본 300s. 안 줄이면 5분 정지 화면이 생긴다
+ALIGN_FAIL_RECORD_PRELUDE=1        # 접속 구간(RCS 실행~tool 진입)을 화면 전체로 녹화
 ```
+
+> `ALIGN_FAIL_RECORD_PRELUDE=1` 을 켰다면 **화면을 먼저 정리할 것** - 그 구간은 창이
+> 아니라 화면 전체를 찍으므로 열려 있는 다른 창이 그대로 담긴다(§0.5).
 
 **`SAFE_MODE` 와 `ALIGN_FAIL_CORRECTION_DRY_RUN` 은 건드리지 않는다.**
 진입점의 `_apply_live_mode_defaults()` 가 둘 다 `0` 으로 못박아 실클릭 모드로 뜬다 —
@@ -310,13 +330,44 @@ DEMO_VIDEO_START_SEC=120 DEMO_VIDEO_END_SEC=180 DEMO_VIDEO_SPEED=2 \
   `>> +38s skipped` 로 표시되므로 몰래 편집한 영상이 되지 않는다.
 - 경과시간/프레임번호를 burn-in 한다(`DEMO_VIDEO_OVERLAY=0` 으로 끌 수 있음).
   **ASCII 만 렌더링된다** — 한글 자막은 편집 도구에서 얹을 것.
+- `prelude/` 가 있으면 **접속 구간을 앞에 이어 붙인다**(§0.5). 두 세션은 t0 가 달라
+  manifest 의 `started_epoch` 차이로 맞추고, 종횡비가 다른 두 소스는 letterbox 로
+  합성한다. 빼고 싶으면 `DEMO_VIDEO_PRELUDE=0`.
+
+**어디를 자를지 고르는 법**: 실행하면 편집 전에 타임라인 미리보기가 먼저 찍힌다 —
+소스 구간(`prelude`/`recording`)과 30초 단위 프레임 밀도 막대다. 막대가 긴 구간이
+화면이 많이 바뀐 = 조작이 있던 구간이므로, 그걸 보고 남길 구간을 정하면 된다.
+
+```
+[INFO] 타임라인 0s ~ 412s (2831 frames)
+[INFO]         0s ~      38s  [prelude]      <- RCS 실행 ~ tool 진입
+[INFO]        38s ~     412s  [recording]
+[INFO]         0s |###########                   | 121
+[INFO]        30s |##############################| 342   <- 조작이 몰린 구간
+[INFO]        60s |##                            | 24
+```
+
+```
+# 앞 40초를 버리고, 뒤 20초도 버린다 (음수 = 끝에서부터)
+DEMO_VIDEO_START_SEC=40 DEMO_VIDEO_END_SEC=-20 \
+  uv run python poc/workflow_3/monitor/make_demo_video.py
+
+# 중간을 통째로 들어낸다 (남길 구간 목록; START/END 보다 우선)
+DEMO_VIDEO_SEGMENTS="0-30,120-260" \
+  uv run python poc/workflow_3/monitor/make_demo_video.py
+```
+
+잘라낸 구간도 숨기지 않는다 — 프레임 시각은 원본 그대로 두고 사라진 간격은 정지
+구간 압축과 같은 규약으로 `>> +NNs skipped` 로 표시된다.
 
 주요 env 는 스크립트 docstring 참고 (`SPEED`/`FPS`/`MAX_HOLD_SEC`/`START_SEC`/
-`END_SEC`/`MAX_WIDTH`/`OVERLAY`/`LABEL`).
+`END_SEC`/`SEGMENTS`/`PRELUDE`/`MAX_WIDTH`/`OVERLAY`/`LABEL`).
 
 ### 로그 패널 - 프레임에 없는 콘솔을 되살린다
 
 녹화 프레임은 **tool 창 rect** 만 담으므로 터미널이 절대 찍히지 않는다(§0.5).
+(prelude 를 켜면 접속 구간만은 화면 전체라 콘솔이 그대로 보인다 - 그 뒤 본 녹화
+구간은 여전히 tool 창뿐이므로 패널은 계속 필요하다.)
 `DEMO_VIDEO_LOG_PANEL=1` 을 켜면 프레임 오른쪽에 그 시각의 로그를 합성한다.
 
 ```

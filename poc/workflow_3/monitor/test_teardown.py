@@ -72,7 +72,9 @@ def test_alarm_cycle_teardown_unblocks_input_first():
     )
     assert steps[0][0] == "input_unblock", [n for n, _ in steps]
     names = [n for n, _ in steps]
-    assert names == ["input_unblock", "recording_stop", "close_tool", "close_alert"], names
+    assert names == [
+        "input_unblock", "recording_stop", "prelude_stop", "close_tool", "close_alert",
+    ], names
     print("[OK] test_alarm_cycle_teardown_unblocks_input_first")
 
 

@@ -37,6 +37,29 @@ def capture_window(window) -> "Image.Image":
         return Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
 
 
+def capture_screen(monitor_index: int = 1) -> "Image.Image":
+    """모니터 한 장 전체를 mss 로 캡처한다 (창 핸들 불필요).
+
+    `capture_window` 은 창 rect 만 그랩하므로 **창이 존재해야** 한다. 시연 영상의
+    "RCS 실행 -> 로그인 -> tool 진입" 구간은 tool 창이 아직 없고 RCS 창조차 없을 수
+    있는 구간이라, 그 구간만은 창이 아니라 화면을 통째로 찍는다. 콘솔 터미널도 같이
+    담기므로 로그 패널 합성 없이도 "그때 뭐가 찍혔는지"가 영상에 남는다.
+
+    index 규약은 mss 를 그대로 따른다 - 0 = 전 모니터를 합친 가상 화면,
+    1 = 주 모니터. 범위를 벗어나면 주 모니터로 떨어뜨린다(시연 녹화가 index 오타
+    하나로 통째로 실패하는 것보다 낫다).
+    """
+    if not MSS_AVAILABLE:
+        raise ImportError("mss 라이브러리가 필요합니다.")
+
+    with mss.mss() as sct:
+        index = monitor_index if 0 <= monitor_index < len(sct.monitors) else 1
+        if index != monitor_index:
+            print(f"[WARNING] 모니터 index={monitor_index} 없음 - 주 모니터로 캡처")
+        shot = sct.grab(sct.monitors[index])
+        return Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+
+
 def encode_image_webp(
     image: "Image.Image", quality: int = 90
 ) -> tuple[str, int, int]:

@@ -3,6 +3,7 @@
 from .env_utils import env_flag, env_float, env_int
 from .image_utils import (
     build_relative_crop_box,
+    capture_screen,
     capture_window,
     crop_image,
     encode_image_webp,

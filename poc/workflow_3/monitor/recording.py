@@ -121,6 +121,7 @@ class RecordingSession:
         max_disk_mb: float = 0.0,
         jpeg_quality: int = 95,
         capture_fn=None,
+        capture_source: str = "tool_window",
     ):
         self.tool_window = tool_window
         self.out_dir = Path(out_dir)
@@ -138,6 +139,10 @@ class RecordingSession:
         self.jpeg_quality = int(jpeg_quality)
         # 테스트 주입점 — 기본은 실제 창 캡처.
         self._capture_fn = capture_fn or (lambda: capture_window(self.tool_window))
+        # 무엇을 찍은 프레임인지(창 rect / 화면 전체). manifest 에만 남는 라벨이지만
+        # 소비자에겐 중요하다 - recording_filter 의 live SEM box 게이트는 'tool 창
+        # rect' 를 전제하므로, 화면 전체 프레임을 같은 파이프라인에 넣으면 안 된다.
+        self.capture_source = capture_source
         self.frames: list[Path] = []
         self.sampled_count = 0
         self.stop_reason: str = ""
@@ -258,6 +263,12 @@ class RecordingSession:
             "started_at": time.strftime(
                 "%Y-%m-%dT%H:%M:%S", time.localtime(self._started_at or time.time())
             ),
+            # 초 단위 문자열과 달리 세션 간 접합에 쓸 수 있는 절대 기준점.
+            # prelude 녹화와 본 녹화는 t0 가 다르므로, 두 프레임 목록을 하나의
+            # 시간축에 올리려면 이 값의 차이가 필요하다(문자열은 1초 해상도라
+            # 20fps 구간에서 최대 20프레임이 어긋난다).
+            "started_epoch": round(self._started_at or time.time(), 3),
+            "capture_source": self.capture_source,
             "stopped_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
             "frame_count": len(self.frames),
             "sampled_count": self.sampled_count,

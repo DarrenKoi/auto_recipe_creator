@@ -306,7 +306,7 @@ def build_review(
         recipe_dirs = _recipe_dirs_from_batch(out_root, batch_summary_path)
         batch_ts = batch_summary_path.stem.replace("batch_summary_", "")
     else:
-        print("[WARNING] batch_summary_*.json 부재 — results.jsonl 폴더를 직접 스캔합니다.")
+        print("[WARNING] batch_summary_*.json 부재 - results.jsonl 폴더를 직접 스캔합니다.")
         recipe_dirs = _all_recipe_dirs(out_root)
         batch_ts = time.strftime("%Y%m%d_%H%M%S")
 
@@ -453,7 +453,7 @@ def _self_test() -> bool:
         assert summary["total_images"] == 7, f"total 불일치: {summary['total_images']}"
         # suspect 는 actual status(ok) + suspect_success 양쪽 카운트 → ok 1 + suspect 1.
         assert summary["section_counts"].get("suspect_success") == 1, "suspect 카운트 오류"
-        print("[INFO] self-test 통과 — index.html, by_status thumbnails, 그룹핑 검증 완료.")
+        print("[INFO] self-test 통과 - index.html, by_status thumbnails, 그룹핑 검증 완료.")
         print(f"[INFO] (합성 결과 위치, 확인용) {index}")
         # self-test 산출물은 임시 — 확인 후 정리. 보고 싶으면 위 경로 복사.
         return True
@@ -472,7 +472,7 @@ def run() -> str:
     ):
         index = build_review(out_root)
         return "success" if index is not None else "no_data"
-    print("[WARNING] 실제 align_correction 결과 없음 — 합성 self-test 로 대체합니다.")
+    print("[WARNING] 실제 align_correction 결과 없음 - 합성 self-test 로 대체합니다.")
     return "success" if _self_test() else "selftest_failed"
 
 

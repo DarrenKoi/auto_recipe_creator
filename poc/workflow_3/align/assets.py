@@ -267,7 +267,7 @@ def resolve_assets_auto(
     if any_override:
         print(
             f"[WARNING] override 가 불완전합니다(eqp_id={eqp_id!r}, class={class_name!r}, "
-            f"recipe={recipe_name!r}) — 무시하고 최신 align fail 폴더를 자동 선택합니다. "
+            f"recipe={recipe_name!r}) - 무시하고 최신 align fail 폴더를 자동 선택합니다. "
             f"고정하려면 eqp_id + class + recipe 를 모두 지정하세요."
         )
 

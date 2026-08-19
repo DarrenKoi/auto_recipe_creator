@@ -431,7 +431,7 @@ def wait_for_remote_monitoring_window(
         # 점유 'select' 팝업 조기 감지 — 떠 있으면 창 탐색을 더 돌지 않고 즉시 포기.
         if abort_check is not None and abort_check():
             print(
-                f"[INFO] Remote Monitoring System 창 대기 중단 — 점유 'select' 팝업 감지 "
+                f"[INFO] Remote Monitoring System 창 대기 중단 - 점유 'select' 팝업 감지 "
                 f"(attempt={attempt}, tool_name={tool_name!r})."
             )
             return None, "", ""
@@ -445,7 +445,7 @@ def wait_for_remote_monitoring_window(
 
         if max_attempts is not None and attempt >= max_attempts:
             print(
-                f"[WARNING] Remote Monitoring System 창 미발견 — {max_attempts}회 시도 후 중단 "
+                f"[WARNING] Remote Monitoring System 창 미발견 - {max_attempts}회 시도 후 중단 "
                 f"(tool_name={tool_name!r}). RCS 가 다른 사용자에게 점유됐을 수 있음(select 팝업)."
             )
             return None, "", ""

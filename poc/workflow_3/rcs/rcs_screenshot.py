@@ -109,7 +109,7 @@ def record_rcs_window(
     """
     if not WINDOW_UTILS_AVAILABLE:
         print(
-            f"[INFO] window_utils 비활성 — RCS 캡처 생략 (os={os.name}, "
+            f"[INFO] window_utils 비활성 - RCS 캡처 생략 (os={os.name}, "
             f"WINDOW_UTILS_AVAILABLE={WINDOW_UTILS_AVAILABLE})"
         )
         return [], None, "", ""
@@ -211,7 +211,7 @@ def connect_capture_close(
     저장된 프레임 경로 목록을 반환하며, 접속/캡처 실패 시 빈 리스트를 반환한다.
     """
     if not CONNECT_TOOL_AVAILABLE:
-        print("[ERROR] connect_to_tool 비활성 — 독립 실행 불가 (office Windows 에서 실행하세요).")
+        print("[ERROR] connect_to_tool 비활성 - 독립 실행 불가 (office Windows 에서 실행하세요).")
         return []
     if not eqp_id:
         # 지정 경로가 둘(코드 상수 / env)이라 어느 쪽을 채워야 하는지 같이 알려준다.
@@ -242,12 +242,12 @@ def connect_capture_close(
         main_window_timeout_sec=CONNECT_WINDOW_TIMEOUT_SEC,
     )
     if result is None:
-        print(f"[ERROR] 접속 실패 — 캡처 생략: EQP_ID={eqp_id}")
+        print(f"[ERROR] 접속 실패 - 캡처 생략: EQP_ID={eqp_id}")
         return []
     if not getattr(result, "double_clicked", False):
         print(
             f"[WARNING] tool 더블클릭이 수행되지 않았습니다 "
-            f"(action_enabled={action_enabled}) — 창이 안 열렸을 수 있음: EQP_ID={eqp_id}"
+            f"(action_enabled={action_enabled}) - 창이 안 열렸을 수 있음: EQP_ID={eqp_id}"
         )
 
     return capture_and_close_rcs_window(eqp_id, recipe_id)

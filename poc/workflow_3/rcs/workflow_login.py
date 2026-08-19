@@ -56,7 +56,7 @@ except ImportError:
     PYNPUT_KEYBOARD_AVAILABLE = False
     KeyboardController = None
     Key = None
-    print("[WARNING] pynput.keyboard 미설치 — 타이핑 동작은 로그만 출력됩니다.")
+    print("[WARNING] pynput.keyboard 미설치 - 타이핑 동작은 로그만 출력됩니다.")
 
 try:
     from poc.workflow_3.util.mouse_utils import PYNPUT_MOUSE_AVAILABLE

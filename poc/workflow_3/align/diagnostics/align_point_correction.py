@@ -846,8 +846,8 @@ def _build_rcp_template(
         fx, fy, fw, fh = fallback_bbox
         fallback_gray = rcp_gray[fy:fy + fh, fx:fx + fw].copy()
         print(
-            f"[WARNING] {label}: 흰색 unique-area 박스 검출 실패 — 이미지 중심 {fw}x{fh} "
-            f"(≈{RCP_FALLBACK_CENTER_CROP_AREA_RATIO * 100:.0f}% area) 크롭을 template 으로 사용합니다."
+            f"[WARNING] {label}: 흰색 unique-area 박스 검출 실패 - 이미지 중심 {fw}x{fh} "
+            f"(~={RCP_FALLBACK_CENTER_CROP_AREA_RATIO * 100:.0f}% area) 크롭을 template 으로 사용합니다."
         )
         template = build_template(
             fallback_gray, recipe_id=recipe_id, version=version, key_type=key_type,
@@ -1068,7 +1068,7 @@ def _match_with_prior_roi(
             policy=STRUCTURE_POLICY,
         )
     except Exception as exc:
-        print(f"[WARNING] prior-ROI 재매칭 실패 — free 검색 유지: {exc}")
+        print(f"[WARNING] prior-ROI 재매칭 실패 - free 검색 유지: {exc}")
         return None
 
 
@@ -1518,7 +1518,7 @@ def _process_msr_image(
         overlay_path = overlay_dir / f"{msr_path.stem}_overlay.jpg"
         cv2.imwrite(str(overlay_path), overlay, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
         print(f"[WARNING] {msr_path.name}: msr unrecognizable (lap_var={sharpness:.1f} "
-              f"< {MIN_SHARPNESS_LAPVAR}) — 정렬 위치 추정 불가, 다음 행동 권장.")
+              f"< {MIN_SHARPNESS_LAPVAR}) - 정렬 위치 추정 불가, 다음 행동 권장.")
         return {
             "recipe_id": recipe_id,
             "eqp_id": eqp_id,
@@ -1643,7 +1643,7 @@ def _process_msr_image(
             tiebreak_applied = True
             print(
                 f"[INFO] {msr_path.name}: race {cv_winner_modality}→{scale_bar_hint} "
-                f"(status={status}, scale={scale_bar_um} µm) tiebreak applied"
+                f"(status={status}, scale={scale_bar_um} um) tiebreak applied"
             )
 
     # 보정 벡터 계산 — 기준은 crosshair (있으면) 또는 image center.
@@ -1842,7 +1842,7 @@ def _process_recipe(
                 )
             except Exception as exc:
                 # 한 장 실패가 batch 전체를 막지 않도록 — 동일 schema 로 처리 실패 row 를 남기고 다음 장으로.
-                print(f"[ERROR] {msr_path.name}: 처리 중 예외 — {type(exc).__name__}: {exc}")
+                print(f"[ERROR] {msr_path.name}: 처리 중 예외 - {type(exc).__name__}: {exc}")
                 row = _error_row(
                     msr_path,
                     exc=exc,
@@ -2023,7 +2023,7 @@ def _process_recipe(
     if no_crosshair_rows:
         print(f"[INFO] no-crosshair-drawn images (도구가 포기 추정): {len(no_crosshair_rows)}")
     if unrecognizable_rows:
-        print(f"[INFO] unrecognizable images (전체 blur — 다음 행동 권장): {len(unrecognizable_rows)}")
+        print(f"[INFO] unrecognizable images (전체 blur - 다음 행동 권장): {len(unrecognizable_rows)}")
     if tiebreak_rows:
         print(f"[INFO] tiebreak applied (race 비자신 + OCR 힌트로 modality 교체): {len(tiebreak_rows)}")
     if disagreement_rows:
@@ -2033,7 +2033,7 @@ def _process_recipe(
     if crosshair_prior_rows:
         print(f"[INFO] crosshair prior 적용 (free 검색을 spatial prior 로 교체): {len(crosshair_prior_rows)}")
     if not_distinctive_rows:
-        print(f"[INFO] not-distinctive 매치 (frame 의 다른 곳들과 비슷한 점수 — live 탐색 필요): {len(not_distinctive_rows)}")
+        print(f"[INFO] not-distinctive 매치 (frame 의 다른 곳들과 비슷한 점수 - live 탐색 필요): {len(not_distinctive_rows)}")
     return summary
 
 
@@ -2093,7 +2093,7 @@ def run() -> str:
         )
         print(f"[INFO] scale-bar OCR client 준비됨: {SCALE_BAR_OCR_SERVICE}")
     except Exception as exc:
-        print(f"[WARNING] scale-bar OCR client 생성 실패 — 힌트 없이 진행: {exc}")
+        print(f"[WARNING] scale-bar OCR client 생성 실패 - 힌트 없이 진행: {exc}")
 
     per_recipe_summaries: list[dict] = []
     failed_recipes: list[dict] = []
@@ -2101,7 +2101,7 @@ def run() -> str:
         header = f"[{idx}/{len(recipes)}] {assets.eqp_id}/{assets.class_name}/{assets.recipe_name}"
         print(f"\n===== {header} =====")
         if assets.recipe_om is None and assets.recipe_sem is None:
-            print(f"[WARNING] {header}: from_rcp 안에 IMAP0001/IMAP0002 둘 다 없음 — 건너뜀")
+            print(f"[WARNING] {header}: from_rcp 안에 IMAP0001/IMAP0002 둘 다 없음 - 건너뜀")
             failed_recipes.append({
                 "recipe_dir": str(assets.recipe_dir),
                 "reason": "no_templates",
@@ -2117,7 +2117,7 @@ def run() -> str:
             })
         except Exception as exc:
             # recipe 한 개의 처리 자체가 실패해도 batch 가 멈추지 않는다.
-            print(f"[ERROR] {header}: recipe 처리 예외 — {type(exc).__name__}: {exc}")
+            print(f"[ERROR] {header}: recipe 처리 예외 - {type(exc).__name__}: {exc}")
             failed_recipes.append({
                 "recipe_dir": str(assets.recipe_dir),
                 "reason": f"{type(exc).__name__}: {str(exc)[:256]}",
@@ -2142,7 +2142,7 @@ def run() -> str:
     )
 
     print(
-        f"\n[INFO] batch done in {batch_summary['duration_sec']}s — "
+        f"\n[INFO] batch done in {batch_summary['duration_sec']}s - "
         f"processed={len(per_recipe_summaries)} failed={len(failed_recipes)}"
     )
     print(f"[INFO] batch summary: {batch_path}")

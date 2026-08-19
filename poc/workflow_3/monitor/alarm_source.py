@@ -106,7 +106,7 @@ def load_alarm_source(kind: str = "office") -> AlarmSource:
         return AlarmSource("office", module.get_cdsem_alarms, module.filter_align_fail)
 
     print(
-        "[WARNING] office_align_fail_alarm 모듈을 찾지 못함 — 알람 폴링 비활성. "
+        "[WARNING] office_align_fail_alarm 모듈을 찾지 못함 - 알람 폴링 비활성. "
         "개발 PC 에서는 ALIGN_FAIL_ALARM_SOURCE=replay + ALIGN_FAIL_REPLAY_CSV 를 쓰세요."
     )
     return AlarmSource("disabled", lambda: None, lambda rows: rows, available=False)

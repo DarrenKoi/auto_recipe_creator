@@ -610,7 +610,7 @@ def close_window(
         if _closed_after_attempt():
             print(f"[INFO] 창 닫기 완료: {debug_label}, strategy=close")
             return True
-        print(f"[INFO] close() 후에도 창 생존 — 다음 전략: {debug_label}")
+        print(f"[INFO] close() 후에도 창 생존 - 다음 전략: {debug_label}")
     except Exception as exc:
         print(f"[INFO] pywinauto close 실패: {debug_label}, error={exc}")
 
@@ -652,7 +652,7 @@ def close_window(
 
     if not verifiable:
         print(
-            f"[WARNING] 창 닫힘을 검증할 수 없습니다(handle 없음) — 모든 전략을 시도했으나 "
+            f"[WARNING] 창 닫힘을 검증할 수 없습니다(handle 없음) - 모든 전략을 시도했으나 "
             f"결과 미확인: {debug_label}"
         )
     else:

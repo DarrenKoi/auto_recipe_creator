@@ -211,7 +211,7 @@ def search_align_key(
                     notify_fn(state, recent_lows[-config.low_streak_limit:])
                 else:
                     print(
-                        f"[WARNING] low_streak={state.low_streak} 도달 — 엔지니어 호출"
+                        f"[WARNING] low_streak={state.low_streak} 도달 - 엔지니어 호출"
                         f" 핸들러 미장착, escalated 로 종료"
                     )
                 return AlignKeySearchOutcome(

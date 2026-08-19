@@ -269,7 +269,7 @@ def probe(limit_per_recipe: int | None = None) -> str:
 
     leaves = iter_recipe_dirs()
     if not leaves:
-        print("[ERROR] align_images 아래 recipe 가 없습니다 — probe 불가.")
+        print("[ERROR] align_images 아래 recipe 가 없습니다 - probe 불가.")
         return "no_assets"
 
     ts = time.strftime("%Y%m%d_%H%M%S")
@@ -297,7 +297,7 @@ def probe(limit_per_recipe: int | None = None) -> str:
                 v2 = detect_crosshair(gray)
                 old_xy, _old_conf, _old_dbg = _detect_existing_crosshair(gray)
             except Exception as exc:
-                print(f"[WARNING] {msr_path.name}: probe 실패 — {type(exc).__name__}: {exc}")
+                print(f"[WARNING] {msr_path.name}: probe 실패 - {type(exc).__name__}: {exc}")
                 continue
             n_total += 1
             lab = _tool_label(msr_path.name)
@@ -408,7 +408,7 @@ def run() -> str:
         has_data = False
     if has_data:
         return probe()
-    print("[WARNING] align_images 데이터 없음 — 합성 self-test 로 대체합니다.\n")
+    print("[WARNING] align_images 데이터 없음 - 합성 self-test 로 대체합니다.\n")
     return "success" if _self_test() else "selftest_failed"
 
 

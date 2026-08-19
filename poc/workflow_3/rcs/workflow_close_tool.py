@@ -154,7 +154,7 @@ def main() -> str:
     """env 가 있으면 1회, 없으면 대화형 반복 닫기."""
     action_enabled = _action_enabled()
     if not action_enabled:
-        print("[INFO] CLOSE_TOOL_DRY_RUN=on — 실제로 닫지 않고 대상 창만 확인합니다.")
+        print("[INFO] CLOSE_TOOL_DRY_RUN=on - 실제로 닫지 않고 대상 창만 확인합니다.")
 
     env_tool = load_target_tool_name()
     if env_tool:

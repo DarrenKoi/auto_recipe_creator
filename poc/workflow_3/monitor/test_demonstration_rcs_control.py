@@ -709,5 +709,76 @@ def test_run_demonstration_stops_cleanly_on_keyboard_interrupt():
     assert [v.tool_id for v in result.visits] == ["MCD019"]
 
 
+# ------------------------------------------------------------------
+# 이름 위치 가드 - Mac 에서 실행으로는 잡히지 않는 부류.
+#
+# 이 모듈의 Windows 배선은 pywinauto 가 없는 Mac 에서 import 자체가 안 되므로,
+# "이름을 엉뚱한 모듈에서 가져왔다" 가 조용히 통과한다(실제로 capture_window 를
+# image_utils 가 아닌 window_utils 에서 가져와 오피스에서만 터졌다). 그래서 실행
+# 대신 **AST 로** 각 from-import 의 이름이 대상 모듈에 실제로 있는지 확인한다.
+# ------------------------------------------------------------------
+
+import ast
+import pathlib
+
+
+def _module_file(module_name):
+    """poc.workflow_3.x.y -> 파일 경로. 패키지면 __init__.py."""
+    root = pathlib.Path(__file__).resolve().parents[3]
+    base = root / pathlib.Path(*module_name.split("."))
+    if base.is_dir():
+        return base / "__init__.py"
+    return base.with_suffix(".py")
+
+
+def _top_level_names(tree):
+    """모듈이 최상위에서 바인딩하는 이름들(def/class/대입/import 별칭)."""
+    names = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    names.add(target.id)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.Try):
+            # import-guard 패턴(try/except ImportError) 안의 import 도 최상위 이름이다.
+            for sub in node.body:
+                if isinstance(sub, (ast.Import, ast.ImportFrom)):
+                    for alias in sub.names:
+                        names.add(alias.asname or alias.name.split(".")[0])
+    return names
+
+
+def test_every_workflow3_import_name_exists_in_its_module():
+    source_path = _module_file("poc.workflow_3.monitor.demonstration_rcs_control")
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+
+    missing = []
+    checked = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom) or not node.module:
+            continue
+        if not node.module.startswith("poc.workflow_3"):
+            continue
+        target = _module_file(node.module)
+        if not target.is_file():
+            missing.append(f"{node.module} (모듈 파일 없음)")
+            continue
+        available = _top_level_names(ast.parse(target.read_text(encoding="utf-8")))
+        for alias in node.names:
+            checked += 1
+            if alias.name not in available:
+                missing.append(f"{node.module}.{alias.name} (line {node.lineno})")
+
+    assert not missing, "엉뚱한 모듈에서 가져온 이름: " + ", ".join(missing)
+    assert checked > 10, f"검사한 import 가 너무 적다({checked}) - 가드가 헛돌고 있다"
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))

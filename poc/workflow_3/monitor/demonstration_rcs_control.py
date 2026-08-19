@@ -879,8 +879,9 @@ def _build_action_fn(
     화면을 볼 수 없어, 오피스 실행이 실제 문구(required 토큰)를 아는 유일한 경로다.
     """
     from poc.workflow_3 import DEBUG_IMAGE_DIR
+    from poc.workflow_3.util.image_utils import capture_window
     from poc.workflow_3.util.mouse_utils import click_at_screen, move_cursor_to_screen
-    from poc.workflow_3.util.window_utils import capture_window, image_point_to_screen
+    from poc.workflow_3.util.window_utils import image_point_to_screen
     from poc.workflow_3.vlm.label_verify import (
         crop_box_around_point,
         read_text_near_point,
@@ -1088,9 +1089,24 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
         )
         visit_fn = _build_visit_fn(settings, dwell_sec, action_fn)
     except Exception as exc:
-        # Mac/개발 PC 에서는 pywinauto 등이 없어 여기서 걸린다 - 무엇이 없는지 이름을 남긴다.
-        print(f"[ERROR] RCS 모듈을 불러오지 못했습니다(오피스 Windows 전용): {exc}")
-        return DemoRunResult(aborted="rcs_modules_unavailable")
+        # 두 원인이 섞이는 자리다. Mac 은 pywinauto 부재로 걸리지만(정상), 오피스는
+        # 의존성이 있으므로 여기서 걸렸다면 **우리 코드의 결함**이다 - 예전에 이 자리가
+        # 무조건 "Windows 전용 의존성 없음" 이라고 찍어, 엉뚱한 모듈에서 이름을 가져온
+        # 버그를 환경 탓으로 읽게 만들었다. 그래서 둘을 갈라 찍고 traceback 을 남긴다.
+        import traceback
+
+        missing_dep = isinstance(exc, ModuleNotFoundError)
+        if missing_dep:
+            print(f"[ERROR] Windows 전용 모듈 없음(개발 PC 에서는 정상): {exc}")
+        else:
+            print(
+                f"[ERROR] 시연 배선 조립 실패 - 코드 결함일 가능성이 높습니다: "
+                f"{type(exc).__name__}: {exc}"
+            )
+        traceback.print_exc()
+        return DemoRunResult(
+            aborted="rcs_modules_unavailable" if missing_dep else "wiring_error"
+        )
 
     return run_demonstration(
         tool_ids,

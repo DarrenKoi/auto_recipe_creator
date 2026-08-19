@@ -281,17 +281,50 @@ def find_login_window() -> tuple[object | None, str, str]:
     return None, "", ""
 
 
+def find_window_two_pass(
+    title_prefix: str,
+    *,
+    label: str,
+    window_filter=None,
+) -> tuple[object | None, str, str]:
+    """제목 prefix 로 창을 찾되, 보이는 창에서 못 찾으면 숨은 창까지 다시 훑는다.
+
+    `visible_only=True` 한 번만 훑으면 **작업 표시줄로 내려간(최소화) 창이나 트레이로
+    숨은 창을 놓친다**. 오피스에서 실제로 났던 증상이다 — RCS 가 다른 창 뒤에 있거나
+    내려가 있으면 `메인 RCS 창 없음` 으로 끝나, 엔지니어가 작업 표시줄 아이콘을 직접
+    눌러 띄워야 자동화가 이어졌다.
+
+    창을 찾은 뒤의 `activate_window` 는 이미 `IsIconic -> SW_RESTORE` 로 최소화를 풀 수
+    있다. 그러니 빠졌던 것은 복원이 아니라 **탐색** 이다. 1차(보이는 창)를 먼저 두는
+    이유는 그쪽이 후보가 적어 오탐이 적기 때문이고, 2차는 미스일 때만 돈다.
+    """
+    for visible_only in (True, False):
+        window, window_title, backend = find_window_by_title_prefix(
+            title_prefix,
+            DESKTOP_SCAN_BACKENDS,
+            visible_only=visible_only,
+            window_filter=window_filter,
+        )
+        if window is not None:
+            if not visible_only:
+                print(
+                    f"[INFO] {label} 은 숨은/최소화 창 스캔에서 발견됨 "
+                    f"(1차 visible 스캔 미검출): title={window_title!r}"
+                )
+            return window, window_title, backend
+    return None, "", ""
+
+
 def find_rcs_main_window() -> tuple[object | None, str, str]:
-    """로그인 후 메인 RCS 창을 탐색한다."""
+    """로그인 후 메인 RCS 창을 탐색한다(최소화/숨김 창 포함)."""
     if not WINDOW_UTILS_AVAILABLE:
         print("[ERROR] window_utils unavailable - 메인 창 탐색 불가")
         return None, "", ""
 
     print(f"[INFO] 메인 RCS 창 탐색 시작: title_prefix={RCS_MAIN_WINDOW_TITLE_PREFIX!r}")
-    main_window, window_title, backend = find_window_by_title_prefix(
+    main_window, window_title, backend = find_window_two_pass(
         RCS_MAIN_WINDOW_TITLE_PREFIX,
-        DESKTOP_SCAN_BACKENDS,
-        visible_only=True,
+        label="메인 RCS 창",
     )
     if main_window is None:
         return None, "", ""
@@ -349,10 +382,12 @@ def find_remote_monitoring_window(tool_name: str = "") -> tuple[object | None, s
         "[INFO] Remote Monitoring System 창 탐색 시작: "
         f"title_prefix={REMOTE_MONITORING_WINDOW_TITLE_PREFIX!r}, tool_name={tool_name!r}"
     )
-    tool_window, window_title, backend = find_window_by_title_prefix(
+    # tool 창도 최소화/가림 상태일 수 있다. 특히 **닫기** 경로가 이 함수를 쓰므로
+    # (workflow_close_tool.close_tool), 여기서 못 찾으면 엔지니어가 작업을 끝낸 뒤에도
+    # tool 창이 안 닫히고 남는다.
+    tool_window, window_title, backend = find_window_two_pass(
         REMOTE_MONITORING_WINDOW_TITLE_PREFIX,
-        DESKTOP_SCAN_BACKENDS,
-        visible_only=True,
+        label=f"Remote Monitoring System 창(tool={tool_name!r})",
         window_filter=lambda window, title: _tool_window_filter(window, title, tool_name),
     )
     if tool_window is None:
@@ -497,6 +532,7 @@ __all__ = [
     "WINDOW_TITLE_PREFIX",
     "find_login_window",
     "find_rcs_main_window",
+    "find_window_two_pass",
     "find_remote_monitoring_window",
     "find_rcs_updater_window",
     "wait_for_rcs_main_window",

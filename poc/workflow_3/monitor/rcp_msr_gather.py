@@ -18,6 +18,7 @@ office 모듈 부재(개발 PC)·예외 시 조용히 skip 해 모니터 루프�
 office_rcp_msr_downloader 는 정위치(poc.workflow_3.monitor)에서 로드한다.
 """
 
+import inspect
 import threading
 from typing import Protocol
 
@@ -88,6 +89,55 @@ _IN_FLIGHT_LOCK = threading.Lock()
 _IN_FLIGHT: dict = {}
 
 
+def _accepts_include_msr(downloader) -> bool:
+    """office downloader 가 include_msr 키워드를 받는지 판정한다(모르면 True).
+
+    office_rcp_msr_downloader.py 는 gitignore 라 오피스 PC 에만 있고 git 으로 갱신되지
+    않는다. 그래서 이 저장소의 호출부만 include_msr 를 붙이면 구버전 사본이
+    `unexpected keyword argument 'include_msr'` 로 통째로 실패하고, rcp 가 한 장도
+    안 받아진 채 feasibility 가 '자산 없음' 을 오판한다. 서명을 먼저 읽어 갈라낸다.
+
+    서명을 읽을 수 없으면(C 구현/래퍼) True 로 본다 - 그 경우 호출부가 TypeError 를
+    받아 인자 없이 한 번 더 시도한다.
+    """
+    try:
+        sig = inspect.signature(downloader.download_rcp_msr)
+    except (TypeError, ValueError):
+        return True
+    params = sig.parameters
+    if "include_msr" in params:
+        return True
+    # **kwargs 를 받으면 그대로 넘겨도 안전하다.
+    return any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
+def _call_downloader(downloader, eqp_id, recipe_id, *, dest_dir, include_msr) -> int:
+    """office downloader 를 버전 차이에 관계없이 호출한다.
+
+    구버전(include_msr 없음)에 include_msr=True 를 요구하면 조용히 넘기지 않고 경고를
+    남긴다 - 그 사본은 항상 msr 까지 받으므로 '오프라인 벤치만 msr' 규약이 깨진다.
+    프로덕션(include_msr=False)에서는 msr 도 함께 받게 되어 느려질 뿐 결과는 맞다.
+    """
+    if _accepts_include_msr(downloader):
+        try:
+            return downloader.download_rcp_msr(
+                eqp_id, recipe_id, dest_dir=dest_dir, include_msr=include_msr
+            )
+        except TypeError as exc:
+            # 서명을 못 읽은 경우만 여기로 온다. downloader 내부에서 난 TypeError 를
+            # 재시도로 오인하지 않게 메시지에 include_msr 가 있을 때만 폴백한다.
+            if "include_msr" not in str(exc):
+                raise
+            print(f"[WARNING] office downloader 가 include_msr 미지원 - 인자 없이 재시도: {exc}")
+
+    print(
+        "[WARNING] office_rcp_msr_downloader 가 구버전입니다(include_msr 미지원). "
+        "rcp 만 받도록 오피스 PC 의 사본을 temp_office_rcp_msr_downloader.py 기준으로 "
+        "갱신하세요 - 지금은 msr 까지 받아 다운로드가 느려집니다."
+    )
+    return downloader.download_rcp_msr(eqp_id, recipe_id, dest_dir=dest_dir)
+
+
 def gather_rcp_msr(
     eqp_id, recipe_id, settings: Workflow3Settings, *,
     include_msr: bool = False, timeout_sec=None,
@@ -116,8 +166,9 @@ def gather_rcp_msr(
 
     def _run():
         try:
-            n_images = _DOWNLOADER.download_rcp_msr(
-                eqp_id, recipe_id, dest_dir=dest_dir, include_msr=include_msr
+            n_images = _call_downloader(
+                _DOWNLOADER, eqp_id, recipe_id,
+                dest_dir=dest_dir, include_msr=include_msr,
             )
             kind = "rcp+msr" if include_msr else "rcp"
             print(f"[INFO] {kind} 다운로드 완료: EQP_ID={eqp_id} recipe={recipe_id} "

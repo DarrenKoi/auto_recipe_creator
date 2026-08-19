@@ -452,11 +452,11 @@ def _close_select_popup() -> None:
     다시 겨냥하는 것이라, 확인 게이트를 통과하지 않은 클릭을 최악의 순간에 내보내게
     된다. 창 핸들은 이미 있으므로 VLM 도 좌표도 필요 없다.
     """
-    from poc.workflow_3.monitor.occupied_popup import SELECT_TITLE
-    from poc.workflow_3.util import close_window, find_window_by_title_prefix
+    from poc.workflow_3.monitor.occupied_popup import find_select_popup_window
+    from poc.workflow_3.util import close_window
 
     try:
-        popup = find_window_by_title_prefix(SELECT_TITLE)
+        popup = find_select_popup_window()
         if popup is not None and close_window is not None:
             close_window(popup, debug_label="select popup")
     except Exception as exc:
@@ -469,9 +469,11 @@ def _run_share_request(settings: Workflow3Settings, tag: str):
     확인 실패 시 crop 과 OCR 원문이 debug_images 에 남는다 - strict 를 기본값으로 두는
     대가이며, Mac 에서는 팝업을 볼 수 없어 이 산출물이 실제 문구를 아는 유일한 경로다.
     """
-    from poc.workflow_3.monitor.occupied_popup import SELECT_TITLE
+    from poc.workflow_3.monitor.occupied_popup import (
+        SELECT_TITLE,
+        find_select_popup_window,
+    )
     from poc.workflow_3.monitor.share_request import request_screen_share
-    from poc.workflow_3.util import find_window_by_title_prefix
     from poc.workflow_3.vlm.label_verify import (
         crop_box_around_point,
         read_text_near_point,
@@ -530,7 +532,7 @@ def _run_share_request(settings: Workflow3Settings, tag: str):
         read_tokens_fn=_read_tokens,
         click_fn=_click,
         capture_fn=capture_window,
-        find_popup_fn=lambda: find_window_by_title_prefix(SELECT_TITLE),
+        find_popup_fn=find_select_popup_window,
     )
 
 

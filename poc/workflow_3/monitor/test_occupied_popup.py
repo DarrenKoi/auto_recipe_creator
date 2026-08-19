@@ -30,6 +30,20 @@ def _restore(state):
         setattr(module, name, orig)
 
 
+class _FakeWindow:
+    """창 객체 자리표시자 - 튜플과 구분되는 타입이어야 의미가 있다."""
+
+
+def _fake_find_window(*args, **kwargs):
+    """`util.find_window_by_title_prefix` 의 **실제 계약** 인 3-tuple 을 돌려준다.
+
+    예전 스텁은 `object()` 하나를 돌려줬다. 그래서 호출부가 3-tuple 을 창 하나로
+    받아 쓰는 결함(팝업 닫기/화면 공유 요청이 오피스에서 전혀 동작하지 않음)을
+    테스트가 12/12 통과로 가려버렸다. 스텁은 producer 의 모양을 그대로 흉내내야 한다.
+    """
+    return (_FakeWindow(), "Select", "uia")
+
+
 def _fake_vlm(is_popup: bool):
     text = '{"is_select_popup": %s, "options_seen": []}' % ("true" if is_popup else "false")
     return SimpleNamespace(
@@ -86,7 +100,7 @@ def test_detect_title_no_vlm():
 def test_detect_vlm_confirms():
     state = {}
     _swap(state, op, "collect_window_rows", lambda: [SimpleNamespace(title="select")])
-    _swap(state, op, "find_window_by_title_prefix", lambda *a, **k: object())
+    _swap(state, op, "find_window_by_title_prefix", _fake_find_window)
     _swap(state, op, "capture_window", lambda win: Image.new("RGB", (80, 40)))
     try:
         assert op.detect_select_popup(_fake_vlm(True)) is True
@@ -98,7 +112,7 @@ def test_detect_vlm_confirms():
 def test_detect_vlm_rejects():
     state = {}
     _swap(state, op, "collect_window_rows", lambda: [SimpleNamespace(title="select")])
-    _swap(state, op, "find_window_by_title_prefix", lambda *a, **k: object())
+    _swap(state, op, "find_window_by_title_prefix", _fake_find_window)
     _swap(state, op, "capture_window", lambda win: Image.new("RGB", (80, 40)))
     try:
         # VLM 이 점유 팝업 아님으로 판단 → 오검출로 보고 접속 계속(False).
@@ -111,7 +125,7 @@ def test_detect_vlm_rejects():
 def _stub_select_window(state):
     """'select' 제목 창 + 캡처를 stub 해 VLM 확인 단계까지 도달시킨다."""
     _swap(state, op, "collect_window_rows", lambda: [SimpleNamespace(title="select")])
-    _swap(state, op, "find_window_by_title_prefix", lambda *a, **k: object())
+    _swap(state, op, "find_window_by_title_prefix", _fake_find_window)
     _swap(state, op, "capture_window", lambda win: Image.new("RGB", (80, 40)))
 
 
@@ -261,7 +275,51 @@ def test_process_fail_rows_success_marks_active():
     print("[OK] test_process_fail_rows_success_marks_active")
 
 
+def test_find_select_popup_window_returns_window_not_tuple():
+    """창 해석 지점은 **창 객체** 를 돌려줘야 한다(3-tuple 그대로 흘리면 안 됨).
+
+    회귀 방지: `find_window_by_title_prefix` 는 (window, title, backend) 를 돌려주는데
+    호출부 3곳이 그걸 창 하나로 받았다. 튜플은 절대 None 이 아니라서 모든
+    `if popup is None` 가드가 죽고, capture/close 에 튜플이 들어가 오피스에서
+    팝업 닫기와 화면 공유 요청이 매번 예외로 끝났다.
+    """
+    state = {}
+    _swap(state, op, "find_window_by_title_prefix", _fake_find_window)
+    try:
+        window = op.find_select_popup_window()
+        assert isinstance(window, _FakeWindow), f"창이 아님: {window!r}"
+        assert not isinstance(window, tuple), "3-tuple 이 그대로 새어나감"
+    finally:
+        _restore(state)
+    print("[OK] test_find_select_popup_window_returns_window_not_tuple")
+
+
+def test_find_select_popup_window_none_when_absent():
+    """팝업이 없으면 None - 튜플 (None, '', '') 을 그대로 넘기면 가드가 죽는다."""
+    state = {}
+    _swap(state, op, "find_window_by_title_prefix", lambda *a, **k: (None, "", ""))
+    try:
+        assert op.find_select_popup_window() is None
+    finally:
+        _restore(state)
+    print("[OK] test_find_select_popup_window_none_when_absent")
+
+
+def test_find_select_popup_window_unavailable_on_non_windows():
+    """window_utils 부재(Mac)면 None - 예외로 루프를 죽이지 않는다."""
+    state = {}
+    _swap(state, op, "find_window_by_title_prefix", None)
+    try:
+        assert op.find_select_popup_window() is None
+    finally:
+        _restore(state)
+    print("[OK] test_find_select_popup_window_unavailable_on_non_windows")
+
+
 if __name__ == "__main__":
+    test_find_select_popup_window_returns_window_not_tuple()
+    test_find_select_popup_window_none_when_absent()
+    test_find_select_popup_window_unavailable_on_non_windows()
     test_is_select_title()
     test_detect_no_select_title()
     test_detect_title_no_vlm()
@@ -274,4 +332,4 @@ if __name__ == "__main__":
     test_wait_abort_check_short_circuits()
     test_process_fail_rows_occupied_cooldown()
     test_process_fail_rows_success_marks_active()
-    print("\n=== occupied_popup: 12/12 통과 ===")
+    print("\n=== occupied_popup: 15/15 통과 ===")

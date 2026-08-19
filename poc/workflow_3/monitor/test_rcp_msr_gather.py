@@ -137,6 +137,86 @@ def test_include_msr_propagates():
     return ok
 
 
+class _LegacyDownloader:
+    """오피스 PC 의 구버전 사본 — include_msr 키워드를 아직 모른다."""
+
+    def __init__(self):
+        self.calls = []
+
+    def download_rcp_msr(self, eqp_id, recipe_id, *, dest_dir):
+        self.calls.append({"eqp_id": eqp_id, "recipe_id": recipe_id, "dest_dir": dest_dir})
+        return 2
+
+
+class _OpaqueLegacyDownloader(_LegacyDownloader):
+    """서명을 읽을 수 없는 구버전(C 구현/래퍼 흉내) — TypeError 폴백 경로."""
+
+    def __getattribute__(self, name):
+        attr = object.__getattribute__(self, name)
+        if name != "download_rcp_msr":
+            return attr
+
+        class _Opaque:
+            """inspect.signature 가 실패하도록 __call__ 만 노출한다."""
+
+            def __call__(self, *args, **kwargs):
+                return attr(*args, **kwargs)
+
+        return _Opaque()
+
+
+def test_legacy_downloader_without_include_msr():
+    """include_msr 를 모르는 구버전 사본에도 rcp 다운로드가 성공해야 한다.
+
+    회귀 방지: office_rcp_msr_downloader.py 는 gitignore 라 저장소와 버전이 어긋난다.
+    호출부가 include_msr 를 무조건 붙이면 구버전에서 TypeError 로 통째로 실패해
+    rcp 가 한 장도 안 받아지고 feasibility 가 '자산 없음' 을 오판한다.
+    """
+    fake = _LegacyDownloader()
+    rcp_msr_gather._DOWNLOADER = fake
+    rcp_msr_gather.RCP_MSR_DOWNLOADER_AVAILABLE = True
+    ret = rcp_msr_gather.gather_rcp_msr("EQP1", "CLS/RCP", _settings(rcp_msr_gather_enabled=True))
+    ok = ret is True and len(fake.calls) == 1
+    print(f"[{'PASS' if ok else 'FAIL'}] legacy_downloader_without_include_msr: "
+          f"ret={ret} calls={len(fake.calls)}")
+    return ok
+
+
+def test_legacy_downloader_unreadable_signature():
+    """서명을 못 읽으면 include_msr 로 시도했다가 TypeError 를 보고 인자 없이 재시도한다."""
+    fake = _OpaqueLegacyDownloader()
+    rcp_msr_gather._DOWNLOADER = fake
+    rcp_msr_gather.RCP_MSR_DOWNLOADER_AVAILABLE = True
+    ret = rcp_msr_gather.gather_rcp_msr("EQP1", "CLS/RCP", _settings(rcp_msr_gather_enabled=True))
+    ok = ret is True and len(fake.calls) == 1
+    print(f"[{'PASS' if ok else 'FAIL'}] legacy_downloader_unreadable_signature: "
+          f"ret={ret} calls={len(fake.calls)}")
+    return ok
+
+
+class _InnerTypeErrorDownloader:
+    """downloader **내부** 에서 난 TypeError 는 재시도 대상이 아니다."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def download_rcp_msr(self, eqp_id, recipe_id, *, dest_dir, include_msr=True):
+        self.calls += 1
+        raise TypeError("내부 버그: unsupported operand type(s)")
+
+
+def test_inner_type_error_not_retried():
+    """downloader 내부 TypeError 를 '구버전' 으로 오인해 재호출하면 안 된다(부작용 2회)."""
+    fake = _InnerTypeErrorDownloader()
+    rcp_msr_gather._DOWNLOADER = fake
+    rcp_msr_gather.RCP_MSR_DOWNLOADER_AVAILABLE = True
+    ret = rcp_msr_gather.gather_rcp_msr("EQP1", "CLS/RCP", _settings(rcp_msr_gather_enabled=True))
+    ok = ret is False and fake.calls == 1
+    print(f"[{'PASS' if ok else 'FAIL'}] inner_type_error_not_retried: "
+          f"ret={ret} calls={fake.calls}")
+    return ok
+
+
 def main():
     print("[INFO] rcp_msr_gather self-test 시작")
     results = [
@@ -148,6 +228,9 @@ def main():
         test_loader_canonical(),
         test_production_requests_rcp_only(),
         test_include_msr_propagates(),
+        test_legacy_downloader_without_include_msr(),
+        test_legacy_downloader_unreadable_signature(),
+        test_inner_type_error_not_retried(),
     ]
     passed = sum(1 for r in results if r)
     print(f"[INFO] {passed}/{len(results)} cases passed")

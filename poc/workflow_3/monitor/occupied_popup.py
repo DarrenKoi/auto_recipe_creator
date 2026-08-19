@@ -35,6 +35,25 @@ def _is_select_title(title: str) -> bool:
     return title.strip().lower().startswith(SELECT_TITLE)
 
 
+def find_select_popup_window():
+    """점유 'select' 팝업 **창 객체**만 돌려준다(없으면 None).
+
+    `find_window_by_title_prefix` 는 `(window, title, backend)` 3-tuple 을 돌려주는데,
+    호출부들이 그걸 창 하나로 받아 쓰고 있었다. 튜플은 절대 None 이 아니라서
+    `if popup is None` 가드가 전부 죽고, capture/close 에 튜플이 그대로 들어가
+    팝업 닫기와 화면 공유 요청이 **오피스에서 한 번도 동작하지 않았다**. 창을 꺼내는
+    지점을 여기 하나로 모아 같은 실수가 되풀이되지 않게 한다.
+    """
+    if not callable(find_window_by_title_prefix):
+        return None
+    try:
+        window, _title, _backend = find_window_by_title_prefix(SELECT_TITLE)
+    except Exception as exc:
+        print(f"[WARNING] select 팝업 창 탐색 실패: {exc}")
+        return None
+    return window
+
+
 def _vlm_confirm_select(vlm_client) -> "bool | None":
     """'select' 제목 창을 캡처해 세 옵션이 보이는지 VLM 으로 확인한다.
 
@@ -45,10 +64,10 @@ def _vlm_confirm_select(vlm_client) -> "bool | None":
     타입이 다르면(모델 교체로 스키마가 흔들리는 경우) '아님'이 아니라 '모름'(None)이다 -
     '아님'으로 읽으면 점유 가드가 조용히 꺼져 점유된 tool 에 그대로 진입한다.
     """
-    if not callable(find_window_by_title_prefix) or capture_window is None:
+    if capture_window is None:
         return None
     try:
-        window = find_window_by_title_prefix(SELECT_TITLE)
+        window = find_select_popup_window()
         if window is None:
             return None
         image = capture_window(window)
@@ -107,4 +126,4 @@ def detect_select_popup(vlm_client=None) -> bool:
     return False
 
 
-__all__ = ["detect_select_popup"]
+__all__ = ["SELECT_TITLE", "detect_select_popup", "find_select_popup_window"]

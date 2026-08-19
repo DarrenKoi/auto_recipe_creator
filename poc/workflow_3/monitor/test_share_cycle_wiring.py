@@ -308,9 +308,12 @@ def test_share_click_converts_image_point_to_screen(monkeypatch):
     popup, image = object(), _FakeImage()
     converted, clicked = [], []
 
+    # 실제 계약대로 (window, title, backend) 3-tuple 을 돌려준다. 창을 꺼내는 지점은
+    # occupied_popup.find_select_popup_window 하나뿐이라 그 모듈의 이름을 갈아끼운다
+    # (occupied_popup 이 import 시점에 바인딩하므로 util 쪽을 패치하면 안 먹는다).
     monkeypatch.setattr(
-        "poc.workflow_3.util.find_window_by_title_prefix",
-        lambda prefix: popup, raising=False,
+        "poc.workflow_3.monitor.occupied_popup.find_window_by_title_prefix",
+        lambda prefix, *a, **k: (popup, "Select", "uia"), raising=False,
     )
     monkeypatch.setattr(cyc, "capture_window", lambda w: image)
     monkeypatch.setattr(

@@ -157,6 +157,14 @@ class Workflow3Settings(WorkflowSettings):
     # 관전만 하고 끝나면 알람이 영영 안 풀린다. 켜도 결과는 corrected_unverified 로
     # 강등되어 cube 가 반드시 나간다 - 클릭이 먹었는지는 여전히 되읽지 못하기 때문이다.
     correct_when_occupied: bool = False
+    # --- 점유 중 들어온 접근 요청 허용 (2026-08-20) ---
+    # 우리가 tool 을 점유한 동안 다른 엔지니어가 접속하면 우리 화면에 허용/거부 팝업이
+    # 뜨고, 응답하지 않으면 상대가 강제 종료로 우리 세션을 끊을 수 있다. 첫 실행에서는
+    # 팝업 문구를 모르므로 기본은 관찰 전용(감지+토큰 로깅, 클릭 없음)이다.
+    access_request_watch_enabled: bool = True   # 세션 중 접근 요청 팝업 감시.
+    access_grant_enabled: bool = False          # 실제 허용 클릭(문구 확인 후 1 로).
+    access_confirm_policy: str = "strict"       # strict | lenient | off.
+    access_watch_poll_sec: float = 2.0          # 감시 주기 - 상대가 기다려 주는 시간이 짧다.
     keep_awake: bool = True
     # 자동 GUI 구간 동안 사용자 물리 마우스/키보드 입력 차단(Windows BlockInput).
     # 사용자가 다른 앱을 쓰면 foreground lock 으로 RCS 가 안 떠서 방해되는 문제 대응.
@@ -370,6 +378,10 @@ def load_workflow3_settings() -> Workflow3Settings:
         share_wait_sec=env_float("ALIGN_FAIL_SHARE_WAIT_SEC", 10.0),
         share_max_attempts=env_int("ALIGN_FAIL_SHARE_MAX_ATTEMPTS", 2),
         correct_when_occupied=env_flag("ALIGN_FAIL_CORRECT_WHEN_OCCUPIED", default=False),
+        access_request_watch_enabled=env_flag("ALIGN_FAIL_ACCESS_WATCH", default=True),
+        access_grant_enabled=env_flag("ALIGN_FAIL_ACCESS_GRANT", default=False),
+        access_confirm_policy=os.getenv("ALIGN_FAIL_ACCESS_CONFIRM", "strict").strip().lower(),
+        access_watch_poll_sec=env_float("ALIGN_FAIL_ACCESS_WATCH_POLL_SEC", 2.0),
         rcs_recovery_enabled=env_flag("ALIGN_FAIL_RCS_RECOVERY", default=True),
         rcs_kill_stale_enabled=env_flag("ALIGN_FAIL_RCS_KILL_STALE", default=False),
         rcs_recovery_window_timeout_sec=env_float(

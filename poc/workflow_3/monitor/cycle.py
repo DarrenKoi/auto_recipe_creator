@@ -29,6 +29,7 @@ tool 닫기·알림 발송은 step 이 아니라 `run_alarm_cycle` 의 후처리
 """
 
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -63,7 +64,9 @@ from poc.workflow_3.util import (
     capture_screen,
     capture_window,
     click_at_screen,
+    collect_window_rows,
     env_float,
+    find_window_by_title_prefix,
     image_point_to_screen,
     make_timestamp_tag,
     move_cursor_to_screen,
@@ -1014,12 +1017,136 @@ _STEP_EXECUTORS = {
 # ------------------------------------------------------------------
 
 
+_ACCESS_TITLE_TOKENS = tuple(
+    token.strip().lower()
+    for token in os.getenv(
+        "ALIGN_FAIL_ACCESS_TITLES", "select,request,confirm,요청,공유,허용"
+    ).split(",")
+    if token.strip()
+)
+
+
+def _find_access_request_popup(baseline: set):
+    """세션 중 새로 뜬 top-level 창 중 접근 요청 팝업으로 볼 만한 것을 찾는다.
+
+    제목 문구를 아직 모르므로 두 가지를 함께 한다 - 후보 토큰으로 팝업을 고르고,
+    baseline 에 없던 **모든** 새 제목을 콘솔에 남긴다(첫 실행에서 실제 문구를 아는
+    유일한 경로. Mac 에서는 이 화면을 볼 수 없다).
+    """
+    if not callable(collect_window_rows) or not callable(find_window_by_title_prefix):
+        return None
+    try:
+        rows = collect_window_rows()
+    except Exception as exc:
+        print(f"[WARNING] 접근 요청 감시용 창 열거 실패: {exc}")
+        return None
+
+    candidate = None
+    for row in rows:
+        title = (row.title or "").strip()
+        if not title or title in baseline:
+            continue
+        baseline.add(title)
+        print(f"[INFO] 세션 중 새 창 감지: title={title!r}")
+        lowered = title.lower()
+        if candidate is None and any(tok in lowered for tok in _ACCESS_TITLE_TOKENS):
+            candidate = title
+    if candidate is None:
+        return None
+    try:
+        window, _title, _backend = find_window_by_title_prefix(candidate)
+    except Exception as exc:
+        print(f"[WARNING] 접근 요청 팝업 창 확보 실패: {exc}")
+        return None
+    return window
+
+
+def _make_access_watcher(settings: Workflow3Settings, tag: str):
+    """engineer watch 루프에서 매 주기 호출할 접근 요청 감시자를 만든다(off 면 None).
+
+    응답하지 않으면 상대가 강제 종료로 우리 세션을 끊을 수 있다(오피스 확인). 그래서
+    감시는 기본 on 이고, 실제 허용 클릭만 문구 확인 후 여는 opt-in 이다.
+    """
+    if not settings.access_request_watch_enabled:
+        return None
+
+    from poc.workflow_3.monitor.access_request import (
+        STATUS_NOT_FOUND,
+        grant_access_request,
+    )
+    from poc.workflow_3.vlm.label_verify import (
+        crop_box_around_point,
+        read_text_near_point,
+        tokens_from_text,
+    )
+    from poc.workflow_3.vlm.ui_venus_mai_locator import analyze_window_target
+
+    debug_dir = DEBUG_IMAGE_DIR / "access_request" / tag
+    baseline: set = set()
+    try:
+        if callable(collect_window_rows):
+            baseline = {(row.title or "").strip() for row in collect_window_rows()}
+    except Exception:
+        baseline = set()
+
+    def _locate(image, target):
+        result = analyze_window_target(
+            None, "", "uia", target,
+            debug_image_dir=debug_dir,
+            log_name="access_request",
+            component_name="access_request",
+            artifact_prefix=target.key,
+            image=image,
+        )
+        return result.point
+
+    def _read_tokens(image, point, key):
+        box = crop_box_around_point(
+            point, image.width, image.height,
+            left_ratio=0.30, right_ratio=0.30, half_height_ratio=0.06,
+        )
+        read = read_text_near_point(
+            image, box,
+            debug_image_dir=debug_dir,
+            timestamp_tag=make_timestamp_tag(time.time()),
+            artifact_label=key,
+            log_name="access_request",
+        )
+        return tokens_from_text(read.raw_text) if read.ok else []
+
+    def _click(window, image, point, key):
+        screen = image_point_to_screen(window, point, image_size=image.size)
+        if screen is None:
+            raise RuntimeError(f"접근 요청 팝업 좌표 변환 실패: {key} point={point}")
+        print(f"[INFO] 접근 요청 팝업 클릭: {key} px={point} -> screen={screen}")
+        click_at_screen(screen, f"access_{key}", action_enabled=settings.action_enabled)
+
+    def _watch():
+        result = grant_access_request(
+            settings,
+            locate_fn=_locate,
+            read_tokens_fn=_read_tokens,
+            click_fn=_click,
+            capture_fn=capture_window,
+            find_popup_fn=lambda: _find_access_request_popup(baseline),
+        )
+        if result.status != STATUS_NOT_FOUND:
+            log_work2_event(
+                component=LOG_COMPONENT, message="access_request",
+                level="info", status=result.status, verdict=result.verdict,
+            )
+
+    return _watch
+
+
 def _engineer_watch(
     recording: RecordingSession,
     watch_sec: float,
     *,
     done_detector=None,
     poll_sec: float = 8.0,
+    access_watcher=None,
+    access_poll_sec: float = 2.0,
 ) -> None:
     """미보정 시 엔지니어 수동 조작 구간 대기 — 녹화 스레드가 계속 캡처한다.
 
@@ -1036,7 +1163,16 @@ def _engineer_watch(
     )
     deadline = time.time() + watch_sec
     next_check = 0.0
+    next_access = 0.0
     while time.time() < deadline and recording.is_alive():
+        # 접근 요청은 상대가 오래 기다려 주지 않는다(무응답 시 강제 종료 가능).
+        # done_detector 보다 촘촘히 본다.
+        if access_watcher is not None and time.time() >= next_access:
+            try:
+                access_watcher()
+            except Exception as exc:
+                print(f"[WARNING] 접근 요청 감시 예외(무시, watch 계속): {exc}")
+            next_access = time.time() + max(access_poll_sec, 0.5)
         if done_detector is not None and time.time() >= next_check:
             try:
                 if done_detector():
@@ -1203,10 +1339,17 @@ def run_alarm_cycle(
                     )
                 except Exception as exc:
                     print(f"[WARNING] done detector 생성 실패(고정 timeout 으로 진행): {exc}")
+            access_watcher = None
+            try:
+                access_watcher = _make_access_watcher(settings, tag)
+            except Exception as exc:
+                print(f"[WARNING] 접근 요청 감시자 생성 실패(감시 없이 진행): {exc}")
             _engineer_watch(
                 recording, settings.engineer_watch_sec,
                 done_detector=done_detector,
                 poll_sec=settings.engineer_done_poll_sec,
+                access_watcher=access_watcher,
+                access_poll_sec=settings.access_watch_poll_sec,
             )
     except Exception as exc:
         result.run_status = "error"

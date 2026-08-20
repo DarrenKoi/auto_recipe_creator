@@ -126,6 +126,9 @@ SHARE_CONFIRM = None
 SHARE_WAIT_SEC = None        # 상대 승낙 대기 상한(초). None=기본 10. 블로킹이라 짧게.
 SHARE_MAX_ATTEMPTS = None    # EQP 별 연속 view-only 재시도 상한. None=기본 2.
 CORRECT_WHEN_OCCUPIED = None # 점유 중에도 보정 시도(엔지니어와 조율 시). 1/0/None(기본 off).
+ACCESS_WATCH = None          # 세션 중 다른 엔지니어 접근 요청 팝업 감시. 1/0/None(기본 on).
+ACCESS_GRANT = None          # 그 요청을 실제로 허용 클릭. 1/0/None(기본 off=관찰 전용).
+ACCESS_CONFIRM = None        # strict|lenient|off - 허용 버튼 라벨 확인 정책(기본 strict).
 
 # ============================================================================
 # [7.5] 상시 녹화 / 엔지니어 watch (production align_fail_monitor 전용)

@@ -38,6 +38,7 @@ from poc.workflow_3 import ALIGN_IMAGES_DIR, DEBUG_IMAGE_DIR
 from poc.workflow_3.config import Workflow3Settings
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
 from poc.workflow_3.logger import log_work2_event
+from poc.workflow_3.monitor.cycle_images import gather_and_report
 from poc.workflow_3.monitor.cycle_report import print_cycle_report
 from poc.workflow_3.monitor.notify import (
     CORRECTED_UNVERIFIED,
@@ -1384,6 +1385,13 @@ def run_alarm_cycle(
             label=f"align_fail_cycle {eqp_id}",
         )
         result.notes.extend(f"teardown_failed:{n}: {e}" for n, e in failures)
+
+        # 이 테이크가 처리한 이미지를 한 폴더로 모은다. **teardown 뒤**여야
+        # close_tool 이 남긴 crop 까지 들어오고 result 의 녹화 필드도 채워져 있다.
+        # finally 안이어야 하는 이유는 녹화 스레드와 engineer watch 가 테이크마다
+        # 존재하지 않기 때문이다 - 보정 성공(watch 없음)과 접속 단계 실패(녹화 없음)에
+        # 훅을 걸면 그 테이크가 통째로 빠진다.
+        gather_and_report(result, context, started_epoch=cycle_started_at)
 
         # tool 창을 닫고 빠져나온 직후 = 엔지니어가 화면을 되찾는 순간. 이 테이크가
         # 성공인지 판단할 신호를 여기서 한 장으로 낸다.

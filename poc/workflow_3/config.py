@@ -271,6 +271,8 @@ class Workflow3Settings(WorkflowSettings):
     # 점검 사이클의 보정 가능성 마킹에서 live SEM box 를 VLM 으로 검출해 (1) PM 박스로
     # OM/SEM modality 를 정하고 (2) box 안쪽만 매칭한 뒤 align point 를 풀프레임으로
     # 되돌리고 (3) box 를 overlay 에 그릴지. off 면 기존 전체 창 매칭으로 폴백한다.
+    # 긴급 해제 전역 단축키. 자동화가 쥔 마우스를 즉시 돌려받는 유일한 경로다.
+    abort_hotkey: str = "<ctrl>+<alt>+q"
     sem_box_detect_enabled: bool = True
     sem_box_vlm_service: str = "mai-ui"  # route_slug (모델명 "mai-ui-8b" 아님).
     # PM 모드 읽기 2단계: off(기본)=단일 호출의 inline pm_box_text. on=같은 호출이 준 PM
@@ -417,6 +419,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         consensus_refresh_ttl_sec=env_int("ALIGN_FAIL_CONSENSUS_REFRESH_TTL", 21600),
         feasibility_mark_enabled=env_flag("ALIGN_FAIL_FEASIBILITY_MARK", default=True),
         reposition_preview_enabled=env_flag("ALIGN_FAIL_REPOSITION_PREVIEW", default=False),
+        abort_hotkey=_env_str("ALIGN_FAIL_ABORT_HOTKEY", "<ctrl>+<alt>+q"),
         sem_box_detect_enabled=env_flag("ALIGN_FAIL_SEM_BOX_DETECT", default=True),
         sem_box_vlm_service=_env_str("ALIGN_FAIL_SEM_BOX_SERVICE", "mai-ui"),
         pm_two_stage_ocr_enabled=env_flag("ALIGN_FAIL_PM_TWO_STAGE_OCR", default=False),

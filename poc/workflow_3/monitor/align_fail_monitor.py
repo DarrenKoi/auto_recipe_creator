@@ -32,6 +32,7 @@ from poc.workflow_3 import LOG_DIR
 from poc.workflow_3.config import Workflow3Settings, load_workflow3_settings
 from poc.workflow_3.monitor.alarm_source import load_alarm_source
 from poc.workflow_3.monitor.cycle import CycleResult, run_alarm_cycle
+from poc.workflow_3.util.abort_switch import abort_reason, is_aborted, start_abort_hotkey
 from poc.workflow_3.monitor.notify import (
     ALARM_LOG_PATH,
     CORRECTED_UNVERIFIED,
@@ -635,9 +636,15 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
     # 알람 대기 전에 RCS 를 로그인 + List 탭까지 올려둔다(실행 -> 로그인 -> List -> 대기).
     # best-effort 라 실패해도 루프는 뜬다 - 알람이 오면 사이클의 ensure_rcs_ready 가
     # 같은 복구를 다시 시도하므로, 준비 실패가 곧 감시 중단이 되어서는 안 된다.
+    # 긴급 해제 단축키 - preflight(첫 실제 마우스 조작) **전에** 띄운다.
+    start_abort_hotkey(settings.abort_hotkey)
+
     _run_rcs_preflight(settings)
 
     while True:
+        if is_aborted():
+            print(f"[WARNING] 긴급 해제됨({abort_reason()}) - 감지 루프를 종료합니다.")
+            break
         try:
             poll_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             print(f"[INFO] {poll_time} - 알람 조회 (최근 {settings.detection_window_sec}s 윈도우)")
@@ -710,6 +717,8 @@ def _apply_live_mode_defaults() -> None:
     if live:
         print("[WARNING] 실운전 모드: 실제 마우스 클릭이 발생합니다 "
               "(접속 더블클릭 + align point reposition).")
+        hotkey = os.environ.get("ALIGN_FAIL_ABORT_HOTKEY", "<ctrl>+<alt>+q")
+        print(f"[WARNING] 긴급 해제 단축키: {hotkey} - 누르면 마우스를 즉시 돌려받습니다.")
         print("[WARNING] 점검만 하려면 중단 후 'SAFE_MODE=1' 을 붙여 다시 실행하세요.")
     else:
         print(f"[INFO] 점검 모드: SAFE_MODE={safe_mode}, "

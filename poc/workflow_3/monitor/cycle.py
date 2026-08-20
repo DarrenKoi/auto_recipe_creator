@@ -39,6 +39,7 @@ from poc.workflow_3.config import Workflow3Settings
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
 from poc.workflow_3.logger import log_work2_event
 from poc.workflow_3.monitor.cycle_images import gather_and_report
+from poc.workflow_3.util.abort_switch import abort_reason, is_aborted
 from poc.workflow_3.monitor.cycle_report import print_cycle_report
 from poc.workflow_3.monitor.notify import (
     CORRECTED_UNVERIFIED,
@@ -1181,6 +1182,11 @@ def _engineer_watch(
     next_check = 0.0
     next_access = 0.0
     while time.time() < deadline and recording.is_alive():
+        if is_aborted():
+            # 해제했는데 watch 상한(기본 수십 초~분)을 다 기다리면 "아무 조치도 못 하고
+            # 끝날 때까지 기다린다" 는 원래 문제가 그대로 남는다.
+            print(f"[WARNING] 긴급 해제됨({abort_reason()}) - engineer watch 조기 종료")
+            break
         # 접근 요청은 상대가 오래 기다려 주지 않는다(무응답 시 강제 종료 가능).
         # done_detector 보다 촘촘히 본다.
         if access_watcher is not None and time.time() >= next_access:

@@ -10,6 +10,7 @@ RCS 가 그 이동을 놓치거나 원격 커서가 목표(live SEM box) 안으�
 
 import time
 
+from poc.workflow_3.util.abort_switch import abort_reason, is_aborted
 from poc.workflow_3.util.env_utils import env_float, env_int
 
 try:
@@ -34,6 +35,10 @@ def _glide_to(mouse, target_x: int, target_y: int) -> None:
         sx0, sy0 = target_x, target_y
     steps = max(1, _GLIDE_STEPS)
     for i in range(1, steps + 1):
+        if is_aborted():
+            # 진행 중인 이동도 그 자리에서 끊는다. 사용자가 단축키를 눌렀는데
+            # 커서가 300ms 더 끌려가면 "해제됐다"고 느껴지지 않는다.
+            return
         ix = int(round(sx0 + (target_x - sx0) * i / steps))
         iy = int(round(sy0 + (target_y - sy0) * i / steps))
         mouse.position = (ix, iy)
@@ -44,9 +49,11 @@ def _glide_to(mouse, target_x: int, target_y: int) -> None:
 def _jiggle(mouse, x: int, y: int) -> None:
     """목표 지점에서 미세하게 흔들어 RCS 가 커서를 그 위치에 등록하게 한다."""
     px = _JIGGLE_PX
-    if px <= 0:
+    if px <= 0 or is_aborted():
         return
     for dx, dy in ((px, 0), (-px, 0), (0, px), (0, -px), (0, 0)):
+        if is_aborted():
+            return
         mouse.position = (x + dx, y + dy)
         if _GLIDE_DELAY > 0:
             time.sleep(_GLIDE_DELAY)
@@ -70,6 +77,10 @@ def click_at_screen(
     """
     sx, sy = screen_point["x"], screen_point["y"]
 
+    if is_aborted():
+        # 긴급 해제(전역 단축키). 사용자가 마우스를 되찾은 상태이므로 어떤 출력도 내지 않는다.
+        print(f"[WARNING] 긴급 해제 상태 - 마우스 출력 생략: reason={abort_reason()}")
+        return False
     if not action_enabled or not PYNPUT_MOUSE_AVAILABLE:
         print(
             f"[INFO] [DRY-RUN] 클릭 생략: target={target_key}, screen=({sx}, {sy}), "
@@ -112,6 +123,10 @@ def move_cursor_to_screen(
     """
     sx, sy = screen_point["x"], screen_point["y"]
 
+    if is_aborted():
+        # 긴급 해제(전역 단축키). 사용자가 마우스를 되찾은 상태이므로 어떤 출력도 내지 않는다.
+        print(f"[WARNING] 긴급 해제 상태 - 마우스 출력 생략: reason={abort_reason()}")
+        return False
     if not action_enabled or not PYNPUT_MOUSE_AVAILABLE:
         print(
             f"[INFO] [DRY-RUN] 커서 이동 생략: target={target_key}, screen=({sx}, {sy}), "
@@ -140,6 +155,10 @@ def scroll_at_screen(
     """스크린 좌표에서 mouse wheel scroll 을 수행한다."""
     sx, sy = screen_point["x"], screen_point["y"]
 
+    if is_aborted():
+        # 긴급 해제(전역 단축키). 사용자가 마우스를 되찾은 상태이므로 어떤 출력도 내지 않는다.
+        print(f"[WARNING] 긴급 해제 상태 - 마우스 출력 생략: reason={abort_reason()}")
+        return False
     if not action_enabled or not PYNPUT_MOUSE_AVAILABLE:
         print(
             f"[INFO] [DRY-RUN] scroll 생략: phase={phase}, step={step_index}, "

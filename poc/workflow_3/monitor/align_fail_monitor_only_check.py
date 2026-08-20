@@ -390,4 +390,10 @@ if __name__ == "__main__":
     from poc.workflow_3.workflow_3_config_loader import seed_env
 
     seed_env()
+
+    # check-only 도 tool row 더블클릭으로 마우스를 쥔다 - 같은 탈출구를 준다.
+    from poc.workflow_3.config import load_workflow3_settings
+    from poc.workflow_3.util.abort_switch import start_abort_hotkey
+
+    start_abort_hotkey(load_workflow3_settings().abort_hotkey)
     monitor_loop()

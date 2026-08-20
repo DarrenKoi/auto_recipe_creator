@@ -101,10 +101,10 @@ class RCSSEMMonitor:
         self._last_rect_size: tuple[int, int] | None = None
         self._mode_warned = False
         if action_enabled:
-            print(
-                "[WARNING] RCSSEMMonitor: 좌표/배율 캘리브레이션 미완료 상태에서 "
-                "action_enabled=True, 단일 장비 pilot 외 사용 비권장(dry-run 권장)."
-            )
+            # 캘리브레이션 미완료 경고는 2026-07-07 오피스 캘리브레이션으로 사실이 아니게
+            # 됐다. 실운전 중에 "dry-run 권장"을 찍으면 진짜 실패 원인을 가리므로, 무장
+            # 사실만 남긴다.
+            print("[INFO] RCSSEMMonitor: action_enabled=True - 실제 클릭/휠이 장비로 나갑니다.")
 
     # ---- 캡처 ----
 

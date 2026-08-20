@@ -38,6 +38,7 @@ from poc.workflow_3 import ALIGN_IMAGES_DIR, DEBUG_IMAGE_DIR
 from poc.workflow_3.config import Workflow3Settings
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
 from poc.workflow_3.logger import log_work2_event
+from poc.workflow_3.monitor.cycle_report import print_cycle_report
 from poc.workflow_3.monitor.notify import (
     CORRECTED_UNVERIFIED,
     VIEW_ONLY_OBSERVATION,
@@ -958,6 +959,7 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
         )
 
     debug_dir = DEBUG_IMAGE_DIR / "align_fail_cycle" / context["tag"]
+    context["correction_debug_dir"] = debug_dir
     try:
         outcome = correct_align_fail_auto(
             context["controller"],
@@ -1250,6 +1252,7 @@ def run_alarm_cycle(
     항상 실행된다. 예외는 삼켜 상위 폴링 루프가 죽지 않게 한다.
     """
     tag = tag or make_timestamp_tag()
+    cycle_started_at = time.time()
     result = CycleResult(eqp_id=eqp_id, recipe_id=recipe_id, tag=tag)
 
     if not RCS_MODULES_AVAILABLE:
@@ -1381,6 +1384,12 @@ def run_alarm_cycle(
             label=f"align_fail_cycle {eqp_id}",
         )
         result.notes.extend(f"teardown_failed:{n}: {e}" for n, e in failures)
+
+        # tool 창을 닫고 빠져나온 직후 = 엔지니어가 화면을 되찾는 순간. 이 테이크가
+        # 성공인지 판단할 신호를 여기서 한 장으로 낸다.
+        print_cycle_report(
+            result, context, elapsed_sec=time.time() - cycle_started_at
+        )
 
     return result
 

@@ -46,6 +46,36 @@ def test_free_keeps_original_status():
     assert resolve_correction_outcome_status(FREE, "corrected") == "corrected"
 
 
+def test_occupied_not_attempted_is_view_only():
+    """보정을 아예 안 했으면 관전 status 그대로."""
+    assert (
+        resolve_correction_outcome_status(OCCUPIED_BY_OTHER, "corrected", attempted=False)
+        == VIEW_ONLY_OBSERVATION
+    )
+
+
+def test_occupied_but_attempted_downgrades_to_unverified():
+    """점유 중 보정(opt-in)은 'corrected' 로 보고하지 않는다 - cube 가 나가야 한다.
+
+    화면 공유는 원래 view-only 라 클릭이 먹었는지 확인할 수 없다. unknown 과 같은
+    강등을 받아야 조용한 미보정이 남지 않는다.
+    """
+    assert (
+        resolve_correction_outcome_status(OCCUPIED_BY_OTHER, "corrected", attempted=True)
+        == CORRECTED_UNVERIFIED
+    )
+
+
+def test_occupied_attempted_keeps_failure_status():
+    """실패/인계 경로의 정보는 덮어쓰지 않는다."""
+    assert (
+        resolve_correction_outcome_status(
+            OCCUPIED_BY_OTHER, "awaiting_engineer_ok", attempted=True
+        )
+        == "awaiting_engineer_ok"
+    )
+
+
 def test_unknown_downgrades_corrected():
     """반영 여부를 보장 못 하므로 성공으로 보고하지 않는다."""
     assert (
@@ -66,12 +96,17 @@ def test_unknown_leaves_non_corrected_alone():
 
 
 def test_occupied_is_view_only_regardless_of_input():
+    """보정을 건너뛴 점유(기본 경로)는 입력 status 와 무관하게 관전."""
     assert (
-        resolve_correction_outcome_status(OCCUPIED_BY_OTHER, "corrected")
+        resolve_correction_outcome_status(
+            OCCUPIED_BY_OTHER, "corrected", attempted=False
+        )
         == VIEW_ONLY_OBSERVATION
     )
     assert (
-        resolve_correction_outcome_status(OCCUPIED_BY_OTHER, "no_assets")
+        resolve_correction_outcome_status(
+            OCCUPIED_BY_OTHER, "no_assets", attempted=False
+        )
         == VIEW_ONLY_OBSERVATION
     )
 

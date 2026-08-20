@@ -658,7 +658,8 @@ def _handle_occupied_popup(step, context, settings: Workflow3Settings, started_a
     context["tool_window"] = window
     context["tool_window_title"] = title
     context["tool_window_backend"] = backend
-    print(f"[INFO] 화면 공유 세션 진입 - 관전·녹화만 수행: EQP_ID={eqp_id}")
+    mode = ("보정 진행(설정)" if settings.correct_when_occupied else "관전·녹화만 수행")
+    print(f"[INFO] 화면 공유 세션 진입 - {mode}: EQP_ID={eqp_id}")
     return _make_result(step, "success", started_at, settings)
 
 
@@ -880,19 +881,23 @@ def _exec_locate_sem_panel(step, context, settings: Workflow3Settings) -> StepRe
     return _make_result(step, "success", started_at, settings)
 
 
-def resolve_correction_outcome_status(occupancy: str, status: str) -> str:
+def resolve_correction_outcome_status(
+    occupancy: str, status: str, *, attempted: bool = True
+) -> str:
     """점유 상태를 반영해 최종 outcome status 를 정한다.
 
-    occupied_by_other  : 보정 자체를 건너뛰었으므로 관전 status.
-    unknown + corrected: 클릭이 실제로 먹었는지 확인할 수 없다. `correct_align_fail_auto`
+    attempted=False    : 보정을 아예 시도하지 않았다(점유 관전). 관전 status.
+    점유/불명 + corrected: 클릭이 실제로 먹었는지 확인할 수 없다. `correct_align_fail_auto`
                          는 open-loop 라 반영 여부를 화면으로 되읽지 않으므로, 여기서
                          'corrected' 로 두면 cube 가 생략되어(notify.py) 아무도 모르는
                          미보정이 남는다. 조용한 성공을 만들지 않는 것이 요점이다.
+                         점유 중 보정(correct_when_occupied)은 화면 공유가 원래 view-only
+                         라 이 불확실성이 unknown 보다 오히려 크므로 같은 강등을 받는다.
     그 외              : 그대로 둔다(실패/인계 경로가 담은 정보를 덮어쓰지 않는다).
     """
-    if occupancy == OCCUPIED_BY_OTHER:
+    if occupancy == OCCUPIED_BY_OTHER and not attempted:
         return VIEW_ONLY_OBSERVATION
-    if occupancy == UNKNOWN and status == "corrected":
+    if occupancy in (UNKNOWN, OCCUPIED_BY_OTHER) and status == "corrected":
         return CORRECTED_UNVERIFIED
     return status
 
@@ -907,7 +912,12 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
     started_at = time.time()
     eqp_id, recipe_id = context["eqp_id"], context["recipe_id"]
     occupancy = context.get("occupancy", UNKNOWN)
-    if occupancy == OCCUPIED_BY_OTHER:
+    if occupancy == OCCUPIED_BY_OTHER and settings.correct_when_occupied:
+        # 엔지니어와 조율해 제어를 넘겨받은 상황. 클릭이 먹었는지는 여전히 되읽지
+        # 못하므로 결과는 아래 resolve 에서 corrected_unverified 로 강등된다.
+        print("[WARNING] 다른 엔지니어 점유 중이지만 보정 진행 "
+              "(ALIGN_FAIL_CORRECT_WHEN_OCCUPIED=1) - 클릭이 안 먹을 수 있음")
+    elif occupancy == OCCUPIED_BY_OTHER:
         from poc.workflow_3.align.correction import CorrectionOutcome
 
         print("[INFO] 다른 엔지니어 점유 중 - 보정 건너뜀, 관전·녹화만 수행")
@@ -975,7 +985,8 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
             failure_class="correction_error", error_message=f"{type(exc).__name__}: {exc}",
         )
     # 점유 미확정이면 '보정 완료' 로 보고하지 않는다 - 알림이 생략되면 안 된다.
-    resolved = resolve_correction_outcome_status(occupancy, outcome.status)
+    # 여기까지 왔으면 보정을 실제로 시도한 것이다(점유 skip 은 위에서 early return).
+    resolved = resolve_correction_outcome_status(occupancy, outcome.status, attempted=True)
     if resolved != outcome.status:
         print(
             f"[WARNING] 점유 여부 미확정({occupancy}) - status 강등: "

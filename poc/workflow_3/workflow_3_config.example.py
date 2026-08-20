@@ -125,6 +125,7 @@ SHARE_REQUEST = None         # 공유 요청 발송. 1/0/None(기본 on).
 SHARE_CONFIRM = None
 SHARE_WAIT_SEC = None        # 상대 승낙 대기 상한(초). None=기본 10. 블로킹이라 짧게.
 SHARE_MAX_ATTEMPTS = None    # EQP 별 연속 view-only 재시도 상한. None=기본 2.
+CORRECT_WHEN_OCCUPIED = None # 점유 중에도 보정 시도(엔지니어와 조율 시). 1/0/None(기본 off).
 
 # ============================================================================
 # [7.5] 상시 녹화 / 엔지니어 watch (production align_fail_monitor 전용)

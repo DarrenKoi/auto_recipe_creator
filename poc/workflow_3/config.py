@@ -152,6 +152,11 @@ class Workflow3Settings(WorkflowSettings):
     # 요청하므로, 엔지니어는 다음 사이클에서 또 기회를 얻는다.
     share_wait_sec: float = 10.0
     share_max_attempts: int = 2            # EQP 별 연속 view-only 재시도 상한.
+    # 점유 중에도 보정을 시도한다(opt-in). 화면 공유는 원래 view-only 라 클릭이 장비에
+    # 안 먹는 게 기본 가정이지만, 엔지니어와 구두로 조율해 제어를 넘겨받은 상황에서는
+    # 관전만 하고 끝나면 알람이 영영 안 풀린다. 켜도 결과는 corrected_unverified 로
+    # 강등되어 cube 가 반드시 나간다 - 클릭이 먹었는지는 여전히 되읽지 못하기 때문이다.
+    correct_when_occupied: bool = False
     keep_awake: bool = True
     # 자동 GUI 구간 동안 사용자 물리 마우스/키보드 입력 차단(Windows BlockInput).
     # 사용자가 다른 앱을 쓰면 foreground lock 으로 RCS 가 안 떠서 방해되는 문제 대응.
@@ -364,6 +369,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         share_confirm_policy=_load_share_confirm_policy(),
         share_wait_sec=env_float("ALIGN_FAIL_SHARE_WAIT_SEC", 10.0),
         share_max_attempts=env_int("ALIGN_FAIL_SHARE_MAX_ATTEMPTS", 2),
+        correct_when_occupied=env_flag("ALIGN_FAIL_CORRECT_WHEN_OCCUPIED", default=False),
         rcs_recovery_enabled=env_flag("ALIGN_FAIL_RCS_RECOVERY", default=True),
         rcs_kill_stale_enabled=env_flag("ALIGN_FAIL_RCS_KILL_STALE", default=False),
         rcs_recovery_window_timeout_sec=env_float(

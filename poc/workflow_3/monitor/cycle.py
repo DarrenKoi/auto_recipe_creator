@@ -855,11 +855,19 @@ def _exec_locate_sem_panel(step, context, settings: Workflow3Settings) -> StepRe
         except Exception as exc:
             print(f"[WARNING] SEM box VLM 클라이언트 생성 실패 - landmark 경로만 시도: {exc}")
 
+    # 실패 사유와 그때 본 화면을 사이클 debug 폴더에 남긴다. 이 폴더는 테이크 수집
+    # (cycle_images)의 tag 키 소스라, 실패 화면이 자동으로 gathered/ 번들에 들어간다.
+    panel_reasons: list = []
+    fail_frame_path = (
+        DEBUG_IMAGE_DIR / "align_fail_cycle" / context["tag"] / "sem_box_fail.jpg"
+    )
     try:
         controller = build_rcs_sem_monitor(
             context["tool_window"],
             vlm_client=sem_box_client,
             pm_two_stage=settings.pm_two_stage_ocr_enabled,
+            reason_sink=panel_reasons,
+            fail_frame_path=fail_frame_path,
             action_enabled=controller_action,
             settle_sec=settings.sem_controller_settle_sec,
             zoom_scroll_dy=settings.zoom_scroll_dy,
@@ -874,7 +882,12 @@ def _exec_locate_sem_panel(step, context, settings: Workflow3Settings) -> StepRe
         return _make_result(
             step, "failed", started_at, settings,
             failure_class="panel_not_found",
-            error_message="live SEM box 미검출 + landmark 미캘리브레이션/신뢰도 부족 - 보정 생략",
+            # 정적 문자열이면 4가지 원인(클라이언트 부재/예외/미검출/박스이상)이 저널에서
+            # 구분되지 않는다. build_rcs_sem_monitor 가 채운 실제 사유를 그대로 적는다.
+            error_message=(
+                f"SEM panel 확보 실패 - {panel_reasons[0]}" if panel_reasons
+                else "SEM panel 확보 실패 - 사유 미기록"
+            ),
         )
     if settings.require_pm_mode and not getattr(controller, "mode_hint", None):
         return _make_result(

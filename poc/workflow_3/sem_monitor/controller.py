@@ -37,6 +37,7 @@ import cv2
 import numpy as np
 
 from poc.workflow_3 import TEMPLATES_DIR
+from poc.workflow_3.debug_artifacts import save_debug_jpeg
 # util/__init__ 는 pynput/pywinauto 부재 시 None 을 바인딩한다(import-안전).
 # 실제 호출은 오피스(Windows+의존성 설치) 환경에서만 일어난다.
 from poc.workflow_3.util import (
@@ -239,7 +240,8 @@ class RCSSEMMonitor:
 
 
 def _panel_from_vlm_box(
-    tool_window, vlm_client, *, ocr_client=None, two_stage: bool = False
+    tool_window, vlm_client, *, ocr_client=None, two_stage: bool = False,
+    reasons: list | None = None, fail_frame_path=None,
 ) -> tuple[SEMPanelMatch, str | None] | None:
     """detect_sem_box 로 live SEM box 를 잡아 (SEMPanelMatch, pm_mode) 로 변환한다.
 
@@ -247,28 +249,53 @@ def _panel_from_vlm_box(
     VLM 부재/검출 실패/예외는 모두 None 으로 돌려 호출부가 landmark 폴백을 타게 한다
     (개발 PC 에서 import 조차 실패할 수 있어 함수 안에서 import 한다).
     """
-    if vlm_client is None:
+    def _fail(reason: str, frame=None):
+        """실패 사유를 남기고(선택) 그때 본 화면을 저장한다.
+
+        사유를 구분하지 않으면 호출부가 정적 문자열 하나로 뭉개 저널에 적고,
+        나중에 "클라이언트가 없었다" 와 "보았는데 없었다" 를 가릴 수 없게 된다.
+        """
+        if reasons is not None:
+            reasons.append(reason)
+        if frame is not None and fail_frame_path is not None:
+            try:
+                save_debug_jpeg(frame, Path(fail_frame_path))
+                print(f"[INFO] SEM box 검출 실패 화면 저장: {fail_frame_path}")
+            except Exception as exc:
+                print(f"[WARNING] 실패 화면 저장 실패(무시): {exc}")
         return None
+
+    if vlm_client is None:
+        # 유일하게 콘솔에도 안 남던 경로. sem_box VLM 클라이언트 생성이 깨졌다는 뜻이다.
+        print("[WARNING] SEM box VLM 클라이언트 없음 - live box 검출을 건너뛴다")
+        return _fail("vlm_client_missing")
+    try:
+        frame_image = capture_window(tool_window)
+    except Exception as exc:
+        print(f"[WARNING] tool 창 캡처 실패(landmark 폴백 시도): {exc}")
+        return _fail(f"capture_error:{type(exc).__name__}")
     try:
         from poc.workflow_3.sem_monitor.sem_box_detect import detect_sem_box
 
         detection = detect_sem_box(
-            capture_window(tool_window), vlm_client,
-            ocr_client=ocr_client, two_stage=two_stage,
+            frame_image, vlm_client, ocr_client=ocr_client, two_stage=two_stage,
         )
     except Exception as exc:
         print(f"[WARNING] live SEM box 검출 실패(landmark 폴백 시도): {exc}")
-        return None
+        return _fail(f"sem_box_detect_error:{type(exc).__name__}:{exc}", frame_image)
 
     bbox = getattr(detection, "bbox_px", None)
     if not detection.detected or not bbox:
-        print("[WARNING] live SEM box 미검출(landmark 폴백 시도)")
-        return None
+        # 점유 view-only 화면처럼 SEM Monitor 가 아예 안 떠 있으면 여기로 온다.
+        # 오검출이 아니라 정당한 거부이므로, 화면을 남겨 눈으로 가리게 한다.
+        pm = getattr(detection, "pm_text", None)
+        print(f"[WARNING] live SEM box 미검출(landmark 폴백 시도) pm_text={pm!r}")
+        return _fail(f"sem_box_not_detected(pm_text={pm!r})", frame_image)
     left, top = int(bbox["left"]), int(bbox["top"])
     width, height = int(bbox["right"]) - left, int(bbox["bottom"]) - top
     if width <= 0 or height <= 0:
         print(f"[WARNING] live SEM box 크기 이상(landmark 폴백 시도): {bbox}")
-        return None
+        return _fail(f"sem_box_degenerate:{bbox}", frame_image)
 
     panel = SEMPanelMatch(
         model_id="vlm_live_box",
@@ -287,6 +314,8 @@ def build_rcs_sem_monitor(
     ocr_client=None,
     pm_two_stage: bool = False,
     landmarks_dir=DEFAULT_LANDMARKS_DIR,
+    reason_sink: list | None = None,
+    fail_frame_path=None,
     action_enabled: bool = False,
     settle_sec: float = 0.5,
     zoom_scroll_dy: int = 1,
@@ -300,21 +329,30 @@ def build_rcs_sem_monitor(
     mode_hint 로 주입하므로 read_mode 가 OM/SEM 을 화면에서 읽은 값으로 답한다.
     """
     mode_hint: str | None = None
+    reasons: list = []
     resolved = _panel_from_vlm_box(
-        tool_window, vlm_client, ocr_client=ocr_client, two_stage=pm_two_stage
+        tool_window, vlm_client, ocr_client=ocr_client, two_stage=pm_two_stage,
+        reasons=reasons, fail_frame_path=fail_frame_path,
     )
+
+    def _give_up(landmark_reason: str):
+        """VLM 사유 + landmark 사유를 합쳐 한 줄로 남긴다 - 저널이 이걸 그대로 적는다."""
+        if reason_sink is not None:
+            reason_sink.append(" + ".join(reasons + [landmark_reason]))
+        return None
+
     if resolved is not None:
         panel, mode_hint = resolved
     else:
         landmarks = load_landmarks(landmarks_dir)
         if not landmarks:
             print(f"[WARNING] SEM panel landmark 없음(미캘리브레이션): {landmarks_dir}")
-            return None
+            return _give_up("landmark_missing")
         frame = _to_gray(capture_window(tool_window))
         panel = locate_panel(frame, landmarks)
         if panel is None:
             print("[WARNING] SEM panel 을 찾지 못함 (landmark 신뢰도 부족)")
-            return None
+            return _give_up("landmark_low_confidence")
     print(
         f"[INFO] SEM panel 확보: model={panel.model_id}, roi={panel.panel_roi}, "
         f"conf={panel.confidence:.3f}, mode={mode_hint or '-'}"

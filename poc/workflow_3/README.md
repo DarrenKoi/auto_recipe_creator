@@ -250,7 +250,8 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 정상 상태이고, 알람마다 탭을 다시 누르면 VLM 왕복·클릭이 공짜로 늘 뿐 아니라 로케이터가
 어긋나면 멀쩡하던 화면을 망친다. 두 경로 모두 List 탭 실패는 **step 을 죽이지 않는다** —
 창은 확보됐고 실제 판정은 다음 단계의 connect 가 한다.
-| `ALIGN_FAIL_BLOCK_INPUT` | 0 | 자동 GUI 구간 동안 사용자 물리 마우스/키보드 차단(Win32 BlockInput). 사용자가 다른 앱을 쓰면 foreground lock 으로 RCS 가 안 떠서 방해되는 문제 대응. SAFE_MODE=0 일 때만 적용, engineer watch 구간은 제외, Ctrl+Alt+Del 로 항상 해제. 합성 클릭(자동화)은 차단 중에도 통과 |
+| `ALIGN_FAIL_ABORT_HOTKEY` | `<ctrl>+<alt>+q` | **긴급 해제 전역 단축키.** 누르면 마우스/휠 출력이 즉시 멈추고(glide 진행 중이던 이동도 그 자리에서 끊는다), engineer watch 가 조기 종료되며, 현재 사이클은 teardown(창 닫기/녹화 저장/이미지 수집)만 마치고 감지 루프가 끝난다. `Ctrl+C` 로는 안 된다 - 자동화 중 포그라운드는 RCS 창이라 터미널의 SIGINT 가 파이썬에 도달하지 않아 OS 레벨 키보드 훅(pynput)이어야 한다. 훅 등록 실패/pynput 부재는 경고만 남기고 루프는 그대로 뜬다. **주의: `ALIGN_FAIL_BLOCK_INPUT=1` 이면 이 단축키가 안 먹을 수 있다**(BlockInput 은 훅에도 입력을 막는다) - 그 경우 탈출구는 Ctrl+Alt+Del 이다 |
+| `ALIGN_FAIL_BLOCK_INPUT` | 0 | 자동 GUI 구간 동안 사용자 물리 마우스/키보드 차단(Win32 BlockInput). 사용자가 다른 앱을 쓰면 foreground lock 으로 RCS 가 안 떠서 방해되는 문제 대응. SAFE_MODE=0 일 때만 적용, engineer watch 구간은 제외, Ctrl+Alt+Del 로 항상 해제(이 모드에서는 `ALIGN_FAIL_ABORT_HOTKEY` 가 안 먹을 수 있어 이것이 유일한 탈출구다). 합성 클릭(자동화)은 차단 중에도 통과 |
 | `ALIGN_FAIL_SHARE_REQUEST` | 1 | 점유 `Select` 팝업에서 **화면 공유 요청** 발송. 승낙되면 관전(view-only) 세션으로 들어가 엔지니어의 수동 작업을 녹화한다 |
 | `ALIGN_FAIL_SHARE_CONFIRM` | `strict` | 클릭 전 라벨 OCR 확인 정책. `strict`=확인된 것만 클릭 / `lenient`=못 읽어도 클릭 / `off`=확인 생략. **어느 값이든 `terminate`/`control`/`cancel` 이 읽히면 클릭하지 않는다** |
 | `ALIGN_FAIL_SHARE_WAIT_SEC` | 10 | 상대 승낙 대기 상한. 블로킹이고 단일 RCS 커서를 모든 알람이 직렬 공유하므로 길게 두면 다른 장비 처리가 밀린다. 못 받아도 알람이 유지되는 한 cooldown 후 다시 요청한다 |

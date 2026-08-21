@@ -47,6 +47,10 @@ SAFE_MODE = None
 # glide 하는 걸 손이 방해하지 못하게 한다. SAFE_MODE=1 이면 자동 no-op 이라 1 로 둬도 안전.
 # Ctrl+Alt+Del 로 항상 탈출 가능. 1=on, 0=off.
 BLOCK_INPUT = 1
+# 긴급 해제 전역 단축키. 누르면 자동 마우스 출력이 즉시 멈추고 사이클은 teardown 만
+# 마치고 끝난다. Ctrl+C 는 자동화 중 포그라운드가 RCS 창이라 안 통한다.
+# 주의: BLOCK_INPUT=1 이면 이 단축키가 안 먹을 수 있다(탈출구는 Ctrl+Alt+Del).
+ABORT_HOTKEY = "<ctrl>+<alt>+q"
 
 # 모니터링 중 화면/시스템 절전 방지(SetThreadExecutionState). 1=on, 0=off.
 KEEP_AWAKE = 1

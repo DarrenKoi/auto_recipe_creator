@@ -81,6 +81,10 @@ ALIGN_CONSENSUS_CACHE_DIR = (
     else WORKFLOW_3_DIR / "align_consensus_cache"
 )
 
+# Align Fail 의 MES ALID (office 정의). monitor 의 row-collapse 헬퍼와 replay 필터가
+# 같은 값을 본다 — 한쪽만 바뀌면 안 되므로 단일 출처로 둔다.
+ALIGN_FAIL_ALID = "9006"
+
 _TIMESTAMP_PREFIX_PATTERN = re.compile(r"^\d{6}_\d{6}_")
 
 
@@ -146,6 +150,7 @@ def debug_image_path(
 
 __all__ = [
     "ALIGN_CONSENSUS_CACHE_DIR",
+    "ALIGN_FAIL_ALID",
     "ALIGN_IMAGES_DIR",
     "DEBUG_IMAGE_DIR",
     "LOG_DIR",

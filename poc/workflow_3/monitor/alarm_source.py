@@ -19,14 +19,16 @@ replay 사용법 (실알람을 기다리지 않고 사이클을 1회 강제 - to
     uv run python poc/workflow_3/monitor/align_fail_monitor_only_check.py
 
 컬럼은 EQP_ID / RECIPE_ID / ALID / UTC9 (+ALARM_NAME/OPERATION_DESC/LOT_TYPE_CD 선택).
-ALID 는 9006 이어야 필터를 통과하고, UTC9 는 poll 시 현재 시각으로 재기록되므로
-값 자체는 자리표시자여도 된다. rows 는 **첫 poll 에 한 번만** 방출된다.
+ALID 는 `ALIGN_FAIL_ALID`(현재 9006) 이어야 필터를 통과하고, UTC9 는 poll 시 현재
+시각으로 재기록되므로 값 자체는 자리표시자여도 된다. rows 는 **첫 poll 에 한 번만**
+방출된다.
 """
 
 import os
 
 import pandas as pd
 
+from poc.workflow_3 import ALIGN_FAIL_ALID
 from poc.workflow_3.monitor.integration_loader import load_office_integration
 
 
@@ -46,7 +48,7 @@ class AlarmSource:
         return self._poll_fn()
 
     def filter_align_fail(self, rows):
-        """알람 rows 에서 align fail(ALID=9006) 만 남긴다."""
+        """알람 rows 에서 align fail(ALID=`ALIGN_FAIL_ALID`) 만 남긴다."""
         if rows is None:
             return None
         return self._filter_fn(rows)
@@ -63,10 +65,10 @@ def _load_office_module():
 
 
 def _replay_filter_align_fail(rows: "pd.DataFrame") -> "pd.DataFrame":
-    """replay rows 에서 ALID=9006 만 남긴다 (ALID 컬럼이 없으면 전체 통과)."""
+    """replay rows 에서 ALID=`ALIGN_FAIL_ALID` 만 남긴다 (ALID 컬럼이 없으면 전체 통과)."""
     if rows is None or rows.empty or "ALID" not in rows.columns:
         return rows
-    mask = rows["ALID"].astype(str).str.strip() == "9006"
+    mask = rows["ALID"].astype(str).str.strip() == ALIGN_FAIL_ALID
     return rows[mask].reset_index(drop=True)
 
 

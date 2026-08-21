@@ -28,7 +28,7 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 
-from poc.workflow_3 import LOG_DIR
+from poc.workflow_3 import ALIGN_FAIL_ALID, LOG_DIR
 from poc.workflow_3.config import Workflow3Settings, load_workflow3_settings
 from poc.workflow_3.monitor.alarm_source import load_alarm_source
 from poc.workflow_3.monitor.cycle import CycleResult, run_alarm_cycle
@@ -142,14 +142,43 @@ def _alarm_time_to_tag(alarm_time: str) -> str | None:
     return ts.strftime("%y%m%d_%H%M%S")
 
 
-def _collapse_rows_by_tool(fails) -> dict[str, dict]:
-    """같은 EQP_ID 의 여러 알람 row 를 하나로 합친다 (첫 번째 row 채택)."""
+def _collapse_rows_by_tool(
+    fails,
+    target_alid: str = ALIGN_FAIL_ALID,
+) -> dict[str, dict]:
+    """같은 EQP_ID 의 여러 알람 row 를 하나로 합친다 (첫 번째 row 채택).
+
+    ALID 처리는 세 갈래:
+      * 누락/NaN/빈 문자열 → 'unknown' 으로 stamp 후 계속 (관측 가능성 유지).
+      * 있고 target_alid 와 같음 → 수락.
+      * 있고 target_alid 와 다름 → target ALID 가 아니므로 건너뜀.
+    두 번째로 보는 EQP_ID 는 조용히 무시(첫 row 채택) — 후속 row 가 더 좋은
+    필드를 가져도 덮어쓰지 않는다.
+    """
     by_tool: dict[str, dict] = {}
     for row in _iter_alarm_rows(fails):
         eqp_id = str(_row_value(row, "EQP_ID", "eqp_id", "tool_name") or "").strip()
         if not eqp_id:
             print("[WARNING] EQP_ID 없는 Align Fail row 발견 - 건너뜀")
             continue
+
+        raw_alid = _row_value(row, "ALID", "alarm_id", "al_id")
+        if (
+            raw_alid is None
+            or (isinstance(raw_alid, float) and pd.isna(raw_alid))
+            or str(raw_alid).strip() == ""
+        ):
+            print(f"[WARNING] ALID 누락 - 'unknown' 으로 stamp 후 계속 (EQP_ID={eqp_id})")
+            alid = "unknown"
+        else:
+            alid = str(raw_alid).strip()
+            if alid != target_alid:
+                print(
+                    f"[WARNING] ALID={alid} (≠ {target_alid}) - "
+                    f"target ALID 가 아니므로 건너뜀 (EQP_ID={eqp_id})"
+                )
+                continue
+
         if eqp_id in by_tool:
             continue
         by_tool[eqp_id] = {
@@ -161,7 +190,7 @@ def _collapse_rows_by_tool(fails) -> dict[str, dict]:
                 _row_value(row, "ALARM_NAME", "alarm_name", "DESCRIPTION")
                 or "Align Fail"
             ).strip(),
-            "alid": str(_row_value(row, "ALID", "alarm_id", "al_id") or "9006").strip(),
+            "alid": alid,
             "recipe_id": str(_row_value(row, "RECIPE_ID", "recipe_id") or "").strip(),
             "operation_desc": str(
                 _row_value(row, "OPERATION_DESC", "operation_desc") or ""

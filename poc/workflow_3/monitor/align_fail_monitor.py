@@ -381,8 +381,6 @@ def process_fail_rows(
         if eqp_id not in current_tools:
             del view_only_attempts[eqp_id]
     cooling = current_tools & set(occupied_cooldown)
-    for eqp_id in sorted(cooling):
-        print(f"[INFO] EQP_ID={eqp_id} 점유 cooldown 중 - 이번 poll 재시도 건너뜀")
 
     new_tools = current_tools - active_tools - cooling
     cleared_tools = active_tools - current_tools
@@ -646,8 +644,6 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
             print(f"[WARNING] 긴급 해제됨({abort_reason()}) - 감지 루프를 종료합니다.")
             break
         try:
-            poll_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f"[INFO] {poll_time} - 알람 조회 (최근 {settings.detection_window_sec}s 윈도우)")
             alarms = source.poll()
             fails = source.filter_align_fail(alarms)
             fails = filter_rows_within_window(fails, settings.detection_window_sec)
@@ -662,14 +658,9 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
                     idle_logged = True
             else:
                 idle_logged = False
-                count = process_fail_rows(
+                process_fail_rows(
                     fails, active_tools, settings, occupied_cooldown, view_only_attempts
                 )
-                if count == 0:
-                    print(
-                        f"[INFO] {datetime.now().strftime('%H:%M:%S')} - "
-                        f"신규 없음 (활성 {len(active_tools)}대 유지)"
-                    )
         except KeyboardInterrupt:
             print("\n[INFO] 감지 중단 (Ctrl+C)")
             break

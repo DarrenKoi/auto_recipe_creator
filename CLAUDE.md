@@ -202,6 +202,25 @@ VLM calls route through a Flask proxy at the company server, which provides unif
 - **Health endpoint**: `GET /api/vlm_serve/health`.
 - **Proxy URL pattern**: `{flask_base}/api/vlm_serve/{service_slug}/v1/chat/completions`.
 
+### `flask_api/model_upload/` — 모델 가중치 청크 업로드 (2026-08-22)
+
+사내 private cloud 의 Flask 서버로 openweight 모델을 올리는 경로. code-server 웹
+드래그앤드롭이 1GB 근처에서 깨지던 것을 대체한다 - 요청 하나에 파일 하나를 싣지 않고
+청크로 쪼갠다. 3계층: `store.py` (HTTP 를 모르는 파일시스템/상태 계층 - 이어받기·무결성
+로직이 전부 여기 산다), `routes.py` (blueprint, store 주입식), `config.py` (env + 배선).
+클라이언트는 `deploy_vlms/scripts/upload_model.py` (stdlib + requests 만, 서버 코드를
+import 하지 않는다). 계약 셋 — ① **committed offset 은 기록보다 `.part` 실제 크기가
+우선**(상태만 남고 파일이 없으면 seek 이 0 으로 채운 구멍을 만든다) ② **청크 sha256 이
+안 맞으면 offset 을 전진시키지 않는다**(소켓이 예외 없이 일찍 닫히는 짧은 바디가 조용히
+구멍을 만드는 것을 막는 유일한 방어선) ③ **완료 시 전체 파일 재해싱**(청크 검증은
+네트워크만 덮고 디스크/조립 손상은 못 잡는다). staging 은 반드시 목적지 루트 안쪽 -
+`os.replace` 가 원자적이려면 같은 파일시스템이어야 한다. 앞단 프록시의
+`client_max_body_size` 가 청크보다 작으면 Flask 에 닿기도 전에 413 이 나므로
+`/health` 가 서버 상한을 알리고 클라이언트가 청크를 자동으로 줄인다. 운영 문서
+`deploy_vlms/UPLOAD.md`. 테스트 50개 전부 Mac 에서 실장비/실서버 없이 돈다
+(`uv run pytest flask_api/model_upload deploy_vlms/scripts`) - 마지막 3개는 로컬에
+진짜 werkzeug 서버를 띄워 클라이언트<->서버 계약을 왕복 검증한다.
+
 ### `poc/workflow_3/vlm/flask_vlm.py` — client config hub
 
 Defines `ALL_VLM_SERVICES` (a `list[VLMServiceEntry]`) plus `DEFAULT_*` service/model constants. Two connection modes:

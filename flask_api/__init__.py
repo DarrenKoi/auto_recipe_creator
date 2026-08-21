@@ -6,6 +6,10 @@ web_main.py 에서 register_flask_api(app) 만 호출하면 된다.
 
 from flask import Blueprint, Flask, jsonify
 
+from .model_upload.config import (
+    build_model_upload_health_payload,
+    register_model_upload_routes,
+)
 from .vlm_serve import build_vlm_health_payload, register_vlm_serve_routes
 
 DEFAULT_URL_PREFIX = "/api"
@@ -22,11 +26,13 @@ def health():
             "status": "ok",
             "base_path": "/api",
             "vlm_serve": build_vlm_health_payload(),
+            "model_upload": build_model_upload_health_payload(),
         }
     )
 
 
 register_vlm_serve_routes(api_blueprint)
+register_model_upload_routes(api_blueprint)
 
 
 def register_flask_api(app: Flask, url_prefix: str = DEFAULT_URL_PREFIX) -> None:

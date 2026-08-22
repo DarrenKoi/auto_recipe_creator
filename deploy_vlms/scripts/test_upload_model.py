@@ -69,6 +69,15 @@ class _StoreTransport:
         session = self.store.finish(upload_id)
         return {"completed": session.completed}
 
+    def get_session(self, upload_id):
+        """세션 상태를 조회한다."""
+        session = self.store.status(upload_id)
+        return {
+            "upload_id": session.upload_id,
+            "committed_offset": session.committed_offset,
+            "completed": session.completed,
+        }
+
 
 @pytest.fixture()
 def env(tmp_path):
@@ -278,3 +287,85 @@ def test_huggingface_local_dir_layout_is_handled(tmp_path):
     assert upload_model.sha256_of_file(symlinked.local_path) == hashlib.sha256(
         blob.read_bytes()
     ).hexdigest()
+
+
+class _ProxyWithBodyLimit(_StoreTransport):
+    """nginx client_max_body_size 를 흉내내는 transport."""
+
+    def __init__(self, store, limit: int):
+        super().__init__(store)
+        self.limit = limit
+        self.rejected = 0
+
+    def put_chunk(self, upload_id, offset, data, chunk_sha256):
+        """상한을 넘는 바디는 서버에 닿기 전에 413 으로 잘린다."""
+        if len(data) > self.limit:
+            self.rejected += 1
+            raise upload_model.UploadFailed(413, "request entity too large")
+        return super().put_chunk(upload_id, offset, data, chunk_sha256)
+
+
+def test_client_shrinks_chunk_when_proxy_rejects_413(env):
+    """프록시가 413 을 뱉으면 청크를 줄여 스스로 통과한다."""
+    job = _big_job(env)
+    env["transport"] = _ProxyWithBodyLimit(env["store"], limit=16)
+
+    result = _upload(env, job, chunk_size=128, min_chunk_size=8)
+
+    assert env["transport"].rejected > 0
+    assert result.chunk_size <= 16
+    assert (env["dest"] / "MAI-UI-8B" / "model-00001.safetensors").read_bytes() == job.local_path.read_bytes()
+
+
+def test_client_gives_up_when_even_smallest_chunk_is_rejected(env):
+    """최소 청크까지 줄여도 413 이면 포기하고 원인을 알린다."""
+    job = _big_job(env)
+    env["transport"] = _ProxyWithBodyLimit(env["store"], limit=0)
+
+    with pytest.raises(upload_model.UploadFailed) as excinfo:
+        _upload(env, job, chunk_size=128, min_chunk_size=8)
+
+    assert excinfo.value.status_code == 413
+
+
+def test_complete_timeout_is_resolved_by_polling_status(env, tmp_path):
+    """complete 응답이 프록시 타임아웃으로 잘려도, 서버가 끝냈으면 성공으로 본다."""
+    job = _big_job(env)
+
+    class _LosesCompleteResponse(_StoreTransport):
+        def complete(self, upload_id):
+            """서버는 실제로 완료시키지만 응답은 504 로 잘린다."""
+            super().complete(upload_id)
+            raise upload_model.TransientError("504 gateway timeout from proxy")
+
+    env["transport"] = _LosesCompleteResponse(env["store"])
+
+    result = _upload(env, job)
+
+    assert result.skipped is False
+    assert (env["dest"] / "MAI-UI-8B" / "model-00001.safetensors").read_bytes() == job.local_path.read_bytes()
+
+
+def test_complete_is_retried_when_server_did_not_finish(env):
+    """complete 가 진짜 실패했으면(서버 미완료) 다시 시도한다."""
+    job = _big_job(env)
+
+    class _FailsCompleteOnce(_StoreTransport):
+        def __init__(self, store):
+            super().__init__(store)
+            self.attempts = 0
+
+        def complete(self, upload_id):
+            """첫 시도는 서버에 닿기 전에 끊긴다."""
+            self.attempts += 1
+            if self.attempts == 1:
+                raise upload_model.TransientError("connection reset before server")
+            return super().complete(upload_id)
+
+    env["transport"] = _FailsCompleteOnce(env["store"])
+
+    result = _upload(env, job)
+
+    assert env["transport"].attempts == 2
+    assert result.skipped is False
+    assert (env["dest"] / "MAI-UI-8B" / "model-00001.safetensors").read_bytes() == job.local_path.read_bytes()

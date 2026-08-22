@@ -33,6 +33,27 @@ uv run python index.py     # 또는 기존 WSGI 기동 방식 그대로
 curl -s http://<서버>:<포트>/api/model_upload/health
 ```
 
+## nginx 가 앞에 있을 때 (필수 확인)
+
+**기본 설정 그대로면 세 가지가 순서대로 터진다.** `deploy_vlms/nginx/model_upload.conf`
+를 server 블록에 넣고 `nginx -t` 로 검증한 뒤 reload 할 것.
+
+| nginx 기본값 | 증상 | 해결 |
+|---|---|---|
+| `client_max_body_size 1m` | 청크가 Flask 에 닿기 전에 **413** | `client_max_body_size 128m` |
+| `proxy_read_timeout 60s` | `/complete` 의 전체 재해싱 중 **504** (서버는 성공했는데 실패로 보임) | `proxy_read_timeout 900s` |
+| `proxy_request_buffering on` | 청크마다 임시파일에 통째로 받아썼다가 전달 - 동작은 하나 디스크 I/O 2배 | `proxy_request_buffering off` (+ `proxy_http_version 1.1`) |
+
+클라이언트는 이 셋에 대해 **스스로 버티도록** 되어 있다 - 근본 해결은 위 설정이지만,
+당장 nginx 를 못 고치는 상황에서도 업로드는 끝난다:
+
+- **413 을 만나면 청크를 절반씩 줄인다** (하한 256KB). 왕복이 늘 뿐 실패하지 않는다.
+- **완료 응답이 잘리면(504) 재요청 대신 상태를 먼저 물어본다.** 서버가 이미 끝냈으면
+  성공으로 처리한다 - 무작정 `/complete` 를 다시 부르면 같은 재해싱을 반복하게 된다.
+
+`nginx.conf` 를 못 건드리는 경우 `MODEL_UPLOAD_CHUNK_MB` 를 nginx 상한 아래로
+직접 맞춰도 된다(예: 상한이 1m 이면 `MODEL_UPLOAD_CHUNK_MB=1`).
+
 ## 클라이언트 (로컬 PC)
 
 ```bash
@@ -63,11 +84,18 @@ uv run python deploy_vlms/scripts/upload_model.py
 
 | 증상 | 원인 / 조치 |
 |---|---|
-| `HTTP 413` | 앞단 프록시의 `client_max_body_size` 가 청크보다 작다. `MODEL_UPLOAD_CHUNK_MB` 를 낮춘다 |
+| `HTTP 413` 경고 후 계속 진행 | 프록시 `client_max_body_size` 가 청크보다 작아 클라이언트가 청크를 반씩 줄인 것. 동작은 하지만 nginx 를 고치는 게 낫다 |
 | `HTTP 401` | `MODEL_UPLOAD_TOKEN` 불일치 |
 | `HTTP 400 PathNotAllowed` | `MODEL_UPLOAD_DEST` 가 루트를 벗어난다 |
 | `HTTP 422` 반복 | 청크가 계속 손상돼 도착한다. 네트워크 경로를 의심 |
+| `완료 응답을 못 받았습니다` 반복 | `proxy_read_timeout` 이 재해싱 시간보다 짧다. nginx 설정을 올린다 |
 | 완료 시 `ChecksumMismatch` | 청크는 다 통과했는데 조립 결과가 다르다 = 디스크 의심. 서버가 `.part` 를 버리고 0 부터 다시 받는다 |
+
+### `.upload_staging` 를 손으로 지우지 말 것
+
+`.part` 는 받는 중인 실파일이라 크지만, 같이 있는 `.json` 은 수백 바이트짜리 상태
+파일이고 **"이 파일은 이미 다 올렸다"는 유일한 기록**이다. 이걸 지우면 다음 실행이
+멀쩡히 올라간 파일까지 처음부터 다시 올린다. 정리는 아래 DELETE 로 할 것.
 
 ### 잘못 올린 세션 정리
 

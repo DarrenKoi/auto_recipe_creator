@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Callable, Protocol
 
 READ_BLOCK_BYTES = 1024 * 1024
+MIN_CHUNK_BYTES = 256 * 1024
 RETRY_BACKOFF_BASE_SEC = 1.0
 RETRY_BACKOFF_CAP_SEC = 30.0
 
@@ -56,6 +57,8 @@ class UploadTransport(Protocol):
 
     def complete(self, upload_id: str) -> dict: ...
 
+    def get_session(self, upload_id: str) -> dict: ...
+
 
 @dataclass(frozen=True)
 class FileJob:
@@ -73,6 +76,7 @@ class UploadResult:
     rel_path: str
     sent_bytes: int
     skipped: bool
+    chunk_size: int = 0
 
 
 def sha256_of_file(path: Path) -> str:
@@ -113,6 +117,7 @@ def upload_file(
     job: FileJob,
     chunk_size: int,
     max_retries: int = 5,
+    min_chunk_size: int = MIN_CHUNK_BYTES,
     sleep_fn: Callable[[float], None] = time.sleep,
     log: Callable[[str], None] = print,
     progress_fn: Callable[[int, int], None] | None = None,
@@ -121,7 +126,7 @@ def upload_file(
     digest = sha256_of_file(job.local_path)
     session = transport.open_session(job.rel_path, job.size, digest, chunk_size)
     if session.get("completed"):
-        return UploadResult(job.rel_path, 0, skipped=True)
+        return UploadResult(job.rel_path, 0, skipped=True, chunk_size=chunk_size)
 
     upload_id = session["upload_id"]
     offset = int(session["committed_offset"])
@@ -143,6 +148,18 @@ def upload_file(
                 attempts += 1
                 if attempts > max_retries:
                     raise
+                continue
+            except UploadFailed as error:
+                if error.status_code != 413 or chunk_size <= min_chunk_size:
+                    raise
+                # 앞단 프록시(nginx client_max_body_size)가 Flask 에 닿기 전에 잘랐다.
+                # 서버 /health 는 프록시 상한을 모르므로 여기서 직접 줄여 본다.
+                chunk_size = max(min_chunk_size, chunk_size // 2)
+                log(
+                    f"[WARNING] 프록시가 청크를 413 으로 거부했습니다. "
+                    f"청크를 {_human_bytes(chunk_size)} 로 줄여 재시도합니다 "
+                    "(nginx client_max_body_size 를 올리는 것이 근본 해결입니다)"
+                )
                 continue
             except (TransientError, RemoteChecksumMismatch) as error:
                 attempts += 1
@@ -168,8 +185,10 @@ def upload_file(
             if progress_fn is not None:
                 progress_fn(offset, job.size)
 
-    transport.complete(upload_id)
-    return UploadResult(job.rel_path, sent, skipped=False)
+    _complete_with_proxy_tolerance(
+        transport, upload_id, job, max_retries=max_retries, sleep_fn=sleep_fn, log=log
+    )
+    return UploadResult(job.rel_path, sent, skipped=False, chunk_size=chunk_size)
 
 
 # ── HTTP transport ────────────────────────────────────────────────────
@@ -278,6 +297,12 @@ class HttpTransport:
             "POST", f"/sessions/{upload_id}/complete", headers=self._headers()
         )
 
+    def get_session(self, upload_id: str) -> dict:
+        """서버가 보는 세션 상태를 조회한다."""
+        return self._request(
+            "GET", f"/sessions/{upload_id}", headers=self._headers()
+        )
+
     def health(self) -> dict:
         """엔드포인트 도달성을 확인한다."""
         return self._request("GET", "/health")
@@ -334,6 +359,40 @@ def _load_settings() -> dict:
             os.environ.get("MODEL_UPLOAD_MAX_RETRIES", str(DEFAULT_MAX_RETRIES))
         ),
     }
+
+
+def _complete_with_proxy_tolerance(
+    transport: UploadTransport,
+    upload_id: str,
+    job: FileJob,
+    max_retries: int,
+    sleep_fn: Callable[[float], None],
+    log: Callable[[str], None],
+) -> None:
+    """완료 요청이 프록시 타임아웃에 잘리는 경우까지 감안해 마무리한다.
+
+    서버는 여기서 파일 전체를 재해싱하므로 큰 샤드는 nginx proxy_read_timeout
+    (기본 60s)을 넘길 수 있다. 그때 응답만 못 받았을 뿐 서버는 성공했을 수 있어,
+    무작정 complete 를 다시 부르면 같은 재해싱을 반복하게 된다.
+    그래서 먼저 **상태를 물어보고**, 정말 안 끝났을 때만 다시 부른다.
+    """
+    for attempt in range(1, max_retries + 1):
+        try:
+            transport.complete(upload_id)
+            return
+        except TransientError as error:
+            log(
+                f"[WARNING] {job.rel_path} 완료 응답을 못 받았습니다 "
+                f"({attempt}/{max_retries}): {error}"
+            )
+            sleep_fn(min(RETRY_BACKOFF_CAP_SEC, RETRY_BACKOFF_BASE_SEC * 2 ** (attempt - 1)))
+            try:
+                if transport.get_session(upload_id).get("completed"):
+                    log(f"[INFO] {job.rel_path} 서버에서는 이미 완료돼 있습니다")
+                    return
+            except TransientError:
+                continue
+    raise TransientError(f"{job.rel_path}: 완료 확인 실패 ({max_retries}회 시도)")
 
 
 def resolve_chunk_size(requested: int, server_limit: int | None) -> int:

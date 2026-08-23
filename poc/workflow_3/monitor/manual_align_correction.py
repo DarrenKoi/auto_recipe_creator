@@ -18,21 +18,41 @@ safety:
     점검만 하려면 `SAFE_MODE=1` 으로 실행하면 클릭이 모두 막힌다.
   * 긴급 해제 단축키는 사이클 진입 전에 띄운다.
 
-사용법:
-  MANUAL_CORRECTION_EQP_ID=MCD916 \
-  MANUAL_CORRECTION_RECIPE_ID=MyRecipe \
-    uv run python poc/workflow_3/monitor/manual_align_correction.py
+사용법 (venv 활성화 후, 저장소 루트에서):
+  1) 이 파일 상단의 EQP_ID / RECIPE_ID 상수를 채운다.
+  2) python poc/workflow_3/monitor/manual_align_correction.py
 
-옵션:
-  MANUAL_CORRECTION_CLASS_NAME=CDSEM      (선택 - asset 라우팅/로그용)
-  MANUAL_CORRECTION_TAG=run_42            (선택 - 미지정 시 wall-clock)
-  MANUAL_CORRECTION_SKIP_PREFLIGHT=1      (점검 - List 탭이 이미 열려있다면)
+  이 프로젝트는 CLI 인자를 쓰지 않으므로 "인자"는 파일 상단 상수이거나 동명의
+  환경변수다. 1회성으로 다른 장비를 돌릴 때만 env 를 붙이면 되고, env 가 상수를
+  이긴다(어느 쪽이 쓰였는지는 시작 시 콘솔에 찍힌다).
+
+    Windows cmd  : set MANUAL_CORRECTION_EQP_ID=MCD916
+    PowerShell   : $env:MANUAL_CORRECTION_EQP_ID = "MCD916"
+    macOS/Linux  : MANUAL_CORRECTION_EQP_ID=MCD916 python poc/workflow_3/monitor/manual_align_correction.py
+
+인자 (상수 이름 = env 이름 MANUAL_CORRECTION_<상수>):
+  EQP_ID           (필수)
+  RECIPE_ID        (필수)
+  CLASS_NAME       (선택 - asset 라우팅/로그용)
+  TAG              (선택 - 미지정 시 wall-clock)
+  MANUAL_CORRECTION_SKIP_PREFLIGHT=1  (점검 - List 탭이 이미 열려있다면. env 전용)
 """
 
 import os
+import sys
 from datetime import datetime
+from pathlib import Path
 
-from poc.workflow_3 import ALIGN_FAIL_ALID, LOG_DIR
+# venv 에서 `python poc/workflow_3/monitor/manual_align_correction.py` 로 직접 실행하면
+# sys.path[0] 는 이 파일이 있는 monitor 폴더라 `poc` 패키지가 보이지 않는다. 저장소
+# 루트를 먼저 얹어, 프로젝트를 pip 로 설치하지 않은 순수 venv 에서도 절대 import 가
+# 풀리게 한다. editable 설치(uv sync)나 `python -m poc...` 실행에서는 중복 경로일
+# 뿐이라 무해하다. 같은 규약: monitor/test_cycle_report.py
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from poc.workflow_3 import ALIGN_FAIL_ALID, LOG_DIR  # noqa: E402
 from poc.workflow_3.config import load_workflow3_settings
 from poc.workflow_3.monitor.cycle import (
     CycleResult,
@@ -65,6 +85,20 @@ from poc.workflow_3.monitor.align_fail_monitor import (
     append_alarm_record,
     append_cycle_manifest,
 )
+
+# ===========================================================================
+# 실행 인자 - 여기만 고쳐서 쓴다 (셸 env 를 붙이지 않고 실행하려는 경우).
+#
+# 이 프로젝트는 CLI 인자(argparse/flag)를 쓰지 않는다. 그래서 "인자"는 아래 상수이거나
+# 같은 이름의 환경변수 둘 중 하나다. 우선순위는 workflow_3_config.py 와 동일하게
+#   실제 셸 env  >  아래 상수
+# 이며, 어느 쪽이 쓰였는지 시작 시 콘솔에 찍힌다(둘이 어긋난 채 도는 것을 막는다).
+# ===========================================================================
+
+EQP_ID = "MCD513"
+RECIPE_ID = "RJ1BXXX/RJ1B_ISOLINERPOLY_R1"   # 반드시 '<class>/<recipe>' 형태
+CLASS_NAME = ""      # 선택. 알람 로그/팝업 표시용일 뿐이라 비워도 라우팅에 영향 없다
+TAG = ""             # 선택. 산출물 폴더 tag. 비우면 wall-clock 으로 생성
 
 LOG_COMPONENT = "manual_align_correction"
 
@@ -103,26 +137,51 @@ def _apply_live_mode_defaults() -> None:
     print("=" * 70)
 
 
+def _resolve_arg(env_name: str, inline_value: str) -> tuple[str, str]:
+    """하나의 인자를 `셸 env > 파일 상수` 순으로 고르고, 출처까지 돌려준다.
+
+    출처를 같이 돌려주는 이유: 파일 상수를 고쳤는데 셸에 예전 env 가 남아 있으면
+    조용히 다른 장비를 상대로 실클릭이 나간다. 어느 쪽이 이겼는지 콘솔에 찍어
+    그 사고를 눈에 보이게 만든다. 우선순위는 workflow_3_config.py 와 같다.
+    """
+    env_value = os.environ.get(env_name, "").strip()
+    if env_value:
+        return env_value, "env"
+    return (inline_value or "").strip(), "file"
+
+
 def _load_trigger_args() -> tuple[str, str, str, str]:
-    """필수/선택 env 를 읽고 검증한다.
+    """실행 인자(파일 상수 또는 동명의 env)를 읽고 검증한다.
 
     EQP_ID/RECIPE_ID 는 필수. 없으면 사이클을 돌릴 식별자가 없으니 즉시 종료한다.
     """
-    eqp_id = os.environ.get("MANUAL_CORRECTION_EQP_ID", "").strip()
-    recipe_id = os.environ.get("MANUAL_CORRECTION_RECIPE_ID", "").strip()
-    class_name = os.environ.get("MANUAL_CORRECTION_CLASS_NAME", "").strip()
-    tag = os.environ.get("MANUAL_CORRECTION_TAG", "").strip()
+    eqp_id, eqp_src = _resolve_arg("MANUAL_CORRECTION_EQP_ID", EQP_ID)
+    recipe_id, recipe_src = _resolve_arg("MANUAL_CORRECTION_RECIPE_ID", RECIPE_ID)
+    class_name, _ = _resolve_arg("MANUAL_CORRECTION_CLASS_NAME", CLASS_NAME)
+    tag, _ = _resolve_arg("MANUAL_CORRECTION_TAG", TAG)
+
+    if eqp_id or recipe_id:
+        print(f"[INFO] 인자 출처: EQP_ID={eqp_src}, RECIPE_ID={recipe_src} "
+              "(env 가 파일 상수를 이깁니다)")
 
     missing = [name for name, value in (
-        ("MANUAL_CORRECTION_EQP_ID", eqp_id),
-        ("MANUAL_CORRECTION_RECIPE_ID", recipe_id),
+        ("EQP_ID", eqp_id),
+        ("RECIPE_ID", recipe_id),
     ) if not value]
     if missing:
-        print(f"[ERROR] 필수 env 누락: {', '.join(missing)}")
-        print("예시:")
-        print("  MANUAL_CORRECTION_EQP_ID=MCD916 \\")
-        print("  MANUAL_CORRECTION_RECIPE_ID=MyRecipe \\")
-        print("    uv run python poc/workflow_3/monitor/manual_align_correction.py")
+        print(f"[ERROR] 필수 인자 누락: {', '.join(missing)}")
+        print("설정 방법 두 가지 - 아무거나 하나:")
+        print("  [1] 이 파일 상단 상수를 고친다 (권장, 셸 무관)")
+        print('        EQP_ID = "MCD916"')
+        print('        RECIPE_ID = "MyRecipe"')
+        print("      그리고: python poc/workflow_3/monitor/manual_align_correction.py")
+        print("  [2] 셸 env 로 1회성 지정 (파일 상수를 덮어씀)")
+        print("      Windows cmd:")
+        print("        set MANUAL_CORRECTION_EQP_ID=MCD916")
+        print("        set MANUAL_CORRECTION_RECIPE_ID=MyRecipe")
+        print("      PowerShell:")
+        print('        $env:MANUAL_CORRECTION_EQP_ID = "MCD916"')
+        print('        $env:MANUAL_CORRECTION_RECIPE_ID = "MyRecipe"')
         raise SystemExit(EXIT_BAD_ARGS)
 
     return eqp_id, recipe_id, class_name, tag
@@ -144,7 +203,7 @@ def _build_synthetic_info(eqp_id: str, recipe_id: str, class_name: str) -> dict:
         "alid": ALIGN_FAIL_ALID,
         "recipe_id": recipe_id,
         "operation_desc": MANUAL_OPERATION_DESC,
-        "lot_type_cd": class_name,  # rcp/msr gather 의 class 라우팅 힌트로 재활용
+        "lot_type_cd": class_name,  # 표시용(알람 로그/팝업). class 라우팅은 recipe_id 가 담당
     }
 
 

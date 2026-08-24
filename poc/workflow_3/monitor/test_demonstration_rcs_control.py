@@ -486,13 +486,6 @@ def test_memo_print_flow_opens_utility_then_the_menu_item_then_the_editor():
     ]
 
 
-def test_memo_print_editor_receives_the_exact_two_line_message():
-    editor_step = _step_by_key("memo_print", "memo_print_editor")
-
-    assert editor_step.input_text == "Infra. Tech Center!!\nOne Stop Solution"
-    assert editor_step.input_text == demo.DEFAULT_MEMO_TEXT
-
-
 def test_memo_print_editor_depends_on_selecting_the_menu_item():
     editor_step = _step_by_key("memo_print", "memo_print_editor")
 
@@ -583,7 +576,7 @@ def test_flow_types_only_after_clicking_the_configured_editor():
     ]
     # 입력은 편집 영역 클릭 **직후**, Close 는 그 뒤다.
     typed_at = screen.events.index(
-        "type:memo_print_editor:Infra. Tech Center!!\nOne Stop Solution"
+        f"type:memo_print_editor:{demo.DEFAULT_MEMO_TEXT}"
     )
     assert screen.events[typed_at - 1] == "click:memo_print_editor"
     assert screen.events[-1] == "click:memo_print_close_button"
@@ -1621,3 +1614,48 @@ def test_an_unknown_shift_mode_falls_back_to_the_default_not_to_nothing():
     keyboard = _type("B", shift_mode="typoo")
 
     assert ("press", "CAPS") in keyboard.events
+
+
+# ------------------------------------------------------------------
+# 3번째 줄 추가 (사용자 지시 2026-08-24) + Shift 기호 사전 경고.
+#
+# Caps Lock 은 글자만 바꾼다. Shift 기호(`!`, `"`)는 이 원격을 못 건너므로 **기본 키가
+# 그대로 들어온다**: `!`->`1`, `"`->`'`. 조용히 틀린 글자를 넣지 말고, 무엇이 어떻게
+# 들어올지 입력 전에 콘솔에 적는다 - 오피스에서 화면을 보고 대조할 근거가 된다.
+# ------------------------------------------------------------------
+
+
+def test_memo_has_three_lines_ending_with_the_poc_sentence():
+    lines = demo.DEFAULT_MEMO_TEXT.split("\n")
+
+    assert lines == [
+        "Infra. Tech Center!!",
+        "One Stop Solution",
+        'This is the PoC of "Auto Recipe Creation".',
+    ]
+
+
+def test_the_editor_step_types_all_three_lines():
+    editor = _step_by_key("memo_print", "memo_print_editor")
+
+    assert editor.input_text == demo.DEFAULT_MEMO_TEXT
+    assert editor.input_text.count("\n") == 2
+
+
+def test_typing_presses_enter_once_per_line_break():
+    keyboard = _type(demo.DEFAULT_MEMO_TEXT)
+
+    assert keyboard.events.count(("press", "ENTER")) == 2
+
+
+def test_shift_symbols_reports_what_will_arrive_instead():
+    """대문자는 Caps Lock 이 처리하니 경고 대상이 아니다 - 기호만 문제다."""
+    assert demo.shift_symbols('A!b"c') == [("!", "1"), ('"', "'")]
+    assert demo.shift_symbols("no symbols here") == []
+
+
+def test_the_default_memo_only_risks_the_two_known_symbols():
+    """지금 문구에서 어긋날 수 있는 것은 '!!' 와 두 개의 큰따옴표뿐이다."""
+    assert demo.shift_symbols(demo.DEFAULT_MEMO_TEXT) == [
+        ("!", "1"), ("!", "1"), ('"', "'"), ('"', "'"),
+    ]

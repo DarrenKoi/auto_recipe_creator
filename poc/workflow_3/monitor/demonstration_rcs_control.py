@@ -4,7 +4,7 @@
 재생하는 것이 목적이다. 시나리오(사용자 지정, 2026-08-19 / MCD019 흐름 2026-08-24 교체):
 
     RCS 실행 -> 로그인 -> View 탭 + 휠로 위아래 훑기 -> List 탭
-      -> MCD019 접속 -> [Utility -> Memo Print -> 두 줄 메모 입력 -> Close] -> tool 창 닫기
+      -> MCD019 접속 -> [Utility -> Memo Print -> 세 줄 메모 입력 -> Close] -> tool 창 닫기
                         (Utility 가 다른 창에 가려 안 보이면 Alt+click 으로 밀어낸다)
       -> MCDC22 접속 -> [Work Sheet 아래 버튼 -> File -> Exit]    -> tool 창 닫기
 
@@ -91,8 +91,12 @@ LOG_COMPONENT = "demonstration_rcs_control"
 # 셸 따옴표와 씨름하지 않는다.
 DEFAULT_TOOL_IDS = ["MCD019", "MCDC22"]
 
-# MCD019 MemoPrint 에 입력할 시연 문구. 첫 줄 뒤 Enter 를 누르고 둘째 줄을 입력한다.
-DEFAULT_MEMO_TEXT = "Infra. Tech Center!!\nOne Stop Solution"
+# MCD019 MemoPrint 에 입력할 시연 문구. 줄바꿈마다 Enter 를 누른다.
+DEFAULT_MEMO_TEXT = (
+    "Infra. Tech Center!!\n"
+    "One Stop Solution\n"
+    'This is the PoC of "Auto Recipe Creation".'
+)
 
 
 def parse_memo_text(raw, default: str) -> str:
@@ -600,6 +604,22 @@ def shift_plan(char: str) -> tuple:
     return char, False
 
 
+def shift_symbols(text: str) -> list:
+    """Shift 기호와 **그 자리에 실제로 들어올 문자** 목록. 없으면 빈 리스트.
+
+    Caps Lock 은 글자만 바꾸므로 대문자는 여기 대상이 아니다. 문제는 기호다 - 이
+    원격은 쥐고 있는 수정자를 실어 보내지 않으므로 `!` 는 `1`, `"` 는 `'` 로 들어온다.
+    조용히 틀린 글자를 넣지 않으려고, 입력 **전에** 무엇이 어떻게 들어올지 콘솔에
+    적는다. 오피스에서 화면과 대조할 유일한 근거다(Mac 에서는 그 화면을 볼 수 없다).
+    """
+    found = []
+    for char in text:
+        base, needs_shift = shift_plan(char)
+        if needs_shift and not char.isalpha():
+            found.append((char, base))
+    return found
+
+
 def type_multiline_text(
     text: str,
     key: str,
@@ -708,6 +728,13 @@ def type_multiline_text(
 
     print(f"[INFO] 텍스트 입력 시작: target={key}, 대문자방식={mode}, "
           f"글자수={len(text)}")
+    risky = shift_symbols(text)
+    if risky and mode != SHIFT_MODE_TYPE:
+        pairs = ", ".join(f"{c!r}->{b!r}" for c, b in risky)
+        print(
+            f"[WARNING] Shift 기호는 이 원격을 못 건넙니다 - 다음이 어긋날 수 있습니다: "
+            f"{pairs}. 화면이 이상하면 DEMO_RCS_MEMO_TEXT 로 문구에서 그 기호를 빼세요."
+        )
     for index, char in enumerate(text):
         if aborted():
             print(f"[WARNING] 긴급 해제 - 텍스트 입력 중단: target={key}, "
@@ -1822,6 +1849,7 @@ __all__ = [
     "run_in_tool_flow",
     "resolve_shift_mode",
     "shift_plan",
+    "shift_symbols",
     "type_multiline_text",
     "visit_tool",
 ]

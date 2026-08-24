@@ -21,6 +21,7 @@ from poc.workflow_3.monitor.make_demo_video_combined import (
     group_by_recipe,
     load_trials,
     make_title_card,
+    normalize_trial_dir,
     ordinal,
     probe_canvas,
     render_combined,
@@ -355,3 +356,43 @@ def test_env_names_in_table_are_the_ones_actually_read():
         if env_name.startswith("DEMO_VIDEO_"):
             assert env_name in source or env_name in render_source, env_name
     print("[OK] test_env_names_in_table_are_the_ones_actually_read")
+
+
+def test_normalize_trial_dir_descends_into_recording(tmp_path):
+    """INPUT_DIRS 에 tag 폴더를 적어도 recording/ 을 찾아 내려간다.
+
+    붙여넣기 좋은 것은 tag 폴더인데 프레임은 그 아래에 있다. 안 내려가면 모든 회차가
+    "프레임이 없어 제외" 되어 산출물이 통째로 비고, 경고만 봐서는 한 단계 아래를
+    가리켜야 한다는 걸 알 수 없다.
+    """
+    recording = _make_trial_dir(tmp_path, "260824_090000", frames=3)
+    tag_dir = recording.parent
+
+    assert normalize_trial_dir(tag_dir) == recording
+
+
+def test_normalize_trial_dir_keeps_recording_dir_untouched(tmp_path):
+    """이미 recording/ 을 가리키면 그대로 둔다 (기존 사용법 무변경)."""
+    recording = _make_trial_dir(tmp_path, "260824_090000", frames=3)
+
+    assert normalize_trial_dir(recording) == recording
+
+
+def test_normalize_trial_dir_leaves_frameless_dir_alone(tmp_path):
+    """프레임도 recording/ 도 없으면 준 경로를 그대로 돌려준다 (기존 경고 경로 유지)."""
+    empty = tmp_path / "nothing_here"
+    empty.mkdir()
+
+    assert normalize_trial_dir(empty) == empty
+
+
+def test_input_dirs_accepts_tag_dirs_end_to_end(tmp_path, monkeypatch):
+    """resolve_trial_dirs 가 tag 목록을 recording 목록으로 바꿔 돌려준다."""
+    first = _make_trial_dir(tmp_path, "260824_090000", epoch=1_000.0)
+    second = _make_trial_dir(tmp_path, "260824_100000", epoch=2_000.0)
+    monkeypatch.setenv(
+        "DEMO_COMBINED_INPUT_DIRS",
+        f"{first.parent},{second.parent}",
+    )
+
+    assert combined.resolve_trial_dirs() == [first, second]

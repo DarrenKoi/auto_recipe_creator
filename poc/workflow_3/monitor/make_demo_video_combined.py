@@ -311,6 +311,24 @@ def group_by_recipe(dirs: list[Path]) -> dict[Path, list[Path]]:
     return groups
 
 
+def normalize_trial_dir(path: Path) -> Path:
+    """tag 폴더를 받으면 그 안의 recording/ 으로 내려간다.
+
+    INPUT_DIRS 에 붙여넣기 좋은 것은 tag 폴더(`captured_img_from_rcs/<tag>`)인데
+    프레임은 그 아래 `recording/` 에 있다. 구분을 모르고 tag 를 적으면 모든 회차가
+    "프레임이 없어 제외" 되어 결과물이 통째로 비는데, 경고만 봐서는 한 단계 아래를
+    가리켜야 한다는 걸 알 수 없다. 프레임이 없고 recording/ 이 있을 때만 내려가므로
+    (둘 다 있는 경우는 준 경로를 그대로 존중) 뜻이 갈리지 않는다.
+    """
+    if scan_frames(path):
+        return path
+    nested = path / "recording"
+    if nested.is_dir() and scan_frames(nested):
+        print(f"[INFO] tag 폴더를 받아 recording/ 으로 내려갑니다: {path.name}")
+        return nested
+    return path
+
+
 def resolve_trial_dirs() -> list[Path]:
     """env 3단(명시 목록 / ROOT / 자동 탐색)으로 회차 폴더 목록을 정한다."""
     raw = os.environ.get("DEMO_COMBINED_INPUT_DIRS", "").strip()
@@ -324,7 +342,7 @@ def resolve_trial_dirs() -> list[Path]:
             if not path.is_dir():
                 print(f"[WARNING] 폴더가 없어 건너뜁니다: {path}")
                 continue
-            dirs.append(path)
+            dirs.append(normalize_trial_dir(path))
         # 명시 목록은 **적은 순서를 그대로** 쓴다 - 사용자가 순서를 정한 것이다.
         print(f"[INFO] DEMO_COMBINED_INPUT_DIRS 지정 {len(dirs)}개 (적은 순서 유지)")
         return dirs

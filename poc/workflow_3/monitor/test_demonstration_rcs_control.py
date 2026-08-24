@@ -7,8 +7,12 @@
     uv run pytest poc/workflow_3/monitor/test_demonstration_rcs_control.py
 """
 
+import ast
+import pathlib
+
 import pytest
 
+from poc.workflow_3.monitor import demonstration_rcs_control as demo
 from poc.workflow_3.monitor.demonstration_rcs_control import (
     STATUS_CONNECT_FAILED,
     STATUS_CONNECTED,
@@ -17,6 +21,7 @@ from poc.workflow_3.monitor.demonstration_rcs_control import (
     STATUS_VIEW_TAB_FAILED,
     STATUS_WINDOW_NOT_FOUND,
     DEFAULT_CONFIRM_POLICY,
+    DEFAULT_TOOL_FLOWS,
     DemoRunResult,
     FlowStep,
     InToolFlow,
@@ -424,8 +429,8 @@ def test_flow_survives_a_capture_exception():
 
 
 def test_parse_flow_map_reads_tool_equals_flow_pairs():
-    assert parse_flow_map("MCD019=optics,MCDC22=worksheet", {}) == {
-        "mcd019": "optics", "mcdc22": "worksheet",
+    assert parse_flow_map("MCD019=memo_print,MCDC22=worksheet", {}) == {
+        "mcd019": "memo_print", "mcdc22": "worksheet",
     }
 
 
@@ -437,7 +442,9 @@ def test_parse_flow_map_falls_back_to_default_when_empty():
 
 def test_parse_flow_map_ignores_malformed_entries():
     """시연 직전 오타로 스크립트가 죽는 것보다, 그 항목만 버리고 도는 편이 낫다."""
-    assert parse_flow_map("MCD019=optics,garbage,=x,y=", {}) == {"mcd019": "optics"}
+    assert parse_flow_map("MCD019=memo_print,garbage,=x,y=", {}) == {
+        "mcd019": "memo_print",
+    }
 
 
 def test_resolve_flow_name_is_case_insensitive():
@@ -463,12 +470,39 @@ def _flow_keys(flow):
     return [flow.opener.target.key] + [step.target.key for step in flow.steps]
 
 
-def test_optics_flow_is_optics_then_memory_then_close():
-    flow = build_flows()["optics"]
+def test_memo_print_flow_is_utility_then_memo_print_then_editor():
+    flow = build_flows()["memo_print"]
 
     assert _flow_keys(flow) == [
+        "utility_button", "memo_print_menu_item", "memo_print_editor",
+    ]
+
+
+def test_memo_print_editor_receives_the_exact_two_line_message():
+    editor_step = build_flows()["memo_print"].steps[-1]
+
+    assert editor_step.input_text == "Infra. Tech Center!!\nOne Stop Solution"
+    assert editor_step.input_text == demo.DEFAULT_MEMO_TEXT
+
+
+def test_memo_print_editor_depends_on_selecting_the_menu_item():
+    editor_step = build_flows()["memo_print"].steps[-1]
+
+    assert editor_step.requires_previous is True
+
+
+def test_mcd019_uses_memo_print_by_default():
+    assert DEFAULT_TOOL_FLOWS["mcd019"] == "memo_print"
+
+
+def test_optics_flow_stays_selectable_after_memo_print_became_the_default():
+    """기본 배정에서 빠졌을 뿐 등록은 유지한다 - 설명문 좌표가 오피스 실측이라 못 되살린다."""
+    flows = build_flows()
+
+    assert _flow_keys(flows["optics"]) == [
         "optics_button", "optics_memory_tab", "optics_close_button",
     ]
+    assert resolve_flow_name("MCD019", {"mcd019": "optics"}, "memo_print") == "optics"
 
 
 def test_optics_close_does_not_depend_on_the_memory_tab():
@@ -515,6 +549,107 @@ def test_worksheet_button_rejects_a_neighbouring_label():
 
     opener = build_flows()["worksheet"].opener
     assert classify_label(["Recipe"], opener.required, opener.forbidden) != "confirmed"
+
+
+def test_flow_types_only_after_clicking_the_configured_editor():
+    flow = build_flows()["memo_print"]
+    screen = _Screen()
+
+    status = run_in_tool_flow(
+        object(), "Remote Monitoring System - MCD019", "uia", flow,
+        capture_fn=lambda w: object(),
+        locate_fn=screen.locate,
+        read_tokens_fn=screen.read_tokens,
+        click_fn=screen.click,
+        type_fn=lambda text, key: screen.events.append(f"type:{key}:{text}"),
+        sleep_fn=lambda sec: None,
+        settle_sec=0.0,
+        confirm_policy="off",
+        attempts=1,
+    )
+
+    assert status == "memo_print:ok"
+    assert screen.clicks == ["utility_button", "memo_print_menu_item", "memo_print_editor"]
+    assert screen.events[-2:] == [
+        "click:memo_print_editor",
+        "type:memo_print_editor:Infra. Tech Center!!\nOne Stop Solution",
+    ]
+
+
+def test_memo_print_title_does_not_block_the_editor_focus():
+    flow = build_flows()["memo_print"]
+    screen = _Screen(tokens_by_key={
+        "utility_button": ["Utility"],
+        "memo_print_menu_item": ["Memo", "Print"],
+        "memo_print_editor": ["MemoPrint"],
+    })
+
+    status = run_in_tool_flow(
+        object(), "Remote Monitoring System - MCD019", "uia", flow,
+        capture_fn=lambda w: object(),
+        locate_fn=screen.locate,
+        read_tokens_fn=screen.read_tokens,
+        click_fn=screen.click,
+        type_fn=lambda text, key: None,
+        sleep_fn=lambda sec: None,
+        settle_sec=0.0,
+        confirm_policy="strict",
+        attempts=1,
+    )
+
+    assert status == "memo_print:ok"
+    assert "memo_print_editor" in screen.clicks
+
+
+class _KeyboardSpy:
+    def __init__(self):
+        self.events = []
+
+    def type(self, text):
+        self.events.append(("type", text))
+
+    def press(self, key):
+        self.events.append(("press", key))
+
+    def release(self, key):
+        self.events.append(("release", key))
+
+
+def test_type_multiline_text_converts_newline_to_enter():
+    keyboard = _KeyboardSpy()
+
+    demo.type_multiline_text(
+        "first\nsecond",
+        "memo_print_editor",
+        action_enabled=True,
+        keyboard=keyboard,
+        enter_key="ENTER",
+        sleep_fn=lambda sec: None,
+        char_delay_sec=0.0,
+    )
+
+    assert keyboard.events == [
+        *(("type", ch) for ch in "first"),
+        ("press", "ENTER"),
+        ("release", "ENTER"),
+        *(("type", ch) for ch in "second"),
+    ]
+
+
+def test_type_multiline_text_dry_run_never_touches_the_keyboard():
+    keyboard = _KeyboardSpy()
+
+    demo.type_multiline_text(
+        demo.DEFAULT_MEMO_TEXT,
+        "memo_print_editor",
+        action_enabled=False,
+        keyboard=keyboard,
+        enter_key="ENTER",
+        sleep_fn=lambda sec: None,
+        char_delay_sec=0.0,
+    )
+
+    assert keyboard.events == []
 
 
 # ------------------------------------------------------------------
@@ -720,10 +855,6 @@ def test_run_demonstration_stops_cleanly_on_keyboard_interrupt():
 # 대신 **AST 로** 각 from-import 의 이름이 대상 모듈에 실제로 있는지 확인한다.
 # ------------------------------------------------------------------
 
-import ast
-import pathlib
-
-
 def _module_file(module_name):
     """poc.workflow_3.x.y -> 파일 경로. 패키지면 __init__.py."""
     root = pathlib.Path(__file__).resolve().parents[3]
@@ -849,3 +980,79 @@ def test_default_confirm_policy_is_lenient_but_still_blocks_forbidden_labels():
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+# ------------------------------------------------------------------
+# 메모 입력 게이트 - 클릭보다 엄격해야 한다. 클릭은 대개 한 번이면 끝나지만
+# 타이핑은 상태를 남기고, 포커스가 어디 있는지 틀리면 엉뚱한 필드에 글자가 들어간다.
+# ------------------------------------------------------------------
+
+
+def test_memo_editor_is_gated_by_a_real_label_so_strict_can_reject_it():
+    """`required=()` 는 정책을 아예 건너뛴다(_confirm_point 조기 반환) - 타이핑엔 부적합."""
+    from poc.workflow_3.monitor.share_request import accepts_label, classify_label
+
+    editor = build_flows()["memo_print"].steps[-1]
+
+    assert editor.required, "빈 required 는 strict 에서도 무검증 통과가 된다"
+    assert classify_label(["MemoPrint"], editor.required, editor.forbidden) == "confirmed"
+    # 읽히지 않으면 기본 정책(lenient)에서는 그대로 진행한다 - 시연이 멈추면 안 된다.
+    assert accepts_label(
+        classify_label([], editor.required, editor.forbidden), "lenient"
+    ) is True
+    # 같은 상황에서 strict 는 거부한다 - 캘리브레이션 실행이 의미를 갖는다.
+    assert accepts_label(
+        classify_label([], editor.required, editor.forbidden), "strict"
+    ) is False
+
+
+def test_memo_editor_rejects_a_recipe_field_read_under_strict():
+    """popup 이 안 떴는데 눌린 자리가 다른 필드면 strict 에서 타이핑이 막혀야 한다."""
+    from poc.workflow_3.monitor.share_request import accepts_label, classify_label
+
+    editor = build_flows()["memo_print"].steps[-1]
+
+    verdict = classify_label(["Recipe", "Name"], editor.required, editor.forbidden)
+    assert accepts_label(verdict, "strict") is False
+
+
+def test_type_multiline_text_stops_mid_string_on_abort():
+    """긴급 해제(ctrl+alt+q) 는 40글자 입력 도중에도 즉시 먹어야 한다."""
+    keyboard = _KeyboardSpy()
+
+    def _aborted():
+        # 호출 횟수가 아니라 **실제 입력된 글자 수**를 본다 - 루프 앞 가드가 몇 번
+        # 묻는지에 테스트가 매달리지 않게 한다.
+        return len(keyboard.events) >= 3  # 3글자 뒤 사용자가 단축키를 눌렀다.
+
+    ok = demo.type_multiline_text(
+        "abcdefgh",
+        "memo_print_editor",
+        action_enabled=True,
+        keyboard=keyboard,
+        enter_key="ENTER",
+        sleep_fn=lambda sec: None,
+        char_delay_sec=0.0,
+        is_aborted_fn=_aborted,
+    )
+
+    assert ok is False
+    assert keyboard.events == [("type", ch) for ch in "abc"]
+
+
+def test_type_multiline_text_never_starts_when_already_aborted():
+    keyboard = _KeyboardSpy()
+
+    ok = demo.type_multiline_text(
+        demo.DEFAULT_MEMO_TEXT,
+        "memo_print_editor",
+        action_enabled=True,
+        keyboard=keyboard,
+        enter_key="ENTER",
+        sleep_fn=lambda sec: None,
+        char_delay_sec=0.0,
+        is_aborted_fn=lambda: True,
+    )
+
+    assert ok is False
+    assert keyboard.events == []

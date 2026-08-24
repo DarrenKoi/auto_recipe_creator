@@ -1,11 +1,11 @@
 """RCS 자동 조작 시연 스크립트 - 알람 없이 정해진 시나리오를 순서대로 보여준다.
 
 알람을 기다리지 않고, 사람이 보는 앞에서 "이 시스템이 RCS 를 이렇게 몹니다" 를
-재생하는 것이 목적이다. 시나리오(사용자 지정, 2026-08-19):
+재생하는 것이 목적이다. 시나리오(사용자 지정, 2026-08-19 / MCD019 흐름 2026-08-24 교체):
 
     RCS 실행 -> 로그인 -> View 탭 + 휠로 위아래 훑기 -> List 탭
-      -> MCD019 접속 -> [Optics... -> Memory 탭 -> Close]        -> tool 창 닫기
-      -> MCDC22 접속 -> [Work Sheet 아래 버튼 -> File -> Exit]   -> tool 창 닫기
+      -> MCD019 접속 -> [Utility -> Memo Print -> 두 줄 메모 입력] -> tool 창 닫기
+      -> MCDC22 접속 -> [Work Sheet 아래 버튼 -> File -> Exit]    -> tool 창 닫기
 
 장비마다 **다른 조작**을 보여주는 것이 요점이다 - 같은 동작을 반복하면 스크립트로
 보이고, 창을 열어 메뉴를 타고 들어갔다 빠져나오면 자동화로 보인다.
@@ -16,8 +16,8 @@
 별도 진입점으로 둔다.
 
 **이 스크립트는 보정을 하지 않는다.** 하는 일은 탭 클릭 / 휠 / tool 더블클릭 /
-Optics 대화상자 열고 닫기 / 창 닫기뿐이다. reposition·OK 클릭처럼 레시피나 측정에
-영향을 주는 조작은 전혀 없다.
+Utility 메뉴와 MemoPrint 창 열기 / 메모 입력 / 창 닫기뿐이다. reposition·OK 클릭처럼
+레시피나 측정에 영향을 주는 조작은 전혀 없다.
 
 사용법 (오피스 Windows):
 
@@ -38,8 +38,9 @@ env (`DEMO_RCS_*` 네임스페이스 - 루프의 `ALIGN_FAIL_*` 과 섞지 않�
     DEMO_RCS_REPEAT         장비 순회 반복 횟수 (기본 1)
     DEMO_RCS_VIEW_TAB       View 탭 훑기 on/off (기본 1)
     DEMO_RCS_FLOW           tool 창 안 조작 on/off (기본 1)
-    DEMO_RCS_FLOWS          장비별 흐름 배정 (기본 "MCD019=optics,MCDC22=worksheet")
-    DEMO_RCS_DEFAULT_FLOW   목록에 없는 장비의 흐름 (기본 optics)
+    DEMO_RCS_FLOWS          장비별 흐름 배정 (기본 "MCD019=memo_print,MCDC22=worksheet")
+                            고를 수 있는 흐름: memo_print / optics / worksheet
+    DEMO_RCS_DEFAULT_FLOW   목록에 없는 장비의 흐름 (기본 memo_print)
     DEMO_RCS_FLOW_SETTLE_SEC      창/드롭다운이 그려질 대기 (기본 1.5)
     DEMO_RCS_FLOW_ATTEMPTS        여는 버튼 재시도 횟수 (기본 2)
     DEMO_RCS_CONFIRM        라벨 확인 정책 strict|lenient|off (기본 lenient)
@@ -48,6 +49,9 @@ env (`DEMO_RCS_*` 네임스페이스 - 루프의 `ALIGN_FAIL_*` 과 섞지 않�
                             원격 뷰가 커서를 따라올 시간 - 짧으면 클릭이 삼켜진다
     DEMO_RCS_CLICK_HOLD_SEC 버튼을 누르고 있는 시간 (기본 0.15)
                             즉시 press/release 는 원격 샘플링 사이로 빠져나간다
+    DEMO_RCS_CHAR_TYPE_DELAY_SEC  메모 글자 사이 입력 간격 (기본 0.08)
+                            원격 화면이 입력을 샘플링하므로 한 번에 보내지 않는다
+    ACTION_LOGIN_TYPING_ENABLED=0  클릭은 두고 **메모 입력만** 끈다(롤백 스위치)
     ALIGN_FAIL_RCS_KILL_STALE=1  창 없는 좀비 RCS 프로세스를 종료하고 재실행 (기본 off)
     SAFE_MODE=1             모든 클릭 차단 (리허설 - 화면은 안 움직인다)
 
@@ -61,6 +65,7 @@ import time
 from dataclasses import dataclass, field
 
 from poc.workflow_3.config import Workflow3Settings, load_workflow3_settings
+from poc.workflow_3.util.abort_switch import abort_reason, is_aborted
 from poc.workflow_3.util.time_utils import make_timestamp_tag
 
 LOG_COMPONENT = "demonstration_rcs_control"
@@ -69,11 +74,14 @@ LOG_COMPONENT = "demonstration_rcs_control"
 # 셸 따옴표와 씨름하지 않는다.
 DEFAULT_TOOL_IDS = ["MCD019", "MCDC22"]
 
-# 라벨 확인 정책 기본값. 이 시연이 누르는 버튼(Optics/Memory/Close/Work Sheet/File/
-# Exit)은 **돌고 있는 장비에 영향을 주지 않는다** 고 오피스에서 확인됐다(2026-08-19).
-# 그래서 균형점이 바뀐다 - 여기서 지키려는 것은 장비 안전이 아니라 시연 흐름이고,
-# OCR 이 한 번 못 읽어 시연이 멈추는 쪽이 더 큰 손해다. lenient 는 "못 읽음" 을 통과
-# 시키되 **금지 토큰(cancel/exit/terminate 등)은 어떤 정책에서도 막는다**
+# MCD019 MemoPrint 에 입력할 시연 문구. 첫 줄 뒤 Enter 를 누르고 둘째 줄을 입력한다.
+DEFAULT_MEMO_TEXT = "Infra. Tech Center!!\nOne Stop Solution"
+
+# 라벨 확인 정책 기본값. 기존 시연 버튼은 **돌고 있는 장비에 영향을 주지 않는다** 고
+# 오피스에서 확인됐다(2026-08-19). 새 Utility/Memo Print 흐름은 2026-08-24 추가됐고
+# 아직 오피스 실측 전이므로 첫 실행은 DEMO_RCS_CONFIRM=strict 로 캘리브레이션한다.
+# 기존 기본값 lenient 는 "못 읽음" 을 통과시키되 **금지 토큰(cancel/exit/terminate
+# 등)은 어떤 정책에서도 막는다**
 # (share_request.accepts_label). 좌표 자체를 못 찾으면 정책과 무관하게 안 누른다.
 # 라벨 문구를 확정하는 진단 실행에서는 DEMO_RCS_CONFIRM=strict 로 되돌린다.
 DEFAULT_CONFIRM_POLICY = "lenient"
@@ -93,7 +101,7 @@ STATUS_VIEW_SKIPPED = "view_skipped"
 
 @dataclass
 class ToolVisit:
-    """장비 1대의 [접속 -> Optics 조작 -> 닫기] 결과."""
+    """장비 1대의 [접속 -> 장비별 창 안 조작 -> 닫기] 결과."""
 
     tool_id: str
     status: str = STATUS_CONNECTED
@@ -242,18 +250,19 @@ def _close_tool_window(visit: ToolVisit, close_fn) -> None:
 # tool 창 안 조작 흐름 - 여는 버튼 -> 창 확인 -> 안에서 차례로 클릭.
 #
 # **대화상자는 로컬 창이 아니다.** Remote Monitoring 창은 장비 화면의 원격 뷰라,
-# Optics 나 Work Sheet 를 열면 그 창이 뷰 **안에** 그려진다 - 로컬 top-level 창
+# MemoPrint 나 Work Sheet 를 열면 그 창이 뷰 **안에** 그려진다 - 로컬 top-level 창
 # 열거로는 절대 찾을 수 없다. 첫 오피스 실행에서 창 제목으로 찾다 실패하고도 "그래도
 # 계속" 폴백이 걸려 화면 어딘가의 **다른 Close** 를 눌렀다. 그래서 확인은 창 열거가
 # 아니라 **라벨 판독(OCR)** 으로 하고, 확인되지 않으면 누르지 않는다(share_request 와
 # 같은 fail-closed actuator 규약).
 #
-# Optics 와 Work Sheet 는 모양이 같아 한 엔진으로 돈다:
-#   Optics    : [Optics...]  -> Memory 탭 -> Close
+# 세 흐름 모두 모양이 같아 한 엔진으로 돈다:
+#   MemoPrint : [Utility] -> Memo Print -> 편집 영역 -> 두 줄 입력
+#   Optics    : [Optics...] -> Memory 탭 -> Close
 #   Work Sheet: [Work Sheet 아래 버튼] -> File -> Exit
 # 차이는 **step 사이의 의존성** 하나다. Optics 의 Close 는 Memory 와 무관하게 누를 수
-# 있지만, Work Sheet 의 Exit 는 File 이 드롭다운을 열어야만 존재한다. 그래서
-# `requires_previous` 로 그 차이를 데이터에 적는다.
+# 있지만, 드롭다운/popup 항목(File -> Exit, Memo Print -> 편집 영역)은 앞 step 이
+# 성공해야만 존재한다. 그래서 `requires_previous` 로 그 차이를 데이터에 적는다.
 # ------------------------------------------------------------------
 
 # 흐름 status(장비별 요약에 그대로 실린다). "<흐름이름>:<status>" 로 붙여서 보고한다.
@@ -280,6 +289,7 @@ class FlowStep:
     required: tuple = ()
     forbidden: tuple = ()
     requires_previous: bool = False
+    input_text: str = ""
 
 
 @dataclass
@@ -340,6 +350,7 @@ def run_in_tool_flow(
     locate_fn,
     read_tokens_fn,
     click_fn,
+    type_fn=None,
     sleep_fn,
     settle_sec: float = 1.5,
     confirm_policy: str = "strict",
@@ -352,8 +363,9 @@ def run_in_tool_flow(
       locate_fn(image, target)            -> point dict | None (**이미지 픽셀 좌표**)
       read_tokens_fn(image, point, key)   -> list[str]
       click_fn(window, image, point, key) -> None
+      type_fn(text, key)                  -> None (input_text 가 있는 step 만)
 
-    세 가지가 계약이다.
+    네 가지가 계약이다.
 
     ① **확인되지 않으면 누르지 않는다.** 좌표만 믿고 누르면 원격 뷰의 엉뚱한 버튼을
        누르게 된다. 실제로 첫 오피스 실행이 그렇게 깨졌다.
@@ -362,7 +374,7 @@ def run_in_tool_flow(
        자체의 닫기 같은 다른 것을 누른다. 확인 안 된 채 남은 창은 다음 단계의 tool 창
        닫기가 정리하므로, 여기서 무리하게 닫는 것보다 안 누르는 편이 낫다.
     ③ **창이 확인된 뒤에는 독립 step 을 끝까지 시도한다.** 중간 step 이 실패해도
-       `requires_previous=False` 인 뒤 step(예: Optics 의 Close)은 눌러 본다.
+       `requires_previous=False` 인 뒤 step 은 눌러 본다.
 
     `attempts` 는 여는 버튼의 재시도 횟수다. 원격 뷰는 커서 이동을 따라오지 못해 첫
     클릭이 삼켜지는 일이 있어(오피스 1회차 증상: "마우스만 이동") 창이 확인되지 않으면
@@ -443,6 +455,11 @@ def run_in_tool_flow(
 
             print(f"[INFO] [{flow.name}] {key} 클릭")
             click_fn(tool_window, image, point, key)
+            if step.input_text:
+                if type_fn is None:
+                    raise RuntimeError(f"텍스트 입력 협력자 없음: {key}")
+                print(f"[INFO] [{flow.name}] {key} 텍스트 입력(chars={len(step.input_text)})")
+                type_fn(step.input_text, key)
             previous_ok = True
         except Exception as exc:
             print(f"[WARNING] [{flow.name}] {key} 클릭 예외: {type(exc).__name__}: {exc}")
@@ -453,6 +470,66 @@ def run_in_tool_flow(
         return _tag(f"step_failed({failed_key})")
     sleep_fn(settle_sec)
     return _tag(FLOW_OK)
+
+
+def type_multiline_text(
+    text: str,
+    key: str,
+    *,
+    action_enabled: bool,
+    keyboard=None,
+    enter_key=None,
+    sleep_fn=time.sleep,
+    char_delay_sec: float = 0.08,
+    is_aborted_fn=None,
+) -> bool:
+    """포커스된 입력창에 줄바꿈을 Enter 로 바꿔 천천히 입력한다.
+
+    원격 tool 화면은 입력을 샘플링하므로 문자열 전체를 한 번에 보내지 않고 글자마다
+    간격을 둔다. `SAFE_MODE=1` 에서는 pynput 을 만들기 전 반환해 키 입력을 완전히
+    차단한다. keyboard/enter_key/is_aborted_fn 은 Mac 단위 테스트용 주입점이다.
+
+    **긴급 해제(전역 단축키)를 글자마다 확인한다.** 이 저장소의 마우스 출력은 전부
+    `abort_switch` 를 지나는데(`mouse_utils.click_at_screen`), 메모 입력은 기본값에서
+    수십 글자 x 0.08s = 수 초간 키를 흘려보내므로 그 사이 단축키가 안 먹으면
+    "해제됐다" 고 느껴지지 않는다. 도중에 끊긴 경우 False 를 돌려준다.
+    """
+    if not action_enabled:
+        print(
+            f"[INFO] [DRY-RUN] 텍스트 입력 생략: target={key}, "
+            f"text={text!r}, action_enabled={action_enabled}"
+        )
+        return True
+
+    aborted = is_aborted_fn if is_aborted_fn is not None else is_aborted
+    if aborted():
+        print(f"[WARNING] 긴급 해제 상태 - 텍스트 입력 생략: target={key}, "
+              f"reason={abort_reason()}")
+        return False
+
+    if keyboard is None or enter_key is None:
+        try:
+            from pynput.keyboard import Key, Controller as KeyboardController
+        except ImportError as exc:
+            raise RuntimeError("pynput.keyboard 미설치 - 텍스트를 입력할 수 없음") from exc
+        keyboard = keyboard if keyboard is not None else KeyboardController()
+        enter_key = enter_key if enter_key is not None else Key.enter
+
+    delay = max(0.0, char_delay_sec)
+    for index, char in enumerate(text):
+        if aborted():
+            print(f"[WARNING] 긴급 해제 - 텍스트 입력 중단: target={key}, "
+                  f"입력={index}/{len(text)}글자")
+            return False
+        if char == "\n":
+            keyboard.press(enter_key)
+            keyboard.release(enter_key)
+        else:
+            keyboard.type(char)
+        sleep_fn(delay)
+
+    print(f"[INFO] 텍스트 입력 완료: target={key}, text={text!r}")
+    return True
 
 
 def perform_remote_click(
@@ -484,16 +561,17 @@ def perform_remote_click(
 # 장비별 조작 흐름 배정.
 # ------------------------------------------------------------------
 
+FLOW_MEMO_PRINT = "memo_print"
 FLOW_OPTICS = "optics"
 FLOW_WORKSHEET = "worksheet"
-KNOWN_FLOW_NAMES = (FLOW_OPTICS, FLOW_WORKSHEET)
+KNOWN_FLOW_NAMES = (FLOW_MEMO_PRINT, FLOW_OPTICS, FLOW_WORKSHEET)
 
 # 시연 기본 배정 - 장비마다 다른 조작을 보여줘야 "자동화" 로 보인다.
-DEFAULT_TOOL_FLOWS = {"mcd019": FLOW_OPTICS, "mcdc22": FLOW_WORKSHEET}
+DEFAULT_TOOL_FLOWS = {"mcd019": FLOW_MEMO_PRINT, "mcdc22": FLOW_WORKSHEET}
 
 
 def parse_flow_map(raw, default: dict) -> dict:
-    """"MCD019=optics,MCDC22=worksheet" 를 {소문자 장비: 흐름} 으로 만든다. 비면 default.
+    """"MCD019=memo_print,MCDC22=worksheet" 를 {소문자 장비: 흐름} 으로 만든다. 비면 default.
 
     형식이 깨진 항목은 버리고 계속한다 - 시연 직전 오타로 스크립트가 죽는 것보다,
     그 항목만 기본 흐름으로 도는 편이 낫다.
@@ -810,45 +888,59 @@ def build_flows():
     """
     from poc.workflow_3.vlm.ui_venus_mai_locator import TargetConfig
 
-    optics_flow = InToolFlow(
-        name=FLOW_OPTICS,
+    memo_print_flow = InToolFlow(
+        name=FLOW_MEMO_PRINT,
         opener=FlowStep(
             TargetConfig(
-                key="optics_button",
+                key="utility_button",
                 description=(
-                    "the 'Optics...' button in the Remote Monitoring window's button "
-                    "area, located directly above the 'PM' button. Use the first letter "
-                    "'O' as the anchor, then click safely inside the Optics button area."
+                    "the 'Utility' button in the Remote Monitoring window's button "
+                    "area. Use the first letter 'U' as the anchor, then click safely "
+                    "inside the Utility button area. This button opens its dropdown "
+                    "upward, above the Utility button."
                 ),
             ),
-            required=(("optics",),),
-            forbidden=("cancel", "stop", "terminat", "취소"),
+            required=(("utility",),),
+            forbidden=("cancel", "stop", "terminat", "exit", "취소", "종료"),
         ),
         steps=[
             FlowStep(
                 TargetConfig(
-                    key="optics_memory_tab",
+                    key="memo_print_menu_item",
                     description=(
-                        "the 'Memory' tab in the tab strip of the Optics window. Use the "
-                        "first letter 'M' as the anchor, then click safely inside the "
-                        "Memory tab area."
+                        "the 'Memo Print' item in the Utility dropdown that opened "
+                        "upward above the Utility button. Use the first letter 'M' as "
+                        "the anchor, then click safely inside the Memo Print menu item."
                     ),
                 ),
-                required=(("memory",), ("메모리",)),
-                forbidden=("cancel", "취소"),
+                required=(("memo", "print"), ("메모", "프린트")),
+                forbidden=("cancel", "exit", "close", "취소", "종료", "닫기"),
             ),
             FlowStep(
                 TargetConfig(
-                    key="optics_close_button",
+                    key="memo_print_editor",
                     description=(
-                        "the 'Close' button of the Optics window. Use the first letter "
-                        "'C' as the anchor, then click safely inside the Close button area."
+                        "the large editable memo text area inside the popup titled "
+                        "'MemoPrint'. Click safely near the upper-left inside the empty "
+                        "white editor body, not the MemoPrint title bar and not any "
+                        "button around the editor."
                     ),
                 ),
-                required=(("close",), ("닫기",)),
-                forbidden=("cancel", "terminat", "logout", "abort", "취소", "종료"),
-                # Optics 의 Close 는 대화상자의 상시 버튼이라 Memory 와 무관하게 누른다.
-                requires_previous=False,
+                # 편집 영역 자체에는 읽을 글자가 없으므로 확인 근거는 **popup 제목**이다.
+                # `required=()` 로 비워 두면 `_confirm_point` 가 정책을 건너뛰고 조기
+                # 반환해 strict 에서도 무검증 통과가 된다 - 클릭이라면 그게 설계지만
+                # (문구를 모르는 요소를 알아내기 위한 장치) 타이핑은 상태를 남기므로
+                # 같은 구멍을 쓸 수 없다. 'memo' 한 needle 이면 'MemoPrint'/'Memo Print'
+                # 가 모두 부분 일치하고, 제목이 crop 밖이면 unreadable 이라 기본 정책
+                # (lenient)에서는 그대로 진행한다 - strict 만 거부한다.
+                required=(("memo",), ("메모",)),
+                forbidden=(
+                    "cancel", "close", "exit", "ok",
+                    "취소", "닫기", "종료", "확인",
+                ),
+                # Memo Print 항목이 눌리지 않았다면 popup/편집 영역은 존재하지 않는다.
+                requires_previous=True,
+                input_text=DEFAULT_MEMO_TEXT,
             ),
         ],
     )
@@ -902,7 +994,58 @@ def build_flows():
         ],
     )
 
-    return {FLOW_OPTICS: optics_flow, FLOW_WORKSHEET: worksheet_flow}
+    # Optics 흐름은 MCD019 기본 배정에서 memo_print 로 교체됐지만 **등록은 유지한다**.
+    # 이 설명문의 좌표는 오피스에서 실측 검증된 것이고(2026-08-19, 커서가 Optics 버튼에
+    # 정확히 도달), Mac 에서는 그 화면을 볼 수 없어 지우면 되살릴 방법이 없다.
+    # `DEMO_RCS_FLOWS="MCD019=optics"` 로 그대로 다시 고를 수 있다.
+    optics_flow = InToolFlow(
+        name=FLOW_OPTICS,
+        opener=FlowStep(
+            TargetConfig(
+                key="optics_button",
+                description=(
+                    "the 'Optics...' button in the Remote Monitoring window's button "
+                    "area, located directly above the 'PM' button. Use the first letter "
+                    "'O' as the anchor, then click safely inside the Optics button area."
+                ),
+            ),
+            required=(("optics",),),
+            forbidden=("cancel", "stop", "terminat", "취소"),
+        ),
+        steps=[
+            FlowStep(
+                TargetConfig(
+                    key="optics_memory_tab",
+                    description=(
+                        "the 'Memory' tab in the tab strip of the Optics window. Use the "
+                        "first letter 'M' as the anchor, then click safely inside the "
+                        "Memory tab area."
+                    ),
+                ),
+                required=(("memory",), ("메모리",)),
+                forbidden=("cancel", "취소"),
+            ),
+            FlowStep(
+                TargetConfig(
+                    key="optics_close_button",
+                    description=(
+                        "the 'Close' button of the Optics window. Use the first letter "
+                        "'C' as the anchor, then click safely inside the Close button area."
+                    ),
+                ),
+                required=(("close",), ("닫기",)),
+                forbidden=("cancel", "terminat", "logout", "abort", "취소", "종료"),
+                # Optics 의 Close 는 대화상자의 상시 버튼이라 Memory 와 무관하게 누른다.
+                requires_previous=False,
+            ),
+        ],
+    )
+
+    return {
+        FLOW_MEMO_PRINT: memo_print_flow,
+        FLOW_OPTICS: optics_flow,
+        FLOW_WORKSHEET: worksheet_flow,
+    }
 
 
 def _build_action_fn(
@@ -915,6 +1058,7 @@ def _build_action_fn(
     attempts: int,
     pre_click_settle_sec: float,
     click_hold_sec: float,
+    char_type_delay_sec: float,
     tag: str,
 ):
     """장비별 창 안 조작 협력자 (VLM 좌표 + OCR 확인 + 클릭).
@@ -1001,6 +1145,15 @@ def _build_action_fn(
             locate_fn=_locate,
             read_tokens_fn=_read_tokens,
             click_fn=_click,
+            type_fn=lambda text, key: type_multiline_text(
+                text,
+                key,
+                # 클릭과 별개로 타이핑만 끄는 스위치를 남긴다
+                # (`ACTION_LOGIN_TYPING_ENABLED=0` - 로그인 타이핑과 같은 게이트).
+                action_enabled=settings.action_enabled and settings.typing_enabled,
+                sleep_fn=time.sleep,
+                char_delay_sec=char_type_delay_sec,
+            ),
             sleep_fn=time.sleep,
             settle_sec=settle_sec,
             confirm_policy=confirm_policy,
@@ -1011,7 +1164,7 @@ def _build_action_fn(
 
 
 def _build_visit_fn(settings: Workflow3Settings, dwell_sec: float, action_fn=None):
-    """장비 1대 [접속 -> 체류 -> Optics -> 닫기] 협력자."""
+    """장비 1대 [접속 -> 체류 -> 장비별 창 안 조작 -> 닫기] 협력자."""
     from poc.workflow_3.rcs.login_rcs_common import wait_for_remote_monitoring_window
     from poc.workflow_3.rcs.workflow_close_tool import close_tool
     from poc.workflow_3.rcs.workflow_select_tool import connect_to_tool
@@ -1074,19 +1227,20 @@ def _apply_demo_mode_defaults() -> None:
     """시연은 실제로 화면이 움직여야 의미가 있으므로 SAFE_MODE=0 을 기본으로 둔다.
 
     setdefault 라 **실제 셸 env 가 항상 이긴다** - 리허설만 하려면
-    `SAFE_MODE=1 uv run python ...` 로 실행하면 클릭이 전부 막힌다(화면은 안 움직이고
-    콘솔에 [DRY-RUN] 만 찍힌다). 이 스크립트가 내는 클릭은 탭/더블클릭/창 닫기뿐이며
-    보정(reposition/OK)은 아예 없다.
+    `SAFE_MODE=1 uv run python ...` 로 실행하면 클릭과 키 입력이 전부 막힌다(화면은 안
+    움직이고 콘솔에 [DRY-RUN] 만 찍힌다). 이 스크립트는 보정(reposition/OK)을 하지
+    않는다.
     """
     os.environ.setdefault("SAFE_MODE", "0")
     live = os.environ.get("SAFE_MODE", "0") == "0"
     print("=" * 70)
     if live:
-        print("[WARNING] 시연 모드: 실제 마우스 조작이 발생합니다 "
-              "(탭 클릭 / 휠 / tool 더블클릭 / 창 닫기).")
+        print("[WARNING] 시연 모드: 실제 마우스/키보드 조작이 발생합니다 "
+              "(탭 클릭 / 휠 / tool 더블클릭 / 메모 입력 / 창 닫기).")
         print("[WARNING] 리허설만 하려면 중단 후 'SAFE_MODE=1' 을 붙여 다시 실행하세요.")
     else:
-        print("[INFO] SAFE_MODE=1 - 모든 클릭이 차단된 리허설입니다(화면은 움직이지 않음).")
+        print("[INFO] SAFE_MODE=1 - 모든 클릭/키 입력이 차단된 리허설입니다"
+              "(화면은 움직이지 않음).")
     print("=" * 70)
 
 
@@ -1105,13 +1259,14 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
     flow_settle_sec = _env_float("DEMO_RCS_FLOW_SETTLE_SEC", 1.5)
     flow_attempts = max(1, _env_int("DEMO_RCS_FLOW_ATTEMPTS", 2))
     flow_map = parse_flow_map(os.environ.get("DEMO_RCS_FLOWS"), DEFAULT_TOOL_FLOWS)
-    default_flow = os.environ.get("DEMO_RCS_DEFAULT_FLOW", FLOW_OPTICS).strip().lower()
+    default_flow = os.environ.get("DEMO_RCS_DEFAULT_FLOW", FLOW_MEMO_PRINT).strip().lower()
     confirm_policy = (
         os.environ.get("DEMO_RCS_CONFIRM", DEFAULT_CONFIRM_POLICY).strip().lower()
         or DEFAULT_CONFIRM_POLICY
     )
     pre_click_settle = _env_float("DEMO_RCS_PRE_CLICK_SETTLE_SEC", 0.6)
     click_hold_sec = _env_float("DEMO_RCS_CLICK_HOLD_SEC", 0.15)
+    char_type_delay_sec = _env_float("DEMO_RCS_CHAR_TYPE_DELAY_SEC", 0.08)
     tag = make_timestamp_tag(time.time())
 
     assigned = ", ".join(
@@ -1123,6 +1278,7 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
         f"창안조작={'on' if flow_enabled else 'off'}"
         f"(확인={confirm_policy}, 재시도={flow_attempts}, "
         f"클릭전대기={pre_click_settle:.1f}s, 누름유지={click_hold_sec:.2f}s), "
+        f"글자간격={char_type_delay_sec:.2f}s, "
         f"반복={repeat}회"
     )
     print(f"[INFO] 장비별 조작 흐름: {assigned or '-'}")
@@ -1144,6 +1300,7 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
                 attempts=flow_attempts,
                 pre_click_settle_sec=pre_click_settle,
                 click_hold_sec=click_hold_sec,
+                char_type_delay_sec=char_type_delay_sec,
                 tag=tag,
             )
             if flow_enabled
@@ -1183,10 +1340,12 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
 
 
 __all__ = [
+    "DEFAULT_MEMO_TEXT",
     "DEFAULT_TOOL_FLOWS",
     "DEFAULT_TOOL_IDS",
     "FLOW_OK",
     "FLOW_OPENER_FAILED",
+    "FLOW_MEMO_PRINT",
     "FLOW_OPTICS",
     "FLOW_SKIPPED",
     "FLOW_WINDOW_NOT_FOUND",
@@ -1212,6 +1371,7 @@ __all__ = [
     "resolve_flow_name",
     "run_demonstration",
     "run_in_tool_flow",
+    "type_multiline_text",
     "visit_tool",
 ]
 

@@ -6,6 +6,7 @@
 """
 
 import importlib
+import traceback
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -27,6 +28,33 @@ class OfficeIntegration:
         return self.module is not None and self.status == "loaded"
 
 
+def _exc_location(exc: BaseException) -> str:
+    """예외가 실제로 난 마지막 프레임을 ``file:line`` 으로 요약한다.
+
+    office_* 는 gitignore 라 오피스 PC 에만 존재하고 개발 PC 에서 열어볼 수 없다.
+    타입과 메시지만으로는(예: "TypeError: 'NoneType' object is not subscriptable")
+    그 파일의 어느 줄인지 특정할 수 없어 진단이 통째로 막힌다 - 실제로 이 형태의
+    한 줄만 보고는 원인을 좁힐 수 없었다. 마지막 프레임을 함께 남겨 바로 짚게 한다.
+    """
+    location = ""
+    for frame, lineno in traceback.walk_tb(exc.__traceback__):
+        location = f"{frame.f_code.co_filename}:{lineno}"
+    return location
+
+
+def _print_exc_traceback(exc: BaseException) -> None:
+    """office adapter import/factory 실패의 전체 traceback 을 들여쓰기해 찍는다.
+
+    콘솔 한 줄 요약(status/error)과 별개로 전체를 남긴다. import 실패는 드물지만
+    그 기능 전체를 무력화하므로(consensus gather 영구 비활성 등) 첫 발생에서
+    원인을 확정하는 편이 재현을 기다리는 것보다 싸다.
+    """
+    text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    print("[WARNING] office adapter traceback (맨 아래 프레임이 실제 원인 줄):")
+    for line in text.rstrip().splitlines():
+        print(f"    {line}")
+
+
 def _log_office_status(
     *,
     name: str,
@@ -34,6 +62,7 @@ def _log_office_status(
     module_path: str = "",
     error: str = "",
     missing_attrs: list[str] | None = None,
+    location: str = "",
 ) -> None:
     """office adapter 로딩 상태를 콘솔과 workflow_3 파일 로그에 남긴다."""
     level = "info" if status in {"loaded", "factory_loaded"} else "warning"
@@ -48,6 +77,8 @@ def _log_office_status(
         details.append(f"missing_attrs={','.join(missing_attrs)}")
     if error:
         details.append(f"error={error}")
+    if location:
+        details.append(f"at={location}")
 
     print(f"{prefix} office integration: " + " ".join(details))
 
@@ -62,6 +93,7 @@ def _log_office_status(
             module_path=module_path,
             missing_attrs=",".join(missing_attrs or []),
             error=error,
+            at=location,
         )
     except Exception:
         # 로깅 실패가 monitor import 자체를 깨면 안 된다.
@@ -97,7 +129,9 @@ def load_office_integration(
                 status="import_error",
                 module_path=module_path,
                 error=f"{type(exc).__name__}: {exc}",
+                location=_exc_location(exc),
             )
+            _print_exc_traceback(exc)
         return OfficeIntegration(name=name, module_path="", module=None)
     except Exception as exc:
         _log_office_status(
@@ -105,7 +139,9 @@ def load_office_integration(
             status="import_error",
             module_path=module_path,
             error=f"{type(exc).__name__}: {exc}",
+            location=_exc_location(exc),
         )
+        _print_exc_traceback(exc)
         return OfficeIntegration(name=name, module_path="", module=None)
 
     attrs = {attr: getattr(module, attr, None) for attr in required_attrs}
@@ -136,7 +172,9 @@ def log_office_factory_error(name: str, module_path: str, exc: Exception) -> Non
         status="factory_error",
         module_path=module_path,
         error=f"{type(exc).__name__}: {exc}",
+        location=_exc_location(exc),
     )
+    _print_exc_traceback(exc)
 
 
 def log_office_factory_loaded(name: str, module_path: str) -> None:

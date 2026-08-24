@@ -1377,6 +1377,7 @@ def test_shift_characters_get_their_own_dwell_so_the_remote_registers_them():
         keyboard=keyboard,
         enter_key="ENTER",
         shift_key="SHIFT",
+        shift_mode="shift",
         sleep_fn=lambda sec: keyboard.events.append(("sleep", sec)),
         char_delay_sec=0.0,
         shift_settle_sec=0.12,
@@ -1431,7 +1432,8 @@ def test_shift_is_released_even_when_the_key_press_explodes():
     with pytest.raises(RuntimeError, match="press boom"):
         demo.type_multiline_text(
             "B", "memo", action_enabled=True, keyboard=keyboard, enter_key="ENTER",
-            shift_key="SHIFT", sleep_fn=lambda sec: None, char_delay_sec=0.0,
+            shift_key="SHIFT", shift_mode="shift",
+            sleep_fn=lambda sec: None, char_delay_sec=0.0,
         )
 
     assert keyboard.events[-1] == ("release", "SHIFT")
@@ -1442,7 +1444,8 @@ def test_enter_is_never_shifted():
 
     demo.type_multiline_text(
         "A\nb", "memo", action_enabled=True, keyboard=keyboard, enter_key="ENTER",
-        shift_key="SHIFT", sleep_fn=lambda sec: None, char_delay_sec=0.0,
+        shift_key="SHIFT", shift_mode="shift",
+        sleep_fn=lambda sec: None, char_delay_sec=0.0,
     )
 
     assert ("press", "ENTER") in keyboard.events
@@ -1526,3 +1529,95 @@ def test_file_menu_description_says_it_is_a_small_label_near_the_title():
 
     assert "small" in description
     assert "title" in description
+
+
+# ------------------------------------------------------------------
+# 오피스 2회차 실측 (2026-08-24) - Shift 를 쥐어도 **소문자로 들어온다**.
+#
+# 1회차는 글자가 아예 사라졌다. 원인은 pynput 의 win32 구현이다
+# (`pynput/keyboard/_win32.py:83-92`): `VkKeyScan(char)` 이 "Shift 필요" 라고 답하면
+# vk=0 / scan=유니코드 코드포인트 / flags=UNICODE 로 보낸다 - **vk 도 scan code 도
+# 없는 이벤트**라 vk/scancode 를 중계하는 RCS 원격이 중계할 것이 없어 사라진다.
+# Shift 를 직접 쥐면 기본 키가 진짜 vk 이벤트가 되어 **도착은 한다**(2회차 확인).
+# 그런데 소문자로 온다 - 원격이 키를 개별 타건으로 중계하고 **쥐고 있는 수정자를
+# 함께 실어 보내지 않는다**는 뜻이다.
+#
+# 그래서 필요한 것은 '쥐는 수정자' 가 아니라 **상태를 남기는 키**다. Caps Lock 은
+# 평범한 vk 타건이고(중계된다) 그 상태는 장비 쪽 OS 가 기억한다.
+# ------------------------------------------------------------------
+
+
+def _type(text, **kw):
+    keyboard = kw.pop("keyboard", None) or _KeyboardSpy()
+    demo.type_multiline_text(
+        text, "memo", action_enabled=True, keyboard=keyboard,
+        enter_key="ENTER", shift_key="SHIFT", caps_key="CAPS",
+        sleep_fn=kw.pop("sleep_fn", lambda sec: None),
+        char_delay_sec=kw.pop("char_delay_sec", 0.0),
+        **kw,
+    )
+    return keyboard
+
+
+def test_caps_mode_toggles_caps_lock_around_an_uppercase_letter():
+    """쥐는 수정자가 아니라 **타건 + 장비가 기억하는 상태**로 대문자를 만든다."""
+    keyboard = _type("B", shift_settle_sec=0.12)
+
+    assert keyboard.events == [
+        ("press", "CAPS"), ("release", "CAPS"),
+        ("press", "b"), ("release", "b"),
+        ("press", "CAPS"), ("release", "CAPS"),
+    ]
+
+
+def test_caps_mode_is_the_default():
+    """2회차 결과가 이 기본값을 정했다 - Shift 쥐기는 이 원격에서 안 먹는다."""
+    keyboard = _type("B")
+
+    assert ("press", "CAPS") in keyboard.events
+    assert ("press", "SHIFT") not in keyboard.events
+
+
+def test_caps_lock_is_turned_back_off_even_when_the_key_press_explodes():
+    """켠 채로 끝나면 그 뒤 모든 입력이 대문자가 된다 - 로컬 PC 도 같이 켜진다."""
+
+    class _Boom(_KeyboardSpy):
+        def press(self, key):
+            super().press(key)
+            if key == "b":
+                raise RuntimeError("press boom")
+
+    keyboard = _Boom()
+    with pytest.raises(RuntimeError, match="press boom"):
+        _type("B", keyboard=keyboard)
+
+    assert keyboard.events[-2:] == [("press", "CAPS"), ("release", "CAPS")]
+
+
+def test_caps_mode_leaves_lowercase_alone():
+    keyboard = _type("abc")
+
+    assert keyboard.events == [("type", c) for c in "abc"]
+
+
+def test_caps_mode_still_uses_shift_for_symbols():
+    """Caps Lock 은 글자만 바꾼다 - '!' 는 Shift+1 밖에 방법이 없다."""
+    keyboard = _type("!")
+
+    assert keyboard.events == [
+        ("press", "SHIFT"), ("press", "1"), ("release", "1"), ("release", "SHIFT"),
+    ]
+
+
+def test_type_mode_reproduces_the_original_pynput_behaviour():
+    """1회차와 같은 경로 - A/B 로 원인을 재확인할 때만 쓴다(글자가 사라진다)."""
+    keyboard = _type("B", shift_mode="type")
+
+    assert keyboard.events == [("type", "B")]
+
+
+def test_an_unknown_shift_mode_falls_back_to_the_default_not_to_nothing():
+    """시연 직전 오타가 조용히 '입력 안 함' 이 되면 안 된다."""
+    keyboard = _type("B", shift_mode="typoo")
+
+    assert ("press", "CAPS") in keyboard.events

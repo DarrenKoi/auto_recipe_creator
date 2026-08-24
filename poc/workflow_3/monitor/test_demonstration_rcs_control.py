@@ -1056,3 +1056,252 @@ def test_type_multiline_text_never_starts_when_already_aborted():
 
     assert ok is False
     assert keyboard.events == []
+
+
+# ------------------------------------------------------------------
+# 가려진 여는 버튼 되살리기 (2026-08-24, 사용자 보고).
+#
+# Utility 버튼은 tool 모니터 **오른쪽 아래**에 있고, 다른 창이 그 위를 덮어 VLM 이
+# 아예 찾지 못하는 일이 있다. 그때 엔지니어가 쓰는 손동작이 **Alt+click** 이다 -
+# 누른 자리의 창이 뒤로 밀려 Utility 가 드러난다. 그래서 "여는 버튼을 못 찾으면
+# 즉시 포기" 라는 기존 규칙이 여기서만 깨진다: 화면을 바꿀 수단이 실제로 있다.
+# ------------------------------------------------------------------
+
+
+class _HiddenThenRevealed:
+    """Alt+click 을 n 번 받은 뒤에야 opener 가 보이는 화면."""
+
+    def __init__(self, reveals_needed=1, reveal_result=True):
+        self.reveals_needed = reveals_needed
+        self.reveal_result = reveal_result
+        self.reveals = 0
+        self.events = []
+        self.clicks = []
+
+    def locate(self, image, target):
+        self.events.append(f"locate:{target.key}")
+        if target.key == "opener" and self.reveals < self.reveals_needed:
+            return None  # 가려져 있어 좌표가 안 나온다.
+        return {"x": 10, "y": 20}
+
+    def read_tokens(self, image, point, key):
+        return ["__match__"]
+
+    def click(self, window, image, point, key):
+        self.events.append(f"click:{key}")
+        self.clicks.append(key)
+
+    def reveal(self, window, image, round_index):
+        self.events.append(f"reveal:{round_index}")
+        self.reveals += 1
+        return self.reveal_result
+
+
+def _run_with_reveal(screen, *, attempts=1, reveal_attempts=2):
+    return run_in_tool_flow(
+        object(), "Remote Monitoring System - MCD019", "uia", _flow(),
+        capture_fn=lambda w: object(),
+        locate_fn=screen.locate,
+        read_tokens_fn=screen.read_tokens,
+        click_fn=screen.click,
+        reveal_fn=screen.reveal,
+        sleep_fn=lambda sec: None,
+        settle_sec=0.0,
+        confirm_policy="off",
+        attempts=attempts,
+        reveal_attempts=reveal_attempts,
+    )
+
+
+def test_a_hidden_opener_is_revealed_then_clicked():
+    screen = _HiddenThenRevealed()
+
+    status = _run_with_reveal(screen)
+
+    assert status == "optics:ok"
+    # 가림 해제가 클릭보다 먼저, 그리고 해제 뒤에 다시 찾는다.
+    assert screen.events[:4] == ["locate:opener", "reveal:1", "locate:opener", "click:opener"]
+
+
+def test_reveal_repeats_for_stacked_windows_up_to_its_own_budget():
+    """창이 여러 장 겹쳐 있으면 한 번의 Alt+click 으로는 안 드러난다."""
+    screen = _HiddenThenRevealed(reveals_needed=2)
+
+    status = _run_with_reveal(screen, attempts=1, reveal_attempts=2)
+
+    assert status == "optics:ok"
+    assert [e for e in screen.events if e.startswith("reveal")] == ["reveal:1", "reveal:2"]
+
+
+def test_reveal_budget_is_separate_from_the_click_retry_budget():
+    """가림 해제는 '클릭이 삼켜졌다' 재시도 예산(attempts=1)을 쓰지 않는다."""
+    screen = _HiddenThenRevealed(reveals_needed=2)
+
+    assert _run_with_reveal(screen, attempts=1, reveal_attempts=2) == "optics:ok"
+
+
+def test_reveal_gives_up_with_a_distinct_status_when_the_button_never_appears():
+    """'가려서 못 찾음' 과 '라벨이 다름' 은 오피스에서 할 일이 다르다."""
+    screen = _HiddenThenRevealed(reveals_needed=99)
+
+    status = _run_with_reveal(screen, reveal_attempts=2)
+
+    assert status == "optics:opener_not_visible"
+    assert screen.clicks == []
+
+
+def test_reveal_stops_when_the_alt_click_itself_fails():
+    screen = _HiddenThenRevealed(reveals_needed=99, reveal_result=False)
+
+    status = _run_with_reveal(screen, reveal_attempts=3)
+
+    assert status == "optics:opener_not_visible"
+    assert [e for e in screen.events if e.startswith("reveal")] == ["reveal:1"]
+
+
+def test_reveal_is_not_attempted_when_the_label_was_read_as_something_else():
+    """좌표가 나왔다면 그 버튼은 이미 보이는 것이다 - 창을 밀어내도 달라지지 않고,
+    엉뚱한 창을 뒤로 보내기만 한다."""
+    calls = []
+    flow = InToolFlow(
+        name="optics",
+        opener=FlowStep(_Target("opener"), required=(("open",),), forbidden=("cancel",)),
+        steps=[FlowStep(_Target("a"), required=(), forbidden=())],
+    )
+
+    status = run_in_tool_flow(
+        object(), "RMS", "uia", flow,
+        capture_fn=lambda w: object(),
+        locate_fn=lambda image, target: {"x": 1, "y": 2},
+        read_tokens_fn=lambda image, point, key: ["Cancel"],  # 금지 토큰
+        click_fn=lambda w, i, p, k: calls.append(f"click:{k}"),
+        reveal_fn=lambda w, i, n: calls.append(f"reveal:{n}") or True,
+        sleep_fn=lambda sec: None,
+        settle_sec=0.0,
+        confirm_policy="lenient",
+        attempts=2,
+        reveal_attempts=2,
+    )
+
+    assert status == "optics:opener_failed"
+    assert calls == []
+
+
+def test_flow_without_a_reveal_helper_keeps_giving_up_immediately():
+    """다른 흐름의 동작은 그대로다 - reveal 협력자가 없으면 종전과 같다."""
+    status, screen = _run_flow(screen=_Screen(missing={"opener"}))
+
+    assert status == "optics:opener_failed"
+    assert screen.clicks == []
+
+
+# --- Alt 를 쥔 채 누르기 - stuck-modifier 와 전면화 순서가 걸린 자리 ---
+
+
+def test_alt_is_held_after_foregrounding_not_before():
+    """`foreground_window` 는 foreground-lock 우회로 더미 Alt down/up 을 주입한다.
+
+    먼저 Alt 를 잡으면 그 up 이 우리 Alt 를 놓아버려 평범한 클릭이 된다 - 커서는
+    맞는데 창이 뒤로 안 밀리는, 원인 찾기 어려운 실패가 된다.
+    """
+    calls, kwargs = _click_calls()
+
+    perform_remote_click(
+        object(), {"x": 1, "y": 2}, "reveal_utility", settle_sec=0.6,
+        press_modifier_fn=lambda: calls.append("alt_down"),
+        release_modifier_fn=lambda: calls.append("alt_up"),
+        **kwargs,
+    )
+
+    assert calls == ["foreground", "alt_down", "move", "sleep:0.6", "click", "alt_up"]
+
+
+def test_alt_is_released_even_when_the_click_raises():
+    """눌린 채 남으면 이후 모든 클릭이 Alt+click 으로 변질된다(window_utils 의 경고)."""
+    calls, kwargs = _click_calls(
+        click_fn=lambda screen, key: (_ for _ in ()).throw(RuntimeError("click boom")),
+    )
+
+    with pytest.raises(RuntimeError, match="click boom"):
+        perform_remote_click(
+            object(), {"x": 1, "y": 2}, "reveal_utility", settle_sec=0.0,
+            press_modifier_fn=lambda: calls.append("alt_down"),
+            release_modifier_fn=lambda: calls.append("alt_up"),
+            **kwargs,
+        )
+
+    assert calls[-1] == "alt_up"
+
+
+def test_alt_is_never_pressed_when_the_window_cannot_be_focused():
+    calls, kwargs = _click_calls(foreground_fn=lambda window: False)
+
+    with pytest.raises(RuntimeError, match="foreground"):
+        perform_remote_click(
+            object(), {"x": 1, "y": 2}, "reveal_utility", settle_sec=0.0,
+            press_modifier_fn=lambda: calls.append("alt_down"),
+            release_modifier_fn=lambda: calls.append("alt_up"),
+            **kwargs,
+        )
+
+    assert "alt_down" not in calls
+
+
+# --- 밀어낼 지점 - Utility 는 오른쪽 아래에 있다 ---
+
+
+def test_reveal_point_is_in_the_bottom_right_quadrant():
+    point = demo.covering_window_point(1000, 800)
+
+    assert point["x"] > 500 and point["y"] > 400
+
+
+def test_reveal_point_stays_inside_the_frame():
+    """비율을 1.0 이상으로 잘못 줘도 창 밖을 누르지 않는다."""
+    point = demo.covering_window_point(100, 50, x_ratio=1.4, y_ratio=2.0)
+
+    assert point == {"x": 99, "y": 49}
+
+
+def test_reveal_point_ratios_are_tunable_from_the_office():
+    """Mac 에서 이 화면을 볼 수 없으니, 빗나가면 env 로 옮길 수 있어야 한다."""
+    assert demo.covering_window_point(1000, 1000, x_ratio=0.5, y_ratio=0.25) == {
+        "x": 500, "y": 250,
+    }
+
+
+def test_alt_hold_hooks_do_nothing_in_safe_mode():
+    keyboard = _KeyboardSpy()
+
+    press, release = demo.alt_hold_hooks(
+        action_enabled=False, keyboard=keyboard, alt_key="ALT",
+    )
+    press()
+    release()
+
+    assert keyboard.events == []
+
+
+def test_alt_hold_hooks_press_and_release_the_alt_key():
+    keyboard = _KeyboardSpy()
+
+    press, release = demo.alt_hold_hooks(
+        action_enabled=True, keyboard=keyboard, alt_key="ALT",
+    )
+    press()
+    release()
+
+    assert keyboard.events == [("press", "ALT"), ("release", "ALT")]
+
+
+def test_alt_hold_hooks_skip_pressing_when_aborted_but_release_is_still_safe():
+    keyboard = _KeyboardSpy()
+
+    press, release = demo.alt_hold_hooks(
+        action_enabled=True, keyboard=keyboard, alt_key="ALT",
+        is_aborted_fn=lambda: True,
+    )
+    press()
+    release()
+
+    assert keyboard.events == []

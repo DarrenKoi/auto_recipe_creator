@@ -5,6 +5,7 @@
 
     RCS 실행 -> 로그인 -> View 탭 + 휠로 위아래 훑기 -> List 탭
       -> MCD019 접속 -> [Utility -> Memo Print -> 두 줄 메모 입력] -> tool 창 닫기
+                        (Utility 가 다른 창에 가려 안 보이면 Alt+click 으로 밀어낸다)
       -> MCDC22 접속 -> [Work Sheet 아래 버튼 -> File -> Exit]    -> tool 창 닫기
 
 장비마다 **다른 조작**을 보여주는 것이 요점이다 - 같은 동작을 반복하면 스크립트로
@@ -52,6 +53,11 @@ env (`DEMO_RCS_*` 네임스페이스 - 루프의 `ALIGN_FAIL_*` 과 섞지 않�
     DEMO_RCS_CHAR_TYPE_DELAY_SEC  메모 글자 사이 입력 간격 (기본 0.08)
                             원격 화면이 입력을 샘플링하므로 한 번에 보내지 않는다
     ACTION_LOGIN_TYPING_ENABLED=0  클릭은 두고 **메모 입력만** 끈다(롤백 스위치)
+    DEMO_RCS_REVEAL         여는 버튼이 가려졌을 때 Alt+click 으로 밀어내기 (기본 1)
+    DEMO_RCS_REVEAL_ATTEMPTS  밀어낼 창 수 = Alt+click 반복 상한 (기본 2)
+    DEMO_RCS_REVEAL_X_RATIO / _Y_RATIO  누를 지점(창 크기 대비, 기본 0.88 / 0.92)
+                            Utility 가 오른쪽 아래에 있어 그 자리를 누른다 - 빗나가면
+                            오피스 콘솔의 px/screen 값을 보고 이 비율만 옮긴다
     ALIGN_FAIL_RCS_KILL_STALE=1  창 없는 좀비 RCS 프로세스를 종료하고 재실행 (기본 off)
     SAFE_MODE=1             모든 클릭 차단 (리허설 - 화면은 안 움직인다)
 
@@ -267,9 +273,19 @@ def _close_tool_window(visit: ToolVisit, close_fn) -> None:
 
 # 흐름 status(장비별 요약에 그대로 실린다). "<흐름이름>:<status>" 로 붙여서 보고한다.
 FLOW_OK = "ok"
-FLOW_OPENER_FAILED = "opener_failed"       # 여는 버튼을 확인/클릭하지 못했다.
+FLOW_OPENER_FAILED = "opener_failed"       # 여는 버튼의 라벨이 기대와 달랐다.
+FLOW_OPENER_NOT_VISIBLE = "opener_not_visible"  # 가림 해제 후에도 좌표가 안 나왔다.
 FLOW_WINDOW_NOT_FOUND = "window_not_found"  # 열었는데 창이 확인되지 않았다.
 FLOW_SKIPPED = "skipped"
+
+# `_confirm_point` 의 실패 이유. 오피스에서 할 일이 갈리므로 하나로 뭉치지 않는다.
+#   NOT_LOCATED    : VLM 이 좌표를 못 찍었다 - 화면에 없거나 **다른 창에 가려졌다**.
+#                    Alt+click 으로 가린 창을 밀어내면 되살아날 수 있다.
+#   LABEL_REJECTED : 좌표는 나왔는데 그 자리 라벨이 기대와 다르다 - 이미 보이는
+#                    화면이므로 창을 밀어내도 달라지지 않는다(엉뚱한 창만 뒤로 간다).
+CONFIRM_OK = "ok"
+CONFIRM_NOT_LOCATED = "not_located"
+CONFIRM_LABEL_REJECTED = "label_rejected"
 
 
 @dataclass
@@ -307,10 +323,14 @@ def _confirm_point(
 ):
     """좌표를 찍고 그 자리 라벨을 읽어 **확인된 경우에만** 그 점을 돌려준다.
 
-    좌표는 VLM 이 정하고 OCR 은 확인만 한다(이 저장소의 클릭 규약). 확인이 안 되면
-    None - 원격 뷰에서 한 칸 어긋난 클릭은 무엇을 눌렀는지 알 수 없다.
-    클릭을 여기서 하지 않는 이유는 호출부가 "라벨은 확인됐는데 클릭이 실패했다" 와
-    "라벨부터 확인이 안 됐다" 를 구분해야 하기 때문이다.
+    `(point, reason)` 을 돌려준다. 좌표는 VLM 이 정하고 OCR 은 확인만 한다(이 저장소의
+    클릭 규약). 확인이 안 되면 point 는 None - 원격 뷰에서 한 칸 어긋난 클릭은 무엇을
+    눌렀는지 알 수 없다. 클릭을 여기서 하지 않는 이유는 호출부가 "라벨은 확인됐는데
+    클릭이 실패했다" 와 "라벨부터 확인이 안 됐다" 를 구분해야 하기 때문이다.
+
+    reason 을 함께 주는 이유: **좌표 미검출과 라벨 불일치는 대응이 다르다.** 미검출은
+    다른 창이 덮은 것일 수 있어 Alt+click 으로 되살릴 여지가 있지만, 라벨 불일치는
+    이미 보이는 화면을 잘못 짚은 것이라 창을 밀어내도 달라지지 않는다.
     """
     from poc.workflow_3.monitor.share_request import accepts_label, classify_label
 
@@ -318,7 +338,7 @@ def _confirm_point(
     point = locate_fn(image, step.target)
     if point is None:
         print(f"[WARNING] 좌표 미검출 - 클릭 안 함: {key}")
-        return None
+        return None, CONFIRM_NOT_LOCATED
 
     tokens = read_tokens_fn(image, point, key)
     if not step.required:
@@ -328,7 +348,9 @@ def _confirm_point(
         blocked = verdict == "forbidden"
         print(f"[INFO] 라벨 요구 없음({key}) - 읽힌 토큰={tokens!r}"
               f"{' -> 금지 토큰이라 클릭 안 함' if blocked else ''}")
-        return None if blocked else point
+        if blocked:
+            return None, CONFIRM_LABEL_REJECTED
+        return point, CONFIRM_OK
 
     verdict = classify_label(tokens, step.required, step.forbidden)
     if not accepts_label(verdict, policy):
@@ -336,8 +358,8 @@ def _confirm_point(
             f"[WARNING] 라벨 확인 실패 - 클릭 안 함: {key} "
             f"verdict={verdict} policy={policy} tokens={tokens!r}"
         )
-        return None
-    return point
+        return None, CONFIRM_LABEL_REJECTED
+    return point, CONFIRM_OK
 
 
 def run_in_tool_flow(
@@ -351,10 +373,12 @@ def run_in_tool_flow(
     read_tokens_fn,
     click_fn,
     type_fn=None,
+    reveal_fn=None,
     sleep_fn,
     settle_sec: float = 1.5,
     confirm_policy: str = "strict",
     attempts: int = 2,
+    reveal_attempts: int = 2,
 ) -> str:
     """tool 창 안에서 흐름 한 벌을 확인하며 차례로 누른다. "<흐름>:<status>" 반환.
 
@@ -364,8 +388,11 @@ def run_in_tool_flow(
       read_tokens_fn(image, point, key)   -> list[str]
       click_fn(window, image, point, key) -> None
       type_fn(text, key)                  -> None (input_text 가 있는 step 만)
+      reveal_fn(window, image, round_index) -> bool
+        여는 버튼이 **가려져서** 안 보일 때 가린 창을 밀어낸다(Alt+click). 없으면
+        종전처럼 즉시 포기한다.
 
-    네 가지가 계약이다.
+    다섯 가지가 계약이다.
 
     ① **확인되지 않으면 누르지 않는다.** 좌표만 믿고 누르면 원격 뷰의 엉뚱한 버튼을
        누르게 된다. 실제로 첫 오피스 실행이 그렇게 깨졌다.
@@ -376,9 +403,15 @@ def run_in_tool_flow(
     ③ **창이 확인된 뒤에는 독립 step 을 끝까지 시도한다.** 중간 step 이 실패해도
        `requires_previous=False` 인 뒤 step 은 눌러 본다.
 
+    ④ **여는 버튼이 안 보이는 것과 라벨이 다른 것은 다르다.** 좌표가 아예 안 나오면
+       다른 창이 덮었을 수 있으므로 `reveal_fn` 으로 밀어내고 다시 찾는다. 라벨이
+       다르게 읽혔다면 화면은 이미 보이는 것이라 밀어내지 않는다.
+
     `attempts` 는 여는 버튼의 재시도 횟수다. 원격 뷰는 커서 이동을 따라오지 못해 첫
     클릭이 삼켜지는 일이 있어(오피스 1회차 증상: "마우스만 이동") 창이 확인되지 않으면
-    한 번 더 누른다.
+    한 번 더 누른다. `reveal_attempts` 는 그와 **별개 예산**이다 - 창이 여러 장 겹쳐
+    있으면 Alt+click 을 여러 번 해야 드러나는데, 그 때문에 클릭 재시도가 줄어들 이유는
+    없다(둘은 서로 다른 실패를 고친다).
     """
     max_attempts = max(1, attempts)
 
@@ -393,25 +426,43 @@ def run_in_tool_flow(
     first_image = None
 
     # --- 여는 버튼 -> 창이 떴는지 확인(= 첫 step 의 라벨 판독) ---
+    max_reveals = max(0, reveal_attempts) if reveal_fn is not None else 0
     try:
-        for attempt in range(1, max_attempts + 1):
+        attempt = 0
+        reveals = 0
+        while attempt < max_attempts:
+            attempt += 1
             print(f"[INFO] [{flow.name}] {flow.opener.target.key} 확인 후 클릭 "
                   f"(시도 {attempt}/{max_attempts})")
             image = capture_fn(tool_window)
-            point = _confirm_point(
+            point, reason = _confirm_point(
                 image, flow.opener,
                 locate_fn=locate_fn, read_tokens_fn=read_tokens_fn, policy=confirm_policy,
             )
             if point is None:
-                # 여는 버튼조차 확인 못 했다면 다시 눌러도 같은 화면이다 - 즉시 포기.
-                return _tag(FLOW_OPENER_FAILED)
+                if reason != CONFIRM_NOT_LOCATED or max_reveals == 0:
+                    # 라벨이 다르게 읽혔다면 다시 눌러도 같은 화면이다 - 즉시 포기.
+                    return _tag(FLOW_OPENER_FAILED)
+                if reveals >= max_reveals:
+                    print(f"[WARNING] [{flow.name}] 가림 해제 {reveals}회 후에도 "
+                          f"{flow.opener.target.key} 를 찾지 못했습니다.")
+                    return _tag(FLOW_OPENER_NOT_VISIBLE)
+                reveals += 1
+                print(f"[INFO] [{flow.name}] {flow.opener.target.key} 가 안 보입니다 - "
+                      f"가린 창을 밀어냅니다({reveals}/{max_reveals})")
+                if not reveal_fn(tool_window, image, reveals):
+                    return _tag(FLOW_OPENER_NOT_VISIBLE)
+                # 가림 해제는 '클릭이 삼켜졌다' 재시도 예산을 쓰지 않는다 - 둘은 서로
+                # 다른 실패를 고친다. `reveals` 가 상한을 가지므로 무한 루프는 없다.
+                attempt -= 1
+                continue
             click_fn(tool_window, image, point, flow.opener.target.key)
 
             sleep_fn(settle_sec)  # 창이 그려질 시간(원격이라 로컬보다 느리다).
 
             print(f"[INFO] [{flow.name}] 창 확인({first_step.target.key} 판독)")
             image = capture_fn(tool_window)
-            first_point = _confirm_point(
+            first_point, _ = _confirm_point(
                 image, first_step,
                 locate_fn=locate_fn, read_tokens_fn=read_tokens_fn, policy=confirm_policy,
             )
@@ -423,6 +474,9 @@ def run_in_tool_flow(
                       "않습니다(tool 창 닫기가 정리합니다).")
                 return _tag(FLOW_WINDOW_NOT_FOUND)
             print(f"[INFO] [{flow.name}] 창 미확인 - 클릭이 삼켜졌을 수 있어 다시 누릅니다")
+        else:
+            # while 이 예산 소진으로 끝난 경우(위 분기에서 이미 반환되는 것이 정상).
+            return _tag(FLOW_WINDOW_NOT_FOUND)
     except Exception as exc:
         print(f"[WARNING] [{flow.name}] 여는 버튼/창 확인 중 예외: {type(exc).__name__}: {exc}")
         return _tag(FLOW_OPENER_FAILED)
@@ -443,7 +497,7 @@ def run_in_tool_flow(
             else:
                 sleep_fn(settle_sec)
                 image = capture_fn(tool_window)
-                point = _confirm_point(
+                point, _ = _confirm_point(
                     image, step,
                     locate_fn=locate_fn, read_tokens_fn=read_tokens_fn,
                     policy=confirm_policy,
@@ -535,10 +589,11 @@ def type_multiline_text(
 def perform_remote_click(
     window, screen_point: dict, key: str,
     *, foreground_fn, move_fn, click_fn, sleep_fn, settle_sec: float,
+    press_modifier_fn=None, release_modifier_fn=None,
 ) -> None:
     """원격 뷰의 한 지점을 실제로 눌리게 클릭한다.
 
-    순서가 계약이다: **전면화 -> 커서 이동 -> 체류 -> 누름**.
+    순서가 계약이다: **전면화 -> (수정자 누름) -> 커서 이동 -> 체류 -> 누름**.
 
       * 전면화를 빼면 포커스 없는 창의 첫 클릭이 창 활성화에 쓰이고 버튼에는 닿지
         않는다. 2026-08-19 오피스에서 "커서는 버튼 위로 가는데 클릭이 안 먹는" 증상의
@@ -549,12 +604,119 @@ def perform_remote_click(
 
     `foreground_fn` 이 None 이면(그 수단이 없는 환경) 막지 않는다 - 그건 게이트가
     아니라 부재이고, 여기서 시연을 통째로 멈출 이유가 없다.
+
+    `press_modifier_fn` 은 Alt+click(가린 창 밀어내기)용이다. **전면화 뒤에** 잡는
+    것이 계약이다: `window_utils.foreground_window` 는 Windows 의 foreground-lock 을
+    우회하려고 더미 **Alt down/up** 을 합성 주입하므로, 먼저 잡은 Alt 를 그 up 이
+    놓아버려 수정자 없는 평범한 클릭이 된다(커서는 맞는데 창이 안 밀리는, 원인 찾기
+    어려운 실패). 해제는 `finally` 로 보장한다 - 눌린 채 남으면 이후 **모든** 클릭이
+    Alt+click 으로 변질된다(window_utils 가 같은 이유로 경고하는 stuck-modifier).
+    전면화에 실패하면 애초에 누르지 않으므로 Alt 도 잡지 않는다.
     """
     if foreground_fn is not None and not foreground_fn(window):
         raise RuntimeError(f"tool 창 foreground 확보 실패 - 클릭하지 않음: {key}")
-    move_fn(screen_point, key)
-    sleep_fn(settle_sec)
-    click_fn(screen_point, key)
+    if press_modifier_fn is not None:
+        press_modifier_fn()
+    try:
+        move_fn(screen_point, key)
+        sleep_fn(settle_sec)
+        click_fn(screen_point, key)
+    finally:
+        if release_modifier_fn is not None:
+            release_modifier_fn()
+
+
+# ------------------------------------------------------------------
+# 가려진 여는 버튼 되살리기 - Alt+click 으로 덮은 창을 뒤로 밀어낸다.
+#
+# 사용자 보고(2026-08-24): Utility 버튼은 tool 모니터 **오른쪽 아래**에 있는데 다른
+# 창이 그 위에 떠서 VLM 이 아예 찾지 못하는 일이 있다. 엔지니어는 그 자리를
+# **Alt+click** 해서 창을 뒤로 밀고 Utility 를 되살린다. 이 저장소의 "여는 버튼을 못
+# 찾으면 즉시 포기" 규칙은 '다시 눌러도 같은 화면' 이라는 전제에서 나온 것이므로,
+# 화면을 바꿀 수단이 있는 이 경우에만 예외가 된다.
+#
+# 누를 지점은 **가린 창이 아니라 Utility 가 있어야 할 자리**다. 그 위를 덮고 있는
+# 것이 밀어낼 창이므로 같은 좌표를 누르면 된다. Mac 에서 이 화면을 볼 수 없어 비율은
+# env 로 옮길 수 있게 둔다(DEMO_RCS_REVEAL_X_RATIO / _Y_RATIO).
+# ------------------------------------------------------------------
+
+# Utility 가 있는 자리(창 크기 대비 비율). 오른쪽 아래이되 창 테두리/스크롤바를 피해
+# 약간 안쪽으로 둔다.
+DEFAULT_REVEAL_X_RATIO = 0.88
+DEFAULT_REVEAL_Y_RATIO = 0.92
+
+
+def covering_window_point(
+    width: int, height: int,
+    *, x_ratio: float = DEFAULT_REVEAL_X_RATIO, y_ratio: float = DEFAULT_REVEAL_Y_RATIO,
+) -> dict:
+    """가린 창을 밀어낼 지점(**이미지 픽셀 좌표**). 항상 프레임 안으로 자른다.
+
+    비율을 잘못 줘도 창 밖을 누르지 않게 하는 것이 요점이다 - 창 밖 클릭은 그 자리에
+    있는 다른 앱으로 가고, 그건 시연 중에 가장 하면 안 되는 일이다.
+    """
+    max_x = max(0, int(width) - 1)
+    max_y = max(0, int(height) - 1)
+    x = min(max_x, max(0, int(round(int(width) * float(x_ratio)))))
+    y = min(max_y, max(0, int(round(int(height) * float(y_ratio)))))
+    return {"x": x, "y": y}
+
+
+def alt_hold_hooks(
+    *, action_enabled: bool, keyboard=None, alt_key=None, is_aborted_fn=None,
+):
+    """Alt 를 쥐고/놓는 `(press, release)` 한 쌍을 만든다.
+
+    `SAFE_MODE=1` 이나 긴급 해제 상태에서는 **아무 키도 내보내지 않는다**. release 는
+    누른 적이 없어도 안전하게 호출될 수 있어야 한다(`perform_remote_click` 이
+    `finally` 에서 무조건 부르기 때문). keyboard/alt_key/is_aborted_fn 은 Mac 단위
+    테스트용 주입점이다.
+    """
+    aborted = is_aborted_fn if is_aborted_fn is not None else is_aborted
+    state = {"held": False}
+
+    def _press():
+        if not action_enabled:
+            print("[INFO] [DRY-RUN] Alt 누름 생략(SAFE_MODE)")
+            return
+        if aborted():
+            print(f"[WARNING] 긴급 해제 상태 - Alt 누름 생략: reason={abort_reason()}")
+            return
+        board, key = _resolve_keyboard(keyboard, alt_key)
+        board.press(key)
+        state["held"] = True
+
+    def _release():
+        if not state["held"]:
+            return
+        board, key = _resolve_keyboard(keyboard, alt_key)
+        board.release(key)
+        state["held"] = False
+
+    return _press, _release
+
+
+def _resolve_keyboard(keyboard, alt_key):
+    """주입된 대역이 있으면 그것을, 없으면 pynput 을 쓴다(캐시해 같은 객체를 유지)."""
+    if keyboard is not None and alt_key is not None:
+        return keyboard, alt_key
+    from pynput.keyboard import Key, Controller as KeyboardController
+
+    board = keyboard if keyboard is not None else _shared_keyboard()
+    return board, (alt_key if alt_key is not None else Key.alt)
+
+
+_KEYBOARD_CACHE = {}
+
+
+def _shared_keyboard():
+    """pynput KeyboardController 를 하나만 만든다 - press 와 release 가 같은 객체여야
+    Alt 상태가 이어진다(새로 만들면 놓지 못한 Alt 가 남을 수 있다)."""
+    if "board" not in _KEYBOARD_CACHE:
+        from pynput.keyboard import Controller as KeyboardController
+
+        _KEYBOARD_CACHE["board"] = KeyboardController()
+    return _KEYBOARD_CACHE["board"]
 
 
 # ------------------------------------------------------------------
@@ -1059,6 +1221,10 @@ def _build_action_fn(
     pre_click_settle_sec: float,
     click_hold_sec: float,
     char_type_delay_sec: float,
+    reveal_enabled: bool,
+    reveal_attempts: int,
+    reveal_x_ratio: float,
+    reveal_y_ratio: float,
     tag: str,
 ):
     """장비별 창 안 조작 협력자 (VLM 좌표 + OCR 확인 + 클릭).
@@ -1109,15 +1275,8 @@ def _build_action_fn(
         )
         return tokens_from_text(read.raw_text) if read.ok else []
 
-    def _click(window, image, point, key):
-        """이미지 픽셀 좌표를 스크린 좌표로 변환해 클릭한다(순서는 perform_remote_click)."""
-        screen = image_point_to_screen(window, point, image_size=image.size)
-        if screen is None:
-            raise RuntimeError(f"좌표 변환 실패: {key} point={point}")
-        print(
-            f"[INFO] 클릭: {key} px={point} -> screen={screen}"
-            f"{'' if settings.action_enabled else ' [dry-run]'}"
-        )
+    def _remote_click(window, screen, key, *, press_fn=None, release_fn=None):
+        """스크린 좌표를 실제로 누른다 - 순서는 `perform_remote_click` 이 고정한다."""
 
         def _foreground(target_window):
             return foreground_window(target_window, debug_label=f"demo_{key}")
@@ -1134,7 +1293,52 @@ def _build_action_fn(
             ),
             sleep_fn=time.sleep,
             settle_sec=max(0.0, pre_click_settle_sec),
+            press_modifier_fn=press_fn,
+            release_modifier_fn=release_fn,
         )
+
+    def _click(window, image, point, key):
+        """이미지 픽셀 좌표를 스크린 좌표로 변환해 클릭한다."""
+        screen = image_point_to_screen(window, point, image_size=image.size)
+        if screen is None:
+            raise RuntimeError(f"좌표 변환 실패: {key} point={point}")
+        print(
+            f"[INFO] 클릭: {key} px={point} -> screen={screen}"
+            f"{'' if settings.action_enabled else ' [dry-run]'}"
+        )
+        _remote_click(window, screen, key)
+
+    def _reveal(window, image, round_index):
+        """여는 버튼을 덮은 창을 Alt+click 으로 뒤로 밀어낸다.
+
+        예외를 올리지 않고 True/False 로 답한다 - 실패는 "가려서 못 찾음" 이라는
+        진단으로 남아야 하고, 그 때문에 시연의 나머지가 죽으면 안 된다.
+        """
+        point = covering_window_point(
+            image.width, image.height,
+            x_ratio=reveal_x_ratio, y_ratio=reveal_y_ratio,
+        )
+        screen = image_point_to_screen(window, point, image_size=image.size)
+        if screen is None:
+            print(f"[WARNING] 가림 해제 좌표 변환 실패 - Alt+click 생략: px={point}")
+            return False
+
+        press, release = alt_hold_hooks(action_enabled=settings.action_enabled)
+        print(
+            f"[INFO] Alt+click 으로 가린 창 밀어내기({round_index}회): "
+            f"px={point} -> screen={screen} "
+            f"(비율 x={reveal_x_ratio}, y={reveal_y_ratio})"
+            f"{'' if settings.action_enabled else ' [dry-run]'}"
+        )
+        try:
+            _remote_click(
+                window, screen, "reveal_opener", press_fn=press, release_fn=release,
+            )
+        except Exception as exc:
+            print(f"[WARNING] 가림 해제 실패: {type(exc).__name__}: {exc}")
+            return False
+        time.sleep(max(0.0, settle_sec))  # 창이 내려가고 다시 그려질 시간.
+        return True
 
     def _action(tool_id, tool_window, tool_title, tool_backend):
         flow_name = resolve_flow_name(tool_id, flow_map, default_flow)
@@ -1154,10 +1358,12 @@ def _build_action_fn(
                 sleep_fn=time.sleep,
                 char_delay_sec=char_type_delay_sec,
             ),
+            reveal_fn=_reveal if reveal_enabled else None,
             sleep_fn=time.sleep,
             settle_sec=settle_sec,
             confirm_policy=confirm_policy,
             attempts=attempts,
+            reveal_attempts=reveal_attempts,
         )
 
     return _action
@@ -1267,6 +1473,10 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
     pre_click_settle = _env_float("DEMO_RCS_PRE_CLICK_SETTLE_SEC", 0.6)
     click_hold_sec = _env_float("DEMO_RCS_CLICK_HOLD_SEC", 0.15)
     char_type_delay_sec = _env_float("DEMO_RCS_CHAR_TYPE_DELAY_SEC", 0.08)
+    reveal_enabled = _env_flag("DEMO_RCS_REVEAL", True)
+    reveal_attempts = max(0, _env_int("DEMO_RCS_REVEAL_ATTEMPTS", 2))
+    reveal_x_ratio = _env_float("DEMO_RCS_REVEAL_X_RATIO", DEFAULT_REVEAL_X_RATIO)
+    reveal_y_ratio = _env_float("DEMO_RCS_REVEAL_Y_RATIO", DEFAULT_REVEAL_Y_RATIO)
     tag = make_timestamp_tag(time.time())
 
     assigned = ", ".join(
@@ -1279,6 +1489,8 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
         f"(확인={confirm_policy}, 재시도={flow_attempts}, "
         f"클릭전대기={pre_click_settle:.1f}s, 누름유지={click_hold_sec:.2f}s), "
         f"글자간격={char_type_delay_sec:.2f}s, "
+        f"가림해제={'on' if reveal_enabled else 'off'}"
+        f"(Alt+click {reveal_attempts}회, 지점 x={reveal_x_ratio:.2f}/y={reveal_y_ratio:.2f}), "
         f"반복={repeat}회"
     )
     print(f"[INFO] 장비별 조작 흐름: {assigned or '-'}")
@@ -1301,6 +1513,10 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
                 pre_click_settle_sec=pre_click_settle,
                 click_hold_sec=click_hold_sec,
                 char_type_delay_sec=char_type_delay_sec,
+                reveal_enabled=reveal_enabled,
+                reveal_attempts=reveal_attempts,
+                reveal_x_ratio=reveal_x_ratio,
+                reveal_y_ratio=reveal_y_ratio,
                 tag=tag,
             )
             if flow_enabled
@@ -1347,6 +1563,7 @@ __all__ = [
     "FLOW_OPENER_FAILED",
     "FLOW_MEMO_PRINT",
     "FLOW_OPTICS",
+    "FLOW_OPENER_NOT_VISIBLE",
     "FLOW_SKIPPED",
     "FLOW_WINDOW_NOT_FOUND",
     "FLOW_WORKSHEET",
@@ -1362,8 +1579,10 @@ __all__ = [
     "FlowStep",
     "InToolFlow",
     "ToolVisit",
+    "alt_hold_hooks",
     "browse_view_tab",
     "build_flows",
+    "covering_window_point",
     "main",
     "parse_flow_map",
     "parse_tool_ids",

@@ -83,6 +83,10 @@ class CorrectionConfig:
     # 잘못된 좌표가 그대로 측정으로 확정되는 것을 사람이 막을 수 있게 한다.
     # 라이브러리 기본은 설계된 전체 동작(True); 운영 루프 기본값은 Workflow3Settings 참조.
     ok_click_enabled: bool = True
+    # key 부재 시 live_align_search(pan/zoom)로 위임할지. False 면 actuation 없이
+    # escalated_key_not_visible 로 끝낸다 - 라이브러리 기본은 설계된 전체 동작(True),
+    # 운영 루프 기본값은 Workflow3Settings.fallback_search_enabled 를 따른다.
+    fallback_search_enabled: bool = True
     settle_sec: float = 0.0  # 제스처 후 대기(실장비 안정화).
     cond_box_crop: bool = True  # cond.box_ltrb 기반 box-crop template(+decoupled offset). False -> whole-template(구 동작) 롤백.
     # 만성 모호 키 게이트(Tier 0.1). second_ratio 가 이 값을 넘으면 present 라도 auto-act 대신
@@ -101,7 +105,7 @@ class CorrectionOutcome:
     """보정 결과. 어느 경로로 끝났는지 + 좌표/decision 기록."""
 
     # "corrected" | "awaiting_engineer_ok" | "fallback_<status>" | "escalated_ambiguous_key"
-    # | "escalated_no_ok" | "ok_detect_error" | "no_assets"
+    # | "escalated_key_not_visible" | "escalated_no_ok" | "ok_detect_error" | "no_assets"
     #
     # monitor 계층이 사이클 문맥을 반영해 **추가 status 로 치환**할 수 있다(2026-08-18):
     # "view_only_observation"(다른 엔지니어 점유 - 보정 자체를 건너뜀),
@@ -290,6 +294,32 @@ def correct_align_fail(
     route = key_visibility_gate(
         result, reregister_ratio_threshold=config.reregister_ratio_threshold
     )
+    if route == GATE_FALLBACK and not config.fallback_search_enabled:
+        # pan/zoom 을 하지 않고 끝낸다. actuation 이 전혀 없으므로 stage 는 그대로다.
+        # status 는 corrected 가 아니라서 notify 가 cube 로 엔지니어를 부른다.
+        print("[WARNING] key 가 paused 화면에 보이지 않음 + fallback search 비활성 "
+              "(ALIGN_FAIL_FALLBACK_SEARCH=0) -> pan 없이 엔지니어 확인으로 넘깁니다.")
+        log_work2_event(
+            component=LOG_COMPONENT,
+            message="escalated_key_not_visible",
+            level="warning",
+            key_decision=result.decision,
+            score=f"{result.score:.3f}",
+            best_scale=f"{result.best_scale:.2f}",
+        )
+        return _with_key_ambiguity(
+            CorrectionOutcome(
+                status="escalated_key_not_visible",
+                path="primary",
+                key_decision=result.decision,
+                best_xy=None,
+                ok_screen_xy=None,
+                fallback=None,
+                history=history,
+            ),
+            result,
+        )
+
     if route == GATE_FALLBACK:
         print("[INFO] key 가 paused 화면에 보이지 않음 → fallback(live_align_search) 위임")
         outcome = live_align_search(

@@ -79,6 +79,7 @@ from poc.workflow_3.util.abort_switch import (
     start_abort_hotkey,
 )
 from poc.workflow_3.util import make_timestamp_tag
+from poc.workflow_3.util.window_utils import print_elevation_status
 from poc.workflow_3.logger import log_work2_event
 
 from poc.workflow_3.monitor.align_fail_monitor import (
@@ -300,8 +301,17 @@ def main() -> int:
         )
         return EXIT_PREFLIGHT_FAILED
 
+    # 관리자 권한 진단. 비elevated 면 UIPI 때문에 (a) RCS 강제 전면화와 (b) **긴급 해제
+    # 단축키 수신**이 조용히 실패한다 - RCS 창이 더 높은 무결성 수준으로 떠 있으면
+    # 비elevated 프로세스의 전역 키보드 훅은 그 창이 포커스를 쥔 동안 키를 못 받는다.
+    # 즉 자동화가 도는 바로 그 순간에만 단축키가 안 듣는다. 다른 두 모니터 진입점은
+    # 이미 이 진단을 찍는데 여기만 빠져 있었다.
+    print_elevation_status()
+
     # 마우스/키보드 조작 진입 전에 abort 스위치를 먼저 띄운다 - 모니터의 순서를 그대로 따른다.
-    start_abort_hotkey(settings.abort_hotkey)
+    if not start_abort_hotkey(settings.abort_hotkey):
+        print("[WARNING] 긴급 해제 단축키가 등록되지 않았습니다 - 실행 중 자동 조작을 "
+              "키로 멈출 수 없습니다. 중단하려면 터미널 창에서 프로세스를 종료하세요.")
     _run_preflight(settings)
 
     if is_aborted():

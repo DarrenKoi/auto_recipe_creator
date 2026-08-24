@@ -988,6 +988,8 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
                 cond_box_crop=settings.cond_box_crop,
                 # OK 자동 클릭(기본 off = reposition 까지만, OK 는 엔지니어).
                 ok_click_enabled=settings.ok_click_enabled,
+                # key 부재 시 spiral pan 탐색 위임 여부(off -> pan 없이 escalate).
+                fallback_search_enabled=settings.fallback_search_enabled,
                 # consensus 라우팅 설정(Workflow3Settings 에서 주입).
                 consensus_enabled=settings.consensus_enabled,
                 consensus_min_s=settings.consensus_min_s,

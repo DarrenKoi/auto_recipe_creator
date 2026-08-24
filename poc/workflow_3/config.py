@@ -317,6 +317,12 @@ class Workflow3Settings(WorkflowSettings):
     # 좌표가 틀린 채 OK 가 눌리면 잘못된 위치로 측정이 확정되므로, 실전 신뢰가 쌓이기
     # 전까지는 사람이 마지막 확정을 쥔다. 켜려면 ALIGN_FAIL_OK_CLICK=1.
     ok_click_enabled: bool = False
+    # paused 화면에서 key 를 못 찾았을 때 live_align_search(zoom-out + 사각 spiral pan)로
+    # 넘길지. 기본 on(설계된 동작). off 면 pan 하지 않고 escalated_key_not_visible 로
+    # 엔지니어에게 넘긴다 - 실장비에서 spiral 이 stage 를 최대 pan_budget(10) 회 끌고
+    # 다니는데, 그 사이 커서를 되찾기 어려워 "보정을 못 한 것" 보다 비용이 큰 상황이
+    # 있다. 롤백/재활성은 ALIGN_FAIL_FALLBACK_SEARCH=1.
+    fallback_search_enabled: bool = True
     # PM 판독으로 OM/SEM 을 확정하지 못했을 때 보정을 보류할지(기본 on).
     # modality 를 틀리면 다른 template(IMAP0001 OM vs IMAP0002 SEM)로 매칭해 좌표가
     # 근본적으로 틀리므로, 추측해서 누르느니 엔지니어에게 넘긴다. off 면 sem_mode_default 사용.
@@ -437,6 +443,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         correction_dry_run=correction_dry_run,
         ok_button_vlm_service=_env_str("ALIGN_OK_BUTTON_VLM_SERVICE", "mai-ui"),
         ok_click_enabled=env_flag("ALIGN_FAIL_OK_CLICK", default=False),
+        fallback_search_enabled=env_flag("ALIGN_FAIL_FALLBACK_SEARCH", default=True),
         require_pm_mode=env_flag("ALIGN_FAIL_REQUIRE_PM_MODE", default=True),
         sem_mode_default=_env_str("ALIGN_SEM_MODE_DEFAULT", "SEM"),
         sem_controller_settle_sec=env_float("ALIGN_SEM_SETTLE_SEC", 0.5),

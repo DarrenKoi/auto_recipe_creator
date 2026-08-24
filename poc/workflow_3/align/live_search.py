@@ -48,6 +48,7 @@ import cv2
 import numpy as np
 
 from poc.workflow_3 import DEBUG_IMAGE_DIR
+from poc.workflow_3.util.abort_switch import abort_reason, is_aborted
 from poc.workflow_3.align.matching.engine import (
     BROAD_SCALES,
     STRUCTURE_POLICY,
@@ -221,6 +222,13 @@ def live_align_search(
     iter_idx = 0
     last_decision = "low"
     while True:
+        # 긴급 해제 래치. mouse_utils 가 개별 클릭을 이미 막지만, 그것만으로는 루프가
+        # 남은 pan 예산을 no-op 으로 끝까지 돌면서 캡처/매칭을 계속한다(커서를 돌려준
+        # 뒤에도 수십 초). 여기서 끊어야 "즉시 멈춤" 이 실제로 즉시가 된다.
+        if is_aborted():
+            print(f"[WARNING] 긴급 해제({abort_reason()}) - live search 중단.")
+            return _finish_with_best(state, "aborted", last_decision)
+
         frame = controller.capture()
         fh, fw = frame.shape[:2]
         mode = (controller.read_mode() or "").upper()

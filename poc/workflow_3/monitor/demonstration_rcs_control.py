@@ -55,6 +55,9 @@ env (`DEMO_RCS_*` 네임스페이스 - 루프의 `ALIGN_FAIL_*` 과 섞지 않�
     ACTION_LOGIN_TYPING_ENABLED=0  클릭은 두고 **메모 입력만** 끈다(롤백 스위치)
     DEMO_RCS_REVEAL         여는 버튼이 가려졌을 때 Alt+click 으로 밀어내기 (기본 1)
     DEMO_RCS_REVEAL_ATTEMPTS  밀어낼 창 수 = Alt+click 반복 상한 (기본 2)
+    DEMO_RCS_ALT_SETTLE_SEC   Alt 를 누른 뒤 클릭까지 대기 (기본 0.3)
+                            커서를 오른쪽 아래로 옮긴 **뒤에** Alt 를 잡고, 원격이 그
+                            수정자를 등록할 틱을 준 다음 누른다
     DEMO_RCS_REVEAL_X_RATIO / _Y_RATIO  누를 지점(창 크기 대비, 기본 0.88 / 0.92)
                             Utility 가 오른쪽 아래에 있어 그 자리를 누른다 - 빗나가면
                             오피스 콘솔의 px/screen 값을 보고 이 비율만 옮긴다
@@ -590,10 +593,11 @@ def perform_remote_click(
     window, screen_point: dict, key: str,
     *, foreground_fn, move_fn, click_fn, sleep_fn, settle_sec: float,
     press_modifier_fn=None, release_modifier_fn=None,
+    modifier_settle_sec: float = 0.0,
 ) -> None:
     """원격 뷰의 한 지점을 실제로 눌리게 클릭한다.
 
-    순서가 계약이다: **전면화 -> (수정자 누름) -> 커서 이동 -> 체류 -> 누름**.
+    순서가 계약이다: **전면화 -> 커서 이동 -> 체류 -> (수정자 누름 -> 체류) -> 누름**.
 
       * 전면화를 빼면 포커스 없는 창의 첫 클릭이 창 활성화에 쓰이고 버튼에는 닿지
         않는다. 2026-08-19 오피스에서 "커서는 버튼 위로 가는데 클릭이 안 먹는" 증상의
@@ -605,21 +609,33 @@ def perform_remote_click(
     `foreground_fn` 이 None 이면(그 수단이 없는 환경) 막지 않는다 - 그건 게이트가
     아니라 부재이고, 여기서 시연을 통째로 멈출 이유가 없다.
 
-    `press_modifier_fn` 은 Alt+click(가린 창 밀어내기)용이다. **전면화 뒤에** 잡는
-    것이 계약이다: `window_utils.foreground_window` 는 Windows 의 foreground-lock 을
-    우회하려고 더미 **Alt down/up** 을 합성 주입하므로, 먼저 잡은 Alt 를 그 up 이
-    놓아버려 수정자 없는 평범한 클릭이 된다(커서는 맞는데 창이 안 밀리는, 원인 찾기
-    어려운 실패). 해제는 `finally` 로 보장한다 - 눌린 채 남으면 이후 **모든** 클릭이
-    Alt+click 으로 변질된다(window_utils 가 같은 이유로 경고하는 stuck-modifier).
-    전면화에 실패하면 애초에 누르지 않으므로 Alt 도 잡지 않는다.
+    `press_modifier_fn` 은 Alt+click(가린 창 밀어내기)용이고, **커서가 도착한 뒤에**
+    잡는 것이 계약이다("오른쪽 아래로 마우스를 옮긴 뒤 Alt+click" - 사용자 설명,
+    2026-08-24). 세 가지가 이 자리를 정한다:
+
+      * **전면화보다 뒤**여야 한다. `window_utils.foreground_window` 는 Windows 의
+        foreground-lock 을 우회하려고 더미 **Alt down/up** 을 합성 주입하므로, 먼저
+        잡은 Alt 를 그 up 이 놓아버려 수정자 없는 평범한 클릭이 된다(커서는 맞는데
+        창이 안 밀리는, 원인 찾기 어려운 실패).
+      * **커서 이동보다 뒤**여야 한다. Alt 를 쥔 채 커서를 끌고 가면 그 이동 전체가
+        Alt 눌린 상태가 된다 - 원격이 그것을 창 조작 제스처로 읽을 여지를 만들 이유가
+        없다.
+      * **누름보다 한 틱 앞**이어야 한다(`modifier_settle_sec`). 원격은 입력을
+        샘플링하므로 Alt down 과 버튼 down 이 같은 틱에 들어가면 수정자 없는 클릭으로
+        넘어갈 수 있다 - `click_at_screen(hold_sec=)` 이 생긴 것과 같은 이유다.
+
+    해제는 `finally` 로 보장한다 - 눌린 채 남으면 이후 **모든** 클릭이 Alt+click 으로
+    변질된다(window_utils 가 같은 이유로 경고하는 stuck-modifier). 전면화에 실패하면
+    애초에 누르지 않으므로 Alt 도 잡지 않는다.
     """
     if foreground_fn is not None and not foreground_fn(window):
         raise RuntimeError(f"tool 창 foreground 확보 실패 - 클릭하지 않음: {key}")
-    if press_modifier_fn is not None:
-        press_modifier_fn()
     try:
         move_fn(screen_point, key)
         sleep_fn(settle_sec)
+        if press_modifier_fn is not None:
+            press_modifier_fn()
+            sleep_fn(max(0.0, modifier_settle_sec))
         click_fn(screen_point, key)
     finally:
         if release_modifier_fn is not None:
@@ -1225,6 +1241,7 @@ def _build_action_fn(
     reveal_attempts: int,
     reveal_x_ratio: float,
     reveal_y_ratio: float,
+    alt_settle_sec: float,
     tag: str,
 ):
     """장비별 창 안 조작 협력자 (VLM 좌표 + OCR 확인 + 클릭).
@@ -1295,6 +1312,7 @@ def _build_action_fn(
             settle_sec=max(0.0, pre_click_settle_sec),
             press_modifier_fn=press_fn,
             release_modifier_fn=release_fn,
+            modifier_settle_sec=alt_settle_sec,
         )
 
     def _click(window, image, point, key):
@@ -1310,6 +1328,12 @@ def _build_action_fn(
 
     def _reveal(window, image, round_index):
         """여는 버튼을 덮은 창을 Alt+click 으로 뒤로 밀어낸다.
+
+        커서를 그 자리로 옮긴 뒤 Alt 를 잡는다(순서는 `perform_remote_click`).
+        `click_at_screen` 이 누르기 전에 커서를 ±`ALIGN_FAIL_CURSOR_JIGGLE_PX`(3) 만큼
+        흔드는데(원격이 커서 위치를 등록하게 하는 이 저장소의 규약) 그 흔들림만은 Alt
+        를 쥔 상태로 일어난다 - 버튼은 안 눌린 상태이므로 창 끌기(Alt+drag)가 되지는
+        않는다. 원격이 그마저 제스처로 읽는다면 `ALIGN_FAIL_CURSOR_JIGGLE_PX=0`.
 
         예외를 올리지 않고 True/False 로 답한다 - 실패는 "가려서 못 찾음" 이라는
         진단으로 남아야 하고, 그 때문에 시연의 나머지가 죽으면 안 된다.
@@ -1477,6 +1501,7 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
     reveal_attempts = max(0, _env_int("DEMO_RCS_REVEAL_ATTEMPTS", 2))
     reveal_x_ratio = _env_float("DEMO_RCS_REVEAL_X_RATIO", DEFAULT_REVEAL_X_RATIO)
     reveal_y_ratio = _env_float("DEMO_RCS_REVEAL_Y_RATIO", DEFAULT_REVEAL_Y_RATIO)
+    alt_settle_sec = _env_float("DEMO_RCS_ALT_SETTLE_SEC", 0.3)
     tag = make_timestamp_tag(time.time())
 
     assigned = ", ".join(
@@ -1490,7 +1515,8 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
         f"클릭전대기={pre_click_settle:.1f}s, 누름유지={click_hold_sec:.2f}s), "
         f"글자간격={char_type_delay_sec:.2f}s, "
         f"가림해제={'on' if reveal_enabled else 'off'}"
-        f"(Alt+click {reveal_attempts}회, 지점 x={reveal_x_ratio:.2f}/y={reveal_y_ratio:.2f}), "
+        f"(Alt+click {reveal_attempts}회, 지점 x={reveal_x_ratio:.2f}/y={reveal_y_ratio:.2f}, "
+        f"Alt대기={alt_settle_sec:.2f}s), "
         f"반복={repeat}회"
     )
     print(f"[INFO] 장비별 조작 흐름: {assigned or '-'}")
@@ -1517,6 +1543,7 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
                 reveal_attempts=reveal_attempts,
                 reveal_x_ratio=reveal_x_ratio,
                 reveal_y_ratio=reveal_y_ratio,
+                alt_settle_sec=alt_settle_sec,
                 tag=tag,
             )
             if flow_enabled

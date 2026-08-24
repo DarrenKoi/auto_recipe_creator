@@ -1198,11 +1198,14 @@ def test_flow_without_a_reveal_helper_keeps_giving_up_immediately():
 # --- Alt 를 쥔 채 누르기 - stuck-modifier 와 전면화 순서가 걸린 자리 ---
 
 
-def test_alt_is_held_after_foregrounding_not_before():
-    """`foreground_window` 는 foreground-lock 우회로 더미 Alt down/up 을 주입한다.
+def test_alt_is_grabbed_after_the_cursor_has_arrived():
+    """"오른쪽 아래로 **마우스를 옮긴 뒤** Alt+click" (사용자 설명, 2026-08-24).
 
-    먼저 Alt 를 잡으면 그 up 이 우리 Alt 를 놓아버려 평범한 클릭이 된다 - 커서는
-    맞는데 창이 뒤로 안 밀리는, 원인 찾기 어려운 실패가 된다.
+    두 가지가 이 순서를 강제한다:
+      * `foreground_window` 가 foreground-lock 우회로 더미 Alt down/up 을 주입하므로
+        먼저 Alt 를 잡으면 그 up 이 우리 Alt 를 놓아버린다(평범한 클릭이 된다).
+      * Alt 를 쥔 채로 커서를 끌고 가면 그동안의 이동이 전부 Alt 눌린 상태가 된다 -
+        원격이 그걸 창 조작 제스처로 읽을 여지를 만들 이유가 없다.
     """
     calls, kwargs = _click_calls()
 
@@ -1210,10 +1213,41 @@ def test_alt_is_held_after_foregrounding_not_before():
         object(), {"x": 1, "y": 2}, "reveal_utility", settle_sec=0.6,
         press_modifier_fn=lambda: calls.append("alt_down"),
         release_modifier_fn=lambda: calls.append("alt_up"),
+        modifier_settle_sec=0.3,
         **kwargs,
     )
 
-    assert calls == ["foreground", "alt_down", "move", "sleep:0.6", "click", "alt_up"]
+    assert calls == [
+        "foreground", "move", "sleep:0.6", "alt_down", "sleep:0.3", "click", "alt_up",
+    ]
+
+
+def test_alt_gets_its_own_dwell_before_the_click():
+    """원격은 입력을 샘플링한다 - Alt down 과 버튼 down 이 같은 틱에 들어가면 수정자
+    없는 클릭으로 넘어갈 수 있다(DEMO_RCS_CLICK_HOLD_SEC 이 생긴 이유와 같다)."""
+    calls, kwargs = _click_calls()
+
+    perform_remote_click(
+        object(), {"x": 1, "y": 2}, "reveal_utility", settle_sec=0.0,
+        press_modifier_fn=lambda: calls.append("alt_down"),
+        release_modifier_fn=lambda: calls.append("alt_up"),
+        modifier_settle_sec=0.25,
+        **kwargs,
+    )
+
+    assert calls[calls.index("alt_down") + 1] == "sleep:0.25"
+    assert calls[calls.index("alt_down") + 2] == "click"
+
+
+def test_a_plain_click_has_no_extra_modifier_dwell():
+    """수정자를 안 쓰는 클릭(탭/버튼)의 타이밍은 그대로다."""
+    calls, kwargs = _click_calls()
+
+    perform_remote_click(
+        object(), {"x": 1, "y": 2}, "utility_button", settle_sec=0.6, **kwargs
+    )
+
+    assert calls == ["foreground", "move", "sleep:0.6", "click"]
 
 
 def test_alt_is_released_even_when_the_click_raises():

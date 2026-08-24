@@ -4,7 +4,7 @@
 재생하는 것이 목적이다. 시나리오(사용자 지정, 2026-08-19 / MCD019 흐름 2026-08-24 교체):
 
     RCS 실행 -> 로그인 -> View 탭 + 휠로 위아래 훑기 -> List 탭
-      -> MCD019 접속 -> [Utility -> Memo Print -> 두 줄 메모 입력] -> tool 창 닫기
+      -> MCD019 접속 -> [Utility -> Memo Print -> 두 줄 메모 입력 -> Close] -> tool 창 닫기
                         (Utility 가 다른 창에 가려 안 보이면 Alt+click 으로 밀어낸다)
       -> MCDC22 접속 -> [Work Sheet 아래 버튼 -> File -> Exit]    -> tool 창 닫기
 
@@ -52,6 +52,10 @@ env (`DEMO_RCS_*` 네임스페이스 - 루프의 `ALIGN_FAIL_*` 과 섞지 않�
                             즉시 press/release 는 원격 샘플링 사이로 빠져나간다
     DEMO_RCS_CHAR_TYPE_DELAY_SEC  메모 글자 사이 입력 간격 (기본 0.08)
                             원격 화면이 입력을 샘플링하므로 한 번에 보내지 않는다
+    DEMO_RCS_SHIFT_SETTLE_SEC  Shift 를 잡고/놓기 전 대기 (기본 0.12)
+                            대문자와 '!' 가 사라지면 이 값을 올린다(오피스 1회차 증상)
+    DEMO_RCS_POST_TYPE_WAIT_SEC  입력을 끝내고 Close 를 누르기 전 대기 (기본 2.0)
+    DEMO_RCS_MEMO_TEXT      메모 문구 교체 ('\\n' 이 줄바꿈)
     ACTION_LOGIN_TYPING_ENABLED=0  클릭은 두고 **메모 입력만** 끈다(롤백 스위치)
     DEMO_RCS_REVEAL         여는 버튼이 가려졌을 때 Alt+click 으로 밀어내기 (기본 1)
     DEMO_RCS_REVEAL_ATTEMPTS  밀어낼 창 수 = Alt+click 반복 상한 (기본 2)
@@ -85,6 +89,18 @@ DEFAULT_TOOL_IDS = ["MCD019", "MCDC22"]
 
 # MCD019 MemoPrint 에 입력할 시연 문구. 첫 줄 뒤 Enter 를 누르고 둘째 줄을 입력한다.
 DEFAULT_MEMO_TEXT = "Infra. Tech Center!!\nOne Stop Solution"
+
+
+def parse_memo_text(raw, default: str) -> str:
+    """env 문구를 읽는다. env 에는 실제 줄바꿈을 담기 어려우니 `\\n` 을 줄바꿈으로 본다.
+
+    문구를 env 로 뺀 이유: `!` 는 Shift+1(US 기호 배열) 로 입력하는데 배열이 다르면
+    `1` 이 들어간다. 그때 코드를 고치지 않고 문구만 바꿔 시연을 살릴 수 있어야 한다.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return default
+    return text.replace("\\n", "\n")
 
 # 라벨 확인 정책 기본값. 기존 시연 버튼은 **돌고 있는 장비에 영향을 주지 않는다** 고
 # 오피스에서 확인됐다(2026-08-19). 새 Utility/Memo Print 흐름은 2026-08-24 추가됐고
@@ -529,6 +545,31 @@ def run_in_tool_flow(
     return _tag(FLOW_OK)
 
 
+# US 기호 배열에서 Shift 를 함께 눌러야 나오는 문자 -> 그 자리의 기본 문자.
+# 오피스 PC 는 한글 Windows 지만 기호 배열은 US 표준이다. 이 표가 틀린 배열에서는
+# '!' 가 '1' 로 들어가므로, 그때는 `DEMO_RCS_MEMO_TEXT` 로 문구를 바꾼다.
+SHIFTED_CHARS = {
+    "!": "1", "@": "2", "#": "3", "$": "4", "%": "5", "^": "6", "&": "7",
+    "*": "8", "(": "9", ")": "0", "_": "-", "+": "=", "{": "[", "}": "]",
+    "|": "\\", ":": ";", '"': "'", "<": ",", ">": ".", "?": "/", "~": "`",
+}
+
+
+def shift_plan(char: str) -> tuple:
+    """`(눌러야 할 기본 문자, Shift 필요 여부)`.
+
+    오피스 1회차(2026-08-24)에서 **Shift 글자만** 통째로 사라졌다("Infra. Tech
+    Center!!" -> "nfra. ech enter"). 빠진 것이 정확히 I/T/C/!/O/S/S 였고, 전부
+    Shift 조합이다. 그래서 Shift 는 pynput 의 `type()` 에 맡기지 않고 우리가 직접
+    잡는다 - 그래야 수정자에 체류 시간을 줄 수 있다.
+    """
+    if char.isalpha() and char.isupper():
+        return char.lower(), True
+    if char in SHIFTED_CHARS:
+        return SHIFTED_CHARS[char], True
+    return char, False
+
+
 def type_multiline_text(
     text: str,
     key: str,
@@ -536,15 +577,31 @@ def type_multiline_text(
     action_enabled: bool,
     keyboard=None,
     enter_key=None,
+    shift_key=None,
     sleep_fn=time.sleep,
     char_delay_sec: float = 0.08,
+    shift_settle_sec: float = 0.12,
+    post_dwell_sec: float = 0.0,
     is_aborted_fn=None,
 ) -> bool:
     """포커스된 입력창에 줄바꿈을 Enter 로 바꿔 천천히 입력한다.
 
     원격 tool 화면은 입력을 샘플링하므로 문자열 전체를 한 번에 보내지 않고 글자마다
     간격을 둔다. `SAFE_MODE=1` 에서는 pynput 을 만들기 전 반환해 키 입력을 완전히
-    차단한다. keyboard/enter_key/is_aborted_fn 은 Mac 단위 테스트용 주입점이다.
+    차단한다. keyboard/enter_key/shift_key/is_aborted_fn 은 Mac 단위 테스트용
+    주입점이다.
+
+    **Shift 글자는 우리가 직접 잡는다**(`shift_settle_sec`). pynput 의 `type("I")` 는
+    Shift down / 키 down / 키 up / Shift up 을 간격 없이 내보내는데, 원격은 입력을
+    샘플링하므로 그 조합이 두 틱 사이로 통째로 빠져나간다 - 오피스 1회차에서 대문자와
+    '!' 만 정확히 사라진 것이 그 증거다(소문자는 전부 정상 입력됐다). 그래서
+    Shift 를 잡고 -> 한 틱 쉬고 -> 기본 키를 누르고 -> 한 틱 쉬고 -> 놓는다.
+    클릭의 `DEMO_RCS_ALT_SETTLE_SEC`/`CLICK_HOLD_SEC` 과 같은 처방이다.
+    해제는 글자마다 `finally` 로 보장한다 - Shift 가 눌린 채 남으면 그 뒤의 입력과
+    클릭이 전부 변질된다.
+
+    `post_dwell_sec` 은 입력을 끝낸 뒤 머무는 시간이다("글자를 다 넣고 2초 기다린 뒤
+    Close" - 사용자 지시). 화면에 반영될 시간이면서 관객이 읽을 시간이다.
 
     **긴급 해제(전역 단축키)를 글자마다 확인한다.** 이 저장소의 마우스 출력은 전부
     `abort_switch` 를 지나는데(`mouse_utils.click_at_screen`), 메모 입력은 기본값에서
@@ -564,15 +621,17 @@ def type_multiline_text(
               f"reason={abort_reason()}")
         return False
 
-    if keyboard is None or enter_key is None:
+    if keyboard is None or enter_key is None or shift_key is None:
         try:
             from pynput.keyboard import Key, Controller as KeyboardController
         except ImportError as exc:
             raise RuntimeError("pynput.keyboard 미설치 - 텍스트를 입력할 수 없음") from exc
         keyboard = keyboard if keyboard is not None else KeyboardController()
         enter_key = enter_key if enter_key is not None else Key.enter
+        shift_key = shift_key if shift_key is not None else Key.shift
 
     delay = max(0.0, char_delay_sec)
+    shift_settle = max(0.0, shift_settle_sec)
     for index, char in enumerate(text):
         if aborted():
             print(f"[WARNING] 긴급 해제 - 텍스트 입력 중단: target={key}, "
@@ -581,11 +640,30 @@ def type_multiline_text(
         if char == "\n":
             keyboard.press(enter_key)
             keyboard.release(enter_key)
-        else:
+            sleep_fn(delay)
+            continue
+
+        base, needs_shift = shift_plan(char)
+        if not needs_shift:
             keyboard.type(char)
+            sleep_fn(delay)
+            continue
+
+        keyboard.press(shift_key)
+        try:
+            sleep_fn(shift_settle)   # 원격이 수정자 상태를 등록할 틱.
+            keyboard.press(base)
+            keyboard.release(base)
+            sleep_fn(shift_settle)   # 키가 Shift 눌린 상태로 넘어갈 틱.
+        finally:
+            # 눌린 채 남으면 그 뒤 입력과 클릭이 전부 Shift 조합으로 변질된다.
+            keyboard.release(shift_key)
         sleep_fn(delay)
 
     print(f"[INFO] 텍스트 입력 완료: target={key}, text={text!r}")
+    if post_dwell_sec > 0:
+        print(f"[INFO] 입력 후 {post_dwell_sec:.1f}s 체류(화면 반영 + 관객이 읽을 시간)")
+        sleep_fn(post_dwell_sec)
     return True
 
 
@@ -1058,13 +1136,15 @@ def _build_list_tab_fn(settings: Workflow3Settings):
     return _list_tab
 
 
-def build_flows():
-    """시연 흐름 정의 - 이름 -> InToolFlow.
+def build_flows(memo_text: str = ""):
+    """시연 흐름 정의 - 이름 -> InToolFlow. `memo_text` 가 비면 기본 문구를 쓴다.
 
     설명문은 이 저장소의 규약대로 **첫 글자를 anchor** 로 잡게 쓰고, 화면 안 위치
     단서를 함께 준다(tool 창에는 버튼이 많아 라벨만으로는 coarse 단계가 흔들린다).
     """
     from poc.workflow_3.vlm.ui_venus_mai_locator import TargetConfig
+
+    memo_text = memo_text or DEFAULT_MEMO_TEXT
 
     memo_print_flow = InToolFlow(
         name=FLOW_MEMO_PRINT,
@@ -1118,7 +1198,26 @@ def build_flows():
                 ),
                 # Memo Print 항목이 눌리지 않았다면 popup/편집 영역은 존재하지 않는다.
                 requires_previous=True,
-                input_text=DEFAULT_MEMO_TEXT,
+                input_text=memo_text,
+            ),
+            FlowStep(
+                TargetConfig(
+                    key="memo_print_close_button",
+                    description=(
+                        "the 'Close' button of the popup titled 'MemoPrint'. Use the "
+                        "first letter 'C' as the anchor, then click safely inside the "
+                        "Close button area. Choose the button that belongs to the "
+                        "MemoPrint popup, not the close control of the surrounding "
+                        "Remote Monitoring window."
+                    ),
+                ),
+                required=(("close",), ("닫기",)),
+                forbidden=("cancel", "terminat", "logout", "abort", "취소", "종료"),
+                # **편집 영역 클릭이 popup 존재의 유일한 증거다.** 그것이 실패했는데
+                # 'Close' 를 찾아 나서면 화면 어딘가의 다른 Close 를 누른다(엔진 계약
+                # ②와 같은 이유). 그때는 popup 이 열린 채 남지만, 엔지니어가 손으로
+                # 닫는 편이 정체불명의 Close 를 누르는 것보다 훨씬 낫다.
+                requires_previous=True,
             ),
         ],
     )
@@ -1146,13 +1245,22 @@ def build_flows():
                 TargetConfig(
                     key="worksheet_file_menu",
                     description=(
-                        "the 'File' menu in the menu bar of the Work Sheet window. Use "
-                        "the first letter 'F' as the anchor, then click safely inside "
-                        "the File menu area."
+                        "the 'File' menu of the window titled 'Work Sheet'. It is a "
+                        "SMALL text label in the menu bar just under that window's "
+                        "title bar, near the top-left corner of the Work Sheet window, "
+                        "close to the 'Work Sheet' title text itself. Use the first "
+                        "letter 'F' as the anchor, then click safely inside the small "
+                        "File label. Clicking it opens a dropdown menu."
                     ),
                 ),
                 required=(("file",), ("파일",)),
-                forbidden=("edit", "view", "help"),
+                # **형제 메뉴 이름을 금지어로 두면 안 된다.** OCR crop 은 클릭 지점
+                # 좌우 30% 를 담으므로 메뉴 바에서는 Edit/View/Help 가 반드시 함께
+                # 읽힌다. `classify_label` 은 forbidden 을 required 보다 먼저 보고
+                # forbidden 은 lenient 에서도 막으므로, 그 목록이 File 클릭을 스스로
+                # 막았다(오피스 1회차 실패). File 자체는 드롭다운만 여는 무해한
+                # 클릭이라 금지어가 필요 없다 - 확인은 required 가 한다.
+                forbidden=(),
             ),
             FlowStep(
                 TargetConfig(
@@ -1164,7 +1272,11 @@ def build_flows():
                     ),
                 ),
                 required=(("exit",), ("종료",)),
-                forbidden=("export", "save", "print"),
+                # 같은 이유로 비운다 - File 드롭다운에는 Save/Print/Export 가 당연히
+                # 함께 있어서, 금지어로 두면 Exit 를 읽어 놓고도 막힌다. 대신 문구를
+                # 확정하는 진단 실행에서는 `DEMO_RCS_CONFIRM=strict` 가 'exit' 를
+                # 실제로 읽었을 때만 누르게 한다.
+                forbidden=(),
                 # Exit 는 File 이 드롭다운을 열어야만 존재한다 - File 이 실패하면
                 # 열리지도 않은 메뉴 자리를 누르게 되므로 건너뛴다.
                 requires_previous=True,
@@ -1242,6 +1354,9 @@ def _build_action_fn(
     reveal_x_ratio: float,
     reveal_y_ratio: float,
     alt_settle_sec: float,
+    shift_settle_sec: float,
+    post_type_wait_sec: float,
+    memo_text: str,
     tag: str,
 ):
     """장비별 창 안 조작 협력자 (VLM 좌표 + OCR 확인 + 클릭).
@@ -1265,7 +1380,7 @@ def _build_action_fn(
     from poc.workflow_3.vlm.ui_venus_mai_locator import analyze_window_target
 
     debug_dir = DEBUG_IMAGE_DIR / "demo_rcs_flow" / tag
-    flows = build_flows()
+    flows = build_flows(memo_text)
 
     def _locate(image, target):
         result = analyze_window_target(
@@ -1381,6 +1496,8 @@ def _build_action_fn(
                 action_enabled=settings.action_enabled and settings.typing_enabled,
                 sleep_fn=time.sleep,
                 char_delay_sec=char_type_delay_sec,
+                shift_settle_sec=shift_settle_sec,
+                post_dwell_sec=post_type_wait_sec,
             ),
             reveal_fn=_reveal if reveal_enabled else None,
             sleep_fn=time.sleep,
@@ -1502,6 +1619,9 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
     reveal_x_ratio = _env_float("DEMO_RCS_REVEAL_X_RATIO", DEFAULT_REVEAL_X_RATIO)
     reveal_y_ratio = _env_float("DEMO_RCS_REVEAL_Y_RATIO", DEFAULT_REVEAL_Y_RATIO)
     alt_settle_sec = _env_float("DEMO_RCS_ALT_SETTLE_SEC", 0.3)
+    shift_settle_sec = _env_float("DEMO_RCS_SHIFT_SETTLE_SEC", 0.12)
+    post_type_wait_sec = _env_float("DEMO_RCS_POST_TYPE_WAIT_SEC", 2.0)
+    memo_text = parse_memo_text(os.environ.get("DEMO_RCS_MEMO_TEXT"), DEFAULT_MEMO_TEXT)
     tag = make_timestamp_tag(time.time())
 
     assigned = ", ".join(
@@ -1513,7 +1633,8 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
         f"창안조작={'on' if flow_enabled else 'off'}"
         f"(확인={confirm_policy}, 재시도={flow_attempts}, "
         f"클릭전대기={pre_click_settle:.1f}s, 누름유지={click_hold_sec:.2f}s), "
-        f"글자간격={char_type_delay_sec:.2f}s, "
+        f"글자간격={char_type_delay_sec:.2f}s(Shift대기={shift_settle_sec:.2f}s, "
+        f"입력후체류={post_type_wait_sec:.1f}s), "
         f"가림해제={'on' if reveal_enabled else 'off'}"
         f"(Alt+click {reveal_attempts}회, 지점 x={reveal_x_ratio:.2f}/y={reveal_y_ratio:.2f}, "
         f"Alt대기={alt_settle_sec:.2f}s), "
@@ -1544,6 +1665,9 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
                 reveal_x_ratio=reveal_x_ratio,
                 reveal_y_ratio=reveal_y_ratio,
                 alt_settle_sec=alt_settle_sec,
+                shift_settle_sec=shift_settle_sec,
+                post_type_wait_sec=post_type_wait_sec,
+                memo_text=memo_text,
                 tag=tag,
             )
             if flow_enabled
@@ -1612,11 +1736,13 @@ __all__ = [
     "covering_window_point",
     "main",
     "parse_flow_map",
+    "parse_memo_text",
     "parse_tool_ids",
     "perform_remote_click",
     "resolve_flow_name",
     "run_demonstration",
     "run_in_tool_flow",
+    "shift_plan",
     "type_multiline_text",
     "visit_tool",
 ]

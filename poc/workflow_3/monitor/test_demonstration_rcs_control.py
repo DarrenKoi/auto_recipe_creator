@@ -466,27 +466,35 @@ def test_resolve_flow_name_rejects_an_unknown_flow_name():
 # ------------------------------------------------------------------
 
 
+def _step_by_key(flow_name, key):
+    """흐름에서 key 로 step 을 집는다. 마지막 step 에 기대면 step 이 늘 때 깨진다."""
+    for step in build_flows()[flow_name].steps:
+        if step.target.key == key:
+            return step
+    raise AssertionError(f"{flow_name} 에 {key} step 이 없다")
+
+
 def _flow_keys(flow):
     return [flow.opener.target.key] + [step.target.key for step in flow.steps]
 
 
-def test_memo_print_flow_is_utility_then_memo_print_then_editor():
+def test_memo_print_flow_opens_utility_then_the_menu_item_then_the_editor():
     flow = build_flows()["memo_print"]
 
-    assert _flow_keys(flow) == [
+    assert _flow_keys(flow)[:3] == [
         "utility_button", "memo_print_menu_item", "memo_print_editor",
     ]
 
 
 def test_memo_print_editor_receives_the_exact_two_line_message():
-    editor_step = build_flows()["memo_print"].steps[-1]
+    editor_step = _step_by_key("memo_print", "memo_print_editor")
 
     assert editor_step.input_text == "Infra. Tech Center!!\nOne Stop Solution"
     assert editor_step.input_text == demo.DEFAULT_MEMO_TEXT
 
 
 def test_memo_print_editor_depends_on_selecting_the_menu_item():
-    editor_step = build_flows()["memo_print"].steps[-1]
+    editor_step = _step_by_key("memo_print", "memo_print_editor")
 
     assert editor_step.requires_previous is True
 
@@ -569,11 +577,16 @@ def test_flow_types_only_after_clicking_the_configured_editor():
     )
 
     assert status == "memo_print:ok"
-    assert screen.clicks == ["utility_button", "memo_print_menu_item", "memo_print_editor"]
-    assert screen.events[-2:] == [
-        "click:memo_print_editor",
-        "type:memo_print_editor:Infra. Tech Center!!\nOne Stop Solution",
+    assert screen.clicks == [
+        "utility_button", "memo_print_menu_item", "memo_print_editor",
+        "memo_print_close_button",
     ]
+    # 입력은 편집 영역 클릭 **직후**, Close 는 그 뒤다.
+    typed_at = screen.events.index(
+        "type:memo_print_editor:Infra. Tech Center!!\nOne Stop Solution"
+    )
+    assert screen.events[typed_at - 1] == "click:memo_print_editor"
+    assert screen.events[-1] == "click:memo_print_close_button"
 
 
 def test_memo_print_title_does_not_block_the_editor_focus():
@@ -582,6 +595,7 @@ def test_memo_print_title_does_not_block_the_editor_focus():
         "utility_button": ["Utility"],
         "memo_print_menu_item": ["Memo", "Print"],
         "memo_print_editor": ["MemoPrint"],
+        "memo_print_close_button": ["Close"],
     })
 
     status = run_in_tool_flow(
@@ -992,7 +1006,7 @@ def test_memo_editor_is_gated_by_a_real_label_so_strict_can_reject_it():
     """`required=()` 는 정책을 아예 건너뛴다(_confirm_point 조기 반환) - 타이핑엔 부적합."""
     from poc.workflow_3.monitor.share_request import accepts_label, classify_label
 
-    editor = build_flows()["memo_print"].steps[-1]
+    editor = _step_by_key("memo_print", "memo_print_editor")
 
     assert editor.required, "빈 required 는 strict 에서도 무검증 통과가 된다"
     assert classify_label(["MemoPrint"], editor.required, editor.forbidden) == "confirmed"
@@ -1010,7 +1024,7 @@ def test_memo_editor_rejects_a_recipe_field_read_under_strict():
     """popup 이 안 떴는데 눌린 자리가 다른 필드면 strict 에서 타이핑이 막혀야 한다."""
     from poc.workflow_3.monitor.share_request import accepts_label, classify_label
 
-    editor = build_flows()["memo_print"].steps[-1]
+    editor = _step_by_key("memo_print", "memo_print_editor")
 
     verdict = classify_label(["Recipe", "Name"], editor.required, editor.forbidden)
     assert accepts_label(verdict, "strict") is False
@@ -1339,3 +1353,176 @@ def test_alt_hold_hooks_skip_pressing_when_aborted_but_release_is_still_safe():
     release()
 
     assert keyboard.events == []
+
+
+# ------------------------------------------------------------------
+# 오피스 1회차 실측 (2026-08-24) - 두 가지가 드러났다.
+#
+# ① 메모에 **Shift 글자만** 빠졌다: "Infra. Tech Center!! / One Stop Solution" 이
+#    "nfra. ech enter / ne top olution" 으로 들어갔다. 빠진 것은 정확히
+#    I T C !! O S S - 전부 Shift 를 함께 눌러야 나오는 글자다. pynput 의
+#    `type()` 은 Shift down/키/Shift up 을 간격 없이 보내는데, 원격은 입력을
+#    샘플링하므로 그 조합이 한 틱 사이로 통째로 빠져나간다(클릭이 삼켜진 것과 같은
+#    원인이며 `DEMO_RCS_CLICK_HOLD_SEC`/`ALT_SETTLE_SEC` 이 생긴 이유와 같다).
+# ② Work Sheet 의 File 클릭이 실패했다 - 아래 절 참조.
+# ------------------------------------------------------------------
+
+
+def test_shift_characters_get_their_own_dwell_so_the_remote_registers_them():
+    keyboard = _KeyboardSpy()
+
+    demo.type_multiline_text(
+        "aB", "memo",
+        action_enabled=True,
+        keyboard=keyboard,
+        enter_key="ENTER",
+        shift_key="SHIFT",
+        sleep_fn=lambda sec: keyboard.events.append(("sleep", sec)),
+        char_delay_sec=0.0,
+        shift_settle_sec=0.12,
+    )
+
+    assert keyboard.events == [
+        ("type", "a"), ("sleep", 0.0),
+        # Shift 를 잡고 -> 한 틱 기다리고 -> 기본 키를 눌렀다 놓고 -> 또 한 틱 -> 놓는다.
+        ("press", "SHIFT"), ("sleep", 0.12),
+        ("press", "b"), ("release", "b"), ("sleep", 0.12),
+        ("release", "SHIFT"), ("sleep", 0.0),
+    ]
+
+
+def test_lowercase_typing_is_unchanged():
+    """소문자는 오피스에서 정상 입력됐다 - 건드릴 이유가 없다."""
+    keyboard = _KeyboardSpy()
+
+    demo.type_multiline_text(
+        "abc", "memo", action_enabled=True, keyboard=keyboard, enter_key="ENTER",
+        shift_key="SHIFT", sleep_fn=lambda sec: None, char_delay_sec=0.0,
+    )
+
+    assert keyboard.events == [("type", c) for c in "abc"]
+
+
+def test_exclamation_mark_is_typed_as_shift_plus_its_base_key():
+    """'!!' 도 함께 사라졌다 - Shift+1 이라서다(US 기호 배열)."""
+    keyboard = _KeyboardSpy()
+
+    demo.type_multiline_text(
+        "!", "memo", action_enabled=True, keyboard=keyboard, enter_key="ENTER",
+        shift_key="SHIFT", sleep_fn=lambda sec: None, char_delay_sec=0.0,
+    )
+
+    assert keyboard.events == [
+        ("press", "SHIFT"), ("press", "1"), ("release", "1"), ("release", "SHIFT"),
+    ]
+
+
+def test_shift_is_released_even_when_the_key_press_explodes():
+    """Shift 가 눌린 채 남으면 이후 입력과 클릭이 전부 변질된다."""
+
+    class _Boom(_KeyboardSpy):
+        def press(self, key):
+            super().press(key)
+            if key == "b":
+                raise RuntimeError("press boom")
+
+    keyboard = _Boom()
+
+    with pytest.raises(RuntimeError, match="press boom"):
+        demo.type_multiline_text(
+            "B", "memo", action_enabled=True, keyboard=keyboard, enter_key="ENTER",
+            shift_key="SHIFT", sleep_fn=lambda sec: None, char_delay_sec=0.0,
+        )
+
+    assert keyboard.events[-1] == ("release", "SHIFT")
+
+
+def test_enter_is_never_shifted():
+    keyboard = _KeyboardSpy()
+
+    demo.type_multiline_text(
+        "A\nb", "memo", action_enabled=True, keyboard=keyboard, enter_key="ENTER",
+        shift_key="SHIFT", sleep_fn=lambda sec: None, char_delay_sec=0.0,
+    )
+
+    assert ("press", "ENTER") in keyboard.events
+    # Enter 앞에서 Shift 는 이미 놓여 있다.
+    enter_at = keyboard.events.index(("press", "ENTER"))
+    assert keyboard.events[enter_at - 1] == ("release", "SHIFT")
+
+
+def test_typing_holds_after_the_last_character_so_the_memo_can_be_read():
+    """"글자를 다 넣은 뒤 2초 기다리고 Close" (사용자 지시, 2026-08-24)."""
+    sleeps = []
+
+    demo.type_multiline_text(
+        "ab", "memo", action_enabled=True,
+        keyboard=_KeyboardSpy(), enter_key="ENTER", shift_key="SHIFT",
+        sleep_fn=sleeps.append, char_delay_sec=0.0, post_dwell_sec=2.0,
+    )
+
+    assert sleeps[-1] == 2.0
+
+
+def test_shift_plan_maps_upper_and_symbol_characters():
+    assert demo.shift_plan("S") == ("s", True)
+    assert demo.shift_plan("s") == ("s", False)
+    assert demo.shift_plan("!") == ("1", True)
+    assert demo.shift_plan(".") == (".", False)
+    assert demo.shift_plan("1") == ("1", False)
+
+
+# --- MemoPrint 를 닫고 나온다 ---
+
+
+def test_memo_print_flow_ends_by_closing_the_popup():
+    flow = build_flows()["memo_print"]
+
+    assert _flow_keys(flow) == [
+        "utility_button", "memo_print_menu_item", "memo_print_editor",
+        "memo_print_close_button",
+    ]
+
+
+def test_memo_close_is_skipped_when_the_popup_was_never_confirmed():
+    """편집 영역 클릭이 popup 존재의 증거다. 그게 없으면 'Close' 를 찾아 나서면
+    화면 어딘가의 다른 Close 를 누른다(엔진 계약 ②와 같은 이유)."""
+    close_step = build_flows()["memo_print"].steps[-1]
+
+    assert close_step.requires_previous is True
+    assert close_step.required == (("close",), ("닫기",))
+
+
+# --- Work Sheet: File 클릭 실패 (오피스 1회차) ---
+
+
+def test_menu_siblings_are_not_forbidden_tokens():
+    """`classify_label` 은 forbidden 을 required 보다 **먼저** 보고, forbidden 은
+    lenient 에서도 막는다. 메뉴 항목의 crop 에는 형제 항목이 반드시 들어오므로
+    'edit'/'view' 를 금지어로 두면 File 클릭이 스스로 막힌다 - 오피스 1회차 실패."""
+    from poc.workflow_3.monitor.share_request import accepts_label, classify_label
+
+    file_step = build_flows()["worksheet"].steps[0]
+    verdict = classify_label(["File", "Edit", "View"], file_step.required, file_step.forbidden)
+
+    assert verdict == "confirmed"
+    assert accepts_label(verdict, "strict") is True
+
+
+def test_dropdown_items_are_not_forbidden_tokens_for_exit():
+    """File 드롭다운에는 Save/Print 가 당연히 함께 있다 - 금지어로 두면 Exit 도 막힌다."""
+    from poc.workflow_3.monitor.share_request import accepts_label, classify_label
+
+    exit_step = build_flows()["worksheet"].steps[-1]
+    verdict = classify_label(["Save", "Print", "Exit"], exit_step.required, exit_step.forbidden)
+
+    assert verdict == "confirmed"
+    assert accepts_label(verdict, "lenient") is True
+
+
+def test_file_menu_description_says_it_is_a_small_label_near_the_title():
+    """VLM 이 못 찾은 요소다 - 설명문에 '작다' 와 '제목 근처' 가 들어가야 한다."""
+    description = build_flows()["worksheet"].steps[0].target.description.lower()
+
+    assert "small" in description
+    assert "title" in description

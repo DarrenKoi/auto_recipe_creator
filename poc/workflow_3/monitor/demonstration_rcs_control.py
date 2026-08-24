@@ -29,20 +29,22 @@ Utility 메뉴와 MemoPrint 창 열기 / 메모 입력 / 창 닫기뿐이다. re
     DEMO_RCS_TOOL_IDS="MCD019,MCDC22,MCD916" \
       uv run python poc/workflow_3/monitor/demonstration_rcs_control.py
 
-env (`DEMO_RCS_*` 네임스페이스 - 루프의 `ALIGN_FAIL_*` 과 섞지 않는다):
+env (`DEMO_RCS_*` 네임스페이스 - 루프의 `ALIGN_FAIL_*` 과 섞지 않는다).
+기본값은 파일 상단 타이밍 상수 블록에 있고, 그중 **원격 입력 성사 조건 4개는
+줄이지 않는다**(PRE_CLICK_SETTLE / CLICK_HOLD / ALT_SETTLE / SHIFT_SETTLE):
 
     DEMO_RCS_TOOL_IDS       접속할 장비 (콤마/공백 구분, 기본 "MCD019,MCDC22")
-    DEMO_RCS_DWELL_SEC      접속 화면 체류 시간 (기본 3.0) - 관객이 볼 시간
-    DEMO_RCS_GAP_SEC        창을 닫고 다음 장비까지 간격 (기본 3.0)
+    DEMO_RCS_DWELL_SEC      접속 화면 체류 시간 (기본 2.1) - 관객이 볼 시간
+    DEMO_RCS_GAP_SEC        창을 닫고 다음 장비까지 간격 (기본 2.1)
     DEMO_RCS_SCROLL_NOTCHES View 탭에서 아래/위로 굴릴 휠 눈금 수 (기본 3)
-    DEMO_RCS_SCROLL_PAUSE_SEC  휠 한 눈금 사이 간격 (기본 0.6)
+    DEMO_RCS_SCROLL_PAUSE_SEC  휠 한 눈금 사이 간격 (기본 0.42)
     DEMO_RCS_REPEAT         장비 순회 반복 횟수 (기본 1)
     DEMO_RCS_VIEW_TAB       View 탭 훑기 on/off (기본 1)
     DEMO_RCS_FLOW           tool 창 안 조작 on/off (기본 1)
     DEMO_RCS_FLOWS          장비별 흐름 배정 (기본 "MCD019=memo_print,MCDC22=worksheet")
                             고를 수 있는 흐름: memo_print / optics / worksheet
     DEMO_RCS_DEFAULT_FLOW   목록에 없는 장비의 흐름 (기본 memo_print)
-    DEMO_RCS_FLOW_SETTLE_SEC      창/드롭다운이 그려질 대기 (기본 1.5)
+    DEMO_RCS_FLOW_SETTLE_SEC      창/드롭다운이 그려질 대기 (기본 1.05)
     DEMO_RCS_FLOW_ATTEMPTS        여는 버튼 재시도 횟수 (기본 2)
     DEMO_RCS_CONFIRM        라벨 확인 정책 strict|lenient|off (기본 lenient)
                             lenient 도 금지 토큰(cancel/exit 등)은 그대로 막는다
@@ -50,7 +52,7 @@ env (`DEMO_RCS_*` 네임스페이스 - 루프의 `ALIGN_FAIL_*` 과 섞지 않�
                             원격 뷰가 커서를 따라올 시간 - 짧으면 클릭이 삼켜진다
     DEMO_RCS_CLICK_HOLD_SEC 버튼을 누르고 있는 시간 (기본 0.15)
                             즉시 press/release 는 원격 샘플링 사이로 빠져나간다
-    DEMO_RCS_CHAR_TYPE_DELAY_SEC  메모 글자 사이 입력 간격 (기본 0.08)
+    DEMO_RCS_CHAR_TYPE_DELAY_SEC  메모 글자 사이 입력 간격 (기본 0.056)
                             원격 화면이 입력을 샘플링하므로 한 번에 보내지 않는다
     DEMO_RCS_SHIFT_MODE     대문자 입력 방식 caps|shift|type (기본 caps)
                             caps = Caps Lock 타건(원격이 중계하고 장비가 상태를 기억)
@@ -58,7 +60,7 @@ env (`DEMO_RCS_*` 네임스페이스 - 루프의 `ALIGN_FAIL_*` 과 섞지 않�
                             type = pynput 에 그대로 맡김(1회차: 글자가 사라짐)
     DEMO_RCS_SHIFT_SETTLE_SEC  수정자를 잡고/놓기 전 대기 (기본 0.12)
                             대문자가 여전히 어긋나면 이 값을 올린다
-    DEMO_RCS_POST_TYPE_WAIT_SEC  입력을 끝내고 Close 를 누르기 전 대기 (기본 2.0)
+    DEMO_RCS_POST_TYPE_WAIT_SEC  입력을 끝내고 Close 를 누르기 전 대기 (기본 1.4)
     DEMO_RCS_MEMO_TEXT      메모 문구 교체 ('\\n' 이 줄바꿈)
     ACTION_LOGIN_TYPING_ENABLED=0  클릭은 두고 **메모 입력만** 끈다(롤백 스위치)
     DEMO_RCS_REVEAL         여는 버튼이 가려졌을 때 Alt+click 으로 밀어내기 (기본 1)
@@ -90,6 +92,33 @@ LOG_COMPONENT = "demonstration_rcs_control"
 # 시연 기본 장비. env 로 덮을 수 있지만, 아무것도 안 줘도 바로 돌아야 시연 직전에
 # 셸 따옴표와 씨름하지 않는다.
 DEFAULT_TOOL_IDS = ["MCD019", "MCDC22"]
+
+# ------------------------------------------------------------------
+# 시연 속도(초). 두 종류를 **반드시 구분한다**.
+#
+# ① 동작 사이의 간격 - 관객이 보는 속도다. 2026-08-24 사용자 요청으로 종전 대비 30%
+#    줄였다(체류 3.0->2.1, 간격 3.0->2.1, step 1.5->1.05, 글자 0.08->0.056,
+#    입력후 2.0->1.4, 휠 0.6->0.42). 더 줄이려면 여기를 고친다.
+# ② 원격 입력이 **성사되는 조건** - 오피스 실측 3회로 얻은 값이라 줄이지 않는다.
+#    이 값을 깎으면 커서는 가는데 클릭이 안 먹거나(1·2회차) 대문자가 사라진다(3회차).
+#    시연이 30% 빠른 것과 시연이 안 되는 것은 비교 대상이 아니다.
+#
+# env(`DEMO_RCS_*`)가 항상 이긴다 - 오피스에서 값을 찾을 때는 env, 찾은 뒤에는 여기.
+# ------------------------------------------------------------------
+
+# ① 간격 - 줄여도 되는 것.
+DWELL_SEC = 2.1              # 접속 화면 체류
+GAP_SEC = 2.1                # 창을 닫고 다음 장비까지
+SCROLL_PAUSE_SEC = 0.42      # View 탭 휠 한 눈금 사이
+FLOW_SETTLE_SEC = 1.05       # 창/드롭다운이 그려질 대기
+CHAR_TYPE_DELAY_SEC = 0.056  # 메모 글자 사이
+POST_TYPE_WAIT_SEC = 1.4     # 입력을 끝내고 Close 를 누르기 전
+
+# ② 입력 성사 조건 - 줄이지 않는 것.
+PRE_CLICK_SETTLE_SEC = 0.6   # 커서 도착 -> 클릭. 원격이 커서를 따라올 시간.
+CLICK_HOLD_SEC = 0.15        # 누름 유지. 즉시 press/release 는 샘플링 사이로 빠진다.
+ALT_SETTLE_SEC = 0.3         # Alt 를 잡고 -> 클릭. 수정자가 등록될 틱.
+SHIFT_SETTLE_SEC = 0.12      # Caps/Shift 를 잡고/놓기 전. 같은 이유.
 
 # MCD019 MemoPrint 에 입력할 시연 문구. 줄바꿈마다 Enter 를 누른다.
 DEFAULT_MEMO_TEXT = (
@@ -1698,14 +1727,14 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
     settings = settings or load_workflow3_settings()
 
     tool_ids = parse_tool_ids(os.environ.get("DEMO_RCS_TOOL_IDS"), DEFAULT_TOOL_IDS)
-    dwell_sec = _env_float("DEMO_RCS_DWELL_SEC", 3.0)
-    gap_sec = _env_float("DEMO_RCS_GAP_SEC", 3.0)
+    dwell_sec = _env_float("DEMO_RCS_DWELL_SEC", DWELL_SEC)
+    gap_sec = _env_float("DEMO_RCS_GAP_SEC", GAP_SEC)
     notches = _env_int("DEMO_RCS_SCROLL_NOTCHES", 3)
-    pause_sec = _env_float("DEMO_RCS_SCROLL_PAUSE_SEC", 0.6)
+    pause_sec = _env_float("DEMO_RCS_SCROLL_PAUSE_SEC", SCROLL_PAUSE_SEC)
     repeat = max(1, _env_int("DEMO_RCS_REPEAT", 1))
     view_enabled = _env_flag("DEMO_RCS_VIEW_TAB", True)
     flow_enabled = _env_flag("DEMO_RCS_FLOW", True)
-    flow_settle_sec = _env_float("DEMO_RCS_FLOW_SETTLE_SEC", 1.5)
+    flow_settle_sec = _env_float("DEMO_RCS_FLOW_SETTLE_SEC", FLOW_SETTLE_SEC)
     flow_attempts = max(1, _env_int("DEMO_RCS_FLOW_ATTEMPTS", 2))
     flow_map = parse_flow_map(os.environ.get("DEMO_RCS_FLOWS"), DEFAULT_TOOL_FLOWS)
     default_flow = os.environ.get("DEMO_RCS_DEFAULT_FLOW", FLOW_MEMO_PRINT).strip().lower()
@@ -1713,17 +1742,17 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
         os.environ.get("DEMO_RCS_CONFIRM", DEFAULT_CONFIRM_POLICY).strip().lower()
         or DEFAULT_CONFIRM_POLICY
     )
-    pre_click_settle = _env_float("DEMO_RCS_PRE_CLICK_SETTLE_SEC", 0.6)
-    click_hold_sec = _env_float("DEMO_RCS_CLICK_HOLD_SEC", 0.15)
-    char_type_delay_sec = _env_float("DEMO_RCS_CHAR_TYPE_DELAY_SEC", 0.08)
+    pre_click_settle = _env_float("DEMO_RCS_PRE_CLICK_SETTLE_SEC", PRE_CLICK_SETTLE_SEC)
+    click_hold_sec = _env_float("DEMO_RCS_CLICK_HOLD_SEC", CLICK_HOLD_SEC)
+    char_type_delay_sec = _env_float("DEMO_RCS_CHAR_TYPE_DELAY_SEC", CHAR_TYPE_DELAY_SEC)
     reveal_enabled = _env_flag("DEMO_RCS_REVEAL", True)
     reveal_attempts = max(0, _env_int("DEMO_RCS_REVEAL_ATTEMPTS", 2))
     reveal_x_ratio = _env_float("DEMO_RCS_REVEAL_X_RATIO", DEFAULT_REVEAL_X_RATIO)
     reveal_y_ratio = _env_float("DEMO_RCS_REVEAL_Y_RATIO", DEFAULT_REVEAL_Y_RATIO)
-    alt_settle_sec = _env_float("DEMO_RCS_ALT_SETTLE_SEC", 0.3)
-    shift_settle_sec = _env_float("DEMO_RCS_SHIFT_SETTLE_SEC", 0.12)
+    alt_settle_sec = _env_float("DEMO_RCS_ALT_SETTLE_SEC", ALT_SETTLE_SEC)
+    shift_settle_sec = _env_float("DEMO_RCS_SHIFT_SETTLE_SEC", SHIFT_SETTLE_SEC)
     shift_mode = resolve_shift_mode(os.environ.get("DEMO_RCS_SHIFT_MODE"))
-    post_type_wait_sec = _env_float("DEMO_RCS_POST_TYPE_WAIT_SEC", 2.0)
+    post_type_wait_sec = _env_float("DEMO_RCS_POST_TYPE_WAIT_SEC", POST_TYPE_WAIT_SEC)
     memo_text = parse_memo_text(os.environ.get("DEMO_RCS_MEMO_TEXT"), DEFAULT_MEMO_TEXT)
     tag = make_timestamp_tag(time.time())
 

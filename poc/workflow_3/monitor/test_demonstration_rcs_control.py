@@ -1659,3 +1659,29 @@ def test_the_default_memo_only_risks_the_two_known_symbols():
     assert demo.shift_symbols(demo.DEFAULT_MEMO_TEXT) == [
         ("!", "1"), ("!", "1"), ('"', "'"), ('"', "'"),
     ]
+
+
+# ------------------------------------------------------------------
+# 시연 속도 (2026-08-24 사용자 요청: 30% 단축).
+#
+# 두 종류의 대기를 구분한다. **동작 사이의 간격**은 관객이 보는 속도이므로 줄여도
+# 되지만, **원격 입력이 성사되는 조건**은 오피스 실측 3회로 얻은 값이라 줄이지 않는다
+# (클릭이 삼켜지거나 대문자가 사라지면 시연 자체가 성립하지 않는다).
+# ------------------------------------------------------------------
+
+
+def test_pacing_waits_were_cut_by_thirty_percent():
+    assert demo.DWELL_SEC == pytest.approx(2.1)
+    assert demo.GAP_SEC == pytest.approx(2.1)
+    assert demo.SCROLL_PAUSE_SEC == pytest.approx(0.42)
+    assert demo.FLOW_SETTLE_SEC == pytest.approx(1.05)
+    assert demo.CHAR_TYPE_DELAY_SEC == pytest.approx(0.056)
+    assert demo.POST_TYPE_WAIT_SEC == pytest.approx(1.4)
+
+
+def test_input_landing_timings_are_not_cut():
+    """이 네 값은 '원격에서 클릭/키가 실제로 먹는가' 를 정한다 - 오피스 실측값 유지."""
+    assert demo.PRE_CLICK_SETTLE_SEC == pytest.approx(0.6)
+    assert demo.CLICK_HOLD_SEC == pytest.approx(0.15)
+    assert demo.ALT_SETTLE_SEC == pytest.approx(0.3)
+    assert demo.SHIFT_SETTLE_SEC == pytest.approx(0.12)

@@ -124,10 +124,13 @@ SHIFT_SETTLE_SEC = 0.12      # Shift 를 잡고/놓기 전. 같은 이유.
 CAPS_SETTLE_SEC = 0.4        # Caps 토글 전후. 토글은 링크를 건너 장비가 적용해야 한다.
 
 # MCD019 MemoPrint 에 입력할 시연 문구. 줄바꿈마다 Enter 를 누른다.
+# `!!` 와 큰따옴표는 뺐다(사용자 결정 2026-08-24). Shift 기호는 이 원격을 못 건너
+# `!`->`1`, `"`->`'` 로 찍혔다 - 화면에 틀리게 나올 글자를 문구에 남길 이유가 없다.
+# 이제 이 문구에 필요한 수정자는 전체를 감싸는 Caps 토글 한 쌍뿐이다.
 DEFAULT_MEMO_TEXT = (
-    "Infra. Tech Center!!\n"
+    "Infra. Tech Center\n"
     "One Stop Solution\n"
-    'This is the PoC of "Auto Recipe Creation".'
+    "This is the PoC of Auto Recipe Creation."
 )
 
 

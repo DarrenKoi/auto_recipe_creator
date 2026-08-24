@@ -1631,9 +1631,9 @@ def test_memo_has_three_lines_ending_with_the_poc_sentence():
     lines = demo.DEFAULT_MEMO_TEXT.split("\n")
 
     assert lines == [
-        "Infra. Tech Center!!",
+        "Infra. Tech Center",
         "One Stop Solution",
-        'This is the PoC of "Auto Recipe Creation".',
+        "This is the PoC of Auto Recipe Creation.",
     ]
 
 
@@ -1656,11 +1656,12 @@ def test_shift_symbols_reports_what_will_arrive_instead():
     assert demo.shift_symbols("no symbols here") == []
 
 
-def test_the_default_memo_only_risks_the_two_known_symbols():
-    """지금 문구에서 어긋날 수 있는 것은 '!!' 와 두 개의 큰따옴표뿐이다."""
-    assert demo.shift_symbols(demo.DEFAULT_MEMO_TEXT) == [
-        ("!", "1"), ("!", "1"), ('"', "'"), ('"', "'"),
-    ]
+def test_the_default_memo_has_no_untypeable_characters():
+    """`!!` 와 큰따옴표를 뺐다(사용자 결정 2026-08-24) - Shift 기호는 이 원격을 못
+    건너므로 `!`->`1`, `"`->`'` 로 화면에 찍혔다. 문구에 남겨 둘 이유가 없다.
+
+    이제 남은 수정자는 문구 전체를 감싸는 Caps 토글 한 쌍뿐이다."""
+    assert demo.shift_symbols(demo.DEFAULT_MEMO_TEXT) == []
 
 
 # ------------------------------------------------------------------

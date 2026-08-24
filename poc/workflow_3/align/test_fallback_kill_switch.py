@@ -16,6 +16,9 @@
 `uv run pytest poc/workflow_3/align/test_fallback_kill_switch.py` 로 실행.
 """
 
+from pathlib import Path
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -193,3 +196,45 @@ def test_live_search_stops_mid_loop_when_latched():
     assert outcome.status == "aborted"
     # pan_budget 10 을 다 돌았다면 capture 가 10회 이상 불렸을 것이다.
     assert state["n"] <= 3, f"래치 후에도 루프가 계속됐다 (capture {state['n']}회)"
+
+
+def test_pan_budget_default_is_halved():
+    """spiral 시도 상한 기본값 (2026-08-24 오피스 실측으로 10 -> 5)."""
+    assert live_search_mod.LiveSearchConfig().pan_budget == 5
+
+
+def test_auto_forwards_fallback_config_to_live_search(monkeypatch):
+    """correct_align_fail_auto 가 fallback_config 를 실제로 넘긴다.
+
+    이전에는 auto 가 이 인자를 받지도 넘기지도 않아 운영 루프가 pan_budget 을
+    바꿀 방법이 없었다(항상 라이브러리 기본값). 조용히 무시되면 "설정했는데 안
+    듣는다" 가 되므로 계약으로 고정한다.
+    """
+    _force_fallback(monkeypatch)
+    # assets 는 resolve_templates 로 바로 넘어가므로 필드만 있으면 된다.
+    fake_assets = SimpleNamespace(
+        eqp_id="MCD513", class_name="c", recipe_name="r", recipe_dir=Path("/tmp/x"),
+    )
+    monkeypatch.setattr(correction_mod, "resolve_assets_auto", lambda **k: fake_assets)
+    monkeypatch.setattr(
+        correction_mod, "resolve_templates",
+        lambda *a, **k: {"SEM": _template()},
+    )
+    seen = {}
+
+    def _capture_cfg(controller, templates, *, config, **k):
+        seen["pan_budget"] = config.pan_budget
+        return live_search_mod.LiveSearchOutcome(
+            status="exhausted", final_decision="low", best=None, pan_count=0, history=[]
+        )
+
+    monkeypatch.setattr(correction_mod, "live_align_search", _capture_cfg)
+
+    correction_mod.correct_align_fail_auto(
+        _RecordingController(),
+        config=CorrectionConfig(fallback_search_enabled=True),
+        fallback_config=live_search_mod.LiveSearchConfig(pan_budget=2),
+        dry_run=False,
+    )
+
+    assert seen["pan_budget"] == 2, "주입한 fallback_config 가 무시됐다"

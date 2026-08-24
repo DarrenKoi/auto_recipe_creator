@@ -120,7 +120,11 @@ class SEMMonitorController(Protocol):
 class LiveSearchConfig:
     """search policy 파라미터 (recipe/Tool 별 캘리브레이션 대상)."""
 
-    pan_budget: int = 10  # step 7 — pan(새 영역 탐색)만 카운트하는 hard cap.
+    # pan(새 영역 탐색)만 카운트하는 hard cap. 2026-08-24 오피스 실측으로 10 -> 5:
+    # 실장비에서 10회 spiral 은 stage 를 너무 오래 끌고 다녀 엔지니어가 개입할 수
+    # 없었다. 못 찾으면 빨리 포기하고 사람에게 넘기는 편이 낫다.
+    # 운영 루프는 Workflow3Settings.search_pan_budget(env ALIGN_FAIL_SEARCH_PAN_BUDGET)로 주입.
+    pan_budget: int = 5
     initial_zoom_out_steps: int = 3  # 시작 시 broad 시야 확보용 zoom-out.
     max_zoom_in_steps: int = 4  # Phase B 에서 candidate 당 zoom-in 상한.
     low_streak_limit: int = 5  # 연속 low → 엔지니어 escalation.

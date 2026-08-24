@@ -957,6 +957,7 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
         return _make_result(step, "skipped", started_at, settings)
 
     from poc.workflow_3.align.correction import CorrectionConfig, correct_align_fail_auto
+    from poc.workflow_3.align.live_search import LiveSearchConfig
 
     vlm_client = None
     try:
@@ -996,6 +997,8 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
                 consensus_max_events=settings.gather_max_events,
                 consensus_sync_timeout_sec=settings.consensus_sync_timeout_sec,
             ),
+            # spiral pan 상한만 운영 설정에서 주입(나머지는 라이브러리 기본값).
+            fallback_config=LiveSearchConfig(pan_budget=settings.search_pan_budget),
             dry_run=settings.correction_dry_run,
             debug_dir=debug_dir,
             eqp_id=eqp_id,

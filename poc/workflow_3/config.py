@@ -323,6 +323,9 @@ class Workflow3Settings(WorkflowSettings):
     # 다니는데, 그 사이 커서를 되찾기 어려워 "보정을 못 한 것" 보다 비용이 큰 상황이
     # 있다. 롤백/재활성은 ALIGN_FAIL_FALLBACK_SEARCH=1.
     fallback_search_enabled: bool = True
+    # fallback 이 켜져 있을 때 spiral pan 시도 상한. 낮출수록 stage 를 덜 끌고
+    # 다니는 대신 못 찾고 escalate 할 확률이 는다.
+    search_pan_budget: int = 5
     # PM 판독으로 OM/SEM 을 확정하지 못했을 때 보정을 보류할지(기본 on).
     # modality 를 틀리면 다른 template(IMAP0001 OM vs IMAP0002 SEM)로 매칭해 좌표가
     # 근본적으로 틀리므로, 추측해서 누르느니 엔지니어에게 넘긴다. off 면 sem_mode_default 사용.
@@ -444,6 +447,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         ok_button_vlm_service=_env_str("ALIGN_OK_BUTTON_VLM_SERVICE", "mai-ui"),
         ok_click_enabled=env_flag("ALIGN_FAIL_OK_CLICK", default=False),
         fallback_search_enabled=env_flag("ALIGN_FAIL_FALLBACK_SEARCH", default=True),
+        search_pan_budget=env_int("ALIGN_FAIL_SEARCH_PAN_BUDGET", 5),
         require_pm_mode=env_flag("ALIGN_FAIL_REQUIRE_PM_MODE", default=True),
         sem_mode_default=_env_str("ALIGN_SEM_MODE_DEFAULT", "SEM"),
         sem_controller_settle_sec=env_float("ALIGN_SEM_SETTLE_SEC", 0.5),

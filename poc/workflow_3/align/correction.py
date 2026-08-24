@@ -517,6 +517,7 @@ def correct_align_fail_auto(
     vlm_client=None,
     ok_locator: OkLocator | None = None,
     config: CorrectionConfig = CorrectionConfig(),
+    fallback_config: LiveSearchConfig | None = None,
     notify_fn: NotifyFn | None = None,
     dry_run: bool = True,
     debug_dir: Path | None = None,
@@ -561,6 +562,8 @@ def correct_align_fail_auto(
         vlm_client=vlm_client,
         ok_locator=ok_locator,
         config=config,
+        # None 이면 라이브러리 기본값(LiveSearchConfig()) - 인자를 안 넘기던 기존 동작 유지.
+        fallback_config=fallback_config or LiveSearchConfig(),
         notify_fn=notify_fn,
         dry_run=dry_run,
         debug_dir=debug_dir,

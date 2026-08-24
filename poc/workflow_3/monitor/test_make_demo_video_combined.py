@@ -7,10 +7,14 @@
 """
 
 import json
+import os
+from pathlib import Path
 
 import cv2
 import numpy as np
 
+from poc.workflow_3.monitor import make_demo_video
+from poc.workflow_3.monitor import make_demo_video_combined as combined
 from poc.workflow_3.monitor.make_demo_video_combined import (
     Trial,
     find_trial_dirs,
@@ -255,3 +259,99 @@ def test_trial_span_sec_is_zero_for_single_frame():
     assert Trial("1st Trial", "t", tmp := __import__("pathlib").Path("."), []).span_sec == 0.0
     assert Trial("1st Trial", "t", tmp, [(5.0, tmp)]).span_sec == 0.0
     print("[OK] test_trial_span_sec_is_zero_for_single_frame")
+
+
+# ------------------------------------------------------------------
+# 파일 상수 -> env 브리지 (셸 env 를 안 붙이고 파일만 고쳐 실행하는 경로).
+# ------------------------------------------------------------------
+
+
+def test_seed_env_applies_file_constants(monkeypatch):
+    """상단 상수는 env 로 흘러 기존 reader 가 그대로 읽는다."""
+    monkeypatch.delenv("DEMO_COMBINED_ROOT", raising=False)
+    monkeypatch.delenv("DEMO_COMBINED_TITLE_SEC", raising=False)
+    monkeypatch.setattr(combined, "ROOT", "/tmp/shots", raising=False)
+    monkeypatch.setattr(combined, "TITLE_SEC", 4.0, raising=False)
+
+    combined.seed_env_from_constants()
+
+    assert os.environ["DEMO_COMBINED_ROOT"] == "/tmp/shots"
+    assert os.environ["DEMO_COMBINED_TITLE_SEC"] == "4.0"
+    print("[OK] test_seed_env_applies_file_constants")
+
+
+def test_seed_env_lets_shell_env_win(monkeypatch, capsys):
+    """셸 env 가 이미 있으면 파일 상수는 지고, 그 사실이 콘솔에 남는다.
+
+    파일을 고쳤는데 예전 env 가 남아 다른 영상이 나가는 것이 제일 흔한 사고다.
+    """
+    monkeypatch.setenv("DEMO_COMBINED_ROOT", "/from/shell")
+    monkeypatch.setattr(combined, "ROOT", "/from/file", raising=False)
+
+    combined.seed_env_from_constants()
+
+    assert os.environ["DEMO_COMBINED_ROOT"] == "/from/shell"
+    assert "무시" in capsys.readouterr().out
+    print("[OK] test_seed_env_lets_shell_env_win")
+
+
+def test_seed_env_joins_list_constants(monkeypatch):
+    """경로/라벨은 리스트로 적을 수 있다 (콤마 문자열은 따옴표 실수가 잦다)."""
+    monkeypatch.delenv("DEMO_COMBINED_INPUT_DIRS", raising=False)
+    monkeypatch.delenv("DEMO_COMBINED_LABELS", raising=False)
+    monkeypatch.setattr(combined, "INPUT_DIRS", ["/a/recording", "/b/recording"], raising=False)
+    monkeypatch.setattr(combined, "LABELS", ["Baseline", "After tuning"], raising=False)
+
+    combined.seed_env_from_constants()
+
+    assert os.environ["DEMO_COMBINED_INPUT_DIRS"] == "/a/recording,/b/recording"
+    assert os.environ["DEMO_COMBINED_LABELS"] == "Baseline,After tuning"
+    print("[OK] test_seed_env_joins_list_constants")
+
+
+def test_seed_env_skips_unset_but_keeps_zero(monkeypatch):
+    """None/""=미설정, 0=유효한 값 (TITLE_SEC=0 은 '카드 없음'이지 미설정이 아니다)."""
+    monkeypatch.delenv("DEMO_COMBINED_ROOT", raising=False)
+    monkeypatch.delenv("DEMO_COMBINED_TITLE_SEC", raising=False)
+    monkeypatch.delenv("DEMO_VIDEO_OVERLAY", raising=False)
+    monkeypatch.setattr(combined, "ROOT", "", raising=False)
+    monkeypatch.setattr(combined, "TITLE_SEC", 0, raising=False)
+    monkeypatch.setattr(combined, "OVERLAY", False, raising=False)
+
+    combined.seed_env_from_constants()
+
+    assert "DEMO_COMBINED_ROOT" not in os.environ
+    assert os.environ["DEMO_COMBINED_TITLE_SEC"] == "0"
+    # bool 은 "False" 가 아니라 "0" 으로 내린다 (_env_int 가 읽어도 깨지지 않게).
+    assert os.environ["DEMO_VIDEO_OVERLAY"] == "0"
+    print("[OK] test_seed_env_skips_unset_but_keeps_zero")
+
+
+def test_seed_env_expands_per_trial_segments(monkeypatch):
+    """회차별 구간 dict 는 번호가 붙은 env 이름으로 펼쳐진다."""
+    monkeypatch.delenv("DEMO_COMBINED_SEGMENTS_2", raising=False)
+    monkeypatch.delenv("DEMO_COMBINED_SEGMENTS_3", raising=False)
+    monkeypatch.setattr(combined, "SEGMENTS_BY_TRIAL", {2: "10-90", 3: ""}, raising=False)
+
+    combined.seed_env_from_constants()
+
+    assert os.environ["DEMO_COMBINED_SEGMENTS_2"] == "10-90"
+    assert "DEMO_COMBINED_SEGMENTS_3" not in os.environ   # 빈 값은 설정하지 않는다.
+    print("[OK] test_seed_env_expands_per_trial_segments")
+
+
+def test_env_names_in_table_are_the_ones_actually_read():
+    """표의 env 이름이 실제로 읽히는 이름과 어긋나면 상수는 조용히 무시된다.
+
+    브리지의 유일한 실패 모드가 '이름 오타'라, 표를 소스 본문과 대조해 못박는다.
+    """
+    source = Path(combined.__file__).read_text(encoding="utf-8")
+    for const_name, env_name in combined._CONST_TO_ENV:
+        if env_name.startswith("DEMO_COMBINED_"):
+            assert source.count(f'"{env_name}"') >= 2, f"{const_name} -> {env_name} 미사용"
+    # 렌더 knob 은 make_demo_video 가 읽는 이름이라 이 파일 안에서 대조한다.
+    render_source = Path(make_demo_video.__file__).read_text(encoding="utf-8")
+    for _, env_name in combined._CONST_TO_ENV:
+        if env_name.startswith("DEMO_VIDEO_"):
+            assert env_name in source or env_name in render_source, env_name
+    print("[OK] test_env_names_in_table_are_the_ones_actually_read")

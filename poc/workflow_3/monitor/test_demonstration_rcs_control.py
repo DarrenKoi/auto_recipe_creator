@@ -164,7 +164,7 @@ def test_visit_tool_runs_the_in_tool_flow_before_closing_the_tool():
 
 
 def test_visit_tool_passes_the_tool_id_so_each_tool_gets_its_own_flow():
-    """MCD019 는 Optics, MCDC22 는 Work Sheet - 흐름 선택은 장비가 정한다."""
+    """MCD019 는 Memo Print, MCDC10 은 Work Sheet - 흐름 선택은 장비가 정한다."""
     seen = []
     _visit("MCDC22", action_fn=lambda tool_id, w, t, b: seen.append(tool_id) or "ok")
 
@@ -494,6 +494,12 @@ def test_memo_print_editor_depends_on_selecting_the_menu_item():
 
 def test_mcd019_uses_memo_print_by_default():
     assert DEFAULT_TOOL_FLOWS["mcd019"] == "memo_print"
+
+
+def test_mcdc10_uses_worksheet_instead_of_the_memo_default():
+    assert resolve_flow_name(
+        "MCDC10", DEFAULT_TOOL_FLOWS, "memo_print",
+    ) == "worksheet"
 
 
 def test_optics_flow_stays_selectable_after_memo_print_became_the_default():
@@ -1776,3 +1782,26 @@ def test_unknown_local_caps_state_is_not_guessed():
     _type("Ab", keyboard=keyboard, caps_state_fn=lambda: None)
 
     assert keyboard.events.count(("press", "CAPS")) == 2
+
+
+# ------------------------------------------------------------------
+# 시연 장비 배정 (2026-08-24 사용자 변경: MCDC22 -> MCDC10).
+# ------------------------------------------------------------------
+
+
+def test_default_tools_are_mcd019_and_mcdc10():
+    assert demo.DEFAULT_TOOL_IDS == ["MCD019", "MCDC10"]
+
+
+def test_mcdc10_runs_the_worksheet_flow_not_the_memo():
+    """MCD019 에서 memo_print 가 확인됐으니 같은 것을 반복할 이유가 없다 -
+    MCDC10 은 'File' 쪽(Work Sheet -> File -> Exit)만 보여준다."""
+    assert DEFAULT_TOOL_FLOWS["mcdc10"] == "worksheet"
+    assert DEFAULT_TOOL_FLOWS["mcd019"] == "memo_print"
+    assert "mcdc22" not in DEFAULT_TOOL_FLOWS
+
+
+def test_every_default_tool_has_a_flow_assigned():
+    """배정이 빠지면 기본 흐름(memo_print)으로 조용히 새어 두 장비가 같은 것을 한다."""
+    for tool in demo.DEFAULT_TOOL_IDS:
+        assert tool.lower() in DEFAULT_TOOL_FLOWS, tool

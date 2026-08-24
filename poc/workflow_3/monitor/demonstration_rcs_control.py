@@ -6,7 +6,7 @@
     RCS 실행 -> 로그인 -> View 탭 + 휠로 위아래 훑기 -> List 탭
       -> MCD019 접속 -> [Utility -> Memo Print -> 세 줄 메모 입력 -> Close] -> tool 창 닫기
                         (Utility 가 다른 창에 가려 안 보이면 Alt+click 으로 밀어낸다)
-      -> MCDC22 접속 -> [Work Sheet 아래 버튼 -> File -> Exit]    -> tool 창 닫기
+      -> MCDC10 접속 -> [Work Sheet 아래 버튼 -> File -> Exit]    -> tool 창 닫기
 
 장비마다 **다른 조작**을 보여주는 것이 요점이다 - 같은 동작을 반복하면 스크립트로
 보이고, 창을 열어 메뉴를 타고 들어갔다 빠져나오면 자동화로 보인다.
@@ -26,14 +26,14 @@ Utility 메뉴와 MemoPrint 창 열기 / 메모 입력 / 창 닫기뿐이다. re
 
 장비 목록만 바꿔서:
 
-    DEMO_RCS_TOOL_IDS="MCD019,MCDC22,MCD916" \
+    DEMO_RCS_TOOL_IDS="MCD019,MCDC10,MCD916" \
       uv run python poc/workflow_3/monitor/demonstration_rcs_control.py
 
 env (`DEMO_RCS_*` 네임스페이스 - 루프의 `ALIGN_FAIL_*` 과 섞지 않는다).
 기본값은 파일 상단 타이밍 상수 블록에 있고, 그중 **원격 입력 성사 조건 4개는
 줄이지 않는다**(PRE_CLICK_SETTLE / CLICK_HOLD / ALT_SETTLE / SHIFT_SETTLE):
 
-    DEMO_RCS_TOOL_IDS       접속할 장비 (콤마/공백 구분, 기본 "MCD019,MCDC22")
+    DEMO_RCS_TOOL_IDS       접속할 장비 (콤마/공백 구분, 기본 "MCD019,MCDC10")
     DEMO_RCS_DWELL_SEC      접속 화면 체류 시간 (기본 2.1) - 관객이 볼 시간
     DEMO_RCS_GAP_SEC        창을 닫고 다음 장비까지 간격 (기본 2.1)
     DEMO_RCS_SCROLL_NOTCHES View 탭에서 아래/위로 굴릴 휠 눈금 수 (기본 3)
@@ -41,7 +41,7 @@ env (`DEMO_RCS_*` 네임스페이스 - 루프의 `ALIGN_FAIL_*` 과 섞지 않�
     DEMO_RCS_REPEAT         장비 순회 반복 횟수 (기본 1)
     DEMO_RCS_VIEW_TAB       View 탭 훑기 on/off (기본 1)
     DEMO_RCS_FLOW           tool 창 안 조작 on/off (기본 1)
-    DEMO_RCS_FLOWS          장비별 흐름 배정 (기본 "MCD019=memo_print,MCDC22=worksheet")
+    DEMO_RCS_FLOWS          장비별 흐름 배정 (기본 "MCD019=memo_print,MCDC10=worksheet")
                             고를 수 있는 흐름: memo_print / optics / worksheet
     DEMO_RCS_DEFAULT_FLOW   목록에 없는 장비의 흐름 (기본 memo_print)
     DEMO_RCS_FLOW_SETTLE_SEC      창/드롭다운이 그려질 대기 (기본 1.05)
@@ -93,7 +93,7 @@ LOG_COMPONENT = "demonstration_rcs_control"
 
 # 시연 기본 장비. env 로 덮을 수 있지만, 아무것도 안 줘도 바로 돌아야 시연 직전에
 # 셸 따옴표와 씨름하지 않는다.
-DEFAULT_TOOL_IDS = ["MCD019", "MCDC22"]
+DEFAULT_TOOL_IDS = ["MCD019", "MCDC10"]
 
 # ------------------------------------------------------------------
 # 시연 속도(초). 두 종류를 **반드시 구분한다**.
@@ -205,7 +205,7 @@ class DemoRunResult:
 
 
 def parse_tool_ids(raw, default: list) -> list:
-    """"MCD019, MCDC22" 같은 문자열을 장비 목록으로 만든다. 비면 default.
+    """"MCD019, MCDC10" 같은 문자열을 장비 목록으로 만든다. 비면 default.
 
     중복은 **대소문자 무시**로 제거하되 첫 표기를 남긴다. 같은 장비를 두 번 열면
     두 번째 접속이 '이미 열려 있는 창' 을 만나 시연 흐름이 깨지기 때문이다.
@@ -1036,11 +1036,13 @@ FLOW_WORKSHEET = "worksheet"
 KNOWN_FLOW_NAMES = (FLOW_MEMO_PRINT, FLOW_OPTICS, FLOW_WORKSHEET)
 
 # 시연 기본 배정 - 장비마다 다른 조작을 보여줘야 "자동화" 로 보인다.
-DEFAULT_TOOL_FLOWS = {"mcd019": FLOW_MEMO_PRINT, "mcdc22": FLOW_WORKSHEET}
+# MCD019 에서 memo_print 는 오피스 확인됨(2026-08-24). 두 번째 장비는 MCDC10 으로
+# 바꾸고 **같은 것을 반복하지 않는다** - 'File' 쪽(Work Sheet -> File -> Exit)만 본다.
+DEFAULT_TOOL_FLOWS = {"mcd019": FLOW_MEMO_PRINT, "mcdc10": FLOW_WORKSHEET}
 
 
 def parse_flow_map(raw, default: dict) -> dict:
-    """"MCD019=memo_print,MCDC22=worksheet" 를 {소문자 장비: 흐름} 으로 만든다. 비면 default.
+    """"MCD019=memo_print,MCDC10=worksheet" 를 {소문자 장비: 흐름} 으로 만든다. 비면 default.
 
     형식이 깨진 항목은 버리고 계속한다 - 시연 직전 오타로 스크립트가 죽는 것보다,
     그 항목만 기본 흐름으로 도는 편이 낫다.

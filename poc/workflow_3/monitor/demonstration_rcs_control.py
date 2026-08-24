@@ -54,10 +54,12 @@ env (`DEMO_RCS_*` 네임스페이스 - 루프의 `ALIGN_FAIL_*` 과 섞지 않�
                             즉시 press/release 는 원격 샘플링 사이로 빠져나간다
     DEMO_RCS_CHAR_TYPE_DELAY_SEC  메모 글자 사이 입력 간격 (기본 0.056)
                             원격 화면이 입력을 샘플링하므로 한 번에 보내지 않는다
-    DEMO_RCS_SHIFT_MODE     대문자 입력 방식 caps|shift|type (기본 caps)
-                            caps = Caps Lock 타건(원격이 중계하고 장비가 상태를 기억)
+    DEMO_RCS_SHIFT_MODE     대문자 입력 방식 caps_all|caps|shift|type (기본 caps_all)
+                            caps_all = 문구 전체를 Caps 토글 한 쌍으로(전부 대문자)
+                            caps = 대문자마다 토글(4회차: memo 가 깨졌다)
                             shift = Shift 쥐기(2회차: 도착하지만 소문자로 들어옴)
                             type = pynput 에 그대로 맡김(1회차: 글자가 사라짐)
+    DEMO_RCS_CAPS_SETTLE_SEC  Caps 토글 전후 대기 (기본 0.4)
     DEMO_RCS_SHIFT_SETTLE_SEC  수정자를 잡고/놓기 전 대기 (기본 0.12)
                             대문자가 여전히 어긋나면 이 값을 올린다
     DEMO_RCS_POST_TYPE_WAIT_SEC  입력을 끝내고 Close 를 누르기 전 대기 (기본 1.4)
@@ -118,7 +120,8 @@ POST_TYPE_WAIT_SEC = 1.4     # 입력을 끝내고 Close 를 누르기 전
 PRE_CLICK_SETTLE_SEC = 0.6   # 커서 도착 -> 클릭. 원격이 커서를 따라올 시간.
 CLICK_HOLD_SEC = 0.15        # 누름 유지. 즉시 press/release 는 샘플링 사이로 빠진다.
 ALT_SETTLE_SEC = 0.3         # Alt 를 잡고 -> 클릭. 수정자가 등록될 틱.
-SHIFT_SETTLE_SEC = 0.12      # Caps/Shift 를 잡고/놓기 전. 같은 이유.
+SHIFT_SETTLE_SEC = 0.12      # Shift 를 잡고/놓기 전. 같은 이유.
+CAPS_SETTLE_SEC = 0.4        # Caps 토글 전후. 토글은 링크를 건너 장비가 적용해야 한다.
 
 # MCD019 MemoPrint 에 입력할 시연 문구. 줄바꿈마다 Enter 를 누른다.
 DEFAULT_MEMO_TEXT = (
@@ -593,17 +596,26 @@ SHIFTED_CHARS = {
 
 
 # 대문자를 만드는 방법. 오피스 실측 2회가 이 선택지를 만들었다(2026-08-24).
-#   caps  : Caps Lock 을 켜고 기본 키를 눌렀다 끄고(기본값). Caps Lock 은 평범한 vk
-#           타건이라 원격이 중계하고, **그 상태는 장비 쪽 OS 가 기억한다**.
-#   shift : Shift 를 쥔 채 기본 키를 누른다. 2회차에서 글자는 도착했지만 소문자로
-#           들어왔다 - 이 원격은 쥐고 있는 수정자를 함께 실어 보내지 않는다.
-#   type  : pynput 의 `type()` 에 그대로 맡긴다. 1회차 경로이며 **글자가 사라진다**
-#           (vk=0 유니코드 이벤트라 중계할 것이 없다). 원인 재확인용.
+#   caps_all : 문구 전체를 Caps Lock **한 쌍**으로 감싸고 모든 글자를 소문자 기본 키로
+#              보낸다 -> 전부 대문자로 찍힌다(기본값). 토글이 2번뿐이라 유실/경합
+#              위험이 최소이고, 실패해도 '전부 소문자' 라는 읽을 수 있는 형태로 어긋난다.
+#   caps     : 대문자마다 Caps 를 켜고 끈다. 4회차에서 이것이 memo 를 깨뜨렸다 -
+#              토글은 상태라서 (a) 장비가 적용하기 전에 글자가 도착하거나 (b) 24번 중
+#              하나만 유실되면 그 뒤 글자가 **전부** 반대 case 가 된다.
+#   shift    : Shift 를 쥔 채 기본 키를 누른다. 2회차에서 글자는 도착했지만 소문자로
+#              들어왔다 - 이 원격은 쥐고 있는 수정자를 실어 보내지 않는다. pynput 의
+#              `Key.shift` 는 Windows 에서 VK.LSHIFT + scancode 0x2A, 즉 실제 왼쪽
+#              Shift 와 같은 신호이므로 '다른 Shift 를 쓰면 된다' 는 선택지는 없다.
+#   type     : pynput 의 `type()` 에 그대로 맡긴다. 1회차 경로이며 **글자가 사라진다**
+#              (vk=0 유니코드 이벤트라 중계할 것이 없다). 원인 재확인용.
+SHIFT_MODE_CAPS_ALL = "caps_all"
 SHIFT_MODE_CAPS = "caps"
 SHIFT_MODE_SHIFT = "shift"
 SHIFT_MODE_TYPE = "type"
-KNOWN_SHIFT_MODES = (SHIFT_MODE_CAPS, SHIFT_MODE_SHIFT, SHIFT_MODE_TYPE)
-DEFAULT_SHIFT_MODE = SHIFT_MODE_CAPS
+KNOWN_SHIFT_MODES = (
+    SHIFT_MODE_CAPS_ALL, SHIFT_MODE_CAPS, SHIFT_MODE_SHIFT, SHIFT_MODE_TYPE,
+)
+DEFAULT_SHIFT_MODE = SHIFT_MODE_CAPS_ALL
 
 
 def resolve_shift_mode(raw) -> str:
@@ -649,6 +661,20 @@ def shift_symbols(text: str) -> list:
     return found
 
 
+def _local_caps_on():
+    """로컬 PC 의 Caps Lock 상태. 알 수 없으면 None(Windows 전용 조회).
+
+    None 과 False 를 **구분**하는 것이 요점이다 - 모르는 상태에서 토글하면 꺼져
+    있던 Caps 를 켜는 쪽이 될 수 있다.
+    """
+    try:
+        import ctypes
+
+        return bool(ctypes.windll.user32.GetKeyState(0x14) & 1)  # VK_CAPITAL
+    except Exception:
+        return None
+
+
 def type_multiline_text(
     text: str,
     key: str,
@@ -662,8 +688,10 @@ def type_multiline_text(
     sleep_fn=time.sleep,
     char_delay_sec: float = 0.08,
     shift_settle_sec: float = 0.12,
+    caps_settle_sec: float = 0.4,
     post_dwell_sec: float = 0.0,
     is_aborted_fn=None,
+    caps_state_fn=None,
 ) -> bool:
     """포커스된 입력창에 줄바꿈을 Enter 로 바꿔 천천히 입력한다.
 
@@ -715,17 +743,28 @@ def type_multiline_text(
 
     mode = resolve_shift_mode(shift_mode)
     if keyboard is None or enter_key is None or shift_key is None or caps_key is None:
+        key_enum = None
         try:
             from pynput.keyboard import Key, Controller as KeyboardController
+
+            key_enum = Key
         except ImportError as exc:
-            raise RuntimeError("pynput.keyboard 미설치 - 텍스트를 입력할 수 없음") from exc
-        keyboard = keyboard if keyboard is not None else KeyboardController()
-        enter_key = enter_key if enter_key is not None else Key.enter
-        shift_key = shift_key if shift_key is not None else Key.shift
-        caps_key = caps_key if caps_key is not None else Key.caps_lock
+            # 키보드 대역이 주입돼 있으면 계속한다 - 안 쓰는 특수 키 때문에 죽을 이유가
+            # 없다(Mac 단위 테스트가 이 경로로 돈다). 대역조차 없으면 진짜 실패다.
+            if keyboard is None:
+                raise RuntimeError(
+                    "pynput.keyboard 미설치 - 텍스트를 입력할 수 없음"
+                ) from exc
+        else:
+            keyboard = keyboard if keyboard is not None else KeyboardController()
+        if key_enum is not None:
+            enter_key = enter_key if enter_key is not None else key_enum.enter
+            shift_key = shift_key if shift_key is not None else key_enum.shift
+            caps_key = caps_key if caps_key is not None else key_enum.caps_lock
 
     delay = max(0.0, char_delay_sec)
     shift_settle = max(0.0, shift_settle_sec)
+    caps_settle = max(0.0, caps_settle_sec)
 
     def _tap(tap_key):
         keyboard.press(tap_key)
@@ -735,12 +774,29 @@ def type_multiline_text(
         """Caps Lock 을 켜고 기본 키를 눌렀다 끈다 - 상태를 장비가 기억한다."""
         _tap(caps_key)
         try:
-            sleep_fn(shift_settle)   # 장비가 Caps 상태를 반영할 틱.
+            sleep_fn(caps_settle)   # 장비가 Caps 상태를 반영할 틱(토글은 링크를 건넌다).
             keyboard.press(base)
             keyboard.release(base)
-            sleep_fn(shift_settle)
+            sleep_fn(caps_settle)
         finally:
             # 켠 채 남으면 이후 입력이 전부 대문자가 되고 로컬 PC 도 켜진 채 남는다.
+            _tap(caps_key)
+
+    def _restore_local_caps():
+        """엔지니어 PC 의 Caps 가 켜진 채 남았으면 끈다.
+
+        `SendInput` 은 전역이라 우리가 보낸 토글이 **로컬 PC 에도** 걸린다. 장비 쪽
+        상태는 읽을 수 없지만 로컬은 읽을 수 있으므로, 최소한 사람이 쓰는 키보드는
+        원래대로 돌려놓는다. **모르면(None) 건드리지 않는다** - 추측으로 토글하면
+        꺼져 있던 것을 켜는 쪽이 될 수 있다.
+        """
+        reader = caps_state_fn if caps_state_fn is not None else _local_caps_on
+        try:
+            state = reader()
+        except Exception:
+            return
+        if state is True:
+            print("[INFO] 로컬 Caps Lock 이 켜진 채라 되돌립니다.")
             _tap(caps_key)
 
     def _type_via_shift(base):
@@ -764,30 +820,55 @@ def type_multiline_text(
             f"[WARNING] Shift 기호는 이 원격을 못 건넙니다 - 다음이 어긋날 수 있습니다: "
             f"{pairs}. 화면이 이상하면 DEMO_RCS_MEMO_TEXT 로 문구에서 그 기호를 빼세요."
         )
-    for index, char in enumerate(text):
-        if aborted():
-            print(f"[WARNING] 긴급 해제 - 텍스트 입력 중단: target={key}, "
-                  f"입력={index}/{len(text)}글자")
-            return False
-        if char == "\n":
-            keyboard.press(enter_key)
-            keyboard.release(enter_key)
-            sleep_fn(delay)
-            continue
+    def _type_body():
+        """문구를 글자마다 보낸다. 긴급 해제로 중단되면 False."""
+        caps_on = mode == SHIFT_MODE_CAPS_ALL
+        for index, char in enumerate(text):
+            if aborted():
+                print(f"[WARNING] 긴급 해제 - 텍스트 입력 중단: target={key}, "
+                      f"입력={index}/{len(text)}글자")
+                return False
+            if char == "\n":
+                keyboard.press(enter_key)
+                keyboard.release(enter_key)
+                sleep_fn(delay)
+                continue
 
-        base, needs_shift = shift_plan(char)
-        if not needs_shift or mode == SHIFT_MODE_TYPE:
-            # 수정자가 필요 없는 글자는 1회차에서도 정상 입력됐다 - 건드리지 않는다.
-            keyboard.type(char)
-            sleep_fn(delay)
-            continue
+            if caps_on and char.isalpha():
+                # Caps 가 켜져 있으므로 **소문자 기본 키**를 보내면 대문자로 찍힌다.
+                # 글자마다 수정자가 없다 = 경합도 유실 위험도 없다.
+                keyboard.type(char.lower())
+                sleep_fn(delay)
+                continue
 
-        if mode == SHIFT_MODE_CAPS and char.isalpha():
-            _type_via_caps(base)
-        else:
-            # 기호(Caps Lock 이 못 바꾼다) 또는 shift 모드.
-            _type_via_shift(base)
-        sleep_fn(delay)
+            base, needs_shift = shift_plan(char)
+            if not needs_shift or mode == SHIFT_MODE_TYPE:
+                # 수정자가 필요 없는 글자는 1회차에서도 정상 입력됐다 - 건드리지 않는다.
+                keyboard.type(char)
+                sleep_fn(delay)
+                continue
+
+            if mode == SHIFT_MODE_CAPS and char.isalpha():
+                _type_via_caps(base)
+            else:
+                # 기호(Caps Lock 이 못 바꾼다) 또는 shift 모드.
+                _type_via_shift(base)
+            sleep_fn(delay)
+        return True
+
+    if mode == SHIFT_MODE_CAPS_ALL and any(c.isupper() for c in text):
+        # 토글을 **한 쌍**만 쓴다. 4회차에서 글자마다 토글한 것이 memo 를 깨뜨렸다:
+        # 24번 중 하나만 유실되면 장비의 caps 상태가 뒤집혀 그 뒤가 전부 틀린다.
+        _tap(caps_key)
+        try:
+            sleep_fn(caps_settle)
+            if not _type_body():
+                return False
+        finally:
+            _tap(caps_key)
+            _restore_local_caps()
+    elif not _type_body():
+        return False
 
     print(f"[INFO] 텍스트 입력 완료: target={key}, text={text!r}")
     if post_dwell_sec > 0:
@@ -1484,6 +1565,7 @@ def _build_action_fn(
     reveal_y_ratio: float,
     alt_settle_sec: float,
     shift_settle_sec: float,
+    caps_settle_sec: float,
     shift_mode: str,
     post_type_wait_sec: float,
     memo_text: str,
@@ -1627,6 +1709,7 @@ def _build_action_fn(
                 sleep_fn=time.sleep,
                 char_delay_sec=char_type_delay_sec,
                 shift_settle_sec=shift_settle_sec,
+                caps_settle_sec=caps_settle_sec,
                 shift_mode=shift_mode,
                 post_dwell_sec=post_type_wait_sec,
             ),
@@ -1752,6 +1835,7 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
     alt_settle_sec = _env_float("DEMO_RCS_ALT_SETTLE_SEC", ALT_SETTLE_SEC)
     shift_settle_sec = _env_float("DEMO_RCS_SHIFT_SETTLE_SEC", SHIFT_SETTLE_SEC)
     shift_mode = resolve_shift_mode(os.environ.get("DEMO_RCS_SHIFT_MODE"))
+    caps_settle_sec = _env_float("DEMO_RCS_CAPS_SETTLE_SEC", CAPS_SETTLE_SEC)
     post_type_wait_sec = _env_float("DEMO_RCS_POST_TYPE_WAIT_SEC", POST_TYPE_WAIT_SEC)
     memo_text = parse_memo_text(os.environ.get("DEMO_RCS_MEMO_TEXT"), DEFAULT_MEMO_TEXT)
     tag = make_timestamp_tag(time.time())
@@ -1766,7 +1850,7 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
         f"(확인={confirm_policy}, 재시도={flow_attempts}, "
         f"클릭전대기={pre_click_settle:.1f}s, 누름유지={click_hold_sec:.2f}s), "
         f"글자간격={char_type_delay_sec:.2f}s(대문자={shift_mode}, "
-        f"수정자대기={shift_settle_sec:.2f}s, "
+        f"수정자대기={shift_settle_sec:.2f}s/caps={caps_settle_sec:.2f}s, "
         f"입력후체류={post_type_wait_sec:.1f}s), "
         f"가림해제={'on' if reveal_enabled else 'off'}"
         f"(Alt+click {reveal_attempts}회, 지점 x={reveal_x_ratio:.2f}/y={reveal_y_ratio:.2f}, "
@@ -1799,6 +1883,7 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
                 reveal_y_ratio=reveal_y_ratio,
                 alt_settle_sec=alt_settle_sec,
                 shift_settle_sec=shift_settle_sec,
+                caps_settle_sec=caps_settle_sec,
                 shift_mode=shift_mode,
                 post_type_wait_sec=post_type_wait_sec,
                 memo_text=memo_text,

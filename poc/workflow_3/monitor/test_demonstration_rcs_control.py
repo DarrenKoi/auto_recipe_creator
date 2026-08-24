@@ -1554,7 +1554,7 @@ def _type(text, **kw):
 
 def test_caps_mode_toggles_caps_lock_around_an_uppercase_letter():
     """쥐는 수정자가 아니라 **타건 + 장비가 기억하는 상태**로 대문자를 만든다."""
-    keyboard = _type("B", shift_settle_sec=0.12)
+    keyboard = _type("B", shift_mode="caps", caps_settle_sec=0.4)
 
     assert keyboard.events == [
         ("press", "CAPS"), ("release", "CAPS"),
@@ -1563,11 +1563,13 @@ def test_caps_mode_toggles_caps_lock_around_an_uppercase_letter():
     ]
 
 
-def test_caps_mode_is_the_default():
-    """2회차 결과가 이 기본값을 정했다 - Shift 쥐기는 이 원격에서 안 먹는다."""
-    keyboard = _type("B")
+def test_caps_all_is_the_default():
+    """4회차 결과가 이 기본값을 정했다 - 토글을 글자마다 하면 memo 가 깨진다."""
+    assert demo.DEFAULT_SHIFT_MODE == "caps_all"
+    keyboard = _type("Bc")
 
-    assert ("press", "CAPS") in keyboard.events
+    # 전체를 감싸는 토글 **한 쌍**(켜기+끄기)뿐이다 - 글자마다 토글하지 않는다.
+    assert keyboard.events.count(("press", "CAPS")) == 2
     assert ("press", "SHIFT") not in keyboard.events
 
 
@@ -1582,20 +1584,20 @@ def test_caps_lock_is_turned_back_off_even_when_the_key_press_explodes():
 
     keyboard = _Boom()
     with pytest.raises(RuntimeError, match="press boom"):
-        _type("B", keyboard=keyboard)
+        _type("B", keyboard=keyboard, shift_mode="caps")
 
     assert keyboard.events[-2:] == [("press", "CAPS"), ("release", "CAPS")]
 
 
 def test_caps_mode_leaves_lowercase_alone():
-    keyboard = _type("abc")
+    keyboard = _type("abc", shift_mode="caps")
 
     assert keyboard.events == [("type", c) for c in "abc"]
 
 
 def test_caps_mode_still_uses_shift_for_symbols():
     """Caps Lock 은 글자만 바꾼다 - '!' 는 Shift+1 밖에 방법이 없다."""
-    keyboard = _type("!")
+    keyboard = _type("!", shift_mode="caps")
 
     assert keyboard.events == [
         ("press", "SHIFT"), ("press", "1"), ("release", "1"), ("release", "SHIFT"),
@@ -1685,3 +1687,91 @@ def test_input_landing_timings_are_not_cut():
     assert demo.CLICK_HOLD_SEC == pytest.approx(0.15)
     assert demo.ALT_SETTLE_SEC == pytest.approx(0.3)
     assert demo.SHIFT_SETTLE_SEC == pytest.approx(0.12)
+
+
+# ------------------------------------------------------------------
+# 오피스 4회차 (2026-08-24) - Caps Lock 을 글자마다 켜고 끄니 memo 가 깨졌다.
+#
+# 토글은 **상태**라서 쥐는 수정자와 위험이 다르다. ① 장비가 토글을 적용하는 데
+# 시간이 걸려, 글자가 'caps on' 보다 먼저 도착하거나 'caps off' 가 글자를 추월한다.
+# ② 24번 보내는 토글 중 **하나만 유실되면** 장비의 caps 상태가 우리 기대와 반대로
+# 뒤집혀 그 뒤 글자가 전부 틀린다. Shift 유실은 한 글자를 망치지만 토글 유실은
+# 나머지 전부를 망친다. 그래서 토글 수를 **문서 전체에 한 쌍**으로 줄인다.
+#
+# (Shift 쥐기는 이미 배제됐다: pynput 의 `Key.shift` 는 Windows 에서 VK.LSHIFT +
+#  scancode 0x2A - 실제 왼쪽 Shift 와 같은 신호다. 2회차가 그것으로 실패했으므로
+#  '다른 Shift 를 써 보자' 는 선택지가 없다. 이 원격은 수정자 상태를 안 보낸다.)
+# ------------------------------------------------------------------
+
+
+def test_caps_all_wraps_the_whole_text_in_one_toggle_pair():
+    keyboard = _type("Ab\ncD")
+
+    assert keyboard.events[0] == ("press", "CAPS")
+    assert keyboard.events[1] == ("release", "CAPS")
+    assert keyboard.events[-2] == ("press", "CAPS")
+    assert keyboard.events[-1] == ("release", "CAPS")
+    # '한 쌍' = 켜는 타건 + 끄는 타건. 글자 사이에는 하나도 없다.
+    assert keyboard.events.count(("press", "CAPS")) == 2
+
+
+def test_caps_all_sends_every_letter_as_its_lowercase_base_key():
+    """caps 가 켜져 있으므로 기본 키가 대문자로 찍힌다 - 글자마다 수정자가 없다."""
+    keyboard = _type("PoC")
+
+    typed = [e for e in keyboard.events if e[0] == "type"]
+    assert typed == [("type", "p"), ("type", "o"), ("type", "c")]
+
+
+def test_caps_all_turns_caps_back_off_even_when_typing_explodes():
+    class _Boom(_KeyboardSpy):
+        def type(self, char):
+            super().type(char)
+            raise RuntimeError("type boom")
+
+    keyboard = _Boom()
+    with pytest.raises(RuntimeError, match="type boom"):
+        _type("Ab", keyboard=keyboard)
+
+    assert keyboard.events[-2:] == [("press", "CAPS"), ("release", "CAPS")]
+
+
+def test_caps_all_skips_the_toggle_when_there_is_nothing_to_capitalise():
+    """소문자만 적은 문구는 **수정자 0개**로 가야 한다 - 가장 안전한 경로이며,
+    '전부 소문자로 쓰겠다' 는 저자의 의도를 뒤집지도 않는다."""
+    keyboard = _type("abc def")
+
+    assert ("press", "CAPS") not in keyboard.events
+    assert keyboard.events == [("type", c) for c in "abc def"]
+
+
+def test_caps_toggles_use_their_own_longer_dwell():
+    """토글은 링크를 건너 장비가 적용해야 하므로 Shift 체류(0.12)로는 짧다."""
+    sleeps = []
+    _type("Ab", sleep_fn=sleeps.append, caps_settle_sec=0.4, char_delay_sec=0.0)
+
+    assert 0.4 in sleeps
+
+
+def test_local_caps_lock_is_restored_when_it_is_left_on():
+    """`SendInput` 은 전역이라 엔지니어 PC 의 Caps 도 같이 켜진다 - 켜져 있으면 끈다."""
+    keyboard = _KeyboardSpy()
+    _type("Ab", keyboard=keyboard, caps_state_fn=lambda: True)
+
+    # 감싸는 한 쌍(2) + 로컬 복구 1회.
+    assert keyboard.events.count(("press", "CAPS")) == 3
+
+
+def test_local_caps_lock_is_left_alone_when_already_off():
+    keyboard = _KeyboardSpy()
+    _type("Ab", keyboard=keyboard, caps_state_fn=lambda: False)
+
+    assert keyboard.events.count(("press", "CAPS")) == 2
+
+
+def test_unknown_local_caps_state_is_not_guessed():
+    """상태를 모를 때 토글하면 오히려 켜 놓을 수 있다 - 모르면 건드리지 않는다."""
+    keyboard = _KeyboardSpy()
+    _type("Ab", keyboard=keyboard, caps_state_fn=lambda: None)
+
+    assert keyboard.events.count(("press", "CAPS")) == 2

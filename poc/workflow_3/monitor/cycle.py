@@ -78,6 +78,9 @@ from poc.workflow_3.util import (
 
 LOG_COMPONENT = "align_fail_cycle"
 
+# workflow_4 live graph view import 실패 경고를 한 번만 출력하기 위한 플래그.
+_MIRROR_GRAPH_VIEW_WARNED = False
+
 # zoom-out(wheel-down) 보정탐색을 발동할 feasibility verdict — "어느 점이 align point 인지"
 # 가릴 수 없는 두 경우만(ambiguous=모호, not_visible=프레임에 키 부재). possible(확신)·
 # no_assets(rcp 자산 없음)는 제외. PM_OM_VALUES 처럼 settings 밖 모듈 상수로 둔다.
@@ -1264,6 +1267,50 @@ def _teardown_steps(eqp_id, context, result, settings, *, input_blocked, recordi
     ]
 
 
+def _maybe_start_graph_mirror(settings: Workflow3Settings, steps, context: dict, graph_name: str):
+    """live graph view(workflow_4 cycle mirror)를 시작한다 — opt-in, 기본 off.
+
+    workflow_4 에 하드 의존을 만들지 않으려고 import 를 함수 안에서 가드한다.
+    import 실패 시 경고 **1회** 후 비활성(사이클 동작 불변). 그래프는 runner 에
+    넘기는 **바로 그 step 목록**으로 만들어 이름/순서가 production 과 어긋날 수
+    없고, run_dir 은 runner.run() 이 `context["run_dir"]` 에 넣는 값을 mirror 가
+    폴링마다 읽으므로 run() 전에 시작해도 된다(경로 예측 없음).
+    """
+    global _MIRROR_GRAPH_VIEW_WARNED
+    if not getattr(settings, "graph_view_enabled", False):
+        return None
+    # 이 함수는 사이클의 try/finally **밖**에서 불리므로 어떤 예외도 밖으로 내보내면
+    # 안 된다 - 새면 teardown 과 '알람당 cube 1회' 보장(7512b1d)을 통째로 건너뛴다.
+    # 시각화 실패는 사이클 실패가 아니다: 경고 1회 후 None.
+    try:
+        from poc.workflow_4.adapters.workflow3_cycle import (
+            CycleGraphMirror,
+            build_step_chain_graph,
+        )
+
+        graph = build_step_chain_graph(
+            graph_name, [(s.step_id, s.target_description) for s in steps]
+        )
+        mirror = CycleGraphMirror(
+            graph,
+            run_dir_fn=lambda: context.get("run_dir"),
+            poll_sec=0.5,
+            refresh_sec=1,
+            autoopen=getattr(settings, "graph_view_autoopen", False),
+        )
+        mirror.start()
+    except Exception as exc:
+        if not _MIRROR_GRAPH_VIEW_WARNED:
+            print(
+                "[WARNING] workflow_4 live graph view 비활성(시작 실패, "
+                f"1회만 경고): {type(exc).__name__}: {exc}"
+            )
+            _MIRROR_GRAPH_VIEW_WARNED = True
+        return None
+    print("[INFO] live graph view 시작 (workflow_4 mirror): 스냅샷은 runner run_dir 에 남는다")
+    return mirror
+
+
 def run_alarm_cycle(
     eqp_id: str,
     recipe_id: str,
@@ -1309,7 +1356,14 @@ def run_alarm_cycle(
         reregister_ratio_threshold=settings.reregister_second_ratio_threshold,
     )
     notifier.start_watchdog(settings.notify_delay_sec)
+    mirror = None
     try:
+        # live graph view (opt-in, 기본 off) — run() 전에 시작해 첫 step 부터 관찰한다.
+        # try 안에 두는 이유: 여기서 던져도 finally 의 teardown/알림 보장이 지켜져야 한다.
+        steps = build_cycle_steps(eqp_id)
+        mirror = _maybe_start_graph_mirror(
+            settings, steps, context, f"align_fail_cycle_{eqp_id}"
+        )
         # 시연용 접속 구간 녹화 - **step 시작 전**에 켠다. ensure_rcs_ready 가 RCS 를
         # 재실행/재로그인하는 장면까지 담아야 "RCS 를 열어 tool 로 들어가는" 영상이 된다.
         prelude = start_prelude_recording(context, settings)
@@ -1319,7 +1373,7 @@ def run_alarm_cycle(
         # 자동 GUI 구간 동안 사용자 물리 입력 차단(opt-in) — foreground lock/클릭 방해 방지.
         if _should_block_input(settings):
             input_blocked = block_input(True, debug_label=f"align_fail_cycle {eqp_id}")
-        run = runner.run(build_cycle_steps(eqp_id), context, executor)
+        run = runner.run(steps, context, executor)
         result.run_status = run.status
         result.run_dir = str(run.run_dir or "")
         for step_result in run.step_results:
@@ -1422,6 +1476,10 @@ def run_alarm_cycle(
         print_cycle_report(
             result, context, elapsed_sec=time.time() - cycle_started_at
         )
+
+        # live graph view mirror 를 멈추고 마지막 스냅샷(.md/.html)을 남긴다.
+        if mirror is not None:
+            mirror.stop(final=True)
 
     return result
 
@@ -2404,12 +2462,18 @@ def run_check_only_cycle(
         return _CHECK_STEP_EXECUTORS[step.step_id](step, step_context, settings)
 
     input_blocked = False
+    mirror = None
     try:
+        # live graph view (opt-in, 기본 off) — check 전용 5 step 그래프로 미러링.
+        steps = build_check_steps(eqp_id)
+        mirror = _maybe_start_graph_mirror(
+            settings, steps, context, f"align_fail_check_{eqp_id}"
+        )
         # 자동 GUI 구간(접속~캡처~닫기) 동안 사용자 물리 입력 차단(opt-in).
         # engineer watch 가 없으므로 close 까지 차단 유지하고 finally 끝에서 해제.
         if _should_block_input(settings):
             input_blocked = block_input(True, debug_label=f"align_fail_check {eqp_id}")
-        run = runner.run(build_check_steps(eqp_id), context, executor)
+        run = runner.run(steps, context, executor)
         result.run_status = run.status
         result.run_dir = str(run.run_dir or "")
         for step_result in run.step_results:
@@ -2448,6 +2512,8 @@ def run_check_only_cycle(
             label=f"align_fail_check {eqp_id}",
         )
         result.notes.extend(f"teardown_failed:{n}: {e}" for n, e in failures)
+        if mirror is not None:
+            mirror.stop(final=True)
 
     return result
 

@@ -60,6 +60,10 @@ poc/workflow_2/debug_images/*
 !poc/workflow_2/debug_images/.gitkeep
 poc/workflow_3/debug_images/*
 !poc/workflow_3/debug_images/.gitkeep
+poc/workflow_4/debug_images/*
+!poc/workflow_4/debug_images/.gitkeep
+poc/workflow_4/logs/*
+!poc/workflow_4/logs/.gitkeep
 
 # Generated throwaway-check results (box/crosshair); inputs in templates/*_samples stay tracked.
 poc/workflow_2/templates/box_crop_results/

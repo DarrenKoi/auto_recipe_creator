@@ -356,6 +356,17 @@ class Workflow3Settings(WorkflowSettings):
     # False: whole-template(구 동작) 롤백 — env ALIGN_FAIL_COND_BOX_CROP=0.
     cond_box_crop: bool = True
 
+    # --- live graph view (workflow_4 cycle mirror, opt-in, 기본 off) ---
+    # workflow_4 CycleGraphMirror 가 사이클 step 저널(run_dir/step_<id>.json +
+    # run_state.json)을 읽어 run_dir 에 workflow_graph.md/.html(live view) 를 쓴다.
+    # 기본 off — workflow_4 가 없거나 import 실패하면 경고 1회 후 자동 비활성
+    # (workflow_3 이 workflow_4 에 하드 의존하지 않는다). off 일 때 동작은
+    # 기존과 byte-identical.
+    graph_view_enabled: bool = False
+    # graph_view_enabled 일 때만 유효 — Windows 에서 첫 스냅샷 후 HTML 을 기본
+    # 브라우저로 자동 연다(엔지니어가 사이클 진행을 바로 볼 수 있게).
+    graph_view_autoopen: bool = True
+
 
 def load_workflow3_settings() -> Workflow3Settings:
     """env 오버라이드를 적용해 Workflow3Settings 를 생성한다."""
@@ -478,6 +489,8 @@ def load_workflow3_settings() -> Workflow3Settings:
         reregister_second_ratio_threshold=env_float("ALIGN_FAIL_REREGISTER_RATIO", 0.98),
         cond_box_crop=env_flag("ALIGN_FAIL_COND_BOX_CROP", default=True),
         locator_combo=_env_str("VLM_LOCATOR_COMBO", ""),
+        graph_view_enabled=env_flag("ALIGN_FAIL_GRAPH_VIEW", default=False),
+        graph_view_autoopen=env_flag("ALIGN_FAIL_GRAPH_AUTOOPEN", default=True),
     )
 
 

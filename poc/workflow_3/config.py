@@ -323,9 +323,17 @@ class Workflow3Settings(WorkflowSettings):
     # 다니는데, 그 사이 커서를 되찾기 어려워 "보정을 못 한 것" 보다 비용이 큰 상황이
     # 있다. 롤백/재활성은 ALIGN_FAIL_FALLBACK_SEARCH=1.
     fallback_search_enabled: bool = True
-    # fallback 이 켜져 있을 때 spiral pan 시도 상한. 낮출수록 stage 를 덜 끌고
-    # 다니는 대신 못 찾고 escalate 할 확률이 는다.
-    search_pan_budget: int = 5
+    # fallback 이 켜져 있을 때 spiral pan 시도 상한(2026-08-28 사용자 결정으로 5 -> 10;
+    # 클릭 횟수는 더 이상 제약이 아니다). 못 찾으면 fallback_exhausted/escalated 로
+    # 끝나고 cube 알림이 나간다. cycle.py 가 low_streak_limit 도 budget+1 로 맞춰 주입한다.
+    search_pan_budget: int = 10
+    # --- search-around 재설계 (2026-08-28, docs/superpowers/specs/2026-08-28-search-around-zoomout-grid-design.md) ---
+    # "grid" = PM 드롭다운 절대 배율 zoom-out + FOV 격자 sweep(grid_search). "legacy" = 종전 휠+spiral.
+    search_mode: str = "grid"
+    search_radius_um: float = 30.0      # 탐색 반경 R(시험값). 박스 = 2R.
+    search_min_key_px: int = 60         # zoom-out 후 key 최소 픽셀(오피스 실측으로 확정).
+    search_max_chase: int = 3           # sweep 뒤 추격할 후보 수(각각 배율 왕복).
+    search_odom_tol_fov: float = 0.15   # odometry |측정-명령| 허용(FOV 비율).
     # PM 판독으로 OM/SEM 을 확정하지 못했을 때 보정을 보류할지(기본 on).
     # modality 를 틀리면 다른 template(IMAP0001 OM vs IMAP0002 SEM)로 매칭해 좌표가
     # 근본적으로 틀리므로, 추측해서 누르느니 엔지니어에게 넘긴다. off 면 sem_mode_default 사용.
@@ -458,7 +466,12 @@ def load_workflow3_settings() -> Workflow3Settings:
         ok_button_vlm_service=_env_str("ALIGN_OK_BUTTON_VLM_SERVICE", "mai-ui"),
         ok_click_enabled=env_flag("ALIGN_FAIL_OK_CLICK", default=False),
         fallback_search_enabled=env_flag("ALIGN_FAIL_FALLBACK_SEARCH", default=True),
-        search_pan_budget=env_int("ALIGN_FAIL_SEARCH_PAN_BUDGET", 5),
+        search_pan_budget=env_int("ALIGN_FAIL_SEARCH_PAN_BUDGET", 10),
+        search_mode=(_env_str("ALIGN_FAIL_SEARCH_MODE", "grid").strip().lower() or "grid"),
+        search_radius_um=env_float("ALIGN_FAIL_SEARCH_RADIUS_UM", 30.0),
+        search_min_key_px=env_int("ALIGN_FAIL_SEARCH_MIN_KEY_PX", 60),
+        search_max_chase=env_int("ALIGN_FAIL_SEARCH_MAX_CHASE", 3),
+        search_odom_tol_fov=env_float("ALIGN_FAIL_SEARCH_ODOM_TOL_FOV", 0.15),
         require_pm_mode=env_flag("ALIGN_FAIL_REQUIRE_PM_MODE", default=True),
         sem_mode_default=_env_str("ALIGN_SEM_MODE_DEFAULT", "SEM"),
         sem_controller_settle_sec=env_float("ALIGN_SEM_SETTLE_SEC", 0.5),

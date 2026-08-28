@@ -120,14 +120,22 @@ class SEMMonitorController(Protocol):
 class LiveSearchConfig:
     """search policy 파라미터 (recipe/Tool 별 캘리브레이션 대상)."""
 
-    # pan(새 영역 탐색)만 카운트하는 hard cap. 2026-08-24 오피스 실측으로 10 -> 5:
-    # 실장비에서 10회 spiral 은 stage 를 너무 오래 끌고 다녀 엔지니어가 개입할 수
-    # 없었다. 못 찾으면 빨리 포기하고 사람에게 넘기는 편이 낫다.
+    # pan(새 영역 탐색)만 카운트하는 hard cap. 2026-08-24 오피스 실측으로 10 -> 5 로
+    # 줄였다가("stage 를 오래 끌면 엔지니어가 개입 못 한다") 2026-08-28 사용자 결정으로
+    # 다시 10: 그 제약은 버린다(긴급 해제 래치가 개입 경로를 대신한다). 못 찾으면
+    # exhausted/escalated 로 끝나고 cube 알림이 나간다(corrected 가 아니므로).
     # 운영 루프는 Workflow3Settings.search_pan_budget(env ALIGN_FAIL_SEARCH_PAN_BUDGET)로 주입.
-    pan_budget: int = 5
+    pan_budget: int = 10
     initial_zoom_out_steps: int = 3  # 시작 시 broad 시야 확보용 zoom-out.
     max_zoom_in_steps: int = 4  # Phase B 에서 candidate 당 zoom-in 상한.
-    low_streak_limit: int = 5  # 연속 low → 엔지니어 escalation.
+    # 연속 low → 엔지니어 escalation. None = pan_budget + 1: 아무것도 안 보일 때 streak 는
+    # pan 마다 1씩 오르므로 limit <= budget 이면 예산 전에 걸려 예산이 겉보기가 된다
+    # (5/5 이던 시절 실제 pan 은 4회였다). 명시값은 그대로 존중한다(테스트/진단용).
+    low_streak_limit: int | None = None
+
+    @property
+    def effective_low_streak_limit(self) -> int:
+        return self.pan_budget + 1 if self.low_streak_limit is None else int(self.low_streak_limit)
     # pan 한 step 의 FOV 픽셀 이동량. 더블클릭은 최대 ~FOV 절반까지만 가능하므로
     # FOV 폭의 절반보다 작게 둔다(아래 clamp_to_fov 으로 한 번 더 보정).
     pan_step_px: int = 220
@@ -166,6 +174,8 @@ class LiveSearchOutcome:
     best: CandidateRecord | None
     pan_count: int
     history: list[dict]
+    # grid_search 가 채우는 부가 정보(search_mag/cells_visited/odometry ...). 기본 빈 dict.
+    meta: dict = field(default_factory=dict)
 
 
 NotifyFn = Callable[[LiveSearchState, list[dict]], None]
@@ -277,9 +287,10 @@ def live_align_search(
                 if state.pan_count >= config.pan_budget:
                     return _finish_with_best(state, "exhausted", last_decision)
                 state.low_streak += 1
-                if state.low_streak >= config.low_streak_limit:
+                limit = config.effective_low_streak_limit
+                if state.low_streak >= limit:
                     if notify_fn is not None:
-                        notify_fn(state, state.history[-config.low_streak_limit:])
+                        notify_fn(state, state.history[-limit:])
                     return _finish_with_best(state, "escalated", last_decision)
                 _do_pan(controller, state, config, fw, fh)
         else:  # confirm phase

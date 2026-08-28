@@ -50,7 +50,6 @@ from poc.workflow_3.align.live_search import (
     NotifyFn,
     SEMMonitorController,
     clamp_to_fov,
-    live_align_search,
     route_template,
 )
 
@@ -218,6 +217,9 @@ def correct_align_fail(
     notify_fn: NotifyFn | None = None,
     dry_run: bool = True,
     debug_dir: Path | None = None,
+    grid_mag=None,
+    grid_reg_mag: float | None = None,
+    grid_config=None,
 ) -> CorrectionOutcome:
     """paused Align Fail 화면에서 crosshair 를 recipe-matched 점으로 옮기고 OK.
 
@@ -236,6 +238,9 @@ def correct_align_fail(
     테스트할 수 있고, 미주입 시 vlm_client 로 locate_ok_button 을 래핑한다.
 
     notify_fn 은 fallback(live_align_search) escalation 알림 콜백으로 그대로 전달된다.
+    fallback 탐색은 ``grid_search.search_around`` 하나로 간다: ``grid_mag``(MagnificationControl)
+    + ``grid_reg_mag``(등록 배율) 이 있으면 절대 배율 zoom-out + FOV 격자, 아니면(또는 grid 가
+    배율 판독 실패로 degrade 하면) 종전 legacy live_align_search.
     모든 종료 분기는 console([INFO]/[ERROR]) + 파일 로그(log_work2_event)로 기록한다.
     OK 탐지 *예외*는 정상 'OK 안 보임'(escalated_no_ok)과 구분해 ok_detect_error 로 surface
     하며 error 필드에 예외 요약을 담는다(조용히 삼켜 escalate 로 위장하지 않는다).
@@ -321,12 +326,12 @@ def correct_align_fail(
         )
 
     if route == GATE_FALLBACK:
-        print("[INFO] key 가 paused 화면에 보이지 않음 → fallback(live_align_search) 위임")
-        outcome = live_align_search(
-            controller,
-            templates,
-            config=fallback_config,
-            notify_fn=notify_fn,
+        from poc.workflow_3.align.grid_search import search_around
+
+        outcome = search_around(
+            controller, templates,
+            grid_mag=grid_mag, reg_mag=grid_reg_mag, grid_config=grid_config,
+            legacy_config=fallback_config, notify_fn=notify_fn,
             debug_dir=(debug_dir / "fallback") if debug_dir is not None else None,
         )
         result_outcome = CorrectionOutcome(
@@ -524,8 +529,13 @@ def correct_align_fail_auto(
     eqp_id: str = "",
     class_name: str = "",
     recipe_name: str = "",
+    grid_mag=None,
+    grid_config=None,
 ) -> CorrectionOutcome:
     """자산을 자동 해석(resolve_assets_auto)해 template 을 만들고 correct_align_fail 실행.
+
+    ``grid_mag``(grid_search.MagnificationControl) 가 오면 현재 modality 의 등록 이미지
+    cond.txt 에서 Magnification 을 읽어 함께 넘긴다 — 없으면 search_around 가 legacy 로 간다.
 
     eqp_id/class_name/recipe_name 을 주면 resolve_assets_auto 의 override 로 전달된다
     (알람 RECIPE_ID 가 "<class>/<recipe>" 형태면 recipe_name 에 그대로 줘도 된다).
@@ -556,6 +566,14 @@ def correct_align_fail_auto(
             recipe_dir=str(assets.recipe_dir),
         )
         return CorrectionOutcome("no_assets", "primary", "low", None, None, None)
+    reg_mag = None
+    if grid_mag is not None:
+        from poc.workflow_3.align.cond_file import load_cond
+        from poc.workflow_3.align.grid_search import registered_magnification
+
+        mode = (controller.read_mode() or "").upper()
+        rcp = assets.recipe_om if "OM" in mode else assets.recipe_sem
+        reg_mag = registered_magnification(load_cond(rcp)) if rcp is not None else None
     return correct_align_fail(
         controller,
         templates,
@@ -567,6 +585,9 @@ def correct_align_fail_auto(
         notify_fn=notify_fn,
         dry_run=dry_run,
         debug_dir=debug_dir,
+        grid_mag=grid_mag,
+        grid_reg_mag=reg_mag,
+        grid_config=grid_config,
     )
 
 

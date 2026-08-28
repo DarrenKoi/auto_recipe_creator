@@ -90,7 +90,8 @@ def test_kill_switch_off_delegates_to_live_search(monkeypatch):
             status="exhausted", final_decision="low", best=None, pan_count=3, history=[]
         )
 
-    monkeypatch.setattr(correction_mod, "live_align_search", _fake_search)
+    # fallback 은 grid_search.search_around 가 live_search 모듈 속성으로 부른다.
+    monkeypatch.setattr(live_search_mod, "live_align_search", _fake_search)
     controller = _RecordingController()
 
     outcome = correct_align_fail(
@@ -110,7 +111,7 @@ def test_kill_switch_on_skips_search_entirely(monkeypatch):
     def _must_not_run(*a, **k):
         raise AssertionError("fallback 이 꺼졌는데 live_align_search 가 호출됐다")
 
-    monkeypatch.setattr(correction_mod, "live_align_search", _must_not_run)
+    monkeypatch.setattr(live_search_mod, "live_align_search", _must_not_run)
     controller = _RecordingController()
 
     outcome = correct_align_fail(
@@ -128,7 +129,7 @@ def test_kill_switch_on_performs_zero_actuation(monkeypatch):
     """off 경로는 stage 를 건드리지 않는다 - 이게 이 스위치의 존재 이유다."""
     _force_fallback(monkeypatch)
     monkeypatch.setattr(
-        correction_mod, "live_align_search",
+        live_search_mod, "live_align_search",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("호출되면 안 됨")),
     )
     controller = _RecordingController()
@@ -145,7 +146,7 @@ def test_kill_switch_on_performs_zero_actuation(monkeypatch):
 def test_escalated_status_is_not_corrected(monkeypatch):
     """notify 는 corrected 일 때만 cube 를 생략한다 - 이 status 는 알림이 나가야 한다."""
     _force_fallback(monkeypatch)
-    monkeypatch.setattr(correction_mod, "live_align_search", lambda *a, **k: None)
+    monkeypatch.setattr(live_search_mod, "live_align_search", lambda *a, **k: None)
     controller = _RecordingController()
 
     outcome = correct_align_fail(
@@ -198,9 +199,27 @@ def test_live_search_stops_mid_loop_when_latched():
     assert state["n"] <= 3, f"래치 후에도 루프가 계속됐다 (capture {state['n']}회)"
 
 
-def test_pan_budget_default_is_halved():
-    """spiral 시도 상한 기본값 (2026-08-24 오피스 실측으로 10 -> 5)."""
-    assert live_search_mod.LiveSearchConfig().pan_budget == 5
+def test_pan_budget_default_is_ten():
+    """spiral 시도 상한 기본값 (08-24 에 10 -> 5, 2026-08-28 사용자 결정으로 다시 10)."""
+    assert live_search_mod.LiveSearchConfig().pan_budget == 10
+
+
+def test_pan_budget_is_not_capped_by_low_streak():
+    """아무것도 안 보이면 예산 **전부** pan 한 뒤 exhausted 로 끝난다(cube 발송 경로).
+
+    streak limit 이 예산 이하면 예산 전에 escalated 로 잘려 예산이 겉보기가 된다
+    (5/5 이던 시절 실제 pan 은 4회). 기본값 조합이 그 함정에 다시 빠지지 않게 고정한다.
+    """
+    controller = _RecordingController()
+
+    outcome = live_search_mod.live_align_search(
+        controller, {"SEM": _template()},
+        config=live_search_mod.LiveSearchConfig(),
+    )
+
+    moves = [c for c in controller.calls if c[0] == "move"]
+    assert outcome.status == "exhausted", outcome.status
+    assert len(moves) == 10, f"pan {len(moves)}회 - 예산 10 이 다 돌지 않았다"
 
 
 def test_auto_forwards_fallback_config_to_live_search(monkeypatch):
@@ -228,7 +247,7 @@ def test_auto_forwards_fallback_config_to_live_search(monkeypatch):
             status="exhausted", final_decision="low", best=None, pan_count=0, history=[]
         )
 
-    monkeypatch.setattr(correction_mod, "live_align_search", _capture_cfg)
+    monkeypatch.setattr(live_search_mod, "live_align_search", _capture_cfg)
 
     correction_mod.correct_align_fail_auto(
         _RecordingController(),

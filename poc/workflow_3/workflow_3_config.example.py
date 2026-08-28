@@ -101,6 +101,10 @@ CORRECTION = None            # CV 보정 마스터 토글. 1/0/None(기본 on).
 # 보정의 실제 reposition/OK 클릭 차단(이중 게이트의 두 번째). 1=dry-run(클릭 안 함),
 # 0=실제 클릭(SAFE_MODE=0 도 동시 충족해야 함). None=기본(1=dry-run, 안전).
 CORRECTION_DRY_RUN = None
+# paused 화면에 key 가 없을 때의 search-around 방식(2026-08-29 사용자 확정: grid 가 기본).
+# "grid"=PM 드롭다운 절대 배율 zoom-out + FOV 격자 sweep / "legacy"=종전 휠+spiral(롤백).
+# None=기본(grid).
+SEARCH_MODE = None
 
 # ============================================================================
 # [6] 과거 데이터 수집 / consensus

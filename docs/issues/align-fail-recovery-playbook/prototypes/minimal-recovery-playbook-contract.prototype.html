@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PROTOTYPE — 최소 Recovery Playbook 계약</title>
+  <style>
+    :root { color-scheme: light; --ink:#17212b; --muted:#66727e; --line:#d9e0e6; --soft:#f4f7f9; --accent:#176b87; --warn:#9a5b00; }
+    * { box-sizing: border-box; }
+    body { margin:0; font:15px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--ink); background:#fff; }
+    main { width:min(1120px,calc(100% - 32px)); margin:36px auto 72px; }
+    h1,h2,h3 { line-height:1.2; }
+    h1 { margin:0 0 8px; font-size:28px; }
+    h2 { margin:32px 0 12px; font-size:20px; }
+    p { margin:8px 0; }
+    .eyebrow { color:var(--accent); font-weight:750; letter-spacing:.04em; }
+    .intro { max-width:900px; color:var(--muted); }
+    .notice { margin:18px 0; padding:12px 14px; border-left:4px solid var(--warn); background:#fff8eb; }
+    .grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+    .card { border:1px solid var(--line); border-radius:10px; padding:13px; background:var(--soft); }
+    .card small { display:block; color:var(--muted); }
+    .card strong { display:block; margin-top:3px; overflow-wrap:anywhere; }
+    .changed { margin:10px 0 0; color:var(--accent); font-weight:650; }
+    .controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+    fieldset { min-width:0; border:1px solid var(--line); border-radius:10px; padding:12px; }
+    legend { padding:0 6px; font-weight:750; }
+    .button-row { display:flex; flex-wrap:wrap; gap:7px; margin:8px 0; }
+    button { border:1px solid #aeb9c2; border-radius:8px; padding:7px 10px; color:var(--ink); background:#fff; cursor:pointer; }
+    button:hover { border-color:var(--accent); color:var(--accent); }
+    button.primary { color:#fff; border-color:var(--accent); background:var(--accent); }
+    button[disabled] { opacity:.45; cursor:not-allowed; }
+    .tabs { display:flex; flex-wrap:wrap; gap:7px; margin-bottom:10px; }
+    .tabs button[aria-selected="true"] { color:#fff; border-color:var(--accent); background:var(--accent); }
+    .walkthrough { border:1px solid var(--line); border-radius:10px; padding:16px; }
+    .walkthrough h3 { margin:0 0 4px; }
+    .steps { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+    .steps button.done { text-decoration:line-through; opacity:.55; }
+    pre { margin:0; max-height:680px; overflow:auto; border-radius:10px; padding:16px; color:#dbe8ef; background:#12202a; font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+    @media (max-width:800px) { .grid,.controls { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">THROWAWAY LOGIC PROTOTYPE</div>
+  <h1>최소 Recovery Playbook 계약</h1>
+  <p class="intro">질문: 원본 Trace를 복제하지 않고도 하나의 규칙이 3상태 Recovery Guard,
+    도메인 Action, 우선순위 Verification, Outcome, provenance, candidate/approval,
+    version 단위 승인과 <code>unresolved</code>를 충분히 표현하는가?</p>
+  <div class="notice">실데이터가 없는 상태를 반영한 모형입니다. 아래 “qualified Trace 연결”은
+    구조를 시험하기 위한 가상 reference이며, production 실행이나 승인 gate를 구현하지 않습니다.</div>
+
+  <h2>현재 사례 상태</h2>
+  <section class="grid" id="stateCards" aria-live="polite"></section>
+  <p class="changed" id="lastChange"></p>
+
+  <h2>자유 실행</h2>
+  <section class="controls">
+    <fieldset>
+      <legend>Trace와 Guard</legend>
+      <div class="button-row">
+        <button data-event='{"type":"RESET"}'>초기화</button>
+        <button data-event='{"type":"ATTACH_TRACE"}'>qualified Trace 연결</button>
+      </div>
+      <div id="guardControls"></div>
+      <div class="button-row"><button class="primary" data-event='{"type":"EVALUATE_GUARDS"}'>Guard 평가</button></div>
+    </fieldset>
+    <fieldset>
+      <legend>Verification과 검토 상태</legend>
+      <div class="button-row">
+        <button data-event='{"type":"VERIFY_PRIMARY"}'>Measurement 정상</button>
+        <button data-event='{"type":"VERIFY_FALLBACK"}'>Measurement 불명 + 분자 증가</button>
+        <button data-event='{"type":"VERIFY_UNKNOWN"}'>Verification 불명</button>
+      </div>
+      <div class="button-row">
+        <button data-event='{"type":"ADD_OVERLAPPING_RULE"}'>동일 Guard rule 충돌 추가</button>
+        <button data-event='{"type":"RECORD_APPROVAL"}'>승인 기록 모양 보기</button>
+      </div>
+      <p><small>승격 조건은 후속 티켓의 책임입니다. 이 버튼은 필드 모양만 보여줍니다.</small></p>
+    </fieldset>
+  </section>
+
+  <h2>Guided walkthroughs</h2>
+  <div class="tabs" id="tabs" role="tablist" aria-label="시나리오"></div>
+  <section class="walkthrough" id="walkthrough" role="tabpanel"></section>
+
+  <h2>현재 <code>recovery_playbook.json</code> 모양</h2>
+  <pre id="jsonView" aria-live="polite"></pre>
+</main>
+
+<script>
+const PlaybookModel = (() => {
+  const GUARDS = ["observation_available", "control_available", "key_visible_unique"];
+  const clone = value => JSON.parse(JSON.stringify(value));
+
+  function initialState() {
+    return {
+      contract: {
+        schema_version: 1,
+        playbook_id: "align-fail-recovery",
+        playbook_version: "candidate-001",
+        lifecycle: {
+          state: "candidate",
+          approval: { decision: "pending", playbook_version: null, reviewer: null, reviewed_at: null }
+        },
+        rule_selection: {
+          implicit_priority: false,
+          multiple_matches: "unresolved",
+          no_match: "unresolved"
+        },
+        scope: {
+          required_capabilities: ["remote_monitoring", "sem_mode_observation", "align_key_matching"],
+          observation_contract: "recovery-observation-v1"
+        },
+        rules: [{
+          rule_id: "visible-unique-align-key",
+          guards: GUARDS.map(kind => ({ kind, expected: true })),
+          actions: [
+            { kind: "reposition_to_align_key", parameters: { target: "matched_recipe_box_center" } },
+            { kind: "confirm_align", parameters: {}, preconditions: ["ok_control_available"] }
+          ],
+          verification: {
+            primary: { kind: "measurement_quality", expected: "healthy" },
+            fallback: { kind: "recipe_monitor_numerator", expected: "strictly_increasing", only_if: "measurement_quality=unknown" }
+          },
+          transitions: {
+            verified: { outcome: "recovered", next: null },
+            guard_unknown: { outcome: "unknown", next: "escalate" },
+            guard_false: { outcome: "unknown", next: "unresolved" },
+            verification_unknown: { outcome: "unknown", next: "escalate" },
+            multiple_matches: { outcome: "unknown", next: "unresolved" }
+          },
+          fallback_rule_id: null,
+          provenance: { trace_refs: [], event_refs: [] }
+        }],
+        unresolved: []
+      },
+      sample: {
+        guards: Object.fromEntries(GUARDS.map(kind => [kind, "unknown"])),
+        phase: "observing",
+        selected_rule: null,
+        verification: null,
+        outcome: "unknown"
+      },
+      last_change: "초기 상태 — 모든 Guard는 unknown"
+    };
+  }
+
+  function reduce(state, event) {
+    if (event.type === "RESET") return initialState();
+    const next = clone(state);
+    const rule = next.contract.rules[0];
+    if (event.type === "SET_GUARD") {
+      next.sample.guards[event.guard] = event.value;
+      next.sample.phase = "observing";
+      next.sample.selected_rule = null;
+      next.sample.verification = null;
+      next.sample.outcome = "unknown";
+      next.last_change = `${event.guard} → ${event.value}`;
+      return next;
+    }
+    if (event.type === "ATTACH_TRACE") {
+      rule.provenance.trace_refs = ["recovery_episode.json#future-episode-001"];
+      rule.provenance.event_refs = ["attempt:1/events:3-9"];
+      next.last_change = "가상 qualified Trace reference 연결";
+      return next;
+    }
+    if (event.type === "EVALUATE_GUARDS") {
+      const values = Object.values(next.sample.guards);
+      if (values.includes("unknown")) {
+        next.sample.phase = "escalated";
+        next.sample.outcome = "unknown";
+        next.last_change = "필수 Guard unknown → 자동 Action 없이 escalation";
+      } else if (values.includes("false")) {
+        next.sample.phase = "escalated";
+        next.sample.outcome = "unknown";
+        next.last_change = "일치 규칙 없음 → fallback을 추측하지 않고 unresolved + escalation";
+      } else {
+        const matches = next.contract.rules.filter(candidate => candidate.guards.every(guard => next.sample.guards[guard.kind] === String(guard.expected)));
+        if (matches.length > 1) {
+          next.sample.phase = "escalated";
+          next.sample.outcome = "unknown";
+          next.contract.unresolved = [{
+            unresolved_id: "overlapping-rules",
+            question: "같은 관측 Guard에서 어느 Recovery Action을 선택해야 하는가?",
+            rule_refs: matches.map(candidate => candidate.rule_id),
+            resolution: "escalate"
+          }];
+          next.last_change = "둘 이상의 rule 일치 → 선언 순서로 고르지 않고 unresolved + escalation";
+        } else {
+          next.sample.phase = "awaiting_verification";
+          next.sample.selected_rule = matches[0].rule_id;
+          next.last_change = "유일한 rule의 Guard 충족 → 의미 Action 선택, Verification 대기";
+        }
+      }
+      return next;
+    }
+    if (["VERIFY_PRIMARY", "VERIFY_FALLBACK", "VERIFY_UNKNOWN"].includes(event.type)) {
+      if (next.sample.phase !== "awaiting_verification") {
+        next.last_change = "불법 전이: 먼저 세 Guard를 true로 만들고 평가해야 함";
+        return next;
+      }
+      next.sample.phase = "finished";
+      if (event.type === "VERIFY_PRIMARY") {
+        next.sample.verification = "measurement_quality=healthy";
+        next.sample.outcome = "recovered";
+        next.last_change = "Primary Verification → recovered";
+      } else if (event.type === "VERIFY_FALLBACK") {
+        next.sample.verification = "measurement_quality=unknown; numerator=strictly_increasing";
+        next.sample.outcome = "recovered";
+        next.last_change = "Measurement 불명일 때만 분자 fallback → recovered";
+      } else {
+        next.sample.verification = "unknown";
+        next.sample.outcome = "unknown";
+        next.last_change = "Verification unknown → Outcome unknown";
+      }
+      return next;
+    }
+    if (event.type === "ADD_OVERLAPPING_RULE") {
+      const alternative = clone(rule);
+      alternative.rule_id = "engineer-adjustment-other";
+      alternative.actions = [{ kind: "engineer_adjustment_other", parameters: {} }];
+      alternative.provenance = { trace_refs: ["recovery_episode.json#future-episode-002"], event_refs: ["attempt:1/events:4-8"] };
+      next.contract.rules = [rule, alternative];
+      next.last_change = "동일 Guard를 가진 대안 rule 추가 — 아직 자동 선택하지 않음";
+      return next;
+    }
+    if (event.type === "RECORD_APPROVAL") {
+      next.contract.lifecycle.state = "approved";
+      next.contract.lifecycle.approval = { decision: "approved", playbook_version: next.contract.playbook_version, reviewer: "prototype-reviewer", reviewed_at: "PROTOTYPE" };
+      next.last_change = `${next.contract.playbook_version} 승인 필드 모양만 기록 — 실제 승격 gate는 아직 미정`;
+      return next;
+    }
+    next.last_change = `알 수 없는 event: ${event.type}`;
+    return next;
+  }
+
+  return { GUARDS, initialState, reduce };
+})();
+
+const guardLabels = {
+  observation_available: "화면 관측 가능",
+  control_available: "점유·제어 가능",
+  key_visible_unique: "SEM mode + key 가시성·유일성"
+};
+const scenarios = [
+  {
+    id:"primary", title:"Primary 성공", description:"세 Guard가 명확하고 Measurement가 정상화된 첫 성공 경로.",
+    steps:[
+      ["Trace 연결",{type:"ATTACH_TRACE"}],
+      ["화면 true",{type:"SET_GUARD",guard:"observation_available",value:"true"}],
+      ["제어 true",{type:"SET_GUARD",guard:"control_available",value:"true"}],
+      ["key true",{type:"SET_GUARD",guard:"key_visible_unique",value:"true"}],
+      ["Guard 평가",{type:"EVALUATE_GUARDS"}],
+      ["Measurement 정상",{type:"VERIFY_PRIMARY"}]
+    ]
+  },
+  {
+    id:"unknown-guard", title:"Guard 불명", description:"화면이 가려져 사전 상태를 읽지 못한 경우. 다른 행동을 추측하지 않는다.",
+    steps:[
+      ["화면 unknown",{type:"SET_GUARD",guard:"observation_available",value:"unknown"}],
+      ["제어 true",{type:"SET_GUARD",guard:"control_available",value:"true"}],
+      ["key true",{type:"SET_GUARD",guard:"key_visible_unique",value:"true"}],
+      ["Guard 평가",{type:"EVALUATE_GUARDS"}]
+    ]
+  },
+  {
+    id:"fallback-verification", title:"분자 fallback", description:"Measurement가 읽히지 않을 때만 분자 엄격 증가를 성공 근거로 쓴다.",
+    steps:[
+      ["화면 true",{type:"SET_GUARD",guard:"observation_available",value:"true"}],
+      ["제어 true",{type:"SET_GUARD",guard:"control_available",value:"true"}],
+      ["key true",{type:"SET_GUARD",guard:"key_visible_unique",value:"true"}],
+      ["Guard 평가",{type:"EVALUATE_GUARDS"}],
+      ["분자 fallback",{type:"VERIFY_FALLBACK"}]
+    ]
+  },
+  {
+    id:"unresolved", title:"rule 충돌", description:"같은 Guard의 두 rule이 일치해도 선언 순서로 하나를 고르지 않는다.",
+    steps:[
+      ["Trace 연결",{type:"ATTACH_TRACE"}],
+      ["충돌 rule 추가",{type:"ADD_OVERLAPPING_RULE"}],
+      ["화면 true",{type:"SET_GUARD",guard:"observation_available",value:"true"}],
+      ["제어 true",{type:"SET_GUARD",guard:"control_available",value:"true"}],
+      ["key true",{type:"SET_GUARD",guard:"key_visible_unique",value:"true"}],
+      ["Guard 평가",{type:"EVALUATE_GUARDS"}]
+    ]
+  }
+];
+
+let state = PlaybookModel.initialState();
+let activeScenario = 0;
+let scenarioStep = 0;
+
+function dispatch(event) { state = PlaybookModel.reduce(state,event); render(); }
+function eventAttr(event) { return JSON.stringify(event).replaceAll("'", "&#39;"); }
+function render() {
+  const cards = [
+    [`Playbook ${state.contract.playbook_version}`,state.contract.lifecycle.state],
+    ["사례 phase",state.sample.phase],
+    ["선택 rule",state.sample.selected_rule || "없음"],
+    ["Outcome",state.sample.outcome]
+  ];
+  document.querySelector("#stateCards").innerHTML = cards.map(([label,value]) => `<div class="card"><small>${label}</small><strong>${value}</strong></div>`).join("");
+  document.querySelector("#lastChange").textContent = state.last_change;
+  document.querySelector("#guardControls").innerHTML = PlaybookModel.GUARDS.map(guard => `
+    <div><strong>${guardLabels[guard]}</strong><div class="button-row">
+      ${["true","false","unknown"].map(value => `<button data-event='${eventAttr({type:"SET_GUARD",guard,value})}'>${value}</button>`).join("")}
+      <small>현재: ${state.sample.guards[guard]}</small>
+    </div></div>`).join("");
+  document.querySelector("#jsonView").textContent = JSON.stringify(state.contract,null,2);
+  renderScenario();
+  bindEventButtons();
+}
+function renderTabs() {
+  document.querySelector("#tabs").innerHTML = scenarios.map((scenario,index) => `<button role="tab" aria-selected="${index===activeScenario}" data-tab="${index}">${scenario.title}</button>`).join("");
+  document.querySelectorAll("[data-tab]").forEach(button => button.addEventListener("click",() => {
+    activeScenario = Number(button.dataset.tab); scenarioStep = 0; state = PlaybookModel.initialState(); renderTabs(); render();
+  }));
+}
+function renderScenario() {
+  const scenario = scenarios[activeScenario];
+  document.querySelector("#walkthrough").innerHTML = `<h3>${scenario.title}</h3><p>${scenario.description}</p><div class="steps">${scenario.steps.map(([label,event],index) => `<button class="${index<scenarioStep?"done":""}" ${index!==scenarioStep?"disabled":""} data-step="${index}" data-event='${eventAttr(event)}'>${index+1}. ${label}</button>`).join("")}</div>`;
+  document.querySelectorAll("[data-step]").forEach(button => button.addEventListener("click",() => { scenarioStep += 1; }));
+}
+function bindEventButtons() {
+  document.querySelectorAll("[data-event]").forEach(button => {
+    if (button.dataset.bound) return;
+    button.dataset.bound = "1";
+    button.addEventListener("click",() => dispatch(JSON.parse(button.dataset.event)));
+  });
+}
+renderTabs();
+render();
+</script>
+</body>
+</html>

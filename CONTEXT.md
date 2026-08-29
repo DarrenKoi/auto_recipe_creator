@@ -9,6 +9,36 @@ CD-SEM/VeritySEM 레시피 자동 셋업 시스템의 도메인 용어집(glossa
 CD-SEM 장비가 레시피에 등록된 align key 와 현재 wafer 화면을 정렬하지 못해 발생하는 알람.
 알람 코드 **ALID=9006** 으로 식별한다. workflow_2 파이프라인의 트리거.
 
+### Recovery Episode
+하나의 Align Fail 발생에서 시작해 정렬 복구 성공 또는 엔지니어 escalation 으로 끝나는 한 번의
+복구 사건.
+
+### Recovery Trace
+하나의 Recovery Episode 동안 관측된 화면 상태와 엔지니어 행동의 시간순 기록. 실행 절차가
+아니라 Recovery Playbook 을 만드는 근거다.
+
+### Recovery Playbook
+여러 Recovery Trace 를 통합해 만든 조건부 복구 모델. 관측 가능한 사전 상태, 행동,
+검증 결과, 실패 시 대안 경로의 관계를 담는다.
+
+### Recovery Guard
+Recovery Playbook 에서 특정 Recovery Action 을 선택할 수 있게 하는 관측 가능한 사전
+상태. 판정값은 `true`, `false`, `unknown` 이며, 관측 불가는 `false` 가 아니라 `unknown`
+이다. 엔지니어의 의도나 관측되지 않은 이유는 Recovery Guard 가 아니다.
+
+### Recovery Action
+Recovery Playbook 이 선택하는 장비 독립적 행동 의미. 화면 좌표나 녹화에서 읽은 라벨은
+행동 자체가 아니라 그 행동을 뒷받침하는 근거다.
+
+### Recovery Verification
+Recovery Action 후 기대한 관측 가능한 상태 변화가 실제로 일어났는지 확인하는 판정.
+행동을 시도했다는 기록이나 GUI 클릭 자체는 Verification 이 아니며, 관측할 수 없으면
+실패로 단정하지 않고 `unknown` 이다.
+
+### Recovery Outcome
+Recovery Episode 의 종료 결과. `recovered`, `escalated`, `aborted`, `unknown` 중 하나이며,
+`recovered` 는 측정 재개나 품질 신호처럼 관측 가능한 성공 근거가 있을 때만 성립한다.
+
 ### align key
 레시피에 등록된, 정렬 기준이 되는 화면 패턴(주변 layout 포함). OM 버전과 SEM 버전이 따로 있다.
 등록 이미지(`align_img_from_rcp`)에는 엔지니어가 유니크한 위치를 **박스로 그려** 두며(이미지에

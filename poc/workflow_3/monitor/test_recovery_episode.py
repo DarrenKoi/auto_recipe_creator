@@ -404,3 +404,112 @@ def test_scan_survives_a_broken_episode_file(tmp_path):
     good = _read([p for p in _episode_files(tmp_path) if "EQP1" in str(p)][0])
     assert good["state"] == "closed"
     assert "alarm_gone_during_restart" in good["incomplete_reasons"]
+
+
+# ------------------------------------------------------------------
+# 티켓 17 - Episode Outcome 파생과 digest.
+# ------------------------------------------------------------------
+
+
+def _close_with_attempt_records(tmp_path, capsys, *, records=None, outcome_status=""):
+    """알람 1건을 돌리고, attempt 폴더에 record 를 심은 뒤 알람 해제로 Episode 를 닫는다."""
+    tracker = EpisodeTracker(images_root=tmp_path)
+    settings = afm.load_workflow3_settings()
+
+    state = {}
+    _stub_deps(state, afm, _cycle_returning(
+        run_status="completed", outcome_status=outcome_status))
+    try:
+        active = set()
+        afm.process_fail_rows([_row()], active, settings, {}, {}, episodes=tracker)
+        attempt_dir = (tmp_path / "EQP1" / "CLS" / "RCP" / "captured_img_from_rcs"
+                       / "260830_010203" / "attempt_1")
+        attempt_dir.mkdir(parents=True, exist_ok=True)
+        for name, payload in (records or {}).items():
+            (attempt_dir / name).write_text(payload, encoding="utf-8")
+        capsys.readouterr()
+        afm.process_fail_rows([], active, settings, {}, {}, episodes=tracker)
+    finally:
+        _restore(state)
+    return _read(_episode_files(tmp_path)[0]), capsys.readouterr().out
+
+
+def _measurement(value):
+    return json.dumps({
+        "schema_version": "measurement_verification.v1", "value": value,
+        "reason": "test", "source": "annotation",
+        "baseline_ref": "", "post_action_ref": "", "evidence": "", "detail": {},
+    })
+
+
+def test_measurement_success_closes_the_episode_as_recovered(tmp_path, capsys):
+    """primary Measurement success 만이 recovered 를 만든다."""
+    data, out = _close_with_attempt_records(
+        tmp_path, capsys,
+        records={"measurement_verification.json": _measurement("success")},
+    )
+    assert data["outcome"] == "recovered"
+    assert data["outcome_detail"]["verification_path"] == "primary"
+    assert "[DIGEST] episode " in out
+
+
+def test_measurement_failure_does_not_become_recovered(tmp_path, capsys):
+    """관측된 실패는 recovered 가 아니다 - 알람 해제도 그것을 뒤집지 못한다."""
+    data, _out = _close_with_attempt_records(
+        tmp_path, capsys,
+        records={"measurement_verification.json": _measurement("failure")},
+    )
+    assert data["outcome"] != "recovered"
+
+
+def test_numerator_fallback_recovers_only_on_a_strictly_increasing_run(tmp_path, capsys):
+    """Measurement unknown 일 때만 fallback 을 보고, 끊긴 연속은 회복이 아니다."""
+    increasing = "\n".join(json.dumps({"decision": d}) for d in (
+        "first_sample", "strictly_increasing", "strictly_increasing"))
+    data, _ = _close_with_attempt_records(
+        tmp_path, capsys,
+        records={"measurement_verification.json": _measurement("unknown"),
+                 "numerator_reads.jsonl": increasing},
+    )
+    assert data["outcome"] == "recovered"
+    assert data["outcome_detail"]["verification_path"] == "fallback"
+
+
+def test_broken_numerator_run_stays_unknown(tmp_path, capsys):
+    broken = "\n".join(json.dumps({"decision": d} ) for d in (
+        "first_sample", "strictly_increasing", "ocr_miss", "first_sample"))
+    data, _ = _close_with_attempt_records(
+        tmp_path, capsys,
+        records={"measurement_verification.json": _measurement("unknown"),
+                 "numerator_reads.jsonl": broken},
+    )
+    assert data["outcome"] == "unknown"
+
+
+def test_explicit_engineer_handoff_closes_the_episode_as_escalated(tmp_path, capsys):
+    """보정이 명시적으로 엔지니어에게 넘긴 경우만 escalated 다."""
+    data, _ = _close_with_attempt_records(
+        tmp_path, capsys, outcome_status="awaiting_engineer_ok")
+    assert data["attempts"][0]["handoff"] == {
+        "explicit": True, "reason": "awaiting_engineer_ok"}
+    assert data["outcome"] == "escalated"
+
+
+def test_a_plain_failed_cycle_does_not_escalate(tmp_path, capsys):
+    """사이클 실패나 관전은 명시 handoff 가 아니다 - unknown 으로 남는다."""
+    data, _ = _close_with_attempt_records(
+        tmp_path, capsys, outcome_status="view_only_observation")
+    assert data["attempts"][0]["handoff"] is None
+    assert data["outcome"] == "unknown"
+
+
+def test_digest_line_carries_the_episode_summary(tmp_path, capsys):
+    """오피스에서 집으로 복사할 한 줄에 필요한 값이 전부 있다."""
+    _data, out = _close_with_attempt_records(
+        tmp_path, capsys,
+        records={"measurement_verification.json": _measurement("success")},
+    )
+    line = next(l for l in out.splitlines() if l.startswith("[DIGEST] episode "))
+    for token in ("eqp=EQP1", "recipe=CLS/RCP", "attempts=1",
+                  "outcome=recovered", "verify=primary", "complete=yes", "guards="):
+        assert token in line, (token, line)

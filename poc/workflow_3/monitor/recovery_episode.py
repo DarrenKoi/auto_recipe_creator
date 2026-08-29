@@ -53,6 +53,41 @@ _ATTEMPT_RECORD_FILES = (
     ("numerator_reads", "numerator_reads.jsonl"),
 )
 
+# 자동 보정이 **명시적으로** 엔지니어에게 넘긴 outcome status. 이 목록에 있을 때만
+# handoff 기록을 남긴다 - 'handoff' 라는 노드/상태 이름만으로는 escalated 가 되지 않는다는
+# 규약이라, 여기 없는 status(예: 사이클 실패, 관전)는 escalated 로 승격되지 않는다.
+_HANDOFF_STATUSES = (
+    "awaiting_engineer_ok",
+    "escalated_ambiguous_key",
+    "escalated_key_not_visible",
+    "escalated_no_ok",
+)
+
+
+def _abort_record(abort_fn=None):
+    """긴급 해제 래치가 걸렸으면 명시 abort 기록을 만든다(아니면 None)."""
+    try:
+        if abort_fn is not None:
+            aborted, reason = abort_fn()
+        else:
+            from poc.workflow_3.util.abort_switch import abort_reason, is_aborted
+
+            aborted, reason = is_aborted(), abort_reason()
+    except Exception:
+        return None
+    if not aborted:
+        return None
+    return {"aborted": True, "reason": str(reason or "abort_latched")}
+
+
+def _handoff_record(outcome_status: str):
+    """보정이 명시적으로 엔지니어에게 넘긴 경우에만 handoff 기록을 만든다."""
+    status = str(outcome_status or "")
+    if status not in _HANDOFF_STATUSES:
+        return None
+    return {"explicit": True, "reason": status}
+
+
 # attempt 가 '수집 완료' 로 볼 수 없는 run_status. GUI 를 아예 못 돌린 경우다.
 _INCOMPLETE_RUN_STATUSES = {"error", "rcs_unavailable", "cycle_disabled"}
 
@@ -175,6 +210,9 @@ class EpisodeTracker:
         self._open: dict[str, dict] = {}
         # 디스크 재구성은 프로세스당 한 번뿐이다(첫 poll). 이후의 진실은 메모리 맵이다.
         self._scanned = False
+        # fallback Verification 이 요구하는 엄격 증가 표본 수. begin_attempt 에서
+        # settings 로 갱신된다(설정과 판정이 갈리면 안 된다).
+        self._min_increasing_reads = 3
 
     # ---- 내부 ----
 
@@ -285,6 +323,9 @@ class EpisodeTracker:
         다른 두 사건이 한 Episode 로 뭉개진다.
         """
         eqp_id = str(info.get("eqp_id") or "")
+        self._min_increasing_reads = max(
+            1, int(getattr(settings, "engineer_done_numerator_increase_reads", 3) or 3)
+        )
         episode = self._open.get(eqp_id)
         if episode is not None and episode.get("fingerprint") != alarm_fingerprint(info):
             self._mark_episode_incomplete(episode, "fingerprint_changed")
@@ -308,6 +349,10 @@ class EpisodeTracker:
             "failure_class": "",
             "outcome_status": "",
             "artifacts": {"dir": attempt_dirname(attempt_seq)},
+            # 명시 기록만 Outcome 을 escalated/aborted 로 만든다 - 노드나 status 이름은
+            # 근거가 아니다. finish_attempt 가 실제로 관측된 경우에만 채운다.
+            "abort": None,
+            "handoff": None,
             "complete": False,
             "incomplete_reason": "in_progress",
         })
@@ -356,7 +401,7 @@ class EpisodeTracker:
             if (attempt_dir / name).is_file():
                 attempt["artifacts"][key] = f"{attempt_dirname(attempt['attempt_seq'])}/{name}"
 
-    def finish_attempt(self, handle: AttemptHandle, cycle) -> None:
+    def finish_attempt(self, handle: AttemptHandle, cycle, *, abort_fn=None) -> None:
         """사이클 결과를 attempt 에 반영한다(`CycleResult` 를 plain 값으로 받아 적는다).
 
         `run_dir` 은 basename(run id)만 남긴다 - runner journal 은 Episode root 밖에
@@ -383,6 +428,8 @@ class EpisodeTracker:
             "failure_class": str(getattr(cycle, "failure_class", "") or ""),
             "outcome_status": str(getattr(cycle, "outcome_status", "") or ""),
         })
+        attempt["abort"] = _abort_record(abort_fn)
+        attempt["handoff"] = _handoff_record(attempt["outcome_status"])
         if run_status in _INCOMPLETE_RUN_STATUSES:
             self._mark_incomplete(episode, attempt, f"run_status:{run_status}")
         else:
@@ -392,11 +439,101 @@ class EpisodeTracker:
                          run_status=run_status)
         self._persist(episode)
 
+    def _read_attempt_evidence(self, root: Path, attempt: dict) -> dict:
+        """attempt 폴더의 관측 record 를 읽어 **plain data** 로 만든다.
+
+        workflow_4 의 evaluator 는 workflow_3 파일을 파싱하지 않으므로, 파일에서
+        값을 꺼내는 일은 여기(생산자 쪽)가 한다. 읽기 실패는 그 항목을 비우고 넘어간다 -
+        판정은 그때 unknown 이 되며 그것이 정직한 결과다.
+        """
+        attempt_dir = root / attempt_dirname(attempt.get("attempt_seq") or 1)
+        evidence = {
+            "attempt_seq": attempt.get("attempt_seq"),
+            "measurement": None,
+            "numerator_reads": [],
+            "guards": [],
+            "abort": attempt.get("abort"),
+            "handoff": attempt.get("handoff"),
+        }
+        try:
+            path = attempt_dir / "measurement_verification.json"
+            if path.is_file():
+                evidence["measurement"] = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(f"[WARNING] Measurement record 읽기 실패(unknown 으로 진행): {exc}")
+        try:
+            path = attempt_dir / "guards.json"
+            if path.is_file():
+                evidence["guards"] = json.loads(
+                    path.read_text(encoding="utf-8")
+                ).get("guards") or []
+        except Exception as exc:
+            print(f"[WARNING] Guard record 읽기 실패(진행): {exc}")
+        try:
+            path = attempt_dir / "numerator_reads.jsonl"
+            if path.is_file():
+                evidence["numerator_reads"] = [
+                    json.loads(line)
+                    for line in path.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+        except Exception as exc:
+            print(f"[WARNING] numerator 기록 읽기 실패(진행): {exc}")
+        return evidence
+
+    def build_episode_evidence(self, episode: dict) -> dict:
+        """Episode 하나의 근거를 workflow_4 evaluator 가 받는 모양으로 모은다."""
+        root = Path(episode["_root"])
+        alarm = episode.get("alarm") or {}
+        return {
+            "episode_id": episode.get("episode_id", ""),
+            "eqp_id": alarm.get("eqp_id", ""),
+            "recipe_id": alarm.get("recipe_id", ""),
+            "complete": bool(episode.get("complete", True)),
+            "incomplete_reasons": list(episode.get("incomplete_reasons") or ()),
+            "alarm_cleared": episode.get("state") == "closed",
+            "attempts": [
+                self._read_attempt_evidence(root, attempt)
+                for attempt in episode.get("attempts") or ()
+            ],
+        }
+
+    def _derive_and_report(self, episode: dict) -> None:
+        """final Outcome 을 파생해 Episode 에 쓰고 digest 를 한 줄 찍는다.
+
+        workflow_4 import 는 **지연·보호**한다 - workflow_3 가 workflow_4 에 하드
+        의존하지 않는다는 규약이고(graph view mirror 와 같은 형태), 그 계층이 없다고
+        알람 처리가 깨지면 안 된다. 없으면 outcome 은 `unknown` 으로 남는다.
+        """
+        try:
+            from poc.workflow_4.playbook.outcome import (
+                derive_outcome,
+                format_episode_digest,
+            )
+        except Exception as exc:
+            print(f"[WARNING] Outcome evaluator 없음 - outcome=unknown 유지: {exc}")
+            return
+        try:
+            evidence = self.build_episode_evidence(episode)
+            result = derive_outcome(
+                evidence, min_increasing_reads=self._min_increasing_reads
+            )
+            episode["outcome"] = result.outcome
+            episode["outcome_detail"] = {
+                "verification_path": result.verification_path,
+                "reason": result.reason,
+                "deciding_attempt": result.deciding_attempt,
+            }
+            print(format_episode_digest(evidence, result))
+        except Exception as exc:
+            print(f"[WARNING] Outcome 파생 실패 - outcome=unknown 유지: {exc}")
+
     def _close(self, episode: dict, kind: str, **detail) -> None:
-        """Episode 를 닫고(state/closed_at) 마지막 이벤트를 남긴다."""
+        """Episode 를 닫고(state/closed_at) final Outcome + digest 를 낸다."""
         self._next_event(episode, kind, None, **detail)
         episode["state"] = "closed"
         episode["closed_at"] = _now_iso()
+        self._derive_and_report(episode)
         self._persist(episode)
 
     def close_cleared(self, current_eqp_ids) -> list:

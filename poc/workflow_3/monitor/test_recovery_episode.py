@@ -158,7 +158,7 @@ def test_clearance_closes_episode_and_recurrence_gets_new_identity(tmp_path):
 
 def test_cycle_exception_preserves_episode_as_incomplete(tmp_path):
     """사이클이 예외로 끝나도 파일은 남고 사유가 적힌다 - 삭제하지 않는다."""
-    def _boom(eqp_id, recipe_id, settings, tag=None):
+    def _boom(eqp_id, recipe_id, settings, tag=None, **_kwargs):
         raise RuntimeError("boom")
 
     _run(tmp_path, [_row()], cycle_fn=_boom)
@@ -201,3 +201,106 @@ def test_load_rejects_absolute_and_escaping_artifact_paths(tmp_path):
         path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         with pytest.raises(ValueError):
             load_episode(path)
+
+
+# ------------------------------------------------------------------
+# 티켓 11 - attempt 별 산출물 폴더.
+# ------------------------------------------------------------------
+
+
+def _start_recording(monkeypatch, tmp_path, *, attempt_seq=None, prelude=False):
+    """`_exec_start_recording` 을 실제로 돌려 프레임/manifest 를 남기고 세션을 돌려준다."""
+    import dataclasses
+    import time
+
+    from PIL import Image
+
+    from poc.workflow_3.monitor import cycle, recording
+
+    monkeypatch.setattr(cycle, "ALIGN_IMAGES_DIR", tmp_path)
+    monkeypatch.setattr(
+        recording, "capture_window", lambda _win: Image.new("RGB", (64, 48), "white")
+    )
+    monkeypatch.setattr(
+        cycle, "capture_screen", lambda index=1: Image.new("RGB", (64, 48), "black")
+    )
+    settings = dataclasses.replace(
+        afm.load_workflow3_settings(),
+        recording_poll_sec=0.01,
+        record_prelude_enabled=prelude,
+        prelude_poll_sec=0.01,
+    )
+    context = {
+        "eqp_id": "EQP1", "recipe_id": "CLS/RCP", "tag": "T1",
+        "tool_window": object(),
+    }
+    if attempt_seq is not None:
+        context["attempt_seq"] = attempt_seq
+    if prelude:
+        cycle.start_prelude_recording(context, settings)
+        time.sleep(0.05)
+    step = cycle.build_cycle_steps("EQP1")[4]
+    cycle._exec_start_recording(step, context, settings)
+    time.sleep(0.05)
+    session = context["recording"]
+    session.stop("test")
+    cycle.stop_prelude_recording(context, "test")
+    return session
+
+
+def test_retries_write_into_separate_attempt_recording_folders(tmp_path, monkeypatch):
+    """재시도 2회가 attempt_1/recording 과 attempt_2/recording 으로 갈린다."""
+    first = _start_recording(monkeypatch, tmp_path, attempt_seq=1)
+    second = _start_recording(monkeypatch, tmp_path, attempt_seq=2)
+
+    episode_root = tmp_path / "EQP1" / "CLS" / "RCP" / "captured_img_from_rcs" / "T1"
+    assert first.out_dir == episode_root / "attempt_1" / "recording"
+    assert second.out_dir == episode_root / "attempt_2" / "recording"
+    for session in (first, second):
+        assert (session.out_dir / "recording_manifest.json").is_file()
+        assert list(session.out_dir.glob("*.jpg"))
+    # 두 테이크의 프레임이 한 폴더에 섞이지 않는다(구 tag 충돌 결함).
+    assert not list((episode_root / "recording").glob("*.jpg"))
+
+
+def test_prelude_goes_under_the_same_attempt_folder(tmp_path, monkeypatch):
+    """prelude 는 attempt_<n>/recording/prelude/ 다 - 본 녹화와 같은 attempt 아래."""
+    session = _start_recording(monkeypatch, tmp_path, attempt_seq=3, prelude=True)
+    prelude_dir = session.out_dir / "prelude"
+    assert prelude_dir.is_dir()
+    assert list(prelude_dir.glob("*.jpg"))
+    # 본 녹화 폴더 직하에 화면 전체 프레임이 섞이면 recording_filter 가 오염된다.
+    assert prelude_dir.parent.parent.name == "attempt_3"
+
+
+def test_collection_off_keeps_the_legacy_tag_recording_folder(tmp_path, monkeypatch):
+    """수집 off(attempt_seq 없음)면 종전 <tag>/recording/ 그대로다."""
+    session = _start_recording(monkeypatch, tmp_path, attempt_seq=None)
+    episode_root = tmp_path / "EQP1" / "CLS" / "RCP" / "captured_img_from_rcs" / "T1"
+    assert session.out_dir == episode_root / "recording"
+
+
+def test_episode_records_attempt_artifacts_as_episode_relative(tmp_path):
+    """Episode 파일의 attempt 항목이 자기 폴더/산출물을 Episode-relative 로 가리킨다."""
+    from poc.workflow_3.monitor.recovery_episode import load_episode
+
+    tracker = EpisodeTracker(images_root=tmp_path)
+    settings = afm.load_workflow3_settings()
+    root = tmp_path / "EQP1" / "CLS" / "RCP" / "captured_img_from_rcs" / "260830_010203"
+
+    state = {}
+    _stub_deps(state, afm, _cycle_returning(
+        run_status="completed",
+        recording_dir=str(root / "attempt_1" / "recording"),
+        prelude_dir=str(root / "attempt_1" / "recording" / "prelude"),
+    ))
+    try:
+        afm.process_fail_rows([_row()], set(), settings, {}, {}, episodes=tracker)
+    finally:
+        _restore(state)
+
+    data = load_episode(_episode_files(tmp_path)[0])
+    artifacts = data["attempts"][0]["artifacts"]
+    assert artifacts["dir"] == "attempt_1"
+    assert artifacts["recording"] == "attempt_1/recording"
+    assert artifacts["prelude"] == "attempt_1/recording/prelude"

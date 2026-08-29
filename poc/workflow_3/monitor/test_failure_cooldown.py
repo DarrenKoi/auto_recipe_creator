@@ -39,7 +39,9 @@ def _stub_deps(state, module, cycle_fn, cycle_attr="run_alarm_cycle"):
 
 
 def _cycle_returning(**fields):
-    def _fake(eqp_id, recipe_id, settings, tag=None):
+    # **_kwargs: Episode 수집이 켜지면 run_alarm_cycle 이 attempt_seq 도 받는다.
+    # 이 fake 는 사이클 인자를 검사하지 않으므로 조용히 흘려보낸다.
+    def _fake(eqp_id, recipe_id, settings, tag=None, **_kwargs):
         r = CycleResult(eqp_id=eqp_id, recipe_id=recipe_id, tag=tag or "")
         for k, v in fields.items():
             setattr(r, k, v)

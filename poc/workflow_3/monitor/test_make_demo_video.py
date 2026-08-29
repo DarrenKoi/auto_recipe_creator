@@ -240,6 +240,24 @@ def test_fit_into_canvas_passthrough_when_same_size():
     print("[OK] test_fit_into_canvas_passthrough_when_same_size")
 
 
+def test_find_recording_dirs_is_recursive_over_attempt_folders(tmp_path):
+    """attempt 하위 녹화도 코드 변경 없이 발견된다 - 재귀 탐색이라는 사실을 고정한다.
+
+    recording_filter 는 고정 깊이 glob 이라 attempt 깊이를 손으로 추가해야 했지만,
+    이쪽은 `rglob("recording")` 이라 손댈 것이 없다. 그 비대칭을 테스트로 못박아 둔다.
+    """
+    from poc.workflow_3.monitor.make_demo_video import find_recording_dirs
+
+    legacy = tmp_path / "EQP" / "_unregistered" / "T1" / "recording"
+    attempt = tmp_path / "EQP" / "_unregistered" / "T2" / "attempt_3" / "recording"
+    manual = tmp_path / "EQP" / "_manual" / "T3" / "recording"
+    for path in (legacy, attempt, manual):
+        path.mkdir(parents=True)
+
+    assert set(find_recording_dirs(tmp_path)) == {legacy, attempt, manual}
+    print("[OK] test_find_recording_dirs_is_recursive_over_attempt_folders")
+
+
 if __name__ == "__main__":
     import tempfile
     from pathlib import Path

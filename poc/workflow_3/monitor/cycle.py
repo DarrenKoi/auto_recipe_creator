@@ -50,6 +50,7 @@ from poc.workflow_3.monitor.notify import (
 )
 from poc.workflow_3.monitor.rcs_recovery import RECOVERED, recover_rcs_session
 from poc.workflow_3.monitor.recording import RecordingSession
+from poc.workflow_3.monitor.recovery_episode import attempt_dirname, episode_root_for
 from poc.workflow_3.monitor.teardown import run_teardown
 from poc.workflow_3.rcs.row_occupant import OCCUPIED_BY_OTHER, UNKNOWN
 from poc.workflow_3.sem_monitor.controller import build_rcs_sem_monitor
@@ -114,14 +115,12 @@ try:
         wait_for_rcs_main_window,
         wait_for_remote_monitoring_window,
     )
-    from poc.workflow_3.rcs.rcs_screenshot import captured_dir_for
     from poc.workflow_3.rcs.workflow_select_tool import connect_to_tool
 
     RCS_MODULES_AVAILABLE = True
 except Exception as _rcs_import_exc:
     wait_for_rcs_main_window = None
     wait_for_remote_monitoring_window = None
-    captured_dir_for = None
     connect_to_tool = None
     RCS_MODULES_AVAILABLE = False
     print(f"[WARNING] RCS 모듈 로드 실패 - 사이클 비활성(감지/로그만 동작): {_rcs_import_exc}")
@@ -742,11 +741,23 @@ def _exec_wait_tool_window(step, context, settings: Workflow3Settings) -> StepRe
     return _make_result(step, "success", started_at, settings)
 
 
-def _recording_dir_for(eqp_id: str, recipe_id: str, tag: str) -> Path:
-    """녹화 저장 폴더 — captured_img_from_rcs/<tag>/recording (recipe 없으면 _unregistered)."""
-    if recipe_id and captured_dir_for is not None:
-        return captured_dir_for(eqp_id, recipe_id) / tag / "recording"
-    return ALIGN_IMAGES_DIR / eqp_id / "_unregistered" / tag / "recording"
+def _attempt_dir_for(eqp_id: str, recipe_id: str, tag: str, attempt_seq=None) -> Path:
+    """이 attempt 의 산출물 루트 — Episode root, 수집 on 이면 그 아래 `attempt_<n>/`.
+
+    녹화 폴더와 캡처 폴더를 각각 계산하던 두 resolver 를 여기로 합쳤다. 둘이 갈려
+    있으면 attempt 깊이를 한쪽에만 넣는 회귀가 조용히 생긴다.
+
+    `attempt_seq` 가 없으면(=Episode 수집 off, 점검 전용 사이클) 종전 `<tag>/` 그대로다.
+    경로 계산은 `recovery_episode.episode_root_for` 가 소유한다 - 순수 함수라 Windows
+    전용 모듈 없이도 성립하고, Episode 정본과 같은 자리를 가리키는 것이 보장된다.
+    """
+    root = episode_root_for(ALIGN_IMAGES_DIR, eqp_id, recipe_id, tag)
+    return root / attempt_dirname(attempt_seq) if attempt_seq else root
+
+
+def _recording_dir_for(eqp_id: str, recipe_id: str, tag: str, attempt_seq=None) -> Path:
+    """녹화 저장 폴더 — <attempt 루트>/recording."""
+    return _attempt_dir_for(eqp_id, recipe_id, tag, attempt_seq) / "recording"
 
 
 def start_prelude_recording(context: dict, settings: Workflow3Settings):
@@ -765,7 +776,8 @@ def start_prelude_recording(context: dict, settings: Workflow3Settings):
     if not settings.record_prelude_enabled:
         return None
     out_dir = _recording_dir_for(
-        context["eqp_id"], context["recipe_id"], context["tag"]
+        context["eqp_id"], context["recipe_id"], context["tag"],
+        context.get("attempt_seq"),
     ) / "prelude"
     monitor_index = settings.prelude_monitor_index
     try:
@@ -813,7 +825,10 @@ def stop_prelude_recording(context: dict, reason: str) -> int:
 def _exec_start_recording(step, context, settings: Workflow3Settings) -> StepResult:
     """⑤ 상시 녹화 시작 — 실패해도 사이클은 계속(녹화는 best-effort)."""
     started_at = time.time()
-    out_dir = _recording_dir_for(context["eqp_id"], context["recipe_id"], context["tag"])
+    out_dir = _recording_dir_for(
+        context["eqp_id"], context["recipe_id"], context["tag"],
+        context.get("attempt_seq"),
+    )
     try:
         session = RecordingSession(
             context["tool_window"],
@@ -1331,6 +1346,7 @@ def run_alarm_cycle(
     settings: Workflow3Settings,
     *,
     tag: str | None = None,
+    attempt_seq=None,
 ) -> CycleResult:
     """알람 1건에 대한 전체 사이클을 실행하고 결과 요약을 반환한다.
 
@@ -1350,6 +1366,9 @@ def run_alarm_cycle(
         return result
 
     context: dict = {"eqp_id": eqp_id, "recipe_id": recipe_id, "tag": tag}
+    # Episode 수집이 켜졌을 때만 채워진다 - 폴더 resolver 가 attempt 깊이를 넣는 근거.
+    if attempt_seq:
+        context["attempt_seq"] = attempt_seq
     runner = WorkflowRunner(
         settings,
         workflow_name=f"align_fail_cycle_{eqp_id}",
@@ -1503,17 +1522,13 @@ def run_alarm_cycle(
 # ------------------------------------------------------------------
 
 
-def _capture_dir_for(eqp_id: str, recipe_id: str, tag: str) -> Path:
-    """첫 화면 캡처 저장 폴더 — captured_img_from_rcs/<tag> (recipe 없으면 _unregistered)."""
-    if recipe_id and captured_dir_for is not None:
-        return captured_dir_for(eqp_id, recipe_id) / tag
-    return ALIGN_IMAGES_DIR / eqp_id / "_unregistered" / tag
-
-
 def _exec_capture_screen(step, context, settings: Workflow3Settings) -> StepResult:
     """첫 화면 1장 캡처 — 장비는 fail 시 정지라 단일 스크린샷으로 충분."""
     started_at = time.time()
-    out_dir = _capture_dir_for(context["eqp_id"], context["recipe_id"], context["tag"])
+    out_dir = _attempt_dir_for(
+        context["eqp_id"], context["recipe_id"], context["tag"],
+        context.get("attempt_seq"),
+    )
     try:
         if _CHECK_CAPTURE_SETTLE_SEC > 0:
             time.sleep(_CHECK_CAPTURE_SETTLE_SEC)

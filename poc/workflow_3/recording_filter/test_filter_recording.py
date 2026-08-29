@@ -765,3 +765,50 @@ def test_injected_settings_are_not_capped(tmp_path, monkeypatch):
         (rec.parent / "recording_filter" / "summary.json").read_text(encoding="utf-8")
     )
     assert summary["max_vlm_calls"] == 0, summary
+
+
+def _touch_recording(base, *parts):
+    """`<...>/recording/` 폴더 하나를 프레임 1장과 함께 만든다."""
+    path = base.joinpath(*parts)
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "f_0000.jpg").write_bytes(b"x")
+    return path.resolve()
+
+
+def test_discovery_finds_both_legacy_tag_and_attempt_recordings(tmp_path, monkeypatch):
+    """자동 탐색이 `<tag>/recording` 과 `<tag>/attempt_<n>/recording` 을 둘 다 찾는다.
+
+    attempt 깊이가 생긴 뒤에도 구 녹화(`<tag>/recording`)는 그대로 발견돼야 한다 -
+    고정 깊이 glob 이라 새 깊이를 **추가**해야 하고, 교체하면 예전 자료가 사라진다.
+    """
+    from poc.workflow_3.recording_filter import filter_recording as fr
+
+    monkeypatch.delenv("RECORDING_FILTER_INPUT_DIR", raising=False)
+    monkeypatch.setattr(fr, "ALIGN_IMAGES_DIR", tmp_path)
+    monkeypatch.setattr(fr, "INPUT_DIR_OVERRIDE", "")
+
+    expected = {
+        _touch_recording(tmp_path, "EQP", "CLS", "RCP", "captured_img_from_rcs", "T1",
+                         "recording"),
+        _touch_recording(tmp_path, "EQP", "CLS", "RCP", "captured_img_from_rcs", "T2",
+                         "attempt_2", "recording"),
+        _touch_recording(tmp_path, "EQP", "_unregistered", "T3", "recording"),
+        _touch_recording(tmp_path, "EQP", "_unregistered", "T4", "attempt_1", "recording"),
+        _touch_recording(tmp_path, "EQP", "_manual", "T5", "recording"),
+    }
+    found = set(fr._discover_recording_dirs())
+    assert found == expected, (found ^ expected)
+
+
+def test_discovery_ignores_prelude_subfolder(tmp_path, monkeypatch):
+    """prelude 는 화면 전체 프레임이라 이 파이프라인의 입력이 아니다(tool 창 rect 전제)."""
+    from poc.workflow_3.recording_filter import filter_recording as fr
+
+    monkeypatch.delenv("RECORDING_FILTER_INPUT_DIR", raising=False)
+    monkeypatch.setattr(fr, "ALIGN_IMAGES_DIR", tmp_path)
+    monkeypatch.setattr(fr, "INPUT_DIR_OVERRIDE", "")
+
+    main = _touch_recording(tmp_path, "EQP", "_unregistered", "T1", "attempt_1", "recording")
+    _touch_recording(tmp_path, "EQP", "_unregistered", "T1", "attempt_1", "recording",
+                     "prelude")
+    assert set(fr._discover_recording_dirs()) == {main}

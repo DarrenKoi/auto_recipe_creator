@@ -116,6 +116,22 @@ def _reject_unsafe_ref(value: str, where: str) -> None:
         raise ValueError(f"parent-escaping artifact path in {where}: {value!r}")
 
 
+def relative_ref(root, value) -> str:
+    """Episode root 기준 상대 참조로 바꾼다. root 밖이거나 비면 빈 문자열.
+
+    root 밖의 경로는 **참조하지 않는다** - Episode 폴더가 통째로 옮겨져도 provenance 가
+    깨지지 않아야 하므로, 밖을 가리키는 절대 경로를 적느니 참조를 비워 둔다
+    (runner journal 처럼 밖에 사는 것은 경로가 아니라 id 로 참조한다).
+    """
+    if not value:
+        return ""
+    try:
+        rel = Path(str(value)).resolve().relative_to(Path(root).resolve())
+    except (ValueError, OSError):
+        return ""
+    return rel.as_posix()
+
+
 def load_episode(path) -> dict:
     """recovery_episode.json 을 읽고 artifact 경로 규약을 검증한다.
 
@@ -271,6 +287,14 @@ class EpisodeTracker:
         if attempt is None:
             return
         run_status = str(getattr(cycle, "run_status", "") or "")
+        root = Path(episode["_root"])
+        for key, value in (
+            ("recording", getattr(cycle, "recording_dir", "")),
+            ("prelude", getattr(cycle, "prelude_dir", "")),
+        ):
+            ref = relative_ref(root, value)
+            if ref:
+                attempt["artifacts"][key] = ref
         attempt.update({
             "finished_at": _now_iso(),
             "run_id": Path(str(getattr(cycle, "run_dir", "") or "")).name,
@@ -336,4 +360,5 @@ __all__ = [
     "attempt_dirname",
     "episode_root_for",
     "load_episode",
+    "relative_ref",
 ]

@@ -492,6 +492,8 @@ def process_fail_rows(
                     info["recipe_id"],
                     settings,
                     tag=tag,
+                    # 수집 off 면 넘기지 않는다 - 사이클 폴더 규약이 종전 그대로여야 한다.
+                    **({"attempt_seq": handle.attempt_seq} if handle else {}),
                 )
             else:
                 cycle = CycleResult(eqp_id=eqp_id, recipe_id=info["recipe_id"], tag="")

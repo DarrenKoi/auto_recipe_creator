@@ -39,6 +39,27 @@ INPUT_DIR_OVERRIDE = r""
 MAX_VLM_CALLS = 300
 
 
+def _discover_recording_dirs() -> list[Path]:
+    """분석 가능한 recording/ 폴더를 전부 찾는다(등록 / 미등록 / 수동 / attempt 하위).
+
+    고정 깊이 glob 이라 Episode 수집의 `attempt_<n>/` 깊이는 **추가**해야 한다.
+    기존 깊이를 갈아끼우면 구 녹화(`<tag>/recording/`)가 통째로 안 보이게 된다.
+    `prelude/` 는 화면 전체 그랩이라 여기 들어오면 안 된다 - 이 파이프라인(live SEM
+    box 게이트)은 tool 창 rect 프레임을 전제한다. 비재귀 glob 이 그것을 보장한다.
+    """
+    patterns = (
+        "*/*/*/captured_img_from_rcs/*/recording",
+        "*/*/*/captured_img_from_rcs/*/attempt_*/recording",
+        "*/_unregistered/*/recording",
+        "*/_unregistered/*/attempt_*/recording",
+        "*/_manual/*/recording",
+    )
+    found = []
+    for pattern in patterns:
+        found.extend(p.resolve() for p in ALIGN_IMAGES_DIR.glob(pattern) if p.is_dir())
+    return found
+
+
 def _resolve_input_dir() -> Path | None:
     """분석할 recording/ 폴더를 결정한다(override -> env -> 자동탐색)."""
     override = (INPUT_DIR_OVERRIDE or "").strip()
@@ -58,15 +79,8 @@ def _resolve_input_dir() -> Path | None:
         print(f"[ERROR] RECORDING_FILTER_INPUT_DIR 디렉터리를 찾지 못했습니다: {path}")
         return None
 
-    # 등록(captured_img_from_rcs) + 미등록(_unregistered) 두 경로 형태 모두 탐색.
     candidates = sorted(
-        [
-            *ALIGN_IMAGES_DIR.glob("*/*/*/captured_img_from_rcs/*/recording"),
-            *ALIGN_IMAGES_DIR.glob("*/_unregistered/*/recording"),
-            *ALIGN_IMAGES_DIR.glob("*/_manual/*/recording"),
-        ],
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
+        _discover_recording_dirs(), key=lambda p: p.stat().st_mtime, reverse=True
     )
     if candidates:
         latest = candidates[0].resolve()

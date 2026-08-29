@@ -304,3 +304,101 @@ def test_episode_records_attempt_artifacts_as_episode_relative(tmp_path):
     assert artifacts["dir"] == "attempt_1"
     assert artifacts["recording"] == "attempt_1/recording"
     assert artifacts["prelude"] == "attempt_1/recording/prelude"
+
+
+# ------------------------------------------------------------------
+# 티켓 14 - 재시작 재개와 고아 스캔.
+# ------------------------------------------------------------------
+
+
+def test_restart_resumes_only_an_exact_fingerprint_match(tmp_path):
+    """재시작(새 tracker)해도 fingerprint 가 완전히 같으면 같은 Episode 를 이어 간다."""
+    settings = afm.load_workflow3_settings()
+    rows = [_row()]
+
+    state = {}
+    _stub_deps(state, afm, _cycle_returning(run_status="completed"))
+    try:
+        afm.process_fail_rows(rows, set(), settings, {}, {},
+                              episodes=EpisodeTracker(images_root=tmp_path))
+        # 프로세스가 죽었다 살아난다 - 메모리 맵은 비어 있고 디스크만 남는다.
+        afm.process_fail_rows(rows, set(), settings, {}, {},
+                              episodes=EpisodeTracker(images_root=tmp_path))
+    finally:
+        _restore(state)
+
+    files = _episode_files(tmp_path)
+    assert len(files) == 1, files
+    data = _read(files[0])
+    assert [a["attempt_seq"] for a in data["attempts"]] == [1, 2]
+    assert data["state"] == "open"
+
+
+def test_fingerprint_change_closes_prior_episode_and_opens_a_new_one(tmp_path):
+    """알람이 바뀌면(같은 장비라도) 이전 Episode 를 사유와 함께 닫고 새로 연다."""
+    tracker = EpisodeTracker(images_root=tmp_path)
+    settings = afm.load_workflow3_settings()
+
+    state = {}
+    _stub_deps(state, afm, _cycle_returning(run_status="completed"))
+    try:
+        afm.process_fail_rows([_row()], set(), settings, {}, {}, episodes=tracker)
+        # 해제(빈 poll) 없이 같은 장비의 알람 시각만 바뀐 경우 - cooldown 재시도 경로.
+        afm.process_fail_rows([_row(utc9="2026-08-30 05:00:00")], set(), settings,
+                              {}, {}, episodes=tracker)
+    finally:
+        _restore(state)
+
+    files = _episode_files(tmp_path)
+    assert len(files) == 2, files
+    prior, current = (_read(p) for p in files)
+    assert prior["state"] == "closed"
+    assert prior["complete"] is False
+    assert "fingerprint_changed" in prior["incomplete_reasons"]
+    assert current["state"] == "open"
+    assert current["episode_id"] != prior["episode_id"]
+
+
+def test_first_poll_scan_closes_open_episode_whose_alarm_is_gone(tmp_path):
+    """재시작 첫 poll 스캔이 알람 없는 open Episode 를 alarm_gone_during_restart 로 닫는다."""
+    settings = afm.load_workflow3_settings()
+
+    state = {}
+    _stub_deps(state, afm, _cycle_returning(run_status="completed"))
+    try:
+        afm.process_fail_rows([_row()], set(), settings, {}, {},
+                              episodes=EpisodeTracker(images_root=tmp_path))
+        # 재시작 후 첫 poll 에 그 알람이 없다(다른 장비만 떠 있다).
+        afm.process_fail_rows([_row(eqp_id="EQP2")], set(), settings, {}, {},
+                              episodes=EpisodeTracker(images_root=tmp_path))
+    finally:
+        _restore(state)
+
+    orphan = _read([p for p in _episode_files(tmp_path) if "EQP1" in str(p)][0])
+    assert orphan["state"] == "closed"
+    assert orphan["complete"] is False
+    assert "alarm_gone_during_restart" in orphan["incomplete_reasons"]
+    assert "alarm_gone_during_restart" in [e["kind"] for e in orphan["events"]]
+
+
+def test_scan_survives_a_broken_episode_file(tmp_path):
+    """깨진 Episode 파일은 경고 후 건너뛴다 - 스캔이 모니터를 죽이면 안 된다."""
+    settings = afm.load_workflow3_settings()
+
+    state = {}
+    _stub_deps(state, afm, _cycle_returning(run_status="completed"))
+    try:
+        afm.process_fail_rows([_row()], set(), settings, {}, {},
+                              episodes=EpisodeTracker(images_root=tmp_path))
+        broken = tmp_path / "EQPX" / "_unregistered" / "T9"
+        broken.mkdir(parents=True)
+        (broken / "recovery_episode.json").write_text("{ not json", encoding="utf-8")
+
+        afm.process_fail_rows([], set(), settings, {}, {},
+                              episodes=EpisodeTracker(images_root=tmp_path))
+    finally:
+        _restore(state)
+
+    good = _read([p for p in _episode_files(tmp_path) if "EQP1" in str(p)][0])
+    assert good["state"] == "closed"
+    assert "alarm_gone_during_restart" in good["incomplete_reasons"]

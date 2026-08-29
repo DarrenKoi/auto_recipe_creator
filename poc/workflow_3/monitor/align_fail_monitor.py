@@ -42,6 +42,7 @@ from poc.workflow_3.monitor.notify import (
 )
 from poc.workflow_3.monitor.rcp_msr_gather import gather_rcp_msr
 from poc.workflow_3.monitor.success_gather import gather_success_async
+from poc.workflow_3.monitor.recovery_episode import alarm_fingerprint
 from poc.workflow_3.util import make_timestamp_tag
 from poc.workflow_3.logger import log_work2_event
 
@@ -402,6 +403,14 @@ def process_fail_rows(
     by_tool = _collapse_rows_by_tool(fails)
     current_tools = set(by_tool.keys())
 
+    # 재시작 복구: 첫 poll 에 한 번만 capture tree 를 훑어 열린 Episode 를 되찾고,
+    # 이번 알람 목록에 없는 것은 alarm_gone_during_restart 로 닫는다. tracker 가
+    # 자체적으로 1회 실행을 보장하므로 매 poll 불러도 된다.
+    if episodes is not None:
+        episodes.resume_from_disk(
+            alarm_fingerprint(info) for info in by_tool.values()
+        )
+
     # cooldown 만료/알람해제 정리 → 남은 것은 '아직 점유 추정' 으로 이번 poll 에서 건너뜀.
     now = time.time()
     for eqp_id in list(occupied_cooldown):
@@ -719,6 +728,9 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
                 # Episode clearance 는 이 분기에서도 닫아야 한다(빠뜨리면 열린 채
                 # 남아 다음 알람이 같은 Episode 로 잘못 재개된다).
                 if episodes is not None:
+                    # 재시작 직후 첫 poll 이 빈 경우도 스캔을 거쳐야 한다 - 그러지
+                    # 않으면 알람이 이미 풀린 고아 Episode 가 영영 열린 채 남는다.
+                    episodes.resume_from_disk(())
                     episodes.close_cleared(())
                 if not idle_logged:
                     print(f"[INFO] {datetime.now().strftime('%H:%M:%S')} - Align Fail 없음")

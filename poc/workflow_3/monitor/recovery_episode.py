@@ -166,6 +166,8 @@ class EpisodeTracker:
     def __init__(self, images_root=None):
         self.images_root = Path(images_root) if images_root else ALIGN_IMAGES_DIR
         self._open: dict[str, dict] = {}
+        # 디스크 재구성은 프로세스당 한 번뿐이다(첫 poll). 이후의 진실은 메모리 맵이다.
+        self._scanned = False
 
     # ---- 내부 ----
 
@@ -221,14 +223,67 @@ class EpisodeTracker:
 
     # ---- 공개 API ----
 
+    def resume_from_disk(self, current_fingerprints) -> None:
+        """첫 poll 에 capture tree 를 한 번 훑어 열린 Episode 를 되찾는다.
+
+        장비->Episode 맵은 메모리에만 있으므로, 프로세스가 재시작하면 진행 중이던
+        Episode 가 디스크에만 남는다. 이 스캔이 **유일한** 디스크 재구성 경로다.
+
+          * fingerprint 가 이번 poll 의 알람과 **완전히** 일치하면 재개한다.
+          * 그렇지 않으면 `incomplete(alarm_gone_during_restart)` 로 닫는다.
+
+        깨진 파일 하나 때문에 모니터가 뜨지 못하면 안 되므로, 스캔 전체와 파일 하나
+        모두 예외를 삼키고 경고만 남긴다(파일은 지우지 않는다).
+        """
+        if self._scanned:
+            return
+        self._scanned = True
+        wanted = {str(value) for value in (current_fingerprints or ())}
+        try:
+            paths = sorted(self.images_root.rglob(EPISODE_FILENAME))
+        except Exception as exc:
+            print(f"[WARNING] Episode 스캔 실패(건너뜀): {exc}")
+            return
+        resumed = orphaned = 0
+        for path in paths:
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if data.get("state") != "open":
+                    continue
+                data["_root"] = str(path.parent)
+                eqp_id = str((data.get("alarm") or {}).get("eqp_id") or "")
+                if data.get("fingerprint") in wanted and eqp_id not in self._open:
+                    self._open[eqp_id] = data
+                    resumed += 1
+                else:
+                    self._mark_episode_incomplete(data, "alarm_gone_during_restart")
+                    self._close(data, "alarm_gone_during_restart", eqp_id=eqp_id)
+                    orphaned += 1
+            except Exception as exc:
+                print(f"[WARNING] Episode 파일을 건너뜀({path}): {exc}")
+        if resumed or orphaned:
+            print(
+                f"[INFO] Episode 스캔: 재개={resumed}, "
+                f"alarm_gone_during_restart={orphaned}"
+            )
+
     def begin_attempt(self, info, settings, *, tag: str) -> AttemptHandle:
         """이 알람의 Episode 를 열거나 재개하고 attempt 하나를 시작한다.
 
         정본은 **첫 GUI step 전에** 디스크에 있다 - 사이클이 예외로 끝나도 "이 알람을
         건드렸다" 는 사실이 남아야 한다.
+
+        같은 장비에 열린 Episode 가 있어도 fingerprint 가 하나라도 다르면 재개하지
+        않는다 - 그건 같은 알람의 재시도가 아니라 **다음 실패**이며, 이어 붙이면 서로
+        다른 두 사건이 한 Episode 로 뭉개진다.
         """
         eqp_id = str(info.get("eqp_id") or "")
         episode = self._open.get(eqp_id)
+        if episode is not None and episode.get("fingerprint") != alarm_fingerprint(info):
+            self._mark_episode_incomplete(episode, "fingerprint_changed")
+            self._close(episode, "fingerprint_changed", eqp_id=eqp_id)
+            self._open.pop(eqp_id, None)
+            episode = None
         if episode is None:
             episode = self._new_episode(info, tag)
             self._open[eqp_id] = episode
@@ -267,6 +322,12 @@ class EpisodeTracker:
                 if attempt["attempt_seq"] == handle.attempt_seq:
                     return episode, attempt
         return None, None
+
+    def _mark_episode_incomplete(self, episode: dict, reason: str) -> None:
+        """수집이 attempt 밖의 이유로 깨진 Episode 를 사유와 함께 미완으로 표시한다."""
+        if reason not in episode["incomplete_reasons"]:
+            episode["incomplete_reasons"].append(reason)
+        episode["complete"] = False
 
     def _mark_incomplete(self, episode: dict, attempt: dict, reason: str) -> None:
         """attempt 를 미완 처리하고 Episode 의 사유 목록에 합친다(파일은 안 지운다)."""

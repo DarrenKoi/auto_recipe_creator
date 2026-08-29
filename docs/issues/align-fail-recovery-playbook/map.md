@@ -37,6 +37,14 @@ Playbook 으로 정규화하는 구현 가능한 명세에 필요한 모든 결�
   과 검토 묶음 렌더러(05), `poc/workflow_4/playbook/` 의 evaluator·compiler·어휘 JSON(07/09),
   workflow_3 의 분류 단계·바인딩·shadow 모드·replay 도구와 digest(06/07/09). 05 의 논리 프로토타입은
   `prototypes/` 에 남는다.
+- **명세 작성·리뷰 완료 (2026-08-29, [`spec.md`](spec.md)).** 코드 seam 대조 리뷰로 티켓 요약과 달라진 점 다섯:
+  Episode root = `captured_img_from_rcs/<tag>/` + `attempt_<n>/` 하위 폴더(tag 충돌 버그를 함께 닫음),
+  Measurement reader 는 `unknown` stub + actor annotation 이 첫 Episode 의 primary 출처(열 분리 CV 는 오피스 gate),
+  `pan_fov` 는 `(dx,dy)` 가 아니라 8방향+3단 bin(원값은 provenance), Guard 3 의 OM/SEM 은 v1 signature 밖(충돌은 `unresolved`),
+  actor identity 는 `RECOVERY_REVIEW_ACTOR` 선언값. 롤아웃 정지점은 increment 2 + 오피스 실제 Episode 1건.
+- **구현 티켓 발행 (2026-08-30, `to-tickets`).** `issues/10`–`27` 열여덟 장, 스펙 증분 1(10–14)·2(15–17)·오피스 gate(18,
+  `ready-for-human`)·증분 3–8(19–27, 전부 18 뒤). frontier 는 10 하나. 어휘·분류기(19·20)는 순수 코드라 gate 앞으로
+  뺄 수 있었으나 사용자가 스펙대로 gate 뒤에 두기로 했다.
 - 현재 [`workflow extraction 설계`](../../../poc/workflow_3/docs/superpowers/specs/2026-08-11-workflow-extraction-design.md)는
   평평한 의미 step 목록까지만 제공하고, [`workflow_4`](../../../poc/workflow_4/README.md) 엔진은
   현재 demo 전용이며 `failure_class` 라우팅만 가진다.

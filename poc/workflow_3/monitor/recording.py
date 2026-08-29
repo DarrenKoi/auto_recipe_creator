@@ -122,6 +122,7 @@ class RecordingSession:
         jpeg_quality: int = 95,
         capture_fn=None,
         capture_source: str = "tool_window",
+        manifest_extra_fn=None,
     ):
         self.tool_window = tool_window
         self.out_dir = Path(out_dir)
@@ -143,6 +144,10 @@ class RecordingSession:
         # 소비자에겐 중요하다 - recording_filter 의 live SEM box 게이트는 'tool 창
         # rect' 를 전제하므로, 화면 전체 프레임을 같은 파이프라인에 넣으면 안 된다.
         self.capture_source = capture_source
+        # manifest 에 덧붙일 값을 만드는 콜러블(없으면 종전 manifest 그대로).
+        # 녹화기가 Episode 개념을 알 필요는 없으므로 dict 를 만드는 쪽은 호출부다.
+        # 종료 시점에 불러야 프레임 수 같은 최종값이 반영된다.
+        self._manifest_extra_fn = manifest_extra_fn
         self.frames: list[Path] = []
         self.sampled_count = 0
         self.stop_reason: str = ""
@@ -281,6 +286,12 @@ class RecordingSession:
             "disk_mb": round(self.disk_mb(), 2),
             "stop_reason": self.stop_reason,
         }
+        # additive 확장 - 새 필드를 모르는 기존 소비자는 그대로 동작한다.
+        if self._manifest_extra_fn is not None:
+            try:
+                manifest.update(self._manifest_extra_fn() or {})
+            except Exception as exc:
+                print(f"[WARNING] manifest 확장 필드 생성 실패(기본 manifest 만 기록): {exc}")
         try:
             self.out_dir.mkdir(parents=True, exist_ok=True)
             (self.out_dir / "recording_manifest.json").write_text(

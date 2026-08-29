@@ -13,6 +13,7 @@ capture_window 는 창 핸들이 아니라 **창 rect 의 스크린 그랩**이�
 import ctypes
 import json
 import os
+import time
 from pathlib import Path
 
 # 사이드카 파일명 - 분석 단계가 frame 키로 프레임과 조인한다.
@@ -222,3 +223,98 @@ class FrameMetaWriter:
             except Exception:
                 pass
             self._handle = None
+
+
+class FrameMetaRecorder:
+    """`capture_fn` 을 감싸 프레임마다 사이드카 1줄을 남기는 공용 래퍼.
+
+    수동 녹화 런처와 알람 사이클이 **같은** 래퍼를 쓴다. `RecordingSession` 은
+    건드리지 않는다 - 캡처 함수를 감싸는 것만으로 프레임과 같은 시각의 창 rect /
+    전면 창 / 가림 / 커서를 남길 수 있기 때문이다(주입점이 이미 계약이다).
+
+    커서는 `GetCursorPos` 폴링 결과를 **기록만** 한다. 어떤 Action 이나 의도 claim 도
+    만들지 않는다 - 그 해석은 오프라인 분석 단계(recording_filter)의 몫이다.
+
+    수집 실패는 **1회 경고 후 영구 비활성**이다. 20fps 루프에서 프레임마다 경고를
+    찍으면 콘솔이 도배되어 정작 중요한 로그가 묻힌다. 대신 사유를 남겨
+    `completeness()` 가 manifest 로 내보낸다 - 사이드카가 왜 비었는지는 사후에
+    알 수 있어야 한다.
+    """
+
+    def __init__(self, tool_window, out_dir, *, our_handles=None, started_at=None):
+        self.tool_window = tool_window
+        self.writer = FrameMetaWriter(out_dir)
+        self.started_at = time.time() if started_at is None else float(started_at)
+        self.our_handles = (
+            set(our_handles) if our_handles is not None
+            else _handles_of(tool_window)
+        )
+        self.records = 0
+        self.disabled_reason = ""
+        self._seq = 0
+
+    def wrap(self, capture_fn):
+        """캡처 함수를 감싼 새 함수를 돌려준다(원본은 그대로 호출된다)."""
+        def _capture():
+            image = capture_fn()
+            if not self.disabled_reason:
+                self._append_for(image)
+            return image
+
+        return _capture
+
+    def _append_for(self, _image) -> None:
+        try:
+            rect_obj = self.tool_window.rectangle()
+            rect = {
+                "left": int(rect_obj.left), "top": int(rect_obj.top),
+                "right": int(rect_obj.right), "bottom": int(rect_obj.bottom),
+            }
+            _fg_handle, fg_title = _read_foreground()
+            self.writer.append(build_meta_record(
+                frame_name=f"seq_{self._seq:04d}",
+                t_sec=time.time() - self.started_at,
+                rect=rect,
+                foreground_title=fg_title,
+                occlusion=probe_occlusion(rect, self.our_handles),
+                cursor_xy=read_cursor_screen_xy(),
+            ))
+            self._seq += 1
+            self.records += 1
+        except Exception as exc:
+            self.disabled_reason = f"{type(exc).__name__}: {exc}"
+            print(f"[WARNING] frame_meta 수집 비활성화(녹화는 계속): {exc}")
+
+    def completeness(self, frames: int = 0) -> dict:
+        """manifest 에 실을 수집 완전성 요약 - 사이드카가 비면 사유가 남는다."""
+        return {
+            "meta_enabled": True,
+            "frames": int(frames),
+            "meta_records": self.records,
+            "meta_disabled_reason": self.disabled_reason,
+        }
+
+    def close(self) -> None:
+        self.writer.close()
+
+
+def _handles_of(tool_window) -> set:
+    """가림 판정 기준 핸들 - 창에서 직접 뽑는다. 못 뽑으면 빈 집합(=unknown 판정)."""
+    try:
+        from poc.workflow_3.util.window_utils import _extract_window_handle
+
+        handle = _extract_window_handle(tool_window)
+    except Exception:
+        return set()
+    return {int(handle)} if handle else set()
+
+
+def _read_foreground():
+    """전면 창 정보를 읽는다. 유틸이 없는 환경(비 Windows)에서는 (None, "")."""
+    try:
+        from poc.workflow_3.util import read_foreground_window_info
+    except Exception:
+        return (None, "")
+    if read_foreground_window_info is None:
+        return (None, "")
+    return read_foreground_window_info()

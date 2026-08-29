@@ -218,9 +218,11 @@ def _start_recording(monkeypatch, tmp_path, *, attempt_seq=None, prelude=False):
     from poc.workflow_3.monitor import cycle, recording
 
     monkeypatch.setattr(cycle, "ALIGN_IMAGES_DIR", tmp_path)
-    monkeypatch.setattr(
-        recording, "capture_window", lambda _win: Image.new("RGB", (64, 48), "white")
-    )
+    # 캡처 경로는 수집 플래그로 갈린다: on 이면 cycle 이 주입한 람다(사이드카 래퍼),
+    # off 면 RecordingSession 의 기본 capture_window. 폴더 규약만 보는 테스트라 둘 다 막는다.
+    fake_capture = lambda _win: Image.new("RGB", (64, 48), "white")  # noqa: E731
+    monkeypatch.setattr(cycle, "capture_window", fake_capture)
+    monkeypatch.setattr(recording, "capture_window", fake_capture)
     monkeypatch.setattr(
         cycle, "capture_screen", lambda index=1: Image.new("RGB", (64, 48), "black")
     )

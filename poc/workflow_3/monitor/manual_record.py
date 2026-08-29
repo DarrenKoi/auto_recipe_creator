@@ -22,7 +22,13 @@ from poc.workflow_3.config import (
     DEFAULT_RECORDING_POLL_SEC,
 )
 from poc.workflow_3.rcs.login_rcs_common import REMOTE_MONITORING_WINDOW_TITLE_PREFIX
-from poc.workflow_3.util import env_flag, env_float, env_int, make_timestamp_tag
+from poc.workflow_3.util import (
+    capture_window,
+    env_flag,
+    env_float,
+    env_int,
+    make_timestamp_tag,
+)
 
 # 폴더명으로 쓸 수 없는 문자(Windows 예약 문자 + 공백/괄호)를 밑줄로 바꾼다.
 # \w 는 유니코드 단어 문자(한글 포함)까지 허용한다 - ASCII 로 한정하면 "장비1" 같은
@@ -200,12 +206,7 @@ def resolve_capture_handles(
     return {int(resolved_handle)}
 
 
-from poc.workflow_3.monitor.frame_meta import (
-    FrameMetaWriter,
-    build_meta_record,
-    probe_occlusion,
-    read_cursor_screen_xy,
-)
+from poc.workflow_3.monitor.frame_meta import FrameMetaRecorder
 from poc.workflow_3.monitor.recording import RecordingSession
 
 
@@ -222,46 +223,6 @@ def _collect_monitoring_rows():
         if (row.title or "").strip().lower().startswith(prefix):
             rows.append((row.title, row.handle))
     return rows
-
-
-def _make_capture_fn(tool_window, meta_writer, started_at, our_handles):
-    """RecordingSession 에 주입할 capture_fn 을 만든다(캡처 + 사이드카 기록).
-
-    RecordingSession 은 수정하지 않는다. 캡처 함수를 감싸는 것만으로 프레임과
-    같은 시각의 창 rect/가림/커서를 남길 수 있다. 사이드카 기록 실패는 삼켜
-    캡처 자체를 방해하지 않는다.
-    """
-    from poc.workflow_3.util import capture_window, read_foreground_window_info
-
-    state = {"seq": 0}
-
-    def _capture():
-        image = capture_window(tool_window)
-        if meta_writer is None:
-            return image
-        try:
-            rect_obj = tool_window.rectangle()
-            rect = {
-                "left": int(rect_obj.left), "top": int(rect_obj.top),
-                "right": int(rect_obj.right), "bottom": int(rect_obj.bottom),
-            }
-            _fg_handle, fg_title = (
-                read_foreground_window_info() if read_foreground_window_info else (None, "")
-            )
-            meta_writer.append(build_meta_record(
-                frame_name=f"seq_{state['seq']:04d}",
-                t_sec=time.time() - started_at,
-                rect=rect,
-                foreground_title=fg_title,
-                occlusion=probe_occlusion(rect, our_handles),
-                cursor_xy=read_cursor_screen_xy(),
-            ))
-            state["seq"] += 1
-        except Exception as exc:
-            print(f"[WARNING] frame_meta 수집 실패(계속 진행): {exc}")
-        return image
-
-    return _capture
 
 
 def _watch_until_stop(session, settings) -> str:
@@ -337,8 +298,13 @@ def main() -> int:
     # 모든 프레임이 조용히 "full"(=분석 전량 폐기)로 찍힌다.
     our_handles = resolve_capture_handles(tool_window, handle, resolved_title, title)
 
-    meta_writer = FrameMetaWriter(out_dir) if settings.meta_enabled else None
-    started_at = time.time()
+    # 사이드카 래퍼는 알람 사이클과 **공용**이다(frame_meta.FrameMetaRecorder).
+    # 여기서 포크하면 두 녹화의 사이드카 스키마가 조용히 갈린다.
+    meta = (
+        FrameMetaRecorder(tool_window, out_dir, our_handles=our_handles)
+        if settings.meta_enabled
+        else None
+    )
     session = RecordingSession(
         tool_window, out_dir, tag=tag,
         poll_sec=settings.poll_sec,
@@ -348,8 +314,8 @@ def main() -> int:
         max_frames=settings.max_frames,
         max_disk_mb=settings.max_disk_mb,
         jpeg_quality=settings.jpeg_quality,
-        capture_fn=_make_capture_fn(
-            tool_window, meta_writer, started_at, our_handles,
+        capture_fn=(
+            meta.wrap(lambda: capture_window(tool_window)) if meta is not None else None
         ),
     )
     session.start()
@@ -358,8 +324,8 @@ def main() -> int:
     stop_reason = _watch_until_stop(session, settings)
 
     frames = session.stop(stop_reason)
-    if meta_writer is not None:
-        meta_writer.close()
+    if meta is not None:
+        meta.close()
     print(f"[INFO] ===== 녹화 종료: {len(frames)} 프레임, 사유={session.stop_reason} =====")
     print(f"[INFO] 프레임 경로: {out_dir}")
     print("[INFO] 분석하려면: RECORDING_FILTER_INPUT_DIR=<위 경로> "

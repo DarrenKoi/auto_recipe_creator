@@ -49,6 +49,7 @@ from poc.workflow_3.monitor.notify import (
     notify_correction_outcome,
 )
 from poc.workflow_3.monitor.rcs_recovery import RECOVERED, recover_rcs_session
+from poc.workflow_3.monitor.frame_meta import FrameMetaRecorder
 from poc.workflow_3.monitor.recording import RecordingSession
 from poc.workflow_3.monitor.recovery_episode import attempt_dirname, episode_root_for
 from poc.workflow_3.monitor.teardown import run_teardown
@@ -830,6 +831,24 @@ def _exec_start_recording(step, context, settings: Workflow3Settings) -> StepRes
         context.get("attempt_seq"),
     )
     try:
+        # 수동 녹화와 **같은** 사이드카 래퍼를 캡처 주입점에 끼운다(녹화기는 무변경).
+        # 실패해도 녹화는 계속되며 사유는 manifest 의 capture_completeness 로 나간다.
+        # Episode 수집 게이트 뒤에 둔다 - 프레임마다 Win32 조회가 붙는 상시 비용이라
+        # 수집을 켜지 않은 운전에서는 녹화 동작이 종전과 완전히 같아야 한다.
+        meta = None
+        capture_fn = None
+        manifest_extra_fn = None
+        if settings.episode_collect_enabled:
+            meta = FrameMetaRecorder(context["tool_window"], out_dir)
+            context["frame_meta"] = meta
+            capture_fn = meta.wrap(lambda: capture_window(context["tool_window"]))
+            manifest_extra_fn = lambda: {  # noqa: E731 - manifest 시점에 최종값을 읽는다.
+                "episode_id": context.get("episode_id", ""),
+                "attempt_seq": context.get("attempt_seq", 0),
+                "capture_completeness": meta.completeness(
+                    len(context["recording"].frames) if context.get("recording") else 0
+                ),
+            }
         session = RecordingSession(
             context["tool_window"],
             out_dir,
@@ -838,6 +857,8 @@ def _exec_start_recording(step, context, settings: Workflow3Settings) -> StepRes
             heartbeat_sec=settings.recording_heartbeat_sec,
             change_min_px=settings.recording_change_min_px,
             max_sec=settings.recording_max_sec,
+            capture_fn=capture_fn,
+            manifest_extra_fn=manifest_extra_fn,
         ).start()
         context["recording"] = session
         # tool 창 녹화가 떴으니 화면 전체 녹화는 여기서 끝난다 - 두 세션이 겹쳐 돌면
@@ -1271,6 +1292,10 @@ def _teardown_steps(eqp_id, context, result, settings, *, input_blocked, recordi
         frames = sess.stop("cycle_teardown")
         result.recording_dir = str(sess.out_dir)
         result.frame_count = len(frames)
+        # manifest 를 쓴 뒤 사이드카 핸들을 닫는다(열어 둔 채 끝내지 않는다).
+        meta = context.get("frame_meta")
+        if meta is not None:
+            meta.close()
 
     def _stop_prelude():
         # 정상 흐름에선 tool 창이 뜬 시점에 이미 멈췄다. 여기 남는 건 접속이 깨진
@@ -1347,6 +1372,7 @@ def run_alarm_cycle(
     *,
     tag: str | None = None,
     attempt_seq=None,
+    episode_id: str = "",
 ) -> CycleResult:
     """알람 1건에 대한 전체 사이클을 실행하고 결과 요약을 반환한다.
 
@@ -1366,9 +1392,12 @@ def run_alarm_cycle(
         return result
 
     context: dict = {"eqp_id": eqp_id, "recipe_id": recipe_id, "tag": tag}
-    # Episode 수집이 켜졌을 때만 채워진다 - 폴더 resolver 가 attempt 깊이를 넣는 근거.
+    # Episode 수집이 켜졌을 때만 채워진다 - 폴더 resolver 가 attempt 깊이를 넣는 근거
+    # 이자 녹화 manifest 가 Episode 를 가리키는 근거다.
     if attempt_seq:
         context["attempt_seq"] = attempt_seq
+    if episode_id:
+        context["episode_id"] = episode_id
     runner = WorkflowRunner(
         settings,
         workflow_name=f"align_fail_cycle_{eqp_id}",

@@ -251,6 +251,10 @@ class FrameMetaRecorder:
         )
         self.records = 0
         self.disabled_reason = ""
+        # 마지막으로 기록한 레코드와 그 시각 - Guard 판독이 "그때 창이 보였는가" 를
+        # 파일을 다시 파싱하지 않고 물어볼 수 있게 한다(그리고 stale 판정의 기준).
+        self.last_record = None
+        self.last_at = 0.0
         self._seq = 0
 
     def wrap(self, capture_fn):
@@ -271,14 +275,17 @@ class FrameMetaRecorder:
                 "right": int(rect_obj.right), "bottom": int(rect_obj.bottom),
             }
             _fg_handle, fg_title = _read_foreground()
-            self.writer.append(build_meta_record(
+            record = build_meta_record(
                 frame_name=f"seq_{self._seq:04d}",
                 t_sec=time.time() - self.started_at,
                 rect=rect,
                 foreground_title=fg_title,
                 occlusion=probe_occlusion(rect, self.our_handles),
                 cursor_xy=read_cursor_screen_xy(),
-            ))
+            )
+            self.writer.append(record)
+            self.last_record = record
+            self.last_at = time.time()
             self._seq += 1
             self.records += 1
         except Exception as exc:

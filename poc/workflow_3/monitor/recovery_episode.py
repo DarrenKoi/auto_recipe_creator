@@ -46,6 +46,11 @@ EPISODE_FILENAME = "recovery_episode.json"
 CAPTURED_RCS_DIRNAME = "captured_img_from_rcs"
 UNREGISTERED_DIRNAME = "_unregistered"
 
+# attempt 폴더에 남는 관측 record 파일 - (artifacts 키, 파일명). 존재하는 것만 참조로 건다.
+_ATTEMPT_RECORD_FILES = (
+    ("guards", "guards.json"),
+)
+
 # attempt 가 '수집 완료' 로 볼 수 없는 run_status. GUI 를 아예 못 돌린 경우다.
 _INCOMPLETE_RUN_STATUSES = {"error", "rcs_unavailable", "cycle_disabled"}
 
@@ -338,6 +343,17 @@ class EpisodeTracker:
             episode["incomplete_reasons"].append(label)
         episode["complete"] = False
 
+    def _attach_attempt_records(self, root: Path, attempt: dict) -> None:
+        """attempt 폴더에 실제로 쓰인 관측 record 파일만 골라 참조로 건다.
+
+        존재하는 파일만 적는다 - 없는 파일을 가리키는 참조는 provenance 가 아니라
+        거짓말이다. 새 record 종류는 `_ATTEMPT_RECORD_FILES` 에 한 줄 추가한다.
+        """
+        attempt_dir = root / attempt_dirname(attempt["attempt_seq"])
+        for key, name in _ATTEMPT_RECORD_FILES:
+            if (attempt_dir / name).is_file():
+                attempt["artifacts"][key] = f"{attempt_dirname(attempt['attempt_seq'])}/{name}"
+
     def finish_attempt(self, handle: AttemptHandle, cycle) -> None:
         """사이클 결과를 attempt 에 반영한다(`CycleResult` 를 plain 값으로 받아 적는다).
 
@@ -356,6 +372,7 @@ class EpisodeTracker:
             ref = relative_ref(root, value)
             if ref:
                 attempt["artifacts"][key] = ref
+        self._attach_attempt_records(root, attempt)
         attempt.update({
             "finished_at": _now_iso(),
             "run_id": Path(str(getattr(cycle, "run_dir", "") or "")).name,

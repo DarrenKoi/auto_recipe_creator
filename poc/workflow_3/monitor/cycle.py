@@ -49,7 +49,7 @@ from poc.workflow_3.monitor.notify import (
     notify_correction_outcome,
 )
 from poc.workflow_3.monitor.rcs_recovery import RECOVERED, recover_rcs_session
-from poc.workflow_3.monitor.frame_meta import FrameMetaRecorder
+from poc.workflow_3.monitor.frame_meta import FRAME_META_FILENAME, FrameMetaRecorder
 from poc.workflow_3.monitor.recording import RecordingSession
 from poc.workflow_3.monitor.recovery_episode import attempt_dirname, episode_root_for
 from poc.workflow_3.monitor.teardown import run_teardown
@@ -649,6 +649,8 @@ def _handle_occupied_popup(step, context, settings: Workflow3Settings, started_a
         )
 
     share = _run_share_request(settings, context["tag"])
+    # Guard provenance - 공유 요청이 어디까지 갔는지는 점유 판독의 문맥이다(값은 아니다).
+    context["share_status"] = share.status
     if share.status != STATUS_REQUESTED:
         return _give_up(share)
 
@@ -664,6 +666,7 @@ def _handle_occupied_popup(step, context, settings: Workflow3Settings, started_a
     # 화면 공유는 관전만 가능하다. 여기서 확정해 두지 않으면 보정이 먹지 않는
     # 클릭을 하고도 'corrected' 로 보고한다.
     context["occupancy"] = OCCUPIED_BY_OTHER
+    context["share_status"] = ACCEPTED
     context["tool_window"] = window
     context["tool_window_title"] = title
     context["tool_window_backend"] = backend
@@ -1270,6 +1273,88 @@ def _engineer_watch(
     print("[INFO] engineer watch 종료")
 
 
+def collect_attempt_guards(context, result, *, now=None) -> list:
+    """이 attempt 의 Episode-level Guard 세 개를 사이클 문맥에서 읽어 낸다.
+
+    새 관측을 하지 않는다 - 사이클이 이미 얻은 값(사이드카 마지막 레코드, 점유 3상태,
+    controller 의 mode, 보정 outcome)을 `guard_readings` 의 순수 분류 함수에 넘길 뿐이다.
+    그래서 matcher/occupancy/share 쪽 동작은 전혀 바뀌지 않는다.
+
+    evidence 는 Episode-relative 만 적는다. 점유 판독의 crop 은 Episode 밖
+    (`debug_images/row_occupant/`)에 살아 참조를 비우고, 그 사실은 detail 에 남긴다 -
+    밖을 가리키는 절대 경로를 적으면 Episode 폴더를 옮기는 순간 깨진다.
+    """
+    from poc.workflow_3.monitor.guard_readings import (
+        align_key_guard,
+        occupancy_guard,
+        screen_observability_guard,
+    )
+
+    now = time.time() if now is None else now
+    attempt_dir = attempt_dirname(context.get("attempt_seq") or 1)
+    recording_ref = f"{attempt_dir}/recording"
+
+    meta = context.get("frame_meta")
+    last_record = getattr(meta, "last_record", None)
+    age_sec = (now - meta.last_at) if (meta is not None and meta.last_at) else None
+    screen = screen_observability_guard(
+        last_record,
+        age_sec=age_sec if age_sec is not None else float("inf"),
+        evidence=f"{recording_ref}/{FRAME_META_FILENAME}" if last_record else "",
+    )
+
+    occupancy = occupancy_guard(
+        context.get("occupancy", UNKNOWN),
+        share_status=context.get("share_status", ""),
+        # 근거 crop 은 Episode 밖에 있다 - 경로 대신 detail 로만 가리킨다.
+        evidence="",
+    )
+
+    outcome = context.get("outcome")
+    controller = context.get("controller")
+    align_key = align_key_guard(
+        mode=str(getattr(controller, "mode_hint", "") or ""),
+        key_decision=str(getattr(outcome, "key_decision", "") or ""),
+        distinctive=bool(getattr(outcome, "distinctive", False)),
+        second_ratio=getattr(outcome, "second_ratio", None),
+        # 보정 step 이 예외로 죽으면 matcher 판정 자체가 없다(=unknown).
+        matcher_error=(
+            result.failure_class if result.failure_class == "correction_error" else None
+        ),
+        correction_status=str(getattr(outcome, "status", "") or ""),
+        evidence=recording_ref,
+    )
+    return [screen, occupancy, align_key]
+
+
+def write_attempt_guards(context, result, settings: Workflow3Settings) -> None:
+    """Guard record 를 attempt 폴더에 남긴다(수집 on 일 때만). 실패는 삼킨다."""
+    if not settings.episode_collect_enabled or not context.get("attempt_seq"):
+        return
+    from poc.workflow_3.monitor.guard_readings import (
+        ok_control_precondition,
+        write_guard_records,
+    )
+
+    try:
+        outcome = context.get("outcome")
+        path = write_guard_records(
+            _attempt_dir_for(
+                context["eqp_id"], context["recipe_id"], context["tag"],
+                context["attempt_seq"],
+            ),
+            attempt_seq=context["attempt_seq"],
+            guards=collect_attempt_guards(context, result),
+            preconditions=[ok_control_precondition(
+                ok_screen_xy=getattr(outcome, "ok_screen_xy", None),
+                correction_status=str(getattr(outcome, "status", "") or ""),
+            )],
+        )
+        print(f"[INFO] Guard 기록: {path}")
+    except Exception as exc:
+        print(f"[WARNING] Guard 기록 실패(사이클은 계속): {exc}")
+
+
 def _teardown_steps(eqp_id, context, result, settings, *, input_blocked, recording):
     """알람 사이클 teardown 단계 목록 - 순서가 계약이다.
 
@@ -1525,6 +1610,10 @@ def run_alarm_cycle(
             label=f"align_fail_cycle {eqp_id}",
         )
         result.notes.extend(f"teardown_failed:{n}: {e}" for n, e in failures)
+
+        # Guard record - teardown 앞에 둔다. 창을 닫으면 controller/outcome 은 그대로지만
+        # 녹화 세션이 끝나 사이드카 마지막 레코드가 급격히 낡는다(stale 판정으로 샌다).
+        write_attempt_guards(context, result, settings)
 
         # 이 테이크가 처리한 이미지를 한 폴더로 모은다. **teardown 뒤**여야
         # close_tool 이 남긴 crop 까지 들어오고 result 의 녹화 필드도 채워져 있다.

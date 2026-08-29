@@ -149,6 +149,11 @@ RECORD_PRELUDE = None        # 접속 구간(RCS 실행->로그인->tool 진입)
                              # tool 창 rect 라 창이 뜨기 전 장면이 원리상 없다.
                              # 켜면 recording/prelude/ 에 쌓이고 make_demo_video 가
                              # 자동으로 영상 앞에 잇는다(터미널 콘솔도 같이 찍힌다).
+EPISODE_COLLECT = None       # Recovery Episode 수집. 1/0/None(기본 off).
+                             # 켜면 알람 1건마다 capture 폴더 루트에
+                             # recovery_episode.json 이 생기고 재시도별 산출물이
+                             # attempt_<n>/ 로 갈린다(cooldown 재시도가 같은
+                             # recording/ 에 두 테이크를 섞던 결함도 함께 닫힌다).
 PRELUDE_MAX_SEC = None       # 접속 구간 녹화 상한(초). None=기본 300.
 PRELUDE_MONITOR_INDEX = None # mss 규약(0=전 모니터 합침, 1=주 모니터). None=기본 1.
 ENGINEER_WATCH_SEC = None    # 미보정 watch 상한(초). None=기본 300. 엔지니어 조작을

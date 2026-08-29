@@ -42,6 +42,7 @@ from poc.workflow_3.monitor.notify import (
 )
 from poc.workflow_3.monitor.rcp_msr_gather import gather_rcp_msr
 from poc.workflow_3.monitor.success_gather import gather_success_async
+from poc.workflow_3.util import make_timestamp_tag
 from poc.workflow_3.logger import log_work2_event
 
 LOG_COMPONENT = "align_fail_monitor"
@@ -374,6 +375,7 @@ def process_fail_rows(
     settings: Workflow3Settings,
     occupied_cooldown: dict | None = None,
     view_only_attempts: dict | None = None,
+    episodes=None,
 ) -> int:
     """EQP_ID 기준 edge-triggered 로 신규 알람마다 사이클을 수행한다.
 
@@ -387,6 +389,9 @@ def process_fail_rows(
       {eqp_id: 만료 epoch} dict.
     - tool 1대의 처리 중 예외는 같은 poll 의 나머지 tool 처리를 막지 않는다(F5) -
       예외를 던진 tool 도 cooldown 에 등록해 다음 poll 에 같은 예외를 반복하지 않게 한다.
+
+    `episodes` 는 Recovery Episode tracker(`recovery_episode.EpisodeTracker`) 또는 None.
+    None 이면 Episode 수집을 하지 않으며 동작은 종전과 같다(기본 off 플래그).
 
     `active_tools`/`occupied_cooldown` 는 in-place 로 갱신된다. 새로 처리한 개수를 반환.
     """
@@ -418,11 +423,27 @@ def process_fail_rows(
         print(f"[INFO] Align Fail 해제: EQP_ID={eqp_id}")
     active_tools.difference_update(cleared_tools)
 
+    # Episode 는 알람이 poll 에서 사라지는 순간 닫힌다 - active_tools 가 아니라
+    # 현재 알람 목록이 기준이다(cooldown 중인 tool 은 알람이 살아 있어 안 닫힌다).
+    if episodes is not None:
+        episodes.close_cleared(current_tools)
+
     newly_handled = 0
     for eqp_id in sorted(new_tools):
+        handle = None
         try:
             info = by_tool[eqp_id]
             alarm_time = str(info["alarm_time"] or "")
+
+            # Episode 는 **첫 GUI step 전에** 열린다. 사이클이 예외로 끝나도
+            # "이 알람을 건드렸다" 는 사실이 파일로 남아야 하기 때문이다.
+            # 수집 off(episodes=None)면 tag 계산도 종전 그대로 둔다.
+            tag = _alarm_time_to_tag(info["utc9"])
+            if episodes is not None:
+                handle = episodes.begin_attempt(
+                    info, settings, tag=tag or make_timestamp_tag()
+                )
+                tag = handle.tag
 
             print(
                 f"[WARNING] Align Fail 감지: EQP_ID={eqp_id}, "
@@ -470,12 +491,14 @@ def process_fail_rows(
                     eqp_id,
                     info["recipe_id"],
                     settings,
-                    tag=_alarm_time_to_tag(info["utc9"]),
+                    tag=tag,
                 )
             else:
                 cycle = CycleResult(eqp_id=eqp_id, recipe_id=info["recipe_id"], tag="")
                 cycle.run_status = "cycle_disabled"
 
+            if handle is not None:
+                episodes.finish_attempt(handle, cycle)
             append_cycle_manifest(info, cycle)
 
             # 점유(select)로 포기한 경우: active 에 넣지 않고 cooldown 등록 → 만료 후 재시도.
@@ -516,6 +539,8 @@ def process_fail_rows(
         except Exception as exc:
             # tool 1대의 예외가 같은 poll 의 나머지 tool 을 건너뛰게 하면 안 된다(F5).
             # 던진 tool 은 cooldown 에 넣어 다음 poll 에 같은 예외를 반복하지 않게 한다.
+            if handle is not None:
+                episodes.fail_attempt(handle, f"{type(exc).__name__}: {exc}")
             _defer_retry(
                 occupied_cooldown, eqp_id, settings.failure_retry_cooldown_sec,
                 f"처리 예외({type(exc).__name__}: {exc}) - 나머지 tool 은 계속",
@@ -622,6 +647,12 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
     occupied_cooldown: dict = {}  # {eqp_id: 재시도 가능 epoch} — 점유(select)로 포기한 tool.
     view_only_attempts: dict = {}  # {eqp_id: 연속 view-only/unverified 사이클 횟수}
     idle_logged = False  # "Align Fail 없음" 은 idle 진입 시 한 번만 로깅 (poll 마다 X)
+    # Recovery Episode tracker — 기본 off. None 이면 수집 경로가 통째로 비활성이다.
+    episodes = None
+    if settings.episode_collect_enabled:
+        from poc.workflow_3.monitor.recovery_episode import EpisodeTracker
+
+        episodes = EpisodeTracker()
 
     print(
         f"[INFO] Align Fail 모니터링 시작 (소스={source.kind}, "
@@ -682,13 +713,19 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
                     for eqp_id in sorted(active_tools):
                         print(f"[INFO] Align Fail 해제: EQP_ID={eqp_id}")
                     active_tools.clear()
+                # 알람이 전부 사라진 poll 은 process_fail_rows 를 거치지 않는다 -
+                # Episode clearance 는 이 분기에서도 닫아야 한다(빠뜨리면 열린 채
+                # 남아 다음 알람이 같은 Episode 로 잘못 재개된다).
+                if episodes is not None:
+                    episodes.close_cleared(())
                 if not idle_logged:
                     print(f"[INFO] {datetime.now().strftime('%H:%M:%S')} - Align Fail 없음")
                     idle_logged = True
             else:
                 idle_logged = False
                 process_fail_rows(
-                    fails, active_tools, settings, occupied_cooldown, view_only_attempts
+                    fails, active_tools, settings, occupied_cooldown,
+                    view_only_attempts, episodes=episodes,
                 )
         except KeyboardInterrupt:
             print("\n[INFO] 감지 중단 (Ctrl+C)")

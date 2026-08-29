@@ -364,6 +364,13 @@ class Workflow3Settings(WorkflowSettings):
     # False: whole-template(구 동작) 롤백 — env ALIGN_FAIL_COND_BOX_CROP=0.
     cond_box_crop: bool = True
 
+    # --- Recovery Episode 수집 (opt-in, 기본 off) ---
+    # ALID=9006 active interval 하나마다 recovery_episode.json 정본을 capture 폴더
+    # 루트에 쓰고, attempt 산출물을 attempt_<n>/ 아래로 가른다. 기본 off - 켜기 전과
+    # 동작이 byte 단위로 같아야 한다는 것이 이 플래그의 계약이다.
+    # 켜기: ALIGN_FAIL_EPISODE_COLLECT=1.
+    episode_collect_enabled: bool = False
+
     # --- live graph view (workflow_4 cycle mirror, opt-in, 기본 off) ---
     # workflow_4 CycleGraphMirror 가 사이클 step 저널(run_dir/step_<id>.json +
     # run_state.json)을 읽어 run_dir 에 workflow_graph.md/.html(live view) 를 쓴다.
@@ -502,6 +509,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         reregister_second_ratio_threshold=env_float("ALIGN_FAIL_REREGISTER_RATIO", 0.98),
         cond_box_crop=env_flag("ALIGN_FAIL_COND_BOX_CROP", default=True),
         locator_combo=_env_str("VLM_LOCATOR_COMBO", ""),
+        episode_collect_enabled=env_flag("ALIGN_FAIL_EPISODE_COLLECT", default=False),
         graph_view_enabled=env_flag("ALIGN_FAIL_GRAPH_VIEW", default=False),
         graph_view_autoopen=env_flag("ALIGN_FAIL_GRAPH_AUTOOPEN", default=True),
     )

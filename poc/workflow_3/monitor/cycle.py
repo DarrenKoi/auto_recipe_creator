@@ -1626,6 +1626,17 @@ def run_alarm_cycle(
                         vlm_client=context.get("vlm_client"),
                         # tool 별/알람 별로 debug crop 이 안 섞이게 폴더를 분리한다.
                         debug_dir=DEBUG_IMAGE_DIR / "engineer_done" / f"{eqp_id}_{tag}",
+                        # 수집 on 이면 per-read 판독을 attempt 폴더에도 남긴다 -
+                        # fallback Verification 이 detector 의 boolean 이 아니라
+                        # 이 기록을 읽는다(boolean 은 false 와 unknown 을 못 가른다).
+                        record_dir=(
+                            _attempt_dir_for(
+                                eqp_id, recipe_id, tag, context["attempt_seq"]
+                            )
+                            if settings.episode_collect_enabled
+                            and context.get("attempt_seq")
+                            else None
+                        ),
                     )
                 except Exception as exc:
                     print(f"[WARNING] done detector 생성 실패(고정 timeout 으로 진행): {exc}")

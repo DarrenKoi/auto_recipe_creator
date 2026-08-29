@@ -50,6 +50,7 @@ UNREGISTERED_DIRNAME = "_unregistered"
 _ATTEMPT_RECORD_FILES = (
     ("guards", "guards.json"),
     ("measurement_verification", "measurement_verification.json"),
+    ("numerator_reads", "numerator_reads.jsonl"),
 )
 
 # attempt 가 '수집 완료' 로 볼 수 없는 run_status. GUI 를 아예 못 돌린 경우다.

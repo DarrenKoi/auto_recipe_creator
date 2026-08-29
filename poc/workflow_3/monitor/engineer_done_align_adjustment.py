@@ -67,10 +67,12 @@ engineer_watch_sec cap 이 안전망. (CLAUDE.md 규칙: VLM 은 위치만, 전�
   uv run python poc/workflow_3/monitor/engineer_done_align_adjustment.py
 """
 
+import json
 import os
 import re
 import time
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 from poc.workflow_3.config import validate_engineer_done_priority_settings
 from poc.workflow_3.debug_artifacts import save_debug_jpeg, save_debug_json
@@ -118,6 +120,44 @@ def extract_numerator(text: str) -> int | None:
     return int(match.group(0))
 
 
+# fallback Verification 이 읽는 per-read 기록 파일(attempt 폴더). detector 의 boolean
+# 반환은 false 와 unknown 을 구분하지 못해 Verification 입력이 될 수 없다 - 그래서
+# **판독 자체**를 남긴다.
+NUMERATOR_RECORDS_FILENAME = "numerator_reads.jsonl"
+
+# 한 회차 판독의 닫힌 판정 집합. fallback 은 `strictly_increasing` 연속만 success 로
+# 볼 수 있고 나머지는 전부 근거가 되지 못한다.
+NUMERATOR_DECISIONS = (
+    "not_sampled",
+    "ocr_miss",
+    "equal_or_decrease",
+    "reground_reset",
+    "first_sample",
+    "strictly_increasing",
+)
+
+
+def classify_numerator_decision(*, sampled, value, reset_reason, sequence) -> str:
+    """한 회차 분자 판독을 닫힌 판정 이름 하나로 분류한다(순수 함수).
+
+    우선순위가 계약이다 - **reground 는 값이 읽혔어도 이긴다.** 재grounding 은 누적
+    sequence 를 되돌린 사건이라, 그 회차의 값을 '증가했다' 의 근거로 쓰면 서로 다른 ROI
+    에서 읽은 숫자를 한 줄에 이어 붙이는 셈이 된다.
+
+    첫 표본은 `first_sample` 이다 - 길이 1 짜리 수열을 `strictly_increasing` 이라고
+    부르면 "증가를 봤다" 가 한 번의 판독으로 성립해 버린다.
+    """
+    if not sampled:
+        return "not_sampled"
+    if reset_reason == "reground":
+        return "reground_reset"
+    if value is None or reset_reason == "ocr_miss":
+        return "ocr_miss"
+    if reset_reason == "equal_or_decrease":
+        return "equal_or_decrease"
+    return "strictly_increasing" if len(sequence or []) >= 2 else "first_sample"
+
+
 @dataclass(frozen=True)
 class NumeratorObservation:
     """Recipe Monitor 카운터 N 을 한 회차 관측한 결과.
@@ -160,6 +200,7 @@ class EngineerDoneDetector:
         cursor_fn=None,
         time_fn=None,
         debug_dir=None,
+        record_dir=None,
     ):
         self.tool_window = tool_window
         self.s = settings
@@ -174,6 +215,8 @@ class EngineerDoneDetector:
         self._last_cursor_xy = None
         self._last_cursor_move_at = None
         self.debug_dir = debug_dir
+        # Episode 수집이 켜졌을 때만 채워진다 - attempt 폴더에 per-read 기록을 남긴다.
+        self.record_dir = Path(record_dir) if record_dir else None
         self._roi_ratios: tuple[float, float, float, float] | None = None
         self._next_localize_at = 0.0  # 거부(blank) 후 재시도 가능 시각 (throttle).
         self._prev_gray = None
@@ -468,28 +511,56 @@ class EngineerDoneDetector:
         fallback_open: bool,
         done: bool,
     ) -> None:
-        """평가한 numerator 표본과 sequence 결정을 run 폴더에 poll별로 저장한다."""
-        if self.debug_dir is None:
+        """평가한 numerator 표본과 sequence 결정을 남긴다.
+
+        두 곳에 쓴다: 종전대로 debug 폴더에 poll 별 JSON, 그리고 Episode 수집이 켜져
+        있으면 attempt 폴더에 JSONL 한 줄. 후자는 fallback Verification 의 **입력**이라
+        판정 이름(`decision`)과 관측 시각을 함께 담는다.
+
+        어느 쪽이 실패해도 감지는 계속된다 - 기록은 보조물이지 판정 경로가 아니다.
+        """
+        self._numerator_decision_seq += 1
+        record = {
+            "poll": self._numerator_decision_seq,
+            "observed_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
+            "reading": observation.reason,
+            "sampled": observation.sampled,
+            "value": observation.value,
+            "sequence": list(self._numerator_sequence),
+            "reset_reason": reset_reason,
+            "decision": classify_numerator_decision(
+                sampled=observation.sampled,
+                value=observation.value,
+                reset_reason=reset_reason,
+                sequence=self._numerator_sequence,
+            ),
+            "assist_unusable_streak": self._assist_unusable_streak,
+            "fallback_open": fallback_open,
+            "done": done,
+        }
+        if self.debug_dir is not None:
+            try:
+                save_debug_json(
+                    self.debug_dir
+                    / f"numerator_decision_{self._numerator_decision_seq:03d}.json",
+                    record,
+                )
+            except Exception as exc:
+                print(f"[WARNING] numerator decision 저장 실패: {exc}")
+        self._append_numerator_record(record)
+
+    def _append_numerator_record(self, record: dict) -> None:
+        """attempt 폴더의 JSONL 에 한 줄 append 한다(수집 on 일 때만, 실패는 삼킨다)."""
+        if self.record_dir is None:
             return
         try:
-            self._numerator_decision_seq += 1
-            save_debug_json(
-                self.debug_dir
-                / f"numerator_decision_{self._numerator_decision_seq:03d}.json",
-                {
-                    "poll": self._numerator_decision_seq,
-                    "reading": observation.reason,
-                    "sampled": observation.sampled,
-                    "value": observation.value,
-                    "sequence": list(self._numerator_sequence),
-                    "reset_reason": reset_reason,
-                    "assist_unusable_streak": self._assist_unusable_streak,
-                    "fallback_open": fallback_open,
-                    "done": done,
-                },
-            )
+            self.record_dir.mkdir(parents=True, exist_ok=True)
+            with (self.record_dir / NUMERATOR_RECORDS_FILENAME).open(
+                "a", encoding="utf-8"
+            ) as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
         except Exception as exc:
-            print(f"[WARNING] numerator decision 저장 실패: {exc}")
+            print(f"[WARNING] numerator 기록 append 실패(감지는 계속): {exc}")
 
     def _read_numerator(self, crop) -> int | None:
         """분자 crop 을 OCR 해 정수 N 을 얻는다. 실패는 None."""
@@ -630,7 +701,9 @@ def _make_assist_fn(tool_window, settings, *, debug_dir=None):
     return assist_fn
 
 
-def build_engineer_done_detector(tool_window, settings, *, vlm_client=None, debug_dir=None):
+def build_engineer_done_detector(
+    tool_window, settings, *, vlm_client=None, debug_dir=None, record_dir=None
+):
     """설정 게이트 확인 후 실 VLM/OCR 배선된 detector 를 만든다.
 
     비활성/창 없음 -> None (호출부는 고정 timeout 폴백). 분자 fallback 클라이언트
@@ -669,6 +742,7 @@ def build_engineer_done_detector(tool_window, settings, *, vlm_client=None, debu
         ocr_fn=ocr_fn,
         assist_fn=assist_fn,
         debug_dir=debug_dir,
+        record_dir=record_dir,
     )
 
 

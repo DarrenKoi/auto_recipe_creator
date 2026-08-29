@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PROTOTYPE — 엔지니어 검토와 annotation 흐름</title>
+  <style>
+    :root { color-scheme: light; --ink:#17212b; --muted:#66727e; --line:#d9e0e6; --soft:#f4f7f9; --accent:#176b87; --warn:#9a5b00; --bad:#9b2c2c; }
+    * { box-sizing: border-box; }
+    body { margin:0; font:15px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--ink); background:#fff; }
+    main { width:min(1160px,calc(100% - 32px)); margin:36px auto 72px; }
+    h1,h2,h3 { line-height:1.2; }
+    h1 { margin:0 0 8px; font-size:28px; }
+    h2 { margin:32px 0 12px; font-size:20px; }
+    h3 { margin:16px 0 6px; font-size:16px; }
+    p { margin:8px 0; }
+    .eyebrow { color:var(--accent); font-weight:750; letter-spacing:.04em; }
+    .intro { max-width:960px; color:var(--muted); }
+    .notice { margin:18px 0; padding:12px 14px; border-left:4px solid var(--warn); background:#fff8eb; }
+    .grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:10px; }
+    .card { border:1px solid var(--line); border-radius:10px; padding:13px; background:var(--soft); }
+    .card small { display:block; color:var(--muted); }
+    .card strong { display:block; margin-top:3px; overflow-wrap:anywhere; }
+    .changed { margin:10px 0 0; color:var(--accent); font-weight:650; }
+    .changed.bad { color:var(--bad); }
+    .packet { border:1px solid var(--line); border-radius:12px; padding:18px 20px; }
+    .packet table { width:100%; border-collapse:collapse; font-size:14px; }
+    .packet th, .packet td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+    .packet th { color:var(--muted); font-weight:650; }
+    .frame { display:inline-block; min-width:78px; padding:3px 6px; border:1px dashed #aeb9c2; border-radius:6px; color:var(--muted); background:#fff; font:12px ui-monospace,SFMono-Regular,Menlo,monospace; text-align:center; }
+    .tag { display:inline-block; padding:1px 7px; border-radius:999px; font-size:12px; font-weight:650; }
+    .tag.unknown { background:#fff1cc; color:var(--warn); }
+    .tag.unresolved, .tag.bad { background:#fde2e2; color:var(--bad); }
+    .tag.ok { background:#dff3ea; color:#1b6b48; }
+    .tag.inferred { background:#e7eef3; color:var(--muted); }
+    .src { color:var(--muted); font-size:12px; }
+    .questions li { margin:6px 0; }
+    .controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+    fieldset { min-width:0; border:1px solid var(--line); border-radius:10px; padding:12px; }
+    legend { padding:0 6px; font-weight:750; }
+    .button-row { display:flex; flex-wrap:wrap; gap:7px; margin:8px 0; }
+    button { border:1px solid #aeb9c2; border-radius:8px; padding:7px 10px; color:var(--ink); background:#fff; cursor:pointer; }
+    button:hover { border-color:var(--accent); color:var(--accent); }
+    button.primary { color:#fff; border-color:var(--accent); background:var(--accent); }
+    button[disabled] { opacity:.45; cursor:not-allowed; }
+    .tabs { display:flex; flex-wrap:wrap; gap:7px; margin-bottom:10px; }
+    .tabs button[aria-selected="true"] { color:#fff; border-color:var(--accent); background:var(--accent); }
+    .walkthrough { border:1px solid var(--line); border-radius:10px; padding:16px; }
+    .walkthrough h3 { margin:0 0 4px; }
+    .steps { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+    .steps button.done { text-decoration:line-through; opacity:.55; }
+    pre { margin:0; max-height:620px; overflow:auto; border-radius:10px; padding:16px; color:#dbe8ef; background:#12202a; font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+    @media (max-width:900px) { .grid,.controls { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">THROWAWAY LOGIC PROTOTYPE</div>
+  <h1>엔지니어 검토와 annotation 흐름</h1>
+  <p class="intro">질문: 행동 수행자가 모든 클릭을 다시 설명하지 않아도, 하나의 <strong>검토 묶음</strong>이
+    Recovery Action 의미·모호한 Guard·분기 이유·Outcome·적용 범위를 보여 주고, 시스템이 묻는
+    <strong>최소 질문</strong>에 append-only annotation 으로만 답하며, Playbook 승인자의 승인이
+    annotation 과 <strong>분리된 기록</strong>으로 남는가?</p>
+  <div class="notice">성공 Recovery Episode 가 아직 0건이라 아래 Episode 는 필드 모양을 시험하기 위한 가상
+    자료입니다. frame 번호는 자리표시자이며 실제 이미지는 없습니다. 검토 묶음은 저장하는 정본이 아니라
+    <code>recovery_episode.json</code> + candidate Playbook + annotation 기록에서 매번 다시 만드는 파생
+    view 라는 가정을 깔고 있습니다(이 가정 자체가 검토 대상).</div>
+
+  <h2>현재 상태</h2>
+  <section class="grid" id="stateCards" aria-live="polite"></section>
+  <p class="changed" id="lastChange"></p>
+
+  <h2>검토 묶음 (엔지니어가 보는 화면)</h2>
+  <section class="packet" id="packet"></section>
+
+  <h2>자유 실행</h2>
+  <section class="controls">
+    <fieldset>
+      <legend>행동 수행자 (Recovery 를 실제로 한 엔지니어)</legend>
+      <div class="button-row" id="actorButtons"></div>
+      <p><small>판독·분류 annotation 은 근거 frame/event 를 가리켜야 값을 바꿉니다. 근거가 없으면 rationale 로만 남습니다.</small></p>
+    </fieldset>
+    <fieldset>
+      <legend>Playbook 승인자</legend>
+      <div class="button-row" id="approverButtons"></div>
+      <p><small>승인자는 관측을 대신 판독하지 않습니다. 승인 / 근거 요청 / 반려 와 rationale 만 남깁니다.</small></p>
+      <div class="button-row"><button data-event='{"type":"RESET"}'>초기화</button></div>
+    </fieldset>
+  </section>
+
+  <h2>Guided walkthroughs</h2>
+  <div class="tabs" id="tabs" role="tablist" aria-label="시나리오"></div>
+  <section class="walkthrough" id="walkthrough" role="tabpanel"></section>
+
+  <h2>기록 모양 — <code>annotations.jsonl</code> 과 승인 record, 파생 view</h2>
+  <pre id="jsonView" aria-live="polite"></pre>
+</main>
+
+<script>
+// ---------- 순수 모듈: DOM 을 모른다. 나중에 그대로 들어낼 수 있는 부분 ----------
+const ReviewModel = (() => {
+  const clone = value => JSON.parse(JSON.stringify(value));
+  const OBSERVATIONAL = ["guard_reading", "verification_reading"];
+  const VALUE_KINDS = [...OBSERVATIONAL, "action_meaning"];
+
+  function initialState() {
+    return {
+      // recovery_episode.json + candidate Playbook rule 에서 뽑은, 검토에 필요한 최소 단면.
+      packet: {
+        schema_version: 1,
+        episode_ref: "recovery_episode.json#episode-001",
+        episode: { eqp_id: "MCD019", recipe_id: "CLASS_A/RECIPE_01", alarm_at: "2026-09-02T10:14", attempt_seq: 1 },
+        playbook_version: "candidate-001",
+        rule_ref: "visible-unique-align-key",
+        scope: { required_capabilities: ["remote_monitoring", "sem_mode_observation", "align_key_matching"] },
+        branch_reason: null,
+        guards: [
+          { kind: "observation_available", value: "unknown", reason: "occlusion=unknown (sidecar join 10s 초과)", evidence_ref: "frame:0007" },
+          { kind: "control_available", value: "true", reason: "occupancy=free", evidence_ref: "frame:0007" },
+          { kind: "key_visible_unique", value: "true", reason: "key_decision=act, second_ratio=0.41", evidence_ref: "frame:0009" }
+        ],
+        steps: [
+          { step_seq: 1, action_kind: "reposition_to_align_key", inferred: true, before: "frame:0009", after: "frame:0012", raw_events: [3, 4], note: "R1 double_click - 결과 기하로 추론" },
+          { step_seq: 2, action_kind: null, inferred: true, before: "frame:0012", after: "frame:0018", raw_events: [5, 6, 7], note: "live box 안 클릭 3건 - 의미 미분류" },
+          { step_seq: 3, action_kind: "confirm_align", inferred: false, before: "frame:0018", after: "frame:0021", raw_events: [8], note: "OCR 'OK' 확인" }
+        ],
+        verification: {
+          primary: { kind: "measurement_quality", value: "unknown", evidence_ref: null },
+          fallback: { kind: "recipe_monitor_numerator", value: "unknown", evidence_ref: null }
+        }
+      },
+      annotations: [],
+      approval: { decision: "pending", playbook_version: null, approver: null, rationale: null, open_questions: [] },
+      last_change: "초기 상태 - 검토 묶음이 열렸고 아직 annotation 이 없다",
+      last_change_bad: false
+    };
+  }
+
+  function targetExists(packet, ref) {
+    const [type, id] = ref.split(":");
+    if (type === "guard") return packet.guards.some(g => g.kind === id);
+    if (type === "step") return packet.steps.some(s => String(s.step_seq) === id);
+    if (type === "verification") return id in packet.verification;
+    return false;
+  }
+
+  function activeAnnotations(state) {
+    const superseded = new Set(state.annotations.map(a => a.supersedes).filter(Boolean));
+    return state.annotations.filter(a => !superseded.has(a.annotation_id) && a.kind !== "rationale");
+  }
+
+  // annotation 을 packet 위에 겹쳐 실효값을 만든다. 같은 대상에 다른 값이 살아 있으면 unresolved.
+  function effective(state) {
+    const view = clone(state.packet);
+    const byTarget = {};
+    activeAnnotations(state).forEach(a => (byTarget[a.target_ref] ||= []).push(a));
+    const resolve = (ref, raw) => {
+      const list = byTarget[ref] || [];
+      if (!list.length) return { value: raw, source: "packet", conflict: false, evidence_ref: null };
+      const values = new Set(list.map(a => a.value));
+      if (values.size > 1) return { value: "unresolved", source: list.map(a => a.annotation_id).join(", "), conflict: true, evidence_ref: null };
+      return { value: list[0].value, source: list.map(a => a.annotation_id).join(", "), conflict: false, evidence_ref: list[list.length - 1].evidence_ref };
+    };
+    view.guards.forEach(g => {
+      const r = resolve(`guard:${g.kind}`, g.value);
+      Object.assign(g, { effective: r.value, source: r.source, conflict: r.conflict });
+      if (r.evidence_ref) g.evidence_ref = r.evidence_ref;
+    });
+    view.steps.forEach(s => {
+      const r = resolve(`step:${s.step_seq}`, s.action_kind);
+      Object.assign(s, { effective_kind: r.value, source: r.source, conflict: r.conflict, confirmed: r.source !== "packet" && !r.conflict });
+    });
+    ["primary", "fallback"].forEach(k => {
+      const v = view.verification[k];
+      const r = resolve(`verification:${k}`, v.value);
+      Object.assign(v, { effective: r.value, source: r.source, conflict: r.conflict });
+      if (r.evidence_ref) v.evidence_ref = r.evidence_ref;
+    });
+    const primary = view.verification.primary.effective;
+    const fallback = view.verification.fallback.effective;
+    view.outcome = primary === "healthy" ? "recovered"
+      : (primary === "unknown" && fallback === "strictly_increasing") ? "recovered"
+      : "unknown";
+    view.branch_reason_text = view.branch_reason || "분기 없음 - 단일 rule, 대조 Trace 없음";
+    return view;
+  }
+
+  // 질문은 저장하지 않고 실효값에서 매번 파생한다. 모호한 항목에만 생긴다.
+  function questions(view, labels) {
+    const list = [];
+    view.guards.forEach(g => {
+      const ref = `guard:${g.kind}`;
+      if (g.conflict) list.push({ target_ref: ref, asks: "actor", text: `${labels.guard[g.kind]} 판독이 충돌합니다. 근거 frame 을 지목해 하나를 정정(supersedes)하세요.` });
+      else if (g.effective === "unknown") list.push({ target_ref: ref, asks: "actor", text: `${labels.guard[g.kind]} 을(를) 읽지 못했습니다 (${g.reason}). Action 전 상태를 보여 주는 frame 이 있습니까?` });
+    });
+    view.steps.forEach(s => {
+      const ref = `step:${s.step_seq}`;
+      if (s.conflict) list.push({ target_ref: ref, asks: "actor", text: `step ${s.step_seq} 의 의미 분류가 충돌합니다. 하나를 정정(supersedes)하세요.` });
+      else if (!s.effective_kind) list.push({ target_ref: ref, asks: "actor", text: `step ${s.step_seq} (${s.note}) 은 어떤 Recovery Action 입니까?` });
+      else if (s.inferred && !s.confirmed) list.push({ target_ref: ref, asks: "actor", text: `step ${s.step_seq} 를 '${labels.action[s.effective_kind] || s.effective_kind}' 로 추론했습니다. 맞습니까?` });
+    });
+    const v = view.verification.primary;
+    if (v.conflict) list.push({ target_ref: "verification:primary", asks: "actor", text: "Measurement 판독이 충돌합니다. 정정하세요." });
+    else if (view.outcome !== "recovered") list.push({ target_ref: "verification:primary", asks: "actor", text: "Action 후 Measurement 정상화/측정 재개를 보여 주는 frame 이 있습니까? Measurement 를 읽을 수 없다면 Recipe Monitor 분자 증가 frame 을 지목하세요." });
+    return list;
+  }
+
+  function blockers(view, qs) {
+    const out = [];
+    if (qs.length) out.push(`열린 질문 ${qs.length}건`);
+    const conflicts = [...view.guards, ...view.steps, view.verification.primary, view.verification.fallback].filter(x => x.conflict).length;
+    if (conflicts) out.push(`unresolved 충돌 ${conflicts}건`);
+    return out;
+  }
+
+  function reduce(state, event, labels) {
+    if (event.type === "RESET") return initialState();
+    const next = clone(state);
+    next.last_change_bad = false;
+
+    if (event.type === "ANNOTATE") {
+      const a = clone(event.annotation);
+      if (!targetExists(next.packet, a.target_ref)) {
+        next.last_change = `대상 없음: ${a.target_ref}`; next.last_change_bad = true; return next;
+      }
+      if (a.role !== "actor" && a.kind !== "rationale") {
+        next.last_change = "거부: 승인자는 관측·행동 의미를 대신 판독하지 않는다. 승인자가 남길 수 있는 것은 승인/근거 요청/반려와 rationale 뿐이다.";
+        next.last_change_bad = true; return next;
+      }
+      let demoted = false;
+      if (VALUE_KINDS.includes(a.kind) && !a.evidence_ref) {
+        // 근거 없는 판독은 값을 바꾸지 못한다. 발언은 버리지 않고 rationale 로 강등해 남긴다.
+        a.rationale = `(근거 없음 - 값 변경 안 함) 주장: ${a.kind}=${a.value}`;
+        a.kind = "rationale"; a.value = null; demoted = true;
+      }
+      if (a.supersedes === "latest") {
+        const prev = activeAnnotations(next).filter(x => x.target_ref === a.target_ref).pop();
+        if (!prev) { next.last_change = "정정할 annotation 이 없다."; next.last_change_bad = true; return next; }
+        a.supersedes = prev.annotation_id;
+      }
+      a.annotation_id = `a-${String(next.annotations.length + 1).padStart(3, "0")}`;
+      a.at = "PROTOTYPE";
+      next.annotations.push(a);
+      const view = effective(next);
+      const qs = questions(view, labels);
+      next.last_change = demoted
+        ? `${a.annotation_id} 를 rationale 로만 기록 - 관측값은 그대로 (열린 질문 ${qs.length}건)`
+        : `${a.annotation_id} 추가 (${a.kind} @ ${a.target_ref}${a.supersedes ? `, supersedes ${a.supersedes}` : ""}) - 열린 질문 ${qs.length}건, Outcome ${view.outcome}`;
+      return next;
+    }
+
+    if (event.type === "DECIDE") {
+      const view = effective(next);
+      const qs = questions(view, labels);
+      const b = blockers(view, qs);
+      if (event.decision === "approved" && b.length) {
+        next.last_change = `승인 차단: ${b.join(", ")} - 승인자는 '근거 요청' 또는 '반려' 만 할 수 있다`;
+        next.last_change_bad = true; return next;
+      }
+      next.approval = {
+        decision: event.decision,
+        playbook_version: next.packet.playbook_version,
+        approver: "prototype-approver",
+        rationale: event.rationale || null,
+        open_questions: qs.map(q => q.target_ref),
+        at: "PROTOTYPE"
+      };
+      next.last_change = `승인 record: ${event.decision} (playbook ${next.packet.playbook_version} 에 고정, annotation 과 별도 기록)`;
+      return next;
+    }
+
+    next.last_change = `알 수 없는 event: ${event.type}`; next.last_change_bad = true;
+    return next;
+  }
+
+  return { initialState, reduce, effective, questions, blockers };
+})();
+
+// ---------- 페이지 (throwaway shell) ----------
+const labels = {
+  guard: { observation_available: "화면 관측 가능", control_available: "점유·제어 가능", key_visible_unique: "SEM mode + key 가시성·유일성" },
+  action: { reposition_to_align_key: "align key 로 재중심 (double-click)", confirm_align: "OK 확인", pan_to_search: "key 탐색을 위한 시야 이동" },
+  role: { actor: "수행자", approver: "승인자" }
+};
+const A = (kind, target_ref, value, evidence_ref, extra = {}) => ({ type: "ANNOTATE", annotation: { role: "actor", kind, target_ref, value, evidence_ref, supersedes: null, rationale: null, ...extra } });
+const actorButtons = [
+  ["화면 Guard 판독: frame 0007 → true", A("guard_reading", "guard:observation_available", "true", "frame:0007")],
+  ["화면 Guard 를 근거 없이 true 로", A("guard_reading", "guard:observation_available", "true", null)],
+  ["step 1 추론 확인: 맞다", A("action_meaning", "step:1", "reposition_to_align_key", "events:3-4")],
+  ["step 2 의미: key 탐색 시야 이동", A("action_meaning", "step:2", "pan_to_search", "events:5-7")],
+  ["step 2 의미: align key 재중심 (충돌)", A("action_meaning", "step:2", "reposition_to_align_key", "events:5-7")],
+  ["step 2 정정: 최신 annotation 을 supersedes", A("action_meaning", "step:2", "pan_to_search", "events:5-7", { supersedes: "latest", rationale: "재검토: 3회 클릭은 탐색 이동이었다" })],
+  ["Measurement 정상 판독: frame 0040", A("verification_reading", "verification:primary", "healthy", "frame:0040")],
+  ["분자 증가 판독 (Measurement 불명): frame 0044", A("verification_reading", "verification:fallback", "strictly_increasing", "frame:0044")],
+  ["rationale 만 남기기 (step 1)", A("rationale", "step:1", null, null, { rationale: "crosshair 가 key 왼쪽에 있어 바로 재중심했다" })]
+];
+const approverButtons = [
+  ["승인", { type: "DECIDE", decision: "approved", rationale: "근거·질문 모두 닫힘" }],
+  ["근거 요청", { type: "DECIDE", decision: "needs_evidence", rationale: "열린 질문의 frame 을 지목해 달라" }],
+  ["반려", { type: "DECIDE", decision: "rejected", rationale: "Outcome 근거 부족" }],
+  ["승인자가 Guard 를 직접 판독 (월권)", { type: "ANNOTATE", annotation: { role: "approver", kind: "guard_reading", target_ref: "guard:observation_available", value: "true", evidence_ref: "frame:0007", supersedes: null, rationale: null } }],
+  ["승인자 rationale 만", { type: "ANNOTATE", annotation: { role: "approver", kind: "rationale", target_ref: "step:2", value: null, evidence_ref: null, supersedes: null, rationale: "탐색 이동이면 별도 rule 후보다" } }]
+];
+const scenarios = [
+  { id: "minimal", title: "최소 검토 완주", description: "클릭 8건짜리 Episode 에 질문은 4개만 생긴다(OCR 로 확인된 OK 는 묻지 않음). 수행자가 넷을 근거와 함께 닫으면 승인자가 정확한 candidate 버전에 승인을 남긴다.",
+    steps: [["step 1 확인", actorButtons[2][1]], ["화면 Guard 판독", actorButtons[0][1]], ["step 2 의미", actorButtons[3][1]], ["Measurement 판독", actorButtons[6][1]], ["승인", approverButtons[0][1]]] },
+  { id: "no-evidence", title: "근거 없는 정정", description: "unknown 을 말로만 true 로 바꾸려 하면 값은 그대로이고 발언만 rationale 로 남는다. 승인자는 근거 요청으로 되돌려 보낸다.",
+    steps: [["근거 없이 true", actorButtons[1][1]], ["승인 시도", approverButtons[0][1]], ["근거 요청", approverButtons[1][1]], ["frame 0007 지목", actorButtons[0][1]]] },
+  { id: "conflict", title: "의미 충돌과 정정", description: "같은 step 에 다른 의미 두 개가 살아 있으면 최신값을 고르지 않고 unresolved 가 된다. append-only 정정(supersedes) 만이 해소한다.",
+    steps: [["step 2: 탐색 이동", actorButtons[3][1]], ["step 2: 재중심 (충돌)", actorButtons[4][1]], ["승인 시도", approverButtons[0][1]], ["supersedes 로 정정", actorButtons[5][1]]] },
+  { id: "approver", title: "승인자 월권", description: "승인자는 관측을 대신 판독할 수 없고, 질문이 열린 채 승인할 수 없다. 할 수 있는 것은 근거 요청·반려·rationale 뿐이다.",
+    steps: [["승인자가 Guard 판독", approverButtons[3][1]], ["질문 열린 채 승인", approverButtons[0][1]], ["승인자 rationale", approverButtons[4][1]], ["근거 요청", approverButtons[1][1]]] },
+  { id: "fallback", title: "분자 fallback 로 recovered", description: "Measurement 를 읽지 못해도 분자 엄격 증가 frame 이 있으면 Outcome 은 recovered 다. Verification 질문이 닫히는지 본다.",
+    steps: [["step 1 확인", actorButtons[2][1]], ["화면 Guard 판독", actorButtons[0][1]], ["step 2 의미", actorButtons[3][1]], ["분자 증가 판독", actorButtons[7][1]], ["승인", approverButtons[0][1]]] }
+];
+
+let state = ReviewModel.initialState();
+let activeScenario = 0;
+let scenarioStep = 0;
+
+function dispatch(event) { state = ReviewModel.reduce(state, event, labels); render(); }
+function eventAttr(event) { return JSON.stringify(event).replaceAll("'", "&#39;"); }
+function tag(value) {
+  const cls = value === "unknown" ? "unknown" : value === "unresolved" ? "unresolved" : (value === "true" || value === "healthy" || value === "strictly_increasing" || value === "recovered") ? "ok" : "inferred";
+  return `<span class="tag ${cls}">${value ?? "미분류"}</span>`;
+}
+function frame(ref) { return `<span class="frame">${ref || "-"}</span>`; }
+
+function renderPacket(view, qs) {
+  const p = view;
+  const guards = p.guards.map(g => `<tr><td>${labels.guard[g.kind]}</td><td>${tag(g.effective)}${g.effective !== g.value ? ` <span class="src">(packet: ${g.value})</span>` : ""}</td><td>${g.reason}</td><td>${frame(g.evidence_ref)}</td><td class="src">${g.source}</td></tr>`).join("");
+  const steps = p.steps.map(s => `<tr><td>${s.step_seq}</td><td>${frame(s.before)} → ${frame(s.after)}</td><td>${s.conflict ? tag("unresolved") : (labels.action[s.effective_kind] || tag(s.effective_kind))} ${s.inferred && !s.confirmed && !s.conflict ? '<span class="tag inferred">추론</span>' : ""}${s.confirmed ? '<span class="tag ok">확인됨</span>' : ""}</td><td class="src">${s.note} · raw ${s.raw_events.length}건</td><td class="src">${s.source}</td></tr>`).join("");
+  const v = p.verification;
+  document.querySelector("#packet").innerHTML = `
+    <p><strong>Episode</strong> ${p.episode.eqp_id} / ${p.episode.recipe_id} · alarm ${p.episode.alarm_at} · attempt ${p.episode.attempt_seq}
+      <span class="src">(${p.episode_ref})</span><br>
+      <strong>candidate Playbook</strong> ${p.playbook_version} · rule <code>${p.rule_ref}</code><br>
+      <strong>분기 이유</strong> ${p.branch_reason_text}<br>
+      <strong>적용 범위</strong> ${p.scope.required_capabilities.join(", ")} <span class="src">(범위가 근거보다 넓은지는 승격 gate 의 책임)</span></p>
+    <h3>Action 전 Recovery Guard</h3>
+    <table><tr><th>Guard</th><th>판정</th><th>이유</th><th>근거</th><th>출처</th></tr>${guards}</table>
+    <h3>정규화 step (전·후 frame)</h3>
+    <table><tr><th>#</th><th>전 → 후</th><th>의미</th><th>근거</th><th>출처</th></tr>${steps}</table>
+    <h3>Verification 과 Outcome</h3>
+    <table>
+      <tr><th>Measurement (primary)</th><td>${tag(v.primary.effective)}</td><td>${frame(v.primary.evidence_ref)}</td><td class="src">${v.primary.source}</td></tr>
+      <tr><th>Recipe Monitor 분자 (fallback)</th><td>${tag(v.fallback.effective)}</td><td>${frame(v.fallback.evidence_ref)}</td><td class="src">${v.fallback.source}</td></tr>
+      <tr><th>Recovery Outcome</th><td colspan="3">${tag(p.outcome)}</td></tr>
+    </table>
+    <h3>시스템이 묻는 질문 (${qs.length}건)</h3>
+    ${qs.length ? `<ol class="questions">${qs.map(q => `<li><strong>[${labels.role[q.asks]}]</strong> ${q.text} <span class="src">${q.target_ref}</span></li>`).join("")}</ol>` : "<p>없음 - 승인 가능한 상태.</p>"}`;
+}
+
+function render() {
+  const view = ReviewModel.effective(state);
+  const qs = ReviewModel.questions(view, labels);
+  const cards = [
+    ["Episode", state.packet.episode.eqp_id],
+    ["candidate Playbook", state.packet.playbook_version],
+    ["Outcome", view.outcome],
+    ["열린 질문", String(qs.length)],
+    ["승인", state.approval.decision]
+  ];
+  document.querySelector("#stateCards").innerHTML = cards.map(([label, value]) => `<div class="card"><small>${label}</small><strong>${value}</strong></div>`).join("");
+  const change = document.querySelector("#lastChange");
+  change.textContent = state.last_change;
+  change.className = `changed${state.last_change_bad ? " bad" : ""}`;
+  renderPacket(view, qs);
+  document.querySelector("#actorButtons").innerHTML = actorButtons.map(([label, event]) => `<button data-event='${eventAttr(event)}'>${label}</button>`).join("");
+  document.querySelector("#approverButtons").innerHTML = approverButtons.map(([label, event], i) => `<button class="${i === 0 ? "primary" : ""}" data-event='${eventAttr(event)}'>${label}</button>`).join("");
+  document.querySelector("#jsonView").textContent = JSON.stringify({
+    "annotations.jsonl": state.annotations,
+    approval: state.approval,
+    derived_review: { outcome: view.outcome, open_questions: qs.map(q => q.target_ref), blockers: ReviewModel.blockers(view, qs) }
+  }, null, 2);
+  renderScenario();
+  bindEventButtons();
+}
+function renderTabs() {
+  document.querySelector("#tabs").innerHTML = scenarios.map((scenario, index) => `<button role="tab" aria-selected="${index === activeScenario}" data-tab="${index}">${scenario.title}</button>`).join("");
+  document.querySelectorAll("[data-tab]").forEach(button => button.addEventListener("click", () => {
+    activeScenario = Number(button.dataset.tab); scenarioStep = 0; state = ReviewModel.initialState(); renderTabs(); render();
+  }));
+}
+function renderScenario() {
+  const scenario = scenarios[activeScenario];
+  document.querySelector("#walkthrough").innerHTML = `<h3>${scenario.title}</h3><p>${scenario.description}</p><div class="steps">${scenario.steps.map(([label, event], index) => `<button class="${index < scenarioStep ? "done" : ""}" ${index !== scenarioStep ? "disabled" : ""} data-step="${index}" data-event='${eventAttr(event)}'>${index + 1}. ${label}</button>`).join("")}</div>`;
+  document.querySelectorAll("[data-step]").forEach(button => button.addEventListener("click", () => { scenarioStep += 1; }));
+}
+function bindEventButtons() {
+  document.querySelectorAll("[data-event]").forEach(button => {
+    if (button.dataset.bound) return;
+    button.dataset.bound = "1";
+    button.addEventListener("click", () => dispatch(JSON.parse(button.dataset.event)));
+  });
+}
+renderTabs();
+render();
+</script>
+</body>
+</html>

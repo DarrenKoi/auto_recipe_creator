@@ -170,28 +170,28 @@ class CycleGraphMirror:
             self._thread = None
             if thread.is_alive():
                 # 아직 쓰는 중일 수 있다 - 같은 .tmp 를 두 스레드가 쓰지 않게 최종 폴은 생략.
-                print("[WARNING] [WF4] cycle mirror thread 가 join 시간 안에 안 끝나 최종 스냅샷 생략")
+                print("[WARNING] cycle mirror thread 가 join 시간 안에 안 끝나 최종 스냅샷 생략")
                 return
         if not final:
             return
         try:
             self.poll_once()
         except Exception as exc:
-            print(f"[WARNING] [WF4] cycle mirror final poll error: {exc}")
+            print(f"[WARNING] cycle mirror final poll error: {exc}")
         with self._lock:
             latest = self._latest
         if latest is not None:
             try:
                 self._write_snapshots(*latest)
             except Exception as exc:  # 호출부의 finally 안에서 불린다 - 절대 던지지 않는다
-                print(f"[WARNING] [WF4] cycle mirror final snapshot error: {exc}")
+                print(f"[WARNING] cycle mirror final snapshot error: {exc}")
 
     def _poll_loop(self) -> None:
         while not self._stop_event.wait(self.poll_sec):
             try:
                 self.poll_once()
             except Exception as exc:
-                print(f"[WARNING] [WF4] cycle mirror poll error: {exc}")
+                print(f"[WARNING] cycle mirror poll error: {exc}")
 
     # --------------------------------------------------------------- polling
 

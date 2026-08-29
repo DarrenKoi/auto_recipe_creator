@@ -27,7 +27,7 @@ def _mermaid_asset_content() -> str:
             _MMA_CACHE = _ASSET_PATH.read_text(encoding="utf-8")
         except OSError:
             print(
-                f"[WARNING] [WF4] vendored mermaid asset 없음: {_ASSET_PATH} "
+                f"[WARNING] vendored mermaid asset 없음: {_ASSET_PATH} "
                 "- HTML 은 CDN fallback 으로 동작합니다(오프라인은 vendor 필요)."
             )
             _MMA_CACHE = ""
@@ -256,21 +256,21 @@ def open_graph_view(html_path: Path) -> None:
     """
     path = Path(html_path)
     if not path.is_file():
-        print(f"[WARNING] [WF4] graph view 파일 없음: {path}")
+        print(f"[WARNING] graph view 파일 없음: {path}")
         return
     try:
         if platform.system() == "Windows":
             os.startfile(str(path))  # type: ignore[attr-defined]
-            print(f"[INFO] [WF4] 기본 브라우저로 열기: {path}")
+            print(f"[INFO] 기본 브라우저로 열기: {path}")
             return
         opened = webbrowser.open(path.resolve().as_uri())
         if not opened:
-            print(f"[WARNING] [WF4] 브라우저 열기 실패: {path}")
+            print(f"[WARNING] 브라우저 열기 실패: {path}")
     except Exception as exc:
-        print(f"[WARNING] [WF4] graph view 자동 열기 실패: {exc}")
+        print(f"[WARNING] graph view 자동 열기 실패: {exc}")
 
 
 def print_ascii(graph: WorkflowGraph, run_state: RunState) -> None:
-    """ascii 지도를 [INFO] [WF4] prefix 로 출력한다."""
+    """ascii 지도를 [INFO] prefix 로 출력한다."""
     for line in render_ascii(graph, run_state).splitlines():
-        print(f"[INFO] [WF4] {line}")
+        print(f"[INFO] {line}")

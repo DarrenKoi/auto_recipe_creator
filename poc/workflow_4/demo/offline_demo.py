@@ -183,18 +183,18 @@ def run_scenario(
     engine = WorkflowEngine(graph, handlers, config=config)
 
     print(
-        f"[INFO] [WF4] === scenario '{scenario_name}' start "
+        f"[INFO] === scenario '{scenario_name}' start "
         f"(persist_dir={persist_dir}) ==="
     )
     state = engine.run()
     print_ascii(graph, state)
     print(
-        f"[INFO] [WF4] === scenario '{scenario_name}' done: "
+        f"[INFO] === scenario '{scenario_name}' done: "
         f"status={state.status.value} current={state.current_node} "
         f"failure_class={state.failure_class} ==="
     )
-    print(f"[INFO] [WF4]     artifact: {persist_dir / 'run_state.json'}")
-    print(f"[INFO] [WF4]     artifact: {persist_dir / 'workflow_graph.md'}")
+    print(f"[INFO]     artifact: {persist_dir / 'run_state.json'}")
+    print(f"[INFO]     artifact: {persist_dir / 'workflow_graph.md'}")
     return state, persist_dir
 
 
@@ -202,16 +202,16 @@ def main() -> None:
     """DEMO_SCENARIO(env WF4_DEMO_SCENARIO 가 우선)로 시나리오를 골라 데모를 실행한다."""
     scenarios = ["happy", "fallback", "escalate"]
     choice = os.environ.get("WF4_DEMO_SCENARIO", "").strip() or DEMO_SCENARIO
-    print(f"[INFO] [WF4] workflow_4 offline demo (scenario={choice!r})")
+    print(f"[INFO] workflow_4 offline demo (scenario={choice!r})")
     if choice != "all":
         if choice not in scenarios:
-            print(f"[ERROR] [WF4] scenario {choice!r} 는 {scenarios} 또는 'all' 중 하나여야 합니다.")
+            print(f"[ERROR] scenario {choice!r} 는 {scenarios} 또는 'all' 중 하나여야 합니다.")
             return
         scenarios = [choice]
     for scenario_name in scenarios:
         run_scenario(scenario_name)
     print(
-        "[INFO] [WF4] demo complete. "
+        "[INFO] demo complete. "
         "See poc/workflow_4/debug_images/demo_runs/ for artifacts."
     )
 

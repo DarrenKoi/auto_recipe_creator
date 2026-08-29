@@ -373,7 +373,7 @@ class WorkflowEngine:
         """ESCALATED 로 종료. v1 은 resume 이 없어 항상 여기서 멈춘다."""
         if not self.config.pause_on_escalate:
             print(
-                "[WARNING] [WF4] pause_on_escalate=False 는 v1 에서 미지원입니다. "
+                "[WARNING] pause_on_escalate=False 는 v1 에서 미지원입니다. "
                 "ESCALATED 로 종료합니다."
             )
         run_state.status = RunStatus.ESCALATED
@@ -421,7 +421,7 @@ class WorkflowEngine:
         """모든 전이 뒤 호출 — 로그 출력 + run_state.json + graph snapshot."""
         run_state.history.append(record)
         print(
-            f"[INFO] [WF4] {self.graph.name} {record.from_node} -> "
+            f"[INFO] {self.graph.name} {record.from_node} -> "
             f"{record.to_node} ({record.event}, {record.attempt})"
         )
         self._persist(run_state)

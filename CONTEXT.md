@@ -39,6 +39,27 @@ Recovery Action 후 기대한 관측 가능한 상태 변화가 실제로 일어
 Recovery Episode 의 종료 결과. `recovered`, `escalated`, `aborted`, `unknown` 중 하나이며,
 `recovered` 는 측정 재개나 품질 신호처럼 관측 가능한 성공 근거가 있을 때만 성립한다.
 
+### Recovery Annotation
+행동 수행자가 Recovery Trace 의 특정 근거(frame 또는 event 범위)를 가리키며 남기는 판독·분류·
+설명 기록. 종류는 관측 Guard 값의 판독/정정, Recovery Action 의 도메인 의미 분류, Verification
+판독, rationale 넷뿐이다. append-only 이며 정정은 이전 기록을 supersedes 하는 새 기록이다. 근거를
+가리키지 않는 annotation 은 관측값을 바꾸지 못하고 rationale 로만 남는다. 관측되지 않은 Guard 나
+counterfactual 성공을 만들 수 없다.
+
+### 검토 묶음 (Review Packet)
+Recovery Episode 하나와 그 Episode 를 근거로 삼는 Recovery Playbook rule 하나에 대해, 엔지니어가
+검토해야 할 것만 모은 파생 view. Guard 판정, 정규화 step 과 대표 전·후 frame, Verification,
+Outcome, 분기 이유, 적용 범위, 시스템이 묻는 열린 질문을 담는다. 저장 정본이 아니라
+Episode·Playbook·Recovery Annotation 에서 매번 다시 만든다.
+
+### 행동 수행자 (Recovery Actor)
+Recovery Episode 에서 실제로 Recovery Action 을 한 엔지니어. 검토 묶음의 질문에 답하고 Recovery
+Annotation 을 남길 수 있는 유일한 역할.
+
+### Playbook 승인자 (Playbook Approver)
+candidate Recovery Playbook 의 특정 버전을 승인·반려하거나 근거를 요청하는 역할. 관측이나 행동
+의미를 대신 판독하지 않으며, 승인 기록은 Recovery Annotation 과 분리해 Playbook 버전에 고정된다.
+
 ### align key
 레시피에 등록된, 정렬 기준이 되는 화면 패턴(주변 layout 포함). OM 버전과 SEM 버전이 따로 있다.
 등록 이미지(`align_img_from_rcp`)에는 엔지니어가 유니크한 위치를 **박스로 그려** 두며(이미지에

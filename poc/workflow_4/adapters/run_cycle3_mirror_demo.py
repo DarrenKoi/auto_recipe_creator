@@ -94,7 +94,7 @@ def main() -> None:
     run_dir: Path = DEBUG_IMAGE_DIR / "demo_runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     started_at = time.strftime("%Y-%m-%dT%H:%M:%S")
-    print(f"[INFO] [WF4] cycle3 mirror demo - run_dir={run_dir}")
+    print(f"[INFO] cycle3 mirror demo - run_dir={run_dir}")
 
     mirror = CycleGraphMirror(
         build_step_chain_graph("cycle3_align_fail_demo", DEMO_STEPS),
@@ -126,7 +126,7 @@ def main() -> None:
             json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         _write_state("running", list(results), i)
-        print(f"[INFO] [WF4] journal: {step_id} complete")
+        print(f"[INFO] journal: {step_id} complete")
 
     time.sleep(1.0)
     _write_state(
@@ -138,9 +138,9 @@ def main() -> None:
     time.sleep(1.0)
     mirror.stop(final=True)
 
-    print("[INFO] [WF4] cycle3 mirror demo done")
-    print(f"[INFO] [WF4]   md   : {run_dir / 'workflow_graph.md'}")
-    print(f"[INFO] [WF4]   html : {run_dir / 'workflow_graph.html'}")
+    print("[INFO] cycle3 mirror demo done")
+    print(f"[INFO]   md   : {run_dir / 'workflow_graph.md'}")
+    print(f"[INFO]   html : {run_dir / 'workflow_graph.html'}")
 
 
 if __name__ == "__main__":

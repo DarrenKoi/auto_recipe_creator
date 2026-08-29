@@ -49,6 +49,7 @@ UNREGISTERED_DIRNAME = "_unregistered"
 # attempt 폴더에 남는 관측 record 파일 - (artifacts 키, 파일명). 존재하는 것만 참조로 건다.
 _ATTEMPT_RECORD_FILES = (
     ("guards", "guards.json"),
+    ("measurement_verification", "measurement_verification.json"),
 )
 
 # attempt 가 '수집 완료' 로 볼 수 없는 run_status. GUI 를 아예 못 돌린 경우다.

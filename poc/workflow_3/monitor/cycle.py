@@ -1355,6 +1355,67 @@ def write_attempt_guards(context, result, settings: Workflow3Settings) -> None:
         print(f"[WARNING] Guard 기록 실패(사이클은 계속): {exc}")
 
 
+def _locate_measurement_panel(image, context=None):
+    """Measurement 판독용 Assist 패널 박스를 찾는다(실패는 None).
+
+    기존 locator 를 **그대로** 쓴다 - 지금 목적은 판독이 아니라 crop 을 근거로 남기는
+    것뿐이라, 새 grounding 프롬프트나 새 좌표 규약을 만들 이유가 없다.
+    """
+    from poc.workflow_3.sem_monitor.assist_score import locate_assist_panel
+
+    context = context or {}
+    return locate_assist_panel(
+        context.get("tool_window"),
+        context.get("tool_window_title", ""),
+        context.get("tool_window_backend", ""),
+        image,
+        debug_dir=DEBUG_IMAGE_DIR / "assist_score",
+    )
+
+
+def write_attempt_verification(context, settings: Workflow3Settings) -> None:
+    """Measurement Verification record 를 attempt 폴더에 남긴다(수집 on 일 때만).
+
+    자동 판독기는 아직 `unknown` 만 내는 stub 이다 - 값을 얻으려는 것이 아니라 **패널
+    crop 을 근거로 남기려는** 호출이다. 실제 primary 판독은 행동 수행자의
+    `verification_reading` annotation 이 채운다(티켓 21).
+    """
+    if not settings.episode_collect_enabled or not context.get("attempt_seq"):
+        return
+    from poc.workflow_3.monitor.measurement_verification import (
+        SOURCE_READER,
+        UNKNOWN,
+        read_measurement_stub,
+        verification_record,
+        write_verification_record,
+    )
+
+    attempt_seq = context["attempt_seq"]
+    attempt_dir = _attempt_dir_for(
+        context["eqp_id"], context["recipe_id"], context["tag"], attempt_seq
+    )
+    try:
+        image = capture_window(context["tool_window"])
+        record = read_measurement_stub(
+            image,
+            locate_fn=lambda img: _locate_measurement_panel(img, context),
+            save_crop_fn=lambda crop, path: save_debug_jpeg(crop, path),
+            attempt_dir=attempt_dir,
+            crop_ref_prefix=attempt_dirname(attempt_seq),
+        )
+    except Exception as exc:
+        # 화면을 못 잡아도 record 는 남긴다 - "판독을 못 했다" 자체가 관측이다.
+        record = verification_record(
+            value=UNKNOWN, reason=f"crop_failed:capture:{type(exc).__name__}: {exc}",
+            source=SOURCE_READER,
+        )
+    try:
+        path = write_verification_record(attempt_dir, record)
+        print(f"[INFO] Measurement Verification 기록: {path} ({record['reason']})")
+    except Exception as exc:
+        print(f"[WARNING] Measurement Verification 기록 실패(사이클은 계속): {exc}")
+
+
 def _teardown_steps(eqp_id, context, result, settings, *, input_blocked, recording):
     """알람 사이클 teardown 단계 목록 - 순서가 계약이다.
 
@@ -1614,6 +1675,8 @@ def run_alarm_cycle(
         # Guard record - teardown 앞에 둔다. 창을 닫으면 controller/outcome 은 그대로지만
         # 녹화 세션이 끝나 사이드카 마지막 레코드가 급격히 낡는다(stale 판정으로 샌다).
         write_attempt_guards(context, result, settings)
+        # Measurement Verification - 역시 teardown 앞이다(창이 닫히면 패널 crop 을 못 남긴다).
+        write_attempt_verification(context, settings)
 
         # 이 테이크가 처리한 이미지를 한 폴더로 모은다. **teardown 뒤**여야
         # close_tool 이 남긴 crop 까지 들어오고 result 의 녹화 필드도 채워져 있다.

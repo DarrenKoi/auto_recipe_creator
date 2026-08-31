@@ -395,3 +395,110 @@ class _OcrRead:
     def __init__(self, raw_text):
         self.ok = True
         self.raw_text = raw_text
+
+
+# ------------------------------------------------------------------
+# CORRECT_WHEN_OCCUPIED=1 (opt-in) 의 on-branch.
+#
+# 기본값은 off 이고 그 경로만 테스트가 있었다. 이 플래그를 켜는 것이 정당한 상황은
+# "엔지니어와 조율해 제어를 넘겨받았다" 뿐인데, 자동 루프는 그 조건을 스스로 판단할
+# 수 없다. 그래서 여기서 못 박는 것은 "켜도 된다"가 아니라 **켜면 무엇이 일어나는가**
+# 다 - 특히 결과가 절대 조용한 성공이 되지 않는다는 것.
+# ------------------------------------------------------------------
+
+
+def _occupied_opt_in_context():
+    return {
+        "eqp_id": "MCD427",
+        "recipe_id": "CLS/RCP",
+        "tag": "t",
+        "occupancy": OCCUPIED_BY_OTHER,
+        "controller": object(),
+    }
+
+
+def _patch_correction(monkeypatch, status, called=None):
+    """correct_align_fail_auto 를 대역으로 갈고 그 앞의 실장비 의존을 끊는다."""
+    from poc.workflow_3.monitor import cycle as cyc
+
+    def _fake(*a, **k):
+        if called is not None:
+            called.append(1)
+        return _Outcome(status=status)
+
+    monkeypatch.setattr(
+        "poc.workflow_3.align.correction.correct_align_fail_auto", _fake, raising=False
+    )
+    # 배율 주입점은 PM 드롭다운 실물을 만지므로 끊는다(None = legacy 경로 위임).
+    monkeypatch.setattr(cyc, "_build_grid_mag_control", lambda *a, **k: None,
+                        raising=False)
+    return cyc
+
+
+def test_opt_in_calls_corrector_while_occupied(monkeypatch):
+    """켜면 실제로 보정기가 불린다 - 플래그가 배선까지 닿아 있는가.
+
+    off-branch 만 테스트하면 '플래그를 켜도 아무 일이 없는' 배선 실수를 못 잡는다.
+    """
+    from dataclasses import replace
+
+    called = []
+    cyc = _patch_correction(monkeypatch, "corrected", called)
+    settings = replace(_settings(), correct_when_occupied=True)
+
+    context = _occupied_opt_in_context()
+    result = cyc._exec_run_correction(_Step(), context, settings)
+
+    assert called == [1], "opt-in 인데 보정기가 불리지 않았다"
+    assert result.status == "success"
+    assert context["outcome"].status != VIEW_ONLY_OBSERVATION
+
+
+def test_opt_in_corrected_is_downgraded_end_to_end(monkeypatch):
+    """보정기가 'corrected' 를 줘도 최종 status 는 corrected_unverified 다.
+
+    순수 함수(resolve_...)는 이미 덮여 있지만, 그 함수가 **이 경로에서 실제로 불리는지**
+    는 별개다. 강등이 빠지면 notify 가 cube 를 생략해(corrected 는 성공으로 본다) 아무도
+    모르는 미보정이 남는다 - 이 기능의 가장 위험한 실패 모드.
+    """
+    from dataclasses import replace
+
+    cyc = _patch_correction(monkeypatch, "corrected")
+    settings = replace(_settings(), correct_when_occupied=True)
+
+    context = _occupied_opt_in_context()
+    cyc._exec_run_correction(_Step(), context, settings)
+
+    assert context["outcome"].status == CORRECTED_UNVERIFIED
+
+
+def test_opt_in_does_not_overwrite_a_failure_status(monkeypatch):
+    """실패/인계 경로의 정보는 강등이 덮지 않는다 - 켜도 마찬가지."""
+    from dataclasses import replace
+
+    cyc = _patch_correction(monkeypatch, "awaiting_engineer_ok")
+    settings = replace(_settings(), correct_when_occupied=True)
+
+    context = _occupied_opt_in_context()
+    cyc._exec_run_correction(_Step(), context, settings)
+
+    assert context["outcome"].status == "awaiting_engineer_ok"
+
+
+def test_opt_in_warns_that_the_click_may_not_land(monkeypatch, capsys):
+    """켠 세션은 콘솔로 경고를 남긴다.
+
+    화면 공유는 원래 view-only 라 클릭이 장비에 도달하지 않을 수 있다. 로그만 보고
+    '이 세션은 점유 중에 보정을 시도했다'를 알 수 있어야 한다 - 결과가 왜
+    corrected_unverified 인지 나중에 설명되지 않으면 강등이 버그로 읽힌다.
+    """
+    from dataclasses import replace
+
+    cyc = _patch_correction(monkeypatch, "corrected")
+    settings = replace(_settings(), correct_when_occupied=True)
+
+    cyc._exec_run_correction(_Step(), _occupied_opt_in_context(), settings)
+
+    out = capsys.readouterr().out
+    assert "CORRECT_WHEN_OCCUPIED" in out
+    assert "안 먹을 수 있음" in out

@@ -170,7 +170,7 @@ uv run pytest poc/workflow_3/align/test_grid_search.py                # 31 (sear
 uv run pytest poc/workflow_3/align/test_fallback_kill_switch.py       # 9 (fallback kill switch + pan 예산 10 이 streak 에 안 잘림)
 uv run pytest poc/workflow_3/rcs/test_row_occupant.py                 # 14 (점유 3-상태 판별)
 uv run pytest poc/workflow_3/monitor/test_share_request.py            # 35 (확인 게이트/승낙 대기/클릭 경로)
-uv run pytest poc/workflow_3/monitor/test_share_cycle_wiring.py       # 21 (occupancy->outcome->notify->retry 배선)
+uv run pytest poc/workflow_3/monitor/test_share_cycle_wiring.py       # 30 (occupancy->outcome->notify->retry 배선 + CORRECT_WHEN_OCCUPIED on-branch)
 uv run pytest poc/workflow_3/monitor/test_rcs_recovery.py             # 27 (RCS 재실행 중복 가드 + 복구 로그인이 tool 안 여는 계약 + 창 없는 좀비 판정)
 uv run pytest poc/workflow_3/monitor/test_recovery_episode.py         # 21 (Episode 식별/attempt 폴더/재시작 재개/Outcome+digest)
 uv run pytest poc/workflow_3/monitor/test_guard_readings.py          # 12 (Guard 3종 3상태 + attempt 기록)

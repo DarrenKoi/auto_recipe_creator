@@ -46,6 +46,157 @@ from poc.workflow_3.monitor.recovery_episode import alarm_fingerprint
 from poc.workflow_3.util import make_timestamp_tag
 from poc.workflow_3.logger import log_work2_event
 
+# ==========================================================================
+# 실행 인자 = 이 블록의 상수 (CLI 인자를 쓰지 않는 프로젝트 규약)
+# --------------------------------------------------------------------------
+# 우선순위: 실제 셸 env > 실운전 기본값(_apply_live_mode_defaults) > 이 블록
+#           > workflow_3_config.py(오피스 사본) > config.py 기본값
+#
+# None = 미설정(아래 단계로 넘김). 1/0 = 명시적 on/off. 숫자 0 도 유효한 값이다.
+# 셸 env 때문에 무시된 상수는 시작할 때 콘솔에 그대로 찍힌다.
+#
+# 기본 방침(2026-08-31 사용자 결정): 구현이 끝난 기능은 **켜고 시작**한다.
+# 문제가 생기면 여기서 0 으로 내리면 된다.
+# 다만 아래 [위험] 넷은 되돌릴 수 없거나 남에게 영향을 주는 조작이라 off 로 둔다 -
+# 끄는 것으로 원상복구가 안 되는 종류다. 켤 때는 그 줄만 1 로 바꾼다.
+# ==========================================================================
+
+# --- 알람 폴링 / 소스 ---
+POLL_SEC = None              # 알람 폴링 주기(초). None=코드 기본값.
+WINDOW_SEC = None            # 알람 조회 창(초).
+ALARM_SOURCE = None          # "" =office 모듈, "replay"=CSV 재생.
+REPLAY_CSV = None            # ALARM_SOURCE="replay" 일 때 읽을 CSV 경로.
+
+# --- 안전 / 중단 ---
+SAFE_MODE = None             # None 이면 실운전 기본값 0 이 적용된다(실클릭).
+                             # 점검만 할 때는 셸에서 SAFE_MODE=1 을 붙인다.
+ABORT_HOTKEY = None          # 긴급 해제 단축키. None=<ctrl>+<alt>+q.
+KEEP_AWAKE = 1               # 절전 진입 방지.
+BLOCK_INPUT = 0              # [위험] 엔지니어의 키보드/마우스 입력 차단.
+                             # 사람이 개입하려는 순간을 막는다. 기본 off 유지.
+
+# --- RCS 확보 ---
+RCS_PREFLIGHT = 1            # 시작 전 RCS 세션 준비.
+RCS_WINDOW_MAX_TRIALS = None # tool 창 탐색 재시도 상한.
+RCS_KILL_STALE = 0           # [위험] 창 없는 좀비 RCS 프로세스를 자동 종료.
+                             # 종료는 되돌릴 수 없고, 엔지니어 세션일 수 있다.
+                             # 판정이 창 조회에 의존하므로 모를 때는 죽이지 않는 편이 낫다.
+
+# --- 점유 / 화면 공유 ---
+SHARE_REQUEST = 1            # 점유 Select 팝업에서 화면 공유 요청 발송.
+SHARE_CONFIRM = None         # 확인 정책. None=코드 기본값.
+SHARE_WAIT_SEC = None
+SHARE_MAX_ATTEMPTS = None
+ACCESS_WATCH = 1             # 세션 중 접근 요청 팝업 감시(관측만).
+ACCESS_GRANT = 0             # [위험] 접근 요청에 실제 '허용' 클릭.
+                             # 남의 요청을 우리가 대신 승낙하는 것이라 사람이 판단해야 한다.
+ACCESS_CONFIRM = None        # strict | lenient | off.
+CORRECT_WHEN_OCCUPIED = 0    # [위험] 남이 점유 중인 tool 을 그대로 보정.
+                             # 상대가 조작 중인 장비에 우리 클릭이 섞인다.
+
+# --- CV 보정 ---
+CORRECTION = 1               # 보정 사이클 자체.
+CORRECTION_DRY_RUN = None    # None 이면 실운전 기본값 0(실제 클릭)이 적용된다.
+OK_CLICK = 0                 # [위험] 보정 후 OK 를 자동으로 누른다.
+                             # 0 = 반자동(운영 기본값): reposition 까지만 하고
+                             # awaiting_engineer_ok 로 끝나 엔지니어가 OK 를 누른다.
+                             # 이 상태값이 있어야 cube 알림이 나가고 watch 도 계속 돈다.
+SEARCH_MODE = None           # "grid"(기본) | "legacy".
+FEASIBILITY_MARK = 1         # 보정 가능성 판정 이미지 마킹.
+REPOSITION_PREVIEW = None
+SEM_BOX_DETECT = 1           # 라이브 SEM box 검출(panel ROI 1단).
+ZOOM_PROBE = 1               # zoom ladder 탐색.
+ZOOM_METHOD = None
+PM_DROPDOWN = 1              # PM 드롭다운 절대 배율 선택.
+
+# --- 과거 데이터 / consensus ---
+GATHER_RCP_MSR = 1           # 알람 시 rcp 등록 키 내려받기(msr 은 받지 않는다).
+RCP_GATHER_TIMEOUT_SEC = None
+GATHER_SUCCESS = 1           # 성공 S 수집(consensus pool 적재).
+CONSENSUS = 1                # consensus 템플릿 라우팅.
+CONSENSUS_MIN_S = None
+
+# --- 알림 ---
+POPUP = 1                    # 로컬 팝업.
+RICH_NOTIFY = 1              # cube rich notification.
+NOTIFY_DELAY_SEC = None
+
+# --- 녹화 / 엔지니어 watch ---
+RECORDING_MAX_SEC = None     # 녹화 하드 상한(초). None=900.
+RECORD_PRELUDE = 1           # 접속 구간(RCS 실행->로그인->tool 진입) 화면 전체 녹화.
+PRELUDE_MAX_SEC = None
+PRELUDE_MONITOR_INDEX = None
+ENGINEER_WATCH_SEC = None    # 미보정 watch 상한(초). None=300.
+ENGINEER_DONE_DETECT = 1     # 완료 신호로 watch 조기 종료.
+ENGINEER_DONE_ASSIST = 0     # Assist 패널 판독으로 완료 판정.
+                             # 판독 정확도가 아직 확보되지 않아 off - 켜면 Recipe Monitor
+                             # 분자 단독 판정보다 나빠질 수 있다(오탐이 녹화를 일찍 끊는다).
+
+# --- Recovery Episode 수집 ---
+EPISODE_COLLECT = 1          # 알람 1건 = Episode 1건으로 기록. 티켓 18 의 대상.
+                             # 켜면 재시도 산출물이 attempt_<n>/ 로 갈려서 cooldown
+                             # 재시도가 같은 recording/ 에 두 테이크를 섞던 결함도 닫힌다.
+
+# --- 실행 그래프 뷰 (읽기 전용) ---
+GRAPH_VIEW = 1               # runner journal 을 workflow_graph.html 로 렌더.
+GRAPH_AUTOOPEN = None        # 첫 스냅샷 후 브라우저로 열기. None=코드 기본값(on).
+
+# --- VLM ---
+LOCATOR_COMBO = None         # "coarse>fine" 조합. None=mai-ui>mai-ui.
+
+# (상수명, env 이름). 같은 뜻이면 새 env 이름을 만들지 않는다.
+_CONST_TO_ENV = (
+    ("POLL_SEC", "ALIGN_FAIL_POLL_SEC"),
+    ("WINDOW_SEC", "ALIGN_FAIL_WINDOW_SEC"),
+    ("ALARM_SOURCE", "ALIGN_FAIL_ALARM_SOURCE"),
+    ("REPLAY_CSV", "ALIGN_FAIL_REPLAY_CSV"),
+    ("SAFE_MODE", "SAFE_MODE"),
+    ("ABORT_HOTKEY", "ALIGN_FAIL_ABORT_HOTKEY"),
+    ("KEEP_AWAKE", "ALIGN_FAIL_KEEP_AWAKE"),
+    ("BLOCK_INPUT", "ALIGN_FAIL_BLOCK_INPUT"),
+    ("RCS_PREFLIGHT", "ALIGN_FAIL_RCS_PREFLIGHT"),
+    ("RCS_WINDOW_MAX_TRIALS", "ALIGN_FAIL_RCS_WINDOW_MAX_TRIALS"),
+    ("RCS_KILL_STALE", "ALIGN_FAIL_RCS_KILL_STALE"),
+    ("SHARE_REQUEST", "ALIGN_FAIL_SHARE_REQUEST"),
+    ("SHARE_CONFIRM", "ALIGN_FAIL_SHARE_CONFIRM"),
+    ("SHARE_WAIT_SEC", "ALIGN_FAIL_SHARE_WAIT_SEC"),
+    ("SHARE_MAX_ATTEMPTS", "ALIGN_FAIL_SHARE_MAX_ATTEMPTS"),
+    ("ACCESS_WATCH", "ALIGN_FAIL_ACCESS_WATCH"),
+    ("ACCESS_GRANT", "ALIGN_FAIL_ACCESS_GRANT"),
+    ("ACCESS_CONFIRM", "ALIGN_FAIL_ACCESS_CONFIRM"),
+    ("CORRECT_WHEN_OCCUPIED", "ALIGN_FAIL_CORRECT_WHEN_OCCUPIED"),
+    ("CORRECTION", "ALIGN_FAIL_CORRECTION"),
+    ("CORRECTION_DRY_RUN", "ALIGN_FAIL_CORRECTION_DRY_RUN"),
+    ("OK_CLICK", "ALIGN_FAIL_OK_CLICK"),
+    ("SEARCH_MODE", "ALIGN_FAIL_SEARCH_MODE"),
+    ("FEASIBILITY_MARK", "ALIGN_FAIL_FEASIBILITY_MARK"),
+    ("REPOSITION_PREVIEW", "ALIGN_FAIL_REPOSITION_PREVIEW"),
+    ("SEM_BOX_DETECT", "ALIGN_FAIL_SEM_BOX_DETECT"),
+    ("ZOOM_PROBE", "ALIGN_FAIL_ZOOM_PROBE"),
+    ("ZOOM_METHOD", "ALIGN_FAIL_ZOOM_METHOD"),
+    ("PM_DROPDOWN", "ALIGN_FAIL_PM_DROPDOWN"),
+    ("GATHER_RCP_MSR", "ALIGN_FAIL_GATHER_RCP_MSR"),
+    ("RCP_GATHER_TIMEOUT_SEC", "ALIGN_FAIL_RCP_GATHER_TIMEOUT_SEC"),
+    ("GATHER_SUCCESS", "ALIGN_FAIL_GATHER_SUCCESS"),
+    ("CONSENSUS", "ALIGN_FAIL_CONSENSUS"),
+    ("CONSENSUS_MIN_S", "ALIGN_FAIL_CONSENSUS_MIN_S"),
+    ("POPUP", "ALIGN_FAIL_POPUP"),
+    ("RICH_NOTIFY", "ALIGN_FAIL_RICH_NOTIFY"),
+    ("NOTIFY_DELAY_SEC", "ALIGN_FAIL_NOTIFY_DELAY_SEC"),
+    ("RECORDING_MAX_SEC", "ALIGN_FAIL_RECORDING_MAX_SEC"),
+    ("RECORD_PRELUDE", "ALIGN_FAIL_RECORD_PRELUDE"),
+    ("PRELUDE_MAX_SEC", "ALIGN_FAIL_PRELUDE_MAX_SEC"),
+    ("PRELUDE_MONITOR_INDEX", "ALIGN_FAIL_PRELUDE_MONITOR_INDEX"),
+    ("ENGINEER_WATCH_SEC", "ALIGN_FAIL_ENGINEER_WATCH_SEC"),
+    ("ENGINEER_DONE_DETECT", "ALIGN_FAIL_ENGINEER_DONE_DETECT"),
+    ("ENGINEER_DONE_ASSIST", "ALIGN_FAIL_ENGINEER_DONE_ASSIST"),
+    ("EPISODE_COLLECT", "ALIGN_FAIL_EPISODE_COLLECT"),
+    ("GRAPH_VIEW", "ALIGN_FAIL_GRAPH_VIEW"),
+    ("GRAPH_AUTOOPEN", "ALIGN_FAIL_GRAPH_AUTOOPEN"),
+    ("LOCATOR_COMBO", "VLM_LOCATOR_COMBO"),
+)
+
+
 LOG_COMPONENT = "align_fail_monitor"
 
 # 알람 1건당 사이클 결과를 한 줄로 누적하는 CSV manifest (Excel/grep 용).
@@ -805,11 +956,20 @@ def _apply_live_mode_defaults() -> None:
 
 
 if __name__ == "__main__":
-    # 실장비 운전 기본값을 먼저 못박고(셸 env 는 그대로 우선), 그 다음 실편집
-    # workflow_3_config.py 의 나머지 토글을 env 로 브리지한다. 둘 다 setdefault 이며
-    # load_workflow3_settings 가 env 를 읽기 전에 끝나야 적용된다.
+    # 세 단계 모두 setdefault 이며 먼저 잡은 쪽이 이긴다. load_workflow3_settings 가
+    # env 를 읽기 전에 끝나야 적용된다.
+    #
+    #   1. _apply_live_mode_defaults  실장비 운전 기본값(실클릭)
+    #   2. 이 파일 상단 상수 블록      이 실행의 기능 on/off
+    #   3. workflow_3_config.py       오피스 사본 (남아 있으면)
+    #
+    # 2 가 3 보다 앞서는 이유: 이 파일은 git 에 추적되어 리뷰를 거치지만 3 은 오피스
+    # PC 에만 있는 사본이라 무엇이 적혀 있는지 여기서 알 수 없다. 사본이 조용히
+    # 덮는 대신, 무시된 값을 seed_env 가 콘솔에 그대로 보고하게 한다.
+    from poc.workflow_3.util.env_utils import seed_env_from_constants
     from poc.workflow_3.workflow_3_config_loader import seed_env
 
     _apply_live_mode_defaults()
+    seed_env_from_constants(globals(), _CONST_TO_ENV, label="align_fail_monitor 상수")
     seed_env()
     monitor_loop()

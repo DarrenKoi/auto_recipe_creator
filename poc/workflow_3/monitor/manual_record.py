@@ -45,6 +45,33 @@ MANUAL_DIRNAME = "_manual"
 _BACKSTOP_HEADROOM = 1.25
 
 
+# ==========================================================================
+# 실행 인자 = 이 블록의 상수 (CLI 인자를 쓰지 않는 프로젝트 규약)
+# --------------------------------------------------------------------------
+# 우선순위: 실제 셸 env > 이 상수 > (없음). 상수가 곧 기본값이라 코드 안쪽에 숨은
+# 세 번째 기본값이 없다 - 값을 바꾸려면 여기만 고친다.
+#
+# 이 스크립트는 알람과 무관하다. **이미 열려 있는** Remote Monitoring 창에 붙어
+# 엔지니어의 수동 조작을 녹화한다(접속은 하지 않는다). 엔지니어와 "지금부터
+# 녹화하겠다"고 약속한 뒤 실행할 것.
+# ==========================================================================
+
+EQP_ID = ""                  # 창이 여럿일 때 고를 장비. 비우면 창이 1개일 때만 진행한다
+                             # (부분 일치가 모호하면 임의 선택하지 않고 거부한다 -
+                             #  엉뚱한 장비를 10분 녹화하느니 다시 실행하는 편이 낫다).
+MAX_SEC = 600.0              # 세션 상한(초). 실질 상한은 이것 하나다.
+POLL_SEC = None              # 샘플링 주기(초). None=녹화 기본값(약 0.05 = 20fps).
+JPEG_QUALITY = 85            # 알람 녹화(95)보다 낮다 - 수동 세션은 길고 장수가 많다.
+META = 1                     # frame_meta.jsonl 사이드카(창 rect/전면 창/가림/커서).
+                             # 끄면 recording_filter 의 커서 경로가 VLM 폴백으로 내려간다.
+WATCH_INTERVAL_SEC = 5.0     # 창 생존 확인 주기(초).
+
+# 아래 둘은 백스톱이다. MAX_SEC 보다 먼저 걸리면 안 된다 - MAX_FRAMES 를 고정값으로
+# 두었다가 POLL_SEC 를 0.05 로 내리자 10분 세션이 ~3분에 끊긴 적이 있다.
+MAX_FRAMES = None            # None = MAX_SEC/POLL_SEC 에서 파생(여유 1.25배).
+MAX_DISK_MB = 4000.0         # 디스크 백스톱(MB).
+
+
 def parse_eqp_from_title(title) -> str:
     """창 제목에서 EQP 문자열을 추출한다(접두어 제거). 실패하면 빈 문자열.
 
@@ -116,12 +143,12 @@ def load_manual_record_settings() -> ManualRecordSettings:
     """env 오버라이드를 적용한 설정을 만든다."""
     import os
 
-    max_sec = env_float("MANUAL_RECORD_MAX_SEC", 600.0)
-    poll_sec = env_float("MANUAL_RECORD_POLL_SEC", DEFAULT_RECORDING_POLL_SEC)
+    max_sec = env_float("MANUAL_RECORD_MAX_SEC", MAX_SEC)
+    poll_sec = env_float("MANUAL_RECORD_POLL_SEC", POLL_SEC or DEFAULT_RECORDING_POLL_SEC)
     return ManualRecordSettings(
         max_sec=max_sec,
-        max_frames=env_int("MANUAL_RECORD_MAX_FRAMES", frame_backstop(max_sec, poll_sec)),
-        max_disk_mb=env_float("MANUAL_RECORD_MAX_DISK_MB", 4000.0),
+        max_frames=env_int("MANUAL_RECORD_MAX_FRAMES", MAX_FRAMES or frame_backstop(max_sec, poll_sec)),
+        max_disk_mb=env_float("MANUAL_RECORD_MAX_DISK_MB", MAX_DISK_MB),
         poll_sec=poll_sec,
         heartbeat_sec=env_float(
             "MANUAL_RECORD_HEARTBEAT_SEC", DEFAULT_RECORDING_HEARTBEAT_SEC
@@ -129,10 +156,10 @@ def load_manual_record_settings() -> ManualRecordSettings:
         change_min_px=env_int(
             "MANUAL_RECORD_CHANGE_MIN_PX", DEFAULT_RECORDING_CHANGE_MIN_PX
         ),
-        jpeg_quality=env_int("MANUAL_RECORD_JPEG_QUALITY", 85),
-        eqp_id=os.getenv("MANUAL_RECORD_EQP_ID", "").strip(),
-        meta_enabled=env_flag("MANUAL_RECORD_META", True),
-        watch_interval_sec=env_float("MANUAL_RECORD_WATCH_INTERVAL_SEC", 5.0),
+        jpeg_quality=env_int("MANUAL_RECORD_JPEG_QUALITY", JPEG_QUALITY),
+        eqp_id=os.getenv("MANUAL_RECORD_EQP_ID", EQP_ID).strip(),
+        meta_enabled=env_flag("MANUAL_RECORD_META", bool(META)),
+        watch_interval_sec=env_float("MANUAL_RECORD_WATCH_INTERVAL_SEC", WATCH_INTERVAL_SEC),
     )
 
 

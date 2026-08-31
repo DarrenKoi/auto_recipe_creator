@@ -71,6 +71,77 @@ from poc.workflow_3.monitor.success_gather import (
     gather_success_async,
 )
 
+# ==========================================================================
+# 실행 인자 = 이 블록의 상수 (CLI 인자를 쓰지 않는 프로젝트 규약)
+# --------------------------------------------------------------------------
+# 우선순위: 실제 셸 env > 이 블록 > workflow_3_config.py(오피스 사본) > config.py 기본값
+# None = 미설정(아래 단계로 넘김). 1/0 = 명시적 on/off.
+#
+# 이 진입점은 **의도적으로 실운전 기본값을 갖지 않는다**. production 모니터는
+# `_apply_live_mode_defaults()` 로 SAFE_MODE=0 을 못박지만, 여기는 "안전하게 한 번만
+# 보고 싶다"는 요구를 받는 쪽이라 같은 기본값을 복사하면 안 된다.
+# 하는 일: 접속 -> 프레임 1장 -> 닫기. 보정 actuation / 녹화 / 엔지니어 watch 없음.
+# ==========================================================================
+
+# --- 알람 폴링 / 소스 ---
+POLL_SEC = None              # 알람 폴링 주기(초).
+WINDOW_SEC = None            # 알람 조회 창(초).
+ALARM_SOURCE = None          # "" =office 모듈, "replay"=CSV 재생.
+REPLAY_CSV = None            # ALARM_SOURCE="replay" 일 때 읽을 CSV 경로.
+
+# --- 안전 ---
+SAFE_MODE = None             # None = config.py 기본값(off=클릭 허용).
+                             # 커서를 아예 안 쥐게 하려면 1.
+ABORT_HOTKEY = None          # 긴급 해제 단축키.
+
+# --- 이 모니터가 실제로 하는 일 ---
+FEASIBILITY_MARK = 1         # 보정 가능성 판정 + 마킹 이미지. 이 진입점의 본체.
+REPOSITION_PREVIEW = 1       # 어디로 옮길지 미리보기만 그린다(클릭하지 않음).
+SEM_BOX_DETECT = 1           # 라이브 SEM box 검출.
+ZOOM_PROBE = None            # zoom ladder 탐색. 한 장만 보려면 0 이 빠르다.
+PM_DROPDOWN = None           # PM 드롭다운 배율 선택.
+GATHER_RCP_MSR = 1           # rcp 등록 키 내려받기(판정에 필요).
+CONSENSUS = 1                # consensus 템플릿 라우팅.
+CONSENSUS_MIN_S = None
+
+# --- 하지 않는 일 (켜지 말 것) ---
+CORRECTION = 0               # 보정 사이클. 이 진입점의 존재 이유가 "안 고치고 보기" 다.
+                             # 고치려면 align_fail_monitor.py 를 쓴다.
+OK_CLICK = 0                 # OK 자동 클릭 없음.
+
+# --- 알림 ---
+POPUP = None
+RICH_NOTIFY = None           # 검출 시점 cube 알림은 이 모니터도 보낸다.
+NOTIFY_DELAY_SEC = None
+
+# --- VLM ---
+LOCATOR_COMBO = None         # "coarse>fine" 조합. None=mai-ui>mai-ui.
+
+# (상수명, env 이름). 같은 뜻이면 새 env 이름을 만들지 않는다.
+_CONST_TO_ENV = (
+    ("POLL_SEC", "ALIGN_FAIL_POLL_SEC"),
+    ("WINDOW_SEC", "ALIGN_FAIL_WINDOW_SEC"),
+    ("ALARM_SOURCE", "ALIGN_FAIL_ALARM_SOURCE"),
+    ("REPLAY_CSV", "ALIGN_FAIL_REPLAY_CSV"),
+    ("SAFE_MODE", "SAFE_MODE"),
+    ("ABORT_HOTKEY", "ALIGN_FAIL_ABORT_HOTKEY"),
+    ("FEASIBILITY_MARK", "ALIGN_FAIL_FEASIBILITY_MARK"),
+    ("REPOSITION_PREVIEW", "ALIGN_FAIL_REPOSITION_PREVIEW"),
+    ("SEM_BOX_DETECT", "ALIGN_FAIL_SEM_BOX_DETECT"),
+    ("ZOOM_PROBE", "ALIGN_FAIL_ZOOM_PROBE"),
+    ("PM_DROPDOWN", "ALIGN_FAIL_PM_DROPDOWN"),
+    ("GATHER_RCP_MSR", "ALIGN_FAIL_GATHER_RCP_MSR"),
+    ("CONSENSUS", "ALIGN_FAIL_CONSENSUS"),
+    ("CONSENSUS_MIN_S", "ALIGN_FAIL_CONSENSUS_MIN_S"),
+    ("CORRECTION", "ALIGN_FAIL_CORRECTION"),
+    ("OK_CLICK", "ALIGN_FAIL_OK_CLICK"),
+    ("POPUP", "ALIGN_FAIL_POPUP"),
+    ("RICH_NOTIFY", "ALIGN_FAIL_RICH_NOTIFY"),
+    ("NOTIFY_DELAY_SEC", "ALIGN_FAIL_NOTIFY_DELAY_SEC"),
+    ("LOCATOR_COMBO", "VLM_LOCATOR_COMBO"),
+)
+
+
 LOG_COMPONENT = "align_fail_only_check"
 
 # 점검 전용 manifest — production align_fail_cycles.csv 와 분리해 결과가 안 섞이게 한다.
@@ -387,8 +458,10 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
 if __name__ == "__main__":
     # 실편집 workflow_3_config.py 의 토글을 env 로 브리지(있으면). load_workflow3_settings
     # 가 env 를 읽기 전에 호출해야 적용된다. 실제 OS env 가 우선(setdefault).
+    from poc.workflow_3.util.env_utils import seed_env_from_constants
     from poc.workflow_3.workflow_3_config_loader import seed_env
 
+    seed_env_from_constants(globals(), _CONST_TO_ENV, label="only_check 상수")
     seed_env()
 
     # check-only 도 tool row 더블클릭으로 마우스를 쥔다 - 같은 탈출구를 준다.

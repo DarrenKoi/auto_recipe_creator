@@ -83,6 +83,8 @@ import cv2
 import numpy as np
 
 from poc.workflow_3 import ALIGN_IMAGES_DIR
+from poc.workflow_3.util.env_utils import as_env_value
+from poc.workflow_3.util.env_utils import seed_env_from_constants as _shared_seed
 from poc.workflow_3.monitor.make_demo_video import (
     _env_flag,
     _env_float,
@@ -158,48 +160,19 @@ _CONST_TO_ENV = (
 )
 
 
-def _as_env_value(value) -> str:
-    """상수 하나를 env 문자열로 바꾼다 (빈 값이면 "").
-
-    리스트를 받는 이유는 py 파일에서 경로/라벨을 콤마 문자열로 적는 것이 실수하기
-    쉽기 때문이다(따옴표 안에서 콤마를 빠뜨리면 두 경로가 한 덩어리가 된다).
-    bool 은 "True"/"False" 가 아니라 "1"/"0" 으로 내린다 - 숫자 파서(_env_int)가
-    같은 값을 읽을 수도 있는 자리라 문자열 표기를 하나로 맞춘다.
-    """
-    if isinstance(value, bool):
-        return "1" if value else "0"
-    if isinstance(value, (list, tuple)):
-        return ",".join(str(item).strip() for item in value if str(item).strip())
-    if value is None:
-        return ""
-    return str(value).strip()
-
-
 def seed_env_from_constants() -> None:
     """파일 상단 상수를 env 로 setdefault 한다 (셸 env 가 항상 이긴다).
 
-    `workflow_3_config_loader.seed_env()` 와 같은 규약이다 - 한 방향으로만 흐른다:
-    상수 -> os.environ -> 기존 reader. 그래서 이 함수를 빼도 env 로 돌던 사용법이
-    그대로 살아 있고, 읽는 쪽 코드는 상수의 존재를 몰라도 된다.
-
-    셸 env 때문에 무시된 상수는 반드시 콘솔에 남긴다 - 파일을 고쳤는데 예전 env 가
-    남아 있어 다른 영상이 나오는 사고가 이 스크립트에서 제일 흔한 실수다.
+    표로 적을 수 있는 것은 공유 헬퍼(`util.env_utils.seed_env_from_constants`)에
+    맡기고, 여기서는 **회차별 구간**만 따로 처리한다 - env 이름이 번호를 달고
+    있어(`DEMO_COMBINED_SEGMENTS_2`) 정적 표에 넣을 수 없다.
     """
+    _shared_seed(globals(), _CONST_TO_ENV, label="파일 상수")
+
     applied: list[str] = []
     ignored: list[str] = []
-    for const_name, env_name in _CONST_TO_ENV:
-        value = _as_env_value(globals().get(const_name))
-        if not value:
-            continue
-        if os.environ.get(env_name, "").strip():
-            ignored.append(f"{const_name}(env {env_name})")
-            continue
-        os.environ[env_name] = value
-        applied.append(f"{const_name}={value}")
-
-    # 회차별 구간은 env 이름이 번호를 달고 있어 표에 못 넣는다 - dict 로 받는다.
     for position, raw in sorted((SEGMENTS_BY_TRIAL or {}).items()):
-        value = _as_env_value(raw)
+        value = as_env_value(raw)
         if not value:
             continue
         env_name = f"DEMO_COMBINED_SEGMENTS_{int(position)}"
@@ -210,9 +183,9 @@ def seed_env_from_constants() -> None:
         applied.append(f"SEGMENTS_BY_TRIAL[{position}]={value}")
 
     if applied:
-        print(f"[INFO] 파일 상수 적용: {', '.join(applied)}")
+        print(f"[INFO] 회차별 구간 적용: {', '.join(applied)}")
     if ignored:
-        print(f"[INFO] 셸 env 가 이미 있어 파일 상수를 무시: {', '.join(ignored)}")
+        print(f"[INFO] 셸 env 가 이미 있어 회차별 구간을 무시: {', '.join(ignored)}")
 
 
 # 자동 탐색 시 콘솔에 보여줄 후보 묶음 수.

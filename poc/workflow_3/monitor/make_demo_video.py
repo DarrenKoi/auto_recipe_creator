@@ -111,6 +111,51 @@ _SEGMENT_RE = re.compile(
 )
 
 
+# ==========================================================================
+# 실행 인자 = 이 블록의 상수 (CLI 인자를 쓰지 않는 프로젝트 규약)
+# --------------------------------------------------------------------------
+# 우선순위: 실제 셸 env > 이 상수 > (없음). 상수가 곧 기본값이다.
+# "" / None = 미설정(자동 탐색 또는 기능 off). 숫자 0 은 유효한 값이다.
+#
+# 오프라인 스크립트다 - RCS 도 장비도 필요 없고 Mac/dev PC 에서 돈다.
+# 렌더 knob 의 env 이름은 make_demo_video_combined.py 와 **공유한다**(같은 뜻이므로
+# 새 이름을 만들지 않는다).
+# ==========================================================================
+
+# --- 입력 / 출력 ---
+INPUT_DIR = ""               # recording 폴더. 비우면 가장 최근 것을 자동 탐색.
+OUTPUT = ""                  # 출력 mp4. 비우면 입력 폴더 옆에 만든다.
+LABEL = ""                   # 화면 좌상단에 새길 라벨.
+
+# --- 자를 구간 ---
+SEGMENTS = ""                # 남길 구간 "0-30,120-260" (START/END 보다 우선, 음수=끝에서부터).
+                             # 실행하면 먼저 타임라인 미리보기를 찍어 자를 지점을 고르게 한다.
+START_SEC = 0.0              # SEGMENTS 가 비었을 때만 쓰인다.
+END_SEC = 0.0                # 0 = 끝까지.
+
+# --- 렌더 ---
+SPEED = 1.0                  # 1.0=실시간, 2.0=2배속.
+FPS = 15.0
+MAX_HOLD_SEC = 2.0           # 정지 구간을 이 길이로 압축(원본은 화면이 오래 안 바뀐다).
+TAIL_HOLD_SEC = 2.0          # 마지막 화면 머무는 시간.
+MAX_WIDTH = 1920             # 0 = 원본 크기.
+OVERLAY = 1                  # 경과시간 등 burn-in 오버레이.
+
+# --- 접속 구간(prelude) 잇기 ---
+PRELUDE = 1                  # recording/prelude/ 가 있으면 앞에 잇는다.
+                             # 본 녹화는 tool 창 rect 라 'RCS 실행->로그인->tool 진입'
+                             # 구간의 프레임이 원리상 없다. 그 구간은 화면 전체 녹화이며
+                             # manifest 의 started_epoch 차이로 시간축을 맞춘다.
+
+# --- 로그 패널 (녹화 옆에 콘솔/감사 로그를 합성) ---
+LOG_PANEL = 0                # 켜면 아래 경로들을 시간 정렬해 프레임 옆에 그린다.
+LOG_PANEL_WIDTH = 520
+LOG_LINES = 14
+LOG_FILE = ""                # work2.log 경로. 비우면 자동 탐색.
+CONSOLE_LOG = ""             # 콘솔 tee 파일 경로.
+RUN_DIR = ""                 # step_*.json 이 있는 run 폴더.
+
+
 def _env_float(name: str, default: float) -> float:
     """env 를 float 으로 읽는다 (빈값/파싱실패는 기본값)."""
     raw = os.environ.get(name, "").strip()
@@ -156,7 +201,7 @@ def find_recording_dirs(root: Path) -> list[Path]:
 
 def resolve_input_dir() -> Path | None:
     """DEMO_VIDEO_INPUT_DIR 또는 가장 최근 recording 폴더를 고른다."""
-    raw = os.environ.get("DEMO_VIDEO_INPUT_DIR", "").strip()
+    raw = os.environ.get("DEMO_VIDEO_INPUT_DIR", INPUT_DIR).strip()
     if raw:
         path = Path(raw).expanduser()
         if not path.is_dir():
@@ -234,7 +279,7 @@ def merge_prelude(
     prelude 마지막 프레임 뒤 1초에 본 녹화를 붙이고 근사임을 콘솔에 밝힌다.
     반환값의 두 번째는 로그 패널이 쓸 기준 manifest 폴더(가장 이른 세션)다.
     """
-    if not _env_flag("DEMO_VIDEO_PRELUDE", True):
+    if not _env_flag("DEMO_VIDEO_PRELUDE", bool(PRELUDE)):
         return main_frames, input_dir
 
     prelude_dir = input_dir / "prelude"
@@ -517,7 +562,7 @@ def build_log_panel(
     맞출 방법이 없으므로 **패널을 조용히 붙이지 않고** 사유를 남기고 포기한다 -
     시각이 어긋난 로그를 붙이면 없느니만 못하다.
     """
-    if not _env_flag("DEMO_VIDEO_LOG_PANEL", False):
+    if not _env_flag("DEMO_VIDEO_LOG_PANEL", bool(LOG_PANEL)):
         return None
 
     # 기준점은 **가장 이른 세션**의 manifest 다. prelude 가 붙으면 시간축 0 이
@@ -529,16 +574,16 @@ def build_log_panel(
         return None
 
     log_paths = []
-    audit = os.environ.get("DEMO_VIDEO_LOG_FILE", "").strip()
+    audit = os.environ.get("DEMO_VIDEO_LOG_FILE", LOG_FILE).strip()
     log_paths.append(Path(audit).expanduser() if audit else LOG_DIR / "work2.log")
-    console = os.environ.get("DEMO_VIDEO_CONSOLE_LOG", "").strip()
+    console = os.environ.get("DEMO_VIDEO_CONSOLE_LOG", CONSOLE_LOG).strip()
     if console:
         log_paths.append(Path(console).expanduser())
 
     span = frames[-1][0] - frames[0][0]
     entries = load_log_entries(log_paths, base, span)
 
-    run_dir = os.environ.get("DEMO_VIDEO_RUN_DIR", "").strip()
+    run_dir = os.environ.get("DEMO_VIDEO_RUN_DIR", RUN_DIR).strip()
     if run_dir:
         entries.extend(load_step_entries(Path(run_dir).expanduser(), base))
         entries.sort(key=lambda entry: entry.t_sec)
@@ -548,11 +593,11 @@ def build_log_panel(
               "(로그 파일 경로/시각을 확인하세요)")
         return None
 
-    width = max(240, _env_int("DEMO_VIDEO_LOG_PANEL_WIDTH", 520))
+    width = max(240, _env_int("DEMO_VIDEO_LOG_PANEL_WIDTH", LOG_PANEL_WIDTH))
     width -= width % 2
     print(f"[INFO] 로그 패널: {len(entries)}줄, 폭 {width}px, 기준 {base:%Y-%m-%d %H:%M:%S}")
     return LogPanel(
-        entries, width, height, max_lines=_env_int("DEMO_VIDEO_LOG_LINES", 14)
+        entries, width, height, max_lines=_env_int("DEMO_VIDEO_LOG_LINES", LOG_LINES)
     )
 
 
@@ -699,28 +744,28 @@ def main() -> str:
 
     segments = resolve_segments(
         frames,
-        os.environ.get("DEMO_VIDEO_SEGMENTS", ""),
-        _env_float("DEMO_VIDEO_START_SEC", 0.0),
-        _env_float("DEMO_VIDEO_END_SEC", 0.0),
+        os.environ.get("DEMO_VIDEO_SEGMENTS", SEGMENTS),
+        _env_float("DEMO_VIDEO_START_SEC", START_SEC),
+        _env_float("DEMO_VIDEO_END_SEC", END_SEC),
     )
     frames = trim_frames(frames, segments)
     if len(frames) < 2:
         return f"프레임이 부족합니다 ({len(frames)}장) - 편집 구간을 확인하세요"
 
-    raw_output = os.environ.get("DEMO_VIDEO_OUTPUT", "").strip()
+    raw_output = os.environ.get("DEMO_VIDEO_OUTPUT", OUTPUT).strip()
     out_path = Path(raw_output).expanduser() if raw_output else input_dir / "demo.mp4"
 
     return render(
         frames,
         out_path,
         manifest_dir,
-        fps=max(1.0, _env_float("DEMO_VIDEO_FPS", 15.0)),
-        speed=max(0.1, _env_float("DEMO_VIDEO_SPEED", 1.0)),
-        max_hold_sec=max(0.0, _env_float("DEMO_VIDEO_MAX_HOLD_SEC", 2.0)),
-        tail_hold_sec=max(0.0, _env_float("DEMO_VIDEO_TAIL_HOLD_SEC", 2.0)),
-        max_width=max(0, _env_int("DEMO_VIDEO_MAX_WIDTH", 1920)),
-        overlay=_env_flag("DEMO_VIDEO_OVERLAY", True),
-        label=os.environ.get("DEMO_VIDEO_LABEL", "").strip(),
+        fps=max(1.0, _env_float("DEMO_VIDEO_FPS", FPS)),
+        speed=max(0.1, _env_float("DEMO_VIDEO_SPEED", SPEED)),
+        max_hold_sec=max(0.0, _env_float("DEMO_VIDEO_MAX_HOLD_SEC", MAX_HOLD_SEC)),
+        tail_hold_sec=max(0.0, _env_float("DEMO_VIDEO_TAIL_HOLD_SEC", TAIL_HOLD_SEC)),
+        max_width=max(0, _env_int("DEMO_VIDEO_MAX_WIDTH", MAX_WIDTH)),
+        overlay=_env_flag("DEMO_VIDEO_OVERLAY", bool(OVERLAY)),
+        label=os.environ.get("DEMO_VIDEO_LABEL", LABEL).strip(),
     )
 
 

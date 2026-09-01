@@ -1,33 +1,27 @@
 # -*- coding: utf-8 -*-
-"""Align Tuning Agent 경과 보고 - Bento 슬라이드(.bento.html) 생성 스크립트.
+"""Align Tuning Agent 경과 보고 v2 - 동료 공유용 Bento 슬라이드(.bento.html) 생성 스크립트.
 
-임원 보고용 **본편 4장** + 클릭으로만 열리는 **백업 state 2장**. 근거는 같은 폴더의
-00~04 Markdown 보고서이며, 수치를 고칠 때는 .md 를 먼저 고치고 본 스크립트를 맞춘다.
-흰 배경 테마(build_slides_pptx.py 의 흰 배경 팔레트와 통일). 더 상세한 동료 공유판은
-build_slides_bento_v2.py(Align_Tuning_Agent_v2.bento.html) 참조.
-
-Bento 덱은 런타임(앱)이 동봉된 단일 HTML 파일이고, 문서는 그 안의 id="bento-doc" script
-블록에 든 JSON 하나가 전부다. 본 스크립트는 그 블록만 통째로 교체한다(런타임은 건드리지
-않는다). 파일이 700KB 대이고 JSON 이 한 줄이라 git diff 로는 내용 변화를 읽을 수 없으므로,
-수정은 반드시 이 스크립트로 한다.
+v1(build_slides_bento.py, 임원 보고용 본편 4장 + 백업 2장, 다크 테마)과 별도 파일이다.
+v2는 **흰 배경 · 동료 공유용**으로 성과 요약 위에 workflow_3 최신 하드닝(Recovery Episode
+수집·notify 재설계·grid_search 재설계·env 리팩터)과 workflow_4(상태 머신 프레임워크) 두
+섹션을 더 얹어 상세도를 높인다. 근거는 00~04 Markdown(00_executive_summary.md,
+04_workflow_3.md)이며, 수치를 고칠 때는 .md를 먼저 고치고 본 스크립트를 맞춘다.
 
 대상 파일이 없으면 최신 릴리스를 먼저 내려받을 것:
   curl -fsSL https://bento.page/releases/slides/Bento_Slides.bento.html \
-    -o docs/project_progress/Align_Tuning_Agent.bento.html
+    -o docs/project_progress/Align_Tuning_Agent_v2.bento.html
 
 실행:
-  uv run python docs/project_progress/build_slides_bento.py
+  uv run python docs/project_progress/build_slides_bento_v2.py
 출력:
-  docs/project_progress/Align_Tuning_Agent.bento.html (in-place 갱신)
-
-같은 내용의 PowerPoint 판은 짝 스크립트 build_slides_pptx.py 참조.
+  docs/project_progress/Align_Tuning_Agent_v2.bento.html (in-place 갱신)
 """
 import json
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-PATH = HERE / "Align_Tuning_Agent.bento.html"
+PATH = HERE / "Align_Tuning_Agent_v2.bento.html"
 
 # ── 흰 배경 팔레트 (build_slides_pptx.py 의 흰 배경 팔레트와 통일) ──────────
 BG      = "#FFFFFF"
@@ -42,6 +36,8 @@ CARD    = "#F6F9FC"
 CARDB   = "#B9D6EC"
 LINE    = "#DCE5EE"
 NEUT    = "#AEBECD"
+GOOD    = "#1E9E6B"
+WARN    = "#C9832A"
 FONT    = "Pretendard, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', system-ui, sans-serif"
 
 
@@ -111,7 +107,7 @@ s1.append({"id": "glow", "type": "shape", "shape": "ellipse", "x": 830, "y": -22
            "w": 700, "h": 700, "rotation": 0, "opacity": 1,
            "fill": "rgba(14,111,184,0.08)", "stroke": "none", "strokeWidth": 0, "radius": 0,
            "fx": {"ambient": "kenburns", "ken": {"dir": "drift", "scale": 1.06, "duration": 24}}})
-s1.append(T("kick", 96, 88, 700, 32, "과제 종류 · 현업&nbsp;&nbsp;|&nbsp;&nbsp;경과 보고",
+s1.append(T("kick", 96, 88, 700, 32, "과제 종류 · 현업&nbsp;&nbsp;|&nbsp;&nbsp;경과 보고 (동료 공유판 v2)",
             20, 700, ACC, ls=3))
 s1.append(T("title", 96, 128, 1000, 110, "Align Tuning Agent", 92, 900, TEXTC, lh=1.05))
 s1.append(R("rule", 96, 250, 110, 6, ACC, radius=3))
@@ -141,10 +137,9 @@ s1.append(T("endd", 500, 612, 660, 50,
             "현업 엔지니어 합동 실전 테스트와 단일 장비 Pilot 완료 시점<br>이후 4Q 대상 장비 확대 · 2027년 Recipe Tuning 확장",
             14, 600, MUTED, lh=1.5))
 slides.append({"id": "s1", "background": BG, "transition": "none", "elements": s1, "notes":
-    "표지 겸 Head Message. 핵심 한 줄: 주 400건의 Align Fail에 대해 1건당 대응 지연을 5분에서 1분으로 줄여 "
-    "주 WAFER 약 100장의 측정 여력을 회수한다. 대상은 R3 CD-SEM 28대. 예상 종료는 2026년 9월 말 — "
-    "현업 합동 실전 테스트와 단일 장비 Pilot 완료를 과제 종료 시점으로 본다. "
-    "환산 근거를 물으면: 400건/주 × 4분 단축 ÷ 15분/장 ≈ 주 100장."})
+    "표지 겸 Head Message (동료 공유판). 핵심 한 줄: 주 400건의 Align Fail에 대해 1건당 대응 지연을 "
+    "5분에서 1분으로 줄여 주 WAFER 약 100장의 측정 여력을 회수한다. 이 v2는 임원 보고용 4장 구성에 "
+    "workflow_3 최신 하드닝과 workflow_4 상태 머신 프레임워크 상세를 더 얹은 동료 공유판이다."})
 
 # ──────────────────────────────────────────────── S2 · 선정 배경 / 목적
 s2 = []
@@ -254,7 +249,7 @@ s3.append(T("qh", 688, 328, 496, 26, "정성적 성과 · 구조적으로 확보
 QUAL = [
     ("VLM 인프라 자체 확보", "GPU 1~2장 규모 소형 모델을 사내 HCP에서 직접 구동. 벤치로 이긴 2종만 상시 운영해 모델 교체를 측정으로 결정합니다."),
     ("실장비 보정 반자동 개통 (2026-08)", "정렬 위치 재조정은 자동, 마지막 확정(OK)은 엔지니어. 개통 과정에서 보정이 한 번도 실행되지 않던 병목을 찾아 제거했습니다."),
-    ("루프 하드닝 + Recovery Episode 수집 (~09월)", "실패 경로를 촘촘히 막고, 알람 1건을 사람이 읽을 기록(Episode)으로 표준화했습니다(04 문서 참조)."),
+    ("루프 하드닝 + Recovery Episode 수집 (~09월)", "실패 경로를 촘촘히 막고, 알람 1건을 사람이 읽을 기록(Episode)으로 표준화했습니다 — §5, §6."),
 ]
 for n, (ttl, desc) in enumerate(QUAL):
     y = 358 + n * 104
@@ -335,9 +330,9 @@ for n, txt in enumerate(QEFF):
 
 s4.append(T("sh", 688, 172, 496, 26, "향후 일정", 15, 800, ACC, ls=2))
 SCHED = [
-    ("9월 초", "첫 실알람 완주 확인(진행 중) · 접속 게이트/알림 재설계 오피스 검증 · Recovery Episode 오피스 첫 1건 수집", True),
+    ("9월 초", "첫 실알람 완주 확인(진행 중) · 접속 게이트/알림 재설계 오피스 검증 · Recovery Episode 오피스 첫 1건 수집(티켓18)", True),
     ("9월", "MI 현업 엔지니어와 합동 실전 테스트 · 단일 장비 Pilot · 엔지니어 PC 배포 방식 확정", True),
-    ("4Q", "Pilot 결과를 반영해 대상 장비 확대", False),
+    ("4Q", "Pilot 결과를 반영해 대상 장비 확대 · Episode 기록 기반 자동 판단 후속 티켓 착수", False),
     ("2027년", "VLM이 Recipe Tuning을 수행하도록 workflow 구조 확장", False),
 ]
 for n, (when, what, hot) in enumerate(SCHED):
@@ -363,7 +358,8 @@ slides.append({"id": "s4", "background": BG, "transition": "morph", "elements": 
     "기대 효과와 일정으로 마무리. 정량 효과 재확인(28대 / 주 400건 / 5분→1분 / 주 WAFER 100장)과 "
     "정성 효과 4가지. 일정은 9월 초 첫 실알람 완주 확인과 Recovery Episode 오피스 첫 1건 수집, "
     "9월 합동 실전 테스트와 단일 장비 Pilot, 4Q 확대, 2027년 Recipe Tuning 확장. 예상 종료는 2026년 9월 말. "
-    "허들 질문이 나오면 오른쪽 '가장 가까운 관문' 박스를 클릭한다."})
+    "허들 질문이 나오면 오른쪽 '가장 가까운 관문' 박스를 클릭한다. 이 뒤로 동료 공유판 전용 상세 섹션(S5 workflow_3 "
+    "최신 하드닝, S6 workflow_4)이 이어진다."})
 
 # ─────────────────────────── S4-state · 진행 현황 & 예상 허들 (백업)
 se = []
@@ -376,11 +372,14 @@ se.append(table("ptbl", 96, 110, 560, 452, [1.0, 1.05],
                  ["CV 정렬 정확도 (consensus + 모드별 재순위)", "✅ 운영 반영"],
                  ["실시간 루프 골격·보정·녹화·알림", "✅ 개발 완료"],
                  ["실장비 보정 (반자동, 확정은 사람)", "✅ 개통 · 🟡 완주 대기"],
-                 ["루프 실패 경로 하드닝 + 설정 체계 정리", "✅ 완료"],
-                 ["Recovery Episode 관측 계층 + 탐색 엔진 재설계", "✅ 구현 · 🟡 오피스 검증 대기"],
+                 ["루프 실패 경로 하드닝 + env 리팩터(443→10)", "✅ 완료"],
+                 ["점유 tool 화면공유 요청 + 접속 게이트 재설계", "✅ 구현 · 🟡 오피스 검증 대기"],
+                 ["탐색 범위 확대(grid_search 격자 탐색)", "✅ 구현 · 🟡 오피스 미검증"],
+                 ["Recovery Episode 수집(Guard·Verification·Outcome)", "✅ 구현 · 🟡 오피스 1건 대기(티켓18)"],
+                 ["workflow_4 상태 머신 프레임워크", "✅ 골격 구현 · 데모 단계"],
                  ["지식 자산화 (녹화 → 절차서)", "✅ 녹화 확보 · 🟡 추출 미실행"],
                  ["엔지니어 PC 배포 방식", "🟡 방식 결정 대기"],
-                 ["현업 합동 실전 테스트", "🟡 9월 예정"]], fs=13, padY=7))
+                 ["현업 합동 실전 테스트", "🟡 9월 예정"]], fs=12.5, padY=6))
 se.append(T("eh2", 688, 110, 496, 26, "예상 허들과 대응", 15, 800, ACC, ls=2))
 HURD = [
     ("개통과 완주는 다릅니다", "실알람 완주 사례가 없습니다. → replay 절차와 점검 모드로 단계별 사전 확인, 첫 실알람은 엔지니어 입회하에 관찰합니다."),
@@ -401,15 +400,214 @@ se.append(T("bk2", 96, 656, 1088, 26, "클릭하면 본 슬라이드로 돌아�
 slides.append({"id": "s4-detail", "stateOf": "s4", "background": "#FAFCFE",
                "transition": "morph", "name": "진행 현황", "elements": se, "notes":
     "백업 슬라이드. 진행 현황은 구현/오피스 검증/실알람 경험을 구분해 표기했다. "
-    "가장 가까운 관문은 첫 실알람 완주 확인과 Recovery Episode 오피스 첫 1건 수집이다."})
+    "가장 가까운 관문은 첫 실알람 완주 확인과 Recovery Episode 오피스 첫 1건 수집(티켓18)이다."})
+
+# ═══════════════════════════ 동료 공유판 전용 섹션 ═══════════════════════════
+s5div = []
+s5div.append(R("bgdiv1", 0, 0, 1280, 720, ACC_DK, radius=0,
+               grad={"angle": 120, "stops": [{"at": 0, "color": "#0A5389"}, {"at": 1, "color": "#0E6FB8"}]}))
+s5div.append(T("divk", 96, 300, 1088, 28, "SECTION · 동료 공유 상세", 16, 700, "rgba(255,255,255,0.75)", ls=3))
+s5div.append(T("divt", 96, 330, 1088, 90, "workflow_3 최신 하드닝<br>2026-08-16 이후 (80 commits)", 46, 900, "#FFFFFF", lh=1.2,
+               fx={"enter": "fade-up", "order": 1}))
+s5div.append(T("divs", 96, 430, 1000, 40,
+               "실알람 완주 관문을 좁히기 위해 진단·알림, 설정 구조, 탐색 범위, 기록 표준을 함께 정리했습니다.",
+               17, 600, "rgba(255,255,255,0.85)", lh=1.5))
+slides.append({"id": "s5-div", "background": ACC_DK, "transition": "none", "elements": s5div, "notes":
+    "구분 슬라이드. 여기부터는 임원 보고 4장 이후 동료 공유판에 추가한 상세 섹션이다. "
+    "00~04 문서 최종 갱신(2026-08-16) 이후 workflow_3 에서 진행된 80개 커밋을 4개 축으로 정리한다."})
+
+# ─────────────────────────── S5 · workflow_3 최신 하드닝 (4카드)
+s5 = []
+s5.append(R("bg5", 0, 0, 1280, 720, BG, radius=0))
+s5.append(T("t5", 96, 46, 900, 44, "workflow_3 최신 하드닝", 36, 900, TEXTC))
+s5.append(T("st5", 96, 92, 1088, 26,
+            "실보정 개통(§3) 이후, 실알람 완주를 가로막는 사각지대를 하나씩 없앴습니다.", 15, 600, MUTED))
+
+W3 = [
+    ("진단·알림 재설계", "2026-09-01 · 구현완료",
+     "보정이 안 될 때 상태 코드만 보내던 알림을 <b>원인 + 요구 행동 + 매칭 점수</b> 포함 9종 안내로 바꿨습니다. "
+     "점유 tool 의 접속 요청 팝업이 원격 화면 <i>내부</i>에 그려져 로컬 창으로는 잡히지 않던 구조적 사각지대도 "
+     "찾아 수정했습니다(탐지를 tool 창 crop 기준으로 전환). 엔지니어 도착 판정 후에야 대기 시간을 다시 세도록 "
+     "고쳐, 도착 전에 장비가 먼저 닫히는 문제를 없앴습니다."),
+    ("설정 구조 리팩터 (443→10)", "2026-08-31 · 구현완료",
+     "산개해 있던 env 변수 443개를 <b>진입점 상단 상수 블록</b>으로 모았습니다. 계기는 오피스 사본이 추적 파일의 "
+     "기본값을 조용히 덮어써 <code>SHARE_REQUEST</code>(공유 요청 알림)가 뜻하지 않게 켜졌던 실사고였습니다. "
+     "지금은 무시된 상수를 콘솔에 자기고발하도록 만들어 같은 사고가 조용히 재발하지 않습니다."),
+    ("탐색 범위 확대", "2026-08-28 · 기본값 채택 · 오피스 미검증",
+     "휠 조작만으로는 배율을 크게 못 바꿔 탐색 반경이 좁았던 한계를 배율 드롭다운 절대값 zoom-out + 시야(FOV) "
+     "격자 sweep 로 재설계했습니다. 픽셀이 아니라 <b>FOV 비율·배율 비율</b>로 계산해 배율이 달라져도 같은 로직이 "
+     "적용됩니다. grid 탐색이 기본값이 됐고, 필요하면 <code>ALIGN_FAIL_SEARCH_MODE=legacy</code> 로 되돌릴 수 있습니다."),
+    ("Recovery Episode 기록 표준화", "2026-08-30 · 구현완료 · 오피스 1건 대기",
+     "알람 1건의 시작부터 종료까지를 <b>Episode</b> 하나로 묶어, 화면 관측 가능성·점유 상태·모드 판독이라는 "
+     "Guard 3종과 측정 검증 기록, 최종 판정(Outcome)을 자동으로 남깁니다. 재시도는 같은 Episode 의 새 attempt 로 "
+     "쌓여, 예전에 한 폴더에 두 시도가 섞이던 결함이 구조적으로 닫혔습니다."),
+]
+for n, (ttl, meta, desc) in enumerate(W3):
+    x = 96 + (n % 2) * 560
+    y = 132 + (n // 2) * 264
+    s5.append(R("w3_%db" % n, x, y, 528, 244, CARD, CARDB, 1, 12))
+    s5.append(R("w3_%dtag" % n, x + 20, y + 20, 20, 20, ACC_DIM, radius=6))
+    s5.append(T("w3_%dn" % n, x + 20, y + 18, 20, 24, str(n + 1), 13, 900, ACC, align="center"))
+    s5.append(T("w3_%dt" % n, x + 54, y + 16, 450, 26, ttl, 17, 800, TEXTC))
+    s5.append(T("w3_%dm" % n, x + 54, y + 44, 450, 20, meta, 11.5, 700, ACC_DK, ls=1))
+    s5.append(T("w3_%dd" % n, x + 20, y + 74, 488, 158, desc, 12.5, 600, MUTED, lh=1.55))
+
+s5.append(R("more5", 96, 668, 1088, 26, "rgba(0,0,0,0)", radius=6, link="s5-detail"))
+s5.append(T("moret5", 96, 670, 1088, 24,
+            "▸ Recovery Episode 티켓 진행표 · env 리팩터 전/후 비교 — 클릭",
+            12, 700, ACC, align="right", link="s5-detail"))
+slides.append({"id": "s5", "background": BG, "transition": "none", "elements": s5, "notes":
+    "workflow_3 최신 진전 4가지: (1) 자동 보정 불가 시 원인·요구 행동을 알리는 알림 재설계와 점유 접속 게이트의 "
+    "구조적 사각지대 수정 — 오늘(9/1) 커밋. (2) env 443개를 진입점 상수 블록으로 모은 설정 리팩터 — 계기는 "
+    "SHARE_REQUEST 오작동 실사고. (3) grid_search 탐색 재설계, 기본값 채택했으나 오피스 미검증. (4) Recovery "
+    "Episode 기록 표준화, 티켓 10~17 구현완료·테스트 통과, 티켓18(오피스에서 알람 1건 수집)이 다음 관문. "
+    "네 항목 모두 '실알람 완주'라는 하나의 목표로 수렴한다."})
+
+# ─────────────────────────── S5-state · 티켓 진행표 + 리팩터 비교 (백업)
+se5 = []
+se5.append(R("ov5", 0, 0, 1280, 720, "#FAFCFE", radius=0, link="s5"))
+se5.append(T("dt5", 96, 56, 900, 42, "Recovery Episode 티켓 진행 · 백업", 32, 900, TEXTC))
+se5.append(T("dh5", 96, 100, 1088, 26,
+            "알람 1건 = Episode 1건. 각 attempt(재시도)에 Guard·Verification·Outcome 기록이 자동으로 남습니다.",
+            14, 600, MUTED))
+se5.append(table("tk5", 96, 142, 620, 420, [0.3, 1.0, 0.55],
+                [["#", "산출물", "상태"],
+                 ["10", "Episode identity (alarm row 처리 시 생성)", "✅ 완료"],
+                 ["11", "attempt-scoped 산출물 폴더", "✅ 완료"],
+                 ["12", "자동 녹화 공유 frame metadata", "✅ 완료"],
+                 ["13", "Guard 3종(관측·점유·모드) 기록", "✅ 완료"],
+                 ["14", "재시작 재개 + orphan 스캔", "✅ 완료"],
+                 ["15", "Measurement Verification 기록", "✅ 완료 (unknown-only)"],
+                 ["16", "분자 per-read 판정 기록", "✅ 완료"],
+                 ["17", "Outcome 판정 + [DIGEST] 한 줄", "✅ 완료"],
+                 [{"html": "<b>18</b>"}, {"html": "<b>오피스 실알람 1건 수집</b>"},
+                  {"html": "🟡 대기 · 코드 변경 없음", "color": ACC_DK}],
+                 ["19~27", "행동 어휘·승인 기록·검토 패킷 등 후속", "⬜ 명세만, 착수 전(티켓18 대기)"]],
+                fs=12.5, padY=6))
+se5.append(T("eh5", 748, 142, 436, 26, "env 리팩터 · 전/후", 15, 800, ACC, ls=2))
+BEFORE_AFTER = [
+    ("이전", "env 변수 443개가 파일 곳곳에 산개 · 오피스 gitignored 사본이 조용히 우선순위를 가짐"),
+    ("계기", "그 사본의 기본값이 실운전 SHARE_REQUEST(공유 요청 알림)를 뜻하지 않게 켬 — 당일 발견·수정"),
+    ("이후", "진입점 상단 상수 블록 + setdefault 시딩. 셸 env > 파일 상수 > 코드 기본값. 무시된 상수는 콘솔에 출력"),
+]
+for n, (ttl, desc) in enumerate(BEFORE_AFTER):
+    y = 176 + n * 96
+    se5.append(R("ba%db" % n, 748, y, 436, 84, CARD, LINE, 1, 10))
+    se5.append(T("ba%dt" % n, 766, y + 12, 400, 20, ttl, 12.5, 800, ACC_DK, ls=1))
+    se5.append(T("ba%dd" % n, 766, y + 34, 400, 46, desc, 12, 600, MUTED, lh=1.45))
+se5.append(R("cb5", 748, 470, 436, 96, ACC_DIM, "rgba(14,111,184,0.30)", 1, 10))
+se5.append(T("cb5t", 766, 486, 400, 60,
+            "위험도 높은 4개 토글(입력 차단·RCS 강제 종료·접속 승인·점유 중 보정)과 반자동 계약인 OK 클릭은 "
+            "여전히 <b>기본 off</b>로 남겨 뒀습니다.", 12.5, 600, TEXTC, lh=1.55))
+se5.append(T("bk5", 96, 656, 1088, 26, "클릭하면 본 슬라이드로 돌아갑니다", 12, 700, DIM, align="right", link="s5"))
+slides.append({"id": "s5-detail", "stateOf": "s5", "background": "#FAFCFE",
+               "transition": "morph", "name": "티켓 진행", "elements": se5, "notes":
+    "백업 슬라이드. Recovery Episode 티켓 10~17은 전부 구현·테스트 완료. 티켓18은 코드가 아니라 오피스에서 "
+    "실알람 1건을 수집·확인하는 순수 실행 게이트이며 결과(성공/미완)와 무관하게 파일이 남았는지만 확인하면 "
+    "통과한다. 19~27은 18 통과 전까지 명세만 있고 착수하지 않는다. env 리팩터는 SHARE_REQUEST 오작동을 계기로 "
+    "시작된 근본 원인 수정이다."})
+
+# ─────────────────────────── S6 · workflow_4 상태 머신 프레임워크
+s6 = []
+s6.append(R("bg6", 0, 0, 1280, 720, BG, radius=0))
+s6.append(T("t6", 96, 46, 900, 44, "실패 회복 과정을 눈에 보이게 · workflow_4", 32, 900, TEXTC))
+s6.append(T("st6", 96, 92, 1088, 40,
+            "workflow_3 대응 루프가 커지며 '지금 어느 단계인지, 실패하면 어디로 넘어가는지'를 코드 없이 "
+            "확인할 별도 계층이 필요해졌습니다. 2026-08-28 착수.", 15, 600, MUTED, lh=1.5))
+
+s6.append(T("wh6", 96, 148, 1088, 24, "세 가지를 분리해서 봐야 합니다", 15, 800, ACC, ls=1))
+s6.append(table("w4tbl", 96, 180, 1088, 176, [0.62, 1.5, 1.0],
+                [["구분", "무엇을 하나", "지금 production에 닿는가"],
+                 [{"html": "<b>미러</b><br>(mirror)"},
+                  "workflow_3 실행 기록을 읽기 전용으로 따라가며 진행 상황을 그림+표로 남긴다",
+                  {"html": "✅ 켤 수 있음 (기본 꺼짐 · 켜도 기존 동작 동일)", "color": ACC_DK}],
+                 [{"html": "<b>판정 계층</b><br>(Outcome)"},
+                  "Recovery Episode(04문서 §9)의 최종 판정(회복/에스컬레이션 등)을 결정",
+                  {"html": "✅ 실제로 쓰이는 중 (Outcome 판정의 유일한 소유자)", "color": ACC_DK}],
+                 [{"html": "<b>엔진</b><br>(engine)"},
+                  "흐름 자체를 상태 머신으로 실행하는 실행기",
+                  {"html": "🔵 데모 전용 (가짜 시나리오 3종으로만 검증)", "color": DIM}]],
+                fs=13, padY=10))
+
+s6.append(T("wh7", 96, 380, 528, 24, "왜 만들어 쓰지 않고 새로 짰나", 15, 800, ACC, ls=1))
+WHY4 = [
+    "표준 상태 머신 라이브러리는 실패 종류별 대체 경로 · 노드별/전체 재시도 예산 · 중단 신호 폴링 · 그림+표 "
+    "동시 출력 요구에 비해 무겁거나 맞지 않았습니다 — 신규 의존성 0개로 직접 구현.",
+    "기존 실행기를 바로 이 엔진으로 갈아타는 안도 검토했지만, 위험의 시점(회귀가 오피스에서 뒤늦게 드러남) · "
+    "기존 기록 형식 · 뒷정리 책임(장비 창 닫기 등은 실행기 소관 아님) 세 가지 이유로 당분간 데모 전용으로 "
+    "묶어 두는 쪽을 택했습니다.",
+]
+for n, txt in enumerate(WHY4):
+    y = 412 + n * 96
+    s6.append(T("wh7_d%d" % n, 96, y + 4, 14, 20, "▪", 14, 900, ACC))
+    s6.append(T("wh7_%d" % n, 118, y, 506, 86, txt, 12.5, 600, MUTED, lh=1.55))
+
+s6.append(T("nx6", 656, 380, 528, 24, "다음 실제 활용처와 전제 조건", 15, 800, ACC, ls=1))
+s6.append(R("nx6b", 656, 412, 528, 236, ACC_DIM, "rgba(14,111,184,0.30)", 1, 12))
+s6.append(T("nx6t", 676, 428, 488, 40,
+            "첫 실제 활용처는 정렬 보정 하위 흐름(재조정 → 탐색 → 재탐색)을 이 엔진으로 옮기는 것입니다.",
+            13.5, 700, TEXTC, lh=1.5))
+COND4 = [
+    "중단 신호가 오래 걸리는 노드 안까지 관통해야 함 — 이번 착수 중 놓치는 결함을 실제로 잡아 고침",
+    "예산은 시도 횟수가 아니라 실제 걸리는 시간 기준이어야 함",
+    "미러가 여는 그림과 보정 흐름의 그림이 겹치지 않아야 함",
+]
+for n, txt in enumerate(COND4):
+    y = 470 + n * 56
+    s6.append(T("c4n%d" % n, 676, y, 24, 24, str(n + 1), 13, 900, ACC))
+    s6.append(T("c4_%d" % n, 704, y, 460, 50, txt, 12, 600, MUTED, lh=1.4))
+
+s6.append(R("more6", 96, 668, 1088, 26, "rgba(0,0,0,0)", radius=6, link="s6-detail"))
+s6.append(T("moret6", 96, 670, 1088, 24,
+            "▸ 진행 현황표 · ADR 설계 결정 요약 — 클릭",
+            12, 700, ACC, align="right", link="s6-detail"))
+slides.append({"id": "s6", "background": BG, "transition": "none", "elements": s6, "notes":
+    "workflow_4 소개. 핵심은 3분리: 미러(읽기전용, production에 opt-in으로 이미 닿음) / 판정 계층(Outcome, "
+    "Recovery Episode에 실제로 쓰임) / 엔진(상태 머신 실행기, 아직 데모 전용 — 가짜 시나리오 3종). "
+    "표준 라이브러리 대신 직접 짠 이유와 기존 실행기를 바로 안 바꾼 이유(회귀 위험 시점, 기록 형식, 뒷정리 "
+    "책임)를 설명한다. 다음 활용처는 정렬 보정 하위 흐름 이전이며 전제 조건 3가지를 먼저 정리해 뒀다."})
+
+# ─────────────────────────── S6-state · 진행 현황 + ADR 요약 (백업)
+se6 = []
+se6.append(R("ov6", 0, 0, 1280, 720, "#FAFCFE", radius=0, link="s6"))
+se6.append(T("dt6", 96, 56, 900, 42, "workflow_4 진행 현황 · 백업", 32, 900, TEXTC))
+se6.append(table("pt6", 96, 108, 1088, 300, [1.6, 1.0],
+                [["항목", "상태"],
+                 ["상태 머신 프레임워크(그래프 정의·검증·유계 실행 루프)", "✅ 구현 완료"],
+                 ["진행 상황 그림+표 실시간 뷰(오프라인, 아무 브라우저)", "✅ 구현 완료"],
+                 ["workflow_3 대응 루프 읽기 전용 미러", "✅ 구현 완료 · 기본 꺼짐(옵트인)"],
+                 ["Recovery Episode Outcome 판정 로직", "✅ 구현 완료 · 실제로 쓰이는 중"],
+                 ["데모 시나리오(전 성공 / 대체 경로 / 에스컬레이션)", "✅ 검증 완료(모의 데이터)"],
+                 ["정렬 보정 하위 흐름을 엔진으로 이전", "🔵 계획 단계 · 전제 조건 3가지 정리 완료"],
+                 ["오피스 실장비에서의 미러 확인", "🟡 9월 초 예정"]], fs=13, padY=8))
+se6.append(T("adrh", 96, 434, 1088, 24, "설계 결정 노트 (ADR)", 15, 800, ACC, ls=1))
+ADRS = [
+    ("0001 · 왜 직접 구현했나", "LangGraph 등 외부 상태 머신 라이브러리 대비, 이 요구사항(실패별 대체 경로·이중 재시도 예산·중단 폴링)엔 "
+     "과중하거나 어긋나 신규 의존성 없이 직접 구현."),
+    ("0002 · 읽기 전용 미러 + HTML 뷰", "cycle.py 의 실행 기록을 옆에서 읽기만 하는 미러로 한정. mermaid + 자체완결 HTML 뷰로 브라우저만 있으면 "
+     "확인 가능, 기본 꺼짐."),
+    ("0003 · 첫 실제 소비처는 정렬 보정 하위 흐름", "엔진에 실행기 라우팅을 아직 넘기지 않는다 — 첫 실제 적용은 run_correction 실행자 안에 중첩된 "
+     "정렬 보정 하위 흐름부터."),
+]
+for n, (ttl, desc) in enumerate(ADRS):
+    y = 464 + n * 68
+    se6.append(T("adr%dt" % n, 96, y, 1088, 20, ttl, 13, 800, TEXTC))
+    se6.append(T("adr%dd" % n, 96, y + 22, 1088, 40, desc, 12, 600, MUTED, lh=1.4))
+se6.append(T("bk6", 96, 656, 1088, 26, "클릭하면 본 슬라이드로 돌아갑니다", 12, 700, DIM, align="right", link="s6"))
+slides.append({"id": "s6-detail", "stateOf": "s6", "background": "#FAFCFE",
+               "transition": "morph", "name": "workflow_4 상세", "elements": se6, "notes":
+    "백업 슬라이드. workflow_4 진행 현황 전체 표와 ADR 3건 요약(직접 구현 이유·읽기전용 미러 범위·첫 실제 "
+    "소비처가 엔진 전체 교체가 아니라 정렬 보정 하위 흐름이라는 점)."})
+
+print("[INFO] S1~S6(+detail) 완료")
 
 doc = {
     "format": "bento/slides",
     "version": 1,
-    "title": "Align Tuning Agent 경과 보고",
+    "title": "Align Tuning Agent 경과 보고 v2 (동료 공유판)",
     "size": {"width": 1280, "height": 720},
     "meta": {"author": "기반기술센터", "company": "SK hynix",
-             "subject": "Align Fail 무인 대응 AI Agent", "event": "과제 경과 보고"},
+             "subject": "Align Fail 무인 대응 AI Agent", "event": "과제 경과 보고 (동료 공유판)"},
     "theme": {"background": BG, "color": TEXTC, "accent": ACC, "fontFamily": FONT},
     "slides": slides,
 }
@@ -418,8 +616,6 @@ payload = json.dumps(doc, ensure_ascii=False, separators=(",", ":")).replace("<"
 
 if not PATH.exists():
     print("[ERROR] 대상 파일이 없습니다:", PATH)
-    print("[ERROR] 최신 Bento 릴리스를 먼저 내려받으십시오:")
-    print("[ERROR]   curl -fsSL https://bento.page/releases/slides/Bento_Slides.bento.html -o", PATH)
     sys.exit(1)
 
 html = PATH.read_text(encoding="utf-8")

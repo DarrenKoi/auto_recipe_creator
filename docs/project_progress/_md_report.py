@@ -146,7 +146,7 @@ def parse_markdown(text):
 
 
 def load_report_docs(base_dir):
-    """00~04 보고서 .md 를 순서대로 (slug, blocks) 리스트로 로드한다."""
+    """00~05 보고서 .md 를 순서대로 (slug, blocks) 리스트로 로드한다."""
     import pathlib
 
     base = pathlib.Path(base_dir)
@@ -156,6 +156,7 @@ def load_report_docs(base_dir):
         "02_workflow_1.md",
         "03_workflow_2.md",
         "04_workflow_3.md",
+        "05_workflow_4.md",
     ]
     docs = []
     for name in names:

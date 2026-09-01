@@ -17,20 +17,41 @@ git status
 `087c915` 전까지 이 두 경로가 실제로 무시되지 않았다. 보이면 `git restore --staged <경로>` 로 내린다.
 
 ```
-git pull            # 2b2e3db 이상이어야 한다
+git pull            # 상수 블록(cb45eac) 이상이어야 한다
 git log --oneline -1
 ```
 
-## 1. 수집 켜기
+## 1. 수집 켜기 - 이미 켜져 있다
 
-`poc/workflow_3/workflow_3_config.py` (오피스 PC 에만 있는 파일) 에서 한 줄만 바꾼다:
+이 실행의 인자는 `poc/workflow_3/monitor/align_fail_monitor.py` **상단 상수 블록**이다.
+거기에 `EPISODE_COLLECT = 1` 이 이미 들어 있으므로 **아무것도 바꾸지 않는다.**
 
-```python
-EPISODE_COLLECT = 1          # None -> 1
+`workflow_3_config.py` (오피스 PC 사본) 를 고쳐도 소용없다. seed 순서가
+
+```
+_apply_live_mode_defaults()  ->  상수 블록  ->  workflow_3_config.py
 ```
 
-이 파일이 없으면 `workflow_3_config.example.py` 를 복사해서 만든다.
-셸 env 로도 되지만(`ALIGN_FAIL_EPISODE_COLLECT=1`) 파일 상수가 기본 규약이다.
+이고 셋 다 `setdefault` 라 **먼저 잡은 쪽이 이긴다**. 사본이 진 값은 시작할 때 찍힌다:
+
+```
+[INFO] workflow_3_config 무시(실제 env 우선): ALIGN_FAIL_ZOOM_PROBE: env=1 우선(config=0 무시), ...
+```
+
+**이 줄을 읽고 넘어갈 것.** 사본에 남아 있던 관측 SAFE 프로파일의 차단이 여기서 풀린다.
+지금 상수 블록이 사본과 다르게 정하는 것:
+
+| 사본 | 상수 블록 | 뜻 |
+|---|---|---|
+| `ZOOM_PROBE = 0` | `1` | 휠 줌(장비 배율 변경). 2026-08-29 허용 확정 |
+| `PM_DROPDOWN = 0` | `1` | PM 드롭다운 절대 배율 선택. 같은 결정 |
+| `SHARE_REQUEST = 0` | `0` | 상수 블록도 0 (2026-09-01) - 점유면 공유 요청 없이 건너뛴다 |
+
+이번 실행만 되돌리려면 셸 env 가 셋 다 이긴다: `ALIGN_FAIL_ZOOM_PROBE=0 uv run ...`.
+
+`ALIGN_IMAGES_DIR` 만은 상수 블록으로 못 바꾼다 - 패키지 import 시점에 읽혀서
+어떤 seed 보다 앞선다. MES 출력 경로가 다르면 **셸 env 로** 넘겨야 Episode 폴더가
+제자리에 생긴다.
 
 ## 2. 실행
 
@@ -120,6 +141,7 @@ poc/workflow_3/monitor/episode_fixture/
 
 ## 되돌리기
 
-수집이 시끄럽거나 느리면 `EPISODE_COLLECT = 0`.
+수집이 시끄럽거나 느리면 `align_fail_monitor.py` 상수 블록의 `EPISODE_COLLECT = 0`
+(사본이 아니라 이 파일이다. 위 §1 참고).
 새 동작이 전부 사라진다 - 폴더, 사이드카, manifest 필드, Guard/Verification 파일.
 켰을 때 추가되는 비용은 프레임 사이드카(20fps Win32 호출)와 Assist 패널 VLM grounding **1콜**이다.

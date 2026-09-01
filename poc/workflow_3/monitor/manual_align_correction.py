@@ -82,10 +82,12 @@ from poc.workflow_3.util import make_timestamp_tag
 from poc.workflow_3.util.window_utils import print_elevation_status
 from poc.workflow_3.logger import log_work2_event
 
+from poc.workflow_3.monitor import align_fail_monitor as _monitor
 from poc.workflow_3.monitor.align_fail_monitor import (
     append_alarm_record,
     append_cycle_manifest,
 )
+from poc.workflow_3.util.env_utils import seed_env_from_constants
 
 # ===========================================================================
 # 실행 인자 - 여기만 고쳐서 쓴다 (셸 env 를 붙이지 않고 실행하려는 경우).
@@ -281,6 +283,14 @@ def main() -> int:
     _apply_live_mode_defaults()
     from poc.workflow_3.workflow_3_config_loader import seed_env
 
+    # 운전 knob 은 align_fail_monitor 의 상수 블록을 그대로 쓴다 - 이 진입점은 알람
+    # 폴링만 우회할 뿐 같은 사이클을 돌리므로, 상수를 따로 두면 두 벌이 어긋나
+    # "모니터에선 켜져 있던 기능이 수동 실행에서만 꺼진" 채로 시험하게 된다.
+    # 순서도 모니터와 같다: 실운전 기본값 -> 상수 블록 -> workflow_3_config.py.
+    seed_env_from_constants(
+        vars(_monitor), _monitor._CONST_TO_ENV,
+        label="align_fail_monitor 상수(manual 공유)",
+    )
     seed_env()
 
     eqp_id, recipe_id, _class_name, env_tag = _load_trigger_args()

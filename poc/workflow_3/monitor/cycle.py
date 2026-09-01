@@ -34,7 +34,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from poc.workflow_3 import ALIGN_IMAGES_DIR, DEBUG_IMAGE_DIR
+from poc.workflow_3 import ALIGN_IMAGES_DIR, DEBUG_IMAGE_DIR, LOG_DIR
 from poc.workflow_3.config import Workflow3Settings
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
 from poc.workflow_3.logger import log_work2_event
@@ -1542,6 +1542,7 @@ def _maybe_start_graph_mirror(settings: Workflow3Settings, steps, context: dict,
         mirror = CycleGraphMirror(
             graph,
             run_dir_fn=lambda: context.get("run_dir"),
+            live_dir=LOG_DIR / "workflow_runs" / "_live",
             poll_sec=0.5,
             refresh_sec=1,
             autoopen=getattr(settings, "graph_view_autoopen", False),
@@ -1556,6 +1557,10 @@ def _maybe_start_graph_mirror(settings: Workflow3Settings, steps, context: dict,
             _MIRROR_GRAPH_VIEW_WARNED = True
         return None
     print("[INFO] live graph view 시작 (workflow_4 mirror): 스냅샷은 runner run_dir 에 남는다")
+    print(
+        "[INFO] 라이브 탭(한 번만 열어두면 알람마다 자동 갱신): "
+        f"{LOG_DIR / 'workflow_runs' / '_live' / 'workflow_graph.html'}"
+    )
     return mirror
 
 

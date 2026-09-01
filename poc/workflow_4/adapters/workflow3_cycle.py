@@ -127,6 +127,7 @@ class CycleGraphMirror:
         run_dir_fn: Callable[[], "Path | str | None"],
         persist_dir: Path | str | None = None,
         *,
+        live_dir: Path | str | None = None,
         poll_sec: float = 0.5,
         refresh_sec: int = 1,
         autoopen: bool = False,
@@ -134,6 +135,10 @@ class CycleGraphMirror:
         self.graph = graph
         self._run_dir_fn = run_dir_fn
         self._persist_dir = Path(persist_dir) if persist_dir is not None else None
+        # 알람마다 바뀌는 run_dir 과 **별개**인 고정 경로. 엔지니어가 이 경로의
+        # HTML 탭을 한 번 열어두면 이후 사이클은 state.js 폴링으로 갱신되므로
+        # 창을 새로 띄울 필요가 없다(autoopen 의 전면 탈취를 대체한다).
+        self._live_dir = Path(live_dir) if live_dir is not None else None
         self.poll_sec = max(0.05, float(poll_sec))
         self.refresh_sec = max(1, int(refresh_sec))
         self.autoopen = bool(autoopen) and platform.system() == "Windows"
@@ -351,10 +356,18 @@ class CycleGraphMirror:
     # ------------------------------------------------------------ snapshots
 
     def _write_snapshots(self, persist_dir: Path, run_state: RunState) -> None:
-        """persist_dir 에 workflow_graph.md + workflow_graph.html 을 덮어쓴다."""
+        """persist_dir(+ live_dir) 에 workflow_graph.md/.html 을 덮어쓴다."""
         write_graph_snapshot(
             persist_dir, self.graph, run_state, refresh_sec=self.refresh_sec
         )
+        if self._live_dir is not None and self._live_dir != persist_dir:
+            # 라이브 사본 실패는 사이클 실패가 아니다 - run_dir 스냅샷이 정본.
+            try:
+                write_graph_snapshot(
+                    self._live_dir, self.graph, run_state, refresh_sec=self.refresh_sec
+                )
+            except Exception as exc:
+                print(f"[WARNING] live graph 사본 쓰기 실패: {exc}")
         if self.autoopen and not self._opened:
             self._opened = True
             open_graph_view(persist_dir / "workflow_graph.html")

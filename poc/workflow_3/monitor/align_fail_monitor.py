@@ -83,7 +83,9 @@ RCS_KILL_STALE = 0           # [위험] 창 없는 좀비 RCS 프로세스를 �
                              # 판정이 창 조회에 의존하므로 모를 때는 죽이지 않는 편이 낫다.
 
 # --- 점유 / 화면 공유 ---
-SHARE_REQUEST = 1            # 점유 Select 팝업에서 화면 공유 요청 발송.
+SHARE_REQUEST = 0            # 점유 Select 팝업에서 화면 공유 요청 발송.
+                             # 상대 화면에 요청 팝업이 뜨는 대외 동작이라, 티켓 18
+                             # (Episode 파일 확보)에는 필요 없다. 켤 때는 1.
 SHARE_CONFIRM = None         # 확인 정책. None=코드 기본값.
 SHARE_WAIT_SEC = None
 SHARE_MAX_ATTEMPTS = None

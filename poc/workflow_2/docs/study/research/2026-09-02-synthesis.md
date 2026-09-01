@@ -42,19 +42,19 @@ supersedes-in-part: ../cv/align_fail_vlm_deep_learning_addendum_ko.md (2026-07-1
 
 ### 2.2 B 의 "drop-in" 주장 vs A 의 "top-8 cap + Canny rescore 가 학습 후보를 지운다"
 
-B §2.3 은 `argmax R -> best_xy` 가 기존 좌표 계약과 같아 drop-in 이라 한다. A §4.1 #1-2 는 production engine 이 fused 후보를 **Canny Chamfer 로 재점수하고 앞 8개만** NCC/MIND/ECC 에 넘기므로, classical edge 로 약한 정답을 학습 proposer 가 새로 찾아도 downstream 이 다시 버린다고 확정한다.
+B §2.3 은 `argmax R -> best_xy` 가 기존 좌표 계약과 같아 drop-in 이라 한다. A §4.1 #1-2 는 production engine 이 fused 후보를 **Canny Chamfer 로 재점수하고 앞 8개만** NCC/MIND/ECC 에 넘기므로 classical edge 로 약한 정답을 학습 proposer 가 새로 찾아도 downstream 이 다시 버린다고 확정한다.
 
-**조정**: A 가 맞다. 실험 seam 은 `compute_ensemble_candidates` 교체가 아니라 A §5 의 `LearnedProposerResult -> candidate scorer(baseline arm / learned arm) -> calibrated result` 구조여야 하고, learned proposal_score 를 보존하는 arm 과 mode 별 threshold 재보정을 **한 묶음으로** A/B 한다. B 의 Step 2 통과선(SEM rank1 ≥0.73 등)은 이 seam 위에서 잰다.
+**조정**: A 가 맞다. 실험 seam 은 `compute_ensemble_candidates` 교체가 아니라 A §5 의 `LearnedProposerResult -> candidate scorer(baseline arm / learned arm) -> calibrated result` 구조여야 하고 learned proposal_score 를 보존하는 arm 과 mode 별 threshold 재보정을 **한 묶음으로** A/B 한다. B 의 Step 2 통과선(SEM rank1 ≥0.73 등)은 이 seam 위에서 잰다.
 
 ### 2.3 crosshair 처리 - C "지워라" vs B "증강으로 건드리지 마라"
 
-둘은 다른 얘기다. C §3.2 는 **학습 입력**에서 crosshair 를 inpaint 하지 않으면 모델이 crosshair 자체를 찾는 치팅을 배운다는 것이고, B §2.4 는 **증강**으로 crosshair 를 그리거나 지우지 말라는 것이다(제거 A/B -2%p, 가짜 lock).
+둘은 다른 얘기다. C §3.2 는 **학습 입력**에서 crosshair 를 inpaint 하지 않으면 모델이 crosshair 자체를 찾는 치팅을 배운다는 것이고 B §2.4 는 **증강**으로 crosshair 를 그리거나 지우지 말라는 것이다(제거 A/B -2%p, 가짜 lock).
 
 **조정**: 학습 입력 msr S 프레임은 반드시 `clean_image` 로 crosshair 를 지운다(라벨 위치에 십자선이 있는 프레임으로 학습하면 결과가 무의미). 근거는 production 이 상대하는 paused fail 프레임에 crosshair 가 없다는 것(C §3.3: E 는 crosshair 0/182). -2%p 실험은 CV matcher rerank 맥락이라 학습에 이식할 근거가 아니다(C 도 같은 판단). 증강으로 crosshair 를 합성하지 않는다는 B 의 규칙은 그대로.
 
 ### 2.4 SSL 사전학습의 위치
 
-C 는 "unlabeled S+E 전부 쓸 수 있으니 SSL 이 데이터 분포에 더 맞다"는 쪽으로 기울고, B 는 "라벨이 많으니 supervised 먼저, SSL 은 E 프레임 활용 수단으로 Step 3b" 로 둔다. D 는 둘을 짝으로 본다.
+C 는 "unlabeled S+E 전부 쓸 수 있으니 SSL 이 데이터 분포에 더 맞다"는 쪽으로 기울고 B 는 "라벨이 많으니 supervised 먼저, SSL 은 E 프레임 활용 수단으로 Step 3b" 로 둔다. D 는 둘을 짝으로 본다.
 
 **조정**: B 의 순서를 채택한다. 단 조건부 - C §4.1 이 지적하듯 **fine-tune 용 라벨 물량은 MES 전체 S 커버리지에 달렸고 그 규모가 미확인**이다. 규모 probe(§4) 결과 S 라벨이 10^5 미만이면 SSL(3b)을 앞당긴다.
 

@@ -6,6 +6,7 @@ asset 이 없으면 CDN fallback(오프라인에서는 vendor 파일이 필요�
 """
 
 import html
+import json
 import os
 import platform
 import webbrowser
@@ -104,12 +105,52 @@ def render_ascii(graph: WorkflowGraph, run_state: RunState) -> str:
     return "\n".join(lines)
 
 
+STATE_JS_NAME = "workflow_graph_state.js"
+
+
+def render_state_payload(graph: WorkflowGraph, run_state: RunState) -> dict:
+    """HTML 이 매 주기 갈아끼우는 동적 부분만 모은 payload.
+
+    페이지는 `file://` 로 열리는데 Chromium 은 file:// 에서 fetch/XHR 을 막는다.
+    `<script src>` 로딩은 허용되므로 이 payload 를 JS 파일로 써 두고 페이지가
+    주기적으로 다시 로드한다(JSONP 방식). 페이지 전체 reload 가 아니라 바뀐 부분만
+    DOM 교체하므로 깜빡이지 않고, 내용이 같으면 mermaid 도 다시 그리지 않는다.
+    """
+    rows = [
+        "<tr>"
+        f"<td>{r.seq}</td>"
+        f"<td>{_html_cell(r.ts)}</td>"
+        f"<td>{_html_cell(r.from_node)}</td>"
+        f"<td>{_html_cell(r.to_node)}</td>"
+        f"<td>{_html_cell(r.event)}</td>"
+        f"<td>{_html_cell(r.failure_class or '')}</td>"
+        f"<td>{r.attempt}</td>"
+        "</tr>"
+        for r in run_state.history
+    ]
+    return {
+        "status": run_state.status.value,
+        "current": str(run_state.current_node),
+        "diagram": render_mermaid(graph, run_state),
+        "rows": "\n".join(rows)
+        if rows
+        else '<tr><td colspan="7" class="muted">아직 기록된 전이가 없습니다.</td></tr>',
+    }
+
+
+def render_state_js(graph: WorkflowGraph, run_state: RunState) -> str:
+    """폴링용 JS 파일 본문 — 페이지의 `__wf4Apply` 콜백을 호출한다."""
+    payload = json.dumps(render_state_payload(graph, run_state), ensure_ascii=False)
+    return f"window.__wf4Apply && window.__wf4Apply({payload});\n"
+
+
 def render_html(
     graph: WorkflowGraph, run_state: RunState, refresh_sec: int = 1
 ) -> str:
     """전체 HTML 문서 (self-contained). mermaid 라이브러리를 인라인 임베드한다.
 
-    `refresh_sec` 마다 브라우저가 자동 새로고침해 live view 가 된다.
+    첫 화면은 현재 상태를 그대로 담고, 이후 `refresh_sec` 마다 옆의
+    `workflow_graph_state.js` 를 다시 로드해 바뀐 부분만 교체한다(페이지 reload 없음).
     """
     asset = _mermaid_asset_content()
     if asset:
@@ -126,32 +167,17 @@ def render_html(
             "vendor 해야 그래프가 그려집니다.</div>"
         )
 
-    diagram = html.escape(render_mermaid(graph, run_state), quote=False)
-    rows = [
-        "<tr>"
-        f"<td>{r.seq}</td>"
-        f"<td>{_html_cell(r.ts)}</td>"
-        f"<td>{_html_cell(r.from_node)}</td>"
-        f"<td>{_html_cell(r.to_node)}</td>"
-        f"<td>{_html_cell(r.event)}</td>"
-        f"<td>{_html_cell(r.failure_class or '')}</td>"
-        f"<td>{r.attempt}</td>"
-        "</tr>"
-        for r in run_state.history
-    ]
-    history_rows = (
-        "\n".join(rows)
-        if rows
-        else '<tr><td colspan="7" class="muted">아직 기록된 전이가 없습니다.</td></tr>'
-    )
+    payload = render_state_payload(graph, run_state)
+    diagram = html.escape(payload["diagram"], quote=False)
+    history_rows = payload["rows"]
 
     refresh = max(1, int(refresh_sec))
     return f"""<!DOCTYPE html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="refresh" content="{refresh}">
 <title>WF4 — {graph.name} ({run_state.status.value})</title>
+<!-- state poll: {refresh}s -->
 <style>
   body {{ font-family: 'Segoe UI', system-ui, sans-serif; margin: 16px; color: #222; }}
   h1 {{ font-size: 18px; }}
@@ -172,21 +198,47 @@ def render_html(
 </head>
 <body>
 <h1>{graph.name}
-  <span class="status {run_state.status.value}">{run_state.status.value}</span>
-  <span class="muted">current: {run_state.current_node} · auto-refresh {refresh}s</span>
+  <span id="wf4-status" class="status {run_state.status.value}">{run_state.status.value}</span>
+  <span class="muted">current: <span id="wf4-current">{run_state.current_node}</span> · live {refresh}s</span>
 </h1>
-<div class="mermaid">
+<div id="wf4-diagram" class="mermaid">
 {diagram}
 </div>
 <table>
 <thead><tr><th>seq</th><th>ts</th><th>from</th><th>to</th><th>event</th><th>failure_class</th><th>attempt</th></tr></thead>
-<tbody>
+<tbody id="wf4-rows">
 {history_rows}
 </tbody>
 </table>
 {banner}
 {mermaid_script}
-<script>mermaid.initialize({{startOnLoad:true, theme:'default'}});</script>
+<script>
+mermaid.initialize({{startOnLoad:true, theme:'default'}});
+(function () {{
+  var last = null;
+  window.__wf4Apply = function (s) {{
+    var key = JSON.stringify(s);
+    if (key === last) return;           // 변화 없음 -> DOM 도 mermaid 도 건드리지 않는다
+    last = key;
+    var st = document.getElementById('wf4-status');
+    st.textContent = s.status; st.className = 'status ' + s.status;
+    document.getElementById('wf4-current').textContent = s.current;
+    document.getElementById('wf4-rows').innerHTML = s.rows;
+    document.title = 'WF4 — {graph.name} (' + s.status + ')';
+    var d = document.getElementById('wf4-diagram');
+    d.removeAttribute('data-processed');
+    d.textContent = s.diagram;
+    mermaid.run({{nodes: [d]}});
+  }};
+  function poll() {{
+    var sc = document.createElement('script');
+    sc.src = '{STATE_JS_NAME}?t=' + Date.now();   // 쿼리로 캐시 우회 (file:// 에서도 동작)
+    sc.onload = sc.onerror = function () {{ sc.remove(); setTimeout(poll, {refresh * 1000}); }};
+    document.body.appendChild(sc);
+  }}
+  setTimeout(poll, {refresh * 1000});
+}})();
+</script>
 </body>
 </html>
 """
@@ -246,6 +298,8 @@ def write_graph_html(
     persist_dir.mkdir(parents=True, exist_ok=True)
     path = persist_dir / "workflow_graph.html"
     write_text_atomic(path, render_html(graph, run_state, refresh_sec=refresh_sec))
+    # 브라우저는 HTML 을 다시 읽지 않고 이 파일만 주기적으로 다시 로드한다.
+    write_text_atomic(persist_dir / STATE_JS_NAME, render_state_js(graph, run_state))
     return path
 
 

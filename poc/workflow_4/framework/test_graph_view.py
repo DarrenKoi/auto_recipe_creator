@@ -73,7 +73,9 @@ def test_render_html_contains_required_parts():
     assert "classDef active fill:#ffd54f,stroke:#f57f17" in out
     assert "class b active" in out
     assert "stateDiagram-v2" in out
-    assert '<meta http-equiv="refresh" content="1">' in out
+    assert 'http-equiv="refresh"' not in out  # 전체 reload 는 깜빡인다
+    assert "workflow_graph_state.js?t=" in out
+    assert "setTimeout(poll, 1000)" in out
     assert "<table>" in out
     assert "view_graph" in out
 
@@ -99,7 +101,7 @@ def test_render_html_history_rows():
 
 def test_render_html_custom_refresh():
     out = render_html(_graph(), _state(), refresh_sec=3)
-    assert '<meta http-equiv="refresh" content="3">' in out
+    assert "setTimeout(poll, 3000)" in out
 
 
 def test_write_graph_html_creates_file(tmp_path):
@@ -109,3 +111,13 @@ def test_write_graph_html_creates_file(tmp_path):
     content = path.read_text(encoding="utf-8")
     assert "mermaid.initialize" in content
     assert "stateDiagram-v2" in content
+
+def test_write_graph_html_writes_pollable_state_js(tmp_path):
+    import json
+
+    write_graph_html(tmp_path, _graph(), _state())
+    js = (tmp_path / "workflow_graph_state.js").read_text(encoding="utf-8")
+    assert js.startswith("window.__wf4Apply && window.__wf4Apply(")
+    payload = json.loads(js[js.index("(", 30) + 1 : js.rindex(")")])
+    assert set(payload) == {"status", "current", "diagram", "rows"}
+    assert "stateDiagram-v2" in payload["diagram"]

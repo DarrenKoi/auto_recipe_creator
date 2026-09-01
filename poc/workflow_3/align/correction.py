@@ -547,7 +547,12 @@ def correct_align_fail_auto(
     if assets is None:
         print("[ERROR] align fail recipe 폴더를 찾지 못했습니다.")
         log_work2_event(component=LOG_COMPONENT, message="no_assets", level="error")
-        return CorrectionOutcome("no_assets", "primary", "low", None, None, None)
+        # 두 no_assets 를 구분해 둔다 - 알림에서 "경로 설정 문제" 와 "등록 이미지 없음"
+        # 은 엔지니어가 할 일이 다르다.
+        return CorrectionOutcome(
+            "no_assets", "primary", "low", None, None, None,
+            error="recipe 폴더 미검출(ALIGN_IMAGES_DIR / EQP·RECIPE 경로 확인)",
+        )
     templates = resolve_templates(
         assets,
         # 자동선택(eqp_id="") 경로에선 resolve_assets_auto 가 채운 assets.eqp_id 가 권위.
@@ -565,7 +570,10 @@ def correct_align_fail_auto(
             component=LOG_COMPONENT, message="no_assets", level="error",
             recipe_dir=str(assets.recipe_dir),
         )
-        return CorrectionOutcome("no_assets", "primary", "low", None, None, None)
+        return CorrectionOutcome(
+            "no_assets", "primary", "low", None, None, None,
+            error=f"등록 OM/SEM 이미지 없음: {assets.recipe_dir}",
+        )
     reg_mag = None
     if grid_mag is not None:
         from poc.workflow_3.align.cond_file import load_cond

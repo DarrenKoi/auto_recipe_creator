@@ -71,7 +71,6 @@ from poc.workflow_3.util import (
     click_at_screen,
     collect_window_rows,
     env_float,
-    find_window_by_title_prefix,
     image_point_to_screen,
     make_timestamp_tag,
     move_cursor_to_screen,
@@ -1095,57 +1094,53 @@ _STEP_EXECUTORS = {
 # ------------------------------------------------------------------
 
 
-_ACCESS_TITLE_TOKENS = tuple(
-    token.strip().lower()
-    for token in os.getenv(
-        "ALIGN_FAIL_ACCESS_TITLES", "select,request,confirm,요청,공유,허용"
-    ).split(",")
-    if token.strip()
-)
+# 접근 요청 팝업은 **장비 모니터 화면 안**(Remote Monitoring 원격 뷰)에 그려진다
+# (사용자 확인 2026-09-01). 그래서 로컬 top-level 창 열거로는 원리상 못 찾는다 -
+# demonstration_rcs_control 1회차가 Optics 대화상자에서 겪은 것과 같은 원인이며,
+# 제목 기반 탐색은 이 팝업에 대해 한 번도 발화한 적이 없다. 프레임을 봐야 한다.
+#
+# 다만 매 주기 VLM 을 부르면 정지 화면에서도 비용이 든다. 언제 요청이 올지 모르므로
+# 감시는 세션 내내 돌아야 하는데, align fail 화면은 대부분 정지다(장비가 멈춰 있다).
+# 그래서 녹화가 쓰는 것과 **같은 변화 감지**를 앞에 두어, 화면이 실제로 움직였을
+# 때만 VLM 이 프레임을 본다. 정지 구간의 VLM 콜은 0 이다.
 
 
-def _find_access_request_popup(baseline: set):
-    """세션 중 새로 뜬 top-level 창 중 접근 요청 팝업으로 볼 만한 것을 찾는다.
+def _make_frame_change_gate(window, settings):
+    """tool 창 프레임에 유의미한 변화가 있을 때만 그 창을 내주는 find_popup_fn.
 
-    제목 문구를 아직 모르므로 두 가지를 함께 한다 - 후보 토큰으로 팝업을 고르고,
-    baseline 에 없던 **모든** 새 제목을 콘솔에 남긴다(첫 실행에서 실제 문구를 아는
-    유일한 경로. Mac 에서는 이 화면을 볼 수 없다).
+    `grant_access_request` 계약상 "팝업이 있을 법한 창" 을 돌려주면 되고, 팝업이
+    실제로 있는지는 그 뒤의 VLM 좌표 + OCR 라벨 확인이 가른다(fail-closed). 여기서는
+    **VLM 을 부를 가치가 있는 프레임인가**만 판정한다.
+
+    첫 호출은 비교 대상이 없어 항상 통과시킨다(감시 시작 시 1회).
     """
-    if not callable(collect_window_rows) or not callable(find_window_by_title_prefix):
-        return None
-    try:
-        rows = collect_window_rows()
-    except Exception as exc:
-        print(f"[WARNING] 접근 요청 감시용 창 열거 실패: {exc}")
-        return None
+    from poc.workflow_3.monitor.recording import frame_changed, to_diff_gray
 
-    candidate = None
-    for row in rows:
-        title = (row.title or "").strip()
-        if not title or title in baseline:
-            continue
-        baseline.add(title)
-        print(f"[INFO] 세션 중 새 창 감지: title={title!r}")
-        lowered = title.lower()
-        if candidate is None and any(tok in lowered for tok in _ACCESS_TITLE_TOKENS):
-            candidate = title
-    if candidate is None:
-        return None
-    try:
-        window, _title, _backend = find_window_by_title_prefix(candidate)
-    except Exception as exc:
-        print(f"[WARNING] 접근 요청 팝업 창 확보 실패: {exc}")
-        return None
-    return window
+    prev = {"gray": None}
+
+    def _find():
+        image = capture_window(window)
+        if image is None:
+            return None
+        gray = to_diff_gray(image)
+        previous, prev["gray"] = prev["gray"], gray
+        if not frame_changed(previous, gray, settings.access_change_min_px):
+            return None
+        return window
+
+    return _find
 
 
-def _make_access_watcher(settings: Workflow3Settings, tag: str):
+def _make_access_watcher(settings: Workflow3Settings, tag: str, tool_window=None):
     """engineer watch 루프에서 매 주기 호출할 접근 요청 감시자를 만든다(off 면 None).
 
     응답하지 않으면 상대가 강제 종료로 우리 세션을 끊을 수 있다(오피스 확인). 그래서
     감시는 기본 on 이고, 실제 허용 클릭만 문구 확인 후 여는 opt-in 이다.
+
+    `tool_window` 가 없으면 볼 프레임이 없으므로 감시를 만들지 않는다 - 팝업이 그
+    창 안에 그려지기 때문이다(위 `_make_frame_change_gate` 주석 참조).
     """
-    if not settings.access_request_watch_enabled:
+    if not settings.access_request_watch_enabled or tool_window is None:
         return None
 
     from poc.workflow_3.monitor.access_request import (
@@ -1160,12 +1155,7 @@ def _make_access_watcher(settings: Workflow3Settings, tag: str):
     from poc.workflow_3.vlm.ui_venus_mai_locator import analyze_window_target
 
     debug_dir = DEBUG_IMAGE_DIR / "access_request" / tag
-    baseline: set = set()
-    try:
-        if callable(collect_window_rows):
-            baseline = {(row.title or "").strip() for row in collect_window_rows()}
-    except Exception:
-        baseline = set()
+    find_popup = _make_frame_change_gate(tool_window, settings)
 
     def _locate(image, target):
         result = analyze_window_target(
@@ -1200,21 +1190,50 @@ def _make_access_watcher(settings: Workflow3Settings, tag: str):
         click_at_screen(screen, f"access_{key}", action_enabled=settings.action_enabled)
 
     def _watch():
+        """한 주기 감시. AccessRequestResult 를 돌려준다 - 호출부의 도착 판정 재료다."""
         result = grant_access_request(
             settings,
             locate_fn=_locate,
             read_tokens_fn=_read_tokens,
             click_fn=_click,
             capture_fn=capture_window,
-            find_popup_fn=lambda: _find_access_request_popup(baseline),
+            find_popup_fn=find_popup,
         )
         if result.status != STATUS_NOT_FOUND:
             log_work2_event(
                 component=LOG_COMPONENT, message="access_request",
                 level="info", status=result.status, verdict=result.verdict,
             )
+        return result
 
     return _watch
+
+
+def _access_result_is_arrival(result) -> bool:
+    """접근 요청 감시 결과가 '엔지니어가 왔다' 인가 — **라벨이 확인된 경우만**.
+
+    status 로 판정하면 안 된다. 변화 게이트를 통과한 프레임마다 VLM 이 좌표를 하나
+    찍어 주므로(팝업이 없어도 무언가를 가리킬 수 있다), 관찰 전용 모드에서는 팝업
+    유무와 무관하게 `observed` 가 나온다. 도착의 유일한 증거는 그 자리에서 허용
+    계열 문구가 실제로 읽혔다는 것이다 - 확인 게이트와 같은 기준을 쓴다.
+
+    확인이 안 되면 도착으로 치지 않고 crop 만 남는다(그 crop 이 VLM 인지 정확도를
+    평가할 재료다). VLM/OCR 이 못 읽는 동안 도착은 영영 안 잡히지만, 못 읽는 채로
+    '왔다' 고 단정하는 것보다 낫다.
+
+    정책과 무관하게 **strict** 로 판정한다. lenient 는 '못 읽었어도 눌러라' 는 뜻인데,
+    누를 대상이 정말 있는 클릭 경로와 달리 여기서는 팝업 유무 자체가 질문이라
+    lenient 를 그대로 쓰면 변화가 있는 모든 프레임이 도착으로 잡힌다.
+    """
+    from poc.workflow_3.monitor.access_request import STATUS_GRANTED
+    from poc.workflow_3.monitor.share_request import accepts_label
+
+    status = getattr(result, "status", "")
+    if status == STATUS_GRANTED:
+        return True
+    return bool(getattr(result, "verdict", "")) and accepts_label(
+        result.verdict, "strict"
+    )
 
 
 def _engineer_watch(
@@ -1225,21 +1244,37 @@ def _engineer_watch(
     poll_sec: float = 8.0,
     access_watcher=None,
     access_poll_sec: float = 2.0,
+    arrival_wait_sec: float = 0.0,
 ) -> None:
     """미보정 시 엔지니어 수동 조작 구간 대기 — 녹화 스레드가 계속 캡처한다.
 
     종료 조건(첫 충족 시): ① 녹화 스레드 자체 종료(창 닫힘=window_gone/max_sec)
     ② done_detector() True (측정 시작 = align 완료, engineer_done_align_adjustment 모듈)
     ③ watch_sec 경과 (이제 backstop cap). detector 예외는 ②만 무력화한다.
+
+    ``arrival_wait_sec`` > 0 이면 **도착 대기 구간**을 앞에 둔다. 자동 보정 실패 후
+    엔지니어가 cube 를 보고 접근 요청을 띄우기까지는 정지 화면이라, 그 시간을
+    watch_sec 에서 빼면 정작 수동 조작이 시작될 때 우리는 이미 tool 을 닫고 나간 뒤다.
+    접근 요청이 잡히면 그 시점부터 watch_sec 를 새로 센다(재설정은 1회).
+    도착 없이 arrival_wait_sec 가 지나면 종전처럼 끝낸다.
+
+    녹화 자체는 이 구간에도 계속 돈다 - RecordingSession 이 변화 없는 화면은
+    heartbeat 1장만 남기므로 대기 비용은 프레임 몇 장이다(별도 일시정지 불필요).
     """
     if watch_sec <= 0:
         return
+    awaiting_arrival = arrival_wait_sec > 0 and access_watcher is not None
     print(
         f"[INFO] engineer watch 시작: 최대 {watch_sec:.0f}s "
         f"(창 닫힘/측정시작 감지/녹화 종료 시 조기 종료, "
         f"감지={'on' if done_detector is not None else 'off'})"
     )
-    deadline = time.time() + watch_sec
+    if awaiting_arrival:
+        print(
+            f"[INFO] 엔지니어 접속 대기 {arrival_wait_sec:.0f}s - 접근 요청이 잡히면 "
+            f"그때부터 {watch_sec:.0f}s 를 새로 셉니다."
+        )
+    deadline = time.time() + (arrival_wait_sec if awaiting_arrival else watch_sec)
     next_check = 0.0
     next_access = 0.0
     while time.time() < deadline and recording.is_alive():
@@ -1252,7 +1287,15 @@ def _engineer_watch(
         # done_detector 보다 촘촘히 본다.
         if access_watcher is not None and time.time() >= next_access:
             try:
-                access_watcher()
+                access_result = access_watcher()
+                if awaiting_arrival and _access_result_is_arrival(access_result):
+                    awaiting_arrival = False
+                    deadline = time.time() + watch_sec
+                    print(
+                        f"[INFO] 엔지니어 접속 감지(접근 요청 "
+                        f"{getattr(access_result, 'status', '')}) - "
+                        f"수동 조작 녹화 {watch_sec:.0f}s 시작"
+                    )
             except Exception as exc:
                 print(f"[WARNING] 접근 요청 감시 예외(무시, watch 계속): {exc}")
             next_access = time.time() + max(access_poll_sec, 0.5)
@@ -1265,6 +1308,11 @@ def _engineer_watch(
                 print(f"[WARNING] done detector 예외(무시, cap 으로 진행): {exc}")
             next_check = time.time() + max(poll_sec, 0.0)
         time.sleep(2.0)
+    if awaiting_arrival:
+        print(
+            f"[WARNING] {arrival_wait_sec:.0f}s 동안 엔지니어 접속 없음 - "
+            f"수동 조작 녹화 없이 watch 종료(cube 알림은 이미 발송됨)"
+        )
     reason = getattr(recording, "stop_reason", "")
     if reason == "window_gone":
         print("[INFO] 엔지니어가 Remote Monitoring 창을 닫음 - 명시적 완료로 watch 종료")
@@ -1642,7 +1690,9 @@ def run_alarm_cycle(
                     print(f"[WARNING] done detector 생성 실패(고정 timeout 으로 진행): {exc}")
             access_watcher = None
             try:
-                access_watcher = _make_access_watcher(settings, tag)
+                access_watcher = _make_access_watcher(
+                    settings, tag, tool_window=context.get("tool_window")
+                )
             except Exception as exc:
                 print(f"[WARNING] 접근 요청 감시자 생성 실패(감시 없이 진행): {exc}")
             _engineer_watch(
@@ -1651,6 +1701,7 @@ def run_alarm_cycle(
                 poll_sec=settings.engineer_done_poll_sec,
                 access_watcher=access_watcher,
                 access_poll_sec=settings.access_watch_poll_sec,
+                arrival_wait_sec=settings.engineer_arrival_wait_sec,
             )
     except Exception as exc:
         result.run_status = "error"

@@ -195,6 +195,77 @@ def _stage_note(failed_step: str, failure_class: str) -> str:
     return f"실패단계={stage}"
 
 
+# 자동 보정을 못 하고 끝난 status -> (원인, 엔지니어 요구 행동).
+# CorrectionOutcome.status 는 **정확 비교 전용**(monitor 가 치환하는 status 가 있어
+# 접두사 매칭이 새는 자리다)이라 fallback_* 도 접두사로 묶지 않고 4가지를 다 적는다.
+# 여기 없는 status 는 요구 행동 줄 없이 종전처럼 status= 로만 나간다.
+_UNCORRECTED_ACTIONS = {
+    "no_assets": (
+        "등록 align key 자산 없음(rcp/consensus 미확보)",
+        "직접 align point 를 잡고 OK 를 눌러주세요",
+    ),
+    "escalated_key_not_visible": (
+        "align key 가 현재 화면에 없음(주변 탐색 비활성)",
+        "직접 align point 를 잡고 OK 를 눌러주세요",
+    ),
+    "fallback_exhausted": (
+        "주변 탐색을 다 돌았으나 align key 미검출",
+        "직접 align point 를 잡고 OK 를 눌러주세요",
+    ),
+    "fallback_escalated": (
+        "주변 탐색 중 점수가 계속 낮아 자동 판단 중단",
+        "직접 align point 를 잡고 OK 를 눌러주세요",
+    ),
+    "fallback_best_candidate": (
+        "주변 탐색에서 후보는 나왔으나 확신 임계 미달",
+        "화면 위치를 확인한 뒤 align point 를 잡고 OK 를 눌러주세요",
+    ),
+    "fallback_match": (
+        "주변 탐색에서 align key 검출(자동 확정은 안 함)",
+        "화면 위치를 확인한 뒤 align point 를 잡고 OK 를 눌러주세요",
+    ),
+    "escalated_ambiguous_key": (
+        "align key 가 보이나 닮은 곳이 많아 단정 불가(만성 모호 - 재등록 대상)",
+        "직접 align point 를 잡고 OK 를 눌러주세요",
+    ),
+    "escalated_no_ok": (
+        "align point 이동은 했으나 OK 버튼을 찾지 못함",
+        "위치 확인 후 OK 를 눌러주세요",
+    ),
+    "ok_detect_error": (
+        "OK 버튼 탐지 중 예외",
+        "위치 확인 후 OK 를 눌러주세요",
+    ),
+}
+
+
+def _match_index(outcome) -> str:
+    """matcher 점수를 임계와 나란히 놓은 한 조각 — "왜 못 잡았나" 의 정량 근거.
+
+    새로 계산하지 않는다. correct_align_fail 이 history 에 이미 적어 둔 paused_match
+    레코드와 outcome 의 모호도 필드를 읽을 뿐이다. 그 레코드가 없으면(no_assets 처럼
+    매칭 전에 끝난 경로) 빈 문자열이라 요약 모양이 종전 그대로다.
+    """
+    record = None
+    for entry in reversed(getattr(outcome, "history", None) or []):
+        if isinstance(entry, dict) and entry.get("stage") == "paused_match":
+            record = entry
+            break
+    if record is None:
+        return ""
+    score, scale = record.get("score"), record.get("best_scale")
+    if score is None or scale is None:
+        return ""
+    from poc.workflow_3.align.live_search import MIN_CONFIRM_SCALE
+    from poc.workflow_3.align.matching.engine import STRUCTURE_POLICY
+
+    parts = [
+        f"매칭점수={score:.3f}(match임계 {STRUCTURE_POLICY.ensemble_match_threshold:.3f})",
+        f"scale={scale:.2f}(최소 {MIN_CONFIRM_SCALE:.2f})",
+    ]
+    return " ".join(parts)
+
+
 def build_outcome_summary(
     outcome,
     *,
@@ -224,7 +295,18 @@ def build_outcome_summary(
                 "점유 여부 확인 불가 - 보정을 시도했으나 실제 반영 여부는 미확인, "
                 "장비에서 직접 확인 필요"
             )
+        else:
+            # 자동 보정을 못 하고 끝난 경로 - 원인과 요구 행동을 맨 앞에 둔다.
+            # 지금까지는 status=no_assets 처럼 코드값만 나가 엔지니어가 무엇을 해야
+            # 하는지 알 수 없었다(이 알림이 유일한 통보라 그 자리에서 읽혀야 한다).
+            reason_action = _UNCORRECTED_ACTIONS.get(outcome.status)
+            if reason_action is not None:
+                parts.append(f"자동 보정 불가: {reason_action[0]}")
+                parts.append(reason_action[1])
         parts += [f"status={outcome.status}", f"path={outcome.path}", f"decision={outcome.key_decision}"]
+        index = _match_index(outcome)
+        if index:
+            parts.append(index)
         if outcome.best_xy is not None:
             parts.append(f"best_xy={outcome.best_xy}")
         fallback = getattr(outcome, "fallback", None)

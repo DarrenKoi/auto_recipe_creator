@@ -165,6 +165,10 @@ class Workflow3Settings(WorkflowSettings):
     access_grant_enabled: bool = False          # 실제 허용 클릭(문구 확인 후 1 로).
     access_confirm_policy: str = "strict"       # strict | lenient | off.
     access_watch_poll_sec: float = 2.0          # 감시 주기 - 상대가 기다려 주는 시간이 짧다.
+    # 팝업은 tool 창 **프레임 안**에 그려지므로 VLM 이 프레임을 봐야 한다. 매 주기
+    # 부르면 정지 화면에서도 비용이 나므로, 다운샘플(1/16) 변화 픽셀이 이 값을 넘을
+    # 때만 부른다. 커서 이동(~64px)보다 크고 팝업 등장(수천 px)보다 훨씬 작게 잡는다.
+    access_change_min_px: int = 200
     keep_awake: bool = True
     # 자동 GUI 구간 동안 사용자 물리 마우스/키보드 입력 차단(Windows BlockInput).
     # 사용자가 다른 앱을 쓰면 foreground lock 으로 RCS 가 안 떠서 방해되는 문제 대응.
@@ -193,6 +197,13 @@ class Workflow3Settings(WorkflowSettings):
     prelude_monitor_index: int = 1  # mss 규약(0=전 모니터 합침, 1=주 모니터).
 
     engineer_watch_sec: float = 300.0  # 미보정 watch 상한(cap, 5분) - done 감지 시 조기 종료.
+    # 엔지니어 "도착" 을 기다리는 별도 상한(초). 자동 보정에 실패하면 cube 가 나가고
+    # 엔지니어가 접근 요청 팝업을 띄우는데, 그 사이는 정지 화면이다. 이 값이 0 보다
+    # 크면 접근 요청이 잡힐 때까지 먼저 기다리고, 잡힌 시점부터 engineer_watch_sec 를
+    # 새로 센다 - 그러지 않으면 엔지니어가 오기도 전에 상한이 소진돼 정작 수동 조작이
+    # 녹화되지 않는다. 0 이면 종전 동작(즉시 engineer_watch_sec 카운트).
+    # 실질 상한은 recording_max_sec 이며 그쪽이 먼저 걸리면 watch 도 함께 끝난다.
+    engineer_arrival_wait_sec: float = 300.0
 
     # --- engineer watch 측정-시작 감지 (Assist 우선, Recipe Monitor 카운터 fallback) ---
     engineer_done_detect_enabled: bool = True  # 기본 on (2026-08-19 사용자 결정).
@@ -419,6 +430,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         access_grant_enabled=env_flag("ALIGN_FAIL_ACCESS_GRANT", default=False),
         access_confirm_policy=os.getenv("ALIGN_FAIL_ACCESS_CONFIRM", "strict").strip().lower(),
         access_watch_poll_sec=env_float("ALIGN_FAIL_ACCESS_WATCH_POLL_SEC", 2.0),
+        access_change_min_px=env_int("ALIGN_FAIL_ACCESS_CHANGE_MIN_PX", 200),
         rcs_recovery_enabled=env_flag("ALIGN_FAIL_RCS_RECOVERY", default=True),
         rcs_kill_stale_enabled=env_flag("ALIGN_FAIL_RCS_KILL_STALE", default=False),
         rcs_recovery_window_timeout_sec=env_float(
@@ -444,6 +456,9 @@ def load_workflow3_settings() -> Workflow3Settings:
         prelude_jpeg_quality=env_int("ALIGN_FAIL_PRELUDE_JPEG_QUALITY", 85),
         prelude_monitor_index=env_int("ALIGN_FAIL_PRELUDE_MONITOR_INDEX", 1),
         engineer_watch_sec=env_float("ALIGN_FAIL_ENGINEER_WATCH_SEC", 300.0),
+        engineer_arrival_wait_sec=env_float(
+            "ALIGN_FAIL_ENGINEER_ARRIVAL_WAIT_SEC", 300.0
+        ),
         rcp_msr_gather_enabled=env_flag("ALIGN_FAIL_GATHER_RCP_MSR", default=True),
         rcp_gather_timeout_sec=env_float("ALIGN_FAIL_RCP_GATHER_TIMEOUT_SEC", 60.0),
         gather_enabled=env_flag("ALIGN_FAIL_GATHER_SUCCESS", default=True),

@@ -92,6 +92,9 @@ SHARE_MAX_ATTEMPTS = None
 ACCESS_WATCH = 1             # 세션 중 접근 요청 팝업 감시(관측만).
 ACCESS_GRANT = 0             # [위험] 접근 요청에 실제 '허용' 클릭.
                              # 남의 요청을 우리가 대신 승낙하는 것이라 사람이 판단해야 한다.
+                             # 0 이어도 감시는 돌아 팝업 crop/OCR 판독을
+                             # debug_images/access_request/ 에 남긴다 - VLM 이 이 팝업을
+                             # 제대로 짚는지 오피스에서 평가한 뒤 1 로 올린다.
 ACCESS_CONFIRM = None        # strict | lenient | off.
 CORRECT_WHEN_OCCUPIED = 0    # [위험] 남이 점유 중인 tool 을 그대로 보정.
                              # 상대가 조작 중인 장비에 우리 클릭이 섞인다.
@@ -129,6 +132,9 @@ RECORD_PRELUDE = 1           # 접속 구간(RCS 실행->로그인->tool 진입)
 PRELUDE_MAX_SEC = None
 PRELUDE_MONITOR_INDEX = None
 ENGINEER_WATCH_SEC = None    # 미보정 watch 상한(초). None=300.
+ARRIVAL_WAIT_SEC = None      # 엔지니어 접속(접근 요청) 대기 상한(초). None=300.
+                             # 0 이면 종전 동작(보정 실패 즉시 watch 상한 카운트).
+ACCESS_CHANGE_MIN_PX = None  # 접근 요청 감시가 VLM 을 부를 최소 화면 변화량. None=200.
 ENGINEER_DONE_DETECT = 1     # 완료 신호로 watch 조기 종료.
 ENGINEER_DONE_ASSIST = 0     # Assist 패널 판독으로 완료 판정.
                              # 판독 정확도가 아직 확보되지 않아 off - 켜면 Recipe Monitor
@@ -190,6 +196,8 @@ _CONST_TO_ENV = (
     ("PRELUDE_MAX_SEC", "ALIGN_FAIL_PRELUDE_MAX_SEC"),
     ("PRELUDE_MONITOR_INDEX", "ALIGN_FAIL_PRELUDE_MONITOR_INDEX"),
     ("ENGINEER_WATCH_SEC", "ALIGN_FAIL_ENGINEER_WATCH_SEC"),
+    ("ARRIVAL_WAIT_SEC", "ALIGN_FAIL_ENGINEER_ARRIVAL_WAIT_SEC"),
+    ("ACCESS_CHANGE_MIN_PX", "ALIGN_FAIL_ACCESS_CHANGE_MIN_PX"),
     ("ENGINEER_DONE_DETECT", "ALIGN_FAIL_ENGINEER_DONE_DETECT"),
     ("ENGINEER_DONE_ASSIST", "ALIGN_FAIL_ENGINEER_DONE_ASSIST"),
     ("EPISODE_COLLECT", "ALIGN_FAIL_EPISODE_COLLECT"),

@@ -175,6 +175,51 @@ def test_summary_omits_stage_when_absent() -> bool:
     return ok
 
 
+# ------------------------------------------------------------------
+# 자동 보정 불가 경로: 원인 + 요구 행동 + 매칭점수 (2026-09-01).
+# ------------------------------------------------------------------
+
+
+def _outcome_with_history(status, score, scale, **kw):
+    """paused_match history 를 단 CorrectionOutcome."""
+    out = _outcome(status, **kw)
+    out.history = [{
+        "stage": "paused_match", "decision": "low",
+        "score": score, "best_scale": scale,
+    }]
+    return out
+
+
+def test_uncorrected_summary_carries_reason_and_action():
+    """no_assets 요약에 원인/요구 행동이 status 앞에 실린다."""
+    summary = build_outcome_summary(_outcome("no_assets"))
+    assert "자동 보정 불가" in summary, summary
+    assert "직접 align point" in summary, summary
+    assert summary.index("자동 보정 불가") < summary.index("status="), summary
+    print("[PASS] no_assets 요약 = 원인 + 요구 행동")
+    return True
+
+
+def test_uncorrected_summary_carries_match_index():
+    """매칭까지 간 실패는 점수를 임계와 나란히 싣는다."""
+    summary = build_outcome_summary(
+        _outcome_with_history("escalated_key_not_visible", 0.31, 0.55)
+    )
+    assert "매칭점수=0.310" in summary, summary
+    assert "match임계" in summary and "scale=0.55" in summary, summary
+    print("[PASS] escalated_key_not_visible 요약 = 매칭점수 지수")
+    return True
+
+
+def test_corrected_paths_unchanged():
+    """성공/기존 status 는 원인 줄이 붙지 않는다(요약 모양 보존)."""
+    for status in ("corrected", "awaiting_engineer_ok"):
+        summary = build_outcome_summary(_outcome(status))
+        assert "자동 보정 불가" not in summary, summary
+    print("[PASS] corrected/awaiting_engineer_ok 요약 불변")
+    return True
+
+
 def main() -> int:
     print("[INFO] notify self-test 시작")
     results = [
@@ -189,6 +234,9 @@ def main() -> int:
         test_notify_corrected_ambiguous_audits_no_cube(),
         test_notify_corrected_distinct_no_notify(),
         test_notify_failure_carries_recommendation(),
+        test_uncorrected_summary_carries_reason_and_action(),
+        test_uncorrected_summary_carries_match_index(),
+        test_corrected_paths_unchanged(),
     ]
     passed = sum(1 for r in results if r)
     print(f"[INFO] {passed}/{len(results)} cases passed")
@@ -197,3 +245,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+

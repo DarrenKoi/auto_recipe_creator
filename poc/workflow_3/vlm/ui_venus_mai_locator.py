@@ -43,7 +43,7 @@ from poc.workflow_3.util import (
     parse_coords,
     point_to_tiny_bbox,
 )
-from poc.workflow_3.util.json_utils import extract_json
+from poc.workflow_3.util.json_utils import describe_bbox_reject, extract_json
 from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
 
 
@@ -530,12 +530,16 @@ def _run_ui_venus_coarse_bbox(
     try:
         parsed = extract_json(response.text)
     except Exception as exc:
-        print(f"[WARNING] [{slug}] coarse JSON 파싱 실패: {exc}")
+        print(f"[WARNING] [{slug}] coarse JSON 파싱 실패(target={target.key}): {exc}")
         return {**base_result, "bbox_1000": None, "bbox_pixels": None, "center": None}
 
-    bbox_1000 = normalize_bbox_1000(parsed.get("bbox"))
+    raw_bbox = parsed.get("bbox")
+    bbox_1000 = normalize_bbox_1000(raw_bbox)
     if bbox_1000 is None:
-        print(f"[INFO] [{slug}] coarse bbox 미검출")
+        print(
+            f"[INFO] [{slug}] coarse bbox 미검출: target={target.key}, "
+            f"reason={describe_bbox_reject(raw_bbox)}, raw={raw_bbox!r}"
+        )
         return {**base_result, "bbox_1000": None, "bbox_pixels": None, "center": None}
 
     bbox_pixels = bbox_1000_to_pixels(bbox_1000, img_w, img_h)
@@ -575,7 +579,7 @@ def _run_mai_ui_refinement(
     try:
         parsed = extract_json(response.text)
     except Exception as exc:
-        print(f"[WARNING] [{slug}] refine JSON 파싱 실패: {exc}")
+        print(f"[WARNING] [{slug}] refine JSON 파싱 실패(target={target.key}): {exc}")
         return {
             "response_text": response.text,
             "token_usage": response.token_usage or {},
@@ -585,7 +589,7 @@ def _run_mai_ui_refinement(
     parsed = parse_coords(parsed, [target.key], zoom_w, zoom_h)
     point = parsed.get(target.key)
     if not isinstance(point, dict) or "x" not in point or "y" not in point:
-        print(f"[INFO] [{slug}] refined point 미검출")
+        print(f"[INFO] [{slug}] refined point 미검출: target={target.key}")
         return {
             "response_text": response.text,
             "token_usage": response.token_usage or {},

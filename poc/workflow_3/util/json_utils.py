@@ -394,3 +394,34 @@ def normalize_lines(raw_text: str, max_items: int = 120) -> list[str]:
         if len(lines) >= max_items:
             break
     return lines
+
+
+def describe_bbox_reject(raw_bbox) -> str:
+    """``normalize_bbox_1000`` 이 None 을 돌려준 이유를 한 토큰으로 말한다.
+
+    미검출 로그가 "못 찾았다"만 찍으면 오피스에서 할 수 있는 일이 없다 - 모델이
+    아예 답을 안 준 것(absent)과, 좌표를 줬는데 우리가 버린 것(degenerate/bad_shape)은
+    고치는 방법이 정반대다: 앞은 프롬프트/화면 문제, 뒤는 파싱/규약 문제.
+    None 이 아닌 값에는 "ok" 를 돌려준다(호출부의 방어용).
+    """
+    if raw_bbox is None:
+        return "absent"          # 키 없음 또는 null - 모델이 '없다'고 답한 것.
+    corners = None
+    if isinstance(raw_bbox, dict):
+        for keys in (("left", "top", "right", "bottom"),
+                     ("x", "y", "width", "height"),
+                     ("x", "y", "w", "h")):
+            if set(keys) <= raw_bbox.keys():
+                corners = [coerce_float(raw_bbox[k]) for k in keys]
+                break
+    elif isinstance(raw_bbox, list) and len(raw_bbox) == 4:
+        corners = [coerce_float(v) for v in raw_bbox]
+    if corners is None:
+        return "bad_shape"       # dict/list 모양이 규약과 다름.
+    if None in corners:
+        return "non_numeric"     # 좌표 자리에 숫자가 아닌 값.
+    if any(v < 0 for v in corners):
+        return "refusal"         # [-1,-1,-1,-1] 계열 = 모델의 명시적 거부.
+    if normalize_bbox_1000(raw_bbox) is None:
+        return "degenerate"      # 폭/높이가 0 이하 (clamp 후 붕괴 포함).
+    return "ok"

@@ -34,6 +34,7 @@ from poc.workflow_3.util import env_int
 from poc.workflow_3.util.image_utils import encode_image_webp
 from poc.workflow_3.util.json_utils import (
     bbox_1000_to_pixels,
+    describe_bbox_reject,
     extract_json,
     normalize_bbox_1000,
 )
@@ -410,11 +411,24 @@ def _run_sem_box_detection(
         temperature=0.0,
     )
     parsed = extract_json(response.text)
+    # 두 실패 분기 모두 조용히 None 을 돌려주던 자리다. locate_sem_panel 은 사유를
+    # panel_reasons 로만 넘겨 "VLM 미검출" 한 덩어리가 되는데, 실제로는 모델이
+    # '패널이 안 보인다'고 답한 것과 좌표를 줬는데 우리가 버린 것이 갈린다.
     if parsed.get("panel_visible") is not True:
+        print(
+            f"[INFO] [{client.service_slug}] live SEM box 미검출: "
+            f"panel_visible={parsed.get('panel_visible')!r}, "
+            f"mode_label={parsed.get('mode_label')!r}"
+        )
         return parsed, None
 
-    bbox_1000 = normalize_bbox_1000(parsed.get("panel_bbox"))
+    raw_bbox = parsed.get("panel_bbox")
+    bbox_1000 = normalize_bbox_1000(raw_bbox)
     if bbox_1000 is None:
+        print(
+            f"[INFO] [{client.service_slug}] live SEM box bbox 거부: "
+            f"reason={describe_bbox_reject(raw_bbox)}, raw={raw_bbox!r}"
+        )
         return parsed, None
     return parsed, bbox_1000_to_pixels(bbox_1000, width, height)
 

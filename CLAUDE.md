@@ -243,6 +243,14 @@ VLM calls route through a Flask proxy at the company server, which provides unif
 - **Registered services**: mai-ui (8002), paddleocr-vl-1.5 (8004), qwen3.8-27b (8006) are enabled and served; mai-ui-2b (8007) is registered `enabled=False` (A/B bench only). **ui-venus / ui-tars / got-ocr are gone as of 2026-09-03** — weights deleted from the server, so their registry entries, route stubs, deploy env files and start scripts were all removed on both server and client. A call to those slugs now fails at slug resolution (`get_service_by_slug` returns `None`), not at the proxy. Reviving one needs the checkpoint re-imported first; git history is the restore path (the route stub is a 13-line `service_template` copy).
 - **Health endpoint**: `GET /api/vlm_serve/health`.
 - **Proxy URL pattern**: `{flask_base}/api/vlm_serve/{service_slug}/v1/chat/completions`.
+- **서버측 문서는 별도 저장소로 나갔다** (2026-09-04): `docs/setup_vlms/` 12편은 `../llm_serving/docs/`
+  에 있다 (기동 절차, 용량 산정, knob 개념, prefill/decode·TTFT·멀티유저). **`deploy_vlms/` 와
+  `flask_api/` 는 여기 그대로 남는다** - `web_main.py` 가 `flask_api` 를 import 하고 GPU 서버가 이
+  체크아웃을 배포하기 때문이다. 따라서 두 사본이 갈릴 수 있다: **여기가 라이브고 `llm_serving` 은
+  분리를 준비하는 자리다.** 서빙 코드를 고치면 어느 쪽인지 밝힐 것.
+  참고: `test/flask_api/` 의 서버측 3파일 중 `test_vlm_serve.py` 는 2026-09-03 모델 제거 이후
+  기대값이 낡아 실패한다(`ui-venus`/`ui-tars`/`got-ocr` 를 아직 기대). 고친 판이 `llm_serving/tests/`
+  에 있다.
 
 ### `flask_api/model_upload/` — 모델 가중치 청크 업로드 (2026-08-22)
 

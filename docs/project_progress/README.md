@@ -65,5 +65,5 @@ PREVIEW=1 uv run python docs/project_progress/build_slides_pptx.py
 
 - 본문은 한국어 **경어체**로 작성하고 모델명·CV 기법·env·경로 등 기술 용어는 영문을 병기합니다.
 - **standalone 제출용**입니다: 본문에는 저장소 내부 근거 경로를 넣지 않습니다(수치는 임의 추정 금지,
-  근거는 저장소 문서 `docs/setup_vlms/`, `poc/workflow_2/docs/`, `poc/workflow_3/` 에서 확인).
+  근거는 저장소 문서 `../../llm_serving/docs/`(구 `docs/setup_vlms/`), `poc/workflow_2/docs/`, `poc/workflow_3/` 에서 확인).
 - 정확도 수치는 **벤치(golden set) 기준**임을 명시하고 오피스 실데이터 검증 대기 항목과 구분합니다.

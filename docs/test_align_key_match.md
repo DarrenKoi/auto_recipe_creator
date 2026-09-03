@@ -200,6 +200,6 @@ CLI 인자 없음 (프로젝트 컨벤션). 출력 디렉토리 경로는 stdout
 ## 참고 문서
 
 - `docs/search_align_key.md` — 알고리즘 설계, 운영 결정사항 (정본).
-- `docs/setup_vlms/05-resource-comparison-vs-kimi-k2.md` — VLM 리소스 비교
+- `../llm_serving/docs/05-resource-comparison-vs-kimi-k2.md` — VLM 리소스 비교 (2026-09-04 llm_serving 으로 이관)
   (본 테스트와 직접 관련 없으나 같은 워크스트림).
 - `CLAUDE.md` — 프로젝트 코딩 컨벤션 (Korean docstrings, no argparse, etc.)

@@ -38,28 +38,22 @@ DEFAULT_COMPANY_LLM_BASE_URL = "http://common.llm.skhynix.com/v1"
 
 KIMI_K2_6_MODEL_NAME = "Kimi-K2.6"
 GLM_5_2_MODEL_NAME = "GLM-5.2"
-UI_VENUS_MODEL_NAME = "ui-venus-1.5-8b"
 MAI_UI_MODEL_NAME = "mai-ui-8b"
 MAI_UI_2B_MODEL_NAME = "mai-ui-2b"
 QWEN3_8_27B_MODEL_NAME = "qwen3.8-27b"
-UI_TARS_MODEL_NAME = "ui-tars-1.5-7b"
 PADDLEOCR_VL_1_5_MODEL_NAME = "paddleocr-vl-1.5"
-GOT_OCR_MODEL_NAME = "got-ocr-2.0-hf"
 
 KIMI_K2_6_API_URL = DEFAULT_COMPANY_LLM_BASE_URL
 GLM_5_2_API_URL = DEFAULT_COMPANY_LLM_BASE_URL
-UI_VENUS_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/ui-venus"
 MAI_UI_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/mai-ui"
 MAI_UI_2B_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/mai-ui-2b"
 QWEN3_8_27B_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/qwen3.8-27b"
-UI_TARS_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/ui-tars"
 PADDLEOCR_VL_1_5_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/paddleocr-vl-1.5"
-GOT_OCR_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/got-ocr"
 
 DEFAULT_SCREEN_ANALYSIS_SERVICE = "mai-ui"
-DEFAULT_SCREEN_ANALYSIS_MODEL_NAME = UI_VENUS_MODEL_NAME
+DEFAULT_SCREEN_ANALYSIS_MODEL_NAME = MAI_UI_MODEL_NAME
 DEFAULT_MAIN_TABS_SERVICE = "mai-ui"
-DEFAULT_MAIN_TABS_MODEL_NAME = UI_VENUS_MODEL_NAME
+DEFAULT_MAIN_TABS_MODEL_NAME = MAI_UI_MODEL_NAME
 DEFAULT_OCR_SERVICE = "paddleocr-vl-1.5"
 DEFAULT_OCR_MODEL_NAME = PADDLEOCR_VL_1_5_MODEL_NAME
 
@@ -81,12 +75,6 @@ ALL_VLM_SERVICES: list[VLMServiceEntry] = [
         connection_mode="direct",
     ),
     VLMServiceEntry(
-        "ui-venus",
-        "UI-Venus-1.5-8B",
-        UI_VENUS_MODEL_NAME,
-        UI_VENUS_API_URL,
-    ),
-    VLMServiceEntry(
         "mai-ui",
         "MAI-UI-8B",
         MAI_UI_MODEL_NAME,
@@ -101,22 +89,10 @@ ALL_VLM_SERVICES: list[VLMServiceEntry] = [
         MAI_UI_2B_API_URL,
     ),
     VLMServiceEntry(
-        "ui-tars",
-        "UI-TARS-1.5-7B",
-        UI_TARS_MODEL_NAME,
-        UI_TARS_API_URL,
-    ),
-    VLMServiceEntry(
         "paddleocr-vl-1.5",
         "PaddleOCR-VL-1.5",
         PADDLEOCR_VL_1_5_MODEL_NAME,
         PADDLEOCR_VL_1_5_API_URL,
-    ),
-    VLMServiceEntry(
-        "got-ocr",
-        "GOT-OCR-2.0-hf",
-        GOT_OCR_MODEL_NAME,
-        GOT_OCR_API_URL,
     ),
     # 범용 추론/멀티모달 (GPU 1 단독, 262k 컨텍스트). grounding/OCR 기본값이 아니다 -
     # 명시적으로 이 slug 을 고른 호출만 여기로 간다.

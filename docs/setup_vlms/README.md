@@ -1,5 +1,9 @@
 # VLM Deployment Guide
 
+> [2026-09-03] ui-venus / ui-tars / got-ocr 은 가중치와 기동 스크립트를 모두 삭제했다.
+> 아래 그 세 모델 관련 절차는 역사 기록이며, 실행하면 파일이 없다.
+> 현재 서빙은 mai-ui / paddleocr-vl-1.5 / qwen3.8-27b 셋뿐이다.
+
 `docs/setup_vlms/` is now the canonical home for installation, runtime tuning, model-specific special settings, and repo integration for the GPU serving stack.
 
 This folder covers:

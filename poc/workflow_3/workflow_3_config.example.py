@@ -173,7 +173,8 @@ ENGINEER_DONE_DETECT = None  # 완료 신호(창 닫힘/분자 증가/커서 2�
 # ----------------------------------------------------------------------------
 # 2단계 로케이터의 coarse>fine 서비스 조합(route_slug, 모델명 아님).
 # None = 코드 기본값 사용(현재 "mai-ui>mai-ui", vlm/ui_venus_mai_locator.py 의 DEFAULT_*).
-# 옛 조합으로 임시 복귀: "ui-venus>mai-ui". 상시 기본을 바꾸려면 코드 상수를 고친다.
+# A/B 후보로 임시 교체: "mai-ui-2b>mai-ui". 상시 기본을 바꾸려면 코드 상수를 고친다.
+# (ui-venus 는 2026-09-03 에 가중치 삭제 - 조합에 쓸 수 없다.)
 #
 # env 이름은 VLM_LOCATOR_COMBO (ALIGN_FAIL_* 아님 - rcs/ 단독 스크립트도 같은 스위치를
 # 쓴다). config.py 의 Workflow3Settings.locator_combo 로 미러링되어 모니터 시작 로그에

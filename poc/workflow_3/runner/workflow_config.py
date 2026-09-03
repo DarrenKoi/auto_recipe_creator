@@ -10,9 +10,9 @@ class WorkflowSettings:
     """워크플로 공통 설정."""
 
     verify_service: str = "paddleocr-vl-1.5"
-    # 2026-08-11: grounding 은 mai-ui 단일 체제. ui-venus 는 GPU 서버에서 기동하지 않고
-    # Flask registry 에서도 enabled=False 이므로, 폴백에 남겨두면 404 왕복만 한 번 더 한다.
-    # 되살리려면 deploy_vlms 기동 + flask_api/vlm_serve/config.py enabled=True 가 함께 필요.
+    # 2026-08-11: grounding 은 mai-ui 단일 체제라 폴백을 비웠다(남겨두면 404 왕복만 는다).
+    # 2026-09-03: ui-venus/ui-tars/got-ocr 은 가중치까지 삭제하고 Flask registry 에서도
+    # 뺐다 - 폴백 후보로 되돌리려면 체크포인트 재반입이 먼저다.
     service_fallback_order: tuple[str, ...] = ("mai-ui",)
     total_retry_budget: int = 10
     settle_max_wait_sec: float = 3.0

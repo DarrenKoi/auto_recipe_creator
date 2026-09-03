@@ -87,14 +87,15 @@ LOG_NAME = "bench_tool_window_reader"
 COMPONENT_NAME = LOG_NAME
 DEBUG_ARTIFACT_DIR = DEBUG_IMAGE_DIR / "bench_tool_window_reader"
 
+# 2026-09-03: bench_tool_locator 와 같은 결함이 여기 남아 있었다 - production 은
+# 2026-08-07 부터 mai-ui>mai-ui 인데 PRODUCTION_COMBO 가 ui-venus>mai-ui 라
+# `is_production` 이 모든 행에서 False 였고, ui-venus 는 가중치까지 삭제돼
+# 기본 조합 4개 중 3개가 404 만 쌓는다. **기본값에는 실제로 서빙 중인 것만 둔다.**
 DEFAULT_COMBOS = [
-    ("ui-venus", "ui-venus"),
-    ("mai-ui", "mai-ui"),
-    ("ui-venus", "mai-ui"),  # 현재 production 설정
-    ("mai-ui", "ui-venus"),
+    ("mai-ui", "mai-ui"),  # 현재 production 설정 (8B 양단)
 ]
-PRODUCTION_COMBO = ("ui-venus", "mai-ui")
-CURSOR_MODELS = ["ui-venus", "mai-ui"]
+PRODUCTION_COMBO = ("mai-ui", "mai-ui")
+CURSOR_MODELS = ["mai-ui"]
 
 DEFAULT_TARGET_LABELS = ["Stop", "Queue", "PM"]
 

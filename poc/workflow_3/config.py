@@ -361,7 +361,8 @@ class Workflow3Settings(WorkflowSettings):
 
     # --- VLM 2단계 로케이터 조합 (로그인 / List 탭 / tool 선택 / PM 버튼 공통) ---
     # "coarse>fine" route_slug 조합. 빈 문자열 = 코드 기본값(현재 mai-ui>mai-ui,
-    # vlm/ui_venus_mai_locator.py 의 DEFAULT_* 상수). 옛 조합 임시 복귀 예: "ui-venus>mai-ui".
+    # vlm/ui_venus_mai_locator.py 의 DEFAULT_* 상수). A/B 교체 예: "mai-ui-2b>mai-ui".
+    # ui-venus 는 2026-09-03 에 가중치를 삭제해서 조합에 쓸 수 없다.
     # env 이름은 ALIGN_FAIL_* 가 아니라 VLM_LOCATOR_COMBO 다
     # (모니터 루프뿐 아니라 rcs/ 단독 스크립트도 같은 스위치를 쓰기 때문).
     #

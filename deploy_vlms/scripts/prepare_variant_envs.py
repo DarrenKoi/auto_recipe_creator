@@ -2,8 +2,8 @@
 
 사용법:
   python prepare_variant_envs.py
-  python prepare_variant_envs.py ui-venus
-  python prepare_variant_envs.py ui-venus-30b
+  python prepare_variant_envs.py mai-ui
+  python prepare_variant_envs.py mai-ui-30b
 
 기본 동작:
   - config/common.env가 없으면 기본값으로 생성한다.
@@ -71,45 +71,6 @@ class ModelVariant:
 
 MODEL_VARIANTS = [
     ModelVariant(
-        instance="ui-venus-2b",
-        family="ui-venus",
-        size="2b",
-        model_dir_placeholder="SET_ME_UI_VENUS_2B",
-        served_model_name="ui-venus-2b",
-        port="8102",
-        gpu_id="0",
-        tensor_parallel_size="1",
-        gpu_memory_utilization="0.65",
-        max_model_len="4096",
-        max_num_seqs="16",
-    ),
-    ModelVariant(
-        instance="ui-venus-7b",
-        family="ui-venus",
-        size="7b",
-        model_dir_placeholder="SET_ME_UI_VENUS_7B",
-        served_model_name="ui-venus-7b",
-        port="8107",
-        gpu_id="1",
-        tensor_parallel_size="1",
-        gpu_memory_utilization="0.75",
-        max_model_len="8192",
-        max_num_seqs="8",
-    ),
-    ModelVariant(
-        instance="ui-venus-30b",
-        family="ui-venus",
-        size="30b",
-        model_dir_placeholder="SET_ME_UI_VENUS_30B",
-        served_model_name="ui-venus-30b",
-        port="8130",
-        gpu_id="0,1",
-        tensor_parallel_size="2",
-        gpu_memory_utilization="0.88",
-        max_model_len="8192",
-        max_num_seqs="4",
-    ),
-    ModelVariant(
         instance="mai-ui-2b",
         family="mai-ui",
         size="2b",
@@ -142,45 +103,6 @@ MODEL_VARIANTS = [
         model_dir_placeholder="SET_ME_MAI_UI_30B",
         served_model_name="mai-ui-30b",
         port="8230",
-        gpu_id="0,1",
-        tensor_parallel_size="2",
-        gpu_memory_utilization="0.88",
-        max_model_len="8192",
-        max_num_seqs="4",
-    ),
-    ModelVariant(
-        instance="ui-tars-2b",
-        family="ui-tars",
-        size="2b",
-        model_dir_placeholder="SET_ME_UI_TARS_2B",
-        served_model_name="ui-tars-2b",
-        port="8302",
-        gpu_id="0",
-        tensor_parallel_size="1",
-        gpu_memory_utilization="0.65",
-        max_model_len="4096",
-        max_num_seqs="16",
-    ),
-    ModelVariant(
-        instance="ui-tars-7b",
-        family="ui-tars",
-        size="7b",
-        model_dir_placeholder="SET_ME_UI_TARS_7B",
-        served_model_name="ui-tars-7b",
-        port="8307",
-        gpu_id="1",
-        tensor_parallel_size="1",
-        gpu_memory_utilization="0.75",
-        max_model_len="8192",
-        max_num_seqs="8",
-    ),
-    ModelVariant(
-        instance="ui-tars-30b",
-        family="ui-tars",
-        size="30b",
-        model_dir_placeholder="SET_ME_UI_TARS_30B",
-        served_model_name="ui-tars-30b",
-        port="8330",
         gpu_id="0,1",
         tensor_parallel_size="2",
         gpu_memory_utilization="0.88",

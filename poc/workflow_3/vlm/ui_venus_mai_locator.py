@@ -5,7 +5,7 @@ env 로 런타임에 덮어쓸 수 있다(형식은 bench_tool_locator 의 BENCH
 "coarse>fine"). env 는 어디까지나 임시 오버라이드고, 상시 동작은 상수가 정한다.
 
     (env 미설정)                        # DEFAULT_* 상수 = mai-ui>mai-ui
-    VLM_LOCATOR_COMBO="ui-venus>mai-ui" # 옛 production 조합으로 임시 복귀
+    VLM_LOCATOR_COMBO="mai-ui-2b>mai-ui" # A/B 후보 조합으로 임시 교체
 """
 
 import os
@@ -53,8 +53,9 @@ from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
 #   2026-08-07: coarse 를 ui-venus -> mai-ui 로 전환(mai-ui>mai-ui A/B).
 #               tool selection 벤치에서 mai-ui__mai-ui 가 좋았고, 로그인/List 탭/
 #               tool 선택/PM 버튼 전부 같은 조합으로 검증하기로 함.
-#   롤백:       DEFAULT_COARSE_SERVICE = "ui-venus"  (원래 production 값)
-#               또는 git revert 로 이 커밋만 되돌리기.
+#   2026-09-03: ui-venus 가중치를 서버에서 삭제했다 - 그쪽으로 되돌리는 롤백은
+#               더 이상 없다(체크포인트 재반입이 선행돼야 한다). 파일 이름과
+#               내부 artifact 접두사에 남은 ui_venus 는 역사적 명칭일 뿐이다.
 # ---------------------------------------------------------------------------
 DEFAULT_COARSE_SERVICE = "mai-ui"     # coarse 단계 기본 서비스(route_slug, 모델명 아님).
 DEFAULT_REFINE_SERVICE = "mai-ui"     # fine 단계 기본 서비스(route_slug).

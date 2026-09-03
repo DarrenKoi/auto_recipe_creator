@@ -40,6 +40,8 @@ It replaces the older fragmented setup notes and also absorbs the vLLM runtime a
 4. [`04-operations-integration-and-benchmarking.md`](./04-operations-integration-and-benchmarking.md)
 5. [`06-recent-small-vlm-hf-survey-2026-06-25.md`](./06-recent-small-vlm-hf-survey-2026-06-25.md)
 6. [`07-h100-downgrade-capacity.md`](./07-h100-downgrade-capacity.md)
+7. [`08-serving-knobs-concepts.md`](./08-serving-knobs-concepts.md) — context window / KV cache / BF16·FP8 / prefix cache 개념 정리
+8. [`09-inference-phases-and-capacity.md`](./09-inference-phases-and-capacity.md) — prefill / decode / TTFT / 멀티유저 용량 산정
 
 ## Non-Negotiable Rules
 

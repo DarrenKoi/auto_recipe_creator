@@ -211,7 +211,10 @@ uv run python -m test.vlm_input_control.integration_test
 
 ## Code Conventions
 
-- **Korean docstrings** throughout all modules.
+- **Korean docstrings** throughout all modules. **예외: `flask_api/vlm_serve/*.py` 의
+  route-template stub 들은 영어 한 줄 docstring 을 유지한다** (기존 5개 파일의 선례,
+  사용자 판정 2026-09-03). 새 서비스를 추가할 때도 형제 파일과 같은 영어 한 줄로 맞출 것 -
+  이 패키지만 섞이면 일관성이 더 나빠진다. 그 밖의 모든 모듈은 한국어 docstring 이다.
 - **No `__future__` imports by default**: do not add `from __future__ import annotations` (or any `__future__` import) unless explicitly asked.
 - **Print-based logging**: `[INFO]`, `[ERROR]`, `[WARNING]` prefixes (never the `logging` module). Exception: `poc/workflow_3/logger.py` uses Python `logging` with `RotatingFileHandler` for the audit trail (`poc/workflow_3/logs/vlm_calls.log` for VLM calls, `work2.log` for general events). Avoid em-dash (U+2014) inside `print()` strings — the office console is cp949 and cannot encode it (docstrings are fine).
 - **Absolute imports** within `poc/`: use `from poc.workflow_3.xxx import ...`; legacy packages import from workflow_3, never the reverse.

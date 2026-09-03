@@ -3,7 +3,7 @@
 GPU 배분 (H200 140GB × 2), 2026-09-03 재배치:
   GPU 0: mai-ui (8B, 8002, u=0.45) + paddleocr-vl-1.5 (0.9B, 8004, u=0.20)
          -> 둘 다 workflow_3 전용 소형 모델. 합쳐 0.65, 49GiB 여유.
-  GPU 1: qwen3.8-27b (27B FP8, 8006, u=0.90) 단독
+  GPU 1: qwen3.8-27b (27B BF16, 8006, u=0.90) 단독
          -> 범용 추론/멀티모달. 27B dense 라 대역폭 바운드, 카드를 독점해야 의미가 있다.
 
 시작 순서가 곧 이 리스트 순서다. 큰 모델을 먼저 띄우는 이유는 GPU 가 아니라
@@ -38,7 +38,7 @@ STARTUP_POLL_SEC = 2.0
 # 고정 sleep 이 아닌 이유는 GPU 가 아니라 **호스트 RAM 16GB** 때문이다 - 가중치 로딩과
 # torch.compile/CUDA graph 캡처가 각 모델의 RSS 최대 구간인데, 고정 10초는 27B 로딩이
 # 끝나기 한참 전이라 세 모델의 최대 구간이 겹친다. 겹치면 OOM killer 가 고른 하나가 죽는다.
-READY_TIMEOUT_SEC = 900.0  # 27B FP8 첫 기동(컴파일 캐시 없음)은 수 분 걸릴 수 있다
+READY_TIMEOUT_SEC = 900.0  # 27B BF16(~48GiB) 첫 기동(컴파일 캐시 없음)은 수 분 걸릴 수 있다
 READY_POLL_SEC = 5.0
 
 VLLM_MODELS = [

@@ -317,9 +317,9 @@
   <!-- 3. VLM 인프라 -->
   <section>
     <div class="sec-head"><span class="sec-num">04</span><h2>VLM 인프라 — 자사 HCP 소형 모델 자체 운영</h2></div>
-    <p class="lead">화면 이해(VLM)와 문자 인식(OCR)에 필요한 능력을 소형 오픈소스 모델로 분담해 자사 HCP에 직접 배포했습니다. 대규모 GPU가 필요한 단일 거대 모델 없이 사내에서 자체 구동합니다.</p>
+    <p class="lead">화면 이해(VLM)와 문자 인식(OCR)에 필요한 능력을 소형 오픈소스 모델로 분담해 자사 HCP에 직접 배포했습니다. 대규모 GPU가 필요한 단일 거대 모델 없이 사내에서 자체 구동합니다. 이후 실제 업무 화면 벤치로 모델을 비교해 <b>이긴 2종만 상시 운영</b>하도록 정리했습니다. 모델 교체를 감(感)이 아니라 측정으로 결정하는 체계도 함께 확보했습니다.</p>
     <div class="grid3">
-      <div class="card stat"><div class="big">5<em>종</em></div><div class="cap">설치 모델<br>VLM 3 + OCR 2</div></div>
+      <div class="card stat"><div class="big">5<em>→</em>2<em>종</em></div><div class="cap">설치·비교 5종 중<br>벤치로 이긴 2종만 상시 운영</div></div>
       <div class="card stat"><div class="big">1~2<em>장</em></div><div class="cap">GPU<br>소형 모델 자체 구동</div></div>
       <div class="card stat"><div class="big"><em>HCP</em></div><div class="cap">사내 자체 배포·운영<br>기반기술센터 서비스</div></div>
     </div>
@@ -329,15 +329,15 @@
   <!-- 4. 2-stage locator -->
   <section>
     <div class="sec-head"><span class="sec-num">05</span><h2>2-stage VLM 로케이터 (GUI 자동화 핵심)</h2></div>
-    <p class="lead">RCS는 화면 요소가 표준 컴포넌트가 아니라 일반 UI 자동화 도구로 인식되지 않습니다. "대략 위치 → 정밀 좌표 → 확인"을 서로 다른 모델로 분리해 안정적으로 클릭합니다.</p>
+    <p class="lead">RCS는 화면 요소가 표준 컴포넌트가 아니라 일반 UI 자동화 도구로 인식되지 않습니다. "대략 위치 → 정밀 좌표 → 확인"을 단계로 나눠 안정적으로 클릭합니다.</p>
     <div class="pipe">
       <div class="pstep"><span class="pn">1</span><div class="pt">Capture</div><div class="pm">화면 캡처</div><div class="pd">전체 화면 캡처</div></div>
-      <div class="pstep"><span class="pn">2</span><div class="pt">Coarse</div><div class="pm">UI-Venus</div><div class="pd">타겟 UI 대략 위치</div></div>
+      <div class="pstep"><span class="pn">2</span><div class="pt">Coarse</div><div class="pm">MAI-UI</div><div class="pd">타겟 UI 대략 위치</div></div>
       <div class="pstep"><span class="pn">3</span><div class="pt">Crop &amp; Zoom</div><div class="pm">영역 확대</div><div class="pd">디테일 보존 확대</div></div>
       <div class="pstep"><span class="pn">4</span><div class="pt">Fine</div><div class="pm">MAI-UI</div><div class="pd">픽셀 단위 클릭점</div></div>
       <div class="pstep"><span class="pn">5</span><div class="pt">Verify</div><div class="pm">PaddleOCR-VL</div><div class="pd">입력값 OCR 재확인</div></div>
     </div>
-    <p class="lead" style="margin-top:16px">→ 클릭·입력 후 화면을 다시 읽어 의도한 값이 들어갔는지 확인하는 <b>closed-loop</b>로 무인 신뢰도를 확보하고, 화면 배율 차이도 보정해 정확한 좌표를 산출합니다. 이 방식으로 <b>버튼 클릭·키보드 타이핑 정확도 90% 이상</b>을 확보했습니다.</p>
+    <p class="lead" style="margin-top:16px">→ 클릭·입력 후 화면을 다시 읽어 의도한 값이 들어갔는지 확인하는 <b>closed-loop</b>로 무인 신뢰도를 확보하고, 화면 배율 차이도 보정해 정확한 좌표를 산출합니다. 이 방식으로 <b>버튼 클릭·키보드 타이핑 정확도 90% 이상</b>을 확보했습니다. 초기에는 대략 단계, 정밀 단계에 서로 다른 모델을 썼습니다. 실제 화면 벤치에서는 <b>양단 모두 MAI-UI가 우세</b>해 2026-08 기준 동일 모델로 통일했습니다. 교체는 코드 수정 없이 되돌릴 수 있습니다.</p>
   </section>
 
   <!-- 5. real-time loop -->
@@ -355,10 +355,14 @@
     <div class="loop">
       <div class="card node"><h4>알람 감지</h4><p>10초마다 알람 확인 · Align Fail(9006)만 대응</p></div>
       <div class="card node"><h4>RCS 실행 → 장비 모니터 접속</h4><p>대상 장비 화면에 자동 진입</p></div>
-      <div class="card node"><h4>CV 자동 정렬 보정</h4><p>성공 사례 종합 기준으로 정렬 위치 재조정</p></div>
+      <div class="card node"><h4>CV 정렬 보정 (반자동)</h4><p>성공 사례 종합 기준으로 위치 재조정까지 자동 · 최종 확정(OK)은 엔지니어</p></div>
       <div class="card node fail"><h4>실패 시 담당자 알림</h4><p>Engineer에게 Cube 알람 발송</p></div>
       <div class="card node"><h4>상시 화면 녹화</h4><p>엔지니어 수동 조작까지 프레임 보존</p></div>
       <div class="card node"><h4>자동 종료 → 다음 알람 대기</h4><p>뒷정리 보장 후 루프 복귀</p></div>
+    </div>
+    <div class="card" style="border-left:4px solid var(--navy);display:flex;align-items:center;gap:14px;padding:14px 18px;margin-top:12px">
+      <span style="font-weight:800;color:var(--navy);white-space:nowrap">▤ 기록</span>
+      <span><b>Recovery Episode</b> — 알람 1건이 <b>몇 번 시도됐는지, 왜 회복됐다고(또는 못 했다고) 판단했는지</b>를 한 줄로 남깁니다. 판정 규칙은 실행 루프와 분리된 별도 계층(workflow_4)에 두어 장비 없이도 검증할 수 있습니다. 같은 계층이 진행 상황을 그림+표로 실시간에 가깝게 보여줍니다.</span>
     </div>
     <div class="caveat" style="margin-top:18px">안전 장치 — 보정 실행 후 <b>이후 측정을 계속 모니터링</b>하다가 <b>오측이 감지되면 즉시 측정을 멈추고</b> 담당 Engineer에게 <b>Cube 알람</b>을 보내 사람이 확인·개입합니다.</div>
   </section>
@@ -387,6 +391,7 @@
         <span><i style="background:var(--accent)"></i>성공 사례 종합 · To-Be</span>
         <span style="font-family:var(--mono)">후보 포함률 +0.442 (약 +102%) · 1순위 +0.446</span>
       </div>
+      <div class="caveat" style="background:#f4f7fc;border-color:#cdd8e8;color:var(--navy)">추가 반영 — 저배율(OM), 고배율(SEM)에 <b>서로 다른 심판을 쓰는 재순위</b>도 A/B로 검증해 반영했습니다(고배율 1순위 적중률 약 <b>+0.07</b>). 순위 교정 축은 여기서 소진됐습니다. 남은 개선 여지의 약 <b>87%</b>는 <b>정렬 키 재등록</b>의 몫으로 확인됐습니다. 알고리즘이 손댈 부분은 아니었습니다.</div>
       <div class="caveat">※ 위 수치는 <b>오프라인 평가(다운로드 샘플) 기준</b>이며, 오피스 실데이터 현장 검증은 진행 예정입니다(실제 운영은 성공 사례를 더 많이 요구하는 보수적 기준 적용).</div>
     </div>
   </section>
@@ -400,32 +405,40 @@
         <div class="si"><span class="dot ok"></span>GUI 자동화 + CCTV PoC<span class="st">검증·동결</span></div>
         <div class="si"><span class="dot ok"></span>CV 정렬 정확도 평가<span class="st">활성</span></div>
         <div class="si"><span class="dot ok"></span>실시간 대응 루프·보정·녹화·알림<span class="st">구현 완료</span></div>
+        <div class="si"><span class="dot go"></span>실장비 보정 개통(반자동)<span class="st">개통 · 첫 실알람 완주 대기</span></div>
         <div class="si"><span class="dot ok"></span>안전 장치 (오측 감지→중단→Cube 알람)<span class="st">구현 완료</span></div>
+        <div class="si"><span class="dot ok"></span>실패 회복 기록·시각화 계층(workflow_4)<span class="st">구현 완료 · 첫 기록 대기</span></div>
+        <div class="si"><span class="dot ok"></span>지식 자산화(조작 녹화 → 절차서 추출)<span class="st">녹화 확보 · 추출 미실행</span></div>
+        <div class="si"><span class="dot go"></span>정렬 탐색 엔진 재설계(search-around)<span class="st">구현 완료 · 실장비 미검증</span></div>
         <div class="si"><span class="dot go"></span>각 루프 단계 안정화·고도화<span class="st">진행 중</span></div>
         <div class="si"><span class="dot go"></span>CV 정확도 오피스 실데이터 확정<span class="st">진행 중</span></div>
+        <div class="si"><span class="dot go"></span>엔지니어 PC 배포 방식<span class="st">타당성 검토 완료 · 방식 결정 대기</span></div>
         <div class="si"><span class="dot go"></span>MI 현업 엔지니어 실전 테스트<span class="st">예정</span></div>
       </div>
       <div class="card mile">
-        <div class="mrow"><span class="m">7~8월</span><span class="mt">실전 테스트<small>MI 현업 엔지니어와 현장 검증</small></span><span class="when">2026</span></div>
-        <div class="mrow"><span class="m">9월</span><span class="mt">실전 배치<small>현장 적용 목표</small></span><span class="when">2026</span></div>
+        <div class="mrow"><span class="m">8월</span><span class="mt">실장비 보정 개통(반자동)<small>재조정 자동 · 확정은 엔지니어</small></span><span class="when">완료</span></div>
+        <div class="mrow"><span class="m">9월</span><span class="mt">첫 실알람 완주 · 실전 테스트<small>엔지니어 입회하에 단일 장비 pilot</small></span><span class="when">2026</span></div>
+        <div class="mrow"><span class="m">4Q</span><span class="mt">실전 배치<small>pilot 확인 후 대상 확대</small></span><span class="when">2026</span></div>
         <div class="mrow"><span class="m">2027</span><span class="mt">Recipe Tuning 고도화<small>PoC 기반으로 VLM이 Recipe Tuning을 직접 수행하도록 workflow 구조 확장</small></span><span class="when">차기</span></div>
       </div>
     </div>
     <div class="card statlist" style="margin-top:18px">
       <div class="si" style="font-weight:600;color:var(--navy)">예상 허들 (Risks)<span class="st">대응</span></div>
+      <div class="si"><span class="dot go"></span>개통과 완주는 다름 — 실알람 완주 사례 아직 없음<span class="st">첫 건 엔지니어 입회 관찰</span></div>
       <div class="si"><span class="dot go"></span>정확도 수치가 오프라인 벤치 기준 — 현장과 다를 수 있음<span class="st">오피스 실측 확정 · 보수적 기준</span></div>
       <div class="si"><span class="dot go"></span>성공 이미지 적재 전에는 성공 사례 기반 보정 효과 제한<span class="st">수집·적재 기능 최우선</span></div>
       <div class="si"><span class="dot go"></span>비변별 정렬 키(특히 SEM)는 알고리즘 개선으로 안 풀림<span class="st">우선순위화 · 재등록 협업</span></div>
       <div class="si"><span class="dot go"></span>장비별 조작 방식·점유·PC 환경 편차<span class="st">캘리브레이션(완료) · 합동 평가 확인</span></div>
       <div class="si"><span class="dot go"></span>VLM 서버 재시작 시 재설치 약 3~4시간 — 그동안 자동 대응 중단<span class="st">운영 제약 관리 · 절차 표준화</span></div>
       <div class="si"><span class="dot go"></span>실보정 오동작 시 측정 영향<span class="st">점검 모드 → 단일 장비 pilot → 확대</span></div>
+      <div class="si"><span class="dot go"></span>엔지니어 PC에 개발 도구 없음 — 더블클릭 실행 형태 필요<span class="st">실행 환경 3경로 사내 자원 고정</span></div>
     </div>
     <div class="caveat" style="margin-top:16px">기대 효과 — 대상 <b>28대</b>, 주 평균 약 <b>400건</b>, 1건당 대응 시간 <b>5분 → 1분</b>(4분 단축)으로 주 WAFER 약 <b>100장</b> 추가 측정. 상세는 docx 본문 요약(§5)을 참조하시기 바랍니다.</div>
   </section>
 
   <div class="foot">
     <span>프로젝트 진행 보고서 · 시각 부록 (Visual Appendix)</span>
-    <span>pairs with project_progress_report.docx · source: 00–04 *.md</span>
+    <span>pairs with project_progress_report.docx · source: 00–06 *.md</span>
   </div>
 
 </div>

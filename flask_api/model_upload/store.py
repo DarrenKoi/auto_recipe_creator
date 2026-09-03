@@ -7,11 +7,14 @@ HTTP 를 모른다 - Flask 계층은 이 store 를 감싸기만 한다.
 import hashlib
 import json
 import os
+import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import BinaryIO
 
 READ_BLOCK_BYTES = 1024 * 1024
+
+UPLOAD_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 STATE_SUFFIX = ".json"
 PART_SUFFIX = ".part"
@@ -95,6 +98,19 @@ def _make_upload_id(rel_path: str, sha256: str) -> str:
     return digest[:32]
 
 
+def _safe_upload_id(upload_id: str) -> str:
+    """URL 세그먼트로 들어온 upload_id 가 우리가 발급한 모양인지 확인한다.
+
+    _make_upload_id 는 항상 32자 hex 를 낸다. 검증 없이 경로에 붙이면
+    Flask 기본 컨버터가 허용하는 역슬래시로 Windows 에서 staging 을 벗어난다
+    (DELETE 는 unlink 까지 하므로 임의 파일 삭제가 된다). 경로를 만드는 곳이
+    _state_path/_part_path 둘뿐이라 여기 한 곳에서 막는다.
+    """
+    if not UPLOAD_ID_RE.match(upload_id or ""):
+        raise PathNotAllowed(f"malformed upload_id: {upload_id!r}")
+    return upload_id
+
+
 def _safe_rel_path(dest_root: Path, rel_path: str) -> str:
     """rel_path 를 정규화하고 dest_root 를 벗어나지 않는지 확인한다."""
     cleaned = (rel_path or "").strip().replace("\\", "/")
@@ -136,11 +152,11 @@ class UploadStore:
 
     def _state_path(self, upload_id: str) -> Path:
         """세션 상태 JSON 경로를 반환한다."""
-        return self.staging_root / f"{upload_id}{STATE_SUFFIX}"
+        return self.staging_root / f"{_safe_upload_id(upload_id)}{STATE_SUFFIX}"
 
     def _part_path(self, upload_id: str) -> Path:
         """부분 수신 파일(.part) 경로를 반환한다."""
-        return self.staging_root / f"{upload_id}{PART_SUFFIX}"
+        return self.staging_root / f"{_safe_upload_id(upload_id)}{PART_SUFFIX}"
 
     def _write_state(self, session: UploadSession) -> None:
         """세션 상태를 디스크에 기록한다."""

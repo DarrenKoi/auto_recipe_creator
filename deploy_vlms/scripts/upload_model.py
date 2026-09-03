@@ -327,7 +327,9 @@ class HttpTransport:
 # ── 실행 진입점 ────────────────────────────────────────────────────────
 
 DEFAULT_CHUNK_MB = 32
-DEFAULT_MAX_RETRIES = 5
+# 완료 재해싱이 프록시 타임아웃보다 오래 걸릴 때 폴링 창이 되기도 한다.
+# 5회면 백오프 합계가 ~31s 뿐이라 수십 GB 샤드에서 모자란다(백오프 상한 30s).
+DEFAULT_MAX_RETRIES = 12
 
 
 def _human_bytes(value: float) -> str:

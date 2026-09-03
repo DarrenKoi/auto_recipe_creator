@@ -18,6 +18,14 @@ from .store import (
 )
 
 
+def _int_field(value: object, name: str) -> int:
+    """정수 필드를 읽는다 - 쓰레기 입력은 500 이 아니라 400 으로 돌려준다."""
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        raise UploadError(f"{name} must be an integer, got {value!r}")
+
+
 def _session_payload(session: UploadSession) -> dict[str, object]:
     """세션 상태를 JSON 응답 형태로 만든다."""
     return {
@@ -81,9 +89,9 @@ def create_model_upload_blueprint(
         body = request.get_json(silent=True) or {}
         session = store.begin(
             rel_path=str(body.get("rel_path", "")),
-            size=int(body.get("size", 0)),
+            size=_int_field(body.get("size", 0), "size"),
             sha256=str(body.get("sha256", "")),
-            chunk_size=int(body.get("chunk_size", 0)),
+            chunk_size=_int_field(body.get("chunk_size", 0), "chunk_size"),
         )
         return jsonify(_session_payload(session))
 
@@ -114,7 +122,9 @@ def create_model_upload_blueprint(
 
         session = store.append_chunk(
             upload_id=upload_id,
-            offset=int(request.headers.get("X-Upload-Offset", "-1")),
+            offset=_int_field(
+                request.headers.get("X-Upload-Offset", "-1"), "X-Upload-Offset"
+            ),
             stream=request.stream,
             length=int(length),
             chunk_sha256=request.headers.get("X-Chunk-Sha256", ""),

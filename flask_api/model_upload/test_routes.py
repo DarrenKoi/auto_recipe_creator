@@ -129,11 +129,27 @@ def test_path_escaping_root_returns_400(client):
 
 
 def test_unknown_upload_id_returns_404(client):
-    """존재하지 않는 세션 조회는 404 다."""
-    response = client.get("/api/model_upload/sessions/deadbeef")
+    """모양은 맞지만 존재하지 않는 세션 조회는 404 다."""
+    response = client.get("/api/model_upload/sessions/" + "de" * 16)
 
     assert response.status_code == 404
     assert response.get_json()["code"] == "UploadNotFound"
+
+
+def test_malformed_upload_id_is_rejected_before_path_construction(client):
+    """우리가 발급하지 않은 모양의 upload_id 는 경로가 되기 전에 막힌다.
+
+    Flask 기본 컨버터는 역슬래시를 허용하므로, 검증이 없으면 Windows 에서
+    staging 밖의 파일을 가리킬 수 있다(DELETE 는 unlink 까지 한다).
+    """
+    for bad in ("deadbeef", "..%5C..%5Cx", "DE" * 16, "z" * 32):
+        response = client.get("/api/model_upload/sessions/" + bad)
+
+        assert response.status_code == 400, bad
+        assert response.get_json()["code"] == "PathNotAllowed", bad
+
+    response = client.delete("/api/model_upload/sessions/" + "..%5C..%5Cevil")
+    assert response.status_code == 400
 
 
 def test_chunk_larger_than_limit_returns_413(tmp_path):
@@ -193,3 +209,20 @@ def test_chunk_without_content_length_returns_411(client):
     )
 
     assert response.status_code == 411
+
+
+def test_non_integer_fields_return_400_not_500(client, tmp_path):
+    """쓰레기 정수 필드는 500 이 아니라 400 으로 돌아온다."""
+    response = client.post(
+        "/api/model_upload/sessions",
+        json={"rel_path": "a.bin", "size": "abc", "sha256": "0" * 64},
+    )
+    assert response.status_code == 400
+    assert response.get_json()["code"] == "UploadError"
+
+    response = client.put(
+        "/api/model_upload/sessions/" + "de" * 16 + "/chunk",
+        data=b"x",
+        headers={"X-Upload-Offset": "not-a-number", "X-Chunk-Sha256": "0" * 64},
+    )
+    assert response.status_code == 400

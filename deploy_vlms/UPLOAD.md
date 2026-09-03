@@ -21,7 +21,7 @@ uv run python index.py     # 또는 기존 WSGI 기동 방식 그대로
 
 | env | 기본값 | 뜻 |
 |---|---|---|
-| `MODEL_UPLOAD_ROOT` | `ALLOWED_MODEL_ROOT` 와 같은 경로 | 업로드 목적지 루트. **이 밖으로는 절대 쓰지 않는다** |
+| `MODEL_UPLOAD_ROOT` | `ALLOWED_MODEL_ROOT` env, 없으면 하드코딩된 같은 경로 | 업로드 목적지 루트. **이 밖으로는 절대 쓰지 않는다** |
 | `MODEL_UPLOAD_TOKEN` | (빈값 = 인증 없음) | 설정하면 모든 업로드 요청에 `X-Upload-Token` 필요 |
 | `MODEL_UPLOAD_MAX_CHUNK_MB` | 64 | 청크 하나의 상한 |
 | `MODEL_UPLOAD_STAGING_DIR` | `<root>/.upload_staging` | 받는 중인 `.part` 위치. **반드시 root 와 같은 파일시스템** |
@@ -83,7 +83,7 @@ uv run python deploy_vlms/scripts/upload_model.py
 | `MODEL_UPLOAD_DEST` | 소스 폴더명 | 서버 루트 아래 목적지 경로 |
 | `MODEL_UPLOAD_TOKEN` | (빈값) | 서버가 요구하면 필수 |
 | `MODEL_UPLOAD_CHUNK_MB` | 32 | 서버 상한보다 크면 자동으로 줄인다 |
-| `MODEL_UPLOAD_MAX_RETRIES` | 5 | 청크 하나당 재시도 한도 (지수 백오프, 최대 30s) |
+| `MODEL_UPLOAD_MAX_RETRIES` | 12 | 청크 하나당 재시도 한도 (지수 백오프, 최대 30s) |
 
 ### 끊겼을 때
 
@@ -99,7 +99,7 @@ uv run python deploy_vlms/scripts/upload_model.py
 | `HTTP 401` | `MODEL_UPLOAD_TOKEN` 불일치 |
 | `HTTP 400 PathNotAllowed` | `MODEL_UPLOAD_DEST` 가 루트를 벗어난다 |
 | `HTTP 422` 반복 | 청크가 계속 손상돼 도착한다. 네트워크 경로를 의심 |
-| `완료 응답을 못 받았습니다` 반복 | `proxy_read_timeout` 이 재해싱 시간보다 짧다. nginx 를 못 고치면 `MAX_RETRIES` 를 올려 폴링 창을 늘린다(5회=~31s, 12회=~3분) |
+| `완료 응답을 못 받았습니다` 반복 | `proxy_read_timeout` 이 재해싱 시간보다 짧다. nginx 를 못 고치면 `MAX_RETRIES` 를 더 올린다(기본 12회=~3분, 백오프 상한 30s) |
 | 완료 시 `ChecksumMismatch` | 청크는 다 통과했는데 조립 결과가 다르다 = 디스크 의심. 서버가 `.part` 를 버리고 0 부터 다시 받는다 |
 
 ### `.upload_staging` 를 손으로 지우지 말 것
@@ -122,6 +122,6 @@ curl -X DELETE -H "X-Upload-Token: <비밀>" \
 전부 Mac 에서 실서버 없이 돈다 (마지막 것만 로컬에 임시 서버를 띄운다).
 
 ```bash
-uv run pytest flask_api/model_upload              # 33 (store / routes / 배선)
-uv run pytest deploy_vlms/scripts                 # 14 (클라이언트 루프 + 실제 HTTP 왕복)
+uv run pytest flask_api/model_upload              # 36 (store / routes / 배선)
+uv run pytest deploy_vlms/scripts                 # 21 (클라이언트 루프 + 실제 HTTP 왕복)
 ```

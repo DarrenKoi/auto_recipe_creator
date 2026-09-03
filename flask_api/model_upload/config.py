@@ -36,8 +36,12 @@ class ModelUploadConfig:
 
 def load_upload_config() -> ModelUploadConfig:
     """환경변수에서 업로드 설정을 읽는다."""
+    # deploy_vlms/config/common.env 의 ALLOWED_MODEL_ROOT 가 서빙 쪽 루트다.
+    # 그것이 바뀌면 업로드 목적지도 따라가야 한다 - 하드코딩 기본값은 마지막 수단.
     dest_root = Path(
-        os.environ.get("MODEL_UPLOAD_ROOT", "").strip() or DEFAULT_DEST_ROOT
+        os.environ.get("MODEL_UPLOAD_ROOT", "").strip()
+        or os.environ.get("ALLOWED_MODEL_ROOT", "").strip()
+        or DEFAULT_DEST_ROOT
     ).expanduser()
 
     staging_override = os.environ.get("MODEL_UPLOAD_STAGING_DIR", "").strip()

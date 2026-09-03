@@ -48,6 +48,8 @@ curl -s http://<서버>:<포트>/api/model_upload/health
 당장 nginx 를 못 고치는 상황에서도 업로드는 끝난다:
 
 - **413 을 만나면 청크를 절반씩 줄인다** (하한 256KB). 왕복이 늘 뿐 실패하지 않는다.
+  알아낸 상한은 **세션 전체로 전파**되므로 파일마다 다시 탐색하지 않는다 - 첫 실행이
+  찍어 주는 값을 `CHUNK_MB` 상수에 박으면 첫 파일의 탐색도 사라진다.
 - **완료 응답이 잘리면(504) 재요청 대신 상태를 먼저 물어본다.** 서버가 이미 끝냈으면
   성공으로 처리한다 - 무작정 `/complete` 를 다시 부르면 같은 재해싱을 반복하게 된다.
 
@@ -56,12 +58,21 @@ curl -s http://<서버>:<포트>/api/model_upload/health
 
 ## 클라이언트 (로컬 PC)
 
+**인자는 `upload_model.py` 상단 상수 블록을 고쳐 쓴다** (셸 env 는 1회성 override).
+
+```python
+BASE_URL = "http://<서버>"   # 이미 채워져 있다
+SRC = r"C:/models/MAI-UI-8B" # 올릴 폴더/파일
+TOKEN = ""                   # 서버가 토큰을 안 쓰면 빈 문자열
+CHUNK_MB = None              # None = 기본값 32
+```
+
 ```bash
-MODEL_UPLOAD_URL=http://<서버>:<포트>      \
-MODEL_UPLOAD_SRC=C:/models/MAI-UI-8B       \
-MODEL_UPLOAD_TOKEN=<공유비밀>              \
 uv run python deploy_vlms/scripts/upload_model.py
 ```
+
+우선순위는 **실제 셸 env > 파일 상수 > 코드 기본값**이고, env 에 밀려 무시된 상수는
+콘솔에 찍힌다. 아래 표의 env 이름은 그 override 용으로 그대로 유효하다.
 
 폴더면 재귀로 전부, 단일 파일이면 그것만 올린다. 숨김 파일/폴더(`.git`, `.cache`)는 건너뛴다.
 
@@ -88,7 +99,7 @@ uv run python deploy_vlms/scripts/upload_model.py
 | `HTTP 401` | `MODEL_UPLOAD_TOKEN` 불일치 |
 | `HTTP 400 PathNotAllowed` | `MODEL_UPLOAD_DEST` 가 루트를 벗어난다 |
 | `HTTP 422` 반복 | 청크가 계속 손상돼 도착한다. 네트워크 경로를 의심 |
-| `완료 응답을 못 받았습니다` 반복 | `proxy_read_timeout` 이 재해싱 시간보다 짧다. nginx 설정을 올린다 |
+| `완료 응답을 못 받았습니다` 반복 | `proxy_read_timeout` 이 재해싱 시간보다 짧다. nginx 를 못 고치면 `MAX_RETRIES` 를 올려 폴링 창을 늘린다(5회=~31s, 12회=~3분) |
 | 완료 시 `ChecksumMismatch` | 청크는 다 통과했는데 조립 결과가 다르다 = 디스크 의심. 서버가 `.part` 를 버리고 0 부터 다시 받는다 |
 
 ### `.upload_staging` 를 손으로 지우지 말 것

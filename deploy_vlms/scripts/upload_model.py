@@ -8,6 +8,22 @@
 의존성은 requests 뿐이다(서버 코드/Flask 를 import 하지 않는다).
 """
 
+# ---------------------------------------------------------------------------
+# 실행 인자 (여기를 고쳐 쓴다 - 셸 env 는 1회성 override 일 뿐이다)
+#
+# 우선순위: 실제 셸 env > 아래 상수 > 코드 기본값.
+# env 에 밀려 무시된 상수는 실행 시 콘솔에 찍힌다.
+# None / "" 은 "미설정"이고, 0 은 유효한 값이다.
+# ---------------------------------------------------------------------------
+
+BASE_URL = "http://itc-1stop-solution-gpu-image-webapp.aipp02.skhynix.com"
+SRC = ""            # 올릴 로컬 폴더 또는 파일. 예) r"C:/models/Qwen3.8-27B"
+DEST = ""           # 서버 루트 아래 목적지. 비우면 소스 폴더명 = <model_name>
+TOKEN = ""          # 서버가 토큰을 안 쓰면 빈 문자열
+CHUNK_MB = None     # None = 코드 기본값(32). 프록시 상한이 작으면 낮춘다
+MAX_RETRIES = None  # None = 코드 기본값(5)
+
+
 import hashlib
 import time
 from dataclasses import dataclass
@@ -323,25 +339,35 @@ def _human_bytes(value: float) -> str:
     return f"{value:.1f}TB"
 
 
-def _load_settings() -> dict:
-    """환경변수에서 실행 설정을 읽는다(CLI 인자는 쓰지 않는다)."""
+def _env(name: str, constant, default=""):
+    """셸 env > 파일 상수 > 코드 기본값. 무시된 상수는 콘솔에 남긴다."""
     import os
 
-    source = os.environ.get("MODEL_UPLOAD_SRC", "").strip()
-    base_url = os.environ.get("MODEL_UPLOAD_URL", "").strip()
+    raw = os.environ.get(name, "").strip()
+    if raw:
+        if constant not in (None, ""):
+            print(f"[INFO] {name}={raw} (셸 env) - 파일 상수 {constant!r} 는 무시됩니다")
+        return raw
+    if constant in (None, ""):
+        return str(default)
+    return str(constant)
+
+
+def _load_settings() -> dict:
+    """파일 상단 상수 + 환경변수에서 실행 설정을 읽는다(CLI 인자는 쓰지 않는다)."""
+    source = _env("MODEL_UPLOAD_SRC", SRC)
+    base_url = _env("MODEL_UPLOAD_URL", BASE_URL)
     if not source or not base_url:
         raise SystemExit(
-            "[ERROR] MODEL_UPLOAD_SRC 와 MODEL_UPLOAD_URL 은 필수입니다.\n"
-            "  예) MODEL_UPLOAD_URL=http://10.0.0.5:5000 "
-            "MODEL_UPLOAD_SRC=C:/models/MAI-UI-8B "
-            "uv run python deploy_vlms/scripts/upload_model.py"
+            "[ERROR] SRC 와 BASE_URL 이 필요합니다.\n"
+            f"  {__file__} 상단의 SRC / BASE_URL 상수를 채우세요."
         )
 
     source_path = Path(source).expanduser()
     if not source_path.exists():
         raise SystemExit(f"[ERROR] 소스를 찾을 수 없습니다: {source_path}")
 
-    dest_prefix = os.environ.get("MODEL_UPLOAD_DEST", "").strip()
+    dest_prefix = _env("MODEL_UPLOAD_DEST", DEST)
     if not dest_prefix:
         dest_prefix = source_path.name if source_path.is_dir() else ""
 
@@ -349,14 +375,12 @@ def _load_settings() -> dict:
         "source": source_path,
         "base_url": base_url,
         "dest_prefix": dest_prefix,
-        "token": os.environ.get("MODEL_UPLOAD_TOKEN", "").strip(),
-        "chunk_size": int(
-            os.environ.get("MODEL_UPLOAD_CHUNK_MB", str(DEFAULT_CHUNK_MB))
-        )
+        "token": _env("MODEL_UPLOAD_TOKEN", TOKEN),
+        "chunk_size": int(_env("MODEL_UPLOAD_CHUNK_MB", CHUNK_MB, DEFAULT_CHUNK_MB))
         * 1024
         * 1024,
         "max_retries": int(
-            os.environ.get("MODEL_UPLOAD_MAX_RETRIES", str(DEFAULT_MAX_RETRIES))
+            _env("MODEL_UPLOAD_MAX_RETRIES", MAX_RETRIES, DEFAULT_MAX_RETRIES)
         ),
     }
 
@@ -486,6 +510,13 @@ def main() -> int:
                 "        같은 명령을 다시 실행하면 받은 지점부터 이어갑니다."
             )
             return 4
+
+        if result.chunk_size and result.chunk_size < settings["chunk_size"]:
+            # 프록시가 알려준 상한은 파일마다 다시 알아낼 필요가 없다.
+            settings["chunk_size"] = result.chunk_size
+            print(
+                f"[INFO] 이후 파일은 청크 {_human_bytes(result.chunk_size)} 로 진행합니다"
+            )
 
         if result.skipped:
             skipped += 1

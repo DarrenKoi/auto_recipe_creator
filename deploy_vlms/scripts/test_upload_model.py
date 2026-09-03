@@ -369,3 +369,15 @@ def test_complete_is_retried_when_server_did_not_finish(env):
     assert env["transport"].attempts == 2
     assert result.skipped is False
     assert (env["dest"] / "MAI-UI-8B" / "model-00001.safetensors").read_bytes() == job.local_path.read_bytes()
+
+
+def test_env_precedence_shell_beats_constant_beats_default(monkeypatch, capsys):
+    """셸 env > 파일 상수 > 코드 기본값, 그리고 무시된 상수는 콘솔에 남는다."""
+    monkeypatch.setenv("X_UP", "from_shell")
+    assert upload_model._env("X_UP", "from_const", "from_default") == "from_shell"
+    assert "무시" in capsys.readouterr().out
+
+    monkeypatch.delenv("X_UP", raising=False)
+    assert upload_model._env("X_UP", "from_const", "from_default") == "from_const"
+    assert upload_model._env("X_UP", None, "from_default") == "from_default"
+    assert upload_model._env("X_UP", 0, 32) == "0"  # 0 은 유효한 값이다

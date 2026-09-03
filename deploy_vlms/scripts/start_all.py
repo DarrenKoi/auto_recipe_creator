@@ -9,8 +9,12 @@ GPU 배분 (H200 140GB × 2), 2026-09-03 재배치:
 시작 순서가 곧 이 리스트 순서다. 큰 모델을 먼저 띄우는 이유는 GPU 가 아니라
 **호스트 RAM 16GB** 때문이다 - vLLM 인스턴스 3개(각 API server + EngineCore)가
 같은 16GB 를 나눠 쓰므로, 가장 큰 로딩을 먼저 끝내고 나머지를 붙인다.
-27B 가중치 로딩은 10초보다 오래 걸릴 수 있다. start_all 은 기다려주지 않고
-다음 모델로 넘어가므로, 3개 모두 뜬 것은 반드시 check_vlm.py 로 확인할 것.
+27B 가중치 로딩은 수 분 걸릴 수 있다. start_all 은 앞 모델이 /v1/models 에
+응답할 때까지 기다린 뒤(wait_until_ready, 최대 READY_TIMEOUT_SEC) 다음으로
+넘어가므로 로딩 최대 구간이 겹치지 않는다. 이미 떠 있는 인스턴스는 시작 전에
+먼저 내린다(stop_if_already_running) - 살아 있는 스택 위에 그대로 실행하면
+포트에 답하는 것이 옛 인스턴스라 "준비 완료" 가 거짓이 되기 때문이다.
+최종 확인은 check_vlm.py 로 한다.
 
 ui-venus(8001) / ui-tars(8003) / got-ocr(8005) 는 2026-09-03 에 **가중치를
 서버에서 삭제**했다. 호스트 RAM 이 16GB 뿐이라 프로세스 수 자체가 제약이므로,
@@ -32,6 +36,7 @@ import time
 from pathlib import Path
 
 from check_vlm import check_model
+from start_model import stop_if_already_running
 
 
 STARTUP_POLL_SEC = 2.0
@@ -202,6 +207,19 @@ def main() -> None:
     # 호스트 RAM 16GB 를 3개 인스턴스가 나눠 쓰므로 로딩 최대 구간이 겹치면 안 된다.
     for instance in VLLM_MODELS:
         log(f"Starting {instance}...")
+        # 이미 떠 있으면 먼저 내린다(start_model.py 와 같은 가드).
+        # 없으면 살아 있는 스택 위에 다시 실행할 때 두 가지가 조용히 깨진다:
+        #   (a) wait_until_ready 가 **옛 인스턴스**의 포트 응답을 보고 "준비 완료" 로 거짓 보고
+        #   (b) 새 프로세스는 가중치를 다 올린 뒤에야 포트 바인딩에 실패한다
+        # (b) 의 로딩 구간이 호스트 RAM 16GB 를 두 배로 밟는 자리다.
+        try:
+            stop_if_already_running(instance)
+        except SystemExit:
+            # 포트가 15s 안에 안 풀리는 경우(SIGKILL 후에도 D-state 로 남는 등).
+            # 여기서 전체를 멈추면 무관한 production 모델까지 못 뜨므로 이 인스턴스만 실패 처리한다.
+            warn(f"{instance}: 기존 인스턴스를 내리지 못해 건너뛴다 (포트 점유 지속)")
+            failed.append(instance)
+            continue
         pid = start_vllm_model(script_dir, deploy_vlms_root, instance)
         if pid and wait_until_ready(config_root, instance, pid):
             succeeded.append(instance)

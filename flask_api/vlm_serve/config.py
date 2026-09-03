@@ -1,7 +1,7 @@
 """VLM 서비스 중앙 설정.
 
 모든 VLM 서비스의 포트, 모델명, 활성 여부를 한 곳에서 관리한다.
-현재 활성 포트: 8002 (mai-ui), 8004 (paddleocr-vl-1.5)
+현재 활성 포트: 8002 (mai-ui), 8004 (paddleocr-vl-1.5), 8006 (qwen3.8-27b)
 
 2026-08-11 부터 grounding 은 mai-ui 단일 모델, OCR 보조는 paddleocr 만 사용한다.
 ui-venus / ui-tars / got-ocr 은 GPU 서버에서 기동하지 않으므로 enabled=False 로 둔다
@@ -28,9 +28,15 @@ class VLMServiceEntry:
 ALL_VLM_SERVICES: list[VLMServiceEntry] = [
     VLMServiceEntry("ui-venus", "UI-Venus-1.5-8B", "ui-venus-1.5-8b", 8001, enabled=False),
     VLMServiceEntry("mai-ui", "MAI-UI-8B", "mai-ui-8b", 8002, enabled=True),
+    # A/B 벤치 전용. 상시 기동이 아니라서 기본 off - 켜려면 여기 enabled=True 로 바꾸고
+    # deploy 쪽에서도 mai-ui-2b 를 띄운다 (호스트 RAM 16GB, 4번째 인스턴스 금지).
+    VLMServiceEntry("mai-ui-2b", "MAI-UI-2B", "mai-ui-2b", 8007, enabled=False),
     VLMServiceEntry("ui-tars", "UI-TARS-1.5-7B", "ui-tars-1.5-7b", 8003, enabled=False),
     VLMServiceEntry("paddleocr-vl-1.5", "PaddleOCR-VL-1.5", "paddleocr-vl-1.5", 8004, enabled=True),
     VLMServiceEntry("got-ocr", "GOT-OCR-2.0-hf", "got-ocr-2.0-hf", 8005, enabled=False),
+    # route_slug 과 model_name 을 일부러 같게 둔다 - 호출부가 slug 대신 모델명을
+    # 넘기는 실수가 조용히 통과하지 않도록 (paddleocr 와 같은 규약).
+    VLMServiceEntry("qwen3.8-27b", "Qwen3.8-27B", "qwen3.8-27b", 8006, enabled=True),
 ]
 
 # 활성 서비스만 필터링

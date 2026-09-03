@@ -76,13 +76,25 @@ COMPONENT_NAME = LOG_NAME
 DEBUG_ARTIFACT_DIR = DEBUG_IMAGE_DIR / "bench_tool_locator"
 
 # (coarse, fine). 같은 모델을 두 번 쓰는 조합이 핵심 비교 대상이다.
+#
+# 2026-09-03 갱신: production 은 2026-08-07 부터 mai-ui>mai-ui 인데 여기가 ui-venus>mai-ui
+# 로 남아 있었다. `is_production` 이 모든 행에서 False 가 되어 digest 가 baseline 을
+# 못 짚던 결함이다. 더해서 ui-venus 는 더 이상 서빙되지 않아(포트가 죽어 있다) 옛 기본
+# 조합 4개 중 2개는 404 만 쌓는다.
+#
+# 새 기본값은 8B vs 2B A/B 다. 교차 조합이 있어야 **어느 단이** 나빠졌는지 갈린다:
+#   mai-ui   > mai-ui      = production baseline
+#   mai-ui-2b> mai-ui      = coarse(전체 화면에서 얇은 행 찾기)만 2B  -> coarse 열화 분리
+#   mai-ui   > mai-ui-2b   = fine(확대된 crop 에서 점 찍기)만 2B      -> fine 열화 분리
+#   mai-ui-2b> mai-ui-2b   = 실제 교체안
+# 2B 를 안 띄웠으면 BENCH_COMBOS="mai-ui>mai-ui" 로 좁혀 돌린다.
 DEFAULT_COMBOS = [
-    ("ui-venus", "ui-venus"),
-    ("mai-ui", "mai-ui"),
-    ("ui-venus", "mai-ui"),  # 현재 production 설정
-    ("mai-ui", "ui-venus"),
+    ("mai-ui", "mai-ui"),  # 현재 production 설정
+    ("mai-ui-2b", "mai-ui"),
+    ("mai-ui", "mai-ui-2b"),
+    ("mai-ui-2b", "mai-ui-2b"),
 ]
-PRODUCTION_COMBO = ("ui-venus", "mai-ui")
+PRODUCTION_COMBO = ("mai-ui", "mai-ui")
 
 # 여기에 결과 JSON 경로를 적으면 **측정하지 않고** 그 결과로 digest 만 다시 출력한다.
 # digest 형식이 바뀌었을 때 20~30분짜리 벤치를 다시 돌리지 않으려는 용도.

@@ -19,10 +19,14 @@ from .config import (
 )
 from .mai_ui import SERVICE_CONFIG as MAI_UI_CONFIG
 from .mai_ui import service_blueprint as mai_ui_blueprint
+from .mai_ui_2b import SERVICE_CONFIG as MAI_UI_2B_CONFIG
+from .mai_ui_2b import service_blueprint as mai_ui_2b_blueprint
 from .got_ocr import SERVICE_CONFIG as GOT_OCR_CONFIG
 from .got_ocr import service_blueprint as got_ocr_blueprint
 from .paddleocr_vl import SERVICE_CONFIG as PADDLEOCR_VL_CONFIG
 from .paddleocr_vl import service_blueprint as paddleocr_vl_blueprint
+from .qwen3_8_27b import SERVICE_CONFIG as QWEN3_8_27B_CONFIG
+from .qwen3_8_27b import service_blueprint as qwen3_8_27b_blueprint
 from .ui_tars import SERVICE_CONFIG as UI_TARS_CONFIG
 from .ui_tars import service_blueprint as ui_tars_blueprint
 from .ui_venus import SERVICE_CONFIG as UI_VENUS_CONFIG
@@ -33,9 +37,11 @@ from .ui_venus import service_blueprint as ui_venus_blueprint
 _ALL_SERVICE_BLUEPRINTS = [
     (UI_VENUS_CONFIG, ui_venus_blueprint),
     (MAI_UI_CONFIG, mai_ui_blueprint),
+    (MAI_UI_2B_CONFIG, mai_ui_2b_blueprint),
     (UI_TARS_CONFIG, ui_tars_blueprint),
     (PADDLEOCR_VL_CONFIG, paddleocr_vl_blueprint),
     (GOT_OCR_CONFIG, got_ocr_blueprint),
+    (QWEN3_8_27B_CONFIG, qwen3_8_27b_blueprint),
 ]
 
 # config.py 의 enabled 플래그에 따라 활성 서비스만 등록

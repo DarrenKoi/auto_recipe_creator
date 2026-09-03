@@ -40,6 +40,8 @@ KIMI_K2_6_MODEL_NAME = "Kimi-K2.6"
 GLM_5_2_MODEL_NAME = "GLM-5.2"
 UI_VENUS_MODEL_NAME = "ui-venus-1.5-8b"
 MAI_UI_MODEL_NAME = "mai-ui-8b"
+MAI_UI_2B_MODEL_NAME = "mai-ui-2b"
+QWEN3_8_27B_MODEL_NAME = "qwen3.8-27b"
 UI_TARS_MODEL_NAME = "ui-tars-1.5-7b"
 PADDLEOCR_VL_1_5_MODEL_NAME = "paddleocr-vl-1.5"
 GOT_OCR_MODEL_NAME = "got-ocr-2.0-hf"
@@ -48,6 +50,8 @@ KIMI_K2_6_API_URL = DEFAULT_COMPANY_LLM_BASE_URL
 GLM_5_2_API_URL = DEFAULT_COMPANY_LLM_BASE_URL
 UI_VENUS_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/ui-venus"
 MAI_UI_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/mai-ui"
+MAI_UI_2B_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/mai-ui-2b"
+QWEN3_8_27B_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/qwen3.8-27b"
 UI_TARS_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/ui-tars"
 PADDLEOCR_VL_1_5_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/paddleocr-vl-1.5"
 GOT_OCR_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/got-ocr"
@@ -88,6 +92,14 @@ ALL_VLM_SERVICES: list[VLMServiceEntry] = [
         MAI_UI_MODEL_NAME,
         MAI_UI_API_URL,
     ),
+    # A/B 벤치 후보. slug 가 resolve 돼야 BENCH_COMBOS="mai-ui-2b>mai-ui-2b" 가 동작한다.
+    # 서버에서 안 띄워져 있으면 호출이 404 로 떨어질 뿐, 등록만으로는 아무것도 안 바뀐다.
+    VLMServiceEntry(
+        "mai-ui-2b",
+        "MAI-UI-2B",
+        MAI_UI_2B_MODEL_NAME,
+        MAI_UI_2B_API_URL,
+    ),
     VLMServiceEntry(
         "ui-tars",
         "UI-TARS-1.5-7B",
@@ -105,6 +117,19 @@ ALL_VLM_SERVICES: list[VLMServiceEntry] = [
         "GOT-OCR-2.0-hf",
         GOT_OCR_MODEL_NAME,
         GOT_OCR_API_URL,
+    ),
+    # 범용 추론/멀티모달 (GPU 1 단독, 262k 컨텍스트). grounding/OCR 기본값이 아니다 -
+    # 명시적으로 이 slug 을 고른 호출만 여기로 간다.
+    # [주의] 이 모델은 thinking 이 기본 on 이고, 지금 클라이언트는 요청에
+    # temperature/max_tokens/frequency_penalty/stream 만 싣는다 - chat_template_kwargs 로
+    # enable_thinking=false 를 보낼 방법이 없다. 짧은 max_tokens 로 부르면 답 대신
+    # 사고 과정으로 예산을 다 쓸 수 있다. 짧은 응답 용도로 쓰려면 클라이언트에
+    # chat_template_kwargs 지원을 먼저 넣을 것.
+    VLMServiceEntry(
+        "qwen3.8-27b",
+        "Qwen3.8-27B",
+        QWEN3_8_27B_MODEL_NAME,
+        QWEN3_8_27B_API_URL,
     ),
 ]
 

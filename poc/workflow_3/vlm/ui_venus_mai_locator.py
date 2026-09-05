@@ -5,7 +5,8 @@ env 로 런타임에 덮어쓸 수 있다(형식은 bench_tool_locator 의 BENCH
 "coarse>fine"). env 는 어디까지나 임시 오버라이드고, 상시 동작은 상수가 정한다.
 
     (env 미설정)                        # DEFAULT_* 상수 = mai-ui>mai-ui
-    VLM_LOCATOR_COMBO="mai-ui-2b>mai-ui" # A/B 후보 조합으로 임시 교체
+    VLM_LOCATOR_COMBO="<coarse>><fine>"  # 새 grounding 후보가 생겼을 때 임시 교체
+                                         # (2026-09-05 현재 후보는 mai-ui 하나뿐)
 """
 
 import os

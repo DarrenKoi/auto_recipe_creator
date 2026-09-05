@@ -39,14 +39,12 @@ DEFAULT_COMPANY_LLM_BASE_URL = "http://common.llm.skhynix.com/v1"
 KIMI_K2_6_MODEL_NAME = "Kimi-K2.6"
 GLM_5_2_MODEL_NAME = "GLM-5.2"
 MAI_UI_MODEL_NAME = "mai-ui-8b"
-MAI_UI_2B_MODEL_NAME = "mai-ui-2b"
 QWEN3_8_27B_MODEL_NAME = "qwen3.8-27b"
 PADDLEOCR_VL_1_5_MODEL_NAME = "paddleocr-vl-1.5"
 
 KIMI_K2_6_API_URL = DEFAULT_COMPANY_LLM_BASE_URL
 GLM_5_2_API_URL = DEFAULT_COMPANY_LLM_BASE_URL
 MAI_UI_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/mai-ui"
-MAI_UI_2B_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/mai-ui-2b"
 QWEN3_8_27B_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/qwen3.8-27b"
 PADDLEOCR_VL_1_5_API_URL = f"{DEFAULT_FLASK_API_BASE_URL}/vlm_serve/paddleocr-vl-1.5"
 
@@ -79,14 +77,6 @@ ALL_VLM_SERVICES: list[VLMServiceEntry] = [
         "MAI-UI-8B",
         MAI_UI_MODEL_NAME,
         MAI_UI_API_URL,
-    ),
-    # A/B 벤치 후보. slug 가 resolve 돼야 BENCH_COMBOS="mai-ui-2b>mai-ui-2b" 가 동작한다.
-    # 서버에서 안 띄워져 있으면 호출이 404 로 떨어질 뿐, 등록만으로는 아무것도 안 바뀐다.
-    VLMServiceEntry(
-        "mai-ui-2b",
-        "MAI-UI-2B",
-        MAI_UI_2B_MODEL_NAME,
-        MAI_UI_2B_API_URL,
     ),
     VLMServiceEntry(
         "paddleocr-vl-1.5",

@@ -83,19 +83,18 @@ DEBUG_ARTIFACT_DIR = DEBUG_IMAGE_DIR / "bench_tool_locator"
 # 조합 4개 중 2개는 404 만 쌓는다.
 #
 # **기본값에는 실제로 서빙 중인 조합만 둔다.** 안 띄운 모델을 기본값에 넣으면 벤치가
-# 404 만 쌓는데, 그게 옛 ui-venus 기본값이 망가져 있던 방식이다. 같은 실수를 mai-ui-2b
-# 로 반복하지 않는다 - 2B 는 `enabled=False` 이고 사용자가 8B 유지를 확정했다(2026-09-03).
+# 404 만 쌓는데, 그게 옛 ui-venus 기본값이 망가져 있던 방식이다.
 DEFAULT_COMBOS = [
     ("mai-ui", "mai-ui"),  # 현재 production 설정 (8B 양단)
 ]
 
-# 2B A/B 를 할 때만 env 로 켠다. 교차 조합이 있어야 **어느 단이** 나빠졌는지 갈린다:
-#   mai-ui   > mai-ui      = production baseline
-#   mai-ui-2b> mai-ui      = coarse(전체 화면에서 얇은 행 찾기)만 2B  -> coarse 열화 분리
-#   mai-ui   > mai-ui-2b   = fine(확대된 crop 에서 점 찍기)만 2B      -> fine 열화 분리
-#   mai-ui-2b> mai-ui-2b   = 실제 교체안
-# BENCH_COMBOS="mai-ui>mai-ui,mai-ui-2b>mai-ui,mai-ui>mai-ui-2b,mai-ui-2b>mai-ui-2b"
-# 절차는 docs/runbooks/mai_ui_2b_vs_8b_bench.md (기본 답은 '하지 않는다').
+# grounding 후보가 지금은 mai-ui 하나뿐이라 교차 조합이 없다. **mai-ui-2b 는 2026-09-05 에
+# 폐기됐다** - 서버 배선(route stub / registry / env)과 클라이언트 등록이 모두 제거돼서
+# slug 이 resolve 되지 않는다. 절차와 판단 근거는 docs/runbooks/mai_ui_2b_vs_8b_bench.md
+# (obsolete 표시) 와 git 이력에 남아 있다.
+#
+# 새 후보가 생기면 BENCH_COMBOS 로 교차 조합을 켠다 - 어느 단이 나빠졌는지는 교차해야 갈린다:
+#   A>A = baseline / B>A = coarse 만 교체 / A>B = fine 만 교체 / B>B = 실제 교체안
 PRODUCTION_COMBO = ("mai-ui", "mai-ui")
 
 # 여기에 결과 JSON 경로를 적으면 **측정하지 않고** 그 결과로 digest 만 다시 출력한다.

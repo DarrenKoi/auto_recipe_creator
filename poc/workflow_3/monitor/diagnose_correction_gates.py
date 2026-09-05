@@ -27,7 +27,7 @@ from pathlib import Path
 _MARKS = {"ok": "OK", "block": "XX", "warn": "!!"}
 
 # 보정 step 에 도달하기 전에 사이클을 세우는 failure_class -> 사람이 읽는 원인.
-_FAILURE_HINTS = {
+FAILURE_HINTS = {
     "rcs_unavailable": "RCS 메인 창을 못 찾음. 보정 이전 문제.",
     "rcs_recovery_error": "RCS 재실행/재로그인 실패.",
     "rcs_recovery_no_window": "재로그인했지만 창이 안 뜸(좀비 프로세스 가능).",
@@ -151,8 +151,8 @@ def report_last_run(runs_dir: Path, limit: int = 3) -> None:
             klass = data.get("failure_class") or ""
             print(f"      {data.get('step_id', '?'):22} {data.get('status', '?'):9}"
                   f" {klass or '-'}")
-            if klass and klass in _FAILURE_HINTS:
-                print(f"        -> {_FAILURE_HINTS[klass]}")
+            if klass and klass in FAILURE_HINTS:
+                print(f"        -> {FAILURE_HINTS[klass]}")
             message = (data.get("error_message") or "").strip()
             if message:
                 print(f"        msg: {message[:100]}")

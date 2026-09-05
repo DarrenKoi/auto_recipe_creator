@@ -26,11 +26,18 @@ from collections import Counter
 from pathlib import Path
 
 from poc.workflow_3 import LOG_DIR
+from poc.workflow_3.monitor.diagnose_correction_gates import (
+    FAILURE_HINTS as CORRECTION_HINTS,
+)
 
 DEFAULT_MANIFEST_PATH = LOG_DIR / "align_fail_cycles.csv"
 
 # 접속 단계에서 나오는 failure_class - 사람이 읽을 설명.
+# 보정 단계 class(panel_not_found/pm_mode_unknown/...)는 diagnose_correction_gates 의
+# 표를 합쳐 쓴다 - 같은 CSV 를 보는 두 도구가 설명을 두 벌 들면 갈린다.
+# 접속 단계 관점이 이 파일의 것이므로 겹치는 key 는 아래 리터럴이 이긴다.
 FAILURE_HINTS = {
+    **CORRECTION_HINTS,
     "connect_not_clicked": "로케이터가 tool 을 못 찾아 더블클릭 안 함 (화면 밖/스크롤/VLM 미검출)",
     "connect_error": "접속 중 예외",
     "wrong_tool_opened": "옆 행 클릭 - 다른 tool 창이 열림 (오클릭)",

@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cond.txt Align Point 계산기</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#F5F7F6; --ink:#1B2228; --muted:#5E6A72; --rule:#D5DCD9; --code:#EAEFED; --panel:#FFFFFF;
+  --box:#178C86; --box-soft:#178C8622; --align:#D3721A; --align-soft:#D3721A22; --cross:#B8407A;
+  --img:#3A4249; --img-tex:#5A6470;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#11161A; --ink:#E2E7E9; --muted:#97A3AB; --rule:#29333A; --code:#1A2126; --panel:#161C21;
+    --box:#38BDB6; --box-soft:#38BDB622; --align:#F09A4E; --align-soft:#F09A4E22; --cross:#E06AA6;
+    --img:#2A3138; --img-tex:#454F59;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#11161A; --ink:#E2E7E9; --muted:#97A3AB; --rule:#29333A; --code:#1A2126; --panel:#161C21;
+  --box:#38BDB6; --box-soft:#38BDB622; --align:#F09A4E; --align-soft:#F09A4E22; --cross:#E06AA6;
+  --img:#2A3138; --img-tex:#454F59;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.7 "IBM Plex Sans KR","Noto Sans KR",system-ui,sans-serif;word-break:keep-all}
+main{max-width:760px;margin:0 auto;padding:48px 20px 96px}
+h1{font-size:2rem;line-height:1.25;font-weight:600;margin:0 0 .5rem;text-wrap:balance}
+h2{font-size:1.3rem;font-weight:600;margin:3rem 0 .75rem;text-wrap:balance}
+h2 .eyebrow{display:block;font:500 .72rem/1 "IBM Plex Mono",monospace;letter-spacing:.12em;color:var(--muted);margin-bottom:.4rem}
+p{margin:0 0 1rem;max-width:68ch}
+.lede{font-size:1.05rem;color:var(--muted);max-width:60ch}
+code,pre,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
+code{background:var(--code);padding:.05em .35em;border-radius:3px;font-size:.9em}
+pre{background:var(--code);padding:14px 16px;border-radius:6px;overflow-x:auto;font-size:.85rem;line-height:1.55;margin:0 0 1rem}
+pre code{background:none;padding:0;font-size:inherit}
+.note{border-left:3px solid var(--align);padding:.4rem 1rem;background:var(--align-soft);margin:1.25rem 0;max-width:68ch}
+.note p{margin:0}
+.formula{font-family:"IBM Plex Mono",monospace;font-size:.95rem;background:var(--code);padding:14px 18px;border-radius:6px;margin:1rem 0;line-height:1.9;overflow-x:auto}
+.formula b{font-weight:500}
+.c-box{color:var(--box)} .c-align{color:var(--align)} .c-cross{color:var(--cross)}
+table{border-collapse:collapse;width:100%;font-size:.92rem;margin:0 0 1.25rem}
+th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font-weight:500;color:var(--muted);font-size:.8rem;letter-spacing:.04em}
+.tbl{overflow-x:auto}
+figure{margin:1.5rem 0 2rem;padding:0}
+figure.frame{border:1px solid var(--rule);border-radius:8px;background:var(--panel);padding:16px}
+figcaption{font-size:.85rem;color:var(--muted);margin-top:.75rem;line-height:1.55}
+svg{display:block;max-width:100%;height:auto}
+svg text{font-family:"IBM Plex Mono",monospace;fill:var(--ink)}
+.calc{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media (max-width:640px){.calc{grid-template-columns:1fr}}
+.controls{display:grid;grid-template-columns:auto 1fr auto;gap:.35rem .75rem;align-items:center;font-size:.85rem;margin-top:12px}
+.controls label{font-family:"IBM Plex Mono",monospace;color:var(--muted)}
+.controls output{font-family:"IBM Plex Mono",monospace;min-width:4.5ch;text-align:right}
+input[type=range]{width:100%;accent-color:var(--box)}
+input[type=range].align{accent-color:var(--align)}
+input[type=range]:focus-visible{outline:2px solid var(--align);outline-offset:2px}
+.readout{margin-top:12px;font-family:"IBM Plex Mono",monospace;font-size:.85rem;line-height:1.8;background:var(--code);border-radius:6px;padding:10px 14px;overflow-x:auto;white-space:pre}
+.status{display:inline-block;padding:0 .5em;border-radius:3px;font-weight:500}
+.status.ok{background:var(--box-soft);color:var(--box)}
+.status.warn{background:var(--align-soft);color:var(--align)}
+.status.skip{background:var(--cross);color:#fff}
+.legend{display:flex;flex-wrap:wrap;gap:1rem;font-size:.8rem;color:var(--muted);margin-top:8px}
+.legend span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:.4em;vertical-align:-1px;background:var(--sw)}
+.pipe{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+@media (max-width:640px){.pipe{grid-template-columns:1fr}}
+.pipe .step{font-size:.82rem;color:var(--muted);margin-top:6px}
+.pipe .step b{color:var(--ink);font-weight:500;display:block}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media (max-width:640px){.two{grid-template-columns:1fr}}
+.two h3{font-size:.95rem;font-weight:500;margin:0 0 6px}
+a{color:var(--box)}
+.ref td:first-child{white-space:nowrap}
+@media (prefers-reduced-motion:no-preference){svg .live{transition:all .12s ease-out}}
+</style>
+</head>
+<body>
+<main>
+
+<h1>cond.txt 의 흰 박스에서 align point 를 계산하는 방법</h1>
+<p class="lede">OM / SEM align 이미지에 그려진 흰 네모 박스의 좌표는 <code>cond.txt</code> 에 숫자로 적혀 있다.
+코드는 그 숫자로 "template 이 라이브 화면에서 맞았을 때 <em>어디를 더블클릭해야 하는가</em>" 를 계산한다.
+이 페이지는 그 계산을 그림과 함께 처음부터 끝까지 따라간다.</p>
+
+<div class="note"><p><b>용어 정리.</b> 실제 cond.txt 키 이름은 <code>!Locator</code> 가 아니라 <code>!Cursor_info</code> 다.
+실데이터에는 끝 <code>o</code> 가 빠진 <code>!Cursor_inf</code> 로 적혀 있어 파서는 <code>cursor_inf</code> 접두로 찾는다.
+코드에 <code>!Locator</code> 키를 읽는 곳은 없다.</p></div>
+
+<h2><span class="eyebrow">결론 한 줄</span>align point 는 박스 중심이 아니라 이미지 중심이다</h2>
+<div class="formula">
+<span class="c-align">align point</span> (rcp 이미지 위) = <span class="c-align">이미지 중심</span><br>
+<b>offset</b> = <span class="c-align">이미지 중심</span> − <span class="c-box">박스 중심</span><br>
+라이브 프레임 클릭 지점 = 매칭 위치(best_xy) + offset × best_scale
+</div>
+<p>박스는 "이 근처가 유니크한 무늬다" 라는 <b>매칭 단서</b>일 뿐이고, 장비가 기억하는 align point 는 등록 당시 화면의 <b>정중앙</b>이다.
+박스가 중앙에서 조금 빗나가 그려져 있으면 그 차이(offset)를 template 이 따로 들고 다닌다.</p>
+
+<h2><span class="eyebrow">인터랙티브</span>박스를 움직여 보면서 offset 이 어떻게 나오는지 보기</h2>
+<figure class="frame">
+  <div class="calc">
+    <div>
+      <svg id="rcp" viewBox="-20 -20 552 552" role="img" aria-label="rcp 이미지 위 흰 박스, 박스 중심, 이미지 중심, offset 화살표">
+        <defs>
+          <pattern id="tex" width="32" height="32" patternUnits="userSpaceOnUse">
+            <rect width="32" height="32" fill="var(--img)"/>
+            <rect x="4" y="4" width="10" height="24" fill="var(--img-tex)"/>
+            <rect x="18" y="14" width="10" height="10" fill="var(--img-tex)"/>
+          </pattern>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--align)"/>
+          </marker>
+        </defs>
+        <rect x="0" y="0" width="512" height="512" fill="url(#tex)"/>
+        <text x="0" y="-6" font-size="12" fill="var(--muted)">rcp 이미지 512×512 (IMAP0001 / IMAP0002)</text>
+        <rect id="box" class="live" x="177" y="177" width="161" height="156" fill="none" stroke="#fff" stroke-width="2"/>
+        <rect id="inset" class="live" x="179" y="179" width="157" height="152" fill="var(--box-soft)" stroke="var(--box)" stroke-width="1" stroke-dasharray="4 3"/>
+        <line x1="256" y1="236" x2="256" y2="276" stroke="var(--align)" stroke-width="1.5"/>
+        <line x1="236" y1="256" x2="276" y2="256" stroke="var(--align)" stroke-width="1.5"/>
+        <circle cx="256" cy="256" r="4" fill="var(--align)"/>
+        <line id="offarrow" class="live" x1="257.5" y1="255" x2="256" y2="256" stroke="var(--align)" stroke-width="2" marker-end="url(#arr)"/>
+        <circle id="bc" class="live" cx="257.5" cy="255" r="5" fill="var(--box)" stroke="#fff" stroke-width="1.5"/>
+        <text id="bclabel" class="live" x="266" y="250" font-size="12" fill="var(--box)">box center</text>
+        <text x="266" y="272" font-size="12" fill="var(--align)">image center = align point</text>
+      </svg>
+      <div class="controls">
+        <label for="l">left</label><input id="l" type="range" min="0" max="5120" step="10" value="1770"><output for="l">1770</output>
+        <label for="t">top</label><input id="t" type="range" min="0" max="5120" step="10" value="1770"><output for="t">1770</output>
+        <label for="r">right</label><input id="r" type="range" min="0" max="5120" step="10" value="3380"><output for="r">3380</output>
+        <label for="b">bottom</label><input id="b" type="range" min="0" max="5120" step="10" value="3330"><output for="b">3330</output>
+      </div>
+      <div class="legend"><span style="--sw:#fff;outline:1px solid var(--rule)">흰 박스 (cond.txt)</span><span style="--sw:var(--box)">박스 중심 / inset crop</span><span style="--sw:var(--align)">이미지 중심 = align point</span></div>
+    </div>
+    <div>
+      <svg id="livef" viewBox="-20 -20 680 520" role="img" aria-label="라이브 프레임에서 매칭 위치와 offset 을 배율로 환산한 클릭 지점">
+        <rect x="0" y="0" width="640" height="480" fill="url(#tex)"/>
+        <text x="0" y="-6" font-size="12" fill="var(--muted)">라이브 프레임 640×480 (실시간 캡처)</text>
+        <rect id="lbox" class="live" x="240" y="170" width="161" height="156" fill="var(--box-soft)" stroke="var(--box)" stroke-width="1.5" stroke-dasharray="4 3"/>
+        <circle id="lbc" class="live" cx="320" cy="248" r="5" fill="var(--box)" stroke="#fff" stroke-width="1.5"/>
+        <text id="lbclabel" class="live" x="330" y="244" font-size="12" fill="var(--box)">best_xy (매칭 중심)</text>
+        <line id="larrow" class="live" x1="320" y1="248" x2="318" y2="249" stroke="var(--align)" stroke-width="2" marker-end="url(#arr)"/>
+        <g id="lclick" class="live" transform="translate(318 249)">
+          <line x1="0" y1="-18" x2="0" y2="18" stroke="var(--align)" stroke-width="1.5"/>
+          <line x1="-18" y1="0" x2="18" y2="0" stroke="var(--align)" stroke-width="1.5"/>
+          <circle r="4" fill="var(--align)"/>
+          <text x="10" y="26" font-size="12" fill="var(--align)">더블클릭 지점</text>
+        </g>
+      </svg>
+      <div class="controls">
+        <label for="sc">best_scale</label><input id="sc" class="align" type="range" min="0.5" max="2" step="0.05" value="1"><output for="sc">1.00</output>
+        <label for="bx">best_x</label><input id="bx" class="align" type="range" min="60" max="580" step="1" value="320"><output for="bx">320</output>
+        <label for="by">best_y</label><input id="by" class="align" type="range" min="60" max="420" step="1" value="248"><output for="by">248</output>
+      </div>
+      <div class="legend"><span style="--sw:var(--box)">template 이 맞은 자리</span><span style="--sw:var(--align)">best_xy + offset × scale</span></div>
+    </div>
+  </div>
+  <div class="readout" id="readout"></div>
+  <figcaption>기본값은 실제 OM 샘플(<code>Pixel 512,512</code>, 박스 <code>1770,1770,3380,3330</code>)이다. 왼쪽 슬라이더는 cursor 좌표(×10) 단위이고, 오른쪽은 매칭 엔진이 돌려주는 값을 흉내 낸다.
+  <code>check_cond_box</code> 의 가드 판정이 상태 칩으로 같이 바뀐다. 박스를 구석으로 끌어 보면 <code>offset:far</code> → <code>offset:too_far</code> 가 되는 지점을 볼 수 있다.</figcaption>
+</figure>
+
+<h2><span class="eyebrow">1. 재료</span>cond.txt 는 어디 있고 무엇이 적혀 있나</h2>
+<p>이미지마다 같은 폴더 안의 숨김 폴더에 짝이 있다.</p>
+<pre><code>align_img_from_rcp/
+├─ IMAP0001.jpeg              # OM  align key
+├─ .IMAP0001.jpeg/cond.txt    #   ↑ 의 조건
+├─ IMAP0002.jpeg              # SEM align key
+└─ .IMAP0002.jpeg/cond.txt</code></pre>
+<p>실제 샘플(OM, 512px):</p>
+<pre><code># Observation condition
+Scope                   OM
+Magnification           104
+Pixel                   512,512
+!Cursor_info            -1,-1,-1,-1,-1,-1,1770,1770,3380,3330,-1,-1,...</code></pre>
+<p><code>!Cursor_info</code> 는 콤마로 나뉜 긴 목록이고 우리가 읽는 자리는 정해져 있다(0 부터 센다).</p>
+<figure class="frame">
+<svg viewBox="0 0 720 96" role="img" aria-label="!Cursor_info 토큰 자리 표시">
+  <g font-size="13">
+  <text x="8" y="22" fill="var(--muted)">idx</text>
+  <text x="8" y="58">값</text>
+  </g>
+  <g id="tokens"></g>
+</svg>
+<figcaption><code>[4],[5]</code> = crosshair (둘 중 하나라도 −1 이면 없음) · <code>[6]…[9]</code> = 흰 박스 left, top, right, bottom (<code>[8]</code> 또는 <code>[9]</code> 가 −1 이면 없음). 이 샘플은 박스만 있고 crosshair 는 없다.</figcaption>
+</figure>
+<p>파서는 <code>poc/workflow_3/align/cond_file.py</code> 의 <code>parse_cond</code> 이고 결과는 <code>CondInfo(scope, pixel, box_ltrb, crosshair_xy)</code> 다.</p>
+
+<h2><span class="eyebrow">2. 좌표계</span>숫자가 이미지보다 10배 크다</h2>
+<p><code>Pixel 512,512</code> 인데 박스 값은 3380 까지 간다. <code>!Cursor_info</code> 의 좌표는 <b>이미지 픽셀의 10배 해상도</b>(cursor frame)로 적혀 있다.</p>
+<div class="formula">이미지 px = cursor 값 / 10 &nbsp;&nbsp;(OVERSAMPLE = 10)<br>(1770, 1770, 3380, 3330) → (177, 177, 338, 333)</div>
+<figure class="frame">
+<svg viewBox="0 0 720 230" role="img" aria-label="좌표계 네 단계 사다리">
+  <defs><marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker></defs>
+  <g font-size="12">
+    <rect x="10" y="20" width="150" height="56" rx="4" fill="var(--code)" stroke="var(--rule)"/>
+    <text x="85" y="42" text-anchor="middle" font-weight="500">cursor frame</text>
+    <text x="85" y="62" text-anchor="middle" fill="var(--muted)">5120 × 5120 (×10)</text>
+
+    <line x1="160" y1="48" x2="200" y2="48" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#arr2)"/>
+    <text x="180" y="40" text-anchor="middle" fill="var(--muted)">/10</text>
+
+    <rect x="200" y="20" width="150" height="56" rx="4" fill="var(--code)" stroke="var(--rule)"/>
+    <text x="275" y="42" text-anchor="middle" font-weight="500">rcp 이미지 px</text>
+    <text x="275" y="62" text-anchor="middle" fill="var(--muted)">512 × 512</text>
+
+    <line x1="350" y1="48" x2="390" y2="48" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#arr2)"/>
+    <text x="370" y="40" text-anchor="middle" fill="var(--muted)">중심−중심</text>
+
+    <rect x="390" y="20" width="150" height="56" rx="4" fill="var(--align-soft)" stroke="var(--align)"/>
+    <text x="465" y="42" text-anchor="middle" font-weight="500" fill="var(--align)">offset (dx, dy)</text>
+    <text x="465" y="62" text-anchor="middle" fill="var(--muted)">template 이 품고 다님</text>
+
+    <line x1="465" y1="76" x2="465" y2="116" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#arr2)"/>
+    <text x="475" y="100" fill="var(--muted)">× best_scale</text>
+
+    <rect x="390" y="120" width="150" height="56" rx="4" fill="var(--code)" stroke="var(--rule)"/>
+    <text x="465" y="142" text-anchor="middle" font-weight="500">라이브 프레임 px</text>
+    <text x="465" y="162" text-anchor="middle" fill="var(--muted)">best_xy + offset·s</text>
+
+    <line x1="540" y1="148" x2="580" y2="148" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#arr2)"/>
+    <text x="560" y="140" text-anchor="middle" fill="var(--muted)">DPI</text>
+
+    <rect x="580" y="120" width="130" height="56" rx="4" fill="var(--code)" stroke="var(--rule)"/>
+    <text x="645" y="142" text-anchor="middle" font-weight="500">스크린 px</text>
+    <text x="645" y="162" text-anchor="middle" fill="var(--muted)">125 / 150 % 보정</text>
+
+    <text x="10" y="210" fill="var(--muted)">/10 은 clean_align_image.cursor_to_image 한 곳에만 있다. 다른 곳에서 다시 나누지 않는다.</text>
+  </g>
+</svg>
+<figcaption>좌표는 네 단계를 지난다. 이 문서가 다루는 것은 앞의 세 칸(cursor → rcp px → offset)과 라이브 프레임 적용이고, 스크린 px 변환은 <code>sem_monitor/controller</code> 가 rect/screenshot 비율로 한다.</figcaption>
+</figure>
+<p><b>보정 한 가지.</b> 로드한 이미지 크기가 <code>Pixel</code> 과 다르면(리사이즈 저장 등) <code>/10</code> 만으로는 어긋난다.
+<code>cond_for_image(cond, image.shape)</code> 가 로드 크기 / Pixel 비율로 박스와 crosshair 를 축별로 곱해 주고 <code>pixel</code> 을 로드 크기로 바꿔 둔다.
+한 번 보정된 cond 는 다시 넣어도 값이 안 변한다(멱등). 그래서 여러 레이어가 겹쳐 불러도 이중 보정이 없다.</p>
+
+<h2><span class="eyebrow">3. 계산</span>박스 중심 → offset</h2>
+<pre><code>def _cond_box_center(box_ltrb):
+    l, t = cursor_to_image(box_ltrb[:2])      # /10
+    r, b = cursor_to_image(box_ltrb[2:])
+    return (l + r) / 2, (t + b) / 2
+
+def cond_align_offset(box_ltrb, shape_hw):
+    h, w = shape_hw[:2]
+    bcx, bcy = _cond_box_center(box_ltrb)
+    return round(w / 2 - bcx), round(h / 2 - bcy)   # 이미지 중심 - 박스 중심</code></pre>
+<p>샘플로 손계산:</p>
+<div class="formula">
+박스(px)&nbsp;&nbsp;&nbsp;&nbsp; l=177 &nbsp;t=177 &nbsp;r=338 &nbsp;b=333<br>
+<span class="c-box">박스 중심</span>&nbsp;&nbsp;&nbsp; ((177+338)/2, (177+333)/2) = (257.5, 255.0)<br>
+<span class="c-align">이미지 중심</span>&nbsp; (256, 256)<br>
+<b>offset</b>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; (256 − 257.5, 256 − 255.0) = (−1.5, +1.0) → round → <b>(−2, +1)</b>
+</div>
+<p>offset <code>(-2, +1)</code> 이란 "박스 중심에서 왼쪽 2px, 아래 1px 이 진짜 align point" 라는 뜻이다.
+이 샘플은 박스가 거의 정중앙이라 작지만, 중앙에서 빗나가 그린 박스라면 수십 px 이 나온다.
+<code>round</code> 는 Python 반올림(짝수 쪽)이라 <code>-1.5 → -2</code> 다.</p>
+<p><b>왜 crop 이 아니라 cond 숫자만으로 계산하나.</b> 예전 코드는 이미지 내용을 검출해 잡은 crop 의 중심에서 offset 을 뽑았다.
+검출 crop 이 조금만 치우쳐도 offset 이 같이 오염됐고, 그게 miss 절반의 원인이었다.
+지금은 offset 을 <b>cond.txt 의 박스 기하만으로</b> 정하고 crop 은 따로 만든다(decoupled). crop 을 어떻게 잡든 align point 는 안 움직인다.</p>
+
+<h2><span class="eyebrow">4. 가드</span>이 박스를 믿어도 되나</h2>
+<p><code>check_cond_box(box_ltrb, shape)</code> 가 <code>('ok' | 'warn' | 'skip', 이유, offset_norm)</code> 을 돌려준다.
+<code>offset_norm</code> 은 offset 길이를 <b>이미지 대각선</b>으로 나눈 값이라 crop 크기와 무관한 척도다.</p>
+<div class="tbl"><table>
+<thead><tr><th>판정</th><th>조건</th><th>뜻</th></tr></thead>
+<tbody>
+<tr><td><span class="status skip">skip</span> <code>box:degenerate</code></td><td>폭 또는 높이 ≤ 0</td><td>좌표가 뒤집혔거나 깨짐</td></tr>
+<tr><td><span class="status skip">skip</span> <code>box:out_of_bounds</code></td><td>박스가 이미지 밖</td><td>Pixel 불일치 의심</td></tr>
+<tr><td><span class="status skip">skip</span> <code>box:too_small</code></td><td><code>min(변) − 4 &lt; 16px</code></td><td>inset 후 무늬가 안 남음</td></tr>
+<tr><td><span class="status skip">skip</span> <code>offset:too_far</code></td><td>offset_norm &gt; 0.38</td><td>"박스 ≈ 중앙" 가정 붕괴, 엔지니어 검토</td></tr>
+<tr><td><span class="status warn">warn</span> <code>offset:far</code></td><td>offset_norm &gt; 0.25</td><td>쓰긴 쓰되 경고</td></tr>
+<tr><td><span class="status warn">warn</span> <code>box:small</code></td><td><code>min(변) − 4 &lt; 24px</code></td><td>신호 약함 경고</td></tr>
+<tr><td><span class="status ok">ok</span></td><td>그 외</td><td></td></tr>
+</tbody></table></div>
+<p>skip 이면 박스를 버리고 <b>이미지 중앙 15% 면적</b> crop(<code>centered_area_crop</code>)에 offset <code>(0, 0)</code> 으로 간다. cond.txt 자체가 없을 때도 같은 폴백이다.</p>
+
+<h2><span class="eyebrow">5. template</span>박스 테두리를 지우고 안쪽만 오려낸다</h2>
+<figure class="frame">
+<div class="pipe">
+  <div>
+    <svg viewBox="0 0 200 200" role="img" aria-label="원본 rcp 이미지와 흰 박스">
+      <rect width="200" height="200" fill="url(#tex)"/>
+      <rect x="60" y="62" width="82" height="78" fill="none" stroke="#fff" stroke-width="2"/>
+      <line x1="100" y1="90" x2="100" y2="110" stroke="var(--align)"/><line x1="90" y1="100" x2="110" y2="100" stroke="var(--align)"/>
+    </svg>
+    <div class="step"><b>① 원본</b>흰 박스 테두리는 라이브 화면에 없는 선이다.</div>
+  </div>
+  <div>
+    <svg viewBox="0 0 200 200" role="img" aria-label="테두리를 inpaint 로 지운 이미지와 대칭 inset crop">
+      <rect width="200" height="200" fill="url(#tex)"/>
+      <rect x="60" y="62" width="82" height="78" fill="none" stroke="var(--img-tex)" stroke-width="2" stroke-dasharray="2 2"/>
+      <rect x="64" y="66" width="74" height="70" fill="var(--box-soft)" stroke="var(--box)" stroke-dasharray="4 3"/>
+      <circle cx="101" cy="101" r="3" fill="var(--box)"/>
+    </svg>
+    <div class="step"><b>② inpaint + 대칭 inset</b>테두리만 지우고(crosshair 는 남김) 사방 2px 안쪽을 오린다. crop 중심 = 박스 중심.</div>
+  </div>
+  <div>
+    <svg viewBox="0 0 200 200" role="img" aria-label="template 이 offset 을 들고 다닌다">
+      <rect x="40" y="46" width="120" height="108" fill="var(--code)" stroke="var(--rule)" rx="4"/>
+      <rect x="52" y="58" width="74" height="70" fill="url(#tex)"/>
+      <text x="52" y="146" font-size="11" fill="var(--muted)">AlignKeyTemplate</text>
+      <text x="132" y="80" font-size="11" fill="var(--align)">offset</text>
+      <text x="132" y="94" font-size="11" fill="var(--align)">(−2, +1)</text>
+    </svg>
+    <div class="step"><b>③ build_template</b>crop 과 <code>align_offset_xy</code> 를 한 객체로 묶는다.</div>
+  </div>
+</div>
+<figcaption><code>cond_template_crop</code> → <code>build_template(..., align_offset_xy=offset)</code>. inset 이 대칭이라 3 절의 offset 과 정확히 맞아떨어진다. inset 하면 16px 미만이 될 때만 inset 을 생략한다.</figcaption>
+</figure>
+
+<h2><span class="eyebrow">6. 실전</span>라이브 프레임에서 클릭 지점까지</h2>
+<pre><code>ox, oy = template.align_offset_xy
+align_x = result.best_xy[0] + round(ox * result.best_scale)
+align_y = result.best_xy[1] + round(oy * result.best_scale)
+cx, cy  = clamp_to_fov(align_x, align_y, fw, fh, margin)
+controller.move_to_point(cx, cy)        # 더블클릭 = 그 점으로 recenter</code></pre>
+<ul>
+<li><code>best_xy</code> 는 매칭 엔진이 라이브 프레임에서 찾은 <b>template 중심</b>(= 박스 중심이 화면에 나타난 자리).</li>
+<li><code>best_scale</code> 은 매칭 때 쓴 배율. 라이브 프레임이 rcp 이미지와 크기가 다르면 offset 도 같은 배율로 늘려야 한다. 위 계산기의 오른쪽 슬라이더가 이 값이다.</li>
+<li><code>clamp_to_fov</code> 는 클릭 지점이 화면 가장자리 마진 안에 머물게 자른다.</li>
+</ul>
+<p>offset 이 <code>(0, 0)</code> 이면(박스 없음 폴백, 또는 정확히 중앙에 그린 박스) 클릭 지점은 <code>best_xy</code> 그대로다.</p>
+
+<h2><span class="eyebrow">7. OM vs SEM</span>계산은 같고, 박스 크기가 다르다</h2>
+<figure class="frame">
+<div class="two">
+  <div>
+    <h3>OM · IMAP0001 (저배율, 예: 104)</h3>
+    <svg viewBox="0 0 260 260" role="img" aria-label="OM 은 박스가 프레임의 약 35% 를 차지">
+      <rect width="260" height="260" fill="url(#tex)"/>
+      <rect x="86" y="88" width="90" height="86" fill="none" stroke="#fff" stroke-width="2"/>
+      <circle cx="131" cy="131" r="4" fill="var(--box)"/>
+      <line x1="130" y1="118" x2="130" y2="142" stroke="var(--align)" stroke-width="1.5"/><line x1="118" y1="130" x2="142" y2="130" stroke="var(--align)" stroke-width="1.5"/>
+      <text x="8" y="250" font-size="11" fill="#fff">박스 ≈ 프레임 변의 35%</text>
+    </svg>
+    <p class="step" style="font-size:.85rem;color:var(--muted);margin-top:8px">박스 밖 여백이 많다. offset 이 실제로 클릭 위치를 바꾸고, 매칭 난점은 비슷한 박스가 여러 개인 주기 무늬다.</p>
+  </div>
+  <div>
+    <h3>SEM · IMAP0002 (고배율, K 단위)</h3>
+    <svg viewBox="0 0 260 260" role="img" aria-label="SEM 은 박스가 프레임의 80~100% 를 차지">
+      <rect width="260" height="260" fill="url(#tex)"/>
+      <rect x="18" y="20" width="224" height="220" fill="none" stroke="#fff" stroke-width="2"/>
+      <circle cx="130" cy="130" r="4" fill="var(--box)"/>
+      <line x1="130" y1="118" x2="130" y2="142" stroke="var(--align)" stroke-width="1.5"/><line x1="118" y1="130" x2="142" y2="130" stroke="var(--align)" stroke-width="1.5"/>
+      <text x="26" y="250" font-size="11" fill="#fff">박스 ≈ 프레임의 80~100%</text>
+    </svg>
+    <p class="step" style="font-size:.85rem;color:var(--muted);margin-top:8px">박스가 거의 프레임이라 offset 은 대개 몇 px. 매칭 난점은 aperture problem(선 교차점만 유니크)이다.</p>
+  </div>
+</div>
+<figcaption><code>build_templates_from_assets</code> 가 <code>IMAP0001</code> 로 <code>templates["OM"]</code>, <code>IMAP0002</code> 로 <code>templates["SEM"]</code> 을 같은 <code>load_template</code> 으로 만든다. 다른 것은 <code>key_type</code> 하나이고, 이건 매칭 rerank 방식(OM = MIND, SEM = ECC)을 가를 뿐 offset 계산에는 안 쓰인다.</figcaption>
+</figure>
+
+<h2><span class="eyebrow">8. 확인</span>Mac 에서 실장비 없이 돌려 보기</h2>
+<pre><code>uv run python - &lt;&lt;'EOF'
+from poc.workflow_3.align.cond_file import parse_cond
+from poc.workflow_3.align.cond_template import cond_align_offset, check_cond_box
+cond = parse_cond(open("poc/workflow_2/docs/journals/260608/cond_sample.txt").read())
+print(cond.box_ltrb)                                   # (1770, 1770, 3380, 3330)
+print(cond_align_offset(cond.box_ltrb, (512, 512)))    # (-2, 1)
+print(check_cond_box(cond.box_ltrb, (512, 512)))       # ('ok', 'ok', 0.003...)
+print(cond_align_offset((600, 600, 2200, 2200), (512, 512)))  # (116, 116) 왼쪽 위로 치우친 박스
+EOF</code></pre>
+
+<h2><span class="eyebrow">참고</span>코드 위치</h2>
+<div class="tbl"><table class="ref">
+<tbody>
+<tr><td>cond.txt 파싱, Pixel 불일치 보정</td><td><code>poc/workflow_3/align/cond_file.py</code> (<code>parse_cond</code>, <code>cond_for_image</code>)</td></tr>
+<tr><td>/10 변환, 테두리 inpaint</td><td><code>poc/workflow_3/align/clean_align_image.py</code> (<code>cursor_to_image</code>, <code>clean_image</code>)</td></tr>
+<tr><td>박스 중심, offset, 가드, template crop</td><td><code>poc/workflow_3/align/cond_template.py</code></td></tr>
+<tr><td>rcp 이미지 → template (OM/SEM)</td><td><code>poc/workflow_3/align/templates.py</code> (<code>load_template</code>)</td></tr>
+<tr><td>라이브 프레임에서 offset 적용 + 클릭</td><td><code>poc/workflow_3/align/correction.py</code> (primary 분기)</td></tr>
+<tr><td>반대 작업: crosshair 를 이미지 위에 그리기</td><td><code>docs/crosshair_overlay_from_cond.md</code></td></tr>
+</tbody></table></div>
+
+</main>
+<script>
+(function(){
+  var W=512,H=512,OV=10,INSET=2,MIN_INNER=16,WARN_INNER=24,OFF_WARN=0.25,OFF_SKIP=0.38;
+  var $=function(id){return document.getElementById(id)};
+  var ids=['l','t','r','b','sc','bx','by'];
+  function pyround(v){var f=Math.floor(v),d=v-f;if(d!==0.5)return Math.round(v);return f%2===0?f:f+1;}
+  function guard(x,y,bw,bh,onorm){
+    if(bw<=0||bh<=0)return['skip','box:degenerate'];
+    if(x<0||y<0||x+bw>W||y+bh>H)return['skip','box:out_of_bounds'];
+    var inner=Math.min(bw,bh)-2*INSET;
+    if(inner<MIN_INNER)return['skip','box:too_small'];
+    if(onorm>OFF_SKIP)return['skip','offset:too_far'];
+    if(onorm>OFF_WARN)return['warn','offset:far'];
+    if(inner<WARN_INNER)return['warn','box:small'];
+    return['ok','ok'];
+  }
+  function update(){
+    var v={};ids.forEach(function(k){v[k]=parseFloat($(k).value);
+      document.querySelector('output[for="'+k+'"]').textContent=k==='sc'?v[k].toFixed(2):v[k];});
+    var l=v.l/OV,t=v.t/OV,r=v.r/OV,b=v.b/OV,bw=r-l,bh=b-t;
+    var bcx=(l+r)/2,bcy=(t+b)/2;
+    var dx=pyround(W/2-bcx),dy=pyround(H/2-bcy);
+    var onorm=Math.hypot(dx,dy)/Math.hypot(W,H);
+    var g=guard(Math.round(l),Math.round(t),Math.round(bw),Math.round(bh),onorm);
+    var skip=g[0]==='skip';
+    // rcp panel
+    $('box').setAttribute('x',l);$('box').setAttribute('y',t);
+    $('box').setAttribute('width',Math.max(0,bw));$('box').setAttribute('height',Math.max(0,bh));
+    var ix=l+INSET,iy=t+INSET,iw=Math.max(0,bw-2*INSET),ih=Math.max(0,bh-2*INSET);
+    $('inset').setAttribute('x',ix);$('inset').setAttribute('y',iy);$('inset').setAttribute('width',iw);$('inset').setAttribute('height',ih);
+    $('inset').style.visibility=skip?'hidden':'visible';
+    $('bc').setAttribute('cx',bcx);$('bc').setAttribute('cy',bcy);
+    $('bclabel').setAttribute('x',bcx+10);$('bclabel').setAttribute('y',bcy-6);
+    $('offarrow').setAttribute('x1',bcx);$('offarrow').setAttribute('y1',bcy);
+    $('offarrow').style.visibility=(dx||dy)&&!skip?'visible':'hidden';
+    // live panel
+    var s=v.sc,ox=skip?0:dx,oy=skip?0:dy;
+    var lw=(skip?Math.sqrt(0.15)*W:iw)*s,lh=(skip?Math.sqrt(0.15)*H:ih)*s;
+    $('lbox').setAttribute('x',v.bx-lw/2);$('lbox').setAttribute('y',v.by-lh/2);$('lbox').setAttribute('width',lw);$('lbox').setAttribute('height',lh);
+    $('lbc').setAttribute('cx',v.bx);$('lbc').setAttribute('cy',v.by);
+    $('lbclabel').setAttribute('x',v.bx+10);$('lbclabel').setAttribute('y',v.by-6);
+    var ax=v.bx+pyround(ox*s),ay=v.by+pyround(oy*s);
+    $('larrow').setAttribute('x1',v.bx);$('larrow').setAttribute('y1',v.by);$('larrow').setAttribute('x2',ax);$('larrow').setAttribute('y2',ay);
+    $('larrow').style.visibility=(ox||oy)?'visible':'hidden';
+    $('lclick').setAttribute('transform','translate('+ax+' '+ay+')');
+    var chip='<span class="status '+g[0]+'">'+g[0]+'</span> '+g[1];
+    $('readout').innerHTML=
+      '!Cursor_info  ...,'+v.l+','+v.t+','+v.r+','+v.b+',...   (cursor frame ×10)\n'+
+      '박스(px)      l='+l.toFixed(0)+' t='+t.toFixed(0)+' r='+r.toFixed(0)+' b='+b.toFixed(0)+'   w='+bw.toFixed(0)+' h='+bh.toFixed(0)+'\n'+
+      '박스 중심     ('+bcx.toFixed(1)+', '+bcy.toFixed(1)+')      이미지 중심 ('+(W/2)+', '+(H/2)+')\n'+
+      'offset        ('+(W/2-bcx).toFixed(1)+', '+(H/2-bcy).toFixed(1)+') → round → ('+dx+', '+dy+')   offset_norm='+onorm.toFixed(3)+'\n'+
+      'check_cond_box  '+chip+(skip?'   → center-area crop, offset (0, 0)':'')+'\n'+
+      '클릭 지점     best_xy ('+v.bx+', '+v.by+') + ('+ox+', '+oy+') × '+s.toFixed(2)+' = ('+ax+', '+ay+')';
+  }
+  ids.forEach(function(k){$(k).addEventListener('input',update)});
+  // token strip for !Cursor_info
+  var toks=['-1','-1','-1','-1','-1','-1','1770','1770','3380','3330','-1','-1'];
+  var g=$('tokens'),x=44;
+  toks.forEach(function(tk,i){
+    var w=tk.length>2?52:36;
+    var role=(i===4||i===5)?'cross':(i>=6&&i<=9)?'box':null;
+    var rect=document.createElementNS('http://www.w3.org/2000/svg','rect');
+    rect.setAttribute('x',x);rect.setAttribute('y',36);rect.setAttribute('width',w);rect.setAttribute('height',30);rect.setAttribute('rx',3);
+    rect.setAttribute('fill',role==='box'?'var(--box-soft)':role==='cross'?'var(--align-soft)':'var(--code)');
+    rect.setAttribute('stroke',role==='box'?'var(--box)':role==='cross'?'var(--cross)':'var(--rule)');
+    g.appendChild(rect);
+    var t1=document.createElementNS('http://www.w3.org/2000/svg','text');
+    t1.setAttribute('x',x+w/2);t1.setAttribute('y',22);t1.setAttribute('text-anchor','middle');t1.setAttribute('font-size','11');t1.setAttribute('fill','var(--muted)');t1.textContent=i;g.appendChild(t1);
+    var t2=document.createElementNS('http://www.w3.org/2000/svg','text');
+    t2.setAttribute('x',x+w/2);t2.setAttribute('y',56);t2.setAttribute('text-anchor','middle');t2.setAttribute('font-size','12');t2.textContent=tk;g.appendChild(t2);
+    if(role){var t3=document.createElementNS('http://www.w3.org/2000/svg','text');
+      t3.setAttribute('x',x+w/2);t3.setAttribute('y',86);t3.setAttribute('text-anchor','middle');t3.setAttribute('font-size','11');
+      t3.setAttribute('fill',role==='box'?'var(--box)':'var(--cross)');
+      t3.textContent=role==='box'?['left','top','right','bottom'][i-6]:['cx','cy'][i-4];g.appendChild(t3);}
+    x+=w+6;
+  });
+  update();
+})();
+</script>
+</body>
+</html>

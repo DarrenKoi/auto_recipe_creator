@@ -132,14 +132,22 @@ def _build_upstream_headers() -> dict[str, str]:
         "transfer-encoding",
         "accept-encoding",
     }
+    default_api_key = os.environ.get("VLM_SERVE_UPSTREAM_API_KEY", "").strip()
+
+    # 호출자의 Authorization 은 **이 프록시에게** 온 것이다 (OpenAI 클라이언트가 비워 둘 수
+    # 없어서 채워 보내는 아무 값 포함). 업스트림 키는 프록시의 구현 세부이므로 그대로
+    # 넘기지 않는다 - 넘기면 vLLM 이 --api-key 를 켠 순간 401 이 나고, 증상은 호출부에서
+    # "프록시가 죽었다"로 보인다. 프록시를 쓰는 쪽(workflow_3)은 업스트림 키를 몰라야 한다.
+    if default_api_key:
+        blocked_headers.add("authorization")
+
     headers = {
         key: value
         for key, value in request.headers.items()
         if key.lower() not in blocked_headers
     }
 
-    default_api_key = os.environ.get("VLM_SERVE_UPSTREAM_API_KEY", "").strip()
-    if default_api_key and "authorization" not in {key.lower() for key in headers}:
+    if default_api_key:
         headers["Authorization"] = f"Bearer {default_api_key}"
 
     return headers

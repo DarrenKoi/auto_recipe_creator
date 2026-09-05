@@ -19,8 +19,6 @@ from .config import (
 )
 from .mai_ui import SERVICE_CONFIG as MAI_UI_CONFIG
 from .mai_ui import service_blueprint as mai_ui_blueprint
-from .mai_ui_2b import SERVICE_CONFIG as MAI_UI_2B_CONFIG
-from .mai_ui_2b import service_blueprint as mai_ui_2b_blueprint
 from .paddleocr_vl import SERVICE_CONFIG as PADDLEOCR_VL_CONFIG
 from .paddleocr_vl import service_blueprint as paddleocr_vl_blueprint
 from .qwen3_8_27b import SERVICE_CONFIG as QWEN3_8_27B_CONFIG
@@ -30,7 +28,6 @@ from .qwen3_8_27b import service_blueprint as qwen3_8_27b_blueprint
 
 _ALL_SERVICE_BLUEPRINTS = [
     (MAI_UI_CONFIG, mai_ui_blueprint),
-    (MAI_UI_2B_CONFIG, mai_ui_2b_blueprint),
     (PADDLEOCR_VL_CONFIG, paddleocr_vl_blueprint),
     (QWEN3_8_27B_CONFIG, qwen3_8_27b_blueprint),
 ]
@@ -162,7 +159,15 @@ def _probe_service(entry: dict[str, Any]) -> dict[str, Any]:
     health_url = f"{str(upstream_base_url).rstrip('/')}/v1/models"
     entry["probe_url"] = health_url
     try:
-        response = requests.get(health_url, timeout=_health_timeout_sec())
+        # vLLM 이 --api-key 로 떠 있으면 /v1/* 는 인증을 요구한다 (/health 만 열림).
+        # 키가 없으면 살아 있는 모델이 401 때문에 unreachable 로 보고된다.
+        upstream_api_key = os.environ.get("VLM_SERVE_UPSTREAM_API_KEY", "").strip()
+        probe_headers = (
+            {"Authorization": f"Bearer {upstream_api_key}"} if upstream_api_key else None
+        )
+        response = requests.get(
+            health_url, headers=probe_headers, timeout=_health_timeout_sec()
+        )
     except requests.RequestException as exc:
         entry["health_status"] = "unreachable"
         entry["reason"] = str(exc)

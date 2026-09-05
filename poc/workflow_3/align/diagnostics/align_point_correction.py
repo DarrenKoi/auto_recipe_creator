@@ -2,9 +2,16 @@
 
 목표:
   - from_rcp/IMAP0001 (OM), IMAP0002 (SEM) 에는 엔지니어가 그려둔 *흰색 박스*
-    overlay 가 있다 — 그 박스 안쪽이 "유일하게 식별 가능한 영역" 이고, align
-    point 는 그 박스 중심이다. 따라서 박스를 검출 → 박스 *내부* 픽셀만 잘라낸
-    것이 template, 그 template 중심이 정답 align point 가 된다.
+    overlay 가 있다 — 그 박스 안쪽이 "유일하게 식별 가능한 영역" 이라 template
+    은 박스를 검출해 그 *내부* 픽셀만 잘라 만든다. 다만 **align point 는 박스
+    중심이 아니라 이미지 중심** 이다 (rcp 이미지는 등록 때 align point 로 stage
+    를 옮긴 뒤 찍힌 것이라 그 점이 정중앙에 온다). 박스는 매칭 단서일 뿐이므로
+    매칭이 잡은 template 중심에 `align_offset_xy` (= 이미지 중심 − template
+    중심) 를 더해야 정답 align point 가 된다. 박스 미검출시 template 은 이미지
+    중심 기준 ~20% area 크롭이고 offset = (0, 0).
+    주의 — 여기서 offset 은 *검출한* inner crop 중심에서 뽑는다. 프로덕션
+    (`align/cond_template.py`) 은 검출 대신 cond.txt 박스 기하로만 offset 을
+    정해 검출 오차 오염을 없앤 경로다. 설명은 `docs/align_point_from_cond.md`.
   - from_msr/{S,E}##_A000X-01AP.* 각 이미지에서 **CV 가 결정한 정답 좌표**
     (corrected_xy = 매칭된 template 중심) 와, **도구가 이미 그려둔 crosshair
     좌표** (crosshair_xy) 를 함께 뽑아 둘 사이의 보정 벡터를 기록한다.

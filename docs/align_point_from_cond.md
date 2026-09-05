@@ -95,11 +95,12 @@ center 까지의 벡터다. 이렇게 읽으면 세 경우가 **같은 규칙의
 align center 다. offset 이 `(0, 0)` 인 template 은 "매칭 위치가 곧 클릭 지점"
 인 특수한 경우일 뿐 예외가 아니다.
 
-> **옛 문서와 충돌 주의.** 진단 스크립트
-> `align/diagnostics/align_point_correction.py` 의 docstring 은 "align point 는
-> 그 박스 중심" 이라고 적고 있다. 그건 cond 기하를 쓰기 전, 박스를 **검출**해서
-> 그 중심을 쓰던 시절의 서술이다. 프로덕션 경로(`cond_template.py`)는 위 표대로
-> 동작한다 — 박스 중심은 align center 가 아니다.
+> **진단 스크립트와의 차이.** 오프라인 진단
+> `align/diagnostics/align_point_correction.py` 도 align center 를 이미지 중심으로
+> 본다(같은 규칙). 다른 것은 **crop 중심을 어디서 얻느냐**다 — 그쪽은 흰 박스를
+> 이미지에서 **검출**해 그 inner crop 중심을 쓰고, 프로덕션은 cond.txt 의 박스
+> 숫자만 쓴다. 검출 crop 이 조금 치우치면 offset 이 같이 오염되므로(§3 마지막
+> 문단) 프로덕션 경로가 cond 기하로 갈아탄 것이다.
 
 ---
 

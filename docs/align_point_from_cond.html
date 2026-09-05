@@ -160,6 +160,85 @@ a{color:var(--box)}
   <code>check_cond_box</code> 의 가드 판정이 상태 칩으로 같이 바뀐다. 박스를 구석으로 끌어 보면 <code>offset:far</code> → <code>offset:too_far</code> 가 되는 지점을 볼 수 있다.</figcaption>
 </figure>
 
+<h2><span class="eyebrow">0.5. 용어</span>세 개의 중심 — image center · align center · box center</h2>
+<p>위의 "align point = 이미지 중심" 은 <b>rcp 이미지에서만</b> 참인 문장이다. 왜 참인지, 그리고 어디서 깨지는지를 알아야 offset 을 제대로 읽는다. 이름이 비슷한 점이 셋 있다.</p>
+<div class="tbl"><table>
+  <tr><th>이름</th><th>정의</th><th>누가 정하나</th></tr>
+  <tr><td><b class="c-align">image center</b><br>이미지 중심</td><td><code>(w/2, h/2)</code>. 파일의 기하학적 중심</td><td>이미지 크기. 아무것도 안 읽고 안다</td></tr>
+  <tr><td><b>align center</b><br>align point</td><td>장비가 "여기로 stage 를 맞춘다" 고 기억하는 <b>물리적</b> 지점. 더블클릭으로 recenter 시키려는 목표</td><td>장비 / 레시피</td></tr>
+  <tr><td><b class="c-box">box center</b><br>박스 중심</td><td>엔지니어가 그린 흰 박스의 기하 중심</td><td>사람 손</td></tr>
+</table></div>
+
+<figure class="frame">
+<div class="two">
+  <div>
+    <h3>rcp (IMAP000x) — 두 중심이 겹친다</h3>
+    <svg viewBox="0 0 300 300" role="img" aria-label="rcp 이미지에서 이미지 중심과 align center 가 같은 점이고 박스 중심만 어긋난 그림">
+      <defs>
+        <pattern id="tex2" width="26" height="26" patternUnits="userSpaceOnUse">
+          <rect width="26" height="26" fill="var(--img)"/>
+          <path d="M0 13h26M13 0v26" stroke="var(--img-tex)" stroke-width="1"/>
+        </pattern>
+        <marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--align)"/>
+        </marker>
+      </defs>
+      <rect x="20" y="20" width="260" height="260" fill="url(#tex2)" stroke="var(--rule)"/>
+      <rect x="92" y="60" width="120" height="120" fill="none" stroke="#fff" stroke-width="2"/>
+      <line x1="152" y1="120" x2="150" y2="150" stroke="var(--align)" stroke-width="2.5" marker-end="url(#arr3)"/>
+      <circle cx="152" cy="120" r="5" fill="var(--box)" stroke="#fff" stroke-width="1.5"/>
+      <circle cx="150" cy="150" r="6" fill="var(--align)" stroke="#fff" stroke-width="1.5"/>
+      <line x1="20" y1="150" x2="280" y2="150" stroke="var(--align)" stroke-width=".7" stroke-dasharray="3 4" opacity=".7"/>
+      <line x1="150" y1="20" x2="150" y2="280" stroke="var(--align)" stroke-width=".7" stroke-dasharray="3 4" opacity=".7"/>
+      <text x="160" y="115" font-size="11" fill="var(--box)">box center</text>
+      <text x="160" y="172" font-size="11" fill="var(--align)">image center</text>
+      <text x="160" y="186" font-size="11" fill="var(--align)">= align center</text>
+      <text x="26" y="272" font-size="11" fill="var(--align)">offset = 주황 − 청록</text>
+    </svg>
+  </div>
+  <div>
+    <h3>msr (S / E) — 갈라진다</h3>
+    <svg viewBox="0 0 300 300" role="img" aria-label="msr 프레임에서 align center 는 crosshair 이고 이미지 중심은 의미가 없다는 그림">
+      <rect x="20" y="20" width="260" height="260" fill="url(#tex2)" stroke="var(--rule)"/>
+      <rect x="120" y="45" width="130" height="130" fill="none" stroke="var(--box)" stroke-width="1.5" stroke-dasharray="5 4"/>
+      <line x1="163" y1="110" x2="207" y2="110" stroke="var(--cross)" stroke-width="2"/>
+      <line x1="185" y1="88" x2="185" y2="132" stroke="var(--cross)" stroke-width="2"/>
+      <circle cx="150" cy="150" r="5" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="2 2"/>
+      <text x="196" y="84" font-size="11" fill="var(--cross)">crosshair</text>
+      <text x="196" y="98" font-size="11" fill="var(--cross)">= align center</text>
+      <text x="140" y="152" font-size="11" fill="var(--muted)" text-anchor="end">image center</text>
+      <text x="140" y="166" font-size="11" fill="var(--muted)" text-anchor="end">(여기선 무의미)</text>
+      <text x="126" y="196" font-size="11" fill="var(--box)">consensus crop</text>
+      <text x="126" y="210" font-size="11" fill="var(--box)">= crosshair 중심</text>
+    </svg>
+  </div>
+</div>
+<figcaption>rcp 은 등록 때 <b>align point 로 stage 를 옮긴 뒤</b> 찍은 사진이라 이미지 중심이 곧 align center 다 — 우연이 아니라 촬영 방식의 결과다. msr 프레임은 그렇게 찍히지 않아서, align center 를 도구가 그린 crosshair 로 따로 표시한다.</figcaption>
+</figure>
+
+<p>rcp 에서 두 중심이 겹치는 덕분에 §1 샘플의 <code>!Cursor_info</code> 가 crosshair 자리(<code>[4],[5]</code>)를 <code>-1</code> 로 비워 둘 수 있다 — align center 를 따로 표시할 필요가 없다. <b class="c-box">box center</b> 만 다르다. 사람이 "유니크한 무늬" 를 보고 손으로 그린 것이라 정중앙에 있으리란 보장이 없고, <b>그 어긋남이 곧 offset</b> 이다.</p>
+<div class="formula">
+<span class="c-align">image center</span> == align center &nbsp;&nbsp;← 캡처 방식이 보장<br>
+<span class="c-box">box center</span> &nbsp;&nbsp;← 손으로 그린 위치, 어긋날 수 있음<br>
+<b>offset</b> = align center − <span class="c-box">box center</span> = <span class="c-align">image center</span> − <span class="c-box">box center</span>
+</div>
+
+<h3 style="font-size:1rem;font-weight:600;margin:2rem 0 .5rem">msr 에서는 crosshair 가 align center 다</h3>
+<p><code>align_img_from_msr/</code> 의 S / E 프레임은 <b>align point 로 맞춘 뒤 찍은 사진이 아니다.</b> stage 가 그때 있던 자리에서 찍힌 프레임이고, align center 는 도구가 그려 둔 <b class="c-cross">crosshair</b> <code>!Cursor_info[4],[5]</code> 가 가리킨다.</p>
+<p>이 구별이 코드에 그대로 나타난다. consensus template 을 만들 때 S 프레임을 <b>이미지 중심이 아니라 crosshair 중심으로</b> 자른다(<code>consensus_crops._cond_consensus_crop</code>). 그렇게 자르면 crop 중심이 곧 align center 가 되고, 그래서 consensus template 은 offset 을 안 들고 다닌다(<code>build_consensus_template</code> 이 <code>align_offset_xy</code> 를 넘기지 않으므로 <code>(0, 0)</code>). E(실패) 프레임에 crosshair 가 <b>아예 없는</b> 것도 같은 틀에서 읽힌다 — "도구가 이 프레임에서 align center 를 정하지 못했다" 는 뜻이고, 그 부재 자체가 신호다.</p>
+
+<h3 style="font-size:1rem;font-weight:600;margin:2rem 0 .5rem">그래서 offset 의 정확한 정의는 "crop 중심 → align center"</h3>
+<p>template 마다 crop 을 자르는 기준점이 다르고, offset 은 그 기준점에서 align center 까지의 벡터다. 이렇게 읽으면 세 경우가 <b>같은 규칙의 사례</b>가 된다.</p>
+<div class="tbl"><table>
+  <tr><th>template</th><th>crop 중심</th><th>align center</th><th><code>align_offset_xy</code></th></tr>
+  <tr><td>rcp box-crop <span style="color:var(--muted)">(기본)</span></td><td class="c-box">박스 중심</td><td class="c-align">이미지 중심</td><td>이미지 중심 − 박스 중심</td></tr>
+  <tr><td>rcp center-area <span style="color:var(--muted)">(박스 없음/skip 폴백)</span></td><td class="c-align">이미지 중심</td><td class="c-align">이미지 중심</td><td><code>(0, 0)</code></td></tr>
+  <tr><td>consensus <span style="color:var(--muted)">(msr S 평균)</span></td><td class="c-cross">crosshair</td><td class="c-cross">crosshair</td><td><code>(0, 0)</code></td></tr>
+</table></div>
+<p>아래 6절의 <code>best_xy + offset × best_scale</code> 도 같은 문장으로 읽힌다 — <b>매칭 엔진이 찾아 주는 것은 언제나 crop 중심</b>(<code>best_xy</code>)이고, 거기서 offset 만큼 이동해야 align center 다. offset 이 <code>(0, 0)</code> 인 template 은 "매칭 위치가 곧 클릭 지점" 인 특수한 경우일 뿐 예외가 아니다.</p>
+
+<div class="note"><p><b>옛 문서와 충돌 주의.</b> 진단 스크립트 <code>align/diagnostics/align_point_correction.py</code> 의 docstring 은 "align point 는 그 박스 중심" 이라고 적고 있다. 그건 cond 기하를 쓰기 전, 박스를 <b>검출</b>해서 그 중심을 쓰던 시절의 서술이다. 프로덕션 경로(<code>cond_template.py</code>)는 위 표대로 동작한다 — 박스 중심은 align center 가 아니다.</p></div>
+
 <h2><span class="eyebrow">1. 재료</span>cond.txt 는 어디 있고 무엇이 적혀 있나</h2>
 <p>이미지마다 같은 폴더 안의 숨김 폴더에 짝이 있다.</p>
 <pre><code>align_img_from_rcp/

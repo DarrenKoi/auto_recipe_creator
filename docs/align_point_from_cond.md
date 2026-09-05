@@ -28,6 +28,81 @@ align point 는 등록 당시 화면의 **정중앙**이다. 그래서 박스가
 
 ---
 
+## 0.5. 세 개의 중심을 구별하기 — image center · align center · box center
+
+윗줄의 "align point = 이미지 중심" 은 **rcp 이미지에서만** 참인 문장이다. 왜
+참인지, 그리고 어디서 깨지는지를 알아야 offset 을 제대로 읽는다. 이름이 비슷한
+점이 셋 있다.
+
+| 이름 | 정의 | 누가 정하나 |
+|---|---|---|
+| **image center** (이미지 중심) | `(w/2, h/2)`. 파일의 기하학적 중심 | 이미지 크기. 아무것도 안 읽고 안다 |
+| **align center** (align point) | 장비가 "여기로 stage 를 맞춘다" 고 기억하는 **물리적** 지점. 우리가 더블클릭으로 recenter 시키려는 목표 | 장비/레시피 |
+| **box center** (박스 중심) | 엔지니어가 그린 흰 박스의 기하 중심 | 사람 손 |
+
+### rcp 이미지에서는 image center == align center 다 (구성상)
+
+레시피 등록 때 장비는 **align point 로 stage 를 옮긴 뒤** 화면을 캡처했다.
+그래서 그 이미지는 align center 를 정중앙에 놓고 잘린 사진이다. 두 점이 우연히
+같은 게 아니라 **찍힌 방식 때문에** 같다.
+
+여기서 §1 샘플의 `!Cursor_info` 가 왜 crosshair 자리(`[4],[5]`)를 `-1` 로
+비워 두는지가 설명된다 — align center 를 따로 표시할 필요가 없기 때문이다.
+이미지 자체가 그 점을 가리키고 있다.
+
+box center 는 다르다. 사람이 "유니크한 무늬" 를 보고 손으로 그린 것이라 그
+무늬가 정중앙에 있으리란 보장이 없다. **그 어긋남이 곧 offset 이다.**
+
+```
+image center == align center     ← 캡처 방식이 보장
+box center                       ← 손으로 그린 위치, 어긋날 수 있음
+offset = align center - box center = image center - box center
+```
+
+### msr 이미지에서는 갈라진다 — 그때는 crosshair 가 align center 다
+
+`align_img_from_msr/` 의 S / E 프레임은 **align point 로 맞춘 뒤 찍은 사진이
+아니다.** stage 가 그때 있던 자리에서 찍힌 프레임이고, align center 는 도구가
+그 위에 그려 둔 **crosshair** `!Cursor_info[4],[5]` 가 가리킨다. 즉 msr 에서는
+
+```
+image center ≠ align center
+align center = crosshair
+```
+
+이 구별이 코드에 그대로 나타난다. consensus template 을 만들 때 S 프레임을
+**이미지 중심이 아니라 crosshair 중심으로** 자른다
+(`consensus_crops._cond_consensus_crop`). 그렇게 자르면 crop 중심이 곧 align
+center 가 되고, 그래서 consensus template 은 offset 을 안 들고 다닌다
+(`build_consensus_template` 이 `align_offset_xy` 를 넘기지 않으므로 `(0, 0)`).
+
+E(실패) 프레임에 crosshair 가 아예 없는 것도 같은 틀에서 읽힌다 — "도구가 이
+프레임에서 align center 를 정하지 못했다" 는 뜻이고, 그 부재 자체가 신호다.
+
+### 그래서 offset 의 정확한 정의는 "crop 중심 → align center"
+
+template 마다 crop 을 자르는 기준점이 다르고, offset 은 그 기준점에서 align
+center 까지의 벡터다. 이렇게 읽으면 세 경우가 **같은 규칙의 사례** 가 된다.
+
+| template | crop 중심 | align center | `align_offset_xy` |
+|---|---|---|---|
+| rcp box-crop (기본) | 박스 중심 | 이미지 중심 | 이미지 중심 − 박스 중심 |
+| rcp center-area (박스 없음/skip 폴백) | 이미지 중심 | 이미지 중심 | `(0, 0)` |
+| consensus (msr S 평균) | crosshair | crosshair | `(0, 0)` |
+
+§6 의 `best_xy + offset × best_scale` 도 같은 문장으로 읽힌다 — **매칭 엔진이
+찾아 주는 것은 언제나 crop 중심**(`best_xy`)이고, 거기서 offset 만큼 이동해야
+align center 다. offset 이 `(0, 0)` 인 template 은 "매칭 위치가 곧 클릭 지점"
+인 특수한 경우일 뿐 예외가 아니다.
+
+> **옛 문서와 충돌 주의.** 진단 스크립트
+> `align/diagnostics/align_point_correction.py` 의 docstring 은 "align point 는
+> 그 박스 중심" 이라고 적고 있다. 그건 cond 기하를 쓰기 전, 박스를 **검출**해서
+> 그 중심을 쓰던 시절의 서술이다. 프로덕션 경로(`cond_template.py`)는 위 표대로
+> 동작한다 — 박스 중심은 align center 가 아니다.
+
+---
+
 ## 1. 재료: cond.txt 는 어디 있고 무엇이 적혀 있나
 
 이미지마다 같은 폴더 안의 숨김 폴더에 짝이 있다.

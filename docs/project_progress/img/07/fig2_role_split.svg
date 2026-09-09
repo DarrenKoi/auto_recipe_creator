@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" font-family="Apple SD Gothic Neo, Malgun Gothic, NanumGothic, sans-serif">
   <rect width="1920" height="1080" fill="#ffffff"/>
   <text x="960" y="66" text-anchor="middle" font-size="38" font-weight="700" fill="#111827">AI 역할 분리 : 누가 무엇을 결정하는가</text>
-  <text x="960" y="112" text-anchor="middle" font-size="24" fill="#4b5563">한 모델에 다 맡기지 않는다 · UI 는 VLM 이 찍고 OCR 이 확인 · 좌표는 CV 만 결정 · AI 가 못 푸는 것은 현업 담당자</text>
+  <text x="960" y="112" text-anchor="middle" font-size="24" fill="#4b5563">한 모델에 다 맡기지 않는다 · UI는 VLM이 찍고 OCR이 확인 · 좌표는 CV만 결정 · AI가 못 푸는 것은 현업 담당자</text>
 
   <!-- ① VLM -->
-  <rect x="60" y="160" width="420" height="580" rx="14" fill="#eff6ff" stroke="#2563eb" stroke-width="2.8"/>
+  <rect x="60" y="160" width="420" height="540" rx="14" fill="#eff6ff" stroke="#2563eb" stroke-width="2.8"/>
   <rect x="60" y="160" width="420" height="90" rx="14" fill="#2563eb"/>
   <text x="270" y="219" text-anchor="middle" font-size="34" font-weight="700" fill="#ffffff">① VLM · 이해</text>
   <text x="270" y="320" text-anchor="middle" font-size="30" font-weight="700" fill="#1e3a8a">"어디를 볼지"</text>
@@ -17,7 +17,7 @@
   <text x="270" y="665" text-anchor="middle" font-size="22" font-weight="700" fill="#1d4ed8">사내 소형 모델 · 외부 API 없음</text>
 
   <!-- ② OCR -->
-  <rect x="520" y="160" width="420" height="580" rx="14" fill="#fffbeb" stroke="#d97706" stroke-width="2.8"/>
+  <rect x="520" y="160" width="420" height="540" rx="14" fill="#fffbeb" stroke="#d97706" stroke-width="2.8"/>
   <rect x="520" y="160" width="420" height="90" rx="14" fill="#d97706"/>
   <text x="730" y="219" text-anchor="middle" font-size="34" font-weight="700" fill="#ffffff">② OCR · 확인</text>
   <text x="730" y="320" text-anchor="middle" font-size="30" font-weight="700" fill="#92400e">"정말 그 버튼인지"</text>
@@ -30,7 +30,7 @@
   <text x="730" y="665" text-anchor="middle" font-size="22" font-weight="700" fill="#b45309">사내 소형 AI 모델 · fail-closed</text>
 
   <!-- ③ CV -->
-  <rect x="980" y="160" width="420" height="580" rx="14" fill="#ecfdf5" stroke="#059669" stroke-width="2.8"/>
+  <rect x="980" y="160" width="420" height="540" rx="14" fill="#ecfdf5" stroke="#059669" stroke-width="2.8"/>
   <rect x="980" y="160" width="420" height="90" rx="14" fill="#059669"/>
   <text x="1190" y="219" text-anchor="middle" font-size="34" font-weight="700" fill="#ffffff">③ CV 엔진 · 정량</text>
   <text x="1190" y="320" text-anchor="middle" font-size="30" font-weight="700" fill="#065f46">"정확히 몇 픽셀인지"</text>
@@ -40,33 +40,37 @@
     <text x="1190" y="514">최종 좌표(픽셀) 산출</text>
   </g>
   <rect x="1010" y="620" width="360" height="70" rx="35" fill="#d1fae5"/>
-  <text x="1190" y="665" text-anchor="middle" font-size="22" font-weight="700" fill="#047857">정렬 좌표는 CV 만 결정</text>
+  <text x="1190" y="665" text-anchor="middle" font-size="22" font-weight="700" fill="#047857">정렬 좌표는 CV만 결정</text>
 
   <!-- ④ 현업 담당자 -->
-  <rect x="1440" y="160" width="420" height="580" rx="14" fill="#fff7ed" stroke="#ea580c" stroke-width="2.8"/>
+  <rect x="1440" y="160" width="420" height="540" rx="14" fill="#fff7ed" stroke="#ea580c" stroke-width="2.8"/>
   <rect x="1440" y="160" width="420" height="90" rx="14" fill="#ea580c"/>
   <text x="1650" y="219" text-anchor="middle" font-size="34" font-weight="700" fill="#ffffff">④ 현업 담당자 · 예외</text>
-  <text x="1650" y="320" text-anchor="middle" font-size="30" font-weight="700" fill="#9a3412">"AI 가 못 푸는 것"</text>
+  <text x="1650" y="320" text-anchor="middle" font-size="30" font-weight="700" fill="#9a3412">"AI가 못 푸는 것"</text>
   <g font-size="24" fill="#1f2937" text-anchor="middle">
     <text x="1650" y="410">큐브 알림 받고 판단</text>
     <text x="1650" y="462">수동 정렬 · 재등록 검토</text>
     <text x="1650" y="514">확정(OK) 누름</text>
   </g>
   <rect x="1470" y="620" width="360" height="70" rx="35" fill="#ffedd5"/>
-  <text x="1650" y="665" text-anchor="middle" font-size="22" font-weight="700" fill="#c2410c">담당자가 개입하면 AI 는 양보</text>
+  <text x="1650" y="665" text-anchor="middle" font-size="22" font-weight="700" fill="#c2410c">담당자가 개입하면 AI는 양보</text>
 
   <!-- arrows -->
   <g stroke="#6b7280" stroke-width="2.4" fill="#6b7280">
     <path d="M480 470 L500 470"/><path d="M496 461 L520 470 L496 479 Z"/>
     <path d="M940 470 L960 470"/><path d="M956 461 L980 470 L956 479 Z"/>
-    <path d="M1400 470 L1420 470"/><path d="M1416 461 L1440 470 L1416 479 Z"/>
   </g>
-  <text x="1420" y="446" text-anchor="middle" font-size="18" fill="#7c3aed">큐브 알림</text>
+  <g stroke="#7c3aed" stroke-width="6" fill="#7c3aed">
+    <path d="M1400 470 L1416 470"/><path d="M1408 452 L1440 470 L1408 488 Z"/>
+  </g>
+
+  <rect x="980" y="712" width="880" height="66" rx="33" fill="#f5f3ff" stroke="#7c3aed" stroke-width="3"/>
+  <text x="1420" y="756" text-anchor="middle" font-size="28" font-weight="700" fill="#6d28d9">AI가 못 풀면 즉시 엔지니어에게 인계 - 큐브 알림 발송</text>
 
   <!-- rules -->
   <rect x="60" y="790" width="1800" height="110" rx="14" fill="#111827"/>
   <text x="960" y="838" text-anchor="middle" font-size="26" font-weight="700" fill="#f9fafb">설계 원칙 (코드에 고정)</text>
-  <text x="960" y="878" text-anchor="middle" font-size="24" fill="#e5e7eb">① VLM 의 답이 낮은 CV 점수를 덮지 못한다   ② 확인 안 되면 VLM 이 확정하지 않고 엔지니어에게 인폼·작업 요청   ③ 되돌릴 수 없는 확정(OK) 은 담당자가</text>
+  <text x="960" y="878" text-anchor="middle" font-size="24" fill="#e5e7eb">① VLM의 답이 낮은 CV 점수를 덮지 못한다   ② 확인 안 되면 VLM이 확정하지 않고 엔지니어에게 인폼·작업 요청   ③ 되돌릴 수 없는 확정(OK)은 담당자가</text>
 
   <text x="960" y="960" text-anchor="middle" font-size="20" fill="#6b7280">VLM 1종 + OCR 1종 상시 운영 · GPU 1~2장으로 26대 모니터링 · 모델은 벤치 결과로 교체 (통합 API 뒤라 루프는 그대로)</text>
 </svg>

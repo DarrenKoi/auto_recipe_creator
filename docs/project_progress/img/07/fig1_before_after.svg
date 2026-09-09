@@ -43,7 +43,7 @@
   <!-- ===== AFTER ===== -->
   <rect x="40" y="546" width="1840" height="440" rx="16" fill="#eff6ff" stroke="#bfdbfe"/>
   <text x="64" y="651" font-size="46" font-weight="700" fill="#1e3a8a">After</text>
-  <text x="64" y="694" font-size="22" fill="#1e40af">AI Agent 가</text>
+  <text x="64" y="694" font-size="22" fill="#1e40af">AI Agent가</text>
   <text x="64" y="726" font-size="22" fill="#1e40af">자동 수행</text>
 
   <g font-size="30" font-weight="700" fill="#1d4ed8" text-anchor="middle">
@@ -79,7 +79,7 @@
   <text x="64" y="855" font-size="26" font-weight="700" fill="#b91c1c">예외 시</text>
   <g font-size="24" font-weight="700" text-anchor="middle">
     <rect x="330"  y="796" width="280" height="100" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="2.4"/>
-    <text x="470"  y="838" fill="#b91c1c">AI 가 처리 안될 때</text>
+    <text x="470"  y="838" fill="#b91c1c">AI가 처리 안될 때</text>
     <text x="470"  y="872" font-size="18" font-weight="400" fill="#7f1d1d">추측해서 누르지 않음</text>
 
     <rect x="646"  y="796" width="280" height="100" rx="12" fill="#f5f3ff" stroke="#7c3aed" stroke-width="2.4"/>
@@ -88,7 +88,7 @@
 
     <rect x="962"  y="796" width="280" height="100" rx="12" fill="#fff7ed" stroke="#ea580c" stroke-width="2.4"/>
     <text x="1102" y="838" fill="#c2410c">담당자 조치</text>
-    <text x="1102" y="872" font-size="18" font-weight="400" fill="#7c2d12">수동 정렬 · AI 는 관전</text>
+    <text x="1102" y="872" font-size="18" font-weight="400" fill="#7c2d12">수동 정렬 · AI는 관전</text>
 
     <rect x="1278" y="796" width="280" height="100" rx="12" fill="#ffffff" stroke="#2563eb" stroke-width="2.4"/>
     <text x="1418" y="838" fill="#1d4ed8">기록 → 다음 알람</text>
@@ -101,7 +101,7 @@
     <path d="M926 846 L946 846"/><path d="M942 837 L962 846 L942 855 Z"/>
     <path d="M1242 846 L1262 846"/><path d="M1258 837 L1278 846 L1258 855 Z"/>
   </g>
-  <text x="944" y="938" text-anchor="middle" font-size="22" fill="#1e3a8a">안전 원칙 : 확인 안 되면 VLM 이 확정하지 않고 엔지니어에게 인폼 및 작업 요청 (녹화를 위해 추후 개선 루프 발동)</text>
+  <text x="944" y="938" text-anchor="middle" font-size="22" fill="#1e3a8a">안전 원칙 : 확인 안 되면 VLM이 확정하지 않고 엔지니어에게 인폼 및 작업 요청 (녹화를 위해 추후 개선 루프 발동)</text>
   <text x="944" y="968" text-anchor="middle" font-size="22" fill="#1e3a8a">담당자가 개입하면 자동화가 양보 · 긴급 중단 단축키</text>
 
   <text x="960" y="1030" text-anchor="middle" font-size="18" fill="#6b7280">회색 = 담당자 수행 · 파랑 = 시스템 자동 수행 (VLM·OCR 판단 포함) · 초록 = CV 매칭 엔진이 좌표 결정</text>

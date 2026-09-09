@@ -70,7 +70,7 @@
   </g>
   <rect x="1600" y="586" width="280" height="150" rx="12" fill="#1d4ed8"/>
   <text x="1740" y="666" text-anchor="middle" font-size="56" font-weight="700" fill="#ffffff">1분 미만</text>
-  <text x="1740" y="711" text-anchor="middle" font-size="22" fill="#bfdbfe">감지~재조정 · 실알람 3건</text>
+  <text x="1740" y="711" text-anchor="middle" font-size="22" fill="#bfdbfe">감지~재조정</text>
 
   <!-- exception strip -->
   <g stroke="#dc2626" stroke-width="2.4" fill="#dc2626">

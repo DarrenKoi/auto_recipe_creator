@@ -1,53 +1,51 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" font-family="Apple SD Gothic Neo, Malgun Gothic, NanumGothic, sans-serif">
   <rect width="1920" height="1080" fill="#ffffff"/>
-  <text x="960" y="64" text-anchor="middle" font-size="34" font-weight="700" fill="#111827">무엇이 얼마나 바뀌었나</text>
-  <text x="960" y="104" text-anchor="middle" font-size="20" fill="#4b5563">[검증] = 벤치·테스트·실알람으로 측정한 값        [목표] = 측정값을 주 400건에 적용한 환산값</text>
+  <text x="960" y="66" text-anchor="middle" font-size="38" font-weight="700" fill="#111827">무엇이 얼마나 바뀌었나</text>
+  <text x="960" y="112" text-anchor="middle" font-size="24" fill="#4b5563">[검증] = 벤치·테스트·실알람 측정값     [목표] = 측정값을 주 400건에 적용한 환산값</text>
 
   <!-- Panel A: response time (cx=350) -->
-  <rect x="60" y="140" width="580" height="840" rx="16" fill="#f9fafb" stroke="#e5e7eb"/>
-  <text x="350" y="190" text-anchor="middle" font-size="24" font-weight="700" fill="#111827">1건당 대응 시간 (감지 → 위치 재조정)</text>
-  <rect x="305" y="210" width="90" height="32" rx="16" fill="#dcfce7"/><text x="350" y="232" text-anchor="middle" font-size="17" font-weight="700" fill="#166534">[검증]</text>
-  <line x1="100" y1="880" x2="600" y2="880" stroke="#9ca3af" stroke-width="2"/>
-  <rect x="135" y="380" width="150" height="500" fill="#9ca3af"/>
-  <text x="210" y="362" text-anchor="middle" font-size="32" font-weight="700" fill="#374151">5분</text>
-  <text x="210" y="916" text-anchor="middle" font-size="19" fill="#374151">Before · 사람</text>
-  <rect x="415" y="780" width="150" height="100" fill="#2563eb"/>
-  <text x="490" y="762" text-anchor="middle" font-size="32" font-weight="700" fill="#1d4ed8">&lt; 1분</text>
-  <text x="490" y="916" text-anchor="middle" font-size="19" fill="#1d4ed8">After · AI Agent</text>
-  <text x="350" y="956" text-anchor="middle" font-size="18" fill="#4b5563">감지 → 위치 재조정 구간 · 실알람 3건 · 확정 대기·측정 재개 제외</text>
+  <rect x="60" y="160" width="580" height="800" rx="16" fill="#f9fafb" stroke="#e5e7eb"/>
+  <text x="350" y="220" text-anchor="middle" font-size="28" font-weight="700" fill="#111827">1건당 대응 시간</text>
+  <rect x="300" y="244" width="100" height="40" rx="20" fill="#dcfce7"/><text x="350" y="272" text-anchor="middle" font-size="20" font-weight="700" fill="#166534">[검증]</text>
+  <line x1="100" y1="840" x2="600" y2="840" stroke="#9ca3af" stroke-width="2"/>
+  <rect x="130" y="400" width="160" height="440" fill="#9ca3af"/>
+  <text x="210" y="380" text-anchor="middle" font-size="52" font-weight="700" fill="#374151">5분</text>
+  <text x="210" y="880" text-anchor="middle" font-size="24" fill="#374151">Before · 담당자</text>
+  <rect x="410" y="752" width="160" height="88" fill="#2563eb"/>
+  <text x="490" y="732" text-anchor="middle" font-size="52" font-weight="700" fill="#1d4ed8">&lt; 1분</text>
+  <text x="490" y="880" text-anchor="middle" font-size="24" fill="#1d4ed8">After · AI Agent</text>
+  <text x="350" y="930" text-anchor="middle" font-size="20" fill="#4b5563">감지 → 위치 재조정 · 실알람 3건</text>
 
   <!-- Panel B: rank-1 (cx=970) -->
-  <rect x="680" y="140" width="580" height="840" rx="16" fill="#f9fafb" stroke="#e5e7eb"/>
-  <text x="970" y="190" text-anchor="middle" font-size="24" font-weight="700" fill="#111827">첫 시도에 정답 위치를 맞춘 비율</text>
-  <rect x="925" y="210" width="90" height="32" rx="16" fill="#dcfce7"/><text x="970" y="232" text-anchor="middle" font-size="17" font-weight="700" fill="#166534">[검증]</text>
-  <line x1="720" y1="880" x2="1220" y2="880" stroke="#9ca3af" stroke-width="2"/>
-  <line x1="720" y1="380" x2="1220" y2="380" stroke="#d1d5db" stroke-dasharray="6 6"/>
-  <text x="724" y="372" font-size="16" fill="#9ca3af">100%</text>
-  <rect x="755" y="721" width="150" height="159" fill="#9ca3af"/>
-  <text x="830" y="703" text-anchor="middle" font-size="32" font-weight="700" fill="#374151">31.8%</text>
-  <text x="830" y="916" text-anchor="middle" font-size="19" fill="#374151">등록 이미지 1장</text>
-  <rect x="1035" y="498" width="150" height="382" fill="#059669"/>
-  <text x="1110" y="480" text-anchor="middle" font-size="32" font-weight="700" fill="#047857">76.4%</text>
-  <text x="1110" y="916" text-anchor="middle" font-size="19" fill="#047857">최근 성공 사례 취합 (consensus)</text>
-  <rect x="915" y="580" width="110" height="40" rx="20" fill="#ecfdf5" stroke="#059669" stroke-width="2"/>
-  <text x="970" y="608" text-anchor="middle" font-size="21" font-weight="700" fill="#047857">× 2.4</text>
-  <text x="970" y="956" text-anchor="middle" font-size="18" fill="#4b5563">Recipe 200개 오프라인 평가 · 후보 안에 정답이 든 비율 43.4% → 87.6%</text>
+  <rect x="680" y="160" width="580" height="800" rx="16" fill="#f9fafb" stroke="#e5e7eb"/>
+  <text x="970" y="220" text-anchor="middle" font-size="28" font-weight="700" fill="#111827">첫 시도에 정답 위치를 맞춘 비율</text>
+  <rect x="920" y="244" width="100" height="40" rx="20" fill="#dcfce7"/><text x="970" y="272" text-anchor="middle" font-size="20" font-weight="700" fill="#166534">[검증]</text>
+  <line x1="720" y1="840" x2="1220" y2="840" stroke="#9ca3af" stroke-width="2"/>
+  <rect x="750" y="700" width="160" height="140" fill="#9ca3af"/>
+  <text x="830" y="680" text-anchor="middle" font-size="52" font-weight="700" fill="#374151">31.8%</text>
+  <text x="830" y="880" text-anchor="middle" font-size="24" fill="#374151">등록 이미지 1장</text>
+  <rect x="1030" y="504" width="160" height="336" fill="#059669"/>
+  <text x="1110" y="484" text-anchor="middle" font-size="52" font-weight="700" fill="#047857">76.4%</text>
+  <text x="1110" y="880" text-anchor="middle" font-size="24" fill="#047857">성공 사례 종합</text>
+  <rect x="905" y="560" width="130" height="48" rx="24" fill="#ecfdf5" stroke="#059669" stroke-width="2"/>
+  <text x="970" y="594" text-anchor="middle" font-size="28" font-weight="700" fill="#047857">× 2.4</text>
+  <text x="970" y="930" text-anchor="middle" font-size="20" fill="#4b5563">Recipe 200개 오프라인 평가</text>
 
   <!-- Panel C: weekly idle (cx=1590) -->
-  <rect x="1300" y="140" width="580" height="840" rx="16" fill="#f9fafb" stroke="#e5e7eb"/>
-  <text x="1590" y="190" text-anchor="middle" font-size="24" font-weight="700" fill="#111827">주당 장비 idle 시간 (400건 기준)</text>
-  <rect x="1545" y="210" width="90" height="32" rx="16" fill="#fef3c7"/><text x="1590" y="232" text-anchor="middle" font-size="17" font-weight="700" fill="#92400e">[목표]</text>
-  <line x1="1340" y1="880" x2="1840" y2="880" stroke="#9ca3af" stroke-width="2"/>
-  <rect x="1375" y="380" width="150" height="500" fill="#9ca3af"/>
-  <text x="1450" y="362" text-anchor="middle" font-size="32" font-weight="700" fill="#374151">약 33시간</text>
-  <text x="1450" y="916" text-anchor="middle" font-size="19" fill="#374151">Before · 400건 × 5분</text>
-  <rect x="1655" y="380" width="150" height="399" fill="#ffffff" stroke="#2563eb" stroke-width="2" stroke-dasharray="8 6"/>
-  <rect x="1655" y="779" width="150" height="101" fill="#2563eb"/>
-  <text x="1730" y="362" text-anchor="middle" font-size="32" font-weight="700" fill="#1d4ed8">약 6.7시간</text>
-  <text x="1730" y="560" text-anchor="middle" font-size="21" font-weight="700" fill="#1d4ed8">회수</text>
-  <text x="1730" y="598" text-anchor="middle" font-size="26" font-weight="700" fill="#1d4ed8">약 27시간/주</text>
-  <text x="1730" y="916" text-anchor="middle" font-size="19" fill="#1d4ed8">After · 400건 × 1분 (가정)</text>
-  <text x="1590" y="956" text-anchor="middle" font-size="18" fill="#4b5563">≈ WAFER 약 100장/주 (장당 15분) · 장비 약 0.2대 = Capex 약 4~5억 원 절감</text>
+  <rect x="1300" y="160" width="580" height="800" rx="16" fill="#f9fafb" stroke="#e5e7eb"/>
+  <text x="1590" y="220" text-anchor="middle" font-size="28" font-weight="700" fill="#111827">주당 장비 idle 시간 (400건 기준)</text>
+  <rect x="1540" y="244" width="100" height="40" rx="20" fill="#fef3c7"/><text x="1590" y="272" text-anchor="middle" font-size="20" font-weight="700" fill="#92400e">[목표]</text>
+  <line x1="1340" y1="840" x2="1840" y2="840" stroke="#9ca3af" stroke-width="2"/>
+  <rect x="1370" y="400" width="160" height="440" fill="#9ca3af"/>
+  <text x="1450" y="380" text-anchor="middle" font-size="52" font-weight="700" fill="#374151">33시간</text>
+  <text x="1450" y="880" text-anchor="middle" font-size="24" fill="#374151">Before · 5분 × 400</text>
+  <rect x="1650" y="400" width="160" height="352" fill="#ffffff" stroke="#2563eb" stroke-width="2" stroke-dasharray="8 6"/>
+  <rect x="1650" y="752" width="160" height="88" fill="#2563eb"/>
+  <text x="1730" y="380" text-anchor="middle" font-size="52" font-weight="700" fill="#1d4ed8">7시간</text>
+  <text x="1730" y="566" text-anchor="middle" font-size="26" font-weight="700" fill="#1d4ed8">27시간/주</text>
+  <text x="1730" y="602" text-anchor="middle" font-size="26" font-weight="700" fill="#1d4ed8">회수</text>
+  <text x="1730" y="880" text-anchor="middle" font-size="24" fill="#1d4ed8">After · 1분 × 400</text>
+  <text x="1590" y="930" text-anchor="middle" font-size="20" fill="#4b5563">≈ 웨이퍼 100장/주 · Capex 약 4~5억 원</text>
 
-  <text x="960" y="1030" text-anchor="middle" font-size="18" fill="#6b7280">그 외 [검증]: 화면 버튼 인식+클릭 500회 99% · VLM·OCR 5종 비교 → 2종 상시 운영 · 실장비 없이 도는 자동 테스트 1,207개</text>
+  <text x="960" y="1020" text-anchor="middle" font-size="20" fill="#6b7280">그 외 [검증] : 화면 버튼 인식+클릭 500회 99% · 실장비 없이 도는 자동 테스트 1,207개</text>
 </svg>

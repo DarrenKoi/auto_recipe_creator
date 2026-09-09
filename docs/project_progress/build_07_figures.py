@@ -1,4 +1,7 @@
-"""img/07/fig*.svg -> PNG(2400px, md/HTML 용) + 07_figures.pptx (편집 가능한 PPT 도형).
+"""img/07/fig*.svg -> PNG(2400px, md/HTML 용) + 07_slides.pptx (편집 가능한 PPT 도형·표).
+
+슬라이드 1~3 은 도표(SVG -> 도형), 그 뒤는 요약본(07_ax_innovation_challenge_short.md)의
+markdown 표를 PPT 표로 옮긴 것이다(제목 = 그 표가 속한 절 제목, 굵게/[검증]/[목표] 서식 유지).
 
 SVG 가 단일 원본이다. 1920x1080 슬라이드 캔버스로 그려져 있고, 여기서 rect/text/line/path 만 써서
 python-pptx 의 사각형·텍스트 상자·연결선·자유형 도형으로 1:1 옮긴다(그림 삽입이 아니라 도형이라
@@ -11,7 +14,9 @@ text(text-anchor, font-size/weight, fill; g 상속), line, path(M/L/H/V/Z 절대
 """
 import pathlib, re, subprocess
 import xml.etree.ElementTree as ET
+from lxml import etree
 from pptx import Presentation
+from pptx.oxml.ns import qn
 from pptx.dml.color import RGBColor
 from pptx.enum.dml import MSO_LINE
 from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
@@ -19,6 +24,7 @@ from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Inches, Pt, Emu
 
 HERE = pathlib.Path(__file__).resolve().parent / "img" / "07"
+MD = pathlib.Path(__file__).resolve().parent / "07_ax_innovation_challenge_short.md"
 PNG_WIDTH = 2400
 PX = Emu(Inches(13.333) / 1920)  # 1 SVG px (1920 캔버스) = 이만큼 EMU
 FONT = "Malgun Gothic"
@@ -139,6 +145,87 @@ for svg in svgs:
     subprocess.run(["rsvg-convert", "-w", str(PNG_WIDTH), "-o", str(png), str(svg)], check=True)
     print(f"[INFO] {png.name} ({png.stat().st_size / 1024:.0f} KB)")
 
+
+# ---------- markdown 표 -> PPT 표 ----------
+ACC, INK, LINE, BAND = "1E3A8A", "1F2328", "D0D7DE", "F6F8FA"
+TAG_COLOR = {"[검증]": "166534", "[목표]": "92400E"}
+
+
+def md_tables(md_path):
+    """(절 제목, header cells, body rows) 목록. 표 바로 앞의 ## / ### 제목을 슬라이드 제목으로 쓴다."""
+    title, rows, out = "", [], []
+    for line in md_path.read_text(encoding="utf-8").splitlines() + [""]:
+        if line.startswith("|"):
+            rows.append([c.strip() for c in line.strip().strip("|").split("|")]); continue
+        if rows:
+            if len(rows) >= 3:
+                out.append((title, rows[0], rows[2:]))
+            rows = []
+        m = re.match(r"^(##|###) (.+)$", line)
+        if m:
+            title = m.group(2).strip()
+    return out
+
+
+def set_borders(cell):
+    tcPr = cell._tc.get_or_add_tcPr()
+    for tag in ("a:lnL", "a:lnR", "a:lnT", "a:lnB"):
+        ln = etree.SubElement(tcPr, qn(tag), w=str(int(Pt(0.75))), cap="flat", cmpd="sng", algn="ctr")
+        sf = etree.SubElement(ln, qn("a:solidFill")); etree.SubElement(sf, qn("a:srgbClr"), val=LINE)
+        etree.SubElement(ln, qn("a:prstDash"), val="solid")
+
+
+def fill_cell(cell, md_text, size, color=INK, bold_all=False):
+    """**굵게** 와 `[검증]`/`[목표]` 만 서식으로 옮기고 나머지 markdown 표시는 뗀다."""
+    cell.fill.solid(); cell.fill.fore_color.rgb = rgb(cell_bg[0])
+    cell.margin_left = cell.margin_right = Pt(7); cell.margin_top = cell.margin_bottom = Pt(5)
+    cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+    tf = cell.text_frame; tf.word_wrap = True
+    p = tf.paragraphs[0]
+    for tok in re.split(r"(\*\*.+?\*\*|`[^`]+`)", md_text):
+        if not tok:
+            continue
+        r = p.add_run()
+        bold, col = bold_all, color
+        if tok.startswith("**"):
+            tok, bold = tok[2:-2], True
+        elif tok.startswith("`"):
+            tok = tok[1:-1]; col = TAG_COLOR.get(tok, col); bold = True
+        r.text = tok; r.font.name = FONT; r.font.size = Pt(size); r.font.bold = bold
+        r.font.color.rgb = rgb(col)
+
+
+def add_table_slide(prs, title, header, body):
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    W, H = prs.slide_width, prs.slide_height
+    tb = slide.shapes.add_textbox(Inches(0.5), Inches(0.35), W - Inches(1.0), Inches(0.6))
+    tb.text_frame.margin_left = 0
+    r = tb.text_frame.paragraphs[0].add_run(); r.text = title
+    r.font.name = FONT; r.font.size = Pt(24); r.font.bold = True; r.font.color.rgb = rgb(ACC)
+    bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.5), Inches(1.0), W - Inches(1.0), Pt(2))
+    bar.fill.solid(); bar.fill.fore_color.rgb = rgb(ACC); bar.line.fill.background(); bar.shadow.inherit = False
+
+    ncol, nrow = len(header), len(body) + 1
+    longest = max(len(re.sub(r"[*`]", "", c)) for row in [header] + body for c in row)
+    size = 14 if nrow <= 6 and longest < 90 else 13 if longest < 140 else 12
+    shape = slide.shapes.add_table(nrow, ncol, Inches(0.5), Inches(1.2), W - Inches(1.0), Inches(0.4) * nrow)
+    tbl = shape.table
+    tblPr = tbl._tbl.tblPr; tblPr.set("firstRow", "1"); tblPr.set("bandRow", "0")
+    # 열 너비: 열별 최대 글자 수에 비례(최소 12%)
+    weights = [max(12, min(60, max(len(re.sub(r"[*`]", "", row[i])) for row in [header] + body))) for i in range(ncol)]
+    total = sum(weights); avail = W - Inches(1.0)
+    for i, w in enumerate(weights):
+        tbl.columns[i].width = int(avail * w / total)
+    global cell_bg
+    for i, h in enumerate(header):
+        cell_bg = (ACC,); c = tbl.cell(0, i); set_borders(c); fill_cell(c, h, size + 0.5, color="FFFFFF", bold_all=True)
+    for r_i, row in enumerate(body, start=1):
+        cell_bg = ("FFFFFF" if r_i % 2 else BAND,)
+        for i in range(ncol):
+            c = tbl.cell(r_i, i); set_borders(c); fill_cell(c, row[i] if i < len(row) else "", size)
+    return slide
+
+
 prs = Presentation()
 prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
 for svg in svgs:
@@ -146,6 +233,9 @@ for svg in svgs:
     root = ET.parse(svg).getroot()
     walk(slide, root, {})
     print(f"[INFO] {svg.name}: {len(slide.shapes)} shapes")
-out = HERE / "07_figures.pptx"
+for title, header, body in md_tables(MD):
+    add_table_slide(prs, title, header, body)
+    print(f"[INFO] table slide: {title} ({len(body)} rows x {len(header)} cols)")
+out = HERE / "07_slides.pptx"
 prs.save(out)
-print(f"[INFO] wrote {out} ({len(svgs)} slides, native shapes)")
+print(f"[INFO] wrote {out} ({len(prs.slides)} slides: {len(svgs)} figures + tables, all editable)")

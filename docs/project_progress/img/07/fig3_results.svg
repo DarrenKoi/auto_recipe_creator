@@ -18,7 +18,7 @@
 
   <!-- Panel B: rank-1 (cx=970) -->
   <rect x="680" y="140" width="580" height="840" rx="16" fill="#f9fafb" stroke="#e5e7eb"/>
-  <text x="970" y="190" text-anchor="middle" font-size="24" font-weight="700" fill="#111827">정렬 위치 1순위 적중률 (rank-1)</text>
+  <text x="970" y="190" text-anchor="middle" font-size="24" font-weight="700" fill="#111827">첫 시도에 정답 위치를 맞춘 비율</text>
   <rect x="925" y="210" width="90" height="32" rx="16" fill="#dcfce7"/><text x="970" y="232" text-anchor="middle" font-size="17" font-weight="700" fill="#166534">[검증]</text>
   <line x1="720" y1="880" x2="1220" y2="880" stroke="#9ca3af" stroke-width="2"/>
   <line x1="720" y1="380" x2="1220" y2="380" stroke="#d1d5db" stroke-dasharray="6 6"/>
@@ -28,10 +28,10 @@
   <text x="830" y="916" text-anchor="middle" font-size="19" fill="#374151">등록 이미지 1장</text>
   <rect x="1035" y="498" width="150" height="382" fill="#059669"/>
   <text x="1110" y="480" text-anchor="middle" font-size="32" font-weight="700" fill="#047857">76.4%</text>
-  <text x="1110" y="916" text-anchor="middle" font-size="19" fill="#047857">성공 사례 종합 (consensus)</text>
+  <text x="1110" y="916" text-anchor="middle" font-size="19" fill="#047857">최근 성공 사례 취합 (consensus)</text>
   <rect x="915" y="580" width="110" height="40" rx="20" fill="#ecfdf5" stroke="#059669" stroke-width="2"/>
   <text x="970" y="608" text-anchor="middle" font-size="21" font-weight="700" fill="#047857">× 2.4</text>
-  <text x="970" y="956" text-anchor="middle" font-size="18" fill="#4b5563">Recipe 200개 오프라인 벤치 · 후보 포함률 43.4% → 87.6%</text>
+  <text x="970" y="956" text-anchor="middle" font-size="18" fill="#4b5563">Recipe 200개 오프라인 평가 · 후보 안에 정답이 든 비율 43.4% → 87.6%</text>
 
   <!-- Panel C: weekly idle (cx=1590) -->
   <rect x="1300" y="140" width="580" height="840" rx="16" fill="#f9fafb" stroke="#e5e7eb"/>
@@ -49,5 +49,5 @@
   <text x="1730" y="916" text-anchor="middle" font-size="19" fill="#1d4ed8">After · 400건 × 1분 (가정)</text>
   <text x="1590" y="956" text-anchor="middle" font-size="18" fill="#4b5563">≈ WAFER 약 100장/주 (장당 15분) · 장비 약 0.2대 = Capex 약 4~5억 원 절감</text>
 
-  <text x="960" y="1030" text-anchor="middle" font-size="18" fill="#6b7280">그 외 [검증]: 좌표 인식+클릭 500회 99% · 버튼 판독 100% (클릭 미실행 벤치) · VLM·OCR 5종 비교 → 2종 상시 운영 · 실장비 없이 도는 자동 테스트 1,207개</text>
+  <text x="960" y="1030" text-anchor="middle" font-size="18" fill="#6b7280">그 외 [검증]: 화면 버튼 인식+클릭 500회 99% · VLM·OCR 5종 비교 → 2종 상시 운영 · 실장비 없이 도는 자동 테스트 1,207개</text>
 </svg>

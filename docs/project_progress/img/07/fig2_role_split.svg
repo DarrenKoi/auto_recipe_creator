@@ -66,7 +66,7 @@
   <!-- rules -->
   <rect x="60" y="790" width="1800" height="110" rx="14" fill="#111827"/>
   <text x="960" y="838" text-anchor="middle" font-size="26" font-weight="700" fill="#f9fafb">설계 원칙 (코드에 고정)</text>
-  <text x="960" y="878" text-anchor="middle" font-size="24" fill="#e5e7eb">① VLM 의 답이 낮은 CV 점수를 덮지 못한다   ② 확인 안 된 클릭은 나가지 않는다   ③ 되돌릴 수 없는 확정(OK) 은 담당자가</text>
+  <text x="960" y="878" text-anchor="middle" font-size="24" fill="#e5e7eb">① VLM 의 답이 낮은 CV 점수를 덮지 못한다   ② 확인 안 되면 VLM 이 확정하지 않고 엔지니어에게 인폼·작업 요청   ③ 되돌릴 수 없는 확정(OK) 은 담당자가</text>
 
   <text x="960" y="960" text-anchor="middle" font-size="20" fill="#6b7280">VLM 1종 + OCR 1종 상시 운영 · GPU 1~2장으로 26대 모니터링 · 모델은 벤치 결과로 교체 (통합 API 뒤라 루프는 그대로)</text>
 </svg>

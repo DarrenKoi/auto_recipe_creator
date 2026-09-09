@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="540" viewBox="0 0 1200 540" font-family="Apple SD Gothic Neo, Malgun Gothic, NanumGothic, sans-serif">
+  <rect width="1200" height="540" fill="#ffffff"/>
+  <text x="600" y="36" text-anchor="middle" font-size="22" font-weight="700" fill="#111827">그림 2. AI 역할 분리 : 누가 무엇을 결정하는가</text>
+  <text x="600" y="62" text-anchor="middle" font-size="14" fill="#4b5563">한 모델에 다 맡기지 않는다. UI 조작은 VLM 이 찍고 OCR 이 검증하며, 정렬 좌표는 CV 만 결정하고, 되돌릴 수 없는 확정은 사람이 한다.</text>
+
+  <!-- input -->
+  <rect x="24" y="112" width="120" height="250" rx="10" fill="#f9fafb" stroke="#d1d5db"/>
+  <text x="84" y="150" text-anchor="middle" font-size="15" font-weight="700" fill="#374151">RCS 화면</text>
+  <text x="84" y="172" text-anchor="middle" font-size="12" fill="#6b7280">캡처 이미지</text>
+  <text x="84" y="200" text-anchor="middle" font-size="12" fill="#6b7280">표준 UI 아님</text>
+  <text x="84" y="218" text-anchor="middle" font-size="12" fill="#6b7280">컨트롤 트리 없음</text>
+  <text x="84" y="246" text-anchor="middle" font-size="12" fill="#6b7280">Align Key 는</text>
+  <text x="84" y="264" text-anchor="middle" font-size="12" fill="#6b7280">매번 조금씩 다름</text>
+
+  <!-- 4 role boxes: w=232 gap=18 start=176 -->
+  <!-- VLM -->
+  <rect x="176" y="96" width="232" height="282" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+  <rect x="176" y="96" width="232" height="44" rx="10" fill="#2563eb"/>
+  <text x="292" y="125" text-anchor="middle" font-size="16" font-weight="700" fill="#ffffff">① VLM  ·  이해</text>
+  <text x="292" y="166" text-anchor="middle" font-size="14" font-weight="700" fill="#1e3a8a">"어디를 볼지"</text>
+  <g font-size="12.5" fill="#1f2937">
+    <text x="192" y="196">• UI 요소 위치 (로그인·탭·장비 행)</text>
+    <text x="192" y="216">   전체에서 대략 → 잘라 확대해 정밀</text>
+    <text x="192" y="236">   (coarse → fine 2단계)</text>
+    <text x="192" y="260">• 라이브 SEM 화면 영역 검출</text>
+    <text x="192" y="280">• 촬영 모드 OM / SEM 판독</text>
+    <text x="192" y="300">• 정렬 후보 영역 식별, 모호 상황 설명</text>
+  </g>
+  <text x="192" y="334" font-size="12" fill="#1d4ed8">사내 HCP 자체 배포 소형 모델</text>
+  <text x="192" y="352" font-size="12" fill="#1d4ed8">(MAI-UI 8B, 외부 API 없음)</text>
+
+  <!-- OCR -->
+  <rect x="426" y="96" width="232" height="282" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+  <rect x="426" y="96" width="232" height="44" rx="10" fill="#d97706"/>
+  <text x="542" y="125" text-anchor="middle" font-size="16" font-weight="700" fill="#ffffff">② OCR  ·  확인</text>
+  <text x="542" y="166" text-anchor="middle" font-size="14" font-weight="700" fill="#92400e">"정말 그 버튼이 맞는지"</text>
+  <g font-size="12.5" fill="#1f2937">
+    <text x="442" y="196">• VLM 이 찍은 지점의 라벨을 읽음</text>
+    <text x="442" y="216">• 의도한 대상 ID·문구와 대조</text>
+    <text x="442" y="240">• 다른 장비 ID 가 읽히면 → 클릭 거부</text>
+    <text x="442" y="260">• 취소·종료 버튼으로 읽히면 → 클릭 거부</text>
+    <text x="442" y="284">• 확인 못 하면 클릭하지 않음</text>
+    <text x="442" y="304">   (fail-closed)</text>
+  </g>
+  <text x="442" y="334" font-size="12" fill="#b45309">VLM 두 단계는 독립 투표가 아니므로</text>
+  <text x="442" y="352" font-size="12" fill="#b45309">별도 근거(문자)로 한 번 더 본다</text>
+
+  <!-- CV -->
+  <rect x="676" y="96" width="232" height="282" rx="10" fill="#ecfdf5" stroke="#059669" stroke-width="2"/>
+  <rect x="676" y="96" width="232" height="44" rx="10" fill="#059669"/>
+  <text x="792" y="125" text-anchor="middle" font-size="16" font-weight="700" fill="#ffffff">③ CV 매칭 엔진  ·  정량</text>
+  <text x="792" y="166" text-anchor="middle" font-size="14" font-weight="700" fill="#065f46">"정확히 몇 픽셀인지"</text>
+  <g font-size="12.5" fill="#1f2937">
+    <text x="692" y="196">• 기준 이미지 vs 라이브 화면 유사도 점수</text>
+    <text x="692" y="216">• 기준 = 등록 1장이 아니라</text>
+    <text x="692" y="236">   최근 성공 사례 종합(부족하면 등록 이미지)</text>
+    <text x="692" y="260">• 여러 매칭 방식 종합 + 모드별 재순위</text>
+    <text x="692" y="280">• 임계값은 성공/실패 점수 분포로 보정</text>
+    <text x="692" y="304">• 최종 재정렬 좌표(픽셀) 산출</text>
+  </g>
+  <text x="692" y="334" font-size="12" fill="#047857">최종 정렬 좌표는 CV 만 결정. 오프라인 벤치</text>
+  <text x="692" y="352" font-size="12" fill="#047857">(Recipe 200개)에서 검증된 변경만 반영</text>
+
+  <!-- Human -->
+  <rect x="926" y="96" width="250" height="282" rx="10" fill="#fff7ed" stroke="#ea580c" stroke-width="2"/>
+  <rect x="926" y="96" width="250" height="44" rx="10" fill="#ea580c"/>
+  <text x="1051" y="125" text-anchor="middle" font-size="16" font-weight="700" fill="#ffffff">④ 사람  ·  확정</text>
+  <text x="1051" y="166" text-anchor="middle" font-size="14" font-weight="700" fill="#9a3412">"확정과 예외 판단"</text>
+  <g font-size="12.5" fill="#1f2937">
+    <text x="942" y="196">• 재정렬 결과를 보고 확정(OK) 클릭</text>
+    <text x="942" y="220">• 자동 판단이 서지 않는 예외 처리</text>
+    <text x="942" y="240">   모드 불명 · 위치 모호 · 타인 점유</text>
+    <text x="942" y="264">• 재순위로 안 풀리는 Recipe 는</text>
+    <text x="942" y="284">   재등록 검토 후보로 받아 판단</text>
+    <text x="942" y="308">• 사람이 개입하면 자동화가 물러남</text>
+  </g>
+  <text x="942" y="334" font-size="12" fill="#c2410c">반자동(Supervised Autonomy) :</text>
+  <text x="942" y="352" font-size="12" fill="#c2410c">감지~재정렬 무인, 확정은 사람</text>
+
+  <!-- arrows -->
+  <g stroke="#6b7280" stroke-width="2" fill="#6b7280">
+    <path d="M144 237 L172 237"/><path d="M166 231 L176 237 L166 243 Z"/>
+    <path d="M408 237 L422 237"/><path d="M416 231 L426 237 L416 243 Z"/>
+    <path d="M658 237 L672 237"/><path d="M666 231 L676 237 L666 243 Z"/>
+    <path d="M908 237 L922 237"/><path d="M916 231 L926 237 L916 243 Z"/>
+  </g>
+
+  <!-- rules -->
+  <rect x="24" y="400" width="1152" height="112" rx="10" fill="#111827"/>
+  <text x="48" y="430" font-size="14" font-weight="700" fill="#f9fafb">설계 원칙 (2026-05 확정, 코드에 고정)</text>
+  <g font-size="13.5" fill="#e5e7eb">
+    <text x="48" y="458">①  VLM 의 답이 낮은 CV 점수를 덮어쓰지 못한다. 반복되는 단계 전환은 VLM 이 아니라 CV 점수가 결정한다.</text>
+    <text x="48" y="480">②  검증 대상 클릭은 확인 없이 나가지 않는다. 좌표 미검출·라벨 불일치·취소/종료 문구면 클릭 보류.</text>
+    <text x="48" y="502">③  되돌릴 수 없는 조작(확정 OK)은 사람이 한다. 화면 이해는 소형 모델, 정밀 판정은 CV 에 분담해 GPU 1~2장으로 26대를 모니터링하도록 설계.</text>
+  </g>
+</svg>

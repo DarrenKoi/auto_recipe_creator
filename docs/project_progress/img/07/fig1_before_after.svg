@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="600" viewBox="0 0 1200 600" font-family="Apple SD Gothic Neo, Malgun Gothic, NanumGothic, sans-serif">
+  <rect width="1200" height="600" fill="#ffffff"/>
+  <text x="600" y="36" text-anchor="middle" font-size="22" font-weight="700" fill="#111827">그림 1. Before / After : 사람이 5분 걸리던 Align Fail 대응이 AI 루프에서 1분 미만으로</text>
+
+  <!-- BEFORE band -->
+  <rect x="20" y="62" width="1160" height="218" rx="12" fill="#f3f4f6" stroke="#d1d5db"/>
+  <text x="40" y="92" font-size="17" font-weight="700" fill="#374151">Before</text>
+  <text x="112" y="92" font-size="15" fill="#4b5563">24시간 교대 인력이 전 과정 수행 · 감지~재조정 1건 평균 5분 = 장비 idle · 발생 주 400~500건 / 400건 환산 시 약 33시간</text>
+
+  <g font-size="14" fill="#111827" text-anchor="middle">
+    <rect x="40"  y="112" width="200" height="66" rx="8" fill="#ffffff" stroke="#6b7280" stroke-width="1.5"/>
+    <text x="140" y="140">① 알람 육안 확인</text>
+    <text x="140" y="160" font-size="12" fill="#6b7280">사람이 알람 화면을 지켜봄</text>
+
+    <rect x="270" y="112" width="200" height="66" rx="8" fill="#ffffff" stroke="#6b7280" stroke-width="1.5"/>
+    <text x="370" y="140">② RCS 실행·로그인·접속</text>
+    <text x="370" y="160" font-size="12" fill="#6b7280">장비 목록에서 해당 장비 탐색</text>
+
+    <rect x="500" y="112" width="200" height="66" rx="8" fill="#ffffff" stroke="#6b7280" stroke-width="1.5"/>
+    <text x="600" y="140">③ Align Key 육안 탐색</text>
+    <text x="600" y="160" font-size="12" fill="#6b7280">배율 바꿔가며 위치 찾기</text>
+
+    <rect x="730" y="112" width="200" height="66" rx="8" fill="#ffffff" stroke="#6b7280" stroke-width="1.5"/>
+    <text x="830" y="140">④ 화면 재조정 후 확정</text>
+    <text x="830" y="160" font-size="12" fill="#6b7280">위치 정밀도가 손에 좌우</text>
+
+    <rect x="960" y="112" width="200" height="66" rx="8" fill="#ffffff" stroke="#9ca3af" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <text x="1060" y="140" fill="#6b7280">⑤ 기록</text>
+    <text x="1060" y="160" font-size="12" fill="#6b7280">없음</text>
+  </g>
+  <g stroke="#6b7280" stroke-width="1.5" fill="#6b7280">
+    <path d="M240 145 L268 145"/><path d="M262 140 L270 145 L262 150 Z"/>
+    <path d="M470 145 L498 145"/><path d="M492 140 L500 145 L492 150 Z"/>
+    <path d="M700 145 L728 145"/><path d="M722 140 L730 145 L722 150 Z"/>
+    <path d="M930 145 L958 145"/><path d="M952 140 L960 145 L952 150 Z"/>
+  </g>
+  <!-- bottleneck captions -->
+  <g font-size="12.5" fill="#b91c1c" text-anchor="middle">
+    <text x="140"  y="205">병목: 사람의 확인 주기</text>
+    <text x="140"  y="223">24시간 교대 인력, 인계 구간 지연</text>
+    <text x="370"  y="205">병목: 매 건 같은 조작 반복</text>
+    <text x="370"  y="223">비표준 UI → 기존 UI 인식 도구 실패</text>
+    <text x="600"  y="205">병목: 숙련도 편차</text>
+    <text x="600"  y="223">헷갈리는 Key는 사람도 오판</text>
+    <text x="830"  y="205">병목: 매번 달라지는 정답</text>
+    <text x="830"  y="223">고정 좌표 스크립트로 못 풂</text>
+    <text x="1060" y="205">병목: 축적 없음</text>
+    <text x="1060" y="223">실패 화면·조치 근거 없음</text>
+  </g>
+  <text x="600" y="262" text-anchor="middle" font-size="13" fill="#374151">"화면의 의미 이해" 와 "픽셀 단위 정밀도" 가 동시에 필요 → 규칙 기반 자동화의 사각지대</text>
+
+  <!-- transition arrow -->
+  <g>
+    <path d="M600 284 L600 318" stroke="#2563eb" stroke-width="3"/>
+    <path d="M590 312 L600 326 L610 312 Z" fill="#2563eb"/>
+    <rect x="640" y="288" width="330" height="30" rx="15" fill="#dbeafe"/>
+    <text x="805" y="308" text-anchor="middle" font-size="14" font-weight="700" fill="#1d4ed8">AI Agent 도입 : VLM + OCR + CV 역할 분리</text>
+  </g>
+
+  <!-- AFTER band -->
+  <rect x="20" y="334" width="1160" height="222" rx="12" fill="#eff6ff" stroke="#bfdbfe"/>
+  <text x="40" y="364" font-size="17" font-weight="700" fill="#1e3a8a">After</text>
+  <text x="100" y="364" font-size="15" fill="#1e40af">AI 가 감지 → 접속 → 재정렬 → 기록을 자동 수행 · 감지~재조정 1분 미만(실알람 3건) · 사람은 확정(OK) · 기록 적재·공존 규칙은 현장 검증 중</text>
+
+  <g font-size="13.5" fill="#111827" text-anchor="middle">
+    <!-- 7 boxes: w=148 gap=18 start=28 -->
+    <rect x="28"  y="388" width="148" height="92" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="102" y="412" font-weight="700" fill="#1d4ed8">알람 감지</text>
+    <text x="102" y="432" font-size="12" fill="#374151">10초 주기 폴링</text>
+    <text x="102" y="449" font-size="12" fill="#374151">Align Fail(9006) 만</text>
+    <text x="102" y="466" font-size="12" fill="#374151">신규 발생 시 1회 발동</text>
+
+    <rect x="194" y="388" width="148" height="92" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="268" y="412" font-weight="700" fill="#1d4ed8">사전 고지</text>
+    <text x="268" y="432" font-size="12" fill="#374151">담당자에게</text>
+    <text x="268" y="449" font-size="12" fill="#374151">"AI 가 대응 시작" 알림</text>
+
+    <rect x="360" y="388" width="148" height="92" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="434" y="412" font-weight="700" fill="#1d4ed8">RCS 자동 접속</text>
+    <text x="434" y="432" font-size="12" fill="#374151">실행·로그인·장비 선택</text>
+    <text x="434" y="449" font-size="12" fill="#374151">VLM 좌표 + OCR 확인</text>
+    <text x="434" y="466" font-size="12" fill="#374151">접속 즉시 상시 녹화</text>
+
+    <rect x="526" y="388" width="148" height="92" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="600" y="412" font-weight="700" fill="#1d4ed8">화면 판독</text>
+    <text x="600" y="432" font-size="12" fill="#374151">라이브 SEM 영역 검출</text>
+    <text x="600" y="449" font-size="12" fill="#374151">촬영 모드 OM/SEM 판독</text>
+    <text x="600" y="466" font-size="12" fill="#374151">타인 점유 여부 판별</text>
+
+    <rect x="692" y="388" width="148" height="92" rx="8" fill="#ffffff" stroke="#059669" stroke-width="1.8"/>
+    <text x="766" y="412" font-weight="700" fill="#047857">자동 재정렬</text>
+    <text x="766" y="432" font-size="12" fill="#374151">기준: 성공 사례 종합</text>
+    <text x="766" y="449" font-size="12" fill="#374151">(부족하면 등록 이미지)</text>
+    <text x="766" y="466" font-size="12" fill="#374151">CV 매칭 → 픽셀 좌표</text>
+
+    <rect x="858" y="388" width="148" height="92" rx="8" fill="#fff7ed" stroke="#ea580c" stroke-width="2.2"/>
+    <text x="932" y="412" font-weight="700" fill="#c2410c">확정 요청 → OK</text>
+    <text x="932" y="432" font-size="12" fill="#7c2d12">재조정 결과를 담당자에 알림</text>
+    <text x="932" y="449" font-size="12" fill="#7c2d12">사람이 OK 를 누름</text>
+    <text x="932" y="466" font-size="12" fill="#7c2d12">(되돌릴 수 없는 조작)</text>
+
+    <rect x="1024" y="388" width="148" height="92" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="1098" y="412" font-weight="700" fill="#1d4ed8">완료 감시·종료·기록</text>
+    <text x="1098" y="432" font-size="12" fill="#374151">OK 완료·개입 종료 감지</text>
+    <text x="1098" y="449" font-size="12" fill="#374151">장비 화면 창 자동 종료</text>
+    <text x="1098" y="466" font-size="12" fill="#374151">대응 1건 = 기록 1줄</text>
+  </g>
+  <g stroke="#2563eb" stroke-width="1.5" fill="#2563eb">
+    <path d="M176 434 L192 434"/><path d="M187 430 L194 434 L187 438 Z"/>
+    <path d="M342 434 L358 434"/><path d="M353 430 L360 434 L353 438 Z"/>
+    <path d="M508 434 L524 434"/><path d="M519 430 L526 434 L519 438 Z"/>
+    <path d="M674 434 L690 434"/><path d="M685 430 L692 434 L685 438 Z"/>
+    <path d="M840 434 L856 434"/><path d="M851 430 L858 434 L851 438 Z"/>
+    <path d="M1006 434 L1022 434"/><path d="M1017 430 L1024 434 L1017 438 Z"/>
+  </g>
+  <text x="600" y="512" text-anchor="middle" font-size="13" fill="#1e3a8a">보정 불가·모드 불명·타인 점유 등 예외는 원인과 요구 행동을 담아 담당자에게 알리고 물러난다 (쿨다운 후 재시도)</text>
+  <text x="600" y="534" text-anchor="middle" font-size="13" fill="#1e3a8a">검증 대상 클릭은 OCR 확인 실패 시 차단 (fail-closed) · 예외가 나도 녹화 종료·창 닫기·팝업 정리를 순서대로 시도</text>
+
+  <!-- legend -->
+  <g font-size="12" fill="#374151">
+    <rect x="40" y="570" width="14" height="14" rx="3" fill="#ffffff" stroke="#6b7280" stroke-width="1.5"/><text x="60" y="582">사람 수행 (기존)</text>
+    <rect x="170" y="570" width="14" height="14" rx="3" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/><text x="190" y="582">시스템 자동 수행 (VLM·OCR 판단 포함)</text>
+    <rect x="440" y="570" width="14" height="14" rx="3" fill="#ffffff" stroke="#059669" stroke-width="1.8"/><text x="460" y="582">CV 매칭 엔진이 좌표 결정</text>
+    <rect x="640" y="570" width="14" height="14" rx="3" fill="#fff7ed" stroke="#ea580c" stroke-width="2"/><text x="660" y="582">정상 경로에서 사람이 맡는 최종 단계</text>
+  </g>
+</svg>

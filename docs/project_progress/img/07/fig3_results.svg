@@ -45,7 +45,7 @@
   <text x="1730" y="566" text-anchor="middle" font-size="26" font-weight="700" fill="#1d4ed8">27시간/주</text>
   <text x="1730" y="602" text-anchor="middle" font-size="26" font-weight="700" fill="#1d4ed8">회수</text>
   <text x="1730" y="880" text-anchor="middle" font-size="24" fill="#1d4ed8">After · 1분 × 400</text>
-  <text x="1590" y="930" text-anchor="middle" font-size="20" fill="#4b5563">≈ 웨이퍼 100장/주 · Capex 약 4~5억 원</text>
+  <text x="1590" y="930" text-anchor="middle" font-size="20" fill="#4b5563">≈ Wafer 100장/주 · Capex 약 4~5억 원</text>
 
   <text x="960" y="1020" text-anchor="middle" font-size="20" fill="#6b7280">그 외 [검증] : 화면 버튼 인식+클릭 500회 99% · 실장비 없이 도는 자동 테스트 1,207개</text>
 </svg>

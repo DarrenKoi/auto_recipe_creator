@@ -9,8 +9,8 @@
 
   <g font-size="22" fill="#111827" text-anchor="middle">
     <rect x="64"   y="170" width="330" height="104" rx="10" fill="#ffffff" stroke="#6b7280" stroke-width="2"/>
-    <text x="229"  y="212">① 알람 육안 확인</text>
-    <text x="229"  y="246" font-size="18" fill="#6b7280">사람이 알람 화면을 지켜봄</text>
+    <text x="229"  y="212">① 24시간 모니터 감시</text>
+    <text x="229"  y="246" font-size="18" fill="#6b7280">RCS 화면을 사람이 교대로 지켜봄</text>
 
     <rect x="428"  y="170" width="330" height="104" rx="10" fill="#ffffff" stroke="#6b7280" stroke-width="2"/>
     <text x="593"  y="212">② RCS 실행·로그인·접속</text>

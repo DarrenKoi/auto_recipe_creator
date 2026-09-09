@@ -47,7 +47,7 @@
   <text x="1730" y="560" text-anchor="middle" font-size="21" font-weight="700" fill="#1d4ed8">회수</text>
   <text x="1730" y="598" text-anchor="middle" font-size="26" font-weight="700" fill="#1d4ed8">약 27시간/주</text>
   <text x="1730" y="916" text-anchor="middle" font-size="19" fill="#1d4ed8">After · 400건 × 1분 (가정)</text>
-  <text x="1590" y="956" text-anchor="middle" font-size="18" fill="#4b5563">≈ WAFER 약 100장/주 (장당 15분) · 연 약 5,000장 · 전 건 동일 단축 가정</text>
+  <text x="1590" y="956" text-anchor="middle" font-size="18" fill="#4b5563">≈ WAFER 약 100장/주 (장당 15분) · 장비 약 0.2대 = Capex 약 4~5억 원 절감</text>
 
   <text x="960" y="1030" text-anchor="middle" font-size="18" fill="#6b7280">그 외 [검증]: 좌표 인식+클릭 500회 99% · 버튼 판독 100% (클릭 미실행 벤치) · VLM·OCR 5종 비교 → 2종 상시 운영 · 실장비 없이 도는 자동 테스트 1,207개</text>
 </svg>

@@ -1,103 +1,72 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" font-family="Apple SD Gothic Neo, Malgun Gothic, NanumGothic, sans-serif">
   <rect width="1920" height="1080" fill="#ffffff"/>
-  <text x="960" y="64" text-anchor="middle" font-size="34" font-weight="700" fill="#111827">AI 역할 분리 : 누가 무엇을 결정하는가</text>
-  <text x="960" y="104" text-anchor="middle" font-size="21" fill="#4b5563">한 모델에 다 맡기지 않는다. UI 조작은 VLM 이 찍고 OCR 이 검증하며, 정렬 좌표는 CV 만 결정하고, AI 가 진행 못하는 예외는 큐브 알림으로 사람에게 넘긴다.</text>
-
-  <!-- input -->
-  <rect x="40" y="160" width="200" height="500" rx="12" fill="#f9fafb" stroke="#d1d5db"/>
-  <text x="140" y="220" text-anchor="middle" font-size="22" font-weight="700" fill="#374151">RCS 화면</text>
-  <g font-size="17" fill="#6b7280" text-anchor="middle">
-    <text x="140" y="252">캡처 이미지</text>
-    <text x="140" y="300">표준 UI 아님</text>
-    <text x="140" y="328">컨트롤 트리 없음</text>
-    <text x="140" y="376">Align Key 는</text>
-    <text x="140" y="404">매번 조금씩 다름</text>
-    <text x="140" y="452">라이브 영상이</text>
-    <text x="140" y="480">계속 바뀜</text>
-  </g>
+  <text x="960" y="66" text-anchor="middle" font-size="38" font-weight="700" fill="#111827">AI 역할 분리 : 누가 무엇을 결정하는가</text>
+  <text x="960" y="112" text-anchor="middle" font-size="24" fill="#4b5563">한 모델에 다 맡기지 않는다 · UI 는 VLM 이 찍고 OCR 이 확인 · 좌표는 CV 만 결정 · AI 가 못 푸는 것은 현업 담당자</text>
 
   <!-- ① VLM -->
-  <rect x="280" y="140" width="376" height="520" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2.4"/>
-  <rect x="280" y="140" width="376" height="64" rx="12" fill="#2563eb"/>
-  <text x="468" y="182" text-anchor="middle" font-size="26" font-weight="700" fill="#ffffff">① VLM  ·  이해</text>
-  <text x="468" y="240" text-anchor="middle" font-size="21" font-weight="700" fill="#1e3a8a">"어디를 볼지"</text>
-  <g font-size="18" fill="#1f2937">
-    <text x="302" y="286">• UI 요소 위치 (로그인·탭·장비 행)</text>
-    <text x="302" y="316">   전체에서 대략 → 잘라 확대해 정밀</text>
-    <text x="302" y="346">   (coarse → fine 2단계)</text>
-    <text x="302" y="386">• 라이브 SEM 화면 영역 검출</text>
-    <text x="302" y="416">• 촬영 모드 OM / SEM 판독</text>
-    <text x="302" y="446">• 타인 점유 팝업 · 모호 상황 설명</text>
-    <text x="302" y="476">• 정렬 후보 영역 식별</text>
+  <rect x="60" y="160" width="420" height="580" rx="14" fill="#eff6ff" stroke="#2563eb" stroke-width="2.8"/>
+  <rect x="60" y="160" width="420" height="90" rx="14" fill="#2563eb"/>
+  <text x="270" y="219" text-anchor="middle" font-size="34" font-weight="700" fill="#ffffff">① VLM · 이해</text>
+  <text x="270" y="320" text-anchor="middle" font-size="30" font-weight="700" fill="#1e3a8a">"어디를 볼지"</text>
+  <g font-size="24" fill="#1f2937" text-anchor="middle">
+    <text x="270" y="410">UI 요소 위치 (2단계 정밀)</text>
+    <text x="270" y="462">라이브 SEM 영역 검출</text>
+    <text x="270" y="514">촬영 모드 OM / SEM 판독</text>
   </g>
-  <text x="302" y="596" font-size="17" fill="#1d4ed8">사내 HCP 자체 배포 소형 모델</text>
-  <text x="302" y="624" font-size="17" fill="#1d4ed8">(MAI-UI 8B, 외부 API 없음)</text>
+  <rect x="90" y="620" width="360" height="70" rx="35" fill="#dbeafe"/>
+  <text x="270" y="665" text-anchor="middle" font-size="22" font-weight="700" fill="#1d4ed8">사내 소형 모델 · 외부 API 없음</text>
 
   <!-- ② OCR -->
-  <rect x="684" y="140" width="376" height="520" rx="12" fill="#fffbeb" stroke="#d97706" stroke-width="2.4"/>
-  <rect x="684" y="140" width="376" height="64" rx="12" fill="#d97706"/>
-  <text x="872" y="182" text-anchor="middle" font-size="26" font-weight="700" fill="#ffffff">② OCR  ·  확인</text>
-  <text x="872" y="240" text-anchor="middle" font-size="21" font-weight="700" fill="#92400e">"정말 그 버튼이 맞는지"</text>
-  <g font-size="18" fill="#1f2937">
-    <text x="706" y="286">• VLM 이 찍은 지점의 라벨을 읽음</text>
-    <text x="706" y="316">• 의도한 대상 ID·문구와 대조</text>
-    <text x="706" y="356">• 다른 장비 ID 가 읽히면 → 클릭 거부</text>
-    <text x="706" y="386">• 취소·종료 버튼으로 읽히면 → 클릭 거부</text>
-    <text x="706" y="426">• 확인 못 하면 클릭하지 않음</text>
-    <text x="706" y="456">   (fail-closed)</text>
+  <rect x="520" y="160" width="420" height="580" rx="14" fill="#fffbeb" stroke="#d97706" stroke-width="2.8"/>
+  <rect x="520" y="160" width="420" height="90" rx="14" fill="#d97706"/>
+  <text x="730" y="219" text-anchor="middle" font-size="34" font-weight="700" fill="#ffffff">② OCR · 확인</text>
+  <text x="730" y="320" text-anchor="middle" font-size="30" font-weight="700" fill="#92400e">"정말 그 버튼인지"</text>
+  <g font-size="24" fill="#1f2937" text-anchor="middle">
+    <text x="730" y="410">찍은 지점의 라벨 읽기</text>
+    <text x="730" y="462">다른 ID · 취소 문구면 거부</text>
+    <text x="730" y="514">확인 못 하면 클릭 안 함</text>
   </g>
-  <text x="706" y="596" font-size="17" fill="#b45309">VLM 두 단계는 독립 투표가 아니므로</text>
-  <text x="706" y="624" font-size="17" fill="#b45309">별도 근거(문자)로 한 번 더 본다</text>
+  <rect x="550" y="620" width="360" height="70" rx="35" fill="#fef3c7"/>
+  <text x="730" y="665" text-anchor="middle" font-size="22" font-weight="700" fill="#b45309">fail-closed : 미확인 = 클릭 금지</text>
 
   <!-- ③ CV -->
-  <rect x="1088" y="140" width="376" height="520" rx="12" fill="#ecfdf5" stroke="#059669" stroke-width="2.4"/>
-  <rect x="1088" y="140" width="376" height="64" rx="12" fill="#059669"/>
-  <text x="1276" y="182" text-anchor="middle" font-size="26" font-weight="700" fill="#ffffff">③ CV 매칭 엔진  ·  정량</text>
-  <text x="1276" y="240" text-anchor="middle" font-size="21" font-weight="700" fill="#065f46">"정확히 몇 픽셀인지"</text>
-  <g font-size="18" fill="#1f2937">
-    <text x="1110" y="286">• 기준 이미지 vs 라이브 화면 유사도 점수</text>
-    <text x="1110" y="316">• 기준 = 등록 1장이 아니라</text>
-    <text x="1110" y="346">   최근 성공 사례 종합(부족하면 등록 이미지)</text>
-    <text x="1110" y="386">• 여러 매칭 방식 종합 + 모드별 재순위</text>
-    <text x="1110" y="416">• 임계값은 성공/실패 점수 분포로 보정</text>
-    <text x="1110" y="456">• 최종 재정렬 좌표(픽셀) 산출</text>
+  <rect x="980" y="160" width="420" height="580" rx="14" fill="#ecfdf5" stroke="#059669" stroke-width="2.8"/>
+  <rect x="980" y="160" width="420" height="90" rx="14" fill="#059669"/>
+  <text x="1190" y="219" text-anchor="middle" font-size="34" font-weight="700" fill="#ffffff">③ CV 엔진 · 정량</text>
+  <text x="1190" y="320" text-anchor="middle" font-size="30" font-weight="700" fill="#065f46">"정확히 몇 픽셀인지"</text>
+  <g font-size="24" fill="#1f2937" text-anchor="middle">
+    <text x="1190" y="410">성공 사례 종합 vs 라이브 화면</text>
+    <text x="1190" y="462">여러 매칭 종합 + 재순위</text>
+    <text x="1190" y="514">최종 좌표(픽셀) 산출</text>
   </g>
-  <text x="1110" y="596" font-size="17" fill="#047857">최종 정렬 좌표는 CV 만 결정</text>
-  <text x="1110" y="624" font-size="17" fill="#047857">오프라인 벤치(Recipe 200개) 검증 변경만 반영</text>
+  <rect x="1010" y="620" width="360" height="70" rx="35" fill="#d1fae5"/>
+  <text x="1190" y="665" text-anchor="middle" font-size="22" font-weight="700" fill="#047857">정렬 좌표는 CV 만 결정</text>
 
-  <!-- ④ 사람 -->
-  <rect x="1492" y="140" width="376" height="520" rx="12" fill="#fff7ed" stroke="#ea580c" stroke-width="2.4"/>
-  <rect x="1492" y="140" width="376" height="64" rx="12" fill="#ea580c"/>
-  <text x="1680" y="182" text-anchor="middle" font-size="26" font-weight="700" fill="#ffffff">④ 사람  ·  예외</text>
-  <text x="1680" y="240" text-anchor="middle" font-size="21" font-weight="700" fill="#9a3412">"AI 가 못 푸는 것"</text>
-  <g font-size="18" fill="#1f2937">
-    <text x="1514" y="286">• AI 가 진행 못하면 큐브 알림 수신</text>
-    <text x="1514" y="316">   모드 불명 · 위치 모호 · 타인 점유</text>
-    <text x="1514" y="356">• 수동 정렬 · 점유 해제 · 재등록 검토</text>
-    <text x="1514" y="386">• 재순위로 안 풀리는 Recipe 판단</text>
-    <text x="1514" y="426">• 사람이 개입하면 자동화가 물러남</text>
-    <text x="1514" y="456">• 현 단계: 확정(OK) 도 사람이 누름</text>
+  <!-- ④ 현업 담당자 -->
+  <rect x="1440" y="160" width="420" height="580" rx="14" fill="#fff7ed" stroke="#ea580c" stroke-width="2.8"/>
+  <rect x="1440" y="160" width="420" height="90" rx="14" fill="#ea580c"/>
+  <text x="1650" y="219" text-anchor="middle" font-size="34" font-weight="700" fill="#ffffff">④ 현업 담당자 · 예외</text>
+  <text x="1650" y="320" text-anchor="middle" font-size="30" font-weight="700" fill="#9a3412">"AI 가 못 푸는 것"</text>
+  <g font-size="24" fill="#1f2937" text-anchor="middle">
+    <text x="1650" y="410">큐브 알림 받고 판단</text>
+    <text x="1650" y="462">수동 정렬 · 재등록 검토</text>
+    <text x="1650" y="514">확정(OK) 누름</text>
   </g>
-  <text x="1514" y="596" font-size="17" fill="#c2410c">감지~재정렬은 무인. 확정(OK) 은</text>
-  <text x="1514" y="624" font-size="17" fill="#c2410c">현 단계 사람 → 향후 Agent 로 이관</text>
+  <rect x="1470" y="620" width="360" height="70" rx="35" fill="#ffedd5"/>
+  <text x="1650" y="665" text-anchor="middle" font-size="22" font-weight="700" fill="#c2410c">담당자가 개입하면 AI 는 양보</text>
 
   <!-- arrows -->
   <g stroke="#6b7280" stroke-width="2.4" fill="#6b7280">
-    <path d="M240 400 L266 400"/><path d="M262 391 L280 400 L262 409 Z"/>
-    <path d="M656 400 L670 400"/><path d="M668 391 L684 400 L668 409 Z"/>
-    <path d="M1060 400 L1074 400"/><path d="M1072 391 L1088 400 L1072 409 Z"/>
-    <path d="M1464 400 L1478 400"/><path d="M1476 391 L1492 400 L1476 409 Z"/>
+    <path d="M480 470 L500 470"/><path d="M496 461 L520 470 L496 479 Z"/>
+    <path d="M940 470 L960 470"/><path d="M956 461 L980 470 L956 479 Z"/>
+    <path d="M1400 470 L1420 470"/><path d="M1416 461 L1440 470 L1416 479 Z"/>
   </g>
-  <text x="1478" y="380" text-anchor="middle" font-size="14" fill="#7c3aed">큐브 알림</text>
+  <text x="1420" y="446" text-anchor="middle" font-size="18" fill="#7c3aed">큐브 알림</text>
 
   <!-- rules -->
-  <rect x="40" y="700" width="1828" height="210" rx="12" fill="#111827"/>
-  <text x="70" y="742" font-size="22" font-weight="700" fill="#f9fafb">설계 원칙 (2026-05 확정, 코드에 고정)</text>
-  <g font-size="20" fill="#e5e7eb">
-    <text x="70" y="786">①  VLM 의 답이 낮은 CV 점수를 덮어쓰지 못한다. 반복되는 단계 전환은 VLM 이 아니라 CV 점수가 결정한다.</text>
-    <text x="70" y="826">②  검증 대상 클릭은 확인 없이 나가지 않는다. 좌표 미검출·라벨 불일치·취소/종료 문구면 클릭 보류. 진행 못 하면 큐브 알림으로 담당자에게 넘긴다.</text>
-    <text x="70" y="866">③  되돌릴 수 없는 조작(확정 OK)은 현 단계에서 사람이 한다(향후 Agent 이관). 화면 이해는 소형 모델, 정밀 판정은 CV 에 분담해 GPU 1~2장으로 26대를 모니터링한다.</text>
-  </g>
+  <rect x="60" y="790" width="1800" height="110" rx="14" fill="#111827"/>
+  <text x="960" y="838" text-anchor="middle" font-size="26" font-weight="700" fill="#f9fafb">설계 원칙 (코드에 고정)</text>
+  <text x="960" y="878" text-anchor="middle" font-size="24" fill="#e5e7eb">① VLM 의 답이 낮은 CV 점수를 덮지 못한다   ② 확인 안 된 클릭은 나가지 않는다   ③ 되돌릴 수 없는 확정(OK) 은 담당자가</text>
 
-  <text x="960" y="980" text-anchor="middle" font-size="18" fill="#6b7280">외부 API 의존 없음 · VLM 1종 + OCR 1종 상시 운영 · 모델은 벤치 결과로 교체하며 통합 API 뒤에서 바뀌므로 루프는 그대로</text>
+  <text x="960" y="960" text-anchor="middle" font-size="20" fill="#6b7280">VLM 1종 + OCR 1종 상시 운영 · GPU 1~2장으로 26대 모니터링 · 모델은 벤치 결과로 교체 (통합 API 뒤라 루프는 그대로)</text>
 </svg>

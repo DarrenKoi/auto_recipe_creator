@@ -79,7 +79,7 @@
   <text x="64" y="855" font-size="26" font-weight="700" fill="#b91c1c">예외 시</text>
   <g font-size="24" font-weight="700" text-anchor="middle">
     <rect x="330"  y="796" width="280" height="100" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="2.4"/>
-    <text x="470"  y="838" fill="#b91c1c">AI 가 물러남</text>
+    <text x="470"  y="838" fill="#b91c1c">AI 가 처리 안될 때</text>
     <text x="470"  y="872" font-size="18" font-weight="400" fill="#7f1d1d">추측해서 누르지 않음</text>
 
     <rect x="646"  y="796" width="280" height="100" rx="12" fill="#f5f3ff" stroke="#7c3aed" stroke-width="2.4"/>

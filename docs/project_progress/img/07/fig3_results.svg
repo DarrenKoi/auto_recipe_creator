@@ -14,7 +14,7 @@
   <rect x="410" y="752" width="160" height="88" fill="#2563eb"/>
   <text x="490" y="732" text-anchor="middle" font-size="52" font-weight="700" fill="#1d4ed8">&lt; 1분</text>
   <text x="490" y="880" text-anchor="middle" font-size="24" fill="#1d4ed8">After · AI Agent</text>
-  <text x="350" y="930" text-anchor="middle" font-size="20" fill="#4b5563">감지 → 위치 재조정 · 실알람 3건</text>
+  <text x="350" y="930" text-anchor="middle" font-size="20" fill="#4b5563">감지 → 위치 재조정 · 실장비 실측</text>
 
   <!-- Panel B: rank-1 (cx=970) -->
   <rect x="680" y="160" width="580" height="800" rx="16" fill="#f9fafb" stroke="#e5e7eb"/>

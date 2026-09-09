@@ -1,126 +1,170 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="600" viewBox="0 0 1200 600" font-family="Apple SD Gothic Neo, Malgun Gothic, NanumGothic, sans-serif">
-  <rect width="1200" height="600" fill="#ffffff"/>
-  <text x="600" y="36" text-anchor="middle" font-size="22" font-weight="700" fill="#111827">그림 1. Before / After : 사람이 5분 걸리던 Align Fail 대응이 AI 루프에서 1분 미만으로</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" font-family="Apple SD Gothic Neo, Malgun Gothic, NanumGothic, sans-serif">
+  <rect width="1920" height="1080" fill="#ffffff"/>
+  <text x="960" y="64" text-anchor="middle" font-size="34" font-weight="700" fill="#111827">Before / After : 사람이 5분 걸리던 Align Fail 대응이 AI Agent 루프에서 1분 미만으로</text>
 
-  <!-- BEFORE band -->
-  <rect x="20" y="62" width="1160" height="218" rx="12" fill="#f3f4f6" stroke="#d1d5db"/>
-  <text x="40" y="92" font-size="17" font-weight="700" fill="#374151">Before</text>
-  <text x="112" y="92" font-size="15" fill="#4b5563">24시간 교대 인력이 전 과정 수행 · 감지~재조정 1건 평균 5분 = 장비 idle · 발생 주 400~500건 / 400건 환산 시 약 33시간</text>
+  <!-- ===== BEFORE ===== -->
+  <rect x="40" y="100" width="1840" height="300" rx="16" fill="#f3f4f6" stroke="#d1d5db"/>
+  <text x="64" y="140" font-size="26" font-weight="700" fill="#374151">Before</text>
+  <text x="180" y="140" font-size="21" fill="#4b5563">24시간 교대 인력이 전 과정 수행 · 감지~재조정 1건 평균 5분 = 장비 idle · 주 400~500건 (400건 환산 시 약 33시간)</text>
 
-  <g font-size="14" fill="#111827" text-anchor="middle">
-    <rect x="40"  y="112" width="200" height="66" rx="8" fill="#ffffff" stroke="#6b7280" stroke-width="1.5"/>
-    <text x="140" y="140">① 알람 육안 확인</text>
-    <text x="140" y="160" font-size="12" fill="#6b7280">사람이 알람 화면을 지켜봄</text>
+  <g font-size="22" fill="#111827" text-anchor="middle">
+    <rect x="64"   y="170" width="330" height="104" rx="10" fill="#ffffff" stroke="#6b7280" stroke-width="2"/>
+    <text x="229"  y="212">① 알람 육안 확인</text>
+    <text x="229"  y="246" font-size="18" fill="#6b7280">사람이 알람 화면을 지켜봄</text>
 
-    <rect x="270" y="112" width="200" height="66" rx="8" fill="#ffffff" stroke="#6b7280" stroke-width="1.5"/>
-    <text x="370" y="140">② RCS 실행·로그인·접속</text>
-    <text x="370" y="160" font-size="12" fill="#6b7280">장비 목록에서 해당 장비 탐색</text>
+    <rect x="428"  y="170" width="330" height="104" rx="10" fill="#ffffff" stroke="#6b7280" stroke-width="2"/>
+    <text x="593"  y="212">② RCS 실행·로그인·접속</text>
+    <text x="593"  y="246" font-size="18" fill="#6b7280">장비 목록에서 해당 장비 탐색</text>
 
-    <rect x="500" y="112" width="200" height="66" rx="8" fill="#ffffff" stroke="#6b7280" stroke-width="1.5"/>
-    <text x="600" y="140">③ Align Key 육안 탐색</text>
-    <text x="600" y="160" font-size="12" fill="#6b7280">배율 바꿔가며 위치 찾기</text>
+    <rect x="792"  y="170" width="330" height="104" rx="10" fill="#ffffff" stroke="#6b7280" stroke-width="2"/>
+    <text x="957"  y="212">③ Align Key 육안 탐색</text>
+    <text x="957"  y="246" font-size="18" fill="#6b7280">배율 바꿔가며 위치 찾기</text>
 
-    <rect x="730" y="112" width="200" height="66" rx="8" fill="#ffffff" stroke="#6b7280" stroke-width="1.5"/>
-    <text x="830" y="140">④ 화면 재조정 후 확정</text>
-    <text x="830" y="160" font-size="12" fill="#6b7280">위치 정밀도가 손에 좌우</text>
+    <rect x="1156" y="170" width="330" height="104" rx="10" fill="#ffffff" stroke="#6b7280" stroke-width="2"/>
+    <text x="1321" y="212">④ 화면 재조정 후 확정</text>
+    <text x="1321" y="246" font-size="18" fill="#6b7280">위치 정밀도가 손에 좌우</text>
 
-    <rect x="960" y="112" width="200" height="66" rx="8" fill="#ffffff" stroke="#9ca3af" stroke-width="1.5" stroke-dasharray="6 4"/>
-    <text x="1060" y="140" fill="#6b7280">⑤ 기록</text>
-    <text x="1060" y="160" font-size="12" fill="#6b7280">없음</text>
+    <rect x="1520" y="170" width="330" height="104" rx="10" fill="#ffffff" stroke="#9ca3af" stroke-width="2" stroke-dasharray="8 6"/>
+    <text x="1685" y="212" fill="#6b7280">⑤ 기록</text>
+    <text x="1685" y="246" font-size="18" fill="#6b7280">없음</text>
   </g>
-  <g stroke="#6b7280" stroke-width="1.5" fill="#6b7280">
-    <path d="M240 145 L268 145"/><path d="M262 140 L270 145 L262 150 Z"/>
-    <path d="M470 145 L498 145"/><path d="M492 140 L500 145 L492 150 Z"/>
-    <path d="M700 145 L728 145"/><path d="M722 140 L730 145 L722 150 Z"/>
-    <path d="M930 145 L958 145"/><path d="M952 140 L960 145 L952 150 Z"/>
+  <g stroke="#6b7280" stroke-width="2" fill="#6b7280">
+    <path d="M396 222 L418 222"/><path d="M414 214 L428 222 L414 230 Z"/>
+    <path d="M760 222 L782 222"/><path d="M778 214 L792 222 L778 230 Z"/>
+    <path d="M1124 222 L1146 222"/><path d="M1142 214 L1156 222 L1142 230 Z"/>
+    <path d="M1488 222 L1510 222"/><path d="M1506 214 L1520 222 L1506 230 Z"/>
   </g>
-  <!-- bottleneck captions -->
-  <g font-size="12.5" fill="#b91c1c" text-anchor="middle">
-    <text x="140"  y="205">병목: 사람의 확인 주기</text>
-    <text x="140"  y="223">24시간 교대 인력, 인계 구간 지연</text>
-    <text x="370"  y="205">병목: 매 건 같은 조작 반복</text>
-    <text x="370"  y="223">비표준 UI → 기존 UI 인식 도구 실패</text>
-    <text x="600"  y="205">병목: 숙련도 편차</text>
-    <text x="600"  y="223">헷갈리는 Key는 사람도 오판</text>
-    <text x="830"  y="205">병목: 매번 달라지는 정답</text>
-    <text x="830"  y="223">고정 좌표 스크립트로 못 풂</text>
-    <text x="1060" y="205">병목: 축적 없음</text>
-    <text x="1060" y="223">실패 화면·조치 근거 없음</text>
+  <g font-size="18" fill="#b91c1c" text-anchor="middle">
+    <text x="229"  y="312">병목: 사람의 확인 주기</text>
+    <text x="229"  y="340">24시간 교대 인력, 인계 구간 지연</text>
+    <text x="593"  y="312">병목: 매 건 같은 조작 반복</text>
+    <text x="593"  y="340">비표준 UI → 기존 UI 인식 도구 실패</text>
+    <text x="957"  y="312">병목: 숙련도 편차</text>
+    <text x="957"  y="340">헷갈리는 Key 는 사람도 오판</text>
+    <text x="1321" y="312">병목: 매번 달라지는 정답</text>
+    <text x="1321" y="340">고정 좌표 스크립트로 못 풂</text>
+    <text x="1685" y="312">병목: 축적 없음</text>
+    <text x="1685" y="340">실패 화면·조치 근거 없음</text>
   </g>
-  <text x="600" y="262" text-anchor="middle" font-size="13" fill="#374151">"화면의 의미 이해" 와 "픽셀 단위 정밀도" 가 동시에 필요 → 규칙 기반 자동화의 사각지대</text>
+  <text x="960" y="384" text-anchor="middle" font-size="20" fill="#374151">"화면의 의미 이해" 와 "픽셀 단위 정밀도" 가 동시에 필요 → 규칙 기반 자동화의 사각지대</text>
 
-  <!-- transition arrow -->
-  <g>
-    <path d="M600 284 L600 318" stroke="#2563eb" stroke-width="3"/>
-    <path d="M590 312 L600 326 L610 312 Z" fill="#2563eb"/>
-    <rect x="640" y="288" width="330" height="30" rx="15" fill="#dbeafe"/>
-    <text x="805" y="308" text-anchor="middle" font-size="14" font-weight="700" fill="#1d4ed8">AI Agent 도입 : VLM + OCR + CV 역할 분리</text>
+  <!-- ===== transition ===== -->
+  <path d="M960 404 L960 448" stroke="#2563eb" stroke-width="4"/>
+  <path d="M946 442 L960 462 L974 442 Z" fill="#2563eb"/>
+  <rect x="1000" y="408" width="540" height="44" rx="22" fill="#dbeafe"/>
+  <text x="1270" y="438" text-anchor="middle" font-size="22" font-weight="700" fill="#1d4ed8">AI Agent 도입 : VLM + OCR + CV 역할 분리</text>
+
+  <!-- ===== AFTER ===== -->
+  <rect x="40" y="470" width="1840" height="520" rx="16" fill="#eff6ff" stroke="#bfdbfe"/>
+  <text x="64" y="510" font-size="26" font-weight="700" fill="#1e3a8a">After</text>
+  <text x="150" y="510" font-size="20" fill="#1e40af">AI 가 감지 → 접속 → 재정렬 → 확정 → 기록을 자동 수행 · 감지~재조정 1분 미만(실알람 3건) · 진행 못 하면 큐브 알림으로 담당자에게 자동 인폼 → 사이클은 멈추지 않는다</text>
+
+  <!-- normal path: 7 boxes w=232 gap=24 start=80 -->
+  <g font-size="21" fill="#111827" text-anchor="middle">
+    <rect x="80"   y="540" width="232" height="136" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="2.4"/>
+    <text x="196"  y="572" font-weight="700" fill="#1d4ed8">알람 감지</text>
+    <text x="196"  y="602" font-size="16" fill="#374151">10초 주기 폴링</text>
+    <text x="196"  y="626" font-size="16" fill="#374151">Align Fail(9006) 만</text>
+    <text x="196"  y="650" font-size="16" fill="#374151">신규 발생 시 1회 발동</text>
+
+    <rect x="336"  y="540" width="232" height="136" rx="10" fill="#ffffff" stroke="#7c3aed" stroke-width="2.4"/>
+    <text x="452"  y="572" font-weight="700" fill="#6d28d9">사전 고지 (큐브)</text>
+    <text x="452"  y="602" font-size="16" fill="#374151">"AI 가 대응 시작"</text>
+    <text x="452"  y="626" font-size="16" fill="#374151">담당자에게 자동 알림</text>
+    <text x="452"  y="650" font-size="16" fill="#374151">장비·Recipe·알람 시각</text>
+
+    <rect x="592"  y="540" width="232" height="136" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="2.4"/>
+    <text x="708"  y="572" font-weight="700" fill="#1d4ed8">RCS 자동 접속</text>
+    <text x="708"  y="602" font-size="16" fill="#374151">실행·로그인·장비 선택</text>
+    <text x="708"  y="626" font-size="16" fill="#374151">VLM 좌표 + OCR 확인</text>
+    <text x="708"  y="650" font-size="16" fill="#374151">접속 즉시 상시 녹화</text>
+
+    <rect x="848"  y="540" width="232" height="136" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="2.4"/>
+    <text x="964"  y="572" font-weight="700" fill="#1d4ed8">화면 판독</text>
+    <text x="964"  y="602" font-size="16" fill="#374151">라이브 SEM 영역 검출</text>
+    <text x="964"  y="626" font-size="16" fill="#374151">촬영 모드 OM/SEM 판독</text>
+    <text x="964"  y="650" font-size="16" fill="#374151">타인 점유 여부 판별</text>
+
+    <rect x="1104" y="540" width="232" height="136" rx="10" fill="#ffffff" stroke="#059669" stroke-width="2.4"/>
+    <text x="1220" y="572" font-weight="700" fill="#047857">자동 재정렬</text>
+    <text x="1220" y="602" font-size="16" fill="#374151">기준: 성공 사례 종합</text>
+    <text x="1220" y="626" font-size="16" fill="#374151">(부족하면 등록 이미지)</text>
+    <text x="1220" y="650" font-size="16" fill="#374151">CV 매칭 → 픽셀 좌표</text>
+
+    <rect x="1360" y="540" width="232" height="136" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="2.4"/>
+    <text x="1476" y="572" font-weight="700" fill="#1d4ed8">확정 (OK)</text>
+    <text x="1476" y="602" font-size="16" fill="#374151">재조정 결과 확정</text>
+    <text x="1476" y="626" font-size="16" fill="#374151">현 단계: 담당자가 OK</text>
+    <text x="1476" y="650" font-size="16" fill="#374151">향후: Agent 가 수행</text>
+
+    <rect x="1616" y="540" width="232" height="136" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="2.4"/>
+    <text x="1732" y="572" font-weight="700" fill="#1d4ed8">완료 감시·종료·기록</text>
+    <text x="1732" y="602" font-size="16" fill="#374151">완료·개입 종료 감지</text>
+    <text x="1732" y="626" font-size="16" fill="#374151">tool 창 자동 종료</text>
+    <text x="1732" y="650" font-size="16" fill="#374151">대응 1건 = 기록 1줄</text>
+  </g>
+  <g stroke="#2563eb" stroke-width="2" fill="#2563eb">
+    <path d="M312 608 L326 608"/><path d="M324 601 L336 608 L324 615 Z"/>
+    <path d="M568 608 L582 608"/><path d="M580 601 L592 608 L580 615 Z"/>
+    <path d="M824 608 L838 608"/><path d="M836 601 L848 608 L836 615 Z"/>
+    <path d="M1080 608 L1094 608"/><path d="M1092 601 L1104 608 L1092 615 Z"/>
+    <path d="M1336 608 L1350 608"/><path d="M1348 601 L1360 608 L1348 615 Z"/>
+    <path d="M1592 608 L1606 608"/><path d="M1604 601 L1616 608 L1604 615 Z"/>
   </g>
 
-  <!-- AFTER band -->
-  <rect x="20" y="334" width="1160" height="222" rx="12" fill="#eff6ff" stroke="#bfdbfe"/>
-  <text x="40" y="364" font-size="17" font-weight="700" fill="#1e3a8a">After</text>
-  <text x="100" y="364" font-size="15" fill="#1e40af">AI 가 감지 → 접속 → 재정렬 → 기록을 자동 수행 · 감지~재조정 1분 미만(실알람 3건) · 사람은 확정(OK) · 기록 적재·공존 규칙은 현장 검증 중</text>
-
-  <g font-size="13.5" fill="#111827" text-anchor="middle">
-    <!-- 7 boxes: w=148 gap=18 start=28 -->
-    <rect x="28"  y="388" width="148" height="92" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
-    <text x="102" y="412" font-weight="700" fill="#1d4ed8">알람 감지</text>
-    <text x="102" y="432" font-size="12" fill="#374151">10초 주기 폴링</text>
-    <text x="102" y="449" font-size="12" fill="#374151">Align Fail(9006) 만</text>
-    <text x="102" y="466" font-size="12" fill="#374151">신규 발생 시 1회 발동</text>
-
-    <rect x="194" y="388" width="148" height="92" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
-    <text x="268" y="412" font-weight="700" fill="#1d4ed8">사전 고지</text>
-    <text x="268" y="432" font-size="12" fill="#374151">담당자에게</text>
-    <text x="268" y="449" font-size="12" fill="#374151">"AI 가 대응 시작" 알림</text>
-
-    <rect x="360" y="388" width="148" height="92" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
-    <text x="434" y="412" font-weight="700" fill="#1d4ed8">RCS 자동 접속</text>
-    <text x="434" y="432" font-size="12" fill="#374151">실행·로그인·장비 선택</text>
-    <text x="434" y="449" font-size="12" fill="#374151">VLM 좌표 + OCR 확인</text>
-    <text x="434" y="466" font-size="12" fill="#374151">접속 즉시 상시 녹화</text>
-
-    <rect x="526" y="388" width="148" height="92" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
-    <text x="600" y="412" font-weight="700" fill="#1d4ed8">화면 판독</text>
-    <text x="600" y="432" font-size="12" fill="#374151">라이브 SEM 영역 검출</text>
-    <text x="600" y="449" font-size="12" fill="#374151">촬영 모드 OM/SEM 판독</text>
-    <text x="600" y="466" font-size="12" fill="#374151">타인 점유 여부 판별</text>
-
-    <rect x="692" y="388" width="148" height="92" rx="8" fill="#ffffff" stroke="#059669" stroke-width="1.8"/>
-    <text x="766" y="412" font-weight="700" fill="#047857">자동 재정렬</text>
-    <text x="766" y="432" font-size="12" fill="#374151">기준: 성공 사례 종합</text>
-    <text x="766" y="449" font-size="12" fill="#374151">(부족하면 등록 이미지)</text>
-    <text x="766" y="466" font-size="12" fill="#374151">CV 매칭 → 픽셀 좌표</text>
-
-    <rect x="858" y="388" width="148" height="92" rx="8" fill="#fff7ed" stroke="#ea580c" stroke-width="2.2"/>
-    <text x="932" y="412" font-weight="700" fill="#c2410c">확정 요청 → OK</text>
-    <text x="932" y="432" font-size="12" fill="#7c2d12">재조정 결과를 담당자에 알림</text>
-    <text x="932" y="449" font-size="12" fill="#7c2d12">사람이 OK 를 누름</text>
-    <text x="932" y="466" font-size="12" fill="#7c2d12">(되돌릴 수 없는 조작)</text>
-
-    <rect x="1024" y="388" width="148" height="92" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
-    <text x="1098" y="412" font-weight="700" fill="#1d4ed8">완료 감시·종료·기록</text>
-    <text x="1098" y="432" font-size="12" fill="#374151">OK 완료·개입 종료 감지</text>
-    <text x="1098" y="449" font-size="12" fill="#374151">장비 화면 창 자동 종료</text>
-    <text x="1098" y="466" font-size="12" fill="#374151">대응 1건 = 기록 1줄</text>
+  <!-- exception path: down from 화면 판독 / 자동 재정렬 -->
+  <g stroke="#dc2626" stroke-width="2.4" fill="#dc2626">
+    <path d="M964 678 L964 746"/><path d="M956 744 L964 760 L972 744 Z"/>
+    <path d="M1220 678 L1220 746"/><path d="M1212 744 L1220 760 L1228 744 Z"/>
   </g>
-  <g stroke="#2563eb" stroke-width="1.5" fill="#2563eb">
-    <path d="M176 434 L192 434"/><path d="M187 430 L194 434 L187 438 Z"/>
-    <path d="M342 434 L358 434"/><path d="M353 430 L360 434 L353 438 Z"/>
-    <path d="M508 434 L524 434"/><path d="M519 430 L526 434 L519 438 Z"/>
-    <path d="M674 434 L690 434"/><path d="M685 430 L692 434 L685 438 Z"/>
-    <path d="M840 434 L856 434"/><path d="M851 430 L858 434 L851 438 Z"/>
-    <path d="M1006 434 L1022 434"/><path d="M1017 430 L1024 434 L1017 438 Z"/>
+  <g text-anchor="middle">
+    <rect x="848" y="760" width="424" height="120" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2.4"/>
+    <text x="1060" y="792" font-size="20" font-weight="700" fill="#b91c1c">AI 가 진행 못할 때</text>
+    <text x="1060" y="820" font-size="16" fill="#7f1d1d">보정 불가 · 촬영 모드 불명 · 위치 모호</text>
+    <text x="1060" y="844" font-size="16" fill="#7f1d1d">타인 점유 · OCR 확인 실패(클릭 차단)</text>
+    <text x="1060" y="868" font-size="16" fill="#7f1d1d">추측해서 누르지 않고 물러난다</text>
+
+    <rect x="1300" y="760" width="290" height="120" rx="10" fill="#f5f3ff" stroke="#7c3aed" stroke-width="2.4"/>
+    <text x="1445" y="792" font-size="20" font-weight="700" fill="#6d28d9">큐브 알림 → MI 담당자</text>
+    <text x="1445" y="820" font-size="16" fill="#4c1d95">원인 + 요구 행동 + 매칭 점수</text>
+    <text x="1445" y="844" font-size="16" fill="#4c1d95">설정 문제 vs 재등록 검토 구분</text>
+    <text x="1445" y="868" font-size="16" fill="#4c1d95">사람 개입 없이 자동 발송</text>
+
+    <rect x="1616" y="760" width="232" height="120" rx="10" fill="#fff7ed" stroke="#ea580c" stroke-width="2.4"/>
+    <text x="1732" y="792" font-size="20" font-weight="700" fill="#c2410c">담당자 조치</text>
+    <text x="1732" y="820" font-size="16" fill="#7c2d12">수동 정렬 · 점유 해제</text>
+    <text x="1732" y="844" font-size="16" fill="#7c2d12">Align Key 재등록 검토</text>
+    <text x="1732" y="868" font-size="16" fill="#7c2d12">AI 는 관전·녹화로 양보</text>
   </g>
-  <text x="600" y="512" text-anchor="middle" font-size="13" fill="#1e3a8a">보정 불가·모드 불명·타인 점유 등 예외는 원인과 요구 행동을 담아 담당자에게 알리고 물러난다 (쿨다운 후 재시도)</text>
-  <text x="600" y="534" text-anchor="middle" font-size="13" fill="#1e3a8a">검증 대상 클릭은 OCR 확인 실패 시 차단 (fail-closed) · 예외가 나도 녹화 종료·창 닫기·팝업 정리를 순서대로 시도</text>
+  <g stroke="#7c3aed" stroke-width="2.4" fill="#7c3aed">
+    <path d="M1272 820 L1288 820"/><path d="M1286 812 L1300 820 L1286 828 Z"/>
+  </g>
+  <g stroke="#ea580c" stroke-width="2.4" fill="#ea580c">
+    <path d="M1590 820 L1604 820"/><path d="M1602 812 L1616 820 L1602 828 Z"/>
+    <path d="M1732 760 L1732 692"/><path d="M1724 694 L1732 678 L1740 694 Z"/>
+  </g>
+  <text x="1760" y="726" font-size="14" fill="#c2410c">조치 후 기록</text>
+
+  <!-- safety rules panel -->
+  <rect x="80" y="760" width="740" height="120" rx="10" fill="#111827"/>
+  <text x="100" y="790" font-size="18" font-weight="700" fill="#f9fafb">안전 원칙 (코드에 고정)</text>
+  <g font-size="16" fill="#e5e7eb">
+    <text x="100" y="818">① 확인 안 된 클릭은 나가지 않는다 (VLM 좌표 → OCR 라벨 확인 → 클릭, fail-closed)</text>
+    <text x="100" y="842">② 예외가 나도 녹화 종료 · 창 닫기 · 팝업 정리를 순서대로 시도한다</text>
+    <text x="100" y="866">③ 사람이 개입하면 자동화가 양보한다 · 긴급 중단 단축키 · 점유 중이면 관전 녹화</text>
+  </g>
+
+  <!-- loop back -->
+  <path d="M1848 640 L1866 640 L1866 940 L56 940 L56 608 L66 608" fill="none" stroke="#2563eb" stroke-width="2.4" stroke-dasharray="10 6"/>
+  <path d="M66 600 L80 608 L66 616 Z" fill="#2563eb"/>
+  <text x="960" y="926" text-anchor="middle" font-size="17" fill="#1e3a8a">↻ 정상·예외 경로 모두 기록 1줄로 끝나고 tool 창을 닫은 뒤 다음 알람 대기 · 점유·실패 건은 쿨다운 후 재시도 · 24시간 무인 반복</text>
 
   <!-- legend -->
-  <g font-size="12" fill="#374151">
-    <rect x="40" y="570" width="14" height="14" rx="3" fill="#ffffff" stroke="#6b7280" stroke-width="1.5"/><text x="60" y="582">사람 수행 (기존)</text>
-    <rect x="170" y="570" width="14" height="14" rx="3" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/><text x="190" y="582">시스템 자동 수행 (VLM·OCR 판단 포함)</text>
-    <rect x="440" y="570" width="14" height="14" rx="3" fill="#ffffff" stroke="#059669" stroke-width="1.8"/><text x="460" y="582">CV 매칭 엔진이 좌표 결정</text>
-    <rect x="640" y="570" width="14" height="14" rx="3" fill="#fff7ed" stroke="#ea580c" stroke-width="2"/><text x="660" y="582">정상 경로에서 사람이 맡는 최종 단계</text>
+  <g font-size="17" fill="#374151">
+    <rect x="80"   y="1012" width="16" height="16" rx="3" fill="#ffffff" stroke="#6b7280" stroke-width="2"/><text x="104" y="1026">사람 수행 (기존)</text>
+    <rect x="300"  y="1012" width="16" height="16" rx="3" fill="#ffffff" stroke="#2563eb" stroke-width="2.4"/><text x="324" y="1026">시스템 자동 수행 (VLM·OCR 판단 포함)</text>
+    <rect x="680"  y="1012" width="16" height="16" rx="3" fill="#ffffff" stroke="#059669" stroke-width="2.4"/><text x="704" y="1026">CV 매칭 엔진이 좌표 결정</text>
+    <rect x="960"  y="1012" width="16" height="16" rx="3" fill="#f5f3ff" stroke="#7c3aed" stroke-width="2.4"/><text x="984" y="1026">큐브 알림 (자동 발송)</text>
+    <rect x="1220" y="1012" width="16" height="16" rx="3" fill="#fef2f2" stroke="#dc2626" stroke-width="2.4"/><text x="1244" y="1026">AI 가 진행 못할 때 → 알림 → 담당자 조치 → 기록 → 다음 알람</text>
   </g>
 </svg>

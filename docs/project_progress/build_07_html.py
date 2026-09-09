@@ -3,6 +3,8 @@
 절(H2)마다 탭 하나. 절 안 소제목(h3/h4) 목차, 해시 기반 탭 복원, 키보드 탭 조작,
 인쇄 시 전체 절 출력. 그림은 base64 로 내장해 HTML 한 파일만 전달하면 된다.
 
+원본(07_ax_innovation_challenge.md)과 요약본(_short.md)을 함께 빌드한다(요약본이 없으면 건너뜀).
+
 실행 (markdown 은 프로젝트 의존성이 아니라 1회성으로 얹는다):
     uv run --with markdown python docs/project_progress/build_07_html.py
 """
@@ -10,69 +12,7 @@ import base64, html, pathlib, re
 import markdown
 
 HERE = pathlib.Path(__file__).resolve().parent
-SRC = HERE / "07_ax_innovation_challenge.md"
-OUT = SRC.with_suffix(".html")
-text = SRC.read_text(encoding="utf-8")
-
-# H2 로 절 분할. 첫 덩어리는 표지(제목 + 인용 메타).
-parts = re.split(r"^(?=## )", text, flags=re.M)
-front, sections = parts[0], parts[1:]
-title = re.match(r"# (.+)", front).group(1).strip()
-front_body = front.split("\n", 1)[1].replace("\n---\n", "\n")
-
-def render(md_text):
-    h = markdown.markdown(md_text, extensions=["tables", "sane_lists", "attr_list"])
-    # 이미지 내장
-    def embed(m):
-        p = HERE / m.group(1)
-        b64 = base64.b64encode(p.read_bytes()).decode()
-        return f'src="data:image/png;base64,{b64}"'
-    return re.sub(r'src="(img/[^"]+\.png)"', embed, h)
-
-tabs = [("표지", "표지", front_body)]
-for s in sections:
-    head, body = s.split("\n", 1)
-    full = head[3:].strip()
-    label = re.sub(r"\s*·\s*Operation Improvement 측면 서술", " · O/I", full)
-    label = label.replace("정량적 + 정성적 성과", "성과")
-    tabs.append((label, full, body.replace("\n---\n", "\n")))
-
-def h3_toc(md_text):
-    heads = re.findall(r"^(###|####) (.+)$", md_text, flags=re.M)
-    if sum(1 for lv, _ in heads if lv == "###") < 2:
-        return ""
-    out, open_sub = [], False
-    for lv, t in heads:
-        a = f'<a href="#{slug(t)}">{html.escape(t)}</a>'
-        if lv == "###":
-            if open_sub:
-                out.append("</ul></li>"); open_sub = False
-            elif out:
-                out.append("</li>")
-            out.append(f"<li>{a}")
-        else:
-            if not open_sub:
-                out.append("<ul>"); open_sub = True
-            out.append(f"<li>{a}</li>")
-    out.append("</ul></li>" if open_sub else "</li>")
-    return f'<nav class="toc" aria-label="이 절의 목차"><span>이 절의 목차</span><ol>{"".join(out)}</ol></nav>'
-
-def slug(t):
-    return "h-" + re.sub(r"[^0-9A-Za-z가-힣]+", "-", t).strip("-").lower()
-
-def add_ids(h):
-    return re.sub(r"<(h[34])>(.+?)</h[34]>", lambda m: f'<{m.group(1)} id="{slug(html.unescape(re.sub("<.+?>", "", m.group(2))))}">{m.group(2)}</{m.group(1)}>', h)
-
-nav = "".join(
-    f'<button role="tab" id="tab-{i}" aria-controls="panel-{i}" data-i="{i}" '
-    f'aria-selected="{"true" if i == 0 else "false"}" tabindex="{0 if i == 0 else -1}">{html.escape(l)}</button>'
-    for i, (l, _, _) in enumerate(tabs)
-)
-panels = "".join(
-    f'<section role="tabpanel" id="panel-{i}" aria-labelledby="tab-{i}" data-i="{i}" {"" if i == 0 else "hidden"}>'
-    f'{"<h2 tabindex=-1>" + html.escape(f) + "</h2>" if i else "<h2 tabindex=-1 class=vh>표지</h2>"}{h3_toc(b)}{add_ids(render(b))}</section>'
-    for i, (l, f, b) in enumerate(tabs)
-)
+SRCS = [HERE / "07_ax_innovation_challenge.md", HERE / "07_ax_innovation_challenge_short.md"]
 
 CSS = """
 :root{--ink:#1f2328;--muted:#59636e;--line:#d0d7de;--bg:#fff;--soft:#f6f8fa;--acc:#0b5cad;--tag:#eaf2fb}
@@ -107,7 +47,7 @@ hr{border:0;border-top:1px solid var(--line);margin:30px 0}
 .vh{position:absolute;left:-9999px}
 .toc ul{list-style:disc;margin:2px 0;padding-left:20px;font-size:.88rem}
 [role=tab]:focus-visible{outline:2px solid var(--acc);outline-offset:-2px}
-@media print{header [role=tablist],.pager,.toc{display:none}table{display:table;overflow:visible}th{white-space:normal}td,th{word-break:break-word}section[hidden]{display:block!important}section{page-break-before:always}section[data-i="0"]{page-break-before:auto}body{font-size:11pt}}
+@page{size:A4;margin:14mm 15mm}@media print{header [role=tablist],.pager,.toc{display:none}header .in{padding-top:8px}header h1{font-size:1.15rem;margin-bottom:6px}main{padding:10px 0 0}body{font-size:10.5pt;line-height:1.5}p{margin:0 0 8px}h2{font-size:1.2rem;margin-bottom:10px}h3{margin:18px 0 8px;font-size:1.02rem;page-break-after:avoid}h4{margin:12px 0 6px}table{display:table;overflow:visible;font-size:8.6pt;margin:8px 0 12px;line-height:1.4}th{white-space:normal}td,th{padding:4px 6px;word-break:break-word;min-width:5.5em}tr{page-break-inside:avoid}img{max-height:62mm;width:auto;margin:8px auto 12px;page-break-inside:avoid}img.fig-l{max-height:84mm}li{margin:2px 0}blockquote{padding:6px 12px;margin-bottom:10px;font-size:.9rem}section[hidden]{display:block!important}section{page-break-before:always}section[data-i="0"]{page-break-before:auto}}
 """
 
 JS = r"""
@@ -136,11 +76,80 @@ document.getElementById('next').onclick=()=>go(cur()+1);
 addEventListener('hashchange',fromHash);fromHash();
 """
 
-doc = f"""<!doctype html>
-<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{html.escape(title)}</title><style>{CSS}</style></head>
-<body><header><div class="in"><h1>{html.escape(title)}</h1><div role="tablist">{nav}</div></div></header>
-<main>{panels}<div class="pager"><button id="prev">← 이전 절</button><button id="next">다음 절 →</button></div></main>
-<script>{JS}</script></body></html>"""
-OUT.write_text(doc, encoding="utf-8")
-print(f"[INFO] wrote {OUT} ({OUT.stat().st_size/1024:.0f} KB), tabs={[l for l,_,_ in tabs]}")
+
+def build(src):
+    out = src.with_suffix(".html")
+    text = src.read_text(encoding="utf-8")
+    # H2 로 절 분할. 첫 덩어리는 표지(제목 + 인용 메타).
+    parts = re.split(r"^(?=## )", text, flags=re.M)
+    front, sections = parts[0], parts[1:]
+    title = re.match(r"# (.+)", front).group(1).strip()
+    front_body = front.split("\n", 1)[1].replace("\n---\n", "\n")
+
+    def render(md_text):
+        h = markdown.markdown(md_text, extensions=["tables", "sane_lists", "attr_list"])
+        # 이미지 내장
+        def embed(m):
+            p = HERE / m.group(1)
+            b64 = base64.b64encode(p.read_bytes()).decode()
+            return f'src="data:image/png;base64,{b64}"'
+        return re.sub(r'src="(img/[^"]+\.png)"', embed, h)
+
+    tabs = [("표지", "표지", front_body)]
+    for s in sections:
+        head, body = s.split("\n", 1)
+        full = head[3:].strip()
+        label = re.sub(r"\s*·\s*Operation Improvement 측면 서술", " · O/I", full)
+        label = label.replace("정량적 + 정성적 성과", "성과")
+        tabs.append((label, full, body.replace("\n---\n", "\n")))
+
+    def h3_toc(md_text):
+        heads = re.findall(r"^(###|####) (.+)$", md_text, flags=re.M)
+        if sum(1 for lv, _ in heads if lv == "###") < 2:
+            return ""
+        out, open_sub = [], False
+        for lv, t in heads:
+            a = f'<a href="#{slug(t)}">{html.escape(t)}</a>'
+            if lv == "###":
+                if open_sub:
+                    out.append("</ul></li>"); open_sub = False
+                elif out:
+                    out.append("</li>")
+                out.append(f"<li>{a}")
+            else:
+                if not open_sub:
+                    out.append("<ul>"); open_sub = True
+                out.append(f"<li>{a}</li>")
+        out.append("</ul></li>" if open_sub else "</li>")
+        return f'<nav class="toc" aria-label="이 절의 목차"><span>이 절의 목차</span><ol>{"".join(out)}</ol></nav>'
+
+    def slug(t):
+        return "h-" + re.sub(r"[^0-9A-Za-z가-힣]+", "-", t).strip("-").lower()
+
+    def add_ids(h):
+        return re.sub(r"<(h[34])>(.+?)</h[34]>", lambda m: f'<{m.group(1)} id="{slug(html.unescape(re.sub("<.+?>", "", m.group(2))))}">{m.group(2)}</{m.group(1)}>', h)
+
+    nav = "".join(
+        f'<button role="tab" id="tab-{i}" aria-controls="panel-{i}" data-i="{i}" '
+        f'aria-selected="{"true" if i == 0 else "false"}" tabindex="{0 if i == 0 else -1}">{html.escape(l)}</button>'
+        for i, (l, _, _) in enumerate(tabs)
+    )
+    panels = "".join(
+        f'<section role="tabpanel" id="panel-{i}" aria-labelledby="tab-{i}" data-i="{i}" {"" if i == 0 else "hidden"}>'
+        f'{"<h2 tabindex=-1>" + html.escape(f) + "</h2>" if i else "<h2 tabindex=-1 class=vh>표지</h2>"}{h3_toc(b)}{add_ids(render(b))}</section>'
+        for i, (l, f, b) in enumerate(tabs)
+    )
+
+    doc = f"""<!doctype html>
+    <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>{html.escape(title)}</title><style>{CSS}</style></head>
+    <body><header><div class="in"><h1>{html.escape(title)}</h1><div role="tablist">{nav}</div></div></header>
+    <main>{panels}<div class="pager"><button id="prev">← 이전 절</button><button id="next">다음 절 →</button></div></main>
+    <script>{JS}</script></body></html>"""
+    out.write_text(doc, encoding="utf-8")
+    print(f"[INFO] wrote {out} ({out.stat().st_size/1024:.0f} KB), tabs={[l for l,_,_ in tabs]}")
+
+
+for _src in SRCS:
+    if _src.exists():
+        build(_src)

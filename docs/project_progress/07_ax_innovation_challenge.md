@@ -38,7 +38,7 @@ Align Fail(정렬 실패)이 **주 400~500건** 발생합니다. 사람이 알�
 즉 화면의 의미를 이해하는 능력과 픽셀 단위 정밀도가 동시에 필요한 일이라 규칙 기반
 자동화의 사각지대였습니다.
 
-![그림 1. Before / After 흐름 비교](img/07/fig1_before_after.png)
+![그림 1. Before / After 흐름 비교](img/07/fig1_before_after.png){: .fig-l }
 
 ### Story 2 — 해결: AI에 다 맡기지 않고, 이해·확인·정량·확정을 나눴다
 

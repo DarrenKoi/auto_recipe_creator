@@ -35,7 +35,7 @@ hr{border:0;border-top:1px solid var(--line);margin:30px 0}
 [role=tab]:focus-visible{outline:2px solid var(--acc);outline-offset:-2px}
 @page{size:A4;margin:14mm 15mm}@media print{header [role=tablist],.pager,.toc{display:none}header .in{padding-top:8px}header h1{font-size:1.15rem;margin-bottom:6px}main{padding:10px 0 0}body{font-size:10.5pt;line-height:1.5}p{margin:0 0 8px}h2{font-size:1.2rem;margin-bottom:10px}h3{margin:18px 0 8px;font-size:1.02rem;page-break-after:avoid}h4{margin:12px 0 6px}table{display:table;overflow:visible;font-size:8.6pt;margin:8px 0 12px;line-height:1.4}th{white-space:normal}td,th{padding:4px 6px;word-break:break-word;min-width:5.5em}tr{page-break-inside:avoid}img{max-height:62mm;width:auto;margin:8px auto 12px;page-break-inside:avoid}img.fig-l{max-height:84mm}li{margin:2px 0}blockquote{padding:6px 12px;margin-bottom:10px;font-size:.9rem}section[hidden]{display:block!important}section{page-break-before:always}section[data-i="0"]{page-break-before:auto}}
 </style></head>
-    <body><header><div class="in"><h1>2026 AX 업무 혁신 사례 공모전 — 제출 초안</h1><div role="tablist"><button role="tab" id="tab-0" aria-controls="panel-0" data-i="0" aria-selected="true" tabindex="0">표지</button><button role="tab" id="tab-1" aria-controls="panel-1" data-i="1" aria-selected="false" tabindex="-1">1. 사례 요약</button><button role="tab" id="tab-2" aria-controls="panel-2" data-i="2" aria-selected="false" tabindex="-1">2. 사례 상세</button><button role="tab" id="tab-3" aria-controls="panel-3" data-i="3" aria-selected="false" tabindex="-1">3. 성과</button><button role="tab" id="tab-4" aria-controls="panel-4" data-i="4" aria-selected="false" tabindex="-1">4. SKMS 기본 정신 · O/I</button><button role="tab" id="tab-5" aria-controls="panel-5" data-i="5" aria-selected="false" tabindex="-1">제출 전 확인 목록</button></div></div></header>
+    <body><header><div class="in"><h1>2026 AX 업무 혁신 사례 공모전 — 제출 초안</h1><div role="tablist"><button role="tab" id="tab-0" aria-controls="panel-0" data-i="0" aria-selected="true" tabindex="0">표지</button><button role="tab" id="tab-1" aria-controls="panel-1" data-i="1" aria-selected="false" tabindex="-1">1. 사례 요약</button><button role="tab" id="tab-2" aria-controls="panel-2" data-i="2" aria-selected="false" tabindex="-1">2. 사례 상세</button><button role="tab" id="tab-3" aria-controls="panel-3" data-i="3" aria-selected="false" tabindex="-1">3. 성과</button><button role="tab" id="tab-4" aria-controls="panel-4" data-i="4" aria-selected="false" tabindex="-1">4. SKMS 기본 정신</button><button role="tab" id="tab-5" aria-controls="panel-5" data-i="5" aria-selected="false" tabindex="-1">5. Operation Improvement with AI</button><button role="tab" id="tab-6" aria-controls="panel-6" data-i="6" aria-selected="false" tabindex="-1">제출 전 확인 목록</button></div></div></header>
     <main><section role="tabpanel" id="panel-0" aria-labelledby="tab-0" data-i="0" ><h2 tabindex=-1 class=vh>표지</h2><blockquote>
 <p>사례명(안): <strong>"장비가 멈추면 AI가 먼저 들어간다" — CD-SEM Align Fail 무인 대응 Agent</strong>
 제출 조직: 기반기술전략&amp;안전 AX Part 최대영 / 현업 협업: R&amp;D DMI NAND MI기술 오정률 / 투입 인원 2명
@@ -361,7 +361,7 @@ AI 모델 2종(VLM 1종 + OCR 1종) 상시 운영으로 정리했습니다. 모�
 <td>구조·기하 기반 매칭 + 여러 매칭 방식 종합(Ensemble/RRF) + 성공 사례 consensus. 임계값은 성공·실패 점수 분포로 통계적 보정</td>
 </tr>
 <tr>
-<td>고배율 SEM은 화면 대부분이 반복 패턴이라 진짜 위치와 헷갈리는 가짜 후보가 많음</td>
+<td>고배율 SEM은 화면 대부분이 비슷한 선·평탄면이라 위치를 특정할 단서(선이 만나는 지점)가 드물고, 진짜 위치와 헷갈리는 가짜 후보가 많음</td>
 <td>재순위 후 잔여 실패의 약 87%가 "정답이 후보에 아예 없는" 경우임을 분해로 확인. 순위 조정으로 풀리지 않는 몫은 <strong>Align Key 재등록 권고 Recipe 목록</strong>으로 현업과 검토</td>
 </tr>
 <tr>
@@ -373,7 +373,7 @@ AI 모델 2종(VLM 1종 + OCR 1종) 상시 운영으로 정리했습니다. 모�
 <td>장비·API를 대체한 시험 환경으로 실장비 없이 자동 테스트. 재생(replay) 절차로 알람 없이 사이클 강제 실행. 오피스 실행 결과는 한 줄 요약으로 회수</td>
 </tr>
 <tr>
-<td>실장비 클릭은 오동작 시 측정에 영향</td>
+<td>얼라인 위치 재설정은 오동작 시 측정에 영향</td>
 <td>점검 모드(비파괴) → 반자동(확정은 현업 담당자) → 전용 PC에서 현업 엔지니어와 합동 시험 → 26대 실전 배치의 단계적 게이트. 뒷정리(녹화 종료·창 닫기·팝업 정리)는 예외 시에도 순서대로 시도</td>
 </tr>
 <tr>
@@ -671,8 +671,9 @@ AI가 같은 장비를 다루는 공존 규칙의 적용 개발과 현장 검증
 </tr>
 </tbody>
 </table>
-<p>통념과 달리 고배율 SEM이 더 까다롭습니다. 화면 대부분이 비슷한 반복 패턴이라 가짜 후보가 많고 진짜
-  위치와 잘 헷갈립니다. 그래서 화면에서 촬영 모드를 읽어 모드별로 기준 이미지와 후보 평가 방식을
+<p>통념과 달리 고배율 SEM이 더 까다롭습니다. 화면을 크게 확대할수록 시야는 비슷한 선과 평탄면으로 채워져
+  위치를 특정할 단서(선이 만나는 지점)가 드물어지고, 그 주변이 서로 닮아 진짜 위치와 헷갈리는 가짜
+  후보가 많아집니다. 그래서 화면에서 촬영 모드를 읽어 모드별로 기준 이미지와 후보 평가 방식을
   바꾸도록 설계했습니다. 표본은 평가 이미지 기준입니다.
 - <em>무엇을 뜻하나</em>: 오프라인 평가에서 정답 위치를 첫 후보로 고른 비율이 약 3분의 1에서 4분의 3으로
   올랐습니다. 재순위 적용 후 남은 실패의 약 87%는 정답이 후보 목록에 아예 없는 유형이어서 순위 조정만으로는
@@ -897,12 +898,11 @@ Creation의 재료가 됩니다(§2.6).</p>
 <li><strong>기술과 협업의 경계</strong>: 개선안은 벤치로 채택·기각했습니다. 재순위 적용 후 남은 실패 중 약
   87%가 정답이 후보에 없는 유형임을 확인해 Align Key 재등록이라는 현업 협업 과제로 연결했습니다.
   AI가 못 푸는 몫을 숨기지 않고 현업 담당자의 과제로 정의했습니다. 이것이 이 사례의 성과입니다.</li>
-</ul></section><section role="tabpanel" id="panel-4" aria-labelledby="tab-4" data-i="4" hidden><h2 tabindex=-1>4. SKMS 기본 정신 · Operation Improvement 측면 서술</h2><nav class="toc" aria-label="이 절의 목차"><span>이 절의 목차</span><ol><li><a href="#h-4-1-skms-기본-정신-패기와-teamwork">4.1 SKMS 기본 정신 — 패기와 Teamwork</a><ul><li><a href="#h-4-1-1-패기-일과-싸워서-이기는-힘">4.1.1 패기 — 일과 싸워서 이기는 힘</a></li><li><a href="#h-4-1-2-teamwork-다른-팀이-같은-팀처럼">4.1.2 Teamwork — 다른 팀이 같은 팀처럼</a></li></ul></li><li><a href="#h-4-2-operation-improvement-with-ai">4.2 Operation Improvement with AI</a><ul><li><a href="#h-4-2-1-기존-프로세스의-불편함">4.2.1 기존 프로세스의 불편함</a></li><li><a href="#h-4-2-2-ai로-인한-변화-지점">4.2.2 AI로 인한 변화 지점</a></li><li><a href="#h-4-2-3-개선-효과">4.2.3 개선 효과</a></li></ul></li></ol></nav><h3 id="h-4-1-skms-기본-정신-패기와-teamwork">4.1 SKMS 기본 정신 — 패기와 Teamwork</h3>
-<blockquote>
+</ul></section><section role="tabpanel" id="panel-4" aria-labelledby="tab-4" data-i="4" hidden><h2 tabindex=-1>4. SKMS 기본 정신</h2><nav class="toc" aria-label="이 절의 목차"><span>이 절의 목차</span><ol><li><a href="#h-4-1-패기-일과-싸워서-이기는-힘">4.1 패기 — 일과 싸워서 이기는 힘</a></li><li><a href="#h-4-2-teamwork-다른-팀이-같은-팀처럼">4.2 Teamwork — 다른 팀이 같은 팀처럼</a></li></ol></nav><blockquote>
 <p>두 정신을 선택했습니다. 정의는 SKMS 전문(2020년 14차 개정, sk.co.kr 공개본)과 SK AX 기업문화 페이지의
 공개 문구를 참고했으며, 직접 인용은 따옴표로 표시했습니다. 사내 공식 판본과의 대조는 제출 전 확인합니다.</p>
 </blockquote>
-<h4 id="h-4-1-1-패기-일과-싸워서-이기는-힘">4.1.1 패기 — 일과 싸워서 이기는 힘</h4>
+<h3 id="h-4-1-패기-일과-싸워서-이기는-힘">4.1 패기 — 일과 싸워서 이기는 힘</h3>
 <p><strong>SKMS의 정의</strong></p>
 <blockquote>
 <p>"자발적·의욕적 두뇌활용이 외부로 발현되는 모습이 곧 일과 싸워서 이기는 패기이다. 패기 있는 구성원은
@@ -943,7 +943,7 @@ Creation의 재료가 됩니다(§2.6).</p>
   대체한 시험 환경과 기록된 조건으로 반복 시험하는 절차로 넘었습니다. 현업 담당자와 AI가 같은 장비를 다루는 문제를
   만나자 전용 PC를 확보했고 AI용 ID 할당과 공존 규칙 적용을 진행하고 있습니다.</li>
 </ul>
-<h4 id="h-4-1-2-teamwork-다른-팀이-같은-팀처럼">4.1.2 Teamwork — 다른 팀이 같은 팀처럼</h4>
+<h3 id="h-4-2-teamwork-다른-팀이-같은-팀처럼">4.2 Teamwork — 다른 팀이 같은 팀처럼</h3>
 <p><strong>SKMS의 정의</strong></p>
 <blockquote>
 <p>"회사는 <strong>조직화된 힘</strong>을 통해 가용자원을 효과적으로 활용하여 최대한의 가치를 창출하는 공동체이다."
@@ -980,9 +980,7 @@ Creation의 재료가 됩니다(§2.6).</p>
   같은 조건에서 재시험하는 방식으로 협업했습니다.</li>
 <li><strong>두 조직의 자원을 결합했습니다.</strong> AX Part의 AI 개발·운영 역량과 MI의 장비 지식·시험 환경이 하나의 목표에
   조직화된 덕분에 2명이 7.5개월에 감지에서 기록까지 도는 루프를 만들고 26대 실전 배치를 준비하고 있습니다.</li>
-</ul>
-<h3 id="h-4-2-operation-improvement-with-ai">4.2 Operation Improvement with AI</h3>
-<h4 id="h-4-2-1-기존-프로세스의-불편함">4.2.1 기존 프로세스의 불편함</h4>
+</ul></section><section role="tabpanel" id="panel-5" aria-labelledby="tab-5" data-i="5" hidden><h2 tabindex=-1>5. Operation Improvement with AI</h2><nav class="toc" aria-label="이 절의 목차"><span>이 절의 목차</span><ol><li><a href="#h-5-1-기존-프로세스의-불편함">5.1 기존 프로세스의 불편함</a></li><li><a href="#h-5-2-ai로-인한-변화-지점">5.2 AI로 인한 변화 지점</a></li><li><a href="#h-5-3-개선-효과">5.3 개선 효과</a></li></ol></nav><h3 id="h-5-1-기존-프로세스의-불편함">5.1 기존 프로세스의 불편함</h3>
 <table>
 <thead>
 <tr>
@@ -1004,7 +1002,7 @@ Creation의 재료가 됩니다(§2.6).</p>
 </tr>
 <tr>
 <td><strong>숙련도 의존</strong></td>
-<td>멈춘 화면에서 Align Key를 찾는 시각 판단과 재조정 정밀도가 개인 경험에 좌우. 고배율 화면은 반복 패턴이라 헷갈리는 Key는 숙련자도 오판할 위험</td>
+<td>멈춘 화면에서 Align Key를 찾는 시각 판단과 재조정 정밀도가 개인 경험에 좌우. 고배율 화면은 위치를 특정할 단서가 드물어 헷갈리는 Key는 숙련자도 오판할 위험</td>
 <td>판단 기준 명문화</td>
 </tr>
 <tr>
@@ -1020,7 +1018,7 @@ Creation의 재료가 됩니다(§2.6).</p>
 </tbody>
 </table>
 <p>절차 자체는 정형화되어 있었습니다. 24시간 발생하는 알람은 Fab 인라인 구성원과 MI 엔지니어가 나눠 대응했고 이런 반복 부담과 편차는 화면을 보고 판단하는 단계와 조작 정밀도에서 생겼습니다(§2.1).</p>
-<h4 id="h-4-2-2-ai로-인한-변화-지점">4.2.2 AI로 인한 변화 지점</h4>
+<h3 id="h-5-2-ai로-인한-변화-지점">5.2 AI로 인한 변화 지점</h3>
 <table>
 <thead>
 <tr>
@@ -1067,7 +1065,7 @@ Creation의 재료가 됩니다(§2.6).</p>
 </tr>
 </tbody>
 </table>
-<h4 id="h-4-2-3-개선-효과">4.2.3 개선 효과</h4>
+<h3 id="h-5-3-개선-효과">5.3 개선 효과</h3>
 <table>
 <thead>
 <tr>
@@ -1109,8 +1107,8 @@ Creation의 재료가 됩니다(§2.6).</p>
 </tr>
 </tbody>
 </table>
-<p>반복 조작과 1차 판정은 시스템이 맡습니다. 확정과 예외 판단은 현업 담당자가 맡도록 업무를 재구성했습니다. 재순위만으로 해결되지 않는 실패는 Align Key 재등록 필요성을 현업과 검토할 과제로 연결했습니다. 이 사례의 Operation Improvement는 현업 담당자가 하던 일에서 AI가 맡을 몫과 현업 담당자가 맡아야 할 몫을 갈랐다는 데 있습니다.</p></section><section role="tabpanel" id="panel-5" aria-labelledby="tab-5" data-i="5" hidden><h2 tabindex=-1>제출 전 확인 목록</h2><ol>
-<li>SKMS 인용 문구의 사내 공식 판본 대조(§4.1).</li>
+<p>반복 조작과 1차 판정은 시스템이 맡습니다. 확정과 예외 판단은 현업 담당자가 맡도록 업무를 재구성했습니다. 재순위만으로 해결되지 않는 실패는 Align Key 재등록 필요성을 현업과 검토할 과제로 연결했습니다. 이 사례의 Operation Improvement는 현업 담당자가 하던 일에서 AI가 맡을 몫과 현업 담당자가 맡아야 할 몫을 갈랐다는 데 있습니다.</p></section><section role="tabpanel" id="panel-6" aria-labelledby="tab-6" data-i="6" hidden><h2 tabindex=-1>제출 전 확인 목록</h2><ol>
+<li>SKMS 인용 문구의 사내 공식 판본 대조(§4).</li>
 <li>시연 영상 파일 첨부(§3.5). 도표 원본은 <code>img/07/*.svg</code>, 제출용 PNG(2x)는 같은 폴더. SVG를 고치면 PNG 재생성.</li>
 <li>실알람 건별 일자·소요 시간·종료 상태 표를 §3.5 증빙 표에 추가(필수).</li>
 <li>전용 PC 시험 시작 여부에 따라 §1·§2.5·§3.1의 배치 상태 문구를 최종 확인.</li>

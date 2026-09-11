@@ -165,7 +165,7 @@ def test_chat_proxy_injects_upstream_api_key(monkeypatch):
         )
 
     monkeypatch.setattr("flask_api.vlm_serve.service_template.requests.request", fake_request)
-    monkeypatch.setenv("VLM_SERVE_UPSTREAM_API_KEY", "internal-key")
+    monkeypatch.setenv("VLLM_API_KEY", "internal-key")
 
     app = _create_test_app()
     client = app.test_client()
@@ -176,6 +176,8 @@ def test_chat_proxy_injects_upstream_api_key(monkeypatch):
             "model": "mai-ui-8b",
             "messages": [{"role": "user", "content": "ping"}],
         },
+        # Authorization 없이 X-VLM-Token 만 보낸다 - 업스트림 헤더는 프록시가 만들어야 한다.
+        headers={"X-VLM-Token": "internal-key"},
     )
 
     assert response.status_code == 200
@@ -204,7 +206,7 @@ def test_chat_proxy_logs_request_and_response_details(monkeypatch, caplog):
         )
 
     monkeypatch.setattr("flask_api.vlm_serve.service_template.requests.request", fake_request)
-    monkeypatch.setenv("VLM_SERVE_UPSTREAM_API_KEY", "internal-key")
+    monkeypatch.setenv("VLLM_API_KEY", "internal-key")
 
     app = _create_test_app()
     client = app.test_client()
@@ -216,6 +218,7 @@ def test_chat_proxy_logs_request_and_response_details(monkeypatch, caplog):
                 "model": "mai-ui-8b",
                 "messages": [{"role": "user", "content": "ping"}],
             },
+            headers={"X-VLM-Token": "internal-key"},
         )
 
     assert response.status_code == 200
@@ -322,3 +325,89 @@ def test_get_vlm_logger_reuses_existing_file_handler(monkeypatch, tmp_path):
     ]
 
     assert len(file_handlers) == 1
+
+
+# ── 팀 공용 키 인증 (VLLM_API_KEY) ──────────────────────────────────
+
+
+_CAPTURED: dict[str, object] = {}
+
+
+def _ok_response(*_args, **kwargs):
+    """프록시가 upstream 까지 갔는지 보기 위한 더미."""
+    _CAPTURED.update(kwargs)
+    return DummyResponse(
+        status_code=200,
+        body=json.dumps({"data": [{"id": "mai-ui-8b"}]}).encode("utf-8"),
+    )
+
+
+@pytest.fixture
+def proxy_client(monkeypatch):
+    _CAPTURED.clear()
+    monkeypatch.setattr(
+        "flask_api.vlm_serve.service_template.requests.request", _ok_response
+    )
+    return _create_test_app().test_client()
+
+
+def test_proxy_rejects_call_without_key_when_configured(proxy_client, monkeypatch):
+    """키 없는 호출은 upstream 까지 가지 않는다 - 서버에 키를 채우기 전에 workflow_3 부터 옮길 것."""
+    monkeypatch.setenv("VLLM_API_KEY", "team-secret")
+
+    response = proxy_client.get("/api/vlm_serve/mai-ui/v1/models")
+
+    assert response.status_code == 401
+    assert _CAPTURED == {}
+
+
+def test_proxy_rejects_wrong_key(proxy_client, monkeypatch):
+    monkeypatch.setenv("VLLM_API_KEY", "team-secret")
+
+    response = proxy_client.get(
+        "/api/vlm_serve/mai-ui/v1/models", headers={"X-VLM-Token": "nope"}
+    )
+
+    assert response.status_code == 401
+
+
+def test_proxy_accepts_openai_style_bearer_key(proxy_client, monkeypatch):
+    """OpenAI 클라이언트(workflow_3 의 vlm_client 포함)는 api_key 를 Authorization 으로 보낸다."""
+    monkeypatch.setenv("VLLM_API_KEY", "team-secret")
+
+    response = proxy_client.get(
+        "/api/vlm_serve/mai-ui/v1/models",
+        headers={"Authorization": "Bearer team-secret"},
+    )
+
+    assert response.status_code == 200
+    assert _CAPTURED["headers"]["Authorization"] == "Bearer team-secret"
+
+
+def test_caller_authorization_is_replaced_by_the_key(proxy_client, monkeypatch):
+    """X-VLM-Token 으로 인증한 호출자가 딴 Authorization 을 들고 와도 업스트림엔 키가 간다."""
+    monkeypatch.setenv("VLLM_API_KEY", "team-secret")
+
+    response = proxy_client.get(
+        "/api/vlm_serve/mai-ui/v1/models",
+        headers={"X-VLM-Token": "team-secret", "Authorization": "Bearer placeholder"},
+    )
+
+    assert response.status_code == 200
+    assert _CAPTURED["headers"]["Authorization"] == "Bearer team-secret"
+
+
+def test_health_and_home_stay_open_when_key_is_set(proxy_client, monkeypatch):
+    monkeypatch.setenv("VLLM_API_KEY", "team-secret")
+
+    assert proxy_client.get("/api/vlm_serve/mai-ui/").status_code == 200
+    assert proxy_client.get("/api/vlm_serve/mai-ui/health").status_code == 200
+
+
+def test_proxy_stays_open_when_no_key_configured(proxy_client, monkeypatch):
+    """키를 안 채운 배포(지금 서버)는 종전처럼 열려 있어야 한다."""
+    monkeypatch.delenv("VLLM_API_KEY", raising=False)
+
+    response = proxy_client.get("/api/vlm_serve/mai-ui/v1/models")
+
+    assert response.status_code == 200

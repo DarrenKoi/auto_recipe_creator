@@ -11,18 +11,18 @@ code-server 웹 드래그앤드롭이 1GB 근처에서 깨지는 것을 대체�
 
 ## 서버 (사내 private cloud)
 
-`flask_api` 에 이미 배선돼 있다. 앱만 띄우면 `/api/model_upload/*` 가 열린다.
+`flask_api` 에 이미 배선돼 있다. 앱만 띄우면 `/api/model_upload/*` 가 열린다. 루트와 키는
+`deploy_vlms/config/site.env` 에서 온다(`flask_api` 가 import 시점에 스스로 읽는다):
 
 ```bash
-MODEL_UPLOAD_ROOT=/project/day/workSpace/.../data/models \
-MODEL_UPLOAD_TOKEN=<공유비밀>                              \
+cp deploy_vlms/config/site.env.example deploy_vlms/config/site.env   # MODEL_ROOT, VLLM_API_KEY 채우기
 uv run python index.py     # 또는 기존 WSGI 기동 방식 그대로
 ```
 
 | env | 기본값 | 뜻 |
 |---|---|---|
-| `MODEL_UPLOAD_ROOT` | `ALLOWED_MODEL_ROOT` env, 없으면 하드코딩된 같은 경로 | 업로드 목적지 루트. **이 밖으로는 절대 쓰지 않는다** |
-| `MODEL_UPLOAD_TOKEN` | (빈값 = 인증 없음) | 설정하면 모든 업로드 요청에 `X-Upload-Token` 필요 |
+| `MODEL_ROOT` (site.env) | 하드코딩된 `pjt_shared_pool/models` | 업로드 목적지 루트 = 런처가 모델을 찾는 루트. **이 밖으로는 절대 쓰지 않는다** |
+| `VLLM_API_KEY` (site.env) | (빈값 = 인증 없음) | 서빙·프록시와 같은 팀 공용 키. 설정하면 모든 업로드 요청에 `X-Upload-Token`(또는 Bearer) 필요 |
 | `MODEL_UPLOAD_MAX_CHUNK_MB` | 64 | 청크 하나의 상한 |
 | `MODEL_UPLOAD_STAGING_DIR` | `<root>/.upload_staging` | 받는 중인 `.part` 위치. **반드시 root 와 같은 파일시스템** |
 | `MODEL_UPLOAD_ENABLED` | 1 | 0 이면 엔드포인트를 아예 등록하지 않는다 |
@@ -63,7 +63,7 @@ curl -s http://<서버>:<포트>/api/model_upload/health
 ```python
 BASE_URL = "http://<서버>"   # 이미 채워져 있다
 SRC = r"C:/models/MAI-UI-8B" # 올릴 폴더/파일
-TOKEN = ""                   # 서버가 토큰을 안 쓰면 빈 문자열
+TOKEN = ""                   # 서버 site.env 의 VLLM_API_KEY. 서버가 키를 안 쓰면 빈 문자열
 CHUNK_MB = None              # None = 기본값 32
 ```
 
@@ -81,7 +81,7 @@ uv run python deploy_vlms/scripts/upload_model.py
 | `MODEL_UPLOAD_URL` | (필수) | Flask 서버 base URL |
 | `MODEL_UPLOAD_SRC` | (필수) | 올릴 로컬 폴더 또는 파일 |
 | `MODEL_UPLOAD_DEST` | 소스 폴더명 | 서버 루트 아래 목적지 경로 |
-| `MODEL_UPLOAD_TOKEN` | (빈값) | 서버가 요구하면 필수 |
+| `VLLM_API_KEY` | (빈값) | 서버 site.env 에 키가 있으면 필수 (서빙과 같은 키) |
 | `MODEL_UPLOAD_CHUNK_MB` | 32 | 서버 상한보다 크면 자동으로 줄인다 |
 | `MODEL_UPLOAD_MAX_RETRIES` | 12 | 청크 하나당 재시도 한도 (지수 백오프, 최대 30s) |
 
@@ -96,7 +96,7 @@ uv run python deploy_vlms/scripts/upload_model.py
 | 증상 | 원인 / 조치 |
 |---|---|
 | `HTTP 413` 경고 후 계속 진행 | 프록시 `client_max_body_size` 가 청크보다 작아 클라이언트가 청크를 반씩 줄인 것. 동작은 하지만 nginx 를 고치는 게 낫다 |
-| `HTTP 401` | `MODEL_UPLOAD_TOKEN` 불일치 |
+| `HTTP 401` | `VLLM_API_KEY` 불일치 (서버 site.env 의 값과 같아야 한다) |
 | `HTTP 400 PathNotAllowed` | `MODEL_UPLOAD_DEST` 가 루트를 벗어난다 |
 | `HTTP 422` 반복 | 청크가 계속 손상돼 도착한다. 네트워크 경로를 의심 |
 | `완료 응답을 못 받았습니다` 반복 | `proxy_read_timeout` 이 재해싱 시간보다 짧다. nginx 를 못 고치면 `MAX_RETRIES` 를 더 올린다(기본 12회=~3분, 백오프 상한 30s) |

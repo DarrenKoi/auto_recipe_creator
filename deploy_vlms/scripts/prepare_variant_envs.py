@@ -13,7 +13,7 @@
 환경변수:
   DEPLOY_VLMS_ROOT=/project/.../deploy_vlms
   CONFIG_ROOT=${DEPLOY_VLMS_ROOT}/config
-  MODEL_ROOT=/project/.../data/models
+  MODEL_ROOT=/project/.../pjt_shared_pool/models
   OVERWRITE_EXISTING=1
 """
 
@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-DEFAULT_MODEL_ROOT = "/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/data/models"
+DEFAULT_MODEL_ROOT = "/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/pjt_shared_pool/models"
 DEFAULT_COMMON_ENV_TEXT = """# Bind to localhost by default.
 # If another internal machine must access this server, change this to the GPU server's company-internal IP
 # and restrict inbound access with firewall/security-group rules.
@@ -49,7 +49,7 @@ API_KEY=
 STRICT_OFFLINE=1
 DISABLE_OUTBOUND_PROXIES=1
 CREATE_VLLM_DO_NOT_TRACK_FILE=1
-ALLOWED_MODEL_ROOT=/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/data/models
+ALLOWED_MODEL_ROOT=/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/pjt_shared_pool/models
 """
 
 

@@ -15,6 +15,8 @@ except ImportError:
 WORKFLOW_3_VLM_DIR = Path(__file__).resolve().parent
 WORKFLOW_3_VLM_DOTENV_PATH = WORKFLOW_3_VLM_DIR / ".env"
 COMMON_LLM_API_KEY_ENV = "COMMON_LLM_API_KEY"
+# /api/vlm_serve 프록시 키 - GPU 서버 site.env 의 VLLM_API_KEY 와 같은 값 (위 .env 에 두면 된다).
+VLLM_API_KEY_ENV = "VLLM_API_KEY"
 
 if DOTENV_AVAILABLE and WORKFLOW_3_VLM_DOTENV_PATH.is_file():
     load_dotenv(WORKFLOW_3_VLM_DOTENV_PATH)
@@ -147,13 +149,17 @@ def resolve_company_llm_api_key() -> str:
 
 
 def resolve_service_api_key(service_slug: str, default: str = "") -> str:
-    """service slug 별 API key 를 반환한다."""
+    """service slug 별 API key 를 반환한다.
+
+    direct 는 회사 공용 LLM 키, proxy(/api/vlm_serve) 는 GPU 서버 site.env 의 VLLM_API_KEY 와
+    같은 값이다. 서버가 키를 비워 두면 프록시가 열려 있으므로 빈 값이어도 동작한다.
+    """
     service_entry = get_service_by_slug(service_slug)
     if service_entry is None:
         return default
     if service_entry.connection_mode == "direct":
         return resolve_company_llm_api_key() or default
-    return default
+    return os.getenv(VLLM_API_KEY_ENV, "").strip() or default
 
 
 __all__ = [

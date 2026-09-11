@@ -10,6 +10,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from hmac import compare_digest
 
 import requests
 from flask import Blueprint, Response, jsonify, request
@@ -123,6 +124,30 @@ def _prepare_upstream_body(
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
 
+def _api_key() -> str:
+    """팀 공용 키 하나(site.env 의 VLLM_API_KEY). 비어 있으면 인증 없이 열린다.
+
+    같은 값이 호출자 검증과 업스트림 vLLM 의 --api-key 양쪽에 쓰인다 (model_upload 도 같은 키).
+    """
+    return os.environ.get("VLLM_API_KEY", "").strip()
+
+
+def _presented_token() -> str:
+    """호출자가 제시한 키를 꺼낸다.
+
+    X-VLM-Token 을 먼저 보고, 없으면 Authorization: Bearer 를 본다.
+    OpenAI 클라이언트는 api_key 를 Authorization 으로 보내므로 둘 다 받아야
+    팀원이 표준 클라이언트를 그대로 쓸 수 있다.
+    """
+    provided = request.headers.get("X-VLM-Token", "").strip()
+    if provided:
+        return provided
+    authorization = request.headers.get("Authorization", "").strip()
+    if authorization.lower().startswith("bearer "):
+        return authorization[7:].strip()
+    return ""
+
+
 def _build_upstream_headers() -> dict[str, str]:
     """Hop-by-hop 헤더를 제외한 upstream 요청 헤더를 구성한다."""
     blocked_headers = {
@@ -132,13 +157,12 @@ def _build_upstream_headers() -> dict[str, str]:
         "transfer-encoding",
         "accept-encoding",
     }
-    default_api_key = os.environ.get("VLM_SERVE_UPSTREAM_API_KEY", "").strip()
+    api_key = _api_key()
 
-    # 호출자의 Authorization 은 **이 프록시에게** 온 것이다 (OpenAI 클라이언트가 비워 둘 수
-    # 없어서 채워 보내는 아무 값 포함). 업스트림 키는 프록시의 구현 세부이므로 그대로
-    # 넘기지 않는다 - 넘기면 vLLM 이 --api-key 를 켠 순간 401 이 나고, 증상은 호출부에서
-    # "프록시가 죽었다"로 보인다. 프록시를 쓰는 쪽(workflow_3)은 업스트림 키를 몰라야 한다.
-    if default_api_key:
+    # 호출자의 Authorization 은 **이 프록시에게** 온 것이다 (Bearer 로 보낸 키, 또는 OpenAI
+    # 클라이언트가 비워 둘 수 없어 채워 보내는 아무 값). 키를 쓰는 배포에서는 떼어내고 키를
+    # 다시 싣는다 - X-VLM-Token 으로 인증한 호출자도 업스트림에는 인증된 채로 도착한다.
+    if api_key:
         blocked_headers.add("authorization")
 
     headers = {
@@ -147,8 +171,8 @@ def _build_upstream_headers() -> dict[str, str]:
         if key.lower() not in blocked_headers
     }
 
-    if default_api_key:
-        headers["Authorization"] = f"Bearer {default_api_key}"
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
 
     return headers
 
@@ -239,6 +263,26 @@ def _proxy_request(config: VLMServiceConfig, upstream_path: str):
 def create_vlm_service_blueprint(config: VLMServiceConfig) -> Blueprint:
     """VLM 서비스 proxy blueprint 를 생성한다."""
     service_blueprint = Blueprint(config.blueprint_name, __name__)
+
+    @service_blueprint.before_request
+    def _require_api_key():
+        """프록시 호출에 팀 공용 키(VLLM_API_KEY)를 요구한다. home / health 는 열어 둔다.
+
+        키가 비어 있으면 아무것도 하지 않는다 - 서버 site.env 에 키를 채우는 순간
+        vLLM · 프록시 · 업로드가 한꺼번에 켜진다.
+        """
+        token = _api_key()
+        if not token:
+            return None
+        # endpoint 는 "api.vlm_serve.mai_ui.proxy_v1" 형태라 마지막 조각만 본다.
+        if (request.endpoint or "").rsplit(".", 1)[-1] in {"home", "health"}:
+            return None
+        if not compare_digest(_presented_token(), token):
+            return (
+                jsonify({"error": "missing or invalid VLM token", "code": "Unauthorized"}),
+                401,
+            )
+        return None
 
     @service_blueprint.route("/", methods=["GET"])
     def home():

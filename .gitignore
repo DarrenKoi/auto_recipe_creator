@@ -26,6 +26,8 @@ ENV/
 # Environment Variables (secrets)
 .env
 .env.local
+# 서버 사이트 값(MODEL_ROOT, VLLM_API_KEY). 이름에 점이 없어 위 .env 패턴에 안 걸린다.
+deploy_vlms/config/site.env
 
 # Build artifacts
 build/

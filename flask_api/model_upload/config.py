@@ -14,9 +14,10 @@ from flask import Blueprint
 from .routes import create_model_upload_blueprint
 from .store import UploadStore
 
+# 마지막 수단: site.env 에 MODEL_ROOT 가 없을 때의 목적지 (모델은 pjt_shared_pool 로 이전됐다).
 DEFAULT_DEST_ROOT = (
     "/project/day/workSpace/itc-1stop-solution/"
-    "itc-1stop-solution-gpu-image/data/models"
+    "itc-1stop-solution-gpu-image/pjt_shared_pool/models"
 )
 STAGING_DIRNAME = ".upload_staging"
 DEFAULT_MAX_CHUNK_MB = 64
@@ -36,12 +37,10 @@ class ModelUploadConfig:
 
 def load_upload_config() -> ModelUploadConfig:
     """환경변수에서 업로드 설정을 읽는다."""
-    # deploy_vlms/config/common.env 의 ALLOWED_MODEL_ROOT 가 서빙 쪽 루트다.
-    # 그것이 바뀌면 업로드 목적지도 따라가야 한다 - 하드코딩 기본값은 마지막 수단.
+    # 업로드 전용 루트를 따로 두지 않는다 - site.env 의 MODEL_ROOT(런처가 모델을 찾는 루트) 하나.
+    # 두 벌이면 "올렸는데 런처가 못 찾는" 어긋남이 생긴다. 하드코딩 기본값은 마지막 수단.
     dest_root = Path(
-        os.environ.get("MODEL_UPLOAD_ROOT", "").strip()
-        or os.environ.get("ALLOWED_MODEL_ROOT", "").strip()
-        or DEFAULT_DEST_ROOT
+        os.environ.get("MODEL_ROOT", "").strip() or DEFAULT_DEST_ROOT
     ).expanduser()
 
     staging_override = os.environ.get("MODEL_UPLOAD_STAGING_DIR", "").strip()
@@ -60,7 +59,8 @@ def load_upload_config() -> ModelUploadConfig:
     return ModelUploadConfig(
         dest_root=dest_root,
         staging_root=staging_root,
-        token=os.environ.get("MODEL_UPLOAD_TOKEN", "").strip(),
+        # 서빙과 같은 팀 공용 키. 비우면 인증 없이 열린다.
+        token=os.environ.get("VLLM_API_KEY", "").strip(),
         max_chunk_bytes=max_chunk_mb * 1024 * 1024,
         enabled=enabled,
     )

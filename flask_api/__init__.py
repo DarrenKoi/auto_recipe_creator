@@ -4,15 +4,41 @@ api_blueprint 생성 및 앱 등록을 이 모듈에서 처리한다.
 web_main.py 에서 register_flask_api(app) 만 호출하면 된다.
 """
 
+import os
+from pathlib import Path
+
 from flask import Blueprint, Flask, jsonify
 
 from .model_upload.config import (
     build_model_upload_health_payload,
     register_model_upload_routes,
 )
-from .vlm_serve import build_vlm_health_payload, register_vlm_serve_routes
+from .vlm_serve import (
+    _deploy_model_env_root,
+    _load_env_file,
+    build_vlm_health_payload,
+    register_vlm_serve_routes,
+)
 
 DEFAULT_URL_PREFIX = "/api"
+
+
+def load_site_env(path: Path | None = None) -> None:
+    """deploy_vlms/config/site.env(MODEL_ROOT, VLLM_API_KEY)를 os.environ 의 빈 자리에 채운다.
+
+    uwsgi.ini 에 env = 줄을 두지 않고 키·경로를 이 파일 하나에서 받기 위한 것이다.
+    model_upload 가 등록 시점에 설정을 굳히므로 아래 라우트 등록보다 먼저 부른다.
+    이미 있는 키는 두므로 WSGI 가 준 환경이 우선한다. SITE_ENV 로 경로를 바꿀 수 있다
+    (conftest 가 os.devnull 로 끈다). serve_vlm.py 도 같은 파일을 같은 규칙으로 읽는다.
+    """
+    if path is None:
+        override = os.environ.get("SITE_ENV", "").strip()
+        path = Path(override) if override else _deploy_model_env_root().parent / "site.env"
+    if not path.is_file():
+        return
+    for key, value in _load_env_file(path).items():
+        os.environ.setdefault(key, os.path.expandvars(value))
+
 
 api_blueprint = Blueprint("api", __name__)
 
@@ -31,6 +57,7 @@ def health():
     )
 
 
+load_site_env()
 register_vlm_serve_routes(api_blueprint)
 register_model_upload_routes(api_blueprint)
 
@@ -40,4 +67,4 @@ def register_flask_api(app: Flask, url_prefix: str = DEFAULT_URL_PREFIX) -> None
     app.register_blueprint(api_blueprint, url_prefix=url_prefix)
 
 
-__all__ = ["api_blueprint", "register_flask_api", "DEFAULT_URL_PREFIX"]
+__all__ = ["api_blueprint", "load_site_env", "register_flask_api", "DEFAULT_URL_PREFIX"]

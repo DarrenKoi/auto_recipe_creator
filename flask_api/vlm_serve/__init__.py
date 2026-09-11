@@ -161,7 +161,7 @@ def _probe_service(entry: dict[str, Any]) -> dict[str, Any]:
     try:
         # vLLM 이 --api-key 로 떠 있으면 /v1/* 는 인증을 요구한다 (/health 만 열림).
         # 키가 없으면 살아 있는 모델이 401 때문에 unreachable 로 보고된다.
-        upstream_api_key = os.environ.get("VLM_SERVE_UPSTREAM_API_KEY", "").strip()
+        upstream_api_key = os.environ.get("VLLM_API_KEY", "").strip()
         probe_headers = (
             {"Authorization": f"Bearer {upstream_api_key}"} if upstream_api_key else None
         )

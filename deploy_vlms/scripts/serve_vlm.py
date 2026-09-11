@@ -69,8 +69,8 @@ def require_dir(path: str) -> None:
         fail(f"Required directory not found: {path}")
 
 
-def load_env_file(path: str) -> None:
-    """단순 KEY=VALUE .env 파일을 os.environ에 로드한다."""
+def load_env_file(path: str, override: bool = True) -> None:
+    """단순 KEY=VALUE .env 파일을 os.environ에 로드한다. override=False 면 이미 있는 키는 둔다."""
     with open(path, "r") as f:
         for line in f:
             line = line.strip()
@@ -84,7 +84,8 @@ def load_env_file(path: str) -> None:
             # 따옴표 제거
             if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
                 value = value[1:-1]
-            os.environ[key] = value
+            if override or key not in os.environ:
+                os.environ[key] = value
 
 
 def env(key: str, default: str = "") -> str:
@@ -398,6 +399,12 @@ def main() -> None:
     os.environ["DEPLOY_VLMS_ROOT"] = deploy_vlms_root
     os.environ["CONFIG_ROOT"] = config_root
 
+    # config/site.env (VLLM_API_KEY 등 사이트 값) 를 common.env 보다 먼저 읽는다.
+    # 이미 export 된 키는 둔다(셸이 우선, flask_api 와 같은 규칙). 없으면 건너뛴다.
+    site_env = env("SITE_ENV") or os.path.join(config_root, "site.env")
+    if os.path.isfile(site_env):
+        load_env_file(site_env, override=False)
+
     # env 파일 로드
     require_env_file(common_env)
     require_env_file(model_env)
@@ -427,9 +434,10 @@ def main() -> None:
     limit_mm_per_prompt = env("LIMIT_MM_PER_PROMPT") or '{"image": 1}'
     strict_offline = env("STRICT_OFFLINE") or "1"
     disable_outbound_proxies = env("DISABLE_OUTBOUND_PROXIES") or "1"
-    allowed_model_root = env("ALLOWED_MODEL_ROOT") or "/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/data/models"
+    allowed_model_root = env("ALLOWED_MODEL_ROOT") or "/project/day/workSpace/itc-1stop-solution/itc-1stop-solution-gpu-image/pjt_shared_pool/models"
     create_vllm_do_not_track_file = env("CREATE_VLLM_DO_NOT_TRACK_FILE") or "1"
-    api_key = env("API_KEY")
+    # site.env 의 팀 공용 키. common.env 에 API_KEY 줄을 따로 두지 않는다 - 두 벌은 어긋난다.
+    api_key = env("VLLM_API_KEY")
     chat_template = env("CHAT_TEMPLATE")
     if chat_template and not os.path.isabs(chat_template):
         chat_template = os.path.join(config_root, chat_template)

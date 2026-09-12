@@ -43,6 +43,8 @@ from poc.workflow_3.align.matching.engine import (
     STRUCTURE_POLICY,
     build_template,
     compute_align_key_score,
+    frame_scales,
+    template_frame_scale,
 )
 
 # rcp 중앙 align 영역 crop 의 면적 비율 (각 변 = sqrt). align_point_correction 의 fallback 과 동일 계열.
@@ -175,7 +177,7 @@ def _window_roi(frame_shape, center_xy, tw: int, th: int, factor: float = ROI_FA
 def _score(template, frame, *, roi=None, scales=COMPARE_SCALES):
     """compute_align_key_score 래퍼 — (score, chamfer, orb, best_xy, best_scale)."""
     r = compute_align_key_score(
-        template, frame, roi_hint=roi, scales=scales, policy=STRUCTURE_POLICY,
+        template, frame, roi_hint=roi, scales=frame_scales(template, frame.shape, scales), policy=STRUCTURE_POLICY,
     )
     return r.score, r.chamfer_score, r.orb_inlier_ratio, r.best_xy, r.best_scale
 
@@ -241,6 +243,12 @@ def _truth_forced(gray, crosshair_xy, center_tpls, xhair_crop):
         if tpl is None:
             continue
         th, tw = tpl.raw_image.shape[:2]
+        try:
+            base = template_frame_scale(tpl, gray.shape)
+        except ValueError as exc:
+            print(f"[WARNING] truth geometry 실패 ({mod}): {exc}")
+            continue
+        tw, th = tw * base, th * base
         max_s = max(SWEEP_SCALES)
         slack = max(12, int(0.15 * min(tw, th)))
         # ROI 는 sweep 최대 scale 의 template 을 수용하도록 (compare 의 ROI_FACTOR 대신 max_s 기준).
@@ -310,6 +318,7 @@ def _propose_topk(tpl, gray, frame_dt, *, scales, topk):
     가 두 arm 에서 같은 채널을 뜻하게 한다. recall_miss(consensus arm 의 진짜 약점)에 C4 proposer 를
     A/B 로 댈 수 있는 자리. ensemble_lab 을 모듈로 참조(call-time attr)해 디스패치를 테스트 가능하게 둔다.
     """
+    scales = frame_scales(tpl, gray.shape, scales)
     from poc.workflow_2 import ensemble_lab as _lab
     if _lab.lab_active_from_env():
         ens = _lab.compute_ensemble_candidates(
@@ -358,6 +367,7 @@ def _gt_in_topk(gray, crosshair_xy, center_tpls, *, topk=TOPK_CANDIDATES, scales
         # center/box 가 같은 절대 픽셀 tolerance 로 채점되게 한다.
         short = int(tol_short) if tol_short is not None else max(1, min(tw, th))
         try:
+            short *= template_frame_scale(tpl, gray.shape)
             cands = _propose_topk(tpl, gray, frame_dt, scales=scales, topk=topk)
         except Exception:
             continue
@@ -443,12 +453,14 @@ def _build_templates(assets):
         cx, cy, cw, ch = _centered_area_crop_bbox(gray, CENTER_AREA_RATIO)
         center_crop = gray[cy:cy + ch, cx:cx + cw].copy()
         center[mod] = build_template(center_crop, recipe_id=assets.recipe_id,
-                                     version=version + "_center", key_type=key_type)
+                                     version=version + "_center", key_type=key_type,
+                                     source_wh=(gray.shape[1], gray.shape[0]))
         det = _detect_white_box(gray)
         if det is not None:
             inner, _bbox = _inner_crop_for_box(gray, det)
             box[mod] = build_template(inner, recipe_id=assets.recipe_id,
-                                      version=version + "_box", key_type=key_type)
+                                      version=version + "_box", key_type=key_type,
+                                      source_wh=(gray.shape[1], gray.shape[0]))
         else:
             box[mod] = None
     return center, box
@@ -469,14 +481,15 @@ def _process_msr(msr_path, *, center_tpls, box_tpls):
     label = _tool_label(msr_path.name)
     center_xy = (w // 2, h // 2)
 
-    # 대표 template 크기 (center, 첫 modality) — ROI 산정용.
-    any_center = next((t for t in center_tpls.values() if t is not None), None)
-    if any_center is None:
-        return None, None, None
-    th, tw = any_center.raw_image.shape[:2]
-
-    # 1) free best (center template race).
+    # 1) free best. geometry가 호환되는 race winner로 ROI 크기도 산정한다.
     free = _race(center_tpls, gray)
+    if free is None:
+        return None, None, None
+    roi_template = center_tpls[free[0]]
+    th, tw = roi_template.raw_image.shape[:2]
+    base = template_frame_scale(roi_template, gray.shape)
+    tw, th = tw * base, th * base
+
     free_best = free[1] if free else None
     free_xy = free[4] if free else None
     free_scale = free[5] if free else 1.0
@@ -504,8 +517,9 @@ def _process_msr(msr_path, *, center_tpls, box_tpls):
             ch_mod, _s, _c, _o, _ch_xy, _ch_scale = at_ch
             tpl = center_tpls[ch_mod]
             # S 의 crosshair center 는 ground truth 이므로 consensus crop 은 matcher 위치가 아니라
-            # detector 위치에서 고정 scale=1.0 으로 자른다. modality 만 ROI race winner 를 따른다.
-            xcrop = _matched_crop(gray, ch_res.xy, tpl.raw_image.shape[1], tpl.raw_image.shape[0], 1.0)
+            # detector 위치에서 표시 비율만 환산해 자른다. 잔여 배율은 1.0이다.
+            xcrop = _matched_crop(gray, ch_res.xy, tpl.raw_image.shape[1], tpl.raw_image.shape[0],
+                                  template_frame_scale(tpl, gray.shape))
             if xcrop is not None:
                 mi_xhair = _mi(tpl.raw_image, xcrop)
                 ncc_xhair = _ncc(tpl.raw_image, xcrop)
@@ -549,7 +563,7 @@ def _process_msr(msr_path, *, center_tpls, box_tpls):
         "ncc_free": ncc_free,
         "mi_xhair": mi_xhair,
         "ncc_xhair": ncc_xhair,
-        "xhair_crop_source": "detector_xy_scale1" if xhair_crop is not None else None,
+        "xhair_crop_source": "detector_xy_display_scale" if xhair_crop is not None else None,
         "xhair_crop_modality": xhair_mod,
         "free_best_box": free_best_box,
         "truth": truth,
@@ -951,7 +965,8 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None,
         # all-crops consensus 1회 빌드(루프 불변) — 가드 + 저장에 재사용.
         all_consensus = _consensus(crops)
         all_cons_tpl = build_template(all_consensus, recipe_id=rec,
-                                      version="s_consensus_all", key_type=mod)
+                                      version="s_consensus_all", key_type=mod,
+                                      source_wh=rcp_tpl.source_wh if rcp_tpl is not None else None)
         if cons_dir is not None:
             cv2.imwrite(str(cons_dir / (rec.replace("/", "__") + f"_{mod}.png")), all_consensus)
         # 선명도 비율: all-crops consensus vs 개별 S crop median / rcp raw (blur 확인).
@@ -977,7 +992,8 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None,
                 if len(others) < 2:
                     continue
                 cons_tpl = build_template(_consensus(others), recipe_id=rec,
-                                          version="s_consensus", key_type=mod)
+                                          version="s_consensus", key_type=mod,
+                                          source_wh=all_cons_tpl.source_wh)
             try:
                 gray = frame_loader(f) if frame_loader is not None else load_gray(f["path"])
             except Exception:
@@ -1016,6 +1032,7 @@ def _consensus_template_ab(by_recipe: dict, *, min_s=AB_MIN_S, out_dir=None,
                             version=f"s_consensus_box_{mod}",
                             key_type=mod,
                             align_offset_xy=off,
+                            source_wh=box_tpl_obj.source_wh,
                         )
                         # center arm 과 동일 tolerance 로 채점 — box tpl 크기차로 인한
                         # tolerance 불일치 제거(apples-to-apples). cons_tpl = center 합의 tpl.

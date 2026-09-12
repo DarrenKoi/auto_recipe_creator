@@ -86,6 +86,8 @@ from poc.workflow_3.align.matching.engine import (
     build_template,
     compute_align_key_score,
     compute_align_key_score_ensemble,
+    frame_scales,
+    template_frame_scale,
 )
 from poc.workflow_3.align.diagnostics.align_point_correction import (
     RCP_FALLBACK_CENTER_CROP_AREA_RATIO,
@@ -223,7 +225,7 @@ def _build_offset_templates(
         center_crop = gray[cy:cy + ch, cx:cx + cw].copy()
         center[mod] = (
             build_template(center_crop, recipe_id=assets.recipe_id,
-                           version=version + "_center", key_type=key_type),
+                           version=version + "_center", key_type=key_type, source_wh=(w, h)),
             (0, 0),  # center crop 중심 = 이미지 중심 = align point.
         )
 
@@ -236,7 +238,7 @@ def _build_offset_templates(
             offset = (img_cx - (ix + iw // 2), img_cy - (iy + ih // 2))
             box[mod] = (
                 build_template(inner, recipe_id=assets.recipe_id,
-                               version=version + "_box", key_type=key_type),
+                               version=version + "_box", key_type=key_type, source_wh=(w, h)),
                 offset,
             )
             # 가정 진단: |align_offset| 를 template 짧은 변으로 정규화해 기록한다.
@@ -323,21 +325,23 @@ def _localize(
         th, tw = tpl.raw_image.shape[:2]
         short = max(1, min(tw, th))
         try:
+            short *= template_frame_scale(tpl, frame.shape)
             r = matcher(
-                tpl, frame, roi_hint=roi_hint, scales=COMPARE_SCALES, policy=STRUCTURE_POLICY,
+                tpl, frame, roi_hint=roi_hint, scales=frame_scales(tpl, frame.shape, COMPARE_SCALES),
+                policy=STRUCTURE_POLICY,
             )
         except Exception as exc:
             print(f"[WARNING] score 실패 ({mod}): {exc}")
             continue
 
         # match 중심 → align point (offset 가산).
-        ap = (r.best_xy[0] + dx, r.best_xy[1] + dy)
+        ap = (r.best_xy[0] + round(dx * r.best_scale), r.best_xy[1] + round(dy * r.best_scale))
         dist_norm = float(np.hypot(ap[0] - crosshair_xy[0], ap[1] - crosshair_xy[1]) / short)
 
         # top-N 후보(score 내림차순)에도 동일 offset 적용 → align point 가 허용오차 내인 첫 rank.
         rank = None
         for i, c in enumerate(r.candidates, 1):
-            cap = (c.xy[0] + dx, c.xy[1] + dy)
+            cap = (c.xy[0] + round(dx * c.scale), c.xy[1] + round(dy * c.scale))
             if float(np.hypot(cap[0] - crosshair_xy[0], cap[1] - crosshair_xy[1]) / short) <= GT_TOL_NORM:
                 rank = i
                 break

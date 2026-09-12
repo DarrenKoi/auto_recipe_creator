@@ -18,22 +18,22 @@ CG_OPTIONS = [1000, 2000, 5000, 8000, 10000, 20000, 50000, 100000]
 
 def test_zoom_out_picks_lowest_option_keeping_min_key_px():
     """30K 등록 / fw=512 / 최소 60px -> 5K (key 85px). 2K 는 34px 라 탈락."""
-    assert gs.choose_zoom_out_mag(CG_OPTIONS, reg_mag=30000, fw=512, min_key_px=60) == 5000
+    assert gs.choose_zoom_out_mag(CG_OPTIONS, reg_mag=30000, key_px=512, min_key_px=60) == 5000
 
 
 def test_zoom_out_depends_on_runtime_frame_width():
     """같은 30K 라도 fw=320 이면 5K key 가 53px 로 무너져 8K 로 밀린다(검토 반론 2)."""
-    assert gs.choose_zoom_out_mag(CG_OPTIONS, reg_mag=30000, fw=320, min_key_px=60) == 8000
+    assert gs.choose_zoom_out_mag(CG_OPTIONS, reg_mag=30000, key_px=320, min_key_px=60) == 8000
 
 
 def test_zoom_out_50k_registered_goes_to_8k():
-    assert gs.choose_zoom_out_mag(CG_OPTIONS, reg_mag=50000, fw=512, min_key_px=60) == 8000
+    assert gs.choose_zoom_out_mag(CG_OPTIONS, reg_mag=50000, key_px=512, min_key_px=60) == 8000
 
 
 def test_zoom_out_returns_none_when_no_option_is_lower_than_registered():
     """만족하는 가장 낮은 단이 등록 배율 이상이면 zoom-out 이 아니다 -> None(현재 배율 유지)."""
-    assert gs.choose_zoom_out_mag([50000, 100000], reg_mag=50000, fw=512, min_key_px=60) is None
-    assert gs.choose_zoom_out_mag([], reg_mag=30000, fw=512, min_key_px=60) is None
+    assert gs.choose_zoom_out_mag([50000, 100000], reg_mag=50000, key_px=512, min_key_px=60) is None
+    assert gs.choose_zoom_out_mag([], reg_mag=30000, key_px=512, min_key_px=60) is None
 
 
 # ------------------------------------------------------------------
@@ -150,7 +150,7 @@ class _Mag:
 def _tpl(w=512, h=384):
     rng = np.random.default_rng(1)
     raw = rng.integers(0, 255, size=(h, w), dtype=np.uint8)
-    return {"SEM": build_template(raw, recipe_id="c/r", version="v", key_type="sem")}
+    return {"SEM": build_template(raw, recipe_id="c/r", version="v", key_type="sem", source_wh=(w, h))}
 
 
 def _low(template, frame, **kw):
@@ -298,7 +298,7 @@ def _wafer_with_key(key_wafer_xy, size=(3456, 4608)):
     wafer[ky - th // 2:ky - th // 2 + th, kx - tw // 2:kx - tw // 2 + tw] = pat
     # 등록 이미지 = 등록 배율에서 key 를 중심에 둔 프레임 크기 crop.
     raw = wafer[ky - 192:ky + 192, kx - 256:kx + 256].copy()
-    tpl = build_template(raw, recipe_id="c/r", version="v", key_type="sem")
+    tpl = build_template(raw, recipe_id="c/r", version="v", key_type="sem", source_wh=(512, 384))
     return wafer, {"SEM": tpl}
 
 

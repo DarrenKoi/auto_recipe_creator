@@ -18,9 +18,11 @@ from collections import Counter, defaultdict
 from poc.workflow_3.align.assets import load_gray
 from poc.workflow_3.align.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
 from poc.workflow_3.align.cond_file import cond_for_image, load_cond, msr_modality
-from poc.workflow_3.align.consensus_cv import _matched_crop, coregister_crops
+from poc.workflow_3.align.consensus_cv import _matched_crop, coregister_crops, source_mismatch_reason
 from poc.workflow_3.align.consensus_gather import _events_dir_for
 from poc.workflow_3.align.templates import build_templates_from_assets
+from poc.workflow_3.align.cond_template import centered_area_crop, CENTER_AREA_RATIO
+from poc.workflow_3.align.matching.engine import build_template
 
 # rcp 라우팅 키(대문자) → consensus 빌더/center 키(소문자).
 _ROUTE_TO_MOD = {"OM": "om", "SEM": "sem"}
@@ -38,7 +40,12 @@ def build_center_tpls_for_sizing(assets):
     for route_key, tpl in rcp_center.items():
         mod = _ROUTE_TO_MOD.get(route_key)
         if mod and tpl is not None:
-            out[mod] = (tpl, (0, 0))
+            center = build_template(
+                centered_area_crop(tpl.raw_image, CENTER_AREA_RATIO),
+                recipe_id=tpl.recipe_id, version=tpl.version, key_type=tpl.key_type,
+                source_wh=tpl.source_wh, source_magnification=tpl.source_magnification,
+            )
+            out[mod] = (center, (0, 0))
     return out
 
 
@@ -148,6 +155,10 @@ def load_coregistered_crops(cache_root, eqp_id, cache_key, center_tpls, *, max_e
             gray = load_gray(p)
         except Exception:
             drop_counts["load_failed"] += 1
+            continue
+        reason = source_mismatch_reason(tpl, gray.shape, cond)
+        if reason:
+            drop_counts[reason] += 1
             continue
         crop = _cond_consensus_crop(gray, cond, size_wh)
         if crop is None:

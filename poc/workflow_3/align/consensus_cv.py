@@ -16,6 +16,23 @@ COREG_ITERS = 2                 # ref median 다듬으며 원본 재정렬(보�
 COREG_MAX_SHIFT_FRAC = 0.3      # 추정 shift 가 변의 이 비율 초과면 spurious → 정렬 생략.
 
 
+def source_mismatch_reason(template, frame_shape, cond):
+    """고정-px consensus에 섞을 수 없는 S를 workflow_2/3에서 동일하게 제외한다.
+
+    ponytail: 해상도/배율이 다른 S의 재표본화는 하지 않는다. 호환 S 부족은 rcp로
+    폴백하며, coverage 확인 후 필요할 때 정규화한 별도 pool을 도입한다.
+    """
+    if template.source_wh is not None and tuple(frame_shape[:2][::-1]) != template.source_wh:
+        return "source_size_mismatch"
+    if template.source_magnification is not None:
+        mag = cond.magnification if cond is not None else None
+        if mag is None:
+            return "missing_magnification"
+        if mag != template.source_magnification:
+            return "magnification_mismatch"
+    return None
+
+
 def _consensus(crops: list) -> np.ndarray:
     """동일 크기 gray crop 들의 median 이미지 = '현재 align 영역의 대표 모습'."""
     stack = np.stack([c.astype(np.float32) for c in crops])

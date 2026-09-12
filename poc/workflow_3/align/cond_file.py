@@ -42,6 +42,12 @@ class CondInfo:
     def is_om(self) -> bool:
         return bool(self.scope) and "OM" in self.scope.upper()
 
+    @property
+    def magnification(self) -> float | None:
+        tokens = self.raw.get("magnification") or []
+        value = _to_int(tokens[0]) if tokens else None
+        return float(value) if value is not None and value > 0 else None
+
 
 def _norm_key(key: str) -> str:
     """비교용 키 정규화: 앞의 '!' 제거 + 소문자."""

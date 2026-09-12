@@ -19,12 +19,12 @@ def load_template(
 ) -> AlignKeyTemplate:
     """Load one registered recipe image as a cond-aware AlignKeyTemplate."""
     gray = load_gray(path)
+    cond = cond_for_image(load_cond(path), gray.shape)
     if not cond_box_crop:
         crop, offset = gray, (0, 0)
     else:
         # cond.Pixel 과 로드 크기가 다르면 cursor 좌표를 먼저 보정한다(멱등) —
         # 안 하면 box crop/offset 이 계통적으로 어긋난 채 confident 하게 내려간다.
-        cond = cond_for_image(load_cond(path), gray.shape)
         box_ltrb = cond.box_ltrb if cond is not None else None
         if box_ltrb is None:
             status = "skip"
@@ -46,6 +46,8 @@ def load_template(
         version="v0",
         key_type=key_type,
         align_offset_xy=offset,
+        source_wh=(gray.shape[1], gray.shape[0]),
+        source_magnification=cond.magnification if cond is not None else None,
     )
 
 

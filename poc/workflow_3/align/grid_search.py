@@ -5,8 +5,8 @@
 step 이 픽셀이라 배율에 역비례로 줄고 zoom-out 은 배율을 거의 안 바꾸는 휠이기 때문.
 여기서는 모든 거리를 **FOV 비율**, 모든 scale 을 **배율비**로 다룬다.
 
-단위계(§0): 등록 배율에서 SEM key 가 프레임을 채운다는 사실에서 ``base = fw / template_w``
-로 템플릿을 한 번 리샘플하면, 이후 매칭 scale 은 순수 ``cur_mag / reg_mag`` 가 된다.
+단위계: ``base = fw / source_wh[0]``로 template crop과 offset을 한 번 리샘플하면,
+이후 매칭 scale은 순수 ``cur_mag / reg_mag``다. crop 폭을 원본 FOV 폭으로 쓰지 않는다.
 FOV_um = 135,000 / Mag (``docs/study/hitachi_mag_fov_pixel_260828.md``).
 
 배율 변경은 컨트롤러 Protocol 에 넣지 않고 **주입 함수**로 받는다(``MagnificationControl``).
@@ -24,7 +24,6 @@ import cv2
 import numpy as np
 
 import poc.workflow_3.align.live_search as _live_search
-from poc.workflow_3.align.cond_file import _to_int
 from poc.workflow_3.align.live_search import (
     MIN_CONFIRM_SCALE,
     CandidateRecord,
@@ -39,6 +38,7 @@ from poc.workflow_3.align.matching.engine import (
     _resize_template,
     build_template,
     compute_align_key_score_ensemble,
+    template_frame_scale,
 )
 from poc.workflow_3.align.search_pattern import square_spiral_step
 from poc.workflow_3.util.abort_switch import abort_reason, is_aborted
@@ -57,19 +57,18 @@ def fov_um(mag: float) -> float:
     return FOV_UM_CONSTANT / float(mag)
 
 
-def key_px_at(mag: float, reg_mag: float, fw: int) -> float:
-    """등록 배율에서 프레임을 채우는 key 가 배율 mag 에서 차지하는 픽셀 폭."""
-    return float(fw) * float(mag) / float(reg_mag)
+def key_px_at(mag: float, reg_mag: float, key_px: float) -> float:
+    """등록 배율의 표시 key 크기 → 배율 mag에서 남는 크기."""
+    return float(key_px) * float(mag) / float(reg_mag)
 
 
-def choose_zoom_out_mag(options, reg_mag: float, fw: int, min_key_px: int):
+def choose_zoom_out_mag(options, reg_mag: float, key_px: float, min_key_px: int):
     """key 가 ``min_key_px`` 이상으로 남는 **가장 낮은** 드롭다운 배율. 없거나 등록 배율
     이상이면 None(zoom-out 하지 않는다).
 
-    고정 scale 상수(0.15)가 아니라 런타임 프레임 폭 ``fw`` 로 계산한다 — fw=320 이면 같은
-    30K 등록이라도 5K 에서 key 가 53px 로 무너져 8K 로 밀린다.
+    key_px는 FOV 폭이 아니라 표시 scale로 환산한 template crop의 짧은 변이다.
     """
-    ok = sorted(m for m in options if key_px_at(m, reg_mag, fw) >= min_key_px)
+    ok = sorted(m for m in options if key_px_at(m, reg_mag, key_px) >= min_key_px)
     if not ok or ok[0] >= reg_mag:
         return None
     return ok[0]
@@ -109,20 +108,19 @@ def _nearest_mag(options, value):
 
 def registered_magnification(cond):
     """cond.txt 의 Magnification(단위 없는 str, 예 '30000') -> float. 없으면 None."""
-    if cond is None:
-        return None
-    tokens = (cond.raw or {}).get("magnification") or []
-    mag = _to_int(tokens[0]) if tokens else None
-    return None if mag is None else float(mag)
+    return cond.magnification if cond is not None else None
 
 
 def normalize_template(template: AlignKeyTemplate, fw: int) -> AlignKeyTemplate:
-    """등록 배율에서 key 가 프레임을 채운다는 사실로 템플릿을 프레임 폭에 맞춘다(§0).
+    """원본 FOV 폭 기준으로 template/offset을 표시 픽셀에 맞춘다.
 
     이후 매칭 scale 은 순수 배율비 ``cur_mag / reg_mag`` 가 된다. align_offset 도 같은 비율.
     """
     raw = template.raw_image
-    base = float(fw) / float(raw.shape[1])
+    if template.source_wh is None:
+        raise ValueError("missing_source_geometry")
+    sw, sh = template.source_wh
+    base = template_frame_scale(template, (sh * fw / sw, fw))
     if abs(base - 1.0) < 1e-3:
         return template
     ox, oy = template.align_offset_xy
@@ -130,6 +128,8 @@ def normalize_template(template: AlignKeyTemplate, fw: int) -> AlignKeyTemplate:
         _resize_template(raw, base), recipe_id=template.recipe_id, version=template.version,
         nm_per_pixel=None, key_type=template.key_type,
         align_offset_xy=(int(round(ox * base)), int(round(oy * base))),
+        source_wh=(fw, round(sh * base)),
+        source_magnification=template.source_magnification,
     )
 
 
@@ -297,14 +297,25 @@ def grid_align_search(
     frame = controller.capture()
     fh, fw = frame.shape[:2]
     mode = (controller.read_mode() or "").upper()
-    template = normalize_template(route_template(templates, mode), fw)
+    source_template = route_template(templates, mode)
+    if source_template.source_wh is None:
+        meta["reason"] = "missing_source_geometry"
+        return _outcome("degraded", None, 0, history, meta)
+    try:
+        base = template_frame_scale(source_template, frame.shape)
+        template = normalize_template(source_template, fw)
+    except ValueError as exc:
+        meta["reason"] = "invalid_source_geometry"
+        print(f"[WARNING] grid source geometry: {exc}")
+        return _outcome("degraded", None, 0, history, meta)
+    meta.update(source_wh=list(source_template.source_wh), frame_wh=[fw, fh], base_scale=base)
     odo = Odometer(fov_px=fw, tol_fov=config.odom_tol_fov)
     stage = _Stage(controller, fw, fh, config, shift_fn, odo)
     stage.frame = frame
 
     # ---- §1 zoom-out (SEM 만). ----
     cur_mag = reg_mag
-    back_target = None  # 배율을 바꿨을 때만: 등록 배율 최근접 단(confirm/복귀용).
+    back_target = None  # SEM 배율 선택 시: 등록 배율 최근접 단(confirm/복귀용).
     if "OM" in mode:
         cells = spiral_cells(config.pan_budget)
     else:
@@ -315,22 +326,18 @@ def grid_align_search(
             meta["reason"] = "no_mag_options"
             print("[WARNING] grid search: PM 드롭다운 옵션 0개 -> legacy 경로로 degrade")
             return _outcome("degraded", None, 0, history, meta)
-        target = choose_zoom_out_mag(options, reg_mag, fw, config.min_key_px)
+        target = choose_zoom_out_mag(options, reg_mag, min(template.raw_image.shape[:2]), config.min_key_px)
+        back_target = _nearest_mag(options, reg_mag)
         if target is None:
-            # 옵션을 읽느라 드롭다운이 열려 있다 - 현재 단을 다시 골라 닫는다(배율 불변).
-            keep = _nearest_mag(options, reg_mag)
-            if keep is not None:
-                mag.set_fn(keep)
-                stage.frame = controller.capture()
-        else:
-            read = mag.set_fn(target)
-            if read is None:
-                meta["reason"] = "mag_unreadable"
-                print("[WARNING] grid search: zoom-out 후 PM 배율 판독 실패 -> legacy 경로로 degrade")
-                return _outcome("degraded", None, 0, history, meta)
-            cur_mag = float(read)
-            back_target = _nearest_mag(options, reg_mag)
-            stage.frame = controller.capture()
+            # 등록 배율 최근접 단으로 닫아도 실제 배율은 다를 수 있어 반드시 판독한다.
+            target = back_target
+        read = mag.set_fn(target)
+        if read is None:
+            meta["reason"] = "mag_unreadable"
+            print("[WARNING] grid search: 배율 선택 후 PM 배율 판독 실패 -> legacy 경로로 degrade")
+            return _outcome("degraded", None, 0, history, meta)
+        cur_mag = float(read)
+        stage.frame = controller.capture()
         # 셀 step 은 x=fw, y=fh (FOV 는 폭 기준이라 세로는 fh/fw 배). n 은 짧은 변으로 잡아야
         # 세로 커버에 구멍이 안 난다.
         cells = plan_grid(fov_um=fov_um(cur_mag) * min(1.0, fh / fw),
@@ -342,7 +349,10 @@ def grid_align_search(
 
     def _score(cell):
         r = match(template, stage.frame, scales=(scale,))
-        rec = {"cell": list(cell), "score": float(r.score), "xy": [int(r.best_xy[0]), int(r.best_xy[1])],
+        ox, oy = template.align_offset_xy
+        align_xy = [r.best_xy[0] + round(ox * r.best_scale), r.best_xy[1] + round(oy * r.best_scale)]
+        rec = {"cell": list(cell), "score": float(r.score), "xy": align_xy,
+               "match_xy": list(r.best_xy), "scale": float(r.best_scale),
                "decision": r.decision, "orb": float(r.orb_inlier_ratio)}
         history.append(rec)
         return rec
@@ -389,8 +399,11 @@ def grid_align_search(
             frame_c = stage.capture()
             s2 = back_mag / reg_mag
             r = match(template, frame_c, scales=(s2,))
+            ox, oy = template.align_offset_xy
+            align_xy = (int(r.best_xy[0] + round(ox * r.best_scale)),
+                        int(r.best_xy[1] + round(oy * r.best_scale)))
             history.append({"cell": rec["cell"], "phase": "confirm", "score": float(r.score),
-                            "xy": [int(r.best_xy[0]), int(r.best_xy[1])], "decision": r.decision,
+                            "xy": list(align_xy), "match_xy": list(r.best_xy), "decision": r.decision,
                             "orb": float(r.orb_inlier_ratio), "scale": s2,
                             "distinctive": bool(r.distinctive), "second_ratio": r.second_ratio})
             # confirm 게이트: 단일 known scale(>= 0.6) 의 ensemble match. legacy 의 orb>0 는 쓰지
@@ -398,7 +411,7 @@ def grid_align_search(
             # orb=0 으로 나온다. distinctive 는 engine 규약대로 soft advisory 로만 기록한다
             # (chamfer-top 의 유일성이지 best_xy 의 유일성이 아니다 - hard gate 금지).
             if r.decision == "match" and s2 >= MIN_CONFIRM_SCALE:
-                best = CandidateRecord(score=float(r.score), fov_xy=(int(r.best_xy[0]), int(r.best_xy[1])),
+                best = CandidateRecord(score=float(r.score), fov_xy=align_xy,
                                        iter_idx=len(history), phase="confirm", decision="match")
                 status = "match"
                 meta["restore_mag"] = back_mag

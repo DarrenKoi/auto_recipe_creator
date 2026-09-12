@@ -200,6 +200,10 @@ def _stage_note(failed_step: str, failure_class: str) -> str:
 # 접두사 매칭이 새는 자리다)이라 fallback_* 도 접두사로 묶지 않고 4가지를 다 적는다.
 # 여기 없는 status 는 요구 행동 줄 없이 종전처럼 status= 로만 나간다.
 _UNCORRECTED_ACTIONS = {
+    "escalated_invalid_geometry": (
+        "저장 이미지와 live SEM 영역의 크기 비율이 맞지 않아 자동 보정 보류",
+        "SEM 영상 영역과 배율을 확인한 뒤 직접 align point 를 잡아주세요",
+    ),
     "no_assets": (
         "등록 align key 자산 없음(rcp/consensus 미확보)",
         "직접 align point 를 잡고 OK 를 눌러주세요",

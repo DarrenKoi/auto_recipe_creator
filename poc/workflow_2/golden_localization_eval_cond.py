@@ -69,7 +69,7 @@ from poc.workflow_3.align.cond_template import (
     cond_offset_norm,
     cond_template_crop,
 )
-from poc.workflow_3.align.cond_file import CondInfo, load_cond, msr_modality
+from poc.workflow_3.align.cond_file import CondInfo, load_cond, msr_modality, cond_for_image
 from poc.workflow_3.align.diagnostics.crosshair_detect import detect_crosshair
 # 원본의 cond-독립 부품 재사용(중복/표류 방지).
 from poc.workflow_2 import golden_localization_eval as gle
@@ -301,17 +301,18 @@ def _build_offset_templates_cond(
             continue
         gray = load_gray(path)
         h, w = gray.shape[:2]
+        cond = cond_for_image(load_cond(path), gray.shape)
         img_cx, img_cy = w // 2, h // 2
 
         cx, cy, cw, ch = _centered_area_crop_bbox(gray, CENTER_AREA_RATIO)
         center_crop = gray[cy:cy + ch, cx:cx + cw].copy()
         center[mod] = (
             build_template(center_crop, recipe_id=assets.recipe_id,
-                           version=version + "_center", key_type=key_type),
+                           version=version + "_center", key_type=key_type, source_wh=(w, h),
+                           source_magnification=cond.magnification if cond is not None else None),
             (0, 0),
         )
 
-        cond = load_cond(path)
         box_ltrb = cond.box_ltrb if cond else None
         status, reason = ("absent", "cond:absent")
         if box_ltrb is not None:
@@ -322,7 +323,8 @@ def _build_offset_templates_cond(
             inner, inner_bbox = cond_template_crop(gray, cond)
             box[mod] = (
                 build_template(inner, recipe_id=assets.recipe_id,
-                               version=version + "_box", key_type=key_type),
+                               version=version + "_box", key_type=key_type, source_wh=(w, h),
+                               source_magnification=cond.magnification if cond is not None else None),
                 offset,
             )
             if box_reasons is not None:
@@ -409,7 +411,7 @@ def _process_msr_cond(msr_path, center_tpls, box_tpls, *, recipe_id="",
         return None
 
     label = _tool_label(msr_path.name)
-    cond = load_cond(msr_path)
+    cond = cond_for_image(load_cond(msr_path), gray_raw.shape)
     if cond and cond.crosshair_xy is not None:
         gx, gy = cursor_to_image(cond.crosshair_xy, OVERSAMPLE)
         crosshair_xy = (int(round(gx)), int(round(gy)))

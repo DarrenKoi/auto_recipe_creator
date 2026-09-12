@@ -1,5 +1,9 @@
 # Search-around 재설계 — 절대 배율 zoom-out + FOV 격자 sweep (설계)
 
+> 2026-09-13 수정: 아래 §0의 `fw / template_w` 및 §1의 key≈FOV 가정은 폐기했다.
+> 구현은 crop 전 `source_wh` 기준이며 최소 key 크기도 crop 비율을 보존한다.
+> [현재 scale 계약](../../study/align_display_scale_contract_260913.md)을 따른다.
+
 - 날짜: 2026-08-28
 - 대상:
   - `poc/workflow_3/align/live_search.py` (Phase A 교체: grid sweep + collect-then-chase)

@@ -56,6 +56,8 @@ from poc.workflow_3.align.matching.engine import (
     AlignKeyTemplate,
     build_template,
     compute_align_key_score,
+    frame_scales,
+    template_frame_scale,
     save_overlay_jpeg,
 )
 from poc.workflow_3.align.search_pattern import square_spiral_step
@@ -227,6 +229,23 @@ def live_align_search(
 
     state = LiveSearchState()
 
+    def geometry_failure(exc):
+        print(f"[WARNING] live search 보류: {exc}")
+        state.history.append({"reason": "invalid_source_geometry", "detail": str(exc)})
+        if notify_fn is not None:
+            notify_fn(state, state.history)
+        out = _finish_with_best(state, "escalated", "low")
+        out.meta["reason"] = "invalid_source_geometry"
+        return out
+
+    # 미검증 FOV를 zoom/pan한 뒤에야 거부하지 않도록 시작 동작보다 먼저 검사한다.
+    initial_template = route_template(templates, (controller.read_mode() or "").upper())
+    if initial_template.source_wh is not None:
+        try:
+            template_frame_scale(initial_template, controller.capture().shape)
+        except ValueError as exc:
+            return geometry_failure(exc)
+
     # 시작: broad 시야 확보를 위해 zoom-out. (budget 비포함)
     for _ in range(max(0, config.initial_zoom_out_steps)):
         controller.zoom(-1)
@@ -247,10 +266,14 @@ def live_align_search(
         fh, fw = frame.shape[:2]
         mode = (controller.read_mode() or "").upper()
         template = route_template(templates, mode)
+        try:
+            base_scale = template_frame_scale(template, frame.shape)
+        except ValueError as exc:
+            return geometry_failure(exc)
 
         # 단일 wide band 로 매칭한다. phase 는 scale 이 아니라 *행동*(pan vs zoom-in)만 좌우.
         result = compute_align_key_score(
-            template, frame, scales=WIDE_SCALES, policy=STRUCTURE_POLICY
+            template, frame, scales=frame_scales(template, frame.shape, WIDE_SCALES), policy=STRUCTURE_POLICY
         )
         last_decision = result.decision
 
@@ -260,7 +283,7 @@ def live_align_search(
         # ---- 종료: 확정(terminal) match — 충분히 zoom-in 되고 feature 도 일치해야. ----
         confirmed = (
             result.decision == "match"
-            and result.best_scale >= MIN_CONFIRM_SCALE
+            and result.best_scale / base_scale >= MIN_CONFIRM_SCALE
             and result.orb_inlier_ratio > 0.0
         )
         if confirmed:

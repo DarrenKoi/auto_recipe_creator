@@ -41,6 +41,8 @@ from poc.workflow_3.align.matching.engine import (
     AlignKeyTemplate,
     build_template,
     compute_align_key_score_ensemble,
+    frame_scales,
+    template_frame_scale,
     save_overlay_jpeg,
 )
 from poc.workflow_3.align.live_search import (
@@ -55,8 +57,8 @@ from poc.workflow_3.align.live_search import (
 
 LOG_COMPONENT = "align_fail_correct"
 
-# paused fail 화면은 *레시피 등록 배율* 에서 멈춘 것이므로, key 가 보인다면 거의
-# native(~1.0) 크기로 보인다. 따라서 broad(miniature) band 가 아니라 near-native band
+# paused fail 화면은 *레시피 등록 배율*에서 멈춘다고 가정한다. 표시 비율(source→live)을
+# 먼저 환산한 뒤 상대 배율 ~1.0 주변을 찾는다. broad(miniature) band 대신 near-native band
 # 로 매칭한다. broad scale 을 쓰면 tiny-scale chamfer 과신으로 featureless 프레임도
 # 거짓 match 가 나서 primary 경로로 잘못 진입한다(live_align_search 의 terminal 가드와
 # 동일한 함정). pan/zoom 으로 줌아웃 탐색하는 fallback 만 broad band 를 쓴다.
@@ -104,7 +106,7 @@ class CorrectionOutcome:
     """보정 결과. 어느 경로로 끝났는지 + 좌표/decision 기록."""
 
     # "corrected" | "awaiting_engineer_ok" | "fallback_<status>" | "escalated_ambiguous_key"
-    # | "escalated_key_not_visible" | "escalated_no_ok" | "ok_detect_error" | "no_assets"
+    # | "escalated_key_not_visible" | "escalated_invalid_geometry" | "escalated_no_ok" | "ok_detect_error" | "no_assets"
     #
     # monitor 계층이 사이클 문맥을 반영해 **추가 status 로 치환**할 수 있다(2026-08-18):
     # "view_only_observation"(다른 엔지니어 점유 - 보정 자체를 건너뜀),
@@ -160,6 +162,7 @@ def key_visibility_gate(
     result: AlignKeyMatchResult,
     *,
     reregister_ratio_threshold: float | None = None,
+    base_scale: float = 1.0,
 ) -> str:
     """paused frame 의 route intent 결정 — act(primary) vs fallback_search vs engineer_review.
 
@@ -184,7 +187,9 @@ def key_visibility_gate(
     임계/조건은 cold-start 이며 실데이터 calibration 대상.
     """
     # --- 1) presence: 과거 bool False 조건 → fallback_search. ---
-    if result.best_scale < MIN_CONFIRM_SCALE:
+    if not np.isfinite(base_scale) or base_scale <= 0:
+        raise ValueError("base_scale must be positive and finite")
+    if result.best_scale / base_scale < MIN_CONFIRM_SCALE:
         return GATE_FALLBACK
     present = result.decision == "match" or (
         result.decision == "adjust" and result.distinctive
@@ -256,22 +261,34 @@ def correct_align_fail(
     fh, fw = frame.shape[:2]
     mode = (controller.read_mode() or "").upper()
     template = route_template(templates, mode)
+    try:
+        base_scale = template_frame_scale(template, frame.shape)
+    except ValueError as exc:
+        print(f"[WARNING] 보정 보류: {exc}")
+        history.append({"stage": "paused_match", "reason": "invalid_source_geometry",
+                        "source_wh": template.source_wh, "frame_wh": [fw, fh], "detail": str(exc)})
+        log_work2_event(component=LOG_COMPONENT, message="escalated_invalid_geometry", level="warning")
+        if debug_dir is not None:
+            save_overlay_jpeg(frame, debug_dir / "invalid_geometry.jpg")
+        return CorrectionOutcome("escalated_invalid_geometry", "primary", "low", None, None, None,
+                                 history=history)
+    scales = frame_scales(template, frame.shape, PAUSED_SCALES)
 
     # ensemble 경로(decision/score 정비): decision 은 calibrated sel 임계 재판정, orb=0(폐지).
     # key_visibility_gate 의 adjust 분기는 orb>0 → distinctive 로 대체(위 게이트 참조).
     result = compute_align_key_score_ensemble(
-        template, frame, scales=PAUSED_SCALES, policy=STRUCTURE_POLICY
+        template, frame, scales=scales, policy=STRUCTURE_POLICY
     )
     # 끝 밴드 고정 = scale band 가 live box/template 실제 비율을 못 덮는다는 신호.
     # 후보가 있었을 때만 의미가 있다(no_candidates 는 best_scale=1.0 기본값).
     scale_pinned = bool(
         result.reject_reason != "no_candidates"
-        and result.best_scale in (min(PAUSED_SCALES), max(PAUSED_SCALES))
+        and result.best_scale in (min(scales), max(scales))
     )
     if scale_pinned:
         print(
             f"[WARNING] best_scale={result.best_scale:.2f} 가 scale band "
-            f"({min(PAUSED_SCALES)}~{max(PAUSED_SCALES)}) 끝에 고정 - band 가 "
+            f"({min(scales)}~{max(scales)}) 끝에 고정 - band 가 "
             f"live box/template 비율을 못 덮을 수 있음 (좌표 신뢰도 확인 필요)"
         )
     history.append(
@@ -285,19 +302,24 @@ def correct_align_fail(
             "best_scale": float(result.best_scale),
             "best_xy": [int(result.best_xy[0]), int(result.best_xy[1])],
             "scale_pinned": scale_pinned,
+            "source_wh": template.source_wh,
+            "frame_wh": [fw, fh],
+            "base_scale": base_scale,
+            "relative_scale": float(result.best_scale / base_scale),
         }
     )
     print(
         f"[INFO] paused frame: mode={mode or '-'} decision={result.decision} "
         f"score={result.score:.3f} (ch={result.chamfer_score:.3f} orb={result.orb_inlier_ratio:.3f}) "
-        f"scale={result.best_scale:.2f} best_xy={result.best_xy}"
+        f"scale={result.best_scale:.2f} base={base_scale:.3f} "
+        f"source_wh={template.source_wh} frame_wh={(fw, fh)} best_xy={result.best_xy}"
     )
     if debug_dir is not None:
         save_overlay_jpeg(result.debug_overlay, debug_dir / "paused_match.jpg")
 
     # ---- 가시성 게이트: route intent 에 따라 분기 (act / fallback_search / engineer_review). ----
     route = key_visibility_gate(
-        result, reregister_ratio_threshold=config.reregister_ratio_threshold
+        result, reregister_ratio_threshold=config.reregister_ratio_threshold, base_scale=base_scale
     )
     if route == GATE_FALLBACK and not config.fallback_search_enabled:
         # pan/zoom 을 하지 않고 끝낸다. actuation 이 전혀 없으므로 stage 는 그대로다.

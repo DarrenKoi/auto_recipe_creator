@@ -74,6 +74,10 @@ def resolve_templates(assets, *, eqp_id, consensus_enabled, min_s, max_events,
         print(f"[INFO] consensus[{mod}] n={res.n_crops} edge={res.edge_ratio} "
               f"lap={res.lap_ratio} -> {'consensus' if res.template is not None else reason}")
         if res.template is not None:
+            # 채택 crop은 center 기준과 해상도/배율이 호환된 S만으로 만들어졌다.
+            ref = center_tpls[mod][0]
+            res.template.source_wh = ref.source_wh
+            res.template.source_magnification = ref.source_magnification
             cons_by_mod[mod] = res.template      # ConsensusResult.template 만(객체 아님)
 
     return select_routing_templates(cons_by_mod, rcp_by_mod)

@@ -9,7 +9,10 @@ class _Assets:
 
 
 class _Tpl:
-    def __init__(self, tag): self.tag = tag
+    def __init__(self, tag):
+        self.tag = tag
+        self.source_wh = (512, 512)
+        self.source_magnification = 30000
 
 
 def _patch(d):
@@ -44,6 +47,8 @@ def test_consensus_adopted_when_enough():
         out = cr.resolve_templates(_Assets(), eqp_id="E1", consensus_enabled=True,
                                    min_s=4, max_events=8, sync_timeout_sec=8.0, cond_box_crop=True)
         assert out["SEM"].tag == "cons_sem"
+        assert out["SEM"].source_wh == (512, 512)
+        assert out["SEM"].source_magnification == 30000
     finally:
         restore()
 

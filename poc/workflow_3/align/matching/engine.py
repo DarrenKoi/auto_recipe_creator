@@ -85,6 +85,8 @@ class AlignKeyTemplate:
     key_type: str | None
     fetched_at: datetime
     align_offset_xy: tuple[int, int] = (0, 0)  # rcp px (image_center - box_center); reposition 시 best_scale 환산해 match 중심에 가산.
+    source_wh: tuple[int, int] | None = None  # crop 전 전체 FOV의 실제 이미지 px (cond.Pixel 아님).
+    source_magnification: float | None = None
 
 
 @dataclass
@@ -221,9 +223,19 @@ def build_template(
     nm_per_pixel: float | None = None,
     key_type: str | None = None,
     align_offset_xy: tuple[int, int] = (0, 0),
+    source_wh: tuple[int, int] | None = None,
+    source_magnification: float | None = None,
 ) -> AlignKeyTemplate:
     """레시피 raw 이미지를 1회 전처리하여 AlignKeyTemplate 으로 묶는다."""
     gray = _to_grayscale(raw_image)
+    if source_wh is not None and (len(source_wh) != 2 or any(
+        not np.isfinite(v) or v <= 0 for v in source_wh
+    )):
+        raise ValueError("source_wh must contain two positive finite dimensions")
+    if source_magnification is not None and (
+        not np.isfinite(source_magnification) or source_magnification <= 0
+    ):
+        raise ValueError("source_magnification must be positive and finite")
     edges, dt = preprocess_for_matching(gray)
     return AlignKeyTemplate(
         recipe_id=recipe_id,
@@ -235,7 +247,34 @@ def build_template(
         key_type=key_type,
         fetched_at=datetime.now(),
         align_offset_xy=align_offset_xy,
+        source_wh=source_wh,
+        source_magnification=source_magnification,
     )
+
+
+def template_frame_scale(template: AlignKeyTemplate, frame_shape) -> float:
+    """동일 배율의 전체 FOV 사이 표시 비율. crop/검색 ROI 폭으로 계산하지 않는다.
+
+    metadata 없는 과거/합성 입력은 기존 pixel scale(1.0)을 유지한다. 가로·세로
+    비율이 10% 넘게 다르면 letterbox/잘못된 FOV 가능성이 있어 등방 매칭을 거부한다.
+    ponytail: 비등방 stretch는 지원하지 않는다. 실측 시 별도 x/y 좌표 변환을 설계한다.
+    """
+    if template.source_wh is None:
+        return 1.0
+    sw, sh = template.source_wh
+    fh, fw = frame_shape[:2]
+    if min(sw, sh, fw, fh) <= 0 or not all(np.isfinite(v) for v in (sw, sh, fw, fh)):
+        raise ValueError("invalid source/frame geometry")
+    sx, sy = fw / sw, fh / sh
+    if abs(sy / sx - 1.0) > 0.10:
+        raise ValueError(f"source/frame aspect mismatch: source={template.source_wh}, frame={(fw, fh)}")
+    return float(sx)
+
+
+def frame_scales(template: AlignKeyTemplate, frame_shape, relative_scales) -> tuple[float, ...]:
+    """workflow_2/3 공용: 잔여 배율 band → matcher의 template-px/frame-px scale."""
+    base = template_frame_scale(template, frame_shape)
+    return tuple(base * s for s in relative_scales)
 
 
 # ------------------------------------------------------------------

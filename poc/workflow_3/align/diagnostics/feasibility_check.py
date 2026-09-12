@@ -46,6 +46,7 @@ from poc.workflow_3.align.templates import build_templates_from_assets
 from poc.workflow_3.align.matching.engine import (
     STRUCTURE_POLICY,
     compute_align_key_score_ensemble,
+    template_frame_scale,
 )
 from poc.workflow_3.align.consensus_gather import count_staged_events
 from poc.workflow_3.sem_monitor.sem_box_detect import detect_sem_box
@@ -64,6 +65,7 @@ _VERDICT_STYLE = {
     "ambiguous": ("AMBIGUOUS (engineer review)", (0, 165, 255)),
     "not_visible": ("NOT POSSIBLE (key not visible)", (0, 0, 230)),
     "no_assets": ("NO ASSETS (cannot judge)", (160, 160, 160)),
+    "invalid_geometry": ("FOV GEOMETRY MISMATCH (cannot judge)", (0, 165, 255)),
 }
 
 # route intent -> verdict.
@@ -78,7 +80,7 @@ _ROUTE_TO_VERDICT = {
 class FeasibilityResult:
     """정적 보정 가능성 판정 + 마킹 산출 경로."""
 
-    verdict: str                       # possible | ambiguous | not_visible | no_assets
+    verdict: str                       # possible | ambiguous | not_visible | no_assets | invalid_geometry
     decision: str                      # matcher decision (match/adjust/low) 또는 ""
     score: float
     second_ratio: float | None
@@ -301,6 +303,7 @@ def mark_align_feasibility(
     second_ratio = None
     distinctive = True   # 매처가 best peak 을 2nd 대비 유일하다고 봤는가(engine flag, 0.94).
     best_scale = 0.0
+    geometry_errors = {}
     match_xy = None
     align_xy = None
     second_xy = None
@@ -349,69 +352,82 @@ def mark_align_feasibility(
         # ---- modality 결정: 항상 모든 template 을 매칭(점수 비교 + PM 가드용)한 뒤 선택. ----
         # PM 모드가 읽히면 기본 채택하되, 다른 modality 가 PM_OVERRIDE_MARGIN 이상 높은
         # 점수면 PM 오독으로 보고 점수 승자로 폴백(misread 가 엉뚱한 key 를 확정 못하게).
-        results = {
-            mode: compute_align_key_score_ensemble(
-                tpl, match_gray, scales=PAUSED_SCALES, policy=STRUCTURE_POLICY
+        results = {}
+        bases = {}
+        for mode, tpl in templates.items():
+            try:
+                bases[mode] = template_frame_scale(tpl, match_gray.shape) if box else 1.0
+            except ValueError as exc:
+                geometry_errors[mode] = str(exc)
+                print(f"[WARNING] feasibility {mode}: {exc}")
+                continue
+            results[mode] = compute_align_key_score_ensemble(
+                tpl, match_gray, scales=tuple(bases[mode] * s for s in PAUSED_SCALES),
+                policy=STRUCTURE_POLICY,
             )
-            for mode, tpl in templates.items()
-        }
-        score_mode = max(results, key=lambda m: results[m].score)
-        if pm_mode in results:
-            if (
-                score_mode != pm_mode
-                and results[score_mode].score - results[pm_mode].score > PM_OVERRIDE_MARGIN
-            ):
-                modality = score_mode
-                mode_source = f"score_override(PM={pm_text})"
-            else:
-                modality = pm_mode
-                mode_source = f"PM({pm_text})"
+        if not results or pm_mode in geometry_errors:
+            verdict = "invalid_geometry"
+            color_bgr = _VERDICT_STYLE[verdict][1]
+            _draw_sem_box(color, box)
         else:
-            modality = score_mode
-            mode_source = "score"
-        template = templates[modality]
-        result = results[modality]
+            score_mode = max(results, key=lambda m: results[m].score)
+            if pm_mode in results:
+                if (
+                    score_mode != pm_mode
+                    and results[score_mode].score - results[pm_mode].score > PM_OVERRIDE_MARGIN
+                ):
+                    modality = score_mode
+                    mode_source = f"score_override(PM={pm_text})"
+                else:
+                    modality = pm_mode
+                    mode_source = f"PM({pm_text})"
+            else:
+                modality = score_mode
+                mode_source = "score"
+            template = templates[modality]
+            result = results[modality]
 
-        decision = result.decision
-        score = float(result.score)
-        second_ratio = result.second_ratio
-        distinctive = bool(result.distinctive)
-        best_scale = float(result.best_scale)
-        # ROI-local best_xy → box 원점만큼 더해 풀프레임 좌표로 환산(클릭 좌표계 일치).
-        match_xy = (
-            int(result.best_xy[0]) + origin[0],
-            int(result.best_xy[1]) + origin[1],
-        )
+            decision = result.decision
+            score = float(result.score)
+            second_ratio = result.second_ratio
+            distinctive = bool(result.distinctive)
+            best_scale = float(result.best_scale)
+            # ROI-local best_xy → box 원점만큼 더해 풀프레임 좌표로 환산(클릭 좌표계 일치).
+            match_xy = (
+                int(result.best_xy[0]) + origin[0],
+                int(result.best_xy[1]) + origin[1],
+            )
 
-        # 2nd-best 후보 중심(있으면) → 풀프레임 좌표. 모호성을 유발한 look-alike 위치.
-        if len(result.candidates) >= 2:
-            c2 = result.candidates[1]
-            second_xy = (int(c2.xy[0]) + origin[0], int(c2.xy[1]) + origin[1])
+            # 2nd-best 후보 중심(있으면) → 풀프레임 좌표. 모호성을 유발한 look-alike 위치.
+            if len(result.candidates) >= 2:
+                c2 = result.candidates[1]
+                second_xy = (int(c2.xy[0]) + origin[0], int(c2.xy[1]) + origin[1])
 
-        route = key_visibility_gate(
-            result, reregister_ratio_threshold=reregister_ratio_threshold
-        )
-        verdict = _ROUTE_TO_VERDICT.get(route, "not_visible")
-        color_bgr = _VERDICT_STYLE[verdict][1]
-        # 만성 모호(verdict=ambiguous = second_ratio>tau) → 이 recipe 의 align key 는 더
-        # 변별력 있는 영역으로 재등록 권고. verdict 정의상 chronic-ambiguous 와 동치.
-        reregister_recommended = verdict == "ambiguous"
+            route = key_visibility_gate(
+                result, reregister_ratio_threshold=reregister_ratio_threshold,
+                base_scale=bases[modality],
+            )
+            verdict = _ROUTE_TO_VERDICT.get(route, "not_visible")
+            color_bgr = _VERDICT_STYLE[verdict][1]
+            # 만성 모호(verdict=ambiguous = second_ratio>tau) → 이 recipe 의 align key 는 더
+            # 변별력 있는 영역으로 재등록 권고. verdict 정의상 chronic-ambiguous 와 동치.
+            reregister_recommended = verdict == "ambiguous"
 
-        # align target = match 중심 + (rcp offset * best_scale). offset (0,0)이면 match 중심.
-        ox, oy = template.align_offset_xy
-        align_xy = (
-            int(match_xy[0] + round(ox * best_scale)),
-            int(match_xy[1] + round(oy * best_scale)),
-        )
-        th, tw = template.raw_image.shape[:2]
-        _draw_sem_box(color, box)   # 먼저 박스(초록) → 그 위에 match/align 마크.
-        _draw_pm_box(color, pm_box_px)   # PM 박스(청록) — crop 검증용.
-        _draw_match_marks(
-            color, match_xy, align_xy, (tw, th), best_scale, color_bgr,
-            ambiguous=not distinctive,
-        )
-        # 2nd-best look-alike 를 따로 마킹(자홍) — 엔지니어가 모호성의 원인을 보게.
-        _draw_second_mark(color, second_xy, (tw, th), best_scale)
+            # align target = match 중심 + (rcp offset * best_scale). offset (0,0)이면 match 중심.
+            ox, oy = template.align_offset_xy
+            align_xy = (
+                int(match_xy[0] + round(ox * best_scale)),
+                int(match_xy[1] + round(oy * best_scale)),
+            )
+            th, tw = template.raw_image.shape[:2]
+            _draw_sem_box(color, box)   # 먼저 박스(초록) → 그 위에 match/align 마크.
+            _draw_pm_box(color, pm_box_px)   # PM 박스(청록) — crop 검증용.
+            _draw_match_marks(
+                color, match_xy, align_xy, (tw, th), best_scale, color_bgr,
+                ambiguous=not distinctive,
+            )
+            # 2nd-best look-alike 를 따로 마킹(자홍) — 엔지니어가 모호성의 원인을 보게.
+            _draw_second_mark(color, second_xy, (tw, th), best_scale)
 
     # ---- 배너 텍스트 ----
     label = _VERDICT_STYLE[verdict][0]
@@ -443,6 +459,7 @@ def mark_align_feasibility(
 
     payload = {
         "verdict": verdict,
+        "geometry_errors": geometry_errors,
         "decision": decision,
         "score": score,
         "second_ratio": second_ratio,

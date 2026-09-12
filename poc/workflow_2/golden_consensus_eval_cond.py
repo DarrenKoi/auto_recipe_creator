@@ -71,9 +71,10 @@ from poc.workflow_2.ensemble_lab import (
 from poc.workflow_3.align.diagnostics.align_point_correction import _tool_label
 from poc.workflow_3.align.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
 from poc.workflow_3.align.cond_file import (
-    MSR_OM_MAG_MAX, MSR_SEM_MAG_MIN, _to_int, load_cond,
+    MSR_OM_MAG_MAX, MSR_SEM_MAG_MIN, _to_int, load_cond, cond_for_image,
     msr_modality as _msr_modality,
 )
+from poc.workflow_3.align.consensus_cv import source_mismatch_reason
 from poc.workflow_2 import golden_localization_eval as gle
 import poc.workflow_2.golden_localization_eval_cond as glec
 from poc.workflow_3.util.time_utils import make_timestamp_tag
@@ -308,6 +309,7 @@ def _cond_consensus_crop(gray, cond, size_wh):
     consensus 재료. 모든 S 를 crosshair 로 정렬해 median 이 또렷해지게 하고, crop 전에
     clean_image 로 crosshair(+box) 를 지워 중앙 distractor 를 없앤다(cond 개선점).
     """
+    cond = cond_for_image(cond, gray.shape)
     xy = _cond_crosshair_xy(cond)
     if xy is None:
         return None
@@ -399,6 +401,12 @@ def _build_cond_by_recipe(assets, center_tpls, box_tpls=None):
             print(f"[WARNING] msr 로드 실패 {p.name}: {exc}")
             entry["drop_counts"]["load_failed"] += 1
             continue
+        reason = source_mismatch_reason(tpl, gray.shape, cond)
+        if reason:
+            entry["drop_counts"][reason] += 1
+            continue
+        cond = cond_for_image(cond, gray.shape)
+        xy = _cond_crosshair_xy(cond)
         crop = _cond_consensus_crop(gray, cond, size_wh)
         if crop is None:                          # OOB/너무 작음 — code-review [5].
             entry["drop_counts"]["crop_failed"] += 1
@@ -475,6 +483,10 @@ def _crop_history_by_mod(assets, center_tpls, recipe_mod):
             gray = load_gray(p)
         except Exception:
             continue
+        reason = source_mismatch_reason(tpl, gray.shape, cond)
+        if reason:
+            print(f"[WARNING] consensus history drop {p.name}: {reason}")
+            continue
         crop = _cond_consensus_crop(gray, cond, size_wh)
         if crop is None:
             continue
@@ -517,6 +529,12 @@ def _crop_history_by_mod_box(assets, center_tpls, box_tpls, recipe_mod):
             gray = load_gray(p)
         except Exception:
             continue
+        reason = source_mismatch_reason(box_tpl_obj, gray.shape, cond)
+        if reason:
+            print(f"[WARNING] consensus box history drop {p.name}: {reason}")
+            continue
+        cond = cond_for_image(cond, gray.shape)
+        xy = _cond_crosshair_xy(cond)
         cleaned = clean_image(gray, cond)
         crop_box = _box_consensus_crop(cleaned, xy, off, box_tpl_obj)
         if crop_box is None:

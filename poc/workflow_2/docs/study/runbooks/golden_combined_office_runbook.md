@@ -113,4 +113,13 @@ verdict=<...> | evid[OM:la/pm/rm=../../.. yd=thr/J  SEM:la/pm/rm=../../.. yd=thr
   관측 패턴이 설계와 반대라는 신호 — §4 마지막 항목대로 처리.
 
 > 데이터/수집(흰 box, crosshair, S 장수) 체크리스트는 `golden_localization_office_runbook.md` §1 과 동일.
-> 오피스에서 실패하면 원인은 코드가 아니라 데이터로 좁힌다(Mac self-test/단위테스트 통과 = 코드 무결).
+> Mac 테스트 통과는 검증한 합성/오프라인 조건에 한정된다. 오피스 실패 시 데이터와 코드의
+> FOV·배율·좌표 계약을 함께 확인한다.
+
+## 2026-09-13 scale 계약 변경
+
+golden과 workflow_3가 원본 FOV 크기 기준의 공용 scale 계산을 사용한다.
+crop 폭을 FOV 폭으로 확대하지 않으며, consensus는 기준 크기/배율이 맞지 않는 S를 제외한다.
+기존 결과와 비교할 때 이 입력 계약 변경을 기록할 것. rank1은 오프라인 위치 적중률이며,
+장비 복구율이 아니다. 상세 계약·로그·회귀 검증은
+[저장 이미지와 live SEM box의 scale 계약](../../../../workflow_3/docs/study/align_display_scale_contract_260913.md)을 따른다.

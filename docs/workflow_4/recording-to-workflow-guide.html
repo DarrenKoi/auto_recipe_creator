@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="녹화 프레임을 근거가 있는 조건부 복구 워크플로로 만드는 방법과 workflow_4의 첫 구현 범위">
+<title>녹화 프레임에서 워크플로까지 · Workflow 4</title>
+<style>
+:root{--ink:#20332f;--muted:#5b6c65;--green:#17664f;--paper:#faf9f5;--line:#d8dfd7;--soft:#eaf1e9;--amber:#8a561c}*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;background:var(--paper);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;font-size:17px;line-height:1.85;word-break:keep-all;overflow-wrap:anywhere}a{color:var(--green);text-underline-offset:4px}a:focus-visible{outline:3px solid #bc772b;outline-offset:5px}.layout{max-width:1280px;margin:auto;display:grid;grid-template-columns:230px minmax(0,1fr);gap:64px;padding:48px 40px 90px}aside{align-self:start;position:sticky;top:36px;font-size:14px}.brand{font-size:12px;letter-spacing:.17em;font-weight:800;color:var(--green)}nav{margin-top:28px;border-top:1px solid var(--line);padding-top:18px}nav a{display:block;padding:8px 0;text-decoration:none;color:var(--muted)}nav a:hover{color:var(--green)}.side-note{font-size:12px;color:var(--muted);margin-top:32px}header{padding:15px 0 42px;border-bottom:2px solid var(--ink)}.eyebrow{color:var(--green);font-size:13px;font-weight:750;letter-spacing:.08em}h1{font-size:clamp(32px,4.3vw,55px);letter-spacing:-.055em;line-height:1.23;margin:20px 0 26px}h2{font-size:29px;line-height:1.4;letter-spacing:-.035em;margin:8px 0 22px}h3{font-size:20px;margin:25px 0 10px}p{margin:12px 0}.lead{font-size:21px;line-height:1.7;max-width:750px}.muted,figcaption{color:var(--muted);font-size:14px}section{padding:44px 0;border-bottom:1px solid var(--line)}.num{font-size:12px;color:var(--green);letter-spacing:.15em;font-weight:800}.note{background:var(--soft);border-left:4px solid var(--green);padding:19px 23px;margin:24px 0}.caution{background:#f7efe2;border-color:#b87b33}.note p{margin:0}.pipeline{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line);margin:25px 0}.pipeline div{background:white;padding:20px}.pipeline small{display:block;color:var(--green);font-weight:700}.pipeline strong{display:block;margin:7px 0}.pipeline span{font-size:14px;color:var(--muted)}.table-wrap{overflow-x:auto;margin:22px 0}table{border-collapse:collapse;width:100%;font-size:15px;text-align:left}th{background:var(--soft);font-weight:700}th,td{padding:13px 15px;border-bottom:1px solid var(--line);vertical-align:top}th:first-child{min-width:130px}code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.85em;background:#e9ede6;padding:2px 5px;border-radius:3px;overflow-wrap:anywhere}.two{display:grid;grid-template-columns:1fr 1fr;gap:26px}.two article{border-top:2px solid var(--green);padding-top:10px}.two p{font-size:15px}.steps{padding-left:24px}.steps li{padding:7px 0 9px 7px}.steps strong{display:block}.steps span{font-size:15px;color:var(--muted)}figure{margin:25px 0}.flow{border:1px solid var(--line);padding:28px;background:white;text-align:center}.flow-start,.flow-end{background:var(--ink);color:white;padding:12px 20px;max-width:440px;margin:auto;border-radius:5px}.flow-question{font-weight:700;padding:14px}.branches{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.branch{border:1px solid var(--line);padding:16px 12px;font-size:15px}.branch b{display:block;color:var(--green);font-size:13px;margin-bottom:10px}.branch span{display:block;font-size:13px;color:var(--muted);margin-top:10px}.arrow{color:var(--green);font-size:23px;padding:4px}.flow-end{margin-top:18px;background:var(--soft);color:var(--ink);font-size:15px}figcaption{margin-top:12px}.badge{font-size:12px;border:1px solid var(--line);padding:3px 7px;white-space:nowrap}.refs{font-size:14px;padding-left:20px}.refs li{margin:10px 0}footer{font-size:13px;color:var(--muted);padding-top:28px}.skip{position:absolute;left:10px;top:-80px;background:white;padding:10px}.skip:focus{top:10px}
+@media(max-width:950px){.layout{grid-template-columns:1fr;gap:25px;max-width:850px;padding:24px}aside{position:static}nav{display:flex;gap:8px 22px;flex-wrap:wrap;margin-top:12px;padding-top:10px}nav a{padding:3px 0}.side-note{display:none}header{padding-top:0}}
+@media(max-width:580px){body{font-size:16px}.layout{padding:22px 19px 50px}h2{font-size:25px}.lead{font-size:19px}.pipeline,.two,.branches{grid-template-columns:1fr}.pipeline div{padding:15px}.flow{padding:18px 12px}th,td{padding:10px}section{padding:34px 0}}
+@media print{@page{size:A4;margin:17mm}body{background:white;font-size:10.5pt;line-height:1.65}.layout{display:block;padding:0;max-width:none}aside,.skip{display:none}header{padding:0 0 20px}h1{font-size:30pt}.lead{font-size:13pt}h2{font-size:19pt}section{padding:22px 0}h2,h3{break-after:avoid}tr,.note,.flow,.pipeline,article{break-inside:avoid}table{font-size:9pt}.table-wrap{overflow:visible}a{color:inherit}code{font-size:9pt}footer{font-size:9pt}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">본문으로 바로가기</a>
+<div class="layout">
+<aside aria-label="문서 목차">
+<div class="brand">WORKFLOW / 04</div>
+<nav aria-label="목차">
+<a href="#overview">01 전체 흐름</a><a href="#extract">02 프레임에서 정보 추출</a><a href="#normalize">03 행동 정규화</a><a href="#conditions">04 조건과 검증</a><a href="#graph">05 조건부 그래프</a><a href="#start">06 첫 구현 범위</a><a href="#sources">참고 코드와 명세</a>
+</nav>
+<p class="side-note">방법론 안내 · 2026.09.13<br>현재 구현과 제안 단계를 구분했습니다.<br>외부 리소스 없이 읽을 수 있습니다.</p>
+</aside>
+<main id="main">
+<header>
+<div class="eyebrow">녹화 분석 → RECOVERY PLAYBOOK → 상태 머신</div>
+<h1>녹화 프레임에서<br>워크플로까지</h1>
+<p class="lead">엔지니어의 작업을 <strong>행동 전 상태 → 행동 → 행동 후 변화 → 결과</strong>로 정리하고, 여러 기록의 근거를 모아 재사용 가능한 복구 절차로 만듭니다.</p>
+<p class="muted">대상: Align Fail 복구 녹화를 바탕으로 <code>poc/workflow_4</code>를 발전시키려는 개발자와 엔지니어</p>
+</header>
+
+<section id="overview">
+<div class="num">01 / THE BIG PICTURE</div><h2>먼저, 두 가지 질문을 연결합니다</h2>
+<div class="two"><article><h3>녹화 분석의 질문</h3><p>“이 녹화에서 무엇이 보였고, 사람이 어떤 행동을 했으며, 이후 무엇이 바뀌었는가?”</p><p><strong>산출물: 근거를 따라갈 수 있는 Recovery Trace</strong></p></article><article><h3>워크플로의 질문</h3><p>“다음에 어떤 상태가 관측되면 이 행동을 선택하고, 무엇으로 성공을 확인할 것인가?”</p><p><strong>산출물: 조건이 있는 Recovery Playbook</strong></p></article></div>
+<div class="pipeline" aria-label="녹화에서 워크플로까지 여섯 단계">
+<div><small>1 · 관측</small><strong>원본 프레임</strong><span>시각과 화면 영역, 가능하면 입력 기록을 함께 보존</span></div>
+<div><small>2 · 추출</small><strong>상호작용 타임라인</strong><span>변화 구간, 클릭·입력 후보, 대상과 전후 화면 연결</span></div>
+<div><small>3 · 정규화</small><strong>의미 단위 행동</strong><span>위치 보정·탐색·배율 설정·정렬 확인으로 분류</span></div>
+<div><small>4 · 근거 연결</small><strong>Recovery Trace</strong><span>상태·행동·검증을 사건 단위로 묶고 수행자가 검토</span></div>
+<div><small>5 · 통합</small><strong>조건부 Playbook</strong><span>여러 기록에서 적용 조건과 성공·실패 경로 도출</span></div>
+<div><small>6 · 변환·평가</small><strong>workflow_4 그래프</strong><span>승인된 구조를 노드와 분기로 변환하고 shadow 평가</span></div>
+</div>
+<h3>현재 코드가 담당하는 부분</h3>
+<div class="table-wrap"><table><thead><tr><th>구성 요소</th><th>확인한 역할</th></tr></thead><tbody>
+<tr><td><code>recording_filter</code></td><td>프레임 변화 분석, 클릭·입력 추정, OCR/VLM을 통한 대상 식별, 타임라인 생성</td></tr>
+<tr><td><code>workflow_extract</code></td><td>규칙 기반으로 이벤트를 step으로 묶어 <code>workflow.json</code>과 <code>workflow.md</code> 생성. 그룹화 자체는 VLM 없이 동작</td></tr>
+<tr><td><code>workflow_4/framework</code></td><td>노드, 성공·실패 경로, 재시도를 표현하는 상태 머신과 실행 엔진</td></tr>
+</tbody></table></div>
+<div class="note"><p><strong>다음에 채워야 할 연결:</strong> 추출한 step에 행동 전 상태, 도메인 행동 의미, 검증 결과를 연결하는 일입니다. Playbook 분류·검토·컴파일·shadow의 전체 경로는 명세상 목표이며, 모두 구현됐다는 뜻은 아닙니다.</p></div>
+</section>
+
+<section id="extract">
+<div class="num">02 / OBSERVE</div><h2>행동 전후 프레임을 한 묶음으로 읽습니다</h2>
+<p>각 프레임의 설명문을 나열하기보다 <strong>직전 → 행동 중 → 직후</strong>를 비교합니다. 이렇게 해야 “버튼이 보인다”에서 “버튼을 조작한 뒤 상태가 바뀌었다”로 넘어갈 수 있습니다.</p>
+<div class="table-wrap"><table><thead><tr><th>추출할 정보</th><th>예시</th><th>주된 수단</th></tr></thead><tbody>
+<tr><td>화면 상태</td><td>SEM Monitor, 확인창, 컨트롤의 표시 여부</td><td>영역 탐지·CV, 필요시 VLM</td></tr>
+<tr><td>읽을 수 있는 값</td><td>배율, 상태 문구, 측정 진행값</td><td>OCR</td></tr>
+<tr><td>영상 내 관계</td><td>recipe key 위치, crosshair와의 거리</td><td>matcher·좌표 계산</td></tr>
+<tr><td>상호작용</td><td>더블클릭 후보, 배율 선택, 확인 클릭</td><td>입력 기록 우선, 없으면 영상 추정</td></tr>
+<tr><td>행동 후 변화</td><td>목표 위치 이동, 배율 변경</td><td>전후 프레임 비교</td></tr>
+<tr><td>최종 결과</td><td>측정 재개, 재실패, 관측 불가</td><td>상태·측정 신호 검증</td></tr>
+</tbody></table></div>
+<h3>프레임을 줄일 때 지킬 것</h3>
+<p>SEM 영상과 UI 영역의 변화량을 따로 봅니다. 영상 전체의 변화가 작아도 상태 문구나 확인 버튼 주변의 변화는 중요할 수 있습니다. 원본은 보존하고, 분석용 대표 프레임을 고르되 행동 전후 구간을 함께 남깁니다.</p>
+<h3>사실과 추정을 함께 저장하기</h3>
+<p>각 판독에 <strong>시간·근거 프레임·대상 영역·판독 출처·추정 여부</strong>를 연결합니다. OCR/VLM 결과는 구조화하고 필드를 검증한 뒤 사용합니다. 모델의 설명만으로 클릭이나 이동을 확정하지 않습니다.</p>
+<div class="note caution"><p><strong>프레임만으로 확정할 수 없는 것:</strong> 정확한 클릭 횟수, 보조키, 보이지 않는 입력, 사람의 의도입니다. 화면이 바뀌었다는 사실은 남기되, 확인되지 않은 상호작용은 후보로 유지합니다. 숫자로 표현한 신뢰도만으로 실행 가능성이 보장되지는 않습니다.</p></div>
+</section>
+
+<section id="normalize">
+<div class="num">03 / NORMALIZE</div><h2>서로 다른 조작을 같은 행동 의미로 묶습니다</h2>
+<p>사람마다 커서 경로나 클릭 수가 달라도 같은 목적의 조작을 할 수 있습니다. 재사용할 단위는 <strong>위치 재지정, FOV 탐색, 배율 설정, 정렬 확인</strong>과 같은 도메인 행동입니다.</p>
+<div class="table-wrap"><table><thead><tr><th>녹화에서 보이는 근거</th><th>행동 후보</th><th>추가로 확인할 것</th></tr></thead><tbody>
+<tr><td>영상의 특정 위치 더블클릭 후 위치 변화</td><td><code>reposition_to_align_key</code></td><td>전후 key 위치, 다음 의미 단계가 정렬 확인인지</td></tr>
+<tr><td>영상 영역에서 탐색 이동</td><td><code>pan_fov</code></td><td>이동 방향·크기와 조작 문맥</td></tr>
+<tr><td>배율 컨트롤 조작 후 읽을 수 있는 값 변경</td><td><code>set_magnification</code></td><td>변경 후 절대 배율 값</td></tr>
+<tr><td>확인 컨트롤 클릭</td><td><code>confirm_align</code></td><td>실제 대상 컨트롤의 식별</td></tr>
+</tbody></table></div>
+<p>더블클릭 한 장면만으로 위치 보정이라고 결정하지 않습니다. 앞뒤 화면과 다음 행동을 함께 봐야 탐색 이동과 최종 위치 지정을 구분할 수 있습니다. 구분되지 않으면 <code>unclassified</code>로 남깁니다.</p>
+<div class="two"><article><h3>원본 근거에 보존</h3><p>클릭 좌표, 프레임 번호, 시간 구간, 원본 이벤트 ID를 남깁니다. 현재 그룹화 코드는 <code>raw_events</code>로 원본 이벤트를 연결합니다.</p></article><article><h3>재사용할 행동에 표현</h3><p>목표를 <code>matched_recipe_box_center</code>처럼 의미로 표현합니다. 실행 시점의 좌표는 현재 화면에서 다시 찾습니다.</p></article></div>
+<div class="note"><p><strong>자동 분류는 검토할 제안입니다.</strong> 실제 행동 수행자가 근거를 확인해 의미를 확정합니다. 마지막에 복구가 성공했다는 이유만으로 앞선 모호한 조작의 의미를 소급 확정하지 않습니다.</p></div>
+</section>
+
+<section id="conditions">
+<div class="num">04 / GUARD &amp; VERIFY</div><h2>언제 행동하고, 무엇으로 확인할지 정의합니다</h2>
+<p>각 행동에 진입 조건과 행동 후 검증을 붙입니다. 아래는 <strong>구조를 설명하기 위한 예시</strong>이며, 실제 기준과 임계값은 관측 근거와 장비 검증으로 정해야 합니다.</p>
+<div class="table-wrap"><table><thead><tr><th>규칙의 구성</th><th>위치 보정 예시</th></tr></thead><tbody>
+<tr><td>진입 조건 · Guard</td><td>recipe key가 식별되고 현재 crosshair가 목표에서 어긋나 있음</td></tr>
+<tr><td>행동 · Action</td><td>식별한 recipe key 중심으로 위치 재지정</td></tr>
+<tr><td>행동 후 검증 · Verification</td><td>새 프레임에서 목표 위치와 crosshair의 관계 확인</td></tr>
+<tr><td>다음 단계</td><td>확인 컨트롤이 관측되면 정렬 진행 후 결과 관측</td></tr>
+<tr><td>사건의 결과 · Outcome</td><td>측정 재개 등 관측 가능한 복구 근거로 최종 판정</td></tr>
+<tr><td>예외 경로</td><td>key 판독 불가, 위치 검증 실패, 결과 관측 불가를 각각 처리</td></tr>
+</tbody></table></div>
+<h3>‘모름’을 하나의 상태로 다룹니다</h3>
+<p>조건과 검증은 <code>true</code> / <code>false</code> / <code>unknown</code>으로 표현합니다. 화면을 읽지 못했으면 <code>unknown</code>입니다. 이는 key가 없거나 행동이 실패했다는 판단과 다릅니다.</p>
+<div class="note caution"><p><strong>행동 시도와 복구 성공은 별개입니다.</strong> “OK를 눌렀다” 또는 “창이 닫혔다”만으로 복구 성공을 확정하지 않습니다. 최종 결과에는 측정 재개나 품질 신호처럼 관측 가능한 성공 근거가 필요합니다.</p></div>
+</section>
+
+<section id="graph">
+<div class="num">05 / BUILD THE GRAPH</div><h2>여러 기록에서 분기 조건을 모읍니다</h2>
+<p>같은 상태에서 어떤 행동이 수행됐고 무엇이 확인됐는지 비교합니다. 행동 순서가 비슷해도 진입 상태나 적용 장비·레시피가 다르면 별도 규칙이 필요할 수 있습니다.</p>
+<figure>
+<div class="flow" aria-label="조건부 복구 흐름 예시">
+<div class="flow-start">현재 상태 관측</div><div class="arrow" aria-hidden="true">↓</div>
+<div class="flow-question">Recipe key를 식별할 수 있는가?</div>
+<div class="branches">
+<div class="branch"><b>가능</b>목표 위치로 재지정<div class="arrow" aria-hidden="true">↓</div>위치 변화 검증<span>통과하면 정렬 확인 및 결과 관측<br>실패·불명이면 추가 관측 또는 인계</span></div>
+<div class="branch"><b>불가능</b>예산 안에서 FOV 탐색<div class="arrow" aria-hidden="true">↺</div>현재 상태 재관측<span>탐색 예산 소진 시 엔지니어 인계</span></div>
+<div class="branch"><b>판독 불가</b>추가 관측 또는<br>엔지니어 인계<span>관측 실패를 key 부재로 취급하지 않음</span></div>
+</div>
+<div class="flow-end">정렬 확인 후: 복구 근거 확인 시 완료 / 실패·불명 시 추가 관측 또는 인계</div>
+</div>
+<figcaption>설명용 그래프입니다. 실제 분기에는 관측 근거와 검토가 필요하며, 추가 관측에도 횟수·시간 예산과 종료 경로를 둡니다.</figcaption>
+</figure>
+<h3>기록을 합칠 때 비교할 기준</h3>
+<p><strong>진입 상태 · 행동의 의미와 파라미터 · 검증 결과 · 장비와 레시피의 적용 범위.</strong> 성공 사례와 함께 실패·판독 불가 사례도 수집합니다. 한 번의 성공은 그 상황의 근거이며, 다른 상황의 성공까지 보장하지 않습니다.</p>
+<div class="note"><p><strong>Trace → Playbook → Graph</strong><br>Trace는 관측 기록, Playbook은 조건부 복구 모델, Graph는 승인된 구조를 엔진이 다룰 수 있도록 표현한 결과입니다. <code>workflow_4</code>의 일반 상태 머신과 도메인별 판정·관측 코드를 구분해 연결합니다.</p></div>
+</section>
+
+<section id="start">
+<div class="num">06 / FIRST DELIVERABLE</div><h2>첫 목표는 녹화 한 건의 검토 표입니다</h2>
+<p>기존 <code>workflow.json</code>의 각 step을 전후 프레임과 연결하고, 아래 항목을 한눈에 확인하도록 만듭니다. 이 표가 있어야 잘못된 추출·분류·성공 판정을 찾아 고칠 수 있습니다.</p>
+<div class="table-wrap"><table><thead><tr><th>검토 항목</th><th>표에 담을 내용</th></tr></thead><tbody>
+<tr><td>시간·근거</td><td>전후 프레임 링크와 원본 이벤트 ID</td></tr>
+<tr><td>행동 전 상태</td><td>key 가시성, crosshair 관계, 배율, 컨트롤 상태</td></tr>
+<tr><td>정규화 행동 후보</td><td>행동 종류, 파라미터, 분류 출처, 추정 여부</td></tr>
+<tr><td>행동 후 변화</td><td>위치·값·화면 상태의 실제 변화</td></tr>
+<tr><td>검증과 미확인 사항</td><td>통과·실패·불명, 판정 근거, 수행자가 확인할 질문</td></tr>
+</tbody></table></div>
+<ol class="steps">
+<li><strong>한 녹화를 끝까지 연결</strong><span>원본 프레임 → 타임라인 → step → 전후 상태 → 결과의 연결을 확인합니다.</span></li>
+<li><strong>행동 수행자가 검토</strong><span>모호한 의미와 판독을 근거 프레임에 연결해 정정합니다. 근거가 없는 설명은 관측 사실과 구분합니다.</span></li>
+<li><strong>여러 Trace로 Playbook 후보 구성</strong><span>공통 진입 조건과 행동·검증을 묶고 실패 경로 및 적용 범위를 명시합니다.</span></li>
+<li><strong>보관된 기록으로 규칙 평가</strong><span>규칙 선택과 검증 판정의 일관성을 확인합니다. 같은 기록에 맞춘 규칙만 잘 통과하는지 경계하고 별도 사례에서도 평가합니다.</span></li>
+<li><strong>승인된 구조를 그래프로 변환하고 shadow 평가</strong><span>실제 클릭 없이 다음 행동을 예측하고, 엔지니어가 수행한 행동 및 관측 결과와 비교합니다. 기존 명세의 산출 범위는 approved-for-shadow까지입니다.</span></li>
+</ol>
+<div class="note caution"><p><strong>검증의 한계:</strong> 보관된 기록을 다시 평가해도 녹화에 없던 행동의 성공 여부는 알 수 없습니다. Shadow에서 예측한 행동과 실제 엔지니어 행동도 구분해야 합니다. 자동 조작의 검증은 별도 단계입니다.</p></div>
+<h3>첫 단계가 끝났다고 볼 기준</h3>
+<p>검토자가 각 step을 보고 <strong>“어떤 상태에서, 무엇을 했다고 판단했으며, 어떤 화면 변화로 확인했고, 무엇이 아직 불명인가”</strong>를 원본 근거까지 따라가며 설명할 수 있으면 됩니다.</p>
+</section>
+
+<section id="sources">
+<div class="num">REFERENCE</div><h2>참고 코드와 설계 문서</h2>
+<p class="muted">2026-09-13 대화에서 확인한 코드·명세를 바탕으로 정리했습니다. 링크는 이 HTML을 저장소 내 현재 위치에서 열었을 때의 상대 경로입니다.</p>
+<ul class="refs">
+<li><a href="../../CONTEXT.md">CONTEXT.md</a> — Episode, Trace, Guard, Action, Verification, Outcome의 의미</li>
+<li><a href="../../poc/workflow_3/recording_filter/filter_recording.py">recording_filter/filter_recording.py</a> — 녹화 프레임 분석 진입점</li>
+<li><a href="../../poc/workflow_3/workflow_extract/grouping.py">workflow_extract/grouping.py</a> · <a href="../../poc/workflow_3/workflow_extract/steps.py">steps.py</a> — 의미 단위 그룹화와 원본 이벤트 연결</li>
+<li><a href="../../poc/workflow_3/workflow_extract/extract_workflow.py">workflow_extract/extract_workflow.py</a> — workflow.json 및 Markdown 생성</li>
+<li><a href="../../poc/workflow_4/framework/state_graph.py">workflow_4/framework/state_graph.py</a> — 노드와 그래프 정의</li>
+<li><a href="../issues/align-fail-recovery-playbook/spec.md">Recovery Playbook 구현 명세</a> — 행동 분류, 검토, 평가, 컴파일, shadow의 목표 계약</li>
+</ul>
+</section>
+<footer>Workflow 4 · 녹화 기반 복구 워크플로 방법론<br>현재 구현을 설명하는 부분과 제안·명세상 목표를 구분한 안내 문서입니다.</footer>
+</main>
+</div>
+</body>
+</html>

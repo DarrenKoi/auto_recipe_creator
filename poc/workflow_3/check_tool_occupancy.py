@@ -15,12 +15,12 @@ from PIL import Image, ImageDraw
 from poc.workflow_3 import DEBUG_IMAGE_DIR
 from poc.workflow_3.debug_artifacts import save_debug_jpeg, save_debug_json, save_debug_text
 from poc.workflow_3.rcs.row_occupant import FREE, OCCUPIED_BY_OTHER, UNKNOWN
+from poc.workflow_3.rcs.workflow_select_tool import _locate_tool_via_vlm
 from poc.workflow_3.util.image_utils import encode_image_webp
 from poc.workflow_3.util.json_utils import extract_json
 from poc.workflow_3.vlm.flask_vlm import DEFAULT_SCREEN_ANALYSIS_SERVICE
 from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
 from poc.workflow_3.vlm.label_verify import read_text_near_point
-from poc.workflow_3.vlm.ui_venus_mai_locator import TargetConfig, analyze_window_target
 
 # 단독 점검 대상: 이 값을 직접 수정한다. 알람 루프는 전달받은 EQP_ID를 사용한다.
 ACTION_TARGET_TOOL_NAME = "MCDA23"
@@ -112,26 +112,20 @@ def build_row_read_image(image, layout: dict, tool_name: str):
     return fine
 
 
-def locate_row_point(image, columns: dict, tool_name: str, artifact_dir):
-    """MC ID 컬럼만 기존 coarse→fine 좌표 파이프라인에 넣는다."""
-    left, right = columns["mc_id"]
-    target = TargetConfig(
-        key="occupancy_mc_id",
-        description=f"the center of the complete exact equipment ID {tool_name!r}. "
-                    "Choose only that exact ID, never a neighboring or similar ID.",
-        left_pad_ratio=0.3, right_pad_ratio=0.3,
-        vertical_pad_ratio=0.3, vertical_pad_min_px=4,
-        min_crop_width=80, min_crop_height=24,
-    )
-    result = analyze_window_target(
-        None, "RCS List MC ID column", "image", target,
-        image=image.crop((left, 0, right, image.height)),
+def locate_row_point(image, tool_name: str, artifact_dir):
+    """클릭 경로와 같은 로케이터를 쓴다: list 영역 전체 + tool-list 결과 모드 + 행 확인 게이트.
+
+    MC ID 컬럼만 잘라 넣으면 좁고 긴 strip 안의 행들이 전부 같아 보여 coarse bbox 가
+    무의미해지고 확인 게이트도 없어 mai-ui 가 이웃 행을 고른다(오피스 실측).
+    """
+    located, attempts = _locate_tool_via_vlm(
+        None, "RCS List", "image", tool_name, image,
         debug_image_dir=artifact_dir / "locator", log_name="tool_occupancy",
-        component_name="tool_occupancy", artifact_prefix="mc_id",
+        component_name="tool_occupancy", timestamp_tag="mc_id",
     )
-    if result.exit_code != "success" or result.point is None:
-        raise ValueError(f"MC ID locator failed: {result.exit_code}")
-    return {"x": result.point["x"] + left, "y": result.point["y"]}
+    if located is None:
+        raise ValueError(f"MC ID locator failed: {json.dumps(attempts.get('iters'), ensure_ascii=False)}")
+    return located["full_image_point"]
 
 
 def check_tool_occupancy(image, tool_name: str, *, client=None, row_point=None, ocr_client=None) -> dict:
@@ -175,7 +169,7 @@ def check_tool_occupancy(image, tool_name: str, *, client=None, row_point=None, 
         validate_columns(columns, image.width)
         columns = widen_mc_id_column(columns, image.width)
         report["diagnosis"] = "row_location_failed"
-        point = row_point if row_point is not None else locate_row_point(image, columns, tool_name, artifact_dir)
+        point = row_point if row_point is not None else locate_row_point(image, tool_name, artifact_dir)
         report["row_point"] = point
         report["row_source"] = "click_locator" if row_point is not None else "mc_id_column_locator"
         left, right = columns["mc_id"]

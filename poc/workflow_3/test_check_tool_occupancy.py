@@ -170,12 +170,11 @@ def test_locator_maps_column_point_and_paddle_reads_target_band(monkeypatch, tmp
     image = Image.new("RGB", (1000, 200), "white")
     image.paste("red", (0, 40, 1000, 60))  # 잘못 고르던 MCD916 행
     image.paste("blue", (0, 80, 1000, 100))  # 목표 MCDA23 행
-    def locate(window, title, backend, target, **kwargs):
-        assert window is None
-        assert kwargs["image"].size == (124, 200)
-        assert "MCDA23" in target.description
-        return SimpleNamespace(exit_code="success", point={"x": 64, "y": 90})
-    monkeypatch.setattr(checker, "analyze_window_target", locate)
+    def locate(window, title, backend, tool_name, current_image, **kwargs):
+        assert window is None and tool_name == "MCDA23"
+        assert current_image is image  # 컬럼 strip 이 아니라 전체 List 이미지로 찾는다
+        return {"full_image_point": {"x": 840, "y": 90}}, {"iters": []}
+    monkeypatch.setattr(checker, "_locate_tool_via_vlm", locate)
     ocr_calls = []
     def ocr(**kwargs):
         assert kwargs["user_text"] == "OCR:"

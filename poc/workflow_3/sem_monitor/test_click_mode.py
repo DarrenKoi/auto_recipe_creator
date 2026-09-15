@@ -1,7 +1,8 @@
-"""crosshair / L자 아이콘 모드 판별 - 초록 채움 색 판정과 unknown 규칙 (Mac, VLM 불필요)."""
+"""crosshair / L자 아이콘 모드 판별 - DDS/AMS 앵커 기하 + 초록 채움 판정 (Mac, VLM 불필요)."""
 
 from types import SimpleNamespace
 
+import pytest
 from PIL import Image, ImageDraw
 
 from poc.workflow_3.sem_monitor import click_mode as cm
@@ -28,89 +29,83 @@ def test_classify_mode_requires_a_clear_winner():
     assert cm.classify_mode({"crosshair": 0.5}) == "unknown"                    # 한쪽 미검출
 
 
-def test_icon_strip_sits_right_of_sem_box_and_stays_inside_image():
+def test_button_order_from_bottom_matches_user_report():
+    assert cm.BUTTONS_FROM_BOTTOM[0] == "DDS" and cm.BUTTONS_FROM_BOTTOM[3] == "AMS"
+    assert cm.BUTTONS_FROM_BOTTOM.index("l_shape") == 8
+    assert cm.BUTTONS_FROM_BOTTOM.index("crosshair") == 10
+    assert cm.ANCHOR_GAP == 3
+
+
+def test_column_boxes_count_pitch_upward_from_dds():
+    dds = {"left": 300, "top": 400, "right": 340, "bottom": 420}   # cy=410
+    ams = {"left": 300, "top": 340, "right": 340, "bottom": 360}   # cy=350 -> pitch 20
+    boxes = cm.column_boxes(dds, ams)
+    assert len(boxes) == 13
+    cross, lshape = boxes["crosshair"], boxes["l_shape"]
+    assert (cross["top"] + cross["bottom"]) / 2 == 410 - 10 * 20
+    assert (lshape["top"] + lshape["bottom"]) / 2 == 410 - 8 * 20
+    assert cross["left"] == 300 and cross["right"] == 340
+    assert cross["bottom"] - cross["top"] < 20  # 이웃 버튼을 물지 않는다
+    with pytest.raises(ValueError):
+        cm.column_boxes(dds, dds)                         # pitch 0
+    with pytest.raises(ValueError):
+        cm.column_boxes(ams, dds)                         # 뒤집힘
+
+
+def test_strip_spans_full_window_height_right_of_sem_box():
     strip = cm.icon_strip_box({"left": 100, "top": 50, "right": 600, "bottom": 450}, (700, 500))
-    assert strip == {"left": 600, "top": 34, "right": 690, "bottom": 466}
-    edge = cm.icon_strip_box({"left": 100, "top": 0, "right": 680, "bottom": 500}, (700, 500))
-    assert edge["right"] == 700 and edge["top"] == 0 and edge["bottom"] == 500
+    assert strip == {"left": 600, "top": 0, "right": 690, "bottom": 500}
 
 
-def _strip_with_icons(fills, bg=(235, 235, 235), icon=20, gap=12, width=60):
-    """세로로 나란한 아이콘 열. fills[i] 가 i 번째 아이콘의 채움색."""
-    strip = Image.new("RGB", (width, len(fills) * (icon + gap) + gap), bg)
-    for i, fill in enumerate(fills):
-        y = gap + i * (icon + gap)
-        ImageDraw.Draw(strip).rectangle((18, y, 18 + icon - 1, y + icon - 1), fill=fill)
-    return strip
+def _column_image(active, pitch=20, dds_cy=440, x=310):
+    """13개 버튼 열이 그려진 창 이미지. active 버튼만 초록."""
+    image = Image.new("RGB", (400, 480), (235, 235, 235))
+    for k, name in enumerate(cm.BUTTONS_FROM_BOTTOM):
+        cy = dds_cy - k * pitch
+        fill = (0, 200, 60) if name == active else (120, 120, 120)
+        ImageDraw.Draw(image).rectangle((x, cy - 7, x + 30, cy + 7), fill=fill)
+    return image
 
 
-def test_segment_icon_runs_finds_each_stacked_icon_in_order():
-    grey = (120, 120, 120)
-    runs = cm.segment_icon_runs(_strip_with_icons([grey, grey, (0, 200, 60), grey, grey, grey]))
-    assert len(runs) == 6
-    assert runs[2] == {"left": 18, "top": 12 + 2 * 32, "right": 38, "bottom": 12 + 2 * 32 + 20}
-    assert all(runs[i]["bottom"] <= runs[i + 1]["top"] for i in range(5))
-    assert cm.segment_icon_runs(Image.new("RGB", (60, 100), (235, 235, 235))) == []
-
-
-def test_fixed_positions_pick_third_and_fifth_without_vlm(monkeypatch, tmp_path):
-    grey = (120, 120, 120)
-    image = Image.new("RGB", (400, 300), (235, 235, 235))
-    sem_box = {"left": 20, "top": 20, "right": 300, "bottom": 280}
-    # strip 은 x=300.., y=4.. ; 아이콘 6개 중 5번째(L자)만 초록
-    image.paste(_strip_with_icons([grey, grey, grey, grey, (0, 200, 60), grey]), (310, 30))
+def _fake_pipeline(monkeypatch, *, dds_ok=True, ams_ok=True, pitch=20, dds_cy=440):
+    sem_box = {"left": 20, "top": 20, "right": 300, "bottom": 460}
     monkeypatch.setattr(cm, "detect_sem_box", lambda img, client: SimpleNamespace(bbox_px=sem_box))
-    def no_vlm(*a, **kw):
-        raise AssertionError("VLM must not be called when the icon column segments cleanly")
-    monkeypatch.setattr(cm, "analyze_window_target", no_vlm)
-    report = cm.detect_click_mode(image, client=object(), artifact_dir=tmp_path)
+    centers = {"DDS": dds_cy, "AMS": dds_cy - 3 * pitch}
+
+    def locate(window, title, backend, target, **kw):
+        assert kw["image"].size[1] == 480  # strip 은 창 전체 높이
+        name = "DDS" if "dds" in target.key else "AMS"
+        cy = centers[name]
+        return SimpleNamespace(exit_code="success", point={"x": 25, "y": cy},
+                               bbox={"left": 10, "top": cy - 8, "right": 40, "bottom": cy + 8})
+    monkeypatch.setattr(cm, "analyze_window_target", locate)
+    texts = {"dds": "DDS" if dds_ok else "ODS", "ams": "AMS" if ams_ok else "AMP"}
+    monkeypatch.setattr(cm, "read_text_near_point",
+                        lambda img, box, **kw: SimpleNamespace(ok=True, raw_text=texts[kw["timestamp_tag"]],
+                                                               tokens=[texts[kw["timestamp_tag"]]]))
+
+
+def test_detect_reads_green_at_anchored_positions(monkeypatch, tmp_path):
+    _fake_pipeline(monkeypatch)
+    report = cm.detect_click_mode(_column_image("l_shape"), client=object(), artifact_dir=tmp_path)
     assert report["mode"] == "l_shape" and report["recenter_clicks"] == 1
-    assert report["icons"]["crosshair"]["source"] == "segment"
-    assert report["icons"]["crosshair"]["box"]["top"] == 30 + 12 + 2 * 32
-
-
-def test_detect_click_mode_searches_the_strip_and_maps_boxes_back(monkeypatch, tmp_path):
-    image = Image.new("RGB", (400, 300), (235, 235, 235))
-    sem_box = {"left": 20, "top": 20, "right": 300, "bottom": 280}
-    image.paste(_icon((0, 200, 60)), (310, 40))    # crosshair: 초록 (strip 안)
-    image.paste(_icon((120, 120, 120)), (310, 80))  # L자: 회색
-    monkeypatch.setattr(cm, "detect_sem_box", lambda img, client: SimpleNamespace(bbox_px=sem_box))
-    strip_boxes = {"crosshair": {"left": 10, "top": 36, "right": 34, "bottom": 60},   # strip 좌표
-                   "l_shape": {"left": 10, "top": 76, "right": 34, "bottom": 100}}
-
-    def locate(window, title, backend, target, **kw):
-        assert kw["image"].size == (90, 292)  # 박스 오른쪽 strip 만 넘긴다
-        mode = "crosshair" if "crosshair" in target.key else "l_shape"
-        b = strip_boxes[mode]
-        return SimpleNamespace(exit_code="success", bbox=b,
-                               point={"x": (b["left"] + b["right"]) // 2, "y": (b["top"] + b["bottom"]) // 2})
-    monkeypatch.setattr(cm, "analyze_window_target", locate)
-    report = cm.detect_click_mode(image, client=object(), artifact_dir=tmp_path)
+    assert report["icons"]["crosshair"]["steps_above_dds"] == 10
+    assert (tmp_path / "column.jpg").exists() and (tmp_path / "result.json").exists()
+    report = cm.detect_click_mode(_column_image("crosshair"), client=object(), artifact_dir=tmp_path)
     assert report["mode"] == "crosshair" and report["recenter_clicks"] == 2
-    assert report["icons"]["crosshair"]["source"] == "vlm"  # 아이콘 2개뿐 -> 분할 불신 -> VLM
-    assert report["icons"]["crosshair"]["box"] == {"left": 310, "top": 40, "right": 334, "bottom": 64}
-    assert (tmp_path / "strip.jpg").exists() and (tmp_path / "result.json").exists()
 
 
-def test_without_sem_box_falls_back_to_whole_window(monkeypatch, tmp_path):
-    image = Image.new("RGB", (400, 300), (235, 235, 235))
-    image.paste(_icon((0, 200, 60)), (300, 20))
-    image.paste(_icon((120, 120, 120)), (300, 60))
+def test_anchor_label_mismatch_yields_unknown(monkeypatch, tmp_path):
+    _fake_pipeline(monkeypatch, ams_ok=False)
+    report = cm.detect_click_mode(_column_image("crosshair"), client=object(), artifact_dir=tmp_path)
+    assert report["mode"] == "unknown" and report["anchors"]["AMS"] is None
+
+
+def test_missing_sem_box_yields_unknown_without_locating(monkeypatch, tmp_path):
     monkeypatch.setattr(cm, "detect_sem_box", lambda img, client: SimpleNamespace(bbox_px=None))
-    boxes = {"crosshair": {"left": 300, "top": 20, "right": 324, "bottom": 44},
-             "l_shape": {"left": 300, "top": 60, "right": 324, "bottom": 84}}
 
-    def locate(window, title, backend, target, **kw):
-        assert kw["image"] is image
-        b = boxes["crosshair" if "crosshair" in target.key else "l_shape"]
-        return SimpleNamespace(exit_code="success", bbox=b, point={"x": 312, "y": 32})
-    monkeypatch.setattr(cm, "analyze_window_target", locate)
-    assert cm.detect_click_mode(image, client=object(), artifact_dir=tmp_path)["mode"] == "crosshair"
-
-
-def test_locator_failure_yields_unknown_not_a_guess(monkeypatch, tmp_path):
-    monkeypatch.setattr(cm, "detect_sem_box", lambda img, client: SimpleNamespace(bbox_px=None))
-    monkeypatch.setattr(cm, "analyze_window_target",
-                        lambda *a, **kw: SimpleNamespace(exit_code="refusal", bbox=None, point=None))
+    def no_locate(*a, **kw):
+        raise AssertionError("no locate without box")
+    monkeypatch.setattr(cm, "analyze_window_target", no_locate)
     report = cm.detect_click_mode(Image.new("RGB", (100, 100)), client=object(), artifact_dir=tmp_path)
-    assert report["mode"] == "unknown" and report["recenter_clicks"] is None
+    assert report["mode"] == "unknown"

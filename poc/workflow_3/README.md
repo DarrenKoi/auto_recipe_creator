@@ -307,6 +307,9 @@ Align Fail 접속은 **MC ID를 더블클릭하기 전에** List의 해당 행�
 4. **점유 판독:** 동일 y 범위의 세 셀을 확대해 VLM으로 읽는다. 전체 List를 보내지 않는다.
    추가 MC ID가 보이거나 필드가 불확실하면 `unknown`으로 막는다.
 
+`MC_ID_HORIZONTAL_PAD_PX=24`는 MC ID 컬럼 좌우에 추가하는 원본 픽셀 여백이다.
+로케이터, PaddleOCR, 셀 판독에 같은 확장 폭을 사용한다. RCS IP 텍스트가 들어오면
+엄격한 ID 검증이 실패하므로 저장 crop을 보고 여백을 조정한다.
 `ROW_HALF_HEIGHT_PX`는 DPI/글자 높이에 맞춰 조정한다. `MAX_ROW_HEIGHT_PX=48`은 crop 상한이다.
 `row.jpg`, `cells.jpg`, PaddleOCR crop을 보고 글자 잘림이나 이웃 행 혼입 여부를 확인한다.
 이 기하 검사는 VLM 정확도를 보장하지 않으므로 MCDA01(비점유) / MCDA23(점유)로 재검증한다.

@@ -172,9 +172,9 @@ def test_locator_maps_column_point_and_paddle_reads_target_band(monkeypatch, tmp
     image.paste("blue", (0, 80, 1000, 100))  # 목표 MCDA23 행
     def locate(window, title, backend, target, **kwargs):
         assert window is None
-        assert kwargs["image"].size == (80, 200)
+        assert kwargs["image"].size == (124, 200)
         assert "MCDA23" in target.description
-        return SimpleNamespace(exit_code="success", point={"x": 40, "y": 90})
+        return SimpleNamespace(exit_code="success", point={"x": 64, "y": 90})
     monkeypatch.setattr(checker, "analyze_window_target", locate)
     ocr_calls = []
     def ocr(**kwargs):
@@ -198,3 +198,14 @@ def test_locator_maps_column_point_and_paddle_reads_target_band(monkeypatch, tmp
     assert report["row_point"] == {"x": 840, "y": 90}
     assert report["layout"]["row_top"] == 82
     assert len(ocr_calls) == 1
+
+
+def test_mc_id_padding_widens_both_sides_without_crossing_known_columns():
+    from poc.workflow_3.check_tool_occupancy import widen_mc_id_column
+
+    columns = {"mc_id": [800, 880], "remote": [450, 550], "control_user": [900, 1000]}
+    widened = widen_mc_id_column(columns, 1000)
+    assert widened["mc_id"] == [776, 900]
+    assert columns["mc_id"] == [800, 880]
+    assert widened["remote"] == columns["remote"]
+    assert widen_mc_id_column(dict(columns, mc_id=[0, 70]), 1000)["mc_id"] == [0, 94]

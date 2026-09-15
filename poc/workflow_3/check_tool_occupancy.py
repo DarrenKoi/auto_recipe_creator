@@ -29,6 +29,8 @@ MAX_ROW_HEIGHT_PX = 48
 CELL_UPSCALE = 3
 # MC ID 글자 중심 위/아래 픽셀. 인접 행이 섞이지 않도록 실제 행 간격보다 작게 설정.
 ROW_HALF_HEIGHT_PX = 8
+# MC ID 컬럼 검출이 글자 일부를 자르는 경우를 위한 좌우 여백(원본 픽셀).
+MC_ID_HORIZONTAL_PAD_PX = 24
 
 
 def classify_reading(reading: dict, tool_name: str) -> str:
@@ -68,6 +70,20 @@ def validate_columns(columns, image_width: int):
         if any(left < end and right > start for start, end in spans):
             raise ValueError("overlapping columns")
         spans.append(span)
+
+
+def widen_mc_id_column(columns: dict, image_width: int) -> dict:
+    """MC ID만 좌우로 확장한다. 이미지/확인된 다른 컬럼 경계에서 멈춘다."""
+    left, right = columns["mc_id"]
+    lower, upper = 0, image_width
+    for name in ("remote", "control_user"):
+        start, end = columns[name]
+        if end <= left:
+            lower = max(lower, end)
+        elif start >= right:
+            upper = min(upper, start)
+    return {**columns, "mc_id": [max(lower, left - MC_ID_HORIZONTAL_PAD_PX),
+                                min(upper, right + MC_ID_HORIZONTAL_PAD_PX)]}
 
 
 def build_row_read_image(image, layout: dict, tool_name: str):
@@ -140,6 +156,8 @@ def check_tool_occupancy(image, tool_name: str, *, client=None, row_point=None, 
                 f"Image size is {image.width} x {image.height} pixels. "
                 "Locate only the horizontal column boundaries using the MC ID, Remote "
                 "and Control User headers/labels. Do not select any equipment row. "
+                "MC ID bounds must cover the FULL equipment ID text width, not just "
+                "the short MC ID header. Use the boundary before the adjacent RCS IP column. "
                 "Do not assume a left/right column order. Remote bounds must contain "
                 "the count next to Remote, not just its label. Control User bounds must "
                 "cover the entire user cell width. Return absolute image pixel x values "
@@ -155,6 +173,7 @@ def check_tool_occupancy(image, tool_name: str, *, client=None, row_point=None, 
         columns = column_reading.get("columns")
         # 로케이터 호출 전에 모든 컬럼의 경계와 중복을 검증한다.
         validate_columns(columns, image.width)
+        columns = widen_mc_id_column(columns, image.width)
         report["diagnosis"] = "row_location_failed"
         point = row_point if row_point is not None else locate_row_point(image, columns, tool_name, artifact_dir)
         report["row_point"] = point

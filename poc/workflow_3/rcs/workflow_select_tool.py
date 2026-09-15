@@ -1295,7 +1295,9 @@ def select_tool_from_main_window(
     if require_occupancy_check:
         from poc.workflow_3.check_tool_occupancy import check_tool_occupancy
 
-        occupancy = check_tool_occupancy(main_image, normalized_tool_name)["occupancy"]
+        occupancy = check_tool_occupancy(
+            main_image, normalized_tool_name, row_point=full_image_point,
+        )["occupancy"]
         if occupancy != "free":
             return ToolSelectionResult(
                 exit_code="rcs_occupied" if occupancy == "occupied_by_other" else "rcs_occupancy_unknown",

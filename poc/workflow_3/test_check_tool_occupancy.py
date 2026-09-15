@@ -119,6 +119,9 @@ def test_coarse_then_fine_rejects_multiple_mc_ids(monkeypatch, tmp_path):
     layout = {"mc_id": "MCDA01", "row_top": 40, "row_bottom": 60,
               "columns": {"mc_id": [800, 880], "remote": [450, 550],
                           "control_user": [900, 1000]}}
+    from poc.workflow_3.vlm.label_verify import PointTextRead
+    monkeypatch.setattr(checker, "locate_row_point", lambda *a: {"x": 840, "y": 50})
+    monkeypatch.setattr(checker, "read_text_near_point", lambda *a, **kw: PointTextRead(ok=True, raw_text="MCDA01"))
     for ids, expected in ((["MCDA01"], "free"), (["MCDA01", "MCDA23"], "unknown"),
                           (["MCDA23"], "unknown")):
         responses = iter([layout, {"mc_id": "MCDA01", "row_confirmed": True,
@@ -132,3 +135,66 @@ def test_coarse_then_fine_rejects_multiple_mc_ids(monkeypatch, tmp_path):
         assert report["occupancy"] == expected
         assert len(calls) == 2
         assert calls[0]["image_b64"] != calls[1]["image_b64"]
+
+
+def test_wrong_paddle_id_stops_before_occupancy_read(monkeypatch, tmp_path):
+    import json
+    from types import SimpleNamespace
+    from PIL import Image
+    from poc.workflow_3 import check_tool_occupancy as checker
+    from poc.workflow_3.vlm.label_verify import PointTextRead
+
+    monkeypatch.setattr(checker, "DEBUG_IMAGE_DIR", tmp_path)
+    calls = []
+    def chat(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(text=json.dumps({"columns": {
+            "mc_id": [800, 880], "remote": [450, 550], "control_user": [900, 1000]}}))
+    for raw in ("MC0916", "MCD916", "MCDA23 MCD916", ""):
+        monkeypatch.setattr(checker, "read_text_near_point", lambda *a, **kw: PointTextRead(ok=True, raw_text=raw))
+        report = checker.check_tool_occupancy(Image.new("RGB", (1000, 200)), "MCDA23",
+            client=SimpleNamespace(chat_with_image_b64=chat), row_point={"x": 840, "y": 90})
+        assert report["occupancy"] == "unknown"
+        assert report["diagnosis"] == ("mc_id_unreadable" if not raw else "mc_id_mismatch")
+        assert report["mc_id_ocr"]["raw_text"] == raw
+    assert len(calls) == 4  # 컬럼 검출만; 점유 판독으로 진행하지 않는다.
+
+
+def test_locator_maps_column_point_and_paddle_reads_target_band(monkeypatch, tmp_path):
+    import json
+    from types import SimpleNamespace
+    from PIL import Image
+    from poc.workflow_3 import check_tool_occupancy as checker
+
+    monkeypatch.setattr(checker, "DEBUG_IMAGE_DIR", tmp_path)
+    image = Image.new("RGB", (1000, 200), "white")
+    image.paste("red", (0, 40, 1000, 60))  # 잘못 고르던 MCD916 행
+    image.paste("blue", (0, 80, 1000, 100))  # 목표 MCDA23 행
+    def locate(window, title, backend, target, **kwargs):
+        assert window is None
+        assert kwargs["image"].size == (80, 200)
+        assert "MCDA23" in target.description
+        return SimpleNamespace(exit_code="success", point={"x": 40, "y": 90})
+    monkeypatch.setattr(checker, "analyze_window_target", locate)
+    ocr_calls = []
+    def ocr(**kwargs):
+        assert kwargs["user_text"] == "OCR:"
+        with Image.open(kwargs["image_path"]) as crop:
+            red, green, blue = crop.convert("RGB").getpixel((20, 20))
+            assert blue > 200 and red < 20  # y=90 밴드만 PaddleOCR로 전달
+        ocr_calls.append(kwargs)
+        return SimpleNamespace(text="MCDA23")
+    responses = iter([
+        {"columns": {"mc_id": [800, 880], "remote": [450, 550], "control_user": [900, 1000]},
+         "row_top": 40, "row_bottom": 60},  # 과거 coarse y는 사용하지 않는다.
+        {"mc_id": "MCDA23", "visible_mc_ids": ["MCDA23"], "row_confirmed": True,
+         "remote_text": "1", "control_user_text": "kim"},
+    ])
+    client = SimpleNamespace(chat_with_image_b64=lambda **kw: SimpleNamespace(text=json.dumps(next(responses))))
+    report = checker.check_tool_occupancy(image, "MCDA23", client=client,
+                                        ocr_client=SimpleNamespace(chat_with_image_path=ocr))
+    assert report["occupancy"] == "occupied_by_other"
+    assert report["diagnosis"] == "ok"
+    assert report["row_point"] == {"x": 840, "y": 90}
+    assert report["layout"]["row_top"] == 82
+    assert len(ocr_calls) == 1

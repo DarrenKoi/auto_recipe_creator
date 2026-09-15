@@ -298,13 +298,17 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 Align Fail 접속은 **MC ID를 더블클릭하기 전에** List의 해당 행을 판독한다.
 `Remote` 옆 count와 같은 행의 `Control User`를 coarse → fine으로 읽는다.
 
-1. **Coarse:** MC ID 헤더와 정확한 장비 ID로 대상 행의 위/아래 경계와 세 컬럼의 x 범위를 찾는다.
-   컬럼이 좌측/중앙/우측 어디에 있다고 가정하지 않는다.
-2. **Fine:** 세 셀을 **동일한 y 범위**로 잘라 3배 확대해 판독한다. 이 단계에 전체 List를
-   보내지 않는다. MC ID를 다시 읽고 다른 장비 ID가 섞이면 `unknown`으로 막는다.
+1. **컬럼 검출:** VLM은 헤더로 세 컬럼의 x 범위만 찾는다. 행 y 좌표는 이 응답에서 받지 않는다.
+2. **행 위치:** MC ID 컬럼만 잘라 기존 coarse → fine 로케이터로 목표 ID의 중심을 찾는다.
+   알람 루프에서는 같은 캡처에서 이미 구한 클릭점을 재사용한다.
+3. **PaddleOCR 검증:** 중심 기준 위/아래 `ROW_HALF_HEIGHT_PX=8` 픽셀의 MC ID 셀을
+   `paddleocr-vl-1.5`의 `OCR:` 태스크로 읽는다. 목표 ID 하나와 정확히 일치해야 통과한다.
+   `MC0916`/`MCD916`을 `MCDA23`으로 보정하지 않는다. 불일치/빈 판독/실패 시 점유 판독 전에 멈춘다.
+4. **점유 판독:** 동일 y 범위의 세 셀을 확대해 VLM으로 읽는다. 전체 List를 보내지 않는다.
+   추가 MC ID가 보이거나 필드가 불확실하면 `unknown`으로 막는다.
 
-`check_tool_occupancy.py`의 `MAX_ROW_HEIGHT_PX=48`은 여러 행이 섞이는 crop의 상한이다.
-오피스 DPI/행 높이에 맞춰 조정하고, `cells.jpg`에 이웃 행 텍스트가 없는지 확인한다.
+`ROW_HALF_HEIGHT_PX`는 DPI/글자 높이에 맞춰 조정한다. `MAX_ROW_HEIGHT_PX=48`은 crop 상한이다.
+`row.jpg`, `cells.jpg`, PaddleOCR crop을 보고 글자 잘림이나 이웃 행 혼입 여부를 확인한다.
 이 기하 검사는 VLM 정확도를 보장하지 않으므로 MCDA01(비점유) / MCDA23(점유)로 재검증한다.
 기존 `.env`에 `SELECT_TOOL_LIST_RIGHT_RATIO=0.42`가 있다면 전체 폭인 `1.0`으로 바꿔야
 우측 MC ID도 tool 클릭 로케이터의 탐색 범위에 들어온다.
@@ -331,10 +335,16 @@ uv run python -m poc.workflow_3.check_tool_occupancy
 ```
 
 - 저장 이미지: `.env`에 `TOOL_OCCUPANCY_IMAGE=/path/to/list.jpg` 설정.
-- VLM: 기존 서비스 설정 재사용. `TOOL_OCCUPANCY_SERVICE` 기본 `mai-ui`.
+- 컬럼/점유 VLM: `TOOL_OCCUPANCY_SERVICE` 기본 `mai-ui`. 행 로케이터: 기존 `VLM_LOCATOR_COMBO` 설정.
+- MC ID OCR: 기존 `paddleocr-vl-1.5` 서비스 설정 재사용. PaddleOCR 접속 실패도 `unknown`.
 - 출력: 읽은 두 필드와 `occupancy`. 종료 코드 `0=free`, `1=occupied_by_other`, `2=unknown`.
 - 산출물: `debug_images/tool_occupancy/<timestamp>/`의 `list.jpg`, `coarse_response.txt`,
   `row.jpg`(선택 행), `cells.jpg`(확대 셀), `response.txt`, `result.json`.
+  `locator/`에는 위치 추정 과정, `paddleocr-vl-1.5/`에는 MC ID crop/OCR 원문을 저장한다.
+- `result.json`의 `diagnosis`: `column_location_failed`, `row_location_failed`,
+  `mc_id_ocr_failed`, `mc_id_unreadable`, `mc_id_mismatch`, `fine_mc_id_mismatch`,
+  `occupancy_read_failed`, `occupancy_unreadable`, `ok`.
+  `mc_id_ocr.raw_text`는 실제 판독 ID, `row_point`/`layout`은 적용한 픽셀 좌표다.
 - checker는 tool을 클릭하지 않는다. 실제 창 캡처는 오피스 Windows에서 확인한다.
   저장 이미지도 VLM 연결이 필요하다. 테스트는 mock으로 실행한다.
 

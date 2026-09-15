@@ -235,6 +235,25 @@ CYCLE_MANIFEST_COLUMNS = [
     "run_dir",
 ]
 
+# 알람 1건당 소요 시간. 위 manifest 에 컬럼을 덧붙이지 않는 이유: 그 헤더는 check-only/3e 가
+# 공유하고 오피스에 기존 16컬럼 파일이 있어, 긴 행을 이어 쓰면 DictReader/pandas 가 어긋난다.
+CYCLE_TIMING_PATH = LOG_DIR / "align_fail_timing.csv"
+CYCLE_TIMING_COLUMNS = [
+    "eqp_id",
+    "recipe_id",
+    "tag",
+    "alarm_time",
+    "outcome_status",
+    "failure_class",
+    "cycle_started_at",
+    "correction_started_at",
+    "correction_finished_at",
+    "cycle_finished_at",
+    "correction_sec",           # 보정 step 만 (key 매칭 + reposition + OK)
+    "alarm_to_correction_sec",  # 알람 UTC9 -> 보정 끝 (폴링 지연/다운로드/접속 포함)
+    "cycle_sec",                # 사이클 시작 -> tool 닫힘 (엔지니어 대기 포함)
+]
+
 
 # ------------------------------------------------------------------
 # 알람 row 헬퍼 (기존 검증 로직 유지).
@@ -439,6 +458,61 @@ def append_cycle_manifest(
         )
     except Exception as exc:
         print(f"[WARNING] cycle manifest 기록 실패: {exc}")
+    # 여기서 부르는 이유: manifest 를 쓰는 두 진입점(모니터/manual_align_correction)이
+    # 함께 덮이고, manifest 를 stub 하는 테스트는 timing 파일도 쓰지 않는다.
+    append_cycle_timing(info, cycle)
+
+
+def _fmt_epoch(epoch) -> str:
+    return datetime.fromtimestamp(epoch).strftime("%Y-%m-%d %H:%M:%S") if epoch else ""
+
+
+def _span_sec(start, end) -> str:
+    return f"{end - start:.1f}" if start and end else ""
+
+
+def build_timing_row(info: dict, cycle: CycleResult) -> list:
+    """CYCLE_TIMING_COLUMNS 순서의 한 행. 도달하지 않은 지점은 빈 칸이다."""
+    alarm_ts = pd.to_datetime(info.get("utc9") or None, errors="coerce")
+    # to_pydatetime().timestamp(): naive 시각을 로컬로 해석한다. pandas Timestamp.timestamp()
+    # 는 naive 를 UTC 로 보므로 KST 에서 9시간 어긋난다(윈도우 필터도 로컬 now 와 비교).
+    alarm_epoch = None if pd.isna(alarm_ts) else alarm_ts.to_pydatetime().timestamp()
+    return [
+        cycle.eqp_id,
+        cycle.recipe_id,
+        cycle.tag,
+        info.get("utc9", ""),
+        cycle.outcome_status,
+        cycle.failure_class,
+        _fmt_epoch(cycle.started_at),
+        _fmt_epoch(cycle.correction_started_at),
+        _fmt_epoch(cycle.correction_finished_at),
+        _fmt_epoch(cycle.finished_at),
+        _span_sec(cycle.correction_started_at, cycle.correction_finished_at),
+        _span_sec(alarm_epoch, cycle.correction_finished_at),
+        _span_sec(cycle.started_at, cycle.finished_at),
+    ]
+
+
+def append_cycle_timing(info: dict, cycle: CycleResult) -> None:
+    """알람 1건의 소요 시간을 align_fail_timing.csv 에 한 줄 누적한다(실패는 삼킨다)."""
+    try:
+        row = build_timing_row(info, cycle)
+        CYCLE_TIMING_PATH.parent.mkdir(parents=True, exist_ok=True)
+        write_header = (
+            not CYCLE_TIMING_PATH.exists() or CYCLE_TIMING_PATH.stat().st_size == 0
+        )
+        with CYCLE_TIMING_PATH.open("a", encoding="utf-8", newline="") as fp:
+            writer = csv.writer(fp)
+            if write_header:
+                writer.writerow(CYCLE_TIMING_COLUMNS)
+            writer.writerow(row)
+        print(
+            f"[INFO] timing 기록 -> {CYCLE_TIMING_PATH} "
+            f"(보정={row[10] or '-'}s, 알람->보정={row[11] or '-'}s, 사이클={row[12] or '-'}s)"
+        )
+    except Exception as exc:
+        print(f"[WARNING] timing 기록 실패: {exc}")
 
 
 # ------------------------------------------------------------------

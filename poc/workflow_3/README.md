@@ -296,7 +296,7 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 ## List 점유 확인 / 접속 전 게이트
 
 Align Fail 접속은 **MC ID를 더블클릭하기 전에** List의 해당 행을 판독한다.
-같은 행의 최우측 `Connection User` 셀을 PaddleOCR 로 읽는다(글자가 있으면 점유).
+같은 행의 최우측 `Connection User` 셀을 PaddleOCR 로 읽는다(`Control` 접두로 시작하면 점유).
 
 1. **컬럼 검출:** VLM은 헤더로 세 컬럼의 x 범위만 찾는다. 행 y 좌표는 이 응답에서 받지 않는다.
 2. **행 위치:** MC ID 컬럼만 잘라 기존 coarse → fine 로케이터로 목표 ID의 중심을 찾는다.
@@ -318,7 +318,7 @@ Align Fail 접속은 **MC ID를 더블클릭하기 전에** List의 해당 행�
 
 | 상태 | 판별 | 접속 |
 |---|---|---|
-| `occupied_by_other` | Connection User에 텍스트가 있음 | 클릭 없이 보류, 점유 cooldown 후 재시도 |
+| `occupied_by_other` | Connection User 셀이 `Control ...` 로 읽힘 | 클릭 없이 보류, 점유 cooldown 후 재시도 |
 | `free` | 정확한 MC ID 행에서 두 필드가 모두 확실히 비어 있음 | 기존 검증 후 더블클릭 |
 | `unknown` | 행 불일치, 필드 누락/잘림/판독 불가, VLM 실패 | 클릭 없이 보류, 실패 cooldown 후 재시도 |
 

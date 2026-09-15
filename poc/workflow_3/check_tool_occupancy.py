@@ -31,17 +31,21 @@ MC_ID_HALF_WIDTH_PX = 60
 CONNECTION_USER_LEFT_PAD_PX = 40
 
 
+# 점유된 셀은 이 접두로 읽힌다(오피스 실측). 빈 셀은 PaddleOCR-VL 이 `[Table_Page_Number]`
+# 같은 레이아웃 태그를 내놓으므로 "글자가 있으면 점유" 로는 판정할 수 없다.
+OCCUPIED_PREFIX = "control"
+
+
 def classify_reading(read_ok: bool, raw_text: str) -> str:
     """Connection User 셀의 PaddleOCR 판독으로 3-상태를 정한다.
 
-    VLM 전사는 빈 셀에서 환각한다(오피스 실측: 비어 있는 tool 이 점유로 읽힘). OCR 은
-    없는 글자를 만들지 않으므로 셀 crop 만 읽는다 - MC ID 확인과 같은 경로다. 읽기
-    실패는 UNKNOWN 이고, 글자가 하나라도 있으면 점유다(이름/사번 모양을 가리지 않는다 -
-    거짓 free 가 거짓 occupied 보다 위험하다: 전자는 view-only 세션에 클릭을 낸다).
+    VLM 전사는 빈 셀에서 환각하고, OCR 도 빈 crop 에 대괄호 레이아웃 태그를 낸다.
+    그래서 셀 원문이 `Control` 로 시작할 때만 점유이고, 읽기 실패만 UNKNOWN 이다.
     """
     if not read_ok:
         return UNKNOWN
-    return OCCUPIED_BY_OTHER if tokens_from_text(raw_text) else FREE
+    words = [token for token in tokens_from_text(raw_text) if not token.startswith("[")]
+    return OCCUPIED_BY_OTHER if words and words[0].lower().startswith(OCCUPIED_PREFIX) else FREE
 
 
 def validate_columns(columns, image_width: int):

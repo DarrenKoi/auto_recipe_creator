@@ -3,13 +3,15 @@
 from poc.workflow_3.check_tool_occupancy import classify_reading
 
 
-def test_occupancy_from_ocr_tokens_never_free_on_read_failure():
-    assert classify_reading(True, "") == "free"
-    assert classify_reading(True, " \n ") == "free"
-    for user in ("kim", "KIM0234", "홍길동", "a b"):
-        assert classify_reading(True, user) == "occupied_by_other"
+def test_occupancy_means_control_prefix_and_layout_tags_are_blank():
+    for blank in ("", " \n ", "[Table_Page_Number]", "[Table_Page_Number] [Text]"):
+        assert classify_reading(True, blank) == "free"
+    for occupied in ("Control KIM0234", "control kim", "[Text] Control 홍길동", "Controlled by kim"):
+        assert classify_reading(True, occupied) == "occupied_by_other"
+    for other in ("kim", "KIM0234", "Remote Control"):
+        assert classify_reading(True, other) == "free"
     assert classify_reading(False, "") == "unknown"
-    assert classify_reading(False, "kim") == "unknown"
+    assert classify_reading(False, "Control kim") == "unknown"
 
 
 def test_occupancy_gate_prevents_click_and_free_allows_it(monkeypatch, tmp_path):
@@ -107,7 +109,7 @@ def test_connection_user_cell_ocr_decides_occupancy(monkeypatch, tmp_path):
     monkeypatch.setattr(checker, "DEBUG_IMAGE_DIR", tmp_path)
     monkeypatch.setattr(checker, "locate_row_point", lambda *a: {"x": 840, "y": 50})
     monkeypatch.setattr(checker, "locate_connection_user_column", lambda *a: [920, 1000])
-    for user_text, expected in (("", "free"), ("kim", "occupied_by_other"), ("KIM0234", "occupied_by_other")):
+    for user_text, expected in (("[Table_Page_Number]", "free"), ("Control kim", "occupied_by_other")):
         boxes = []
         reads = iter([PointTextRead(ok=True, raw_text="MCDA01"), PointTextRead(ok=True, raw_text=user_text)])
         def read(image, box, **kwargs):
@@ -164,7 +166,7 @@ def test_locator_maps_column_point_and_paddle_reads_target_band(monkeypatch, tmp
             red, green, blue = crop.convert("RGB").getpixel((20, 20))
             assert blue > 200 and red < 20  # y=90 밴드만 PaddleOCR로 전달
         ocr_calls.append(kwargs)
-        return SimpleNamespace(text="MCDA23" if len(ocr_calls) == 1 else "kim")
+        return SimpleNamespace(text="MCDA23" if len(ocr_calls) == 1 else "Control kim")
     report = checker.check_tool_occupancy(image, "MCDA23",
                                         ocr_client=SimpleNamespace(chat_with_image_path=ocr))
     assert report["occupancy"] == "occupied_by_other"

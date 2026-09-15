@@ -174,6 +174,22 @@ def _offset(box: dict, dx: int, dy: int) -> dict:
             "right": box["right"] + dx, "bottom": box["bottom"] + dy}
 
 
+def box_from_result(result, image_size, *, default_half_w: int, default_half_h: int) -> dict:
+    """로케이터 결과 -> 상자. **중심은 fine point**, 크기만 coarse bbox 에서 빌린다.
+
+    `TargetResult.bbox` 는 coarse 단계의 bbox 라 한 칸 아래 버튼에 걸리는 일이 있고, fine
+    단계(zoom)가 그것을 바로잡은 점이 `point` 다(10회차 오피스: zoom overlay 는 정확한데
+    column.jpg 만 한 칸 아래 = coarse bbox 를 그대로 쓴 탓). 그래서 위치는 point 만 믿는다.
+    """
+    x, y = int(result.point["x"]), int(result.point["y"])
+    half_w, half_h = default_half_w, default_half_h
+    if isinstance(result.bbox, dict):
+        half_w = max(4, (result.bbox["right"] - result.bbox["left"]) // 2)
+        half_h = max(4, (result.bbox["bottom"] - result.bbox["top"]) // 2)
+    return {"left": max(0, x - half_w), "top": max(0, y - half_h),
+            "right": min(image_size[0], x + half_w), "bottom": min(image_size[1], y + half_h)}
+
+
 def _locate_icon(mode: str, strip_image, strip: dict, *, artifact_dir) -> dict | None:
     """아이콘 버튼 하나를 strip 에서 직접 찾는다(요소당 호출 하나). 전체 이미지 좌표 bbox 또는 None."""
     result = analyze_window_target(
@@ -184,13 +200,8 @@ def _locate_icon(mode: str, strip_image, strip: dict, *, artifact_dir) -> dict |
     if result.exit_code != "success" or result.point is None:
         print(f"[WARNING] 아이콘 {mode} 직접 로케이트 실패: {result.exit_code}")
         return None
-    if isinstance(result.bbox, dict):
-        box = result.bbox
-    else:
-        x, y = result.point["x"], result.point["y"]
-        box = {"left": max(0, x - 12), "top": max(0, y - 10),
-               "right": min(strip_image.width, x + 12), "bottom": min(strip_image.height, y + 10)}
-    box = _offset(box, strip["left"], strip["top"])
+    box = _offset(box_from_result(result, strip_image.size, default_half_w=12, default_half_h=10),
+                  strip["left"], strip["top"])
     print(f"[INFO] 아이콘 {mode} 직접 로케이트: box={box}")
     return box
 
@@ -205,13 +216,8 @@ def _locate_anchor(name: str, strip_image, strip: dict, *, artifact_dir) -> dict
     if result.exit_code != "success" or result.point is None:
         print(f"[WARNING] 앵커 {name} 미검출: {result.exit_code}")
         return None
-    if isinstance(result.bbox, dict):
-        box = result.bbox
-    else:
-        x, y = result.point["x"], result.point["y"]
-        box = {"left": max(0, x - 20), "top": max(0, y - 8),
-               "right": min(strip_image.width, x + 20), "bottom": min(strip_image.height, y + 8)}
-    box = _offset(box, strip["left"], strip["top"])
+    box = _offset(box_from_result(result, strip_image.size, default_half_w=20, default_half_h=8),
+                  strip["left"], strip["top"])
     print(f"[INFO] 앵커 {name}: box={box}")
     return box
 

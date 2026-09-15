@@ -55,6 +55,18 @@ def test_column_boxes_count_down_from_equals_with_adjacent_pitch():
         cm.column_boxes(eq, top)                          # 뒤집힘
 
 
+def test_box_is_centred_on_fine_point_not_coarse_bbox():
+    # coarse bbox 는 한 칸(20px) 아래 버튼에 걸렸고 fine point 가 바로잡은 상황
+    result = SimpleNamespace(point={"x": 25, "y": 170},
+                             bbox={"left": 10, "top": 182, "right": 40, "bottom": 198})
+    box = cm.box_from_result(result, (90, 480), default_half_w=20, default_half_h=8)
+    assert (box["top"] + box["bottom"]) / 2 == 170          # 위치는 point
+    assert box["right"] - box["left"] == 30 and box["bottom"] - box["top"] == 16  # 크기는 bbox
+    nobox = cm.box_from_result(SimpleNamespace(point={"x": 25, "y": 170}, bbox=None), (90, 480),
+                               default_half_w=20, default_half_h=8)
+    assert nobox == {"left": 5, "top": 162, "right": 45, "bottom": 178}
+
+
 def test_strip_spans_full_window_height_right_of_sem_box():
     strip = cm.icon_strip_box({"left": 100, "top": 50, "right": 600, "bottom": 450}, (700, 500))
     assert strip == {"left": 600, "top": 0, "right": 690, "bottom": 500}

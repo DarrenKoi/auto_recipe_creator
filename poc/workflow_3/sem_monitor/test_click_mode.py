@@ -28,27 +28,54 @@ def test_classify_mode_requires_a_clear_winner():
     assert cm.classify_mode({"crosshair": 0.5}) == "unknown"                    # 한쪽 미검출
 
 
-def test_detect_click_mode_reads_color_at_located_icons(monkeypatch, tmp_path):
+def test_icon_strip_sits_right_of_sem_box_and_stays_inside_image():
+    strip = cm.icon_strip_box({"left": 100, "top": 50, "right": 600, "bottom": 450}, (700, 500))
+    assert strip == {"left": 600, "top": 34, "right": 690, "bottom": 466}
+    edge = cm.icon_strip_box({"left": 100, "top": 0, "right": 680, "bottom": 500}, (700, 500))
+    assert edge["right"] == 700 and edge["top"] == 0 and edge["bottom"] == 500
+
+
+def test_detect_click_mode_searches_the_strip_and_maps_boxes_back(monkeypatch, tmp_path):
     image = Image.new("RGB", (400, 300), (235, 235, 235))
-    image.paste(_icon((0, 200, 60)), (300, 20))    # crosshair: 초록
-    image.paste(_icon((120, 120, 120)), (300, 60))  # L자: 회색
+    sem_box = {"left": 20, "top": 20, "right": 300, "bottom": 280}
+    image.paste(_icon((0, 200, 60)), (310, 40))    # crosshair: 초록 (strip 안)
+    image.paste(_icon((120, 120, 120)), (310, 80))  # L자: 회색
+    monkeypatch.setattr(cm, "detect_sem_box", lambda img, client: SimpleNamespace(bbox_px=sem_box))
+    strip_boxes = {"crosshair": {"left": 10, "top": 36, "right": 34, "bottom": 60},   # strip 좌표
+                   "l_shape": {"left": 10, "top": 76, "right": 34, "bottom": 100}}
+
+    def locate(window, title, backend, target, **kw):
+        assert kw["image"].size == (90, 292)  # 박스 오른쪽 strip 만 넘긴다
+        mode = "crosshair" if "crosshair" in target.key else "l_shape"
+        b = strip_boxes[mode]
+        return SimpleNamespace(exit_code="success", bbox=b,
+                               point={"x": (b["left"] + b["right"]) // 2, "y": (b["top"] + b["bottom"]) // 2})
+    monkeypatch.setattr(cm, "analyze_window_target", locate)
+    report = cm.detect_click_mode(image, client=object(), artifact_dir=tmp_path)
+    assert report["mode"] == "crosshair" and report["recenter_clicks"] == 2
+    assert report["icons"]["crosshair"]["box"] == {"left": 310, "top": 40, "right": 334, "bottom": 64}
+    assert (tmp_path / "strip.jpg").exists() and (tmp_path / "result.json").exists()
+
+
+def test_without_sem_box_falls_back_to_whole_window(monkeypatch, tmp_path):
+    image = Image.new("RGB", (400, 300), (235, 235, 235))
+    image.paste(_icon((0, 200, 60)), (300, 20))
+    image.paste(_icon((120, 120, 120)), (300, 60))
+    monkeypatch.setattr(cm, "detect_sem_box", lambda img, client: SimpleNamespace(bbox_px=None))
     boxes = {"crosshair": {"left": 300, "top": 20, "right": 324, "bottom": 44},
              "l_shape": {"left": 300, "top": 60, "right": 324, "bottom": 84}}
 
     def locate(window, title, backend, target, **kw):
-        assert window is None and kw["image"] is image
-        mode = "crosshair" if "crosshair" in target.key else "l_shape"
-        b = boxes[mode]
-        return SimpleNamespace(exit_code="success", bbox=b,
-                               point={"x": (b["left"] + b["right"]) // 2, "y": (b["top"] + b["bottom"]) // 2})
+        assert kw["image"] is image
+        b = boxes["crosshair" if "crosshair" in target.key else "l_shape"]
+        return SimpleNamespace(exit_code="success", bbox=b, point={"x": 312, "y": 32})
     monkeypatch.setattr(cm, "analyze_window_target", locate)
-    report = cm.detect_click_mode(image, artifact_dir=tmp_path)
-    assert report["mode"] == "crosshair" and report["recenter_clicks"] == 2
-    assert (tmp_path / "result.json").exists()
+    assert cm.detect_click_mode(image, client=object(), artifact_dir=tmp_path)["mode"] == "crosshair"
 
 
 def test_locator_failure_yields_unknown_not_a_guess(monkeypatch, tmp_path):
+    monkeypatch.setattr(cm, "detect_sem_box", lambda img, client: SimpleNamespace(bbox_px=None))
     monkeypatch.setattr(cm, "analyze_window_target",
                         lambda *a, **kw: SimpleNamespace(exit_code="refusal", bbox=None, point=None))
-    report = cm.detect_click_mode(Image.new("RGB", (100, 100)), artifact_dir=tmp_path)
+    report = cm.detect_click_mode(Image.new("RGB", (100, 100)), client=object(), artifact_dir=tmp_path)
     assert report["mode"] == "unknown" and report["recenter_clicks"] is None

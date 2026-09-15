@@ -6,7 +6,11 @@ crosshair = 더블클릭, L자 = 싱글클릭. `sem_monitor.controller.RECENTER_
 값을 쓴다(지금은 env `ALIGN_SEM_RECENTER_CLICKS` 로 오피스에서 맞춘다).
 
 역할 분담은 저장소 규칙 그대로다 - VLM 은 두 아이콘의 **위치**만 찾고(요소당 호출
-하나), 어느 쪽이 켜졌는지는 **픽셀 색**이 답한다. 아이콘엔 라벨이 없어 OCR 확인이
+하나), 어느 쪽이 켜졌는지는 **픽셀 색**이 답한다. 아이콘은 **라이브 SEM box 바로
+오른쪽에 세로로 나란히** 있다(사용자 보고 2026-09-15). 전체 창에서는 너무 작아 coarse
+단계가 잡지 못하므로(1회차 오피스: 미검출), 오피스 검증된 `detect_sem_box` 로 박스를 먼저
+잡고 그 오른쪽 strip 만 잘라 그 안에서 찾는다 - 그 crop 안에서는 아이콘이 크고 후보도
+그 둘뿐이다. 박스를 못 잡으면 전체 창으로 폴백한다(종전 동작). 아이콘엔 라벨이 없어 OCR 확인이
 불가능하므로, 초록 채움 자체가 확인 게이트다: 두 bbox 중 초록 비율이 뚜렷이 높은 쪽만
 활성으로 보고, 둘 다 초록이거나 둘 다 아니면 unknown 이다(추측하지 않는다).
 
@@ -23,7 +27,16 @@ from PIL import Image
 
 from poc.workflow_3 import DEBUG_IMAGE_DIR
 from poc.workflow_3.debug_artifacts import save_debug_jpeg, save_debug_json
+from poc.workflow_3.sem_monitor.sem_box_detect import detect_sem_box
+from poc.workflow_3.vlm.flask_vlm import DEFAULT_SCREEN_ANALYSIS_SERVICE
 from poc.workflow_3.vlm.ui_venus_mai_locator import TargetConfig, analyze_window_target
+from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
+
+# 아이콘 strip: 라이브 SEM box 오른쪽 경계부터 박스 폭의 이 비율만큼(최소 px). 세로는 박스와
+# 같은 범위에 위아래 pad. 첫 오피스 실행의 strip.jpg 를 보고 맞춘다.
+STRIP_WIDTH_RATIO = 0.18
+STRIP_MIN_WIDTH_PX = 90
+STRIP_VERTICAL_PAD_PX = 16
 
 MODE_CROSSHAIR = "crosshair"   # 더블클릭 이동
 MODE_L_SHAPE = "l_shape"       # 싱글클릭 이동
@@ -42,19 +55,21 @@ ACTIVE_MARGIN = 2.0
 ICON_TARGETS = {
     MODE_CROSSHAIR: TargetConfig(
         key="sem_crosshair_icon",
-        description="the small crosshair (plus-shaped, '+') tool icon button next to the live "
-                    "SEM image area, in the icon toolbar beside the live image. Not the "
-                    "crosshair drawn inside the image itself.",
+        description="the crosshair icon button (a plus sign '+' with a small circle at the "
+                    "centre) in the vertical column of small tool icons immediately to the "
+                    "RIGHT of the live SEM image. One of these icons may be filled green. "
+                    "Return the icon button itself, not any crosshair drawn inside the image.",
         left_pad_ratio=1.0, right_pad_ratio=1.0, vertical_pad_ratio=1.0,
-        min_crop_width=120, min_crop_height=120,
+        min_crop_width=96, min_crop_height=96,
     ),
     MODE_L_SHAPE: TargetConfig(
         key="sem_l_shape_icon",
-        description="the small L-shaped (corner bracket) tool icon button next to the live "
-                    "SEM image area, in the icon toolbar beside the live image, near the "
-                    "crosshair icon.",
+        description="the L-shaped icon button (a corner bracket like the letter 'L') in the "
+                    "vertical column of small tool icons immediately to the RIGHT of the live "
+                    "SEM image, stacked above or below the crosshair icon. One of these icons "
+                    "may be filled green.",
         left_pad_ratio=1.0, right_pad_ratio=1.0, vertical_pad_ratio=1.0,
-        min_crop_width=120, min_crop_height=120,
+        min_crop_width=96, min_crop_height=96,
     ),
 }
 
@@ -96,20 +111,57 @@ def _icon_box(result, image_size) -> dict | None:
             "right": min(image_size[0], x + 12), "bottom": min(image_size[1], y + 12)}
 
 
-def detect_click_mode(image, *, artifact_dir=None) -> dict:
+def icon_strip_box(sem_box: dict, image_size) -> dict:
+    """라이브 SEM box 오른쪽의 아이콘 strip(이미지 픽셀). 이미지 밖으로는 나가지 않는다."""
+    width, height = image_size
+    box_w = max(1, sem_box["right"] - sem_box["left"])
+    strip_w = max(STRIP_MIN_WIDTH_PX, int(box_w * STRIP_WIDTH_RATIO))
+    return {"left": min(width - 1, sem_box["right"]),
+            "top": max(0, sem_box["top"] - STRIP_VERTICAL_PAD_PX),
+            "right": min(width, sem_box["right"] + strip_w),
+            "bottom": min(height, sem_box["bottom"] + STRIP_VERTICAL_PAD_PX)}
+
+
+def _locate_sem_box(image, client, artifact_dir) -> dict | None:
+    """오피스 검증된 detect_sem_box 로 라이브 SEM box(px)를 잡는다. 실패는 None."""
+    try:
+        det = detect_sem_box(image, client)
+        return det.bbox_px if isinstance(det.bbox_px, dict) else None
+    except Exception as exc:
+        print(f"[WARNING] live SEM box 검출 예외(전체 창으로 폴백): {exc}")
+        return None
+
+
+def detect_click_mode(image, *, client=None, artifact_dir=None) -> dict:
     """tool 창 이미지에서 이동 모드를 판별한다. 반환 dict 의 `mode` 는 세 값 중 하나."""
     artifact_dir = artifact_dir or (DEBUG_IMAGE_DIR / "click_mode" / str(time.time_ns()))
     report = {"mode": MODE_UNKNOWN, "icons": {}, "artifact_dir": str(artifact_dir)}
+    client = client or Workflow1VLMClient(
+        service_slug=os.getenv("ALIGN_FAIL_SEM_BOX_SERVICE", DEFAULT_SCREEN_ANALYSIS_SERVICE))
+    sem_box = _locate_sem_box(image, client, artifact_dir)
+    report["sem_box"] = sem_box
+    if sem_box is not None:
+        strip = icon_strip_box(sem_box, image.size)
+        search = image.crop((strip["left"], strip["top"], strip["right"], strip["bottom"]))
+        save_debug_jpeg(search, artifact_dir / "strip.jpg")
+    else:
+        strip = {"left": 0, "top": 0, "right": image.width, "bottom": image.height}
+        search = image
+        print("[WARNING] live SEM box 미검출 - 아이콘을 전체 창에서 찾는다(작아서 실패하기 쉬움)")
+    report["strip"] = strip
     ratios = {}
     for mode, target in ICON_TARGETS.items():
         result = None
         try:
             result = analyze_window_target(
-                None, "tool window", "image", target, image=image,
+                None, "tool window", "image", target, image=search,
                 debug_image_dir=artifact_dir / "locator", log_name="click_mode",
                 component_name="click_mode", artifact_prefix=mode,
             )
-            box = _icon_box(result, image.size)
+            box = _icon_box(result, search.size)
+            if box is not None:  # strip 좌표 -> 전체 이미지 좌표
+                box = {"left": box["left"] + strip["left"], "top": box["top"] + strip["top"],
+                       "right": box["right"] + strip["left"], "bottom": box["bottom"] + strip["top"]}
         except Exception as exc:
             print(f"[WARNING] {mode} 아이콘 로케이트 예외: {exc}")
             box = None

@@ -173,9 +173,10 @@ def key_visibility_gate(
        재판정되므로 featureless 배경(sel~0.25)은 대개 "low" 로 1차 차단된다.
          * ``best_scale`` 가 충분(>=MIN_CONFIRM_SCALE)해야 한다 — tiny-scale chamfer 과신 차단.
          * 강한 ``match`` 는 edge 구조만으로 present 인정.
-         * 약한 ``adjust`` 는 **구조 유일성(distinctive)** 이 있을 때만 present — 배경 거짓양성
-           2차 차단(과거 orb>0 의 대체; ORB 폐지).
-       present 아니면 → "fallback_search"(아무것도 안 보임 → live_align_search pan/zoom).
+         * 약한 ``adjust`` 도 present 다. 다만 **구조 유일성(distinctive)** 이 없으면 act 가
+           아니라 "engineer_review" 로 보류한다(2026-09-15: 종전엔 fallback_search 였는데
+           보이는 key 를 두고 pan 하게 만들었다. distinctive 는 engine 계약상 advisory).
+       ``low`` 만 → "fallback_search"(아무것도 안 보임 → live_align_search pan/zoom).
 
     2) isolation (Tier 0.1, opt-in) — present 라도 ``second_ratio`` 가
        ``reregister_ratio_threshold`` 를 넘으면 chamfer best peak 이 2nd 대비 고립되지 않은
@@ -191,11 +192,13 @@ def key_visibility_gate(
         raise ValueError("base_scale must be positive and finite")
     if result.best_scale / base_scale < MIN_CONFIRM_SCALE:
         return GATE_FALLBACK
-    present = result.decision == "match" or (
-        result.decision == "adjust" and result.distinctive
-    )
-    if not present:
+    if result.decision not in ("match", "adjust"):
         return GATE_FALLBACK
+    # adjust 인데 distinctive 가 아니면 "보이지만 chamfer-top 이 유일하지 않다"(OM 주기 key 에서
+    # 흔함). engine 계약상 distinctive 는 advisory 라 부재 판정에 쓰지 않는다 - 보이는 key 를
+    # 두고 pan 하는 search-around 보다 무조작 보류가 낫다(2026-09-15 오피스 실측: score 0.533).
+    if result.decision == "adjust" and not result.distinctive:
+        return GATE_ENGINEER_REVIEW
     # --- 2) isolation(opt-in): present 하나 만성 모호 → 자동보정 보류. ---
     if (
         reregister_ratio_threshold is not None

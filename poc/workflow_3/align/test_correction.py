@@ -92,7 +92,7 @@ def test_gate() -> bool:
         # --- 임계 None: 기존 bool 의미 보존 (act↔과거 True, fallback_search↔과거 False) ---
         "match→act": R(_dummy_result("match")) == "act",
         "adjust(distinctive)→act": R(_dummy_result("adjust", distinctive=True)) == "act",
-        "adjust(not distinctive)→fallback": R(_dummy_result("adjust", distinctive=False)) == "fallback_search",
+        "adjust(not distinctive)→review": R(_dummy_result("adjust", distinctive=False)) == "engineer_review",
         "low→fallback": R(_dummy_result("low")) == "fallback_search",
         "match(tiny-scale)→fallback": R(_dummy_result("match", scale=0.3)) == "fallback_search",
         # --- 임계 지정: present + 만성 모호(second_ratio>tau) → engineer_review ---

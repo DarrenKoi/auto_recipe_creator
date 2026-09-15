@@ -5,13 +5,13 @@ from poc.workflow_3.check_tool_occupancy import classify_reading
 
 def test_same_row_occupancy_requires_explicit_empty_cells():
     base = {"mc_id": "MCD630", "row_confirmed": True,
-            "remote_text": "", "control_user_text": ""}
+            "remote_text": "", "connection_user_text": ""}
     assert classify_reading(base, "MCD630") == "free"
     for remote in ("1", "2", "12"):
         assert classify_reading(dict(base, remote_text=remote), "MCD630") == "occupied_by_other"
     for user in ("kim", "12345", "홍길동"):
-        assert classify_reading(dict(base, remote_text=None, control_user_text=user), "MCD630") == "occupied_by_other"
-    for change in ({"remote_text": None}, {"control_user_text": None},
+        assert classify_reading(dict(base, remote_text=None, connection_user_text=user), "MCD630") == "occupied_by_other"
+    for change in ({"remote_text": None}, {"connection_user_text": None},
                    {"remote_text": "?"}, {"remote_text": "0"},
                    {"row_confirmed": "true"}, {"mc_id": "MCD631"},
                    {"remote_text": 1}):
@@ -98,7 +98,7 @@ def test_fine_image_excludes_occupied_neighbor_and_keeps_distant_columns():
     image.paste("red", (0, 60, 1000, 80))  # MCDA23: 바로 아래 점유 행
     layout = {"mc_id": "MCDA01", "row_top": 40, "row_bottom": 60,
               "columns": {"mc_id": [800, 880], "remote": [450, 550],
-                          "control_user": [900, 1000]}}
+                          "connection_user": [900, 1000]}}
     fine = build_row_read_image(image, layout, "MCDA01")
     colors = {color for count, color in fine.getcolors(fine.width * fine.height)}
     assert (0, 0, 255) in colors
@@ -118,14 +118,14 @@ def test_coarse_then_fine_rejects_multiple_mc_ids(monkeypatch, tmp_path):
     monkeypatch.setattr(checker, "DEBUG_IMAGE_DIR", tmp_path)
     layout = {"mc_id": "MCDA01", "row_top": 40, "row_bottom": 60,
               "columns": {"mc_id": [800, 880], "remote": [450, 550],
-                          "control_user": [900, 1000]}}
+                          "connection_user": [900, 1000]}}
     from poc.workflow_3.vlm.label_verify import PointTextRead
     monkeypatch.setattr(checker, "locate_row_point", lambda *a: {"x": 840, "y": 50})
     monkeypatch.setattr(checker, "read_text_near_point", lambda *a, **kw: PointTextRead(ok=True, raw_text="MCDA01"))
     for ids, expected in ((["MCDA01"], "free"), (["MCDA01", "MCDA23"], "unknown"),
                           (["MCDA23"], "unknown")):
         responses = iter([layout, {"mc_id": "MCDA01", "row_confirmed": True,
-                          "visible_mc_ids": ids, "remote_text": "", "control_user_text": ""}])
+                          "visible_mc_ids": ids, "remote_text": "", "connection_user_text": ""}])
         calls = []
         def chat(**kwargs):
             calls.append(kwargs)
@@ -149,7 +149,7 @@ def test_wrong_paddle_id_stops_before_occupancy_read(monkeypatch, tmp_path):
     def chat(**kwargs):
         calls.append(kwargs)
         return SimpleNamespace(text=json.dumps({"columns": {
-            "mc_id": [800, 880], "remote": [450, 550], "control_user": [900, 1000]}}))
+            "mc_id": [800, 880], "remote": [450, 550], "connection_user": [900, 1000]}}))
     for raw in ("MC0916", "MCD916", "MCDA23 MCD916", ""):
         monkeypatch.setattr(checker, "read_text_near_point", lambda *a, **kw: PointTextRead(ok=True, raw_text=raw))
         report = checker.check_tool_occupancy(Image.new("RGB", (1000, 200)), "MCDA23",
@@ -184,10 +184,10 @@ def test_locator_maps_column_point_and_paddle_reads_target_band(monkeypatch, tmp
         ocr_calls.append(kwargs)
         return SimpleNamespace(text="MCDA23")
     responses = iter([
-        {"columns": {"mc_id": [800, 880], "remote": [450, 550], "control_user": [900, 1000]},
+        {"columns": {"mc_id": [800, 880], "remote": [450, 550], "connection_user": [900, 1000]},
          "row_top": 40, "row_bottom": 60},  # 과거 coarse y는 사용하지 않는다.
         {"mc_id": "MCDA23", "visible_mc_ids": ["MCDA23"], "row_confirmed": True,
-         "remote_text": "1", "control_user_text": "kim"},
+         "remote_text": "1", "connection_user_text": "kim"},
     ])
     client = SimpleNamespace(chat_with_image_b64=lambda **kw: SimpleNamespace(text=json.dumps(next(responses))))
     report = checker.check_tool_occupancy(image, "MCDA23", client=client,
@@ -202,7 +202,7 @@ def test_locator_maps_column_point_and_paddle_reads_target_band(monkeypatch, tmp
 def test_mc_id_padding_widens_both_sides_without_crossing_known_columns():
     from poc.workflow_3.check_tool_occupancy import widen_mc_id_column
 
-    columns = {"mc_id": [800, 880], "remote": [450, 550], "control_user": [900, 1000]}
+    columns = {"mc_id": [800, 880], "remote": [450, 550], "connection_user": [900, 1000]}
     widened = widen_mc_id_column(columns, 1000)
     assert widened["mc_id"] == [776, 900]
     assert columns["mc_id"] == [800, 880]

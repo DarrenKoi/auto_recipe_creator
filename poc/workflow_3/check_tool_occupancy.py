@@ -1,4 +1,4 @@
-"""RCS List의 Remote / Control User 판독. 클릭 없이 단독 점검 가능.
+"""RCS List의 Remote / Connection User(최우측 컬럼) 판독. 클릭 없이 단독 점검 가능.
 
 uv run python -m poc.workflow_3.check_tool_occupancy
 아래 ACTION_TARGET_TOOL_NAME 수정, 선택: TOOL_OCCUPANCY_IMAGE=/path/list.jpg
@@ -40,7 +40,7 @@ def classify_reading(reading: dict, tool_name: str) -> str:
             or reading["mc_id"].strip().upper() != tool_name.strip().upper()):
         return UNKNOWN
     remote = reading.get("remote_text")
-    user = reading.get("control_user_text")
+    user = reading.get("connection_user_text")
     if remote is not None and not isinstance(remote, str):
         return UNKNOWN
     if user is not None and not isinstance(user, str):
@@ -60,7 +60,7 @@ def validate_columns(columns, image_width: int):
     if not isinstance(columns, dict):
         raise ValueError("missing column bounds")
     spans = []
-    for name in ("mc_id", "remote", "control_user"):
+    for name in ("mc_id", "remote", "connection_user"):
         span = columns.get(name)
         if (not isinstance(span, list) or len(span) != 2
                 or any(type(v) is not int for v in span)
@@ -76,7 +76,7 @@ def widen_mc_id_column(columns: dict, image_width: int) -> dict:
     """MC ID만 좌우로 확장한다. 이미지/확인된 다른 컬럼 경계에서 멈춘다."""
     left, right = columns["mc_id"]
     lower, upper = 0, image_width
-    for name in ("remote", "control_user"):
+    for name in ("remote", "connection_user"):
         start, end = columns[name]
         if end <= left:
             lower = max(lower, end)
@@ -98,14 +98,14 @@ def build_row_read_image(image, layout: dict, tool_name: str):
     columns = layout.get("columns")
     validate_columns(columns, image.width)
     cells = []
-    for name in ("mc_id", "remote", "control_user"):
+    for name in ("mc_id", "remote", "connection_user"):
         left, right = columns[name]
         cell = image.crop((left, top, right, bottom)).convert("RGB")
         cells.append(cell.resize((cell.width * CELL_UPSCALE, cell.height * CELL_UPSCALE)))
     panel_height = cells[0].height + 28
     fine = Image.new("RGB", (max(cell.width for cell in cells) + 16, panel_height * 3), "white")
     draw = ImageDraw.Draw(fine)
-    for index, (label, cell) in enumerate(zip(("MC ID", "Remote", "Control User"), cells)):
+    for index, (label, cell) in enumerate(zip(("MC ID", "Remote", "Connection User"), cells)):
         y = index * panel_height
         draw.text((8, y + 4), label, fill="black")
         fine.paste(cell, (8, y + 24))
@@ -149,14 +149,16 @@ def check_tool_occupancy(image, tool_name: str, *, client=None, row_point=None, 
             user_text=(
                 f"Image size is {image.width} x {image.height} pixels. "
                 "Locate only the horizontal column boundaries using the MC ID, Remote "
-                "and Control User headers/labels. Do not select any equipment row. "
+                "and Connection User headers/labels. Do not select any equipment row. "
                 "MC ID bounds must cover the FULL equipment ID text width, not just "
                 "the short MC ID header. Use the boundary before the adjacent RCS IP column. "
                 "Do not assume a left/right column order. Remote bounds must contain "
-                "the count next to Remote, not just its label. Control User bounds must "
-                "cover the entire user cell width. Return absolute image pixel x values "
+                "the count next to Remote, not just its label. Connection User is the "
+                "LAST column at the far right edge of the table (there is also a separate "
+                "Control User column; do NOT return that one). Its bounds must cover the "
+                "entire user cell width up to the table's right edge. Return absolute image pixel x values "
                 "(NOT normalized 0-1000), with this schema: "
-                '{"columns":{"mc_id":[10,110],"remote":[400,500],"control_user":[700,900]}}. '
+                '{"columns":{"mc_id":[10,110],"remote":[400,500],"connection_user":[700,900]}}. '
                 "The numbers are examples only. Use null for any uncertain column."
             ),
             temperature=0.0,
@@ -209,17 +211,17 @@ def check_tool_occupancy(image, tool_name: str, *, client=None, row_point=None, 
             image_mime="image/webp",
             system_message="Transcribe three cropped RCS cells. Return only JSON. Never guess blank cells.",
             user_text=(
-                "The image contains three labelled panels: MC ID, Remote, Control User. "
+                "The image contains three labelled panels: MC ID, Remote, Connection User. "
                 "Each panel contains an enlarged cell cropped from the SAME pixel row band. "
                 "Read only cell content below each label; labels are not cell values. "
                 "Transcribe ALL equipment IDs visible in the MC ID panel into visible_mc_ids. "
                 "If two rows or partial neighboring text are visible, row_confirmed=false. "
-                "Read the Remote count and Control User text independently. "
+                "Read the Remote count and Connection User text independently. "
                 "Use empty string ONLY for a completely visible, confidently empty cell. "
                 "Use null for clipped, partial or unreadable content. Never infer empty "
                 "from failed recognition. Schema: "
                 '{"mc_id":"transcribed ID","visible_mc_ids":["transcribed ID"],'
-                '"row_confirmed":true,"remote_text":"1","control_user_text":"visible user"}. '
+                '"row_confirmed":true,"remote_text":"1","connection_user_text":"visible user"}. '
                 "Transcribe the actual MC ID, never substitute an expected ID."
             ),
             temperature=0.0,

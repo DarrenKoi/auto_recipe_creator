@@ -296,7 +296,7 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 ## List 점유 확인 / 접속 전 게이트
 
 Align Fail 접속은 **MC ID를 더블클릭하기 전에** List의 해당 행을 판독한다.
-`Remote` 옆 count와 같은 행의 `Control User`를 coarse → fine으로 읽는다.
+`Remote` 옆 count와 같은 행의 `Connection User`를 coarse → fine으로 읽는다.
 
 1. **컬럼 검출:** VLM은 헤더로 세 컬럼의 x 범위만 찾는다. 행 y 좌표는 이 응답에서 받지 않는다.
 2. **행 위치:** MC ID 컬럼만 잘라 기존 coarse → fine 로케이터로 목표 ID의 중심을 찾는다.
@@ -318,18 +318,18 @@ Align Fail 접속은 **MC ID를 더블클릭하기 전에** List의 해당 행�
 
 | 상태 | 판별 | 접속 |
 |---|---|---|
-| `occupied_by_other` | Remote count가 양수이거나 Control User에 텍스트가 있음 | 클릭 없이 보류, 점유 cooldown 후 재시도 |
+| `occupied_by_other` | Remote count가 양수이거나 Connection User에 텍스트가 있음 | 클릭 없이 보류, 점유 cooldown 후 재시도 |
 | `free` | 정확한 MC ID 행에서 두 필드가 모두 확실히 비어 있음 | 기존 검증 후 더블클릭 |
 | `unknown` | 행 불일치, 필드 누락/잘림/판독 불가, VLM 실패 | 클릭 없이 보류, 실패 cooldown 후 재시도 |
 
-Remote를 읽기 어려워도 Control User가 채워져 있으면 점유로 판정한다.
-Control User만 비어 있고 Remote가 판독 불가이면 `unknown`이다.
+Remote를 읽기 어려워도 Connection User가 채워져 있으면 점유로 판정한다.
+Connection User만 비어 있고 Remote가 판독 불가이면 `unknown`이다.
 List 확인 이후 점유가 바뀌어 `select` 팝업이 뜨면 기존 팝업/공유 처리로 대응한다.
 처음부터 List에서 점유로 확인한 장비에는 공유 요청을 위해 진입하지 않는다.
 
 ### 클릭 없는 단독 점검
 
-RCS 로그인 후 List 탭을 열고 대상 MC ID와 Remote / Control User가 보이게 한다.
+RCS 로그인 후 List 탭을 열고 대상 MC ID와 Remote / Connection User가 보이게 한다.
 `check_tool_occupancy.py`의 `ACTION_TARGET_TOOL_NAME = "MCDA23"`을 직접 수정한다.
 단독 점검은 이 코드 값을 사용하고, 알람 루프는 알람의 EQP_ID를 사용한다.
 

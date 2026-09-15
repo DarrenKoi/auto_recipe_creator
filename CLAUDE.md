@@ -179,7 +179,7 @@ uv run pytest poc/workflow_3/monitor/test_guard_readings.py          # 12 (Guard
 uv run pytest poc/workflow_3/monitor/test_measurement_verification.py # 7 (Verification record + unknown-only stub)
 uv run pytest poc/workflow_3/monitor/test_numerator_records.py       # 6 (분자 per-read 기록/판정 분류)
 uv run pytest poc/workflow_3/monitor/test_frame_meta_recorder.py     # 5 (알람 녹화 사이드카 + manifest additive)
-uv run pytest poc/workflow_3/monitor/test_cycle_timing.py            # 2 (logs/align_fail_timing.csv 소요 시간 행: 보정/알람->보정/사이클, UTC9 로컬 해석)
+uv run pytest poc/workflow_3/monitor/test_cycle_timing.py            # 3 (logs/align_fail_timing.csv 소요 시간 행: 보정/알람->보정/사이클, UTC9 로컬 해석)
 uv run pytest poc/workflow_3/monitor/test_prelude_recording.py        # 4 (접속 구간 화면 녹화 게이트/저장 위치/인계)
 uv run pytest poc/workflow_3/monitor/test_demonstration_rcs_control.py  # 124 (시연 흐름 + 확인 게이트 + 클릭/대문자 입력 + Alt+click 가림 해제)
 uv run pytest poc/workflow_3/monitor/test_make_demo_video.py          # 16 (prelude 시간축 접합 + 편집 구간 + letterbox)

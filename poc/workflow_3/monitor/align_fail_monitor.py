@@ -252,6 +252,7 @@ CYCLE_TIMING_COLUMNS = [
     "correction_sec",           # 보정 step 만 (key 매칭 + reposition + OK)
     "alarm_to_correction_sec",  # 알람 UTC9 -> 보정 끝 (폴링 지연/다운로드/접속 포함)
     "cycle_sec",                # 사이클 시작 -> tool 닫힘 (엔지니어 대기 포함)
+    "run_dir",                  # 테이크 고유 키 - tag 는 cooldown 재시도가 재사용한다
 ]
 
 
@@ -422,36 +423,28 @@ def append_cycle_manifest(
     """알람 1건의 메타 + 사이클 결과를 CSV manifest 에 한 줄 누적한다.
 
     파일이 없으면 헤더를 먼저 쓴다. 기록 실패는 삼켜 루프가 죽지 않게 한다.
+    소요 시간(align_fail_timing.csv)도 여기서 함께 누적한다.
     """
     detected_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
-        CYCLE_MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
-        write_header = (
-            not CYCLE_MANIFEST_PATH.exists()
-            or CYCLE_MANIFEST_PATH.stat().st_size == 0
-        )
-        with CYCLE_MANIFEST_PATH.open("a", encoding="utf-8", newline="") as fp:
-            writer = csv.writer(fp)
-            if write_header:
-                writer.writerow(CYCLE_MANIFEST_COLUMNS)
-            writer.writerow([
-                detected_at,
-                cycle.eqp_id,
-                cycle.recipe_id,
-                info["alid"],
-                info["utc9"],
-                info["alarm_name"],
-                cycle.run_status,
-                cycle.failed_step,
-                cycle.failure_class,
-                cycle.outcome_status,
-                cycle.outcome_path,
-                cycle.key_decision,
-                cycle.best_xy,
-                cycle.frame_count,
-                cycle.recording_dir,
-                cycle.run_dir,
-            ])
+        _append_csv_row(CYCLE_MANIFEST_PATH, CYCLE_MANIFEST_COLUMNS, [
+            detected_at,
+            cycle.eqp_id,
+            cycle.recipe_id,
+            info["alid"],
+            info["utc9"],
+            info["alarm_name"],
+            cycle.run_status,
+            cycle.failed_step,
+            cycle.failure_class,
+            cycle.outcome_status,
+            cycle.outcome_path,
+            cycle.key_decision,
+            cycle.best_xy,
+            cycle.frame_count,
+            cycle.recording_dir,
+            cycle.run_dir,
+        ])
         print(
             f"[INFO] cycle manifest 기록 → {CYCLE_MANIFEST_PATH} "
             f"(EQP_ID={cycle.eqp_id}, run={cycle.run_status}, outcome={cycle.outcome_status or '-'})"
@@ -463,6 +456,16 @@ def append_cycle_manifest(
     append_cycle_timing(info, cycle)
 
 
+def _append_csv_row(path, columns, row) -> None:
+    """CSV 에 한 줄 누적한다. 파일이 비어 있으면(append 위치 0) 헤더를 먼저 쓴다."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8", newline="") as fp:
+        writer = csv.writer(fp)
+        if fp.tell() == 0:
+            writer.writerow(columns)
+        writer.writerow(row)
+
+
 def _fmt_epoch(epoch) -> str:
     return datetime.fromtimestamp(epoch).strftime("%Y-%m-%d %H:%M:%S") if epoch else ""
 
@@ -471,45 +474,42 @@ def _span_sec(start, end) -> str:
     return f"{end - start:.1f}" if start and end else ""
 
 
-def build_timing_row(info: dict, cycle: CycleResult) -> list:
-    """CYCLE_TIMING_COLUMNS 순서의 한 행. 도달하지 않은 지점은 빈 칸이다."""
+def build_timing_row(info: dict, cycle: CycleResult) -> dict:
+    """CYCLE_TIMING_COLUMNS 키의 한 행. 도달하지 않은 지점은 빈 칸이다."""
     alarm_ts = pd.to_datetime(info.get("utc9") or None, errors="coerce")
     # to_pydatetime().timestamp(): naive 시각을 로컬로 해석한다. pandas Timestamp.timestamp()
     # 는 naive 를 UTC 로 보므로 KST 에서 9시간 어긋난다(윈도우 필터도 로컬 now 와 비교).
     alarm_epoch = None if pd.isna(alarm_ts) else alarm_ts.to_pydatetime().timestamp()
-    return [
-        cycle.eqp_id,
-        cycle.recipe_id,
-        cycle.tag,
-        info.get("utc9", ""),
-        cycle.outcome_status,
-        cycle.failure_class,
-        _fmt_epoch(cycle.started_at),
-        _fmt_epoch(cycle.correction_started_at),
-        _fmt_epoch(cycle.correction_finished_at),
-        _fmt_epoch(cycle.finished_at),
-        _span_sec(cycle.correction_started_at, cycle.correction_finished_at),
-        _span_sec(alarm_epoch, cycle.correction_finished_at),
-        _span_sec(cycle.started_at, cycle.finished_at),
-    ]
+    return {
+        "eqp_id": cycle.eqp_id,
+        "recipe_id": cycle.recipe_id,
+        "tag": cycle.tag,
+        "alarm_time": info.get("utc9", ""),
+        "outcome_status": cycle.outcome_status,
+        "failure_class": cycle.failure_class,
+        "cycle_started_at": _fmt_epoch(cycle.started_at),
+        "correction_started_at": _fmt_epoch(cycle.correction_started_at),
+        "correction_finished_at": _fmt_epoch(cycle.correction_finished_at),
+        "cycle_finished_at": _fmt_epoch(cycle.finished_at),
+        "correction_sec": _span_sec(cycle.correction_started_at, cycle.correction_finished_at),
+        "alarm_to_correction_sec": _span_sec(alarm_epoch, cycle.correction_finished_at),
+        "cycle_sec": _span_sec(cycle.started_at, cycle.finished_at),
+        "run_dir": cycle.run_dir,
+    }
 
 
 def append_cycle_timing(info: dict, cycle: CycleResult) -> None:
     """알람 1건의 소요 시간을 align_fail_timing.csv 에 한 줄 누적한다(실패는 삼킨다)."""
     try:
         row = build_timing_row(info, cycle)
-        CYCLE_TIMING_PATH.parent.mkdir(parents=True, exist_ok=True)
-        write_header = (
-            not CYCLE_TIMING_PATH.exists() or CYCLE_TIMING_PATH.stat().st_size == 0
+        _append_csv_row(
+            CYCLE_TIMING_PATH, CYCLE_TIMING_COLUMNS, [row[c] for c in CYCLE_TIMING_COLUMNS]
         )
-        with CYCLE_TIMING_PATH.open("a", encoding="utf-8", newline="") as fp:
-            writer = csv.writer(fp)
-            if write_header:
-                writer.writerow(CYCLE_TIMING_COLUMNS)
-            writer.writerow(row)
         print(
             f"[INFO] timing 기록 -> {CYCLE_TIMING_PATH} "
-            f"(보정={row[10] or '-'}s, 알람->보정={row[11] or '-'}s, 사이클={row[12] or '-'}s)"
+            f"(보정={row['correction_sec'] or '-'}s, "
+            f"알람->보정={row['alarm_to_correction_sec'] or '-'}s, "
+            f"사이클={row['cycle_sec'] or '-'}s)"
         )
     except Exception as exc:
         print(f"[WARNING] timing 기록 실패: {exc}")

@@ -3,6 +3,7 @@
 `uv run pytest poc/workflow_3/monitor/test_cycle_timing.py`
 """
 
+import csv
 from datetime import datetime
 
 from poc.workflow_3.monitor import align_fail_monitor as afm
@@ -13,17 +14,17 @@ def _local(hms: str) -> float:
     return datetime.strptime(f"2026-09-15 {hms}", "%Y-%m-%d %H:%M:%S").timestamp()
 
 
-def _row(info, cycle) -> dict:
-    return dict(zip(afm.CYCLE_TIMING_COLUMNS, afm.build_timing_row(info, cycle), strict=True))
-
-
-def test_full_cycle_durations_use_local_alarm_time():
-    cycle = CycleResult(
+def _full_cycle() -> CycleResult:
+    return CycleResult(
         eqp_id="EQP1", recipe_id="CLS/RCP", tag="t", outcome_status="corrected",
+        run_dir="logs/workflow_runs/run1",
         started_at=_local("10:01:00"), finished_at=_local("10:03:00"),
         correction_started_at=_local("10:01:30"), correction_finished_at=_local("10:02:10"),
     )
-    row = _row({"utc9": "2026-09-15 10:00:00"}, cycle)
+
+
+def test_full_cycle_durations_use_local_alarm_time():
+    row = afm.build_timing_row({"utc9": "2026-09-15 10:00:00"}, _full_cycle())
 
     assert row["correction_sec"] == "40.0"
     # naive UTC9 를 UTC 로 해석하면 KST 에서 9시간(32400s) 어긋난다.
@@ -37,9 +38,23 @@ def test_correction_not_reached_leaves_blanks():
         eqp_id="EQP1", recipe_id="", tag="t", failure_class="rcs_occupied",
         started_at=_local("10:01:00"), finished_at=_local("10:01:45"),
     )
-    row = _row({"utc9": "not-a-time"}, cycle)
+    row = afm.build_timing_row({"utc9": "not-a-time"}, cycle)
 
     assert row["correction_started_at"] == ""
     assert row["correction_sec"] == ""
     assert row["alarm_to_correction_sec"] == ""
     assert row["cycle_sec"] == "45.0"
+
+
+def test_append_writes_header_once_in_column_order(tmp_path, monkeypatch):
+    monkeypatch.setattr(afm, "CYCLE_TIMING_PATH", tmp_path / "logs" / "timing.csv")
+    info = {"utc9": "2026-09-15 10:00:00"}
+
+    afm.append_cycle_timing(info, _full_cycle())
+    afm.append_cycle_timing(info, _full_cycle())
+
+    with afm.CYCLE_TIMING_PATH.open(encoding="utf-8", newline="") as fp:
+        rows = list(csv.DictReader(fp))
+    assert len(rows) == 2
+    assert rows[1]["correction_sec"] == "40.0"
+    assert rows[1]["run_dir"] == "logs/workflow_runs/run1"

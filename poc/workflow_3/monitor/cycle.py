@@ -155,9 +155,9 @@ class CycleResult:
     failed_step: str = ""
     failure_class: str = ""
     notes: list[str] = field(default_factory=list)
-    # 소요 시간 기록(align_fail_timing.csv)용 epoch 초. 0/None = 그 지점에 도달하지 않음.
-    started_at: float = 0.0
-    finished_at: float = 0.0
+    # 소요 시간 기록(align_fail_timing.csv)용 epoch 초. None = 그 지점에 도달하지 않음.
+    started_at: float | None = None
+    finished_at: float | None = None
     correction_started_at: float | None = None
     correction_finished_at: float | None = None
 
@@ -996,8 +996,6 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
     from poc.workflow_3.align.grid_search import GridSearchConfig
 
     grid_mag = _build_grid_mag_control(context, settings, debug_dir)
-    # 소요 시간 기록 - 보정을 실제로 시도한 경우만 채운다(점유/RECIPE_ID 없음은 위에서 반환).
-    context["correction_started_at"] = started_at
     try:
         outcome = correct_align_fail_auto(
             context["controller"],
@@ -1041,7 +1039,8 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
             failure_class="correction_error", error_message=f"{type(exc).__name__}: {exc}",
         )
     finally:
-        context["correction_finished_at"] = time.time()
+        # 소요 시간 기록 - 보정을 실제로 시도한 경우만 채운다(점유/RECIPE_ID 없음은 위에서 반환).
+        context["correction_span"] = (started_at, time.time())
     # 점유 미확정이면 '보정 완료' 로 보고하지 않는다 - 알림이 생략되면 안 된다.
     # 여기까지 왔으면 보정을 실제로 시도한 것이다(점유 skip 은 위에서 early return).
     resolved = resolve_correction_outcome_status(occupancy, outcome.status, attempted=True)
@@ -1568,6 +1567,7 @@ def run_alarm_cycle(
         notify_correction_outcome(
             eqp_id, recipe_id, None, enabled=settings.rich_notify_enabled
         )
+        result.finished_at = time.time()
         return result
 
     context: dict = {"eqp_id": eqp_id, "recipe_id": recipe_id, "tag": tag}
@@ -1732,8 +1732,9 @@ def run_alarm_cycle(
         # 훅을 걸면 그 테이크가 통째로 빠진다.
         gather_and_report(result, context, started_epoch=cycle_started_at)
 
-        result.correction_started_at = context.get("correction_started_at")
-        result.correction_finished_at = context.get("correction_finished_at")
+        result.correction_started_at, result.correction_finished_at = context.get(
+            "correction_span", (None, None)
+        )
         result.finished_at = time.time()
 
         # tool 창을 닫고 빠져나온 직후 = 엔지니어가 화면을 되찾는 순간. 이 테이크가

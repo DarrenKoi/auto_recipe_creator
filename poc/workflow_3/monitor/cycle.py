@@ -1025,6 +1025,7 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
                 pan_budget=settings.search_pan_budget,
                 odom_tol_fov=settings.search_odom_tol_fov,
                 max_chase=settings.search_max_chase,
+                candidate_score=settings.search_candidate_score,
             ),
         )
     except Exception as exc:

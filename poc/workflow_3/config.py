@@ -344,6 +344,7 @@ class Workflow3Settings(WorkflowSettings):
     search_radius_um: float = 30.0      # 탐색 반경 R(시험값). 박스 = 2R.
     search_min_key_px: int = 60         # zoom-out 후 key 최소 픽셀(오피스 실측으로 확정).
     search_max_chase: int = 3           # sweep 뒤 추격할 후보 수(각각 배율 왕복).
+    search_candidate_score: float = 0.30  # sweep 셀을 추격할 최소 점수(zoom-out 단일 scale 이라 낮게).
     search_odom_tol_fov: float = 0.15   # odometry |측정-명령| 허용(FOV 비율).
     # PM 판독으로 OM/SEM 을 확정하지 못했을 때 보정을 보류할지(기본 on).
     # modality 를 틀리면 다른 template(IMAP0001 OM vs IMAP0002 SEM)로 매칭해 좌표가
@@ -495,6 +496,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         search_radius_um=env_float("ALIGN_FAIL_SEARCH_RADIUS_UM", 30.0),
         search_min_key_px=env_int("ALIGN_FAIL_SEARCH_MIN_KEY_PX", 60),
         search_max_chase=env_int("ALIGN_FAIL_SEARCH_MAX_CHASE", 3),
+        search_candidate_score=env_float("ALIGN_FAIL_SEARCH_CANDIDATE_SCORE", 0.30),
         search_odom_tol_fov=env_float("ALIGN_FAIL_SEARCH_ODOM_TOL_FOV", 0.15),
         require_pm_mode=env_flag("ALIGN_FAIL_REQUIRE_PM_MODE", default=True),
         sem_mode_default=_env_str("ALIGN_SEM_MODE_DEFAULT", "SEM"),

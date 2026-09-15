@@ -531,6 +531,43 @@ def test_chase_stops_when_confirm_mag_cannot_be_read():
     assert not [h for h in out.history if h.get("phase") == "confirm"]
 
 
+def test_low_decision_cell_above_candidate_score_is_still_chased():
+    """sweep 은 zoom-out 단일 scale 매칭이라 key 위에서도 decision=low 로 나올 수 있다.
+    점수만으로 추격하고, 정확성은 등록 배율 confirm(match) 이 지킨다."""
+    ctl = _Ctl()
+    calls = {"n": 0}
+
+    def _weak_then_match(template, frame, **kw):
+        fh, fw = frame.shape[:2]
+        calls["n"] += 1
+        confirm = kw.get("scales", (0.0,))[0] >= gs.MIN_CONFIRM_SCALE
+        return AlignKeyMatchResult(
+            score=0.9 if confirm else 0.35, chamfer_score=0.5, orb_inlier_ratio=0.0,
+            best_xy=(fw // 2 + 5, fh // 2), best_scale=1.0,
+            decision="match" if confirm else "low", debug_overlay=frame,
+        )
+
+    mag = _Mag(CG_OPTIONS, reg_mag=30000)
+    out = gs.grid_align_search(ctl, _tpl(), mag.control(), reg_mag=30000,
+                               config=gs.GridSearchConfig(pan_budget=1), match_fn=_weak_then_match)
+    assert out.status == "match"
+    assert [h for h in out.history if h.get("phase") == "confirm"]
+    out = gs.grid_align_search(ctl, _tpl(), mag.control(), reg_mag=30000,
+                               config=gs.GridSearchConfig(pan_budget=1, candidate_score=0.5),
+                               match_fn=_weak_then_match)
+    assert out.status == "exhausted"
+
+
+def test_search_around_writes_grid_history_json(tmp_path):
+    ctl = _Ctl()
+    mag = _Mag(CG_OPTIONS, reg_mag=30000)
+    gs.search_around(ctl, _tpl(), grid_mag=mag.control(), reg_mag=30000,
+                     grid_config=gs.GridSearchConfig(pan_budget=1), debug_dir=tmp_path)
+    import json
+    dumped = json.loads((tmp_path / "grid_search.json").read_text(encoding="utf-8"))
+    assert dumped["status"] == "exhausted" and dumped["history"] and "search_mag" in dumped["meta"]
+
+
 def test_notify_fn_fires_once_when_grid_search_ends_without_match():
     ctl = _Ctl()
     mag = _Mag(CG_OPTIONS, reg_mag=30000)

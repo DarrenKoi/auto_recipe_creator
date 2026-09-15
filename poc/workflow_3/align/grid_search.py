@@ -15,6 +15,7 @@ mock 으로 전부 검증된다. 진입점은 ``search_around`` — grid 가 배
 """
 
 import math
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -200,7 +201,11 @@ class GridSearchConfig:
     pan_budget: int = 10           # sweep 셀 수 상한(= 1 FOV step 수).
     click_margin_ratio: float = 0.12  # recenter 클릭의 FOV 안쪽 여백 -> 1 클릭 최대 0.38 FOV.
     odom_tol_fov: float = 0.15     # |측정 - 명령| 허용(FOV 비율). 넘으면 명령값 폴백 + flag.
-    candidate_score: float = STRUCTURE_POLICY.adjust_threshold  # 추격 대상 최소 점수.
+    # 추격 대상 최소 점수(sweep 은 zoom-out 단일 scale 매칭이라 key 가 보여도 점수가 낮다 -
+    # 2026-09-15 오피스: OM key 위를 지나가고도 추격 0회). 종전 0.40 은 `decision != "low"`
+    # 와 겹쳐 실효 임계가 ensemble_adjust 0.4727 이었다(겉보기 게이트). 이제 점수만 본다 -
+    # 정확성은 등록 배율 confirm(decision == "match") 이 지킨다. env ALIGN_FAIL_SEARCH_CANDIDATE_SCORE.
+    candidate_score: float = 0.30
     max_chase: int = 3             # 추격할 후보 수 상한(점수순). 추격마다 배율 왕복이 들어간다.
 
 
@@ -376,9 +381,11 @@ def grid_align_search(
     status = "exhausted"
     if not aborted:
         chase = sorted(
-            (r for r in records if r["score"] >= config.candidate_score and r["decision"] != "low"),
+            (r for r in records if r["score"] >= config.candidate_score),
             key=lambda r: -r["score"],
         )[: max(0, config.max_chase)]
+        print(f"[INFO] grid search: 추격 후보 {len(chase)}/{len(records)} "
+              f"(candidate_score>={config.candidate_score}, top={[round(r['score'], 3) for r in chase]})")
         for rec in chase:
             cx, cy = rec["cell"]
             if not stage.move_to(cx * fw, cy * fh):
@@ -474,6 +481,16 @@ def search_around(
         out = grid_align_search(controller, templates, grid_mag, reg_mag=reg_mag,
                                 config=grid_config or GridSearchConfig(),
                                 notify_fn=notify_fn, debug_dir=debug_dir)
+        if debug_dir is not None:
+            # 셀별 score/decision/scale 이 "key 위를 지나갔는데 왜 안 잡혔나" 의 유일한 근거다.
+            # work2.log 를 grep 하지 않아도 되게 한 파일로 남긴다.
+            try:
+                debug_dir.mkdir(parents=True, exist_ok=True)
+                (debug_dir / "grid_search.json").write_text(json.dumps(
+                    {"status": out.status, "meta": out.meta, "history": out.history},
+                    ensure_ascii=False, indent=1, default=str), encoding="utf-8")
+            except Exception as exc:
+                print(f"[WARNING] grid_search.json 저장 실패: {exc}")
         if out.status != "degraded":
             return out
         degraded_from = out.meta.get("reason")

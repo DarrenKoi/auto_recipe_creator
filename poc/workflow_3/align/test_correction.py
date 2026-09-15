@@ -299,53 +299,87 @@ def test_ok_detect_error() -> bool:
     return ok
 
 
-def _fake_client(payload_json: str):
+def _fake_client(*payloads: str):
+    """호출 순서대로 payload 를 돌려준다: 1) 다이얼로그 bbox, 2) crop 안 OK bbox."""
     class _FakeResp:
-        text = payload_json
+        def __init__(self, text):
+            self.text = text
 
     class _FakeClient:
+        def __init__(self):
+            self._it = iter(payloads)
+
         def chat_with_image_b64(self, **_kwargs):
-            return _FakeResp()
+            return _FakeResp(next(self._it))
 
     return _FakeClient()
 
 
-def test_ok_locator_mapping() -> bool:
-    """relative_1000 / pixel 두 coord_system 을 각각 올바른 screen 픽셀 중심으로 매핑."""
-    frame = np.zeros((600, 800), dtype=np.uint8)  # (h, w) = (600, 800)
+def _fake_ocr(*texts: str):
+    """PaddleOCR 대역: 1) 다이얼로그 문구, 2) OK 라벨."""
+    class _Resp:
+        def __init__(self, text):
+            self.text = text
 
-    # 1) relative_1000 — 정규화 좌표.
+    class _Ocr:
+        def __init__(self):
+            self._it = iter(texts)
+
+        def chat_with_image_path(self, **_kwargs):
+            return _Resp(next(self._it))
+
+    return _Ocr()
+
+
+_DIALOG_PAYLOAD = (
+    '{"dialog_visible": true, "coord_system": "pixel", '
+    '"dialog_bbox": {"left": 400, "top": 300, "right": 800, "bottom": 600}, "confidence": 0.9}'
+)
+
+
+def test_ok_locator_mapping() -> bool:
+    """OK bbox 는 다이얼로그 crop 좌표 -> 다이얼로그 offset 을 더한 screen 픽셀 중심으로 매핑."""
+    import tempfile
+    frame = np.zeros((600, 800), dtype=np.uint8)  # (h, w) = (600, 800); dialog crop = 400x300
+    tmp = tempfile.mkdtemp()
+
+    # 1) relative_1000 — crop 기준 정규화 좌표.
     rel_bbox = {"left": 800, "top": 880, "right": 920, "bottom": 960}
     got_rel = locate_ok_button(
         frame_bgr=frame,
         client=_fake_client(
+            _DIALOG_PAYLOAD,
             '{"ok_button_visible": true, "coord_system": "relative_1000", '
             '"ok_button_bbox": {"left": 800, "top": 880, "right": 920, "bottom": 960}, '
-            '"confidence": 0.9}'
+            '"confidence": 0.9}',
         ),
+        ocr_client=_fake_ocr("Align Fail\nAlignment failed. Continue?", "OK"),
+        debug_image_dir=Path(tmp),
     )
-    exp_rel = bbox_center(bbox_to_pixels(rel_bbox, 800, 600, "relative_1000"))
-    ok_rel = got_rel == (exp_rel["x"], exp_rel["y"])
+    exp_rel = bbox_center(bbox_to_pixels(rel_bbox, 400, 300, "relative_1000"))
+    ok_rel = got_rel == (400 + exp_rel["x"], 300 + exp_rel["y"])
 
-    # 2) pixel — 모델이 절대 픽셀로 응답(fix #2: /1000 로 잘못 스케일하지 않아야).
-    px_bbox = {"left": 640, "top": 540, "right": 740, "bottom": 580}
+    # 2) pixel — 모델이 crop 절대 픽셀로 응답(fix #2: /1000 로 잘못 스케일하지 않아야).
+    px_bbox = {"left": 240, "top": 240, "right": 340, "bottom": 280}
     got_px = locate_ok_button(
         frame_bgr=frame,
         client=_fake_client(
+            _DIALOG_PAYLOAD,
             '{"ok_button_visible": true, "coord_system": "pixel", '
-            '"ok_button_bbox": {"left": 640, "top": 540, "right": 740, "bottom": 580}, '
-            '"confidence": 0.9}'
+            '"ok_button_bbox": {"left": 240, "top": 240, "right": 340, "bottom": 280}, '
+            '"confidence": 0.9}',
         ),
+        ocr_client=_fake_ocr("Align Fail", "OK"),
+        debug_image_dir=Path(tmp),
     )
-    exp_px = bbox_center(bbox_to_pixels(px_bbox, 800, 600, "pixel"))
-    # pixel 경로는 ~(689, 559) 근처여야 한다(상단 1/10 이 아니라 실제 버튼 위치).
-    ok_px = got_px == (exp_px["x"], exp_px["y"]) and got_px[0] > 600 and got_px[1] > 500
+    exp_px = bbox_center(bbox_to_pixels(px_bbox, 400, 300, "pixel"))
+    ok_px = got_px == (400 + exp_px["x"], 300 + exp_px["y"]) and got_px[0] > 600 and got_px[1] > 500
 
     ok = ok_rel and ok_px
     print(
         f"[{'PASS' if ok else 'FAIL'}] ok_locator mapping: "
-        f"rel got={got_rel} exp=({exp_rel['x']},{exp_rel['y']}) | "
-        f"pixel got={got_px} exp=({exp_px['x']},{exp_px['y']})"
+        f"rel got={got_rel} exp=({400 + exp_rel['x']},{300 + exp_rel['y']}) | "
+        f"pixel got={got_px} exp=({400 + exp_px['x']},{300 + exp_px['y']})"
     )
     return ok
 

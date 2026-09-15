@@ -102,10 +102,11 @@ CORRECT_WHEN_OCCUPIED = 0    # [위험] 남이 점유 중인 tool 을 그대로 
 # --- CV 보정 ---
 CORRECTION = 1               # 보정 사이클 자체.
 CORRECTION_DRY_RUN = None    # None 이면 실운전 기본값 0(실제 클릭)이 적용된다.
-OK_CLICK = 0                 # [위험] 보정 후 OK 를 자동으로 누른다.
-                             # 0 = 반자동(운영 기본값): reposition 까지만 하고
-                             # awaiting_engineer_ok 로 끝나 엔지니어가 OK 를 누른다.
-                             # 이 상태값이 있어야 cube 알림이 나가고 watch 도 계속 돈다.
+OK_CLICK = 1                 # 보정 후 OK 를 자동으로 누른다 = 완전 자동 제어.
+                             # 2026-09-15 사용자 결정: List 점유 게이트가 오피스에서
+                             # 확인된 뒤 반자동을 끝냈다. 0 으로 내리면 reposition 까지만
+                             # 하고 awaiting_engineer_ok 로 끝나 엔지니어가 OK 를 누른다
+                             # (그때는 cube 알림이 나가고 watch 도 계속 돈다).
 SEARCH_MODE = None           # "grid"(기본) | "legacy".
 FEASIBILITY_MARK = 1         # 보정 가능성 판정 이미지 마킹.
 REPOSITION_PREVIEW = None

@@ -214,6 +214,7 @@ def test_existing_retry_classes_preserved():
     """기존 점유/오클릭 분류를 잃지 않았는지."""
     assert "rcs_occupied" in _RETRY_LATER_FAILURE_CLASSES
     assert "rcs_occupied_select" in _RETRY_LATER_FAILURE_CLASSES
+    assert "rcs_occupancy_unknown" in _RETRY_LATER_FAILURE_CLASSES
     assert "wrong_tool_opened" in _RETRY_LATER_FAILURE_CLASSES
 
 

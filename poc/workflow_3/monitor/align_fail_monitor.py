@@ -477,7 +477,9 @@ def _set_keep_awake(enable: bool) -> None:
 
 
 # 점유(다른 사용자 사용 중)로 접속을 포기한 사이클의 failure_class — active 미등록 + cooldown.
-_OCCUPIED_FAILURE_CLASSES = {"rcs_occupied", "rcs_occupied_select"}
+# `rcs_occupancy_unknown` 은 List 점유 판독(check_tool_occupancy) 실패라 우리 인식 실패다 -
+# active 로 굳히면 점유자가 없어도 이 알람은 영영 재시도되지 않는다.
+_OCCUPIED_FAILURE_CLASSES = {"rcs_occupied", "rcs_occupied_select", "rcs_occupancy_unknown"}
 # List 오클릭(다른 tool 창이 열림)도 재시도 대상 — 장비 탓이 아니라 우리 인식 실패라
 # active 로 굳혀 버리면 이 알람은 영영 처리되지 않는다. cooldown 은 점유와 공유한다.
 _MISCLICK_FAILURE_CLASSES = {"wrong_tool_opened"}
@@ -498,6 +500,7 @@ _RETRY_LATER_OUTCOME_STATUSES = {VIEW_ONLY_OBSERVATION, CORRECTED_UNVERIFIED}
 _RETRY_LATER_REASONS = {
     "wrong_tool_opened": "List 오클릭(다른 tool 창 열림)",
     "rcs_share_confirm_failed": "공유 요청 라벨 확인 실패(클릭 안 함)",
+    "rcs_occupancy_unknown": "List 점유 판독 실패(접속 보류)",
 }
 
 

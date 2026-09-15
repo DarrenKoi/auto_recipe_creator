@@ -35,6 +35,40 @@ def test_icon_strip_sits_right_of_sem_box_and_stays_inside_image():
     assert edge["right"] == 700 and edge["top"] == 0 and edge["bottom"] == 500
 
 
+def _strip_with_icons(fills, bg=(235, 235, 235), icon=20, gap=12, width=60):
+    """세로로 나란한 아이콘 열. fills[i] 가 i 번째 아이콘의 채움색."""
+    strip = Image.new("RGB", (width, len(fills) * (icon + gap) + gap), bg)
+    for i, fill in enumerate(fills):
+        y = gap + i * (icon + gap)
+        ImageDraw.Draw(strip).rectangle((18, y, 18 + icon - 1, y + icon - 1), fill=fill)
+    return strip
+
+
+def test_segment_icon_runs_finds_each_stacked_icon_in_order():
+    grey = (120, 120, 120)
+    runs = cm.segment_icon_runs(_strip_with_icons([grey, grey, (0, 200, 60), grey, grey, grey]))
+    assert len(runs) == 6
+    assert runs[2] == {"left": 18, "top": 12 + 2 * 32, "right": 38, "bottom": 12 + 2 * 32 + 20}
+    assert all(runs[i]["bottom"] <= runs[i + 1]["top"] for i in range(5))
+    assert cm.segment_icon_runs(Image.new("RGB", (60, 100), (235, 235, 235))) == []
+
+
+def test_fixed_positions_pick_third_and_fifth_without_vlm(monkeypatch, tmp_path):
+    grey = (120, 120, 120)
+    image = Image.new("RGB", (400, 300), (235, 235, 235))
+    sem_box = {"left": 20, "top": 20, "right": 300, "bottom": 280}
+    # strip 은 x=300.., y=4.. ; 아이콘 6개 중 5번째(L자)만 초록
+    image.paste(_strip_with_icons([grey, grey, grey, grey, (0, 200, 60), grey]), (310, 30))
+    monkeypatch.setattr(cm, "detect_sem_box", lambda img, client: SimpleNamespace(bbox_px=sem_box))
+    def no_vlm(*a, **kw):
+        raise AssertionError("VLM must not be called when the icon column segments cleanly")
+    monkeypatch.setattr(cm, "analyze_window_target", no_vlm)
+    report = cm.detect_click_mode(image, client=object(), artifact_dir=tmp_path)
+    assert report["mode"] == "l_shape" and report["recenter_clicks"] == 1
+    assert report["icons"]["crosshair"]["source"] == "segment"
+    assert report["icons"]["crosshair"]["box"]["top"] == 30 + 12 + 2 * 32
+
+
 def test_detect_click_mode_searches_the_strip_and_maps_boxes_back(monkeypatch, tmp_path):
     image = Image.new("RGB", (400, 300), (235, 235, 235))
     sem_box = {"left": 20, "top": 20, "right": 300, "bottom": 280}
@@ -53,6 +87,7 @@ def test_detect_click_mode_searches_the_strip_and_maps_boxes_back(monkeypatch, t
     monkeypatch.setattr(cm, "analyze_window_target", locate)
     report = cm.detect_click_mode(image, client=object(), artifact_dir=tmp_path)
     assert report["mode"] == "crosshair" and report["recenter_clicks"] == 2
+    assert report["icons"]["crosshair"]["source"] == "vlm"  # 아이콘 2개뿐 -> 분할 불신 -> VLM
     assert report["icons"]["crosshair"]["box"] == {"left": 310, "top": 40, "right": 334, "bottom": 64}
     assert (tmp_path / "strip.jpg").exists() and (tmp_path / "result.json").exists()
 

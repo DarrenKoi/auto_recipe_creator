@@ -17,6 +17,9 @@ crosshair = 더블클릭, L자 = 싱글클릭. `sem_monitor.controller.RECENTER_
 단독 점검 (오피스, tool 창이 열려 있을 때; 클릭 없음):
   uv run python -m poc.workflow_3.sem_monitor.click_mode
   CLICK_MODE_IMAGE=/path/tool.jpg uv run python -m poc.workflow_3.sem_monitor.click_mode
+
+live 창에서 돌리면 판별 뒤 **커서를 crosshair -> L자 아이콘 중심으로 차례로 옮겨** 놓는다
+(클릭 없음, 눈으로 위치 검증용). 끄려면 CLICK_MODE_MOVE_CURSOR=0, 체류 CLICK_MODE_HOVER_SEC.
 """
 
 import os
@@ -38,6 +41,14 @@ STRIP_WIDTH_RATIO = 0.18
 STRIP_MIN_WIDTH_PX = 90
 STRIP_VERTICAL_PAD_PX = 16
 
+# 아이콘 열에서의 위치(위에서부터, 0-based). 사용자 확인 2026-09-15: crosshair 3번째, L자 5번째.
+# 위치가 고정이라 strip 안에서는 VLM 없이 세로 blob 분할로 찾는다(VLM 은 분할 실패 시 폴백).
+ICON_INDEX = {"crosshair": 2, "l_shape": 4}
+MIN_ICON_RUNS = 5              # 분할된 아이콘 run 이 이보다 적으면 분할을 믿지 않는다.
+ICON_MIN_HEIGHT_PX = 6         # 이보다 낮은 run 은 잡음(구분선 등)으로 버린다.
+ICON_BG_DIFF = 40              # 배경(최빈색)과의 채널 차이가 이 이상이면 아이콘 픽셀.
+ICON_ROW_MIN_FRACTION = 0.03   # 한 행에서 아이콘 픽셀이 이 비율 이상이어야 아이콘 행.
+
 MODE_CROSSHAIR = "crosshair"   # 더블클릭 이동
 MODE_L_SHAPE = "l_shape"       # 싱글클릭 이동
 MODE_UNKNOWN = "unknown"
@@ -56,18 +67,19 @@ ICON_TARGETS = {
     MODE_CROSSHAIR: TargetConfig(
         key="sem_crosshair_icon",
         description="the crosshair icon button (a plus sign '+' with a small circle at the "
-                    "centre) in the vertical column of small tool icons immediately to the "
-                    "RIGHT of the live SEM image. One of these icons may be filled green. "
-                    "Return the icon button itself, not any crosshair drawn inside the image.",
+                    "centre), the THIRD icon from the top in the vertical column of small tool "
+                    "icons immediately to the RIGHT of the live SEM image. One of these icons "
+                    "may be filled green. Return the icon button itself, not any crosshair "
+                    "drawn inside the image.",
         left_pad_ratio=1.0, right_pad_ratio=1.0, vertical_pad_ratio=1.0,
         min_crop_width=96, min_crop_height=96,
     ),
     MODE_L_SHAPE: TargetConfig(
         key="sem_l_shape_icon",
-        description="the L-shaped icon button (a corner bracket like the letter 'L') in the "
-                    "vertical column of small tool icons immediately to the RIGHT of the live "
-                    "SEM image, stacked above or below the crosshair icon. One of these icons "
-                    "may be filled green.",
+        description="the L-shaped icon button (a corner bracket like the letter 'L'), the "
+                    "FIFTH icon from the top in the vertical column of small tool icons "
+                    "immediately to the RIGHT of the live SEM image, two below the crosshair "
+                    "icon. One of these icons may be filled green.",
         left_pad_ratio=1.0, right_pad_ratio=1.0, vertical_pad_ratio=1.0,
         min_crop_width=96, min_crop_height=96,
     ),
@@ -122,6 +134,34 @@ def icon_strip_box(sem_box: dict, image_size) -> dict:
             "bottom": min(height, sem_box["bottom"] + STRIP_VERTICAL_PAD_PX)}
 
 
+def segment_icon_runs(strip) -> list[dict]:
+    """strip 을 위에서 아래로 훑어 아이콘 blob 의 bbox(strip 좌표) 목록을 낸다.
+
+    배경은 strip 의 최빈색이고, 어느 채널이든 그 색과 ICON_BG_DIFF 이상 다르면 아이콘
+    픽셀이다. 아이콘 행이 연속된 구간이 하나의 아이콘이며, 좌우는 그 구간 안의 아이콘
+    픽셀 범위다. 아이콘 위치가 고정(3번째/5번째)이라 이 목록의 index 로 바로 고른다.
+    """
+    rgb = np.asarray(strip.convert("RGB") if isinstance(strip, Image.Image) else strip).astype(np.int16)
+    if rgb.size == 0:
+        return []
+    flat = rgb.reshape(-1, 3)
+    colors, counts = np.unique(flat, axis=0, return_counts=True)
+    bg = colors[np.argmax(counts)]
+    mask = (np.abs(rgb - bg) >= ICON_BG_DIFF).any(axis=2)
+    row_on = mask.mean(axis=1) >= ICON_ROW_MIN_FRACTION
+    runs, start = [], None
+    for y, on in enumerate(list(row_on) + [False]):
+        if on and start is None:
+            start = y
+        elif not on and start is not None:
+            if y - start >= ICON_MIN_HEIGHT_PX:
+                cols = np.where(mask[start:y].any(axis=0))[0]
+                runs.append({"left": int(cols[0]), "top": start,
+                             "right": int(cols[-1]) + 1, "bottom": y})
+            start = None
+    return runs
+
+
 def _locate_sem_box(image, client, artifact_dir) -> dict | None:
     """오피스 검증된 detect_sem_box 로 라이브 SEM box(px)를 잡는다. 실패는 None."""
     try:
@@ -149,23 +189,34 @@ def detect_click_mode(image, *, client=None, artifact_dir=None) -> dict:
         search = image
         print("[WARNING] live SEM box 미검출 - 아이콘을 전체 창에서 찾는다(작아서 실패하기 쉬움)")
     report["strip"] = strip
+    # 1차: 위치 고정 분할(VLM 없음). strip 이 있고 run 이 충분할 때만 믿는다.
+    runs = segment_icon_runs(search) if sem_box is not None else []
+    report["icon_runs"] = runs
+    use_runs = len(runs) >= MIN_ICON_RUNS
+    print(f"[INFO] 아이콘 열 분할: runs={len(runs)} -> {'위치 고정 사용' if use_runs else 'VLM 폴백'}")
     ratios = {}
     for mode, target in ICON_TARGETS.items():
         result = None
+        box = None
+        source = "segment" if use_runs else "vlm"
         try:
-            result = analyze_window_target(
-                None, "tool window", "image", target, image=search,
-                debug_image_dir=artifact_dir / "locator", log_name="click_mode",
-                component_name="click_mode", artifact_prefix=mode,
-            )
-            box = _icon_box(result, search.size)
+            if use_runs:
+                box = dict(runs[ICON_INDEX[mode]])
+            else:
+                result = analyze_window_target(
+                    None, "tool window", "image", target, image=search,
+                    debug_image_dir=artifact_dir / "locator", log_name="click_mode",
+                    component_name="click_mode", artifact_prefix=mode,
+                )
+                box = _icon_box(result, search.size)
             if box is not None:  # strip 좌표 -> 전체 이미지 좌표
                 box = {"left": box["left"] + strip["left"], "top": box["top"] + strip["top"],
                        "right": box["right"] + strip["left"], "bottom": box["bottom"] + strip["top"]}
         except Exception as exc:
             print(f"[WARNING] {mode} 아이콘 로케이트 예외: {exc}")
             box = None
-        info = {"box": box, "green_ratio": None, "exit_code": getattr(result, "exit_code", "error")}
+        info = {"box": box, "green_ratio": None, "source": source,
+                "exit_code": getattr(result, "exit_code", "n/a")}
         if box is not None:
             crop = image.crop((box["left"], box["top"], box["right"], box["bottom"]))
             save_debug_jpeg(crop, artifact_dir / f"{mode}.jpg")
@@ -197,7 +248,31 @@ def main() -> int:
             return 2
         image = capture_window(window)
     report = detect_click_mode(image)
+    if not image_path and os.getenv("CLICK_MODE_MOVE_CURSOR", "1") != "0":
+        _hover_icons(window, image.size, report)
     return {MODE_CROSSHAIR: 0, MODE_L_SHAPE: 0, MODE_UNKNOWN: 1}[report["mode"]]
+
+
+def _hover_icons(window, image_size, report) -> None:
+    """검출한 아이콘 중심으로 커서만 옮긴다(클릭 없음). 좌표 변환은 DPI 보정 포함."""
+    from poc.workflow_3.util import image_point_to_screen, move_cursor_to_screen
+    if not callable(image_point_to_screen) or not callable(move_cursor_to_screen):
+        print("[INFO] 커서 이동 생략(Windows 유틸 없음)")
+        return
+    hover_sec = float(os.getenv("CLICK_MODE_HOVER_SEC", "2.0"))
+    for mode in (MODE_CROSSHAIR, MODE_L_SHAPE):
+        box = report["icons"].get(mode, {}).get("box")
+        if not box:
+            print(f"[INFO] 커서 이동 생략: {mode} 아이콘 미검출")
+            continue
+        point = {"x": (box["left"] + box["right"]) // 2, "y": (box["top"] + box["bottom"]) // 2}
+        screen = image_point_to_screen(window, point, image_size=image_size)
+        if screen is None:
+            print(f"[WARNING] 커서 이동 생략: {mode} 화면 좌표 변환 실패")
+            continue
+        move_cursor_to_screen(screen, f"click_mode_{mode}")
+        print(f"[INFO] 커서 -> {mode} 아이콘 (image={point}, screen={screen}) {hover_sec}s 체류")
+        time.sleep(hover_sec)
 
 
 if __name__ == "__main__":

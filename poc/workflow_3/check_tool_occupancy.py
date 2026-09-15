@@ -6,7 +6,6 @@ uv run python -m poc.workflow_3.check_tool_occupancy
 
 import json
 import os
-import re
 import time
 
 from dotenv import load_dotenv
@@ -21,6 +20,7 @@ from poc.workflow_3.util.json_utils import extract_json
 from poc.workflow_3.vlm.flask_vlm import DEFAULT_SCREEN_ANALYSIS_SERVICE
 from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
 from poc.workflow_3.vlm.label_verify import read_text_near_point
+from poc.workflow_3.vlm.ui_venus_mai_locator import TargetConfig, analyze_window_target
 
 # 단독 점검 대상: 이 값을 직접 수정한다. 알람 루프는 전달받은 EQP_ID를 사용한다.
 ACTION_TARGET_TOOL_NAME = "MCDA23"
@@ -29,6 +29,10 @@ MAX_ROW_HEIGHT_PX = 48
 CELL_UPSCALE = 3
 # MC ID 글자 중심 위/아래 픽셀. 인접 행이 섞이지 않도록 실제 행 간격보다 작게 설정.
 ROW_HALF_HEIGHT_PX = 8
+# MC ID 셀은 로케이터가 준 ID 중심점 좌우로 이만큼 본다(원본 픽셀). 6글자 ID + 여유.
+MC_ID_HALF_WIDTH_PX = 60
+# Connection User 는 마지막 컬럼이라 오른쪽은 이미지 끝. 왼쪽은 헤더 bbox 왼쪽에서 이만큼 더.
+CONNECTION_USER_LEFT_PAD_PX = 40
 
 
 def classify_reading(reading: dict, tool_name: str) -> str:
@@ -43,37 +47,8 @@ def classify_reading(reading: dict, tool_name: str) -> str:
     return OCCUPIED_BY_OTHER if user.strip() else FREE
 
 
-COLUMN_KEYS = {"mcid": "mc_id", "connectionuser": "connection_user"}
-
-
-def columns_from_headers(headers, image_width: int) -> dict:
-    """헤더 중심 x(0-1000) 목록을 인접 헤더의 중점으로 갈라 컬럼 경계를 만든다.
-
-    mai-ui 는 점(grounding)은 잘 찍지만 폭은 어림한다 - 오피스 실측에서 MC ID 는 2배,
-    Connection User 는 왼쪽이 잘렸다. 폭을 모델에 묻지 않고 이웃 헤더
-    간격에서 파생하면 어느 컬럼도 서로 겹치거나 비지 않는다. 첫/마지막 컬럼은 이미지 가장자리까지.
-    """
-    if not isinstance(headers, list) or not headers:
-        raise ValueError("missing headers")
-    centers = []
-    for header in headers:
-        if (not isinstance(header, dict) or not isinstance(header.get("name"), str)
-                or type(header.get("x")) not in (int, float)):
-            raise ValueError(f"invalid header entry: {header!r}")
-        name = re.sub(r"[^a-z]", "", header["name"].lower())
-        centers.append((int(round(header["x"] * image_width / 1000)), name))
-    centers.sort()
-    columns = {}
-    for index, (x, name) in enumerate(centers):
-        left = 0 if index == 0 else (centers[index - 1][0] + x) // 2
-        right = image_width if index == len(centers) - 1 else (x + centers[index + 1][0]) // 2
-        if name in COLUMN_KEYS:
-            columns[COLUMN_KEYS[name]] = [left, right]
-    return columns
-
-
 def validate_columns(columns, image_width: int):
-    """VLM 컬럼 좌표의 타입, 이미지 경계, 겹침을 검증한다."""
+    """컬럼 좌표의 타입, 이미지 경계, 겹침을 검증한다."""
     if not isinstance(columns, dict):
         raise ValueError("missing column bounds")
     spans = []
@@ -87,6 +62,28 @@ def validate_columns(columns, image_width: int):
         if any(left < end and right > start for start, end in spans):
             raise ValueError("overlapping columns")
         spans.append(span)
+
+
+def locate_connection_user_column(image, artifact_dir) -> list:
+    """'Connection User' 헤더 하나만 coarse→fine 으로 찾는다(요소 하나 = 호출 하나).
+
+    마지막 컬럼이므로 오른쪽 경계는 이미지 끝이고, 왼쪽은 헤더 bbox 의 왼쪽에서 조금 더 본다.
+    여러 헤더를 한 번에 나열시키면 하나만 빠져도 이웃 경계가 전부 밀린다(오피스 실측).
+    """
+    target = TargetConfig(
+        key="connection_user_header",
+        description="the column header text 'Connection User' in the table header row of the "
+                    "equipment list. It is the LAST column at the far right. Not 'Control User'.",
+    )
+    result = analyze_window_target(
+        None, "RCS List header", "image", target, image=image,
+        debug_image_dir=artifact_dir / "locator", log_name="tool_occupancy",
+        component_name="tool_occupancy", artifact_prefix="connection_user",
+    )
+    if result.exit_code != "success" or result.point is None:
+        raise ValueError(f"Connection User header locator failed: {result.exit_code}")
+    anchor = result.bbox["left"] if isinstance(result.bbox, dict) else result.point["x"]
+    return [max(0, int(anchor) - CONNECTION_USER_LEFT_PAD_PX), image.width]
 
 
 def build_row_read_image(image, layout: dict, tool_name: str):
@@ -132,53 +129,34 @@ def locate_row_point(image, tool_name: str, artifact_dir):
 
 
 def check_tool_occupancy(image, tool_name: str, *, client=None, row_point=None, ocr_client=None) -> dict:
-    """헤더 → MC ID 위치 → PaddleOCR 엄격 검증 → 같은 행 Connection User 판독."""
+    """MC ID 행 위치 → Connection User 헤더 위치 → PaddleOCR 엄격 검증 → 같은 행 판독. 로케이트는 요소당 호출 하나."""
     report = {"target_tool_name": tool_name, "occupancy": UNKNOWN,
-              "diagnosis": "column_location_failed"}
+              "diagnosis": "row_location_failed"}
     artifact_dir = DEBUG_IMAGE_DIR / "tool_occupancy" / str(time.time_ns())
     report["artifact_dir"] = str(artifact_dir)
     try:
         if image is None or not tool_name.strip():
             raise ValueError("List image and target MC ID are required")
         save_debug_jpeg(image, artifact_dir / "list.jpg")
-        image_b64, _, _ = encode_image_webp(image.convert("RGB"), quality=90)
         client = client or Workflow1VLMClient(
             service_slug=os.getenv("TOOL_OCCUPANCY_SERVICE", DEFAULT_SCREEN_ANALYSIS_SERVICE),
         )
-        coarse = client.chat_with_image_b64(
-            image_b64=image_b64,
-            image_mime="image/webp",
-            system_message="Locate RCS table geometry. Return only JSON. Do not classify occupancy.",
-            user_text=(
-                "This is an RCS equipment list. Find the table HEADER row and return the "
-                "horizontal center x of EVERY column header text in it, on a 0-1000 scale "
-                "(0 = left image edge, 1000 = right image edge). Include all headers, e.g. "
-                "MC ID, RCS IP, Location, Model, Status, Count, DVR, Remote, Control User, "
-                "Connection User, and any others you see. Control User and Connection User "
-                "are different columns; Connection User is the LAST column at the far right "
-                "edge of the table and must be included. "
-                "Use the header text exactly as displayed. Do not select any equipment row. "
-                'Schema: {"headers":[{"name":"MC ID","x":40},{"name":"Remote","x":520}]}. '
-                "The numbers are examples only."
-            ),
-            temperature=0.0,
-        )
-        save_debug_text(artifact_dir / "coarse_response.txt", coarse.text)
-        column_reading = extract_json(coarse.text)
-        report["column_reading"] = column_reading
-        columns = columns_from_headers(column_reading.get("headers"), image.width)
-        report["columns_px"] = columns
-        validate_columns(columns, image.width)
         report["diagnosis"] = "row_location_failed"
         point = row_point if row_point is not None else locate_row_point(image, tool_name, artifact_dir)
         report["row_point"] = point
-        report["row_source"] = "click_locator" if row_point is not None else "mc_id_column_locator"
-        left, right = columns["mc_id"]
+        report["row_source"] = "click_locator" if row_point is not None else "tool_row_locator"
         if (not isinstance(point, dict)
                 or any(type(point.get(axis)) is not int for axis in ("x", "y"))
-                or not left <= point["x"] < right
+                or not 0 <= point["x"] < image.width
                 or not ROW_HALF_HEIGHT_PX <= point["y"] < image.height - ROW_HALF_HEIGHT_PX):
-            raise ValueError("refined point is outside MC ID column or image")
+            raise ValueError("refined point is outside the image")
+        report["diagnosis"] = "column_location_failed"
+        columns = {"mc_id": [max(0, point["x"] - MC_ID_HALF_WIDTH_PX),
+                             min(image.width, point["x"] + MC_ID_HALF_WIDTH_PX)],
+                   "connection_user": locate_connection_user_column(image, artifact_dir)}
+        report["columns_px"] = columns
+        validate_columns(columns, image.width)
+        left, right = columns["mc_id"]
         layout = {"mc_id": tool_name, "columns": columns,
                   "row_top": point["y"] - ROW_HALF_HEIGHT_PX,
                   "row_bottom": point["y"] + ROW_HALF_HEIGHT_PX}

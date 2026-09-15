@@ -71,7 +71,11 @@ def test_vlm_failure_and_missing_fields_never_mean_free(monkeypatch, tmp_path):
     from PIL import Image
     from poc.workflow_3 import check_tool_occupancy as checker
 
+    from poc.workflow_3.vlm.label_verify import PointTextRead
     monkeypatch.setattr(checker, "DEBUG_IMAGE_DIR", tmp_path)
+    monkeypatch.setattr(checker, "locate_row_point", lambda *a: {"x": 20, "y": 50})
+    monkeypatch.setattr(checker, "locate_connection_user_column", lambda *a: [80, 100])
+    monkeypatch.setattr(checker, "read_text_near_point", lambda *a, **kw: PointTextRead(ok=True, raw_text="MCD630"))
     image = Image.new("RGB", (100, 100))
     for text in ('{}', 'not json', '{"mc_id":"MCD630","row_confirmed":true}'):
         client = SimpleNamespace(chat_with_image_b64=lambda **kw: SimpleNamespace(text=text))
@@ -110,13 +114,13 @@ def test_coarse_then_fine_rejects_multiple_mc_ids(monkeypatch, tmp_path):
     from poc.workflow_3 import check_tool_occupancy as checker
 
     monkeypatch.setattr(checker, "DEBUG_IMAGE_DIR", tmp_path)
-    layout = json.loads('{"headers": [{"name": "Remote", "x": 500}, {"name": "RCS IP", "x": 700}, {"name": "MC ID", "x": 840}, {"name": "Control User", "x": 900}, {"name": "Connection User", "x": 970}]}')
     from poc.workflow_3.vlm.label_verify import PointTextRead
     monkeypatch.setattr(checker, "locate_row_point", lambda *a: {"x": 840, "y": 50})
+    monkeypatch.setattr(checker, "locate_connection_user_column", lambda *a: [900, 1000])
     monkeypatch.setattr(checker, "read_text_near_point", lambda *a, **kw: PointTextRead(ok=True, raw_text="MCDA01"))
     for ids, expected in ((["MCDA01"], "free"), (["MCDA01", "MCDA23"], "unknown"),
                           (["MCDA23"], "unknown")):
-        responses = iter([layout, {"mc_id": "MCDA01", "row_confirmed": True,
+        responses = iter([{"mc_id": "MCDA01", "row_confirmed": True,
                           "visible_mc_ids": ids, "connection_user_text": ""}])
         calls = []
         def chat(**kwargs):
@@ -125,8 +129,7 @@ def test_coarse_then_fine_rejects_multiple_mc_ids(monkeypatch, tmp_path):
         report = checker.check_tool_occupancy(Image.new("RGB", (1000, 200)), "MCDA01",
                                              client=SimpleNamespace(chat_with_image_b64=chat))
         assert report["occupancy"] == expected
-        assert len(calls) == 2
-        assert calls[0]["image_b64"] != calls[1]["image_b64"]
+        assert len(calls) == 1
 
 
 def test_wrong_paddle_id_stops_before_occupancy_read(monkeypatch, tmp_path):
@@ -137,10 +140,11 @@ def test_wrong_paddle_id_stops_before_occupancy_read(monkeypatch, tmp_path):
     from poc.workflow_3.vlm.label_verify import PointTextRead
 
     monkeypatch.setattr(checker, "DEBUG_IMAGE_DIR", tmp_path)
+    monkeypatch.setattr(checker, "locate_connection_user_column", lambda *a: [900, 1000])
     calls = []
     def chat(**kwargs):
         calls.append(kwargs)
-        return SimpleNamespace(text='{"headers": [{"name": "Remote", "x": 500}, {"name": "RCS IP", "x": 700}, {"name": "MC ID", "x": 840}, {"name": "Control User", "x": 900}, {"name": "Connection User", "x": 970}]}')
+        raise AssertionError("no VLM transcription before the MC ID is confirmed")
     for raw in ("MC0916", "MCD916", "MCDA23 MCD916", ""):
         monkeypatch.setattr(checker, "read_text_near_point", lambda *a, **kw: PointTextRead(ok=True, raw_text=raw))
         report = checker.check_tool_occupancy(Image.new("RGB", (1000, 200)), "MCDA23",
@@ -148,7 +152,7 @@ def test_wrong_paddle_id_stops_before_occupancy_read(monkeypatch, tmp_path):
         assert report["occupancy"] == "unknown"
         assert report["diagnosis"] == ("mc_id_unreadable" if not raw else "mc_id_mismatch")
         assert report["mc_id_ocr"]["raw_text"] == raw
-    assert len(calls) == 4  # 컬럼 검출만; 점유 판독으로 진행하지 않는다.
+    assert calls == []
 
 
 def test_locator_maps_column_point_and_paddle_reads_target_band(monkeypatch, tmp_path):
@@ -166,6 +170,11 @@ def test_locator_maps_column_point_and_paddle_reads_target_band(monkeypatch, tmp
         assert current_image is image  # 컬럼 strip 이 아니라 전체 List 이미지로 찾는다
         return {"full_image_point": {"x": 840, "y": 90}}, {"iters": []}
     monkeypatch.setattr(checker, "_locate_tool_via_vlm", locate)
+    def locate_header(window, title, backend, target, **kwargs):
+        assert "Connection User" in target.description and kwargs["image"] is image
+        return SimpleNamespace(exit_code="success", point={"x": 950, "y": 20},
+                               bbox={"left": 960, "top": 10, "right": 995, "bottom": 30})
+    monkeypatch.setattr(checker, "analyze_window_target", locate_header)
     ocr_calls = []
     def ocr(**kwargs):
         assert kwargs["user_text"] == "OCR:"
@@ -175,7 +184,6 @@ def test_locator_maps_column_point_and_paddle_reads_target_band(monkeypatch, tmp
         ocr_calls.append(kwargs)
         return SimpleNamespace(text="MCDA23")
     responses = iter([
-        json.loads('{"headers": [{"name": "Remote", "x": 500}, {"name": "RCS IP", "x": 700}, {"name": "MC ID", "x": 840}, {"name": "Control User", "x": 900}, {"name": "Connection User", "x": 970}]}'),
         {"mc_id": "MCDA23", "visible_mc_ids": ["MCDA23"], "row_confirmed": True,
          "connection_user_text": "kim"},
     ])
@@ -186,19 +194,23 @@ def test_locator_maps_column_point_and_paddle_reads_target_band(monkeypatch, tmp
     assert report["diagnosis"] == "ok"
     assert report["row_point"] == {"x": 840, "y": 90}
     assert report["layout"]["row_top"] == 82
+    assert report["columns_px"] == {"mc_id": [780, 900], "connection_user": [920, 1000]}
     assert len(ocr_calls) == 1
 
 
-def test_columns_split_at_header_midpoints_and_scale_to_image_width():
+def test_connection_user_column_runs_from_header_left_to_image_edge(monkeypatch):
     import pytest
-    from poc.workflow_3.check_tool_occupancy import columns_from_headers
+    from types import SimpleNamespace
+    from PIL import Image
+    from poc.workflow_3 import check_tool_occupancy as checker
 
-    headers = [{"name": "Remote", "x": 500}, {"name": "RCS IP", "x": 700},
-               {"name": "MC ID", "x": 840}, {"name": "Control User", "x": 900},
-               {"name": "Connection User", "x": 970}]
-    assert columns_from_headers(headers, 2000) == {
-        "mc_id": [1540, 1740], "connection_user": [1870, 2000]}
-    assert "control_user" not in columns_from_headers(headers, 2000)
-    for bad in (None, [], [{"name": "MC ID"}], [{"name": 3, "x": 10}], [{"name": "MC ID", "x": "10"}]):
-        with pytest.raises(ValueError):
-            columns_from_headers(bad, 2000)
+    image = Image.new("RGB", (2000, 100))
+    result = SimpleNamespace(exit_code="success", point={"x": 1900, "y": 20},
+                             bbox={"left": 1850, "top": 10, "right": 1990, "bottom": 30})
+    monkeypatch.setattr(checker, "analyze_window_target", lambda *a, **kw: result)
+    assert checker.locate_connection_user_column(image, pytest.importorskip("pathlib").Path(".")) == [1810, 2000]
+    result.bbox = None
+    assert checker.locate_connection_user_column(image, pytest.importorskip("pathlib").Path(".")) == [1860, 2000]
+    result.exit_code = "refusal"
+    with pytest.raises(ValueError):
+        checker.locate_connection_user_column(image, pytest.importorskip("pathlib").Path("."))

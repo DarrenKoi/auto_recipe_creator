@@ -3,12 +3,13 @@
 from poc.workflow_3.check_tool_occupancy import classify_reading
 
 
-def test_occupancy_requires_explicit_empty_cell():
-    assert classify_reading({"connection_user_text": ""}) == "free"
-    for user in ("kim", "12345", "홍길동"):
-        assert classify_reading({"connection_user_text": user}) == "occupied_by_other"
-    for reading in ({"connection_user_text": None}, {"connection_user_text": 1}, {}, None):
-        assert classify_reading(reading) == "unknown"
+def test_occupancy_from_ocr_tokens_never_free_on_read_failure():
+    assert classify_reading(True, "") == "free"
+    assert classify_reading(True, " \n ") == "free"
+    for user in ("kim", "KIM0234", "홍길동", "a b"):
+        assert classify_reading(True, user) == "occupied_by_other"
+    assert classify_reading(False, "") == "unknown"
+    assert classify_reading(False, "kim") == "unknown"
 
 
 def test_occupancy_gate_prevents_click_and_free_allows_it(monkeypatch, tmp_path):
@@ -63,26 +64,20 @@ def test_monitor_requests_gate_and_propagates_block(monkeypatch):
         assert result.failure_class == (None if state == "free" else failure)
 
 
-def test_vlm_failure_and_missing_fields_never_mean_free(monkeypatch, tmp_path):
-    from types import SimpleNamespace
+def test_ocr_failure_never_means_free(monkeypatch, tmp_path):
     from PIL import Image
     from poc.workflow_3 import check_tool_occupancy as checker
-
     from poc.workflow_3.vlm.label_verify import PointTextRead
+
     monkeypatch.setattr(checker, "DEBUG_IMAGE_DIR", tmp_path)
     monkeypatch.setattr(checker, "locate_row_point", lambda *a: {"x": 20, "y": 50})
     monkeypatch.setattr(checker, "locate_connection_user_column", lambda *a: [80, 100])
-    monkeypatch.setattr(checker, "read_text_near_point", lambda *a, **kw: PointTextRead(ok=True, raw_text="MCD630"))
-    image = Image.new("RGB", (100, 100))
-    for text in ('{}', 'not json', '{"connection_user_text":null}'):
-        client = SimpleNamespace(chat_with_image_b64=lambda **kw: SimpleNamespace(text=text))
-        assert checker.check_tool_occupancy(image, "MCD630", client=client)["occupancy"] == "unknown"
-    def unavailable(**kw):
-        raise RuntimeError("offline")
-    client = SimpleNamespace(chat_with_image_b64=unavailable)
-    report = checker.check_tool_occupancy(image, "MCD630", client=client)
+    reads = iter([PointTextRead(ok=True, raw_text="MCD630"), PointTextRead(ok=False, raw_text="", error="offline")])
+    monkeypatch.setattr(checker, "read_text_near_point", lambda *a, **kw: next(reads))
+    report = checker.check_tool_occupancy(Image.new("RGB", (100, 100)), "MCD630")
     assert report["occupancy"] == "unknown"
-    assert "offline" in report["error"]
+    assert report["diagnosis"] == "occupancy_unreadable"
+    assert report["connection_user_ocr"]["error"] == "offline"
 
 
 def test_fine_image_excludes_occupied_neighbor_and_keeps_distant_columns():
@@ -104,9 +99,7 @@ def test_fine_image_excludes_occupied_neighbor_and_keeps_distant_columns():
             build_row_read_image(image, dict(layout, **change), "MCDA01")
 
 
-def test_vlm_id_transcription_does_not_gate_after_paddle_confirmed(monkeypatch, tmp_path):
-    import json
-    from types import SimpleNamespace
+def test_connection_user_cell_ocr_decides_occupancy(monkeypatch, tmp_path):
     from PIL import Image
     from poc.workflow_3 import check_tool_occupancy as checker
     from poc.workflow_3.vlm.label_verify import PointTextRead
@@ -114,17 +107,17 @@ def test_vlm_id_transcription_does_not_gate_after_paddle_confirmed(monkeypatch, 
     monkeypatch.setattr(checker, "DEBUG_IMAGE_DIR", tmp_path)
     monkeypatch.setattr(checker, "locate_row_point", lambda *a: {"x": 840, "y": 50})
     monkeypatch.setattr(checker, "locate_connection_user_column", lambda *a: [920, 1000])
-    monkeypatch.setattr(checker, "read_text_near_point", lambda *a, **kw: PointTextRead(ok=True, raw_text="MCDA01"))
-    for extra in ({}, {"mc_id": "mcda01"}, {"mc_id": "MCDA0l", "visible_mc_ids": ["MCDA0l", "MCDA23"]}):
-        calls = []
-        def chat(**kwargs):
-            calls.append(kwargs)
-            return SimpleNamespace(text=json.dumps({**extra, "connection_user_text": "kim"}))
-        report = checker.check_tool_occupancy(Image.new("RGB", (1000, 200)), "MCDA01",
-                                             client=SimpleNamespace(chat_with_image_b64=chat))
-        assert report["occupancy"] == "occupied_by_other"
+    for user_text, expected in (("", "free"), ("kim", "occupied_by_other"), ("KIM0234", "occupied_by_other")):
+        boxes = []
+        reads = iter([PointTextRead(ok=True, raw_text="MCDA01"), PointTextRead(ok=True, raw_text=user_text)])
+        def read(image, box, **kwargs):
+            boxes.append(box)
+            return next(reads)
+        monkeypatch.setattr(checker, "read_text_near_point", read)
+        report = checker.check_tool_occupancy(Image.new("RGB", (1000, 200)), "MCDA01")
+        assert report["occupancy"] == expected
         assert report["diagnosis"] == "ok"
-        assert len(calls) == 1
+        assert boxes[1] == {"left": 920, "right": 1000, "top": 42, "bottom": 58}  # 같은 y 밴드
 
 
 def test_wrong_paddle_id_stops_before_occupancy_read(monkeypatch, tmp_path):
@@ -136,22 +129,16 @@ def test_wrong_paddle_id_stops_before_occupancy_read(monkeypatch, tmp_path):
 
     monkeypatch.setattr(checker, "DEBUG_IMAGE_DIR", tmp_path)
     monkeypatch.setattr(checker, "locate_connection_user_column", lambda *a: [900, 1000])
-    calls = []
-    def chat(**kwargs):
-        calls.append(kwargs)
-        raise AssertionError("no VLM transcription before the MC ID is confirmed")
     for raw in ("MC0916", "MCD916", "MCDA23 MCD916", ""):
         monkeypatch.setattr(checker, "read_text_near_point", lambda *a, **kw: PointTextRead(ok=True, raw_text=raw))
         report = checker.check_tool_occupancy(Image.new("RGB", (1000, 200)), "MCDA23",
-            client=SimpleNamespace(chat_with_image_b64=chat), row_point={"x": 840, "y": 90})
+                                             row_point={"x": 840, "y": 90})
         assert report["occupancy"] == "unknown"
         assert report["diagnosis"] == ("mc_id_unreadable" if not raw else "mc_id_mismatch")
         assert report["mc_id_ocr"]["raw_text"] == raw
-    assert calls == []
 
 
 def test_locator_maps_column_point_and_paddle_reads_target_band(monkeypatch, tmp_path):
-    import json
     from types import SimpleNamespace
     from PIL import Image
     from poc.workflow_3 import check_tool_occupancy as checker
@@ -177,19 +164,15 @@ def test_locator_maps_column_point_and_paddle_reads_target_band(monkeypatch, tmp
             red, green, blue = crop.convert("RGB").getpixel((20, 20))
             assert blue > 200 and red < 20  # y=90 밴드만 PaddleOCR로 전달
         ocr_calls.append(kwargs)
-        return SimpleNamespace(text="MCDA23")
-    responses = iter([
-        {"connection_user_text": "kim"},
-    ])
-    client = SimpleNamespace(chat_with_image_b64=lambda **kw: SimpleNamespace(text=json.dumps(next(responses))))
-    report = checker.check_tool_occupancy(image, "MCDA23", client=client,
+        return SimpleNamespace(text="MCDA23" if len(ocr_calls) == 1 else "kim")
+    report = checker.check_tool_occupancy(image, "MCDA23",
                                         ocr_client=SimpleNamespace(chat_with_image_path=ocr))
     assert report["occupancy"] == "occupied_by_other"
     assert report["diagnosis"] == "ok"
     assert report["row_point"] == {"x": 840, "y": 90}
     assert report["layout"]["row_top"] == 82
     assert report["columns_px"] == {"mc_id": [780, 900], "connection_user": [920, 1000]}
-    assert len(ocr_calls) == 1
+    assert len(ocr_calls) == 2  # MC ID 확인 + Connection User 셀
 
 
 def test_connection_user_column_runs_from_header_left_to_image_edge(monkeypatch):

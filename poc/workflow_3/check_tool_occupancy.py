@@ -12,14 +12,10 @@ from dotenv import load_dotenv
 from PIL import Image, ImageDraw
 
 from poc.workflow_3 import DEBUG_IMAGE_DIR
-from poc.workflow_3.debug_artifacts import save_debug_jpeg, save_debug_json, save_debug_text
+from poc.workflow_3.debug_artifacts import save_debug_jpeg, save_debug_json
 from poc.workflow_3.rcs.row_occupant import FREE, OCCUPIED_BY_OTHER, UNKNOWN
 from poc.workflow_3.rcs.workflow_select_tool import _locate_tool_via_vlm
-from poc.workflow_3.util.image_utils import encode_image_webp
-from poc.workflow_3.util.json_utils import extract_json
-from poc.workflow_3.vlm.flask_vlm import DEFAULT_SCREEN_ANALYSIS_SERVICE
-from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
-from poc.workflow_3.vlm.label_verify import read_text_near_point
+from poc.workflow_3.vlm.label_verify import read_text_near_point, tokens_from_text
 from poc.workflow_3.vlm.ui_venus_mai_locator import TargetConfig, analyze_window_target
 
 # 단독 점검 대상: 이 값을 직접 수정한다. 알람 루프는 전달받은 EQP_ID를 사용한다.
@@ -35,17 +31,17 @@ MC_ID_HALF_WIDTH_PX = 60
 CONNECTION_USER_LEFT_PAD_PX = 40
 
 
-def classify_reading(reading: dict) -> str:
-    """명시적 판독만 사용한다. 누락/null은 공백이 아니다.
+def classify_reading(read_ok: bool, raw_text: str) -> str:
+    """Connection User 셀의 PaddleOCR 판독으로 3-상태를 정한다.
 
-    행 동일성은 여기서 다시 묻지 않는다 - 같은 y 밴드의 MC ID 를 PaddleOCR 이 엄격히
-    확인한 뒤에만 이 판독에 도달하며, VLM 의 ID 재전사(대소문자/O·0)를 게이트로 쓰면
-    정상 점유 행이 `unknown` 으로 새어 나간다(오피스 실측).
+    VLM 전사는 빈 셀에서 환각한다(오피스 실측: 비어 있는 tool 이 점유로 읽힘). OCR 은
+    없는 글자를 만들지 않으므로 셀 crop 만 읽는다 - MC ID 확인과 같은 경로다. 읽기
+    실패는 UNKNOWN 이고, 글자가 하나라도 있으면 점유다(이름/사번 모양을 가리지 않는다 -
+    거짓 free 가 거짓 occupied 보다 위험하다: 전자는 view-only 세션에 클릭을 낸다).
     """
-    user = reading.get("connection_user_text") if isinstance(reading, dict) else None
-    if not isinstance(user, str):
+    if not read_ok:
         return UNKNOWN
-    return OCCUPIED_BY_OTHER if user.strip() else FREE
+    return OCCUPIED_BY_OTHER if tokens_from_text(raw_text) else FREE
 
 
 def validate_columns(columns, image_width: int):
@@ -129,8 +125,8 @@ def locate_row_point(image, tool_name: str, artifact_dir):
     return located["full_image_point"]
 
 
-def check_tool_occupancy(image, tool_name: str, *, client=None, row_point=None, ocr_client=None) -> dict:
-    """MC ID 행 위치 → Connection User 헤더 위치 → PaddleOCR 엄격 검증 → 같은 행 판독. 로케이트는 요소당 호출 하나."""
+def check_tool_occupancy(image, tool_name: str, *, row_point=None, ocr_client=None) -> dict:
+    """MC ID 행 위치 → Connection User 헤더 위치 → PaddleOCR 로 MC ID 확인 + 같은 행 셀 판독. 로케이트는 요소당 호출 하나."""
     report = {"target_tool_name": tool_name, "occupancy": UNKNOWN,
               "diagnosis": "row_location_failed"}
     artifact_dir = DEBUG_IMAGE_DIR / "tool_occupancy" / str(time.time_ns())
@@ -139,9 +135,6 @@ def check_tool_occupancy(image, tool_name: str, *, client=None, row_point=None, 
         if image is None or not tool_name.strip():
             raise ValueError("List image and target MC ID are required")
         save_debug_jpeg(image, artifact_dir / "list.jpg")
-        client = client or Workflow1VLMClient(
-            service_slug=os.getenv("TOOL_OCCUPANCY_SERVICE", DEFAULT_SCREEN_ANALYSIS_SERVICE),
-        )
         report["diagnosis"] = "row_location_failed"
         point = row_point if row_point is not None else locate_row_point(image, tool_name, artifact_dir)
         report["row_point"] = point
@@ -183,27 +176,16 @@ def check_tool_occupancy(image, tool_name: str, *, client=None, row_point=None, 
             report["diagnosis"] = "mc_id_mismatch" if tokens else "mc_id_unreadable"
             raise ValueError(f"expected {tool_name!r}, PaddleOCR read {id_read.raw_text!r}")
         report["diagnosis"] = "occupancy_read_failed"
-        fine_b64, _, _ = encode_image_webp(fine_image, quality=90)
-        response = client.chat_with_image_b64(
-            image_b64=fine_b64,
-            image_mime="image/webp",
-            system_message="Transcribe one cropped RCS cell. Return only JSON. Never guess a blank cell.",
-            user_text=(
-                "The image contains two labelled panels: MC ID (for reference only) and "
-                "Connection User. Each panel is an enlarged cell from the SAME pixel row band. "
-                "Read only cell content below the Connection User label; labels are not values. "
-                "Transcribe the Connection User text exactly as shown. "
-                "Use empty string ONLY for a completely visible, confidently empty cell. "
-                "Use null for clipped, partial or unreadable content. Never infer empty "
-                "from failed recognition. Schema: "
-                '{"connection_user_text":"visible user"}.'
-            ),
-            temperature=0.0,
+        cell_left, cell_right = columns["connection_user"]
+        user_read = read_text_near_point(
+            image, {"left": cell_left, "right": cell_right,
+                    "top": layout["row_top"], "bottom": layout["row_bottom"]},
+            debug_image_dir=artifact_dir, timestamp_tag="user", artifact_label="connection_user",
+            log_name="tool_occupancy", client=ocr_client,
         )
-        save_debug_text(artifact_dir / "response.txt", response.text)
-        reading = extract_json(response.text)
-        report["reading"] = reading
-        report["occupancy"] = classify_reading(reading)
+        report["connection_user_ocr"] = {"raw_text": user_read.raw_text, "ok": user_read.ok,
+                                         "error": user_read.error, "crop": user_read.crop_image_path}
+        report["occupancy"] = classify_reading(user_read.ok, user_read.raw_text)
         report["diagnosis"] = "ok" if report["occupancy"] != UNKNOWN else "occupancy_unreadable"
     except Exception as exc:
         report["error"] = f"{type(exc).__name__}: {exc}"

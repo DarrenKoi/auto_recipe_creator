@@ -208,3 +208,13 @@ def test_mc_id_padding_widens_both_sides_without_crossing_known_columns():
     assert columns["mc_id"] == [800, 880]
     assert widened["remote"] == columns["remote"]
     assert widen_mc_id_column(dict(columns, mc_id=[0, 70]), 1000)["mc_id"] == [0, 94]
+
+
+def test_columns_are_scaled_from_1000_to_image_width():
+    from poc.workflow_3.check_tool_occupancy import columns_1000_to_pixels
+
+    scaled = columns_1000_to_pixels({"mc_id": [10, 60], "remote": [400, 450],
+                                     "connection_user": [900, 1000], "odd": None}, 2000)
+    assert scaled == {"mc_id": [20, 120], "remote": [800, 900],
+                      "connection_user": [1800, 2000], "odd": None}
+    assert columns_1000_to_pixels(None, 2000) is None

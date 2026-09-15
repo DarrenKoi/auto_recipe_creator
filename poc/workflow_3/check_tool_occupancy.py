@@ -55,6 +55,15 @@ def classify_reading(reading: dict, tool_name: str) -> str:
     return UNKNOWN
 
 
+def columns_1000_to_pixels(columns, image_width: int):
+    """mai-ui 의 0-1000 x 좌표를 픽셀로 바꾼다. 형태가 다른 값은 그대로 두어 검증에서 걸리게 한다."""
+    if not isinstance(columns, dict):
+        return columns
+    return {name: [int(round(v * image_width / 1000)) for v in span]
+            if isinstance(span, list) and all(isinstance(v, (int, float)) for v in span) else span
+            for name, span in columns.items()}
+
+
 def validate_columns(columns, image_width: int):
     """VLM 컬럼 좌표의 타입, 이미지 경계, 겹침을 검증한다."""
     if not isinstance(columns, dict):
@@ -156,8 +165,8 @@ def check_tool_occupancy(image, tool_name: str, *, client=None, row_point=None, 
                 "the count next to Remote, not just its label. Connection User is the "
                 "LAST column at the far right edge of the table (there is also a separate "
                 "Control User column; do NOT return that one). Its bounds must cover the "
-                "entire user cell width up to the table's right edge. Return absolute image pixel x values "
-                "(NOT normalized 0-1000), with this schema: "
+                "entire user cell width up to the table's right edge. Return x values on a 0-1000 "
+                "scale (0 = left image edge, 1000 = right image edge), with this schema: "
                 '{"columns":{"mc_id":[10,110],"remote":[400,500],"connection_user":[700,900]}}. '
                 "The numbers are examples only. Use null for any uncertain column."
             ),
@@ -166,7 +175,8 @@ def check_tool_occupancy(image, tool_name: str, *, client=None, row_point=None, 
         save_debug_text(artifact_dir / "coarse_response.txt", coarse.text)
         column_reading = extract_json(coarse.text)
         report["column_reading"] = column_reading
-        columns = column_reading.get("columns")
+        columns = columns_1000_to_pixels(column_reading.get("columns"), image.width)
+        report["columns_px"] = columns
         # 로케이터 호출 전에 모든 컬럼의 경계와 중복을 검증한다.
         validate_columns(columns, image.width)
         columns = widen_mc_id_column(columns, image.width)

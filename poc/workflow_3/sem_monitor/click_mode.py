@@ -8,17 +8,13 @@ tool 창의 라이브 SEM box **오른쪽**에는 버튼이 세로로 한 줄 �
 
 버튼 열은 **맨 아래 `DDS` 부터** 위로 (사용자 확인 2026-09-15, 3회차):
   DDS, Next, ACD, AMS, 그림, AMP, (빈 버튼), #, L자, 네모, 십자(crosshair), =, ||
-아이콘 자체를 VLM 에 묻는 두 차례 오피스 시도는 실패했다(전체 창에선 너무 작고, strip
-분할은 열 위가 잘리거나 아이콘 일부만 잡혔다). 그래서 **열의 양 끝을 앵커로** 쓴다:
-  * 아래 앵커 `DDS` - 활성 버튼이라 글자가 선명하고 PaddleOCR 로 확인한다(strict).
-    `AMS`/`AMP`/`ACD`/`Next` 는 비활성 회색이라 OCR 이 'A\nN' 같이 읽는다(4회차) - 쓰지 않는다.
-  * 위 앵커 `=` - 위에서 두 번째 버튼, VLM 이 안정적으로 찾는다(5·6회차 오피스). 맨 위
-    `||` 는 VLM 이 자주 놓쳐(6회차) 앵커로 쓰지 않고, 찾히면 간격 교차검사(로그)만 한다.
-셈의 원점은 `=` 다(5회차: `=` 는 정확한데 DDS 에서 10칸 올라온 crosshair 는 어긋났다 -
-먼 끝에서 세면 칸 간격의 작은 불균일이 누적된다): crosshair = `=` 바로 아래 1칸, 네모
-2칸, L자 3칸. pitch 는 DDS-`=` 11칸 baseline 에서 얻는다 - 두 앵커 모두 확인된 것이고,
-목표는 원점에서 1~3칸이라 pitch 오차의 누적이 작다. 어느 쪽이 켜졌는지는 그 자리의
-**픽셀 색**이 답한다. 앵커 확인 실패/기하 이상/색 불명확은 unknown 이다.
+**아이콘 직접 로케이트가 1차다**(9회차 사용자 지적): 열 전체 높이의 strip 에서 zoom 단계로
+찾으면 버튼이 잡힌다(요소당 호출 하나, 열 안 순서를 설명에 넣는다). 못 찾은 아이콘은
+**앵커 기하**로 채운다: 맨 위 `||` 와 그 아래 `=` 는 VLM 이 안정적으로 잡히므로(오피스
+5~9회차) 둘의 간격이 곧 버튼 pitch 이고 `=` 가 원점이다 - crosshair = 1칸 아래, 네모 2칸,
+L자 3칸. `DDS` 등 글자 버튼은 쓰지 않는다(비활성 회색 라벨은 OCR 이 못 읽고, 활성인 DDS
+도 먼 끝이라 셈이 누적 오차를 가진다 - 사용자 결정 2026-09-15). 어느 쪽이 켜졌는지는 그
+자리의 **픽셀 색**이 답한다. 아이콘도 앵커도 못 찾거나 색이 불명확하면 unknown 이다.
 
 단독 점검 (오피스, tool 창이 열려 있을 때; 클릭 없음):
   uv run python -m poc.workflow_3.sem_monitor.click_mode
@@ -39,7 +35,6 @@ from poc.workflow_3 import DEBUG_IMAGE_DIR
 from poc.workflow_3.debug_artifacts import save_debug_jpeg, save_debug_json
 from poc.workflow_3.sem_monitor.sem_box_detect import detect_sem_box
 from poc.workflow_3.vlm.flask_vlm import DEFAULT_SCREEN_ANALYSIS_SERVICE
-from poc.workflow_3.vlm.label_verify import label_matches, read_text_near_point
 from poc.workflow_3.vlm.ui_venus_mai_locator import TargetConfig, analyze_window_target
 from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
 
@@ -52,23 +47,15 @@ CLICKS_FOR_MODE = {MODE_CROSSHAIR: 2, MODE_L_SHAPE: 1}
 # 버튼 열, 맨 아래부터(0 = DDS). 사용자 확인 2026-09-15.
 BUTTONS_FROM_BOTTOM = ["DDS", "Next", "ACD", "AMS", "picture", "AMP", "empty",
                        "hash", MODE_L_SHAPE, "square", MODE_CROSSHAIR, "equals", "pipes"]
-ANCHOR_BOTTOM, ANCHOR_ORIGIN, ANCHOR_CHECK = "DDS", "equals", "pipes"
-ANCHOR_GAP = BUTTONS_FROM_BOTTOM.index(ANCHOR_ORIGIN) - BUTTONS_FROM_BOTTOM.index(ANCHOR_BOTTOM)  # 11
-PITCH_CHECK_TOL = 0.25         # |(= - ||) 간격 - pitch| 허용(pitch 비율). 넘으면 경고(앵커 아님).
-# 원점 보정(버튼 단위, +1 = 모든 상자를 한 칸 위로). 8회차 오피스: pitch 는 맞는데 13개 상자가
-# 전부 한 칸 아래 = VLM 이 '=' 로 돌려준 상자가 실제로는 그 아래 버튼. 콘솔의 버튼별 초록
-# 비율 표로 맞는 값을 고른다: CLICK_MODE_ORIGIN_SHIFT.
-ORIGIN_SHIFT = int(os.getenv("CLICK_MODE_ORIGIN_SHIFT", "1"))
+ANCHOR_TOP, ANCHOR_ORIGIN = "pipes", "equals"   # 인접한 두 앵커: 간격 = pitch, '=' 가 원점.
+# 원점 보정(버튼 단위, +1 = 모든 상자를 한 칸 위로). 콘솔의 버튼별 초록 비율 표로 맞춘다.
+ORIGIN_SHIFT = int(os.getenv("CLICK_MODE_ORIGIN_SHIFT", "0"))
 
 # 검색 strip: 라이브 SEM box 오른쪽 경계부터 박스 폭의 이 비율(최소 px), 세로는 **창 전체**
 # (2회차 오피스: 박스 높이로 자르면 열 위쪽이 잘린다).
 STRIP_WIDTH_RATIO = 0.18
 STRIP_MIN_WIDTH_PX = 90
 MIN_PITCH_PX = 6               # 앵커 간 pitch 가 이보다 작으면 앵커가 잘못 잡힌 것.
-# DDS 라벨 OCR crop 은 로케이터 bbox 보다 넉넉히(4회차 오피스: crop 이 너무 작아 글자가 잘림).
-# 기하(pitch)는 여전히 tight bbox 를 쓴다 - pad 는 읽기 전용이다.
-OCR_PAD_RATIO = 0.6
-OCR_PAD_MIN_PX = 12
 ICON_HALF_H_RATIO = 0.42       # 예측 상자 세로 반높이 = pitch 비율(이웃 버튼을 안 물게).
 
 # 초록 판정(HSV, OpenCV 규약 H 0-180). 7회차 오피스: 앵커는 맞는데 unknown - 채움이 면이
@@ -78,15 +65,32 @@ GREEN_S_MIN, GREEN_V_MIN = 50, 60
 ACTIVE_MIN_RATIO = 0.02        # 활성: 초록 비율이 이 이상이고 상대보다 ACTIVE_MARGIN 배 이상.
 ACTIVE_MARGIN = 2.0
 
-ANCHOR_TARGETS = {
-    ANCHOR_BOTTOM: TargetConfig(
-        key="sem_column_dds",
-        description="the small button labelled 'DDS' at the very BOTTOM of the vertical column "
-                    "of buttons immediately to the right of the live SEM image.",
+ICON_TARGETS = {
+    MODE_CROSSHAIR: TargetConfig(
+        key="sem_icon_crosshair",
+        description="the crosshair icon button (a '+' cross, may have a small circle at the "
+                    "centre) in the vertical column of small buttons immediately to the RIGHT "
+                    "of the live SEM image. Counting from the top of that column: '||', '=', "
+                    "then this crosshair (3rd), then a square, then an L-shape. It may be "
+                    "filled green. Return the button itself, not any crosshair drawn inside "
+                    "the live image.",
         left_pad_ratio=1.0, right_pad_ratio=1.0, vertical_pad_ratio=2.0,
         min_crop_width=96, min_crop_height=160,
     ),
-    ANCHOR_CHECK: TargetConfig(
+    MODE_L_SHAPE: TargetConfig(
+        key="sem_icon_l_shape",
+        description="the L-shaped icon button (a corner bracket like the letter 'L') in the "
+                    "vertical column of small buttons immediately to the RIGHT of the live "
+                    "SEM image. Counting from the top of that column: '||', '=', crosshair, "
+                    "square, then this L-shape (5th), then a '#' grid icon below it. It may "
+                    "be filled green.",
+        left_pad_ratio=1.0, right_pad_ratio=1.0, vertical_pad_ratio=2.0,
+        min_crop_width=96, min_crop_height=160,
+    ),
+}
+
+ANCHOR_TARGETS = {
+    ANCHOR_TOP: TargetConfig(
         key="sem_column_pipes",
         description="the small button at the very TOP of the vertical column of buttons "
                     "immediately to the right of the live SEM image. Its icon is two vertical "
@@ -144,15 +148,15 @@ def _cy(box: dict) -> float:
     return (box["top"] + box["bottom"]) / 2
 
 
-def column_boxes(dds_box: dict, eq_box: dict, origin_shift: int = 0) -> dict:
-    """DDS(아래, OCR 확인)와 `=`(위, 원점)로 13개 버튼의 예측 bbox(같은 좌표계)를 낸다.
+def column_boxes(top_box: dict, eq_box: dict, origin_shift: int = 0) -> dict:
+    """인접 앵커 `||`(위)와 `=`(원점)로 13개 버튼의 예측 bbox(같은 좌표계)를 낸다.
 
-    pitch = (DDS 중심 - = 중심) / 11. `=` 를 원점으로 아래로 센다 - crosshair 는 바로
-    아래 1칸이라 pitch 오차가 거의 누적되지 않는다. `origin_shift` 는 원점 보정(버튼 단위,
-    +1 = 전부 한 칸 위). x 범위는 `=` 버튼 폭, 상자 반높이는 pitch 의 비율이라 이웃 버튼을
-    물지 않는다. pitch 이상이면 ValueError.
+    pitch = `=` 중심 - `||` 중심(인접이라 정확). `=` 를 원점으로 아래로 센다 - crosshair 는
+    바로 아래 1칸이라 오차가 누적되지 않는다. `origin_shift` 는 원점 보정(버튼 단위, +1 =
+    전부 한 칸 위). x 범위는 `=` 버튼 폭, 상자 반높이는 pitch 의 비율이라 이웃 버튼을 물지
+    않는다. pitch 이상(너무 작거나 뒤집힘)이면 ValueError.
     """
-    pitch = (_cy(dds_box) - _cy(eq_box)) / ANCHOR_GAP
+    pitch = _cy(eq_box) - _cy(top_box)
     if pitch < MIN_PITCH_PX:
         raise ValueError(f"button pitch too small or inverted: {pitch:.1f}px")
     half_h = pitch * ICON_HALF_H_RATIO
@@ -165,31 +169,38 @@ def column_boxes(dds_box: dict, eq_box: dict, origin_shift: int = 0) -> dict:
     return boxes
 
 
-def pitch_cross_check(eq_box: dict, top_box: dict | None, pitch: float) -> str:
-    """`||` 가 찾혔으면 `=` 와의 인접 간격을 pitch 와 대조한다(로그용, 판정에 안 쓴다)."""
-    if top_box is None:
-        return "no_pipes"
-    local = _cy(eq_box) - _cy(top_box)
-    return "ok" if abs(local - pitch) <= PITCH_CHECK_TOL * pitch else f"mismatch({local:.1f}px vs {pitch:.1f}px)"
-
-
 def _offset(box: dict, dx: int, dy: int) -> dict:
     return {"left": box["left"] + dx, "top": box["top"] + dy,
             "right": box["right"] + dx, "bottom": box["bottom"] + dy}
 
 
-def _locate_anchor(name: str, strip_image, strip: dict, full_image, *, artifact_dir, ocr_client,
-                   confirm_text: bool = True):
-    """버튼 하나를 strip 에서 찾고(요소당 호출 하나), 글자 버튼이면 그 자리 라벨을 OCR 로 확인한다.
+def _locate_icon(mode: str, strip_image, strip: dict, *, artifact_dir) -> dict | None:
+    """아이콘 버튼 하나를 strip 에서 직접 찾는다(요소당 호출 하나). 전체 이미지 좌표 bbox 또는 None."""
+    result = analyze_window_target(
+        None, "tool window", "image", ICON_TARGETS[mode], image=strip_image,
+        debug_image_dir=artifact_dir / "locator", log_name="click_mode",
+        component_name="click_mode", artifact_prefix=f"icon_{mode}",
+    )
+    if result.exit_code != "success" or result.point is None:
+        print(f"[WARNING] 아이콘 {mode} 직접 로케이트 실패: {result.exit_code}")
+        return None
+    if isinstance(result.bbox, dict):
+        box = result.bbox
+    else:
+        x, y = result.point["x"], result.point["y"]
+        box = {"left": max(0, x - 12), "top": max(0, y - 10),
+               "right": min(strip_image.width, x + 12), "bottom": min(strip_image.height, y + 10)}
+    box = _offset(box, strip["left"], strip["top"])
+    print(f"[INFO] 아이콘 {mode} 직접 로케이트: box={box}")
+    return box
 
-    반환은 전체 이미지 좌표의 bbox 이거나, 미검출/라벨 불일치면 None. 확인은 strict -
-    앵커가 틀리면 13개 상자가 전부 틀리므로 lenient 통과는 여기서 의미가 없다.
-    기호 버튼(`||`, `=`)은 confirm_text=False 로 위치만 받고 기하 검사(column_boxes)가 확인한다.
-    """
+
+def _locate_anchor(name: str, strip_image, strip: dict, *, artifact_dir) -> dict | None:
+    """기호 버튼 앵커(`||`, `=`) 하나를 strip 에서 찾는다(요소당 호출 하나). 전체 이미지 좌표 bbox 또는 None."""
     result = analyze_window_target(
         None, "tool window", "image", ANCHOR_TARGETS[name], image=strip_image,
         debug_image_dir=artifact_dir / "locator", log_name="click_mode",
-        component_name="click_mode", artifact_prefix=f"anchor_{name.lower()}",
+        component_name="click_mode", artifact_prefix=f"anchor_{name}",
     )
     if result.exit_code != "success" or result.point is None:
         print(f"[WARNING] 앵커 {name} 미검출: {result.exit_code}")
@@ -201,21 +212,8 @@ def _locate_anchor(name: str, strip_image, strip: dict, full_image, *, artifact_
         box = {"left": max(0, x - 20), "top": max(0, y - 8),
                "right": min(strip_image.width, x + 20), "bottom": min(strip_image.height, y + 8)}
     box = _offset(box, strip["left"], strip["top"])
-    if not confirm_text:
-        print(f"[INFO] 앵커 {name}: box={box} (기호 버튼 - 기하로 확인)")
-        return box
-    pad_x = max(OCR_PAD_MIN_PX, int((box["right"] - box["left"]) * OCR_PAD_RATIO))
-    pad_y = max(OCR_PAD_MIN_PX, int((box["bottom"] - box["top"]) * OCR_PAD_RATIO))
-    ocr_box = {"left": max(0, box["left"] - pad_x), "top": max(0, box["top"] - pad_y),
-               "right": min(full_image.width, box["right"] + pad_x),
-               "bottom": min(full_image.height, box["bottom"] + pad_y)}
-    read = read_text_near_point(
-        full_image, ocr_box, debug_image_dir=artifact_dir, timestamp_tag=name.lower(),
-        artifact_label=f"anchor_{name.lower()}", log_name="click_mode", client=ocr_client,
-    )
-    ok = read.ok and label_matches(read.tokens or read.raw_text.split(), name)
-    print(f"[INFO] 앵커 {name}: box={box} OCR={read.raw_text!r} -> {'확인' if ok else '거부'}")
-    return box if ok else None
+    print(f"[INFO] 앵커 {name}: box={box}")
+    return box
 
 
 def _locate_sem_box(image, client) -> dict | None:
@@ -228,7 +226,7 @@ def _locate_sem_box(image, client) -> dict | None:
         return None
 
 
-def detect_click_mode(image, *, client=None, ocr_client=None, artifact_dir=None) -> dict:
+def detect_click_mode(image, *, client=None, artifact_dir=None) -> dict:
     """tool 창 이미지에서 이동 모드를 판별한다. 반환 dict 의 `mode` 는 세 값 중 하나."""
     artifact_dir = artifact_dir or (DEBUG_IMAGE_DIR / "click_mode" / str(time.time_ns()))
     report = {"mode": MODE_UNKNOWN, "diagnosis": "sem_box_missing", "icons": {}, "anchors": {},
@@ -246,62 +244,81 @@ def detect_click_mode(image, *, client=None, ocr_client=None, artifact_dir=None)
     save_debug_jpeg(strip_image, artifact_dir / "strip.jpg")
     report["strip"] = strip
 
-    anchors = {}
-    for name in (ANCHOR_BOTTOM, ANCHOR_ORIGIN, ANCHOR_CHECK):
+    # 1차: 아이콘 직접 로케이트.
+    direct = {}
+    for mode in (MODE_CROSSHAIR, MODE_L_SHAPE):
         try:
-            anchors[name] = _locate_anchor(name, strip_image, strip, image,
-                                           artifact_dir=artifact_dir, ocr_client=ocr_client,
-                                           confirm_text=(name == ANCHOR_BOTTOM))
+            direct[mode] = _locate_icon(mode, strip_image, strip, artifact_dir=artifact_dir)
+        except Exception as exc:
+            print(f"[WARNING] 아이콘 {mode} 로케이트 예외: {exc}")
+            direct[mode] = None
+    report["direct"] = direct
+
+    # 2차(폴백 + 교차검사): 앵커 기하 - `||` 와 `=`.
+    anchors = {}
+    for name in (ANCHOR_TOP, ANCHOR_ORIGIN):
+        try:
+            anchors[name] = _locate_anchor(name, strip_image, strip, artifact_dir=artifact_dir)
         except Exception as exc:
             print(f"[WARNING] 앵커 {name} 로케이트 예외: {exc}")
             anchors[name] = None
     report["anchors"] = anchors
-    if anchors[ANCHOR_BOTTOM] is None or anchors[ANCHOR_ORIGIN] is None:
+    boxes = None
+    if anchors[ANCHOR_TOP] is not None and anchors[ANCHOR_ORIGIN] is not None:
+        try:
+            boxes = column_boxes(anchors[ANCHOR_TOP], anchors[ANCHOR_ORIGIN], ORIGIN_SHIFT)
+        except ValueError as exc:
+            print(f"[WARNING] 버튼 열 기하 이상: {exc}")
+    if boxes is not None:
+        report["column"] = boxes
+        pitch = _cy(anchors[ANCHOR_ORIGIN]) - _cy(anchors[ANCHOR_TOP])
+        report["pitch_px"] = pitch
+        print(f"[INFO] 버튼 pitch={pitch:.1f}px (||->= 인접), origin_shift={ORIGIN_SHIFT}")
+        report["column_green"] = {}
+        for k, name in reversed(list(enumerate(BUTTONS_FROM_BOTTOM))):
+            b = boxes[name]
+            g = green_ratio(image.crop((b["left"], b["top"], b["right"], b["bottom"])))
+            report["column_green"][name] = g
+            print(f"[INFO]   [{k:2d}] {name:<10} y={b['top']}-{b['bottom']} green={g:.3f}")
+        overlay = image.copy().convert("RGB")
+        draw = ImageDraw.Draw(overlay)
+        for k, name in enumerate(BUTTONS_FROM_BOTTOM):
+            b = boxes[name]
+            draw.rectangle((b["left"], b["top"], b["right"], b["bottom"]), outline="red")
+            draw.text((b["right"] + 3, b["top"]), f"{k}:{name}", fill="red")
+        for mode, b in direct.items():
+            if b:
+                draw.rectangle((b["left"], b["top"], b["right"], b["bottom"]), outline="blue")
+        save_debug_jpeg(overlay.crop((strip["left"], 0, min(image.width, strip["right"] + 80), image.height)),
+                        artifact_dir / "column.jpg")
+        for mode, b in direct.items():
+            if b:
+                off = (_cy(b) - _cy(boxes[mode])) / pitch
+                print(f"[INFO] {mode}: 직접 로케이트 vs 기하 예측 차이 = {off:+.2f}칸")
+    else:
         report["diagnosis"] = "anchor_missing:" + ",".join(
-            n for n in (ANCHOR_BOTTOM, ANCHOR_ORIGIN) if anchors[n] is None)
+            n for n in (ANCHOR_TOP, ANCHOR_ORIGIN) if anchors.get(n) is None) or "geometry"
+        print(f"[WARNING] 앵커 기하 없음({report['diagnosis']}) - 직접 로케이트만으로 판정")
+
+    chosen = {}
+    for mode in (MODE_CROSSHAIR, MODE_L_SHAPE):
+        if direct.get(mode) is not None:
+            chosen[mode] = (direct[mode], "direct")
+        elif boxes is not None:
+            chosen[mode] = (boxes[mode], "geometry")
+    if len(chosen) < 2:
+        report["diagnosis"] = "icon_missing:" + ",".join(m for m in (MODE_CROSSHAIR, MODE_L_SHAPE) if m not in chosen)
         save_debug_json(artifact_dir / "result.json", report)
         print(f"[INFO] SEM box 이동 모드: unknown ({report['diagnosis']})")
         return report
 
-    try:
-        boxes = column_boxes(anchors[ANCHOR_BOTTOM], anchors[ANCHOR_ORIGIN], ORIGIN_SHIFT)
-    except ValueError as exc:
-        report["diagnosis"] = f"geometry:{exc}"
-        print(f"[WARNING] 버튼 열 기하 이상: {exc}")
-        save_debug_json(artifact_dir / "result.json", report)
-        return report
-    report["column"] = boxes
-    pitch = (_cy(anchors[ANCHOR_BOTTOM]) - _cy(anchors[ANCHOR_ORIGIN])) / ANCHOR_GAP
-    report["pitch_px"] = pitch
-    report["pipes_check"] = pitch_cross_check(anchors[ANCHOR_ORIGIN], anchors[ANCHOR_CHECK], pitch)
-    print(f"[INFO] 버튼 pitch={pitch:.1f}px (DDS->= 11칸), origin_shift={ORIGIN_SHIFT}, "
-          f"|| 교차검사={report['pipes_check']}")
-    # 버튼별 초록 비율 표 - 어느 상자에 초록이 있는지 보면 origin_shift 가 맞는지 바로 드러난다
-    # (crosshair 또는 l_shape 한 곳에만 있어야 한다).
-    report["column_green"] = {}
-    for k, name in reversed(list(enumerate(BUTTONS_FROM_BOTTOM))):
-        b = boxes[name]
-        g = green_ratio(image.crop((b["left"], b["top"], b["right"], b["bottom"])))
-        report["column_green"][name] = g
-        print(f"[INFO]   [{k:2d}] {name:<10} y={b['top']}-{b['bottom']} green={g:.3f}")
-
-    overlay = image.copy().convert("RGB")
-    draw = ImageDraw.Draw(overlay)
-    for k, name in enumerate(BUTTONS_FROM_BOTTOM):
-        b = boxes[name]
-        draw.rectangle((b["left"], b["top"], b["right"], b["bottom"]), outline="red")
-        draw.text((b["right"] + 3, b["top"]), f"{k}:{name}", fill="red")
-    save_debug_jpeg(overlay.crop((strip["left"], 0, min(image.width, strip["right"] + 80), image.height)),
-                    artifact_dir / "column.jpg")
-
     ratios = {}
     for mode in (MODE_CROSSHAIR, MODE_L_SHAPE):
-        b = boxes[mode]
+        b, source = chosen[mode]
         crop = image.crop((b["left"], b["top"], b["right"], b["bottom"]))
         save_debug_jpeg(crop, artifact_dir / f"{mode}.jpg")
         ratios[mode] = green_ratio(crop)
-        report["icons"][mode] = {"box": b, "green_ratio": ratios[mode],
-                                 "steps_below_equals": BUTTONS_FROM_BOTTOM.index(ANCHOR_ORIGIN) - BUTTONS_FROM_BOTTOM.index(mode)}
+        report["icons"][mode] = {"box": b, "green_ratio": ratios[mode], "source": source}
     report["mode"] = classify_mode(ratios)
     report["recenter_clicks"] = CLICKS_FOR_MODE.get(report["mode"])
     if report["mode"] != MODE_UNKNOWN:

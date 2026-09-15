@@ -3,15 +3,12 @@
 from poc.workflow_3.check_tool_occupancy import classify_reading
 
 
-def test_same_row_occupancy_requires_explicit_empty_cell():
-    base = {"mc_id": "MCD630", "row_confirmed": True, "connection_user_text": ""}
-    assert classify_reading(base, "MCD630") == "free"
+def test_occupancy_requires_explicit_empty_cell():
+    assert classify_reading({"connection_user_text": ""}) == "free"
     for user in ("kim", "12345", "홍길동"):
-        assert classify_reading(dict(base, connection_user_text=user), "MCD630") == "occupied_by_other"
-    for change in ({"connection_user_text": None}, {"connection_user_text": 1},
-                   {"row_confirmed": "true"}, {"mc_id": "MCD631"}):
-        assert classify_reading(dict(base, **change), "MCD630") == "unknown"
-    assert classify_reading({}, "MCD630") == "unknown"
+        assert classify_reading({"connection_user_text": user}) == "occupied_by_other"
+    for reading in ({"connection_user_text": None}, {"connection_user_text": 1}, {}, None):
+        assert classify_reading(reading) == "unknown"
 
 
 def test_occupancy_gate_prevents_click_and_free_allows_it(monkeypatch, tmp_path):
@@ -77,7 +74,7 @@ def test_vlm_failure_and_missing_fields_never_mean_free(monkeypatch, tmp_path):
     monkeypatch.setattr(checker, "locate_connection_user_column", lambda *a: [80, 100])
     monkeypatch.setattr(checker, "read_text_near_point", lambda *a, **kw: PointTextRead(ok=True, raw_text="MCD630"))
     image = Image.new("RGB", (100, 100))
-    for text in ('{}', 'not json', '{"mc_id":"MCD630","row_confirmed":true}'):
+    for text in ('{}', 'not json', '{"connection_user_text":null}'):
         client = SimpleNamespace(chat_with_image_b64=lambda **kw: SimpleNamespace(text=text))
         assert checker.check_tool_occupancy(image, "MCD630", client=client)["occupancy"] == "unknown"
     def unavailable(**kw):
@@ -107,28 +104,26 @@ def test_fine_image_excludes_occupied_neighbor_and_keeps_distant_columns():
             build_row_read_image(image, dict(layout, **change), "MCDA01")
 
 
-def test_coarse_then_fine_rejects_multiple_mc_ids(monkeypatch, tmp_path):
+def test_vlm_id_transcription_does_not_gate_after_paddle_confirmed(monkeypatch, tmp_path):
     import json
     from types import SimpleNamespace
     from PIL import Image
     from poc.workflow_3 import check_tool_occupancy as checker
+    from poc.workflow_3.vlm.label_verify import PointTextRead
 
     monkeypatch.setattr(checker, "DEBUG_IMAGE_DIR", tmp_path)
-    from poc.workflow_3.vlm.label_verify import PointTextRead
     monkeypatch.setattr(checker, "locate_row_point", lambda *a: {"x": 840, "y": 50})
-    monkeypatch.setattr(checker, "locate_connection_user_column", lambda *a: [900, 1000])
+    monkeypatch.setattr(checker, "locate_connection_user_column", lambda *a: [920, 1000])
     monkeypatch.setattr(checker, "read_text_near_point", lambda *a, **kw: PointTextRead(ok=True, raw_text="MCDA01"))
-    for ids, expected in ((["MCDA01"], "free"), (["MCDA01", "MCDA23"], "unknown"),
-                          (["MCDA23"], "unknown")):
-        responses = iter([{"mc_id": "MCDA01", "row_confirmed": True,
-                          "visible_mc_ids": ids, "connection_user_text": ""}])
+    for extra in ({}, {"mc_id": "mcda01"}, {"mc_id": "MCDA0l", "visible_mc_ids": ["MCDA0l", "MCDA23"]}):
         calls = []
         def chat(**kwargs):
             calls.append(kwargs)
-            return SimpleNamespace(text=json.dumps(next(responses)))
+            return SimpleNamespace(text=json.dumps({**extra, "connection_user_text": "kim"}))
         report = checker.check_tool_occupancy(Image.new("RGB", (1000, 200)), "MCDA01",
                                              client=SimpleNamespace(chat_with_image_b64=chat))
-        assert report["occupancy"] == expected
+        assert report["occupancy"] == "occupied_by_other"
+        assert report["diagnosis"] == "ok"
         assert len(calls) == 1
 
 
@@ -184,8 +179,7 @@ def test_locator_maps_column_point_and_paddle_reads_target_band(monkeypatch, tmp
         ocr_calls.append(kwargs)
         return SimpleNamespace(text="MCDA23")
     responses = iter([
-        {"mc_id": "MCDA23", "visible_mc_ids": ["MCDA23"], "row_confirmed": True,
-         "connection_user_text": "kim"},
+        {"connection_user_text": "kim"},
     ])
     client = SimpleNamespace(chat_with_image_b64=lambda **kw: SimpleNamespace(text=json.dumps(next(responses))))
     report = checker.check_tool_occupancy(image, "MCDA23", client=client,

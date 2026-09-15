@@ -35,13 +35,14 @@ MC_ID_HALF_WIDTH_PX = 60
 CONNECTION_USER_LEFT_PAD_PX = 40
 
 
-def classify_reading(reading: dict, tool_name: str) -> str:
-    """같은 행임이 확인된 명시적 판독만 사용한다. 누락/null은 공백이 아니다."""
-    if (reading.get("row_confirmed") is not True
-            or not isinstance(reading.get("mc_id"), str)
-            or reading["mc_id"].strip().upper() != tool_name.strip().upper()):
-        return UNKNOWN
-    user = reading.get("connection_user_text")
+def classify_reading(reading: dict) -> str:
+    """명시적 판독만 사용한다. 누락/null은 공백이 아니다.
+
+    행 동일성은 여기서 다시 묻지 않는다 - 같은 y 밴드의 MC ID 를 PaddleOCR 이 엄격히
+    확인한 뒤에만 이 판독에 도달하며, VLM 의 ID 재전사(대소문자/O·0)를 게이트로 쓰면
+    정상 점유 행이 `unknown` 으로 새어 나간다(오피스 실측).
+    """
+    user = reading.get("connection_user_text") if isinstance(reading, dict) else None
     if not isinstance(user, str):
         return UNKNOWN
     return OCCUPIED_BY_OTHER if user.strip() else FREE
@@ -186,31 +187,24 @@ def check_tool_occupancy(image, tool_name: str, *, client=None, row_point=None, 
         response = client.chat_with_image_b64(
             image_b64=fine_b64,
             image_mime="image/webp",
-            system_message="Transcribe two cropped RCS cells. Return only JSON. Never guess blank cells.",
+            system_message="Transcribe one cropped RCS cell. Return only JSON. Never guess a blank cell.",
             user_text=(
-                "The image contains two labelled panels: MC ID, Connection User. "
-                "Each panel contains an enlarged cell cropped from the SAME pixel row band. "
-                "Read only cell content below each label; labels are not cell values. "
-                "Transcribe ALL equipment IDs visible in the MC ID panel into visible_mc_ids. "
-                "If two rows or partial neighboring text are visible, row_confirmed=false. "
+                "The image contains two labelled panels: MC ID (for reference only) and "
+                "Connection User. Each panel is an enlarged cell from the SAME pixel row band. "
+                "Read only cell content below the Connection User label; labels are not values. "
                 "Transcribe the Connection User text exactly as shown. "
                 "Use empty string ONLY for a completely visible, confidently empty cell. "
                 "Use null for clipped, partial or unreadable content. Never infer empty "
                 "from failed recognition. Schema: "
-                '{"mc_id":"transcribed ID","visible_mc_ids":["transcribed ID"],'
-                '"row_confirmed":true,"connection_user_text":"visible user"}. '
-                "Transcribe the actual MC ID, never substitute an expected ID."
+                '{"connection_user_text":"visible user"}.'
             ),
             temperature=0.0,
         )
         save_debug_text(artifact_dir / "response.txt", response.text)
         reading = extract_json(response.text)
         report["reading"] = reading
-        if reading.get("visible_mc_ids") == [tool_name]:
-            report["occupancy"] = classify_reading(reading, tool_name)
-            report["diagnosis"] = "ok" if report["occupancy"] != UNKNOWN else "occupancy_unreadable"
-        else:
-            report["diagnosis"] = "fine_mc_id_mismatch"
+        report["occupancy"] = classify_reading(reading)
+        report["diagnosis"] = "ok" if report["occupancy"] != UNKNOWN else "occupancy_unreadable"
     except Exception as exc:
         report["error"] = f"{type(exc).__name__}: {exc}"
         print(f"[WARNING] List 점유 판독 실패: {exc}")

@@ -66,6 +66,7 @@ def click_at_screen(
     *,
     action_enabled: bool = True,
     hold_sec: float = 0.0,
+    pre_click_settle_sec: float = 0.0,
 ) -> bool:
     """스크린 좌표에서 마우스 클릭을 수행한다.
 
@@ -74,6 +75,12 @@ def click_at_screen(
     press/release 쌍이 두 샘플 사이에 통째로 들어가 **눌린 적 없는 것으로** 넘어갈 수
     있다(2026-08-19 오피스: 커서는 버튼 위로 가는데 클릭만 안 먹음). 기본값 0.0 은
     종전 동작 그대로라 기존 호출부에 영향이 없다.
+
+    `pre_click_settle_sec` 은 커서 도착 -> 누름 사이 체류다. 원격 뷰는 커서 위치를
+    따라오는 데 시간이 걸려, 도착 직후 누르면 원격에서는 **이전 위치**가 눌린다.
+    시연 경로(`demonstration_rcs_control.perform_remote_click`)가 오피스 실측으로 얻은
+    값은 0.6 이며, 라이브 SEM box 더블클릭 recenter 가 같은 증상이었다(2026-09-15:
+    커서는 정확히 가는데 화면이 그 점으로 이동하지 않음). 기본 0.0 = 종전(10ms).
     """
     sx, sy = screen_point["x"], screen_point["y"]
 
@@ -94,7 +101,7 @@ def click_at_screen(
     # 드롭다운 행)에 걸리게 한다(teleport 면 RCS 가 이동을 놓쳐 엉뚱한 위치를 클릭).
     _glide_to(mouse, sx, sy)
     _jiggle(mouse, sx, sy)
-    time.sleep(0.01)
+    time.sleep(max(0.01, pre_click_settle_sec))
     if hold_sec > 0:
         for _ in range(max(1, click_count)):
             mouse.press(Button.left)

@@ -38,6 +38,7 @@ import numpy as np
 
 from poc.workflow_3 import TEMPLATES_DIR
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
+from poc.workflow_3.util.env_utils import env_float
 # util/__init__ 는 pynput/pywinauto 부재 시 None 을 바인딩한다(import-안전).
 # 실제 호출은 오피스(Windows+의존성 설치) 환경에서만 일어난다.
 from poc.workflow_3.util import (
@@ -60,6 +61,13 @@ DEFAULT_LANDMARKS_DIR = TEMPLATES_DIR / "sem_panel_landmarks"
 
 # 캡처~제스처 사이 창 크기 드리프트 허용 오차(논리 px). 초과 시 좌표 무효로 중단.
 RECT_DRIFT_TOL_PX = 2
+
+# 원격 뷰 클릭 성사 조건 - 시연 경로(demonstration_rcs_control)가 오피스 실측 3회로
+# 얻은 값과 같다. 라이브 SEM box 의 recenter 더블클릭이 "커서는 정확히 가는데 화면이
+# 안 움직이는" 증상(2026-09-15)을 보였고 원인도 같다: 도착 직후의 즉시 press/release
+# 쌍은 원격의 입력 샘플링 사이로 빠진다. 줄이면 클릭이 안 먹는다(시연 문서와 동일).
+REMOTE_PRE_CLICK_SETTLE_SEC = env_float("ALIGN_SEM_PRE_CLICK_SETTLE_SEC", 0.6)  # 도착 -> 누름
+REMOTE_CLICK_HOLD_SEC = env_float("ALIGN_SEM_CLICK_HOLD_SEC", 0.15)             # 누름 유지
 
 
 def _to_gray(image) -> np.ndarray:
@@ -182,7 +190,8 @@ class RCSSEMMonitor:
         if screen_point is None:
             raise RuntimeError("move_to_point: 창 좌표→스크린 변환 실패")
         click_at_screen(
-            screen_point, "sem_recenter", 2, action_enabled=self.action_enabled
+            screen_point, "sem_recenter", 2, action_enabled=self.action_enabled,
+            hold_sec=REMOTE_CLICK_HOLD_SEC, pre_click_settle_sec=REMOTE_PRE_CLICK_SETTLE_SEC,
         )
         if self.settle_sec > 0:
             time.sleep(self.settle_sec)
@@ -194,7 +203,8 @@ class RCSSEMMonitor:
         if screen_point is None:
             raise RuntimeError("click_screen: 창 좌표→스크린 변환 실패")
         click_at_screen(
-            screen_point, "sem_dialog_click", 1, action_enabled=self.action_enabled
+            screen_point, "sem_dialog_click", 1, action_enabled=self.action_enabled,
+            hold_sec=REMOTE_CLICK_HOLD_SEC, pre_click_settle_sec=REMOTE_PRE_CLICK_SETTLE_SEC,
         )
         if self.settle_sec > 0:
             time.sleep(self.settle_sec)

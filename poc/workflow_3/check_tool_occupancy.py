@@ -10,7 +10,7 @@ import re
 import time
 
 from dotenv import load_dotenv
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from poc.workflow_3 import DEBUG_IMAGE_DIR
 from poc.workflow_3.debug_artifacts import save_debug_jpeg, save_debug_json, save_debug_text
@@ -22,6 +22,9 @@ from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
 
 # 단독 점검 대상: 이 값을 직접 수정한다. 알람 루프는 전달받은 EQP_ID를 사용한다.
 ACTION_TARGET_TOOL_NAME = "MCDA23"
+# 한 행만 포함하도록 제한한다. 오피스 DPI/행 높이에 맞춰 조정한다.
+MAX_ROW_HEIGHT_PX = 48
+CELL_UPSCALE = 3
 
 
 def classify_reading(reading: dict, tool_name: str) -> str:
@@ -46,8 +49,44 @@ def classify_reading(reading: dict, tool_name: str) -> str:
     return UNKNOWN
 
 
+def build_row_read_image(image, layout: dict, tool_name: str):
+    """세 컬럼을 동일 y 범위로 잘라 확대한다. 좌우 위치는 헤더로 찾는다."""
+    if layout.get("mc_id") != tool_name:
+        raise ValueError("coarse MC ID mismatch")
+    top, bottom = layout.get("row_top"), layout.get("row_bottom")
+    if (type(top) is not int or type(bottom) is not int
+            or not 0 <= top < bottom <= image.height
+            or bottom - top > MAX_ROW_HEIGHT_PX):
+        raise ValueError("invalid or multi-row crop height")
+    columns = layout.get("columns")
+    if not isinstance(columns, dict):
+        raise ValueError("missing column bounds")
+    cells = []
+    spans = []
+    for name in ("mc_id", "remote", "control_user"):
+        span = columns.get(name)
+        if (not isinstance(span, list) or len(span) != 2
+                or any(type(v) is not int for v in span)
+                or not 0 <= span[0] < span[1] <= image.width):
+            raise ValueError(f"invalid {name} column bounds")
+        left, right = span
+        if any(left < end and right > start for start, end in spans):
+            raise ValueError("overlapping columns")
+        spans.append(span)
+        cell = image.crop((left, top, right, bottom)).convert("RGB")
+        cells.append(cell.resize((cell.width * CELL_UPSCALE, cell.height * CELL_UPSCALE)))
+    panel_height = cells[0].height + 28
+    fine = Image.new("RGB", (max(cell.width for cell in cells) + 16, panel_height * 3), "white")
+    draw = ImageDraw.Draw(fine)
+    for index, (label, cell) in enumerate(zip(("MC ID", "Remote", "Control User"), cells)):
+        y = index * panel_height
+        draw.text((8, y + 4), label, fill="black")
+        fine.paste(cell, (8, y + 24))
+    return fine
+
+
 def check_tool_occupancy(image, tool_name: str, *, client=None) -> dict:
-    """전체 List와 헤더를 함께 판독한다. 인접 행/잘린 컬럼/실패는 unknown."""
+    """coarse 행/컬럼 위치 → 동일 행 cell crop → fine 텍스트 판독."""
     report = {"target_tool_name": tool_name, "occupancy": UNKNOWN}
     artifact_dir = DEBUG_IMAGE_DIR / "tool_occupancy" / str(time.time_ns())
     report["artifact_dir"] = str(artifact_dir)
@@ -59,31 +98,61 @@ def check_tool_occupancy(image, tool_name: str, *, client=None) -> dict:
         client = client or Workflow1VLMClient(
             service_slug=os.getenv("TOOL_OCCUPANCY_SERVICE", DEFAULT_SCREEN_ANALYSIS_SERVICE),
         )
-        response = client.chat_with_image_b64(
+        coarse = client.chat_with_image_b64(
             image_b64=image_b64,
             image_mime="image/webp",
-            system_message="Read RCS table cells precisely. Return only a JSON object. Never guess blank cells.",
+            system_message="Locate RCS table geometry. Return only JSON. Do not classify occupancy.",
             user_text=(
-                f"Find the exact MC ID {json.dumps(tool_name)} in the RCS List table. "
-                "Read ONLY that equipment's row, using the headers and row boundaries. "
-                "Read the count immediately next to Remote (such as 1 or 2), and the "
-                "Control User cell in that SAME row. Read both independently; when the "
-                "Remote count is hard to read, Control User is the second occupancy signal. "
-                "Do not copy a count or user from another row. Do not return the headers "
-                "Remote or Control User as cell values. Return this schema: "
-                '{"mc_id":"exact visible ID", "row_confirmed":true, '
-                '"remote_text":"1", "control_user_text":"visible user"}. '
-                "Use empty string ONLY for a fully visible, confidently empty cell. "
-                "Use null for an unreadable, clipped, hidden or unidentified field. "
-                "Set row_confirmed=false if the exact target row cannot be identified "
-                "unambiguously. Never infer empty from missing OCR text."
+                f"Image size is {image.width} x {image.height} pixels. "
+                f"Locate the exact MC ID {json.dumps(tool_name)} using the MC ID header. "
+                "Do not assume MC ID is on the left: columns may be far apart. "
+                "Locate the Remote count field and Control User column using their labels. "
+                "Return one shared row_top/row_bottom pixel band containing ONLY the target "
+                "row, excluding text from rows above and below. Return horizontal pixel "
+                "bounds for the three cells. Remote bounds must cover the count next to "
+                "Remote, not merely the Remote label. Control User bounds must cover the "
+                "whole user cell, not just a blank part. Exclude table headers. "
+                "All coordinates are absolute image pixels, NOT normalized 0-1000. Schema: "
+                '{"mc_id":"exact visible ID","row_top":100,"row_bottom":120,'
+                '"columns":{"mc_id":[10,110],"remote":[400,500],"control_user":[700,900]}}. '
+                "These are example coordinates only. Use null for anything uncertain. "
+                "Do not choose a similarly named neighbor (MCDA01 and MCDA23 are different)."
+            ),
+            temperature=0.0,
+        )
+        save_debug_text(artifact_dir / "coarse_response.txt", coarse.text)
+        layout = extract_json(coarse.text)
+        report["layout"] = layout
+        fine_image = build_row_read_image(image, layout, tool_name)
+        save_debug_jpeg(image.crop((0, layout["row_top"], image.width, layout["row_bottom"])),
+                        artifact_dir / "row.jpg")
+        save_debug_jpeg(fine_image, artifact_dir / "cells.jpg")
+        fine_b64, _, _ = encode_image_webp(fine_image, quality=90)
+        response = client.chat_with_image_b64(
+            image_b64=fine_b64,
+            image_mime="image/webp",
+            system_message="Transcribe three cropped RCS cells. Return only JSON. Never guess blank cells.",
+            user_text=(
+                "The image contains three labelled panels: MC ID, Remote, Control User. "
+                "Each panel contains an enlarged cell cropped from the SAME pixel row band. "
+                "Read only cell content below each label; labels are not cell values. "
+                "Transcribe ALL equipment IDs visible in the MC ID panel into visible_mc_ids. "
+                "If two rows or partial neighboring text are visible, row_confirmed=false. "
+                "Read the Remote count and Control User text independently. "
+                "Use empty string ONLY for a completely visible, confidently empty cell. "
+                "Use null for clipped, partial or unreadable content. Never infer empty "
+                "from failed recognition. Schema: "
+                '{"mc_id":"transcribed ID","visible_mc_ids":["transcribed ID"],'
+                '"row_confirmed":true,"remote_text":"1","control_user_text":"visible user"}. '
+                "Transcribe the actual MC ID, never substitute an expected ID."
             ),
             temperature=0.0,
         )
         save_debug_text(artifact_dir / "response.txt", response.text)
         reading = extract_json(response.text)
         report["reading"] = reading
-        report["occupancy"] = classify_reading(reading, tool_name)
+        if reading.get("visible_mc_ids") == [tool_name]:
+            report["occupancy"] = classify_reading(reading, tool_name)
     except Exception as exc:
         report["error"] = f"{type(exc).__name__}: {exc}"
         print(f"[WARNING] List 점유 판독 실패: {exc}")

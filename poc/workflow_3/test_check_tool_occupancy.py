@@ -87,3 +87,48 @@ def test_vlm_failure_and_missing_fields_never_mean_free(monkeypatch, tmp_path):
     report = checker.check_tool_occupancy(image, "MCD630", client=client)
     assert report["occupancy"] == "unknown"
     assert "offline" in report["error"]
+
+
+def test_fine_image_excludes_occupied_neighbor_and_keeps_distant_columns():
+    from PIL import Image
+    from poc.workflow_3.check_tool_occupancy import build_row_read_image
+
+    image = Image.new("RGB", (1000, 200), "white")
+    image.paste("blue", (0, 40, 1000, 60))  # MCDA01
+    image.paste("red", (0, 60, 1000, 80))  # MCDA23: 바로 아래 점유 행
+    layout = {"mc_id": "MCDA01", "row_top": 40, "row_bottom": 60,
+              "columns": {"mc_id": [800, 880], "remote": [450, 550],
+                          "control_user": [900, 1000]}}
+    fine = build_row_read_image(image, layout, "MCDA01")
+    colors = {color for count, color in fine.getcolors(fine.width * fine.height)}
+    assert (0, 0, 255) in colors
+    assert (255, 0, 0) not in colors
+    for change in ({"row_top": -1}, {"row_bottom": 110}, {"mc_id": "MCDA23"}):
+        import pytest
+        with pytest.raises(ValueError):
+            build_row_read_image(image, dict(layout, **change), "MCDA01")
+
+
+def test_coarse_then_fine_rejects_multiple_mc_ids(monkeypatch, tmp_path):
+    import json
+    from types import SimpleNamespace
+    from PIL import Image
+    from poc.workflow_3 import check_tool_occupancy as checker
+
+    monkeypatch.setattr(checker, "DEBUG_IMAGE_DIR", tmp_path)
+    layout = {"mc_id": "MCDA01", "row_top": 40, "row_bottom": 60,
+              "columns": {"mc_id": [800, 880], "remote": [450, 550],
+                          "control_user": [900, 1000]}}
+    for ids, expected in ((["MCDA01"], "free"), (["MCDA01", "MCDA23"], "unknown"),
+                          (["MCDA23"], "unknown")):
+        responses = iter([layout, {"mc_id": "MCDA01", "row_confirmed": True,
+                          "visible_mc_ids": ids, "remote_text": "", "control_user_text": ""}])
+        calls = []
+        def chat(**kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(text=json.dumps(next(responses)))
+        report = checker.check_tool_occupancy(Image.new("RGB", (1000, 200)), "MCDA01",
+                                             client=SimpleNamespace(chat_with_image_b64=chat))
+        assert report["occupancy"] == expected
+        assert len(calls) == 2
+        assert calls[0]["image_b64"] != calls[1]["image_b64"]

@@ -296,7 +296,18 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 ## List 점유 확인 / 접속 전 게이트
 
 Align Fail 접속은 **MC ID를 더블클릭하기 전에** List의 해당 행을 판독한다.
-`Remote` 옆 count와 같은 행의 `Control User`를 함께 읽는다.
+`Remote` 옆 count와 같은 행의 `Control User`를 coarse → fine으로 읽는다.
+
+1. **Coarse:** MC ID 헤더와 정확한 장비 ID로 대상 행의 위/아래 경계와 세 컬럼의 x 범위를 찾는다.
+   컬럼이 좌측/중앙/우측 어디에 있다고 가정하지 않는다.
+2. **Fine:** 세 셀을 **동일한 y 범위**로 잘라 3배 확대해 판독한다. 이 단계에 전체 List를
+   보내지 않는다. MC ID를 다시 읽고 다른 장비 ID가 섞이면 `unknown`으로 막는다.
+
+`check_tool_occupancy.py`의 `MAX_ROW_HEIGHT_PX=48`은 여러 행이 섞이는 crop의 상한이다.
+오피스 DPI/행 높이에 맞춰 조정하고, `cells.jpg`에 이웃 행 텍스트가 없는지 확인한다.
+이 기하 검사는 VLM 정확도를 보장하지 않으므로 MCDA01(비점유) / MCDA23(점유)로 재검증한다.
+기존 `.env`에 `SELECT_TOOL_LIST_RIGHT_RATIO=0.42`가 있다면 전체 폭인 `1.0`으로 바꿔야
+우측 MC ID도 tool 클릭 로케이터의 탐색 범위에 들어온다.
 
 | 상태 | 판별 | 접속 |
 |---|---|---|
@@ -322,7 +333,8 @@ uv run python -m poc.workflow_3.check_tool_occupancy
 - 저장 이미지: `.env`에 `TOOL_OCCUPANCY_IMAGE=/path/to/list.jpg` 설정.
 - VLM: 기존 서비스 설정 재사용. `TOOL_OCCUPANCY_SERVICE` 기본 `mai-ui`.
 - 출력: 읽은 두 필드와 `occupancy`. 종료 코드 `0=free`, `1=occupied_by_other`, `2=unknown`.
-- 산출물: `debug_images/tool_occupancy/<timestamp>/list.jpg`, `response.txt`, `result.json`.
+- 산출물: `debug_images/tool_occupancy/<timestamp>/`의 `list.jpg`, `coarse_response.txt`,
+  `row.jpg`(선택 행), `cells.jpg`(확대 셀), `response.txt`, `result.json`.
 - checker는 tool을 클릭하지 않는다. 실제 창 캡처는 오피스 Windows에서 확인한다.
   저장 이미지도 VLM 연결이 필요하다. 테스트는 mock으로 실행한다.
 

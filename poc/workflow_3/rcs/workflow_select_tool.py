@@ -144,7 +144,7 @@ def _env_float(name: str, default: float) -> float:
 
 LIST_REGION_LEFT_RATIO = _env_float("SELECT_TOOL_LIST_LEFT_RATIO", 0.00)
 LIST_REGION_TOP_RATIO = _env_float("SELECT_TOOL_LIST_TOP_RATIO", 0.10)
-LIST_REGION_RIGHT_RATIO = _env_float("SELECT_TOOL_LIST_RIGHT_RATIO", 0.42)
+LIST_REGION_RIGHT_RATIO = _env_float("SELECT_TOOL_LIST_RIGHT_RATIO", 1.00)
 LIST_REGION_BOTTOM_RATIO = _env_float("SELECT_TOOL_LIST_BOTTOM_RATIO", 0.98)
 LIST_OCR_MAX_UPSCALE = _env_float("SELECT_TOOL_LIST_OCR_MAX_UPSCALE", 3.0)
 
@@ -244,12 +244,11 @@ def _tool_row_target(tool_name: str) -> TargetConfig:
     return TargetConfig(
         key="tool_row",
         description=(
-            f"the equipment ID '{tool_name}' in the left-most 'MC ID' column of the RCS tool list. "
-            f"Tool/equipment IDs are listed vertically down this left-most column. A small "
-            f"traffic-light status square (green = tool On, black = tool Off) sits immediately to "
-            f"the left of each ID text. Find the row whose MC ID text is exactly '{tool_name}' and "
+            f"the equipment ID '{tool_name}' under the 'MC ID' header of the RCS tool list. "
+            f"Locate the column by its header, without assuming it is on the left or right. "
+            f"Find the row whose MC ID text is exactly '{tool_name}' and "
             f"return a safe point on that ID text where a user would double-click to open the tool. "
-            f"Ignore the right-side columns (RCS IP, Location, Model, Status, Count, DVR, Connection User)."
+            f"Ignore other columns (RCS IP, Location, Model, Status, Count, DVR, Control User, Connection User)."
         ),
         left_pad_ratio=0.7,
         right_pad_ratio=1.8,
@@ -1031,8 +1030,7 @@ def _locate_tool_via_vlm(
     policy = confirm_policy if confirm_policy is not None else load_confirm_policy()
     normalized = _normalize_tool_text(tool_name).lower() or "tool"
 
-    # 장비 ID 는 화면 왼쪽 MC ID 컬럼에만 있으므로, VLM 입력을 왼쪽 list 영역으로
-    # 좁혀 오른쪽 컬럼(Connection User 등 ID 처럼 보이는 텍스트)에 헷갈리지 않게 한다.
+    # MC ID 위치는 화면마다 다를 수 있다. 기본은 전체 폭이며 헤더로 컬럼을 찾는다.
     full_w, full_h = current_image.size
     region_box = _build_relative_crop_box(
         full_w,

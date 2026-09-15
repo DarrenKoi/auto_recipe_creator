@@ -55,6 +55,10 @@ BUTTONS_FROM_BOTTOM = ["DDS", "Next", "ACD", "AMS", "picture", "AMP", "empty",
 ANCHOR_BOTTOM, ANCHOR_ORIGIN, ANCHOR_CHECK = "DDS", "equals", "pipes"
 ANCHOR_GAP = BUTTONS_FROM_BOTTOM.index(ANCHOR_ORIGIN) - BUTTONS_FROM_BOTTOM.index(ANCHOR_BOTTOM)  # 11
 PITCH_CHECK_TOL = 0.25         # |(= - ||) 간격 - pitch| 허용(pitch 비율). 넘으면 경고(앵커 아님).
+# 원점 보정(버튼 단위, +1 = 모든 상자를 한 칸 위로). 8회차 오피스: pitch 는 맞는데 13개 상자가
+# 전부 한 칸 아래 = VLM 이 '=' 로 돌려준 상자가 실제로는 그 아래 버튼. 콘솔의 버튼별 초록
+# 비율 표로 맞는 값을 고른다: CLICK_MODE_ORIGIN_SHIFT.
+ORIGIN_SHIFT = int(os.getenv("CLICK_MODE_ORIGIN_SHIFT", "1"))
 
 # 검색 strip: 라이브 SEM box 오른쪽 경계부터 박스 폭의 이 비율(최소 px), 세로는 **창 전체**
 # (2회차 오피스: 박스 높이로 자르면 열 위쪽이 잘린다).
@@ -140,12 +144,13 @@ def _cy(box: dict) -> float:
     return (box["top"] + box["bottom"]) / 2
 
 
-def column_boxes(dds_box: dict, eq_box: dict) -> dict:
+def column_boxes(dds_box: dict, eq_box: dict, origin_shift: int = 0) -> dict:
     """DDS(아래, OCR 확인)와 `=`(위, 원점)로 13개 버튼의 예측 bbox(같은 좌표계)를 낸다.
 
     pitch = (DDS 중심 - = 중심) / 11. `=` 를 원점으로 아래로 센다 - crosshair 는 바로
-    아래 1칸이라 pitch 오차가 거의 누적되지 않는다. x 범위는 `=` 버튼 폭, 상자 반높이는
-    pitch 의 비율이라 이웃 버튼을 물지 않는다. pitch 이상이면 ValueError.
+    아래 1칸이라 pitch 오차가 거의 누적되지 않는다. `origin_shift` 는 원점 보정(버튼 단위,
+    +1 = 전부 한 칸 위). x 범위는 `=` 버튼 폭, 상자 반높이는 pitch 의 비율이라 이웃 버튼을
+    물지 않는다. pitch 이상이면 ValueError.
     """
     pitch = (_cy(dds_box) - _cy(eq_box)) / ANCHOR_GAP
     if pitch < MIN_PITCH_PX:
@@ -154,7 +159,7 @@ def column_boxes(dds_box: dict, eq_box: dict) -> dict:
     origin_idx = BUTTONS_FROM_BOTTOM.index(ANCHOR_ORIGIN)
     boxes = {}
     for k, name in enumerate(BUTTONS_FROM_BOTTOM):
-        cy = _cy(eq_box) + (origin_idx - k) * pitch
+        cy = _cy(eq_box) + (origin_idx - k - origin_shift) * pitch
         boxes[name] = {"left": int(eq_box["left"]), "top": int(round(cy - half_h)),
                        "right": int(eq_box["right"]), "bottom": int(round(cy + half_h))}
     return boxes
@@ -259,7 +264,7 @@ def detect_click_mode(image, *, client=None, ocr_client=None, artifact_dir=None)
         return report
 
     try:
-        boxes = column_boxes(anchors[ANCHOR_BOTTOM], anchors[ANCHOR_ORIGIN])
+        boxes = column_boxes(anchors[ANCHOR_BOTTOM], anchors[ANCHOR_ORIGIN], ORIGIN_SHIFT)
     except ValueError as exc:
         report["diagnosis"] = f"geometry:{exc}"
         print(f"[WARNING] 버튼 열 기하 이상: {exc}")
@@ -269,7 +274,16 @@ def detect_click_mode(image, *, client=None, ocr_client=None, artifact_dir=None)
     pitch = (_cy(anchors[ANCHOR_BOTTOM]) - _cy(anchors[ANCHOR_ORIGIN])) / ANCHOR_GAP
     report["pitch_px"] = pitch
     report["pipes_check"] = pitch_cross_check(anchors[ANCHOR_ORIGIN], anchors[ANCHOR_CHECK], pitch)
-    print(f"[INFO] 버튼 pitch={pitch:.1f}px (DDS->= 11칸), || 교차검사={report['pipes_check']}")
+    print(f"[INFO] 버튼 pitch={pitch:.1f}px (DDS->= 11칸), origin_shift={ORIGIN_SHIFT}, "
+          f"|| 교차검사={report['pipes_check']}")
+    # 버튼별 초록 비율 표 - 어느 상자에 초록이 있는지 보면 origin_shift 가 맞는지 바로 드러난다
+    # (crosshair 또는 l_shape 한 곳에만 있어야 한다).
+    report["column_green"] = {}
+    for k, name in reversed(list(enumerate(BUTTONS_FROM_BOTTOM))):
+        b = boxes[name]
+        g = green_ratio(image.crop((b["left"], b["top"], b["right"], b["bottom"])))
+        report["column_green"][name] = g
+        print(f"[INFO]   [{k:2d}] {name:<10} y={b['top']}-{b['bottom']} green={g:.3f}")
 
     overlay = image.copy().convert("RGB")
     draw = ImageDraw.Draw(overlay)

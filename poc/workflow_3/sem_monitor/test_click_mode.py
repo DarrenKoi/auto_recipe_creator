@@ -48,6 +48,8 @@ def test_column_boxes_count_down_from_equals_with_dds_baseline_pitch():
     assert (lshape["top"] + lshape["bottom"]) / 2 == 190 + 3 * 20
     assert cross["left"] == 302 and cross["right"] == 342            # x 는 '=' 버튼 폭
     assert cross["bottom"] - cross["top"] < 20  # 이웃 버튼을 물지 않는다
+    up = cm.column_boxes(dds, eq, origin_shift=1)                   # 전부 한 칸 위
+    assert (up["crosshair"]["top"] + up["crosshair"]["bottom"]) / 2 == 190
     with pytest.raises(ValueError):
         cm.column_boxes(dds, dds)                         # pitch 0
     with pytest.raises(ValueError):
@@ -74,6 +76,7 @@ def _column_image(active, pitch=20, dds_cy=440, x=310):
 
 
 def _fake_pipeline(monkeypatch, *, dds_ok=True, top_offset=0, pitch=20, dds_cy=440):
+    monkeypatch.setattr(cm, "ORIGIN_SHIFT", 0)  # 가짜 VLM 은 '=' 를 정확히 돌려준다
     sem_box = {"left": 20, "top": 20, "right": 300, "bottom": 460}
     monkeypatch.setattr(cm, "detect_sem_box", lambda img, client: SimpleNamespace(bbox_px=sem_box))
     centers = {"dds": dds_cy, "pipes": dds_cy - 12 * pitch + top_offset, "equals": dds_cy - 11 * pitch}
@@ -104,6 +107,7 @@ def test_detect_reads_green_at_anchored_positions(monkeypatch, tmp_path):
     assert ocr_calls == ["dds"]
     assert report["icons"]["crosshair"]["steps_below_equals"] == 1
     assert (tmp_path / "column.jpg").exists() and (tmp_path / "result.json").exists()
+    assert max(report["column_green"], key=report["column_green"].get) == "l_shape"
     report = cm.detect_click_mode(_column_image("crosshair"), client=object(), artifact_dir=tmp_path)
     assert report["mode"] == "crosshair" and report["recenter_clicks"] == 2
 

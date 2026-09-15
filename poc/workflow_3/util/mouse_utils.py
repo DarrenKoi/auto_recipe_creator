@@ -22,7 +22,7 @@ except ImportError:
 
 # glide/jiggle 튜닝(환경변수로 오피스 RCS 반응성에 맞춰 보정).
 _GLIDE_STEPS = env_int("ALIGN_FAIL_CURSOR_GLIDE_STEPS", 24)      # 시작→목표 분할 이동 횟수
-_GLIDE_DELAY = env_float("ALIGN_FAIL_CURSOR_GLIDE_DELAY", 0.012)  # 각 단계 사이 sleep(초)
+_GLIDE_DELAY = env_float("ALIGN_FAIL_CURSOR_GLIDE_DELAY", 0.006)  # 각 단계 사이 sleep(초). glide/jiggle 공용
 _JIGGLE_PX = env_int("ALIGN_FAIL_CURSOR_JIGGLE_PX", 3)            # 도착 후 흔들 픽셀(0=off)
 
 

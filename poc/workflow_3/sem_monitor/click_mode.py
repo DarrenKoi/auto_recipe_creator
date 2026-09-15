@@ -67,10 +67,11 @@ OCR_PAD_RATIO = 0.6
 OCR_PAD_MIN_PX = 12
 ICON_HALF_H_RATIO = 0.42       # 예측 상자 세로 반높이 = pitch 비율(이웃 버튼을 안 물게).
 
-# 초록 판정(HSV, OpenCV 규약 H 0-180). 첫 오피스 실행의 green_ratio 값을 보고 좁힌다.
-GREEN_H_MIN, GREEN_H_MAX = 35, 90
-GREEN_S_MIN, GREEN_V_MIN = 80, 80
-ACTIVE_MIN_RATIO = 0.10        # 활성: 초록 비율이 이 이상이고 상대보다 ACTIVE_MARGIN 배 이상.
+# 초록 판정(HSV, OpenCV 규약 H 0-180). 7회차 오피스: 앵커는 맞는데 unknown - 채움이 면이
+# 아니라 글리프 선이면 비율이 작다. 그래서 절대 하한은 낮게, 판정은 상대(배수)로 한다.
+GREEN_H_MIN, GREEN_H_MAX = 30, 95
+GREEN_S_MIN, GREEN_V_MIN = 50, 60
+ACTIVE_MIN_RATIO = 0.02        # 활성: 초록 비율이 이 이상이고 상대보다 ACTIVE_MARGIN 배 이상.
 ACTIVE_MARGIN = 2.0
 
 ANCHOR_TARGETS = {
@@ -225,7 +226,8 @@ def _locate_sem_box(image, client) -> dict | None:
 def detect_click_mode(image, *, client=None, ocr_client=None, artifact_dir=None) -> dict:
     """tool 창 이미지에서 이동 모드를 판별한다. 반환 dict 의 `mode` 는 세 값 중 하나."""
     artifact_dir = artifact_dir or (DEBUG_IMAGE_DIR / "click_mode" / str(time.time_ns()))
-    report = {"mode": MODE_UNKNOWN, "icons": {}, "anchors": {}, "artifact_dir": str(artifact_dir)}
+    report = {"mode": MODE_UNKNOWN, "diagnosis": "sem_box_missing", "icons": {}, "anchors": {},
+              "artifact_dir": str(artifact_dir)}
     client = client or Workflow1VLMClient(
         service_slug=os.getenv("ALIGN_FAIL_SEM_BOX_SERVICE", DEFAULT_SCREEN_ANALYSIS_SERVICE))
     sem_box = _locate_sem_box(image, client)
@@ -250,13 +252,16 @@ def detect_click_mode(image, *, client=None, ocr_client=None, artifact_dir=None)
             anchors[name] = None
     report["anchors"] = anchors
     if anchors[ANCHOR_BOTTOM] is None or anchors[ANCHOR_ORIGIN] is None:
+        report["diagnosis"] = "anchor_missing:" + ",".join(
+            n for n in (ANCHOR_BOTTOM, ANCHOR_ORIGIN) if anchors[n] is None)
         save_debug_json(artifact_dir / "result.json", report)
-        print("[INFO] SEM box 이동 모드: unknown (앵커 미확인)")
+        print(f"[INFO] SEM box 이동 모드: unknown ({report['diagnosis']})")
         return report
 
     try:
         boxes = column_boxes(anchors[ANCHOR_BOTTOM], anchors[ANCHOR_ORIGIN])
     except ValueError as exc:
+        report["diagnosis"] = f"geometry:{exc}"
         print(f"[WARNING] 버튼 열 기하 이상: {exc}")
         save_debug_json(artifact_dir / "result.json", report)
         return report
@@ -285,9 +290,15 @@ def detect_click_mode(image, *, client=None, ocr_client=None, artifact_dir=None)
                                  "steps_below_equals": BUTTONS_FROM_BOTTOM.index(ANCHOR_ORIGIN) - BUTTONS_FROM_BOTTOM.index(mode)}
     report["mode"] = classify_mode(ratios)
     report["recenter_clicks"] = CLICKS_FOR_MODE.get(report["mode"])
+    if report["mode"] != MODE_UNKNOWN:
+        report["diagnosis"] = "ok"
+    elif max(ratios.values()) < ACTIVE_MIN_RATIO:
+        report["diagnosis"] = "no_green"        # 두 상자 모두 초록이 거의 없다: 색 띠/상자 위치 의심
+    else:
+        report["diagnosis"] = "ambiguous_green"  # 둘 다 초록: 상자가 이웃을 물었거나 채움색이 아닌 초록
     save_debug_json(artifact_dir / "result.json", report)
     print(f"[INFO] SEM box 이동 모드: {report['mode']} (clicks={report['recenter_clicks']}, "
-          f"green={ {k: round(v, 3) for k, v in ratios.items()} })")
+          f"green={ {k: round(v, 3) for k, v in ratios.items()} }, diagnosis={report['diagnosis']})")
     return report
 
 

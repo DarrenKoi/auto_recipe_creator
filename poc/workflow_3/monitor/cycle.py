@@ -383,35 +383,9 @@ def _exec_close_alert_popup(step, context, settings: Workflow3Settings) -> StepR
     return _make_result(step, "success", started_at, settings)
 
 
-def _read_row_tokens(image, box):
-    """점유자 컬럼 crop 을 OCR 로 읽는다. 판독 실패는 None(= UNKNOWN 신호)."""
-    from poc.workflow_3.vlm.label_verify import read_text_near_point, tokens_from_text
-
-    read = read_text_near_point(
-        image, box,
-        debug_image_dir=DEBUG_IMAGE_DIR / "row_occupant",
-        timestamp_tag=make_timestamp_tag(time.time()),
-        artifact_label="row_occupant",
-        log_name="row_occupant",
-    )
-    if not read.ok:
-        return None
-    return tokens_from_text(read.raw_text)
-
-
 def _exec_connect_tool(step, context, settings: Workflow3Settings) -> StepResult:
-    """③ tool 더블클릭 접속 — 알람당 1회만 느슨하게 시도(실패 시 엔지니어 직접).
-
-    접속 직전 List 를 캡처해 두었다가, 행 좌표가 확정되면 그 자리의 점유자 컬럼을 읽어
-    `context["occupancy"]` 를 채운다. 이미 승낙되어 팝업 없이 들어가는 경우(b)를
-    잡기 위한 것이다 - 그 세션은 관전만 가능한데 겉보기에는 정상 접속과 같다.
-
-    메인 창은 여기서 **한 번만** 찾아 `connect_to_tool` 에 넘긴다. 예전처럼 양쪽이 각자
-    찾으면 창 열거와 포커스 활성화가 매 알람마다 두 번 일어나, 이 프로젝트에서 이미
-    까다로운 foreground 경합을 공짜로 한 번 더 만든다.
-    """
+    """③ List의 같은 MC ID 행이 비어 있음을 확인한 뒤에만 접속한다."""
     from poc.workflow_3.rcs.login_rcs_common import wait_for_rcs_main_window
-    from poc.workflow_3.rcs.row_occupant import read_occupancy
 
     started_at = time.time()
     eqp_id = context["eqp_id"]
@@ -420,15 +394,6 @@ def _exec_connect_tool(step, context, settings: Workflow3Settings) -> StepResult
     main_window, main_title, main_backend = wait_for_rcs_main_window(
         timeout_sec=settings.connect_window_timeout_sec,
     )
-    # 좌표와 이미지가 같은 순간의 것이어야 crop 이 맞는다. 접속 후에는 tool 창이 List 를
-    # 덮을 수 있어 다시 잡을 수 없으므로 더블클릭 전에 찍어 둔다.
-    list_image = None
-    if main_window is not None:
-        try:
-            list_image = capture_window(main_window)
-        except Exception as exc:
-            print(f"[WARNING] 점유자 판독용 List 캡처 실패(점유 미상으로 진행): {exc}")
-
     try:
         result = connect_to_tool(
             eqp_id,
@@ -437,6 +402,7 @@ def _exec_connect_tool(step, context, settings: Workflow3Settings) -> StepResult
             main_window=main_window,
             main_window_title=main_title,
             main_window_backend=main_backend,
+            require_occupancy_check=True,
         )
     except Exception as exc:
         return _make_result(
@@ -445,13 +411,15 @@ def _exec_connect_tool(step, context, settings: Workflow3Settings) -> StepResult
         )
     double_clicked = bool(getattr(result, "double_clicked", False))
     context["connect_result"] = result
-    occupancy = read_occupancy(
-        list_image,
-        getattr(result, "tool_point_on_full_image", None),
-        read_tokens_fn=_read_row_tokens,
-    )
+    occupancy = getattr(result, "occupancy", UNKNOWN)
     context["occupancy"] = occupancy
     print(f"[INFO] List 점유 판독: occupancy={occupancy} (EQP_ID={eqp_id})")
+    if getattr(result, "exit_code", "") in {"rcs_occupied", "rcs_occupancy_unknown"}:
+        return _make_result(
+            step, "failed", started_at, settings,
+            failure_class=result.exit_code,
+            error_message=f"List 점유 확인으로 접속 보류: {occupancy}",
+        )
     if not double_clicked:
         return _make_result(
             step, "failed", started_at, settings,

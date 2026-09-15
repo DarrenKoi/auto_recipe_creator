@@ -293,26 +293,40 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 | `WORKFLOW3_FILE_LOG_DETAIL` | 0 | 1 이면 `logs/*.log` 에 info 이벤트/VLM 성공 호출까지 기록. 기본은 warning/error 만 파일 기록 |
 | `WORKFLOW3_LOG_LEVEL` | INFO | 파일 로거 레벨. 구버전 `WORK2_LOG_LEVEL` 도 fallback 으로 읽음 |
 
-## 점유된 tool: 화면 공유 요청 (2026-08-18)
+## List 점유 확인 / 접속 전 게이트
 
-다른 엔지니어가 tool 을 쓰고 있으면 RCS 가 `Select` 팝업(제어 공유 / 화면 공유 / 강제
-종료)을 띄운다. 예전에는 검출만 하고 접속을 포기했는데, 그 순간이야말로 **엔지니어가
-align 을 수동으로 잡고 있는 시점**이라 가장 필요한 데이터를 매번 버리고 있었다. 이제는
-화면 공유를 요청하고, 승낙되면 관전 세션으로 들어가 그 작업을 녹화한다.
+Align Fail 접속은 **MC ID를 더블클릭하기 전에** List의 해당 행을 판독한다.
+`Remote` 옆 count와 같은 행의 `Control User`를 함께 읽는다.
 
-점유 상태는 참/거짓이 아니라 3-상태로 다룬다.
+| 상태 | 판별 | 접속 |
+|---|---|---|
+| `occupied_by_other` | Remote count가 양수이거나 Control User에 텍스트가 있음 | 클릭 없이 보류, 점유 cooldown 후 재시도 |
+| `free` | 정확한 MC ID 행에서 두 필드가 모두 확실히 비어 있음 | 기존 검증 후 더블클릭 |
+| `unknown` | 행 불일치, 필드 누락/잘림/판독 불가, VLM 실패 | 클릭 없이 보류, 실패 cooldown 후 재시도 |
 
-| 상태 | 판별 | 보정 | outcome |
-|---|---|---|---|
-| `occupied_by_other` | 우리가 공유 요청을 보내 승낙받았거나, List 점유자 컬럼에서 ID 를 읽음 | 건너뜀 | `view_only_observation` |
-| `free` | 점유자 컬럼 읽기 성공 + 점유자 없음 | 수행 | 기존 그대로 |
-| `unknown` | 점유자 컬럼 읽기 실패 | 수행 | `corrected_unverified` |
+Remote를 읽기 어려워도 Control User가 채워져 있으면 점유로 판정한다.
+Control User만 비어 있고 Remote가 판독 불가이면 `unknown`이다.
+List 확인 이후 점유가 바뀌어 `select` 팝업이 뜨면 기존 팝업/공유 처리로 대응한다.
+처음부터 List에서 점유로 확인한 장비에는 공유 요청을 위해 진입하지 않는다.
 
-`unknown` 에서 보정을 막지 않는 이유는, 먹지 않는 클릭 자체는 무해하고 진짜 피해는
-"보정했다"고 보고하며 알림을 생략하는 것이기 때문이다. `correct_align_fail_auto` 는
-open-loop 라 클릭 반영 여부를 되읽지 않으므로, 불확실하면 status 를 강등해 **cube 가
-반드시 나가게** 한다. 두 새 status 모두 `corrected` 가 아니므로 녹화와 engineer watch
-도 기존 조건 그대로 계속 돈다.
+### 클릭 없는 단독 점검
+
+RCS 로그인 후 List 탭을 열고 대상 MC ID와 Remote / Control User가 보이게 한다.
+`check_tool_occupancy.py`의 `ACTION_TARGET_TOOL_NAME = "MCDA23"`을 직접 수정한다.
+단독 점검은 이 코드 값을 사용하고, 알람 루프는 알람의 EQP_ID를 사용한다.
+
+```bash
+uv run python -m poc.workflow_3.check_tool_occupancy
+```
+
+- 저장 이미지: `.env`에 `TOOL_OCCUPANCY_IMAGE=/path/to/list.jpg` 설정.
+- VLM: 기존 서비스 설정 재사용. `TOOL_OCCUPANCY_SERVICE` 기본 `mai-ui`.
+- 출력: 읽은 두 필드와 `occupancy`. 종료 코드 `0=free`, `1=occupied_by_other`, `2=unknown`.
+- 산출물: `debug_images/tool_occupancy/<timestamp>/list.jpg`, `response.txt`, `result.json`.
+- checker는 tool을 클릭하지 않는다. 실제 창 캡처는 오피스 Windows에서 확인한다.
+  저장 이미지도 VLM 연결이 필요하다. 테스트는 mock으로 실행한다.
+
+### 접속 후 팝업 fallback
 
 안전은 env 게이트가 아니라 **확인 게이트**가 담당한다(`ALIGN_FAIL_SHARE_CONFIRM`).
 라디오와 `Request` 버튼의 좌표를 VLM 이 찍은 뒤 그 자리를 좁게 crop 해 OCR 로 라벨을
@@ -325,9 +339,9 @@ open-loop 라 클릭 반영 여부를 되읽지 않으므로, 불확실하면 st
 1. **확인 게이트가 통과하는가.** 막히면 `debug_images/share_request/<tag>/` 에 crop 과
    OCR 원문이 남는다. 실제 문구(영문/국문, 줄바꿈)를 보고 `share_request.py` 의
    `SHARE_SCREEN_REQUIRED` / `REQUEST_BTN_REQUIRED` 를 조정한다.
-2. **점유자 컬럼 crop 이 맞는가.** `debug_images/row_occupant/` 확인. 어긋나면 대부분의
-   사이클이 `unknown` → `corrected_unverified` 로 떨어진다(안전하지만 알림이 시끄럽다).
-   `rcs/row_occupant.py` 의 `OCCUPANT_*_RATIO` 를 조정한다.
+2. **List 판독이 맞는가.** 단독 checker로 free / 점유 / 판독 불가 예제를 확인한다.
+   `debug_images/tool_occupancy/`의 원본, 응답, 결과를 대조해 다른 행을 읽거나
+   숨겨진 필드를 공백으로 추측하지 않는지 확인한다. 실장비 VLM 정확도는 오피스 검증 대상이다.
 3. **거절 시 RCS 화면.** 지금은 무응답과 합쳐 timeout 으로 처리한다. 거절이 별도 팝업이나
    메시지로 나타난다면 `wait_share_response` 에서 대기를 일찍 끊을 수 있다.
 

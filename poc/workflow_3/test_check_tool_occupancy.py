@@ -1,0 +1,89 @@
+"""List 점유 판정 및 클릭 전 게이트의 오프라인 회귀."""
+
+from poc.workflow_3.check_tool_occupancy import classify_reading
+
+
+def test_same_row_occupancy_requires_explicit_empty_cells():
+    base = {"mc_id": "MCD630", "row_confirmed": True,
+            "remote_text": "", "control_user_text": ""}
+    assert classify_reading(base, "MCD630") == "free"
+    for remote in ("1", "2", "12"):
+        assert classify_reading(dict(base, remote_text=remote), "MCD630") == "occupied_by_other"
+    for user in ("kim", "12345", "홍길동"):
+        assert classify_reading(dict(base, remote_text=None, control_user_text=user), "MCD630") == "occupied_by_other"
+    for change in ({"remote_text": None}, {"control_user_text": None},
+                   {"remote_text": "?"}, {"remote_text": "0"},
+                   {"row_confirmed": "true"}, {"mc_id": "MCD631"},
+                   {"remote_text": 1}):
+        assert classify_reading(dict(base, **change), "MCD630") == "unknown"
+    assert classify_reading({}, "MCD630") == "unknown"
+
+
+def test_occupancy_gate_prevents_click_and_free_allows_it(monkeypatch, tmp_path):
+    from PIL import Image
+    from poc.workflow_3.rcs import workflow_select_tool as selection
+    from poc.workflow_3 import check_tool_occupancy as checker
+
+    image = Image.new("RGB", (400, 200))
+    monkeypatch.setattr(selection, "_is_valid_main_window_title", lambda title: True)
+    monkeypatch.setattr(selection, "window_rect_size", lambda window: (400, 200))
+    monkeypatch.setattr(selection, "_locate_tool_via_vlm", lambda *a, **kw: ({
+        "detection_source": "test", "full_image_point": {"x": 20, "y": 70},
+        "verify_crop_box": {"left": 0, "top": 60, "right": 100, "bottom": 80},
+        "matched_text": "MCD630",
+    }, {}))
+    monkeypatch.setattr(selection, "_save_tool_click_overlay", lambda *a, **kw: None)
+    monkeypatch.setattr(selection, "foreground_window", lambda *a, **kw: True)
+    monkeypatch.setattr(selection, "image_point_to_screen", lambda *a, **kw: {"x": 20, "y": 70})
+    clicks = []
+    monkeypatch.setattr(selection, "click_at_screen", lambda *a, **kw: clicks.append(kw) or True)
+    for state in ("occupied_by_other", "unknown", "free"):
+        monkeypatch.setattr(checker, "check_tool_occupancy", lambda *a, **kw: {"occupancy": state})
+        result = selection.select_tool_from_main_window(
+            object(), "RCS", "uia", "MCD630", image=image,
+            require_occupancy_check=True, debug_image_dir=tmp_path,
+            pre_click_settle_sec=0, post_double_click_settle_sec=0,
+        )
+        assert result.occupancy == state
+        assert result.double_clicked is (state == "free")
+        assert len(clicks) == (1 if state == "free" else 0)
+
+
+def test_monitor_requests_gate_and_propagates_block(monkeypatch):
+    from types import SimpleNamespace
+    from poc.workflow_3.monitor import cycle
+    from poc.workflow_3.rcs import login_rcs_common
+
+    monkeypatch.setattr(login_rcs_common, "wait_for_rcs_main_window", lambda **kw: (object(), "RCS", "uia"))
+    settings = SimpleNamespace(action_enabled=True, connect_action_enabled=True,
+                               connect_window_timeout_sec=1, safe_mode=True)
+    for state, failure in (("occupied_by_other", "rcs_occupied"),
+                           ("unknown", "rcs_occupancy_unknown"), ("free", "success")):
+        def connect(tool, **kwargs):
+            assert tool == "MCD630"
+            assert kwargs["require_occupancy_check"] is True
+            return SimpleNamespace(occupancy=state, exit_code=failure, double_clicked=state == "free")
+        monkeypatch.setattr(cycle, "connect_to_tool", connect)
+        context = {"eqp_id": "MCD630"}
+        result = cycle._exec_connect_tool(SimpleNamespace(step_id="connect_tool"), context, settings)
+        assert context["occupancy"] == state
+        assert result.status == ("success" if state == "free" else "failed")
+        assert result.failure_class == (None if state == "free" else failure)
+
+
+def test_vlm_failure_and_missing_fields_never_mean_free(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from PIL import Image
+    from poc.workflow_3 import check_tool_occupancy as checker
+
+    monkeypatch.setattr(checker, "DEBUG_IMAGE_DIR", tmp_path)
+    image = Image.new("RGB", (100, 100))
+    for text in ('{}', 'not json', '{"mc_id":"MCD630","row_confirmed":true}'):
+        client = SimpleNamespace(chat_with_image_b64=lambda **kw: SimpleNamespace(text=text))
+        assert checker.check_tool_occupancy(image, "MCD630", client=client)["occupancy"] == "unknown"
+    def unavailable(**kw):
+        raise RuntimeError("offline")
+    client = SimpleNamespace(chat_with_image_b64=unavailable)
+    report = checker.check_tool_occupancy(image, "MCD630", client=client)
+    assert report["occupancy"] == "unknown"
+    assert "offline" in report["error"]

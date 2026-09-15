@@ -70,6 +70,7 @@ class ToolSelectionResult:
     double_clicked: bool = False
     selected_attempt: str | None = None
     click_overlay_path: str | None = None
+    occupancy: str = "unknown"
 
 
 @dataclass
@@ -1145,6 +1146,7 @@ def select_tool_from_main_window(
     coarse_service_slug: str | None = DEFAULT_COARSE_SERVICE_SLUG,
     refine_service_slug: str | None = DEFAULT_REFINE_SERVICE_SLUG,
     confirm_policy: str | None = None,
+    require_occupancy_check: bool = False,
 ) -> ToolSelectionResult:
     """현재 List 탭에서 지정 Tool 이름을 찾아 더블클릭한다."""
     resolved_debug_dir = debug_image_dir or DEBUG_ARTIFACT_DIR
@@ -1290,6 +1292,20 @@ def select_tool_from_main_window(
     matched_lines = [located["matched_text"]] if located["matched_text"] else []
     ocr_target_visible = located["matched_text"] is not None
 
+    # 최대화/스크롤 뒤 로케이터와 같은 이미지로 판독한다. 점유 확인용 클릭 금지.
+    occupancy = "unknown"
+    if require_occupancy_check:
+        from poc.workflow_3.check_tool_occupancy import check_tool_occupancy
+
+        occupancy = check_tool_occupancy(main_image, normalized_tool_name)["occupancy"]
+        if occupancy != "free":
+            return ToolSelectionResult(
+                exit_code="rcs_occupied" if occupancy == "occupied_by_other" else "rcs_occupancy_unknown",
+                target_tool_name=normalized_tool_name,
+                tool_point_on_full_image=full_image_point,
+                occupancy=occupancy,
+            )
+
     click_overlay_path = _save_tool_click_overlay(
         main_image,
         list_crop_box,
@@ -1408,6 +1424,7 @@ def select_tool_from_main_window(
         tool_point_on_full_image=full_image_point,
         tool_point_on_screen=screen_point,
         double_clicked=double_clicked,
+        occupancy=occupancy,
         selected_attempt=detection_source,
         click_overlay_path=click_overlay_path,
     )
@@ -1544,6 +1561,7 @@ def connect_to_tool(
     main_window=None,
     main_window_title: str = "",
     main_window_backend: str = "",
+    require_occupancy_check: bool = False,
 ) -> ToolSelectionResult | None:
     """지정 tool(EQP_ID)로 RCS 접속 — List 탭에서 찾아 더블클릭한다.
 
@@ -1581,6 +1599,7 @@ def connect_to_tool(
         normalized,
         action_enabled=action_enabled,
         debug_image_dir=debug_image_dir,
+        require_occupancy_check=require_occupancy_check,
     )
     print(
         f"[INFO] connect_to_tool 완료: tool={normalized!r}, "

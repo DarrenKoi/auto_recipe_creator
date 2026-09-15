@@ -26,7 +26,8 @@ def test_recenter_and_dialog_clicks_use_remote_timing(monkeypatch):
     monitor = _monitor(monkeypatch)
     monitor.move_to_point(10, 20)
     monitor.click_screen(5, 6)
-    assert calls[0][:3] == ({"x": 110, "y": 220}, "sem_recenter", 2)
+    assert calls[0][:3] == ({"x": 110, "y": 220}, "sem_recenter", ctl.RECENTER_CLICKS)
+    assert ctl.RECENTER_CLICKS == 2  # crosshair 아이콘 모드 기본값
     assert calls[1][:3] == ({"x": 5, "y": 6}, "sem_dialog_click", 1)
     for _, _, _, kw in calls:
         assert kw["hold_sec"] == ctl.REMOTE_CLICK_HOLD_SEC > 0

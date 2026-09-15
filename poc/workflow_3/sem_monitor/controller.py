@@ -38,7 +38,7 @@ import numpy as np
 
 from poc.workflow_3 import TEMPLATES_DIR
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
-from poc.workflow_3.util.env_utils import env_float
+from poc.workflow_3.util.env_utils import env_float, env_int
 # util/__init__ 는 pynput/pywinauto 부재 시 None 을 바인딩한다(import-안전).
 # 실제 호출은 오피스(Windows+의존성 설치) 환경에서만 일어난다.
 from poc.workflow_3.util import (
@@ -68,6 +68,12 @@ RECT_DRIFT_TOL_PX = 2
 # 쌍은 원격의 입력 샘플링 사이로 빠진다. 줄이면 클릭이 안 먹는다(시연 문서와 동일).
 REMOTE_PRE_CLICK_SETTLE_SEC = env_float("ALIGN_SEM_PRE_CLICK_SETTLE_SEC", 0.6)  # 도착 -> 누름
 REMOTE_CLICK_HOLD_SEC = env_float("ALIGN_SEM_CLICK_HOLD_SEC", 0.15)             # 누름 유지
+
+# recenter 클릭 수는 tool 의 SEM box 아이콘 모드에 따른다(사용자 보고 2026-09-15):
+# crosshair 아이콘 선택 = 더블클릭, L자 아이콘 선택 = 싱글클릭. 코드는 화면에서 모드를
+# 읽지 못하므로 오피스에서 맞춘다. L자 모드에 더블클릭을 보내면 두 번째 클릭이 이미
+# 움직인 화면의 같은 지점을 다시 찍어 ~2배로 이동하고, crosshair 모드에 싱글은 무이동.
+RECENTER_CLICKS = env_int("ALIGN_SEM_RECENTER_CLICKS", 2)
 
 
 def _to_gray(image) -> np.ndarray:
@@ -183,14 +189,14 @@ class RCSSEMMonitor:
                 )
 
     def move_to_point(self, fov_x: int, fov_y: int) -> None:
-        """FOV-local 픽셀을 더블클릭해 그 점을 중심으로 recenter 한다."""
+        """FOV-local 픽셀을 클릭해 그 점을 중심으로 recenter 한다(클릭 수 = RECENTER_CLICKS)."""
         self._ensure_actionable("move_to_point")
         px, py = self.panel.panel_roi[0] + int(fov_x), self.panel.panel_roi[1] + int(fov_y)
         screen_point = self._frame_point_to_screen(px, py)
         if screen_point is None:
             raise RuntimeError("move_to_point: 창 좌표→스크린 변환 실패")
         click_at_screen(
-            screen_point, "sem_recenter", 2, action_enabled=self.action_enabled,
+            screen_point, "sem_recenter", RECENTER_CLICKS, action_enabled=self.action_enabled,
             hold_sec=REMOTE_CLICK_HOLD_SEC, pre_click_settle_sec=REMOTE_PRE_CLICK_SETTLE_SEC,
         )
         if self.settle_sec > 0:

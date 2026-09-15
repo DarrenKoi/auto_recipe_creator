@@ -29,8 +29,6 @@ MAX_ROW_HEIGHT_PX = 48
 CELL_UPSCALE = 3
 # MC ID 글자 중심 위/아래 픽셀. 인접 행이 섞이지 않도록 실제 행 간격보다 작게 설정.
 ROW_HALF_HEIGHT_PX = 8
-# MC ID 컬럼 검출이 글자 일부를 자르는 경우를 위한 좌우 여백(원본 픽셀).
-MC_ID_HORIZONTAL_PAD_PX = 24
 
 
 def classify_reading(reading: dict, tool_name: str) -> str:
@@ -55,13 +53,33 @@ def classify_reading(reading: dict, tool_name: str) -> str:
     return UNKNOWN
 
 
-def columns_1000_to_pixels(columns, image_width: int):
-    """mai-ui 의 0-1000 x 좌표를 픽셀로 바꾼다. 형태가 다른 값은 그대로 두어 검증에서 걸리게 한다."""
-    if not isinstance(columns, dict):
-        return columns
-    return {name: [int(round(v * image_width / 1000)) for v in span]
-            if isinstance(span, list) and all(isinstance(v, (int, float)) for v in span) else span
-            for name, span in columns.items()}
+COLUMN_KEYS = {"mcid": "mc_id", "remote": "remote", "connectionuser": "connection_user"}
+
+
+def columns_from_headers(headers, image_width: int) -> dict:
+    """헤더 중심 x(0-1000) 목록을 인접 헤더의 중점으로 갈라 컬럼 경계를 만든다.
+
+    mai-ui 는 점(grounding)은 잘 찍지만 폭은 어림한다 - 오피스 실측에서 MC ID 는 2배,
+    Remote 는 1/2, Connection User 는 왼쪽이 잘렸다. 폭을 모델에 묻지 않고 이웃 헤더
+    간격에서 파생하면 어느 컬럼도 서로 겹치거나 비지 않는다. 첫/마지막 컬럼은 이미지 가장자리까지.
+    """
+    if not isinstance(headers, list) or not headers:
+        raise ValueError("missing headers")
+    centers = []
+    for header in headers:
+        if (not isinstance(header, dict) or not isinstance(header.get("name"), str)
+                or type(header.get("x")) not in (int, float)):
+            raise ValueError(f"invalid header entry: {header!r}")
+        name = re.sub(r"[^a-z]", "", header["name"].lower())
+        centers.append((int(round(header["x"] * image_width / 1000)), name))
+    centers.sort()
+    columns = {}
+    for index, (x, name) in enumerate(centers):
+        left = 0 if index == 0 else (centers[index - 1][0] + x) // 2
+        right = image_width if index == len(centers) - 1 else (x + centers[index + 1][0]) // 2
+        if name in COLUMN_KEYS:
+            columns[COLUMN_KEYS[name]] = [left, right]
+    return columns
 
 
 def validate_columns(columns, image_width: int):
@@ -81,22 +99,8 @@ def validate_columns(columns, image_width: int):
         spans.append(span)
 
 
-def widen_mc_id_column(columns: dict, image_width: int) -> dict:
-    """MC ID만 좌우로 확장한다. 이미지/확인된 다른 컬럼 경계에서 멈춘다."""
-    left, right = columns["mc_id"]
-    lower, upper = 0, image_width
-    for name in ("remote", "connection_user"):
-        start, end = columns[name]
-        if end <= left:
-            lower = max(lower, end)
-        elif start >= right:
-            upper = min(upper, start)
-    return {**columns, "mc_id": [max(lower, left - MC_ID_HORIZONTAL_PAD_PX),
-                                min(upper, right + MC_ID_HORIZONTAL_PAD_PX)]}
-
-
 def build_row_read_image(image, layout: dict, tool_name: str):
-    """세 컬럼을 동일 y 범위로 잘라 확대한다. 좌우 위치는 헤더로 찾는다."""
+    """세 컬럼을 동일 y 범위로 잘라 확대한다. 좌우 경계는 헤더 중점 분할이다."""
     if layout.get("mc_id") != tool_name:
         raise ValueError("layout MC ID mismatch")
     top, bottom = layout.get("row_top"), layout.get("row_bottom")
@@ -156,30 +160,24 @@ def check_tool_occupancy(image, tool_name: str, *, client=None, row_point=None, 
             image_mime="image/webp",
             system_message="Locate RCS table geometry. Return only JSON. Do not classify occupancy.",
             user_text=(
-                f"Image size is {image.width} x {image.height} pixels. "
-                "Locate only the horizontal column boundaries using the MC ID, Remote "
-                "and Connection User headers/labels. Do not select any equipment row. "
-                "MC ID bounds must cover the FULL equipment ID text width, not just "
-                "the short MC ID header. Use the boundary before the adjacent RCS IP column. "
-                "Do not assume a left/right column order. Remote bounds must contain "
-                "the count next to Remote, not just its label. Connection User is the "
-                "LAST column at the far right edge of the table (there is also a separate "
-                "Control User column; do NOT return that one). Its bounds must cover the "
-                "entire user cell width up to the table's right edge. Return x values on a 0-1000 "
-                "scale (0 = left image edge, 1000 = right image edge), with this schema: "
-                '{"columns":{"mc_id":[10,110],"remote":[400,500],"connection_user":[700,900]}}. '
-                "The numbers are examples only. Use null for any uncertain column."
+                "This is an RCS equipment list. Find the table HEADER row and return the "
+                "horizontal center x of EVERY column header text in it, on a 0-1000 scale "
+                "(0 = left image edge, 1000 = right image edge). Include all headers, e.g. "
+                "MC ID, RCS IP, Location, Model, Status, Count, DVR, Remote, Control User, "
+                "Connection User, and any others you see. Control User and Connection User "
+                "are different columns; Connection User is the last one at the far right. "
+                "Use the header text exactly as displayed. Do not select any equipment row. "
+                'Schema: {"headers":[{"name":"MC ID","x":40},{"name":"Remote","x":520}]}. '
+                "The numbers are examples only."
             ),
             temperature=0.0,
         )
         save_debug_text(artifact_dir / "coarse_response.txt", coarse.text)
         column_reading = extract_json(coarse.text)
         report["column_reading"] = column_reading
-        columns = columns_1000_to_pixels(column_reading.get("columns"), image.width)
+        columns = columns_from_headers(column_reading.get("headers"), image.width)
         report["columns_px"] = columns
-        # 로케이터 호출 전에 모든 컬럼의 경계와 중복을 검증한다.
         validate_columns(columns, image.width)
-        columns = widen_mc_id_column(columns, image.width)
         report["diagnosis"] = "row_location_failed"
         point = row_point if row_point is not None else locate_row_point(image, tool_name, artifact_dir)
         report["row_point"] = point

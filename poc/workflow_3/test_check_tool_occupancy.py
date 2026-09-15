@@ -116,9 +116,7 @@ def test_coarse_then_fine_rejects_multiple_mc_ids(monkeypatch, tmp_path):
     from poc.workflow_3 import check_tool_occupancy as checker
 
     monkeypatch.setattr(checker, "DEBUG_IMAGE_DIR", tmp_path)
-    layout = {"mc_id": "MCDA01", "row_top": 40, "row_bottom": 60,
-              "columns": {"mc_id": [800, 880], "remote": [450, 550],
-                          "connection_user": [900, 1000]}}
+    layout = json.loads('{"headers": [{"name": "Remote", "x": 500}, {"name": "RCS IP", "x": 700}, {"name": "MC ID", "x": 840}, {"name": "Control User", "x": 900}, {"name": "Connection User", "x": 970}]}')
     from poc.workflow_3.vlm.label_verify import PointTextRead
     monkeypatch.setattr(checker, "locate_row_point", lambda *a: {"x": 840, "y": 50})
     monkeypatch.setattr(checker, "read_text_near_point", lambda *a, **kw: PointTextRead(ok=True, raw_text="MCDA01"))
@@ -148,8 +146,7 @@ def test_wrong_paddle_id_stops_before_occupancy_read(monkeypatch, tmp_path):
     calls = []
     def chat(**kwargs):
         calls.append(kwargs)
-        return SimpleNamespace(text=json.dumps({"columns": {
-            "mc_id": [800, 880], "remote": [450, 550], "connection_user": [900, 1000]}}))
+        return SimpleNamespace(text='{"headers": [{"name": "Remote", "x": 500}, {"name": "RCS IP", "x": 700}, {"name": "MC ID", "x": 840}, {"name": "Control User", "x": 900}, {"name": "Connection User", "x": 970}]}')
     for raw in ("MC0916", "MCD916", "MCDA23 MCD916", ""):
         monkeypatch.setattr(checker, "read_text_near_point", lambda *a, **kw: PointTextRead(ok=True, raw_text=raw))
         report = checker.check_tool_occupancy(Image.new("RGB", (1000, 200)), "MCDA23",
@@ -184,8 +181,7 @@ def test_locator_maps_column_point_and_paddle_reads_target_band(monkeypatch, tmp
         ocr_calls.append(kwargs)
         return SimpleNamespace(text="MCDA23")
     responses = iter([
-        {"columns": {"mc_id": [800, 880], "remote": [450, 550], "connection_user": [900, 1000]},
-         "row_top": 40, "row_bottom": 60},  # 과거 coarse y는 사용하지 않는다.
+        json.loads('{"headers": [{"name": "Remote", "x": 500}, {"name": "RCS IP", "x": 700}, {"name": "MC ID", "x": 840}, {"name": "Control User", "x": 900}, {"name": "Connection User", "x": 970}]}'),
         {"mc_id": "MCDA23", "visible_mc_ids": ["MCDA23"], "row_confirmed": True,
          "remote_text": "1", "connection_user_text": "kim"},
     ])
@@ -199,22 +195,16 @@ def test_locator_maps_column_point_and_paddle_reads_target_band(monkeypatch, tmp
     assert len(ocr_calls) == 1
 
 
-def test_mc_id_padding_widens_both_sides_without_crossing_known_columns():
-    from poc.workflow_3.check_tool_occupancy import widen_mc_id_column
+def test_columns_split_at_header_midpoints_and_scale_to_image_width():
+    import pytest
+    from poc.workflow_3.check_tool_occupancy import columns_from_headers
 
-    columns = {"mc_id": [800, 880], "remote": [450, 550], "connection_user": [900, 1000]}
-    widened = widen_mc_id_column(columns, 1000)
-    assert widened["mc_id"] == [776, 900]
-    assert columns["mc_id"] == [800, 880]
-    assert widened["remote"] == columns["remote"]
-    assert widen_mc_id_column(dict(columns, mc_id=[0, 70]), 1000)["mc_id"] == [0, 94]
-
-
-def test_columns_are_scaled_from_1000_to_image_width():
-    from poc.workflow_3.check_tool_occupancy import columns_1000_to_pixels
-
-    scaled = columns_1000_to_pixels({"mc_id": [10, 60], "remote": [400, 450],
-                                     "connection_user": [900, 1000], "odd": None}, 2000)
-    assert scaled == {"mc_id": [20, 120], "remote": [800, 900],
-                      "connection_user": [1800, 2000], "odd": None}
-    assert columns_1000_to_pixels(None, 2000) is None
+    headers = [{"name": "Remote", "x": 500}, {"name": "RCS IP", "x": 700},
+               {"name": "MC ID", "x": 840}, {"name": "Control User", "x": 900},
+               {"name": "Connection User", "x": 970}]
+    assert columns_from_headers(headers, 2000) == {
+        "remote": [0, 1200], "mc_id": [1540, 1740], "connection_user": [1870, 2000]}
+    assert "control_user" not in columns_from_headers(headers, 2000)
+    for bad in (None, [], [{"name": "MC ID"}], [{"name": 3, "x": 10}], [{"name": "MC ID", "x": "10"}]):
+        with pytest.raises(ValueError):
+            columns_from_headers(bad, 2000)

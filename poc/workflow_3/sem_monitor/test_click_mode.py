@@ -34,27 +34,28 @@ def test_button_order_from_bottom_matches_user_report():
     assert cm.BUTTONS_FROM_BOTTOM[-2] == "equals"
     assert cm.BUTTONS_FROM_BOTTOM.index("l_shape") == 8
     assert cm.BUTTONS_FROM_BOTTOM.index("crosshair") == 10
-    assert cm.ANCHOR_GAP == 12
+    assert cm.ANCHOR_GAP == 11
 
 
-def test_column_boxes_count_pitch_upward_from_dds_and_check_with_equals():
+def test_column_boxes_count_down_from_equals_with_dds_baseline_pitch():
     dds = {"left": 300, "top": 400, "right": 340, "bottom": 420}     # cy=410
-    top = {"left": 300, "top": 160, "right": 340, "bottom": 180}     # cy=170 -> pitch 20
-    eq = {"left": 300, "top": 180, "right": 340, "bottom": 200}      # cy=190 = top + pitch
-    boxes = cm.column_boxes(dds, top, eq)
+    eq = {"left": 302, "top": 180, "right": 342, "bottom": 200}      # cy=190 -> pitch (410-190)/11 = 20
+    boxes = cm.column_boxes(dds, eq)
     assert len(boxes) == 13
-    cross, lshape = boxes["crosshair"], boxes["l_shape"]
-    assert (cross["top"] + cross["bottom"]) / 2 == 410 - 10 * 20
-    assert (lshape["top"] + lshape["bottom"]) / 2 == 410 - 8 * 20
-    assert cross["left"] == 300 and cross["right"] == 340
+    cross, square, lshape = boxes["crosshair"], boxes["square"], boxes["l_shape"]
+    assert (cross["top"] + cross["bottom"]) / 2 == 190 + 1 * 20     # '=' 바로 아래
+    assert (square["top"] + square["bottom"]) / 2 == 190 + 2 * 20
+    assert (lshape["top"] + lshape["bottom"]) / 2 == 190 + 3 * 20
+    assert cross["left"] == 302 and cross["right"] == 342            # x 는 '=' 버튼 폭
     assert cross["bottom"] - cross["top"] < 20  # 이웃 버튼을 물지 않는다
-    assert cm.column_boxes(dds, top) == boxes  # '=' 없이도 같은 기하
     with pytest.raises(ValueError):
         cm.column_boxes(dds, dds)                         # pitch 0
     with pytest.raises(ValueError):
-        cm.column_boxes(top, dds)                         # 뒤집힘
-    with pytest.raises(ValueError):                       # '||' 를 한 칸 아래 버튼으로 잘못 잡음
-        cm.column_boxes(dds, {"left": 300, "top": 180, "right": 340, "bottom": 200}, eq)
+        cm.column_boxes(eq, dds)                          # 뒤집힘
+    top = {"left": 302, "top": 160, "right": 342, "bottom": 180}     # cy=170: 인접 간격 20
+    assert cm.pitch_cross_check(eq, top, 20) == "ok"
+    assert cm.pitch_cross_check(eq, None, 20) == "no_pipes"
+    assert cm.pitch_cross_check(eq, eq, 20).startswith("mismatch")
 
 
 def test_strip_spans_full_window_height_right_of_sem_box():
@@ -101,7 +102,7 @@ def test_detect_reads_green_at_anchored_positions(monkeypatch, tmp_path):
     report = cm.detect_click_mode(_column_image("l_shape"), client=object(), artifact_dir=tmp_path)
     assert report["mode"] == "l_shape" and report["recenter_clicks"] == 1
     assert ocr_calls == ["dds"]
-    assert report["icons"]["crosshair"]["steps_above_dds"] == 10
+    assert report["icons"]["crosshair"]["steps_below_equals"] == 1
     assert (tmp_path / "column.jpg").exists() and (tmp_path / "result.json").exists()
     report = cm.detect_click_mode(_column_image("crosshair"), client=object(), artifact_dir=tmp_path)
     assert report["mode"] == "crosshair" and report["recenter_clicks"] == 2
@@ -113,10 +114,10 @@ def test_anchor_label_mismatch_yields_unknown(monkeypatch, tmp_path):
     assert report["mode"] == "unknown" and report["anchors"]["DDS"] is None
 
 
-def test_top_anchor_on_wrong_button_fails_pitch_check(monkeypatch, tmp_path):
-    _fake_pipeline(monkeypatch, top_offset=20)  # '||' 대신 '=' 를 잡은 상황
+def test_wrong_pipes_only_logs_and_does_not_block(monkeypatch, tmp_path):
+    _fake_pipeline(monkeypatch, top_offset=20)  # '||' 를 엉뚱하게 잡아도 판정은 DDS/= 로 간다
     report = cm.detect_click_mode(_column_image("crosshair"), client=object(), artifact_dir=tmp_path)
-    assert report["mode"] == "unknown" and "column" not in report
+    assert report["mode"] == "crosshair" and report["pipes_check"].startswith("mismatch")
 
 
 def test_missing_sem_box_yields_unknown_without_locating(monkeypatch, tmp_path):

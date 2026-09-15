@@ -26,7 +26,7 @@ import os
 import time
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from poc.workflow_3 import DEBUG_IMAGE_DIR
 from poc.workflow_3.debug_artifacts import save_debug_jpeg, save_debug_json
@@ -43,7 +43,10 @@ STRIP_VERTICAL_PAD_PX = 16
 
 # 아이콘 열에서의 위치(위에서부터, 0-based). 사용자 확인 2026-09-15: crosshair 3번째, L자 5번째.
 # 위치가 고정이라 strip 안에서는 VLM 없이 세로 blob 분할로 찾는다(VLM 은 분할 실패 시 폴백).
-ICON_INDEX = {"crosshair": 2, "l_shape": 4}
+# 2회차 오피스(2026-09-15): 둘 다 한 칸 아래 아이콘에 놓였다 = 열 위쪽에 run 하나가 더 잡힌다.
+# strip_runs.jpg 의 번호를 보고 env 로 맞춘다: CLICK_MODE_CROSSHAIR_INDEX / CLICK_MODE_L_SHAPE_INDEX.
+ICON_INDEX = {"crosshair": int(os.getenv("CLICK_MODE_CROSSHAIR_INDEX", "2")),
+              "l_shape": int(os.getenv("CLICK_MODE_L_SHAPE_INDEX", "4"))}
 MIN_ICON_RUNS = 5              # 분할된 아이콘 run 이 이보다 적으면 분할을 믿지 않는다.
 ICON_MIN_HEIGHT_PX = 6         # 이보다 낮은 run 은 잡음(구분선 등)으로 버린다.
 ICON_BG_DIFF = 40              # 배경(최빈색)과의 채널 차이가 이 이상이면 아이콘 픽셀.
@@ -193,7 +196,18 @@ def detect_click_mode(image, *, client=None, artifact_dir=None) -> dict:
     runs = segment_icon_runs(search) if sem_box is not None else []
     report["icon_runs"] = runs
     use_runs = len(runs) >= MIN_ICON_RUNS
-    print(f"[INFO] 아이콘 열 분할: runs={len(runs)} -> {'위치 고정 사용' if use_runs else 'VLM 폴백'}")
+    print(f"[INFO] 아이콘 열 분할: runs={len(runs)} -> {'위치 고정 사용' if use_runs else 'VLM 폴백'} "
+          f"(index crosshair={ICON_INDEX['crosshair']}, l_shape={ICON_INDEX['l_shape']})")
+    if runs:
+        # 번호 overlay - 어느 run 이 어느 아이콘인지 눈으로 대조해 ICON_INDEX 를 맞추는 근거.
+        overlay = search.copy().convert("RGB")
+        draw = ImageDraw.Draw(overlay)
+        for i, r in enumerate(runs):
+            draw.rectangle((r["left"], r["top"], r["right"] - 1, r["bottom"] - 1), outline="red")
+            draw.text((r["right"] + 2, r["top"]), str(i), fill="red")
+            print(f"[INFO]   run[{i}]: top={r['top']} bottom={r['bottom']} h={r['bottom'] - r['top']} "
+                  f"x={r['left']}-{r['right']} green={green_ratio(search.crop((r['left'], r['top'], r['right'], r['bottom']))):.3f}")
+        save_debug_jpeg(overlay, artifact_dir / "strip_runs.jpg")
     ratios = {}
     for mode, target in ICON_TARGETS.items():
         result = None

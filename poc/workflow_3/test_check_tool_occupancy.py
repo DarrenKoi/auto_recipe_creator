@@ -3,18 +3,13 @@
 from poc.workflow_3.check_tool_occupancy import classify_reading
 
 
-def test_same_row_occupancy_requires_explicit_empty_cells():
-    base = {"mc_id": "MCD630", "row_confirmed": True,
-            "remote_text": "", "connection_user_text": ""}
+def test_same_row_occupancy_requires_explicit_empty_cell():
+    base = {"mc_id": "MCD630", "row_confirmed": True, "connection_user_text": ""}
     assert classify_reading(base, "MCD630") == "free"
-    for remote in ("1", "2", "12"):
-        assert classify_reading(dict(base, remote_text=remote), "MCD630") == "occupied_by_other"
     for user in ("kim", "12345", "홍길동"):
-        assert classify_reading(dict(base, remote_text=None, connection_user_text=user), "MCD630") == "occupied_by_other"
-    for change in ({"remote_text": None}, {"connection_user_text": None},
-                   {"remote_text": "?"}, {"remote_text": "0"},
-                   {"row_confirmed": "true"}, {"mc_id": "MCD631"},
-                   {"remote_text": 1}):
+        assert classify_reading(dict(base, connection_user_text=user), "MCD630") == "occupied_by_other"
+    for change in ({"connection_user_text": None}, {"connection_user_text": 1},
+                   {"row_confirmed": "true"}, {"mc_id": "MCD631"}):
         assert classify_reading(dict(base, **change), "MCD630") == "unknown"
     assert classify_reading({}, "MCD630") == "unknown"
 
@@ -97,8 +92,7 @@ def test_fine_image_excludes_occupied_neighbor_and_keeps_distant_columns():
     image.paste("blue", (0, 40, 1000, 60))  # MCDA01
     image.paste("red", (0, 60, 1000, 80))  # MCDA23: 바로 아래 점유 행
     layout = {"mc_id": "MCDA01", "row_top": 40, "row_bottom": 60,
-              "columns": {"mc_id": [800, 880], "remote": [450, 550],
-                          "connection_user": [900, 1000]}}
+              "columns": {"mc_id": [800, 880], "connection_user": [900, 1000]}}
     fine = build_row_read_image(image, layout, "MCDA01")
     colors = {color for count, color in fine.getcolors(fine.width * fine.height)}
     assert (0, 0, 255) in colors
@@ -123,7 +117,7 @@ def test_coarse_then_fine_rejects_multiple_mc_ids(monkeypatch, tmp_path):
     for ids, expected in ((["MCDA01"], "free"), (["MCDA01", "MCDA23"], "unknown"),
                           (["MCDA23"], "unknown")):
         responses = iter([layout, {"mc_id": "MCDA01", "row_confirmed": True,
-                          "visible_mc_ids": ids, "remote_text": "", "connection_user_text": ""}])
+                          "visible_mc_ids": ids, "connection_user_text": ""}])
         calls = []
         def chat(**kwargs):
             calls.append(kwargs)
@@ -183,7 +177,7 @@ def test_locator_maps_column_point_and_paddle_reads_target_band(monkeypatch, tmp
     responses = iter([
         json.loads('{"headers": [{"name": "Remote", "x": 500}, {"name": "RCS IP", "x": 700}, {"name": "MC ID", "x": 840}, {"name": "Control User", "x": 900}, {"name": "Connection User", "x": 970}]}'),
         {"mc_id": "MCDA23", "visible_mc_ids": ["MCDA23"], "row_confirmed": True,
-         "remote_text": "1", "connection_user_text": "kim"},
+         "connection_user_text": "kim"},
     ])
     client = SimpleNamespace(chat_with_image_b64=lambda **kw: SimpleNamespace(text=json.dumps(next(responses))))
     report = checker.check_tool_occupancy(image, "MCDA23", client=client,
@@ -203,7 +197,7 @@ def test_columns_split_at_header_midpoints_and_scale_to_image_width():
                {"name": "MC ID", "x": 840}, {"name": "Control User", "x": 900},
                {"name": "Connection User", "x": 970}]
     assert columns_from_headers(headers, 2000) == {
-        "remote": [0, 1200], "mc_id": [1540, 1740], "connection_user": [1870, 2000]}
+        "mc_id": [1540, 1740], "connection_user": [1870, 2000]}
     assert "control_user" not in columns_from_headers(headers, 2000)
     for bad in (None, [], [{"name": "MC ID"}], [{"name": 3, "x": 10}], [{"name": "MC ID", "x": "10"}]):
         with pytest.raises(ValueError):

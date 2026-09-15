@@ -1,4 +1,4 @@
-"""RCS List의 Remote / Connection User(최우측 컬럼) 판독. 클릭 없이 단독 점검 가능.
+"""RCS List의 Connection User(최우측 컬럼) 판독으로 점유를 판정한다. 클릭 없이 단독 점검 가능.
 
 uv run python -m poc.workflow_3.check_tool_occupancy
 아래 ACTION_TARGET_TOOL_NAME 수정, 선택: TOOL_OCCUPANCY_IMAGE=/path/list.jpg
@@ -37,30 +37,20 @@ def classify_reading(reading: dict, tool_name: str) -> str:
             or not isinstance(reading.get("mc_id"), str)
             or reading["mc_id"].strip().upper() != tool_name.strip().upper()):
         return UNKNOWN
-    remote = reading.get("remote_text")
     user = reading.get("connection_user_text")
-    if remote is not None and not isinstance(remote, str):
+    if not isinstance(user, str):
         return UNKNOWN
-    if user is not None and not isinstance(user, str):
-        return UNKNOWN
-    if isinstance(remote, str) and re.fullmatch(r"[0-9]+", remote.strip()):
-        if int(remote.strip()) > 0:
-            return OCCUPIED_BY_OTHER
-    if isinstance(user, str) and user.strip():
-        return OCCUPIED_BY_OTHER
-    if remote == "" and user == "":
-        return FREE
-    return UNKNOWN
+    return OCCUPIED_BY_OTHER if user.strip() else FREE
 
 
-COLUMN_KEYS = {"mcid": "mc_id", "remote": "remote", "connectionuser": "connection_user"}
+COLUMN_KEYS = {"mcid": "mc_id", "connectionuser": "connection_user"}
 
 
 def columns_from_headers(headers, image_width: int) -> dict:
     """헤더 중심 x(0-1000) 목록을 인접 헤더의 중점으로 갈라 컬럼 경계를 만든다.
 
     mai-ui 는 점(grounding)은 잘 찍지만 폭은 어림한다 - 오피스 실측에서 MC ID 는 2배,
-    Remote 는 1/2, Connection User 는 왼쪽이 잘렸다. 폭을 모델에 묻지 않고 이웃 헤더
+    Connection User 는 왼쪽이 잘렸다. 폭을 모델에 묻지 않고 이웃 헤더
     간격에서 파생하면 어느 컬럼도 서로 겹치거나 비지 않는다. 첫/마지막 컬럼은 이미지 가장자리까지.
     """
     if not isinstance(headers, list) or not headers:
@@ -87,7 +77,7 @@ def validate_columns(columns, image_width: int):
     if not isinstance(columns, dict):
         raise ValueError("missing column bounds")
     spans = []
-    for name in ("mc_id", "remote", "connection_user"):
+    for name in ("mc_id", "connection_user"):
         span = columns.get(name)
         if (not isinstance(span, list) or len(span) != 2
                 or any(type(v) is not int for v in span)
@@ -100,7 +90,7 @@ def validate_columns(columns, image_width: int):
 
 
 def build_row_read_image(image, layout: dict, tool_name: str):
-    """세 컬럼을 동일 y 범위로 잘라 확대한다. 좌우 경계는 헤더 중점 분할이다."""
+    """두 컬럼을 동일 y 범위로 잘라 확대한다. 좌우 경계는 헤더 중점 분할이다."""
     if layout.get("mc_id") != tool_name:
         raise ValueError("layout MC ID mismatch")
     top, bottom = layout.get("row_top"), layout.get("row_bottom")
@@ -111,14 +101,14 @@ def build_row_read_image(image, layout: dict, tool_name: str):
     columns = layout.get("columns")
     validate_columns(columns, image.width)
     cells = []
-    for name in ("mc_id", "remote", "connection_user"):
+    for name in ("mc_id", "connection_user"):
         left, right = columns[name]
         cell = image.crop((left, top, right, bottom)).convert("RGB")
         cells.append(cell.resize((cell.width * CELL_UPSCALE, cell.height * CELL_UPSCALE)))
     panel_height = cells[0].height + 28
-    fine = Image.new("RGB", (max(cell.width for cell in cells) + 16, panel_height * 3), "white")
+    fine = Image.new("RGB", (max(cell.width for cell in cells) + 16, panel_height * len(cells)), "white")
     draw = ImageDraw.Draw(fine)
-    for index, (label, cell) in enumerate(zip(("MC ID", "Remote", "Connection User"), cells)):
+    for index, (label, cell) in enumerate(zip(("MC ID", "Connection User"), cells)):
         y = index * panel_height
         draw.text((8, y + 4), label, fill="black")
         fine.paste(cell, (8, y + 24))
@@ -142,7 +132,7 @@ def locate_row_point(image, tool_name: str, artifact_dir):
 
 
 def check_tool_occupancy(image, tool_name: str, *, client=None, row_point=None, ocr_client=None) -> dict:
-    """컬럼 → MC ID 위치 → PaddleOCR 엄격 검증 → 같은 행 점유 판독."""
+    """헤더 → MC ID 위치 → PaddleOCR 엄격 검증 → 같은 행 Connection User 판독."""
     report = {"target_tool_name": tool_name, "occupancy": UNKNOWN,
               "diagnosis": "column_location_failed"}
     artifact_dir = DEBUG_IMAGE_DIR / "tool_occupancy" / str(time.time_ns())
@@ -165,7 +155,8 @@ def check_tool_occupancy(image, tool_name: str, *, client=None, row_point=None, 
                 "(0 = left image edge, 1000 = right image edge). Include all headers, e.g. "
                 "MC ID, RCS IP, Location, Model, Status, Count, DVR, Remote, Control User, "
                 "Connection User, and any others you see. Control User and Connection User "
-                "are different columns; Connection User is the last one at the far right. "
+                "are different columns; Connection User is the LAST column at the far right "
+                "edge of the table and must be included. "
                 "Use the header text exactly as displayed. Do not select any equipment row. "
                 'Schema: {"headers":[{"name":"MC ID","x":40},{"name":"Remote","x":520}]}. '
                 "The numbers are examples only."
@@ -217,19 +208,19 @@ def check_tool_occupancy(image, tool_name: str, *, client=None, row_point=None, 
         response = client.chat_with_image_b64(
             image_b64=fine_b64,
             image_mime="image/webp",
-            system_message="Transcribe three cropped RCS cells. Return only JSON. Never guess blank cells.",
+            system_message="Transcribe two cropped RCS cells. Return only JSON. Never guess blank cells.",
             user_text=(
-                "The image contains three labelled panels: MC ID, Remote, Connection User. "
+                "The image contains two labelled panels: MC ID, Connection User. "
                 "Each panel contains an enlarged cell cropped from the SAME pixel row band. "
                 "Read only cell content below each label; labels are not cell values. "
                 "Transcribe ALL equipment IDs visible in the MC ID panel into visible_mc_ids. "
                 "If two rows or partial neighboring text are visible, row_confirmed=false. "
-                "Read the Remote count and Connection User text independently. "
+                "Transcribe the Connection User text exactly as shown. "
                 "Use empty string ONLY for a completely visible, confidently empty cell. "
                 "Use null for clipped, partial or unreadable content. Never infer empty "
                 "from failed recognition. Schema: "
                 '{"mc_id":"transcribed ID","visible_mc_ids":["transcribed ID"],'
-                '"row_confirmed":true,"remote_text":"1","connection_user_text":"visible user"}. '
+                '"row_confirmed":true,"connection_user_text":"visible user"}. '
                 "Transcribe the actual MC ID, never substitute an expected ID."
             ),
             temperature=0.0,

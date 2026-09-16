@@ -85,6 +85,12 @@ RECENTER_CLICKS = env_int("ALIGN_SEM_RECENTER_CLICKS", 2)
 # 0 이하 = 감시 끔(롤백 스위치).
 OCCLUSION_WAIT_SEC = env_float("ALIGN_SEM_OCCLUSION_WAIT_SEC", 6.0)  # 3s 팝업보다 넉넉히
 OCCLUSION_POLL_SEC = env_float("ALIGN_SEM_OCCLUSION_POLL_SEC", 0.3)
+# 판정 heartbeat(초). 가림이 없을 때도 이 간격으로 판정값을 찍는다 - 오피스에서
+# "아무 줄도 안 나왔다" 가 두 가지(가림이 없었다 / 판정기가 못 본다)를 뜻해 버리는
+# 것을 막는 유일한 장치다. 팝업이 원격 뷰 안에 그려지면 WindowFromPoint 는 계속
+# 우리 창을 짚어 "none" 만 나오는데, heartbeat 가 있으면 그 사실이 화면에 보인다.
+# 0 이하 = 상태가 바뀔 때만 출력.
+OCCLUSION_LOG_SEC = env_float("ALIGN_SEM_OCCLUSION_LOG_SEC", 10.0)
 
 
 def _to_gray(image) -> np.ndarray:
@@ -126,6 +132,9 @@ class RCSSEMMonitor:
         # 직접 import 할 수 없다(4-layer DAG) - cycle.py 가 채운다.
         # None 이면 게이트가 통째로 no-op 이라 mock/테스트/다른 호출부는 무영향.
         self.occlusion_fn = occlusion_fn
+        # heartbeat 출력용 - 직전 판정과 마지막 출력 시각.
+        self._occlusion_state = ""
+        self._occlusion_logged_at = 0.0
         # image_point_to_screen 의 DPI 보정에 쓰는 캡처 프레임 크기 (w, h).
         self._last_frame_size: tuple[int, int] | None = None
         # 캡처 시점의 창 rect 크기(논리 px) — 제스처 직전 리사이즈 드리프트 감지용.
@@ -138,6 +147,22 @@ class RCSSEMMonitor:
             print("[INFO] RCSSEMMonitor: action_enabled=True - 실제 클릭/휠이 장비로 나갑니다.")
 
     # ---- 캡처 ----
+
+    def _log_occlusion(self, state: str) -> None:
+        """가림이 없을 때의 판정값을 상태 변화 시 + heartbeat 간격으로 찍는다.
+
+        가림을 만났을 때만 찍으면 오피스에서 침묵이 두 가지를 뜻한다 - "아무도
+        접속을 시도하지 않았다" 와 "팝업이 원격 뷰 안에 그려져 판정기가 못 본다".
+        후자면 이 게이트는 켜져 있어도 무력이므로 구분이 되어야 한다.
+        """
+        now = time.time()
+        changed = state != self._occlusion_state
+        due = OCCLUSION_LOG_SEC > 0 and (now - self._occlusion_logged_at) >= OCCLUSION_LOG_SEC
+        if not (changed or due):
+            return
+        print(f"[INFO] 가림 판정={state} (감시 동작 중 - 가림 감지 시 캡처를 보류합니다)")
+        self._occlusion_state = state
+        self._occlusion_logged_at = now
 
     def _wait_unoccluded(self) -> str:
         """캡처 직전 가림 대기 - 마지막 판정("none"/"unknown"/"partial"/"full")을 돌려준다.
@@ -160,6 +185,7 @@ class RCSSEMMonitor:
             print(f"[WARNING] 가림 판정 실패(그대로 캡처): {exc}")
             return "unknown"
         if state not in ("partial", "full"):
+            self._log_occlusion(state)
             return state
         print(
             f"[WARNING] tool 창 가림 감지({state}) - 캡처 보류, "
@@ -178,6 +204,8 @@ class RCSSEMMonitor:
                 return "unknown"
             if state not in ("partial", "full"):
                 print(f"[INFO] 가림 해소({state}) - 캡처 재개")
+                self._occlusion_state = state
+                self._occlusion_logged_at = time.time()
                 return state
         print(
             f"[WARNING] 가림이 {OCCLUSION_WAIT_SEC:.1f}s 안에 걷히지 않음({state}) - "

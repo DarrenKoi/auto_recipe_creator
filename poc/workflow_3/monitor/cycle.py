@@ -887,6 +887,18 @@ def _make_occlusion_probe(tool_window):
             handles,
         )
 
+    # 무장 시점에 한 번 읽어 둔다 - 판정기가 애초에 화면을 볼 수 있는지를 여기서
+    # 알 수 있어야 한다. "none" 이면 정상(가려지지 않음), "unknown" 이면 조회 자체가
+    # 안 되는 것이므로 이후의 침묵은 '가림이 없었다'가 아니라 '못 본다'는 뜻이다.
+    try:
+        baseline = _probe()
+    except Exception as exc:
+        print(f"[WARNING] 가림 감시 무장 실패(감시 없이 진행): {exc}")
+        return None
+    print(
+        f"[INFO] 가림 감시 무장: 기준 판정={baseline}, 창 핸들 {len(handles)}개 "
+        f"(접속 요청 팝업이 뜨면 '가림 감지' 가 찍힙니다)"
+    )
     return _probe
 
 

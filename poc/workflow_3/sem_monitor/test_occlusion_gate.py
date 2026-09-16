@@ -8,6 +8,8 @@
     uv run python poc/workflow_3/sem_monitor/test_occlusion_gate.py
 """
 
+import time
+
 import numpy as np
 
 from poc.workflow_3.sem_monitor import controller as ctrl
@@ -119,6 +121,32 @@ def test_wait_sec_zero_disables() -> bool:
         ctrl.OCCLUSION_WAIT_SEC = orig
 
 
+def test_heartbeat_reports_clear_state() -> bool:
+    """가림이 없어도 heartbeat 로 판정값을 찍는다 - 침묵이 두 뜻이 되지 않게."""
+    orig = ctrl.OCCLUSION_LOG_SEC
+    ctrl.OCCLUSION_LOG_SEC = 0.02
+    lines = []
+    import builtins
+
+    real_print = builtins.print
+    builtins.print = lambda *a, **k: lines.append(" ".join(str(x) for x in a))
+    try:
+        mon, _ = _monitor(["none"])
+        mon._wait_unoccluded()          # 첫 호출 - 상태 변화라 찍힌다
+        first = len([l for l in lines if "가림 판정=" in l])
+        mon._wait_unoccluded()          # 곧바로 다시 - throttle 로 안 찍힌다
+        second = len([l for l in lines if "가림 판정=" in l])
+        time.sleep(0.03)
+        mon._wait_unoccluded()          # heartbeat 간격 경과 - 다시 찍힌다
+        third = len([l for l in lines if "가림 판정=" in l])
+    finally:
+        builtins.print = real_print
+        ctrl.OCCLUSION_LOG_SEC = orig
+    ok = first == 1 and second == 1 and third == 2
+    print(f"[{'PASS' if ok else 'FAIL'}] heartbeat: 변화={first}, throttle={second}, 재출력={third}")
+    return ok
+
+
 def main() -> int:
     tests = [
         test_waits_until_occlusion_clears,
@@ -127,6 +155,7 @@ def main() -> int:
         test_budget_exhausted_still_captures,
         test_probe_exception_does_not_break_capture,
         test_wait_sec_zero_disables,
+        test_heartbeat_reports_clear_state,
     ]
     results = [t() for t in tests]
     passed = sum(1 for r in results if r)

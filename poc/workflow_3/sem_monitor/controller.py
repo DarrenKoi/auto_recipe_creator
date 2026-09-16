@@ -108,42 +108,52 @@ def _to_gray(image) -> np.ndarray:
 def wait_unoccluded(occlusion_fn) -> str:
     """가림이 걷힐 때까지 폴링하고 마지막 판정을 돌려준다("none"/"unknown"/"partial"/"full").
 
-    "unknown" 은 막지 않는다 - 조회 실패이지 가림이 아니며, 이는
+    첫 판정의 "unknown" 은 막지 않는다 - 조회 실패이지 가림이 아니며, 이는
     `frame_meta.classify_occlusion` 이 세운 규약 그대로다(Mac 에서는 항상 unknown 이라
-    이 게이트가 통째로 no-op 이 된다). 판정자 예외도 같게 다룬다.
+    이 게이트가 통째로 no-op 이 된다).
+
+    그러나 **가림을 한 번 본 뒤의 "unknown" 은 해소가 아니다**(codex 재리뷰
+    2026-09-16 FINDING 1). 판정기를 잃은 것과 화면이 깨끗해진 것은 다른 사건인데,
+    종전 코드는 full -> unknown 을 '해소'로 읽고 즉시 캡처를 허용했다 - 가림을 이미
+    관측한 상태에서 증거를 잃었을 때 통과시키는 것이 정확히 이 게이트가 막으려던
+    silent-wrong 이다. 한 번 막히면 명시적 "none" 만 해소로 인정한다.
 
     예외는 던지지 않는다 - '기다렸는데 안 걷혔다' 를 어떻게 처리할지는 호출부가
     정한다(제스처 경로는 실패, panel 탐색은 panel_not_found).
     """
     if occlusion_fn is None or OCCLUSION_WAIT_SEC <= 0:
         return "unknown"
-    try:
-        state = occlusion_fn()
-    except Exception as exc:
-        print(f"[WARNING] 가림 판정 실패(진행): {exc}")
-        return "unknown"
+
+    def _read() -> str:
+        try:
+            return occlusion_fn()
+        except Exception as exc:
+            print(f"[WARNING] 가림 판정 실패: {exc}")
+            return "unknown"
+
+    state = _read()
     if state not in ("partial", "full"):
         return state
+    blocked = state
     print(
-        f"[WARNING] tool 창 가림 감지({state}) - 캡처 보류, "
+        f"[WARNING] tool 창 가림 감지({blocked}) - 캡처 보류, "
         f"최대 {OCCLUSION_WAIT_SEC:.1f}s 대기 (접속 요청 팝업 추정)"
     )
     deadline = time.time() + OCCLUSION_WAIT_SEC
     while time.time() < deadline:
         if is_aborted():
             print(f"[WARNING] 긴급 해제({abort_reason()}) - 가림 대기 중단")
-            return state
+            return blocked
         time.sleep(max(0.05, OCCLUSION_POLL_SEC))
-        try:
-            state = occlusion_fn()
-        except Exception as exc:
-            print(f"[WARNING] 가림 판정 실패(진행): {exc}")
-            return "unknown"
-        if state not in ("partial", "full"):
-            print(f"[INFO] 가림 해소({state}) - 캡처 재개")
+        state = _read()
+        if state == "none":
+            print("[INFO] 가림 해소(none) - 캡처 재개")
             return state
-    print(f"[WARNING] 가림이 {OCCLUSION_WAIT_SEC:.1f}s 안에 걷히지 않음({state})")
-    return state
+        if state in ("partial", "full"):
+            blocked = state
+        # "unknown" = 판정기를 잃음. 해소로 치지 않고 계속 기다린다.
+    print(f"[WARNING] 가림이 {OCCLUSION_WAIT_SEC:.1f}s 안에 걷히지 않음({blocked})")
+    return blocked
 
 
 class RCSSEMMonitor:
@@ -488,6 +498,12 @@ def build_rcs_sem_monitor(
         if not landmarks:
             print(f"[WARNING] SEM panel landmark 없음(미캘리브레이션): {landmarks_dir}")
             return _give_up("landmark_missing")
+        # VLM 왕복(수 초) 사이에 팝업이 뜰 수 있으므로 여기서 다시 본다 - 위의
+        # 1회 검사는 _panel_from_vlm_box 직전 상태일 뿐이다(codex 재리뷰 FINDING 2).
+        landmark_occlusion = wait_unoccluded(occlusion_fn)
+        if landmark_occlusion in ("partial", "full"):
+            print(f"[WARNING] landmark 폴백 보류 - tool 창 가림({landmark_occlusion})")
+            return _give_up(f"occluded_{landmark_occlusion}")
         frame = _to_gray(capture_window(tool_window))
         panel = locate_panel(frame, landmarks)
         if panel is None:

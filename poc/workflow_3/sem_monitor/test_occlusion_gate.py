@@ -9,6 +9,7 @@
 """
 
 import time
+from pathlib import Path
 
 import numpy as np
 
@@ -193,6 +194,79 @@ def test_heartbeat_reports_clear_state() -> bool:
     return ok
 
 
+def test_unknown_after_occlusion_is_not_clearance() -> bool:
+    """full -> unknown 은 해소가 아니다 - 판정기를 잃은 것과 화면이 깨끗한 것은 다르다."""
+    orig_poll, orig_wait = ctrl.OCCLUSION_POLL_SEC, ctrl.OCCLUSION_WAIT_SEC
+    ctrl.OCCLUSION_POLL_SEC, ctrl.OCCLUSION_WAIT_SEC = 0.01, 0.06
+    try:
+        mon, _ = _monitor(["full", "unknown"], action_enabled=True)
+        try:
+            _with_capture(mon.capture_screen)
+            print("[FAIL] full -> unknown 인데 캡처가 통과했다")
+            return False
+        except RuntimeError as exc:
+            ok = "full" in str(exc)
+            print(f"[{'PASS' if ok else 'FAIL'}] full -> unknown 은 계속 막힘: {exc}")
+            return ok
+    finally:
+        ctrl.OCCLUSION_POLL_SEC, ctrl.OCCLUSION_WAIT_SEC = orig_poll, orig_wait
+
+
+def test_probe_exception_after_occlusion_is_not_clearance() -> bool:
+    """가림을 본 뒤 판정자가 던지면 통과가 아니다(예외 = 증거 상실)."""
+    orig_poll, orig_wait = ctrl.OCCLUSION_POLL_SEC, ctrl.OCCLUSION_WAIT_SEC
+    ctrl.OCCLUSION_POLL_SEC, ctrl.OCCLUSION_WAIT_SEC = 0.01, 0.06
+    calls = []
+
+    def _probe():
+        calls.append(1)
+        if len(calls) == 1:
+            return "full"
+        raise RuntimeError("probe lost")
+
+    try:
+        mon = ctrl.RCSSEMMonitor(
+            object(), _FakePanel(), occlusion_fn=_probe, action_enabled=True
+        )
+        try:
+            _with_capture(mon.capture_screen)
+            print("[FAIL] 가림 후 판정 예외인데 캡처가 통과했다")
+            return False
+        except RuntimeError as exc:
+            ok = "가림" in str(exc)
+            print(f"[{'PASS' if ok else 'FAIL'}] 가림 후 판정 예외도 막힘")
+            return ok
+    finally:
+        ctrl.OCCLUSION_POLL_SEC, ctrl.OCCLUSION_WAIT_SEC = orig_poll, orig_wait
+
+
+def test_landmark_fallback_reprobes() -> bool:
+    """VLM 실패 후 landmark 캡처 전에 다시 본다 - VLM 왕복 중에 뜬 팝업을 놓치지 않게."""
+    orig_poll, orig_wait = ctrl.OCCLUSION_POLL_SEC, ctrl.OCCLUSION_WAIT_SEC
+    ctrl.OCCLUSION_POLL_SEC, ctrl.OCCLUSION_WAIT_SEC = 0.01, 0.05
+    states = ["none", "full", "full", "full", "full", "full", "full", "full"]
+    captured = []
+    orig_capture = ctrl.capture_window
+    ctrl.capture_window = lambda _w: captured.append(1) or np.zeros((30, 40, 3), np.uint8)
+    reasons: list = []
+    try:
+        built = ctrl.build_rcs_sem_monitor(
+            object(),
+            occlusion_fn=lambda: states.pop(0) if len(states) > 1 else states[0],
+            reason_sink=reasons,
+            landmarks_dir=Path("/nonexistent"),
+        )
+        # landmark 디렉터리가 없으면 landmark_missing 으로 먼저 끝난다 - 그 경로는
+        # 캡처를 안 하므로, 여기서 확인할 것은 '첫 게이트를 통과했다' 와
+        # '가림 상태로 캡처하지 않았다' 두 가지다.
+        ok = built is None and not captured
+        print(f"[{'PASS' if ok else 'FAIL'}] landmark 폴백 재검사: captures={len(captured)}, reasons={reasons}")
+        return ok
+    finally:
+        ctrl.capture_window = orig_capture
+        ctrl.OCCLUSION_POLL_SEC, ctrl.OCCLUSION_WAIT_SEC = orig_poll, orig_wait
+
+
 def main() -> int:
     tests = [
         test_waits_until_occlusion_clears,
@@ -204,6 +278,9 @@ def main() -> int:
         test_probe_exception_does_not_break_capture,
         test_wait_sec_zero_disables,
         test_heartbeat_reports_clear_state,
+        test_unknown_after_occlusion_is_not_clearance,
+        test_probe_exception_after_occlusion_is_not_clearance,
+        test_landmark_fallback_reprobes,
     ]
     results = [t() for t in tests]
     passed = sum(1 for r in results if r)

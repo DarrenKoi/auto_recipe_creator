@@ -180,7 +180,11 @@ class Workflow3Settings(WorkflowSettings):
     recording_poll_sec: float = DEFAULT_RECORDING_POLL_SEC  # 샘플링 간격.
     recording_heartbeat_sec: float = DEFAULT_RECORDING_HEARTBEAT_SEC  # 변화 없어도 이 간격마다 1장.
     recording_change_min_px: int = DEFAULT_RECORDING_CHANGE_MIN_PX  # 변화 판정 픽셀 최소 개수.
-    recording_max_sec: float = 900.0
+    # 500s = tool 창 open 부터 세는 **세션 전체** 예산(에이전트 보정 + 엔지니어 수동
+    # 조작이 같은 세션이다). engineer_arrival_wait_sec(60) + engineer_watch_sec(300)
+    # 를 빼면 보정 단계에 ~140s 가 남는다 - 보정이 그보다 오래 끌면 watch 가
+    # max_sec 로 잘리므로 manifest 의 stop_reason 으로 확인할 것.
+    recording_max_sec: float = 500.0
 
     # --- 접속 구간 prelude 녹화 (시연용, 기본 off) ---
     # 본 녹화는 tool 창 rect 를 찍으므로 '창이 뜨기 전' 인 RCS 실행/로그인/tool 진입
@@ -203,7 +207,7 @@ class Workflow3Settings(WorkflowSettings):
     # 새로 센다 - 그러지 않으면 엔지니어가 오기도 전에 상한이 소진돼 정작 수동 조작이
     # 녹화되지 않는다. 0 이면 종전 동작(즉시 engineer_watch_sec 카운트).
     # 실질 상한은 recording_max_sec 이며 그쪽이 먼저 걸리면 watch 도 함께 끝난다.
-    engineer_arrival_wait_sec: float = 300.0
+    engineer_arrival_wait_sec: float = 60.0
 
     # --- engineer watch 측정-시작 감지 (Assist 우선, Recipe Monitor 카운터 fallback) ---
     engineer_done_detect_enabled: bool = True  # 기본 on (2026-08-19 사용자 결정).
@@ -451,7 +455,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         recording_change_min_px=env_int(
             "ALIGN_FAIL_RECORDING_CHANGE_MIN_PX", DEFAULT_RECORDING_CHANGE_MIN_PX
         ),
-        recording_max_sec=env_float("ALIGN_FAIL_RECORDING_MAX_SEC", 900.0),
+        recording_max_sec=env_float("ALIGN_FAIL_RECORDING_MAX_SEC", 500.0),
         record_prelude_enabled=env_flag("ALIGN_FAIL_RECORD_PRELUDE", False),
         prelude_poll_sec=env_float("ALIGN_FAIL_PRELUDE_POLL_SEC", 0.2),
         prelude_max_sec=env_float("ALIGN_FAIL_PRELUDE_MAX_SEC", 300.0),
@@ -460,7 +464,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         prelude_monitor_index=env_int("ALIGN_FAIL_PRELUDE_MONITOR_INDEX", 1),
         engineer_watch_sec=env_float("ALIGN_FAIL_ENGINEER_WATCH_SEC", 300.0),
         engineer_arrival_wait_sec=env_float(
-            "ALIGN_FAIL_ENGINEER_ARRIVAL_WAIT_SEC", 300.0
+            "ALIGN_FAIL_ENGINEER_ARRIVAL_WAIT_SEC", 60.0
         ),
         rcp_msr_gather_enabled=env_flag("ALIGN_FAIL_GATHER_RCP_MSR", default=True),
         rcp_gather_timeout_sec=env_float("ALIGN_FAIL_RCP_GATHER_TIMEOUT_SEC", 60.0),

@@ -143,7 +143,7 @@ ACCESS_CONFIRM = None        # strict|lenient|off - 허용 버튼 라벨 확인 
 # ----------------------------------------------------------------------------
 # align fail 마다 성공/실패 무관하게 녹화한다. 보정이 성공하지 않은 경우에만 이어서
 # 엔지니어 수동 조작을 watch 하며 녹화한다(= 보정을 끄면 항상 watch 한다).
-RECORDING_MAX_SEC = None     # 녹화 하드 상한(초). None=기본 900.
+RECORDING_MAX_SEC = None     # 녹화 하드 상한(초). None=기본 500(세션 전체).
 RECORD_PRELUDE = None        # 접속 구간(RCS 실행->로그인->tool 진입)을 **화면 전체**로
                              # 녹화한다. 1/0/None(기본 off). 시연 촬영용 - 본 녹화는
                              # tool 창 rect 라 창이 뜨기 전 장면이 원리상 없다.

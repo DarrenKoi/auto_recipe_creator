@@ -128,12 +128,13 @@ RICH_NOTIFY = 1              # cube rich notification.
 NOTIFY_DELAY_SEC = None
 
 # --- 녹화 / 엔지니어 watch ---
-RECORDING_MAX_SEC = None     # 녹화 하드 상한(초). None=900.
+RECORDING_MAX_SEC = None     # 녹화 하드 상한(초). None=500. tool 창 open 부터 세는
+                             # 세션 전체 예산 - 보정 + 엔지니어 수동 조작이 같은 세션이다.
 RECORD_PRELUDE = 1           # 접속 구간(RCS 실행->로그인->tool 진입) 화면 전체 녹화.
 PRELUDE_MAX_SEC = None
 PRELUDE_MONITOR_INDEX = None
 ENGINEER_WATCH_SEC = None    # 미보정 watch 상한(초). None=300.
-ARRIVAL_WAIT_SEC = None      # 엔지니어 접속(접근 요청) 대기 상한(초). None=300.
+ARRIVAL_WAIT_SEC = None      # 엔지니어 접속(접근 요청) 대기 상한(초). None=60.
                              # 0 이면 종전 동작(보정 실패 즉시 watch 상한 카운트).
 ACCESS_CHANGE_MIN_PX = None  # 접근 요청 감시가 VLM 을 부를 최소 화면 변화량. None=200.
 ENGINEER_DONE_DETECT = 1     # 완료 신호로 watch 조기 종료.

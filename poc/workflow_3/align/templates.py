@@ -9,9 +9,17 @@ from poc.workflow_3.align.cond_template import (
     centered_area_crop,
     check_cond_box,
     cond_align_offset,
+    cond_align_point,
     cond_template_crop,
 )
 from poc.workflow_3.align.matching.engine import AlignKeyTemplate, build_template
+from poc.workflow_3.util.env_utils import env_flag
+
+# align point 를 cond crosshair 에서 읽는다(기본 on). 0 이면 '이미지 중심' 가정으로 롤백 —
+# 오피스에서 crosshair 가 align point 가 아닌 recipe 가 나오면 Claude 없이 되돌릴 수 있게
+# 남겨둔 스위치다. **호출 시점에 읽는다**: 모듈 import 는 seed_env() 보다 앞이라 import
+# 시점에 읽으면 workflow_3_config.py 사본이 이 값을 못 건드린다(VLM_LOCATOR_COMBO 와 같은 이유).
+_CROSSHAIR_ALIGN_POINT_ENV = "ALIGN_FAIL_COND_CROSSHAIR_ALIGN_POINT"
 
 
 def load_template(
@@ -33,13 +41,28 @@ def load_template(
             status, reason, _onorm = check_cond_box(box_ltrb, gray.shape)
         if status != "skip":
             crop, _bbox = cond_template_crop(gray, cond)
-            offset = cond_align_offset(box_ltrb, gray.shape)
+            # align point = crosshair(있으면) / 이미지 중심(폴백). box 중심이 아니다.
+            use_crosshair = env_flag(_CROSSHAIR_ALIGN_POINT_ENV, default=True)
+            (ax, ay), source = cond_align_point(cond if use_crosshair else None, gray.shape)
+            offset = cond_align_offset(box_ltrb, gray.shape, cond if use_crosshair else None)
             level = "WARNING" if status == "warn" else "INFO"
-            print(f"[{level}] {key_type} template cond box-crop: offset={offset} ({reason})")
+            print(f"[{level}] {key_type} template cond box-crop: offset={offset} "
+                  f"align_point=({ax:.1f},{ay:.1f})/{source} ({reason})")
+            # 두 정의가 갈리면 반드시 찍는다 - 이 차이가 곧 클릭이 빗나가는 거리다.
+            h, w = gray.shape[:2]
+            dcx, dcy = ax - w / 2.0, ay - h / 2.0
+            if source == "crosshair" and (abs(dcx) > 2 or abs(dcy) > 2):
+                print(f"[WARNING] {key_type} align point(crosshair) 가 이미지 중심에서 "
+                      f"({dcx:+.1f},{dcy:+.1f})px 떨어져 있습니다 - '중심=align point' 가정이 "
+                      f"깨진 recipe 입니다. 롤백은 {_CROSSHAIR_ALIGN_POINT_ENV}=0")
         else:
             crop = centered_area_crop(gray, CENTER_AREA_RATIO)
             offset = (0, 0)
             print(f"[INFO] {key_type} template center-area crop ({reason})")
+    rotation = cond.image_rotation if cond is not None else None
+    print(f"[INFO] {key_type} template cond: Image_rotation="
+          f"{'미기재' if rotation is None else f'{rotation:g}deg'} "
+          f"mag={cond.magnification if cond is not None else None}")
     return build_template(
         crop,
         recipe_id=recipe_id,

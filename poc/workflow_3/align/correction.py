@@ -34,6 +34,7 @@ from poc.workflow_3.logger import log_work2_event
 from poc.workflow_3 import DEBUG_IMAGE_DIR
 from poc.workflow_3.align.assets import resolve_assets_auto
 from poc.workflow_3.align.consensus_resolve import resolve_templates
+from poc.workflow_3.align.consensus_template import CONSENSUS_VERSION
 from poc.workflow_3.align.matching.engine import (
     DEFAULT_SCALES,
     STRUCTURE_POLICY,
@@ -405,13 +406,21 @@ def correct_align_fail(
         )
 
     # ---- PRIMARY: crosshair 를 align point 로 reposition. ----
-    # template 이 들고 다니는 align offset(=rcp px image_center - box_center)을 best_scale 로
-    # 환산해 match 중심에 더한다 -> frame 의 진짜 align point. offset (0,0)이면 best_xy 그대로.
+    # template 이 들고 다니는 align offset(=rcp px align_point - box_center; align point 는
+    # cond crosshair 우선·이미지 중심 폴백)을 best_scale 로 환산해 match 중심에 더한다 ->
+    # frame 의 진짜 align point. consensus template 은 crop 자체가 crosshair 중심이라
+    # offset (0,0) 이 정상이고, rcp template 의 (0,0) 은 cond 폴백 신호다.
     ox, oy = template.align_offset_xy
     align_x = result.best_xy[0] + round(ox * result.best_scale)
     align_y = result.best_xy[1] + round(oy * result.best_scale)
     cx, cy = clamp_to_fov(align_x, align_y, fw, fh, config.click_margin_ratio)
-    print(f"[INFO] reposition: 더블클릭 recenter → ({cx}, {cy}){' [dry-run]' if dry_run else ''}")
+    print(f"[INFO] reposition: 더블클릭 recenter → ({cx}, {cy}) "
+          f"[match={result.best_xy} + align_offset={(ox, oy)}x{result.best_scale:.2f}]"
+          f"{' [dry-run]' if dry_run else ''}")
+    if (ox, oy) == (0, 0) and template.version != CONSENSUS_VERSION:
+        print("[WARNING] rcp template align_offset=(0,0) - 클릭이 match 중심(=box 중심)으로 "
+              "갑니다. cond.txt 가 없거나 box-crop 이 center 폴백했는지 확인하세요 "
+              "(uv run python poc/workflow_3/align/diagnostics/verify_cond_box_crop.py).")
     if not dry_run:
         controller.move_to_point(cx, cy)
         if config.settle_sec:

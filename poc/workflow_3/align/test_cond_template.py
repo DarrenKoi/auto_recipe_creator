@@ -10,6 +10,7 @@ from poc.workflow_3.align.matching.engine import build_template
 from poc.workflow_3.align.cond_file import CondInfo
 from poc.workflow_3.align.cond_template import (
     CENTER_AREA_RATIO,
+    cond_align_point,
     CROP_INSET_PX,
     OFFSET_SKIP,
     OFFSET_WARN,
@@ -141,3 +142,44 @@ def test_build_template_defaults_zero_offset():
     gray = np.full((64, 64), 120, dtype=np.uint8)
     tpl = build_template(gray, recipe_id="R", version="v0", key_type="om")
     assert tpl.align_offset_xy == (0, 0)
+
+
+# --- align point vs box 중심 (2026-09-16) -----------------------------------
+# 증상: 보정 클릭이 recipe 흰 박스의 *중심* 으로 갔다. align point 는 박스 중심이
+# 아니므로, cond 의 crosshair 가 있으면 그것을 align point 로 써야 한다.
+
+def test_align_point_prefers_crosshair():
+    """crosshair 가 있으면 align point = crosshair (이미지 중심 아님)."""
+    cond = CondInfo(pixel=(512, 512), crosshair_xy=(3000, 1000))   # cursor frame x10.
+    (ax, ay), source = cond_align_point(cond, (512, 512))
+    assert (ax, ay) == (300.0, 100.0), (ax, ay)
+    assert source == "crosshair"
+
+
+def test_align_point_falls_back_to_image_center():
+    """crosshair 없음/cond 없음 -> 이미지 중심(기존 동작)."""
+    # shape_hw = (h, w) 규약 -> (512, 400) 은 h=512, w=400 이라 중심은 (200, 256).
+    assert cond_align_point(None, (512, 400)) == ((200.0, 256.0), "image_center")
+    cond = CondInfo(pixel=(400, 512), crosshair_xy=None)
+    assert cond_align_point(cond, (512, 400)) == ((200.0, 256.0), "image_center")
+
+
+def test_align_offset_from_crosshair_differs_from_center_assumption():
+    """offset = align_point - box 중심. cond 를 주면 crosshair 기준으로 갈린다."""
+    box = (1000, 1000, 3000, 3000)          # 이미지 px 100..300 -> 중심 (200, 200).
+    cond = CondInfo(pixel=(512, 512), box_ltrb=box, crosshair_xy=(2500, 1500))  # (250,150).
+    assert cond_align_offset(box, (512, 512)) == (56, 56)            # 중심 가정(256-200).
+    assert cond_align_offset(box, (512, 512), cond) == (50, -50)     # crosshair 기준.
+
+
+def test_offset_norm_keeps_center_calibration():
+    """cond_offset_norm/check_cond_box 는 crosshair 와 무관하게 중심 가정을 유지한다.
+
+    OFFSET_WARN/OFFSET_SKIP 임계는 'rcp 이미지가 box 를 중심에 두고 찍혔나' 로
+    캘리브레이션된 값이다. align point 정의가 바뀌어도 그 게이트는 안 흔들려야 한다.
+    """
+    box = (1000, 1000, 3000, 3000)
+    before = cond_offset_norm(box, (512, 512))
+    status, _reason, onorm = check_cond_box(box, (512, 512))
+    assert onorm == before
+    assert status in {"ok", "warn"}

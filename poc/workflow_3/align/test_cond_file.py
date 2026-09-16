@@ -10,7 +10,7 @@ cond.txt 의 cursor 좌표는 ``Pixel × 10`` 프레임이다. 로드된 이미�
     uv run python poc/workflow_3/align/test_cond_file.py
 """
 
-from poc.workflow_3.align.cond_file import CondInfo, cond_for_image
+from poc.workflow_3.align.cond_file import CondInfo, cond_for_image, parse_cond
 
 
 def test_none_cond_passthrough():
@@ -69,6 +69,17 @@ def test_preserves_scope_and_raw():
                     raw={"magnification": ["1000"]})
     out = cond_for_image(cond, (1024, 1024))
     assert out.scope == "SEM" and out.raw == {"magnification": ["1000"]}
+
+
+def test_image_rotation():
+    """Image_rotation 은 float 로 읽고, 0 과 '없음'(None)을 구분한다."""
+    assert parse_cond("Image_rotation\t90.00\n").image_rotation == 90.0
+    assert parse_cond("Image_rotation\t0\n").image_rotation == 0.0      # 0 != None.
+    assert parse_cond("Scope\tOM\n").image_rotation is None              # 키 없음.
+    assert parse_cond("Image_rotation\tabc\n").image_rotation is None    # 숫자 아님.
+    # 키 철자 흔들림(!Cursor_inf 선례) - 접두/부분 일치로 수용.
+    assert parse_cond("!Image_Rotation_Deg\t-45\n").image_rotation == -45.0
+    assert parse_cond("Rotation\t12.5\n").image_rotation == 12.5
 
 
 def main():

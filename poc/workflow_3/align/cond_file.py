@@ -7,6 +7,8 @@ cond.txt 한 줄 형식: ``key  값,값,...`` (key 와 값 사이는 공백/탭,
 우리가 쓰는 키 ([[project_align_cond_files_and_coords]]):
   - ``Scope``        : OM / SEM (modality — fail 멈춘 step 의 종류)
   - ``Pixel``        : 이미지 크기 (예: 512,512 / 1024,1024)
+  - ``Image_rotation``: 등록 당시 화면 회전(도) — SEM key 가 OM 과 다른 회전으로
+        등록되는 경우가 있어 보정 전에 장비 회전을 맞춰야 한다.
   - ``!Cursor_info`` : crosshair / white box 좌표가 한 줄에 들어 있다.
         elements[4],[5]      = crosshair (cx, cy)        — 둘 다 -1 이 아니면 존재
         elements[6],[7],[8],[9] = white box (left, top, right, bottom)
@@ -48,6 +50,23 @@ class CondInfo:
         value = _to_int(tokens[0]) if tokens else None
         return float(value) if value is not None and value > 0 else None
 
+    @property
+    def image_rotation(self) -> float | None:
+        """``Image_rotation`` (도). 등록 당시 화면 회전 - 없으면 None.
+
+        SEM align key 는 OM 과 다른 회전으로 등록되는 경우가 있다(사용자 2026-09-16).
+        회전이 어긋난 채로 매칭하면 template 이 회전만큼 안 맞아 점수가 떨어지므로,
+        보정 전에 장비 회전을 이 값으로 맞춰야 한다(SEM Monitor 의 'Rot..' 버튼).
+        0 과 None 은 다르다 - 0 은 '회전 없음'(유효한 값), None 은 '모른다'.
+
+        키 철자는 실데이터에서 흔들리므로(``!Cursor_inf`` 선례) ``image_rot`` 접두 →
+        ``rotat`` 포함 순으로 찾는다. 값이 숫자가 아니면 None.
+        """
+        tokens = next((v for k, v in self.raw.items() if k.startswith("image_rot")), None)
+        if tokens is None:
+            tokens = next((v for k, v in self.raw.items() if "rotat" in k), None)
+        return _to_float(tokens[0]) if tokens else None
+
 
 def _norm_key(key: str) -> str:
     """비교용 키 정규화: 앞의 '!' 제거 + 소문자."""
@@ -59,6 +78,14 @@ def _to_int(token: str) -> int | None:
     try:
         return int(token.strip())
     except (ValueError, AttributeError):
+        return None
+
+
+def _to_float(token: str) -> float | None:
+    """토큰을 float 로. 실패하면 None (회전각은 '0.00' 처럼 소수로 온다)."""
+    try:
+        return float(token.strip())
+    except (ValueError, AttributeError, TypeError):
         return None
 
 

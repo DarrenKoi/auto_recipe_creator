@@ -5,10 +5,11 @@ box template(+분리된 offset)이 center-area crop 대비 모든 displacement b
 동반 상승(rank1 +0.16~0.18). 그 검증된 cond 기하 함수를 lab 에서 production 으로 byte-identical
 승격한다([[project_align_cond_files_and_coords]], [[project_rcp_white_box_unique_area]]).
 
-핵심 분리(decoupled offset): align point 는 *이미지 중심* 이지 box 중심이 아니다. box 는
-유니크 영역 단서일 뿐이다. offset = image_center - box_center 를 crop 과 분리해 cond 기하로만
-계산하고(검출 inner-crop 의 off-center 오염 제거), template 은 box stroke 를 inpaint 로 지운 뒤
-box 내부를 *대칭* inset 해 만든다(crop 중심 == box 중심 → offset 과 일관).
+핵심 분리(decoupled offset): align point 는 box 중심이 **아니다** — box 는 유니크 영역
+단서일 뿐이다. align point 는 cond 의 crosshair(직접 증거)이고, crosshair 가 없으면 이미지
+중심(가정 폴백)이다(`cond_align_point`). offset = align_point - box_center 를 crop 과 분리해
+cond 기하로만 계산하고(검출 inner-crop 의 off-center 오염 제거), template 은 box stroke 를
+inpaint 로 지운 뒤 box 내부를 *대칭* inset 해 만든다(crop 중심 == box 중심 → offset 과 일관).
 
 좌표계: cond.txt cursor 좌표는 이미지 px 의 10배(OVERSAMPLE). 변환은 clean_align_image 의
 cursor_to_image 를 재사용한다(중복 생성 금지). 의존 방향: lab → 이 모듈(prod), 역방향 금지.
@@ -44,15 +45,42 @@ def _cond_box_center(box_ltrb):
     return (l + r) / 2.0, (t + b) / 2.0
 
 
-def cond_align_offset(box_ltrb, shape_hw):
-    """align point(이미지 중심) - box 중심. cond.txt 만으로 결정 → crop 과 분리(decoupled).
+def cond_align_point(cond, shape_hw):
+    """align point(이미지 px) 와 그 출처. 반환 ``((x, y), source)``.
+
+    **align point 는 box 중심이 아니다.** box 는 "여기가 유일하게 식별 가능한 영역"
+    이라는 단서일 뿐이고, 정렬이 맞춰야 하는 점은 따로 있다. 근거는 두 단계다:
+
+      1. ``crosshair`` — cond 의 ``!Cursor_info[4],[5]``. 등록/측정 때 실제로 찍힌
+         점이라 *직접 증거* 다. consensus 경로는 이미 이것을 align point 로 쓴다
+         (``consensus_crops`` 의 crosshair-중심 crop).
+      2. ``image_center`` — crosshair 가 없을 때의 폴백. "rcp 이미지는 align point
+         로 stage 를 옮긴 뒤 찍혔으니 그 점이 정중앙" 이라는 *가정* 이다. 대개 맞지만
+         가정이라 깨질 수 있고, 깨지면 box 중심 쪽으로 조용히 빗나간다.
+
+    cond 가 없으면 이미지 중심이다(기존 동작).
+    """
+    h, w = shape_hw[:2]
+    if cond is None or cond.crosshair_xy is None:
+        return (w / 2.0, h / 2.0), "image_center"
+    gx, gy = cursor_to_image(cond.crosshair_xy, OVERSAMPLE)
+    return (float(gx), float(gy)), "crosshair"
+
+
+def cond_align_offset(box_ltrb, shape_hw, cond=None):
+    """align point - box 중심. cond.txt 만으로 결정 → crop 과 분리(decoupled).
 
     crop 을 어떻게 잡든 align point 의 기하는 안 변한다. 이 분리가 원본의 결함 — 내용검출
     inner-crop 의 off-center 가 offset 을 오염시키던 경로 — 를 통째로 없앤다.
+
+    ``cond`` 를 주면 align point 를 ``cond_align_point`` 로 정한다(crosshair 우선).
+    생략하면 이미지 중심 — ``cond_offset_norm``/``check_cond_box`` 의 게이트는 "rcp
+    이미지가 box 를 중심에 두고 찍혔나" 를 보는 것이라 그 캘리브레이션을 유지하려고
+    일부러 cond 를 넘기지 않는다(같은 임계값이 두 다른 질문에 쓰이면 안 된다).
     """
-    h, w = shape_hw[:2]
+    (ax, ay), _source = cond_align_point(cond, shape_hw)
     bcx, bcy = _cond_box_center(box_ltrb)
-    return (int(round(w / 2.0 - bcx)), int(round(h / 2.0 - bcy)))
+    return (int(round(ax - bcx)), int(round(ay - bcy)))
 
 
 def cond_offset_norm(box_ltrb, shape_hw):

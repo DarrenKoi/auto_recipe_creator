@@ -253,7 +253,15 @@ class _Stage:
         self.odo.record(cmd, measured)
 
     def move_px(self, dx, dy) -> bool:
-        """(dx,dy) px 만큼 stage 를 옮긴다 - 한 클릭 최대 0.38 FOV 로 쪼갠다. abort 면 False."""
+        """(dx,dy) px 만큼 stage 를 옮긴다 - 한 클릭 최대 0.38 FOV 로 쪼갠다. abort 면 False.
+
+        이동량이 1px 미만이면 클릭하지 않는다. ``max(1, ...)`` 때문에 delta 0 도 FOV
+        중심을 한 번 더블클릭했는데, 그건 이동이 아니라 잡음이다 - 격자가 0 셀일 때
+        (한 FOV 가 이미 2R 을 덮는 경우) 복귀의 이 클릭 하나가 화면에서는 "탐색이
+        한 번 움직이고 끝났다" 로 보인다.
+        """
+        if abs(dx) < 1.0 and abs(dy) < 1.0:
+            return True
         n = max(1, math.ceil(abs(dx) / self.max_click_x), math.ceil(abs(dy) / self.max_click_y))
         for _ in range(n):
             if is_aborted():

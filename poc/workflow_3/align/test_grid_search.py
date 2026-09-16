@@ -603,3 +603,22 @@ def test_cycle_grid_mag_control_is_absent_without_tool_window_or_in_legacy_mode(
     assert _build_grid_mag_control({"tool_window": object(), "tag": "t"}, s2, tmp_path) is None
     s3 = type(s)(**{**s.__dict__, "fallback_search_enabled": False})
     assert _build_grid_mag_control({"tool_window": object(), "tag": "t"}, s3, tmp_path) is None
+
+
+def test_degenerate_grid_makes_no_gesture_at_all():
+    """FOV 하나가 이미 2R 을 덮어 격자가 0 셀이면 클릭이 **한 번도** 나가면 안 된다.
+
+    종전엔 `move_px(0, 0)` 의 `max(1, ...)` 때문에 복귀가 FOV 중심을 한 번 더블클릭했다.
+    이동량 0 인 클릭이라 화면은 그대로인데, 오피스에서는 "탐색이 한 번 움직이고 끝났다"
+    로 보여 sweep 이 도는 중인지 아닌지를 가릴 수 없었다.
+    """
+    ctl = _Ctl(fw=512, fh=384)
+    # 1K 로 내려가면 FOV 135µm x (384/512) = 101µm >= 2R(60µm) -> plan_grid 가 빈 목록.
+    mag = _Mag([1000, 2000, 5000, 50000], reg_mag=2000)
+    out = gs.grid_align_search(
+        ctl, _tpl(), mag.control(), reg_mag=2000,
+        config=gs.GridSearchConfig(min_key_px=60), match_fn=_low, shift_fn=None,
+    )
+    assert out.meta["cells_visited"] == 0
+    assert _moves(ctl) == []
+    assert out.status == "exhausted"

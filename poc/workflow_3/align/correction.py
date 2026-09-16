@@ -414,6 +414,15 @@ def correct_align_fail(
     align_x = result.best_xy[0] + round(ox * result.best_scale)
     align_y = result.best_xy[1] + round(oy * result.best_scale)
     cx, cy = clamp_to_fov(align_x, align_y, fw, fh, config.click_margin_ratio)
+    # clamp 는 조용히 클릭점을 옮긴다(FOV 안쪽 여백으로). live search 의 recenter 는 그걸
+    # 원하지만(가장자리 클릭 = 최대 pan) reposition 은 아니다 - 옮겨진 만큼이 곧 align
+    # point 를 놓친 거리이고, 그래도 결과는 corrected 로 보고된다. 그래서 찍는다.
+    clamp_shift = (align_x - cx, align_y - cy)
+    if clamp_shift != (0, 0):
+        print(f"[WARNING] align point 가 FOV 여백 안으로 clamp 되었습니다: "
+              f"({align_x},{align_y}) -> ({cx},{cy}) shift={clamp_shift} "
+              f"(margin_ratio={config.click_margin_ratio}) - 이만큼 align point 를 "
+              f"벗어난 지점을 누릅니다")
     print(f"[INFO] reposition: 더블클릭 recenter → ({cx}, {cy}) "
           f"[match={result.best_xy} + align_offset={(ox, oy)}x{result.best_scale:.2f}]"
           f"{' [dry-run]' if dry_run else ''}")

@@ -30,6 +30,8 @@ def load_template(
     cond = cond_for_image(load_cond(path), gray.shape)
     if not cond_box_crop:
         crop, offset = gray, (0, 0)
+        (ax, ay), source = cond_align_point(None, gray.shape)
+        crop_kind, reason = "whole", "cond_box_crop=0"
     else:
         # cond.Pixel 과 로드 크기가 다르면 cursor 좌표를 먼저 보정한다(멱등) —
         # 안 하면 box crop/offset 이 계통적으로 어긋난 채 confident 하게 내려간다.
@@ -45,24 +47,22 @@ def load_template(
             use_crosshair = env_flag(_CROSSHAIR_ALIGN_POINT_ENV, default=True)
             (ax, ay), source = cond_align_point(cond if use_crosshair else None, gray.shape)
             offset = cond_align_offset(box_ltrb, gray.shape, cond if use_crosshair else None)
-            level = "WARNING" if status == "warn" else "INFO"
-            print(f"[{level}] {key_type} template cond box-crop: offset={offset} "
-                  f"align_point=({ax:.1f},{ay:.1f})/{source} ({reason})")
-            # 두 정의가 갈리면 반드시 찍는다 - 이 차이가 곧 클릭이 빗나가는 거리다.
-            h, w = gray.shape[:2]
-            dcx, dcy = ax - w / 2.0, ay - h / 2.0
-            if source == "crosshair" and (abs(dcx) > 2 or abs(dcy) > 2):
-                print(f"[WARNING] {key_type} align point(crosshair) 가 이미지 중심에서 "
-                      f"({dcx:+.1f},{dcy:+.1f})px 떨어져 있습니다 - '중심=align point' 가정이 "
-                      f"깨진 recipe 입니다. 롤백은 {_CROSSHAIR_ALIGN_POINT_ENV}=0")
+            crop_kind = "box"
         else:
             crop = centered_area_crop(gray, CENTER_AREA_RATIO)
             offset = (0, 0)
-            print(f"[INFO] {key_type} template center-area crop ({reason})")
+            (ax, ay), source = cond_align_point(None, gray.shape)
+            crop_kind = "center"
+    # 한 줄로 합친다 - 콘솔이 붐비면 이 줄들이 서로를 가린다. 여기 없는 값은 없는 것.
+    # crosshair 와 이미지 중심의 delta 는 **항상 있다**(사람이 박스 정중앙을 못 찍는다,
+    # 사용자 2026-09-16). 그래서 경고가 아니라 값으로만 찍는다 - 경고로 두면 매 recipe 마다
+    # 울려서 진짜 이상 신호(scale pinned / clamp / offset=0)를 덮는다.
     rotation = cond.image_rotation if cond is not None else None
-    print(f"[INFO] {key_type} template cond: Image_rotation="
-          f"{'미기재' if rotation is None else f'{rotation:g}deg'} "
-          f"mag={cond.magnification if cond is not None else None}")
+    h, w = gray.shape[:2]
+    print(f"[INFO] {key_type} template: crop={crop_kind} offset={offset} "
+          f"ap=({ax:.0f},{ay:.0f})/{source} d_center=({ax - w / 2:+.0f},{ay - h / 2:+.0f}) "
+          f"rot={'-' if rotation is None else format(rotation, 'g')} "
+          f"mag={cond.magnification if cond is not None else '-'} ({reason})")
     return build_template(
         crop,
         recipe_id=recipe_id,

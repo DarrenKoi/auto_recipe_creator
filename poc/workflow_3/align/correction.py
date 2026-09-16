@@ -290,11 +290,8 @@ def correct_align_fail(
         and result.best_scale in (min(scales), max(scales))
     )
     if scale_pinned:
-        print(
-            f"[WARNING] best_scale={result.best_scale:.2f} 가 scale band "
-            f"({min(scales)}~{max(scales)}) 끝에 고정 - band 가 "
-            f"live box/template 비율을 못 덮을 수 있음 (좌표 신뢰도 확인 필요)"
-        )
+        print(f"[WARNING] scale_pinned: best={result.best_scale:.2f} 가 band "
+              f"({min(scales)}~{max(scales)}) 끝 - 배율비를 못 덮는다(좌표 신뢰도 낮음)")
     history.append(
         {
             "stage": "paused_match",
@@ -311,12 +308,6 @@ def correct_align_fail(
             "base_scale": base_scale,
             "relative_scale": float(result.best_scale / base_scale),
         }
-    )
-    print(
-        f"[INFO] paused frame: mode={mode or '-'} decision={result.decision} "
-        f"score={result.score:.3f} (ch={result.chamfer_score:.3f} orb={result.orb_inlier_ratio:.3f}) "
-        f"scale={result.best_scale:.2f} base={base_scale:.3f} "
-        f"source_wh={template.source_wh} frame_wh={(fw, fh)} best_xy={result.best_xy}"
     )
     if debug_dir is not None:
         save_overlay_jpeg(result.debug_overlay, debug_dir / "paused_match.jpg")
@@ -414,22 +405,39 @@ def correct_align_fail(
     align_x = result.best_xy[0] + round(ox * result.best_scale)
     align_y = result.best_xy[1] + round(oy * result.best_scale)
     cx, cy = clamp_to_fov(align_x, align_y, fw, fh, config.click_margin_ratio)
-    # clamp 는 조용히 클릭점을 옮긴다(FOV 안쪽 여백으로). live search 의 recenter 는 그걸
-    # 원하지만(가장자리 클릭 = 최대 pan) reposition 은 아니다 - 옮겨진 만큼이 곧 align
-    # point 를 놓친 거리이고, 그래도 결과는 corrected 로 보고된다. 그래서 찍는다.
+
+    # 좌표 사슬 전부를 **한 줄**로 찍는다. 사이클 한 번이 수십 줄의 [INFO] 를 쏟아내서
+    # "이번 보정이 잘 된 건가" 를 콘솔에서 눈으로 못 가린다는 보고(2026-09-16) 때문이다.
+    # 이 한 줄에 rcp px -> frame px 환산이 전부 들어 있어 good/bad 두 실행을 나란히 놓고
+    # 비교할 수 있다. 이상 신호는 flags 에 이름으로 뜬다(없으면 '-').
+    #   clamp  : FOV 여백 안으로 클릭점이 밀렸다 = align point 를 그만큼 못 누른다.
+    #            live search 의 recenter 는 clamp 를 원하지만(가장자리=최대 pan)
+    #            reposition 은 아니다 - 그런데도 결과는 corrected 로 나간다.
+    #   off0   : rcp template 인데 offset 0 = 클릭이 match 중심(=box 중심)으로 간다.
+    #            consensus template 은 crop 이 crosshair 중심이라 0 이 정상이므로 제외.
     clamp_shift = (align_x - cx, align_y - cy)
+    flags = []
+    if scale_pinned:
+        flags.append("scale_pinned")
     if clamp_shift != (0, 0):
-        print(f"[WARNING] align point 가 FOV 여백 안으로 clamp 되었습니다: "
-              f"({align_x},{align_y}) -> ({cx},{cy}) shift={clamp_shift} "
-              f"(margin_ratio={config.click_margin_ratio}) - 이만큼 align point 를 "
-              f"벗어난 지점을 누릅니다")
-    print(f"[INFO] reposition: 더블클릭 recenter → ({cx}, {cy}) "
-          f"[match={result.best_xy} + align_offset={(ox, oy)}x{result.best_scale:.2f}]"
-          f"{' [dry-run]' if dry_run else ''}")
+        flags.append(f"clamp{clamp_shift}")
     if (ox, oy) == (0, 0) and template.version != CONSENSUS_VERSION:
-        print("[WARNING] rcp template align_offset=(0,0) - 클릭이 match 중심(=box 중심)으로 "
-              "갑니다. cond.txt 가 없거나 box-crop 이 center 폴백했는지 확인하세요 "
-              "(uv run python poc/workflow_3/align/diagnostics/verify_cond_box_crop.py).")
+        flags.append("off0")
+    print(
+        f"[DIGEST] reposition mode={mode or '-'} dec={result.decision} "
+        f"score={result.score:.3f}(ch={result.chamfer_score:.3f}) "
+        f"base={base_scale:.3f} scale={result.best_scale:.2f}"
+        f"(rel={result.best_scale / base_scale:.2f}) "
+        f"wh={template.source_wh}->{(fw, fh)} "
+        f"match={result.best_xy} off={(ox, oy)}->"
+        f"({round(ox * result.best_scale)},{round(oy * result.best_scale)}) "
+        f"click=({cx},{cy}) flags={'|'.join(flags) or '-'}"
+        f"{' [dry-run]' if dry_run else ''}"
+    )
+    if flags:
+        print("[WARNING] 위 flags 확인 - scale_pinned=배율 band 미달, clamp=클릭점이 FOV "
+              "여백으로 밀림, off0=cond 폴백으로 box 중심을 누름 "
+              "(uv run python poc/workflow_3/align/diagnostics/verify_cond_box_crop.py)")
     if not dry_run:
         controller.move_to_point(cx, cy)
         if config.settle_sec:

@@ -105,6 +105,47 @@ def _to_gray(image) -> np.ndarray:
     raise ValueError(f"지원하지 않는 이미지 shape: {array.shape}")
 
 
+def wait_unoccluded(occlusion_fn) -> str:
+    """가림이 걷힐 때까지 폴링하고 마지막 판정을 돌려준다("none"/"unknown"/"partial"/"full").
+
+    "unknown" 은 막지 않는다 - 조회 실패이지 가림이 아니며, 이는
+    `frame_meta.classify_occlusion` 이 세운 규약 그대로다(Mac 에서는 항상 unknown 이라
+    이 게이트가 통째로 no-op 이 된다). 판정자 예외도 같게 다룬다.
+
+    예외는 던지지 않는다 - '기다렸는데 안 걷혔다' 를 어떻게 처리할지는 호출부가
+    정한다(제스처 경로는 실패, panel 탐색은 panel_not_found).
+    """
+    if occlusion_fn is None or OCCLUSION_WAIT_SEC <= 0:
+        return "unknown"
+    try:
+        state = occlusion_fn()
+    except Exception as exc:
+        print(f"[WARNING] 가림 판정 실패(진행): {exc}")
+        return "unknown"
+    if state not in ("partial", "full"):
+        return state
+    print(
+        f"[WARNING] tool 창 가림 감지({state}) - 캡처 보류, "
+        f"최대 {OCCLUSION_WAIT_SEC:.1f}s 대기 (접속 요청 팝업 추정)"
+    )
+    deadline = time.time() + OCCLUSION_WAIT_SEC
+    while time.time() < deadline:
+        if is_aborted():
+            print(f"[WARNING] 긴급 해제({abort_reason()}) - 가림 대기 중단")
+            return state
+        time.sleep(max(0.05, OCCLUSION_POLL_SEC))
+        try:
+            state = occlusion_fn()
+        except Exception as exc:
+            print(f"[WARNING] 가림 판정 실패(진행): {exc}")
+            return "unknown"
+        if state not in ("partial", "full"):
+            print(f"[INFO] 가림 해소({state}) - 캡처 재개")
+            return state
+    print(f"[WARNING] 가림이 {OCCLUSION_WAIT_SEC:.1f}s 안에 걷히지 않음({state})")
+    return state
+
+
 class RCSSEMMonitor:
     """RCS tool 창 위에서 동작하는 실장비 SEMMonitorController 구현(골격)."""
 
@@ -165,52 +206,33 @@ class RCSSEMMonitor:
         self._occlusion_logged_at = now
 
     def _wait_unoccluded(self) -> str:
-        """캡처 직전 가림 대기 - 마지막 판정("none"/"unknown"/"partial"/"full")을 돌려준다.
+        """캡처 직전 가림 대기. 안 걷히면 **실행 중일 때만** RuntimeError.
 
-        "unknown" 은 막지 않는다. 조회 실패이지 가림이 아니며, 이는
-        `frame_meta.classify_occlusion` 이 세운 규약 그대로다(Mac 에서는 항상
-        unknown 이라 이 게이트가 no-op 이 된다).
+        예산을 넘겼다는 것은 "지금 화면을 못 본다"는 확정이다. 그대로 캡처하면
+        오염된 프레임이 좌표 근거가 되는데, 매칭 점수는 backstop 이 아니다 -
+        `key_visibility_gate` 는 낮은 점수를 `fallback_search` 로 보내고 그 경로는
+        live_align_search 가 **스테이지를 실제로 움직인다**. 즉 "못 보면 가만히
+        있는다" 가 아니라 "못 보면 장비를 움직인다" 가 된다(codex 리뷰 2026-09-16).
 
-        예산을 다 써도 **예외를 던지지 않고** 경고만 남기고 캡처한다. 3초 팝업과
-        영구히 겹쳐 있는 창(작업 표시줄, 엔지니어가 띄워 둔 앱)을 구분할 수 없어서다 -
-        후자에서 예외를 던지면 가림과 무관한 보정까지 깨진다. 오염된 프레임은
-        매칭 점수 게이트가 이미 걸러 fallback 으로 보내므로, 여기서 할 일은
-        '깨끗한 프레임을 기다리는 것'이지 '사이클을 깨는 것'이 아니다.
+        그래서 `_ensure_actionable` 의 foreground 실패와 같은 모델로 크게 실패한다 -
+        보정 실패는 failure_class 가 되어 cube 로 나가고 엔지니어가 받는다.
+        dry-run/SAFE_MODE 는 좌표 로그만 남기므로 종전대로 통과시킨다.
         """
+        state = self._probe_until_clear()
+        if state in ("partial", "full") and self.action_enabled:
+            raise RuntimeError(
+                f"tool 창 가림({state})이 {OCCLUSION_WAIT_SEC:.1f}s 안에 걷히지 않음 - "
+                f"화면을 못 보는 상태에서 좌표를 뽑지 않습니다"
+            )
+        return state
+
+    def _probe_until_clear(self) -> str:
+        """가림이 걷힐 때까지 기다리고 마지막 판정을 돌려준다(예외 없음)."""
         if self.occlusion_fn is None or OCCLUSION_WAIT_SEC <= 0:
             return "unknown"
-        try:
-            state = self.occlusion_fn()
-        except Exception as exc:
-            print(f"[WARNING] 가림 판정 실패(그대로 캡처): {exc}")
-            return "unknown"
+        state = wait_unoccluded(self.occlusion_fn)
         if state not in ("partial", "full"):
             self._log_occlusion(state)
-            return state
-        print(
-            f"[WARNING] tool 창 가림 감지({state}) - 캡처 보류, "
-            f"최대 {OCCLUSION_WAIT_SEC:.1f}s 대기 (접속 요청 팝업 추정)"
-        )
-        deadline = time.time() + OCCLUSION_WAIT_SEC
-        while time.time() < deadline:
-            if is_aborted():
-                print(f"[WARNING] 긴급 해제({abort_reason()}) - 가림 대기 중단")
-                return state
-            time.sleep(max(0.05, OCCLUSION_POLL_SEC))
-            try:
-                state = self.occlusion_fn()
-            except Exception as exc:
-                print(f"[WARNING] 가림 판정 실패(그대로 캡처): {exc}")
-                return "unknown"
-            if state not in ("partial", "full"):
-                print(f"[INFO] 가림 해소({state}) - 캡처 재개")
-                self._occlusion_state = state
-                self._occlusion_logged_at = time.time()
-                return state
-        print(
-            f"[WARNING] 가림이 {OCCLUSION_WAIT_SEC:.1f}s 안에 걷히지 않음({state}) - "
-            f"그대로 캡처합니다(매칭 점수 게이트가 오염 프레임을 거릅니다)"
-        )
         return state
 
     def _capture_full_gray(self) -> np.ndarray:
@@ -438,6 +460,16 @@ def build_rcs_sem_monitor(
     """
     mode_hint: str | None = None
     reasons: list = []
+    # panel 탐색도 같은 게이트를 지난다. 여기서 찍은 프레임은 panel_roi 와 mode_hint 로
+    # **캐시되어 사이클 내내 재사용**되므로, 가려진 화면으로 한 번 잘못 잡으면 이후의
+    # 깨끗한 캡처가 그것을 고쳐 주지 않는다(codex 리뷰 2026-09-16 FINDING 3).
+    # _capture_full_gray 의 게이트는 이 시점 뒤에야 붙는다 - 그 전에 여기서 막는다.
+    panel_occlusion = wait_unoccluded(occlusion_fn)
+    if panel_occlusion in ("partial", "full"):
+        print(f"[WARNING] SEM panel 탐색 보류 - tool 창 가림({panel_occlusion})")
+        if reason_sink is not None:
+            reason_sink.append(f"occluded_{panel_occlusion}")
+        return None
     resolved = _panel_from_vlm_box(
         tool_window, vlm_client, ocr_client=ocr_client, two_stage=pm_two_stage,
         reasons=reasons, fail_frame_path=fail_frame_path,

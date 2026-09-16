@@ -77,17 +77,63 @@ def test_no_probe_is_noop() -> bool:
     return ok
 
 
-def test_budget_exhausted_still_captures() -> bool:
-    """영구 가림에서도 예외 대신 캡처로 진행한다(작업 표시줄 등과 구분 불가)."""
+def test_budget_exhausted_fails_loud_when_live() -> bool:
+    """실행 중(action_enabled)이면 예산 소진 시 캡처하지 않고 크게 실패한다.
+
+    매칭 점수는 backstop 이 아니다 - 낮은 점수는 fallback_search 로 가고 그 경로는
+    스테이지를 실제로 움직인다. '못 보면 가만히' 가 아니라 '못 보면 움직인다'가
+    되므로 오염 프레임을 좌표 근거로 쓰면 안 된다(codex 리뷰 2026-09-16).
+    """
     orig_poll, orig_wait = ctrl.OCCLUSION_POLL_SEC, ctrl.OCCLUSION_WAIT_SEC
     ctrl.OCCLUSION_POLL_SEC, ctrl.OCCLUSION_WAIT_SEC = 0.01, 0.05
     try:
-        mon, _ = _monitor(["full"])
-        frame = _with_capture(mon.capture_screen)
-        ok = frame.shape == (30, 40)
-        print(f"[{'PASS' if ok else 'FAIL'}] 예산 소진 후에도 캡처 진행: shape={frame.shape}")
+        mon, _ = _monitor(["full"], action_enabled=True)
+        try:
+            _with_capture(mon.capture_screen)
+            ok = False
+            print("[FAIL] 영구 가림인데 캡처가 통과했다")
+        except RuntimeError as exc:
+            ok = "가림" in str(exc)
+            print(f"[{'PASS' if ok else 'FAIL'}] 실행 중 영구 가림은 예외: {exc}")
         return ok
     finally:
+        ctrl.OCCLUSION_POLL_SEC, ctrl.OCCLUSION_WAIT_SEC = orig_poll, orig_wait
+
+
+def test_budget_exhausted_permissive_in_dry_run() -> bool:
+    """dry-run/SAFE_MODE 는 좌표 로그만 남기므로 종전대로 캡처한다."""
+    orig_poll, orig_wait = ctrl.OCCLUSION_POLL_SEC, ctrl.OCCLUSION_WAIT_SEC
+    ctrl.OCCLUSION_POLL_SEC, ctrl.OCCLUSION_WAIT_SEC = 0.01, 0.05
+    try:
+        mon, _ = _monitor(["full"], action_enabled=False)
+        frame = _with_capture(mon.capture_screen)
+        ok = frame.shape == (30, 40)
+        print(f"[{'PASS' if ok else 'FAIL'}] dry-run 은 캡처 진행: shape={frame.shape}")
+        return ok
+    finally:
+        ctrl.OCCLUSION_POLL_SEC, ctrl.OCCLUSION_WAIT_SEC = orig_poll, orig_wait
+
+
+def test_panel_discovery_blocked_when_occluded() -> bool:
+    """panel 탐색 캡처도 같은 게이트를 지난다 - 캐시되는 ROI/modality 를 오염시키지 않게."""
+    orig_poll, orig_wait = ctrl.OCCLUSION_POLL_SEC, ctrl.OCCLUSION_WAIT_SEC
+    ctrl.OCCLUSION_POLL_SEC, ctrl.OCCLUSION_WAIT_SEC = 0.01, 0.05
+    captured = []
+    orig_capture = ctrl.capture_window
+    ctrl.capture_window = lambda _w: captured.append(1) or np.zeros((30, 40, 3), np.uint8)
+    reasons: list = []
+    try:
+        built = ctrl.build_rcs_sem_monitor(
+            object(), occlusion_fn=lambda: "full", reason_sink=reasons,
+        )
+        ok = built is None and not captured and reasons == ["occluded_full"]
+        print(
+            f"[{'PASS' if ok else 'FAIL'}] 가림 중 panel 탐색 차단: "
+            f"built={built}, captures={len(captured)}, reasons={reasons}"
+        )
+        return ok
+    finally:
+        ctrl.capture_window = orig_capture
         ctrl.OCCLUSION_POLL_SEC, ctrl.OCCLUSION_WAIT_SEC = orig_poll, orig_wait
 
 
@@ -152,7 +198,9 @@ def main() -> int:
         test_waits_until_occlusion_clears,
         test_unknown_does_not_block,
         test_no_probe_is_noop,
-        test_budget_exhausted_still_captures,
+        test_budget_exhausted_fails_loud_when_live,
+        test_budget_exhausted_permissive_in_dry_run,
+        test_panel_discovery_blocked_when_occluded,
         test_probe_exception_does_not_break_capture,
         test_wait_sec_zero_disables,
         test_heartbeat_reports_clear_state,

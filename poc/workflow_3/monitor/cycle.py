@@ -850,6 +850,46 @@ def _exec_start_recording(step, context, settings: Workflow3Settings) -> StepRes
     return _make_result(step, "success", started_at, settings)
 
 
+def _make_occlusion_probe(tool_window):
+    """tool 창 가림 판정자를 만든다(못 만들면 None = 감시 없이 진행).
+
+    다른 엔지니어가 접속을 시도하면 RCS 가 "Information"(Connection Request) 팝업을
+    우리 화면에 띄우고, 아무도 누르지 않아도 3초 뒤 사라지며 상대가 들어온다
+    (사용자 보고 2026-09-16). 그 3초 동안 tool 창이 가려지는데 `capture_window` 는
+    창 rect 의 화면 그랩이라 팝업이 프레임에 들어온다 - 보정이 그 프레임에서 좌표를
+    뽑으면 조용히 엉뚱한 점을 클릭한다.
+
+    판정 자체는 `frame_meta.probe_occlusion` 을 그대로 쓴다(자식 HWND 를
+    GetAncestor(GA_ROOT) 로 올리는 처리까지 이미 들어 있고 오피스에서 검증됐다).
+    `sem_monitor` 는 `monitor` 아래 계층이라 직접 import 할 수 없어 주입한다 -
+    share_request/rcs_recovery 와 같은 규약이다.
+    """
+    try:
+        from poc.workflow_3.monitor.frame_meta import _handles_of, probe_occlusion
+
+        handles = _handles_of(tool_window)
+    except Exception as exc:
+        print(f"[WARNING] 가림 감시 준비 실패(감시 없이 진행): {exc}")
+        return None
+    if not handles:
+        # 핸들이 비면 표본점이 전부 '남의 창'으로 세어져 영구 "full" 이 된다.
+        # 그대로 켜면 캡처마다 예산을 통째로 기다리므로 아예 끈다.
+        print("[WARNING] tool 창 핸들 추출 실패 - 가림 감시 비활성")
+        return None
+
+    def _probe() -> str:
+        rect = tool_window.rectangle()
+        return probe_occlusion(
+            {
+                "left": int(rect.left), "top": int(rect.top),
+                "right": int(rect.right), "bottom": int(rect.bottom),
+            },
+            handles,
+        )
+
+    return _probe
+
+
 def _exec_locate_sem_panel(step, context, settings: Workflow3Settings) -> StepResult:
     """⑥ SEM panel ROI → RCSSEMMonitor.
 
@@ -879,6 +919,7 @@ def _exec_locate_sem_panel(step, context, settings: Workflow3Settings) -> StepRe
     try:
         controller = build_rcs_sem_monitor(
             context["tool_window"],
+            occlusion_fn=_make_occlusion_probe(context["tool_window"]),
             vlm_client=sem_box_client,
             pm_two_stage=settings.pm_two_stage_ocr_enabled,
             reason_sink=panel_reasons,

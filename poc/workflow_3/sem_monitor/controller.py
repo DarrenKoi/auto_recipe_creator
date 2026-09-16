@@ -38,6 +38,7 @@ import numpy as np
 
 from poc.workflow_3 import TEMPLATES_DIR
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
+from poc.workflow_3.util.abort_switch import abort_reason, is_aborted
 from poc.workflow_3.util.env_utils import env_float, env_int
 # util/__init__ 는 pynput/pywinauto 부재 시 None 을 바인딩한다(import-안전).
 # 실제 호출은 오피스(Windows+의존성 설치) 환경에서만 일어난다.
@@ -75,6 +76,16 @@ REMOTE_CLICK_HOLD_SEC = env_float("ALIGN_SEM_CLICK_HOLD_SEC", 0.15)             
 # 움직인 화면의 같은 지점을 다시 찍어 ~2배로 이동하고, crosshair 모드에 싱글은 무이동.
 RECENTER_CLICKS = env_int("ALIGN_SEM_RECENTER_CLICKS", 2)
 
+# tool 창 가림 복구. 다른 엔지니어가 접속을 시도하면 RCS 가 "Information"(Connection
+# Request) 팝업을 **우리 화면에** 띄우고, 응답하지 않아도 3초 뒤 사라지면서 상대가
+# 들어온다(사용자 보고 2026-09-16). 문제는 허용 여부가 아니라 그 3초다 - capture_window
+# 는 창 핸들이 아니라 **창 rect 의 화면 그랩**이라 가려진 동안 찍으면 팝업 픽셀이
+# 프레임에 들어오고, 매칭은 그 프레임에서 좌표를 뽑는다. 조용히 엉뚱한 점을 클릭하는
+# 경로이므로 캡처 직전에 가림을 보고 걷힐 때까지 기다린다.
+# 0 이하 = 감시 끔(롤백 스위치).
+OCCLUSION_WAIT_SEC = env_float("ALIGN_SEM_OCCLUSION_WAIT_SEC", 6.0)  # 3s 팝업보다 넉넉히
+OCCLUSION_POLL_SEC = env_float("ALIGN_SEM_OCCLUSION_POLL_SEC", 0.3)
+
 
 def _to_gray(image) -> np.ndarray:
     """PIL Image / numpy 입력을 grayscale uint8 numpy 로 정규화한다."""
@@ -101,6 +112,7 @@ class RCSSEMMonitor:
         zoom_scroll_dy: int = 1,
         mode_default: str = "SEM",
         mode_hint: str | None = None,
+        occlusion_fn=None,
     ):
         self.tool_window = tool_window
         self.panel = panel
@@ -110,6 +122,10 @@ class RCSSEMMonitor:
         self.mode_default = mode_default
         # 화면에서 읽은 modality("OM"|"SEM"). None 이면 판독 실패 -> mode_default 경고 경로.
         self.mode_hint = (mode_hint or "").strip().upper() or None
+        # 가림 판정자(주입). sem_monitor 는 monitor 아래 계층이라 frame_meta 를
+        # 직접 import 할 수 없다(4-layer DAG) - cycle.py 가 채운다.
+        # None 이면 게이트가 통째로 no-op 이라 mock/테스트/다른 호출부는 무영향.
+        self.occlusion_fn = occlusion_fn
         # image_point_to_screen 의 DPI 보정에 쓰는 캡처 프레임 크기 (w, h).
         self._last_frame_size: tuple[int, int] | None = None
         # 캡처 시점의 창 rect 크기(논리 px) — 제스처 직전 리사이즈 드리프트 감지용.
@@ -123,8 +139,55 @@ class RCSSEMMonitor:
 
     # ---- 캡처 ----
 
+    def _wait_unoccluded(self) -> str:
+        """캡처 직전 가림 대기 - 마지막 판정("none"/"unknown"/"partial"/"full")을 돌려준다.
+
+        "unknown" 은 막지 않는다. 조회 실패이지 가림이 아니며, 이는
+        `frame_meta.classify_occlusion` 이 세운 규약 그대로다(Mac 에서는 항상
+        unknown 이라 이 게이트가 no-op 이 된다).
+
+        예산을 다 써도 **예외를 던지지 않고** 경고만 남기고 캡처한다. 3초 팝업과
+        영구히 겹쳐 있는 창(작업 표시줄, 엔지니어가 띄워 둔 앱)을 구분할 수 없어서다 -
+        후자에서 예외를 던지면 가림과 무관한 보정까지 깨진다. 오염된 프레임은
+        매칭 점수 게이트가 이미 걸러 fallback 으로 보내므로, 여기서 할 일은
+        '깨끗한 프레임을 기다리는 것'이지 '사이클을 깨는 것'이 아니다.
+        """
+        if self.occlusion_fn is None or OCCLUSION_WAIT_SEC <= 0:
+            return "unknown"
+        try:
+            state = self.occlusion_fn()
+        except Exception as exc:
+            print(f"[WARNING] 가림 판정 실패(그대로 캡처): {exc}")
+            return "unknown"
+        if state not in ("partial", "full"):
+            return state
+        print(
+            f"[WARNING] tool 창 가림 감지({state}) - 캡처 보류, "
+            f"최대 {OCCLUSION_WAIT_SEC:.1f}s 대기 (접속 요청 팝업 추정)"
+        )
+        deadline = time.time() + OCCLUSION_WAIT_SEC
+        while time.time() < deadline:
+            if is_aborted():
+                print(f"[WARNING] 긴급 해제({abort_reason()}) - 가림 대기 중단")
+                return state
+            time.sleep(max(0.05, OCCLUSION_POLL_SEC))
+            try:
+                state = self.occlusion_fn()
+            except Exception as exc:
+                print(f"[WARNING] 가림 판정 실패(그대로 캡처): {exc}")
+                return "unknown"
+            if state not in ("partial", "full"):
+                print(f"[INFO] 가림 해소({state}) - 캡처 재개")
+                return state
+        print(
+            f"[WARNING] 가림이 {OCCLUSION_WAIT_SEC:.1f}s 안에 걷히지 않음({state}) - "
+            f"그대로 캡처합니다(매칭 점수 게이트가 오염 프레임을 거릅니다)"
+        )
+        return state
+
     def _capture_full_gray(self) -> np.ndarray:
         """tool 창 전체를 캡처해 grayscale 로 반환하고 프레임 크기를 캐시한다."""
+        self._wait_unoccluded()
         image = capture_window(self.tool_window)
         gray = _to_gray(image)
         h, w = gray.shape[:2]
@@ -336,6 +399,7 @@ def build_rcs_sem_monitor(
     settle_sec: float = 0.5,
     zoom_scroll_dy: int = 1,
     mode_default: str = "SEM",
+    occlusion_fn=None,
 ) -> RCSSEMMonitor | None:
     """tool 창에서 SEM panel 을 찾아 RCSSEMMonitor 를 만든다. 실패 시 None.
 
@@ -381,6 +445,7 @@ def build_rcs_sem_monitor(
         zoom_scroll_dy=zoom_scroll_dy,
         mode_default=mode_default,
         mode_hint=mode_hint,
+        occlusion_fn=occlusion_fn,
     )
 
 

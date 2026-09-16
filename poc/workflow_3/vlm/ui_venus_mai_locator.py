@@ -29,6 +29,7 @@ from poc.workflow_3.vlm.prompts.prompt_login_rcs_mai_ui import build_mai_ui_zoom
 from poc.workflow_3.vlm.prompts.prompt_login_rcs_ui_venus import (
     build_ui_venus_single_element_bbox_prompt,
 )
+from poc.workflow_3.util.console import rcs_verbose
 from poc.workflow_3.util import (
     activate_window,
     bbox_1000_to_pixels,
@@ -230,13 +231,20 @@ def _overlay_labels(
 
 
 def _print_vlm_understanding(service_slug: str, response_text: str, token_usage: dict | None) -> None:
-    """VLM 응답 텍스트를 콘솔에서 바로 읽기 좋게 출력한다."""
-    print(f"[INFO] [{service_slug}] understanding:")
+    """VLM 응답 텍스트를 콘솔에 남긴다.
+
+    quiet 모드(`ALIGN_FAIL_RCS_VERBOSE=0`)에서는 **한 줄 요약**으로 줄인다 - 전문은
+    이미 `debug_images/.../ *_response.txt` 로 저장되므로 콘솔 전문은 중복이고,
+    호출 1회에 수십 줄이라 보정/알람 로그를 스크롤 밖으로 밀어낸다. 좌표 로그
+    (bbox/refined point)는 그대로 둔다 - 그건 판독 결과 자체다.
+    """
     stripped = (response_text or "").strip()
-    if stripped:
-        print(stripped)
-    else:
-        print("<empty>")
+    if not rcs_verbose():
+        head = " ".join(stripped.split())[:100] or "<empty>"
+        print(f"[INFO] [{service_slug}] understanding: {head}")
+        return
+    print(f"[INFO] [{service_slug}] understanding:")
+    print(stripped if stripped else "<empty>")
     print(f"[INFO] [{service_slug}] tokens={token_usage or {}}")
 
 

@@ -15,6 +15,7 @@ except ImportError:
     psutil = None
     PSUTIL_AVAILABLE = False
 
+from poc.workflow_3.util.console import rcs_print
 from poc.workflow_3 import LOG_DIR
 from poc.workflow_3 import util as workflow_3_util
 
@@ -50,7 +51,7 @@ def _read_window_size(window) -> tuple[int, int] | None:
     try:
         rect = window.rectangle()
     except Exception as exc:
-        print(f"[INFO] 로그인 창 크기 조회 실패: {exc}")
+        rcs_print(f"[INFO] 로그인 창 크기 조회 실패: {exc}")
         return None
 
     width = max(0, int(rect.right - rect.left))
@@ -72,7 +73,7 @@ def _login_window_filter(window, window_title: str) -> bool:
         and width <= LOGIN_WINDOW_MAX_WIDTH
         and height <= LOGIN_WINDOW_MAX_HEIGHT
     )
-    print(
+    rcs_print(
         "[INFO] 로그인 창 후보 점검 "
         f"title={window_title!r}, size={width}x{height}, area={area}, match={is_match}"
     )
@@ -82,24 +83,24 @@ def _login_window_filter(window, window_title: str) -> bool:
 def _load_open_rcs_pid() -> int | None:
     """open_rcs 가 남긴 상태 파일에서 PID 를 읽는다."""
     if not OPEN_RCS_STATE_PATH.exists():
-        print(f"[INFO] open_rcs 상태 파일 없음: {OPEN_RCS_STATE_PATH}")
+        rcs_print(f"[INFO] open_rcs 상태 파일 없음: {OPEN_RCS_STATE_PATH}")
         return None
 
     try:
         data = json.loads(OPEN_RCS_STATE_PATH.read_text(encoding="utf-8"))
     except Exception as exc:
-        print(f"[INFO] open_rcs 상태 파일 파싱 실패: {exc}")
+        rcs_print(f"[INFO] open_rcs 상태 파일 파싱 실패: {exc}")
         return None
 
     pid = data.get("pid")
     if isinstance(pid, int) and pid > 0:
-        print(
+        rcs_print(
             "[INFO] open_rcs 상태 파일 사용 "
             f"pid={pid}, status={data.get('status')}, path={OPEN_RCS_STATE_PATH}"
         )
         return pid
 
-    print(f"[INFO] open_rcs 상태 파일 PID 없음: {OPEN_RCS_STATE_PATH}")
+    rcs_print(f"[INFO] open_rcs 상태 파일 PID 없음: {OPEN_RCS_STATE_PATH}")
     return None
 
 
@@ -130,7 +131,7 @@ def _is_pid_alive(pid: int, expected_exe_path: str = "", *, log_detail: bool = F
     """PID 가 살아 있고, 필요하면 기대한 RCS 실행 파일과도 일치하는지 확인한다."""
     if not PSUTIL_AVAILABLE:
         if log_detail:
-            print(f"[INFO] psutil unavailable: pid liveness check skipped (pid={pid})")
+            rcs_print(f"[INFO] psutil unavailable: pid liveness check skipped (pid={pid})")
         return False
 
     try:
@@ -151,7 +152,7 @@ def _is_pid_alive(pid: int, expected_exe_path: str = "", *, log_detail: bool = F
         if normalized_running_exe:
             is_match = normalized_running_exe == expected_path
             if log_detail:
-                print(
+                rcs_print(
                     "[INFO] PID 실행 파일 점검 "
                     f"pid={pid}, expected={expected_exe_path!r}, "
                     f"running={running_exe!r}, match={is_match}"
@@ -167,7 +168,7 @@ def _is_pid_alive(pid: int, expected_exe_path: str = "", *, log_detail: bool = F
         if running_name:
             is_match = running_name == expected_name
             if log_detail:
-                print(
+                rcs_print(
                     "[INFO] PID 실행 파일명 점검 "
                     f"pid={pid}, expected_name={expected_name!r}, "
                     f"running_name={running_name!r}, match={is_match}"
@@ -175,7 +176,7 @@ def _is_pid_alive(pid: int, expected_exe_path: str = "", *, log_detail: bool = F
             return is_match
 
         if log_detail:
-            print(f"[INFO] PID 실행 파일 점검 불가: pid={pid}, expected={expected_exe_path!r}")
+            rcs_print(f"[INFO] PID 실행 파일 점검 불가: pid={pid}, expected={expected_exe_path!r}")
         return False
     except (psutil.NoSuchProcess, psutil.AccessDenied):
         return False
@@ -184,7 +185,7 @@ def _is_pid_alive(pid: int, expected_exe_path: str = "", *, log_detail: bool = F
 def _run_open_rcs_fallback() -> None:
     """open_rcs.py 를 실행해 PID 상태 파일 생성을 재시도한다."""
     command = [sys.executable, str(OPEN_RCS_SCRIPT_PATH)]
-    print(f"[INFO] open_rcs fallback 실행: {command!r}")
+    rcs_print(f"[INFO] open_rcs fallback 실행: {command!r}")
     try:
         result = subprocess.run(
             command,
@@ -194,16 +195,16 @@ def _run_open_rcs_fallback() -> None:
             errors="replace",
         )
     except Exception as exc:
-        print(f"[INFO] open_rcs fallback 실행 실패: {exc}")
+        rcs_print(f"[INFO] open_rcs fallback 실행 실패: {exc}")
         return
 
-    print(f"[INFO] open_rcs fallback 종료 returncode={result.returncode}")
+    rcs_print(f"[INFO] open_rcs fallback 종료 returncode={result.returncode}")
     stdout_text = (result.stdout or "").strip()
     stderr_text = (result.stderr or "").strip()
     if stdout_text:
-        print(f"[INFO] open_rcs stdout:\n{stdout_text}\n")
+        rcs_print(f"[INFO] open_rcs stdout:\n{stdout_text}\n")
     if stderr_text:
-        print(f"[INFO] open_rcs stderr:\n{stderr_text}\n")
+        rcs_print(f"[INFO] open_rcs stderr:\n{stderr_text}\n")
 
 
 def _ensure_rcs_running() -> int | None:
@@ -212,27 +213,27 @@ def _ensure_rcs_running() -> int | None:
     expected_exe_path = _load_open_rcs_exe_path()
 
     if launch_pid is None:
-        print("[INFO] PID 없음 -> open_rcs fallback 실행")
+        rcs_print("[INFO] PID 없음 -> open_rcs fallback 실행")
         _run_open_rcs_fallback()
         launch_pid = _load_open_rcs_pid()
         expected_exe_path = _load_open_rcs_exe_path()
     elif not _is_pid_alive(launch_pid, expected_exe_path):
-        print(f"[INFO] PID {launch_pid} 프로세스 검증 실패 -> open_rcs fallback 실행")
+        rcs_print(f"[INFO] PID {launch_pid} 프로세스 검증 실패 -> open_rcs fallback 실행")
         _run_open_rcs_fallback()
         launch_pid = _load_open_rcs_pid()
         expected_exe_path = _load_open_rcs_exe_path()
 
     if launch_pid is None:
-        print("[ERROR] open_rcs fallback 후에도 PID 확보 실패")
+        rcs_print("[ERROR] open_rcs fallback 후에도 PID 확보 실패")
         return None
 
     alive = _is_pid_alive(launch_pid, expected_exe_path)
-    print(
+    rcs_print(
         f"[INFO] RCS PID 최종 확인: pid={launch_pid}, alive={alive}, "
         f"expected_exe_path={expected_exe_path!r}"
     )
     if not alive:
-        print(f"[ERROR] PID {launch_pid} 가 여전히 실행 중이지 않음 - 창 탐색 불가")
+        rcs_print(f"[ERROR] PID {launch_pid} 가 여전히 실행 중이지 않음 - 창 탐색 불가")
         return None
 
     return launch_pid
@@ -241,14 +242,14 @@ def _ensure_rcs_running() -> int | None:
 def find_login_window() -> tuple[object | None, str, str]:
     """RCS 프로세스 생존 확인 후 로그인 대화상자를 탐색한다."""
     if not WINDOW_UTILS_AVAILABLE:
-        print("[ERROR] window_utils unavailable - 로그인 창 탐색 불가")
+        rcs_print("[ERROR] window_utils unavailable - 로그인 창 탐색 불가")
         return None, "", ""
 
     launch_pid = _ensure_rcs_running()
     if launch_pid is None:
         return None, "", ""
 
-    print(f"[INFO] 로그인 창 탐색 시작: PID 우선 scan (rcs pid={launch_pid})")
+    rcs_print(f"[INFO] 로그인 창 탐색 시작: PID 우선 scan (rcs pid={launch_pid})")
     login_window, window_title, backend = find_window_by_pid_and_title_prefix(
         launch_pid,
         WINDOW_TITLE_PREFIX,
@@ -256,14 +257,14 @@ def find_login_window() -> tuple[object | None, str, str]:
         window_filter=_login_window_filter,
     )
     if login_window is not None:
-        print(f"[INFO] 로그인 창 발견 (PID 우선) -> 포커스 활성화: title={window_title!r}")
+        rcs_print(f"[INFO] 로그인 창 발견 (PID 우선) -> 포커스 활성화: title={window_title!r}")
         activate_window(
             login_window,
             debug_label=f"login_window_found_pid_first backend={backend} title={window_title!r}",
         )
         return login_window, window_title, backend
 
-    print(f"[INFO] 로그인 창 탐색 계속: desktop all scan (rcs pid={launch_pid})")
+    rcs_print(f"[INFO] 로그인 창 탐색 계속: desktop all scan (rcs pid={launch_pid})")
     login_window, window_title, backend = find_window_by_title_prefix(
         WINDOW_TITLE_PREFIX,
         DESKTOP_SCAN_BACKENDS,
@@ -271,7 +272,7 @@ def find_login_window() -> tuple[object | None, str, str]:
         window_filter=_login_window_filter,
     )
     if login_window is not None:
-        print(f"[INFO] 로그인 창 발견 (desktop scan) -> 포커스 활성화: title={window_title!r}")
+        rcs_print(f"[INFO] 로그인 창 발견 (desktop scan) -> 포커스 활성화: title={window_title!r}")
         activate_window(
             login_window,
             debug_label=f"login_window_found_desktop backend={backend} title={window_title!r}",
@@ -307,7 +308,7 @@ def find_window_two_pass(
         )
         if window is not None:
             if not visible_only:
-                print(
+                rcs_print(
                     f"[INFO] {label} 은 숨은/최소화 창 스캔에서 발견됨 "
                     f"(1차 visible 스캔 미검출): title={window_title!r}"
                 )
@@ -318,10 +319,10 @@ def find_window_two_pass(
 def find_rcs_main_window() -> tuple[object | None, str, str]:
     """로그인 후 메인 RCS 창을 탐색한다(최소화/숨김 창 포함)."""
     if not WINDOW_UTILS_AVAILABLE:
-        print("[ERROR] window_utils unavailable - 메인 창 탐색 불가")
+        rcs_print("[ERROR] window_utils unavailable - 메인 창 탐색 불가")
         return None, "", ""
 
-    print(f"[INFO] 메인 RCS 창 탐색 시작: title_prefix={RCS_MAIN_WINDOW_TITLE_PREFIX!r}")
+    rcs_print(f"[INFO] 메인 RCS 창 탐색 시작: title_prefix={RCS_MAIN_WINDOW_TITLE_PREFIX!r}")
     main_window, window_title, backend = find_window_two_pass(
         RCS_MAIN_WINDOW_TITLE_PREFIX,
         label="메인 RCS 창",
@@ -329,7 +330,7 @@ def find_rcs_main_window() -> tuple[object | None, str, str]:
     if main_window is None:
         return None, "", ""
 
-    print(f"[INFO] 메인 RCS 창 발견 -> 포커스 활성화: title={window_title!r}")
+    rcs_print(f"[INFO] 메인 RCS 창 발견 -> 포커스 활성화: title={window_title!r}")
     activate_window(
         main_window,
         debug_label=f"rcs_main_window backend={backend} title={window_title!r}",
@@ -340,10 +341,10 @@ def find_rcs_main_window() -> tuple[object | None, str, str]:
 def find_rcs_updater_window() -> tuple[object | None, str, str]:
     """로그인 후 RCS Updater 창을 탐색한다."""
     if not WINDOW_UTILS_AVAILABLE:
-        print("[ERROR] window_utils unavailable - updater 창 탐색 불가")
+        rcs_print("[ERROR] window_utils unavailable - updater 창 탐색 불가")
         return None, "", ""
 
-    print(f"[INFO] RCS Updater 창 탐색 시작: title_prefix={RCS_UPDATER_WINDOW_TITLE_PREFIX!r}")
+    rcs_print(f"[INFO] RCS Updater 창 탐색 시작: title_prefix={RCS_UPDATER_WINDOW_TITLE_PREFIX!r}")
     updater_window, window_title, backend = find_window_by_title_prefix(
         RCS_UPDATER_WINDOW_TITLE_PREFIX,
         DESKTOP_SCAN_BACKENDS,
@@ -352,7 +353,7 @@ def find_rcs_updater_window() -> tuple[object | None, str, str]:
     if updater_window is None:
         return None, "", ""
 
-    print(f"[INFO] RCS Updater 창 발견 -> 포커스 활성화: title={window_title!r}")
+    rcs_print(f"[INFO] RCS Updater 창 발견 -> 포커스 활성화: title={window_title!r}")
     activate_window(
         updater_window,
         debug_label=f"rcs_updater_window backend={backend} title={window_title!r}",
@@ -375,10 +376,10 @@ def _tool_window_filter(window, window_title: str, tool_name: str = "") -> bool:
 def find_remote_monitoring_window(tool_name: str = "") -> tuple[object | None, str, str]:
     """툴 더블클릭 후 뜨는 Remote Monitoring System 창을 탐색한다."""
     if not WINDOW_UTILS_AVAILABLE:
-        print("[ERROR] window_utils unavailable - Remote Monitoring System 창 탐색 불가")
+        rcs_print("[ERROR] window_utils unavailable - Remote Monitoring System 창 탐색 불가")
         return None, "", ""
 
-    print(
+    rcs_print(
         "[INFO] Remote Monitoring System 창 탐색 시작: "
         f"title_prefix={REMOTE_MONITORING_WINDOW_TITLE_PREFIX!r}, tool_name={tool_name!r}"
     )
@@ -393,7 +394,7 @@ def find_remote_monitoring_window(tool_name: str = "") -> tuple[object | None, s
     if tool_window is None:
         return None, "", ""
 
-    print(f"[INFO] Remote Monitoring System 창 발견 -> 포커스 활성화: title={window_title!r}")
+    rcs_print(f"[INFO] Remote Monitoring System 창 발견 -> 포커스 활성화: title={window_title!r}")
     activate_window(
         tool_window,
         debug_label=f"remote_monitoring_window backend={backend} title={window_title!r}",
@@ -418,7 +419,7 @@ def wait_for_remote_monitoring_window(
     중단하고 `(None, "", "")` 를 돌려준다(점유 'select' 팝업 조기 감지 → 접속 포기). 이
     함수는 VLM 을 모른다 — 호출부가 bool 판정을 주입한다(레이어 분리). 예외는 호출부 책임.
     """
-    print(
+    rcs_print(
         f"[INFO] Remote Monitoring System 창 대기 시작: "
         f"title_prefix={REMOTE_MONITORING_WINDOW_TITLE_PREFIX!r}, "
         f"tool_name={tool_name!r}, timeout={timeout_sec}s, max_attempts={max_attempts}"
@@ -430,21 +431,21 @@ def wait_for_remote_monitoring_window(
         attempt += 1
         # 점유 'select' 팝업 조기 감지 — 떠 있으면 창 탐색을 더 돌지 않고 즉시 포기.
         if abort_check is not None and abort_check():
-            print(
+            rcs_print(
                 f"[INFO] Remote Monitoring System 창 대기 중단 - 점유 'select' 팝업 감지 "
                 f"(attempt={attempt}, tool_name={tool_name!r})."
             )
             return None, "", ""
         tool_window, window_title, backend = find_remote_monitoring_window(tool_name)
         if tool_window is not None:
-            print(
+            rcs_print(
                 f"[INFO] Remote Monitoring System 창 발견 (attempt={attempt}): "
                 f"title={window_title!r}, backend={backend}"
             )
             return tool_window, window_title, backend
 
         if max_attempts is not None and attempt >= max_attempts:
-            print(
+            rcs_print(
                 f"[WARNING] Remote Monitoring System 창 미발견 - {max_attempts}회 시도 후 중단 "
                 f"(tool_name={tool_name!r}). RCS 가 다른 사용자에게 점유됐을 수 있음(select 팝업)."
             )
@@ -455,7 +456,7 @@ def wait_for_remote_monitoring_window(
             break
         time.sleep(min(poll_interval_sec, remaining_sec))
 
-    print(
+    rcs_print(
         f"[WARNING] Remote Monitoring System 창 타임아웃: "
         f"{timeout_sec}s 내 미발견 (tool_name={tool_name!r}, attempts={attempt})"
     )
@@ -467,7 +468,7 @@ def wait_for_rcs_main_window(
     poll_interval_sec: float = 2.0,
 ) -> tuple[object | None, str, str]:
     """메인 RCS 창이 나타날 때까지 폴링한다."""
-    print(
+    rcs_print(
         f"[INFO] 메인 RCS 창 대기 시작: "
         f"title_prefix={RCS_MAIN_WINDOW_TITLE_PREFIX!r}, timeout={timeout_sec}s"
     )
@@ -478,7 +479,7 @@ def wait_for_rcs_main_window(
         attempt += 1
         main_window, window_title, backend = find_rcs_main_window()
         if main_window is not None:
-            print(
+            rcs_print(
                 f"[INFO] 메인 RCS 창 발견 (attempt={attempt}): "
                 f"title={window_title!r}, backend={backend}"
             )
@@ -486,7 +487,7 @@ def wait_for_rcs_main_window(
 
         time.sleep(poll_interval_sec)
 
-    print(
+    rcs_print(
         f"[WARNING] 메인 RCS 창 타임아웃: "
         f"{timeout_sec}s 내 미발견 (attempts={attempt})"
     )
@@ -498,7 +499,7 @@ def wait_for_rcs_updater_window(
     poll_interval_sec: float = 2.0,
 ) -> tuple[object | None, str, str]:
     """RCS Updater 창이 나타날 때까지 폴링한다."""
-    print(
+    rcs_print(
         f"[INFO] RCS Updater 창 대기 시작: "
         f"title_prefix={RCS_UPDATER_WINDOW_TITLE_PREFIX!r}, timeout={timeout_sec}s"
     )
@@ -509,7 +510,7 @@ def wait_for_rcs_updater_window(
         attempt += 1
         updater_window, window_title, backend = find_rcs_updater_window()
         if updater_window is not None:
-            print(
+            rcs_print(
                 f"[INFO] RCS Updater 창 발견 (attempt={attempt}): "
                 f"title={window_title!r}, backend={backend}"
             )
@@ -517,7 +518,7 @@ def wait_for_rcs_updater_window(
 
         time.sleep(poll_interval_sec)
 
-    print(
+    rcs_print(
         f"[WARNING] RCS Updater 창 타임아웃: "
         f"{timeout_sec}s 내 미발견 (attempts={attempt})"
     )

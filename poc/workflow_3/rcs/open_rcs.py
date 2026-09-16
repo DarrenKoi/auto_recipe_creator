@@ -30,6 +30,7 @@ except ImportError:
     PSUTIL_AVAILABLE = False
 
 from poc.workflow_3 import LOG_DIR
+from poc.workflow_3.util.console import rcs_print
 from poc.workflow_3.logger import log_work2_event
 
 if DOTENV_AVAILABLE:
@@ -60,8 +61,8 @@ def format_elapsed_ms(start_time: float) -> str:
 
 
 def info(message: str) -> None:
-    """open_rcs 전용 정보 로그를 출력한다."""
-    print(f"[INFO][open_rcs] {message}")
+    """open_rcs 전용 정보 로그를 출력한다(quiet 모드면 생략)."""
+    rcs_print(f"[INFO][open_rcs] {message}")
 
 
 def error(message: str) -> None:

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
+from poc.workflow_3.util.console import rcs_print
 from poc.workflow_3 import DEBUG_IMAGE_DIR
 from poc.workflow_3.debug_artifacts import debug_image_path, save_debug_json
 from poc.workflow_3.rcs.login_rcs_common import RCS_MAIN_WINDOW_TITLE_PREFIX, wait_for_rcs_main_window
@@ -223,7 +224,7 @@ def main() -> str:
 
     main_window, window_title, backend = wait_for_rcs_main_window()
     if main_window is None:
-        print(
+        rcs_print(
             "[ERROR] 메인 RCS 창을 찾지 못했습니다. "
             "먼저 로그인해서 메인 창을 띄운 뒤 다시 실행하세요."
         )
@@ -238,7 +239,7 @@ def main() -> str:
 
     results: list[MainTabActionResult] = []
     for idx, target in enumerate(TAB_ACTION_SEQUENCE):
-        print(f"\n[INFO] === 메인 탭 {idx + 1}/{len(TAB_ACTION_SEQUENCE)}: {target.key} ===")
+        rcs_print(f"\n[INFO] === 메인 탭 {idx + 1}/{len(TAB_ACTION_SEQUENCE)}: {target.key} ===")
         result = click_main_tab(
             main_window,
             window_title,
@@ -247,14 +248,14 @@ def main() -> str:
             action_enabled=DEFAULT_ACTION_ENABLED,
         )
         results.append(result)
-        print(f"[INFO] {target.key} result={result.exit_code}, clicked={result.clicked}")
+        rcs_print(f"[INFO] {target.key} result={result.exit_code}, clicked={result.clicked}")
         if idx < len(TAB_ACTION_SEQUENCE) - 1:
             # 탭 전환 렌더링이 끝난 뒤 다음 탭을 캡처해야 coarse 가 전환 중 화면을
             # 보지 않는다.
             time.sleep(TAB_SWITCH_WAIT_SEC)
 
     summary = ", ".join(f"{r.target_key}={r.exit_code}" for r in results)
-    print(
+    rcs_print(
         f"[INFO] {LOG_NAME} 총 소요: {format_elapsed_ms(started_at)}, {summary}"
     )
 
@@ -268,6 +269,6 @@ def main() -> str:
 if __name__ == "__main__":
     exit_result = main()
     if exit_result != DETECT_SUCCESS:
-        print(f"[EXIT] {exit_result}")
+        rcs_print(f"[EXIT] {exit_result}")
         sys.exit(1)
     sys.exit(0)

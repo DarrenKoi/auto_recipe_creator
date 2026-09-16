@@ -10,6 +10,7 @@ from typing import Callable
 
 from pywinauto import Desktop
 
+from .console import rcs_print
 from .time_utils import format_elapsed_ms
 
 _SW_RESTORE = 9
@@ -369,7 +370,7 @@ def foreground_window(
 
     is_foreground = foreground_handle == handle
     if is_foreground:
-        print(f"[INFO] foreground lock 우회 성공: {debug_label}")
+        rcs_print(f"[INFO] foreground lock 우회 성공: {debug_label}")
         return True
 
     print(f"[INFO] Win32 foreground 미확인: {debug_label}, set_foreground_ok={set_foreground_ok}")
@@ -470,13 +471,13 @@ def activate_window(
         pass
 
     if foreground_window(window, debug_label=debug_label, settle_sec=settle_sec):
-        print(f"[INFO] 창 활성화 완료: {debug_label}, strategy=foreground")
+        rcs_print(f"[INFO] 창 활성화 완료: {debug_label}, strategy=foreground")
         return True
 
     try:
         window.set_focus()
         time.sleep(settle_sec)
-        print(f"[INFO] 창 활성화 완료: {debug_label}, strategy=set_focus")
+        rcs_print(f"[INFO] 창 활성화 완료: {debug_label}, strategy=set_focus")
         return True
     except Exception:
         pass
@@ -487,7 +488,7 @@ def activate_window(
         rel_y = min(18, max(1, rect.bottom - rect.top - 2))
         window.click_input(coords=(rel_x, rel_y), button="left")
         time.sleep(settle_sec)
-        print(f"[INFO] 창 활성화 완료: {debug_label}, strategy=click_input")
+        rcs_print(f"[INFO] 창 활성화 완료: {debug_label}, strategy=click_input")
         return True
     except Exception:
         print(f"[INFO] 창 활성화 실패: {debug_label}")
@@ -543,7 +544,7 @@ def maximize_window(
         print(f"[INFO] Win32 창 최대화 실패: {debug_label}, error={exc}")
 
     if is_window_maximized(window):
-        print(f"[INFO] 창 최대화 완료: {debug_label}")
+        rcs_print(f"[INFO] 창 최대화 완료: {debug_label}")
         return True
 
     try:
@@ -555,7 +556,7 @@ def maximize_window(
 
     maximized = is_window_maximized(window)
     if maximized:
-        print(f"[INFO] 창 최대화 완료(pywinauto): {debug_label}")
+        rcs_print(f"[INFO] 창 최대화 완료(pywinauto): {debug_label}")
     else:
         print(f"[INFO] 창 최대화 미확인(pywinauto): {debug_label}")
     return maximized

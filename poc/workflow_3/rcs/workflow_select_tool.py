@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from dotenv import load_dotenv
 from PIL import ImageChops, ImageStat
 
+from poc.workflow_3.util.console import rcs_print
 from poc.workflow_3 import DEBUG_IMAGE_DIR
 from poc.workflow_3.debug_artifacts import (
     debug_image_path,
@@ -138,7 +139,7 @@ def _env_float(name: str, default: float) -> float:
     try:
         return float(raw_value)
     except ValueError:
-        print(f"[WARNING] {name} 값이 잘못되었습니다. default={default} 사용: {raw_value!r}")
+        rcs_print(f"[WARNING] {name} 값이 잘못되었습니다. default={default} 사용: {raw_value!r}")
         return default
 
 
@@ -561,7 +562,7 @@ def _scroll_list_region_down(
     center_y = int(round(height * min(1.0, (LIST_REGION_TOP_RATIO + LIST_REGION_BOTTOM_RATIO) / 2)))
     screen_point = image_point_to_screen(main_window, {"x": center_x, "y": center_y}, image_size=main_image.size)
     if screen_point is None:
-        print("[WARNING] list 스크롤 좌표 변환 실패 → 스크롤 생략")
+        rcs_print("[WARNING] list 스크롤 좌표 변환 실패 → 스크롤 생략")
         return False
     return scroll_at_screen(
         screen_point,
@@ -575,27 +576,27 @@ def _scroll_list_region_down(
 def _capture_main_window(main_window, window_title: str, backend: str):
     """메인 창을 활성화하고 한 번 캡처한다."""
     if not _is_valid_main_window_title(window_title):
-        print(f"[ERROR] 메인 RCS 창 제목이 예상 형식이 아닙니다: title={window_title!r}")
+        rcs_print(f"[ERROR] 메인 RCS 창 제목이 예상 형식이 아닙니다: title={window_title!r}")
         return None
 
     if not activate_window(
         main_window,
         debug_label=f"workflow_select_tool activate backend={backend} title={window_title!r}",
     ):
-        print(f"[ERROR] 메인 창 활성화 실패: title={window_title!r}")
+        rcs_print(f"[ERROR] 메인 창 활성화 실패: title={window_title!r}")
         return None
 
     if not foreground_window(
         main_window,
         debug_label=f"workflow_select_tool screenshot backend={backend} title={window_title!r}",
     ):
-        print(f"[ERROR] 메인 창 foreground 실패: title={window_title!r}")
+        rcs_print(f"[ERROR] 메인 창 foreground 실패: title={window_title!r}")
         return None
 
     try:
         return capture_window(main_window)
     except Exception as exc:
-        print(f"[ERROR] 메인 창 캡처 실패: {exc}")
+        rcs_print(f"[ERROR] 메인 창 캡처 실패: {exc}")
         return None
 
 
@@ -886,7 +887,7 @@ def _locate_tool_via_spotting(
             and attempt.get("needs_region_guard")
             and not _match_in_list_region(match["bbox"], attempt["working_size"])
         ):
-            print(
+            rcs_print(
                 f"[WARNING] Spotting 매칭이 list 영역 밖({attempt['name']}): "
                 f"bbox={match['bbox']} → 거부(타이틀바/우측 패널 오클릭 방지)"
             )
@@ -1108,7 +1109,7 @@ def _locate_tool_via_vlm(
             iter_rec["row_verify_read_text"] = verdict.read_text
             iter_rec["row_verify_mismatch_token"] = verdict.mismatch_token
         if not row_verdict_accepts(verdict, policy):
-            print(
+            rcs_print(
                 f"[WARNING] row 확인 거부(policy={policy}) → 같은 프레임에서 재시도: "
                 f"iter={iter_idx}"
             )
@@ -1212,7 +1213,7 @@ def select_tool_from_main_window(
     scroll_iters = 0
 
     if located is None and can_drive_window and not is_window_maximized(main_window):
-        print(f"[INFO] tool 미발견 → 창 최대화 후 재시도: tool={normalized_tool_name!r}")
+        rcs_print(f"[INFO] tool 미발견 → 창 최대화 후 재시도: tool={normalized_tool_name!r}")
         maximized_for_retry = maximize_window(
             main_window,
             debug_label=f"select_tool_maximize_{normalized_tool_name}",
@@ -1244,7 +1245,7 @@ def select_tool_from_main_window(
         )
         scrolled_image = _capture_main_window(main_window, window_title, backend)
         if scrolled_image is None:
-            print("[WARNING] 스크롤 후 캡처 실패 → 스크롤 탐색 중단")
+            rcs_print("[WARNING] 스크롤 후 캡처 실패 → 스크롤 탐색 중단")
             break
         main_image = scrolled_image
         capture_rect_size = window_rect_size(main_window) if callable(window_rect_size) else None
@@ -1257,14 +1258,14 @@ def select_tool_from_main_window(
             ),
         )
         if not _list_region_changed(prev_image, main_image):
-            print("[INFO] 스크롤해도 list 영역 변화 없음 → 전체 표시됨(스크롤바 없음), 탐색 중단")
+            rcs_print("[INFO] 스크롤해도 list 영역 변화 없음 → 전체 표시됨(스크롤바 없음), 탐색 중단")
             break
         located, attempt_record = _locate(main_image)
         locate_attempts.append(attempt_record)
         scroll_iters += 1
 
     if located is None:
-        print(
+        rcs_print(
             f"[INFO] tool 미발견(최대화/스크롤 후에도): tool={normalized_tool_name!r} "
             f"→ 추측하지 않고 종료(scroll_iters={scroll_iters}, maximized={maximized_for_retry})"
         )
@@ -1339,7 +1340,7 @@ def select_tool_from_main_window(
             abs(current_rect_size[0] - capture_rect_size[0]) > RECT_DRIFT_TOL_PX
             or abs(current_rect_size[1] - capture_rect_size[1]) > RECT_DRIFT_TOL_PX
         ):
-            print(
+            rcs_print(
                 f"[WARNING] 캡처 후 메인 창 크기 변경 감지: {capture_rect_size}->"
                 f"{current_rect_size} → 좌표 무효, 클릭하지 않고 종료"
             )
@@ -1575,7 +1576,7 @@ def connect_to_tool(
     """
     normalized = (tool_name or "").strip()
     if not normalized:
-        print("[WARNING] connect_to_tool: tool_name 이 비어 있어 접속을 건너뜁니다.")
+        rcs_print("[WARNING] connect_to_tool: tool_name 이 비어 있어 접속을 건너뜁니다.")
         return None
 
     started_at = time.time()
@@ -1586,7 +1587,7 @@ def connect_to_tool(
             timeout_sec=main_window_timeout_sec,
         )
     if main_window is None:
-        print(
+        rcs_print(
             f"[ERROR] connect_to_tool: 메인 RCS 창을 찾지 못해 접속 실패 "
             f"(tool={normalized!r}). RCS 로그인 상태인지 확인하세요."
         )
@@ -1601,7 +1602,7 @@ def connect_to_tool(
         debug_image_dir=debug_image_dir,
         require_occupancy_check=require_occupancy_check,
     )
-    print(
+    rcs_print(
         f"[INFO] connect_to_tool 완료: tool={normalized!r}, "
         f"result={result.exit_code}, double_clicked={result.double_clicked}, "
         f"소요={format_elapsed_ms(started_at)}"
@@ -1621,11 +1622,11 @@ def main() -> str:
         name_source = "env(ACTION_TARGET_TOOL_NAME 등)"
     else:
         name_source = "DEFAULT_TARGET_TOOL_NAME"
-    print(f"[INFO] 대상 tool={target_tool_name!r} (출처: {name_source})")
+    rcs_print(f"[INFO] 대상 tool={target_tool_name!r} (출처: {name_source})")
 
     main_window, window_title, backend = wait_for_rcs_main_window()
     if main_window is None:
-        print(
+        rcs_print(
             "[ERROR] 메인 RCS 창을 찾지 못했습니다. "
             "먼저 로그인 후 List 탭까지 연 뒤 다시 실행하세요."
         )
@@ -1645,7 +1646,7 @@ def main() -> str:
         target_tool_name,
         action_enabled=DEFAULT_ACTION_ENABLED,
     )
-    print(
+    rcs_print(
         f"[INFO] {LOG_NAME} 총 소요: {format_elapsed_ms(started_at)}, "
         f"target_tool_name={target_tool_name!r}, result={result.exit_code}"
     )
@@ -1655,6 +1656,6 @@ def main() -> str:
 if __name__ == "__main__":
     exit_result = main()
     if exit_result != DETECT_SUCCESS:
-        print(f"[EXIT] {exit_result}")
+        rcs_print(f"[EXIT] {exit_result}")
         sys.exit(1)
     sys.exit(0)

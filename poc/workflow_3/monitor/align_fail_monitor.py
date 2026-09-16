@@ -158,6 +158,12 @@ GRAPH_AUTOOPEN = 0           # 첫 스냅샷 후 브라우저로 열기. 0 = 열
 # --- VLM ---
 LOCATOR_COMBO = None         # "coarse>fine" 조합. None=mai-ui>mai-ui.
 
+# --- 콘솔 볼륨 ---
+RCS_VERBOSE = 0              # RCS GUI 자동화(실행/로그인/List/tool 선택/닫기)의 단계별
+                             # 진행 로그 + VLM 응답 전문 출력. 0 이면 [INFO] 만 삼키고
+                             # [ERROR]/[WARNING] 은 그대로 나온다(실패는 안 숨긴다).
+                             # RCS 경로 자체를 디버깅할 때만 1 로 올린다.
+
 # (상수명, env 이름). 같은 뜻이면 새 env 이름을 만들지 않는다.
 _CONST_TO_ENV = (
     ("POLL_SEC", "ALIGN_FAIL_POLL_SEC"),
@@ -210,6 +216,7 @@ _CONST_TO_ENV = (
     ("GRAPH_VIEW", "ALIGN_FAIL_GRAPH_VIEW"),
     ("GRAPH_AUTOOPEN", "ALIGN_FAIL_GRAPH_AUTOOPEN"),
     ("LOCATOR_COMBO", "VLM_LOCATOR_COMBO"),
+    ("RCS_VERBOSE", "ALIGN_FAIL_RCS_VERBOSE"),
 )
 
 

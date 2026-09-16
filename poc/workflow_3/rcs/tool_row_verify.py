@@ -23,6 +23,7 @@ import os
 import time
 from dataclasses import dataclass, field
 
+from poc.workflow_3.util.console import rcs_print
 from poc.workflow_3.debug_artifacts import debug_image_path, save_debug_json
 from poc.workflow_3.logger import log_work2_event
 from poc.workflow_3.rcs.tool_name_match import canonicalize
@@ -52,7 +53,7 @@ def _env_float(name: str, default: float) -> float:
     try:
         return float(raw)
     except ValueError:
-        print(f"[WARNING] {name}={raw!r} 파싱 실패 -> 기본값 {default} 사용")
+        rcs_print(f"[WARNING] {name}={raw!r} 파싱 실패 -> 기본값 {default} 사용")
         return default
 
 
@@ -97,7 +98,7 @@ def load_confirm_policy(default: str = CONFIRM_POLICY_LENIENT) -> str:
         return default
     if raw in _VALID_POLICIES:
         return raw
-    print(
+    rcs_print(
         f"[WARNING] SELECT_TOOL_ROW_CONFIRM={raw!r} 는 알 수 없는 값 "
         f"({sorted(_VALID_POLICIES)}) -> 기본값 {default!r} 사용"
     )
@@ -230,9 +231,9 @@ def verify_tool_row_at_point(
     )
 
     if status == "confirmed":
-        print(f"[INFO] row 확인 OK: point 위 텍스트가 {normalized!r} 와 일치")
+        rcs_print(f"[INFO] row 확인 OK: point 위 텍스트가 {normalized!r} 와 일치")
     elif status == "mismatch":
-        print(
+        rcs_print(
             f"[WARNING] row 확인 실패: 목표 {normalized!r} 가 아니라 "
             f"{mismatch_token!r} 를 읽음 -> 옆 행 클릭 위험, 거부"
         )
@@ -246,7 +247,7 @@ def verify_tool_row_at_point(
             raw_text=read.raw_text[:200],
         )
     else:
-        print(f"[INFO] row 확인 보류(strip 판독 불가): raw={read.raw_text[:60]!r}")
+        rcs_print(f"[INFO] row 확인 보류(strip 판독 불가): raw={read.raw_text[:60]!r}")
 
     return RowVerdict(
         status=status,

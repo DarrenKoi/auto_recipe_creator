@@ -99,6 +99,7 @@ def test_align_fail_monitor_상수의_env_이름이_실제_reader_와_일치한�
         "poc/workflow_3/runner/workflow_config.py",
         "poc/workflow_3/monitor/alarm_source.py",
         "poc/workflow_3/vlm/ui_venus_mai_locator.py",
+        "poc/workflow_3/util/console.py",
     )
     # LOCATOR_COMBO 는 호출 시점에 모듈 상수를 통해 읽혀 정규식에 안 잡힌다.
     readable.add("VLM_LOCATOR_COMBO")

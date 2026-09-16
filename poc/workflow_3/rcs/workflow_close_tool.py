@@ -30,6 +30,7 @@ from poc.workflow_3.rcs.login_rcs_common import (
     REMOTE_MONITORING_WINDOW_TITLE_PREFIX,
     wait_for_remote_monitoring_window,
 )
+from poc.workflow_3.util.console import rcs_print
 from poc.workflow_3.logger import log_work2_event
 from poc.workflow_3.util import close_window, format_elapsed_ms
 from poc.workflow_3.rcs.workflow_select_tool import load_target_tool_name
@@ -67,7 +68,7 @@ def close_tool(
     """
     normalized = (tool_name or "").strip()
     if not normalized:
-        print("[WARNING] close_tool: tool_name 이 비어 있어 닫기를 건너뜁니다.")
+        rcs_print("[WARNING] close_tool: tool_name 이 비어 있어 닫기를 건너뜁니다.")
         return ToolCloseResult(EXIT_INVALID_TOOL_NAME, tool_name or "")
 
     started_at = time.time()
@@ -77,7 +78,7 @@ def close_tool(
         poll_interval_sec=poll_interval_sec,
     )
     if tool_window is None:
-        print(
+        rcs_print(
             f"[ERROR] close_tool: tool 창을 찾지 못했습니다 "
             f"(tool={normalized!r}, prefix={REMOTE_MONITORING_WINDOW_TITLE_PREFIX!r}). "
             f"창이 떠 있는지/제목에 tool id 가 있는지 확인하세요."
@@ -93,7 +94,7 @@ def close_tool(
 
     # 파괴적 동작 — 닫기 전에 제목에 tool id 가 실제로 들어있는지 한 번 더 확인한다.
     if normalized.lower() not in (window_title or "").lower():
-        print(
+        rcs_print(
             f"[ERROR] close_tool: 찾은 창 제목에 tool id 가 없어 닫지 않습니다(안전 차단): "
             f"title={window_title!r}, tool={normalized!r}"
         )
@@ -108,21 +109,21 @@ def close_tool(
         return ToolCloseResult(EXIT_TOOL_WINDOW_NOT_FOUND, normalized, window_title)
 
     if not action_enabled:
-        print(
+        rcs_print(
             f"[INFO] [DRY-RUN] tool 창 발견(닫기 생략): tool={normalized!r}, "
             f"title={window_title!r}, backend={backend}"
         )
         return ToolCloseResult(EXIT_SUCCESS, normalized, window_title, closed=False)
 
     if close_window is None:
-        print("[ERROR] close_tool: close_window 유틸을 쓸 수 없습니다(window_utils 미가용).")
+        rcs_print("[ERROR] close_tool: close_window 유틸을 쓸 수 없습니다(window_utils 미가용).")
         return ToolCloseResult(EXIT_CLOSE_FAILED, normalized, window_title)
 
     closed = close_window(
         tool_window,
         debug_label=f"close_tool {normalized} backend={backend} title={window_title!r}",
     )
-    print(
+    rcs_print(
         f"[INFO] close_tool 완료: tool={normalized!r}, closed={closed}, "
         f"title={window_title!r}, 소요={format_elapsed_ms(started_at)}"
     )
@@ -154,23 +155,23 @@ def main() -> str:
     """env 가 있으면 1회, 없으면 대화형 반복 닫기."""
     action_enabled = _action_enabled()
     if not action_enabled:
-        print("[INFO] CLOSE_TOOL_DRY_RUN=on - 실제로 닫지 않고 대상 창만 확인합니다.")
+        rcs_print("[INFO] CLOSE_TOOL_DRY_RUN=on - 실제로 닫지 않고 대상 창만 확인합니다.")
 
     env_tool = load_target_tool_name()
     if env_tool:
         return _close_once(env_tool, action_enabled)
 
-    print("[INFO] 닫을 tool 이름을 입력하세요 (빈 줄 또는 'q' 입력 시 종료).")
+    rcs_print("[INFO] 닫을 tool 이름을 입력하세요 (빈 줄 또는 'q' 입력 시 종료).")
     while True:
         try:
             tool_name = input("close> ").strip()
         except (EOFError, KeyboardInterrupt):
-            print()
+            rcs_print()
             break
         if not tool_name or tool_name.lower() == "q":
             break
         exit_code = _close_once(tool_name, action_enabled)
-        print(f"[INFO] {tool_name!r} → {exit_code}")
+        rcs_print(f"[INFO] {tool_name!r} → {exit_code}")
 
     return EXIT_SUCCESS
 
@@ -178,6 +179,6 @@ def main() -> str:
 if __name__ == "__main__":
     exit_result = main()
     if exit_result != EXIT_SUCCESS:
-        print(f"[EXIT] {exit_result}")
+        rcs_print(f"[EXIT] {exit_result}")
         sys.exit(1)
     sys.exit(0)

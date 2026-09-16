@@ -18,6 +18,7 @@ from poc.workflow_3.rcs.login_rcs_common import (
     wait_for_rcs_main_window,
     wait_for_remote_monitoring_window,
 )
+from poc.workflow_3.util.console import rcs_print
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
 from poc.workflow_3.rcs.workflow_select_tool import (
     EXIT_SUCCESS as SELECT_TOOL_SUCCESS,
@@ -56,7 +57,7 @@ except ImportError:
     PYNPUT_KEYBOARD_AVAILABLE = False
     KeyboardController = None
     Key = None
-    print("[WARNING] pynput.keyboard 미설치 - 타이핑 동작은 로그만 출력됩니다.")
+    rcs_print("[WARNING] pynput.keyboard 미설치 - 타이핑 동작은 로그만 출력됩니다.")
 
 try:
     from poc.workflow_3.util.mouse_utils import PYNPUT_MOUSE_AVAILABLE
@@ -326,31 +327,31 @@ def _capture_login_window(context: dict, step: WorkflowStep) -> tuple[object, st
         return None, window_title, backend, None
 
     if not callable(activate_window) or not callable(foreground_window):
-        print("[ERROR] window_utils unavailable - 창 활성화/foreground 불가")
+        rcs_print("[ERROR] window_utils unavailable - 창 활성화/foreground 불가")
         return login_window, window_title, backend, None
 
     if not activate_window(
         login_window,
         debug_label=f"{step.step_id} activate backend={backend} title={window_title!r}",
     ):
-        print(f"[ERROR] 로그인 창 활성화 실패: step={step.step_id}")
+        rcs_print(f"[ERROR] 로그인 창 활성화 실패: step={step.step_id}")
         return login_window, window_title, backend, None
 
     if not foreground_window(
         login_window,
         debug_label=f"{step.step_id} foreground backend={backend} title={window_title!r}",
     ):
-        print(f"[ERROR] 로그인 창 foreground 실패: step={step.step_id}")
+        rcs_print(f"[ERROR] 로그인 창 foreground 실패: step={step.step_id}")
         return login_window, window_title, backend, None
 
     if not callable(capture_window):
-        print("[ERROR] capture_window unavailable - 스크린샷 캡처 불가")
+        rcs_print("[ERROR] capture_window unavailable - 스크린샷 캡처 불가")
         return login_window, window_title, backend, None
 
     try:
         image = capture_window(login_window)
     except Exception as exc:
-        print(f"[ERROR] 로그인 창 캡처 실패: {exc}")
+        rcs_print(f"[ERROR] 로그인 창 캡처 실패: {exc}")
         return login_window, window_title, backend, None
 
     context["last_captured_image"] = image
@@ -403,31 +404,31 @@ def _capture_main_window(
         return None, window_title, backend, None
 
     if not callable(activate_window) or not callable(foreground_window):
-        print("[ERROR] window_utils unavailable - 메인 창 활성화/foreground 불가")
+        rcs_print("[ERROR] window_utils unavailable - 메인 창 활성화/foreground 불가")
         return main_window, window_title, backend, None
 
     if not activate_window(
         main_window,
         debug_label=f"{step.step_id} activate backend={backend} title={window_title!r}",
     ):
-        print(f"[ERROR] 메인 창 활성화 실패: step={step.step_id}")
+        rcs_print(f"[ERROR] 메인 창 활성화 실패: step={step.step_id}")
         return main_window, window_title, backend, None
 
     if not foreground_window(
         main_window,
         debug_label=f"{step.step_id} foreground backend={backend} title={window_title!r}",
     ):
-        print(f"[ERROR] 메인 창 foreground 실패: step={step.step_id}")
+        rcs_print(f"[ERROR] 메인 창 foreground 실패: step={step.step_id}")
         return main_window, window_title, backend, None
 
     if not callable(capture_window):
-        print("[ERROR] capture_window unavailable - 메인 창 스크린샷 캡처 불가")
+        rcs_print("[ERROR] capture_window unavailable - 메인 창 스크린샷 캡처 불가")
         return main_window, window_title, backend, None
 
     try:
         image = capture_window(main_window)
     except Exception as exc:
-        print(f"[ERROR] 메인 창 캡처 실패: {exc}")
+        rcs_print(f"[ERROR] 메인 창 캡처 실패: {exc}")
         return main_window, window_title, backend, None
 
     context["last_captured_image"] = image
@@ -492,7 +493,7 @@ def _clear_input_field(keyboard, settings: WorkflowSettings) -> None:
         keyboard.release(Key.delete)
     except Exception as exc:
         # Ctrl+A 를 안 받는 컨트롤이 있을 수 있다 - 아래 backspace 훑기가 보루다.
-        print(f"[INFO] 입력창 select-all 클리어 실패(backspace 훑기로 진행): {exc}")
+        rcs_print(f"[INFO] 입력창 select-all 클리어 실패(backspace 훑기로 진행): {exc}")
 
     keyboard.press(Key.end)
     keyboard.release(Key.end)
@@ -511,12 +512,12 @@ def _clear_and_type(
     """
     if not settings.action_enabled or not PYNPUT_KEYBOARD_AVAILABLE:
         if target_key == "password_input":
-            print(
+            rcs_print(
                 "[INFO] [DRY-RUN] 비밀번호 입력 시퀀스 생략: "
                 f"target={target_key}, chars={len(text)}, action_enabled={settings.action_enabled}"
             )
         else:
-            print(
+            rcs_print(
                 f"[INFO] [DRY-RUN] 입력 시퀀스 생략: target={target_key}, "
                 f"text={text!r}, action_enabled={settings.action_enabled}"
             )
@@ -530,9 +531,9 @@ def _clear_and_type(
         time.sleep(settings.char_type_delay_sec)
 
     if target_key == "password_input":
-        print(f"[INFO] 타이핑 완료: target={target_key}, chars={len(text)}")
+        rcs_print(f"[INFO] 타이핑 완료: target={target_key}, chars={len(text)}")
     else:
-        print(f"[INFO] 타이핑 완료: target={target_key}, text={text!r}")
+        rcs_print(f"[INFO] 타이핑 완료: target={target_key}, text={text!r}")
     return True
 
 
@@ -589,7 +590,7 @@ def _wait_for_post_login_window(
     poll_interval_sec = max(0.1, settings.login_verify_poll_interval_sec)
     attempt = 0
 
-    print(
+    rcs_print(
         "[INFO] 로그인 후 창 대기 시작: "
         f"updater_prefix={RCS_UPDATER_WINDOW_TITLE_PREFIX!r}, "
         f"main_prefix={RCS_MAIN_WINDOW_TITLE_PREFIX!r}, "
@@ -602,7 +603,7 @@ def _wait_for_post_login_window(
 
         updater_window, updater_title, updater_backend = find_rcs_updater_window()
         if updater_window is not None:
-            print(
+            rcs_print(
                 f"[INFO] 로그인 후 updater 창 발견 (attempt={attempt}): "
                 f"title={updater_title!r}, backend={updater_backend}"
             )
@@ -610,7 +611,7 @@ def _wait_for_post_login_window(
 
         main_window, main_title, main_backend = find_rcs_main_window()
         if main_window is not None:
-            print(
+            rcs_print(
                 f"[INFO] 로그인 후 메인 창 발견 (attempt={attempt}): "
                 f"title={main_title!r}, backend={main_backend}"
             )
@@ -621,7 +622,7 @@ def _wait_for_post_login_window(
             break
         time.sleep(min(poll_interval_sec, remaining_sec))
 
-    print(
+    rcs_print(
         "[WARNING] 로그인 후 창 타임아웃: "
         f"{settings.login_verify_timeout_sec}s 내 updater/main window 미발견"
     )
@@ -635,7 +636,7 @@ def _wait_for_target_tool_window(
     """대상 툴용 Remote Monitoring System 창이 나타날 때까지 대기한다."""
     initial_wait_sec = max(0.0, settings.post_tool_open_initial_wait_sec)
     if initial_wait_sec > 0:
-        print(
+        rcs_print(
             f"[INFO] Tool 창 초기 대기: tool_name={tool_name!r}, "
             f"initial_wait={initial_wait_sec:.1f}s"
         )
@@ -672,7 +673,7 @@ def execute_login_step(
                 window_title_before=window_title,
             )
 
-        print(f"[INFO] 로그인 창 발견: title={window_title!r}, backend={backend}")
+        rcs_print(f"[INFO] 로그인 창 발견: title={window_title!r}, backend={backend}")
         return _build_base_result(
             step,
             started_at,
@@ -700,7 +701,7 @@ def execute_login_step(
                 vlm_service_used="window_title",
             )
 
-        print(f"[INFO] 메인 RCS 창 발견: title={window_title!r}, backend={backend}")
+        rcs_print(f"[INFO] 메인 RCS 창 발견: title={window_title!r}, backend={backend}")
         return _build_base_result(
             step,
             started_at,
@@ -1209,7 +1210,7 @@ def execute_login_step(
             window_title_before=window_title,
         )
 
-    print(f"[INFO] 타겟 탐지 시작: step={step.step_id}, target={target_key}")
+    rcs_print(f"[INFO] 타겟 탐지 시작: step={step.step_id}, target={target_key}")
     detection = analyze_login_target(
         login_window,
         window_title,
@@ -1262,12 +1263,12 @@ def execute_login_step(
     if step.step_type == "type":
         if not settings.action_enabled:
             if target_key == "password_input":
-                print(
+                rcs_print(
                     "[INFO] [DRY-RUN] 입력 step skip: "
                     f"target={target_key}, clicks=1+2, chars={len(step.input_text or '')}"
                 )
             else:
-                print(
+                rcs_print(
                     "[INFO] [DRY-RUN] 입력 step skip: "
                     f"target={target_key}, clicks=1+2, text={(step.input_text or '')!r}"
                 )
@@ -1285,7 +1286,7 @@ def execute_login_step(
             )
 
         if not PYNPUT_MOUSE_AVAILABLE or not PYNPUT_KEYBOARD_AVAILABLE:
-            print(
+            rcs_print(
                 "[INFO] 입력 step skip: "
                 f"target={target_key}, pynput_mouse={PYNPUT_MOUSE_AVAILABLE}, "
                 f"pynput_keyboard={PYNPUT_KEYBOARD_AVAILABLE}"
@@ -1405,7 +1406,7 @@ def execute_login_step(
         time.sleep(settings.post_type_settle_sec)
     elif step.step_type == "click":
         if not settings.action_enabled:
-            print(f"[INFO] [DRY-RUN] 클릭 step skip: target={target_key}, click_count=1")
+            rcs_print(f"[INFO] [DRY-RUN] 클릭 step skip: target={target_key}, click_count=1")
             return _build_base_result(
                 step,
                 started_at,
@@ -1420,7 +1421,7 @@ def execute_login_step(
             )
 
         if not PYNPUT_MOUSE_AVAILABLE:
-            print(f"[INFO] 클릭 step skip: target={target_key}, pynput_mouse={PYNPUT_MOUSE_AVAILABLE}")
+            rcs_print(f"[INFO] 클릭 step skip: target={target_key}, pynput_mouse={PYNPUT_MOUSE_AVAILABLE}")
             return _build_base_result(
                 step,
                 started_at,
@@ -1582,21 +1583,21 @@ def main() -> str:
     run = run_login_workflow()
 
     if run.status == "completed":
-        print(f"[INFO] 로그인 워크플로 완료: run_dir={run.run_dir}")
-        print(f"[INFO] 총 소요={format_elapsed_ms(started_at)}")
+        rcs_print(f"[INFO] 로그인 워크플로 완료: run_dir={run.run_dir}")
+        rcs_print(f"[INFO] 총 소요={format_elapsed_ms(started_at)}")
         return EXIT_SUCCESS
 
-    print(
+    rcs_print(
         f"[WARNING] 로그인 워크플로 중단: status={run.status}, "
         f"last_step_index={run.current_step_index}, run_dir={run.run_dir}"
     )
-    print(f"[INFO] 총 소요={format_elapsed_ms(started_at)}")
+    rcs_print(f"[INFO] 총 소요={format_elapsed_ms(started_at)}")
     return EXIT_WORKFLOW_ABORTED
 
 
 if __name__ == "__main__":
     exit_result = main()
     if exit_result != EXIT_SUCCESS:
-        print(f"[EXIT] {exit_result}")
+        rcs_print(f"[EXIT] {exit_result}")
         sys.exit(1)
     sys.exit(0)

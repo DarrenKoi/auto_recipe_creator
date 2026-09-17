@@ -135,6 +135,9 @@ NOTIFY_DELAY_SEC = None
 # --- 녹화 / 엔지니어 watch ---
 RECORDING_MAX_SEC = None     # 녹화 하드 상한(초). None=500. tool 창 open 부터 세는
                              # 세션 전체 예산 - 보정 + 엔지니어 수동 조작이 같은 세션이다.
+RECORDING_KEEP_RUNS = 30     # 녹화 보관 run 수. 사이클 끝에 최신 N 개 recording/ 만 남기고
+                             # 지운다(2026-09-17 결정). 0 = 삭제 안 함. _manual 세션과
+                             # 캡처/Episode JSON 은 지우지 않는다.
 RECORD_PRELUDE = 1           # 접속 구간(RCS 실행->로그인->tool 진입) 화면 전체 녹화.
 PRELUDE_MAX_SEC = None
 PRELUDE_MONITOR_INDEX = None
@@ -212,6 +215,7 @@ _CONST_TO_ENV = (
     ("RICH_NOTIFY", "ALIGN_FAIL_RICH_NOTIFY"),
     ("NOTIFY_DELAY_SEC", "ALIGN_FAIL_NOTIFY_DELAY_SEC"),
     ("RECORDING_MAX_SEC", "ALIGN_FAIL_RECORDING_MAX_SEC"),
+    ("RECORDING_KEEP_RUNS", "ALIGN_FAIL_RECORDING_KEEP_RUNS"),
     ("RECORD_PRELUDE", "ALIGN_FAIL_RECORD_PRELUDE"),
     ("PRELUDE_MAX_SEC", "ALIGN_FAIL_PRELUDE_MAX_SEC"),
     ("PRELUDE_MONITOR_INDEX", "ALIGN_FAIL_PRELUDE_MONITOR_INDEX"),

@@ -50,7 +50,7 @@ from poc.workflow_3.monitor.notify import (
 )
 from poc.workflow_3.monitor.rcs_recovery import RECOVERED, recover_rcs_session
 from poc.workflow_3.monitor.frame_meta import FRAME_META_FILENAME, FrameMetaRecorder
-from poc.workflow_3.monitor.recording import RecordingSession
+from poc.workflow_3.monitor.recording import RecordingSession, prune_recordings
 from poc.workflow_3.monitor.recovery_episode import attempt_dirname, episode_root_for
 from poc.workflow_3.monitor.teardown import run_teardown
 from poc.workflow_3.rcs.row_occupant import OCCUPIED_BY_OTHER, UNKNOWN
@@ -1788,6 +1788,12 @@ def run_alarm_cycle(
         # 존재하지 않기 때문이다 - 보정 성공(watch 없음)과 접속 단계 실패(녹화 없음)에
         # 훅을 걸면 그 테이크가 통째로 빠진다.
         gather_and_report(result, context, started_epoch=cycle_started_at)
+
+        # 녹화 보관 상한 - teardown 이 이 run 의 녹화를 멈춘 뒤라 방금 쓴 폴더는 최신이다.
+        try:
+            prune_recordings(ALIGN_IMAGES_DIR, settings.recording_keep_runs)
+        except Exception as exc:
+            print(f"[WARNING] 녹화 보관 정리 실패(사이클 영향 없음): {exc}")
 
         result.correction_started_at, result.correction_finished_at = context.get(
             "correction_span", (None, None)

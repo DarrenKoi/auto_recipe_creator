@@ -263,6 +263,7 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 | `ALIGN_FAIL_RECORDING_HEARTBEAT_SEC` | 5.0 | 변화 없어도 이 간격마다 1장 저장 |
 | `ALIGN_FAIL_RECORDING_CHANGE_MIN_PX` | 2 | 변화 판정: delta>10 인 다운샘플 픽셀 최소 개수 (커서 이동도 감지) |
 | `ALIGN_FAIL_RECORDING_MAX_SEC` | 900 | 녹화 상한 |
+| `ALIGN_FAIL_RECORDING_KEEP_RUNS` | 30 | 녹화 보관 run 수. 사이클 끝에 최신 N 개 `recording/` 폴더만 남기고 삭제(prelude 포함). `0`=삭제 안 함. `_manual` 수동 세션과 캡처/Episode JSON 은 대상 아님 |
 | `ALIGN_FAIL_ENGINEER_WATCH_SEC` | 300 | 미보정 시 엔지니어 조작 녹화 대기 상한(5분) |
 | `ALIGN_FAIL_ENGINEER_DONE_DETECT` | 1 | 완료 신호 감지. **기본 on** (2026-08-19). 끄면 watch 는 항상 cap(5분)까지 간다 |
 | `ALIGN_FAIL_ENGINEER_DONE_POLL_SEC` | 8.0 | watch 안 감지기 호출 간격 |

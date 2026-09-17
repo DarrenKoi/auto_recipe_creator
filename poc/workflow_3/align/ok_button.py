@@ -9,14 +9,19 @@ crosshair 를 recipe-matched 점으로 옮긴(reposition) 뒤, 진행을 확정�
 눌렀다). 그래서 전체 프레임에 "OK 버튼" 을 묻지 않고 두 단계로 좁힌다 -
 시연 경로의 계약 ②("첫 요소의 라벨이 '창이 떴다'는 유일한 증거") 와 같은 구조다:
 
-  1. **다이얼로그 먼저** - alignment 확인 다이얼로그의 bbox 를 VLM 에 한 요소로 묻고,
-     그 crop 을 PaddleOCR 로 읽어 `OK_DIALOG_REQUIRED` 토큰(기본 `align`)이 있을 때만
-     진행한다. 읽혔는데 토큰이 없으면 **다른 창**이므로 정책과 무관하게 거부한다.
-  2. **OK 는 그 crop 안에서만** 찾고, 그 지점의 라벨을 OCR 로 읽어 `cancel/close/취소/
-     닫기` 류(`OK_BUTTON_FORBIDDEN`)가 읽히면 어떤 정책에서도 누르지 않는다.
+  1. **'Wait Input' 팝업 먼저** - align fail 시 뜨는 모달은 제목 'Wait Input', 본문
+     "Click [OK] button after setting cross cursor to alignment mark.", 버튼은 좌하단
+     OK 하나 + 우하단 Retry/Environment/Reject 다(`workflow_2/vlm_wait_input_ok_button.py`).
+     그 bbox 를 VLM 에 한 요소로 묻고, crop 을 PaddleOCR 로 읽어 **'Wait Input' 제목과
+     `OK_DIALOG_REQUIRED` 토큰(기본 `align`)이 둘 다** 읽힐 때만 진행한다. OK 는 여러
+     팝업에 있으므로 이 창의 확인은 정책과 무관하게 **읽어서 확인**해야 한다 - 못 읽음도
+     거부한다(`off` 만 예외).
+  2. **OK 는 그 crop 안에서만** 찾고, 그 지점의 라벨을 OCR 로 읽어 `retry/reject/cancel`
+     류(`OK_BUTTON_FORBIDDEN`)가 읽히면 어떤 정책에서도 누르지 않는다.
 
-정책은 `ALIGN_OK_CONFIRM` (lenient 기본 | strict | off) - 시연/공유 요청 게이트와 같은
-의미다: lenient 는 '못 읽음' 만 통과시키고, 읽혔는데 다른 문구면 거부한다.
+정책은 `ALIGN_OK_CONFIRM` (lenient 기본 | strict | off) - OK 라벨 게이트에만 시연/공유
+요청 게이트와 같은 의미로 적용된다: lenient 는 '못 읽음' 만 통과시키고, 읽혔는데 다른
+문구면 거부한다.
 
 설계 경계(workflow_2 doc §8): VLM 은 버튼 *영역*만 식별한다. align key 좌표를
 결정하는 일은 CV(``align.matching.engine``)가 한다.
@@ -50,8 +55,12 @@ from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
 OK_DIALOG_REQUIRED = tuple(
     t.strip().lower() for t in os.environ.get("ALIGN_OK_DIALOG_TOKENS", "align").split(",") if t.strip()
 )
+# 팝업 제목. OCR 이 "Wait Input"/"WaitInput" 어느 쪽으로 읽어도 맞도록 영숫자만 이어 붙여 비교한다.
+WAIT_INPUT_TITLE = "waitinput"
 OK_BUTTON_REQUIRED = ("ok", "확인")
-OK_BUTTON_FORBIDDEN = ("cancel", "close", "abort", "exit", "취소", "닫기", "중단")
+# Retry/Environment/Reject 는 같은 팝업의 실제 이웃 버튼이다(Reject 는 되돌릴 수 없다).
+OK_BUTTON_FORBIDDEN = ("retry", "reject", "environment",
+                       "cancel", "close", "abort", "exit", "취소", "닫기", "중단")
 # OK 라벨 crop 크기(다이얼로그 crop 기준 비율). 버튼 하나만 담는다.
 OK_LABEL_HALF_W_RATIO = 0.12
 OK_LABEL_HALF_H_RATIO = 0.06
@@ -84,6 +93,15 @@ def classify_text(read_ok: bool, tokens, required, forbidden=()) -> str:
     return VERDICT_MISMATCH
 
 
+def classify_dialog_text(read_ok: bool, tokens) -> str:
+    """'Wait Input' 제목 **과** align 문구가 모두 읽혀야 confirmed. 하나라도 없으면 다른 창이다."""
+    verdict = classify_text(read_ok, tokens, OK_DIALOG_REQUIRED)
+    squashed = "".join(ch for t in (tokens or []) if not t.startswith("[") for ch in t.lower() if ch.isalnum())
+    if verdict == VERDICT_CONFIRMED and WAIT_INPUT_TITLE not in squashed:
+        return VERDICT_MISMATCH
+    return verdict
+
+
 def accepts(verdict: str, policy: str) -> bool:
     """mismatch 는 어떤 정책에서도 거부. lenient/off 는 unreadable 만 통과."""
     if verdict == VERDICT_MISMATCH:
@@ -97,13 +115,15 @@ def _dialog_system_prompt() -> str:
     """단계 1: 다이얼로그 창 bbox."""
     return (
         "You analyse a screenshot of a CD-SEM / VeritySEM metrology tool that has "
-        "paused on a wafer-alignment confirmation step. A small dialog window (message "
-        "box) is asking the operator to confirm the alignment after the crosshair has "
-        "been placed.\n"
-        "Locate that dialog WINDOW as a whole: its bbox must enclose the dialog's title "
-        "bar, message text and its buttons. Do NOT return the main tool window, the SEM "
-        "image, or any other dialog. Return strict JSON only. If no such alignment dialog "
-        "is clearly visible, say so rather than guessing."
+        "paused on a wafer-alignment failure. A small modal dialog titled 'Wait Input' "
+        "is shown with the message 'Click [OK] button after setting cross cursor to "
+        "alignment mark.', an OK button at the bottom-left and Retry / Environment / "
+        "Reject buttons at the bottom-right.\n"
+        "Locate that 'Wait Input' dialog WINDOW as a whole: its bbox must enclose the "
+        "title bar with 'Wait Input', the message text and all its buttons. Do NOT "
+        "return the main tool window, the SEM image, or any other dialog, even if it "
+        "also has an OK button. Return strict JSON only. If no 'Wait Input' dialog is "
+        "clearly visible, say so rather than guessing."
     )
 
 
@@ -112,18 +132,19 @@ def _dialog_user_prompt() -> str:
         "Return JSON with this exact schema:\n"
         '{"dialog_visible": true, "coord_system": "relative_1000", '
         '"dialog_bbox": {"left": 0, "top": 0, "right": 0, "bottom": 0}, "confidence": 0.0}\n'
-        "If no alignment dialog is clearly visible, set dialog_visible=false, dialog_bbox=null."
+        "If no 'Wait Input' dialog is clearly visible, set dialog_visible=false, dialog_bbox=null."
     )
 
 
 def _ok_button_system_prompt() -> str:
     """단계 2: 다이얼로그 crop 안의 OK 버튼."""
     return (
-        "This image is a cropped dialog from a CD-SEM / VeritySEM tool asking the "
-        "operator to confirm a wafer alignment.\n"
-        "Locate the OK (확인) button that COMMITS / proceeds with the alignment. It is a "
-        "clickable button, usually labelled 'OK', '확인', 'Apply', or 'Accept'. Do NOT "
-        "return the Cancel / 취소 / Close / 닫기 button.\n"
+        "This image is the cropped 'Wait Input' dialog from a CD-SEM / VeritySEM tool "
+        "asking the operator to click OK after setting the cross cursor to the "
+        "alignment mark.\n"
+        "Locate the button labelled 'OK'. It stands alone at the bottom-LEFT of the "
+        "dialog. Do NOT return the Retry, Environment or Reject buttons at the "
+        "bottom-right.\n"
         "Return strict JSON only. If no such OK button is clearly visible, say so rather "
         "than guessing."
     )
@@ -216,12 +237,13 @@ def probe_align_dialog(
         image, dialog, debug_image_dir=artifact_dir, timestamp_tag="dialog",
         artifact_label="ok_dialog", log_name="ok_button", client=ocr_client,
     )
-    verdict = classify_text(dialog_read.ok, dialog_read.tokens or dialog_read.raw_text.split(),
-                            OK_DIALOG_REQUIRED)
+    verdict = classify_dialog_text(dialog_read.ok, dialog_read.tokens or dialog_read.raw_text.split())
+    # OK 는 여러 팝업에 있다 - 이 창이 'Wait Input' 인지는 lenient 여도 읽어서 확인한다.
+    dialog_policy = CONFIRM_POLICY_OFF if policy == CONFIRM_POLICY_OFF else CONFIRM_POLICY_STRICT
     print(f"[INFO] align 다이얼로그: OCR={dialog_read.raw_text!r} -> {verdict} "
-          f"(required={OK_DIALOG_REQUIRED}, policy={policy})")
-    if not accepts(verdict, policy):
-        print("[WARNING] align 다이얼로그: 떠 있는 창이 alignment 다이얼로그로 확인되지 않음")
+          f"(title='Wait Input', required={OK_DIALOG_REQUIRED}, policy={dialog_policy})")
+    if not accepts(verdict, dialog_policy):
+        print("[WARNING] align 다이얼로그: 떠 있는 창이 'Wait Input' 팝업으로 확인되지 않음")
         return DIALOG_OTHER, dialog
     return DIALOG_PRESENT, dialog
 

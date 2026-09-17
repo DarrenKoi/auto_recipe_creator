@@ -21,6 +21,7 @@ DIALOG = ('{"dialog_visible": true, "coord_system": "pixel", '
 OK = ('{"ok_button_visible": true, "coord_system": "pixel", '
       '"ok_button_bbox": {"left": 240, "top": 240, "right": 340, "bottom": 280}}')
 NO_DIALOG = '{"dialog_visible": false, "dialog_bbox": null}'
+WAIT_INPUT = "Wait Input\nClick [OK] button after setting cross cursor to alignment mark."
 
 
 def _locate(vlm, ocr, tmp_path, policy="lenient"):
@@ -42,18 +43,32 @@ def test_wrong_dialog_is_rejected_even_when_lenient(tmp_path):
     assert _locate(_vlm(DIALOG, OK), _ocr("Recipe saved successfully", "OK"), tmp_path) is None
 
 
+def test_only_wait_input_popup_is_accepted(tmp_path):
+    """OK 는 여러 팝업에 있다 - 'Wait Input' 제목과 align 문구가 둘 다 읽혀야 한다."""
+    assert ob.classify_dialog_text(True, WAIT_INPUT.split()) == "confirmed"
+    assert ob.classify_dialog_text(True, ["WaitInput", "alignment", "mark"]) == "confirmed"
+    assert ob.classify_dialog_text(True, ["Align", "Fail", "Continue?"]) == "mismatch"
+    assert ob.classify_dialog_text(True, ["Wait", "Input", "Insert", "cassette"]) == "mismatch"
+    assert _locate(_vlm(DIALOG, OK), _ocr("Align Fail\nContinue?", "OK"), tmp_path) is None
+
+
+def test_unreadable_dialog_is_rejected_even_when_lenient(tmp_path):
+    assert _locate(_vlm(DIALOG, OK), _ocr("", "OK"), tmp_path, "lenient") is None
+
+
 def test_forbidden_label_is_rejected_in_every_policy(tmp_path):
     for policy in ("lenient", "strict", "off"):
-        assert _locate(_vlm(DIALOG, OK), _ocr("Align Fail", "Cancel"), tmp_path, policy) is None
+        for label in ("Cancel", "Reject", "OK Retry"):
+            assert _locate(_vlm(DIALOG, OK), _ocr(WAIT_INPUT, label), tmp_path, policy) is None
 
 
-def test_unreadable_passes_lenient_but_not_strict(tmp_path):
-    assert _locate(_vlm(DIALOG, OK), _ocr("", ""), tmp_path, "lenient") == (690, 560)
-    assert _locate(_vlm(DIALOG, OK), _ocr("", ""), tmp_path, "strict") is None
+def test_unreadable_label_passes_lenient_but_not_strict(tmp_path):
+    assert _locate(_vlm(DIALOG, OK), _ocr(WAIT_INPUT, ""), tmp_path, "lenient") == (690, 560)
+    assert _locate(_vlm(DIALOG, OK), _ocr(WAIT_INPUT, ""), tmp_path, "strict") is None
 
 
 def test_confirmed_dialog_and_label_click_inside_dialog(tmp_path):
-    assert _locate(_vlm(DIALOG, OK), _ocr("Align Fail - Continue?", "OK"), tmp_path, "strict") == (690, 560)
+    assert _locate(_vlm(DIALOG, OK), _ocr(WAIT_INPUT, "OK"), tmp_path, "strict") == (690, 560)
 
 
 def test_no_dialog_means_no_click_without_ocr_calls(tmp_path):

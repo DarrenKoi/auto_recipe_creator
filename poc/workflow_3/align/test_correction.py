@@ -353,7 +353,7 @@ def test_ok_locator_mapping() -> bool:
             '"ok_button_bbox": {"left": 800, "top": 880, "right": 920, "bottom": 960}, '
             '"confidence": 0.9}',
         ),
-        ocr_client=_fake_ocr("Align Fail\nAlignment failed. Continue?", "OK"),
+        ocr_client=_fake_ocr("Wait Input\nClick [OK] button after setting cross cursor to alignment mark.", "OK"),
         debug_image_dir=Path(tmp),
     )
     exp_rel = bbox_center(bbox_to_pixels(rel_bbox, 400, 300, "relative_1000"))
@@ -369,7 +369,7 @@ def test_ok_locator_mapping() -> bool:
             '"ok_button_bbox": {"left": 240, "top": 240, "right": 340, "bottom": 280}, '
             '"confidence": 0.9}',
         ),
-        ocr_client=_fake_ocr("Align Fail", "OK"),
+        ocr_client=_fake_ocr("Wait Input alignment mark", "OK"),
         debug_image_dir=Path(tmp),
     )
     exp_px = bbox_center(bbox_to_pixels(px_bbox, 400, 300, "pixel"))

@@ -236,3 +236,35 @@ def test_missing_tag_gathers_nothing_instead_of_writing_to_a_garbage_path(tmp_pa
     assert report.copied == 0
     assert report.already is True
     assert not (tmp_path / "debug_images").exists()
+
+
+def test_prune_debug_images_keeps_files_from_the_newest_runs(tmp_path):
+    """N 번째 최신 run 시작보다 오래된 파일만 지운다 - 폴더 종류(tag/flat)와 무관."""
+    import json
+    import os
+
+    root = tmp_path / "debug_images"
+
+    def _run(tag, started):
+        manifest = root / "align_fail_cycle" / tag / ci.GATHER_DIR_NAME / "gathered_manifest.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(json.dumps({"started_epoch": started}))
+        os.utime(manifest, (started + 50, started + 50))
+
+    for n, started in enumerate((1000.0, 2000.0, 3000.0)):
+        _run(f"t{n}", started)
+    old_flat = _touch(root / "mai-ui-8b" / "login_old.jpg", 1500.0)
+    kept_flat = _touch(root / "mai-ui-8b" / "login_new.jpg", 2100.0)
+    old_bench = _touch(root / "bench_tool_locator" / "run1" / "a.jpg", 900.0)
+
+    assert ci.prune_debug_images(root, 0) == 0
+    assert ci.prune_debug_images(root, 3) == 0  # run 이 상한 이하면 아무것도 안 지운다.
+    removed = ci.prune_debug_images(root, 2)
+
+    assert removed == 3  # t0 manifest + old_flat + old_bench.
+    assert not old_flat.exists() and not old_bench.exists()
+    assert not (root / "bench_tool_locator").exists()  # 빈 폴더 정리.
+    assert not (root / "align_fail_cycle" / "t0").exists()
+    assert kept_flat.exists()
+    assert (root / "align_fail_cycle" / "t1" / ci.GATHER_DIR_NAME / "gathered_manifest.json").exists()
+    assert root.is_dir()

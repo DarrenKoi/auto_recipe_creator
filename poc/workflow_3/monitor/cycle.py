@@ -38,7 +38,7 @@ from poc.workflow_3 import ALIGN_IMAGES_DIR, DEBUG_IMAGE_DIR, LOG_DIR
 from poc.workflow_3.config import Workflow3Settings
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
 from poc.workflow_3.logger import log_work2_event
-from poc.workflow_3.monitor.cycle_images import gather_and_report
+from poc.workflow_3.monitor.cycle_images import gather_and_report, prune_debug_images
 from poc.workflow_3.util.abort_switch import abort_reason, is_aborted
 from poc.workflow_3.monitor.cycle_report import print_cycle_report
 from poc.workflow_3.monitor.notify import (
@@ -1789,11 +1789,13 @@ def run_alarm_cycle(
         # 훅을 걸면 그 테이크가 통째로 빠진다.
         gather_and_report(result, context, started_epoch=cycle_started_at)
 
-        # 녹화 보관 상한 - teardown 이 이 run 의 녹화를 멈춘 뒤라 방금 쓴 폴더는 최신이다.
+        # 보관 상한 - teardown 이 이 run 의 녹화를 멈추고 수집 manifest 까지 쓴 뒤라
+        # 이 run 은 최신이다. debug_images 정리는 그 manifest 의 시작 시각을 기준으로 삼는다.
         try:
-            prune_recordings(ALIGN_IMAGES_DIR, settings.recording_keep_runs)
+            prune_recordings(ALIGN_IMAGES_DIR, settings.keep_runs)
+            prune_debug_images(DEBUG_IMAGE_DIR, settings.keep_runs)
         except Exception as exc:
-            print(f"[WARNING] 녹화 보관 정리 실패(사이클 영향 없음): {exc}")
+            print(f"[WARNING] 보관 정리 실패(사이클 영향 없음): {exc}")
 
         result.correction_started_at, result.correction_finished_at = context.get(
             "correction_span", (None, None)

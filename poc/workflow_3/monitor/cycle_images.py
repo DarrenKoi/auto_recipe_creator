@@ -18,6 +18,7 @@ watch 에 훅을 걸면 안 된다 - 둘 다 테이크마다 존재하지 않기
 """
 
 import json
+import os
 import shutil
 import time
 from dataclasses import dataclass, field
@@ -297,8 +298,51 @@ def gather_and_report(result, context, *, started_epoch: float, **kwargs) -> boo
     return True
 
 
+def prune_debug_images(debug_root, keep_runs: int) -> int:
+    """debug_images 를 최신 `keep_runs` run 분량만 남긴다 (0 이하 = 끔). 지운 파일 수 반환.
+
+    debug 폴더는 run 단위로 갈리지 않는다(모델 slug/List 탭/점유 판독 폴더는 호출마다
+    파일이 평평하게 쌓인다). 그래서 폴더가 아니라 **시각**으로 자른다: 모든 사이클이
+    남기는 수집 manifest(`align_fail_cycle/<tag>/gathered*/`)의 ``started_epoch`` 중
+    N 번째로 최신인 값을 기준으로, 그보다 오래 수정된 파일을 지운다. 사이클은 단일
+    프로세스에서 직렬로 돌므로 그 시각 이전의 파일은 더 오래된 run(또는 그 사이에
+    돌린 벤치/진단 산출물)의 것이다. 비게 된 하위 폴더도 지운다(루트는 남긴다).
+    """
+    root = Path(debug_root)
+    if keep_runs <= 0 or not root.is_dir():
+        return 0
+    starts = []
+    for manifest in root.glob(f"align_fail_cycle/*/{GATHER_DIR_NAME}*/gathered_manifest.json"):
+        try:
+            starts.append(float(json.loads(manifest.read_text(encoding="utf-8"))["started_epoch"]))
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    if len(starts) <= keep_runs:
+        return 0
+    cutoff = sorted(starts, reverse=True)[keep_runs - 1]
+    removed = 0
+    for dirpath, _dirnames, filenames in os.walk(root, topdown=False):
+        for name in filenames:
+            path = Path(dirpath) / name
+            try:
+                if path.stat().st_mtime < cutoff:
+                    path.unlink()
+                    removed += 1
+            except OSError:
+                pass  # 잠긴 파일(뷰어가 열어 둠) - 다음 사이클이 다시 시도한다.
+        if Path(dirpath) != root:
+            try:
+                os.rmdir(dirpath)  # 비어 있을 때만 성공한다.
+            except OSError:
+                pass
+    if removed:
+        print(f"[INFO] debug_images 보관 {keep_runs} run 이전 파일 삭제: {removed}개")
+    return removed
+
+
 __all__ = [
     "gather_and_report",
+    "prune_debug_images",
     "GatherReport",
     "gather_cycle_images",
     "GatheredImage",

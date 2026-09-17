@@ -185,9 +185,10 @@ class Workflow3Settings(WorkflowSettings):
     # 를 빼면 보정 단계에 ~140s 가 남는다 - 보정이 그보다 오래 끌면 watch 가
     # max_sec 로 잘리므로 manifest 의 stop_reason 으로 확인할 것.
     recording_max_sec: float = 500.0
-    # 녹화 보관 run 수 - 사이클 끝에 최신 N 개 recording/ 폴더만 남긴다. 0 = 삭제 안 함.
-    # 2026-09-17 사용자 결정(30). _manual 세션과 캡처/Episode JSON 은 대상이 아니다.
-    recording_keep_runs: int = 30
+    # 보관 run 수 - 사이클 끝에 최신 N run 의 recording/ 과 debug_images 만 남긴다.
+    # 0 = 삭제 안 함. 2026-09-17 사용자 결정(30). _manual 세션과 캡처/Episode JSON 은
+    # 대상이 아니다.
+    keep_runs: int = 30
 
     # --- 접속 구간 prelude 녹화 (시연용, 기본 off) ---
     # 본 녹화는 tool 창 rect 를 찍으므로 '창이 뜨기 전' 인 RCS 실행/로그인/tool 진입
@@ -467,7 +468,7 @@ def load_workflow3_settings() -> Workflow3Settings:
             "ALIGN_FAIL_RECORDING_CHANGE_MIN_PX", DEFAULT_RECORDING_CHANGE_MIN_PX
         ),
         recording_max_sec=env_float("ALIGN_FAIL_RECORDING_MAX_SEC", 500.0),
-        recording_keep_runs=env_int("ALIGN_FAIL_RECORDING_KEEP_RUNS", 30),
+        keep_runs=env_int("ALIGN_FAIL_KEEP_RUNS", 30),
         record_prelude_enabled=env_flag("ALIGN_FAIL_RECORD_PRELUDE", False),
         prelude_poll_sec=env_float("ALIGN_FAIL_PRELUDE_POLL_SEC", 0.2),
         prelude_max_sec=env_float("ALIGN_FAIL_PRELUDE_MAX_SEC", 300.0),

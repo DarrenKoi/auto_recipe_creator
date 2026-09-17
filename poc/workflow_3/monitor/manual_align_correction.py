@@ -54,9 +54,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from poc.workflow_3 import ALIGN_FAIL_ALID, EVENTS_DIR, LOG_DIR  # noqa: E402
+from poc.workflow_3 import ALIGN_FAIL_ALID, LOG_DIR  # noqa: E402
 from poc.workflow_3.config import load_workflow3_settings
-from poc.workflow_3.monitor.cycle import CycleResult, run_alarm_cycle
+from poc.workflow_3.monitor.cycle import CycleResult, run_alarm_cycle, take_dir_for
 from poc.workflow_3.monitor.notify import (
     notify_align_fail_popup,
     send_detection_notify_async,
@@ -70,6 +70,7 @@ from poc.workflow_3.util.abort_switch import (
     start_abort_hotkey,
 )
 from poc.workflow_3.util import make_timestamp_tag
+from poc.workflow_3.util.event_dir import event_scope
 from poc.workflow_3.util.window_utils import print_elevation_status
 from poc.workflow_3.logger import log_work2_event
 
@@ -216,7 +217,7 @@ def _tool_window_open(eqp_id: str) -> bool:
     return True
 
 
-def _print_summary(cycle: CycleResult) -> None:
+def _print_summary(cycle: CycleResult, take: Path) -> None:
     """사이클 결과를 한 블록으로 요약한다.
 
     로그만 보고도 이 실행이 manual 트리거였는지, 보정이 반영되었는지, 어디로
@@ -234,8 +235,8 @@ def _print_summary(cycle: CycleResult) -> None:
     print(f"  frame_count   = {cycle.frame_count}")
     print(f"  recording_dir = {cycle.recording_dir or '-'}")
     print(f"  run_dir       = {cycle.run_dir or '-'}")
-    print(f"  log_dir       = {LOG_DIR}")
-    print(f"  events_dir    = {EVENTS_DIR}  (이번 실행의 로그/이미지/녹화는 <eqp>-<tag>/ 한 폴더)")
+    print(f"  event_dir     = {take}  (이 실행의 콘솔/로그/이미지/녹화 전부)")
+    print(f"  manifest      = {LOG_DIR / 'align_fail_cycles.csv'}")
     print("=" * 70)
 
 
@@ -257,6 +258,16 @@ def main() -> int:
     eqp_id, recipe_id, _class_name, env_tag = _load_trigger_args()
     settings = load_workflow3_settings()
     tag = env_tag or make_timestamp_tag()
+
+    # 여기부터의 콘솔 출력 전부(트리거 배너, 창 확인, 요약)를 사이클과 같은 이벤트 폴더의
+    # console.log 에 남긴다. run_alarm_cycle 은 같은 폴더로 재진입한다(util/event_dir.py).
+    take = take_dir_for(eqp_id, tag)
+    with event_scope(take):
+        return _run_manual(eqp_id, recipe_id, _class_name, tag, settings, take)
+
+
+def _run_manual(eqp_id, recipe_id, _class_name, tag, settings, take) -> int:
+    """main 의 본체 - 이벤트 폴더 scope 안에서 불린다."""
 
     print(
         f"[INFO] 수동 Align 보정 트리거: EQP_ID={eqp_id}, RECIPE_ID={recipe_id}, "
@@ -334,7 +345,7 @@ def main() -> int:
         run_status=cycle.run_status, outcome=cycle.outcome_status or "",
         failed_step=cycle.failed_step or "", failure_class=cycle.failure_class or "",
     )
-    _print_summary(cycle)
+    _print_summary(cycle, take)
     return EXIT_OK
 
 

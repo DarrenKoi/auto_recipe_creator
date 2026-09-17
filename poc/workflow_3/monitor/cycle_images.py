@@ -94,7 +94,12 @@ def collect_take_images(
                 continue
             if path.suffix.lower() not in IMAGE_SUFFIXES:
                 continue
-            if GATHER_DIR_NAME in path.relative_to(source.directory).parts:
+            # 재시도 수집본(`gathered__a2`...)도 자기 자신이다 - 이름 일치만 보면
+            # 시도마다 직전 수집본 전부를 다시 복사해 1,1,2,4,8... 로 불어난다.
+            if any(
+                part == GATHER_DIR_NAME or part.startswith(f"{GATHER_DIR_NAME}__a")
+                for part in path.relative_to(source.directory).parts
+            ):
                 continue
             if source.keying == "mtime":
                 try:

@@ -59,6 +59,14 @@ def _jiggle(mouse, x: int, y: int) -> None:
             time.sleep(_GLIDE_DELAY)
 
 
+def _aborted_before_press(target_key: str) -> bool:
+    """누르기 직전 긴급 해제 재확인. 해제 상태면 경고를 남기고 True."""
+    if not is_aborted():
+        return False
+    print(f"[WARNING] 긴급 해제 - 누르기 직전 중단: target={target_key}, reason={abort_reason()}")
+    return True
+
+
 def click_at_screen(
     screen_point: dict[str, int],
     target_key: str,
@@ -102,8 +110,14 @@ def click_at_screen(
     _glide_to(mouse, sx, sy)
     _jiggle(mouse, sx, sy)
     time.sleep(max(0.01, pre_click_settle_sec))
+    # glide/jiggle 은 긴급 해제를 보면 조용히 돌아올 뿐이라, 여기서 다시 보지 않으면
+    # 이동 도중 누른 단축키가 '커서는 멈췄는데 클릭은 나간다' 가 된다(체류 0.6s 포함).
+    if _aborted_before_press(target_key):
+        return False
     if hold_sec > 0:
-        for _ in range(max(1, click_count)):
+        for i in range(max(1, click_count)):
+            if i and _aborted_before_press(target_key):
+                return False
             mouse.press(Button.left)
             time.sleep(hold_sec)
             mouse.release(Button.left)
@@ -178,6 +192,8 @@ def scroll_at_screen(
     # 순간이동 대신 glide — RCS 가 커서 이동을 따라와 wheel 이 SEM box 위에서 걸리게 한다.
     _glide_to(mouse, sx, sy)
     time.sleep(0.01)
+    if _aborted_before_press(phase):
+        return False
     mouse.scroll(0, dy)
     print(f"[INFO] scroll 완료: phase={phase}, step={step_index}, screen=({sx}, {sy}), dy={dy}")
     return True

@@ -32,3 +32,24 @@ def test_recenter_and_dialog_clicks_use_remote_timing(monkeypatch):
     for _, _, _, kw in calls:
         assert kw["hold_sec"] == ctl.REMOTE_CLICK_HOLD_SEC > 0
         assert kw["pre_click_settle_sec"] == ctl.REMOTE_PRE_CLICK_SETTLE_SEC >= 0.5
+
+
+def test_resize_after_first_capture_invalidates_panel_roi(monkeypatch):
+    """panel_roi 는 첫 프레임 크기에서만 유효하다 - 리사이즈 뒤 캡처는 낡은 ROI 로 자르지 않는다.
+
+    드리프트 게이트는 캡처마다 기준을 갱신해 '캡처~제스처' 사이만 본다. 800x600 ->
+    1200x900 리사이즈 뒤 재캡처하면 기준도 같이 바뀌어 낡은 ROI 가 통과했다(codex 2026-09-17).
+    """
+    import numpy as np
+    import pytest
+
+    size = {"wh": (800, 600)}
+    monkeypatch.setattr(ctl, "capture_window",
+                        lambda _w: np.zeros((size["wh"][1], size["wh"][0], 3), np.uint8))
+    monitor = _monitor(monkeypatch)
+    monitor.capture()  # 기준 프레임 고정.
+    monitor.capture()  # 같은 크기는 통과.
+
+    size["wh"] = (1200, 900)
+    with pytest.raises(RuntimeError, match="ROI"):
+        monitor.capture()

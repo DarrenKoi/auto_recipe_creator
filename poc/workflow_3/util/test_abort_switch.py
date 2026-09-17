@@ -111,6 +111,41 @@ def test_abort_mid_glide_stops_the_move_in_flight(fake_mouse):
     assert len(fake_mouse.positions) < 24, fake_mouse.positions
 
 
+@pytest.mark.parametrize("hold_sec", [0.0, 0.01])
+def test_abort_during_move_blocks_the_press_that_follows(fake_mouse, monkeypatch, hold_sec):
+    """glide 가 해제를 보고 조용히 돌아와도 그 뒤 누름이 나가면 안 된다.
+
+    진입 시점에만 보면 '커서는 멈췄는데 더블클릭은 나간다' 가 된다(codex 리뷰
+    2026-09-17 재현: 이동 중 해제 -> 클릭 2회 + 성공 반환).
+    """
+    from poc.workflow_3.util import mouse_utils as mu
+
+    monkeypatch.setattr(mu, "Button", type("B", (), {"left": "left"}), raising=False)
+    moves = {"n": 0}
+
+    def _glide(mouse, x, y):
+        moves["n"] += 1
+        ab.request_abort("mid-move")
+
+    monkeypatch.setattr(mu, "_glide_to", _glide)
+
+    clicked = mu.click_at_screen({"x": 1, "y": 2}, "t", 2, action_enabled=True, hold_sec=hold_sec)
+    scrolled = mu.scroll_at_screen({"x": 1, "y": 2}, 1, "zoom", 0, action_enabled=True)
+
+    assert moves["n"] == 1  # scroll 은 진입 게이트에서 이미 막힌다.
+    assert clicked is False and scrolled is False
+    assert fake_mouse.clicks == [] and fake_mouse.scrolls == []
+
+
+def test_abort_mid_glide_blocks_the_scroll(fake_mouse, monkeypatch):
+    from poc.workflow_3.util import mouse_utils as mu
+
+    monkeypatch.setattr(mu, "_glide_to", lambda mouse, x, y: ab.request_abort("mid-move"))
+
+    assert mu.scroll_at_screen({"x": 1, "y": 2}, 1, "zoom", 0, action_enabled=True) is False
+    assert fake_mouse.scrolls == []
+
+
 # ---- 전역 단축키 리스너 ----
 
 

@@ -190,6 +190,10 @@ class RCSSEMMonitor:
         self._last_frame_size: tuple[int, int] | None = None
         # 캡처 시점의 창 rect 크기(논리 px) — 제스처 직전 리사이즈 드리프트 감지용.
         self._last_rect_size: tuple[int, int] | None = None
+        # panel_roi 가 유효한 프레임 크기 - 첫 캡처에서 고정한다. _last_* 는 캡처마다
+        # 갱신되므로 '캡처~제스처' 드리프트만 잡고, 사이클 도중 리사이즈로 panel_roi
+        # 자체가 낡은 것은 못 잡는다(codex 리뷰 2026-09-17).
+        self._panel_frame_size: tuple[int, int] | None = None
         self._mode_warned = False
         if action_enabled:
             # 캘리브레이션 미완료 경고는 2026-07-07 오피스 캘리브레이션으로 사실이 아니게
@@ -251,6 +255,18 @@ class RCSSEMMonitor:
         image = capture_window(self.tool_window)
         gray = _to_gray(image)
         h, w = gray.shape[:2]
+        if self._panel_frame_size is None:
+            self._panel_frame_size = (w, h)
+        elif (
+            abs(w - self._panel_frame_size[0]) > RECT_DRIFT_TOL_PX
+            or abs(h - self._panel_frame_size[1]) > RECT_DRIFT_TOL_PX
+        ):
+            # ponytail: 재검출(VLM) 대신 크게 실패 - 보정 실패 -> cube 로 엔지니어가 받는다.
+            # 사이클 중 리사이즈가 잦다고 확인되면 panel 재검출을 붙인다.
+            raise RuntimeError(
+                f"tool 창 프레임 크기 변경 {self._panel_frame_size}->{(w, h)} - "
+                f"SEM panel ROI 가 낡음(재검출 필요)"
+            )
         self._last_frame_size = (w, h)
         if callable(window_rect_size):
             self._last_rect_size = window_rect_size(self.tool_window)

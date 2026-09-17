@@ -157,6 +157,16 @@ def test_cooldown_retry_with_the_same_tag_gets_its_own_bundle(tmp_path):
     assert (first.dest / "03_correction_correction_paused_match.jpg").exists()
 
 
+def test_retry_bundles_are_not_recollected_by_later_attempts(tmp_path):
+    """`gathered__a2` 도 수집본이다 - 이름 일치만 보면 시도마다 1,1,2,4,8... 로 불어난다."""
+    root = tmp_path / "debug_images"
+    _touch(root / "align_fail_cycle" / TAG / "paused_match.jpg", 2500.0, b"aaa")
+
+    counts = [_gather(tmp_path, started_epoch=1000.0 * n).copied for n in range(2, 7)]
+
+    assert counts == [1, 1, 1, 1, 1]
+
+
 class _ExplodingResult:
     @property
     def tag(self):

@@ -214,6 +214,7 @@ class _FakeTemplate:
         self.name = name
         self.align_offset_xy = offset
         self.raw_image = np.zeros((20, 30), dtype=np.uint8)   # (th, tw).
+        self.source_wh = None   # 실제 AlignKeyTemplate 필드 - None = 배율 metadata 없음(scale 1.0).
 
 
 def _install_feasibility_stubs(monkey_state, *, detect, best_xy, best_scale, calls, scores=None):

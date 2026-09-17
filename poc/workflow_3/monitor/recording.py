@@ -224,7 +224,6 @@ class RecordingSession:
                 break
             try:
                 image = self._capture_fn()
-                first_failure_at = None
                 self.sampled_count += 1
 
                 gray = to_diff_gray(image)
@@ -248,6 +247,10 @@ class RecordingSession:
                     if budget:
                         self.stop_reason = budget
                         break
+                # 캡처만이 아니라 저장까지 끝나야 실패 창을 리셋한다. 캡처 직후 리셋하면
+                # 디스크 가득 참처럼 저장만 계속 깨질 때 매 poll 이 '첫 실패' 가 되어
+                # 5s 컷오프에 영영 안 걸리고 경고가 초당 20줄씩 max_sec 까지 쏟아진다.
+                first_failure_at = None
             except Exception as exc:
                 if first_failure_at is None:
                     first_failure_at = now

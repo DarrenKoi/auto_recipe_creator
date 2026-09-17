@@ -141,3 +141,27 @@ if __name__ == "__main__":
             finally:
                 _monkey.undo()
     print("[INFO] prelude 녹화 배선 테스트 완료")
+
+
+def test_persistent_save_failure_stops_the_session(monkeypatch, tmp_path):
+    """캡처는 되는데 저장만 계속 깨지면(디스크 가득 참) 실패 창에 걸려 멈춰야 한다.
+
+    캡처 직후 실패 창을 리셋하던 때는 매 poll 이 '첫 실패' 라 5s 컷오프를 영영 못
+    넘고 경고를 초당 20줄씩 max_sec 까지 쏟았다(codex 리뷰 2026-09-17).
+    """
+    from poc.workflow_3.monitor import recording
+
+    def _disk_full(*_a, **_k):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(recording, "save_debug_jpeg", _disk_full)
+    monkeypatch.setattr(recording, "FAILURE_WINDOW_SEC", 0.2)
+    session = recording.RecordingSession(
+        None, tmp_path, tag="t", poll_sec=0.02, max_sec=5.0,
+        capture_fn=lambda: Image.new("RGB", (64, 48), "white"),
+    ).start()
+    session._thread.join(timeout=3.0)
+
+    assert not session.is_alive()
+    assert session.stop_reason == "window_gone"
+    session.stop()

@@ -36,7 +36,7 @@ fail)면 1회 bounded sync(`wait_for_gather`, `ALIGN_FAIL_CONSENSUS_SYNC_TIMEOUT
 | `align/diagnostics/` | 오피스/개발 검증용 probe, feasibility mark, crop/캡처 비교 스크립트 |
 | `sem_monitor/` | SEM Monitor panel 위치 검출과 실장비 controller adapter |
 | `vlm/` | VLM 클라이언트/서비스 레지스트리/프롬프트 |
-| `runner/` | WorkflowRunner — step/precondition/journal (`logs/workflow_runs/`) |
+| `runner/` | WorkflowRunner — step/precondition/journal (사이클 안이면 이벤트 폴더 `runs/`, 밖이면 `logs/workflow_runs/`) |
 | `util/` | env/image/json/time + 선택적 mouse(pynput)/window(pywinauto) |
 
 의존 방향: `monitor → {rcs, align, sem_monitor, runner, vlm, util}`. workflow_3 는
@@ -264,7 +264,7 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 | `ALIGN_FAIL_RECORDING_HEARTBEAT_SEC` | 5.0 | 변화 없어도 이 간격마다 1장 저장 |
 | `ALIGN_FAIL_RECORDING_CHANGE_MIN_PX` | 2 | 변화 판정: delta>10 인 다운샘플 픽셀 최소 개수 (커서 이동도 감지) |
 | `ALIGN_FAIL_RECORDING_MAX_SEC` | 900 | 녹화 상한 |
-| `ALIGN_FAIL_KEEP_RUNS` | 30 | 보관 run 수. 사이클 끝에 최신 N 개 `recording/` 폴더(prelude 포함)만 남기고, `debug_images/` 는 N 번째 최신 run 시작보다 오래된 파일을 삭제한다(벤치/진단 산출물 포함). `0`=삭제 안 함. `_manual` 수동 세션과 캡처/Episode JSON 은 대상 아님 |
+| `ALIGN_FAIL_KEEP_RUNS` | 30 | 보관 run 수. 사이클 끝에 이벤트 폴더의 최신 N 개 take 만 온전히 두고, 오래된 take 는 `recording/`(prelude 포함)과 `debug_images/` 만 삭제한다. `console.log`/저널/Episode·Guard JSON 은 남는다. `0`=삭제 안 함. `_manual` 수동 세션은 대상 아님 |
 | `ALIGN_FAIL_ENGINEER_WATCH_SEC` | 300 | 미보정 시 엔지니어 조작 녹화 대기 상한(5분) |
 | `ALIGN_FAIL_ENGINEER_DONE_DETECT` | 1 | 완료 신호 감지. **기본 on** (2026-08-19). 끄면 watch 는 항상 cap(5분)까지 간다 |
 | `ALIGN_FAIL_ENGINEER_DONE_POLL_SEC` | 8.0 | watch 안 감지기 호출 간격 |
@@ -376,12 +376,29 @@ uv run python -m poc.workflow_3.check_tool_occupancy
 
 ## 산출물 경로
 
-- 파일 로그: 기본은 warning/error 만 기록 (`WORKFLOW3_FILE_LOG_DETAIL=1` 일 때 상세 info 기록)
-- 알람 로그: `poc/workflow_3/logs/align_fail_alarms.txt`
-- 사이클 manifest: `poc/workflow_3/logs/align_fail_cycles.csv` (알람 1건 = 1줄: run_status/failed_step/outcome/녹화 경로)
-- step journal: `poc/workflow_3/logs/workflow_runs/<run_id>_align_fail_cycle_<eqp>/`
-- 녹화 프레임: `align_images/<eqp>/<class>/<recipe>/captured_img_from_rcs/<utc9_tag>/recording/`
-  (RECIPE_ID 없으면 `align_images/<eqp>/_unregistered/<tag>/recording/`)
+**알람 1건 = 폴더 1개** (2026-09-17, `util/event_dir.py`). 버그를 쫓을 때는 이 폴더 하나만 열면 된다:
+
+```
+<EVENTS_DIR>/<eqp_id>-<utc9_tag>/        # 기본 EVENTS_DIR = ALIGN_IMAGES_DIR 의 형제 align_fail_events/
+├─ recovery_episode.json                 # Episode 정본 (수집 on)
+└─ attempt_<n>/                          # 사이클 1회 = take (수집 off 면 이벤트 폴더가 곧 take)
+   ├─ event.json                         # eqp/recipe/tag + 사이클 결과(CycleResult)
+   ├─ console.log                        # 감지~teardown 콘솔 전사, 줄마다 시각
+   ├─ work2.log / vlm_calls.log          # 감사 로그 사본 (상세 레벨 무관 전부)
+   ├─ runs/<run_id>_<workflow>/          # step journal (복구 로그인 run 포함)
+   ├─ debug_images/<component>/          # VLM/OCR crop·overlay, 보정 debug, 점유 판독
+   ├─ recording/ (+ prelude/)            # tool 창 녹화
+   └─ guards.json, measurement_verification.json, numerator_reads.jsonl
+```
+
+- 위치 변경: env `ALIGN_FAIL_EVENTS_DIR` (패키지 import 시 읽으므로 셸 env 로만).
+- 전역에 남는 것: 알람 로그 `logs/align_fail_alarms.txt`, 사이클 manifest `logs/align_fail_cycles.csv`
+  (알람 1건 = 1줄; `run_dir`/`recording_dir` 컬럼이 이벤트 폴더를 가리킨다), 소요 시간
+  `logs/align_fail_timing.csv`, 전역 파일 로그(기본 warning/error 만, `WORKFLOW3_FILE_LOG_DETAIL=1`
+  이면 info), live graph 탭 `logs/workflow_runs/_live/`.
+- 사이클 밖 실행(`rcs/` 단독 스크립트, 벤치)은 종전대로 `debug_images/`, `logs/workflow_runs/`.
+- 구 트리(`align_images/.../captured_img_from_rcs/<tag>/`)에 이미 쌓인 녹화는 옮기지 않는다 -
+  `recording_filter`/`make_demo_video` 자동 탐색이 두 루트를 함께 본다.
 - `ALIGN_IMAGES_DIR` 물리 경로는 **현재 `poc/workflow_1/align_images`** (오피스 MES 도구가
   직접 타겟). → `poc/workflow_3/align_images` 로 이전 예정: 아래 **align_images 루트 이전
   체크리스트** 참조. (옮기는 동안은 env `ALIGN_IMAGES_DIR` 한 줄로 검증/전환.)
@@ -418,7 +435,7 @@ cond.txt 는 localization·consensus eval 에서 white box/crosshair 제거용�
    ```
    새 트리에서 eqp/class/recipe 가 보이는지 확인.
 5. **녹화/캡처 경로 확인** — `ALIGN_IMAGES_DIR` 유지한 채 SAFE_MODE=1 dry-run 알람 1회 →
-   `captured_img_from_rcs/<tag>/recording/` 이 새 루트 아래 생기는지.
+   그 형제 `align_fail_events/<eqp>-<tag>/` 이 생기는지 (2026-09-17 부터 녹화는 이벤트 폴더).
 6. **default 상수 교체** — 검증 끝나면 `poc/workflow_3/__init__.py` 의 `ALIGN_IMAGES_DIR`
    default 를 `WORKFLOW_3_DIR.parent / "workflow_1" / "align_images"` →
    `WORKFLOW_3_DIR / "align_images"` 로. 이후 env 불필요. 본 README 산출물 경로 +

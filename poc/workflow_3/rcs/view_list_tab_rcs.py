@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from dotenv import load_dotenv
 
 from poc.workflow_3.util.console import rcs_print
-from poc.workflow_3 import DEBUG_IMAGE_DIR
+from poc.workflow_3.util.event_dir import debug_root
 from poc.workflow_3.debug_artifacts import debug_image_path, save_debug_json
 from poc.workflow_3.rcs.login_rcs_common import RCS_MAIN_WINDOW_TITLE_PREFIX, wait_for_rcs_main_window
 from poc.workflow_3.logger import log_work2_event
@@ -82,7 +82,6 @@ TAB_ACTION_SEQUENCE = (VIEW_TAB_TARGET, LIST_TAB_TARGET)
 # coarse 단계가 전환 중인 화면을 보게 된다.
 TAB_SWITCH_WAIT_SEC = 2.0
 
-DEBUG_ARTIFACT_DIR = DEBUG_IMAGE_DIR / "view_list_tab_rcs"
 LOG_NAME = "view_list_tab_rcs"
 COMPONENT_NAME = LOG_NAME
 DEFAULT_ACTION_ENABLED = os.getenv("ACTION_LOGIN_ACTION_ENABLED", "true").strip().lower() not in {
@@ -119,7 +118,7 @@ def click_main_tab(
     디버그 산출물 이름에 target.key 를 넣어 View/List 를 연달아 눌러도 파일이
     서로 덮이지 않게 한다.
     """
-    resolved_debug_dir = debug_image_dir or DEBUG_ARTIFACT_DIR
+    resolved_debug_dir = debug_image_dir or debug_root() / "view_list_tab_rcs"
     detection = analyze_window_target(
         main_window,
         window_title,

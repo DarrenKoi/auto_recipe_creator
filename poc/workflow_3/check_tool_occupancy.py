@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from PIL import Image, ImageDraw
 
 from poc.workflow_3 import DEBUG_IMAGE_DIR
+from poc.workflow_3.util.event_dir import debug_root
 from poc.workflow_3.debug_artifacts import save_debug_jpeg, save_debug_json
 from poc.workflow_3.rcs.row_occupant import FREE, OCCUPIED_BY_OTHER, UNKNOWN
 from poc.workflow_3.rcs.workflow_select_tool import _locate_tool_via_vlm
@@ -133,7 +134,7 @@ def check_tool_occupancy(image, tool_name: str, *, row_point=None, ocr_client=No
     """MC ID 행 위치 → Connection User 헤더 위치 → PaddleOCR 로 MC ID 확인 + 같은 행 셀 판독. 로케이트는 요소당 호출 하나."""
     report = {"target_tool_name": tool_name, "occupancy": UNKNOWN,
               "diagnosis": "row_location_failed"}
-    artifact_dir = DEBUG_IMAGE_DIR / "tool_occupancy" / str(time.time_ns())
+    artifact_dir = debug_root(DEBUG_IMAGE_DIR) / "tool_occupancy" / str(time.time_ns())
     report["artifact_dir"] = str(artifact_dir)
     try:
         if image is None or not tool_name.strip():

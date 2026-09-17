@@ -7,6 +7,7 @@
 """
 
 import json
+import os
 
 import cv2
 import numpy as np
@@ -303,3 +304,20 @@ if __name__ == "__main__":
         if _name.startswith("test_") and callable(_func):
             _run(_func)
     print("[INFO] make_demo_video 테스트 완료")
+
+
+def test_auto_input_picks_newest_recording_across_event_and_image_roots(tmp_path, monkeypatch):
+    """자동 선택은 이벤트 폴더(알람)와 align_images(수동) 중 가장 최근 녹화다."""
+    from poc.workflow_3.monitor import make_demo_video as mdv
+
+    manual = tmp_path / "align_images" / "MCD019" / "_manual" / "T1" / "recording"
+    alarm = tmp_path / "align_fail_events" / "MCD019-260917_130000" / "attempt_1" / "recording"
+    for path, mtime in ((manual, 1_000), (alarm, 2_000)):
+        path.mkdir(parents=True)
+        os.utime(path, (mtime, mtime))
+    monkeypatch.delenv("DEMO_VIDEO_INPUT_DIR", raising=False)
+    monkeypatch.setattr(mdv, "INPUT_DIR", "")
+    monkeypatch.setattr(mdv, "ALIGN_IMAGES_DIR", tmp_path / "align_images")
+    monkeypatch.setattr(mdv, "EVENTS_DIR", tmp_path / "align_fail_events")
+
+    assert mdv.resolve_input_dir() == alarm

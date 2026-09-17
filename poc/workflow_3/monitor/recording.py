@@ -20,16 +20,14 @@ RCS 는 원격 접속 프로그램이라 장비 측 마우스 커서/움직임�
 
 계약:
   * 저장 경로(out_dir)는 호출부가 정한다 — 보통
-    align_images/<eqp>/<class>/<recipe>/captured_img_from_rcs/<tag>/recording/
-    (RECIPE_ID 없으면 align_images/<eqp>/_unregistered/<tag>/recording/)
+    <이벤트 폴더 take>/recording/ (알람 사이클, util/event_dir.py) 또는
+    align_images/<eqp>/_manual/<tag>/recording/ (수동 녹화)
   * 파일명 <tag>_rcs_<seq:04d>_<elapsed_ms>ms.jpg (elapsed 로 시간축 복원)
   * 자동 중지: 연속 캡처 실패 ``FAILURE_WINDOW_SEC`` 지속(창 닫힘 간주) 또는 max_sec
   * 종료 시 recording_manifest.json (샘플/저장 수, 파라미터, 중지사유) 기록
 """
 
 import json
-import os
-import shutil
 import threading
 import time
 from pathlib import Path
@@ -42,7 +40,6 @@ from poc.workflow_3.config import (
     DEFAULT_RECORDING_POLL_SEC,
 )
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
-from poc.workflow_3.monitor.recovery_episode import CAPTURED_RCS_DIRNAME, UNREGISTERED_DIRNAME
 from poc.workflow_3.util import capture_window
 
 LOG_COMPONENT = "align_fail_recording"
@@ -311,53 +308,8 @@ class RecordingSession:
         )
 
 
-def prune_recordings(images_root, keep_runs: int) -> list[Path]:
-    """알람 사이클 녹화 폴더를 최신 `keep_runs` 개만 남기고 지운다 (0 이하 = 끔).
-
-    녹화는 알람마다 수백 MB~수 GB 라 상시 운전이면 디스크를 채운다(2026-09-17 사용자
-    결정: 30 run 만 보관). 지우는 단위는 ``recording/`` 폴더 하나(= run 하나, prelude
-    포함)뿐이다 - 같은 run 의 캡처/Episode/Guard JSON 은 작고, 열린 Episode 의 재시작
-    재개가 그 파일을 읽으므로 건드리지 않는다.
-
-    ``captured_img_from_rcs`` / ``_unregistered`` 아래의 ``recording`` 만 대상이라
-    엔지니어와 약속하고 찍은 ``_manual`` 세션은 지워지지 않는다. 최신 판정은 폴더
-    mtime(마지막 프레임 기록 시각)이다. 지운 경로 목록을 반환하며 예외를 던지지 않는다.
-    """
-    if keep_runs <= 0:
-        return []
-    found: list[tuple[float, Path]] = []
-    for dirpath, dirnames, _files in os.walk(images_root):
-        parts = Path(dirpath).parts
-        if "recording" in dirnames and (
-            CAPTURED_RCS_DIRNAME in parts or UNREGISTERED_DIRNAME in parts
-        ):
-            path = Path(dirpath) / "recording"
-            try:
-                found.append((path.stat().st_mtime, path))
-            except OSError:
-                pass
-        # 프레임 수천 장이 든 녹화 폴더와 rcp/msr 이미지 폴더는 훑지 않는다.
-        dirnames[:] = [
-            d for d in dirnames
-            if d not in ("recording", "align_img_from_rcp", "align_img_from_msr")
-        ]
-    found.sort(key=lambda item: item[0], reverse=True)
-    removed: list[Path] = []
-    for _mtime, path in found[keep_runs:]:
-        try:
-            shutil.rmtree(path)
-            removed.append(path)
-        except OSError as exc:
-            # 뷰어가 프레임을 열어 둔 경우(Windows 파일 잠금) - 다음 사이클이 다시 시도한다.
-            print(f"[WARNING] 오래된 녹화 삭제 실패(다음 사이클 재시도): {path} ({exc})")
-    if removed:
-        print(f"[INFO] 녹화 보관 {keep_runs} run 초과분 삭제: {len(removed)}개")
-    return removed
-
-
 __all__ = [
     "RecordingSession",
-    "prune_recordings",
     "FAILURE_WINDOW_SEC",
     "frame_changed",
     "to_diff_gray",

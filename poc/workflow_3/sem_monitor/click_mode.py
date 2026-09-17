@@ -31,7 +31,7 @@ import time
 import numpy as np
 from PIL import Image, ImageDraw
 
-from poc.workflow_3 import DEBUG_IMAGE_DIR
+from poc.workflow_3.util.event_dir import debug_root
 from poc.workflow_3.debug_artifacts import save_debug_jpeg, save_debug_json
 from poc.workflow_3.sem_monitor.sem_box_detect import detect_sem_box
 from poc.workflow_3.vlm.flask_vlm import DEFAULT_SCREEN_ANALYSIS_SERVICE
@@ -234,7 +234,7 @@ def _locate_sem_box(image, client) -> dict | None:
 
 def detect_click_mode(image, *, client=None, artifact_dir=None) -> dict:
     """tool 창 이미지에서 이동 모드를 판별한다. 반환 dict 의 `mode` 는 세 값 중 하나."""
-    artifact_dir = artifact_dir or (DEBUG_IMAGE_DIR / "click_mode" / str(time.time_ns()))
+    artifact_dir = artifact_dir or (debug_root() / "click_mode" / str(time.time_ns()))
     report = {"mode": MODE_UNKNOWN, "diagnosis": "sem_box_missing", "icons": {}, "anchors": {},
               "artifact_dir": str(artifact_dir)}
     client = client or Workflow1VLMClient(

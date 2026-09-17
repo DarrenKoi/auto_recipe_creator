@@ -18,7 +18,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from poc.workflow_3 import DEBUG_IMAGE_DIR
+from poc.workflow_3.util.event_dir import debug_root
 from poc.workflow_3.rcs.login_rcs_common import WINDOW_TITLE_PREFIX, find_login_window
 from poc.workflow_3.logger import log_work2_event
 from poc.workflow_3.vlm.ui_venus_mai_locator import (
@@ -93,7 +93,7 @@ def analyze_login_target(
         window_title,
         backend,
         target,
-        debug_image_dir=debug_image_dir or DEBUG_IMAGE_DIR,
+        debug_image_dir=debug_image_dir or debug_root(),
         log_name=LOG_NAME,
         component_name=COMPONENT_NAME,
         artifact_prefix="login_rcs",

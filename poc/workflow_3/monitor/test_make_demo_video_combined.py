@@ -396,3 +396,27 @@ def test_input_dirs_accepts_tag_dirs_end_to_end(tmp_path, monkeypatch):
     )
 
     assert combined.resolve_trial_dirs() == [first, second]
+
+
+def test_group_by_recipe_reads_event_meta_for_event_folders(tmp_path):
+    """이벤트 폴더 이름에는 recipe 가 없다 - 사이클이 남긴 event.json 으로 묶는다."""
+    from poc.workflow_3.monitor.cycle import CycleResult
+    from poc.workflow_3.util.event_dir import write_event_meta
+
+    def _event_trial(folder, eqp_id, recipe_id, epoch):
+        recording = _make_trial_dir(tmp_path / folder, "attempt_1", epoch=epoch)
+        write_event_meta(recording.parent, CycleResult(eqp_id, recipe_id, tag=folder))
+        return recording
+
+    _event_trial("MCD513-260917_100000", "MCD513", "CLS/RCP_A", 1_000.0)
+    _event_trial("MCD513-260917_110000", "MCD513", "CLS/RCP_A", 2_000.0)
+    _event_trial("MCD513-260917_120000", "MCD513", "CLS/RCP_B", 3_000.0)
+    _event_trial("MCD600-260917_130000", "MCD600", "CLS/RCP_A", 4_000.0)
+
+    groups = group_by_recipe(find_trial_dirs(tmp_path))
+
+    assert sorted((str(key), len(value)) for key, value in groups.items()) == [
+        (str(Path("MCD513/CLS/RCP_A")), 2),
+        (str(Path("MCD513/CLS/RCP_B")), 1),
+        (str(Path("MCD600/CLS/RCP_A")), 1),
+    ]

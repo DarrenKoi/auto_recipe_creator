@@ -12,7 +12,7 @@ import shutil
 import time
 from pathlib import Path
 
-from poc.workflow_3 import ALIGN_IMAGES_DIR
+from poc.workflow_3 import ALIGN_IMAGES_DIR, EVENTS_DIR
 from poc.workflow_3.debug_artifacts import save_debug_jpeg, save_debug_json
 from poc.workflow_3.recording_filter.click_detect import detect_clicks
 from poc.workflow_3.recording_filter.close_click_evidence import (
@@ -47,6 +47,8 @@ def _discover_recording_dirs() -> list[Path]:
     `prelude/` 는 화면 전체 그랩이라 여기 들어오면 안 된다 - 이 파이프라인(live SEM
     box 게이트)은 tool 창 rect 프레임을 전제한다. 비재귀 glob 이 그것을 보장한다.
     """
+    # 알람 녹화는 이벤트 폴더로 옮겼다(util/event_dir.py). 구 트리는 기존 자료용으로 남긴다.
+    event_patterns = ("*/recording", "*/attempt_*/recording")
     patterns = (
         "*/*/*/captured_img_from_rcs/*/recording",
         "*/*/*/captured_img_from_rcs/*/attempt_*/recording",
@@ -57,6 +59,8 @@ def _discover_recording_dirs() -> list[Path]:
     found = []
     for pattern in patterns:
         found.extend(p.resolve() for p in ALIGN_IMAGES_DIR.glob(pattern) if p.is_dir())
+    for pattern in event_patterns:
+        found.extend(p.resolve() for p in EVENTS_DIR.glob(pattern) if p.is_dir())
     return found
 
 

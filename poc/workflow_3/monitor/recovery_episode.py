@@ -34,17 +34,11 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from poc.workflow_3 import ALIGN_IMAGES_DIR
+from poc.workflow_3 import EVENTS_DIR
 
 SCHEMA_VERSION = "recovery_episode.v1"
 OBSERVATION_CONTRACT = "align_fail_observation.v1"
 EPISODE_FILENAME = "recovery_episode.json"
-
-# rcs/rcs_screenshot.py 의 같은 이름 상수와 같은 값이다. 그쪽에서 import 하지 않는
-# 이유는 그 모듈이 pywinauto(Windows 전용)를 최상단에서 끌어와 Mac 에서 import 자체가
-# 실패하기 때문이다 - Episode 경로 계산은 실장비 없이도 성립해야 한다.
-CAPTURED_RCS_DIRNAME = "captured_img_from_rcs"
-UNREGISTERED_DIRNAME = "_unregistered"
 
 # attempt 폴더에 남는 관측 record 파일 - (artifacts 키, 파일명). 존재하는 것만 참조로 건다.
 _ATTEMPT_RECORD_FILES = (
@@ -98,19 +92,13 @@ def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime())
 
 
-def episode_root_for(images_root, eqp_id: str, recipe_id: str, tag: str) -> Path:
-    """Episode 루트 = captured_img_from_rcs/<tag> (recipe 없으면 _unregistered/<tag>).
+def episode_root_for(events_root, eqp_id: str, tag: str) -> Path:
+    """Episode 루트 = 이벤트 폴더 `<events_root>/<eqp_id>-<tag>` (util/event_dir.py).
 
-    `recipe_id` 는 실제로 ``<class>/<recipe>`` 형태라 슬래시가 그대로 단계 구분이 된다
-    (`rcs_screenshot.captured_dir_for` 와 같은 규약). **순수 경로 함수**이며 Windows
-    전용 모듈에 의존하지 않는다 - cycle 의 폴더 resolver 도 이것을 쓴다.
+    **순수 경로 함수**이며 Windows 전용 모듈에 의존하지 않는다 - cycle 의 take 폴더
+    resolver 도 이것을 쓴다. recipe 는 경로에 넣지 않는다(take 의 event.json 에 남는다).
     """
-    root = Path(images_root)
-    recipe_rel = (recipe_id or "").replace("\\", "/").strip("/")
-    parts = [part for part in recipe_rel.split("/") if part]
-    if parts:
-        return root.joinpath(eqp_id, *parts, CAPTURED_RCS_DIRNAME, str(tag))
-    return root / eqp_id / UNREGISTERED_DIRNAME / str(tag)
+    return Path(events_root) / f"{eqp_id}-{tag}"
 
 
 def alarm_fingerprint(info) -> str:
@@ -206,8 +194,8 @@ class AttemptHandle:
 class EpisodeTracker:
     """장비 -> 열린 Episode 의 **메모리** 맵. 파일이 정본이고 이 맵은 캐시다."""
 
-    def __init__(self, images_root=None):
-        self.images_root = Path(images_root) if images_root else ALIGN_IMAGES_DIR
+    def __init__(self, events_root=None):
+        self.events_root = Path(events_root) if events_root else EVENTS_DIR
         self._open: dict[str, dict] = {}
         # 디스크 재구성은 프로세스당 한 번뿐이다(첫 poll). 이후의 진실은 메모리 맵이다.
         self._scanned = False
@@ -242,9 +230,15 @@ class EpisodeTracker:
 
     def _new_episode(self, info, tag: str) -> dict:
         eqp_id = str(info.get("eqp_id") or "")
-        root = episode_root_for(
-            self.images_root, eqp_id, str(info.get("recipe_id") or ""), tag
-        )
+        # 폴더 이름에 recipe 가 없어 fingerprint 가 다른 Episode 가 같은 tag 를 가질 수 있다.
+        # 이미 정본이 있는 폴더는 다른 Episode 의 것이므로 `_2`, `_3`... 을 붙여 비켜 간다
+        # (덮어쓰면 "파일은 절대 지우지 않는다" 가 깨진다). handle.tag 로 사이클에 전해진다.
+        base_tag, suffix = tag, 1
+        root = episode_root_for(self.events_root, eqp_id, tag)
+        while (root / EPISODE_FILENAME).exists():
+            suffix += 1
+            tag = f"{base_tag}_{suffix}"
+            root = episode_root_for(self.events_root, eqp_id, tag)
         return {
             "schema_version": SCHEMA_VERSION,
             "observation_contract": OBSERVATION_CONTRACT,
@@ -270,7 +264,7 @@ class EpisodeTracker:
     # ---- 공개 API ----
 
     def resume_from_disk(self, current_fingerprints) -> None:
-        """첫 poll 에 capture tree 를 한 번 훑어 열린 Episode 를 되찾는다.
+        """첫 poll 에 이벤트 루트를 한 번 훑어 열린 Episode 를 되찾는다.
 
         장비->Episode 맵은 메모리에만 있으므로, 프로세스가 재시작하면 진행 중이던
         Episode 가 디스크에만 남는다. 이 스캔이 **유일한** 디스크 재구성 경로다.
@@ -286,7 +280,8 @@ class EpisodeTracker:
         self._scanned = True
         wanted = {str(value) for value in (current_fingerprints or ())}
         try:
-            paths = sorted(self.images_root.rglob(EPISODE_FILENAME))
+            # Episode 루트는 항상 이벤트 루트 바로 아래다 - 고정 깊이라 녹화 프레임은 훑지 않는다.
+            paths = sorted(self.events_root.glob(f"*/{EPISODE_FILENAME}"))
         except Exception as exc:
             print(f"[WARNING] Episode 스캔 실패(건너뜀): {exc}")
             return

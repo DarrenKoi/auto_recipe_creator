@@ -18,14 +18,13 @@ Addressing2 / Measurement)로 최근 측정의 썸네일과 score 가 쌓이고,
 import numpy as np
 from dataclasses import dataclass
 
-from poc.workflow_3 import DEBUG_IMAGE_DIR
+from poc.workflow_3.util.event_dir import debug_root
 from poc.workflow_3.debug_artifacts import save_debug_jpeg, save_debug_json
 from poc.workflow_3.sem_monitor.sem_box_detect import true_runs
 from poc.workflow_3.util import crop_image
 from poc.workflow_3.vlm.ui_venus_mai_locator import TargetConfig, analyze_window_target
 
 LOG_NAME = "assist_score"
-DEBUG_ARTIFACT_DIR = DEBUG_IMAGE_DIR / "assist_score"
 
 # 패널 crop 여유 - 로케이터가 준 점 주변을 넉넉히 잘라 표 전체를 담는다.
 PANEL_LEFT_RATIO = 0.22
@@ -144,7 +143,7 @@ def _save_locate_evidence(image, reason: str, debug_dir) -> None:
     실측). VLM 이 거부했을 때는 crop 이 없으므로 입력 프레임 전체를 남긴다 - 그 프레임에
     패널이 실제로 보였는지(가려짐/스크롤/탭 전환)를 사람이 바로 판별할 수 있다.
     """
-    target = debug_dir if debug_dir is not None else DEBUG_ARTIFACT_DIR
+    target = debug_dir if debug_dir is not None else debug_root() / "assist_score"
     try:
         stamp = f"assist_locate_fail_{reason}"
         if image is not None:
@@ -168,7 +167,7 @@ def locate_assist_panel(window, window_title: str, backend: str, image, *, debug
     watch 당 1회만 돈다 - 이후 폴링은 `read_assist_state` 가 이 박스로 crop 한 픽셀만
     본다(OCR 없음). VLM 은 영역만 답하고 정량 판정에는 관여하지 않는다(CLAUDE.md 규칙).
     """
-    artifact_dir = debug_dir if debug_dir is not None else DEBUG_ARTIFACT_DIR
+    artifact_dir = debug_dir if debug_dir is not None else debug_root() / "assist_score"
     try:
         result = analyze_window_target(
             window, window_title, backend, assist_panel_target(),

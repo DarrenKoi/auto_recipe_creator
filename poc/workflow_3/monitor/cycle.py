@@ -34,12 +34,12 @@ import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from poc.workflow_3 import ALIGN_IMAGES_DIR, DEBUG_IMAGE_DIR, LOG_DIR
+from poc.workflow_3 import EVENTS_DIR, LOG_DIR
 from poc.workflow_3.config import Workflow3Settings
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
 from poc.workflow_3.logger import log_work2_event
-from poc.workflow_3.monitor.cycle_images import gather_and_report, prune_debug_images
 from poc.workflow_3.util.abort_switch import abort_reason, is_aborted
+from poc.workflow_3.util.event_dir import debug_root, event_scope, prune_events, write_event_meta
 from poc.workflow_3.monitor.cycle_report import print_cycle_report
 from poc.workflow_3.monitor.notify import (
     ALIGN_FAIL_CLEARED,
@@ -52,7 +52,7 @@ from poc.workflow_3.monitor.notify import (
 )
 from poc.workflow_3.monitor.rcs_recovery import RECOVERED, recover_rcs_session
 from poc.workflow_3.monitor.frame_meta import FRAME_META_FILENAME, FrameMetaRecorder
-from poc.workflow_3.monitor.recording import RecordingSession, prune_recordings
+from poc.workflow_3.monitor.recording import RecordingSession
 from poc.workflow_3.monitor.recovery_episode import attempt_dirname, episode_root_for
 from poc.workflow_3.monitor.teardown import run_teardown
 from poc.workflow_3.rcs.row_occupant import FREE, OCCUPIED_BY_OTHER, UNKNOWN
@@ -534,7 +534,7 @@ def _run_share_request(settings: Workflow3Settings, tag: str):
     )
     from poc.workflow_3.vlm.ui_venus_mai_locator import analyze_window_target
 
-    debug_dir = DEBUG_IMAGE_DIR / "share_request" / tag
+    debug_dir = debug_root() / "share_request"
 
     def _locate(image, target):
         result = analyze_window_target(
@@ -730,23 +730,24 @@ def _exec_wait_tool_window(step, context, settings: Workflow3Settings) -> StepRe
     return _make_result(step, "success", started_at, settings)
 
 
-def _attempt_dir_for(eqp_id: str, recipe_id: str, tag: str, attempt_seq=None) -> Path:
-    """이 attempt 의 산출물 루트 — Episode root, 수집 on 이면 그 아래 `attempt_<n>/`.
+def take_dir_for(eqp_id: str, tag: str, attempt_seq=None) -> Path:
+    """이 사이클(take)의 폴더 — 이벤트 폴더, Episode 수집 on 이면 그 아래 `attempt_<n>/`.
 
-    녹화 폴더와 캡처 폴더를 각각 계산하던 두 resolver 를 여기로 합쳤다. 둘이 갈려
-    있으면 attempt 깊이를 한쪽에만 넣는 회귀가 조용히 생긴다.
+    콘솔 전사/runner 저널/debug 이미지/녹화/캡처/Guard record 가 전부 여기 쌓인다
+    (레이아웃은 util/event_dir.py). 녹화 폴더와 캡처 폴더를 각각 계산하던 resolver 를
+    여기로 합쳤다 - 갈려 있으면 attempt 깊이를 한쪽에만 넣는 회귀가 조용히 생긴다.
 
-    `attempt_seq` 가 없으면(=Episode 수집 off, 점검 전용 사이클) 종전 `<tag>/` 그대로다.
+    `attempt_seq` 가 없으면(=Episode 수집 off, 점검 전용 사이클) 이벤트 폴더가 곧 take 다.
     경로 계산은 `recovery_episode.episode_root_for` 가 소유한다 - 순수 함수라 Windows
     전용 모듈 없이도 성립하고, Episode 정본과 같은 자리를 가리키는 것이 보장된다.
     """
-    root = episode_root_for(ALIGN_IMAGES_DIR, eqp_id, recipe_id, tag)
+    root = episode_root_for(EVENTS_DIR, eqp_id, tag)
     return root / attempt_dirname(attempt_seq) if attempt_seq else root
 
 
-def _recording_dir_for(eqp_id: str, recipe_id: str, tag: str, attempt_seq=None) -> Path:
-    """녹화 저장 폴더 — <attempt 루트>/recording."""
-    return _attempt_dir_for(eqp_id, recipe_id, tag, attempt_seq) / "recording"
+def _recording_dir_for(eqp_id: str, tag: str, attempt_seq=None) -> Path:
+    """녹화 저장 폴더 — <take>/recording."""
+    return take_dir_for(eqp_id, tag, attempt_seq) / "recording"
 
 
 def start_prelude_recording(context: dict, settings: Workflow3Settings):
@@ -765,8 +766,7 @@ def start_prelude_recording(context: dict, settings: Workflow3Settings):
     if not settings.record_prelude_enabled:
         return None
     out_dir = _recording_dir_for(
-        context["eqp_id"], context["recipe_id"], context["tag"],
-        context.get("attempt_seq"),
+        context["eqp_id"], context["tag"], context.get("attempt_seq"),
     ) / "prelude"
     monitor_index = settings.prelude_monitor_index
     try:
@@ -815,8 +815,7 @@ def _exec_start_recording(step, context, settings: Workflow3Settings) -> StepRes
     """⑤ 상시 녹화 시작 — 실패해도 사이클은 계속(녹화는 best-effort)."""
     started_at = time.time()
     out_dir = _recording_dir_for(
-        context["eqp_id"], context["recipe_id"], context["tag"],
-        context.get("attempt_seq"),
+        context["eqp_id"], context["tag"], context.get("attempt_seq"),
     )
     try:
         # 수동 녹화와 **같은** 사이드카 래퍼를 캡처 주입점에 끼운다(녹화기는 무변경).
@@ -935,12 +934,9 @@ def _exec_locate_sem_panel(step, context, settings: Workflow3Settings) -> StepRe
         except Exception as exc:
             print(f"[WARNING] SEM box VLM 클라이언트 생성 실패 - landmark 경로만 시도: {exc}")
 
-    # 실패 사유와 그때 본 화면을 사이클 debug 폴더에 남긴다. 이 폴더는 테이크 수집
-    # (cycle_images)의 tag 키 소스라, 실패 화면이 자동으로 gathered/ 번들에 들어간다.
+    # 실패 사유와 그때 본 화면을 이 take 의 debug 폴더에 남긴다.
     panel_reasons: list = []
-    fail_frame_path = (
-        DEBUG_IMAGE_DIR / "align_fail_cycle" / context["tag"] / "sem_box_fail.jpg"
-    )
+    fail_frame_path = debug_root() / "align_fail_cycle" / "sem_box_fail.jpg"
     try:
         controller = build_rcs_sem_monitor(
             context["tool_window"],
@@ -1111,7 +1107,7 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
             eqp_id=eqp_id, low_streak=state.low_streak, pan_count=state.pan_count,
         )
 
-    debug_dir = DEBUG_IMAGE_DIR / "align_fail_cycle" / context["tag"]
+    debug_dir = debug_root() / "align_fail_cycle"
     context["correction_debug_dir"] = debug_dir
 
     # 첫 클릭 전에 align fail 이 화면에 아직 있는지 본다. 피드는 해제된 알람도 돌려주므로
@@ -1272,7 +1268,7 @@ def _make_access_watcher(settings: Workflow3Settings, tag: str, tool_window=None
     )
     from poc.workflow_3.vlm.ui_venus_mai_locator import analyze_window_target
 
-    debug_dir = DEBUG_IMAGE_DIR / "access_request" / tag
+    debug_dir = debug_root() / "access_request"
     find_popup = _make_frame_change_gate(tool_window, settings)
 
     def _locate(image, target):
@@ -1446,9 +1442,9 @@ def collect_attempt_guards(context, result, *, now=None) -> list:
     controller 의 mode, 보정 outcome)을 `guard_readings` 의 순수 분류 함수에 넘길 뿐이다.
     그래서 matcher/occupancy/share 쪽 동작은 전혀 바뀌지 않는다.
 
-    evidence 는 Episode-relative 만 적는다. 점유 판독의 crop 은 Episode 밖
-    (`debug_images/row_occupant/`)에 살아 참조를 비우고, 그 사실은 detail 에 남긴다 -
-    밖을 가리키는 절대 경로를 적으면 Episode 폴더를 옮기는 순간 깨진다.
+    evidence 는 Episode-relative 만 적는다. 점유 판독 crop 은 take 의 `debug_images/` 에
+    있지만 파일명이 호출마다 달라 참조를 비우고 detail 에만 남긴다 - 절대 경로를 적으면
+    Episode 폴더를 옮기는 순간 깨진다.
     """
     from poc.workflow_3.monitor.guard_readings import (
         align_key_guard,
@@ -1505,10 +1501,7 @@ def write_attempt_guards(context, result, settings: Workflow3Settings) -> None:
     try:
         outcome = context.get("outcome")
         path = write_guard_records(
-            _attempt_dir_for(
-                context["eqp_id"], context["recipe_id"], context["tag"],
-                context["attempt_seq"],
-            ),
+            take_dir_for(context["eqp_id"], context["tag"], context["attempt_seq"]),
             attempt_seq=context["attempt_seq"],
             guards=collect_attempt_guards(context, result),
             preconditions=[ok_control_precondition(
@@ -1535,7 +1528,7 @@ def _locate_measurement_panel(image, context=None):
         context.get("tool_window_title", ""),
         context.get("tool_window_backend", ""),
         image,
-        debug_dir=DEBUG_IMAGE_DIR / "assist_score",
+        debug_dir=debug_root() / "assist_score",
     )
 
 
@@ -1557,9 +1550,7 @@ def write_attempt_verification(context, settings: Workflow3Settings) -> None:
     )
 
     attempt_seq = context["attempt_seq"]
-    attempt_dir = _attempt_dir_for(
-        context["eqp_id"], context["recipe_id"], context["tag"], attempt_seq
-    )
+    attempt_dir = take_dir_for(context["eqp_id"], context["tag"], attempt_seq)
     try:
         image = capture_window(context["tool_window"])
         record = read_measurement_stub(
@@ -1682,6 +1673,19 @@ def _maybe_start_graph_mirror(settings: Workflow3Settings, steps, context: dict,
     return mirror
 
 
+def _run_in_take(take: Path, eqp_id: str, recipe_id: str, tag: str, run) -> CycleResult:
+    """사이클 하나를 이벤트 폴더(take) 안에서 돌린다 - 콘솔/저널/이미지가 전부 거기 간다.
+
+    event.json 을 앞뒤로 쓴다: 앞은 사이클이 도중에 죽어도(콘솔 창 닫힘) 이 폴더가 어느
+    장비/recipe 의 것인지 남기려는 것이고, 뒤는 결과 요약이다.
+    """
+    with event_scope(take):
+        write_event_meta(take, CycleResult(eqp_id=eqp_id, recipe_id=recipe_id, tag=tag))
+        result = run()
+        write_event_meta(take, result)
+    return result
+
+
 def run_alarm_cycle(
     eqp_id: str,
     recipe_id: str,
@@ -1694,11 +1698,25 @@ def run_alarm_cycle(
 ) -> CycleResult:
     """알람 1건에 대한 전체 사이클을 실행하고 결과 요약을 반환한다.
 
+    산출물은 전부 `take_dir_for(eqp_id, tag, attempt_seq)` 한 폴더에 모인다.
     step 실패로 runner 가 중단돼도 cube 알림·녹화 중지·tool 닫기·팝업 backstop 은
     항상 실행된다. 예외는 삼켜 상위 폴링 루프가 죽지 않게 한다.
     `attach_open_tool` 은 `build_cycle_steps` 참고.
     """
     tag = tag or make_timestamp_tag()
+    return _run_in_take(
+        take_dir_for(eqp_id, tag, attempt_seq), eqp_id, recipe_id, tag,
+        lambda: _run_alarm_cycle(
+            eqp_id, recipe_id, settings, tag=tag, attempt_seq=attempt_seq,
+            episode_id=episode_id, attach_open_tool=attach_open_tool,
+        ),
+    )
+
+
+def _run_alarm_cycle(
+    eqp_id, recipe_id, settings, *, tag, attempt_seq, episode_id, attach_open_tool=False
+) -> CycleResult:
+    """run_alarm_cycle 본체 - 이벤트 폴더 scope 안에서 불린다."""
     cycle_started_at = time.time()
     result = CycleResult(
         eqp_id=eqp_id, recipe_id=recipe_id, tag=tag, started_at=cycle_started_at
@@ -1804,15 +1822,12 @@ def run_alarm_cycle(
                     done_detector = build_engineer_done_detector(
                         context["tool_window"], settings,
                         vlm_client=context.get("vlm_client"),
-                        # tool 별/알람 별로 debug crop 이 안 섞이게 폴더를 분리한다.
-                        debug_dir=DEBUG_IMAGE_DIR / "engineer_done" / f"{eqp_id}_{tag}",
+                        debug_dir=debug_root() / "engineer_done",
                         # 수집 on 이면 per-read 판독을 attempt 폴더에도 남긴다 -
                         # fallback Verification 이 detector 의 boolean 이 아니라
                         # 이 기록을 읽는다(boolean 은 false 와 unknown 을 못 가른다).
                         record_dir=(
-                            _attempt_dir_for(
-                                eqp_id, recipe_id, tag, context["attempt_seq"]
-                            )
+                            take_dir_for(eqp_id, tag, context["attempt_seq"])
                             if settings.episode_collect_enabled
                             and context.get("attempt_seq")
                             else None
@@ -1872,20 +1887,8 @@ def run_alarm_cycle(
         # Measurement Verification - 역시 teardown 앞이다(창이 닫히면 패널 crop 을 못 남긴다).
         write_attempt_verification(context, settings)
 
-        # 이 테이크가 처리한 이미지를 한 폴더로 모은다. **teardown 뒤**여야
-        # close_tool 이 남긴 crop 까지 들어오고 result 의 녹화 필드도 채워져 있다.
-        # finally 안이어야 하는 이유는 녹화 스레드와 engineer watch 가 테이크마다
-        # 존재하지 않기 때문이다 - 보정 성공(watch 없음)과 접속 단계 실패(녹화 없음)에
-        # 훅을 걸면 그 테이크가 통째로 빠진다.
-        gather_and_report(result, context, started_epoch=cycle_started_at)
-
-        # 보관 상한 - teardown 이 이 run 의 녹화를 멈추고 수집 manifest 까지 쓴 뒤라
-        # 이 run 은 최신이다. debug_images 정리는 그 manifest 의 시작 시각을 기준으로 삼는다.
-        try:
-            prune_recordings(ALIGN_IMAGES_DIR, settings.keep_runs)
-            prune_debug_images(DEBUG_IMAGE_DIR, settings.keep_runs)
-        except Exception as exc:
-            print(f"[WARNING] 보관 정리 실패(사이클 영향 없음): {exc}")
+        # 보관 상한 - 이 take 는 방금까지 console.log 를 썼으므로 최신이라 지워지지 않는다.
+        prune_events(EVENTS_DIR, settings.keep_runs)
 
         result.correction_started_at, result.correction_finished_at = context.get(
             "correction_span", (None, None)
@@ -1913,10 +1916,7 @@ def run_alarm_cycle(
 def _exec_capture_screen(step, context, settings: Workflow3Settings) -> StepResult:
     """첫 화면 1장 캡처 — 장비는 fail 시 정지라 단일 스크린샷으로 충분."""
     started_at = time.time()
-    out_dir = _attempt_dir_for(
-        context["eqp_id"], context["recipe_id"], context["tag"],
-        context.get("attempt_seq"),
-    )
+    out_dir = take_dir_for(context["eqp_id"], context["tag"], context.get("attempt_seq"))
     try:
         if _CHECK_CAPTURE_SETTLE_SEC > 0:
             time.sleep(_CHECK_CAPTURE_SETTLE_SEC)
@@ -2991,9 +2991,17 @@ def run_check_only_cycle(
     watch 를 모두 뺀다. 과거 데이터 수집(rcp/msr 는 office MES 가 align_images 에
     직접 적재, 최근 성공 S 이미지는 monitor 의 gather_success_async)은 사이클 밖에서
     이뤄진다. step 실패로 runner 가 중단돼도 tool 닫기·팝업 backstop 은 finally 가
-    보장한다(러너가 중간에 죽어도 teardown 이 실행되게).
+    보장한다(러너가 중간에 죽어도 teardown 이 실행되게). 산출물은 이벤트 폴더 하나에 모인다.
     """
     tag = tag or make_timestamp_tag()
+    return _run_in_take(
+        take_dir_for(eqp_id, tag), eqp_id, recipe_id, tag,
+        lambda: _run_check_only_cycle(eqp_id, recipe_id, settings, tag=tag),
+    )
+
+
+def _run_check_only_cycle(eqp_id, recipe_id, settings, *, tag) -> CycleResult:
+    """run_check_only_cycle 본체 - 이벤트 폴더 scope 안에서 불린다."""
     result = CycleResult(eqp_id=eqp_id, recipe_id=recipe_id, tag=tag)
 
     if not RCS_MODULES_AVAILABLE:

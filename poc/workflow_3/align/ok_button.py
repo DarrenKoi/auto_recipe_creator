@@ -29,7 +29,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from poc.workflow_3 import DEBUG_IMAGE_DIR
+from poc.workflow_3.util.event_dir import debug_root
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
 from poc.workflow_3.rcs.tool_row_verify import (
     CONFIRM_POLICY_LENIENT,
@@ -200,7 +200,7 @@ def probe_align_dialog(
     """
     policy = confirm_policy or load_ok_confirm_policy()
     image = _frame_to_rgb_image(frame_bgr)
-    artifact_dir = debug_image_dir or (DEBUG_IMAGE_DIR / "ok_button" / str(time.time_ns()))
+    artifact_dir = debug_image_dir or (debug_root() / "ok_button" / str(time.time_ns()))
 
     dialog = _locate_bbox(client, image, _dialog_system_prompt(), _dialog_user_prompt(),
                           "dialog_visible", "dialog_bbox")
@@ -242,7 +242,7 @@ def locate_ok_button(
     """
     policy = confirm_policy or load_ok_confirm_policy()
     image = _frame_to_rgb_image(frame_bgr)
-    artifact_dir = debug_image_dir or (DEBUG_IMAGE_DIR / "ok_button" / str(time.time_ns()))
+    artifact_dir = debug_image_dir or (debug_root() / "ok_button" / str(time.time_ns()))
 
     # 게이트 1: 이 창이 정말 alignment 다이얼로그인가.
     state, dialog = probe_align_dialog(

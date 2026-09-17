@@ -167,7 +167,7 @@ def test_cycle_writes_the_verification_record_into_the_attempt_folder(tmp_path, 
     from poc.workflow_3.config import load_workflow3_settings
     from poc.workflow_3.monitor import cycle
 
-    monkeypatch.setattr(cycle, "ALIGN_IMAGES_DIR", tmp_path)
+    monkeypatch.setattr(cycle, "EVENTS_DIR", tmp_path)
     monkeypatch.setattr(
         cycle, "capture_window", lambda _win: Image.new("RGB", (64, 48), "white")
     )
@@ -178,8 +178,7 @@ def test_cycle_writes_the_verification_record_into_the_attempt_folder(tmp_path, 
                "tool_window": object()}
     cycle.write_attempt_verification(context, settings)
 
-    path = (tmp_path / "EQP1" / "_unregistered" / "T1" / "attempt_1"
-            / "measurement_verification.json")
+    path = (tmp_path / "EQP1-T1" / "attempt_1" / "measurement_verification.json")
     record = load_verification_record(path)
     assert record["value"] == UNKNOWN
     assert record["source"] == SOURCE_READER
@@ -192,7 +191,7 @@ def test_collection_off_writes_no_verification_record(tmp_path, monkeypatch):
     from poc.workflow_3.config import load_workflow3_settings
     from poc.workflow_3.monitor import cycle
 
-    monkeypatch.setattr(cycle, "ALIGN_IMAGES_DIR", tmp_path)
+    monkeypatch.setattr(cycle, "EVENTS_DIR", tmp_path)
     settings = dataclasses.replace(load_workflow3_settings(), episode_collect_enabled=False)
     context = {"eqp_id": "EQP1", "recipe_id": "", "tag": "T1", "attempt_seq": 1,
                "tool_window": object()}

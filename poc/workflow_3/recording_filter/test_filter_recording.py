@@ -812,3 +812,26 @@ def test_discovery_ignores_prelude_subfolder(tmp_path, monkeypatch):
     _touch_recording(tmp_path, "EQP", "_unregistered", "T1", "attempt_1", "recording",
                      "prelude")
     assert set(fr._discover_recording_dirs()) == {main}
+
+
+def test_discovery_finds_event_folder_recordings(tmp_path, monkeypatch):
+    """알람 녹화는 이벤트 폴더(`<eqp>-<tag>/[attempt_<n>/]recording`)에 쌓인다.
+
+    수동 녹화(`align_images/<eqp>/_manual`)는 그대로라 두 루트를 함께 훑는다.
+    """
+    from poc.workflow_3.recording_filter import filter_recording as fr
+
+    images_root, events_root = tmp_path / "align_images", tmp_path / "align_fail_events"
+    monkeypatch.delenv("RECORDING_FILTER_INPUT_DIR", raising=False)
+    monkeypatch.setattr(fr, "ALIGN_IMAGES_DIR", images_root)
+    monkeypatch.setattr(fr, "EVENTS_DIR", events_root)
+    monkeypatch.setattr(fr, "INPUT_DIR_OVERRIDE", "")
+
+    expected = {
+        _touch_recording(events_root, "MCD019-260917_130000", "recording"),
+        _touch_recording(events_root, "MCD019-260917_140000", "attempt_2", "recording"),
+        _touch_recording(images_root, "MCD019", "_manual", "T5", "recording"),
+    }
+    _touch_recording(events_root, "MCD019-260917_140000", "attempt_2", "recording", "prelude")
+
+    assert set(fr._discover_recording_dirs()) == expected

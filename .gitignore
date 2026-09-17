@@ -80,6 +80,8 @@ poc/workflow_3/align_consensus_cache/
 # (cond.txt 는 *.txt 라 전역 무시 안 됨). 주석은 **반드시 별도 줄**에 - gitignore 는
 # 인라인 주석을 지원하지 않아 같은 줄에 쓰면 주석까지 패턴의 일부가 되어 무시가 통째로 죽는다.
 poc/workflow_3/align_images/
+# 알람 1건 = 폴더 1개 (util/event_dir.py). ALIGN_IMAGES_DIR 의 형제라 위치가 따라 움직인다.
+align_fail_events/
 !side_projects/screenshot_document_extraction/logs/
 side_projects/screenshot_document_extraction/logs/*
 !side_projects/screenshot_document_extraction/logs/.gitkeep

@@ -176,7 +176,7 @@ def test_cycle_writes_guards_into_the_attempt_folder(tmp_path, monkeypatch):
     from poc.workflow_3.config import load_workflow3_settings
     from poc.workflow_3.monitor import cycle
 
-    monkeypatch.setattr(cycle, "ALIGN_IMAGES_DIR", tmp_path)
+    monkeypatch.setattr(cycle, "EVENTS_DIR", tmp_path)
     settings = dataclasses.replace(load_workflow3_settings(), episode_collect_enabled=True)
 
     class _Outcome:
@@ -202,8 +202,7 @@ def test_cycle_writes_guards_into_the_attempt_folder(tmp_path, monkeypatch):
     result = cycle.CycleResult(eqp_id="EQP1", recipe_id="CLS/RCP", tag="T1")
     cycle.write_attempt_guards(context, result, settings)
 
-    path = (tmp_path / "EQP1" / "CLS" / "RCP" / "captured_img_from_rcs" / "T1"
-            / "attempt_2" / "guards.json")
+    path = (tmp_path / "EQP1-T1" / "attempt_2" / "guards.json")
     data = json.loads(path.read_text(encoding="utf-8"))
     assert [g["kind"] for g in data["guards"]] == list(GUARD_KINDS)
     assert [g["value"] for g in data["guards"]] == [True, True, True]
@@ -218,13 +217,13 @@ def test_broken_cycle_still_records_three_unknown_guards(tmp_path, monkeypatch):
     from poc.workflow_3.config import load_workflow3_settings
     from poc.workflow_3.monitor import cycle
 
-    monkeypatch.setattr(cycle, "ALIGN_IMAGES_DIR", tmp_path)
+    monkeypatch.setattr(cycle, "EVENTS_DIR", tmp_path)
     settings = dataclasses.replace(load_workflow3_settings(), episode_collect_enabled=True)
     context = {"eqp_id": "EQP1", "recipe_id": "", "tag": "T1", "attempt_seq": 1}
     result = cycle.CycleResult(eqp_id="EQP1", recipe_id="", tag="T1")
     cycle.write_attempt_guards(context, result, settings)
 
-    path = tmp_path / "EQP1" / "_unregistered" / "T1" / "attempt_1" / "guards.json"
+    path = tmp_path / "EQP1-T1" / "attempt_1" / "guards.json"
     data = json.loads(path.read_text(encoding="utf-8"))
     assert [g["value"] for g in data["guards"]] == [None, None, None]
 
@@ -236,7 +235,7 @@ def test_collection_off_writes_no_guard_file(tmp_path, monkeypatch):
     from poc.workflow_3.config import load_workflow3_settings
     from poc.workflow_3.monitor import cycle
 
-    monkeypatch.setattr(cycle, "ALIGN_IMAGES_DIR", tmp_path)
+    monkeypatch.setattr(cycle, "EVENTS_DIR", tmp_path)
     settings = dataclasses.replace(load_workflow3_settings(), episode_collect_enabled=False)
     context = {"eqp_id": "EQP1", "recipe_id": "", "tag": "T1", "attempt_seq": 1}
     cycle.write_attempt_guards(

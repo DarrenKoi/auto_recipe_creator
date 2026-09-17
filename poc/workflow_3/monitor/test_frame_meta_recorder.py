@@ -36,7 +36,7 @@ class _FakeWindow:
 
 def _record(tmp_path, monkeypatch, *, attempt_seq=1, episode_id="ep-123"):
     """알람 사이클의 녹화 step 을 실제로 돌리고 (session, out_dir) 를 돌려준다."""
-    monkeypatch.setattr(cycle, "ALIGN_IMAGES_DIR", tmp_path)
+    monkeypatch.setattr(cycle, "EVENTS_DIR", tmp_path)
     # 녹화 캡처는 cycle 이 주입한 람다를 거친다(사이드카 래퍼가 그것을 감싼다).
     monkeypatch.setattr(
         cycle, "capture_window", lambda _win: Image.new("RGB", (64, 48), "white")
@@ -113,7 +113,7 @@ def test_recording_continues_when_the_sidecar_fails(tmp_path, monkeypatch):
         def rectangle(self):
             raise RuntimeError("rect gone")
 
-    monkeypatch.setattr(cycle, "ALIGN_IMAGES_DIR", tmp_path)
+    monkeypatch.setattr(cycle, "EVENTS_DIR", tmp_path)
     # 녹화 캡처는 cycle 이 주입한 람다를 거친다(사이드카 래퍼가 그것을 감싼다).
     monkeypatch.setattr(
         cycle, "capture_window", lambda _win: Image.new("RGB", (64, 48), "white")
@@ -160,7 +160,7 @@ def test_sidecar_warns_once_then_stays_disabled(capsys, tmp_path):
 
 def test_sidecar_is_off_when_episode_collection_is_off(tmp_path, monkeypatch):
     """수집 off 면 사이드카도 manifest 확장도 없다 - 녹화 동작이 종전과 같아야 한다."""
-    monkeypatch.setattr(cycle, "ALIGN_IMAGES_DIR", tmp_path)
+    monkeypatch.setattr(cycle, "EVENTS_DIR", tmp_path)
     monkeypatch.setattr(
         cycle, "capture_window", lambda _win: Image.new("RGB", (64, 48), "white")
     )

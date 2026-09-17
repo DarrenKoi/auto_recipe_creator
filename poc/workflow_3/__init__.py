@@ -81,6 +81,17 @@ ALIGN_CONSENSUS_CACHE_DIR = (
     else WORKFLOW_3_DIR / "align_consensus_cache"
 )
 
+# 알람 1건 = 폴더 1개(`<eqp_id>-<tag>/`). 그 사이클의 콘솔 전사/감사 로그/runner 저널/
+# debug 이미지/녹화가 전부 여기 모인다(레이아웃은 util/event_dir.py). 기본값을
+# ALIGN_IMAGES_DIR 의 **형제**로 두는 이유는 녹화(알람당 수백 MB)가 종전과 같은
+# 드라이브에 쌓이게 하려는 것이다 - 오피스는 ALIGN_IMAGES_DIR 를 D: 로 돌려 쓴다.
+_events_env = os.environ.get("ALIGN_FAIL_EVENTS_DIR", "").strip()
+EVENTS_DIR = (
+    Path(_events_env)
+    if _events_env
+    else ALIGN_IMAGES_DIR.parent / "align_fail_events"
+)
+
 # Align Fail 의 MES ALID (office 정의). monitor 의 row-collapse 헬퍼와 replay 필터가
 # 같은 값을 본다 — 한쪽만 바뀌면 안 되므로 단일 출처로 둔다.
 ALIGN_FAIL_ALID = "9006"
@@ -153,6 +164,7 @@ __all__ = [
     "ALIGN_FAIL_ALID",
     "ALIGN_IMAGES_DIR",
     "DEBUG_IMAGE_DIR",
+    "EVENTS_DIR",
     "LOG_DIR",
     "TEMPLATES_DIR",
     "WORKFLOW_3_DIR",

@@ -2,7 +2,7 @@
 
 Episode 식별은 알람 row 처리의 부수효과이므로, private helper 가 아니라
 `process_fail_rows` 가 남긴 **파일**을 본다(spec Testing Decisions). RCS/office 없이
-Mac 에서 돌며, ALIGN_IMAGES_DIR 대신 `tmp_path` 를 tracker 에 주입한다.
+Mac 에서 돌며, EVENTS_DIR 대신 `tmp_path` 를 tracker 에 주입한다.
 
 `uv run pytest poc/workflow_3/monitor/test_recovery_episode.py`
 """
@@ -46,7 +46,7 @@ def _run(tmp_path, rows, *, tracker=None, cycle_fn=None, settings=None):
     _stub_deps(state, afm, cycle_fn or _cycle_returning(run_status="completed"))
     try:
         settings = settings or afm.load_workflow3_settings()
-        tracker = tracker or EpisodeTracker(images_root=tmp_path)
+        tracker = tracker or EpisodeTracker(events_root=tmp_path)
         afm.process_fail_rows(rows, set(), settings, {}, {}, episodes=tracker)
     finally:
         _restore(state)
@@ -54,15 +54,14 @@ def _run(tmp_path, rows, *, tracker=None, cycle_fn=None, settings=None):
 
 
 def test_alarm_creates_episode_file_with_opaque_identity(tmp_path):
-    """알람 1건이 capture 폴더 루트에 Episode 정본을 남긴다 - identity 는 UUID."""
+    """알람 1건이 이벤트 폴더 루트에 Episode 정본을 남긴다 - identity 는 UUID."""
     _run(tmp_path, [_row()])
 
     files = _episode_files(tmp_path)
     assert len(files) == 1, files
     episode_path = files[0]
-    # Episode root = captured_img_from_rcs/<tag> (recipe 는 class/recipe 로 분해).
-    assert episode_path.parent.parent.name == "captured_img_from_rcs"
-    assert episode_path.parent.parent.parent.name == "RCP"
+    # Episode root = 이벤트 폴더 `<eqp>-<tag>` (recipe 는 경로가 아니라 파일에 남는다).
+    assert episode_path.parent == tmp_path / "EQP1-260830_010203"
 
     data = _read(episode_path)
     assert data["schema_version"] == "recovery_episode.v1"
@@ -85,7 +84,7 @@ def test_alarm_creates_episode_file_with_opaque_identity(tmp_path):
 
 def test_cooldown_retry_reuses_episode_and_increments_attempt(tmp_path):
     """같은 알람의 cooldown 재시도 = 같은 Episode, attempt_seq 1 -> 2."""
-    tracker = EpisodeTracker(images_root=tmp_path)
+    tracker = EpisodeTracker(events_root=tmp_path)
     settings = afm.load_workflow3_settings()
     rows = [_row()]
 
@@ -129,7 +128,7 @@ def test_cooldown_retry_reuses_episode_and_increments_attempt(tmp_path):
 
 def test_clearance_closes_episode_and_recurrence_gets_new_identity(tmp_path):
     """알람 해제 = clearance 이벤트 + Episode 닫힘. 재발은 다른 episode_id 다."""
-    tracker = EpisodeTracker(images_root=tmp_path)
+    tracker = EpisodeTracker(events_root=tmp_path)
     settings = afm.load_workflow3_settings()
 
     state = {}
@@ -217,7 +216,7 @@ def _start_recording(monkeypatch, tmp_path, *, attempt_seq=None, prelude=False):
 
     from poc.workflow_3.monitor import cycle, recording
 
-    monkeypatch.setattr(cycle, "ALIGN_IMAGES_DIR", tmp_path)
+    monkeypatch.setattr(cycle, "EVENTS_DIR", tmp_path)
     # 캡처 경로는 수집 플래그로 갈린다: on 이면 cycle 이 주입한 람다(사이드카 래퍼),
     # off 면 RecordingSession 의 기본 capture_window. 폴더 규약만 보는 테스트라 둘 다 막는다.
     fake_capture = lambda _win: Image.new("RGB", (64, 48), "white")  # noqa: E731
@@ -255,7 +254,7 @@ def test_retries_write_into_separate_attempt_recording_folders(tmp_path, monkeyp
     first = _start_recording(monkeypatch, tmp_path, attempt_seq=1)
     second = _start_recording(monkeypatch, tmp_path, attempt_seq=2)
 
-    episode_root = tmp_path / "EQP1" / "CLS" / "RCP" / "captured_img_from_rcs" / "T1"
+    episode_root = tmp_path / "EQP1-T1"
     assert first.out_dir == episode_root / "attempt_1" / "recording"
     assert second.out_dir == episode_root / "attempt_2" / "recording"
     for session in (first, second):
@@ -275,10 +274,10 @@ def test_prelude_goes_under_the_same_attempt_folder(tmp_path, monkeypatch):
     assert prelude_dir.parent.parent.name == "attempt_3"
 
 
-def test_collection_off_keeps_the_legacy_tag_recording_folder(tmp_path, monkeypatch):
-    """수집 off(attempt_seq 없음)면 종전 <tag>/recording/ 그대로다."""
+def test_collection_off_records_directly_under_the_event_folder(tmp_path, monkeypatch):
+    """수집 off(attempt_seq 없음)면 이벤트 폴더가 곧 take 라 `<eqp>-<tag>/recording/` 이다."""
     session = _start_recording(monkeypatch, tmp_path, attempt_seq=None)
-    episode_root = tmp_path / "EQP1" / "CLS" / "RCP" / "captured_img_from_rcs" / "T1"
+    episode_root = tmp_path / "EQP1-T1"
     assert session.out_dir == episode_root / "recording"
 
 
@@ -286,9 +285,9 @@ def test_episode_records_attempt_artifacts_as_episode_relative(tmp_path):
     """Episode 파일의 attempt 항목이 자기 폴더/산출물을 Episode-relative 로 가리킨다."""
     from poc.workflow_3.monitor.recovery_episode import load_episode
 
-    tracker = EpisodeTracker(images_root=tmp_path)
+    tracker = EpisodeTracker(events_root=tmp_path)
     settings = afm.load_workflow3_settings()
-    root = tmp_path / "EQP1" / "CLS" / "RCP" / "captured_img_from_rcs" / "260830_010203"
+    root = tmp_path / "EQP1-260830_010203"
 
     state = {}
     _stub_deps(state, afm, _cycle_returning(
@@ -322,10 +321,10 @@ def test_restart_resumes_only_an_exact_fingerprint_match(tmp_path):
     _stub_deps(state, afm, _cycle_returning(run_status="completed"))
     try:
         afm.process_fail_rows(rows, set(), settings, {}, {},
-                              episodes=EpisodeTracker(images_root=tmp_path))
+                              episodes=EpisodeTracker(events_root=tmp_path))
         # 프로세스가 죽었다 살아난다 - 메모리 맵은 비어 있고 디스크만 남는다.
         afm.process_fail_rows(rows, set(), settings, {}, {},
-                              episodes=EpisodeTracker(images_root=tmp_path))
+                              episodes=EpisodeTracker(events_root=tmp_path))
     finally:
         _restore(state)
 
@@ -338,7 +337,7 @@ def test_restart_resumes_only_an_exact_fingerprint_match(tmp_path):
 
 def test_fingerprint_change_closes_prior_episode_and_opens_a_new_one(tmp_path):
     """알람이 바뀌면(같은 장비라도) 이전 Episode 를 사유와 함께 닫고 새로 연다."""
-    tracker = EpisodeTracker(images_root=tmp_path)
+    tracker = EpisodeTracker(events_root=tmp_path)
     settings = afm.load_workflow3_settings()
 
     state = {}
@@ -369,10 +368,10 @@ def test_first_poll_scan_closes_open_episode_whose_alarm_is_gone(tmp_path):
     _stub_deps(state, afm, _cycle_returning(run_status="completed"))
     try:
         afm.process_fail_rows([_row()], set(), settings, {}, {},
-                              episodes=EpisodeTracker(images_root=tmp_path))
+                              episodes=EpisodeTracker(events_root=tmp_path))
         # 재시작 후 첫 poll 에 그 알람이 없다(다른 장비만 떠 있다).
         afm.process_fail_rows([_row(eqp_id="EQP2")], set(), settings, {}, {},
-                              episodes=EpisodeTracker(images_root=tmp_path))
+                              episodes=EpisodeTracker(events_root=tmp_path))
     finally:
         _restore(state)
 
@@ -391,13 +390,13 @@ def test_scan_survives_a_broken_episode_file(tmp_path):
     _stub_deps(state, afm, _cycle_returning(run_status="completed"))
     try:
         afm.process_fail_rows([_row()], set(), settings, {}, {},
-                              episodes=EpisodeTracker(images_root=tmp_path))
-        broken = tmp_path / "EQPX" / "_unregistered" / "T9"
+                              episodes=EpisodeTracker(events_root=tmp_path))
+        broken = tmp_path / "EQPX-T9"
         broken.mkdir(parents=True)
         (broken / "recovery_episode.json").write_text("{ not json", encoding="utf-8")
 
         afm.process_fail_rows([], set(), settings, {}, {},
-                              episodes=EpisodeTracker(images_root=tmp_path))
+                              episodes=EpisodeTracker(events_root=tmp_path))
     finally:
         _restore(state)
 
@@ -413,7 +412,7 @@ def test_scan_survives_a_broken_episode_file(tmp_path):
 
 def _close_with_attempt_records(tmp_path, capsys, *, records=None, outcome_status=""):
     """알람 1건을 돌리고, attempt 폴더에 record 를 심은 뒤 알람 해제로 Episode 를 닫는다."""
-    tracker = EpisodeTracker(images_root=tmp_path)
+    tracker = EpisodeTracker(events_root=tmp_path)
     settings = afm.load_workflow3_settings()
 
     state = {}
@@ -422,8 +421,7 @@ def _close_with_attempt_records(tmp_path, capsys, *, records=None, outcome_statu
     try:
         active = set()
         afm.process_fail_rows([_row()], active, settings, {}, {}, episodes=tracker)
-        attempt_dir = (tmp_path / "EQP1" / "CLS" / "RCP" / "captured_img_from_rcs"
-                       / "260830_010203" / "attempt_1")
+        attempt_dir = (tmp_path / "EQP1-260830_010203" / "attempt_1")
         attempt_dir.mkdir(parents=True, exist_ok=True)
         for name, payload in (records or {}).items():
             (attempt_dir / name).write_text(payload, encoding="utf-8")
@@ -513,3 +511,18 @@ def test_digest_line_carries_the_episode_summary(tmp_path, capsys):
     for token in ("eqp=EQP1", "recipe=CLS/RCP", "attempts=1",
                   "outcome=recovered", "verify=primary", "complete=yes", "guards="):
         assert token in line, (token, line)
+
+
+def test_distinct_episode_with_the_same_tag_does_not_overwrite_the_first(tmp_path):
+    """같은 장비·같은 알람 초에 fingerprint 가 다른 Episode 는 폴더를 따로 받는다.
+
+    폴더 이름에 recipe 가 없어서, 그대로 두면 새 Episode 가 앞 Episode 정본을 덮어쓴다
+    (Episode 파일은 절대 지우지 않는다는 규약 위반).
+    """
+    tracker = EpisodeTracker(events_root=tmp_path)
+    _run(tmp_path, [_row(recipe_id="CLS/RCP_A")], tracker=tracker)
+    _run(tmp_path, [_row(recipe_id="CLS/RCP_B")], tracker=tracker)
+
+    episodes = [_read(path) for path in _episode_files(tmp_path)]
+    assert sorted(e["alarm"]["recipe_id"] for e in episodes) == ["CLS/RCP_A", "CLS/RCP_B"]
+    assert len({e["episode_id"] for e in episodes}) == 2

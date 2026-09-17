@@ -165,34 +165,3 @@ def test_persistent_save_failure_stops_the_session(monkeypatch, tmp_path):
     assert not session.is_alive()
     assert session.stop_reason == "window_gone"
     session.stop()
-
-
-def test_prune_keeps_only_the_newest_runs(tmp_path):
-    """recording/ 만 최신 N 개 남긴다 - 같은 run 의 JSON, _manual 세션, rcp 는 그대로."""
-    import os
-
-    from poc.workflow_3.monitor.recording import prune_recordings
-
-    def _run(rel, mtime):
-        rec = tmp_path / rel / "recording"
-        (rec / "prelude").mkdir(parents=True)
-        (rec / "f.jpg").write_bytes(b"x")
-        (rec.parent / "recovery_episode.json").write_text("{}")
-        os.utime(rec, (mtime, mtime))
-        return rec
-
-    old = _run("EQ1/C/R/captured_img_from_rcs/t1", 100)
-    mid = _run("EQ1/_unregistered/t2/attempt_1", 200)
-    new = _run("EQ2/C/R/captured_img_from_rcs/t3/attempt_2", 300)
-    manual = _run("EQ1/_manual/t0", 1)
-    rcp = tmp_path / "EQ1/C/R/align_img_from_rcp/IMAP0001.jpg"
-    rcp.parent.mkdir(parents=True)
-    rcp.write_bytes(b"x")
-
-    assert prune_recordings(tmp_path, 0) == []  # 0 = 끔.
-    removed = prune_recordings(tmp_path, 2)
-
-    assert removed == [old]
-    assert not old.exists() and mid.exists() and new.exists()
-    assert (old.parent / "recovery_episode.json").exists()
-    assert manual.exists() and rcp.exists()

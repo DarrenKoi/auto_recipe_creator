@@ -7,6 +7,7 @@
 import logging
 import os
 import re
+import time
 from logging.handlers import RotatingFileHandler
 
 from poc.workflow_3 import LOG_DIR
@@ -74,6 +75,25 @@ def _detail_enabled() -> bool:
     return value in {"1", "true", "yes", "on", "debug", "verbose"}
 
 
+def _copy_to_event(log_name: str, level: str, line: str) -> None:
+    """사이클 안이면 같은 줄을 이벤트 폴더의 `<log_name>.log` 에도 남긴다.
+
+    상세 레벨(WORKFLOW3_FILE_LOG_DETAIL)과 무관하게 **전부** 쓴다 - 전역 파일은 1MB
+    회전이라 금방 밀려나지만, 이벤트 사본은 그 알람만의 것이라 크기가 문제가 안 된다.
+    """
+    from poc.workflow_3.util.event_dir import active_take_dir
+
+    take = active_take_dir()
+    if take is None:
+        return
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with open(take / f"{_sanitize_log_name(log_name)}.log", "a", encoding="utf-8") as fh:
+            fh.write(f"{stamp} [{level.strip().upper()}] {line}\n")
+    except OSError:
+        pass  # 이벤트 사본 실패가 사이클을 막으면 안 된다.
+
+
 def _should_write(level: str) -> bool:
     """warning/error 는 항상, info 는 상세 모드에서만 기록한다."""
     normalized = (level or "info").strip().lower()
@@ -116,7 +136,14 @@ def log_vlm_call(
     log_name: str = "vlm_calls",
 ) -> None:
     """VLM 호출 결과를 로그에 기록한다."""
-    if not _should_write("error" if status != "ok" else "info"):
+    level = "error" if status != "ok" else "info"
+    _copy_to_event(
+        log_name, level,
+        f"service={service} model={model} status={status} latency_ms={latency_ms:.1f} "
+        f"{_format_tokens(token_usage)}"
+        + (f" error={error} endpoint={endpoint}" if status != "ok" else ""),
+    )
+    if not _should_write(level):
         return
 
     logger = _get_logger(log_name)
@@ -143,14 +170,15 @@ def log_work2_event(
     **fields: object,
 ) -> None:
     """workflow_3 일반 이벤트를 파일 로그에 기록한다."""
-    if not _should_write(level):
-        return
-
-    logger = _get_logger(log_name)
     extras = _format_fields(fields)
     line = f"component={component} message={message}"
     if extras:
         line = f"{line} {extras}"
+    _copy_to_event(log_name, level, line)
+    if not _should_write(level):
+        return
+
+    logger = _get_logger(log_name)
 
     normalized_level = level.strip().lower()
     if normalized_level == "error":

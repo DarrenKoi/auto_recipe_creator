@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from PIL import ImageChops, ImageStat
 
 from poc.workflow_3.util.console import rcs_print
-from poc.workflow_3 import DEBUG_IMAGE_DIR
+from poc.workflow_3.util.event_dir import debug_root
 from poc.workflow_3.debug_artifacts import (
     debug_image_path,
     save_debug_jpeg,
@@ -103,7 +103,6 @@ OCR_SERVICE_SLUG = "paddleocr-vl-1.5"
 TARGET_TOOL_NAME_OVERRIDE = r""
 
 DEFAULT_TARGET_TOOL_NAME = "MCD630"
-DEBUG_ARTIFACT_DIR = DEBUG_IMAGE_DIR / "workflow_select_tool"
 LOG_NAME = "workflow_select_tool"
 COMPONENT_NAME = LOG_NAME
 DEFAULT_ACTION_ENABLED = os.getenv("ACTION_LOGIN_ACTION_ENABLED", "true").strip().lower() not in {
@@ -1148,7 +1147,7 @@ def select_tool_from_main_window(
     require_occupancy_check: bool = False,
 ) -> ToolSelectionResult:
     """현재 List 탭에서 지정 Tool 이름을 찾아 더블클릭한다."""
-    resolved_debug_dir = debug_image_dir or DEBUG_ARTIFACT_DIR
+    resolved_debug_dir = debug_image_dir or debug_root() / "workflow_select_tool"
     normalized_tool_name = tool_name.strip()
     if not normalized_tool_name:
         return ToolSelectionResult(
@@ -1443,7 +1442,7 @@ def verify_tool_visible_in_list(
     component_name: str = COMPONENT_NAME,
 ) -> ToolListVisibilityResult:
     """현재 메인 창 List 영역에서 대상 Tool 이름이 보이는지 검증한다."""
-    resolved_debug_dir = debug_image_dir or DEBUG_ARTIFACT_DIR
+    resolved_debug_dir = debug_image_dir or debug_root() / "workflow_select_tool"
     normalized_tool_name = tool_name.strip()
     if not normalized_tool_name:
         return ToolListVisibilityResult(

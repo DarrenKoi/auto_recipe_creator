@@ -57,9 +57,9 @@
 
 로그 패널 (프레임 옆에 '그때 콘솔에 뭐가 찍혔는지' 합성; `demo_log_panel` 참고):
   DEMO_VIDEO_LOG_PANEL       패널 켜기 (기본 0)
-  DEMO_VIDEO_LOG_FILE        감사 로그 (기본 logs/work2.log)
-  DEMO_VIDEO_CONSOLE_LOG     콘솔 tee 파일 (선택; 줄마다 시각이 있어야 함)
-  DEMO_VIDEO_RUN_DIR         실행 저널 폴더 logs/workflow_runs/<run> (선택)
+  DEMO_VIDEO_LOG_FILE        감사 로그 (기본: 이벤트 폴더 녹화면 그 take 의 work2.log, 아니면 logs/work2.log)
+  DEMO_VIDEO_CONSOLE_LOG     콘솔 tee 파일 (기본: 이벤트 폴더 녹화면 그 take 의 console.log)
+  DEMO_VIDEO_RUN_DIR         실행 저널 폴더 (기본: 이벤트 폴더 녹화면 그 take 의 runs/*_align_fail_*)
   DEMO_VIDEO_LOG_PANEL_WIDTH 패널 폭 px (기본 520)
   DEMO_VIDEO_LOG_LINES       패널에 보일 최대 줄 수 (기본 14)
   DEMO_VIDEO_FONT            한글 TrueType 경로 (미지정 시 자동 탐색)
@@ -89,7 +89,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from poc.workflow_3 import ALIGN_IMAGES_DIR, LOG_DIR
+from poc.workflow_3 import ALIGN_IMAGES_DIR, EVENTS_DIR, LOG_DIR
+from poc.workflow_3.util.event_dir import CONSOLE_LOG_NAME
 from poc.workflow_3.monitor.demo_log_panel import (
     LogPanel,
     load_log_entries,
@@ -189,8 +190,8 @@ def _env_flag(name: str, default: bool) -> bool:
 def find_recording_dirs(root: Path) -> list[Path]:
     """root 아래의 recording 폴더를 최근 순으로 찾는다.
 
-    알람 사이클(`captured_img_from_rcs/<tag>/recording`) 과 수동 녹화
-    (`_manual/<tag>/recording`) 가 같은 이름을 쓰므로 한 번에 잡힌다.
+    알람 사이클(`<eqp>-<tag>/[attempt_<n>/]recording`, 구 `captured_img_from_rcs/<tag>/recording`)
+    과 수동 녹화(`_manual/<tag>/recording`) 가 같은 이름을 쓰므로 한 번에 잡힌다.
     """
     if not root.exists():
         return []
@@ -209,10 +210,15 @@ def resolve_input_dir() -> Path | None:
             return None
         return path
 
-    print(f"[INFO] DEMO_VIDEO_INPUT_DIR 미지정 - {ALIGN_IMAGES_DIR} 에서 자동 탐색")
-    candidates = find_recording_dirs(ALIGN_IMAGES_DIR)
+    # 알람 녹화는 이벤트 폴더에, 수동 녹화(_manual)는 align_images 에 있다.
+    roots = (EVENTS_DIR, ALIGN_IMAGES_DIR)
+    print(f"[INFO] DEMO_VIDEO_INPUT_DIR 미지정 - {roots[0]}, {roots[1]} 에서 자동 탐색")
+    candidates = sorted(
+        (path for root in roots for path in find_recording_dirs(root)),
+        key=lambda p: p.stat().st_mtime, reverse=True,
+    )
     if not candidates:
-        print(f"[ERROR] recording 폴더를 찾지 못했습니다: {ALIGN_IMAGES_DIR}")
+        print(f"[ERROR] recording 폴더를 찾지 못했습니다: {roots[0]}, {roots[1]}")
         return None
 
     for idx, path in enumerate(candidates[:_CANDIDATE_PREVIEW]):
@@ -573,17 +579,34 @@ def build_log_panel(
         print("[WARNING] recording_manifest.json 의 started_at 이 없어 로그 패널을 생략합니다")
         return None
 
+    # 이벤트 폴더의 녹화면 그 take 가 자기 로그를 갖고 있다(util/event_dir.py) - 지정이
+    # 없으면 그것을 쓴다. 전역 work2.log 는 1MB 회전이라 지난 알람의 줄이 이미 밀려났다.
+    take = next(
+        (p for p in (manifest_dir, *list(manifest_dir.parents)[:2])
+         if (p / CONSOLE_LOG_NAME).is_file()),
+        None,
+    )
     log_paths = []
     audit = os.environ.get("DEMO_VIDEO_LOG_FILE", LOG_FILE).strip()
-    log_paths.append(Path(audit).expanduser() if audit else LOG_DIR / "work2.log")
+    if audit:
+        log_paths.append(Path(audit).expanduser())
+    elif take is not None and (take / "work2.log").is_file():
+        log_paths.append(take / "work2.log")
+    else:
+        log_paths.append(LOG_DIR / "work2.log")
     console = os.environ.get("DEMO_VIDEO_CONSOLE_LOG", CONSOLE_LOG).strip()
     if console:
         log_paths.append(Path(console).expanduser())
+    elif take is not None:
+        log_paths.append(take / CONSOLE_LOG_NAME)
 
     span = frames[-1][0] - frames[0][0]
     entries = load_log_entries(log_paths, base, span)
 
     run_dir = os.environ.get("DEMO_VIDEO_RUN_DIR", RUN_DIR).strip()
+    if not run_dir and take is not None:
+        cycle_runs = sorted((take / "runs").glob("*_align_fail_*"))
+        run_dir = str(cycle_runs[-1]) if cycle_runs else ""
     if run_dir:
         entries.extend(load_step_entries(Path(run_dir).expanduser(), base))
         entries.sort(key=lambda entry: entry.t_sec)

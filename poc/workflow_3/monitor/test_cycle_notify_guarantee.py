@@ -8,6 +8,8 @@ CLAUDE.md 규칙: argparse 미사용, [OK] print, Mac 에서 그대로 실행(RC
     uv run python poc/workflow_3/monitor/test_cycle_notify_guarantee.py
 """
 
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 from poc.workflow_3.config import load_workflow3_settings
@@ -39,6 +41,8 @@ def _stub_cycle(state, *, run_impl):
     아니라 notify 쪽 sink 다(사이클이 어떤 경로로 부르든 총 발송 수가 잡힌다).
     """
     calls = []
+    # 직접 실행(python ...)은 conftest 를 거치지 않는다 - 이벤트 폴더를 실제 루트에 만들지 않게.
+    _swap(state, cyc, "EVENTS_DIR", Path(tempfile.mkdtemp()))
     _swap(state, cyc, "RCS_MODULES_AVAILABLE", True)
     _swap(state, ntf, "notify_correction_outcome",
           lambda *a, **k: calls.append((a, k)))

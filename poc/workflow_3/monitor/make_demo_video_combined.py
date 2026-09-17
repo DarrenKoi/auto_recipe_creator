@@ -1,12 +1,12 @@
 """여러 번의 시연(trial) 녹화를 자막과 함께 하나의 mp4 로 잇는다 - 오프라인.
 
 `manual_align_correction.py` 를 같은 tool/recipe 로 여러 번 돌리면 실행마다 별도
-타임스탬프 폴더가 생긴다:
+이벤트 폴더가 생긴다(recipe 는 각 폴더의 event.json 에 있다):
 
-    align_images/<eqp>/<class>/<recipe>/captured_img_from_rcs/
-      ├─ 260824_101530/recording/   <- 1회차
-      ├─ 260824_104512/recording/   <- 2회차
-      └─ 260824_112003/recording/   <- 3회차
+    align_fail_events/
+      ├─ MCD513-260824_101530/recording/   <- 1회차
+      ├─ MCD513-260824_104512/recording/   <- 2회차
+      └─ MCD513-260824_112003/recording/   <- 3회차
 
 이 스크립트는 그 폴더들을 시간 순으로 이어 붙이고, 각 구간 앞에 `1st Trial` 타이틀
 카드를 넣고 프레임마다 좌상단에 회차 라벨을 새긴다. 보는 사람이 "지금 몇 번째
@@ -27,7 +27,7 @@
 사용법 - 파일 상단 상수를 고치고 그냥 실행한다:
 
     # make_demo_video_combined.py 상단
-    ROOT = "D:/align_images/MCD513/RJ1BXXX/RJ1B_ISOLINERPOLY_R1/captured_img_from_rcs"
+    INPUT_DIRS = ["D:/align_fail_events/MCD513-260824_101530", "D:/align_fail_events/MCD513-260824_104512"]
     LABELS = ["Baseline", "After tuning", "3rd try"]
 
     uv run python poc/workflow_3/monitor/make_demo_video_combined.py
@@ -39,8 +39,8 @@
 
 입력 고르기 (셋 중 하나):
   1) INPUT_DIRS 에 recording 폴더를 나열 (리스트로 적으면 그 순서를 그대로 쓴다)
-  2) ROOT 아래의 모든 recording 폴더를 자동 수집 (보통 `.../captured_img_from_rcs`)
-  3) 둘 다 비우면 ALIGN_IMAGES_DIR 전체를 훑어 recipe 별로 묶고 **가장 최근에
+  2) ROOT 아래의 모든 recording 폴더를 자동 수집 (주의: 이벤트 루트를 주면 모든 장비가 섞인다)
+  3) 둘 다 비우면 이벤트 루트 + ALIGN_IMAGES_DIR 를 훑어 eqp/recipe 별로 묶고 **가장 최근에
      녹화된 묶음**을 고른다. 다른 후보도 함께 출력하므로 틀렸으면 2)로 지정한다.
 
   회차 순서는 recording_manifest.json 의 시작 시각(없으면 폴더 tag, 그것도 못 읽으면
@@ -82,7 +82,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from poc.workflow_3 import ALIGN_IMAGES_DIR
+from poc.workflow_3 import ALIGN_IMAGES_DIR, EVENTS_DIR
+from poc.workflow_3.util.event_dir import read_event_meta
 from poc.workflow_3.util.env_utils import as_env_value
 from poc.workflow_3.util.env_utils import seed_env_from_constants as _shared_seed
 from poc.workflow_3.monitor.make_demo_video import (
@@ -117,7 +118,7 @@ from poc.workflow_3.monitor.make_demo_video import (
 # ===========================================================================
 
 # [1] 어떤 회차를 모을 것인가 (INPUT_DIRS 가 ROOT 보다 우선, 둘 다 비면 자동 탐색).
-ROOT = ""            # 이 폴더 아래 recording 전부. 보통 <...>/captured_img_from_rcs
+ROOT = ""            # 이 폴더 아래 recording 전부 (구 트리는 <...>/captured_img_from_rcs)
 INPUT_DIRS = []      # 회차를 직접 고를 때. 리스트로 적으면 그 순서를 그대로 쓴다
 OUTPUT = ""          # 출력 파일. 비우면 <공통부모>/demo_combined.mp4
 
@@ -272,22 +273,28 @@ def find_trial_dirs(root: Path) -> list[Path]:
 
 
 def group_by_recipe(dirs: list[Path]) -> dict[Path, list[Path]]:
-    """recording 폴더를 `captured_img_from_rcs` 단위(= eqp/recipe)로 묶는다.
+    """recording 폴더를 eqp/recipe 단위로 묶는다.
 
-    경로 규약이 `<...>/captured_img_from_rcs/<tag>/recording` 이라 조부모가 곧
-    recipe 묶음이다. 자동 탐색에서 **서로 다른 장비/레시피를 한 영상에 섞지 않기
-    위한** 안전장치다.
+    자동 탐색에서 **서로 다른 장비/레시피를 한 영상에 섞지 않기 위한** 안전장치다.
+    이벤트 폴더(`<eqp>-<tag>/[attempt_<n>/]recording`)는 이름에 recipe 가 없어 사이클이
+    남긴 `event.json` 으로 `<eqp>/<recipe>` 키를 만든다. 구 트리
+    (`<...>/captured_img_from_rcs/<tag>/recording`)는 조부모가 곧 recipe 묶음이다.
     """
     groups: dict[Path, list[Path]] = {}
     for path in dirs:
-        groups.setdefault(path.parent.parent, []).append(path)
+        meta = read_event_meta(path.parent)
+        if meta.get("eqp_id"):
+            key = Path(meta["eqp_id"]) / (meta.get("recipe_id") or "_unregistered")
+        else:
+            key = path.parent.parent
+        groups.setdefault(key, []).append(path)
     return groups
 
 
 def normalize_trial_dir(path: Path) -> Path:
     """tag 폴더를 받으면 그 안의 recording/ 으로 내려간다.
 
-    INPUT_DIRS 에 붙여넣기 좋은 것은 tag 폴더(`captured_img_from_rcs/<tag>`)인데
+    INPUT_DIRS 에 붙여넣기 좋은 것은 이벤트 폴더(`<eqp>-<tag>`, 구 `captured_img_from_rcs/<tag>`)인데
     프레임은 그 아래 `recording/` 에 있다. 구분을 모르고 tag 를 적으면 모든 회차가
     "프레임이 없어 제외" 되어 결과물이 통째로 비는데, 경고만 봐서는 한 단계 아래를
     가리켜야 한다는 걸 알 수 없다. 프레임이 없고 recording/ 이 있을 때만 내려가므로
@@ -327,10 +334,12 @@ def resolve_trial_dirs() -> list[Path]:
         print(f"[INFO] DEMO_COMBINED_ROOT={root} 아래 recording {len(dirs)}개")
         return dirs
 
-    print(f"[INFO] 입력 미지정 - {ALIGN_IMAGES_DIR} 에서 자동 탐색")
-    groups = group_by_recipe(find_trial_dirs(ALIGN_IMAGES_DIR))
+    print(f"[INFO] 입력 미지정 - {EVENTS_DIR}, {ALIGN_IMAGES_DIR} 에서 자동 탐색")
+    groups = group_by_recipe(
+        find_trial_dirs(EVENTS_DIR) + find_trial_dirs(ALIGN_IMAGES_DIR)
+    )
     if not groups:
-        print(f"[ERROR] recording 폴더를 찾지 못했습니다: {ALIGN_IMAGES_DIR}")
+        print(f"[ERROR] recording 폴더를 찾지 못했습니다: {EVENTS_DIR}, {ALIGN_IMAGES_DIR}")
         return []
 
     ranked = sorted(

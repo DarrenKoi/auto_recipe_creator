@@ -22,13 +22,13 @@ Subpackages — 4-layer DAG: `util` (leaf) → `{vlm, runner}` (services) → `{
 
 - **Recovery Episode 수집** (2026-08-30, `ALIGN_FAIL_EPISODE_COLLECT=1`, **기본 off**):
   ALID=9006 active interval 하나 = Recovery Episode 하나. `monitor/recovery_episode.py`
-  의 `EpisodeTracker` 가 알람 row 처리(`process_fail_rows`) 부수효과로 capture 폴더 루트에
+  의 `EpisodeTracker` 가 알람 row 처리(`process_fail_rows`) 부수효과로 이벤트 폴더(`<eqp>-<tag>/`) 루트에
   `recovery_episode.json` 을 **첫 GUI step 전에** 원자적으로 쓰고, cooldown 재시도는 같은
   Episode 의 `attempt_2, 3...` 이 되며, 알람이 poll 에서 사라지면 clearance 이벤트와 함께
   닫힌다. identity 는 uuid4 이고 tag(알람 UTC9)는 **위치일 뿐 identity 가 아니다**;
   재개 판정은 fingerprint(장비+alid+recipe+UTC9) **완전 일치**뿐이며 프로세스당 1회
-  capture tree 스캔이 유일한 디스크 재구성 경로다(알람 없는 open Episode 는
-  `incomplete(alarm_gone_during_restart)`). attempt 산출물은 `<tag>/attempt_<n>/` 아래로
+  이벤트 루트 스캔(고정 깊이)이 유일한 디스크 재구성 경로다(알람 없는 open Episode 는
+  `incomplete(alarm_gone_during_restart)`). attempt 산출물은 `<eqp>-<tag>/attempt_<n>/` 아래로
   갈린다 - **cooldown 재시도가 같은 `recording/` 에 두 테이크를 섞던 tag 충돌 결함이 이
   구조로 닫힌다**(별도 수정 금지). 수집 on 이면 attempt 폴더에 `guards.json`
   (`monitor/guard_readings.py`, Episode-level Guard **정확히 셋**: 화면 관측 가능성 /
@@ -75,8 +75,20 @@ The filesystem contract (office MES writes, `align` reads):
 align_images/<eqp_id>/<class>/<recipe>/
 ├─ align_img_from_rcp/      IMAP0001.*(OM)  IMAP0002.*(SEM)   # recipe-registered align key (office MES)
 ├─ align_img_from_msr/      S*/E*                             # measurement trajectory (E = fail) (office MES)
-└─ captured_img_from_rcs/   <tag>/…                           # fail-time captures + recording/ (workflow_3 writes)
+└─ captured_img_from_rcs/   <tag>/…                           # LEGACY (2026-09-17 전) - 새 captures/recording 은 이벤트 폴더
 ```
+
+- **알람 1건 = 이벤트 폴더 1개** (2026-09-17, `util/event_dir.py`): `<EVENTS_DIR>/<eqp_id>-<tag>/[attempt_<n>/]` 에
+  `console.log`(stdout/stderr 전사, 줄마다 시각) / `work2.log`·`vlm_calls.log` 사본 / `runs/`(runner 저널) /
+  `debug_images/` / `recording/` / `event.json`(eqp·recipe·CycleResult) / Episode·Guard JSON 이 모인다.
+  `EVENTS_DIR` 기본값은 `ALIGN_IMAGES_DIR` 의 **형제** `align_fail_events/` 다(녹화가 같은 드라이브에 쌓이게;
+  override `ALIGN_FAIL_EVENTS_DIR`). 원리: `event_scope(take)` 가 프로세스 전역 take 를 세우고 `sys.stdout`
+  을 tee 하며, `debug_root()`/`runs_root()` 가 **호출 시점에** 그 take 를 가리킨다 - 모듈 import 시점에
+  `DEBUG_IMAGE_DIR / "x"` 를 굳히면 이 경로를 못 따라오므로 새 debug 저장 지점은 반드시 `debug_root()` 를 쓸
+  것. 모니터가 감지 시점에 열고 `run_alarm_cycle`/`run_check_only_cycle` 이 같은 폴더로 재진입한다(동시 사이클
+  전제 없음). take 식별은 `cycle.take_dir_for` 와 `recovery_episode.episode_root_for` 한 곳. 보관은
+  `prune_events`(오래된 take 의 recording/·debug_images/ 만 삭제, 텍스트·Episode 는 유지). 사후 복사로
+  모으던 `cycle_images`(mtime 추정)와 `prune_recordings` 는 이것으로 대체되어 삭제됐다.
 
 - **Runtime no longer consumes `align_img_from_msr`** (2026-06-18): correction/feasibility match consensus(preferred)/rcp(fallback) templates into the live capture, so the production loop (`align_fail_monitor`, `align_fail_monitor_only_check`) downloads **rcp only** (`gather_rcp_msr(..., include_msr=False)`). msr is offline-bench-only — fetch it on demand with `poc/workflow_3/monitor/fetch_msr_offline.py` (`include_msr=True`).
 
@@ -155,7 +167,7 @@ uv run python poc/workflow_1/monitor_align_fail.py           # Align-fail + open
 uv run python -m test.video_frame_parser.example_usage
 ```
 
-`runner/workflow_runner.py` is a library, not an entry point: `WorkflowRunner` runs a `list[WorkflowStep]` sequentially and `ConditionChecker` evaluates step pre/post conditions; runs are journaled under `poc/workflow_3/logs/workflow_runs/`. The per-alarm cycle (`monitor/cycle.py`) is built on it; cleanup (stop recording / close tool / popup backstop) is guaranteed by `try/finally`, not steps.
+`runner/workflow_runner.py` is a library, not an entry point: `WorkflowRunner` runs a `list[WorkflowStep]` sequentially and `ConditionChecker` evaluates step pre/post conditions; runs are journaled under the active event folder's `runs/` (outside a cycle: `poc/workflow_3/logs/workflow_runs/`). The per-alarm cycle (`monitor/cycle.py`) is built on it; cleanup (stop recording / close tool / popup backstop) is guaranteed by `try/finally`, not steps.
 
 ## Testing
 

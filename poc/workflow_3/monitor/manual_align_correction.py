@@ -54,7 +54,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from poc.workflow_3 import ALIGN_FAIL_ALID, LOG_DIR  # noqa: E402
+from poc.workflow_3 import ALIGN_FAIL_ALID, EVENTS_DIR, LOG_DIR  # noqa: E402
 from poc.workflow_3.config import load_workflow3_settings
 from poc.workflow_3.monitor.cycle import CycleResult, run_alarm_cycle
 from poc.workflow_3.monitor.notify import (
@@ -235,6 +235,7 @@ def _print_summary(cycle: CycleResult) -> None:
     print(f"  recording_dir = {cycle.recording_dir or '-'}")
     print(f"  run_dir       = {cycle.run_dir or '-'}")
     print(f"  log_dir       = {LOG_DIR}")
+    print(f"  events_dir    = {EVENTS_DIR}  (이번 실행의 로그/이미지/녹화는 <eqp>-<tag>/ 한 폴더)")
     print("=" * 70)
 
 

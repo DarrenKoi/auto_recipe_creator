@@ -4,8 +4,8 @@ import json
 import time
 from pathlib import Path
 
-from poc.workflow_3 import LOG_DIR
 from poc.workflow_3.util import make_timestamp_tag
+from poc.workflow_3.util.event_dir import runs_root
 from poc.workflow_3.runner.workflow_config import WorkflowSettings
 from poc.workflow_3.runner.workflow_types import (
     ConditionGroup,
@@ -167,7 +167,8 @@ class WorkflowRunner:
         """step 목록을 순서대로 실행한다."""
         started_at = time.time()
         run_id = make_timestamp_tag(started_at)
-        run_dir = LOG_DIR / "workflow_runs" / f"{run_id}_{self.workflow_name}"
+        # 사이클(이벤트 폴더) 안이면 그 take 의 runs/ 로, 밖이면 logs/workflow_runs 로.
+        run_dir = runs_root() / f"{run_id}_{self.workflow_name}"
         run_dir.mkdir(parents=True, exist_ok=True)
 
         run = WorkflowRun(

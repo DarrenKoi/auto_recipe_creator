@@ -23,6 +23,7 @@
 
 import csv
 import time
+from contextlib import ExitStack
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta
 
@@ -31,7 +32,7 @@ import pandas as pd
 from poc.workflow_3 import ALIGN_FAIL_ALID, LOG_DIR
 from poc.workflow_3.config import Workflow3Settings, load_workflow3_settings
 from poc.workflow_3.monitor.alarm_source import load_alarm_source
-from poc.workflow_3.monitor.cycle import CycleResult, run_alarm_cycle
+from poc.workflow_3.monitor.cycle import CycleResult, run_alarm_cycle, take_dir_for
 from poc.workflow_3.util.abort_switch import abort_reason, is_aborted, start_abort_hotkey
 from poc.workflow_3.monitor.notify import (
     ALARM_LOG_PATH,
@@ -44,6 +45,7 @@ from poc.workflow_3.monitor.rcp_msr_gather import gather_rcp_msr
 from poc.workflow_3.monitor.success_gather import gather_success_async
 from poc.workflow_3.monitor.recovery_episode import alarm_fingerprint
 from poc.workflow_3.util import make_timestamp_tag
+from poc.workflow_3.util.event_dir import event_scope
 from poc.workflow_3.logger import log_work2_event
 
 # ==========================================================================
@@ -138,10 +140,10 @@ NOTIFY_DELAY_SEC = None
 # --- 녹화 / 엔지니어 watch ---
 RECORDING_MAX_SEC = None     # 녹화 하드 상한(초). None=500. tool 창 open 부터 세는
                              # 세션 전체 예산 - 보정 + 엔지니어 수동 조작이 같은 세션이다.
-KEEP_RUNS = 30               # 보관 run 수(2026-09-17 결정). 사이클 끝에 최신 N 개
-                             # recording/ 만 남기고, debug_images 는 N 번째 run 시작보다
-                             # 오래된 파일을 지운다(벤치 산출물 포함). 0 = 삭제 안 함.
-                             # _manual 세션과 캡처/Episode JSON 은 지우지 않는다.
+KEEP_RUNS = 30               # 보관 run 수(2026-09-17 결정). 사이클 끝에 이벤트 폴더
+                             # (align_fail_events/) 중 최신 N 개 take 만 온전히 두고,
+                             # 그보다 오래된 take 는 recording/ 과 debug_images/ 만 지운다.
+                             # console.log/저널/Episode JSON 은 남는다. 0 = 삭제 안 함.
 RECORD_PRELUDE = 1           # 접속 구간(RCS 실행->로그인->tool 진입) 화면 전체 녹화.
 PRELUDE_MAX_SEC = None
 PRELUDE_MONITOR_INDEX = None
@@ -737,6 +739,7 @@ def process_fail_rows(
     # UTC9 는 한 피드 안에서 같은 형식이라 문자열 정렬이 시각 순서다.
     for eqp_id in sorted(new_tools, key=lambda e: (by_tool[e]["utc9"], e)):
         handle = None
+        take_scope = ExitStack()
         try:
             info = by_tool[eqp_id]
             alarm_time = str(info["alarm_time"] or "")
@@ -750,6 +753,13 @@ def process_fail_rows(
                     info, settings, tag=tag or make_timestamp_tag()
                 )
                 tag = handle.tag
+            tag = tag or make_timestamp_tag()
+            # 감지 시점부터 이 알람의 take 폴더로 출력을 보낸다 - 알람 내용과 rcp 다운로드
+            # 줄이 사이클 로그와 같은 console.log 에 남는다(run_alarm_cycle 은 같은 폴더로
+            # 재진입한다). 예외 경로의 경고도 담기도록 finally 에서 닫는다.
+            take_scope.enter_context(event_scope(
+                take_dir_for(eqp_id, tag, handle.attempt_seq if handle else None)
+            ))
 
             print(
                 f"[WARNING] Align Fail 감지: EQP_ID={eqp_id}, "
@@ -865,6 +875,8 @@ def process_fail_rows(
                 component=LOG_COMPONENT, message="tool_process_error", level="error",
                 eqp_id=eqp_id, error=str(exc),
             )
+        finally:
+            take_scope.close()
 
     return newly_handled
 

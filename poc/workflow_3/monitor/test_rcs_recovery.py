@@ -499,3 +499,14 @@ def test_relaunches_after_kill_even_if_terminate_reports_failure():
         terminate_fn=_raise(RuntimeError("access denied")),
     )
     assert calls == ["launch", "login"], calls
+
+
+def test_attach_open_tool_skips_rcs_and_connect():
+    """manual_align_correction: 열린 창에 붙으므로 RCS 확보/List 접속이 없고, 창 대기가 첫 의존이 된다."""
+    steps = build_cycle_steps("MCD916", attach_open_tool=True)
+    ids = [s.step_id for s in steps]
+    assert "ensure_rcs_ready" not in ids and "connect_tool" not in ids, ids
+    wait = next(s for s in steps if s.step_id == "wait_tool_window")
+    assert not wait.depends_on
+    # 기본 경로는 그대로다(production 모니터).
+    assert "connect_tool" in [s.step_id for s in build_cycle_steps("MCD916")]

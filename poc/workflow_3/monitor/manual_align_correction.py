@@ -6,11 +6,14 @@
 알람 폴링/edge-trigger 만 우회하고, 같은 `run_alarm_cycle` 을 한 번 돈다.
 
 동작:
-  1. RCS preflight (로그인 + List 탭) - 사이클의 ensure_rcs_ready 와 같은 복구 경로.
+  1. **tool 창은 엔지니어가 먼저 직접 연다.** RCS 로그인/List 탭 탐색/더블클릭 접속은
+     하지 않고, 제목에 EQP_ID 가 든 Remote Monitoring 창에 바로 붙는다. 창이 없으면
+     아무것도 하지 않고 종료.
   2. 합성 info dict (ALID=9006, alarm_name="Manual Trigger") 로 알람 로그/manifest
      형식을 유지한다. 알람 시스템이 보낸 row 가 없으니 alarm_time/UTC9 는 wall-clock.
   3. rcp/msr 1차 입력 + consensus success gather (모니터와 동일한 pre-cycle 작업).
-  4. `run_alarm_cycle(eqp_id, recipe_id, settings, tag=...)` - 사이클 본체.
+  4. `run_alarm_cycle(..., attach_open_tool=True)` - 사이클 본체. 끝나면 teardown 이
+     종전대로 tool 창을 닫는다.
   5. cycle manifest 한 줄 기록.
 
 safety:
@@ -35,7 +38,6 @@ safety:
   RECIPE_ID        (필수)
   CLASS_NAME       (선택 - asset 라우팅/로그용)
   TAG              (선택 - 미지정 시 wall-clock)
-  MANUAL_CORRECTION_SKIP_PREFLIGHT=1  (점검 - List 탭이 이미 열려있다면. env 전용)
 """
 
 import os
@@ -54,25 +56,14 @@ if str(_REPO_ROOT) not in sys.path:
 
 from poc.workflow_3 import ALIGN_FAIL_ALID, LOG_DIR  # noqa: E402
 from poc.workflow_3.config import load_workflow3_settings
-from poc.workflow_3.monitor.cycle import (
-    CycleResult,
-    _list_process_windows,
-    _scan_rcs_processes,
-    _terminate_process,
-    run_alarm_cycle,
-)
+from poc.workflow_3.monitor.cycle import CycleResult, run_alarm_cycle
 from poc.workflow_3.monitor.notify import (
     notify_align_fail_popup,
     send_detection_notify_async,
 )
 from poc.workflow_3.monitor.rcp_msr_gather import gather_rcp_msr
-from poc.workflow_3.monitor.rcs_preflight import ensure_rcs_session_ready
-from poc.workflow_3.monitor.rcs_recovery import recover_rcs_session
 from poc.workflow_3.monitor.success_gather import gather_success_async
-from poc.workflow_3.rcs.login_rcs_common import wait_for_rcs_main_window
-from poc.workflow_3.rcs.open_rcs import launch_rcs
-from poc.workflow_3.rcs.view_list_tab_rcs import click_list_tab_in_main_window
-from poc.workflow_3.rcs.workflow_login import run_login_workflow
+from poc.workflow_3.rcs.login_rcs_common import find_remote_monitoring_window
 from poc.workflow_3.util.abort_switch import (
     abort_reason,
     is_aborted,
@@ -111,7 +102,7 @@ MANUAL_OPERATION_DESC = "manual_trigger"
 
 EXIT_OK = 0
 EXIT_BAD_ARGS = 1
-EXIT_PREFLIGHT_FAILED = 2
+EXIT_PREFLIGHT_FAILED = 2  # 사이클 비활성 / tool 창 없음 / 사이클 전 긴급 해제
 
 
 def _apply_live_mode_defaults() -> None:
@@ -130,7 +121,7 @@ def _apply_live_mode_defaults() -> None:
     print("=" * 70)
     if live:
         print("[WARNING] 실운전 모드: 실제 마우스 클릭이 발생합니다 "
-              "(접속 더블클릭 + align point reposition).")
+              "(align point reposition + OK).")
         hotkey = os.environ.get("ALIGN_FAIL_ABORT_HOTKEY", "<ctrl>+<alt>+q")
         print(f"[WARNING] 긴급 해제 단축키: {hotkey} - 누르면 마우스를 즉시 돌려받습니다.")
         print("[WARNING] 점검만 하려면 중단 후 'SAFE_MODE=1' 을 붙여 다시 실행하세요.")
@@ -210,50 +201,19 @@ def _build_synthetic_info(eqp_id: str, recipe_id: str, class_name: str) -> dict:
     }
 
 
-def _run_preflight(settings):
-    """RCS 가 로그인 + List 탭까지 떠 있는지 보장한다.
+def _tool_window_open(eqp_id: str) -> bool:
+    """엔지니어가 직접 연 tool 창(제목에 eqp_id)이 떠 있는지 본다.
 
-    `align_fail_monitor._run_rcs_preflight` 와 같은 협력자 조립을 그대로 쓰되
-    공개 API `ensure_rcs_session_ready` 를 직접 호출한다 (private 헬퍼 결합 회피).
-    실패해도 None 을 돌려주고, 호출부가 사이클 안의 ensure_rcs_ready 가 복구를
-    다시 시도한다는 사실을 로그에 남긴다.
+    없으면 사이클을 돌리지 않는다 - 사이클의 wait_tool_window 는 못 찾았을 때 다른 tool
+    창을 '오클릭' 으로 보고 닫으므로, 엔지니어가 다른 장비를 열어 둔 경우 그 창이 닫힌다.
     """
-    if not settings.rcs_preflight_enabled:
-        print("[INFO] RCS 기동 준비 생략(ALIGN_FAIL_RCS_PREFLIGHT=0).")
-        return None
-
-    def _recover():
-        return recover_rcs_session(
-            settings,
-            find_processes_fn=_scan_rcs_processes,
-            launch_fn=launch_rcs,
-            login_fn=run_login_workflow,
-            wait_window_fn=wait_for_rcs_main_window,
-            list_windows_fn=_list_process_windows,
-            terminate_fn=_terminate_process,
-        )
-
-    def _open_list(window, title, backend):
-        return click_list_tab_in_main_window(window, title, backend).exit_code
-
-    try:
-        outcome = ensure_rcs_session_ready(
-            settings,
-            find_window_fn=wait_for_rcs_main_window,
-            recover_fn=_recover,
-            open_list_fn=_open_list,
-        )
-    except Exception as exc:
-        print(f"[WARNING] RCS 기동 준비 예외(사이클 안 복구에 의존): {exc}")
-        return None
-
-    status = getattr(outcome, "status", None)
-    if status and status != "ready":
-        print(
-            f"[WARNING] RCS 기동 준비 미완료(status={status}) - "
-            "사이클의 ensure_rcs_ready 가 다시 시도합니다."
-        )
-    return outcome
+    window, title, _backend = find_remote_monitoring_window(eqp_id)
+    if window is None:
+        print(f"[ERROR] tool 창이 없습니다: EQP_ID={eqp_id}. RCS 에서 그 tool 에 먼저 "
+              "직접 접속한 뒤 다시 실행하세요.")
+        return False
+    print(f"[INFO] 열린 tool 창에 붙습니다: title={title!r}")
+    return True
 
 
 def _print_summary(cycle: CycleResult) -> None:
@@ -279,7 +239,7 @@ def _print_summary(cycle: CycleResult) -> None:
 
 
 def main() -> int:
-    """수동 트리거 1회 실행. 종료 코드: 0=사이클 완주, 1=인자 오류, 2=preflight 실패."""
+    """수동 트리거 1회 실행. 종료 코드: 0=사이클 완주, 1=인자 오류, 2=tool 창 없음 등."""
     _apply_live_mode_defaults()
     from poc.workflow_3.workflow_3_config_loader import seed_env
 
@@ -322,7 +282,8 @@ def main() -> int:
     if not start_abort_hotkey(settings.abort_hotkey):
         print("[WARNING] 긴급 해제 단축키가 등록되지 않았습니다 - 실행 중 자동 조작을 "
               "키로 멈출 수 없습니다. 중단하려면 터미널 창에서 프로세스를 종료하세요.")
-    _run_preflight(settings)
+    if not _tool_window_open(eqp_id):
+        return EXIT_PREFLIGHT_FAILED
 
     if is_aborted():
         print(f"[WARNING] 긴급 해제됨({abort_reason()}) - 사이클 진입 전 종료.")
@@ -360,7 +321,7 @@ def main() -> int:
     gather_rcp_msr(eqp_id, recipe_id, settings, timeout_sec=settings.rcp_gather_timeout_sec)
 
     # 본체. 예외는 run_alarm_cycle 안에서 잡혀 CycleResult.failed_step 으로 남는다.
-    cycle = run_alarm_cycle(eqp_id, recipe_id, settings, tag=tag)
+    cycle = run_alarm_cycle(eqp_id, recipe_id, settings, tag=tag, attach_open_tool=True)
     append_cycle_manifest(info, cycle)
 
     if is_aborted():

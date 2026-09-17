@@ -31,7 +31,7 @@ tool 닫기·알림 발송은 step 이 아니라 `run_alarm_cycle` 의 후처리
 import json
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from poc.workflow_3 import ALIGN_IMAGES_DIR, DEBUG_IMAGE_DIR, LOG_DIR
@@ -55,7 +55,7 @@ from poc.workflow_3.monitor.frame_meta import FRAME_META_FILENAME, FrameMetaReco
 from poc.workflow_3.monitor.recording import RecordingSession, prune_recordings
 from poc.workflow_3.monitor.recovery_episode import attempt_dirname, episode_root_for
 from poc.workflow_3.monitor.teardown import run_teardown
-from poc.workflow_3.rcs.row_occupant import OCCUPIED_BY_OTHER, UNKNOWN
+from poc.workflow_3.rcs.row_occupant import FREE, OCCUPIED_BY_OTHER, UNKNOWN
 from poc.workflow_3.sem_monitor.controller import build_rcs_sem_monitor
 from poc.workflow_3.runner.workflow_runner import WorkflowRunner
 from poc.workflow_3.runner.workflow_types import (
@@ -178,9 +178,13 @@ def _ctx_set(target_key: str) -> ConditionGroup:
     )
 
 
-def build_cycle_steps(eqp_id: str) -> list[WorkflowStep]:
-    """알람 1건 사이클의 step 목록을 만든다."""
-    return [
+def build_cycle_steps(eqp_id: str, *, attach_open_tool: bool = False) -> list[WorkflowStep]:
+    """알람 1건 사이클의 step 목록을 만든다.
+
+    `attach_open_tool=True` 는 엔지니어가 tool 창을 이미 직접 열어 둔 경우다
+    (manual_align_correction). RCS 확보와 List 접속을 빼고 열린 창에 바로 붙는다.
+    """
+    steps = [
         WorkflowStep(
             step_id="ensure_rcs_ready",
             step_type="recover",
@@ -225,6 +229,13 @@ def build_cycle_steps(eqp_id: str) -> list[WorkflowStep]:
             depends_on=["locate_sem_panel"],
         ),
     ]
+    if attach_open_tool:
+        steps = [
+            replace(s, depends_on=None) if s.step_id == "wait_tool_window" else s
+            for s in steps
+            if s.step_id not in ("ensure_rcs_ready", "connect_tool")
+        ]
+    return steps
 
 
 # ------------------------------------------------------------------
@@ -1679,11 +1690,13 @@ def run_alarm_cycle(
     tag: str | None = None,
     attempt_seq=None,
     episode_id: str = "",
+    attach_open_tool: bool = False,
 ) -> CycleResult:
     """알람 1건에 대한 전체 사이클을 실행하고 결과 요약을 반환한다.
 
     step 실패로 runner 가 중단돼도 cube 알림·녹화 중지·tool 닫기·팝업 backstop 은
     항상 실행된다. 예외는 삼켜 상위 폴링 루프가 죽지 않게 한다.
+    `attach_open_tool` 은 `build_cycle_steps` 참고.
     """
     tag = tag or make_timestamp_tag()
     cycle_started_at = time.time()
@@ -1707,6 +1720,10 @@ def run_alarm_cycle(
         context["attempt_seq"] = attempt_seq
     if episode_id:
         context["episode_id"] = episode_id
+    if attach_open_tool:
+        # 엔지니어가 직접 연 창 = 그 사람의 제어 세션. List 판독이 없어 unknown 으로 두면
+        # corrected 가 corrected_unverified 로 강등돼 cube + engineer watch 가 헛돈다.
+        context["occupancy"] = FREE
     runner = WorkflowRunner(
         settings,
         workflow_name=f"align_fail_cycle_{eqp_id}",
@@ -1731,7 +1748,7 @@ def run_alarm_cycle(
     try:
         # live graph view (opt-in, 기본 off) — run() 전에 시작해 첫 step 부터 관찰한다.
         # try 안에 두는 이유: 여기서 던져도 finally 의 teardown/알림 보장이 지켜져야 한다.
-        steps = build_cycle_steps(eqp_id)
+        steps = build_cycle_steps(eqp_id, attach_open_tool=attach_open_tool)
         mirror = _maybe_start_graph_mirror(
             settings, steps, context, f"align_fail_cycle_{eqp_id}"
         )

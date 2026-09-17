@@ -39,6 +39,7 @@ from poc.workflow_3.align.matching.engine import (
     _resize_template,
     build_template,
     compute_align_key_score_ensemble,
+    save_overlay_jpeg,
     template_frame_scale,
 )
 from poc.workflow_3.align.search_pattern import square_spiral_step
@@ -46,6 +47,10 @@ from poc.workflow_3.util.abort_switch import abort_reason, is_aborted
 
 # 기준 화면 폭(µm). FOV_um = FOV_UM_CONSTANT / Mag. 상수는 OFFICE-VERIFY(표본 1건 0.02% 차).
 FOV_UM_CONSTANT = 135_000.0
+
+# OM 은 SEM panel 위 휠 한 칸으로 두 단을 오간다: 위 = 210, 아래 = 104 (사용자 확인 2026-09-17).
+OM_WHEEL_UP_MAG = 210.0
+OM_WHEEL_DOWN_MAG = 104.0
 
 
 # ------------------------------------------------------------------
@@ -198,7 +203,10 @@ class GridSearchConfig:
 
     radius_um: float = 30.0        # 탐색 반경 R(시험값, 2026-08-28). 박스 = 2R.
     min_key_px: int = 60           # zoom-out 후 key 가 이보다 작아지면 그 단은 안 쓴다(오피스 실측 상수).
-    pan_budget: int = 10           # sweep 셀 수 상한(= 1 FOV step 수).
+    pan_budget: int = 10           # SEM sweep 셀 수 상한(= 1 FOV step 수).
+    # OM spiral 셀 수 상한. OM 은 저배율이라 한 칸이 wafer 위에서 크게 움직인다 - SEM(고배율 한 칸은
+    # 작다)과 따로 줄인다. 8 = 착지 셀 둘레 한 바퀴(3x3). 2026-09-17 사용자 결정.
+    om_pan_budget: int = 8
     click_margin_ratio: float = 0.12  # recenter 클릭의 FOV 안쪽 여백 -> 1 클릭 최대 0.38 FOV.
     odom_tol_fov: float = 0.15     # |측정 - 명령| 허용(FOV 비율). 넘으면 명령값 폴백 + flag.
     # 추격 대상 최소 점수(sweep 은 zoom-out 단일 scale 매칭이라 key 가 보여도 점수가 낮다 -
@@ -215,11 +223,46 @@ class MagnificationControl:
 
     ``options_fn() -> [배율, ...]`` 은 실장비에서 **드롭다운을 여는 일**이라 선택 직전에 한 번만
     불린다(연 김에 바로 행을 눌러야 한다). ``set_fn(target) -> 판독 배율 | None`` 의 판독은 PM
-    box OCR 이며 None 이면 '모름' 이다 - 명령값을 믿지 않는다(계약 1). Mac 은 list/lambda.
+    box OCR 이며 None 이면 '모름' 이다 - 명령값을 믿지 않는다(계약 1). ``read_fn() -> 판독 배율 |
+    None`` 은 클릭 없이 지금 PM box 만 읽는다(OM 휠 토글 전후 확인용). Mac 은 list/lambda.
     """
 
     options_fn: Callable[[], list]
     set_fn: Callable[[float], float | None]
+    read_fn: Callable[[], float | None] | None = None
+
+
+def _om_to_registered_step(controller, mag: MagnificationControl, reg_mag: float, meta: dict) -> float:
+    """OM 을 등록 이미지와 같은 단(104/210 중 cond 배율에 가까운 쪽)으로 휠 토글하고, 매칭에 쓸
+    현재 배율(등록 배율 단위)을 돌려준다.
+
+    OM 은 단마다 화면이 달라 보여 다른 단에서 recipe/consensus 이미지를 scale 만 바꿔 대 보면
+    놓친다 - 같은 단으로 맞추고 찾는다. cond 의 OM 배율은 '104 부근'(recipe 마다 다름)이라 판독값을
+    그대로 쓰지 않고 단 비율(판독 / 목표 단)로 환산한다. 휠이 원격에 안 먹었으면 실제로 보이는 단의
+    비율로 매칭한다. PM 판독이 없으면 종전처럼 등록 단에 있다고 보고 진행한다.
+    """
+    target = min((OM_WHEEL_DOWN_MAG, OM_WHEEL_UP_MAG), key=lambda m: abs(m - reg_mag))
+    read = mag.read_fn() if mag.read_fn is not None else None
+    meta["om_mag_before"] = read
+    if read is None:
+        meta["reason"] = "om_mag_unreadable"
+        print("[WARNING] grid search: OM PM 배율 판독 실패 - 등록 단에 있다고 보고 진행")
+        return reg_mag
+    if abs(read - target) > 1.0:
+        print(f"[INFO] grid search: OM {read:.0f} -> 등록 단 {target:.0f} 로 휠 "
+              f"{'위' if target > read else '아래'} 한 칸")
+        controller.zoom(1 if target > read else -1)
+        after = mag.read_fn()
+        meta["om_mag_after"] = after
+        if after is None:
+            meta["reason"] = "om_mag_unreadable"
+            print("[WARNING] grid search: 휠 후 OM PM 배율 판독 실패 - 등록 단으로 바뀌었다고 보고 진행")
+            return reg_mag
+        if abs(after - target) > 1.0:
+            meta["reason"] = "om_wheel_not_applied"
+            print(f"[WARNING] grid search: 휠 후에도 OM {after:.0f} - 그 단 비율로 매칭")
+        read = after
+    return reg_mag * read / target
 
 
 class _Stage:
@@ -236,6 +279,8 @@ class _Stage:
         self.max_click_x = (0.5 - config.click_margin_ratio) * fw
         self.max_click_y = (0.5 - config.click_margin_ratio) * fh
         self.frame = None  # 마지막 캡처(odometry 기준).
+        # 클릭마다 찍은 (프레임, 그때의 누적 위치). sweep 이 비우고 읽어 이동 중 프레임도 매긴다.
+        self.captures: list = []
 
     def capture(self):
         self.frame = self.c.capture()
@@ -251,6 +296,7 @@ class _Stage:
         cur = self.capture()
         measured = self.shift_fn(prev, cur) if (self.shift_fn is not None and prev is not None) else None
         self.odo.record(cmd, measured)
+        self.captures.append((cur, self.odo.position))
 
     def move_px(self, dx, dy) -> bool:
         """(dx,dy) px 만큼 stage 를 옮긴다 - 한 클릭 최대 0.38 FOV 로 쪼갠다. abort 면 False.
@@ -330,7 +376,9 @@ def grid_align_search(
     cur_mag = reg_mag
     back_target = None  # SEM 배율 선택 시: 등록 배율 최근접 단(confirm/복귀용).
     if "OM" in mode:
-        cells = spiral_cells(config.pan_budget)
+        cur_mag = _om_to_registered_step(controller, mag, reg_mag, meta)
+        stage.frame = controller.capture()
+        cells = spiral_cells(config.om_pan_budget)
     else:
         options = mag.options_fn()
         if not options:
@@ -360,25 +408,59 @@ def grid_align_search(
     print(f"[INFO] grid search: reg={reg_mag:.0f} search={cur_mag:.0f} scale={scale:.3f} "
           f"fw={fw} cells={len(cells)}")
 
-    def _score(cell):
-        r = match(template, stage.frame, scales=(scale,))
+    # 탐색이 매긴 프레임마다 match overlay(찾은 박스 + score/decision) 한 장. history 의 image 가
+    # 그 파일을 가리켜 "key 위를 지나갔는데 왜 안 잡혔나" 를 grid_search.json 과 함께 대조한다.
+    frames_dir = debug_dir / "grid_frames" if debug_dir is not None else None
+    if frames_dir is not None:
+        try:
+            save_overlay_jpeg(_resize_template(template.raw_image, scale), frames_dir / "template_search.jpg")
+            meta["template_image"] = "grid_frames/template_search.jpg"
+        except Exception as exc:
+            print(f"[WARNING] grid template 이미지 저장 실패: {exc}")
+
+    def _log_frame(rec, overlay):
+        seq = len(history) - 1
+        print(f"[INFO] grid #{seq:03d} {rec['phase']:<7} cell={tuple(rec['cell'])} "
+              f"score={rec['score']:.3f} decision={rec['decision']} xy={tuple(rec['xy'])}")
+        if frames_dir is None:
+            return
+        name = (f"{seq:03d}_{rec['phase']}_c{rec['cell'][0]}_{rec['cell'][1]}"
+                f"_{rec['decision']}_{rec['score']:.2f}.jpg")
+        try:
+            save_overlay_jpeg(overlay, frames_dir / name)
+            rec["image"] = f"grid_frames/{name}"
+        except Exception as exc:
+            print(f"[WARNING] grid frame 저장 실패({name}): {exc}")
+
+    def _score(frame, pos, cell, phase):
+        r = match(template, frame, scales=(scale,))
         ox, oy = template.align_offset_xy
         align_xy = [r.best_xy[0] + round(ox * r.best_scale), r.best_xy[1] + round(oy * r.best_scale)]
-        rec = {"cell": list(cell), "score": float(r.score), "xy": align_xy,
+        # pos = 이 프레임 중심의 누적 위치(px), target = 후보 align point 의 누적 위치(추격 목적지).
+        rec = {"cell": list(cell), "phase": phase, "pos": [float(pos[0]), float(pos[1])],
+               "target": [float(pos[0]) + align_xy[0] - fw / 2, float(pos[1]) + align_xy[1] - fh / 2],
+               "score": float(r.score), "xy": align_xy,
                "match_xy": list(r.best_xy), "scale": float(r.best_scale),
                "decision": r.decision, "orb": float(r.orb_inlier_ratio)}
         history.append(rec)
+        _log_frame(rec, r.debug_overlay)
         return rec
 
     # ---- §2 sweep: collect only. ----
-    records = [_score((0, 0))]
+    records = [_score(stage.frame, odo.position, (0, 0), "sweep")]
     aborted = False
     for cell in cells:
+        stage.captures = []
         if not stage.move_to(cell[0] * fw, cell[1] * fh):
             aborted = True
             break
         meta["cells_visited"] += 1
-        records.append(_score(cell))
+        # 셀로 가는 중간 클릭 프레임(transit)도 매긴다. 셀 간격이 정확히 1 FOV 라 경계에 걸친
+        # key 는 두 도착 프레임에서 모두 잘리고 중간 프레임에서만 온전히 보인다.
+        shots = stage.captures or [(stage.frame, odo.position)]
+        for i, (shot, pos) in enumerate(shots):
+            records.append(_score(shot, pos, cell, "sweep" if i == len(shots) - 1 else "transit"))
+    stage.captures = []
     pan_count = meta["cells_visited"]
 
     best_rec = max(records, key=lambda r: r["score"])
@@ -388,19 +470,24 @@ def grid_align_search(
     # ---- §4 chase: best-first, confirm at registered-nearest mag. ----
     status = "exhausted"
     if not aborted:
-        chase = sorted(
-            (r for r in records if r["score"] >= config.candidate_score),
-            key=lambda r: -r["score"],
-        )[: max(0, config.max_chase)]
+        # 같은 key 를 여러 프레임에서 본 후보는 점수 높은 하나만 쫓는다 - 이동 중 프레임끼리 크게
+        # 겹쳐 한 key 가 2~3번 잡히고, 그대로 두면 max_chase 를 한 자리에 다 쓴다. 반경은 탐색 배율의
+        # key 크기다(그 안의 다른 후보는 confirm 프레임이 어차피 함께 본다).
+        key_px = max(template.raw_image.shape[:2]) * scale
+        chase: list[dict] = []
+        for r in sorted((r for r in records if r["score"] >= config.candidate_score),
+                        key=lambda r: -r["score"]):
+            if len(chase) >= max(0, config.max_chase):
+                break
+            if any(abs(r["target"][0] - c["target"][0]) < key_px
+                   and abs(r["target"][1] - c["target"][1]) < key_px for c in chase):
+                continue
+            chase.append(r)
         print(f"[INFO] grid search: 추격 후보 {len(chase)}/{len(records)} "
               f"(candidate_score>={config.candidate_score}, top={[round(r['score'], 3) for r in chase]})")
         for rec in chase:
-            cx, cy = rec["cell"]
-            if not stage.move_to(cx * fw, cy * fh):
-                aborted = True
-                break
-            # 후보 점으로 recenter (odometry 포함).
-            if not stage.move_px(rec["xy"][0] - fw / 2, rec["xy"][1] - fh / 2):
+            # 후보를 본 프레임의 위치 + 프레임 안 오프셋 = 후보의 누적 위치로 recenter.
+            if not stage.move_to(*rec["target"]):
                 aborted = True
                 break
             back = mag.set_fn(back_target) if back_target is not None else None
@@ -421,6 +508,7 @@ def grid_align_search(
                             "xy": list(align_xy), "match_xy": list(r.best_xy), "decision": r.decision,
                             "orb": float(r.orb_inlier_ratio), "scale": s2,
                             "distinctive": bool(r.distinctive), "second_ratio": r.second_ratio})
+            _log_frame(history[-1], r.debug_overlay)
             # confirm 게이트: 단일 known scale(>= 0.6) 의 ensemble match. legacy 의 orb>0 는 쓰지
             # 않는다 - SEM junction key 는 ORB 특징점이 빈약해(aperture 문제) 진짜 match 도
             # orb=0 으로 나온다. distinctive 는 engine 규약대로 soft advisory 로만 기록한다

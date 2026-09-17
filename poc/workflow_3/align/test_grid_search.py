@@ -209,15 +209,16 @@ def test_degrades_when_zoom_out_readback_fails():
     assert _moves(ctl) == []
 
 
-def test_om_mode_skips_zoom_out_and_pans_budget_cells():
-    """OM 은 key 가 작아 zoom-out 불가(§6) -> 현재 배율에서 예산만큼 spiral."""
+def test_om_mode_skips_zoom_out_and_pans_its_own_budget_cells():
+    """OM 은 key 가 작아 zoom-out 불가(§6) -> 현재 배율에서 OM 예산만큼 spiral. OM 한 칸은 wafer 위
+    이동이 커서 SEM 예산(고배율이라 한 칸이 작다)과 따로 줄인다(2026-09-17 사용자 결정)."""
     ctl = _Ctl(mode="OM")
     mag = _Mag(CG_OPTIONS, reg_mag=104)
     tpl = _tpl()
     tpl["OM"] = tpl.pop("SEM")
     out = gs.grid_align_search(
         ctl, tpl, mag.control(), reg_mag=104,
-        config=gs.GridSearchConfig(pan_budget=4), match_fn=_low,
+        config=gs.GridSearchConfig(pan_budget=10, om_pan_budget=4), match_fn=_low,
     )
     assert mag.set_calls == []
     assert out.meta["cells_visited"] == 4
@@ -461,7 +462,8 @@ def test_settings_expose_grid_search_knobs(monkeypatch):
     from poc.workflow_3.config import load_workflow3_settings
 
     s = load_workflow3_settings()
-    assert s.search_mode == "grid" and s.search_radius_um == 30.0
+    assert s.search_mode == "grid" and s.search_radius_um == 30.0 and s.search_pan_budget == 10
+    assert s.search_om_pan_budget == 8
     assert s.search_min_key_px == 60 and s.search_max_chase == 3 and s.search_odom_tol_fov == 0.15
     monkeypatch.setenv("ALIGN_FAIL_SEARCH_MODE", "legacy")
     monkeypatch.setenv("ALIGN_FAIL_SEARCH_RADIUS_UM", "12")
@@ -476,7 +478,7 @@ def test_options_are_read_once_and_only_when_zooming_out():
     tpl = _tpl(); tpl["OM"] = tpl.pop("SEM")
     mag = _Mag(CG_OPTIONS, reg_mag=104)
     gs.grid_align_search(ctl, tpl, mag.control(), reg_mag=104,
-                         config=gs.GridSearchConfig(pan_budget=1), match_fn=_low)
+                         config=gs.GridSearchConfig(om_pan_budget=1), match_fn=_low)
     assert mag.list_calls == 0
     ctl = _Ctl()
     mag = _Mag(CG_OPTIONS, reg_mag=30000)
@@ -622,3 +624,136 @@ def test_degenerate_grid_makes_no_gesture_at_all():
     assert out.meta["cells_visited"] == 0
     assert _moves(ctl) == []
     assert out.status == "exhausted"
+
+
+# ------------------------------------------------------------------
+# 이동 중 프레임(transit) 도 점수를 매긴다 - 셀 경계에 걸친 key 는 도착 프레임 둘 다에서 잘린다
+# ------------------------------------------------------------------
+
+
+def test_key_cut_by_cell_boundary_is_found_from_transit_frame():
+    """10K 탐색 FOV 는 wafer 1536px. key(등록 crop 512px)를 착지 셀과 (1,0) 셀의 경계에 두면
+    두 도착 프레임에서 모두 잘리고, 셀로 가는 3 클릭 중간 프레임에서만 온전히 보인다."""
+    start = (2304, 1728)
+    key = (start[0] + 768, start[1])
+    wafer, tpl = _wafer_with_key(key)
+    ctl = _WaferCtl(wafer, start, reg_mag=30000)
+    out = gs.grid_align_search(
+        ctl, tpl, gs.MagnificationControl(lambda: [10000, 20000, 50000], ctl.set_mag), reg_mag=30000,
+        config=gs.GridSearchConfig(radius_um=12.0, min_key_px=60, pan_budget=1),
+        shift_fn=None,
+    )
+    assert out.status == "match", (out.status, out.meta.get("reason"), out.history)
+    assert abs(ctl.pos[0] - key[0]) < 256 and abs(ctl.pos[1] - key[1]) < 192
+
+
+def _marker_wafer(key_wafer_xy, size=(3456, 4608)):
+    """검은 wafer 에 key 자리만 밝은 9px 사각형. 탐색 배율(1/3)에서도 3px 로 남는다."""
+    wafer = np.zeros(size, dtype=np.uint8)
+    kx, ky = key_wafer_xy
+    wafer[ky - 4:ky + 5, kx - 4:kx + 5] = 255
+    return wafer
+
+
+def _marker_matcher(score=0.5, confirm_decision="low"):
+    """프레임에서 밝은 표식을 찾는 matcher. 보이면 score, 아니면 0. confirm scale 판정만 바꾼다."""
+    def _match(template, frame, **kw):
+        fh, fw = frame.shape[:2]
+        _, peak, _, (x, y) = cv2.minMaxLoc(frame)
+        visible = peak > 100
+        confirm = kw.get("scales", (0.0,))[0] >= gs.MIN_CONFIRM_SCALE
+        return AlignKeyMatchResult(
+            score=score if visible else 0.0, chamfer_score=0.0, orb_inlier_ratio=0.0,
+            best_xy=(x, y) if visible else (fw // 2, fh // 2), best_scale=1.0,
+            decision=(confirm_decision if confirm else "low") if visible else "low",
+            debug_overlay=frame,
+        )
+    return _match
+
+
+def test_key_seen_from_several_sweep_frames_is_chased_once():
+    """이동 중 프레임끼리 크게 겹쳐 같은 key 가 3 프레임에서 잡힌다. confirm 이 실패해도 같은
+    자리를 max_chase 만큼 반복해 쫓지 않는다 - 다른 후보의 추격 기회를 빼앗기 때문."""
+    start = (2304, 1728)
+    key = (start[0] + 512, start[1])
+    ctl = _WaferCtl(_marker_wafer(key), start, reg_mag=30000)
+    out = gs.grid_align_search(
+        ctl, _tpl(),
+        gs.MagnificationControl(lambda: [10000, 20000, 50000], ctl.set_mag), reg_mag=30000,
+        config=gs.GridSearchConfig(radius_um=12.0, min_key_px=60, pan_budget=1),
+        match_fn=_marker_matcher(), shift_fn=None,
+    )
+    seen = [h for h in out.history if h.get("phase") != "confirm" and h["score"] > 0]
+    assert len(seen) >= 2
+    assert len([h for h in out.history if h.get("phase") == "confirm"]) == 1
+
+
+def test_every_scored_frame_is_saved_and_linked_from_history(tmp_path):
+    """탐색이 매긴 프레임(sweep/transit/confirm) 전부를 match overlay 로 남기고 history 가 그 파일을
+    가리킨다. 탐색 배율로 줄인 template 도 한 장 남긴다 - '무엇을 찾았고 어떻게 봤나' 의 근거."""
+    start = (2304, 1728)
+    key = (start[0] + 512, start[1])
+    ctl = _WaferCtl(_marker_wafer(key), start, reg_mag=30000)
+    out = gs.grid_align_search(
+        ctl, _tpl(), gs.MagnificationControl(lambda: [10000, 20000, 50000], ctl.set_mag), reg_mag=30000,
+        config=gs.GridSearchConfig(radius_um=12.0, min_key_px=60, pan_budget=1),
+        match_fn=_marker_matcher(), shift_fn=None, debug_dir=tmp_path,
+    )
+    phases = {h.get("phase") for h in out.history}
+    assert {"sweep", "transit", "confirm"} <= phases
+    for h in out.history:
+        assert cv2.imread(str(tmp_path / h["image"])) is not None, h
+    assert len({h["image"] for h in out.history}) == len(out.history)
+    template = cv2.imread(str(tmp_path / out.meta["template_image"]))
+    assert template is not None and template.shape[1] == round(512 * 10000 / 30000)
+
+
+# ------------------------------------------------------------------
+# OM 배율 - 휠 한 칸으로 104 <-> 210 (위=210, 아래=104). recipe OM 이미지와 같은 단에서 찾는다
+# ------------------------------------------------------------------
+
+
+class _OmCtl(_Ctl):
+    """OM 휠 토글을 흉내낸다. wheel_works=False 면 휠이 원격에 안 먹은 경우."""
+
+    def __init__(self, mag, wheel_works=True):
+        super().__init__(mode="OM")
+        self.mag, self.wheel_works = float(mag), wheel_works
+
+    def zoom(self, d):
+        super().zoom(d)
+        if self.wheel_works:
+            self.mag = 210.0 if d > 0 else 104.0
+
+
+def _om_search(ctl, reg_mag):
+    tpl = _tpl()
+    tpl["OM"] = tpl.pop("SEM")
+    seen = []
+
+    def _match(template, frame, **kw):
+        seen.append((ctl.mag, kw["scales"][0]))
+        return _low(template, frame)
+
+    out = gs.grid_align_search(
+        ctl, tpl, gs.MagnificationControl(lambda: [], lambda t: None, lambda: ctl.mag), reg_mag=reg_mag,
+        config=gs.GridSearchConfig(om_pan_budget=2), match_fn=_match, shift_fn=None,
+    )
+    return out, seen
+
+
+def test_om_search_wheels_to_the_registered_step_before_sweeping():
+    """tool 이 210 에 멈췄고 recipe OM 은 102(104 단)로 등록: 휠 아래 한 칸 후 모든 매칭이 104 에서."""
+    ctl = _OmCtl(mag=210)
+    out, seen = _om_search(ctl, reg_mag=102)
+    assert [c for c in ctl.calls if c[0] == "zoom"] == [("zoom", -1)]
+    assert seen and all(m == 104.0 and s == pytest.approx(1.0) for m, s in seen)
+    assert out.meta["om_mag_before"] == 210.0 and out.meta["om_mag_after"] == 104.0
+
+
+def test_om_search_scales_by_the_step_actually_shown_when_the_wheel_did_not_take():
+    """휠이 원격에 안 먹어 210 그대로면 등록 단(104)보다 2배 크게 보인다 - 그 비율로 매칭한다."""
+    ctl = _OmCtl(mag=210, wheel_works=False)
+    out, seen = _om_search(ctl, reg_mag=104)
+    assert seen and all(s == pytest.approx(210 / 104) for _, s in seen)
+    assert out.meta["reason"] == "om_wheel_not_applied"

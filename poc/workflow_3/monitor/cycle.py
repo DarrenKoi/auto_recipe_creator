@@ -1165,6 +1165,7 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
                 radius_um=settings.search_radius_um,
                 min_key_px=settings.search_min_key_px,
                 pan_budget=settings.search_pan_budget,
+                om_pan_budget=settings.search_om_pan_budget,
                 odom_tol_fov=settings.search_odom_tol_fov,
                 max_chase=settings.search_max_chase,
                 candidate_score=settings.search_candidate_score,
@@ -2793,14 +2794,34 @@ class _PMDropdownSelector:
         self._opened = (crop, origin, shot)
         return [float(o["value"]) for o in options]
 
-    def select(self, target):
-        """target 에 가장 가까운 행을 눌러 절대 배율을 바꾸고 PM OCR 로 되읽는다. 판독 실패 None."""
-        from poc.workflow_3.sem_monitor.pm_dropdown import nearest_option
+    def read_current(self):
+        """클릭 없이 지금 PM box 배율을 읽는다(OCR). 판독 실패 None. 박스 위치는 첫 검출 후 캐시."""
         from poc.workflow_3.sem_monitor.sem_box_detect import (
             detect_sem_box,
             parse_pm_magnification,
             read_pm_via_ocr,
         )
+
+        try:
+            shot = capture_window(self.tool_window)
+            if self._pm_box is None:
+                det = detect_sem_box(
+                    shot, self.sem_box_client,
+                    ocr_client=self.ocr_client, two_stage=self.settings.pm_two_stage_ocr_enabled,
+                )
+                self._pm_box = det.pm_box_px
+                pm_text = det.pm_text
+            else:
+                pm_text = read_pm_via_ocr(shot, self._pm_box, self.reader)
+            mag = parse_pm_magnification(pm_text)
+        except Exception as exc:
+            print(f"[WARNING] PM 배율 판독 실패: {exc}")
+            return None
+        return None if mag is None else float(mag)
+
+    def select(self, target):
+        """target 에 가장 가까운 행을 눌러 절대 배율을 바꾸고 PM OCR 로 되읽는다. 판독 실패 None."""
+        from poc.workflow_3.sem_monitor.pm_dropdown import nearest_option
 
         if self._opened is None:
             op = self.open_dropdown()
@@ -2815,23 +2836,9 @@ class _PMDropdownSelector:
         opt = nearest_option(self.options, float(target))
         if opt is None or not self.click_option(opt, crop, origin, shot, f"grid_{int(target)}"):
             return None
-        try:
-            shot = capture_window(self.tool_window)
-            if self._pm_box is None:
-                det = detect_sem_box(
-                    shot, self.sem_box_client,
-                    ocr_client=self.ocr_client, two_stage=self.settings.pm_two_stage_ocr_enabled,
-                )
-                self._pm_box = det.pm_box_px
-                pm_text = det.pm_text
-            else:
-                pm_text = read_pm_via_ocr(shot, self._pm_box, self.reader)
-            mag = parse_pm_magnification(pm_text)
-        except Exception as exc:
-            print(f"[WARNING] PM 배율 되읽기 실패(target={target}): {exc}")
-            return None
+        mag = self.read_current()
         print(f"[INFO] PM 배율 선택 {opt['text']}({opt['value']}) -> 판독 {mag}")
-        return None if mag is None else float(mag)
+        return mag
 
 
 def _build_grid_mag_control(context: dict, settings: Workflow3Settings, capture_dir):
@@ -2863,7 +2870,7 @@ def _build_grid_mag_control(context: dict, settings: Workflow3Settings, capture_
         # 보정 actuation 의 이중 게이트(SAFE_MODE=0 **and** CORRECTION_DRY_RUN=0)를 배율 클릭에도 건다.
         action_enabled=settings.action_enabled and not settings.correction_dry_run,
     )
-    return MagnificationControl(sel.list_values, sel.select)
+    return MagnificationControl(sel.list_values, sel.select, sel.read_current)
 
 
 def _run_pm_dropdown_arms(

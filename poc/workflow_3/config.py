@@ -351,6 +351,10 @@ class Workflow3Settings(WorkflowSettings):
     # 클릭 횟수는 더 이상 제약이 아니다). 못 찾으면 fallback_exhausted/escalated 로
     # 끝나고 cube 알림이 나간다. cycle.py 가 low_streak_limit 도 budget+1 로 맞춰 주입한다.
     search_pan_budget: int = 10
+    # grid search 의 OM spiral 셀 수. OM 은 저배율이라 한 칸이 wafer 위에서 크게 움직여 SEM 과 따로
+    # 줄인다(2026-09-17 사용자 결정; 종전엔 search_pan_budget 10 을 같이 써 두 번째 바퀴까지 나갔다).
+    # 8 = 착지 셀 둘레 한 바퀴(3x3). SEM 은 고배율이라 한 칸이 작아 반경/예산을 그대로 둔다.
+    search_om_pan_budget: int = 8
     # --- search-around 재설계 (2026-08-28, docs/superpowers/specs/2026-08-28-search-around-zoomout-grid-design.md) ---
     # "grid" = PM 드롭다운 절대 배율 zoom-out + FOV 격자 sweep(grid_search). "legacy" = 종전 휠+spiral.
     search_mode: str = "grid"
@@ -515,6 +519,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         align_fail_active_check_enabled=env_flag("ALIGN_FAIL_ACTIVE_CHECK", default=True),
         fallback_search_enabled=env_flag("ALIGN_FAIL_FALLBACK_SEARCH", default=True),
         search_pan_budget=env_int("ALIGN_FAIL_SEARCH_PAN_BUDGET", 10),
+        search_om_pan_budget=env_int("ALIGN_FAIL_SEARCH_OM_PAN_BUDGET", 8),
         search_mode=(_env_str("ALIGN_FAIL_SEARCH_MODE", "grid").strip().lower() or "grid"),
         search_radius_um=env_float("ALIGN_FAIL_SEARCH_RADIUS_UM", 30.0),
         search_min_key_px=env_int("ALIGN_FAIL_SEARCH_MIN_KEY_PX", 60),

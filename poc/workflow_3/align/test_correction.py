@@ -453,11 +453,12 @@ def test_primary_path_stamps_ambiguity() -> bool:
 
 
 def test_engineer_review_route() -> bool:
-    """present 하나 만성 모호(second_ratio>tau) → primary 보류: escalated_ambiguous_key, 무액션·fallback 미진입.
+    """present 하나 만성 모호(second_ratio>tau) + fallback off → escalated_ambiguous_key, 무액션.
 
     데모는 key 가 보이는(present) 입력이라 임계 None 이면 corrected 로 끝난다(test_primary_path).
     여기서는 실제 second_ratio 바로 아래로 reregister 임계를 낮춰 '만성 모호' 를 결정적으로
     강제하고, 게이트가 act 대신 engineer_review 로 라우팅해 actuation 을 막는지 검증한다.
+    fallback on 이면 같은 입력이 search-around 로 간다(test_ambiguous_key_enters_search_around).
     """
     monitor, templates = _make_primary_demo(key_in_view=True)
     frame = monitor.capture()
@@ -479,7 +480,7 @@ def test_engineer_review_route() -> bool:
         templates,
         ok_locator=lambda _s: (690, 560),
         dry_run=False,  # actuation 이 '일어나지 않아야' 함을 호출 횟수로 검증.
-        config=CorrectionConfig(reregister_ratio_threshold=thr),
+        config=CorrectionConfig(reregister_ratio_threshold=thr, fallback_search_enabled=False),
     )
     ok = (
         outcome.status == "escalated_ambiguous_key"
@@ -495,6 +496,57 @@ def test_engineer_review_route() -> bool:
         f"moves={len(fake.move_calls)} clicks={len(fake.screen_clicks)} "
         f"fallback={outcome.fallback} sr={outcome.second_ratio}"
     )
+    return ok
+
+
+def test_ambiguous_key_enters_search_around() -> bool:
+    """align point 를 일부러 어긋나게 둔 OM: 화면엔 닮은 주기 구조만 있다 → search-around 진입.
+
+    2026-09-17 오피스: 게이트가 engineer_review(adjust+비유일 / match+second_ratio>0.98)를
+    내면 탐색 없이 escalated_ambiguous_key 로 끝나 사이클이 엔지니어 대기 60s 후 종료했다.
+    paused 한 장으로는 '보이는 주기 key' 와 '닮은 이웃뿐' 을 못 가르므로 탐색이 판별한다
+    (격자는 착지 셀을 먼저 채점하고 confirm=match 만 받으며 OK 는 누르지 않는다).
+    """
+    import poc.workflow_3.align.grid_search as gs
+    from poc.workflow_3.align.live_search import LiveSearchOutcome
+    from poc.workflow_3.align.matching.test_engine import make_synthetic_template
+
+    recipe = cv2.copyMakeBorder(make_synthetic_template(key_type="box"), 20, 20, 20, 20,
+                                cv2.BORDER_REPLICATE)
+    template = build_template(recipe, recipe_id="R", version="v0", key_type="om",
+                              source_wh=(768, 512))
+
+    def _periodic(boxes, pitch=140):
+        f = np.full((512, 768), 120, dtype=np.uint8)
+        for y in range(0, 512, pitch):
+            for x in range(0, 768, pitch):
+                for r, th in boxes:
+                    cv2.rectangle(f, (x + 70 - r, y + 70 - r), (x + 70 + r, y + 70 + r), 40, th)
+        return f
+
+    calls: list[int] = []
+    orig = gs.search_around
+    gs.search_around = lambda *a, **k: (calls.append(1), LiveSearchOutcome(
+        status="exhausted", final_decision="low", best=None, pan_count=0, history=[], meta={}))[1]
+    results = {}
+    try:
+        # 비대칭 점 없는 3중 박스 = match+sr 1.0, 안쪽 두 박스 = adjust+비유일.
+        for name, boxes in (("match_lookalike", ((54, 4), (36, 3), (18, 3))),
+                            ("adjust_lookalike", ((36, 3), (18, 3)))):
+            calls.clear()
+            fake = _FakeController(_periodic(boxes), np.zeros((600, 800), np.uint8), mode="OM")
+            out = correct_align_fail(
+                fake, {"OM": template}, ok_locator=lambda _s: (1, 1), dry_run=False,
+                config=CorrectionConfig(reregister_ratio_threshold=0.98),  # 운영 루프 값.
+            )
+            results[name] = (out.key_decision, out.status, bool(calls), len(fake.screen_clicks))
+    finally:
+        gs.search_around = orig
+    ok = (
+        {r[0] for r in results.values()} == {"match", "adjust"}  # 두 review 분기를 모두 덮는다.
+        and all(s == "fallback_exhausted" and c and k == 0 for _, s, c, k in results.values())
+    )
+    print(f"[{'PASS' if ok else 'FAIL'}] ambiguous_key_enters_search_around: {results}")
     return ok
 
 
@@ -720,6 +772,7 @@ def main() -> int:
         test_with_key_ambiguity_stamps(),
         test_primary_path_stamps_ambiguity(),
         test_engineer_review_route(),
+        test_ambiguous_key_enters_search_around(),
         test_load_template_branches(),
         test_offset_applied_to_reposition(),
         test_scale_pinned_flag_in_history(),

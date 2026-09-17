@@ -239,8 +239,9 @@ def correct_align_fail(
        - "act"             → clamp_to_fov(best_xy) → move_to_point(=더블클릭 recenter) →
                              capture_screen() 에서 OK 버튼을 찾아 click_screen(OK).
        - "fallback_search" → live_align_search(...) 로 위임(아무것도 안 보일 때만 pan/zoom).
-       - "engineer_review" → present 하나 만성 모호(second_ratio>tau) → actuation 없이
-                             escalated_ambiguous_key 로 보류(config.reregister_ratio_threshold 주입 시).
+       - "engineer_review" → 후보가 유일하지 않음(adjust+비유일 / second_ratio>tau) →
+                             fallback_search_enabled 면 search_around 로 판별, off 면 actuation
+                             없이 escalated_ambiguous_key 로 보류.
 
     dry_run=True 면 좌표를 계산·로그·overlay 만 하고 실제 actuation(move/click)은 하지
     않는다(Mac-safe, procedure §5 Phase 3). ok_locator 를 직접 주입하면 VLM 없이도
@@ -316,6 +317,15 @@ def correct_align_fail(
     route = key_visibility_gate(
         result, reregister_ratio_threshold=config.reregister_ratio_threshold, base_scale=base_scale
     )
+    if route == GATE_ENGINEER_REVIEW and config.fallback_search_enabled:
+        # paused 한 장으로는 '보이는 주기 key' 와 'align point 가 어긋나 닮은 이웃만 보임' 을
+        # 못 가른다(2026-09-17 오피스: OM 을 일부러 어긋나게 두자 여기서 멈춰 탐색 없이
+        # 엔지니어 대기로 끝났다). 탐색이 판별한다 - 격자는 착지 셀을 먼저 채점하고
+        # confirm=match 만 받으며 OK 는 누르지 않는다. 탐색 off 일 때만 아래에서 보류.
+        sr_txt = f"{result.second_ratio:.3f}" if result.second_ratio is not None else "-"
+        print(f"[WARNING] align key 후보가 유일하지 않음(decision={result.decision} "
+              f"score={result.score:.3f} second_ratio={sr_txt}) -> 주변 탐색으로 판별")
+        route = GATE_FALLBACK
     if route == GATE_FALLBACK and not config.fallback_search_enabled:
         # pan/zoom 을 하지 않고 끝낸다. actuation 이 전혀 없으므로 stage 는 그대로다.
         # status 는 corrected 가 아니라서 notify 가 cube 로 엔지니어를 부른다.

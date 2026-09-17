@@ -42,6 +42,7 @@ safety:
 
 import os
 import sys
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -256,7 +257,11 @@ def main() -> int:
     seed_env()
 
     eqp_id, recipe_id, _class_name, env_tag = _load_trigger_args()
-    settings = load_workflow3_settings()
+    # 클릭 전 align fail 다이얼로그 확인은 끈다. 그 확인은 '피드가 해제된 알람도 돌려준다'
+    # 는 알람 큐 문제를 막는 것인데, 여기는 알람이 아니라 엔지니어가 지금 연 tool 이라
+    # 해당이 없고, 수동 시험은 다이얼로그 없이 도는 경우가 많아 매번 align_fail_cleared 로
+    # 클릭 없이 끝났다. OK 버튼이 없으면 reposition 후 escalated_no_ok 로 끝난다.
+    settings = replace(load_workflow3_settings(), align_fail_active_check_enabled=False)
     tag = env_tag or make_timestamp_tag()
 
     # 여기부터의 콘솔 출력 전부(트리거 배너, 창 확인, 요약)를 사이클과 같은 이벤트 폴더의

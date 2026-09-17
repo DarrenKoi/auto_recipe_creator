@@ -121,3 +121,26 @@ def test_write_graph_html_writes_pollable_state_js(tmp_path):
     payload = json.loads(js[js.index("(", 30) + 1 : js.rindex(")")])
     assert set(payload) == {"status", "current", "diagram", "rows"}
     assert "stateDiagram-v2" in payload["diagram"]
+
+
+def test_write_text_atomic_retries_windows_lock(tmp_path, monkeypatch):
+    """대상 파일이 잠깐 잠겨 rename 이 PermissionError(WinError 5)면 다시 시도한다."""
+    import os
+
+    from poc.workflow_4.framework import graph_view
+
+    real_replace = os.replace
+    calls = []
+
+    def flaky_replace(src, dst):
+        calls.append(dst)
+        if len(calls) < 3:
+            raise PermissionError(5, "액세스가 거부되었습니다")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(graph_view.os, "replace", flaky_replace)
+    monkeypatch.setattr(graph_view, "_REPLACE_RETRY_SEC", 0)
+    target = tmp_path / "workflow_graph.html"
+    graph_view.write_text_atomic(target, "ok")
+    assert target.read_text(encoding="utf-8") == "ok"
+    assert len(calls) == 3

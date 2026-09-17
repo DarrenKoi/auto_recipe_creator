@@ -9,10 +9,14 @@ import html
 import json
 import os
 import platform
+import time
 import webbrowser
 from pathlib import Path
 
 from poc.workflow_4.framework.run_state import RunState
+
+_REPLACE_ATTEMPTS = 10
+_REPLACE_RETRY_SEC = 0.05
 from poc.workflow_4.framework.state_graph import NodeKind, WorkflowGraph
 
 # vendored mermaid asset — 없으면 CDN fallback. 파일 내용은 모듈 레벨에서 한 번만 읽는다.
@@ -38,10 +42,20 @@ def _mermaid_asset_content() -> str:
 def write_text_atomic(path: Path, text: str) -> None:
     """tmp 에 쓰고 os.replace 로 바꿔치기한다 - 브라우저가 1s 마다 다시 읽는 3.6MB
     HTML 을 쓰는 도중에 읽히면 빈 화면/깨진 페이지가 한 틱 보이므로(torn read),
-    같은 볼륨 안 rename 으로 '완성본 아니면 직전본' 만 보이게 한다."""
+    같은 볼륨 안 rename 으로 '완성본 아니면 직전본' 만 보이게 한다.
+
+    Windows 는 대상 파일을 브라우저(1s 폴링)나 백신 검사가 잠깐 쥐고 있으면 rename 이
+    WinError 5(액세스 거부)로 실패한다 - 잠금은 수십 ms 라 짧게 다시 시도한다."""
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    for attempt in range(_REPLACE_ATTEMPTS):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == _REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(_REPLACE_RETRY_SEC)
 
 
 def _sanitize_label(text: str) -> str:

@@ -31,6 +31,14 @@ ALARM_LOG_PATH = LOG_DIR / "align_fail_alarms.txt"
 VIEW_ONLY_OBSERVATION = "view_only_observation"   # 다른 엔지니어 점유 - 관전·녹화만.
 CORRECTED_UNVERIFIED = "corrected_unverified"     # 점유 미상 - 보정했으나 반영 미확인.
 
+# 접속 직후 화면에 align fail 다이얼로그가 있는지 먼저 본 결과 (2026-09-17). 알람 피드는
+# 해제된 알람도 계속 돌려주므로(이벤트 로그), 큐에서 기다리는 동안 엔지니어가 이미 해결한
+# tool 에 들어가 측정 중인 장비를 클릭하지 않으려는 것이다. 둘 다 클릭 없이 끝나지만
+# "corrected" 가 아니므로 cube 는 나간다 - VLM 이 진짜 다이얼로그를 놓쳤다면 그 알림이
+# 멈춘 장비를 사람에게 되돌려 주는 유일한 경로다.
+ALIGN_FAIL_CLEARED = "align_fail_cleared"          # 다이얼로그 없음 - 이미 해결로 보고 종료.
+ALIGN_FAIL_UNCONFIRMED = "align_fail_unconfirmed"  # 다른 창/판독 실패 - 확인 못 해 클릭 안 함.
+
 
 # ------------------------------------------------------------------
 # office_rich_notify 로딩 (정위치).
@@ -200,6 +208,14 @@ def _stage_note(failed_step: str, failure_class: str) -> str:
 # 접두사 매칭이 새는 자리다)이라 fallback_* 도 접두사로 묶지 않고 4가지를 다 적는다.
 # 여기 없는 status 는 요구 행동 줄 없이 종전처럼 status= 로만 나간다.
 _UNCORRECTED_ACTIONS = {
+    ALIGN_FAIL_CLEARED: (
+        "접속 시 align fail 다이얼로그 없음(이미 해결된 것으로 보고 클릭 안 함)",
+        "장비가 아직 멈춰 있으면 직접 확인해주세요",
+    ),
+    ALIGN_FAIL_UNCONFIRMED: (
+        "접속 시 align fail 다이얼로그를 확인 못 함(다른 창이거나 판독 실패, 클릭 안 함)",
+        "화면 확인 후 직접 align point 를 잡고 OK 를 눌러주세요",
+    ),
     "escalated_invalid_geometry": (
         "저장 이미지와 live SEM 영역의 크기 비율이 맞지 않아 자동 보정 보류",
         "SEM 영상 영역과 배율을 확인한 뒤 직접 align point 를 잡아주세요",

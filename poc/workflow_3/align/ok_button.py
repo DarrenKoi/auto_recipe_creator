@@ -176,6 +176,56 @@ def _locate_bbox(client, image: Image.Image, system_message: str, user_text: str
     return bbox_to_pixels(parsed.get(bbox_key), w, h, parsed.get("coord_system"))
 
 
+# probe_align_dialog 판정. 보정 사이클이 클릭 전에 "align fail 이 아직 살아 있나" 를
+# 묻는 데도 쓴다(monitor/cycle.py) - OK 를 찾을 때와 **같은 판정**이어야 두 곳이 다른
+# 답을 내지 않는다.
+DIALOG_PRESENT = "present"   # alignment 다이얼로그로 확인(lenient 면 '못 읽음' 포함).
+DIALOG_ABSENT = "absent"     # VLM 이 다이얼로그를 못 봄.
+DIALOG_OTHER = "other"       # 창은 있는데 문구가 alignment 가 아님 - 다른 창.
+
+
+def probe_align_dialog(
+    frame_bgr: np.ndarray,
+    client: Workflow1VLMClient,
+    *,
+    ocr_client=None,
+    confirm_policy: str | None = None,
+    debug_image_dir=None,
+) -> tuple[str, dict | None]:
+    """전체 화면에 alignment 다이얼로그가 떠 있는가 -> (DIALOG_*, 다이얼로그 픽셀 bbox).
+
+    다이얼로그 bbox(VLM) -> 그 crop 의 문구 OCR 확인. 읽혔는데 `OK_DIALOG_REQUIRED` 가
+    없으면 다른 창이다(DIALOG_OTHER). 예외는 삼키지 않는다 - 호출부가 '못 봄' 과 '판독
+    실패' 를 갈라야 한다.
+    """
+    policy = confirm_policy or load_ok_confirm_policy()
+    image = _frame_to_rgb_image(frame_bgr)
+    artifact_dir = debug_image_dir or (DEBUG_IMAGE_DIR / "ok_button" / str(time.time_ns()))
+
+    dialog = _locate_bbox(client, image, _dialog_system_prompt(), _dialog_user_prompt(),
+                          "dialog_visible", "dialog_bbox")
+    if dialog is None:
+        # 못 봤을 때가 VLM 누락인지 오피스에서 대조할 근거는 이 프레임뿐이다.
+        save_debug_jpeg(image, artifact_dir / "screen_no_dialog.jpg", quality=85)
+        print("[INFO] align 다이얼로그: 보이지 않음")
+        return DIALOG_ABSENT, None
+    dialog_crop = image.crop((dialog["left"], dialog["top"], dialog["right"], dialog["bottom"]))
+    save_debug_jpeg(dialog_crop, artifact_dir / "dialog.jpg")
+
+    dialog_read = read_text_near_point(
+        image, dialog, debug_image_dir=artifact_dir, timestamp_tag="dialog",
+        artifact_label="ok_dialog", log_name="ok_button", client=ocr_client,
+    )
+    verdict = classify_text(dialog_read.ok, dialog_read.tokens or dialog_read.raw_text.split(),
+                            OK_DIALOG_REQUIRED)
+    print(f"[INFO] align 다이얼로그: OCR={dialog_read.raw_text!r} -> {verdict} "
+          f"(required={OK_DIALOG_REQUIRED}, policy={policy})")
+    if not accepts(verdict, policy):
+        print("[WARNING] align 다이얼로그: 떠 있는 창이 alignment 다이얼로그로 확인되지 않음")
+        return DIALOG_OTHER, dialog
+    return DIALOG_PRESENT, dialog
+
+
 def locate_ok_button(
     *,
     frame_bgr: np.ndarray,
@@ -186,7 +236,7 @@ def locate_ok_button(
 ) -> tuple[int, int] | None:
     """전체 화면 프레임에서 Align 다이얼로그의 OK 버튼 중심 SCREEN 픽셀 좌표(없으면 None).
 
-    다이얼로그 bbox -> 다이얼로그 문구 OCR 확인 -> crop 안 OK bbox -> OK 라벨 OCR 확인.
+    다이얼로그 확인(`probe_align_dialog`) -> crop 안 OK bbox -> OK 라벨 OCR 확인.
     어느 게이트에서든 거부되면 None 이며, 호출부는 정상 not-found(escalate)로 다룬다.
     프레임은 *전체 화면* 이어야 반환 좌표가 그대로 screen 절대 좌표가 된다(`click_screen`).
     """
@@ -194,26 +244,15 @@ def locate_ok_button(
     image = _frame_to_rgb_image(frame_bgr)
     artifact_dir = debug_image_dir or (DEBUG_IMAGE_DIR / "ok_button" / str(time.time_ns()))
 
-    dialog = _locate_bbox(client, image, _dialog_system_prompt(), _dialog_user_prompt(),
-                          "dialog_visible", "dialog_bbox")
-    if dialog is None:
-        print("[INFO] OK 탐지: alignment 다이얼로그가 보이지 않음")
+    # 게이트 1: 이 창이 정말 alignment 다이얼로그인가.
+    state, dialog = probe_align_dialog(
+        frame_bgr, client, ocr_client=ocr_client, confirm_policy=policy,
+        debug_image_dir=artifact_dir,
+    )
+    if state != DIALOG_PRESENT:
+        print("[INFO] OK 탐지: alignment 다이얼로그가 확인되지 않아 클릭하지 않음")
         return None
     dialog_crop = image.crop((dialog["left"], dialog["top"], dialog["right"], dialog["bottom"]))
-    save_debug_jpeg(dialog_crop, artifact_dir / "dialog.jpg")
-
-    # 게이트 1: 이 창이 정말 alignment 다이얼로그인가.
-    dialog_read = read_text_near_point(
-        image, dialog, debug_image_dir=artifact_dir, timestamp_tag="dialog",
-        artifact_label="ok_dialog", log_name="ok_button", client=ocr_client,
-    )
-    verdict = classify_text(dialog_read.ok, dialog_read.tokens or dialog_read.raw_text.split(),
-                            OK_DIALOG_REQUIRED)
-    print(f"[INFO] OK 탐지: 다이얼로그 OCR={dialog_read.raw_text!r} -> {verdict} "
-          f"(required={OK_DIALOG_REQUIRED}, policy={policy})")
-    if not accepts(verdict, policy):
-        print("[WARNING] OK 탐지: alignment 다이얼로그로 확인되지 않아 클릭하지 않음")
-        return None
 
     # 단계 2: OK 는 다이얼로그 crop 안에서만.
     ok_bbox = _locate_bbox(client, dialog_crop, _ok_button_system_prompt(), _ok_button_user_prompt(),

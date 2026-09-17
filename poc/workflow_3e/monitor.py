@@ -21,9 +21,9 @@ from datetime import datetime
 from poc.workflow_3.monitor.alarm_source import load_alarm_source
 from poc.workflow_3.monitor.align_fail_monitor import (
     CYCLE_MANIFEST_PATH,
+    AlarmFeedCursor,
     _alarm_rows_empty,
     _set_keep_awake,
-    filter_rows_within_window,
     process_fail_rows,
 )
 from poc.workflow_3.monitor.notify import ALARM_LOG_PATH
@@ -50,6 +50,9 @@ def monitor_loop(settings: Workflow3eSettings | None = None) -> None:
     aborted_tools: set[str] = set()           # 측정 실패 abort edge-trigger 상태.
     abort_cooldown: dict = {}                 # abort 점유 재시도 유예.
     idle_logged = False
+    # 피드는 해제된 알람도 돌려주는 이벤트 로그 - 알람별로 한 번만, 긴 사이클 중 알람도 놓치지 않게.
+    align_feed = AlarmFeedCursor(settings.detection_window_sec)
+    abort_feed = AlarmFeedCursor(settings.detection_window_sec)
 
     print(
         f"[INFO] 통합 모니터링 시작 (소스={source.kind}, 주기={settings.poll_interval_sec}s, "
@@ -91,7 +94,7 @@ def monitor_loop(settings: Workflow3eSettings | None = None) -> None:
 
             # --- align fail 잡 (workflow_3 재사용) ---
             fails = source.filter_align_fail(alarms)
-            fails = filter_rows_within_window(fails, settings.detection_window_sec)
+            fails = align_feed.take(fails)
             if _alarm_rows_empty(fails):
                 if active_tools:
                     for eqp_id in sorted(active_tools):
@@ -112,7 +115,7 @@ def monitor_loop(settings: Workflow3eSettings | None = None) -> None:
             # --- 측정 실패 abort 잡 (workflow_3e 신규: 전용 provider 우선, 없으면 ALID 필터) ---
             if settings.meas_fail_abort_enabled and (MEAS_PROVIDER_AVAILABLE or alarms is not None):
                 meas = measurement_fail_rows(alarms, settings.meas_fail_alid)
-                meas = filter_rows_within_window(meas, settings.detection_window_sec)
+                meas = abort_feed.take(meas)
                 if not _alarm_rows_empty(meas):
                     process_abort_rows(meas, aborted_tools, settings, abort_cooldown)
                 elif aborted_tools:

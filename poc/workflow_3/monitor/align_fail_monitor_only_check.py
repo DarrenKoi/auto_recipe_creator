@@ -53,8 +53,8 @@ from poc.workflow_3.monitor.align_fail_monitor import (
     _alarm_time_to_tag,
     _collapse_rows_by_tool,
     _set_keep_awake,
+    AlarmFeedCursor,
     append_alarm_record,
-    filter_rows_within_window,
 )
 from poc.workflow_3.monitor.cycle import CycleResult, run_check_only_cycle
 from poc.workflow_3.monitor.notify import (
@@ -388,6 +388,7 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
     active_tools: set[str] = set()
     cooldown: dict = {}  # {eqp_id: 재시도 가능 epoch} — 사이클 실패로 쉬는 tool.
     idle_logged = False  # "Align Fail 없음" 은 idle 진입 시 한 번만 로깅 (poll 마다 X)
+    feed = AlarmFeedCursor(settings.detection_window_sec)
 
     print(
         f"[INFO] Align Fail 점검 모니터링 시작 (소스={source.kind}, "
@@ -420,7 +421,7 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
             print(f"[INFO] {poll_time} - 알람 조회 (최근 {settings.detection_window_sec}s 윈도우)")
             alarms = source.poll()
             fails = source.filter_align_fail(alarms)
-            fails = filter_rows_within_window(fails, settings.detection_window_sec)
+            fails = feed.take(fails)
 
             if _alarm_rows_empty(fails):
                 if active_tools:

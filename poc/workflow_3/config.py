@@ -336,6 +336,11 @@ class Workflow3Settings(WorkflowSettings):
     # 좌표가 틀린 채 OK 가 눌리면 잘못된 위치로 측정이 확정되므로, 실전 신뢰가 쌓이기
     # 전까지는 사람이 마지막 확정을 쥔다. 켜려면 ALIGN_FAIL_OK_CLICK=1.
     ok_click_enabled: bool = False
+    # 보정 클릭 전에 화면에 align fail 다이얼로그가 있는지 먼저 본다(2026-09-17). 알람 피드는
+    # 해제된 알람도 계속 돌려주는 이벤트 로그라, 큐에서 기다리는 사이 엔지니어가 이미 해결한
+    # tool 에 들어가 측정 중인 장비를 클릭하는 것을 막는 유일한 근거가 화면이다. 없으면
+    # align_fail_cleared(클릭/watch 없이 종료 + cube). 롤백 ALIGN_FAIL_ACTIVE_CHECK=0.
+    align_fail_active_check_enabled: bool = True
     # paused 화면에서 key 를 못 찾았을 때 live_align_search(zoom-out + 사각 spiral pan)로
     # 넘길지. 기본 on(설계된 동작). off 면 pan 하지 않고 escalated_key_not_visible 로
     # 엔지니어에게 넘긴다 - 실장비에서 spiral 이 stage 를 최대 pan_budget(10) 회 끌고
@@ -507,6 +512,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         correction_dry_run=correction_dry_run,
         ok_button_vlm_service=_env_str("ALIGN_OK_BUTTON_VLM_SERVICE", "mai-ui"),
         ok_click_enabled=env_flag("ALIGN_FAIL_OK_CLICK", default=False),
+        align_fail_active_check_enabled=env_flag("ALIGN_FAIL_ACTIVE_CHECK", default=True),
         fallback_search_enabled=env_flag("ALIGN_FAIL_FALLBACK_SEARCH", default=True),
         search_pan_budget=env_int("ALIGN_FAIL_SEARCH_PAN_BUDGET", 10),
         search_mode=(_env_str("ALIGN_FAIL_SEARCH_MODE", "grid").strip().lower() or "grid"),

@@ -258,7 +258,8 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 | `ALIGN_FAIL_SHARE_CONFIRM` | `strict` | 클릭 전 라벨 OCR 확인 정책. `strict`=확인된 것만 클릭 / `lenient`=못 읽어도 클릭 / `off`=확인 생략. **어느 값이든 `terminate`/`control`/`cancel` 이 읽히면 클릭하지 않는다** |
 | `ALIGN_FAIL_SHARE_WAIT_SEC` | 10 | 상대 승낙 대기 상한. 블로킹이고 단일 RCS 커서를 모든 알람이 직렬 공유하므로 길게 두면 다른 장비 처리가 밀린다. 못 받아도 알람이 유지되는 한 cooldown 후 다시 요청한다 |
 | `ALIGN_FAIL_SHARE_MAX_ATTEMPTS` | 2 | EQP 별 연속 view-only 재시도 상한. 넘으면 `active_tools` 로 넘겨 cube 반복 발송과 커서 독점을 끊는다 |
-| `ALIGN_FAIL_POLL_SEC` / `ALIGN_FAIL_WINDOW_SEC` | 10 / 60 | 폴링 주기 / 감지 look-back |
+| `ALIGN_FAIL_POLL_SEC` / `ALIGN_FAIL_WINDOW_SEC` | 10 / 60 | 폴링 주기 / 감지 look-back. 하한은 **직전 poll 시각 - WINDOW** 라 사이클이 길어도 그 사이 알람을 잃지 않고, 알람은 `(EQP_ID, UTC9)` 로 한 번만 처리된다(피드가 해제된 알람도 돌려주는 이벤트 로그, `AlarmFeedCursor`). 0 = 필터 끔 |
+| `ALIGN_FAIL_ACTIVE_CHECK` | 1 | 보정 첫 클릭 전에 화면의 align fail 다이얼로그를 2회 확인. 못 보면 `align_fail_cleared`(클릭/watch 없이 닫고 cube), 다른 창/판독 실패면 `align_fail_unconfirmed`(클릭 없이 cube + watch). 0 = 종전(바로 보정) |
 | `ALIGN_FAIL_RECORDING_POLL_SEC` | 0.05 | 녹화 샘플링 간격 (변화 감지용 빠른 폴링) |
 | `ALIGN_FAIL_RECORDING_HEARTBEAT_SEC` | 5.0 | 변화 없어도 이 간격마다 1장 저장 |
 | `ALIGN_FAIL_RECORDING_CHANGE_MIN_PX` | 2 | 변화 판정: delta>10 인 다운샘플 픽셀 최소 개수 (커서 이동도 감지) |

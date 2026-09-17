@@ -433,6 +433,8 @@ def _patch_correction(monkeypatch, status, called=None):
     # 배율 주입점은 PM 드롭다운 실물을 만지므로 끊는다(None = legacy 경로 위임).
     monkeypatch.setattr(cyc, "_build_grid_mag_control", lambda *a, **k: None,
                         raising=False)
+    # 클릭 전 align fail 확인은 화면 캡처 + VLM 이다 - 다이얼로그가 떠 있다(None)로 끊는다.
+    monkeypatch.setattr(cyc, "_confirm_align_fail_on_screen", lambda *a, **k: None)
     return cyc
 
 

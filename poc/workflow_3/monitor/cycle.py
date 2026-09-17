@@ -42,6 +42,8 @@ from poc.workflow_3.monitor.cycle_images import gather_and_report, prune_debug_i
 from poc.workflow_3.util.abort_switch import abort_reason, is_aborted
 from poc.workflow_3.monitor.cycle_report import print_cycle_report
 from poc.workflow_3.monitor.notify import (
+    ALIGN_FAIL_CLEARED,
+    ALIGN_FAIL_UNCONFIRMED,
     CORRECTED_UNVERIFIED,
     VIEW_ONLY_OBSERVATION,
     CycleNotifier,
@@ -968,6 +970,16 @@ def _exec_locate_sem_panel(step, context, settings: Workflow3Settings) -> StepRe
     return _make_result(step, "success", started_at, settings)
 
 
+def needs_engineer_watch(outcome) -> bool:
+    """사이클 끝에 엔지니어 수동 조작을 녹화하며 기다려야 하는가.
+
+    보정됐거나(corrected) 접속해 보니 align fail 이 이미 없으면(cleared) 기다릴 것이 없다 -
+    watch 는 최대 수 분 루프를 막아 뒤에 줄 선 알람을 그만큼 더 멈춰 두므로 불필요하게 돌면
+    안 된다. 그 밖(미보정/확인 못 함/보정 미수행)은 엔지니어가 올 수 있어 녹화한다.
+    """
+    return outcome is None or outcome.status not in ("corrected", ALIGN_FAIL_CLEARED)
+
+
 def resolve_correction_outcome_status(
     occupancy: str, status: str, *, attempted: bool = True
 ) -> str:
@@ -987,6 +999,48 @@ def resolve_correction_outcome_status(
     if occupancy in (UNKNOWN, OCCUPIED_BY_OTHER) and status == "corrected":
         return CORRECTED_UNVERIFIED
     return status
+
+
+# 클릭 전 align fail 확인의 읽기 횟수/간격. 접속 직후 원격 화면이 덜 그려진 프레임 한 장으로
+# '이미 해결됨' 을 단정하지 않으려고 간격을 두고 다시 본다.
+_ACTIVE_CHECK_READS = 2
+_ACTIVE_CHECK_INTERVAL_SEC = 1.5
+
+
+def _confirm_align_fail_on_screen(controller, vlm_client, debug_dir) -> str | None:
+    """클릭 전에 align fail 다이얼로그가 화면에 아직 있는지 본다.
+
+    None = 있음(보정 진행). 아니면 클릭 없이 사이클을 끝낼 outcome status 다:
+      * 매 회차 다이얼로그를 못 봄      -> ALIGN_FAIL_CLEARED (엔지니어가 이미 해결)
+      * 다른 창이거나 판독 예외가 섞임   -> ALIGN_FAIL_UNCONFIRMED
+    '있음' 이 확인될 때만 클릭한다 - 모르면 누르지 않는다. 판정은 OK 를 찾을 때와 같은
+    `probe_align_dialog` 라 두 자리가 서로 다른 답을 내지 않는다.
+    """
+    if vlm_client is None:
+        print("[WARNING] align fail 확인용 VLM 클라이언트 없음 - 클릭하지 않음")
+        return ALIGN_FAIL_UNCONFIRMED
+    from poc.workflow_3.align.ok_button import DIALOG_ABSENT, DIALOG_PRESENT, probe_align_dialog
+
+    states = []
+    for n in range(1, _ACTIVE_CHECK_READS + 1):
+        if n > 1:
+            time.sleep(_ACTIVE_CHECK_INTERVAL_SEC)
+        try:
+            state, _ = probe_align_dialog(
+                controller.capture_screen(), vlm_client,
+                debug_image_dir=debug_dir / f"active_check_{n}",
+            )
+        except Exception as exc:
+            print(f"[WARNING] align fail 확인 {n}회차 판독 실패: {type(exc).__name__}: {exc}")
+            state = "error"
+        if state == DIALOG_PRESENT:
+            return None
+        states.append(state)
+    if all(state == DIALOG_ABSENT for state in states):
+        print("[WARNING] align fail 다이얼로그 없음 - 이미 해결된 것으로 보고 클릭하지 않음")
+        return ALIGN_FAIL_CLEARED
+    print(f"[WARNING] align fail 다이얼로그 확인 못 함({states}) - 클릭하지 않음")
+    return ALIGN_FAIL_UNCONFIRMED
 
 
 def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResult:
@@ -1024,7 +1078,11 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
         print(f"[INFO] RECIPE_ID 없음 - 보정 생략, 엔지니어 직접 처리 (EQP_ID={eqp_id})")
         return _make_result(step, "skipped", started_at, settings)
 
-    from poc.workflow_3.align.correction import CorrectionConfig, correct_align_fail_auto
+    from poc.workflow_3.align.correction import (
+        CorrectionConfig,
+        CorrectionOutcome,
+        correct_align_fail_auto,
+    )
     from poc.workflow_3.align.live_search import LiveSearchConfig
 
     vlm_client = None
@@ -1044,6 +1102,21 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
 
     debug_dir = DEBUG_IMAGE_DIR / "align_fail_cycle" / context["tag"]
     context["correction_debug_dir"] = debug_dir
+
+    # 첫 클릭 전에 align fail 이 화면에 아직 있는지 본다. 피드는 해제된 알람도 돌려주므로
+    # 큐에서 기다리는 사이 엔지니어가 해결한 tool 이면 지금은 측정 중인 장비다.
+    if settings.align_fail_active_check_enabled:
+        ended = _confirm_align_fail_on_screen(context["controller"], vlm_client, debug_dir)
+        log_work2_event(
+            component=LOG_COMPONENT, message="align_fail_active_check",
+            eqp_id=eqp_id, result=ended or "present",
+        )
+        if ended is not None:
+            context["outcome"] = CorrectionOutcome(
+                status=ended, path="precheck", key_decision="",
+                best_xy=None, ok_screen_xy=None, fallback=None,
+            )
+            return _make_result(step, "success", started_at, settings)
     # search-around 재설계: PM 드롭다운 절대 배율 + FOV 격자 sweep 주입점. None 이면
     # search_around 가 종전 legacy(휠+spiral) 경로를 그대로 쓴다.
     from poc.workflow_3.align.grid_search import GridSearchConfig
@@ -1703,7 +1776,7 @@ def run_alarm_cycle(
             input_blocked = False
 
         # 미보정이면 엔지니어 수동 조작을 녹화하며 대기 (측정 시작 감지 시 조기 종료).
-        if recording is not None and (outcome is None or outcome.status != "corrected"):
+        if recording is not None and needs_engineer_watch(outcome):
             done_detector = None
             if settings.engineer_done_detect_enabled and context.get("tool_window") is not None:
                 try:

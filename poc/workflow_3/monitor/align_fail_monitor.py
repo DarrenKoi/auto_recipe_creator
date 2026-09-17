@@ -107,6 +107,9 @@ OK_CLICK = 1                 # 보정 후 OK 를 자동으로 누른다 = 완전
                              # 확인된 뒤 반자동을 끝냈다. 0 으로 내리면 reposition 까지만
                              # 하고 awaiting_engineer_ok 로 끝나 엔지니어가 OK 를 누른다
                              # (그때는 cube 알림이 나가고 watch 도 계속 돈다).
+ACTIVE_CHECK = 1             # 보정 클릭 전에 화면의 align fail 다이얼로그를 확인한다.
+                             # 없으면(엔지니어가 이미 해결) 클릭 없이 닫고 cube 만 보낸다.
+                             # 0 = 확인 없이 바로 보정(종전 동작).
 SEARCH_MODE = None           # "grid"(기본) | "legacy".
 REPOSITION_REFINE_MAX = None # reposition 뒤 재매칭해 중심에 올 때까지 더 누르는 횟수.
                              # None=3. 0 = 종전 1회 클릭(롤백).
@@ -197,6 +200,7 @@ _CONST_TO_ENV = (
     ("CORRECTION", "ALIGN_FAIL_CORRECTION"),
     ("CORRECTION_DRY_RUN", "ALIGN_FAIL_CORRECTION_DRY_RUN"),
     ("OK_CLICK", "ALIGN_FAIL_OK_CLICK"),
+    ("ACTIVE_CHECK", "ALIGN_FAIL_ACTIVE_CHECK"),
     ("SEARCH_MODE", "ALIGN_FAIL_SEARCH_MODE"),
     ("REPOSITION_REFINE_MAX", "ALIGN_FAIL_REPOSITION_REFINE_MAX"),
     ("REPOSITION_TOL_RATIO", "ALIGN_FAIL_REPOSITION_TOL_RATIO"),
@@ -323,18 +327,43 @@ def _row_value(row, *field_names: str):
     return None
 
 
-def filter_rows_within_window(rows: "pd.DataFrame", window_sec: int) -> "pd.DataFrame":
-    """UTC9 가 현재 시각 기준 `window_sec` 이내인 row 만 남긴다.
+class AlarmFeedCursor:
+    """MES 알람 피드를 **이벤트 로그**로 읽는다 - poll 마다 아직 안 본 알람 row 만 넘긴다.
 
-    UTC9 가 비어있거나 파싱 불가한 row 는 제외한다.
+    피드는 해제된 알람 row 도 같은 UTC9 로 계속 돌려준다(2026-09-17 사용자 확인). 그래서
+    고정폭 60s 창은 사이클 하나가 분 단위로 루프를 막는 동안 새로
+    뜬 알람을 창 밖으로 밀어내 조용히 잃었다. 창의 하한을 **직전 poll 시각 - window_sec**
+    으로 잡으면 사이클이 얼마나 길어도 그 사이 알람은 다음 poll 에 들어온다.
+
+    넓힌 창에는 이미 처리한 row 도 남아 있으므로 알람 하나를 **(EQP_ID, UTC9)** 로 식별해
+    한 번만 넘긴다. EQP_ID 만으로 묶으면 같은 tool 의 두 번째 fail 이 첫 번째에 가려진다.
+    본 key 는 창 밖으로 밀려나면 버린다 - 창의 하한은 뒤로 가지 않아 다시 들어올 일이 없다.
+
+    알람 하나는 **한 번만** 시도된다: cooldown 재시도는 피드가 같은 알람을 다시 보여줄 때만
+    일어나는 구조라, 이벤트 로그 피드에서는 일어나지 않는다(오피스에서 한 번도 발화한 적
+    없음, 사용자 결정 2026-09-17 - 재시도가 필요하면 피드가 아니라 자체 기억으로 만든다).
     """
-    if window_sec <= 0 or rows is None or rows.empty or "UTC9" not in rows.columns:
-        return rows
 
-    cutoff = datetime.now() - timedelta(seconds=window_sec)
-    timestamps = pd.to_datetime(rows["UTC9"], errors="coerce")
-    mask = timestamps.notna() & (timestamps >= cutoff)
-    return rows[mask].reset_index(drop=True)
+    def __init__(self, window_sec: int):
+        self.window_sec = window_sec
+        self._last_poll_at: datetime | None = None
+        self._seen: set[tuple[str, str]] = set()
+
+    def take(self, rows, now: datetime | None = None):
+        now = now or datetime.now()
+        cutoff = (self._last_poll_at or now) - timedelta(seconds=self.window_sec)
+        self._last_poll_at = now
+        # window_sec <= 0 = 필터 끔(종전 filter_rows_within_window 계약 그대로).
+        if self.window_sec <= 0 or rows is None or rows.empty or "UTC9" not in rows.columns:
+            return rows
+        timestamps = pd.to_datetime(rows["UTC9"], errors="coerce")
+        rows = rows[timestamps.notna() & (timestamps >= cutoff)]
+        eqp = rows["EQP_ID"] if "EQP_ID" in rows.columns else pd.Series("", index=rows.index)
+        keys = list(zip(eqp.astype(str), rows["UTC9"].astype(str)))
+        self._seen &= set(keys)
+        fresh = [key not in self._seen for key in keys]
+        self._seen.update(keys)
+        return rows[fresh].reset_index(drop=True)
 
 
 def _alarm_time_to_tag(alarm_time: str) -> str | None:
@@ -621,7 +650,9 @@ def _defer_retry(occupied_cooldown: dict, eqp_id: str, delay_sec: float,
     굶긴다(F2) - 그래서 어느 경로든 유예가 필요하다.
     """
     occupied_cooldown[eqp_id] = time.time() + delay_sec
-    print(f"[{level}] EQP_ID={eqp_id} {reason} - active 미등록, {delay_sec:.0f}s 후 재시도")
+    # AlarmFeedCursor 가 같은 알람을 다시 넘기지 않으므로 이 cooldown 이 재시도로 이어지지
+    # 않는다(피드가 이벤트 로그). "N초 후 재시도" 라고 찍으면 운영자가 기다리게 된다.
+    print(f"[{level}] EQP_ID={eqp_id} {reason} - 이 알람은 자동 재시도하지 않음(결과 알림으로 인계)")
 
 
 def _should_retry_later(cycle) -> bool:
@@ -702,7 +733,9 @@ def process_fail_rows(
         episodes.close_cleared(current_tools)
 
     newly_handled = 0
-    for eqp_id in sorted(new_tools):
+    # 먼저 멈춘 tool 부터 - 사이클이 직렬이라 뒤 순번은 앞 사이클 시간만큼 더 멈춰 있다.
+    # UTC9 는 한 피드 안에서 같은 형식이라 문자열 정렬이 시각 순서다.
+    for eqp_id in sorted(new_tools, key=lambda e: (by_tool[e]["utc9"], e)):
         handle = None
         try:
             info = by_tool[eqp_id]
@@ -929,6 +962,7 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
     occupied_cooldown: dict = {}  # {eqp_id: 재시도 가능 epoch} — 점유(select)로 포기한 tool.
     view_only_attempts: dict = {}  # {eqp_id: 연속 view-only/unverified 사이클 횟수}
     idle_logged = False  # "Align Fail 없음" 은 idle 진입 시 한 번만 로깅 (poll 마다 X)
+    feed = AlarmFeedCursor(settings.detection_window_sec)
     # Recovery Episode tracker — 기본 off. None 이면 수집 경로가 통째로 비활성이다.
     episodes = None
     if settings.episode_collect_enabled:
@@ -988,7 +1022,7 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
         try:
             alarms = source.poll()
             fails = source.filter_align_fail(alarms)
-            fails = filter_rows_within_window(fails, settings.detection_window_sec)
+            fails = feed.take(fails)
 
             if _alarm_rows_empty(fails):
                 if active_tools:

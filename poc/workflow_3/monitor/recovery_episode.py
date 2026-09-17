@@ -61,6 +61,7 @@ _HANDOFF_STATUSES = (
     "escalated_ambiguous_key",
     "escalated_key_not_visible",
     "escalated_no_ok",
+    "escalated_reposition_unconverged",
 )
 
 

@@ -42,7 +42,9 @@ def test_primary_display_scale_and_offset(width):
     controller = _FakeController(frame, frame)
     result = correct_align_fail(
         controller, {"SEM": template}, dry_run=False,
-        config=CorrectionConfig(ok_click_enabled=False, fallback_search_enabled=False),
+        # 정지 프레임이라 closed-loop 재매칭은 끈다 - 여기서는 첫 클릭 좌표 사슬만 본다.
+        config=CorrectionConfig(ok_click_enabled=False, fallback_search_enabled=False,
+                                reposition_refine_max=0),
     )
     assert result.status == "awaiting_engineer_ok"
     expected = (width // 2 + round(16 * width / 512), width // 2 - round(8 * width / 512))

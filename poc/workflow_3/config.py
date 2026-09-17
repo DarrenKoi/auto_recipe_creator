@@ -350,6 +350,14 @@ class Workflow3Settings(WorkflowSettings):
     search_max_chase: int = 3           # sweep 뒤 추격할 후보 수(각각 배율 왕복).
     search_candidate_score: float = 0.30  # sweep 셀을 추격할 최소 점수(zoom-out 단일 scale 이라 낮게).
     search_odom_tol_fov: float = 0.15   # odometry |측정-명령| 허용(FOV 비율).
+    # reposition closed-loop (2026-09-17): 더블클릭 1회는 중심에 정확히 안 온다. 클릭 뒤
+    # 재캡처/재매칭해 align point 가 FOV 중심에서 tol(=ratio x frame 폭) 안에 올 때까지
+    # 최대 refine_max 번 더 누른다. 수렴 못 하면 OK 없이 escalated_reposition_unconverged.
+    # 0 = 종전 open-loop 롤백. settle 은 재캡처 전 추가 대기(controller settle 에 더해진다) -
+    # 화면 갱신이 늦어 "진전 없음" 오판이 나면 올린다.
+    reposition_refine_max: int = 3
+    reposition_tol_ratio: float = 0.01
+    reposition_settle_sec: float = 0.5
     # PM 판독으로 OM/SEM 을 확정하지 못했을 때 보정을 보류할지(기본 on).
     # modality 를 틀리면 다른 template(IMAP0001 OM vs IMAP0002 SEM)로 매칭해 좌표가
     # 근본적으로 틀리므로, 추측해서 누르느니 엔지니어에게 넘긴다. off 면 sem_mode_default 사용.
@@ -502,6 +510,9 @@ def load_workflow3_settings() -> Workflow3Settings:
         search_max_chase=env_int("ALIGN_FAIL_SEARCH_MAX_CHASE", 3),
         search_candidate_score=env_float("ALIGN_FAIL_SEARCH_CANDIDATE_SCORE", 0.30),
         search_odom_tol_fov=env_float("ALIGN_FAIL_SEARCH_ODOM_TOL_FOV", 0.15),
+        reposition_refine_max=env_int("ALIGN_FAIL_REPOSITION_REFINE_MAX", 3),
+        reposition_tol_ratio=env_float("ALIGN_FAIL_REPOSITION_TOL_RATIO", 0.01),
+        reposition_settle_sec=env_float("ALIGN_FAIL_REPOSITION_SETTLE_SEC", 0.5),
         require_pm_mode=env_flag("ALIGN_FAIL_REQUIRE_PM_MODE", default=True),
         sem_mode_default=_env_str("ALIGN_SEM_MODE_DEFAULT", "SEM"),
         sem_controller_settle_sec=env_float("ALIGN_SEM_SETTLE_SEC", 0.5),

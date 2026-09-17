@@ -550,6 +550,105 @@ def test_ambiguous_key_enters_search_around() -> bool:
     return ok
 
 
+def _drifting_demo(offset_xy=(90, 50), gain=0.7):
+    """key 가 FOV 중심에서 offset 만큼 어긋나 있고, recenter 가 요청 이동의 gain 배만 가는 mock.
+
+    오피스 2026-09-17: 더블클릭 1회로는 align point 가 중심에서 조금 어긋난 채 남았다.
+    gain<1 은 그 under-shoot 를 재현한다(클릭 좌표/원격 반영의 계통 오차 대용).
+    """
+    monitor, templates = _make_primary_demo(key_in_view=True)
+    monitor.pos[0] -= offset_xy[0]  # 시점을 옮기면 key 는 화면에서 +offset 에 보인다.
+    monitor.pos[1] -= offset_xy[1]
+    base_move = monitor.move_to_point
+    moves: list[tuple[int, int]] = []
+
+    def _move(fov_x, fov_y):
+        moves.append((int(fov_x), int(fov_y)))
+        cx, cy = monitor.sw / 2, monitor.sh / 2
+        base_move(cx + (fov_x - cx) * gain, cy + (fov_y - cy) * gain)
+
+    monitor.move_to_point = _move
+    return monitor, templates, moves
+
+
+def _center_residual(monitor, templates) -> float:
+    """현재 화면에서 key 매칭 중심이 FOV 중심에서 떨어진 거리(px)."""
+    frame = monitor.capture()
+    r = compute_align_key_score_ensemble(templates["SEM"], frame, scales=PAUSED_SCALES,
+                                         policy=STRUCTURE_POLICY)
+    fh, fw = frame.shape[:2]
+    return float(np.hypot(r.best_xy[0] - fw / 2, r.best_xy[1] - fh / 2))
+
+
+def test_reposition_refines_until_centered() -> bool:
+    """recenter 가 under-shoot 해도 재캡처→재매칭→재클릭으로 중심에 수렴한 뒤 OK."""
+    monitor, templates, moves = _drifting_demo()
+    before = _center_residual(monitor, templates)
+    outcome = correct_align_fail(monitor, templates, ok_locator=lambda _s: (690, 560),
+                                 dry_run=False)
+    after = _center_residual(monitor, templates)
+    tol = CorrectionConfig().reposition_tol_ratio * monitor.sw
+    ok = (
+        outcome.status == "corrected"
+        and len(moves) >= 2
+        and after <= tol
+        and len(monitor.screen_clicks) == 1
+    )
+    print(f"[{'PASS' if ok else 'FAIL'}] reposition_refines: status={outcome.status} "
+          f"moves={len(moves)} residual {before:.1f}->{after:.1f}px (tol={tol:.1f})")
+    return ok
+
+
+def test_reposition_no_progress_escalates() -> bool:
+    """클릭이 stage 를 못 움직이면(정지 프레임) OK 를 누르지 않고 escalate."""
+    monitor, templates, _ = _drifting_demo()
+    fake = _FakeController(monitor.capture(), monitor.capture_screen(), mode="SEM")
+    outcome = correct_align_fail(fake, templates, ok_locator=lambda _s: (690, 560),
+                                 dry_run=False)
+    ok = (
+        outcome.status == "escalated_reposition_unconverged"
+        and len(fake.screen_clicks) == 0
+        and len(fake.move_calls) == 1  # 첫 클릭 뒤 잔차가 paused 때와 같다 = 진전 없음.
+    )
+    print(f"[{'PASS' if ok else 'FAIL'}] reposition_no_progress: status={outcome.status} "
+          f"moves={len(fake.move_calls)} ok_clicks={len(fake.screen_clicks)}")
+    return ok
+
+
+def test_reposition_key_lost_enters_search_around() -> bool:
+    """recenter 뒤 key 가 화면에서 사라지면 OK 대신 search-around."""
+    import poc.workflow_3.align.grid_search as gs
+    from poc.workflow_3.align.live_search import LiveSearchOutcome
+
+    monitor, templates, _ = _drifting_demo()
+    monitor.move_to_point = lambda x, y: monitor.pos.__setitem__(0, monitor.pos[0] + 1500)
+    calls: list[int] = []
+    orig = gs.search_around
+    gs.search_around = lambda *a, **k: (calls.append(1), LiveSearchOutcome(
+        status="exhausted", final_decision="low", best=None, pan_count=0, history=[], meta={}))[1]
+    try:
+        outcome = correct_align_fail(monitor, templates, ok_locator=lambda _s: (690, 560),
+                                     dry_run=False)
+    finally:
+        gs.search_around = orig
+    ok = outcome.status == "fallback_exhausted" and calls and len(monitor.screen_clicks) == 0
+    print(f"[{'PASS' if ok else 'FAIL'}] reposition_key_lost: status={outcome.status} "
+          f"search={bool(calls)} ok_clicks={len(monitor.screen_clicks)}")
+    return bool(ok)
+
+
+def test_reposition_refine_off_is_single_shot() -> bool:
+    """reposition_refine_max=0 = 종전 open-loop(클릭 1회, 재캡처 없이 OK)."""
+    monitor, templates, moves = _drifting_demo()
+    outcome = correct_align_fail(monitor, templates, ok_locator=lambda _s: (690, 560),
+                                 dry_run=False,
+                                 config=CorrectionConfig(reposition_refine_max=0))
+    ok = outcome.status == "corrected" and len(moves) == 1 and len(monitor.screen_clicks) == 1
+    print(f"[{'PASS' if ok else 'FAIL'}] reposition_refine_off: status={outcome.status} "
+          f"moves={len(moves)}")
+    return ok
+
+
 def test_load_template_branches() -> bool:
     """_load_template 3분기: cond box -> box-crop+offset, cond 없음 -> center-crop+offset(0), flag off -> whole."""
     gray = np.full((512, 512), 110, dtype=np.uint8)
@@ -643,8 +742,10 @@ def test_offset_applied_to_reposition() -> bool:
         orig = afc.compute_align_key_score_ensemble
         afc.compute_align_key_score_ensemble = lambda *a, **k: _controlled(best_xy, best_scale)
         try:
+            # 좌표 사슬만 본다 - 고정 match 라 재매칭 루프는 끈다.
             correct_align_fail(fake, {"SEM": tpl},
-                               ok_locator=lambda _s: (10, 10), dry_run=False)
+                               ok_locator=lambda _s: (10, 10), dry_run=False,
+                               config=CorrectionConfig(reposition_refine_max=0))
         finally:
             afc.compute_align_key_score_ensemble = orig
         return fake.move_calls
@@ -773,6 +874,10 @@ def main() -> int:
         test_primary_path_stamps_ambiguity(),
         test_engineer_review_route(),
         test_ambiguous_key_enters_search_around(),
+        test_reposition_refines_until_centered(),
+        test_reposition_no_progress_escalates(),
+        test_reposition_key_lost_enters_search_around(),
+        test_reposition_refine_off_is_single_shot(),
         test_load_template_branches(),
         test_offset_applied_to_reposition(),
         test_scale_pinned_flag_in_history(),

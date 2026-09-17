@@ -108,6 +108,11 @@ OK_CLICK = 1                 # 보정 후 OK 를 자동으로 누른다 = 완전
                              # 하고 awaiting_engineer_ok 로 끝나 엔지니어가 OK 를 누른다
                              # (그때는 cube 알림이 나가고 watch 도 계속 돈다).
 SEARCH_MODE = None           # "grid"(기본) | "legacy".
+REPOSITION_REFINE_MAX = None # reposition 뒤 재매칭해 중심에 올 때까지 더 누르는 횟수.
+                             # None=3. 0 = 종전 1회 클릭(롤백).
+REPOSITION_TOL_RATIO = None  # 수렴 판정 잔차(frame 폭 비율). None=0.01.
+REPOSITION_SETTLE_SEC = None # 재캡처 전 대기. None=0.5. 화면 갱신이 늦어 '진전 없음'
+                             # 으로 escalate 되면 올린다.
 FEASIBILITY_MARK = 1         # 보정 가능성 판정 이미지 마킹.
 REPOSITION_PREVIEW = None
 SEM_BOX_DETECT = 1           # 라이브 SEM box 검출(panel ROI 1단).
@@ -189,6 +194,9 @@ _CONST_TO_ENV = (
     ("CORRECTION_DRY_RUN", "ALIGN_FAIL_CORRECTION_DRY_RUN"),
     ("OK_CLICK", "ALIGN_FAIL_OK_CLICK"),
     ("SEARCH_MODE", "ALIGN_FAIL_SEARCH_MODE"),
+    ("REPOSITION_REFINE_MAX", "ALIGN_FAIL_REPOSITION_REFINE_MAX"),
+    ("REPOSITION_TOL_RATIO", "ALIGN_FAIL_REPOSITION_TOL_RATIO"),
+    ("REPOSITION_SETTLE_SEC", "ALIGN_FAIL_REPOSITION_SETTLE_SEC"),
     ("FEASIBILITY_MARK", "ALIGN_FAIL_FEASIBILITY_MARK"),
     ("REPOSITION_PREVIEW", "ALIGN_FAIL_REPOSITION_PREVIEW"),
     ("SEM_BOX_DETECT", "ALIGN_FAIL_SEM_BOX_DETECT"),

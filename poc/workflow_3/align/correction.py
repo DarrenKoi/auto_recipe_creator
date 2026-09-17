@@ -89,7 +89,12 @@ class CorrectionConfig:
     # escalated_key_not_visible 로 끝낸다 - 라이브러리 기본은 설계된 전체 동작(True),
     # 운영 루프 기본값은 Workflow3Settings.fallback_search_enabled 를 따른다.
     fallback_search_enabled: bool = True
-    settle_sec: float = 0.0  # 제스처 후 대기(실장비 안정화).
+    settle_sec: float = 0.0  # 제스처 후 대기(실장비 안정화). reposition 재캡처 전 대기이기도 하다.
+    # reposition closed-loop. 클릭 뒤 재캡처/재매칭해 align point 가 FOV 중심에서
+    # tol(=ratio x frame 폭) 안에 올 때까지 추가 클릭을 최대 refine_max 번 더 한다.
+    # 0 = 종전 open-loop(클릭 1회 후 바로 OK) 롤백.
+    reposition_refine_max: int = 3
+    reposition_tol_ratio: float = 0.01
     cond_box_crop: bool = True  # cond.box_ltrb 기반 box-crop template(+decoupled offset). False -> whole-template(구 동작) 롤백.
     # 만성 모호 키 게이트(Tier 0.1). second_ratio 가 이 값을 넘으면 present 라도 auto-act 대신
     # engineer_review 로 보류한다. None(기본)이면 게이트는 과거 act/fallback 2분기만 — 동작 불변.
@@ -107,6 +112,7 @@ class CorrectionOutcome:
     """보정 결과. 어느 경로로 끝났는지 + 좌표/decision 기록."""
 
     # "corrected" | "awaiting_engineer_ok" | "fallback_<status>" | "escalated_ambiguous_key"
+    # | "escalated_reposition_unconverged"
     # | "escalated_key_not_visible" | "escalated_invalid_geometry" | "escalated_no_ok" | "ok_detect_error" | "no_assets"
     #
     # monitor 계층이 사이클 문맥을 반영해 **추가 status 로 치환**할 수 있다(2026-08-18):
@@ -352,7 +358,7 @@ def correct_align_fail(
             result,
         )
 
-    if route == GATE_FALLBACK:
+    def _search_around(key_decision: str) -> CorrectionOutcome:
         from poc.workflow_3.align.grid_search import search_around
 
         outcome = search_around(
@@ -364,7 +370,7 @@ def correct_align_fail(
         result_outcome = CorrectionOutcome(
             status=f"fallback_{outcome.status}",
             path="fallback",
-            key_decision=result.decision,
+            key_decision=key_decision,
             best_xy=None,
             ok_screen_xy=None,
             fallback=outcome,
@@ -375,10 +381,13 @@ def correct_align_fail(
             message="fallback_delegated",
             level="warning",
             status=result_outcome.status,
-            key_decision=result.decision,
+            key_decision=key_decision,
             pan_count=outcome.pan_count,
         )
         return _with_key_ambiguity(result_outcome, result)
+
+    if route == GATE_FALLBACK:
+        return _search_around(result.decision)
 
     if route == GATE_ENGINEER_REVIEW:
         # key 는 present 하나 second_ratio>tau(만성 모호) — 평평한 score surface 에서 확신
@@ -406,52 +415,114 @@ def correct_align_fail(
             result,
         )
 
-    # ---- PRIMARY: crosshair 를 align point 로 reposition. ----
+    # ---- PRIMARY: crosshair 를 align point 로 reposition (closed-loop). ----
     # template 이 들고 다니는 align offset(=rcp px align_point - box_center; align point 는
     # cond crosshair 우선·이미지 중심 폴백)을 best_scale 로 환산해 match 중심에 더한다 ->
     # frame 의 진짜 align point. consensus template 은 crop 자체가 crosshair 중심이라
     # offset (0,0) 이 정상이고, rcp template 의 (0,0) 은 cond 폴백 신호다.
+    #
+    # 더블클릭 recenter 한 번은 정확히 중심에 오지 않는다(2026-09-17 오피스: 조금 어긋난 채
+    # OK). 그래서 클릭 뒤 다시 찍어 재매칭하고, align point 가 FOV 중심에서 tol 안에
+    # 들어올 때까지 다시 누른다. 멈추는 조건 셋:
+    #   converged   : 잔차 <= tol -> OK 로 간다.
+    #   key lost    : 재매칭에서 key 가 안 보인다 = 이동이 엉뚱했다 -> search-around.
+    #   no progress : 잔차가 줄지 않았다(클릭 미반영 / 닮은 이웃으로 점프) -> OK 없이 escalate.
     ox, oy = template.align_offset_xy
-    align_x = result.best_xy[0] + round(ox * result.best_scale)
-    align_y = result.best_xy[1] + round(oy * result.best_scale)
-    cx, cy = clamp_to_fov(align_x, align_y, fw, fh, config.click_margin_ratio)
+    tol_px = config.reposition_tol_ratio * fw
 
-    # 좌표 사슬 전부를 **한 줄**로 찍는다. 사이클 한 번이 수십 줄의 [INFO] 를 쏟아내서
-    # "이번 보정이 잘 된 건가" 를 콘솔에서 눈으로 못 가린다는 보고(2026-09-16) 때문이다.
-    # 이 한 줄에 rcp px -> frame px 환산이 전부 들어 있어 good/bad 두 실행을 나란히 놓고
-    # 비교할 수 있다. 이상 신호는 flags 에 이름으로 뜬다(없으면 '-').
-    #   clamp  : FOV 여백 안으로 클릭점이 밀렸다 = align point 를 그만큼 못 누른다.
-    #            live search 의 recenter 는 clamp 를 원하지만(가장자리=최대 pan)
-    #            reposition 은 아니다 - 그런데도 결과는 corrected 로 나간다.
-    #   off0   : rcp template 인데 offset 0 = 클릭이 match 중심(=box 중심)으로 간다.
-    #            consensus template 은 crop 이 crosshair 중심이라 0 이 정상이므로 제외.
-    clamp_shift = (align_x - cx, align_y - cy)
-    flags = []
-    if scale_pinned:
-        flags.append("scale_pinned")
-    if clamp_shift != (0, 0):
-        flags.append(f"clamp{clamp_shift}")
-    if (ox, oy) == (0, 0) and template.version != CONSENSUS_VERSION:
-        flags.append("off0")
-    print(
-        f"[DIGEST] reposition mode={mode or '-'} dec={result.decision} "
-        f"score={result.score:.3f}(ch={result.chamfer_score:.3f}) "
-        f"base={base_scale:.3f} scale={result.best_scale:.2f}"
-        f"(rel={result.best_scale / base_scale:.2f}) "
-        f"wh={template.source_wh}->{(fw, fh)} "
-        f"match={result.best_xy} off={(ox, oy)}->"
-        f"({round(ox * result.best_scale)},{round(oy * result.best_scale)}) "
-        f"click=({cx},{cy}) flags={'|'.join(flags) or '-'}"
-        f"{' [dry-run]' if dry_run else ''}"
-    )
-    if flags:
-        print("[WARNING] 위 flags 확인 - scale_pinned=배율 band 미달, clamp=클릭점이 FOV "
-              "여백으로 밀림, off0=cond 폴백으로 box 중심을 누름 "
-              "(uv run python poc/workflow_3/align/diagnostics/verify_cond_box_crop.py)")
-    if not dry_run:
+    def _residual(match: AlignKeyMatchResult) -> tuple[int, int, float]:
+        ax = match.best_xy[0] + round(ox * match.best_scale)
+        ay = match.best_xy[1] + round(oy * match.best_scale)
+        return ax, ay, float(np.hypot(ax - fw / 2, ay - fh / 2))
+
+    cur = result
+    align_x, align_y, prev_dist = _residual(cur)
+    for attempt in range(1, config.reposition_refine_max + 2):
+        cx, cy = clamp_to_fov(align_x, align_y, fw, fh, config.click_margin_ratio)
+
+        # 좌표 사슬 전부를 **한 줄**로 찍는다. 사이클 한 번이 수십 줄의 [INFO] 를 쏟아내서
+        # "이번 보정이 잘 된 건가" 를 콘솔에서 눈으로 못 가린다는 보고(2026-09-16) 때문이다.
+        # 이 한 줄에 rcp px -> frame px 환산이 전부 들어 있어 good/bad 두 실행을 나란히 놓고
+        # 비교할 수 있다. 이상 신호는 flags 에 이름으로 뜬다(없으면 '-').
+        #   clamp  : FOV 여백 안으로 클릭점이 밀렸다 = align point 를 그만큼 못 누른다
+        #            (다음 try 가 나머지를 민다).
+        #   off0   : rcp template 인데 offset 0 = 클릭이 match 중심(=box 중심)으로 간다.
+        #            consensus template 은 crop 이 crosshair 중심이라 0 이 정상이므로 제외.
+        clamp_shift = (align_x - cx, align_y - cy)
+        flags = []
+        if scale_pinned and attempt == 1:
+            flags.append("scale_pinned")
+        if clamp_shift != (0, 0):
+            flags.append(f"clamp{clamp_shift}")
+        if (ox, oy) == (0, 0) and template.version != CONSENSUS_VERSION:
+            flags.append("off0")
+        print(
+            f"[DIGEST] reposition try={attempt} mode={mode or '-'} dec={cur.decision} "
+            f"score={cur.score:.3f}(ch={cur.chamfer_score:.3f}) "
+            f"base={base_scale:.3f} scale={cur.best_scale:.2f}"
+            f"(rel={cur.best_scale / base_scale:.2f}) "
+            f"wh={template.source_wh}->{(fw, fh)} "
+            f"match={cur.best_xy} off={(ox, oy)}->"
+            f"({round(ox * cur.best_scale)},{round(oy * cur.best_scale)}) "
+            f"click=({cx},{cy}) flags={'|'.join(flags) or '-'}"
+            f"{' [dry-run]' if dry_run else ''}"
+        )
+        if flags and attempt == 1:
+            print("[WARNING] 위 flags 확인 - scale_pinned=배율 band 미달, clamp=클릭점이 FOV "
+                  "여백으로 밀림, off0=cond 폴백으로 box 중심을 누름 "
+                  "(uv run python poc/workflow_3/align/diagnostics/verify_cond_box_crop.py)")
+        if dry_run:
+            break
         controller.move_to_point(cx, cy)
         if config.settle_sec:
             time.sleep(config.settle_sec)
+        if config.reposition_refine_max <= 0:
+            break  # 롤백: 종전 open-loop 1회.
+
+        cur = compute_align_key_score_ensemble(
+            template, controller.capture(), scales=scales, policy=STRUCTURE_POLICY
+        )
+        align_x, align_y, dist = _residual(cur)
+        lost = key_visibility_gate(cur, base_scale=base_scale) == GATE_FALLBACK
+        verdict = ("lost" if lost else "converged" if dist <= tol_px
+                   else "no_progress" if dist >= prev_dist else "refine")
+        print(f"[DIGEST] reposition verify try={attempt} dec={cur.decision} score={cur.score:.3f} "
+              f"residual=({align_x - fw / 2:+.0f},{align_y - fh / 2:+.0f}) dist={dist:.1f} "
+              f"prev={prev_dist:.1f} tol={tol_px:.1f} -> {verdict}")
+        history.append({"stage": "reposition_verify", "try": attempt, "decision": cur.decision,
+                        "score": float(cur.score), "residual_px": round(dist, 1),
+                        "tol_px": round(tol_px, 1), "verdict": verdict})
+        if verdict == "converged":
+            break
+        if verdict == "lost":
+            print("[WARNING] reposition 뒤 key 가 화면에서 사라짐 -> 주변 탐색")
+            return _search_around(cur.decision)
+        if verdict == "no_progress":
+            break
+        prev_dist = dist
+    else:
+        verdict = "max_tries"
+    if not dry_run and config.reposition_refine_max > 0 and verdict != "converged":
+        print(f"[WARNING] reposition 이 수렴하지 않음({verdict}, 잔차 {dist:.1f}px > tol {tol_px:.1f}px) "
+              "-> OK 를 누르지 않고 엔지니어 확인. 클릭 미반영이면 ALIGN_SEM_RECENTER_CLICKS / "
+              "ALIGN_FAIL_REPOSITION_SETTLE_SEC 확인")
+        log_work2_event(
+            component=LOG_COMPONENT, message="escalated_reposition_unconverged", level="warning",
+            key_decision=cur.decision, verdict=verdict, residual_px=f"{dist:.1f}",
+            tol_px=f"{tol_px:.1f}",
+        )
+        return _with_key_ambiguity(
+            CorrectionOutcome(
+                status="escalated_reposition_unconverged",
+                path="primary",
+                key_decision=cur.decision,
+                best_xy=(cx, cy),
+                ok_screen_xy=None,
+                fallback=None,
+                history=history,
+            ),
+            result,
+        )
 
     # ---- OK 버튼 위치 확인(screen 좌표) 후 single click. ----
     resolved_locator = ok_locator

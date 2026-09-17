@@ -25,6 +25,7 @@ _VERDICTS = {
     "view_only_observation": ("!!", "다른 엔지니어 점유 - 관전/녹화만 (보정 안 함)"),
     "escalated_ambiguous_key": ("!!", "align key 가 만성 모호 - 자동 보정 보류"),
     "escalated_no_ok": ("!!", "OK 버튼을 찾지 못해 보류"),
+    "escalated_reposition_unconverged": ("!!", "reposition 이 중심에 수렴하지 않아 OK 보류"),
     "ok_detect_error": ("XX", "OK 버튼 탐지 중 오류"),
     "no_assets": ("XX", "rcp align 이미지 없음 - ALIGN_IMAGES_DIR 확인"),
 }

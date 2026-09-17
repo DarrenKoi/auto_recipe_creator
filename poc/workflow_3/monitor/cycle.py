@@ -1064,6 +1064,10 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
                 ok_click_enabled=settings.ok_click_enabled,
                 # key 부재 시 spiral pan 탐색 위임 여부(off -> pan 없이 escalate).
                 fallback_search_enabled=settings.fallback_search_enabled,
+                # reposition closed-loop: 재캡처/재매칭으로 중심 수렴까지 재클릭.
+                reposition_refine_max=settings.reposition_refine_max,
+                reposition_tol_ratio=settings.reposition_tol_ratio,
+                settle_sec=settings.reposition_settle_sec,
                 # consensus 라우팅 설정(Workflow3Settings 에서 주입).
                 consensus_enabled=settings.consensus_enabled,
                 consensus_min_s=settings.consensus_min_s,

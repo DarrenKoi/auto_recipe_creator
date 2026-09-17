@@ -232,6 +232,10 @@ _UNCORRECTED_ACTIONS = {
         "align key 가 보이나 닮은 곳이 많아 단정 불가(만성 모호 - 재등록 대상)",
         "직접 align point 를 잡고 OK 를 눌러주세요",
     ),
+    "escalated_reposition_unconverged": (
+        "align point 로 여러 번 옮겼으나 중심에 맞지 않음(OK 안 누름)",
+        "위치 확인 후 align point 를 잡고 OK 를 눌러주세요",
+    ),
     "escalated_no_ok": (
         "align point 이동은 했으나 OK 버튼을 찾지 못함",
         "위치 확인 후 OK 를 눌러주세요",

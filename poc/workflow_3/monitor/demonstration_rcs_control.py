@@ -1606,6 +1606,8 @@ def build_click_kit(
     alt_settle_sec: float,
     reveal_x_ratio: float,
     reveal_y_ratio: float,
+    confirm_half_width_ratio: float = 0.30,
+    confirm_half_height_ratio: float = 0.05,
 ):
     """tool 창 클릭 협력자 한 벌(capture/locate/read_tokens/click/reveal/alt_click_at).
 
@@ -1613,6 +1615,10 @@ def build_click_kit(
     Alt+click 가림 해제. 시연 흐름과 `manual_click_button` 이 같이 쓴다 - 원격
     클릭을 성사시키는 조건(전면화/체류/누름 유지/Alt 순서)은 오피스 실측으로 얻은 것이라
     진입점마다 따로 두면 안 된다.
+
+    `confirm_half_*_ratio` 는 라벨 확인 OCR crop 크기(창 대비, 점 기준 반폭/반높이).
+    기본값은 시연 흐름의 것이고, 버튼이 여러 줄로 붙은 곳에서는 줄여야 한다 - 넓은
+    crop 은 위/아래 줄 버튼까지 담아 OCR 이 그쪽만 읽고 대상 라벨을 놓친다.
     """
     from poc.workflow_3.util.image_utils import capture_window
     from poc.workflow_3.util.mouse_utils import click_at_screen, move_cursor_to_screen
@@ -1641,7 +1647,8 @@ def build_click_kit(
     def _read_tokens(image, point, key):
         box = crop_box_around_point(
             point, image.width, image.height,
-            left_ratio=0.30, right_ratio=0.30, half_height_ratio=0.05,
+            left_ratio=confirm_half_width_ratio, right_ratio=confirm_half_width_ratio,
+            half_height_ratio=confirm_half_height_ratio,
         )
         read = read_text_near_point(
             image, box,

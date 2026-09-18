@@ -13,6 +13,7 @@
      또는 라벨 불일치이면서 그 예상 영역을 확대 OCR 해도 라벨이 없을 때다. 예상 영역에
      라벨이 읽히면 VLM 이 잘못 짚었을 뿐이라 Alt+click 하지 않고 멈춘다(exit 4).
   4. 확인되면 클릭한다. 확인이 안 되면 누르지 않는다.
+  5. 열린 창의 제목줄('File Manager( Class, IDW, IDP, Recipe )')을 VLM+OCR 로 확인한다.
 
 다른 가려진 버튼에 쓰려면 TARGET_* 상수만 바꾼다. 클릭/가림 해제 배선은
 `demonstration_rcs_control.build_click_kit` 를 그대로 쓴다(원격 클릭 성사 조건이 오피스
@@ -20,11 +21,13 @@
 
 실행: uv run python poc/workflow_3/monitor/manual_click_button.py
 리허설(클릭/Alt 차단): SAFE_MODE=1 uv run python ...
-종료 코드: 0=클릭함, 2=사전조건 실패, 3=가림 해제 후에도 못 찾음, 4=라벨 불일치/미검출
+종료 코드: 0=클릭+창 확인, 2=사전조건 실패, 3=가림 해제 후에도 못 찾음, 4=라벨 불일치/미검출,
+          5=클릭했지만 'File Manager( Class, IDW, IDP, Recipe )' 창 미확인
 """
 
 import os
 import sys
+import time
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -86,10 +89,24 @@ SETTLE_SEC = 1.0                   # Alt+click 뒤 창이 다시 그려질 대�
 EXPECTED_AREA_HALF_WIDTH_RATIO = 0.25
 EXPECTED_AREA_HALF_HEIGHT_RATIO = 0.08
 
+# 클릭 후 열린 창 확인. File Manager 창은 원격 뷰 안에 그려지므로(로컬 top-level 창이
+# 아니다) 창 제목 조회로는 못 찾는다 - VLM 이 제목줄 좌표, OCR 이 제목 확인.
+# 제목: "File Manager( Class, IDW, IDP, Recipe )". 'File Manager' 만으로는 방금 누른
+# **버튼**도 통과하므로 제목에만 있는 IDW/Recipe 를 함께 요구한다(묶음 중 하나).
+OPENED_KEY = "file_manager_window_title"
+OPENED_DESCRIPTION = (
+    "the title bar text of the large 'File Manager' window that just opened, which "
+    "reads 'File Manager( Class, IDW, IDP, Recipe )'. Point at the middle of that "
+    "title text, not at the 'File Manager' button below the live SEM image box."
+)
+OPENED_REQUIRED = (("manager", "idw"), ("manager", "recipe"))
+OPEN_WAIT_SEC = 2.0                # 클릭 -> 창이 원격 뷰에 그려질 대기
+
 EXIT_OK = 0
 EXIT_PREFLIGHT_FAILED = 2
 EXIT_NOT_VISIBLE = 3
 EXIT_NOT_CONFIRMED = 4
+EXIT_NOT_OPENED = 5                # 클릭은 했는데 File Manager 창을 확인 못 함
 
 
 def label_in_tokens(tokens, required) -> bool:
@@ -196,8 +213,23 @@ def main() -> int:
         return EXIT_NOT_VISIBLE if reason == CONFIRM_NOT_VISIBLE else EXIT_NOT_CONFIRMED
 
     kit.click(window, image, point, TARGET_KEY)
-    print(f"[DIGEST] manual_click target={TARGET_KEY} result=clicked reveals={reveals}")
-    return EXIT_OK
+    time.sleep(OPEN_WAIT_SEC)
+
+    # 다시 누르지 않는다 - 창이 떴는데 확인만 실패한 경우 두 번째 클릭이 무엇을 할지
+    # 모른다. 확인 실패는 exit 5 로 남기고 debug crop 으로 대조한다.
+    opened_step = FlowStep(
+        TargetConfig(key=OPENED_KEY, description=OPENED_DESCRIPTION),
+        required=OPENED_REQUIRED,
+    )
+    _, title_point, _, _ = locate_with_reveal(
+        window, opened_step,
+        capture_fn=kit.capture, locate_fn=kit.locate, read_tokens_fn=kit.read_tokens,
+        policy="strict", label=OPENED_KEY,
+    )
+    opened = title_point is not None
+    print(f"[DIGEST] manual_click target={TARGET_KEY} result=clicked reveals={reveals} "
+          f"opened={'yes' if opened else 'unconfirmed'}")
+    return EXIT_OK if opened else EXIT_NOT_OPENED
 
 
 if __name__ == "__main__":

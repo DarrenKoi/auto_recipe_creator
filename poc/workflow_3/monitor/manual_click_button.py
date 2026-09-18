@@ -8,8 +8,8 @@
   1. 제목에 EQP_ID 가 든 Remote Monitoring 창에 붙는다(접속은 하지 않는다 - 엔지니어가
      먼저 연다, `manual_align_correction.py` 와 같은 규약).
   2. VLM 이 버튼 좌표를 찍고 PaddleOCR 이 그 자리 라벨을 확인한다.
-  3. **폴백 - 버튼이 안 보일 때만** 있어야 할 자리(REVEAL_X/Y_RATIO)를 Alt+click 해
-     덮은 창을 뒤로 보내고 다시 찾는다(최대 REVEAL_ATTEMPTS 번). '안 보임' 은 VLM 미검출,
+  3. **폴백 - 버튼이 안 보일 때만** VLM 으로 덮은 창의 제목줄을 찾아 Alt+click 해 뒤로
+     보내고 다시 찾는다(최대 REVEAL_ATTEMPTS 번 - 두 장이면 라운드마다 앞 창). '안 보임' 은 VLM 미검출,
      또는 라벨 불일치이면서 그 예상 영역을 확대 OCR 해도 라벨이 없을 때다. 예상 영역에
      라벨이 읽히면 VLM 이 잘못 짚었을 뿐이라 Alt+click 하지 않고 멈춘다(exit 4).
   4. 확인되면 클릭한다. 확인이 안 되면 누르지 않는다.
@@ -84,10 +84,20 @@ TARGET_FORBIDDEN = ()
 # '못 읽음' 으로 통과시키는데, 버튼이 가려졌을 때 VLM 이 찍는 곳이 바로 덮은 창이다.
 CONFIRM_POLICY = "strict"
 
-# 가림 해제: 버튼이 **있어야 할 자리**를 Alt+click 한다(그 위를 덮은 창이 뒤로 간다).
-# 창 크기 대비 비율. ponytail: 추정값 - 첫 오피스 실행에서 콘솔의 px/screen 으로 맞출 것.
+# 버튼이 있어야 할 자리(창 크기 대비 비율). '가려졌나' 를 보는 예상 영역 OCR 의 중심이다.
+# Alt+click 지점은 이것이 아니라 VLM 이 찾은 **덮은 창의 제목줄**이다 - 창은 버튼 그룹
+# 주변 어디에나 놓일 수 있어 고정 지점은 창을 빗나갔다(2026-09-18 오피스: 창보다 약간
+# 위를 눌러 Alt+click 효과 없음).
 REVEAL_X_RATIO = 0.80              # (MANUAL_CLICK_REVEAL_X_RATIO)
 REVEAL_Y_RATIO = 0.90              # (MANUAL_CLICK_REVEAL_Y_RATIO)
+COVER_KEY = "covering_window_title"
+COVER_DESCRIPTION = (
+    "a separate small window or dialog (for example 'SECS Terminal' or 'Terminal "
+    "Service') that is floating ON TOP of the group of buttons along the bottom of "
+    "the Remote Monitoring screen and hides some of those buttons. If several such "
+    "windows overlap, choose the one in front. Point at the middle of that window's "
+    "TITLE BAR (the bar at its top showing the window name)."
+)
 REVEAL_ATTEMPTS = 3                # (MANUAL_CLICK_REVEAL_ATTEMPTS) 창이 여러 장 겹칠 수 있다
 SETTLE_SEC = 1.0                   # Alt+click 뒤 창이 다시 그려질 대기
 # 라벨 불일치 때 '가려졌나 / 잘못 짚었나' 를 가르는 OCR 영역: 가림해제 지점을 중심으로
@@ -211,10 +221,31 @@ def main() -> int:
         print(f"[INFO] 예상 영역에 라벨 없음(읽힘={tokens[:12]!r}) - 가려진 것으로 봅니다")
         return True
 
+    cover_target = TargetConfig(key=COVER_KEY, description=COVER_DESCRIPTION)
+
+    def _reveal(window, image, round_index):
+        """덮은 창을 VLM 으로 찾아 그 제목줄을 Alt+click 한다. 두 장이면 라운드마다 앞 창.
+
+        짚은 곳에서 대상 라벨이 읽히면 누르지 않는다 - 그건 덮은 창이 아니라 tool 화면
+        자체이고, 거기를 Alt+click 하면 tool 창이 뒤로 간다. 못 찾으면 고정 지점으로
+        대신 누르지 않는다(그 지점이 빗나간 것이 이 경로를 만든 이유다).
+        """
+        point = kit.locate(image, cover_target)
+        if point is None:
+            print("[WARNING] 덮은 창을 찾지 못함 - Alt+click 안 함")
+            return False
+        tokens = kit.read_tokens(image, point, COVER_KEY)
+        print(f"[INFO] 덮은 창 제목줄 후보: px={point} 읽힘={tokens[:12]!r}")
+        if label_in_tokens(tokens, TARGET_REQUIRED):
+            print(f"[WARNING] 짚은 곳에 {TARGET_KEY} 라벨이 있습니다 - 덮은 창이 아니라 "
+                  "tool 화면이라 Alt+click 안 함")
+            return False
+        return kit.alt_click_at(window, image, point, round_index, note="덮은 창 제목줄")
+
     image, point, reason, reveals = locate_with_reveal(
         window, step,
         capture_fn=kit.capture, locate_fn=kit.locate, read_tokens_fn=kit.read_tokens,
-        policy=CONFIRM_POLICY, reveal_fn=kit.reveal, max_reveals=reveal_attempts,
+        policy=CONFIRM_POLICY, reveal_fn=_reveal, max_reveals=reveal_attempts,
         label=TARGET_KEY,
         should_reveal_fn=_should_reveal,
     )

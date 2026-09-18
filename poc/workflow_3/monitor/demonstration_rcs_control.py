@@ -1607,7 +1607,7 @@ def build_click_kit(
     reveal_x_ratio: float,
     reveal_y_ratio: float,
 ):
-    """tool 창 클릭 협력자 한 벌(capture/locate/read_tokens/click/reveal).
+    """tool 창 클릭 협력자 한 벌(capture/locate/read_tokens/click/reveal/alt_click_at).
 
     VLM 이 좌표, OCR 이 라벨 확인, `perform_remote_click` 이 클릭 순서, `_reveal` 이
     Alt+click 가림 해제. 시연 흐름과 `manual_click_button` 이 같이 쓴다 - 원격
@@ -1702,6 +1702,13 @@ def build_click_kit(
             image.width, image.height,
             x_ratio=reveal_x_ratio, y_ratio=reveal_y_ratio,
         )
+        return _alt_click_at(
+            window, image, point, round_index,
+            note=f"비율 x={reveal_x_ratio}, y={reveal_y_ratio}",
+        )
+
+    def _alt_click_at(window, image, point, round_index, *, note=""):
+        """이미지 픽셀 좌표 한 점을 Alt+click 한다(가린 창 밀어내기). True/False 로 답한다."""
         screen = image_point_to_screen(window, point, image_size=image.size)
         if screen is None:
             print(f"[WARNING] 가림 해제 좌표 변환 실패 - Alt+click 생략: px={point}")
@@ -1710,8 +1717,8 @@ def build_click_kit(
         press, release = alt_hold_hooks(action_enabled=settings.action_enabled)
         print(
             f"[INFO] Alt+click 으로 가린 창 밀어내기({round_index}회): "
-            f"px={point} -> screen={screen} "
-            f"(비율 x={reveal_x_ratio}, y={reveal_y_ratio})"
+            f"px={point} -> screen={screen}"
+            f"{f' ({note})' if note else ''}"
             f"{'' if settings.action_enabled else ' [dry-run]'}"
         )
         try:
@@ -1726,7 +1733,7 @@ def build_click_kit(
 
     return SimpleNamespace(
         capture=capture_window, locate=_locate, read_tokens=_read_tokens,
-        click=_click, reveal=_reveal,
+        click=_click, reveal=_reveal, alt_click_at=_alt_click_at,
     )
 
 

@@ -126,7 +126,7 @@ def test_grid_without_zoom_out_uses_readback_or_stops(readback):
         assert not scales and not controller.move_calls
     else:
         assert result.meta["search_mag"] == readback
-        assert scales == [(readback / 30000,)]
+        assert scales == [tuple(readback / 30000 * s for s in gs.DEFAULT_SCALES)]
 
 
 def test_grid_actual_crop_confirms_at_registered_scale_with_offset():

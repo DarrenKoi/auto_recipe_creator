@@ -34,6 +34,7 @@ from poc.workflow_3.align.live_search import (
     route_template,
 )
 from poc.workflow_3.align.matching.engine import (
+    DEFAULT_SCALES,
     STRUCTURE_POLICY,
     AlignKeyTemplate,
     _resize_template,
@@ -279,8 +280,6 @@ class _Stage:
         self.max_click_x = (0.5 - config.click_margin_ratio) * fw
         self.max_click_y = (0.5 - config.click_margin_ratio) * fh
         self.frame = None  # 마지막 캡처(odometry 기준).
-        # 클릭마다 찍은 (프레임, 그때의 누적 위치). sweep 이 비우고 읽어 이동 중 프레임도 매긴다.
-        self.captures: list = []
 
     def capture(self):
         self.frame = self.c.capture()
@@ -296,9 +295,8 @@ class _Stage:
         cur = self.capture()
         measured = self.shift_fn(prev, cur) if (self.shift_fn is not None and prev is not None) else None
         self.odo.record(cmd, measured)
-        self.captures.append((cur, self.odo.position))
 
-    def move_px(self, dx, dy) -> bool:
+    def move_px(self, dx, dy, stop_when=None) -> bool:
         """(dx,dy) px 만큼 stage 를 옮긴다 - 한 클릭 최대 0.38 FOV 로 쪼갠다. abort 면 False.
 
         이동량이 1px 미만이면 클릭하지 않는다. ``max(1, ...)`` 때문에 delta 0 도 FOV
@@ -313,11 +311,14 @@ class _Stage:
             if is_aborted():
                 return False
             self._click(dx / n, dy / n)
+            # 다음 클릭 전에 현재 프레임을 판정한다. True면 그 위치에 그대로 둔다.
+            if stop_when is not None and stop_when(self.frame, self.odo.position):
+                break
         return True
 
-    def move_to(self, tx, ty) -> bool:
+    def move_to(self, tx, ty, stop_when=None) -> bool:
         px, py = self.odo.position
-        return self.move_px(tx - px, ty - py)
+        return self.move_px(tx - px, ty - py, stop_when=stop_when)
 
 
 # ------------------------------------------------------------------
@@ -337,7 +338,7 @@ def grid_align_search(
     notify_fn=None,
     debug_dir: Path | None = None,
 ) -> LiveSearchOutcome:
-    """절대 배율 zoom-out -> 격자 sweep(collect) -> best-first 추격/confirm -> 복귀.
+    """절대 배율 zoom-out -> 매 클릭 판정 -> 미확정 후보 추격/confirm -> 복귀.
 
     status: "match" | "exhausted" | "aborted" | "degraded"(배율 판독 실패 - 호출부가 legacy
     경로로 넘긴다). meta 에 search_mag/cells_visited/odometry/final_position_px/restore_failed
@@ -433,7 +434,7 @@ def grid_align_search(
             print(f"[WARNING] grid frame 저장 실패({name}): {exc}")
 
     def _score(frame, pos, cell, phase):
-        r = match(template, frame, scales=(scale,))
+        r = match(template, frame, scales=tuple(scale * s for s in DEFAULT_SCALES))
         ox, oy = template.align_offset_xy
         align_xy = [r.best_xy[0] + round(ox * r.best_scale), r.best_xy[1] + round(oy * r.best_scale)]
         # pos = 이 프레임 중심의 누적 위치(px), target = 후보 align point 의 누적 위치(추격 목적지).
@@ -441,35 +442,50 @@ def grid_align_search(
                "target": [float(pos[0]) + align_xy[0] - fw / 2, float(pos[1]) + align_xy[1] - fh / 2],
                "score": float(r.score), "xy": align_xy,
                "match_xy": list(r.best_xy), "scale": float(r.best_scale),
-               "decision": r.decision, "orb": float(r.orb_inlier_ratio)}
+               "decision": r.decision, "orb": float(r.orb_inlier_ratio),
+               "distinctive": bool(r.distinctive), "second_ratio": r.second_ratio}
         history.append(rec)
         _log_frame(rec, r.debug_overlay)
         return rec
 
-    # ---- §2 sweep: collect only. ----
+    # ---- §2 sweep: 매 클릭 직후 판정. confirm 가능한 배율의 match는 즉시 멈춘다. ----
     records = [_score(stage.frame, odo.position, (0, 0), "sweep")]
-    aborted = False
+
+    def _confirmed(rec):
+        return (rec["decision"] == "match" and scale >= MIN_CONFIRM_SCALE
+                and rec["scale"] >= MIN_CONFIRM_SCALE)
+
+    found = _confirmed(records[-1])
+    aborted = is_aborted()
     for cell in cells:
-        stage.captures = []
-        if not stage.move_to(cell[0] * fw, cell[1] * fh):
+        if found or aborted:
+            break
+
+        def _observe(shot, pos):
+            nonlocal found
+            records.append(_score(shot, pos, cell, "transit"))
+            found = _confirmed(records[-1])
+            return found or is_aborted()
+
+        if not stage.move_to(cell[0] * fw, cell[1] * fh, stop_when=_observe):
             aborted = True
             break
         meta["cells_visited"] += 1
-        # 셀로 가는 중간 클릭 프레임(transit)도 매긴다. 셀 간격이 정확히 1 FOV 라 경계에 걸친
-        # key 는 두 도착 프레임에서 모두 잘리고 중간 프레임에서만 온전히 보인다.
-        shots = stage.captures or [(stage.frame, odo.position)]
-        for i, (shot, pos) in enumerate(shots):
-            records.append(_score(shot, pos, cell, "sweep" if i == len(shots) - 1 else "transit"))
-    stage.captures = []
+        if is_aborted():
+            aborted = True
+            break
     pan_count = meta["cells_visited"]
 
-    best_rec = max(records, key=lambda r: r["score"])
+    best_rec = records[-1] if found else max(records, key=lambda r: r["score"])
     best = CandidateRecord(score=best_rec["score"], fov_xy=tuple(best_rec["xy"]), iter_idx=0,
-                           phase="sweep", decision=best_rec["decision"])
+                           phase=best_rec["phase"], decision=best_rec["decision"])
 
     # ---- §4 chase: best-first, confirm at registered-nearest mag. ----
-    status = "exhausted"
-    if not aborted:
+    status = "match" if found and not aborted else "exhausted"
+    if status == "match":
+        meta.update(restore_mag=cur_mag, confirm_distinctive=best_rec["distinctive"],
+                    confirm_second_ratio=best_rec["second_ratio"])
+    if not aborted and not found:
         # 같은 key 를 여러 프레임에서 본 후보는 점수 높은 하나만 쫓는다 - 이동 중 프레임끼리 크게
         # 겹쳐 한 key 가 2~3번 잡히고, 그대로 두면 max_chase 를 한 자리에 다 쓴다. 반경은 탐색 배율의
         # key 크기다(그 안의 다른 후보는 confirm 프레임이 어차피 함께 본다).
@@ -500,20 +516,20 @@ def grid_align_search(
             back_mag = float(back) if back is not None else cur_mag
             frame_c = stage.capture()
             s2 = back_mag / reg_mag
-            r = match(template, frame_c, scales=(s2,))
+            r = match(template, frame_c, scales=tuple(s2 * s for s in DEFAULT_SCALES))
             ox, oy = template.align_offset_xy
             align_xy = (int(r.best_xy[0] + round(ox * r.best_scale)),
                         int(r.best_xy[1] + round(oy * r.best_scale)))
             history.append({"cell": rec["cell"], "phase": "confirm", "score": float(r.score),
                             "xy": list(align_xy), "match_xy": list(r.best_xy), "decision": r.decision,
-                            "orb": float(r.orb_inlier_ratio), "scale": s2,
+                            "orb": float(r.orb_inlier_ratio), "scale": float(r.best_scale),
                             "distinctive": bool(r.distinctive), "second_ratio": r.second_ratio})
             _log_frame(history[-1], r.debug_overlay)
-            # confirm 게이트: 단일 known scale(>= 0.6) 의 ensemble match. legacy 의 orb>0 는 쓰지
+            # confirm 게이트: 판독 배율비와 선택 scale 모두 >= 0.6인 ensemble match. legacy 의 orb>0 는 쓰지
             # 않는다 - SEM junction key 는 ORB 특징점이 빈약해(aperture 문제) 진짜 match 도
             # orb=0 으로 나온다. distinctive 는 engine 규약대로 soft advisory 로만 기록한다
             # (chamfer-top 의 유일성이지 best_xy 의 유일성이 아니다 - hard gate 금지).
-            if r.decision == "match" and s2 >= MIN_CONFIRM_SCALE:
+            if r.decision == "match" and s2 >= MIN_CONFIRM_SCALE and r.best_scale >= MIN_CONFIRM_SCALE:
                 best = CandidateRecord(score=float(r.score), fov_xy=align_xy,
                                        iter_idx=len(history), phase="confirm", decision="match")
                 status = "match"

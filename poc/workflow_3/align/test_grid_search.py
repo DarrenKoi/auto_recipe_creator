@@ -349,7 +349,7 @@ def test_abort_latch_stops_sweep_without_return_moves():
         match_fn=_match,
     )
     assert out.status == "aborted"
-    assert len(_moves(ctl)) == 3  # 첫 셀로 가는 3 클릭 뒤 래치 -> 더 안 움직인다.
+    assert len(_moves(ctl)) == 1  # 첫 이동 프레임 판정 직후 래치 -> 다음 클릭 없음.
 
 
 # ------------------------------------------------------------------
@@ -542,7 +542,7 @@ def test_low_decision_cell_above_candidate_score_is_still_chased():
     def _weak_then_match(template, frame, **kw):
         fh, fw = frame.shape[:2]
         calls["n"] += 1
-        confirm = kw.get("scales", (0.0,))[0] >= gs.MIN_CONFIRM_SCALE
+        confirm = kw["scales"][gs.DEFAULT_SCALES.index(1.0)] >= gs.MIN_CONFIRM_SCALE
         return AlignKeyMatchResult(
             score=0.9 if confirm else 0.35, chamfer_score=0.5, orb_inlier_ratio=0.0,
             best_xy=(fw // 2 + 5, fh // 2), best_scale=1.0,
@@ -661,7 +661,7 @@ def _marker_matcher(score=0.5, confirm_decision="low"):
         fh, fw = frame.shape[:2]
         _, peak, _, (x, y) = cv2.minMaxLoc(frame)
         visible = peak > 100
-        confirm = kw.get("scales", (0.0,))[0] >= gs.MIN_CONFIRM_SCALE
+        confirm = kw["scales"][gs.DEFAULT_SCALES.index(1.0)] >= gs.MIN_CONFIRM_SCALE
         return AlignKeyMatchResult(
             score=score if visible else 0.0, chamfer_score=0.0, orb_inlier_ratio=0.0,
             best_xy=(x, y) if visible else (fw // 2, fh // 2), best_scale=1.0,
@@ -732,7 +732,7 @@ def _om_search(ctl, reg_mag):
     seen = []
 
     def _match(template, frame, **kw):
-        seen.append((ctl.mag, kw["scales"][0]))
+        seen.append((ctl.mag, kw["scales"]))
         return _low(template, frame)
 
     out = gs.grid_align_search(
@@ -747,7 +747,7 @@ def test_om_search_wheels_to_the_registered_step_before_sweeping():
     ctl = _OmCtl(mag=210)
     out, seen = _om_search(ctl, reg_mag=102)
     assert [c for c in ctl.calls if c[0] == "zoom"] == [("zoom", -1)]
-    assert seen and all(m == 104.0 and s == pytest.approx(1.0) for m, s in seen)
+    assert seen and all(m == 104.0 and s == pytest.approx(gs.DEFAULT_SCALES) for m, s in seen)
     assert out.meta["om_mag_before"] == 210.0 and out.meta["om_mag_after"] == 104.0
 
 
@@ -755,5 +755,30 @@ def test_om_search_scales_by_the_step_actually_shown_when_the_wheel_did_not_take
     """휠이 원격에 안 먹어 210 그대로면 등록 단(104)보다 2배 크게 보인다 - 그 비율로 매칭한다."""
     ctl = _OmCtl(mag=210, wheel_works=False)
     out, seen = _om_search(ctl, reg_mag=104)
-    assert seen and all(s == pytest.approx(210 / 104) for _, s in seen)
+    assert seen and all(s == pytest.approx(tuple(210 / 104 * b for b in gs.DEFAULT_SCALES)) for _, s in seen)
     assert out.meta["reason"] == "om_wheel_not_applied"
+
+
+def test_nearby_key_uses_primary_scale_band_and_stops_on_first_pan():
+    """첫 화면 바로 밖의 key: 첫 pan에서 보이면 다음 클릭 전에 멈춘다."""
+    from poc.workflow_3.align.matching.test_engine import make_synthetic_template
+    from poc.workflow_3.align.correction import PAUSED_SCALES
+
+    raw = make_synthetic_template(80, "box")
+    template = build_template(raw, recipe_id="c/r", version="v", key_type="sem",
+                              source_wh=(320, 240))
+    wafer = np.full((1000, 1000), 120, dtype=np.uint8)
+    wafer[466:534, 656:724] = cv2.resize(raw, (68, 68))
+    ctl = _WaferCtl(wafer, (500, 500), reg_mag=30000, fw=320, fh=240)
+    initial = gs.compute_align_key_score_ensemble(
+        template, ctl.capture(), scales=PAUSED_SCALES, policy=gs.STRUCTURE_POLICY)
+    assert initial.decision != "match"
+    out = gs.grid_align_search(
+        ctl, {"SEM": template},
+        gs.MagnificationControl(lambda: [30000], ctl.set_mag), reg_mag=30000,
+        config=gs.GridSearchConfig(pan_budget=2), shift_fn=None,
+    )
+    assert out.status == "match", out.history
+    assert ctl.moves == 1  # 셀 끝까지 이동하거나 전체 sweep 뒤 되돌아오지 않는다.
+    assert out.best.fov_xy == pytest.approx((244, 120), abs=3)
+    assert out.history[-1]["scale"] == pytest.approx(0.85)

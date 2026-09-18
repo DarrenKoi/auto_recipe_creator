@@ -1,5 +1,14 @@
 # Search-around 재설계 — 절대 배율 zoom-out + FOV 격자 sweep (설계)
 
+> 2026-09-18 수정: sweep/confirm 모두 판독 배율비에 PRIMARY와 같은
+> `DEFAULT_SCALES=(0.7, 0.85, 1.0, 1.2, 1.4)`를 곱해 찾는다. 단일 scale에서는
+> PRIMARY가 찾는 key도 놓치는 합성 사례를 재현했다. 셀 끝까지 이동한 뒤 저장 프레임을
+> 매기던 순서를 **매 클릭 → 캡처 → 매칭 → 다음 클릭**으로 바꿨다. 판독 배율비와
+> 선택 scale이 모두 `MIN_CONFIRM_SCALE` 이상이고 `decision=match`이면 현재 위치에서
+> 즉시 성공 반환한다. 따라서 아래 collect-only 계약은 저배율/미확정 후보에만 적용한다.
+> 저배율 후보는 기존 점수순 추격과 등록 배율 confirm을 유지한다. 판정 임계값은 낮추지 않았다.
+> 오피스 cursor·렌더 지연·ROI 정확도는 이 오프라인 회귀로 검증되지 않는다.
+
 > 2026-09-13 수정: 아래 §0의 `fw / template_w` 및 §1의 key≈FOV 가정은 폐기했다.
 > 구현은 crop 전 `source_wh` 기준이며 최소 key 크기도 crop 비율을 보존한다.
 > [현재 scale 계약](../../study/align_display_scale_contract_260913.md)을 따른다.

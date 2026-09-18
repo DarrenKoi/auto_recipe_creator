@@ -8,9 +8,10 @@
   1. 제목에 EQP_ID 가 든 Remote Monitoring 창에 붙는다(접속은 하지 않는다 - 엔지니어가
      먼저 연다, `manual_align_correction.py` 와 같은 규약).
   2. VLM 이 버튼 좌표를 찍고 PaddleOCR 이 그 자리 라벨을 확인한다.
-  3. **좌표가 안 나오거나 그 자리 라벨이 File Manager 가 아니면**(가려짐 - VLM 이 덮은
-     창을 짚는다) 버튼이 있어야 할 자리(REVEAL_X/Y_RATIO)를 Alt+click 하고 다시 찾는다.
-     최대 REVEAL_ATTEMPTS 번.
+  3. **폴백 - 버튼이 안 보일 때만** 있어야 할 자리(REVEAL_X/Y_RATIO)를 Alt+click 해
+     덮은 창을 뒤로 보내고 다시 찾는다(최대 REVEAL_ATTEMPTS 번). '안 보임' 은 VLM 미검출,
+     또는 라벨 불일치이면서 그 예상 영역을 확대 OCR 해도 라벨이 없을 때다. 예상 영역에
+     라벨이 읽히면 VLM 이 잘못 짚었을 뿐이라 Alt+click 하지 않고 멈춘다(exit 4).
   4. 확인되면 클릭한다. 확인이 안 되면 누르지 않는다.
 
 다른 가려진 버튼에 쓰려면 TARGET_* 상수만 바꾼다. 클릭/가림 해제 배선은
@@ -37,6 +38,7 @@ from poc.workflow_3.monitor.demonstration_rcs_control import (  # noqa: E402
     CONFIRM_LABEL_REJECTED,
     CONFIRM_NOT_LOCATED,
     CONFIRM_NOT_VISIBLE,
+    covering_window_point,
     FlowStep,
     PRE_CLICK_SETTLE_SEC,
     _env_float,
@@ -79,11 +81,21 @@ REVEAL_X_RATIO = 0.30              # (MANUAL_CLICK_REVEAL_X_RATIO)
 REVEAL_Y_RATIO = 0.85              # (MANUAL_CLICK_REVEAL_Y_RATIO)
 REVEAL_ATTEMPTS = 3                # (MANUAL_CLICK_REVEAL_ATTEMPTS) 창이 여러 장 겹칠 수 있다
 SETTLE_SEC = 1.0                   # Alt+click 뒤 창이 다시 그려질 대기
+# 라벨 불일치 때 '가려졌나 / 잘못 짚었나' 를 가르는 OCR 영역: 가림해제 지점을 중심으로
+# 창 폭의 좌우 이 비율, 창 높이의 위아래 이 비율. 버튼 행 전체가 들어올 만큼 넓게.
+EXPECTED_AREA_HALF_WIDTH_RATIO = 0.25
+EXPECTED_AREA_HALF_HEIGHT_RATIO = 0.08
 
 EXIT_OK = 0
 EXIT_PREFLIGHT_FAILED = 2
 EXIT_NOT_VISIBLE = 3
 EXIT_NOT_CONFIRMED = 4
+
+
+def label_in_tokens(tokens, required) -> bool:
+    """required 묶음 하나의 needle 이 전부 읽혔는가('FileManager' 로 붙어도 통과)."""
+    text = " ".join(tokens).lower()
+    return any(all(needle in text for needle in group) for group in required)
 
 
 def main() -> int:
@@ -112,9 +124,10 @@ def main() -> int:
 
     from poc.workflow_3.vlm.ui_venus_mai_locator import TargetConfig
 
+    debug_dir = debug_root() / "manual_click_button" / make_timestamp_tag()
     kit = build_click_kit(
         settings,
-        debug_dir=debug_root() / "manual_click_button" / make_timestamp_tag(),
+        debug_dir=debug_dir,
         log_component="manual_click_button",
         settle_sec=SETTLE_SEC,
         pre_click_settle_sec=PRE_CLICK_SETTLE_SEC,
@@ -128,13 +141,55 @@ def main() -> int:
         required=TARGET_REQUIRED,
         forbidden=TARGET_FORBIDDEN,
     )
+    from poc.workflow_3.vlm.label_verify import (
+        crop_box_around_point,
+        read_text_near_point,
+        tokens_from_text,
+    )
+
+    def _should_reveal(image, reason):
+        """가려졌을 때만 Alt+click 한다. VLM 이 잘못 짚었을 뿐이면 밀어내지 않는다.
+
+        미검출이든 라벨 불일치든, 버튼이 **있어야 할 자리**를 넓게 잘라 확대 OCR 로 다시
+        읽는다. 거기서 라벨이 읽히면 '보이는데 VLM 이 잘못 짚음/놓침' 이라 멈춘다 - 그때
+        Alt+click 하면 멀쩡한 창만 뒤로 간다. OCR 은 여기서도 판독만 하고 좌표는 만들지
+        않는다(클릭 좌표는 VLM 몫).
+        """
+        if reason not in (CONFIRM_NOT_LOCATED, CONFIRM_LABEL_REJECTED):
+            return False
+        center = covering_window_point(
+            image.width, image.height, x_ratio=x_ratio, y_ratio=y_ratio,
+        )
+        box = crop_box_around_point(
+            center, image.width, image.height,
+            left_ratio=EXPECTED_AREA_HALF_WIDTH_RATIO,
+            right_ratio=EXPECTED_AREA_HALF_WIDTH_RATIO,
+            half_height_ratio=EXPECTED_AREA_HALF_HEIGHT_RATIO,
+        )
+        read = read_text_near_point(
+            image, box,
+            debug_image_dir=debug_dir,
+            timestamp_tag=make_timestamp_tag(),
+            artifact_label=f"{TARGET_KEY}_expected_area",
+            log_name="manual_click_button",
+        )
+        tokens = tokens_from_text(read.raw_text) if read.ok else []
+        if not read.ok:
+            print(f"[WARNING] 예상 영역 OCR 실패 - 가려졌는지 몰라 Alt+click 안 함: {read.error}")
+            return False
+        if label_in_tokens(tokens, TARGET_REQUIRED):
+            print(f"[WARNING] 예상 영역에 {TARGET_KEY} 라벨이 보입니다 - 가려진 게 아니라 "
+                  f"VLM 이 잘못 짚었습니다. Alt+click 안 함. box={box}")
+            return False
+        print(f"[INFO] 예상 영역에 라벨 없음(읽힘={tokens[:12]!r}) - 가려진 것으로 봅니다")
+        return True
+
     image, point, reason, reveals = locate_with_reveal(
         window, step,
         capture_fn=kit.capture, locate_fn=kit.locate, read_tokens_fn=kit.read_tokens,
         policy=CONFIRM_POLICY, reveal_fn=kit.reveal, max_reveals=reveal_attempts,
         label=TARGET_KEY,
-        # 라벨 불일치도 '덮은 창을 짚었다' 로 보고 밀어낸다(가려지는 게 이 버튼의 일상).
-        reveal_on=(CONFIRM_NOT_LOCATED, CONFIRM_LABEL_REJECTED),
+        should_reveal_fn=_should_reveal,
     )
     if point is None:
         print(f"[DIGEST] manual_click target={TARGET_KEY} result={reason} reveals={reveals}")

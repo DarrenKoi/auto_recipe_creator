@@ -1830,13 +1830,19 @@ def _covered_button(reveals_needed):
     return step, kwargs
 
 
-def test_label_mismatch_triggers_reveal_only_when_opted_in():
+def test_label_mismatch_reveals_only_when_the_caller_says_the_button_is_hidden():
     step, kwargs = _covered_button(reveals_needed=1)
     _, point, reason, reveals = demo.locate_with_reveal(
-        None, step, **kwargs,
-        reveal_on=(demo.CONFIRM_NOT_LOCATED, demo.CONFIRM_LABEL_REJECTED),
+        None, step, **kwargs, should_reveal_fn=lambda image, reason: True,
     )
     assert point is not None and reveals == 1
+
+    # 버튼은 보이는데 VLM 이 잘못 짚은 경우 - Alt+click 하지 않는다.
+    step, kwargs = _covered_button(reveals_needed=1)
+    _, point, reason, reveals = demo.locate_with_reveal(
+        None, step, **kwargs, should_reveal_fn=lambda image, reason: False,
+    )
+    assert point is None and reason == demo.CONFIRM_LABEL_REJECTED and reveals == 0
 
     step, kwargs = _covered_button(reveals_needed=1)
     _, point, reason, reveals = demo.locate_with_reveal(None, step, **kwargs)
@@ -1846,7 +1852,6 @@ def test_label_mismatch_triggers_reveal_only_when_opted_in():
 def test_still_covered_after_reveal_budget_is_not_visible():
     step, kwargs = _covered_button(reveals_needed=99)
     _, point, reason, reveals = demo.locate_with_reveal(
-        None, step, **kwargs,
-        reveal_on=(demo.CONFIRM_NOT_LOCATED, demo.CONFIRM_LABEL_REJECTED),
+        None, step, **kwargs, should_reveal_fn=lambda image, reason: True,
     )
     assert point is None and reason == demo.CONFIRM_NOT_VISIBLE and reveals == 2

@@ -430,7 +430,7 @@ def locate_with_reveal(
     window, step: FlowStep,
     *, capture_fn, locate_fn, read_tokens_fn, policy,
     reveal_fn=None, max_reveals: int = 0, reveals_used: int = 0, label: str = "",
-    reveal_on: tuple = (CONFIRM_NOT_LOCATED,),
+    should_reveal_fn=None,
 ):
     """요소를 확인해 찾되, **좌표 미검출이면** 가린 창을 Alt+click 으로 밀어내고 다시 찾는다.
 
@@ -442,10 +442,10 @@ def locate_with_reveal(
     해제 예산이 호출마다 새로 채워지면 안 된다. 어떤 버튼이든 쓸 수 있다
     (`run_in_tool_flow` 의 여는 버튼, `manual_click_button` 의 단일 버튼).
 
-    `reveal_on` 은 가림 해제를 할 실패 이유. 기본은 미검출만이다(시연 흐름의 계약 ④).
-    대상이 **자주 가려지는** 버튼이면 LABEL_REJECTED 도 넣는다 - VLM 은 버튼이 가려져도
-    대개 어딘가를 찍고, 그 자리는 덮은 창의 다른 라벨이다. Alt+click 은 VLM 점이 아니라
-    버튼이 있어야 할 자리에 하므로 그 엉뚱한 라벨을 누르지 않는다.
+    `should_reveal_fn(image, reason) -> bool` 이 가림 해제 여부를 정한다. 기본은
+    미검출일 때만이다(시연 흐름의 계약 ④ - 라벨 불일치는 보이는 화면을 잘못 짚은 것이라
+    창을 밀어내면 엉뚱한 창만 뒤로 간다). 호출부는 라벨 불일치 중에서도 **버튼이 정말
+    안 보이는 경우**만 골라 해제하도록 넓힐 수 있다(`manual_click_button`).
     """
     key = step.target.key
     reveals = reveals_used
@@ -454,7 +454,13 @@ def locate_with_reveal(
         point, reason = _confirm_point(
             image, step, locate_fn=locate_fn, read_tokens_fn=read_tokens_fn, policy=policy,
         )
-        if point is not None or reason not in reveal_on:
+        if point is not None:
+            return image, point, reason, reveals
+        wants_reveal = (
+            should_reveal_fn(image, reason) if should_reveal_fn is not None
+            else reason == CONFIRM_NOT_LOCATED
+        )
+        if not wants_reveal:
             return image, point, reason, reveals
         if reveal_fn is None or max_reveals <= 0:
             return image, None, reason, reveals

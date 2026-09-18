@@ -74,13 +74,15 @@ TARGET_DESCRIPTION = (
     "Click the center of that button."
 )
 # OCR 확인: 묶음 하나를 통째로 만족해야 한다. 'FileManager' 로 붙여 읽혀도 통과한다.
-TARGET_REQUIRED = (("file", "manager"),)
+# needle 은 'manag' - 좁은 crop 에서 끝 글자가 잘려 'File', 'Manage' 로 읽혔다(2026-09-18
+# 오피스). 부분 일치라 Manager/Manage/FileManager 모두 통과한다.
+TARGET_REQUIRED = (("file", "manag"),)
 # 라벨 확인 OCR crop: 클릭 지점 기준 창 폭의 좌우/창 높이의 위아래 비율. **버튼 한 개
 # 크기**로 좁힌다. 기본(0.30/0.05)은 아래쪽 버튼 그룹에서 위/아래 줄까지 담아 OCR 이
 # 위 줄 버튼만 읽고 'File Manager' 를 놓쳤다(2026-09-18 오피스, 가림 해제 뒤 unreadable).
 # 좁은 crop 은 확대되어 글자도 또렷해진다. 점이 한 줄 위를 짚었다면 그 버튼 이름만
 # 읽혀 strict 가 여전히 거부한다.
-CONFIRM_HALF_WIDTH_RATIO = 0.07
+CONFIRM_HALF_WIDTH_RATIO = 0.10
 CONFIRM_HALF_HEIGHT_RATIO = 0.015
 # forbidden 은 비운다. 확인 OCR crop 이 클릭 지점 좌우 30% 를 담아 **아래쪽 버튼 그룹의
 # 이웃 버튼(Exit/Close 등)이 반드시 함께 읽히고**, classify_label 은 forbidden 을 required
@@ -122,7 +124,7 @@ OPENED_DESCRIPTION = (
     "reads 'File Manager( Class, IDW, IDP, Recipe )'. Point at the middle of that "
     "title text, not at the 'File Manager' button in the bottom button group."
 )
-OPENED_REQUIRED = (("manager", "idw"), ("manager", "recipe"))
+OPENED_REQUIRED = (("manag", "idw"), ("manag", "recipe"))
 OPEN_WAIT_SEC = 2.0                # 클릭 -> 창이 원격 뷰에 그려질 대기
 
 EXIT_OK = 0

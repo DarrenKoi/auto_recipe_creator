@@ -257,3 +257,46 @@ def test_auto_forwards_fallback_config_to_live_search(monkeypatch):
     )
 
     assert seen["pan_budget"] == 2, "주입한 fallback_config 가 무시됐다"
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+@pytest.mark.parametrize("verdict", ["no_progress", "max_tries", "lost", "ambiguous"])
+def test_unverified_reposition_searches_only_when_enabled(monkeypatch, enabled, verdict):
+    """primary 실패는 bounded search 로 넘기되 kill switch 와 OK 금지를 유지한다."""
+    controller = _RecordingController()
+    template = _template()
+    scale = correction_mod.template_frame_scale(template, controller.capture().shape)
+    positions = iter([(240, 120), (220, 120), (200, 120)])
+
+    def match(*args, **kwargs):
+        xy = next(positions)
+        after = xy != (240, 120)
+        return correction_mod.AlignKeyMatchResult(
+            score=0.9, chamfer_score=0.9, orb_inlier_ratio=0.0,
+            best_xy=(240, 120) if verdict == "no_progress" else xy,
+            best_scale=scale,
+            decision="low" if after and verdict == "lost" else "match",
+            second_ratio=0.99 if after and verdict == "ambiguous" else 0.5,
+            debug_overlay=np.zeros((4, 4, 3), dtype=np.uint8),
+        )
+
+    monkeypatch.setattr(correction_mod, "compute_align_key_score_ensemble", match)
+    searches = []
+
+    def search(*args, **kwargs):
+        searches.append(1)
+        return live_search_mod.LiveSearchOutcome(
+            status="exhausted", final_decision="low", best=None, pan_count=0, history=[])
+
+    import poc.workflow_3.align.grid_search as grid_search
+    monkeypatch.setattr(grid_search, "search_around", search)
+    outcome = correct_align_fail(
+        controller, {"SEM": template}, dry_run=False,
+        ok_locator=lambda _: (10, 10),
+        config=CorrectionConfig(fallback_search_enabled=enabled, settle_sec=0,
+                                reposition_refine_max=1, reregister_ratio_threshold=0.98),
+    )
+    assert searches == ([1] if enabled else [])
+    assert outcome.status == ("fallback_exhausted" if enabled
+                              else "escalated_reposition_unconverged")
+    assert not any(call[0] == "click" for call in controller.calls)

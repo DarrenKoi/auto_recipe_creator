@@ -15,8 +15,8 @@
 
 흐름의 위치(중요): align key 는 **대개 잘못된 crosshair 근처에 이미 보인다**. 따라서
 본 모듈(즉시 reposition+OK)이 **primary** 경로다. ``live_align_search`` 의 pan/zoom
-two-phase 탐색은 *아무것도 안 보일 때만* 도는 **fallback** 이다. 둘을 가르는 단일
-기준이 ``key_visibility_gate`` 다.
+탐색은 key 부재·모호 또는 reposition 미수렴 시 도는 **fallback** 이다.
+``key_visibility_gate`` 와 reposition 재검증 결과로 분기한다.
 
 실행(Mac 데모): uv run python poc/workflow_3/align/correction.py
 """
@@ -426,7 +426,7 @@ def correct_align_fail(
     # 들어올 때까지 다시 누른다. 멈추는 조건 셋:
     #   converged   : 잔차 <= tol -> OK 로 간다.
     #   key lost    : 재매칭에서 key 가 안 보인다 = 이동이 엉뚱했다 -> search-around.
-    #   no progress : 잔차가 줄지 않았다(클릭 미반영 / 닮은 이웃으로 점프) -> OK 없이 escalate.
+    #   no progress / max tries / ambiguous : OK 없이 bounded search (fallback off 면 보류).
     ox, oy = template.align_offset_xy
     tol_px = config.reposition_tol_ratio * fw
 
@@ -483,8 +483,13 @@ def correct_align_fail(
             template, controller.capture(), scales=scales, policy=STRUCTURE_POLICY
         )
         align_x, align_y, dist = _residual(cur)
-        lost = key_visibility_gate(cur, base_scale=base_scale) == GATE_FALLBACK
-        verdict = ("lost" if lost else "converged" if dist <= tol_px
+        verified_route = key_visibility_gate(
+            cur, base_scale=base_scale,
+            reregister_ratio_threshold=config.reregister_ratio_threshold,
+        )
+        verdict = ("lost" if verified_route == GATE_FALLBACK
+                   else "ambiguous" if verified_route == GATE_ENGINEER_REVIEW
+                   else "converged" if dist <= tol_px
                    else "no_progress" if dist >= prev_dist else "refine")
         print(f"[DIGEST] reposition verify try={attempt} dec={cur.decision} score={cur.score:.3f} "
               f"residual=({align_x - fw / 2:+.0f},{align_y - fh / 2:+.0f}) dist={dist:.1f} "
@@ -494,15 +499,15 @@ def correct_align_fail(
                         "tol_px": round(tol_px, 1), "verdict": verdict})
         if verdict == "converged":
             break
-        if verdict == "lost":
-            print("[WARNING] reposition 뒤 key 가 화면에서 사라짐 -> 주변 탐색")
-            return _search_around(cur.decision)
-        if verdict == "no_progress":
+        if verdict in ("lost", "ambiguous", "no_progress"):
             break
         prev_dist = dist
     else:
         verdict = "max_tries"
     if not dry_run and config.reposition_refine_max > 0 and verdict != "converged":
+        if config.fallback_search_enabled:
+            print(f"[WARNING] reposition 검증 실패({verdict}) -> 주변 탐색")
+            return _search_around(cur.decision)
         print(f"[WARNING] reposition 이 수렴하지 않음({verdict}, 잔차 {dist:.1f}px > tol {tol_px:.1f}px) "
               "-> OK 를 누르지 않고 엔지니어 확인. 클릭 미반영이면 ALIGN_SEM_RECENTER_CLICKS / "
               "ALIGN_FAIL_REPOSITION_SETTLE_SEC 확인")

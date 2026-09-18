@@ -89,7 +89,9 @@ paused 프레임에서 recipe key 가 인식되면 PRIMARY(즉시 reposition+OK)
 
 ### primary vs fallback path
 PRIMARY: key 가 잘못된 crosshair 근처에 이미 보임 → 즉시 reposition+OK. FALLBACK
-(`live_align_search`): 아무것도 안 보일 때만 SEM Monitor 를 pan/zoom 하며 key 를 헌트.
+(`live_align_search`): key 가 안 보이거나 모호할 때 SEM Monitor 를 pan/zoom 하며 key 를 헌트.
+workflow_3 는 reposition 뒤에도 key 가 모호하거나 중심 수렴에 실패하면 기존 예산 안에서
+주변 탐색으로 넘긴다. `ALIGN_FAIL_FALLBACK_SEARCH=0` 이면 탐색 없이 엔지니어 확인으로 끝낸다.
 
 ### tool_id (= EQP_ID)
 CD-SEM 장비 한 대의 식별자. 알람 row 의 `EQP_ID` 필드. 같은 recipe 라도 장비별로 자산을

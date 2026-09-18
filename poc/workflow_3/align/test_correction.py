@@ -600,11 +600,12 @@ def test_reposition_refines_until_centered() -> bool:
 
 
 def test_reposition_no_progress_escalates() -> bool:
-    """클릭이 stage 를 못 움직이면(정지 프레임) OK 를 누르지 않고 escalate."""
+    """fallback off + 정지 프레임이면 OK 를 누르지 않고 escalate."""
     monitor, templates, _ = _drifting_demo()
     fake = _FakeController(monitor.capture(), monitor.capture_screen(), mode="SEM")
     outcome = correct_align_fail(fake, templates, ok_locator=lambda _s: (690, 560),
-                                 dry_run=False)
+                                 dry_run=False,
+                                 config=CorrectionConfig(fallback_search_enabled=False))
     ok = (
         outcome.status == "escalated_reposition_unconverged"
         and len(fake.screen_clicks) == 0

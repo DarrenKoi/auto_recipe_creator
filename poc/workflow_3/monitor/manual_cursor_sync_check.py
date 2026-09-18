@@ -9,12 +9,14 @@ RCS tool 창은 장비 화면을 비추는 뷰라, 창 안에 보이는 커서�
     찍히지 않으므로(프레임에 보이는 것은 장비 커서뿐) 이미지에서 찾을 필요가 없다.
   * 장비 커서: 캡처 프레임에서 VLM 이 찾는다(recording_filter 의 커서 프롬프트 재사용).
   probe 점 몇 곳으로 커서를 옮겨 가며 둘의 거리를 재고, 다수결로 판정한다.
-    synced   - 찾은 probe 의 다수가 SYNC_PX 이내
-    drifted  - 다수가 DRIFT_PX 이상 떨어짐 (중앙값 offset 과 '장비 커서가 따라왔는가' 를 같이 찍는다)
+    probe 하나는 |dx| <= SYNC_DX 그리고 |dy| <= SYNC_DY 면 sync, 아니면 drift.
+    synced   - 찾은 probe 의 과반이 sync
+    drifted  - drift 가 sync 보다 많음 (중앙값 offset 과 '장비 커서가 따라왔는가' 를 같이 찍는다)
     unknown  - 장비 커서를 MIN_FOUND 곳 미만에서 찾음 / 표가 갈림
 
-주의: 커서 bbox 중심을 쓰므로 화살표 끝(hotspot)과 ~16-24px 차이가 난다. SYNC_PX 가
-그보다 넉넉한 이유다. 커서 탐지는 VLM 이라 고정 그래픽(손바닥 아이콘 등) 오탐이 있을 수
+주의: 커서 bbox 중심을 쓰므로 화살표 끝(hotspot)과 ~16-24px 차이가 난다. 축별 허용치
+(SYNC_DX/SYNC_DY)가 그 편향을 흡수한다 - 오피스 첫 실행의 동기화 상태 offset 이
+dx~45/dy~12 였다(2026-09-18). 커서 탐지는 VLM 이라 고정 그래픽(손바닥 아이콘 등) 오탐이 있을 수
 있다 - 판정이 이상하면 산출 폴더의 probe 프레임을 볼 것.
 
 안전: 클릭/휠/키 입력 없음. 물리 마우스만 움직인다(SAFE_MODE=0 필요, 기본값으로 못박음).
@@ -22,7 +24,7 @@ RCS tool 창은 장비 화면을 비추는 뷰라, 창 안에 보이는 커서�
 
 사용법: 이 파일 상단 상수를 고친 뒤
   uv run python poc/workflow_3/monitor/manual_cursor_sync_check.py
-env override: MANUAL_CURSOR_SYNC_<상수> (EQP_ID / SYNC_PX / DRIFT_PX)
+env override: MANUAL_CURSOR_SYNC_<상수> (EQP_ID / SYNC_DX / SYNC_DY)
 """
 
 import math
@@ -42,11 +44,11 @@ if str(_REPO_ROOT) not in sys.path:
 EQP_ID = ""            # 비우면 열려 있는 아무 tool 창
 # probe 점 (창 이미지 비율 x, y). 서로 멀리 떨어지게 둬야 '장비 커서가 따라오는가' 가 보인다.
 PROBES = [(0.15, 0.25), (0.85, 0.25), (0.85, 0.80), (0.15, 0.80), (0.50, 0.50)]
-SYNC_PX = 40           # 이 이내면 같은 자리 (이미지 px, hotspot 편향 포함)
-DRIFT_PX = 80          # 이 이상이면 어긋남. 사이 구간은 판정 보류
+SYNC_DX = 50           # |dx| 이 이하 + |dy| 가 SYNC_DY 이하면 같은 자리 (이미지 px, hotspot 편향 포함)
+SYNC_DY = 15           # 2026-09-18 오피스: 동기화 상태 offset 이 dx~45, dy~12 (사용자 판정)
 MIN_FOUND = 3          # 장비 커서를 최소 이만큼의 probe 에서 찾아야 판정
 SETTLE_SEC = 0.8       # 이동 후 원격 화면이 따라올 시간
-RECHECK_MAX = 2        # 첫 판독이 SYNC_PX 밖이면 다시 읽는 횟수 (원격 커서 지연 흡수)
+RECHECK_MAX = 2        # 첫 판독이 sync 범위 밖이면 다시 읽는 횟수 (원격 커서 지연 흡수)
 RECHECK_SEC = 1.0      # 재판독 전 대기
 VLM_SERVICE = "mai-ui"
 
@@ -56,7 +58,12 @@ EXIT_UNKNOWN = 4
 EXIT_PREFLIGHT_FAILED = 2
 
 
-def judge_sync(probes: list[dict], sync_px: float, drift_px: float, min_found: int) -> dict:
+def is_synced(truth: dict, found: dict, sync_dx: float, sync_dy: float) -> bool:
+    """probe 하나: 장비 커서가 로컬 위치의 축별 허용치 안에 있는가."""
+    return abs(found["x"] - truth["x"]) <= sync_dx and abs(found["y"] - truth["y"]) <= sync_dy
+
+
+def judge_sync(probes: list[dict], sync_dx: float, sync_dy: float, min_found: int) -> dict:
     """probe 결과(truth/found 이미지 px)로 동기화 판정을 낸다. 순수 함수.
 
     probe: {"truth": {"x","y"}, "found": {"x","y"} | None}
@@ -64,8 +71,8 @@ def judge_sync(probes: list[dict], sync_px: float, drift_px: float, min_found: i
     found = [p for p in probes if p.get("found")]
     dists = [math.hypot(p["found"]["x"] - p["truth"]["x"],
                         p["found"]["y"] - p["truth"]["y"]) for p in found]
-    n_sync = sum(d <= sync_px for d in dists)
-    n_drift = sum(d >= drift_px for d in dists)
+    n_sync = sum(is_synced(p["truth"], p["found"], sync_dx, sync_dy) for p in found)
+    n_drift = len(found) - n_sync
     result = {"n_probes": len(probes), "n_found": len(found),
               "n_sync": n_sync, "n_drift": n_drift,
               "distances_px": [round(d, 1) for d in dists],
@@ -75,11 +82,11 @@ def judge_sync(probes: list[dict], sync_px: float, drift_px: float, min_found: i
             "dx": round(statistics.median(p["found"]["x"] - p["truth"]["x"] for p in found)),
             "dy": round(statistics.median(p["found"]["y"] - p["truth"]["y"] for p in found)),
         }
-        # 장비 커서가 움직였는가: 찾은 위치들이 전부 한 점(SYNC_PX 안)에 모여 있으면 안 따라온 것.
+        # 장비 커서가 움직였는가: 찾은 위치들이 전부 한 점(SYNC_DX 안)에 모여 있으면 안 따라온 것.
         xs = [p["found"]["x"] for p in found]
         ys = [p["found"]["y"] for p in found]
         result["remote_followed"] = (
-            len(found) < 2 or max(max(xs) - min(xs), max(ys) - min(ys)) > sync_px
+            len(found) < 2 or max(max(xs) - min(xs), max(ys) - min(ys)) > sync_dx
         )
 
     if len(found) < min_found:
@@ -93,7 +100,7 @@ def judge_sync(probes: list[dict], sync_px: float, drift_px: float, min_found: i
         )
     elif n_sync > n_drift and n_sync * 2 > len(found):
         result["verdict"] = "synced"
-        result["reason"] = f"{n_sync}/{len(found)} probe 가 {sync_px}px 이내"
+        result["reason"] = f"{n_sync}/{len(found)} probe 가 |dx|<={sync_dx}, |dy|<={sync_dy} 이내"
     else:
         result["verdict"] = "unknown"
         result["reason"] = f"표가 갈림 (sync={n_sync}, drift={n_drift}, found={len(found)})"
@@ -129,8 +136,8 @@ def main() -> int:
     from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
 
     eqp_id = _arg("EQP_ID", EQP_ID)
-    sync_px = _arg("SYNC_PX", SYNC_PX)
-    drift_px = _arg("DRIFT_PX", DRIFT_PX)
+    sync_dx = _arg("SYNC_DX", SYNC_DX)
+    sync_dy = _arg("SYNC_DY", SYNC_DY)
 
     window, title, _backend = find_remote_monitoring_window(eqp_id)
     if window is None:
@@ -180,11 +187,11 @@ def main() -> int:
                   f"kind={parsed.get('cursor_kind')}")
             readings.append({"found": found, "bbox": bbox, "kind": parsed.get("cursor_kind"),
                              "frame": str(frame_path)})
-            if dist is not None and dist <= sync_px:
+            if found and is_synced(truth, found, sync_dx, sync_dy):
                 break
         probes.append({"truth": truth, "found": readings[-1]["found"], "readings": readings})
 
-    result = judge_sync(probes, sync_px, drift_px, MIN_FOUND)
+    result = judge_sync(probes, sync_dx, sync_dy, MIN_FOUND)
     save_debug_json(out_dir / "result.json", {"title": title, "probes": probes, **result})
     print("=" * 70)
     print(f"[DIGEST] cursor_sync verdict={result['verdict']} found={result['n_found']}/"

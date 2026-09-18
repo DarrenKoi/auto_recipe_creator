@@ -10,7 +10,7 @@ def _probes(found_fn):
 
 
 def _judge(probes):
-    return judge_sync(probes, sync_px=40, drift_px=80, min_found=3)
+    return judge_sync(probes, sync_dx=50, sync_dy=15, min_found=3)
 
 
 def test_synced_when_remote_sits_on_local():
@@ -38,3 +38,14 @@ def test_unknown_when_cursor_mostly_not_found():
 def test_single_decoy_does_not_flip_synced():
     r = _judge(_probes(lambda x, y: {"x": 20, "y": 20} if (x, y) == (500, 400) else {"x": x, "y": y}))
     assert r["verdict"] == "synced" and r["n_drift"] == 1
+
+
+def test_office_offset_counts_as_synced():
+    # 2026-09-18 오피스: 동기화 상태에서 dx~45, dy~12 (사용자 판정 = sync)
+    r = _judge(_probes(lambda x, y: {"x": x + 45, "y": y + 12}))
+    assert r["verdict"] == "synced"
+
+
+def test_dy_beyond_limit_is_drift_even_with_small_dx():
+    r = _judge(_probes(lambda x, y: {"x": x + 5, "y": y + 20}))
+    assert r["verdict"] == "drifted"

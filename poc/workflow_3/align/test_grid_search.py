@@ -166,8 +166,9 @@ def _moves(ctl):
 
 
 def test_sweep_zooms_out_visits_every_cell_then_returns_home_and_restores_mag():
-    """blank 프레임: 5K 로 내려 3×3 의 8 셀(셀당 3 클릭)을 돌고, 원점 복귀(3 클릭) 후
-    등록 배율 최근접 단으로 복귀, status exhausted. sweep 중 추격 0회."""
+    """blank 프레임: 5K 로 내려 예산 10 셀을 돌고(보폭 = footprint 0.75 FOV 라 셀당 2 클릭),
+    원점 복귀(10번째 셀 (2,0) 에서 4 클릭) 후 등록 배율 최근접 단으로 복귀, status exhausted.
+    보폭이 1 FOV 가 아닌 이유: matcher 는 template 창이 통째로 든 자리만 본다(grid_search 상단)."""
     ctl = _Ctl()
     mag = _Mag(CG_OPTIONS, reg_mag=30000)
     out = gs.grid_align_search(
@@ -178,11 +179,11 @@ def test_sweep_zooms_out_visits_every_cell_then_returns_home_and_restores_mag():
     assert out.status == "exhausted"
     assert mag.set_calls[0] == 5000
     assert mag.set_calls[-1] == 20000  # 30K 는 단에 없다 -> 최근접(20K/50K 동률이면 낮은 쪽)
-    assert len(_moves(ctl)) == 8 * 3 + 3
-    assert out.meta["cells_visited"] == 8
+    assert len(_moves(ctl)) == 10 * 2 + 4
+    assert out.meta["cells_visited"] == 10
     assert out.meta["search_mag"] == 5000
     assert abs(out.meta["final_position_px"][0]) < 1 and abs(out.meta["final_position_px"][1]) < 1
-    assert out.pan_count == 8
+    assert out.pan_count == 10
 
 
 def test_sweep_never_clicks_outside_margin():
@@ -615,11 +616,14 @@ def test_degenerate_grid_makes_no_gesture_at_all():
     로 보여 sweep 이 도는 중인지 아닌지를 가릴 수 없었다.
     """
     ctl = _Ctl(fw=512, fh=384)
-    # 1K 로 내려가면 FOV 135µm x (384/512) = 101µm >= 2R(60µm) -> plan_grid 가 빈 목록.
+    # 1K 로 내려가면 셀 하나(footprint: 세로 (384-24)x0.9 px = 85µm)가 2R(60µm)을 덮는다
+    # -> plan_grid 가 빈 목록. template 이 프레임만 하면 footprint 가 없어 이 전제가 안 선다.
     mag = _Mag([1000, 2000, 5000, 50000], reg_mag=2000)
+    small = {"SEM": build_template(_tpl()["SEM"].raw_image[:48, :64], recipe_id="c/r", version="v",
+                                   key_type="sem", source_wh=(512, 384))}
     out = gs.grid_align_search(
-        ctl, _tpl(), mag.control(), reg_mag=2000,
-        config=gs.GridSearchConfig(min_key_px=60), match_fn=_low, shift_fn=None,
+        ctl, small, mag.control(), reg_mag=2000,
+        config=gs.GridSearchConfig(min_key_px=20), match_fn=_low, shift_fn=None,
     )
     assert out.meta["cells_visited"] == 0
     assert _moves(ctl) == []

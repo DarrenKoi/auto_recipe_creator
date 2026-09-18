@@ -118,6 +118,10 @@ REPOSITION_REFINE_MAX = None # reposition 뒤 재매칭해 중심에 올 때까�
 REPOSITION_TOL_RATIO = None  # 수렴 판정 잔차(frame 폭 비율). None=0.01.
 REPOSITION_SETTLE_SEC = None # 재캡처 전 대기. None=0.5. 화면 갱신이 늦어 '진전 없음'
                              # 으로 escalate 되면 올린다.
+PARTIAL_HINT_MOVES = None    # 프레임 가장자리에 걸친 key 조각을 중심으로 데려오는 이동 상한.
+                             # None=2. 헛 이동이 잦으면 0(끔).
+SEARCH_CONTINUE = None       # 주변 탐색이 key 를 찾으면 reposition+OK 로 잇는다. None=1.
+                             # 0 = 종전처럼 fallback_match 로 끝내고 엔지니어에게 넘김.
 FEASIBILITY_MARK = 1         # 보정 가능성 판정 이미지 마킹.
 REPOSITION_PREVIEW = None
 SEM_BOX_DETECT = 1           # 라이브 SEM box 검출(panel ROI 1단).
@@ -207,6 +211,8 @@ _CONST_TO_ENV = (
     ("REPOSITION_REFINE_MAX", "ALIGN_FAIL_REPOSITION_REFINE_MAX"),
     ("REPOSITION_TOL_RATIO", "ALIGN_FAIL_REPOSITION_TOL_RATIO"),
     ("REPOSITION_SETTLE_SEC", "ALIGN_FAIL_REPOSITION_SETTLE_SEC"),
+    ("PARTIAL_HINT_MOVES", "ALIGN_FAIL_PARTIAL_HINT_MOVES"),
+    ("SEARCH_CONTINUE", "ALIGN_FAIL_SEARCH_CONTINUE"),
     ("FEASIBILITY_MARK", "ALIGN_FAIL_FEASIBILITY_MARK"),
     ("REPOSITION_PREVIEW", "ALIGN_FAIL_REPOSITION_PREVIEW"),
     ("SEM_BOX_DETECT", "ALIGN_FAIL_SEM_BOX_DETECT"),

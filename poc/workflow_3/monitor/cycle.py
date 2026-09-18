@@ -1148,6 +1148,9 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
                 reposition_refine_max=settings.reposition_refine_max,
                 reposition_tol_ratio=settings.reposition_tol_ratio,
                 settle_sec=settings.reposition_settle_sec,
+                # 모서리에 걸친 key 조각 recenter 상한 / 탐색 성공 뒤 reposition+OK 연결.
+                partial_hint_moves=settings.partial_hint_moves,
+                search_continue_enabled=settings.search_continue_enabled,
                 # consensus 라우팅 설정(Workflow3Settings 에서 주입).
                 consensus_enabled=settings.consensus_enabled,
                 consensus_min_s=settings.consensus_min_s,

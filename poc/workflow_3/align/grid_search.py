@@ -5,9 +5,13 @@
 step 이 픽셀이라 배율에 역비례로 줄고 zoom-out 은 배율을 거의 안 바꾸는 휠이기 때문.
 여기서는 모든 거리를 **FOV 비율**, 모든 scale 을 **배율비**로 다룬다.
 
-단위계: ``base = fw / source_wh[0]``로 template crop과 offset을 한 번 리샘플하면,
-이후 매칭 scale은 순수 ``cur_mag / reg_mag``다. crop 폭을 원본 FOV 폭으로 쓰지 않는다.
+단위계: 매칭 scale = ``base(fw / source_wh[0]) x cur_mag / reg_mag`` 를 **원본 template** 에
+건다 - primary(correction)와 글자 그대로 같은 호출이라 '첫 화면에서는 잡히는데 탐색에서는 안
+잡히는' 갈림이 없다. 표시 px 환산은 크기 계산(zoom-out 단/보폭/중복 반경)에만 쓴다.
 FOV_um = 135,000 / Mag (``docs/study/hitachi_mag_fov_pixel_260828.md``).
+
+커버리지: 격자 보폭은 1 FOV 가 아니라 **검출 footprint**(프레임 - template)다(`footprint_stride`).
+판정: 'key 가 있다' 는 ``accept_fn`` 하나 - correction 이 primary 와 같은 게이트를 넘긴다.
 
 배율 변경은 컨트롤러 Protocol 에 넣지 않고 **주입 함수**로 받는다(``MagnificationControl``).
 PM 드롭다운 + OCR 판독 코드는 office-only 라 ``monitor/cycle.py`` 에 남고, 이 모듈은 Mac 에서
@@ -92,11 +96,28 @@ def spiral_cells(count: int) -> list[tuple[int, int]]:
     return cells
 
 
-def plan_grid(fov_um: float, radius_um: float, budget: int) -> list[tuple[int, int]]:
-    """2R 박스를 덮는 홀수 n×n 격자의 셀 오프셋(FOV 단위)을 spiral 순서로 낸다.
+# 격자 보폭 = 한 프레임의 **검출 footprint**. matcher 는 valid-mode 라 template 창이 프레임에
+# 통째로 들어가는 자리만 본다 - key 중심이 놓일 수 있는 폭은 (프레임 - template)이지 1 FOV 가
+# 아니다. 종전 1-FOV 보폭은 footprint 끼리 이어지지 않아 대각선으로 0.2~0.8 FOV 어긋난 key 를
+# 어느 프레임에서도 온전히 못 봤다(2026-09-19 진단: key 옆을 지나가고도 sweep 을 계속 돈 원인).
+STRIDE_OVERLAP = 0.9   # odometry/클릭 오차만큼 footprint 를 겹친다.
+# 보폭 하한은 0 을 피하는 용도일 뿐이다(template >= 프레임이면 footprint <= 0). footprint 보다
+# 크게 잡으면 그만큼 구멍이 다시 생긴다 - 셀 수는 pan_budget 이 묶으므로 하한을 키울 이유가 없다.
+MIN_STRIDE_FOV = 0.1
+SMALL_FOOTPRINT_FOV = 0.25  # 이보다 좁으면 예산 안에서 덮는 면적이 작다 - 경고만.
 
-    n = ceil(2R / FOV) 를 홀수로 올려 착지 셀이 중심에 오게 한다. 예산을 넘으면 안쪽
-    링부터 예산만큼만(바깥 링 일부 생략). FOV 가 이미 2R 을 덮으면 빈 목록.
+
+def footprint_stride(frame_px: float, tpl_px: float) -> float:
+    """탐색 배율에서 template 표시 크기 -> 그 축의 격자 보폭(px)."""
+    return float(min(frame_px, max(MIN_STRIDE_FOV * frame_px, (frame_px - tpl_px) * STRIDE_OVERLAP)))
+
+
+def plan_grid(fov_um: float, radius_um: float, budget: int) -> list[tuple[int, int]]:
+    """2R 박스를 덮는 홀수 n×n 격자의 셀 오프셋(셀 단위)을 spiral 순서로 낸다.
+
+    ``fov_um`` 은 **셀 한 칸**의 시료 위 크기다(보폭이 footprint 라 1 FOV 보다 작다).
+    n = ceil(2R / 셀) 를 홀수로 올려 착지 셀이 중심에 오게 한다. 예산을 넘으면 안쪽
+    링부터 예산만큼만(바깥 링 일부 생략). 셀 하나가 이미 2R 을 덮으면 빈 목록.
     """
     n = math.ceil(2.0 * radius_um / fov_um)
     if n <= 1:
@@ -337,13 +358,18 @@ def grid_align_search(
     shift_fn: Callable[[np.ndarray, np.ndarray], tuple | None] | None = phase_correlate_shift,
     notify_fn=None,
     debug_dir: Path | None = None,
+    accept_fn: Callable[[object], bool] | None = None,
 ) -> LiveSearchOutcome:
-    """절대 배율 zoom-out -> 매 클릭 판정 -> 미확정 후보 추격/confirm -> 복귀.
+    """절대 배율 zoom-out -> 매 클릭 판정 -> 후보 추격/confirm -> 복귀.
 
     status: "match" | "exhausted" | "aborted" | "degraded"(배율 판독 실패 - 호출부가 legacy
     경로로 넘긴다). meta 에 search_mag/cells_visited/odometry/final_position_px/restore_failed
     를 남긴다. ``notify_fn(state, history)`` 는 legacy 와 같은 escalation 콜백 - 못 찾고
     끝날 때 한 번 부른다(cycle 의 live_search_escalation 감사 로그가 grid 경로에서도 남게).
+
+    ``accept_fn(match_result) -> bool`` 은 'key 가 있다' 의 판정이다. correction 은 primary 와
+    **같은** ``key_visibility_gate`` 를 넘긴다 - 게이트가 둘이면 갈린다(종전 탐색은 match 만
+    받아, primary 가 받는 adjust+distinctive key 를 중심에 두고도 지나쳤다). 미주입 = match-only.
     """
     match = match_fn or (lambda t, f, **kw: compute_align_key_score_ensemble(
         t, f, policy=STRUCTURE_POLICY, **kw))
@@ -357,18 +383,23 @@ def grid_align_search(
     frame = controller.capture()
     fh, fw = frame.shape[:2]
     mode = (controller.read_mode() or "").upper()
-    source_template = route_template(templates, mode)
-    if source_template.source_wh is None:
+    template = route_template(templates, mode)
+    if template.source_wh is None:
         meta["reason"] = "missing_source_geometry"
         return _outcome("degraded", None, 0, history, meta)
     try:
-        base = template_frame_scale(source_template, frame.shape)
-        template = normalize_template(source_template, fw)
+        base = template_frame_scale(template, frame.shape)
     except ValueError as exc:
         meta["reason"] = "invalid_source_geometry"
         print(f"[WARNING] grid source geometry: {exc}")
         return _outcome("degraded", None, 0, history, meta)
-    meta.update(source_wh=list(source_template.source_wh), frame_wh=[fw, fh], base_scale=base)
+    # 매칭은 primary 와 **같은 호출**이다: 원본 template 에 scale = base x 배율비. template 을
+    # 미리 리샘플하면 edge 를 다시 뽑고 NCC 가 두 번 보간되어, 같은 key 가 primary 에서는 잡히고
+    # 탐색에서는 안 잡힐 여지가 생긴다. 크기 계산(zoom-out 단/보폭/중복 반경)만 표시 px 로 한다.
+    tw0, th0 = template.raw_image.shape[1] * base, template.raw_image.shape[0] * base
+    accept = accept_fn or (lambda r: r.decision == "match"
+                           and r.best_scale / base >= MIN_CONFIRM_SCALE)
+    meta.update(source_wh=list(template.source_wh), frame_wh=[fw, fh], base_scale=base)
     odo = Odometer(fov_px=fw, tol_fov=config.odom_tol_fov)
     stage = _Stage(controller, fw, fh, config, shift_fn, odo)
     stage.frame = frame
@@ -379,7 +410,6 @@ def grid_align_search(
     if "OM" in mode:
         cur_mag = _om_to_registered_step(controller, mag, reg_mag, meta)
         stage.frame = controller.capture()
-        cells = spiral_cells(config.om_pan_budget)
     else:
         options = mag.options_fn()
         if not options:
@@ -388,7 +418,7 @@ def grid_align_search(
             meta["reason"] = "no_mag_options"
             print("[WARNING] grid search: PM 드롭다운 옵션 0개 -> legacy 경로로 degrade")
             return _outcome("degraded", None, 0, history, meta)
-        target = choose_zoom_out_mag(options, reg_mag, min(template.raw_image.shape[:2]), config.min_key_px)
+        target = choose_zoom_out_mag(options, reg_mag, min(tw0, th0), config.min_key_px)
         back_target = _nearest_mag(options, reg_mag)
         if target is None:
             # 등록 배율 최근접 단으로 닫아도 실제 배율은 다를 수 있어 반드시 판독한다.
@@ -400,21 +430,29 @@ def grid_align_search(
             return _outcome("degraded", None, 0, history, meta)
         cur_mag = float(read)
         stage.frame = controller.capture()
-        # 셀 step 은 x=fw, y=fh (FOV 는 폭 기준이라 세로는 fh/fw 배). n 은 짧은 변으로 잡아야
-        # 세로 커버에 구멍이 안 난다.
-        cells = plan_grid(fov_um=fov_um(cur_mag) * min(1.0, fh / fw),
-                          radius_um=config.radius_um, budget=config.pan_budget)
     meta["search_mag"] = cur_mag
     scale = cur_mag / reg_mag
+    # 셀 보폭 = 축별 footprint. n 은 짧은 쪽 보폭으로 잡아야 커버에 구멍이 안 난다.
+    step_x, step_y = footprint_stride(fw, tw0 * scale), footprint_stride(fh, th0 * scale)
+    if "OM" in mode:
+        cells = spiral_cells(config.om_pan_budget)
+    else:
+        cells = plan_grid(fov_um=fov_um(cur_mag) * min(step_x, step_y) / fw,
+                          radius_um=config.radius_um, budget=config.pan_budget)
+    meta["stride_fov"] = [round(step_x / fw, 3), round(step_y / fh, 3)]
     print(f"[INFO] grid search: reg={reg_mag:.0f} search={cur_mag:.0f} scale={scale:.3f} "
-          f"fw={fw} cells={len(cells)}")
+          f"fw={fw} stride=({step_x / fw:.2f},{step_y / fh:.2f})FOV cells={len(cells)}")
+    if min(fw - tw0 * scale, fh - th0 * scale) < SMALL_FOOTPRINT_FOV * min(fw, fh):
+        print(f"[WARNING] grid search: template({tw0 * scale:.0f}x{th0 * scale:.0f}) 이 프레임"
+              f"({fw}x{fh})을 거의 채운다 - 이 배율에서는 key 가 중심 근처일 때만 보인다"
+              "(예산 안에서 덮는 면적이 작다). 더 낮은 배율 단이 있는지 PM 드롭다운/min_key_px 확인")
 
     # 탐색이 매긴 프레임마다 match overlay(찾은 박스 + score/decision) 한 장. history 의 image 가
     # 그 파일을 가리켜 "key 위를 지나갔는데 왜 안 잡혔나" 를 grid_search.json 과 함께 대조한다.
     frames_dir = debug_dir / "grid_frames" if debug_dir is not None else None
     if frames_dir is not None:
         try:
-            save_overlay_jpeg(_resize_template(template.raw_image, scale), frames_dir / "template_search.jpg")
+            save_overlay_jpeg(_resize_template(template.raw_image, base * scale), frames_dir / "template_search.jpg")
             meta["template_image"] = "grid_frames/template_search.jpg"
         except Exception as exc:
             print(f"[WARNING] grid template 이미지 저장 실패: {exc}")
@@ -433,114 +471,143 @@ def grid_align_search(
         except Exception as exc:
             print(f"[WARNING] grid frame 저장 실패({name}): {exc}")
 
-    def _score(frame, pos, cell, phase):
-        r = match(template, frame, scales=tuple(scale * s for s in DEFAULT_SCALES))
+    def _score(frame, pos, cell, phase, mag_ratio=None):
+        """프레임 하나를 primary 와 같은 호출로 매긴다. accepted 는 confirm 가능한 배율에서만 참."""
+        ratio = scale if mag_ratio is None else mag_ratio
+        r = match(template, frame, scales=tuple(base * ratio * s for s in DEFAULT_SCALES))
         ox, oy = template.align_offset_xy
-        align_xy = [r.best_xy[0] + round(ox * r.best_scale), r.best_xy[1] + round(oy * r.best_scale)]
+        align_xy = [int(r.best_xy[0] + round(ox * r.best_scale)), int(r.best_xy[1] + round(oy * r.best_scale))]
         # pos = 이 프레임 중심의 누적 위치(px), target = 후보 align point 의 누적 위치(추격 목적지).
+        # scale 은 등록 표시 크기 대비(= best_scale / base) - MIN_CONFIRM_SCALE 과 같은 단위다.
         rec = {"cell": list(cell), "phase": phase, "pos": [float(pos[0]), float(pos[1])],
                "target": [float(pos[0]) + align_xy[0] - fw / 2, float(pos[1]) + align_xy[1] - fh / 2],
                "score": float(r.score), "xy": align_xy,
-               "match_xy": list(r.best_xy), "scale": float(r.best_scale),
+               "match_xy": list(r.best_xy), "scale": float(r.best_scale / base),
                "decision": r.decision, "orb": float(r.orb_inlier_ratio),
-               "distinctive": bool(r.distinctive), "second_ratio": r.second_ratio}
+               "distinctive": bool(r.distinctive), "second_ratio": r.second_ratio,
+               "accepted": bool(ratio >= MIN_CONFIRM_SCALE and accept(r))}
         history.append(rec)
         _log_frame(rec, r.debug_overlay)
         return rec
 
-    # ---- §2 sweep: 매 클릭 직후 판정. confirm 가능한 배율의 match는 즉시 멈춘다. ----
+    # 같은 key 를 여러 프레임에서 본 후보는 한 번만 쫓는다 - 이동 중 프레임끼리 크게 겹쳐 한 key 가
+    # 2~3번 잡히고, 그대로 두면 max_chase 를 한 자리에 다 쓴다. 반경은 탐색 배율의 key 크기다
+    # (그 안의 다른 후보는 confirm 프레임이 어차피 함께 본다).
+    key_px = max(tw0, th0) * scale
+    chased: list[dict] = []
+    best: CandidateRecord | None = None
+    mag_unknown = False
+
+    def _chasable(rec):
+        return (len(chased) < max(0, config.max_chase)
+                and not any(abs(rec["target"][0] - c["target"][0]) < key_px
+                            and abs(rec["target"][1] - c["target"][1]) < key_px for c in chased))
+
+    def _chase(rec) -> str:
+        """후보를 중심으로 데려와 등록 배율(최근접 단)에서 판정. "found" | "miss" | "stop"."""
+        nonlocal best, mag_unknown
+        chased.append(rec)
+        print(f"[INFO] grid search: 추격 {len(chased)}/{config.max_chase} "
+              f"score={rec['score']:.3f} decision={rec['decision']} (본 프레임 #{history.index(rec):03d})")
+        if not stage.move_to(*rec["target"]):
+            return "stop"
+        back_mag = cur_mag
+        if back_target is not None and abs(back_target - cur_mag) > 1e-6:
+            back = mag.set_fn(back_target)
+            if back is None:
+                # 배율을 바꾸려 했는데 판독이 없다 = 장비가 어느 배율인지 모른다. 모르는 scale 로
+                # confirm 하지도, px 단위를 모른 채 stage 를 더 옮기지도 않는다(계약 1).
+                meta["reason"] = "mag_unreadable_confirm"
+                mag_unknown = True
+                print("[WARNING] grid search: confirm 배율 판독 실패 -> 추격 중단")
+                return "stop"
+            back_mag = float(back)
+        # confirm 게이트 = accept(primary 와 같은 판정) + 판독 배율비 >= 0.6. legacy 의 orb>0 는
+        # 쓰지 않는다 - SEM junction key 는 ORB 특징점이 빈약해 진짜 match 도 orb=0 이다.
+        c = _score(stage.capture(), odo.position, rec["cell"], "confirm", mag_ratio=back_mag / reg_mag)
+        if c["accepted"]:
+            best = CandidateRecord(score=c["score"], fov_xy=tuple(c["xy"]), iter_idx=len(history),
+                                   phase="confirm", decision=c["decision"])
+            meta.update(restore_mag=back_mag, confirm_distinctive=c["distinctive"],
+                        confirm_second_ratio=c["second_ratio"])
+            return "found"
+        # 놓침 -> 탐색 배율로 돌아가 이어 간다. 복귀 판독이 없으면 이후 이동의 px 단위를 모른다.
+        if abs(back_mag - cur_mag) > 1e-6:
+            restored = mag.set_fn(cur_mag)
+            if restored is None or abs(float(restored) - cur_mag) > 0.01 * cur_mag:
+                # 판독이 없거나 다른 단이다 - 탐색 배율 px 로 계속 움직이면 전부 어긋난다.
+                meta["reason"] = "mag_unreadable_restore"
+                mag_unknown = True
+                print(f"[WARNING] grid search: 탐색 배율 복귀 실패(판독={restored}, 목표={cur_mag:.0f}) "
+                      "-> 탐색 중단")
+                return "stop"
+            stage.frame = controller.capture()
+        return "miss"
+
+    def _react(rec) -> str:
+        """방금 매긴 프레임에 대한 조치. "" = 계속 sweep."""
+        if rec["accepted"]:
+            # confirm 가능한 배율에서 primary 게이트를 통과 - 그 자리에 둔다(상위가 reposition).
+            nonlocal best
+            best = CandidateRecord(score=rec["score"], fov_xy=tuple(rec["xy"]), iter_idx=0,
+                                   phase=rec["phase"], decision=rec["decision"])
+            meta.update(restore_mag=cur_mag, confirm_distinctive=rec["distinctive"],
+                        confirm_second_ratio=rec["second_ratio"])
+            return "found"
+        # zoom-out 에서는 accept 가 구조적으로 불가(scale < 0.6)다. 강한 후보를 두고 남은 셀을 다
+        # 돌면 수십 번의 이동 뒤에야 되돌아오고 그 사이 odometry 오차가 쌓인다 - 바로 쫓는다.
+        # 조건은 match 다: 작은 scale 에서는 배경도 adjust(0.47~0.49)를 내서, adjust 로 쫓으면
+        # 진짜 key 를 보기 전에 예산을 다 쓴다(test_chase_finds_key_one_search_fov_away 가 잡았다).
+        # 나머지 후보는 종전대로 sweep 뒤 점수순 - 그 몫으로 추격 1회는 반드시 남긴다.
+        if (scale < MIN_CONFIRM_SCALE and rec["decision"] == "match"
+                and len(chased) < config.max_chase - 1 and _chasable(rec)):
+            return _chase(rec)
+        return ""
+
+    # ---- §2 sweep: 매 클릭 직후 판정. accept 는 즉시 멈추고, 강한 후보는 즉시 쫓는다. ----
     records = [_score(stage.frame, odo.position, (0, 0), "sweep")]
-
-    def _confirmed(rec):
-        return (rec["decision"] == "match" and scale >= MIN_CONFIRM_SCALE
-                and rec["scale"] >= MIN_CONFIRM_SCALE)
-
-    found = _confirmed(records[-1])
-    aborted = is_aborted()
+    outcome = _react(records[-1])
     for cell in cells:
-        if found or aborted:
-            break
+        while outcome in ("", "miss") and not is_aborted():
+            hit: list[str] = []
 
-        def _observe(shot, pos):
-            nonlocal found
-            records.append(_score(shot, pos, cell, "transit"))
-            found = _confirmed(records[-1])
-            return found or is_aborted()
+            def _observe(shot, pos):
+                records.append(_score(shot, pos, cell, "transit"))
+                verdict = _react(records[-1])
+                if verdict:
+                    hit.append(verdict)
+                return bool(hit) or is_aborted()
 
-        if not stage.move_to(cell[0] * fw, cell[1] * fh, stop_when=_observe):
-            aborted = True
-            break
-        meta["cells_visited"] += 1
-        if is_aborted():
-            aborted = True
+            if not stage.move_to(cell[0] * step_x, cell[1] * step_y, stop_when=_observe):
+                break
+            outcome = hit[0] if hit else ""
+            if not hit:
+                meta["cells_visited"] += 1
+                break
+            # 추격이 놓쳤으면(miss) 같은 셀로 가던 길을 잇는다.
+        if outcome in ("found", "stop") or is_aborted():
             break
     pan_count = meta["cells_visited"]
 
-    best_rec = records[-1] if found else max(records, key=lambda r: r["score"])
-    best = CandidateRecord(score=best_rec["score"], fov_xy=tuple(best_rec["xy"]), iter_idx=0,
-                           phase=best_rec["phase"], decision=best_rec["decision"])
-
-    # ---- §4 chase: best-first, confirm at registered-nearest mag. ----
-    status = "match" if found and not aborted else "exhausted"
-    if status == "match":
-        meta.update(restore_mag=cur_mag, confirm_distinctive=best_rec["distinctive"],
-                    confirm_second_ratio=best_rec["second_ratio"])
-    if not aborted and not found:
-        # 같은 key 를 여러 프레임에서 본 후보는 점수 높은 하나만 쫓는다 - 이동 중 프레임끼리 크게
-        # 겹쳐 한 key 가 2~3번 잡히고, 그대로 두면 max_chase 를 한 자리에 다 쓴다. 반경은 탐색 배율의
-        # key 크기다(그 안의 다른 후보는 confirm 프레임이 어차피 함께 본다).
-        key_px = max(template.raw_image.shape[:2]) * scale
-        chase: list[dict] = []
-        for r in sorted((r for r in records if r["score"] >= config.candidate_score),
-                        key=lambda r: -r["score"]):
-            if len(chase) >= max(0, config.max_chase):
+    # ---- §4 남은 후보 추격: 점수순. ----
+    if outcome in ("", "miss") and not is_aborted():
+        pool = sorted((r for r in records if r["score"] >= config.candidate_score),
+                      key=lambda r: -r["score"])
+        print(f"[INFO] grid search: sweep 끝 - 후보 {len(pool)}/{len(records)} "
+              f"(candidate_score>={config.candidate_score}), 추격 {len(chased)}/{config.max_chase} 사용")
+        for rec in pool:
+            if is_aborted() or len(chased) >= max(0, config.max_chase):
                 break
-            if any(abs(r["target"][0] - c["target"][0]) < key_px
-                   and abs(r["target"][1] - c["target"][1]) < key_px for c in chase):
-                continue
-            chase.append(r)
-        print(f"[INFO] grid search: 추격 후보 {len(chase)}/{len(records)} "
-              f"(candidate_score>={config.candidate_score}, top={[round(r['score'], 3) for r in chase]})")
-        for rec in chase:
-            # 후보를 본 프레임의 위치 + 프레임 안 오프셋 = 후보의 누적 위치로 recenter.
-            if not stage.move_to(*rec["target"]):
-                aborted = True
-                break
-            back = mag.set_fn(back_target) if back_target is not None else None
-            if back_target is not None and back is None:
-                # 배율을 바꾸려 했는데 판독이 없다 = 장비가 어느 배율인지 모른다. 모르는
-                # scale 로 confirm 하지 않는다(계약 1) - 추격을 멈추고 복귀로 간다.
-                meta["reason"] = "mag_unreadable_confirm"
-                print("[WARNING] grid search: confirm 배율 판독 실패 -> 추격 중단, 복귀")
-                break
-            back_mag = float(back) if back is not None else cur_mag
-            frame_c = stage.capture()
-            s2 = back_mag / reg_mag
-            r = match(template, frame_c, scales=tuple(s2 * s for s in DEFAULT_SCALES))
-            ox, oy = template.align_offset_xy
-            align_xy = (int(r.best_xy[0] + round(ox * r.best_scale)),
-                        int(r.best_xy[1] + round(oy * r.best_scale)))
-            history.append({"cell": rec["cell"], "phase": "confirm", "score": float(r.score),
-                            "xy": list(align_xy), "match_xy": list(r.best_xy), "decision": r.decision,
-                            "orb": float(r.orb_inlier_ratio), "scale": float(r.best_scale),
-                            "distinctive": bool(r.distinctive), "second_ratio": r.second_ratio})
-            _log_frame(history[-1], r.debug_overlay)
-            # confirm 게이트: 판독 배율비와 선택 scale 모두 >= 0.6인 ensemble match. legacy 의 orb>0 는 쓰지
-            # 않는다 - SEM junction key 는 ORB 특징점이 빈약해(aperture 문제) 진짜 match 도
-            # orb=0 으로 나온다. distinctive 는 engine 규약대로 soft advisory 로만 기록한다
-            # (chamfer-top 의 유일성이지 best_xy 의 유일성이 아니다 - hard gate 금지).
-            if r.decision == "match" and s2 >= MIN_CONFIRM_SCALE and r.best_scale >= MIN_CONFIRM_SCALE:
-                best = CandidateRecord(score=float(r.score), fov_xy=align_xy,
-                                       iter_idx=len(history), phase="confirm", decision="match")
-                status = "match"
-                meta["restore_mag"] = back_mag
-                meta["confirm_distinctive"] = bool(r.distinctive)
-                meta["confirm_second_ratio"] = r.second_ratio
-                break
-            # 놓침 -> 탐색 배율로 돌아가 다음 후보.
-            if abs(back_mag - cur_mag) > 1e-6:
-                mag.set_fn(cur_mag)
-                stage.frame = controller.capture()
+            if _chasable(rec):
+                outcome = _chase(rec)
+                if outcome != "miss":
+                    break
+    aborted = is_aborted()
+    status = "match" if outcome == "found" and not aborted else "exhausted"
+    if best is None:
+        top = max(records, key=lambda r: r["score"])
+        best = CandidateRecord(score=top["score"], fov_xy=tuple(top["xy"]), iter_idx=0,
+                               phase=top["phase"], decision=top["decision"])
 
     # ---- §5 복귀 (match 는 그 자리에 둔다). 실패는 restore_failed 로 남긴다(스펙 §5). ----
     if status != "match":
@@ -548,7 +615,8 @@ def grid_align_search(
             status = "aborted"
             print(f"[WARNING] 긴급 해제({abort_reason()}) - grid search 중단(복귀 생략).")
         else:
-            moved = stage.move_to(0.0, 0.0)
+            # 배율을 모르면 px 단위도 모른다 - 원점 이동을 하지 않고 restore_failed 로 남긴다.
+            moved = (not mag_unknown) and stage.move_to(0.0, 0.0)
             restored = True
             if back_target is not None and abs(back_target - cur_mag) > 1e-6:
                 meta["restore_mag"] = mag.set_fn(back_target)
@@ -581,6 +649,7 @@ def search_around(
     legacy_config: LiveSearchConfig = LiveSearchConfig(),
     notify_fn=None,
     debug_dir: Path | None = None,
+    accept_fn=None,
 ) -> LiveSearchOutcome:
     """fallback 탐색의 단일 진입점: grid(배율 주입 + 등록 배율이 있을 때), 아니면 legacy.
 
@@ -592,7 +661,7 @@ def search_around(
         print("[INFO] key 가 paused 화면에 보이지 않음 → fallback(grid_align_search) 위임")
         out = grid_align_search(controller, templates, grid_mag, reg_mag=reg_mag,
                                 config=grid_config or GridSearchConfig(),
-                                notify_fn=notify_fn, debug_dir=debug_dir)
+                                notify_fn=notify_fn, debug_dir=debug_dir, accept_fn=accept_fn)
         if debug_dir is not None:
             # 셀별 score/decision/scale 이 "key 위를 지나갔는데 왜 안 잡혔나" 의 유일한 근거다.
             # work2.log 를 grep 하지 않아도 되게 한 파일로 남긴다.

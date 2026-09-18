@@ -55,6 +55,7 @@ from poc.workflow_3.align.live_search import (
     clamp_to_fov,
     route_template,
 )
+from poc.workflow_3.align.partial_hint import partial_key_hint
 
 LOG_COMPONENT = "align_fail_correct"
 
@@ -95,6 +96,12 @@ class CorrectionConfig:
     # 0 = 종전 open-loop(클릭 1회 후 바로 OK) 롤백.
     reposition_refine_max: int = 3
     reposition_tol_ratio: float = 0.01
+    # key 가 프레임 가장자리에 걸쳐 full-window 매칭이 못 볼 때(partial_hint.py), 보이는 조각을
+    # 중심으로 데려오는 이동의 상한. 이동 뒤 판정은 정상 게이트가 처음부터 다시 한다. 0 = 끔.
+    partial_hint_moves: int = 2
+    # 주변 탐색이 key 를 찾으면 같은 closed-loop reposition + OK 로 잇는다. False = 종전처럼
+    # fallback_match 로 끝내고 엔지니어에게 넘긴다(롤백).
+    search_continue_enabled: bool = True
     cond_box_crop: bool = True  # cond.box_ltrb 기반 box-crop template(+decoupled offset). False -> whole-template(구 동작) 롤백.
     # 만성 모호 키 게이트(Tier 0.1). second_ratio 가 이 값을 넘으면 present 라도 auto-act 대신
     # engineer_review 로 보류한다. None(기본)이면 게이트는 과거 act/fallback 2분기만 — 동작 불변.
@@ -235,6 +242,8 @@ def correct_align_fail(
     grid_mag=None,
     grid_reg_mag: float | None = None,
     grid_config=None,
+    _search: LiveSearchOutcome | None = None,
+    _mag_ratio: float = 1.0,
 ) -> CorrectionOutcome:
     """paused Align Fail 화면에서 crosshair 를 recipe-matched 점으로 옮기고 OK.
 
@@ -257,6 +266,9 @@ def correct_align_fail(
     fallback 탐색은 ``grid_search.search_around`` 하나로 간다: ``grid_mag``(MagnificationControl)
     + ``grid_reg_mag``(등록 배율) 이 있으면 절대 배율 zoom-out + FOV 격자, 아니면(또는 grid 가
     배율 판독 실패로 degrade 하면) 종전 legacy live_align_search.
+    탐색이 key 를 찾으면(grid "match") 이 함수를 **한 번 더** 돈다(``_search``/``_mag_ratio`` 는
+    그 재진입 전용): 탐색을 끈 채 새로 캡처해 같은 게이트 -> closed-loop reposition -> OK.
+    그래서 key 는 어느 경로로 찾았든 'FOV 중심에 수렴 + 게이트 통과' 일 때만 확정된다.
     모든 종료 분기는 console([INFO]/[ERROR]) + 파일 로그(log_work2_event)로 기록한다.
     OK 탐지 *예외*는 정상 'OK 안 보임'(escalated_no_ok)과 구분해 ok_detect_error 로 surface
     하며 error 필드에 예외 요약을 담는다(조용히 삼켜 escalate 로 위장하지 않는다).
@@ -283,47 +295,99 @@ def correct_align_fail(
             save_overlay_jpeg(frame, debug_dir / "invalid_geometry.jpg")
         return CorrectionOutcome("escalated_invalid_geometry", "primary", "low", None, None, None,
                                  history=history)
-    scales = frame_scales(template, frame.shape, PAUSED_SCALES)
+    # 탐색 뒤 재진입이면 장비는 등록 배율이 아니라 '최근접 단' 에 있다 - band 를 그 비율로 옮긴다.
+    scales = frame_scales(template, frame.shape, tuple(_mag_ratio * s for s in PAUSED_SCALES))
+    search_enabled = config.fallback_search_enabled and _search is None
 
-    # ensemble 경로(decision/score 정비): decision 은 calibrated sel 임계 재판정, orb=0(폐지).
-    # key_visibility_gate 의 adjust 분기는 orb>0 → distinctive 로 대체(위 게이트 참조).
-    result = compute_align_key_score_ensemble(
-        template, frame, scales=scales, policy=STRUCTURE_POLICY
-    )
-    # 끝 밴드 고정 = scale band 가 live box/template 실제 비율을 못 덮는다는 신호.
-    # 후보가 있었을 때만 의미가 있다(no_candidates 는 best_scale=1.0 기본값).
-    scale_pinned = bool(
-        result.reject_reason != "no_candidates"
-        and result.best_scale in (min(scales), max(scales))
-    )
-    if scale_pinned:
-        print(f"[WARNING] scale_pinned: best={result.best_scale:.2f} 가 band "
-              f"({min(scales)}~{max(scales)}) 끝 - 배율비를 못 덮는다(좌표 신뢰도 낮음)")
-    history.append(
-        {
-            "stage": "paused_match",
-            "mode": mode,
-            "decision": result.decision,
-            "score": float(result.score),
-            "chamfer": float(result.chamfer_score),
-            "orb": float(result.orb_inlier_ratio),
-            "best_scale": float(result.best_scale),
-            "best_xy": [int(result.best_xy[0]), int(result.best_xy[1])],
-            "scale_pinned": scale_pinned,
-            "source_wh": template.source_wh,
-            "frame_wh": [fw, fh],
-            "base_scale": base_scale,
-            "relative_scale": float(result.best_scale / base_scale),
-        }
-    )
-    if debug_dir is not None:
-        save_overlay_jpeg(result.debug_overlay, debug_dir / "paused_match.jpg")
+    def _gate(match: AlignKeyMatchResult) -> str:
+        """'key 가 있다' 의 유일한 판정 - 첫 화면/hint 뒤/reposition 검증/탐색이 전부 이걸 쓴다."""
+        return key_visibility_gate(match, base_scale=base_scale,
+                                   reregister_ratio_threshold=config.reregister_ratio_threshold)
+
+    def _match_paused(shot: np.ndarray, stage: str) -> tuple[AlignKeyMatchResult, bool]:
+        # ensemble 경로(decision/score 정비): decision 은 calibrated sel 임계 재판정, orb=0(폐지).
+        match = compute_align_key_score_ensemble(
+            template, shot, scales=scales, policy=STRUCTURE_POLICY
+        )
+        # 끝 밴드 고정 = scale band 가 live box/template 실제 비율을 못 덮는다는 신호.
+        # 후보가 있었을 때만 의미가 있다(no_candidates 는 best_scale=1.0 기본값).
+        pinned = bool(
+            match.reject_reason != "no_candidates"
+            and match.best_scale in (min(scales), max(scales))
+        )
+        if pinned:
+            print(f"[WARNING] scale_pinned: best={match.best_scale:.2f} 가 band "
+                  f"({min(scales)}~{max(scales)}) 끝 - 배율비를 못 덮는다(좌표 신뢰도 낮음)")
+        history.append(
+            {
+                "stage": stage,
+                "mode": mode,
+                "decision": match.decision,
+                "score": float(match.score),
+                "chamfer": float(match.chamfer_score),
+                "orb": float(match.orb_inlier_ratio),
+                "best_scale": float(match.best_scale),
+                "best_xy": [int(match.best_xy[0]), int(match.best_xy[1])],
+                "scale_pinned": pinned,
+                "source_wh": template.source_wh,
+                "frame_wh": [fw, fh],
+                "base_scale": base_scale,
+                "relative_scale": float(match.best_scale / base_scale),
+            }
+        )
+        if debug_dir is not None:
+            save_overlay_jpeg(match.debug_overlay, debug_dir / f"{stage}.jpg")
+        return match, pinned
+
+    result, scale_pinned = _match_paused(frame, "paused_match")
 
     # ---- 가시성 게이트: route intent 에 따라 분기 (act / fallback_search / engineer_review). ----
-    route = key_visibility_gate(
-        result, reregister_ratio_threshold=config.reregister_ratio_threshold, base_scale=base_scale
-    )
-    if route == GATE_ENGINEER_REVIEW and config.fallback_search_enabled:
+    route = _gate(result)
+    if _search is not None and route != GATE_ACT:
+        # 탐색이 찾았다고 한 자리에서 같은 게이트가 key 를 다시 못 봤다 - 확정하지 않고 종전처럼 넘긴다.
+        print(f"[WARNING] 탐색이 찾은 자리에서 key 재확인 실패(route={route} "
+              f"score={result.score:.3f}) -> 자동 확정 없이 엔지니어 확인")
+        return _with_key_ambiguity(
+            CorrectionOutcome("fallback_match", "fallback", result.decision, None, None, _search,
+                              history=history), result)
+
+    # ---- 가장자리에 걸친 key: 보이는 조각을 중심으로 데려와 같은 게이트로 다시 본다. ----
+    # matcher 는 template 창이 프레임에 통째로 들어가야 점수가 난다 - 모서리의 key 는 눈에 보여도
+    # low 다. 사람처럼 그 조각을 더블클릭한다. hint 는 이동 단서일 뿐이고 판정은 위 게이트가 한다.
+    if route != GATE_ACT and search_enabled and not dry_run:
+        from poc.workflow_3.align.grid_search import phase_correlate_shift
+
+        undo: list[tuple[int, int]] = []
+        for n in range(1, config.partial_hint_moves + 1):
+            hint = partial_key_hint(template, frame, scales)
+            if hint is None:
+                break
+            hx, hy = clamp_to_fov(hint.align_xy[0], hint.align_xy[1], fw, fh, config.click_margin_ratio)
+            print(f"[INFO] 프레임 가장자리에 걸친 key 조각(sel={hint.sel:.3f} visible={hint.visible:.0%} "
+                  f"align={hint.align_xy}) -> ({hx},{hy}) 를 중심으로 (hint {n}/{config.partial_hint_moves})")
+            controller.move_to_point(hx, hy)
+            if config.settle_sec:
+                time.sleep(config.settle_sec)
+            prev, frame = frame, controller.capture()
+            # 되돌리기는 클릭이 실제로 먹었을 때만 예약한다 - 안 먹은 이동을 되돌리면 원점에서
+            # 멀어진다. 측정 불가(None)는 odometry 와 같은 규칙으로 명령값을 믿는다.
+            shift = phase_correlate_shift(prev, frame)
+            want = float(np.hypot(hx - fw / 2, hy - fh / 2))
+            if shift is None or float(np.hypot(*shift)) >= 0.3 * want:
+                undo.append((fw - hx, fh - hy))  # 중심 대칭점 = 같은 이동을 되돌리는 클릭.
+            else:
+                print(f"[WARNING] hint 클릭이 반영되지 않은 듯(측정 {shift}, 명령 {want:.0f}px) - 되돌리기 생략")
+            result, scale_pinned = _match_paused(frame, f"hint_match_{n}")
+            route = _gate(result)
+            if route == GATE_ACT:
+                break
+        if undo and route != GATE_ACT:
+            # 헛 hint 였다. 탐색 반경의 기준점(원래 착지점)을 지키려고 되돌린 뒤 탐색한다.
+            print("[INFO] hint 이동 뒤에도 key 미확인 -> 되돌리고 주변 탐색")
+            for ux, uy in reversed(undo):
+                controller.move_to_point(ux, uy)
+
+    if route == GATE_ENGINEER_REVIEW and search_enabled:
         # paused 한 장으로는 '보이는 주기 key' 와 'align point 가 어긋나 닮은 이웃만 보임' 을
         # 못 가른다(2026-09-17 오피스: OM 을 일부러 어긋나게 두자 여기서 멈춰 탐색 없이
         # 엔지니어 대기로 끝났다). 탐색이 판별한다 - 격자는 착지 셀을 먼저 채점하고
@@ -332,7 +396,7 @@ def correct_align_fail(
         print(f"[WARNING] align key 후보가 유일하지 않음(decision={result.decision} "
               f"score={result.score:.3f} second_ratio={sr_txt}) -> 주변 탐색으로 판별")
         route = GATE_FALLBACK
-    if route == GATE_FALLBACK and not config.fallback_search_enabled:
+    if route == GATE_FALLBACK and not search_enabled:
         # pan/zoom 을 하지 않고 끝낸다. actuation 이 전혀 없으므로 stage 는 그대로다.
         # status 는 corrected 가 아니라서 notify 가 cube 로 엔지니어를 부른다.
         print("[WARNING] key 가 paused 화면에 보이지 않음 + fallback search 비활성 "
@@ -366,6 +430,7 @@ def correct_align_fail(
             grid_mag=grid_mag, reg_mag=grid_reg_mag, grid_config=grid_config,
             legacy_config=fallback_config, notify_fn=notify_fn,
             debug_dir=(debug_dir / "fallback") if debug_dir is not None else None,
+            accept_fn=lambda match: _gate(match) == GATE_ACT,
         )
         result_outcome = CorrectionOutcome(
             status=f"fallback_{outcome.status}",
@@ -384,6 +449,25 @@ def correct_align_fail(
             key_decision=key_decision,
             pan_count=outcome.pan_count,
         )
+        # 탐색이 찾았으면 거기서 끝내지 않는다 - 새로 캡처해 같은 게이트 + closed-loop 로 잇는다.
+        # 조건: 실클릭 / closed-loop 켜짐 / 지금 배율을 안다(restore_mag 는 grid 만 남긴다 -
+        # legacy 탐색은 배율을 모르므로 종전처럼 fallback_match 로 엔지니어에게 넘긴다).
+        # restore_mag 가 있어도 OM PM 판독 실패(om_mag_unreadable)면 그 값은 가정이다 - 제외.
+        restore_mag = outcome.meta.get("restore_mag")
+        if (outcome.status == "match" and config.search_continue_enabled and not dry_run
+                and config.reposition_refine_max > 0 and grid_reg_mag and restore_mag
+                and outcome.meta.get("reason") != "om_mag_unreadable"):
+            ratio = float(restore_mag) / float(grid_reg_mag)
+            print(f"[INFO] 주변 탐색이 key 를 찾음 -> closed-loop reposition 으로 잇는다(배율비 {ratio:.2f})")
+            cont = correct_align_fail(
+                controller, templates, vlm_client=vlm_client, ok_locator=ok_locator,
+                config=config, fallback_config=fallback_config, notify_fn=notify_fn,
+                dry_run=dry_run,
+                debug_dir=(debug_dir / "after_search") if debug_dir is not None else None,
+                _search=outcome, _mag_ratio=ratio,
+            )
+            cont.path, cont.fallback, cont.history = "fallback", outcome, history + cont.history
+            return cont
         return _with_key_ambiguity(result_outcome, result)
 
     if route == GATE_FALLBACK:
@@ -483,10 +567,7 @@ def correct_align_fail(
             template, controller.capture(), scales=scales, policy=STRUCTURE_POLICY
         )
         align_x, align_y, dist = _residual(cur)
-        verified_route = key_visibility_gate(
-            cur, base_scale=base_scale,
-            reregister_ratio_threshold=config.reregister_ratio_threshold,
-        )
+        verified_route = _gate(cur)
         verdict = ("lost" if verified_route == GATE_FALLBACK
                    else "ambiguous" if verified_route == GATE_ENGINEER_REVIEW
                    else "converged" if dist <= tol_px
@@ -505,7 +586,7 @@ def correct_align_fail(
     else:
         verdict = "max_tries"
     if not dry_run and config.reposition_refine_max > 0 and verdict != "converged":
-        if config.fallback_search_enabled:
+        if search_enabled:
             print(f"[WARNING] reposition 검증 실패({verdict}) -> 주변 탐색")
             return _search_around(cur.decision)
         print(f"[WARNING] reposition 이 수렴하지 않음({verdict}, 잔차 {dist:.1f}px > tol {tol_px:.1f}px) "

@@ -75,7 +75,11 @@ TARGET_DESCRIPTION = (
 )
 # OCR 확인: 묶음 하나를 통째로 만족해야 한다. 'FileManager' 로 붙여 읽혀도 통과한다.
 TARGET_REQUIRED = (("file", "manager"),)
-TARGET_FORBIDDEN = ("cancel", "exit", "terminat", "close", "취소", "종료", "닫기")
+# forbidden 은 비운다. 확인 OCR crop 이 클릭 지점 좌우 30% 를 담아 **아래쪽 버튼 그룹의
+# 이웃 버튼(Exit/Close 등)이 반드시 함께 읽히고**, classify_label 은 forbidden 을 required
+# 보다 먼저 봐서 맞는 점을 거부했다(2026-09-18 오피스: 점은 맞는데 클릭 안 됨). 데모의
+# Work Sheet/File 이 같은 이유로 비웠다. 확인은 strict + required 두 단어가 맡는다.
+TARGET_FORBIDDEN = ()
 # strict: 'File Manager' 가 읽혀야만 누른다. lenient 는 다른 라벨(예: 'SECS Terminal')도
 # '못 읽음' 으로 통과시키는데, 버튼이 가려졌을 때 VLM 이 찍는 곳이 바로 덮은 창이다.
 CONFIRM_POLICY = "strict"
@@ -234,7 +238,8 @@ def main() -> int:
             read_tokens_fn=kit.read_tokens, policy=CONFIRM_POLICY,
             label=f"{TARGET_KEY}_crop",
         )
-        print(f"[INFO] 예상 영역 crop 재탐색: {'확인됨' if point else '실패'} point={point}")
+        print(f"[INFO] 예상 영역 crop 재탐색: {'확인됨' if point else '실패'} "
+              f"point={point} reason={reason}")
 
     if point is None:
         print(f"[DIGEST] manual_click target={TARGET_KEY} result={reason} reveals={reveals}")

@@ -74,8 +74,9 @@ TARGET_DESCRIPTION = (
     "Click the center of that button."
 )
 # OCR 확인: 묶음 하나를 통째로 만족해야 한다. 'FileManager' 로 붙여 읽혀도 통과한다.
-# needle 은 'manag' - 좁은 crop 에서 끝 글자가 잘려 'File', 'Manage' 로 읽혔다(2026-09-18
-# 오피스). 부분 일치라 Manager/Manage/FileManager 모두 통과한다.
+# needle 은 'manag' - 'File', 'Manage' 로 읽혔다(2026-09-18 오피스). 가림 해제 Alt+click
+# 뒤 **장비 커서가 버튼 위에 남아 끝 글자를 가렸다**(원격 뷰의 커서는 프레임에 찍힌다).
+# 부분 일치라 Manager/Manage/FileManager 모두 통과한다.
 TARGET_REQUIRED = (("file", "manag"),)
 # 라벨 확인 OCR crop: 클릭 지점 기준 창 폭의 좌우/창 높이의 위아래 비율. **버튼 한 개
 # 크기**로 좁힌다. 기본(0.30/0.05)은 아래쪽 버튼 그룹에서 위/아래 줄까지 담아 OCR 이

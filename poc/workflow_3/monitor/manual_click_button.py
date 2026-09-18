@@ -1,7 +1,7 @@
 """열린 tool 창에서 버튼 하나를 확인 후 누른다. 있어야 할 버튼이 안 보이면 폴백으로
 가린 창을 Alt+click 해 뒤로 밀어내고 다시 찾는다.
 
-기본 대상은 **File Manager** 버튼(라이브 SEM box 아래). 이 버튼은 'SECS Terminal',
+기본 대상은 **File Manager** 버튼(화면 아래쪽 버튼 그룹). 이 버튼은 'SECS Terminal',
 'Terminal Service' 같은 창에 자주 가려지는데, 엔지니어는 그 자리를 Alt+click 해서 덮은
 창을 뒤로 보내고 버튼을 되살린다. 이 진입점이 같은 일을 한다:
 
@@ -63,13 +63,14 @@ EQP_ID = "MCD513"                  # (MANUAL_CLICK_EQP_ID) 제목에 이 ID 가 
 
 TARGET_KEY = "file_manager_button"
 # 첫 글자 anchor('F')를 쓰지 않는다 - 이 창에는 F 로 시작하는 버튼/텍스트가 많아 엉뚱한
-# 것을 짚었다(2026-09-18 오피스). 전체 문구 두 단어 + 위치 관계로 고정한다.
+# 것을 짚었다(2026-09-18 오피스). 전체 문구 두 단어 + "아래쪽 버튼 그룹" 위치로 고정한다
+# (라이브 SEM box 기준 설명은 VLM 이 그 box 를 모를 수 있어 뺐다).
 TARGET_DESCRIPTION = (
     "the button labeled with the two words 'File Manager' in the Remote Monitoring "
-    "window. First find the large live SEM image box, then look directly BELOW it: "
-    "the File Manager button is in the button row under that box. The label must "
-    "read exactly 'File Manager' - ignore any other button or text that merely "
-    "starts with 'F'. Click the center of that button."
+    "window. It is in the group of buttons along the BOTTOM of the screen. Look only "
+    "in that bottom button group and find the button whose label reads exactly "
+    "'File Manager' - ignore any other button or text that merely starts with 'F'. "
+    "Click the center of that button."
 )
 # OCR 확인: 묶음 하나를 통째로 만족해야 한다. 'FileManager' 로 붙여 읽혀도 통과한다.
 TARGET_REQUIRED = (("file", "manager"),)
@@ -81,7 +82,7 @@ CONFIRM_POLICY = "strict"
 # 가림 해제: 버튼이 **있어야 할 자리**를 Alt+click 한다(그 위를 덮은 창이 뒤로 간다).
 # 창 크기 대비 비율. ponytail: 추정값 - 첫 오피스 실행에서 콘솔의 px/screen 으로 맞출 것.
 REVEAL_X_RATIO = 0.30              # (MANUAL_CLICK_REVEAL_X_RATIO)
-REVEAL_Y_RATIO = 0.85              # (MANUAL_CLICK_REVEAL_Y_RATIO)
+REVEAL_Y_RATIO = 0.90              # (MANUAL_CLICK_REVEAL_Y_RATIO)
 REVEAL_ATTEMPTS = 3                # (MANUAL_CLICK_REVEAL_ATTEMPTS) 창이 여러 장 겹칠 수 있다
 SETTLE_SEC = 1.0                   # Alt+click 뒤 창이 다시 그려질 대기
 # 라벨 불일치 때 '가려졌나 / 잘못 짚었나' 를 가르는 OCR 영역: 가림해제 지점을 중심으로
@@ -97,7 +98,7 @@ OPENED_KEY = "file_manager_window_title"
 OPENED_DESCRIPTION = (
     "the title bar text of the large 'File Manager' window that just opened, which "
     "reads 'File Manager( Class, IDW, IDP, Recipe )'. Point at the middle of that "
-    "title text, not at the 'File Manager' button below the live SEM image box."
+    "title text, not at the 'File Manager' button in the bottom button group."
 )
 OPENED_REQUIRED = (("manager", "idw"), ("manager", "recipe"))
 OPEN_WAIT_SEC = 2.0                # 클릭 -> 창이 원격 뷰에 그려질 대기

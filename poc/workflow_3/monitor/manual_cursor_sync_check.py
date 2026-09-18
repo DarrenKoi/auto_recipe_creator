@@ -46,6 +46,8 @@ SYNC_PX = 40           # 이 이내면 같은 자리 (이미지 px, hotspot 편�
 DRIFT_PX = 80          # 이 이상이면 어긋남. 사이 구간은 판정 보류
 MIN_FOUND = 3          # 장비 커서를 최소 이만큼의 probe 에서 찾아야 판정
 SETTLE_SEC = 0.8       # 이동 후 원격 화면이 따라올 시간
+RECHECK_MAX = 2        # 첫 판독이 SYNC_PX 밖이면 다시 읽는 횟수 (원격 커서 지연 흡수)
+RECHECK_SEC = 1.0      # 재판독 전 대기
 VLM_SERVICE = "mai-ui"
 
 EXIT_OK = 0            # synced
@@ -156,18 +158,31 @@ def main() -> int:
             continue
         move_cursor_to_screen(screen, f"cursor_sync_probe{idx}", action_enabled=True)
         time.sleep(SETTLE_SEC)
-        frame_path = out_dir / f"probe{idx}.jpg"
-        save_debug_jpeg(capture_window(window), frame_path)
-        try:
-            _parsed, bbox, _w, _h = _locate_cursor(client, frame_path)
-        except Exception as exc:
-            print(f"[WARNING] probe{idx}: 커서 탐지 실패 - {exc}")
-            bbox = None
-        found = bbox_center(bbox) if bbox else None
-        dist = math.hypot(found["x"] - truth["x"], found["y"] - truth["y"]) if found else None
-        print(f"[INFO] probe{idx}: local={truth} remote={found} "
-              f"dist={'n/a' if dist is None else f'{dist:.0f}px'}")
-        probes.append({"truth": truth, "found": found, "frame": str(frame_path)})
+        # 원격 커서는 로컬 이동을 한 박자 늦게 따라온다. 첫 판독이 멀면 기다렸다 다시 읽고
+        # 마지막 판독을 쓴다 - 지연이면 가까워지고, 진짜 drift 면 같은 자리에 머문다.
+        readings = []
+        for attempt in range(1 + RECHECK_MAX):
+            if attempt:
+                time.sleep(RECHECK_SEC)
+            frame_path = out_dir / f"probe{idx}_r{attempt}.jpg"
+            save_debug_jpeg(capture_window(window), frame_path)
+            try:
+                parsed, bbox, _w, _h = _locate_cursor(client, frame_path)
+            except Exception as exc:
+                print(f"[WARNING] probe{idx} r{attempt}: 커서 탐지 실패 - {exc}")
+                parsed, bbox = {}, None
+            found = bbox_center(bbox) if bbox else None
+            dist = math.hypot(found["x"] - truth["x"], found["y"] - truth["y"]) if found else None
+            delta = f"dx={found['x'] - truth['x']:+d} dy={found['y'] - truth['y']:+d}" if found else ""
+            size = f"bbox={bbox['right'] - bbox['left']}x{bbox['bottom'] - bbox['top']}" if bbox else ""
+            print(f"[INFO] probe{idx} r{attempt}: local={truth} remote={found} "
+                  f"dist={'n/a' if dist is None else f'{dist:.0f}px'} {delta} {size} "
+                  f"kind={parsed.get('cursor_kind')}")
+            readings.append({"found": found, "bbox": bbox, "kind": parsed.get("cursor_kind"),
+                             "frame": str(frame_path)})
+            if dist is not None and dist <= sync_px:
+                break
+        probes.append({"truth": truth, "found": readings[-1]["found"], "readings": readings})
 
     result = judge_sync(probes, sync_px, drift_px, MIN_FOUND)
     save_debug_json(out_dir / "result.json", {"title": title, "probes": probes, **result})

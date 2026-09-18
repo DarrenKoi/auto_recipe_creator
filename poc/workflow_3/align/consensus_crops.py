@@ -4,8 +4,9 @@
 bench `_build_cond_by_recipe`(golden_consensus_eval_cond.py)의 cache 판. msr/LOO 레이아웃
 대신 align_consensus_cache/<eqp>/<class>/<recipe>/events/<event_id>/S* 를 읽는다.
 modality 분류는 bench 와 동일하게 `_resolve_mod = msr_modality(cond) or recipe_mod`(단일-modality
-recipe 가 silently drop 되지 않게), crop 은 clean→crosshair중심→center tpl 크기 고정,
-modality 별 co-registration. 이름(load_cond/load_gray/clean_image/cursor_to_image/msr_modality)은
+recipe 가 silently drop 되지 않게). crop은 clean→S crosshair - RCP align offset→등록 box 크기,
+modality 별 co-registration. box crop off일 때만 기존 center-area 기하를 쓴다.
+이름(load_cond/load_gray/clean_image/cursor_to_image/msr_modality)은
 테스트에서 monkeypatch 하므로 모듈 전역 import 로 둔다.
 
 프로덕션 의도적 divergence(bench 와 1줄 차이): mod 의 center tpl 이 없을 때 bench 는 다른
@@ -18,7 +19,7 @@ from collections import Counter, defaultdict
 from poc.workflow_3.align.assets import load_gray
 from poc.workflow_3.align.clean_align_image import OVERSAMPLE, clean_image, cursor_to_image
 from poc.workflow_3.align.cond_file import cond_for_image, load_cond, msr_modality
-from poc.workflow_3.align.consensus_cv import _matched_crop, coregister_crops, source_mismatch_reason
+from poc.workflow_3.align.consensus_cv import coregister_crops, source_mismatch_reason
 from poc.workflow_3.align.consensus_gather import _events_dir_for
 from poc.workflow_3.align.templates import build_templates_from_assets
 from poc.workflow_3.align.cond_template import centered_area_crop, CENTER_AREA_RATIO
@@ -57,8 +58,8 @@ def _cond_crosshair_xy(cond):
     return (int(round(gx)), int(round(gy)))
 
 
-def _cond_consensus_crop(gray, cond, size_wh):
-    """crosshair(=align point) 중심·고정 size 의 정제된(crosshair 제거) crop. 없으면 None.
+def _cond_consensus_crop(gray, cond, size_wh, align_offset_xy=(0, 0)):
+    """S crosshair에서 RCP offset만큼 되짚은 key box crop. 영역이 잘리면 None.
 
     cond.Pixel != 로드 크기면 cursor 좌표를 먼저 보정한다(cond_for_image, 멱등) —
     안 하면 모든 S crop 이 같은 오차로 어긋나 co-registration/blur 게이트가 못 잡는
@@ -68,9 +69,13 @@ def _cond_consensus_crop(gray, cond, size_wh):
     xy = _cond_crosshair_xy(cond)
     if xy is None:
         return None
-    cleaned = clean_image(gray, cond)        # crosshair(+box) 제거 후 자른다.
     w, h = size_wh
-    return _matched_crop(cleaned, xy, w, h, 1.0)
+    cx, cy = xy[0] - align_offset_xy[0], xy[1] - align_offset_xy[1]
+    x0, y0 = int(cx - w // 2), int(cy - h // 2)
+    if x0 < 0 or y0 < 0 or x0 + w > gray.shape[1] or y0 + h > gray.shape[0]:
+        return None  # 잘린 crop을 이동/확대하면 key 형상과 align offset이 모두 틀어진다.
+    cleaned = clean_image(gray, cond)        # crosshair(+box) 제거 후 자른다.
+    return cleaned[y0:y0 + h, x0:x0 + w].copy()
 
 
 def _resolve_mod(cond, recipe_mod):
@@ -116,7 +121,7 @@ def load_coregistered_crops(cache_root, eqp_id, cache_key, center_tpls, *, max_e
         cache_root: ALIGN_CONSENSUS_CACHE_DIR(또는 테스트 temp).
         eqp_id: 장비 id.
         cache_key: "<class>/<recipe>" (gather 가 쓴 키와 동일 — leaf 금지).
-        center_tpls: {'om'|'sem': (center_tpl, offset)} sizing 전용.
+        center_tpls: {'om'|'sem': (reference_tpl, align_offset)} sizing/좌표 변환용.
         max_events: 최신 event 캡(= settings.gather_max_events).
     Returns:
         {'om'|'sem': [gray_crop, ...]} — 빌더 입력. 비면 빈 dict/빈 리스트.
@@ -160,7 +165,7 @@ def load_coregistered_crops(cache_root, eqp_id, cache_key, center_tpls, *, max_e
         if reason:
             drop_counts[reason] += 1
             continue
-        crop = _cond_consensus_crop(gray, cond, size_wh)
+        crop = _cond_consensus_crop(gray, cond, size_wh, tpl_item[1])
         if crop is None:
             drop_counts["crop_failed"] += 1
             continue

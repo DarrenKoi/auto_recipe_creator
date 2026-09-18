@@ -1,6 +1,7 @@
 # poc/workflow_3/align/test_consensus_resolve.py
 """resolve_templates 오케스트레이션 — 킬스위치/consensus 채택/insufficient 폴백/cold-sync."""
 import sys
+import numpy as np
 import poc.workflow_3.align.consensus_resolve as cr
 
 
@@ -13,6 +14,8 @@ class _Tpl:
         self.tag = tag
         self.source_wh = (512, 512)
         self.source_magnification = 30000
+        self.align_offset_xy = (7, -9)
+        self.raw_image = np.zeros((40, 40), dtype=np.uint8)
 
 
 def _patch(d):
@@ -49,6 +52,7 @@ def test_consensus_adopted_when_enough():
         assert out["SEM"].tag == "cons_sem"
         assert out["SEM"].source_wh == (512, 512)
         assert out["SEM"].source_magnification == 30000
+        assert out["SEM"].align_offset_xy == (7, -9)
     finally:
         restore()
 

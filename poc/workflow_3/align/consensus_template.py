@@ -3,11 +3,12 @@
 
 bench(poc/workflow_2/consensus_template.py)에서 bit-parity 포팅. 책임 = **게이트**:
 consensus 가 신뢰 불가(부족/blur)면 template=None 을 돌려 호출부가 rcp 로 폴백하게 한다
-(consensus or rcp). 즉 어떤 사유든 최악 = 검증된 rcp 베이스라인 → 회귀 위험 0.
+(consensus or rcp). 이 게이트만으로 실제 장비에서의 localization 정확도를 보장하지 않는다.
 검증 근거: cond A/B in_topk 0.434→0.876, rank1 0.318→0.764 (저널 260608_163302).
 
-입력 crop 규약: **한 modality**의, 이미 정제(crosshair 제거)·crosshair 중심 crop·
+입력 crop 규약: **한 modality**의, 이미 정제(crosshair 제거)·등록 box 기하 crop·
 co-registration 까지 끝난 동일 크기 gray 배열들(= consensus_crops.load_coregistered_crops 출력).
+align offset과 원본 FOV 기하는 resolver가 등록 template에서 이어 붙인다.
 """
 
 import statistics

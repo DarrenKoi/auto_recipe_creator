@@ -2,7 +2,7 @@
 """resolve_templates — 실시간 보정용 라우팅 template(consensus 우선·rcp 폴백) 조립.
 
 correction.correct_align_fail_auto 가 build_templates_from_assets 대신 이걸 호출한다.
-어떤 실패(부족/blur/sync timeout/예외)든 해당 modality 는 rcp 로 강등 — 회귀 위험 0.
+어떤 실패(부족/blur/sync timeout/예외)든 해당 modality 는 rcp 로 강등한다.
 cache_key 는 반드시 "<class>/<recipe>"(gather 가 쓴 키) — assets.recipe_id(leaf)는 금지.
 
 DAG 주의: align 은 monitor 아래 capability 레이어다. cold-cache sync 에 쓰는
@@ -45,7 +45,12 @@ def resolve_templates(assets, *, eqp_id, consensus_enabled, min_s, max_events,
 
     cache_key = f"{assets.class_name}/{assets.recipe_name}"   # gather 가 쓴 키와 동일(leaf 금지).
     try:
-        center_tpls = build_center_tpls_for_sizing(assets)
+        # consensus도 런타임 RCP와 같은 영역을 본다. 큰 crosshair-중심 crop으로
+        # 바꾸면 key가 보여도 주변 문맥이 FOV 밖으로 나간 순간 매칭할 수 없다.
+        center_tpls = (
+            {mod: (tpl, tpl.align_offset_xy) for mod, tpl in rcp_by_mod.items()}
+            if cond_box_crop else build_center_tpls_for_sizing(assets)
+        )
     except Exception as exc:
         print(f"[WARNING] consensus center tpl 실패 → rcp: {exc}")
         return rcp_route
@@ -74,11 +79,14 @@ def resolve_templates(assets, *, eqp_id, consensus_enabled, min_s, max_events,
         print(f"[INFO] consensus[{mod}] n={res.n_crops} edge={res.edge_ratio} "
               f"lap={res.lap_ratio} -> {'consensus' if res.template is not None else reason}")
         if res.template is not None:
-            # 채택 crop은 center 기준과 해상도/배율이 호환된 S만으로 만들어졌다.
+            # crop 중심은 key box 중심이다. align point까지의 offset을 잃지 않는다.
             ref = center_tpls[mod][0]
             res.template.source_wh = ref.source_wh
             res.template.source_magnification = ref.source_magnification
+            res.template.align_offset_xy = center_tpls[mod][1]
             cons_by_mod[mod] = res.template      # ConsensusResult.template 만(객체 아님)
+            print(f"[INFO] consensus[{mod}] crop_wh={res.template.raw_image.shape[:2][::-1]} "
+                  f"offset={res.template.align_offset_xy} source_wh={ref.source_wh}")
 
     return select_routing_templates(cons_by_mod, rcp_by_mod)
 

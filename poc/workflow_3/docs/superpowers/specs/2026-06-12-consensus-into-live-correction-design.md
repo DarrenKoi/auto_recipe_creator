@@ -1,5 +1,11 @@
 # Consensus 템플릿을 실시간 보정 경로에 투입 — 설계
 
+> 2026-09-18 변경: 기본 consensus crop은 crosshair 중심의 15% 면적이 아니라 등록 box
+> 내부 크기를 사용한다. `S crosshair - RCP align_offset_xy`를 중심으로 자르고 최종
+> template에 offset과 source FOV 기하를 보존한다. 잘린 S crop은 제외한다.
+> 아래 center-crop 설계는 역사 기록이며, 현재 계약은
+> [consensus 설명](../../study/consensus_method_explained_260707.md)을 따른다.
+
 > 날짜: 2026-06-12
 > 대상: `poc/workflow_3/align/` 실시간 align-fail 보정 경로
 > 상태: 설계 확정(brainstorming) → 구현 계획(writing-plans) 직전

@@ -88,8 +88,8 @@ def _patch_io(monkey):
     restore_factory(lambda p: _fake_cond(), cc, "load_cond")
     restore_factory(lambda p: gray.copy(), cc, "load_gray")
     restore_factory(lambda g, cond: g, cc, "clean_image")            # crosshair 제거 생략.
-    restore_factory(lambda assets: {"sem": (_tpl(80, 60), (0, 0))},
-                    vc, "build_center_tpls_for_sizing")
+    restore_factory(lambda assets, **kw: {"SEM": _tpl(80, 60)},
+                    vc, "build_templates_from_assets")
 
 
 def _unpatch(monkey):

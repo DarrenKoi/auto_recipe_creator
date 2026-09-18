@@ -28,6 +28,7 @@ from collections import Counter
 from poc.workflow_3 import ALIGN_CONSENSUS_CACHE_DIR, ALIGN_IMAGES_DIR
 from poc.workflow_3.config import load_workflow3_settings
 from poc.workflow_3.align.assets import iter_recipe_dirs, resolve_assets
+from poc.workflow_3.align.templates import build_templates_from_assets
 from poc.workflow_3.align.consensus_crops import (
     build_center_tpls_for_sizing,
     load_coregistered_crops,
@@ -40,10 +41,10 @@ from poc.workflow_3.align.consensus_template import (
 from poc.workflow_3.monitor.success_gather import DOWNLOADER_AVAILABLE
 
 
-def _verify_one(assets, *, min_s, max_events, cache_root):
+def _verify_one(assets, *, min_s, max_events, cache_root, cond_box_crop=True):
     """recipe 하나의 modality 별 consensus 빌드 결과를 [(mod, n_s, n_crop, reason), ...] 로.
 
-    resolve_templates 와 동일 입력(cache_key=class/recipe, center tpl sizing,
+    resolve_templates 와 동일 입력(cache_key=class/recipe, 등록 box sizing,
     co-registration, ConsensusPolicy floor 3)이되 cold sync 없이 read-only.
     """
     cache_key = f"{assets.class_name}/{assets.recipe_name}"   # gather 가 쓴 키와 동일(leaf 금지).
@@ -56,7 +57,11 @@ def _verify_one(assets, *, min_s, max_events, cache_root):
         return cache_key, n_events, n_images, rows   # 캐시 빈 recipe — 라이브에선 rcp.
 
     try:
-        center_tpls = build_center_tpls_for_sizing(assets)
+        if cond_box_crop:
+            templates = build_templates_from_assets(assets, cond_box_crop=True)
+            center_tpls = {k.lower(): (tpl, tpl.align_offset_xy) for k, tpl in templates.items()}
+        else:
+            center_tpls = build_center_tpls_for_sizing(assets)
     except Exception as exc:
         print(f"[WARNING] center tpl 실패({cache_key}): {exc}")
         return cache_key, n_events, n_images, rows
@@ -132,6 +137,7 @@ def main():
             min_s=settings.consensus_min_s,
             max_events=settings.gather_max_events,
             cache_root=ALIGN_CONSENSUS_CACHE_DIR,
+            cond_box_crop=settings.cond_box_crop,
         )
         if n_images <= 0:
             print(f"[ ] {cache_key}: staged S 없음(0 imgs) -> 라이브에선 rcp")

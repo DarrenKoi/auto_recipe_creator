@@ -430,7 +430,7 @@ def locate_with_reveal(
     window, step: FlowStep,
     *, capture_fn, locate_fn, read_tokens_fn, policy,
     reveal_fn=None, max_reveals: int = 0, reveals_used: int = 0, label: str = "",
-    should_reveal_fn=None,
+    should_reveal_fn=None, confirm_fn=None,
 ):
     """요소를 확인해 찾되, **좌표 미검출이면** 가린 창을 Alt+click 으로 밀어내고 다시 찾는다.
 
@@ -446,14 +446,20 @@ def locate_with_reveal(
     미검출일 때만이다(시연 흐름의 계약 ④ - 라벨 불일치는 보이는 화면을 잘못 짚은 것이라
     창을 밀어내면 엉뚱한 창만 뒤로 간다). 호출부는 라벨 불일치 중에서도 **버튼이 정말
     안 보이는 경우**만 골라 해제하도록 넓힐 수 있다(`manual_click_button`).
+
+    `confirm_fn(image) -> (point, reason)` 은 한 프레임에서 찾기+확인을 바꿔 끼운다
+    (기본 `_confirm_point`; `button_registry.find_button` 이 등록 영역 crop -> 전체 화면).
     """
     key = step.target.key
     reveals = reveals_used
     while True:
         image = capture_fn(window)
-        point, reason = _confirm_point(
-            image, step, locate_fn=locate_fn, read_tokens_fn=read_tokens_fn, policy=policy,
-        )
+        if confirm_fn is not None:
+            point, reason = confirm_fn(image)
+        else:
+            point, reason = _confirm_point(
+                image, step, locate_fn=locate_fn, read_tokens_fn=read_tokens_fn, policy=policy,
+            )
         if point is not None:
             return image, point, reason, reveals
         wants_reveal = (

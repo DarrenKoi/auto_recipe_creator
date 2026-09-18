@@ -57,10 +57,14 @@ from poc.workflow_3.util.window_utils import print_elevation_status  # noqa: E40
 EQP_ID = "MCD513"                  # (MANUAL_CLICK_EQP_ID) 제목에 이 ID 가 든 tool 창
 
 TARGET_KEY = "file_manager_button"
+# 첫 글자 anchor('F')를 쓰지 않는다 - 이 창에는 F 로 시작하는 버튼/텍스트가 많아 엉뚱한
+# 것을 짚었다(2026-09-18 오피스). 전체 문구 두 단어 + 위치 관계로 고정한다.
 TARGET_DESCRIPTION = (
-    "the 'File Manager' button in the Remote Monitoring window. It is located "
-    "directly BELOW the large live SEM image box. Use the first letter 'F' as the "
-    "anchor, then click safely inside the File Manager button area."
+    "the button labeled with the two words 'File Manager' in the Remote Monitoring "
+    "window. First find the large live SEM image box, then look directly BELOW it: "
+    "the File Manager button is in the button row under that box. The label must "
+    "read exactly 'File Manager' - ignore any other button or text that merely "
+    "starts with 'F'. Click the center of that button."
 )
 # OCR 확인: 묶음 하나를 통째로 만족해야 한다. 'FileManager' 로 붙여 읽혀도 통과한다.
 TARGET_REQUIRED = (("file", "manager"),)

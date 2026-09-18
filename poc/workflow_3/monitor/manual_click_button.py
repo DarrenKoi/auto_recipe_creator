@@ -1,7 +1,7 @@
 """열린 tool 창에서 버튼 하나를 확인 후 누른다. 있어야 할 버튼이 안 보이면 폴백으로
 가린 창을 Alt+click 해 뒤로 밀어내고 다시 찾는다.
 
-기본 대상은 **File Manager** 버튼(화면 아래쪽 버튼 그룹). 이 버튼은 'SECS Terminal',
+기본 대상은 **File Manager** 버튼(화면 아래쪽 버튼 그룹의 오른쪽). 이 버튼은 'SECS Terminal',
 'Terminal Service' 같은 창에 자주 가려지는데, 엔지니어는 그 자리를 Alt+click 해서 덮은
 창을 뒤로 보내고 버튼을 되살린다. 이 진입점이 같은 일을 한다:
 
@@ -67,8 +67,9 @@ TARGET_KEY = "file_manager_button"
 # (라이브 SEM box 기준 설명은 VLM 이 그 box 를 모를 수 있어 뺐다).
 TARGET_DESCRIPTION = (
     "the button labeled with the two words 'File Manager' in the Remote Monitoring "
-    "window. It is in the group of buttons along the BOTTOM of the screen. Look only "
-    "in that bottom button group and find the button whose label reads exactly "
+    "window. It is in the group of buttons along the BOTTOM of the screen, on the "
+    "RIGHT side of that group. Look only in that bottom button group and find the "
+    "button whose label reads exactly "
     "'File Manager' - ignore any other button or text that merely starts with 'F'. "
     "Click the center of that button."
 )
@@ -81,7 +82,7 @@ CONFIRM_POLICY = "strict"
 
 # 가림 해제: 버튼이 **있어야 할 자리**를 Alt+click 한다(그 위를 덮은 창이 뒤로 간다).
 # 창 크기 대비 비율. ponytail: 추정값 - 첫 오피스 실행에서 콘솔의 px/screen 으로 맞출 것.
-REVEAL_X_RATIO = 0.30              # (MANUAL_CLICK_REVEAL_X_RATIO)
+REVEAL_X_RATIO = 0.80              # (MANUAL_CLICK_REVEAL_X_RATIO)
 REVEAL_Y_RATIO = 0.90              # (MANUAL_CLICK_REVEAL_Y_RATIO)
 REVEAL_ATTEMPTS = 3                # (MANUAL_CLICK_REVEAL_ATTEMPTS) 창이 여러 장 겹칠 수 있다
 SETTLE_SEC = 1.0                   # Alt+click 뒤 창이 다시 그려질 대기

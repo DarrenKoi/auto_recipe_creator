@@ -166,6 +166,8 @@ def main() -> int:
         tokens_from_text,
     )
 
+    label_seen = {}  # 예상 영역에서 라벨이 읽혔으면 그 box - 잘못 짚음 재시도에 쓴다
+
     def _should_reveal(image, reason):
         """가려졌을 때만 Alt+click 한다. VLM 이 잘못 짚었을 뿐이면 밀어내지 않는다.
 
@@ -197,8 +199,10 @@ def main() -> int:
             print(f"[WARNING] 예상 영역 OCR 실패 - 가려졌는지 몰라 Alt+click 안 함: {read.error}")
             return False
         if label_in_tokens(tokens, TARGET_REQUIRED):
-            print(f"[WARNING] 예상 영역에 {TARGET_KEY} 라벨이 보입니다 - 가려진 게 아니라 "
-                  f"VLM 이 잘못 짚었습니다. Alt+click 안 함. box={box}")
+            print(f"[INFO] 예상 영역에 {TARGET_KEY} 라벨이 보입니다 - 가려진 게 아니라 "
+                  f"VLM 이 잘못 짚었습니다. Alt+click 안 함, 예상 영역 crop 으로 다시 찾습니다. "
+                  f"box={box}")
+            label_seen["box"] = box
             return False
         print(f"[INFO] 예상 영역에 라벨 없음(읽힘={tokens[:12]!r}) - 가려진 것으로 봅니다")
         return True
@@ -210,6 +214,28 @@ def main() -> int:
         label=TARGET_KEY,
         should_reveal_fn=_should_reveal,
     )
+    if point is None and label_seen:
+        # 전체 화면에서는 비슷한 버튼이 많아 VLM 이 이웃을 짚었다(2026-09-18 오피스). 라벨이
+        # 읽힌 예상 영역만 잘라 다시 찾게 하면 후보가 줄고 확대된다. 좌표는 여전히 VLM 이
+        # 정하고(crop 좌표 + box 원점 = 전체 좌표), OCR 이 전체 이미지에서 다시 확인한다.
+        box = label_seen["box"]
+        crop = image.crop((box["left"], box["top"], box["right"], box["bottom"]))
+
+        def _locate_in_crop(_full_image, target):
+            found = kit.locate(crop, target)
+            if found is None:
+                return None
+            return {"x": int(found["x"]) + box["left"], "y": int(found["y"]) + box["top"]}
+
+        full_image = image
+        _, point, reason, _ = locate_with_reveal(
+            window, step,
+            capture_fn=lambda _w: full_image, locate_fn=_locate_in_crop,
+            read_tokens_fn=kit.read_tokens, policy=CONFIRM_POLICY,
+            label=f"{TARGET_KEY}_crop",
+        )
+        print(f"[INFO] 예상 영역 crop 재탐색: {'확인됨' if point else '실패'} point={point}")
+
     if point is None:
         print(f"[DIGEST] manual_click target={TARGET_KEY} result={reason} reveals={reveals}")
         return EXIT_NOT_VISIBLE if reason == CONFIRM_NOT_VISIBLE else EXIT_NOT_CONFIRMED

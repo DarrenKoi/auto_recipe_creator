@@ -1807,7 +1807,7 @@ def test_every_default_tool_has_a_flow_assigned():
         assert tool.lower() in DEFAULT_TOOL_FLOWS, tool
 
 
-# ---- locate_with_reveal: 단일 버튼(manual_click_hidden_button) 경로 ----
+# ---- locate_with_reveal: 단일 버튼(manual_click_button) 경로 ----
 
 def _covered_button(reveals_needed):
     """가려진 동안 VLM 은 덮은 창의 다른 라벨을 짚는다 - 버튼이 가려졌을 때의 실제 모양."""

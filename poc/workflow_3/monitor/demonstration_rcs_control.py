@@ -440,7 +440,7 @@ def locate_with_reveal(
       CONFIRM_NOT_VISIBLE    : 가림 해제를 해 봤는데도 못 찾았다
     `reveals_used` 를 받아 돌려주는 이유: 호출부가 여러 번 부를 때(클릭 재시도) 가림
     해제 예산이 호출마다 새로 채워지면 안 된다. 어떤 버튼이든 쓸 수 있다
-    (`run_in_tool_flow` 의 여는 버튼, `manual_click_hidden_button` 의 단일 버튼).
+    (`run_in_tool_flow` 의 여는 버튼, `manual_click_button` 의 단일 버튼).
 
     `reveal_on` 은 가림 해제를 할 실패 이유. 기본은 미검출만이다(시연 흐름의 계약 ④).
     대상이 **자주 가려지는** 버튼이면 LABEL_REJECTED 도 넣는다 - VLM 은 버튼이 가려져도
@@ -1604,7 +1604,7 @@ def build_click_kit(
     """tool 창 클릭 협력자 한 벌(capture/locate/read_tokens/click/reveal).
 
     VLM 이 좌표, OCR 이 라벨 확인, `perform_remote_click` 이 클릭 순서, `_reveal` 이
-    Alt+click 가림 해제. 시연 흐름과 `manual_click_hidden_button` 이 같이 쓴다 - 원격
+    Alt+click 가림 해제. 시연 흐름과 `manual_click_button` 이 같이 쓴다 - 원격
     클릭을 성사시키는 조건(전면화/체류/누름 유지/Alt 순서)은 오피스 실측으로 얻은 것이라
     진입점마다 따로 두면 안 된다.
     """

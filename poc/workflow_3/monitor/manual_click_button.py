@@ -1,4 +1,5 @@
-"""열린 tool 창에서 버튼 하나를 누른다 - 다른 창에 가려져 있으면 Alt+click 으로 밀어낸다.
+"""열린 tool 창에서 버튼 하나를 확인 후 누른다. 있어야 할 버튼이 안 보이면 폴백으로
+가린 창을 Alt+click 해 뒤로 밀어내고 다시 찾는다.
 
 기본 대상은 **File Manager** 버튼(라이브 SEM box 아래). 이 버튼은 'SECS Terminal',
 'Terminal Service' 같은 창에 자주 가려지는데, 엔지니어는 그 자리를 Alt+click 해서 덮은
@@ -16,7 +17,7 @@
 `demonstration_rcs_control.build_click_kit` 를 그대로 쓴다(원격 클릭 성사 조건이 오피스
 실측값이라 포크하지 않는다).
 
-실행: uv run python poc/workflow_3/monitor/manual_click_hidden_button.py
+실행: uv run python poc/workflow_3/monitor/manual_click_button.py
 리허설(클릭/Alt 차단): SAFE_MODE=1 uv run python ...
 종료 코드: 0=클릭함, 2=사전조건 실패, 3=가림 해제 후에도 못 찾음, 4=라벨 불일치/미검출
 """
@@ -90,7 +91,7 @@ def main() -> int:
     y_ratio = _env_float("MANUAL_CLICK_REVEAL_Y_RATIO", REVEAL_Y_RATIO)
 
     mode = "실클릭" if settings.action_enabled else "리허설(SAFE_MODE=1, 클릭/Alt 차단)"
-    print(f"[INFO] 가려진 버튼 클릭: EQP_ID={eqp_id}, target={TARGET_KEY}, {mode}, "
+    print(f"[INFO] 버튼 클릭: EQP_ID={eqp_id}, target={TARGET_KEY}, {mode}, "
           f"가림해제 Alt+click 최대 {reveal_attempts}회 @ x={x_ratio:.2f}/y={y_ratio:.2f}")
 
     print_elevation_status()
@@ -109,8 +110,8 @@ def main() -> int:
 
     kit = build_click_kit(
         settings,
-        debug_dir=debug_root() / "manual_click_hidden_button" / make_timestamp_tag(),
-        log_component="manual_click_hidden_button",
+        debug_dir=debug_root() / "manual_click_button" / make_timestamp_tag(),
+        log_component="manual_click_button",
         settle_sec=SETTLE_SEC,
         pre_click_settle_sec=PRE_CLICK_SETTLE_SEC,
         click_hold_sec=CLICK_HOLD_SEC,

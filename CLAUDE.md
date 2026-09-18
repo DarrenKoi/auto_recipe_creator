@@ -134,6 +134,9 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 경로> \
 # workflow_3 — tool 창 커서 동기화 점검 (알람 불필요; office Windows, tool 창을 먼저 열어둘 것). 이동만, 클릭 없음
 uv run python poc/workflow_3/monitor/manual_cursor_sync_check.py   # [DIGEST] verdict=synced|drifted|unknown
 
+# workflow_3 — 열린 tool 창의 가려진 버튼 클릭 (기본 File Manager; 가리면 Alt+click 으로 밀어냄). 대상/가림해제 지점은 파일 상단 상수
+uv run python poc/workflow_3/monitor/manual_click_hidden_button.py
+
 # workflow_3 — RCS 자동 조작 시연 (알람 불필요; office Windows). 실클릭이 기본
 uv run python poc/workflow_3/monitor/demonstration_rcs_control.py
 DEMO_RCS_TOOL_IDS="MCD019,MCDC10" DEMO_RCS_DWELL_SEC=10 \
@@ -199,7 +202,7 @@ uv run pytest poc/workflow_3/monitor/test_numerator_records.py       # 6 (분자
 uv run pytest poc/workflow_3/monitor/test_frame_meta_recorder.py     # 5 (알람 녹화 사이드카 + manifest additive)
 uv run pytest poc/workflow_3/monitor/test_cycle_timing.py            # 3 (logs/align_fail_timing.csv 소요 시간 행: 보정/알람->보정/사이클, UTC9 로컬 해석)
 uv run pytest poc/workflow_3/monitor/test_prelude_recording.py        # 4 (접속 구간 화면 녹화 게이트/저장 위치/인계)
-uv run pytest poc/workflow_3/monitor/test_demonstration_rcs_control.py  # 124 (시연 흐름 + 확인 게이트 + 클릭/대문자 입력 + Alt+click 가림 해제)
+uv run pytest poc/workflow_3/monitor/test_demonstration_rcs_control.py  # 127 (시연 흐름 + 확인 게이트 + 클릭/대문자 입력 + Alt+click 가림 해제)
 uv run pytest poc/workflow_3/monitor/test_make_demo_video.py          # 16 (prelude 시간축 접합 + 편집 구간 + letterbox)
 uv run pytest poc/workflow_3/monitor/test_make_demo_video_combined.py # 17 (회차 정렬/번호/시간축 리셋/공통 캔버스)
 uv run python poc/workflow_3/vlm/test_label_verify.py                 # 23/23 (shared point->label OCR verifier)

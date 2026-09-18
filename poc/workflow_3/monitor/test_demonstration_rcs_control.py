@@ -1805,3 +1805,48 @@ def test_every_default_tool_has_a_flow_assigned():
     """배정이 빠지면 기본 흐름(memo_print)으로 조용히 새어 두 장비가 같은 것을 한다."""
     for tool in demo.DEFAULT_TOOL_IDS:
         assert tool.lower() in DEFAULT_TOOL_FLOWS, tool
+
+
+# ---- locate_with_reveal: 단일 버튼(manual_click_hidden_button) 경로 ----
+
+def _covered_button(reveals_needed):
+    """가려진 동안 VLM 은 덮은 창의 다른 라벨을 짚는다 - 버튼이 가려졌을 때의 실제 모양."""
+    from types import SimpleNamespace
+
+    state = {"reveals": 0}
+
+    def reveal(window, image, round_index):
+        state["reveals"] += 1
+        return True
+
+    def tokens(*_):
+        return ["File", "Manager"] if state["reveals"] >= reveals_needed else ["SECS", "Terminal"]
+
+    step = FlowStep(SimpleNamespace(key="file_manager"), required=(("file", "manager"),))
+    kwargs = dict(
+        capture_fn=lambda w: "img", locate_fn=lambda i, t: {"x": 1, "y": 1},
+        read_tokens_fn=tokens, policy="strict", reveal_fn=reveal, max_reveals=2,
+    )
+    return step, kwargs
+
+
+def test_label_mismatch_triggers_reveal_only_when_opted_in():
+    step, kwargs = _covered_button(reveals_needed=1)
+    _, point, reason, reveals = demo.locate_with_reveal(
+        None, step, **kwargs,
+        reveal_on=(demo.CONFIRM_NOT_LOCATED, demo.CONFIRM_LABEL_REJECTED),
+    )
+    assert point is not None and reveals == 1
+
+    step, kwargs = _covered_button(reveals_needed=1)
+    _, point, reason, reveals = demo.locate_with_reveal(None, step, **kwargs)
+    assert point is None and reason == demo.CONFIRM_LABEL_REJECTED and reveals == 0
+
+
+def test_still_covered_after_reveal_budget_is_not_visible():
+    step, kwargs = _covered_button(reveals_needed=99)
+    _, point, reason, reveals = demo.locate_with_reveal(
+        None, step, **kwargs,
+        reveal_on=(demo.CONFIRM_NOT_LOCATED, demo.CONFIRM_LABEL_REJECTED),
+    )
+    assert point is None and reason == demo.CONFIRM_NOT_VISIBLE and reveals == 2

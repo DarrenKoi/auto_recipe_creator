@@ -84,6 +84,7 @@ env (`DEMO_RCS_*` 네임스페이스 - 루프의 `ALIGN_FAIL_*` 과 섞지 않�
 import os
 import time
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 from poc.workflow_3.config import Workflow3Settings, load_workflow3_settings
 from poc.workflow_3.util.abort_switch import abort_reason, is_aborted
@@ -348,6 +349,7 @@ FLOW_SKIPPED = "skipped"
 CONFIRM_OK = "ok"
 CONFIRM_NOT_LOCATED = "not_located"
 CONFIRM_LABEL_REJECTED = "label_rejected"
+CONFIRM_NOT_VISIBLE = "not_visible"  # 가림 해제 후에도 못 찾음(locate_with_reveal)
 
 
 @dataclass
@@ -424,6 +426,48 @@ def _confirm_point(
     return point, CONFIRM_OK
 
 
+def locate_with_reveal(
+    window, step: FlowStep,
+    *, capture_fn, locate_fn, read_tokens_fn, policy,
+    reveal_fn=None, max_reveals: int = 0, reveals_used: int = 0, label: str = "",
+    reveal_on: tuple = (CONFIRM_NOT_LOCATED,),
+):
+    """요소를 확인해 찾되, **좌표 미검출이면** 가린 창을 Alt+click 으로 밀어내고 다시 찾는다.
+
+    `(image, point, reason, reveals_used)` 를 돌려준다. point 가 None 이면 reason 은
+      CONFIRM_LABEL_REJECTED : 보이는 화면에서 라벨이 달랐다(밀어내도 소용없다)
+      CONFIRM_NOT_LOCATED    : 못 찾았고 가림 해제 수단/예산이 애초에 없다
+      CONFIRM_NOT_VISIBLE    : 가림 해제를 해 봤는데도 못 찾았다
+    `reveals_used` 를 받아 돌려주는 이유: 호출부가 여러 번 부를 때(클릭 재시도) 가림
+    해제 예산이 호출마다 새로 채워지면 안 된다. 어떤 버튼이든 쓸 수 있다
+    (`run_in_tool_flow` 의 여는 버튼, `manual_click_hidden_button` 의 단일 버튼).
+
+    `reveal_on` 은 가림 해제를 할 실패 이유. 기본은 미검출만이다(시연 흐름의 계약 ④).
+    대상이 **자주 가려지는** 버튼이면 LABEL_REJECTED 도 넣는다 - VLM 은 버튼이 가려져도
+    대개 어딘가를 찍고, 그 자리는 덮은 창의 다른 라벨이다. Alt+click 은 VLM 점이 아니라
+    버튼이 있어야 할 자리에 하므로 그 엉뚱한 라벨을 누르지 않는다.
+    """
+    key = step.target.key
+    reveals = reveals_used
+    while True:
+        image = capture_fn(window)
+        point, reason = _confirm_point(
+            image, step, locate_fn=locate_fn, read_tokens_fn=read_tokens_fn, policy=policy,
+        )
+        if point is not None or reason not in reveal_on:
+            return image, point, reason, reveals
+        if reveal_fn is None or max_reveals <= 0:
+            return image, None, reason, reveals
+        if reveals >= max_reveals:
+            print(f"[WARNING] [{label}] 가림 해제 {reveals}회 후에도 {key} 를 찾지 못했습니다.")
+            return image, None, CONFIRM_NOT_VISIBLE, reveals
+        reveals += 1
+        print(f"[INFO] [{label}] {key} 가 안 보입니다 - "
+              f"가린 창을 밀어냅니다({reveals}/{max_reveals})")
+        if not reveal_fn(window, image, reveals):
+            return image, None, CONFIRM_NOT_VISIBLE, reveals
+
+
 def run_in_tool_flow(
     tool_window,
     tool_title: str,
@@ -496,28 +540,20 @@ def run_in_tool_flow(
             attempt += 1
             print(f"[INFO] [{flow.name}] {flow.opener.target.key} 확인 후 클릭 "
                   f"(시도 {attempt}/{max_attempts})")
-            image = capture_fn(tool_window)
-            point, reason = _confirm_point(
-                image, flow.opener,
-                locate_fn=locate_fn, read_tokens_fn=read_tokens_fn, policy=confirm_policy,
+            # 가림 해제는 '클릭이 삼켜졌다' 재시도 예산을 쓰지 않는다 - 둘은 서로 다른
+            # 실패를 고친다. 가림 해제 횟수는 시도를 넘어 누적된다.
+            image, point, reason, reveals = locate_with_reveal(
+                tool_window, flow.opener,
+                capture_fn=capture_fn, locate_fn=locate_fn,
+                read_tokens_fn=read_tokens_fn, policy=confirm_policy,
+                reveal_fn=reveal_fn, max_reveals=max_reveals, reveals_used=reveals,
+                label=flow.name,
             )
             if point is None:
-                if reason != CONFIRM_NOT_LOCATED or max_reveals == 0:
-                    # 라벨이 다르게 읽혔다면 다시 눌러도 같은 화면이다 - 즉시 포기.
-                    return _tag(FLOW_OPENER_FAILED)
-                if reveals >= max_reveals:
-                    print(f"[WARNING] [{flow.name}] 가림 해제 {reveals}회 후에도 "
-                          f"{flow.opener.target.key} 를 찾지 못했습니다.")
+                if reason == CONFIRM_NOT_VISIBLE:
                     return _tag(FLOW_OPENER_NOT_VISIBLE)
-                reveals += 1
-                print(f"[INFO] [{flow.name}] {flow.opener.target.key} 가 안 보입니다 - "
-                      f"가린 창을 밀어냅니다({reveals}/{max_reveals})")
-                if not reveal_fn(tool_window, image, reveals):
-                    return _tag(FLOW_OPENER_NOT_VISIBLE)
-                # 가림 해제는 '클릭이 삼켜졌다' 재시도 예산을 쓰지 않는다 - 둘은 서로
-                # 다른 실패를 고친다. `reveals` 가 상한을 가지므로 무한 루프는 없다.
-                attempt -= 1
-                continue
+                # 라벨이 다르게 읽혔다면 다시 눌러도 같은 화면이다 - 즉시 포기.
+                return _tag(FLOW_OPENER_FAILED)
             click_fn(tool_window, image, point, flow.opener.target.key)
 
             sleep_fn(settle_sec)  # 창이 그려질 시간(원격이라 로컬보다 느리다).
@@ -1553,36 +1589,25 @@ def build_flows(memo_text: str = ""):
     }
 
 
-def _build_action_fn(
+def build_click_kit(
     settings: Workflow3Settings,
-    settle_sec: float,
     *,
-    flow_map: dict,
-    default_flow: str,
-    confirm_policy: str,
-    attempts: int,
+    debug_dir,
+    log_component: str,
+    settle_sec: float,
     pre_click_settle_sec: float,
     click_hold_sec: float,
-    char_type_delay_sec: float,
-    reveal_enabled: bool,
-    reveal_attempts: int,
+    alt_settle_sec: float,
     reveal_x_ratio: float,
     reveal_y_ratio: float,
-    alt_settle_sec: float,
-    shift_settle_sec: float,
-    caps_settle_sec: float,
-    shift_mode: str,
-    post_type_wait_sec: float,
-    memo_text: str,
-    tag: str,
 ):
-    """장비별 창 안 조작 협력자 (VLM 좌표 + OCR 확인 + 클릭).
+    """tool 창 클릭 협력자 한 벌(capture/locate/read_tokens/click/reveal).
 
-    `share_request` 의 주입점과 같은 모양이라 그 배선을 그대로 옮겨 쓴다. 확인 실패 시
-    crop 과 OCR 원문이 `debug_images/demo_rcs_flow/<tag>/` 에 남는다 - Mac 에서는 이
-    화면을 볼 수 없어, 오피스 실행이 실제 문구(required 토큰)를 아는 유일한 경로다.
+    VLM 이 좌표, OCR 이 라벨 확인, `perform_remote_click` 이 클릭 순서, `_reveal` 이
+    Alt+click 가림 해제. 시연 흐름과 `manual_click_hidden_button` 이 같이 쓴다 - 원격
+    클릭을 성사시키는 조건(전면화/체류/누름 유지/Alt 순서)은 오피스 실측으로 얻은 것이라
+    진입점마다 따로 두면 안 된다.
     """
-    from poc.workflow_3 import DEBUG_IMAGE_DIR
     from poc.workflow_3.util.image_utils import capture_window
     from poc.workflow_3.util.mouse_utils import click_at_screen, move_cursor_to_screen
     from poc.workflow_3.util.window_utils import (
@@ -1596,15 +1621,12 @@ def _build_action_fn(
     )
     from poc.workflow_3.vlm.ui_venus_mai_locator import analyze_window_target
 
-    debug_dir = DEBUG_IMAGE_DIR / "demo_rcs_flow" / tag
-    flows = build_flows(memo_text)
-
     def _locate(image, target):
         result = analyze_window_target(
             None, "Remote Monitoring System", "uia", target,
             debug_image_dir=debug_dir,
-            log_name=LOG_COMPONENT,
-            component_name=LOG_COMPONENT,
+            log_name=log_component,
+            component_name=log_component,
             artifact_prefix=target.key,
             image=image,
         )
@@ -1620,7 +1642,7 @@ def _build_action_fn(
             debug_image_dir=debug_dir,
             timestamp_tag=make_timestamp_tag(time.time()),
             artifact_label=key,
-            log_name=LOG_COMPONENT,
+            log_name=log_component,
         )
         return tokens_from_text(read.raw_text) if read.ok else []
 
@@ -1696,15 +1718,65 @@ def _build_action_fn(
         time.sleep(max(0.0, settle_sec))  # 창이 내려가고 다시 그려질 시간.
         return True
 
+    return SimpleNamespace(
+        capture=capture_window, locate=_locate, read_tokens=_read_tokens,
+        click=_click, reveal=_reveal,
+    )
+
+
+def _build_action_fn(
+    settings: Workflow3Settings,
+    settle_sec: float,
+    *,
+    flow_map: dict,
+    default_flow: str,
+    confirm_policy: str,
+    attempts: int,
+    pre_click_settle_sec: float,
+    click_hold_sec: float,
+    char_type_delay_sec: float,
+    reveal_enabled: bool,
+    reveal_attempts: int,
+    reveal_x_ratio: float,
+    reveal_y_ratio: float,
+    alt_settle_sec: float,
+    shift_settle_sec: float,
+    caps_settle_sec: float,
+    shift_mode: str,
+    post_type_wait_sec: float,
+    memo_text: str,
+    tag: str,
+):
+    """장비별 창 안 조작 협력자 (VLM 좌표 + OCR 확인 + 클릭).
+
+    `share_request` 의 주입점과 같은 모양이라 그 배선을 그대로 옮겨 쓴다. 확인 실패 시
+    crop 과 OCR 원문이 `debug_images/demo_rcs_flow/<tag>/` 에 남는다 - Mac 에서는 이
+    화면을 볼 수 없어, 오피스 실행이 실제 문구(required 토큰)를 아는 유일한 경로다.
+    """
+    from poc.workflow_3 import DEBUG_IMAGE_DIR
+
+    flows = build_flows(memo_text)
+    kit = build_click_kit(
+        settings,
+        debug_dir=DEBUG_IMAGE_DIR / "demo_rcs_flow" / tag,
+        log_component=LOG_COMPONENT,
+        settle_sec=settle_sec,
+        pre_click_settle_sec=pre_click_settle_sec,
+        click_hold_sec=click_hold_sec,
+        alt_settle_sec=alt_settle_sec,
+        reveal_x_ratio=reveal_x_ratio,
+        reveal_y_ratio=reveal_y_ratio,
+    )
+
     def _action(tool_id, tool_window, tool_title, tool_backend):
         flow_name = resolve_flow_name(tool_id, flow_map, default_flow)
         print(f"[INFO] {tool_id} 창 안 조작 흐름: {flow_name}")
         return run_in_tool_flow(
             tool_window, tool_title, tool_backend, flows[flow_name],
-            capture_fn=capture_window,
-            locate_fn=_locate,
-            read_tokens_fn=_read_tokens,
-            click_fn=_click,
+            capture_fn=kit.capture,
+            locate_fn=kit.locate,
+            read_tokens_fn=kit.read_tokens,
+            click_fn=kit.click,
             type_fn=lambda text, key: type_multiline_text(
                 text,
                 key,
@@ -1718,7 +1790,7 @@ def _build_action_fn(
                 shift_mode=shift_mode,
                 post_dwell_sec=post_type_wait_sec,
             ),
-            reveal_fn=_reveal if reveal_enabled else None,
+            reveal_fn=kit.reveal if reveal_enabled else None,
             sleep_fn=time.sleep,
             settle_sec=settle_sec,
             confirm_policy=confirm_policy,

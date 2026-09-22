@@ -147,6 +147,10 @@ uv run python poc/workflow_3/monitor/manual_click_button.py
 # workflow_3 — 레지스트리 기준 현재 화면 표 (클릭 없음; 등록 버튼 label_seen/not_seen + 앞 창 제목)
 uv run python poc/workflow_3/monitor/manual_screen_inventory.py
 
+# workflow_3 — live 이미지 모드 변경 (OM / OM-D / SEM). 열린 tool 창의 Image 드롭다운. 대상은 파일 상단 TARGET_MODE
+uv run python poc/workflow_3/monitor/manual_image_mode_change.py
+SAFE_MODE=1 uv run python poc/workflow_3/monitor/manual_image_mode_change.py  # 리허설(현재 모드 판독까지)
+
 # workflow_3 — RCS 자동 조작 시연 (알람 불필요; office Windows). 실클릭이 기본
 uv run python poc/workflow_3/monitor/demonstration_rcs_control.py
 DEMO_RCS_TOOL_IDS="MCD019,MCDC10" DEMO_RCS_DWELL_SEC=10 \
@@ -238,6 +242,7 @@ uv run python poc/workflow_3/monitor/test_success_gather.py
 uv run python poc/workflow_3/monitor/test_manual_record.py                    # EQP 파싱/예산/가림 판정/teardown
 uv run pytest poc/workflow_3/monitor/test_button_registry.py         # 레지스트리 resolve/공통 템플릿/crop->전체 탐색/inventory/whole_word/poll
 uv run pytest poc/workflow_3/monitor/test_manual_cursor_sync_check.py  # 커서 동기화 판정: 축별 허용치/다수결/안 따라옴/미검출
+uv run pytest poc/workflow_3/monitor/test_manual_image_mode_change.py # image mode: OM vs OM-D 단어 판정/이미 그 모드/행 불일치 시 미클릭+목록 닫기
 
 # Video frame parser unit tests
 uv run pytest test/video_frame_parser/tests/

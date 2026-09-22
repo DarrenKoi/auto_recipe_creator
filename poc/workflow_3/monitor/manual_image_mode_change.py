@@ -19,6 +19,11 @@
 눌러도 통과한다. 이 파일은 모드를 **단어 전체**로만 인정한다(`read_mode`). 좌표(VLM)와 클릭
 성사 조건(`build_click_kit` -> `perform_remote_click`)은 그대로 공유한다 - 포크 금지 규약.
 
+**오피스 검증 2026-09-22**: OM / OM-D / SEM 세 모드 상호 변경 성공. 탐색 영역을 목록 크기로
+묶는 것이 계약이다 - 콤보 바로 아래 'Optics...' 와 'OM ABC' 버튼이 있고 목록이 그 자리를 덮으며
+열리는데, 'OM ABC' 에 `OM` 이 글자 그대로 들어 있어 영역이 목록보다 크면 OM 행과 구별되지
+않는다(첫 실행이 'OOM' 을 읽고 거부했다). 화살표는 창 비율 (0.533, 0.329) 에서 관측됐다.
+
 실행: uv run python poc/workflow_3/monitor/manual_image_mode_change.py
 리허설(클릭 차단, 현재 모드 판독까지만): SAFE_MODE=1 uv run python ...
 종료 코드: 0=바꿈(또는 리허설), 2=사전조건 실패, 3=화살표/항목 못 찾음,

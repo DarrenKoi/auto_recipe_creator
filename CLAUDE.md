@@ -147,7 +147,7 @@ uv run python poc/workflow_3/monitor/manual_click_button.py
 # workflow_3 — 레지스트리 기준 현재 화면 표 (클릭 없음; 등록 버튼 label_seen/not_seen + 앞 창 제목)
 uv run python poc/workflow_3/monitor/manual_screen_inventory.py
 
-# workflow_3 — live 이미지 모드 변경 (OM / OM-D / SEM). 열린 tool 창의 Image 드롭다운. 대상은 파일 상단 TARGET_MODE
+# workflow_3 — live 이미지 모드 변경 (OM / OM-D / SEM; 2026-09-22 오피스 3모드 확인). 열린 tool 창의 Image 드롭다운. 대상은 파일 상단 TARGET_MODE
 uv run python poc/workflow_3/monitor/manual_image_mode_change.py
 SAFE_MODE=1 uv run python poc/workflow_3/monitor/manual_image_mode_change.py  # 리허설(현재 모드 판독까지)
 

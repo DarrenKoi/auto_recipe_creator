@@ -87,6 +87,11 @@ class AlignKeyTemplate:
     align_offset_xy: tuple[int, int] = (0, 0)  # rcp px (image_center - box_center); reposition 시 best_scale 환산해 match 중심에 가산.
     source_wh: tuple[int, int] | None = None  # crop 전 전체 FOV의 실제 이미지 px (cond.Pixel 아님).
     source_magnification: float | None = None
+    # 등록 당시 화면 회전(도)과 화면 모드("OM"/"OM-D"/"SEM"). 매칭에는 쓰지 않고 **보정
+    # 전에 장비를 이 상태로 맞추기 위해** 실어 나른다 - template 은 cond.txt 에서 보정
+    # 경로까지 이어지는 유일한 객체라, 여기 없으면 소비처가 cond.txt 를 다시 읽게 된다.
+    source_rotation_deg: float | None = None
+    required_image_mode: str | None = None
 
 
 @dataclass
@@ -127,6 +132,13 @@ class AlignKeyMatchResult:
     second_ratio: float | None = None                # second.chamfer / best.chamfer (1.0 에 가까울수록 모호).
     distinctive: bool = True                          # best 가 2nd 대비 충분히 유일한가.
     reject_reason: str | None = None                  # "not_distinctive" | "no_candidates" | None.
+    # 선택된 후보의 NCC **부호를 살린** 값(ensemble 경로만; 그 외 None). **기록 전용이다** -
+    # 어떤 판정도 이 값을 보지 않는다. selection 은 `max(0, ncc)` 를 그대로 쓴다.
+    # 왜 남기는가: OM-D 는 OM 의 명암 반전이라 정답의 ncc 가 ≈ −1 이고, selection 이 그것을
+    # 0 으로 눌러 sel <= 0.5·chamfer 가 된다(match 임계 0.6053 을 구조적으로 못 넘는다).
+    # 즉 **큰 음수 ncc 는 "자리는 맞는데 화면 극성이 반대"** 라는 뜻이고, |ncc| 가 작으면
+    # 자리가 틀린 것이다. 이 둘은 score 만 봐서는 구분되지 않는다(2026-09-22).
+    best_ncc: float | None = None
 
 
 @dataclass(frozen=True)
@@ -225,6 +237,8 @@ def build_template(
     align_offset_xy: tuple[int, int] = (0, 0),
     source_wh: tuple[int, int] | None = None,
     source_magnification: float | None = None,
+    source_rotation_deg: float | None = None,
+    required_image_mode: str | None = None,
 ) -> AlignKeyTemplate:
     """레시피 raw 이미지를 1회 전처리하여 AlignKeyTemplate 으로 묶는다."""
     gray = _to_grayscale(raw_image)
@@ -249,6 +263,8 @@ def build_template(
         align_offset_xy=align_offset_xy,
         source_wh=source_wh,
         source_magnification=source_magnification,
+        source_rotation_deg=source_rotation_deg,
+        required_image_mode=required_image_mode,
     )
 
 
@@ -819,6 +835,7 @@ def _finalize_match(
     orb_ratio: float,
     score_override: float | None = None,
     decision_thresholds: tuple[float, float] | None = None,
+    best_ncc: float | None = None,
 ) -> AlignKeyMatchResult:
     """best 선택 이후 공유 마감 — distinctiveness + score/decision + overlay + result.
 
@@ -891,6 +908,7 @@ def _finalize_match(
         second_ratio=second_ratio,
         distinctive=distinctive,
         reject_reason=reject_reason,
+        best_ncc=None if best_ncc is None else float(best_ncc),
     )
 
 
@@ -962,9 +980,11 @@ def compute_align_key_score_ensemble(
     # reranker(구조-제안 소수 후보 판별)로만 — primary matcher 금지와 별개. ORB selection 은
     # 폐기(orb_flip 27% 유발). 결정 score/decision 은 아래에서 기존 chamfer+ORB 로 보존.
     sels = []
+    nccs: list = []                               # 부호를 살린 원값 - 기록 전용(아래 best_ncc).
     for cand in candidates:                       # candidates 는 위에서 top_n 으로 cap 됨.
         ncc = _candidate_ncc(template.raw_image, gray_frame, cand.xy, cand.scale)
         ncc_pos = max(0.0, ncc) if ncc is not None else 0.0
+        nccs.append(ncc)
         sels.append(policy.rerank_chamfer_w * cand.chamfer_score + policy.rerank_ncc_w * ncc_pos)
     sel_order = sorted(range(len(candidates)), key=lambda i: (-sels[i], i))
     pick = sel_order[0]                           # 동점은 낮은 index — 기존 argmax(첫 최대)와 동일.
@@ -1003,6 +1023,8 @@ def compute_align_key_score_ensemble(
         chamfer_score=best_cand.chamfer_score, orb_ratio=0.0,
         score_override=best_sel,
         decision_thresholds=(policy.ensemble_match_threshold, policy.ensemble_adjust_threshold),
+        # rerank 가 다른 후보를 골랐을 수 있으므로 **최종 pick** 의 ncc 를 남긴다.
+        best_ncc=nccs[pick],
     )
 
 

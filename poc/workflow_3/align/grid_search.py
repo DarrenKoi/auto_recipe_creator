@@ -485,6 +485,8 @@ def grid_align_search(
                "match_xy": list(r.best_xy), "scale": float(r.best_scale / base),
                "decision": r.decision, "orb": float(r.orb_inlier_ratio),
                "distinctive": bool(r.distinctive), "second_ratio": r.second_ratio,
+               # 부호를 살린 NCC(기록 전용) - 큰 음수면 자리는 맞고 화면 극성이 반대다.
+               "ncc": None if r.best_ncc is None else float(r.best_ncc),
                "accepted": bool(ratio >= MIN_CONFIRM_SCALE and accept(r))}
         history.append(rec)
         _log_frame(rec, r.debug_overlay)

@@ -203,6 +203,7 @@ uv run python poc/workflow_3/rcs/test_tool_name_match.py
 uv run python poc/workflow_3/rcs/test_tool_row_verify.py              # row confirm gate + crop tightness
 uv run pytest poc/workflow_3/align/test_grid_search.py                # search-around: zoom-out 단 선택/격자/odometry/추격 confirm/degrade/cycle 주입 + transit 프레임/추격 중복 제거/프레임 저장/OM 휠 단
 uv run pytest poc/workflow_3/align/test_corner_key_recovery.py         # 모서리 key hint/되돌리기 + footprint 보폭 + 게이트 통일 + 즉시 추격 + 탐색 후 reposition/OK 연결
+uv run pytest poc/workflow_3/align/matching/test_polarity_record.py    # 극성 반전(OM<->OM-D) best_ncc 부호 기록 + 반전 시 sel<=0.5·chamfer 상한(match 임계 도달 불가)
 uv run pytest poc/workflow_3/align/test_fallback_kill_switch.py       # fallback kill switch + pan 예산 10 이 streak 에 안 잘림
 uv run pytest poc/workflow_3/rcs/test_row_occupant.py                 # 점유 3-상태 판별
 uv run pytest poc/workflow_3/monitor/test_share_request.py            # 확인 게이트/승낙 대기/클릭 경로

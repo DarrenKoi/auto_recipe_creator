@@ -59,6 +59,11 @@ from poc.workflow_3.align.partial_hint import partial_key_hint
 
 LOG_COMPONENT = "align_fail_correct"
 
+# 이보다 더 음수인 NCC 는 '자리는 맞는데 화면 극성이 반대'(OM <-> OM-D)를 뜻한다. selection 이
+# `max(0, ncc)` 로 음수를 눌러 sel <= 0.5·chamfer 가 되므로 match 임계 0.6053 을 구조적으로 못
+# 넘는다. **기록 전용 임계다** - 어떤 분기도 이 값을 보지 않는다(2026-09-22, 기록 단계).
+POLARITY_SUSPECT_NCC = -0.3
+
 # paused fail 화면은 *레시피 등록 배율*에서 멈춘다고 가정한다. 표시 비율(source→live)을
 # 먼저 환산한 뒤 상대 배율 ~1.0 주변을 찾는다. broad(miniature) band 대신 near-native band
 # 로 매칭한다. broad scale 을 쓰면 tiny-scale chamfer 과신으로 featureless 프레임도
@@ -333,8 +338,15 @@ def correct_align_fail(
                 "frame_wh": [fw, fh],
                 "base_scale": base_scale,
                 "relative_scale": float(match.best_scale / base_scale),
+                # 부호를 살린 NCC - 기록 전용. 큰 음수 = 극성 반전(자리는 맞음).
+                "best_ncc": None if match.best_ncc is None else float(match.best_ncc),
             }
         )
+        if match.best_ncc is not None and match.best_ncc <= POLARITY_SUSPECT_NCC:
+            # 판정을 바꾸지 않는다 - 지금은 '이런 일이 얼마나 자주 있나' 를 모으는 단계다.
+            print(f"[WARNING] 극성 반전 의심({stage}): ncc={match.best_ncc:+.3f} "
+                  f"score={match.score:.3f} chamfer={match.chamfer_score:.3f} - 자리는 맞고 화면"
+                  " 명암이 반대일 수 있습니다(OM <-> OM-D). 이번 판에서는 기록만 합니다.")
         if debug_dir is not None:
             save_overlay_jpeg(match.debug_overlay, debug_dir / f"{stage}.jpg")
         return match, pinned

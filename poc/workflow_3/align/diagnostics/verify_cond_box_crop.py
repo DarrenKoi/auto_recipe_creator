@@ -75,18 +75,25 @@ def _report_cond_facts(mod, path) -> dict:
     print(f"     Scope/Pixel/Mag : {cond.scope} / {cond.pixel} / {cond.magnification}")
     rot = cond.image_rotation
     print(f"     Image_rotation  : {'미기재' if rot is None else f'{rot:g} deg'}")
+    # 등록 화면 모드. OM-D 판정 임계(OM_DARK_BRIGHTNESS_MAX=35000)는 아직 **가정**이라,
+    # 이 줄로 OM/OM-D recipe 의 실제 밝기 분포를 모아 임계를 확정한다.
+    bright = cond.om_brightness
+    print(f"     OM_Brightness   : {'미기재' if bright is None else f'{bright:g}'}"
+          f"  -> image mode {cond.required_image_mode or '판별 불가'}")
     (ax, ay), source = cond_align_point(cond, gray.shape)
     print(f"     align point     : ({ax:.1f}, {ay:.1f})  <- {source}")
     print(f"     image center    : ({w / 2:.1f}, {h / 2:.1f})  "
           f"delta=({ax - w / 2:+.1f}, {ay - h / 2:+.1f})")
     if cond.box_ltrb is None:
         print("     white box       : 없음")
-        return {"mod": mod, "cond": True, "rot": rot, "box": False, "source": source}
+        return {"mod": mod, "cond": True, "rot": rot, "box": False, "source": source,
+            "mode": cond.required_image_mode, "bright": bright}
     bx, by = _cond_box_center(cond.box_ltrb)
     print(f"     box center      : ({bx:.1f}, {by:.1f})  "
           f"align_offset={cond_align_offset(cond.box_ltrb, gray.shape, cond)} "
           f"(중심가정={cond_align_offset(cond.box_ltrb, gray.shape)})")
     return {"mod": mod, "cond": True, "rot": rot, "box": True, "source": source,
+            "mode": cond.required_image_mode, "bright": bright,
             "off": cond_align_offset(cond.box_ltrb, gray.shape, cond)}
 
 
@@ -149,8 +156,11 @@ def run() -> int:
             parts.append(f"{f['mod']}(cond=N)")
             continue
         rot = f.get("rot")
+        bright = f.get("bright")
         parts.append(
             f"{f['mod']}(cond=Y,rot={'-' if rot is None else format(rot, 'g')},"
+            f"mode={f.get('mode') or '-'},"
+            f"bright={'-' if bright is None else format(bright, 'g')},"
             f"ap={f.get('source', '-')},off={f.get('off', '-')})"
         )
     print(f"\n[DIGEST] cond {' '.join(parts)} flag_box_crop={settings.cond_box_crop}")

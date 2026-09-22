@@ -183,3 +183,86 @@ def test_offset_norm_keeps_center_calibration():
     status, _reason, onorm = check_cond_box(box, (512, 512))
     assert onorm == before
     assert status in {"ok", "warn"}
+
+
+def _write_rcp(tmp_path, stem, scope, extra=""):
+    """rcp 한 장 + 짝 cond.txt (Scope / 추가 키를 바꿔가며 쓴다)."""
+    gray = np.full((512, 512), 110, dtype=np.uint8)
+    cv2.rectangle(gray, (100, 100), (300, 300), 255, 1)
+    img_path = tmp_path / f"{stem}.png"
+    assert cv2.imwrite(str(img_path), gray)
+    cond_dir = tmp_path / f".{img_path.name}"
+    cond_dir.mkdir()
+    (cond_dir / "cond.txt").write_text(
+        (f"Scope {scope}\n" if scope else "")   # scope="" = Scope 줄 없는 구형 cond
+        + "Pixel 512,512\n"
+        "!Cursor_info 0,0,0,0,-1,-1,1000,1000,3000,3000\n" + extra,
+        encoding="utf-8",
+    )
+    return img_path
+
+
+def test_load_template_warns_when_cond_scope_disagrees_with_filename(tmp_path, capsys):
+    # IMAP0001 은 규약상 OM 인데 cond 는 SEM 이라고 말한다 - 알리기만 하고 key_type 은 그대로.
+    from poc.workflow_3.align.templates import load_template
+
+    path = _write_rcp(tmp_path, "IMAP0001", "SEM")
+    tpl = load_template(path, recipe_id="R", key_type="om", cond_box_crop=True)
+    out = capsys.readouterr().out
+    assert "[WARNING]" in out and "Scope=SEM" in out, out
+    assert tpl.key_type == "om"  # 경고일 뿐 - 라우팅 키를 여기서 뒤집지 않는다.
+
+
+def test_load_template_accepts_omdf_as_om(tmp_path, capsys):
+    # Scope 는 OM/OMDF/SEM 셋이다 - OMDF 는 OM 계열이라 경고가 아니다.
+    from poc.workflow_3.align.templates import load_template
+
+    path = _write_rcp(tmp_path, "IMAP0001", "OMDF", extra="!OM_Brightness\t9000\n")
+    load_template(path, recipe_id="R", key_type="om", cond_box_crop=True)
+    assert "Scope=" not in capsys.readouterr().out  # 다른 경고(밝기 없음)와 섞이지 않게.
+
+
+def test_template_carries_rotation_and_required_mode(tmp_path):
+    # cond.txt -> 보정 경로로 값을 나르는 유일한 객체가 template 이다. 여기서 떨어뜨리면
+    # 소비처가 cond.txt 를 다시 읽어야 하고, 같은 사실에 reader 가 둘이 된다.
+    from poc.workflow_3.align.templates import load_template
+
+    path = _write_rcp(tmp_path, "IMAP0002", "SEM",
+                      extra="Magnification\t5000\nImage_rotation\t45.0\n")
+    tpl = load_template(path, recipe_id="R", key_type="sem", cond_box_crop=True)
+    assert tpl.source_rotation_deg == 45.0
+    assert tpl.required_image_mode == "SEM"
+    assert tpl.source_magnification == 5000.0
+
+
+def test_template_required_mode_is_om_d_for_omdf_scope(tmp_path):
+    # Scope=OMDF 하나로 확정된다 - 밝기 키가 없어도 된다.
+    from poc.workflow_3.align.templates import load_template
+
+    path = _write_rcp(tmp_path, "IMAP0001", "OMDF", extra="Magnification\t104\n")
+    tpl = load_template(path, recipe_id="R", key_type="om", cond_box_crop=True)
+    assert tpl.required_image_mode == "OM-D"
+
+
+def test_template_warns_when_mode_rests_on_unverified_brightness(tmp_path, capsys):
+    # Scope 없는 cond 는 미검증 임계(35000)만으로 모드를 정한다. 이때 교차검증 경고는
+    # 구조적으로 못 울린다 - required_mode 가 그 임계로 나온 값이라 늘 자기 자신과 같다.
+    # 판정을 쓰되 '추정' 임을 반드시 남겨야 오피스에서 임계를 확정할 수 있다.
+    from poc.workflow_3.align.templates import load_template
+
+    path = _write_rcp(tmp_path, "IMAP0001", "", extra="!OM_Brightness\t12000\n")
+    tpl = load_template(path, recipe_id="R", key_type="om", cond_box_crop=True)
+    assert tpl.required_image_mode == "OM-D"   # 판정은 낸다.
+    out = capsys.readouterr().out
+    assert "[WARNING]" in out and "추정" in out and "12000" in out, out
+
+
+def test_template_warns_when_brightness_contradicts_scope(tmp_path, capsys):
+    # Scope 를 따르되 갈린 사실을 알린다 - 이 줄이 임계 35000 을 확정하는 신호다.
+    from poc.workflow_3.align.templates import load_template
+
+    path = _write_rcp(tmp_path, "IMAP0001", "OM", extra="!OM_Brightness\t12000\n")
+    tpl = load_template(path, recipe_id="R", key_type="om", cond_box_crop=True)
+    assert tpl.required_image_mode == "OM"  # Scope 가 이긴다.
+    out = capsys.readouterr().out
+    assert "[WARNING]" in out and "12000" in out, out

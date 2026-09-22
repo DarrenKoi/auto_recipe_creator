@@ -7,8 +7,12 @@ cond.txt 한 줄 형식: ``key  값,값,...`` (key 와 값 사이는 공백/탭,
 우리가 쓰는 키 ([[project_align_cond_files_and_coords]]):
   - ``Scope``        : OM / SEM (modality — fail 멈춘 step 의 종류)
   - ``Pixel``        : 이미지 크기 (예: 512,512 / 1024,1024)
+  - ``Magnification``: 등록 배율 (OM 은 104/210, SEM 은 5000 처럼 큰 값).
   - ``Image_rotation``: 등록 당시 화면 회전(도) — SEM key 가 OM 과 다른 회전으로
         등록되는 경우가 있어 보정 전에 장비 회전을 맞춰야 한다.
+  - ``!OM_Brightness``: OM 등록 당시 밝기. 값이 ``OM_DARK_BRIGHTNESS_MAX`` 미만이면
+        recipe 가 **OM-D**(암시야, OM 의 명암 반전)로 등록된 것이다 → live 화면도
+        OM-D 여야 매칭이 된다. ``required_image_mode`` 참고.
   - ``!Cursor_info`` : crosshair / white box 좌표가 한 줄에 들어 있다.
         elements[4],[5]      = crosshair (cx, cy)        — 둘 다 -1 이 아니면 존재
         elements[6],[7],[8],[9] = white box (left, top, right, bottom)
@@ -17,6 +21,7 @@ cond.txt 한 줄 형식: ``key  값,값,...`` (key 와 값 사이는 공백/탭,
     실제 이미지 위 좌표 변환은 본 파서가 아니라 그리기/inpaint 단계에서 적용한다.
 """
 
+import math
 import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -24,6 +29,12 @@ from pathlib import Path
 # !Cursor_info 요소 인덱스 (0-base). 좌표는 cursor oversample 프레임 기준 raw 값.
 _CROSSHAIR_IDX = (4, 5)
 _BOX_IDX = (6, 7, 8, 9)
+
+# Scope 가 **없을 때만** 쓰는 폴백 임계: !OM_Brightness 가 이 값 미만이면 OM-D 로 본다.
+# 출처: 사용자 2026-09-22, 본인도 "I assume" 라고 밝힌 **가정**이다. 같은 날 Scope 가
+# msr cond 에도 있고 OM/OMDF 를 정확히 가른다는 것이 확인되어 1순위에서 내려왔다 -
+# 이제 Scope 없는 cond 를 위한 최후 수단이다. 등호 없음(< 만).
+OM_DARK_BRIGHTNESS_MAX = 35000.0
 
 
 @dataclass(frozen=True)
@@ -43,6 +54,11 @@ class CondInfo:
     @property
     def is_om(self) -> bool:
         return bool(self.scope) and "OM" in self.scope.upper()
+
+    @property
+    def is_om_dark(self) -> bool:
+        """Scope 가 OMDF(암시야 OM)인가. OM 계열이면서 dark - is_om 도 참이다."""
+        return self.is_om and "DF" in self.scope.upper()
 
     @property
     def magnification(self) -> float | None:
@@ -65,7 +81,53 @@ class CondInfo:
         tokens = next((v for k, v in self.raw.items() if k.startswith("image_rot")), None)
         if tokens is None:
             tokens = next((v for k, v in self.raw.items() if "rotat" in k), None)
-        return _to_float(tokens[0]) if tokens else None
+        value = _to_float(tokens[0]) if tokens else None
+        # float("nan")/float("inf") 는 예외 없이 통과한다 - 이 값은 장비 회전을 실제로
+        # 돌리는 데 쓰이므로 파서에서 막는다(소비처마다 막으면 하나는 빼먹는다).
+        return value if value is not None and math.isfinite(value) else None
+
+    @property
+    def om_brightness(self) -> float | None:
+        """``!OM_Brightness`` 값 (없으면 None). 0 은 유효한 값이라 None 과 다르다."""
+        tokens = self.raw.get("om_brightness") or []
+        value = _to_float(tokens[0]) if tokens else None
+        return value if value is not None and math.isfinite(value) else None
+
+    @property
+    def required_image_mode(self) -> str | None:
+        """이 key 가 등록된 **live 화면 모드** "OM" | "OM-D" | "SEM" (모르면 None).
+
+        화면 모드는 recipe 가 자동으로 맞춰 주지 않고 **수동 설정**이라
+        ([[project_om_d_polarity_and_image_mode]]) 화면이 recipe 와 다른 모드일 수 있고
+        그 자체가 align fail 의 원인이 된다. OM-D 는 OM 의 명암 **반전**이라 모드가
+        어긋나면 NCC 가 ≈ −1 이 되고 ``max(0, ncc)`` 가 0 으로 눌러 완벽한 key 라도
+        sel <= 0.5 에 갇힌다(match 임계 0.6053 을 구조적으로 못 넘는다).
+
+        판별 순서 - **Scope 가 1순위**다(2026-09-22 사용자 확인: rcp 뿐 아니라 msr cond 도
+        Scope 를 갖고 OM / OMDF / SEM 을 정확히 구분한다). Scope 는 등록기가 적은 사실이고
+        밝기 임계는 우리 가정이므로, 둘이 갈리면 Scope 가 이긴다.
+
+          SEM        -> "SEM"   (dark 모드 없음)
+          OMDF       -> "OM-D"  (암시야로 등록됨 - 명암 반전)
+          OM         -> "OM"
+          Scope 없음 -> ``!OM_Brightness`` 폴백 (< OM_DARK_BRIGHTNESS_MAX 이면 OM-D)
+
+        Scope 도 밝기도 없으면 **None** 이다 - "모르면 OM" 으로 추측하면 반전 화면을
+        정상이라 부르게 된다.
+
+        반환값 문자열은 ``monitor/manual_image_mode_change.IMAGE_MODES`` 의 key 와 같다.
+        """
+        if self.is_sem:
+            return "SEM"
+        if self.is_om:
+            return "OM-D" if self.is_om_dark else "OM"
+        if self.scope:
+            return None  # 아는 Scope 가 아니다 - 밝기로 덮어쓰지 않는다.
+        # Scope 없는 cond (구형 msr 등) 폴백. 밝기 키가 없으면 OM 계열인지조차 모른다.
+        brightness = self.om_brightness
+        if brightness is None:
+            return None
+        return "OM-D" if brightness < OM_DARK_BRIGHTNESS_MAX else "OM"
 
 
 def _norm_key(key: str) -> str:
@@ -184,10 +246,13 @@ def load_cond(image_path) -> CondInfo | None:
 
 
 # --- modality 추론 (공유) ---------------------------------------------------
-# msr cond 에는 Scope 가 없다(2026-06-08 사용자 확인) → 키/배율로 modality 를 가른다.
+# **2026-09-22 정정**: msr cond 에도 Scope 가 있고 OM/OMDF/SEM 을 정확히 가른다(사용자
+# 확인). 종전 주석의 "msr 에는 Scope 가 없다"(2026-06-08)는 틀렸다. 그래서 Scope 가
+# 1순위이고, 아래 키/배율 휴리스틱은 Scope 없는 cond 를 위한 폴백으로 남는다:
 # OM = !OM_Brightness 키 + Magnification<200, SEM = Accelerating_voltage 키 + Magnification>500.
-# 키 존재가 1순위(확정), Magnification 보조([[project_align_cond_files_and_coords]]).
-# rcp cond 는 Scope(OM/OMDF/SEM)를 가지므로 그쪽은 CondInfo.is_om/is_sem 을 쓴다.
+# 키 존재가 배율보다 우선([[project_align_cond_files_and_coords]]).
+# 반환은 계속 'om' | 'sem' 2값이다 - OMDF 는 OM 과 같은 key 계열(IMAP0001)이라 라우팅·풀링이
+# 같다. "어느 화면 모드로 찍혔나"는 CondInfo.required_image_mode 의 일이다.
 # 두 eval(consensus·localization)이 같은 추론을 써야 해서 여기(공유 모듈)에 둔다 —
 # consensus eval 이 localization eval 을 import 하므로 역방향 import 는 순환이 된다.
 MSR_OM_MAG_MAX = 200     # Magnification < 이값 → OM (보조 신호).
@@ -197,12 +262,17 @@ MSR_SEM_MAG_MIN = 500    # Magnification > 이값 → SEM (보조 신호).
 def msr_modality(cond: "CondInfo | None") -> str | None:
     """msr cond 의 modality 추론 'om' | 'sem' | None (Scope 없음 → 키/배율).
 
-    ``!OM_Brightness`` 키 → om, ``Accelerating_voltage`` 키 → sem (키 존재가 확정,
-    1순위). 키가 없으면 Magnification 보조: <MSR_OM_MAG_MAX → om, >MSR_SEM_MAG_MIN →
+    Scope 가 있으면 그것이 1순위다(OM/OMDF → om, SEM → sem). 없을 때만 키 폴백:
+    ``!OM_Brightness`` 키 → om, ``Accelerating_voltage`` 키 → sem (키 존재가 확정).
+    키도 없으면 Magnification 보조: <MSR_OM_MAG_MAX → om, >MSR_SEM_MAG_MIN →
     sem, 그 사이(또는 미상)는 None(모호). raw 키는 parse 시 '!'·소문자화됨.
     """
     if cond is None:
         return None
+    if cond.is_sem:
+        return "sem"
+    if cond.is_om:
+        return "om"
     raw = cond.raw or {}
     if "accelerating_voltage" in raw:
         return "sem"

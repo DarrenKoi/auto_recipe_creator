@@ -3,7 +3,11 @@
 from pathlib import Path
 
 from poc.workflow_3.align.assets import AlignFailAssets, load_gray
-from poc.workflow_3.align.cond_file import cond_for_image, load_cond
+from poc.workflow_3.align.cond_file import (
+    OM_DARK_BRIGHTNESS_MAX,
+    cond_for_image,
+    load_cond,
+)
 from poc.workflow_3.align.cond_template import (
     CENTER_AREA_RATIO,
     centered_area_crop,
@@ -27,6 +31,7 @@ def load_template(
 ) -> AlignKeyTemplate:
     """Load one registered recipe image as a cond-aware AlignKeyTemplate."""
     gray = load_gray(path)
+    name = Path(path).name  # 호출부가 str 을 넘기기도 한다.
     cond = cond_for_image(load_cond(path), gray.shape)
     if not cond_box_crop:
         crop, offset = gray, (0, 0)
@@ -58,11 +63,50 @@ def load_template(
     # 사용자 2026-09-16). 그래서 경고가 아니라 값으로만 찍는다 - 경고로 두면 매 recipe 마다
     # 울려서 진짜 이상 신호(scale pinned / clamp / offset=0)를 덮는다.
     rotation = cond.image_rotation if cond is not None else None
+    # key_type(=매칭 라우팅 키)은 파일명 규약(IMAP0001=om / IMAP0002=sem)이 정하고, Scope 는
+    # 화면 모드 판정(required_image_mode)에만 쓴다. 둘이 갈려도 key_type 을 여기서 뒤집지
+    # 않는다 - route_template 이 보는 dict 키는 build_templates_from_assets 가 따로 정하므로
+    # 한쪽만 뒤집으면 'sem 라벨인데 OM 칸에 꽂힌 template' 이 되어 더 나쁘다. 알리기만 하고,
+    # 오피스 콘솔에 이 경고가 뜨면 그때 양쪽을 함께 Scope 기준으로 옮긴다.
+    scope = (cond.scope or "").upper() if cond is not None else ""
+    expected_scope = "SEM" if key_type.lower() == "sem" else "OM"
+    if scope and not scope.startswith(expected_scope):
+        print(f"[WARNING] {name}: 파일명 규약은 {key_type} 인데 cond Scope={scope} "
+              f"- template 라우팅이 틀릴 수 있다(regi 확인 필요)")
+    # 등록 화면 모드(OM / OM-D / SEM). OM-D 는 OM 의 명암 반전이라 live 화면이 다른 모드면
+    # 완벽한 key 라도 NCC 가 눌려 match 임계를 못 넘는다 - 보정 전에 맞춰야 할 상태다.
+    required_mode = cond.required_image_mode if cond is not None else None
+    brightness = cond.om_brightness if cond is not None else None
+    if required_mode is None:
+        print(f"[WARNING] {name}: Scope={scope or '-'} / !OM_Brightness="
+              f"{'-' if brightness is None else format(brightness, 'g')} 로 화면 모드를 "
+              f"가를 수 없다 - 모드 정합을 건너뛴다")
+    elif not scope and brightness is not None:
+        # Scope 가 없어 **밝기만으로** 정한 판정. OM_DARK_BRIGHTNESS_MAX 는 오피스에서
+        # 확인된 적 없는 가정치라(사용자 2026-09-22, 본인도 "I assume") 확정처럼 다루면
+        # 안 된다. 아래 교차검증 분기는 이 경로에서 **구조적으로 못 울린다** - required_mode
+        # 자체가 같은 임계로 나온 값이라 by_brightness 와 항상 같기 때문이다. 그래서
+        # 여기서 따로 알린다: 임계가 틀리면 모드가 반대로 뒤집히고, 그때 live 화면과
+        # 극성이 어긋나 NCC 가 눌려 완벽한 key 라도 match 임계를 못 넘는다.
+        print(f"[WARNING] {name}: Scope 가 없어 !OM_Brightness={brightness:g} 로 "
+              f"{required_mode} 라고 추정한다 (임계 {OM_DARK_BRIGHTNESS_MAX:g}, 미검증) "
+              f"- 모드가 반대면 극성 반전으로 매칭이 구조적으로 실패한다")
+    elif required_mode in ("OM", "OM-D") and brightness is not None:
+        # Scope 가 1순위고 밝기 임계는 가정이다. 둘이 갈리면 Scope 를 쓰되 **알린다** -
+        # 이 줄이 OM_DARK_BRIGHTNESS_MAX 를 오피스 데이터로 확정하는 유일한 신호다
+        # (Scope 가 있는 cond 에서만 - 없는 쪽은 위 분기가 맡는다).
+        by_brightness = "OM-D" if brightness < OM_DARK_BRIGHTNESS_MAX else "OM"
+        if by_brightness != required_mode:
+            print(f"[WARNING] {name}: Scope={scope} 는 {required_mode} 인데 "
+                  f"!OM_Brightness={brightness:g} 는 {by_brightness} 를 가리킨다 "
+                  f"(임계 {OM_DARK_BRIGHTNESS_MAX:g}) - Scope 를 따른다")
     h, w = gray.shape[:2]
     print(f"[INFO] {key_type} template: crop={crop_kind} offset={offset} "
           f"ap=({ax:.0f},{ay:.0f})/{source} d_center=({ax - w / 2:+.0f},{ay - h / 2:+.0f}) "
           f"rot={'-' if rotation is None else format(rotation, 'g')} "
-          f"mag={cond.magnification if cond is not None else '-'} ({reason})")
+          f"mag={cond.magnification if cond is not None else '-'} "
+          f"scope={scope or '-'} mode={required_mode or '-'} "
+          f"bright={cond.om_brightness if cond is not None else '-'} ({reason})")
     return build_template(
         crop,
         recipe_id=recipe_id,
@@ -71,6 +115,8 @@ def load_template(
         align_offset_xy=offset,
         source_wh=(gray.shape[1], gray.shape[0]),
         source_magnification=cond.magnification if cond is not None else None,
+        source_rotation_deg=rotation,
+        required_image_mode=required_mode,
     )
 
 

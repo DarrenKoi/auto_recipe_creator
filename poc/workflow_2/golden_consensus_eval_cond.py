@@ -323,11 +323,12 @@ def _cond_consensus_crop(gray, cond, size_wh):
 
 
 def _resolve_mod(cond, recipe_mod):
-    """msr 프레임 routing modality. 우선순위: msr 키/배율 추론 → recipe rcp modality 폴백.
+    """msr 프레임 routing modality. 우선순위: _msr_modality → recipe rcp modality 폴백.
 
-    msr cond 엔 Scope 가 없으므로(사용자 확인) Scope 는 보지 않는다 — _msr_modality(키/배율)로
-    결정하고, 미상이면 recipe 의 단일 rcp modality 로 폴백, 그것도 없으면 None(skip).
-    이 단계가 과거 missing_modality 대량 누락(dual-rcp recipe + Scope 부재)을 해소한다.
+    **2026-09-22 정정**: msr cond 에도 Scope 가 있다(사용자 확인). 종전 주석의 "msr 엔
+    Scope 가 없다"는 틀렸고, Scope 우선 판정은 공유 모듈 _msr_modality 안으로 들어갔다 -
+    여기서 따로 볼 것은 없다. 미상이면 recipe 의 단일 rcp modality 로 폴백, 그것도 없으면
+    None(skip). 이 단계가 과거 missing_modality 대량 누락을 해소한다.
     """
     return _msr_modality(cond) or recipe_mod
 

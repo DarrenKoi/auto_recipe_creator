@@ -13,7 +13,9 @@ from poc.workflow_3.monitor.manual_image_mode_change import (
     RESULT_MODE_UNREADABLE,
     RESULT_REHEARSAL,
     RESULT_UNVERIFIED,
+    ROW_HEIGHT_RATIO,
     change_image_mode,
+    has_contaminant,
     item_description,
     list_box,
     read_mode,
@@ -97,6 +99,25 @@ def test_item_description_names_siblings_for_the_vlm():
     assert "'OM-D'" in text and "'OM'" in text and "'SEM'" in text
 
 
+def test_list_box_height_comes_from_the_item_count():
+    # 목록보다 큰 영역은 목록이 덮고 있는 'Optics...' / 'OM ABC' 버튼을 후보에 넣는다.
+    three = list_box({"x": 700, "y": 300}, 1000, 800, rows=3)
+    six = list_box({"x": 700, "y": 300}, 1000, 800, rows=6)
+    assert six["bottom"] > three["bottom"]
+    assert three["bottom"] - 300 <= 800 * ROW_HEIGHT_RATIO * 4 + 1
+
+
+def test_list_box_is_no_wider_than_the_combo_column():
+    box = list_box({"x": 700, "y": 300}, 1000, 800)
+    assert box["right"] - box["left"] < 1000 * 0.10   # 'Optics...' 버튼 폭보다 좁다
+
+
+def test_contaminant_words_are_detected_whatever_the_casing():
+    assert has_contaminant(["Optics..."]) == "optic"
+    assert has_contaminant(["OM", "ABC"]) == "abc"
+    assert has_contaminant(["OM-D"]) == ""
+
+
 def test_list_box_opens_mostly_downward_from_the_arrow():
     box = list_box({"x": 700, "y": 300}, 1000, 800)
     assert box["top"] < 300 < box["bottom"]
@@ -160,3 +181,35 @@ def test_value_that_never_changes_is_unverified_without_a_second_click():
     out = h.run()
     assert out["result"] == RESULT_UNVERIFIED
     assert [c[0] for c in h.clicks] == ["image_mode_arrow", "image_mode_item"]
+
+
+def test_off_list_button_text_blocks_the_click():
+    # 오피스 2026-09-22: OM 요청에 'OOM' 판독. 'OM ABC' 버튼이 목록 자리에 있어 생긴다.
+    h = Harness(value_reads=[["OM-D"]], item_tokens=["Optics...", "OM"])
+    out = h.run(target="OM")
+    assert out["result"] == RESULT_ITEM_NOT_CONFIRMED
+    assert [c[0] for c in h.clicks] == ["image_mode_arrow"]
+    assert h.escapes == 1
+
+
+def test_om_row_is_clicked_when_the_crop_is_clean():
+    h = Harness(value_reads=[["OM-D"], ["OM"]], item_tokens=["OM"])
+    out = h.run(target="OM")
+    assert out["result"] == RESULT_CHANGED
+    assert [c[0] for c in h.clicks] == ["image_mode_arrow", "image_mode_item"]
+
+
+def test_item_confirm_crop_never_leaves_the_list_box():
+    seen = {}
+
+    class Spy(Harness):
+        def read(self, image, box, label):
+            if label == "image_mode_item":
+                seen["box"] = box
+            return super().read(image, box, label)
+
+    h = Spy(value_reads=[["OM-D"], ["OM"]], item_tokens=["OM"], item=(5, 4))
+    h.run(target="OM")
+    bounds = list_box({"x": 700, "y": 300}, 1000, 800)
+    assert seen["box"]["left"] >= bounds["left"] and seen["box"]["right"] <= bounds["right"]
+    assert seen["box"]["top"] >= bounds["top"] and seen["box"]["bottom"] <= bounds["bottom"]

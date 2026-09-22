@@ -59,17 +59,28 @@ VALUE_LEFT_RATIO = 0.060
 VALUE_RIGHT_RATIO = 0.004
 VALUE_HALF_HEIGHT_RATIO = 0.012
 
-# 열린 목록이 그려질 영역(화살표 기준). 목록은 콤보 폭이라 화살표에서 **왼쪽**으로 퍼지고,
-# 보통 아래로 열리지만 화면 아래쪽에서는 위로 열린다 - 위쪽도 조금 연다.
-LIST_LEFT_RATIO = 0.10
-LIST_RIGHT_RATIO = 0.03
-LIST_UP_RATIO = 0.06
-LIST_DOWN_RATIO = 0.30
+# 열린 목록이 그려질 영역(화살표 기준). **콤보 바로 아래에 'Optics...' 와 'OM ABC' 버튼이
+# 있고 목록이 그 자리를 덮으며 열린다**(2026-09-22 오피스). 'OM ABC' 에는 `OM` 이라는 단어가
+# 그대로 들어 있어, 영역이 목록보다 크면 VLM/OCR 이 그 버튼을 목록의 'OM' 행으로 읽는다
+# (첫 실행: OM 요청에 'OOM' 판독 -> 거부). 그래서 영역은 **실제 목록 크기**로 묶는다:
+#   폭  = 콤보 폭(값 판독이 성공한 VALUE_LEFT_RATIO 폭 + 여유)
+#   높이 = 항목 수 x 행 높이 + 여유 한 행
+# 위로 열리는 경우의 여유는 작게 둔다 - 오피스 실측 화살표 y=0.329 라 아래로 열린다.
+ROW_HEIGHT_RATIO = 0.024     # 목록 한 행 높이(창 비율) = 콤보 글자 한 줄
+LIST_ROW_MARGIN = 1.0        # 목록 높이에 더할 여유(행 단위)
+LIST_LEFT_RATIO = 0.075
+LIST_RIGHT_RATIO = 0.010
+LIST_UP_RATIO = 0.020
 
-# 항목 라벨 확인 crop - **행 한 줄** 크기여야 한다. 넓으면 OM 행과 OM-D 행을 함께 읽어
-# `read_mode` 가 모호로 보고 거부한다(거부는 옳은 방향이지만 그때는 이 값을 줄일 것).
-ITEM_HALF_WIDTH_RATIO = 0.035
+# 항목 라벨 확인 crop - **행 한 줄** 크기이고 목록 폭을 넘지 않는다(넘으면 옆 버튼 글자가
+# 섞인다). 목록 상자로 한 번 더 자른다(`_clip_to`).
+ITEM_HALF_WIDTH_RATIO = 0.025
 ITEM_HALF_HEIGHT_RATIO = 0.009
+
+# 목록 행 crop 에 이 단어가 읽히면 crop 이 목록 밖(덮인 버튼)까지 삼킨 것이다 - 누르지 않는다.
+# 이것은 '메뉴 형제 이름을 forbidden 에 두지 말 것' 규약의 예외가 아니다: 형제 행이 아니라
+# **다른 위젯**이고, 읽혔다는 것 자체가 crop 이 틀렸다는 증거다.
+CONTAMINANT_WORDS = ("optic", "abc")
 # 2단 로케이터의 fine crop 세로 하한. 촘촘한 목록 행은 기본 28px 하한이 위아래 행을 삼킨다.
 ITEM_VERTICAL_PAD_MIN_PX = 10
 
@@ -150,23 +161,47 @@ def item_description(mode: str, modes=IMAGE_MODES) -> str:
     """
     others = ", ".join(f"'{key}'" for key in modes if key != mode)
     return (
-        f"the row whose text is exactly '{mode}' in the dropdown list that is currently open "
-        f"below or above the image mode combo box. The list also contains other rows ({others}); "
+        f"the row whose text is exactly '{mode}' inside the dropdown list that is currently open "
+        f"under the image mode combo box. The list also contains other rows ({others}); "
         f"'{mode}' is a different row from those and must not be confused with them. "
-        f"Point at the center of the '{mode}' row."
+        "The open list covers the buttons labeled 'Optics...' and 'OM ABC' that are normally "
+        "there; those are BUTTONS, not list rows, and the 'OM ABC' button must never be chosen "
+        f"even though its text starts with 'OM'. Point at the center of the '{mode}' list row."
     )
 
 
-def list_box(point, width: int, height: int, *, left_ratio=LIST_LEFT_RATIO,
-             right_ratio=LIST_RIGHT_RATIO, up_ratio=LIST_UP_RATIO,
-             down_ratio=LIST_DOWN_RATIO) -> dict:
-    """열린 목록을 찾을 영역(화살표 기준, 경계 clamp). 탐색을 이 안으로 묶는 것이 계약이다."""
+def list_box(point, width: int, height: int, *, rows: int = len(IMAGE_MODES),
+             left_ratio=LIST_LEFT_RATIO, right_ratio=LIST_RIGHT_RATIO,
+             up_ratio=LIST_UP_RATIO) -> dict:
+    """열린 목록을 찾을 영역(화살표 기준, 경계 clamp). 탐색을 이 안으로 묶는 것이 계약이다.
+
+    높이는 고정 비율이 아니라 **항목 수**에서 나온다. 목록보다 큰 영역은 곧 목록이 덮고 있는
+    'Optics...' / 'OM ABC' 버튼을 후보에 넣는 것이고, 'OM ABC' 는 `OM` 을 글자 그대로 담고
+    있어 그 순간 OM 행과 구별할 수 없어진다(2026-09-22 오피스).
+    """
+    down_ratio = ROW_HEIGHT_RATIO * (max(1, rows) + LIST_ROW_MARGIN)
     return {
         "left": max(0, int(point["x"] - width * left_ratio)),
         "top": max(0, int(point["y"] - height * up_ratio)),
         "right": min(width, int(point["x"] + width * right_ratio)),
         "bottom": min(height, int(point["y"] + height * down_ratio)),
     }
+
+
+def _clip_to(box: dict, bounds: dict) -> dict:
+    """확인 crop 을 목록 상자 안으로 자른다 - 목록 밖 글자가 섞이지 않게."""
+    return {
+        "left": max(box["left"], bounds["left"]),
+        "top": max(box["top"], bounds["top"]),
+        "right": min(box["right"], bounds["right"]),
+        "bottom": min(box["bottom"], bounds["bottom"]),
+    }
+
+
+def has_contaminant(tokens, words=CONTAMINANT_WORDS) -> str:
+    """목록 밖 위젯 글자가 읽혔으면 그 단어를, 아니면 "" 를 돌려준다."""
+    text = " ".join(_word(token) for token in tokens)
+    return next((word for word in words if word in text), "")
 
 
 def change_image_mode(
@@ -258,12 +293,20 @@ def change_image_mode(
         return out
     item = {"x": int(found["x"]) + box["left"], "y": int(found["y"]) + box["top"]}
 
-    item_tokens = read_fn(image, crop_box_around_point(
+    item_tokens = read_fn(image, _clip_to(crop_box_around_point(
         item, image.width, image.height,
         left_ratio=ITEM_HALF_WIDTH_RATIO, right_ratio=ITEM_HALF_WIDTH_RATIO,
         half_height_ratio=ITEM_HALF_HEIGHT_RATIO,
-    ), "image_mode_item")
+    ), box), "image_mode_item")
     out["item_tokens"] = list(item_tokens)
+    dirty = has_contaminant(item_tokens)
+    if dirty:
+        # 목록이 덮고 있어야 할 버튼 글자가 읽혔다 = crop 이 목록 밖까지 갔거나 목록이 안 열렸다.
+        print(f"[WARNING] 목록 밖 글자('{dirty}')가 읽혔습니다 - 클릭 안 함: px={item} "
+              f"읽힘={item_tokens[:8]!r}")
+        out["result"] = RESULT_ITEM_NOT_CONFIRMED
+        _close_dropdown(escape_fn)
+        return out
     if read_mode(item_tokens) != target_mode:
         print(f"[WARNING] 항목 라벨 확인 실패 - 클릭 안 함: px={item} 읽힘={item_tokens[:8]!r} "
               f"기대={target_mode}")

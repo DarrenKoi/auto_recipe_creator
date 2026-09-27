@@ -42,5 +42,6 @@
       "Bash(git log *)"
     ]
   },
-  "prefersReducedMotion": true
+  "prefersReducedMotion": true,
+  "outputStyle": "Concise"
 }

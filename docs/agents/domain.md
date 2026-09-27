@@ -5,8 +5,7 @@ How the engineering skills should consume this repo's domain documentation when 
 ## Before exploring, read these
 
 - **`CONTEXT.md`** at the repo root. Read it before changing align-fail, recipe, or asset-path behavior (per `AGENTS.md`).
-- **`docs/adr/`** at the repo root — read ADRs that touch the area you're about to work in.
-- **Per-workflow ADRs**: also check `poc/workflow_1/docs/study/adr/` and `poc/workflow_2/docs/study/adr/` for decisions scoped to those workflows. `poc/workflow_2/docs/` may additionally hold runbooks, handoffs, and generated status artifacts.
+- **Per-workflow ADRs** in `poc/workflow_*/docs/study/adr/` — read ADRs that touch the area you're about to work in. There is no root `docs/adr/`; new ADRs go in the owning workflow's folder. `poc/workflow_2/docs/` may additionally hold runbooks, handoffs, and generated status artifacts.
 
 If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates them lazily when terms or decisions actually get resolved.
 
@@ -18,12 +17,10 @@ Single-context repo:
 /
 ├── CONTEXT.md
 ├── docs/
-│   ├── adr/                              ← system-wide decisions (root)
 │   ├── agents/                           ← this skill's config
 │   └── issues/                           ← local-markdown issue tracker
 └── poc/
-    ├── workflow_1/docs/study/adr/        ← workflow_1-scoped decisions
-    └── workflow_2/docs/study/adr/        ← workflow_2-scoped decisions
+    └── workflow_*/docs/study/adr/        ← workflow-scoped decisions (1, 2, 4 today)
 ```
 
 ## Use the glossary's vocabulary

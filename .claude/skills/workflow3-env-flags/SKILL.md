@@ -1,6 +1,6 @@
 ---
 name: workflow3-env-flags
-description: workflow_3 런타임 env 플래그 레퍼런스 - 반자동 보정 게이트(ALIGN_FAIL_OK_CLICK/REQUIRE_PM_MODE), foreground takeover, SEM-box/PM mode 검출, occupied popup, 루프 실패경로 쿨다운, zoom ladder + PM dropdown 배율 탐색. 기본값/튜너블/롤백 스위치를 찾을 때 사용.
+description: workflow_3 런타임 env 플래그 레퍼런스 - 보정 OK 클릭/PM 모드 게이트(ALIGN_FAIL_OK_CLICK/REQUIRE_PM_MODE), foreground takeover, SEM-box/PM mode 검출, occupied popup, 루프 실패경로 쿨다운, zoom ladder + PM dropdown 배율 탐색. 기본값/튜너블/롤백 스위치를 찾을 때 사용.
 ---
 
 # workflow_3 env 플래그 레퍼런스
@@ -10,7 +10,7 @@ description: workflow_3 런타임 env 플래그 레퍼런스 - 반자동 보정 
 루트 `CLAUDE.md` 의 "Local config" 항목을 따른다.
 
 
-- **실전 반자동 보정 게이트** (2026-08-12, 첫 실장비 투입용): `ALIGN_FAIL_OK_CLICK` (**0** — reposition 은 자동, OK 버튼은 엔지니어가 확인 후 직접. 좌표가 틀린 채 OK 가 눌리면 잘못된 위치로 측정이 확정되므로 실전 신뢰가 쌓일 때까지 마지막 확정은 사람이 쥔다. 라이브러리 기본값 `CorrectionConfig.ok_click_enabled` 는 설계된 전체 동작인 `True` 로 남아 기존 테스트를 유지), `ALIGN_FAIL_REQUIRE_PM_MODE` (1 — PM 박스에서 OM/SEM 을 확정하지 못하면 step 6 을 `pm_mode_unknown` 으로 실패시켜 보정을 보류. modality 를 틀리면 IMAP0001/IMAP0002 중 엉뚱한 template 로 매칭해 좌표가 근본적으로 틀리므로, 추측해서 누르느니 엔지니어에게 넘긴다. 0 이면 `sem_mode_default` 로 진행).
+- **보정 OK 클릭 / PM 모드 게이트**: `ALIGN_FAIL_OK_CLICK` (실전 `align_fail_monitor` 는 상수 `OK_CLICK=1` = 완전 자동 제어. `0` 이면 reposition 까지만 하고 `awaiting_engineer_ok` 로 끝나 엔지니어가 OK 를 누른다 - 그때만 cube 가 매 알람 나간다. `config.py` reader 기본값 0 은 이 값을 시딩하지 않는 진입점의 안전 폴백이고, 라이브러리 기본값 `CorrectionConfig.ok_click_enabled` 는 `True`), `ALIGN_FAIL_REQUIRE_PM_MODE` (1 — PM 박스에서 OM/SEM 을 확정하지 못하면 step 6 을 `pm_mode_unknown` 으로 실패시켜 보정을 보류. modality 를 틀리면 IMAP0001/IMAP0002 중 엉뚱한 template 로 매칭해 좌표가 근본적으로 틀리므로, 추측해서 누르느니 엔지니어에게 넘긴다. 0 이면 `sem_mode_default` 로 진행).
 
 - **결과-후-알림(notify-last) 정책** (2026-08-18): cube 통보 순서는 **알람 → 접속 → 녹화 → align fail 판정 → 보정 시도 → 결과 cube** 다. 감지 즉시 알리지 않는 이유는 알림을 보고 즉시 반응하는 엔지니어가 자동화와 단일 RCS 커서를 두고 경합해 `rcs_occupied` 로 사이클을 깨뜨리기 때문이다. 관련 플래그:
   - `ALIGN_FAIL_DETECTION_NOTIFY` (**0**, 기본 off) — 감지 시점 사전 고지. 켜면 알람 1건당 cube 2회(감지 + 결과)가 되어 위 경합을 되살린다. "화면이 저절로 움직인다"는 사실을 미리 알려야 하는 상황에서만 켠다. `workflow_3_config.py` 에 노출돼 있지 않아 실 셸 env 로만 켜진다.

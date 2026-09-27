@@ -332,9 +332,9 @@ class Workflow3Settings(WorkflowSettings):
     correction_enabled: bool = True
     correction_dry_run: bool = True  # False 는 SAFE_MODE off + env 명시(0)일 때만.
     ok_button_vlm_service: str = "mai-ui"  # route_slug (모델명 "mai-ui-8b" 아님).
-    # OK 버튼 자동 클릭. 기본 off = 반자동(reposition 까지만 자동, OK 는 엔지니어).
-    # 좌표가 틀린 채 OK 가 눌리면 잘못된 위치로 측정이 확정되므로, 실전 신뢰가 쌓이기
-    # 전까지는 사람이 마지막 확정을 쥔다. 켜려면 ALIGN_FAIL_OK_CLICK=1.
+    # OK 버튼 자동 클릭. 실전 align_fail_monitor 는 상수 OK_CLICK=1(완전 자동)을 시딩한다.
+    # 여기 기본 off(=반자동, OK 는 엔지니어)는 그 값을 시딩하지 않는 진입점의 안전 폴백이다 -
+    # 좌표가 틀린 채 OK 가 눌리면 잘못된 위치로 측정이 확정되므로.
     ok_click_enabled: bool = False
     # 보정 클릭 전에 화면에 align fail 다이얼로그가 있는지 먼저 본다(2026-09-17). 알람 피드는
     # 해제된 알람도 계속 돌려주는 이벤트 로그라, 큐에서 기다리는 사이 엔지니어가 이미 해결한

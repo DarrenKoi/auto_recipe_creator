@@ -27,8 +27,10 @@ SAFE_MODE=1 ALIGN_FAIL_ALARM_SOURCE=replay ALIGN_FAIL_REPLAY_CSV=<fixture.csv> \
   MEAS_FAIL_ALID=<alid> uv run python poc/workflow_3e/monitor.py
 ```
 
-`monitor.py` **supersedes** `align_fail_monitor.py` (it runs the align job *and* the abort
-job). `align_fail_monitor.py` still runs standalone (align-only) for backward compatibility.
+`monitor.py` runs the align job *and* the abort job. **It is not deployed**: production runs
+`poc/workflow_3/monitor/align_fail_monitor.py` (align-only). Note that this entry point only calls
+`seed_env()` — it does not apply `align_fail_monitor`'s live defaults or its constant block, so
+the align correction here runs with `config.py` defaults (correction dry-run, OK click off).
 
 ## Modules
 

@@ -87,7 +87,7 @@ NOTIFY_DELAY_SEC = None
 # ----------------------------------------------------------------------------
 FEASIBILITY_MARK = None      # 캡처 후 보정 가능/불가 마킹(_marked.jpg). 1/0/None(기본 on).
 REPOSITION_PREVIEW = None    # align point 로 커서 이동 미리보기(SAFE_MODE=0 필요). 1/0/None(기본 off).
-OK_CLICK = None              # align OK 버튼까지 자동 클릭. 1/0/None(기본 off=반자동, 엔지니어가 OK).
+OK_CLICK = None              # align OK 버튼까지 자동 클릭. 1/0/None. align_fail_monitor 는 상수 블록(OK_CLICK=1)이 먼저라 여기 값은 무시된다.
 ZOOM_PROBE = None            # 모호/부재 verdict 에서 zoom in/out ladder 탐색. 1/0/None(기본 on).
 # zoom 방식: "auto"(wheel→무효 시 PM 드롭다운), "pm_dropdown"(곧장 드롭다운), "wheel"(휠만). None=기본(auto).
 ZOOM_METHOD = None
@@ -99,7 +99,8 @@ PM_DROPDOWN = None           # wheel 무효 tool 용 PM 버튼 드롭다운 fall
 # ----------------------------------------------------------------------------
 CORRECTION = None            # CV 보정 마스터 토글. 1/0/None(기본 on).
 # 보정의 실제 reposition/OK 클릭 차단(이중 게이트의 두 번째). 1=dry-run(클릭 안 함),
-# 0=실제 클릭(SAFE_MODE=0 도 동시 충족해야 함). None=기본(1=dry-run, 안전).
+# 0=실제 클릭(SAFE_MODE=0 도 동시 충족해야 함). None=기본. align_fail_monitor 는 실운전
+# 기본값(0)을 이 파일보다 먼저 못박으므로 여기 1 은 무시된다(점검은 셸 SAFE_MODE=1).
 CORRECTION_DRY_RUN = None
 # paused 화면에 key 가 없을 때의 search-around 방식(2026-08-29 사용자 확정: grid 가 기본).
 # "grid"=PM 드롭다운 절대 배율 zoom-out + FOV 격자 sweep / "legacy"=종전 휠+spiral(롤백).

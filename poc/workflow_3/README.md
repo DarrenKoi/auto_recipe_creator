@@ -229,7 +229,7 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 |---|---|---|
 | `SAFE_MODE` | 0 | 1 이면 모든 마우스/키보드 차단 (전역 dry-run) |
 | `ALIGN_FAIL_CORRECTION` | 1 | CV 보정 단계 수행 여부 |
-| `ALIGN_FAIL_CORRECTION_DRY_RUN` | 1 | 보정의 move/click 차단. 실 클릭은 SAFE_MODE=0 **그리고** 이 값=0 일 때만 |
+| `ALIGN_FAIL_CORRECTION_DRY_RUN` | 1 (`align_fail_monitor` 는 0) | 보정의 move/click 차단. 실 클릭은 SAFE_MODE=0 **그리고** 이 값=0 일 때만. 실전 진입점 `align_fail_monitor` 는 `_apply_live_mode_defaults` 가 0 을 못박는다 |
 | `ALIGN_FAIL_RCS_RECOVERY` | 1 | RCS 메인 창 부재 시 재실행+재로그인 복구. 프로세스가 이미 있으면 재실행하지 않고(중복 실행 방지), 조회 자체가 불가하면 실행을 보류한다. 복구 로그인은 **tool 에 접속하지 않는다** — 어느 tool 인지는 알람이 정한다. 복구를 탄 경우에만 **List 탭을 따로 연다**(아래 참고). 끄려면 `0` |
 | `ALIGN_FAIL_GRAPH_VIEW` | 0 | live graph view(workflow_4 `CycleGraphMirror`). 사이클 step 저널을 읽기 전용으로 폴링해 run_dir 에 `workflow_graph.html`(self-contained, 자동 새로고침) 을 쓴다. 켜지 않으면 동작 byte-identical; workflow_4 import/시작 실패는 경고 1회 후 자동 비활성(사이클 불변) |
 | `ALIGN_FAIL_GRAPH_AUTOOPEN` | 1 | `ALIGN_FAIL_GRAPH_VIEW=1` 일 때만 유효. Windows 에서 첫 스냅샷 후 HTML 을 기본 브라우저로 자동 연다(다른 OS 무시) |
@@ -443,6 +443,10 @@ cond.txt 는 localization·consensus eval 에서 white box/crosshair 제거용�
 7. **legacy 정리** — `poc\workflow_1\align_images` 잔여 빈 디렉터리 제거.
 
 ## 오피스 PC 이전 체크리스트 (단계별 활성화)
+
+> 첫 투입 때의 절차다. 현재 오피스는 `align_fail_monitor.py` 로 실전 운용 중이며(보정 실클릭 +
+> `OK_CLICK=1` 완전 자동), 새 PC 에 다시 세울 때만 참고한다. 6번의 SEM panel landmark
+> 캘리브레이션은 `detect_sem_box` 가 panel ROI 를 잡으면서 필요 없어졌다.
 
 1. **office_* 복사** — git pull 후 정위치(`poc/workflow_3/monitor/`)로 둔다:
    ```

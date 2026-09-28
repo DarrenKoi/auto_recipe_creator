@@ -13,7 +13,8 @@
      형식을 유지한다. 알람 시스템이 보낸 row 가 없으니 alarm_time/UTC9 는 wall-clock.
   3. rcp/msr 1차 입력 + consensus success gather (모니터와 동일한 pre-cycle 작업).
   4. `run_alarm_cycle(..., attach_open_tool=True)` - 사이클 본체. 끝나면 teardown 이
-     종전대로 tool 창을 닫는다.
+     종전대로 tool 창을 닫는다. 단 긴급 해제(ctrl+alt+q)로 끝나면 창을 **닫지 않는다** -
+     엔지니어가 이어 받는 화면이다.
   5. cycle manifest 한 줄 기록.
 
 safety:

@@ -4,7 +4,8 @@ RCS/Windows 없이 도는 단위 테스트다. 사이클 전체는 Mac 에서 RC
 이 False 라 조기 반환하므로, teardown 목록을 만드는 함수(_teardown_steps 계열)만
 직접 호출해 순서를 검사한다.
 
-`uv run python poc/workflow_3/monitor/test_teardown.py` 로 직접 실행.
+`uv run python poc/workflow_3/monitor/test_teardown.py` 로 직접 실행. 단 monkeypatch 를 쓰는
+긴급 해제 tool 창 테스트 둘은 pytest 로만 돈다(`uv run pytest poc/workflow_3/monitor/test_teardown.py`).
 """
 
 from poc.workflow_3.monitor.teardown import run_teardown
@@ -108,6 +109,42 @@ def test_check_only_teardown_survives_failing_close_alert():
     assert calls == ["unblock", "close_tool"], calls
     assert [n for n, _ in failures] == ["close_alert"], failures
     print("[OK] test_check_only_teardown_survives_failing_close_alert")
+
+
+def _run_close_tool(monkeypatch, context, *, aborted):
+    """alarm teardown 의 close_tool 단계만 돌려 tool 창 닫기가 불렸는지 돌려준다."""
+    from poc.workflow_3.config import load_workflow3_settings
+    from poc.workflow_3.monitor import cycle
+    from poc.workflow_3.util.abort_switch import SWITCH
+
+    closed = []
+    monkeypatch.setattr(cycle, "close_tool", lambda eqp_id: closed.append(eqp_id))
+    monkeypatch.setattr(cycle, "CLOSE_TOOL_AVAILABLE", True)
+    SWITCH.reset()
+    if aborted:
+        SWITCH.request("test")
+    try:
+        steps = dict(cycle._teardown_steps(
+            "EQP1", context, cycle.CycleResult(eqp_id="EQP1", recipe_id="C/R", tag="t"),
+            load_workflow3_settings(), input_blocked=False, recording=None,
+        ))
+        steps["close_tool"]()
+    finally:
+        SWITCH.reset()
+    return closed
+
+
+def test_abort_keeps_the_tool_window_the_engineer_opened(monkeypatch):
+    """manual_align_correction 은 엔지니어가 직접 연 창에 붙는다. 긴급 해제(ctrl+alt+q)는 '내가 이어
+    받겠다' 는 뜻이라 그 창을 닫으면 안 된다. 정상 종료는 종전대로 닫는다."""
+    attached = {"tool_window": object(), "attach_open_tool": True}
+    assert _run_close_tool(monkeypatch, dict(attached), aborted=True) == []
+    assert _run_close_tool(monkeypatch, dict(attached), aborted=False) == ["EQP1"]
+
+
+def test_abort_still_closes_a_tool_window_the_cycle_opened(monkeypatch):
+    """알람 사이클이 스스로 연 창은 긴급 해제여도 종전대로 닫는다(범위 밖 동작 불변)."""
+    assert _run_close_tool(monkeypatch, {"tool_window": object()}, aborted=True) == ["EQP1"]
 
 
 if __name__ == "__main__":

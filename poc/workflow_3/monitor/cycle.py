@@ -1615,6 +1615,11 @@ def _teardown_steps(eqp_id, context, result, settings, *, input_blocked, recordi
             result.prelude_frame_count = context.get("prelude_frame_count", 0)
 
     def _close_tool():
+        if context.get("attach_open_tool") and is_aborted():
+            # 엔지니어가 직접 연 창(manual_align_correction)에서 긴급 해제 = '내가 이어 받겠다'.
+            # 그 창을 닫으면 작업 중인 화면을 빼앗는다 - 그대로 둔다. 정상 종료는 종전대로 닫는다.
+            print(f"[INFO] 긴급 해제({abort_reason()}) - 엔지니어가 연 tool 창은 닫지 않습니다: {eqp_id}")
+            return
         if context.get("tool_window") is not None and CLOSE_TOOL_AVAILABLE:
             close_tool(eqp_id)
 
@@ -1745,6 +1750,8 @@ def _run_alarm_cycle(
     if episode_id:
         context["episode_id"] = episode_id
     if attach_open_tool:
+        # teardown 이 긴급 해제 때 이 창을 닫지 않게 표시한다(_teardown_steps._close_tool).
+        context["attach_open_tool"] = True
         # 엔지니어가 직접 연 창 = 그 사람의 제어 세션. List 판독이 없어 unknown 으로 두면
         # corrected 가 corrected_unverified 로 강등돼 cube + engineer watch 가 헛돈다.
         context["occupancy"] = FREE

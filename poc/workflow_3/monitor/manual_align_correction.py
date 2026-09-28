@@ -17,6 +17,9 @@
      엔지니어가 이어 받는 화면이다.
   5. cycle manifest 한 줄 기록.
 
+  tool 창을 열지 않은 채 RCS List 탭 접속부터 시키려면 형제 진입점
+  `manual_align_correction_semiauto.py` 를 쓴다 - 같은 main 을 attach_open_tool=False 로 부른다.
+
 safety:
   * `SAFE_MODE=0` + `ALIGN_FAIL_CORRECTION_DRY_RUN=0` 기본값을 못박는다 (실운전).
     점검만 하려면 `SAFE_MODE=1` 으로 실행하면 클릭이 모두 막힌다.
@@ -159,15 +162,15 @@ def _resolve_arg(env_name: str, inline_value: str) -> tuple[str, str]:
     return (inline_value or "").strip(), "file"
 
 
-def _load_trigger_args() -> tuple[str, str, str, str]:
-    """실행 인자(파일 상수 또는 동명의 env)를 읽고 검증한다.
+def _load_trigger_args(consts: dict) -> tuple[str, str, str, str]:
+    """실행 인자(실행한 진입점 파일의 상수 또는 동명의 env)를 읽고 검증한다.
 
     EQP_ID/RECIPE_ID 는 필수. 없으면 사이클을 돌릴 식별자가 없으니 즉시 종료한다.
     """
-    eqp_id, eqp_src = _resolve_arg("MANUAL_CORRECTION_EQP_ID", EQP_ID)
-    recipe_id, recipe_src = _resolve_arg("MANUAL_CORRECTION_RECIPE_ID", RECIPE_ID)
-    class_name, _ = _resolve_arg("MANUAL_CORRECTION_CLASS_NAME", CLASS_NAME)
-    tag, _ = _resolve_arg("MANUAL_CORRECTION_TAG", TAG)
+    eqp_id, eqp_src = _resolve_arg("MANUAL_CORRECTION_EQP_ID", consts.get("EQP_ID", ""))
+    recipe_id, recipe_src = _resolve_arg("MANUAL_CORRECTION_RECIPE_ID", consts.get("RECIPE_ID", ""))
+    class_name, _ = _resolve_arg("MANUAL_CORRECTION_CLASS_NAME", consts.get("CLASS_NAME", ""))
+    tag, _ = _resolve_arg("MANUAL_CORRECTION_TAG", consts.get("TAG", ""))
 
     if eqp_id or recipe_id:
         print(f"[INFO] 인자 출처: EQP_ID={eqp_src}, RECIPE_ID={recipe_src} "
@@ -254,8 +257,14 @@ def _print_summary(cycle: CycleResult, take: Path) -> None:
     print("=" * 70)
 
 
-def main() -> int:
-    """수동 트리거 1회 실행. 종료 코드: 0=사이클 완주, 1=인자 오류, 2=tool 창 없음 등."""
+def main(consts: dict | None = None, *, attach_open_tool: bool = True) -> int:
+    """수동 트리거 1회 실행. 종료 코드: 0=사이클 완주, 1=인자 오류, 2=tool 창 없음 등.
+
+    consts: 실행한 진입점의 globals() - 상단 상수 블록을 거기서 읽는다(기본 = 이 파일).
+    attach_open_tool: True = 엔지니어가 연 tool 창에 붙는다. False = RCS List 탭에서 접속부터
+    한다(semiauto 진입점; 알람 사이클과 같은 RCS 확보 + 점유 게이트 + 더블클릭).
+    """
+    consts = globals() if consts is None else consts
     _apply_live_mode_defaults()
     from poc.workflow_3.workflow_3_config_loader import seed_env
 
@@ -265,7 +274,8 @@ def main() -> int:
     # 순서도 모니터와 같다: 실운전 기본값 -> 상수 블록 -> workflow_3_config.py.
     # 이 파일 고유 상수가 먼저다 - 공유 블록/오피스 사본보다 수동 실행의 목적이 우선한다.
     seed_env_from_constants(
-        globals(), _MANUAL_CONST_TO_ENV, label="manual_align_correction 상수",
+        consts, _MANUAL_CONST_TO_ENV,
+        label=f"{Path(consts.get('__file__', __file__)).stem} 상수",
     )
     seed_env_from_constants(
         vars(_monitor), _monitor._CONST_TO_ENV,
@@ -273,7 +283,7 @@ def main() -> int:
     )
     seed_env()
 
-    eqp_id, recipe_id, _class_name, env_tag = _load_trigger_args()
+    eqp_id, recipe_id, _class_name, env_tag = _load_trigger_args(consts)
     # 클릭 전 align fail 다이얼로그 확인은 끈다. 그 확인은 '피드가 해제된 알람도 돌려준다'
     # 는 알람 큐 문제를 막는 것인데, 여기는 알람이 아니라 엔지니어가 지금 연 tool 이라
     # 해당이 없고, 수동 시험은 다이얼로그 없이 도는 경우가 많아 매번 align_fail_cleared 로
@@ -285,10 +295,10 @@ def main() -> int:
     # console.log 에 남긴다. run_alarm_cycle 은 같은 폴더로 재진입한다(util/event_dir.py).
     take = take_dir_for(eqp_id, tag)
     with event_scope(take):
-        return _run_manual(eqp_id, recipe_id, _class_name, tag, settings, take)
+        return _run_manual(eqp_id, recipe_id, _class_name, tag, settings, take, attach_open_tool)
 
 
-def _run_manual(eqp_id, recipe_id, _class_name, tag, settings, take) -> int:
+def _run_manual(eqp_id, recipe_id, _class_name, tag, settings, take, attach_open_tool) -> int:
     """main 의 본체 - 이벤트 폴더 scope 안에서 불린다."""
 
     print(
@@ -316,7 +326,14 @@ def _run_manual(eqp_id, recipe_id, _class_name, tag, settings, take) -> int:
     if not start_abort_hotkey(settings.abort_hotkey):
         print("[WARNING] 긴급 해제 단축키가 등록되지 않았습니다 - 실행 중 자동 조작을 "
               "키로 멈출 수 없습니다. 중단하려면 터미널 창에서 프로세스를 종료하세요.")
-    if not _tool_window_open(eqp_id):
+    if attach_open_tool:
+        if not _tool_window_open(eqp_id):
+            return EXIT_PREFLIGHT_FAILED
+    elif find_remote_monitoring_window(eqp_id)[0] is not None:
+        # 이미 열린 창을 두고 List 에서 다시 더블클릭하면 내 세션이 점유(Control <나>)로 읽혀
+        # rcs_occupied 로 끝난다 - 들어가기 전에 막고 맞는 진입점을 알려준다.
+        print(f"[ERROR] {eqp_id} tool 창이 이미 열려 있습니다. 창을 닫고 다시 실행하거나, "
+              "열린 창에 붙는 manual_align_correction.py 를 쓰세요.")
         return EXIT_PREFLIGHT_FAILED
 
     if is_aborted():
@@ -355,7 +372,7 @@ def _run_manual(eqp_id, recipe_id, _class_name, tag, settings, take) -> int:
     gather_rcp_msr(eqp_id, recipe_id, settings, timeout_sec=settings.rcp_gather_timeout_sec)
 
     # 본체. 예외는 run_alarm_cycle 안에서 잡혀 CycleResult.failed_step 으로 남는다.
-    cycle = run_alarm_cycle(eqp_id, recipe_id, settings, tag=tag, attach_open_tool=True)
+    cycle = run_alarm_cycle(eqp_id, recipe_id, settings, tag=tag, attach_open_tool=attach_open_tool)
     append_cycle_manifest(info, cycle)
 
     if is_aborted():

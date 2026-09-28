@@ -363,6 +363,8 @@ class Workflow3Settings(WorkflowSettings):
     search_max_chase: int = 3           # sweep 뒤 추격할 후보 수(각각 배율 왕복).
     search_candidate_score: float = 0.30  # sweep 셀을 추격할 최소 점수(zoom-out 단일 scale 이라 낮게).
     search_odom_tol_fov: float = 0.15   # odometry |측정-명령| 허용(FOV 비율).
+    search_ladder_max_step: float = 3.0  # SEM 사다리 한 칸의 배율비 상한(오피스 미검증).
+    search_ladder_tol_fov: float = 0.35  # 사다리 중간 단에서 후보를 따라왔다고 보는 중심 반경(FOV 비율, 잠정치).
     # reposition closed-loop (2026-09-17): 더블클릭 1회는 중심에 정확히 안 온다. 클릭 뒤
     # 재캡처/재매칭해 align point 가 FOV 중심에서 tol(=ratio x frame 폭) 안에 올 때까지
     # 최대 refine_max 번 더 누른다. 수렴 못 하면 OK 없이 escalated_reposition_unconverged.
@@ -532,6 +534,8 @@ def load_workflow3_settings() -> Workflow3Settings:
         search_max_chase=env_int("ALIGN_FAIL_SEARCH_MAX_CHASE", 3),
         search_candidate_score=env_float("ALIGN_FAIL_SEARCH_CANDIDATE_SCORE", 0.30),
         search_odom_tol_fov=env_float("ALIGN_FAIL_SEARCH_ODOM_TOL_FOV", 0.15),
+        search_ladder_max_step=env_float("ALIGN_FAIL_SEARCH_LADDER_MAX_STEP", 3.0),
+        search_ladder_tol_fov=env_float("ALIGN_FAIL_SEARCH_LADDER_TOL_FOV", 0.35),
         reposition_refine_max=env_int("ALIGN_FAIL_REPOSITION_REFINE_MAX", 3),
         reposition_tol_ratio=env_float("ALIGN_FAIL_REPOSITION_TOL_RATIO", 0.01),
         reposition_settle_sec=env_float("ALIGN_FAIL_REPOSITION_SETTLE_SEC", 0.5),

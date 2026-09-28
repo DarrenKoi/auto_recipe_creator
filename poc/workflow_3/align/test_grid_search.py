@@ -466,6 +466,11 @@ def test_settings_expose_grid_search_knobs(monkeypatch):
     assert s.search_mode == "grid" and s.search_radius_um == 30.0 and s.search_pan_budget == 10
     assert s.search_om_pan_budget == 8
     assert s.search_min_key_px == 60 and s.search_max_chase == 3 and s.search_odom_tol_fov == 0.15
+    assert s.search_ladder_max_step == 3.0 and s.search_ladder_tol_fov == 0.35
+    monkeypatch.setenv("ALIGN_FAIL_SEARCH_LADDER_MAX_STEP", "2.5")
+    monkeypatch.setenv("ALIGN_FAIL_SEARCH_LADDER_TOL_FOV", "0.45")
+    s = load_workflow3_settings()
+    assert s.search_ladder_max_step == 2.5 and s.search_ladder_tol_fov == 0.45
     monkeypatch.setenv("ALIGN_FAIL_SEARCH_MODE", "legacy")
     monkeypatch.setenv("ALIGN_FAIL_SEARCH_RADIUS_UM", "12")
     monkeypatch.setenv("ALIGN_FAIL_SEARCH_MIN_KEY_PX", "80")
@@ -786,3 +791,282 @@ def test_nearby_key_uses_primary_scale_band_and_stops_on_first_pan():
     assert ctl.moves == 1  # 셀 끝까지 이동하거나 전체 sweep 뒤 되돌아오지 않는다.
     assert out.best.fov_xy == pytest.approx((244, 120), abs=3)
     assert out.history[-1]["scale"] == pytest.approx(0.85)
+
+
+# ------------------------------------------------------------------
+# SEM 배율 사다리 - 깊이 내려간 뒤 한 번에 등록 배율로 뛰지 않고 단을 밟아 올라온다
+# ------------------------------------------------------------------
+
+
+def test_ladder_climbs_at_most_3x_per_step_up_to_the_final_step():
+    """5K 에서 20K 까지: 10K(2x) -> 20K(2x). 10K 에서 100K 까지: 20K -> 50K -> 100K."""
+    assert gs.ladder_steps(CG_OPTIONS, start=5000, final=20000) == [10000, 20000]
+    assert gs.ladder_steps(CG_OPTIONS, start=10000, final=100000) == [20000, 50000, 100000]
+
+
+def test_ladder_takes_the_next_step_even_when_the_gap_is_wider_than_3x():
+    """드롭다운에 중간 단이 없으면 다음 단으로 간다(멈추지 않는다)."""
+    assert gs.ladder_steps([1000, 10000, 50000], start=1000, final=50000) == [10000, 50000]
+
+
+def test_ladder_is_empty_when_already_at_the_final_step():
+    assert gs.ladder_steps(CG_OPTIONS, start=20000, final=20000) == []
+
+
+# ------------------------------------------------------------------
+# 전체 화면 template - 깊은 zoom-out 에서는 box 속 junction 이 몇 px 로 줄어 안 보인다.
+# 등록 화면 전체(주변 배열/패드 배치)를 key 로 쓴다.
+# ------------------------------------------------------------------
+
+
+def test_field_template_is_the_whole_cleaned_image_with_the_crosshair_offset(tmp_path):
+    from poc.workflow_3.align.templates import load_field_template
+
+    gray = np.full((512, 512), 110, dtype=np.uint8)
+    cv2.rectangle(gray, (100, 100), (300, 300), 255, 1)  # rcp 이미지에 그려진 흰 box
+    img_path = tmp_path / "IMAP0002.png"
+    assert cv2.imwrite(str(img_path), gray)
+    cond_dir = tmp_path / f".{img_path.name}"
+    cond_dir.mkdir()
+    # box (100,100)-(300,300), crosshair cursor (2800,2600) = 이미지 (280,260).
+    (cond_dir / "cond.txt").write_text(
+        "Scope SEM\nMagnification 30000\nPixel 512,512\n"
+        "!Cursor_info 0,0,0,0,2800,2600,1000,1000,3000,3000\n",
+        encoding="utf-8",
+    )
+
+    tpl = load_field_template(img_path, recipe_id="c/r")
+
+    assert tpl.raw_image.shape == (512, 512)
+    assert tpl.source_wh == (512, 512)
+    assert tpl.align_offset_xy == (24, 4)  # align point(280,260) - 이미지 중심(256,256)
+    assert tpl.source_magnification == 30000.0
+    assert tpl.key_type == "sem"
+    assert tpl.raw_image[100, 200] < 200  # box 선은 지워졌다(inpaint)
+
+
+def test_zoom_out_stops_at_the_step_whose_single_frame_covers_the_search_box():
+    """반경 5µm(박스 10µm): 5K/8K/10K 모두 한 화면(27/16.9/13.5µm)이 박스를 덮는다 -> 가장 높은
+    10K. 더 내려가면 덮는 면적은 그대로인데 key 만 작아진다."""
+    assert gs.choose_zoom_out_mag(CG_OPTIONS, reg_mag=30000, key_px=512, min_key_px=60,
+                                  radius_um=5.0) == 10000
+
+
+def test_zoom_out_goes_to_the_lowest_readable_step_when_no_frame_covers_the_box():
+    """반경 30µm(박스 60µm): 한 화면으로 덮는 단(<= 2.25K)은 key 가 60px 미만 -> 가장 낮은 5K."""
+    assert gs.choose_zoom_out_mag(CG_OPTIONS, reg_mag=30000, key_px=512, min_key_px=60,
+                                  radius_um=30.0) == 5000
+
+
+# ------------------------------------------------------------------
+# SEM 탐색 끝까지 - 깊은 zoom-out(전체 화면 template) -> 사다리로 올라오며 매 단 재매칭/재중심
+# ------------------------------------------------------------------
+
+
+def _sem_wafer(key_wafer_xy, size=(3456, 4608)):
+    """box key(128px) 하나를 박은 wafer. key template = box crop, field template = 등록 화면 전체."""
+    from poc.workflow_3.align.matching.test_engine import (
+        make_synthetic_template,
+        make_wafer_background,
+    )
+
+    wafer = make_wafer_background(frame_size=size)
+    pat = make_synthetic_template(key_type="box")
+    th, tw = pat.shape[:2]
+    kx, ky = key_wafer_xy
+    wafer[ky - th // 2:ky - th // 2 + th, kx - tw // 2:kx - tw // 2 + tw] = pat
+    key = build_template(pat, recipe_id="c/r", version="v", key_type="sem", source_wh=(512, 384))
+    field = build_template(wafer[ky - 192:ky + 192, kx - 256:kx + 256].copy(), recipe_id="c/r",
+                           version="field", key_type="sem", source_wh=(512, 384))
+    return wafer, {"SEM": key}, field
+
+
+class _LadderCtl(_WaferCtl):
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.mags: list[float] = []
+
+    def set_mag(self, target):
+        self.mags.append(float(target))
+        return super().set_mag(target)
+
+
+def test_sem_search_zooms_out_deep_on_the_whole_field_and_climbs_the_ladder_to_the_key():
+    """등록 30K, key 는 착지점에서 등록 FOV 2.3 개 밖. box key(128px)는 5K 에서 21px 라 못 읽는다 -
+    등록 화면 전체(512px -> 85px)로 5K 에서 찾고, 10K -> 20K 로 밟아 올라와 20K 에서 primary 게이트로
+    확정한다. 한 번에 6배를 뛰지 않는다."""
+    start = (2304, 1728)
+    key_xy = (start[0] + 1196, start[1] + 172)
+    wafer, tpl, field = _sem_wafer(key_xy)
+    ctl = _LadderCtl(wafer, start, reg_mag=30000)
+    out = gs.grid_align_search(
+        ctl, tpl, gs.MagnificationControl(lambda: [2000, 5000, 10000, 20000, 50000], ctl.set_mag),
+        reg_mag=30000, field_template=field,
+        config=gs.GridSearchConfig(radius_um=12.0, min_key_px=60, pan_budget=10), shift_fn=None,
+    )
+    assert out.status == "match", (out.status, out.meta, out.history[-4:])
+    assert out.meta["search_mag"] == 5000
+    assert ctl.mags == [5000, 10000, 20000]
+    assert abs(ctl.pos[0] - key_xy[0]) < 128 and abs(ctl.pos[1] - key_xy[1]) < 96
+
+
+def _two_marker_wafer(decoy_xy, key_xy, size=(3456, 4608)):
+    """검은 wafer 에 밝은 decoy(255)와 덜 밝은 진짜 key(200). 저배율에서는 둘 다 key 처럼 보인다."""
+    wafer = np.zeros(size, dtype=np.uint8)
+    for (x, y), v in ((decoy_xy, 255), (key_xy, 200)):
+        wafer[y - 12:y + 12, x - 12:x + 12] = v
+    return wafer
+
+
+def _look_alike_matcher(template, frame, **kw):
+    """저배율(배율비 < 0.5)에서는 가장 밝은 표식을 key 로 본다(decoy 가 더 높은 점수). 올라가면 진짜
+    key(200)만 key 로 보인다 - 닮은 이웃은 고배율에서 디테일이 갈린다."""
+    fh, fw = frame.shape[:2]
+    ratio = kw["scales"][gs.DEFAULT_SCALES.index(1.0)]
+    img = frame if ratio < 0.5 else np.where((frame > 150) & (frame < 230), frame, 0).astype(np.uint8)
+    _, peak, _, (x, y) = cv2.minMaxLoc(img)
+    if peak < 60:
+        return _low(template, frame)
+    return AlignKeyMatchResult(
+        score=0.3 + peak / 1000.0, chamfer_score=0.5, orb_inlier_ratio=0.0, best_xy=(x, y),
+        best_scale=ratio, decision="match" if ratio >= gs.MIN_CONFIRM_SCALE else "adjust",
+        debug_overlay=frame,
+    )
+
+
+def test_sem_search_drops_a_look_alike_on_the_ladder_and_goes_on_to_the_next_candidate():
+    """착지 화면의 decoy 가 점수 1등이라 먼저 쫓지만 20K 에서 중심 근처에 key 가 없다 -> 버리고 탐색
+    배율로 돌아가 다음 후보(진짜 key)를 쫓아 확정한다."""
+    start = (2304, 1728)
+    decoy, key_xy = (start[0] - 300, start[1]), (start[0] + 1300, start[1])
+    ctl = _LadderCtl(_two_marker_wafer(decoy, key_xy), start, reg_mag=30000)
+    out = gs.grid_align_search(
+        ctl, _tpl(), gs.MagnificationControl(lambda: [10000, 20000, 50000], ctl.set_mag),
+        reg_mag=30000, config=gs.GridSearchConfig(radius_um=12.0, min_key_px=60, pan_budget=10),
+        match_fn=_look_alike_matcher, shift_fn=None,
+    )
+    assert out.status == "match", (out.status, out.meta, out.history[-4:])
+    assert ctl.mags == [10000, 20000, 10000, 20000]
+    assert abs(ctl.pos[0] - key_xy[0]) < 60 and abs(ctl.pos[1] - key_xy[1]) < 60
+
+
+def test_auto_hands_the_whole_registered_sem_image_to_the_search(monkeypatch, tmp_path):
+    """box key(128px)는 5K 에서 21px 라 못 읽는다 - auto 가 등록 SEM 이미지 전체를 탐색에 넘겨 sweep 이
+    그것으로 매칭한다."""
+    _patch_assets(monkeypatch, tmp_path, "Magnification 30000\nPixel 512,384")
+    rng = np.random.default_rng(3)
+    assert cv2.imwrite(str(tmp_path / "from_rcp" / "IMAP0002.png"),
+                       rng.integers(0, 255, size=(384, 512), dtype=np.uint8))
+    (tmp_path / "from_rcp" / "IMAP0002.jpg").unlink()
+    (tmp_path / "from_rcp" / ".IMAP0002.jpg").rename(tmp_path / "from_rcp" / ".IMAP0002.png")
+
+    class _A:
+        eqp_id = "E1"; class_name = "c"; recipe_name = "r"; recipe_dir = tmp_path; recipe_id = "c/r"
+        recipe_om = None; recipe_sem = tmp_path / "from_rcp" / "IMAP0002.png"
+
+    small = build_template(_tpl()["SEM"].raw_image[:128, :128], recipe_id="c/r", version="v",
+                           key_type="sem", source_wh=(512, 384))
+    monkeypatch.setattr(corr, "resolve_assets_auto", lambda **k: _A())
+    monkeypatch.setattr(corr, "resolve_templates", lambda assets, **kw: {"SEM": small})
+    mag = _Mag(CG_OPTIONS, reg_mag=30000)
+    out = corr.correct_align_fail_auto(
+        _Ctl(), dry_run=False, eqp_id="E1", recipe_name="c/r",
+        grid_mag=mag.control(), grid_config=gs.GridSearchConfig(pan_budget=1),
+    )
+    assert out.path == "fallback"
+    assert out.fallback.meta["sweep_template"] == "field"
+    assert out.fallback.meta["search_mag"] == 5000
+
+
+def _bright_matcher(high_look_ratio=0.45, key_min=240):
+    """저배율(배율비 < high_look_ratio)에서는 가장 밝은 표식을 key 로 본다(decision=match). 올라가면
+    key_min 이상인 표식(진짜 key)만 보인다 - 닮은 이웃은 고배율에서 디테일이 갈린다."""
+    def _match(template, frame, **kw):
+        fh, fw = frame.shape[:2]
+        ratio = kw["scales"][gs.DEFAULT_SCALES.index(1.0)]
+        img = frame if ratio < high_look_ratio else np.where(frame >= key_min, frame, 0).astype(np.uint8)
+        _, peak, _, (x, y) = cv2.minMaxLoc(img)
+        if peak < 60:
+            return _low(template, frame)
+        return AlignKeyMatchResult(score=0.3 + peak / 1000.0, chamfer_score=0.5, orb_inlier_ratio=0.0,
+                                   best_xy=(x, y), best_scale=ratio, decision="match", debug_overlay=frame)
+    return _match
+
+
+def test_look_alike_dropped_at_an_intermediate_step_does_not_hide_the_key_next_to_it():
+    """5K 에서 전체 화면 template 으로 탐색. 착지 화면에는 decoy 만 보여 먼저 쫓고, 15K(중간 단)에서
+    중심 근처에 key 가 없어 버린다. 진짜 key 는 decoy 옆(탐색 배율 80px - 전체 화면 template 크기
+    85px 보다 가깝다)에 있다 - 쫓은 자리의 중복 반경이 전체 화면 크기면 key 를 다시는 못 쫓는다."""
+    start = (2304, 1728)
+    decoy, key_xy = (start[0] - 1440, start[1]), (start[0] - 1920, start[1])
+    wafer = np.zeros((3456, 4608), dtype=np.uint8)
+    for (x, y), v in ((decoy, 200), (key_xy, 255)):
+        wafer[y - 12:y + 12, x - 12:x + 12] = v
+    ctl = _LadderCtl(wafer, start, reg_mag=30000)
+    rng = np.random.default_rng(5)
+    key = build_template(rng.integers(0, 255, size=(96, 128), dtype=np.uint8), recipe_id="c/r",
+                         version="v", key_type="sem", source_wh=(512, 384))
+    field = build_template(rng.integers(0, 255, size=(384, 512), dtype=np.uint8), recipe_id="c/r",
+                           version="field", key_type="sem", source_wh=(512, 384))
+    out = gs.grid_align_search(
+        ctl, {"SEM": key}, gs.MagnificationControl(lambda: [5000, 15000, 20000, 50000], ctl.set_mag),
+        reg_mag=30000, field_template=field,
+        config=gs.GridSearchConfig(radius_um=12.0, min_key_px=60, pan_budget=10),
+        match_fn=_bright_matcher(), shift_fn=None,
+    )
+    assert out.status == "match", (out.status, out.meta, [(h["phase"], h["score"]) for h in out.history])
+    assert ctl.mags == [5000, 15000, 5000, 15000, 20000]
+    assert [h for h in out.history if h["phase"] == "ladder" and not h["accepted"]]
+    assert abs(ctl.pos[0] - key_xy[0]) < 60 and abs(ctl.pos[1] - key_xy[1]) < 60
+
+
+def test_unreadable_mag_partway_up_the_ladder_stops_without_moving():
+    """사다리 두 번째 단(20K)의 판독이 없다 = 어느 배율인지 모른다. 확정도, 원점 복귀 이동도 하지 않는다."""
+    ctl = _Ctl()
+    calls = {"n": 0}
+
+    def _readback(t):
+        calls["n"] += 1
+        ctl.calls.append(("set", t))
+        return None if calls["n"] == 3 else t  # 1 = 5K zoom-out, 2 = 10K, 3 = 20K
+
+    def _near(template, frame, **kw):
+        fh, fw = frame.shape[:2]
+        return AlignKeyMatchResult(score=0.7, chamfer_score=0.7, orb_inlier_ratio=0.0,
+                                   best_xy=(fw // 2 + 10, fh // 2), best_scale=1.0,
+                                   decision="adjust", debug_overlay=frame)
+
+    mag = _Mag(CG_OPTIONS, reg_mag=30000, readback=_readback)
+    out = gs.grid_align_search(ctl, _tpl(), mag.control(), reg_mag=30000,
+                               config=gs.GridSearchConfig(pan_budget=1), match_fn=_near)
+    assert out.meta["reason"] == "mag_unreadable_confirm" and out.meta["restore_failed"] is True
+    assert [h for h in out.history if h["phase"] == "ladder"]
+    assert not [h for h in out.history if h["phase"] == "confirm"]
+    failed = ctl.calls.index(("set", 20000))
+    assert not [c for c in ctl.calls[failed:] if c[0] == "move"]
+
+
+def test_odometer_tolerance_shrinks_with_the_current_fov_on_a_higher_step():
+    """위치는 탐색 배율 px 로 누적한다. 3배 높은 단에서는 한 FOV 가 탐색 px 로 1/3 이라 허용치도 1/3 -
+    그대로 두면 주기 구조의 한 주기 어긋난 측정이 게이트를 통과한다."""
+    odo = gs.Odometer(fov_px=100, tol_fov=0.15)
+    used = odo.record(commanded=(10.0, 0.0), measured=(20.0, 0.0), fov_scale=1 / 3)
+    assert used == (10.0, 0.0) and odo.drift_flags == 1
+    assert odo.record(commanded=(10.0, 0.0), measured=(13.0, 0.0), fov_scale=1 / 3) == (13.0, 0.0)
+
+
+def test_ladder_moves_judge_odometry_against_the_current_step_fov():
+    """10K 단(탐색 5K 의 2배)에서 100px 재중심 = 탐색 px 로 50. 측정이 0(안 움직임)이면 50 어긋난
+    것인데, 탐색 FOV 허용치(0.15 x 512 = 77px)로 보면 통과하고 현재 FOV 허용치(38px)로 보면 걸린다."""
+    def _off_center(template, frame, **kw):
+        fh, fw = frame.shape[:2]
+        return AlignKeyMatchResult(score=0.7, chamfer_score=0.7, orb_inlier_ratio=0.0,
+                                   best_xy=(fw // 2 + 100, fh // 2), best_scale=1.0,
+                                   decision="adjust", debug_overlay=frame)
+
+    mag = _Mag(CG_OPTIONS, reg_mag=30000)
+    out = gs.grid_align_search(_Ctl(), _tpl(), mag.control(), reg_mag=30000,
+                               config=gs.GridSearchConfig(pan_budget=1), match_fn=_off_center,
+                               shift_fn=lambda prev, cur: (0.0, 0.0))
+    ladder_move = [e for e in out.meta["odometry"] if e["commanded"] == [50.0, 0.0]]
+    assert ladder_move and ladder_move[0]["flagged"], out.meta["odometry"]

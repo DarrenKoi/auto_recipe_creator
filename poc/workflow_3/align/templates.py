@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from poc.workflow_3.align.assets import AlignFailAssets, load_gray
+from poc.workflow_3.align.clean_align_image import clean_image
 from poc.workflow_3.align.cond_file import (
     OM_DARK_BRIGHTNESS_MAX,
     cond_for_image,
@@ -120,6 +121,31 @@ def load_template(
     )
 
 
+def load_field_template(path: Path, *, recipe_id: str) -> AlignKeyTemplate:
+    """등록 SEM 이미지 **전체**(흰 box/crosshair 선을 지운 것)를 template 으로 만든다.
+
+    깊이 zoom-out 한 SEM 탐색 전용이다. box crop 은 등록 배율에서 유일한 영역을 고른 것이라
+    5~10 배 내리면 junction 이 몇 px 로 줄어 아무것도 안 남는다. 그 배율에서 알아볼 수 있는 것은
+    등록 화면 전체의 배치(배열 가장자리/패드)다. offset = align point(crosshair, 없으면 이미지
+    중심) - 이미지 중심.
+    """
+    gray = load_gray(path)
+    cond = cond_for_image(load_cond(path), gray.shape)
+    image = clean_image(gray, cond) if cond is not None else gray
+    use_crosshair = env_flag(_CROSSHAIR_ALIGN_POINT_ENV, default=True)
+    (ax, ay), _source = cond_align_point(cond if use_crosshair else None, gray.shape)
+    h, w = gray.shape[:2]
+    return build_template(
+        image,
+        recipe_id=recipe_id,
+        version="field",
+        key_type="sem",
+        align_offset_xy=(int(round(ax - w / 2)), int(round(ay - h / 2))),
+        source_wh=(w, h),
+        source_magnification=cond.magnification if cond is not None else None,
+    )
+
+
 def build_templates_from_assets(
     assets: AlignFailAssets, *, cond_box_crop: bool = True
 ) -> dict[str, AlignKeyTemplate]:
@@ -145,4 +171,4 @@ def build_templates_from_assets(
 # Internal name kept for tests that explicitly exercise the branch behavior.
 _load_template = load_template
 
-__all__ = ["build_templates_from_assets", "load_template"]
+__all__ = ["build_templates_from_assets", "load_field_template", "load_template"]

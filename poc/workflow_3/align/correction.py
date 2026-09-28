@@ -247,6 +247,7 @@ def correct_align_fail(
     grid_mag=None,
     grid_reg_mag: float | None = None,
     grid_config=None,
+    grid_field_template: AlignKeyTemplate | None = None,
     _search: LiveSearchOutcome | None = None,
     _mag_ratio: float = 1.0,
 ) -> CorrectionOutcome:
@@ -443,6 +444,7 @@ def correct_align_fail(
             legacy_config=fallback_config, notify_fn=notify_fn,
             debug_dir=(debug_dir / "fallback") if debug_dir is not None else None,
             accept_fn=lambda match: _gate(match) == GATE_ACT,
+            field_template=grid_field_template,
         )
         result_outcome = CorrectionOutcome(
             status=f"fallback_{outcome.status}",
@@ -805,6 +807,7 @@ def correct_align_fail_auto(
             error=f"등록 OM/SEM 이미지 없음: {assets.recipe_dir}",
         )
     reg_mag = None
+    field_template = None
     if grid_mag is not None:
         from poc.workflow_3.align.cond_file import load_cond
         from poc.workflow_3.align.grid_search import registered_magnification
@@ -812,6 +815,16 @@ def correct_align_fail_auto(
         mode = (controller.read_mode() or "").upper()
         rcp = assets.recipe_om if "OM" in mode else assets.recipe_sem
         reg_mag = registered_magnification(load_cond(rcp)) if rcp is not None else None
+        if assets.recipe_sem is not None:
+            # SEM 탐색은 깊이 내려가 box 속 junction 이 몇 px 로 줄어든다 - 그 배율에서는 등록 화면
+            # 전체의 배치로 찾는다(grid_search 상단). 못 만들면 box key 로만 탐색한다. OM 이면
+            # grid_search 가 쓰지 않는다(모드 판단은 한 곳에서만).
+            from poc.workflow_3.align.templates import load_field_template
+
+            try:
+                field_template = load_field_template(assets.recipe_sem, recipe_id=assets.recipe_id)
+            except Exception as exc:
+                print(f"[WARNING] SEM 전체 화면 template 생성 실패 -> box key 로만 탐색: {exc}")
     return correct_align_fail(
         controller,
         templates,
@@ -826,6 +839,7 @@ def correct_align_fail_auto(
         grid_mag=grid_mag,
         grid_reg_mag=reg_mag,
         grid_config=grid_config,
+        grid_field_template=field_template,
     )
 
 

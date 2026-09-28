@@ -392,6 +392,10 @@ class Workflow3Settings(WorkflowSettings):
     # 엔지니어에게 재등록을 권고한다. tau*(S-LOO golden 보정, AUC 0.91) 유래의 시작점이며
     # fail-frame 재보정 대상 · matcher 의 0.94 visibility 게이트(max_second_ratio)와는 별개.
     reregister_second_ratio_threshold: float = 0.98
+    # 위 임계를 넘어도 같은 프레임 NCC 가 key 와 2nd 를 이 차이 이상 가르면(key ncc>0) 자동 보정.
+    # 넓고 낮은 key 는 chamfer 가 가로선을 따라 평평해 2nd비가 늘 ~0.98 이다(2026-09-29 오피스).
+    # 0 = 끔(기본). 시험은 manual_align_correction 이 켠다.
+    ambiguity_ncc_margin: float = 0.0
 
     # --- VLM 2단계 로케이터 조합 (로그인 / List 탭 / tool 선택 / PM 버튼 공통) ---
     # "coarse>fine" route_slug 조합. 빈 문자열 = 코드 기본값(현재 mai-ui>mai-ui,
@@ -569,6 +573,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         engineer_done_vlm_service=_env_str("ALIGN_FAIL_ENGINEER_DONE_VLM_SERVICE", "mai-ui"),
         engineer_done_ocr_service=_env_str("ALIGN_FAIL_ENGINEER_DONE_OCR_SERVICE", "paddleocr-vl-1.5"),
         reregister_second_ratio_threshold=env_float("ALIGN_FAIL_REREGISTER_RATIO", 0.98),
+        ambiguity_ncc_margin=env_float("ALIGN_FAIL_AMBIGUITY_NCC_MARGIN", 0.0),
         cond_box_crop=env_flag("ALIGN_FAIL_COND_BOX_CROP", default=True),
         locator_combo=_env_str("VLM_LOCATOR_COMBO", ""),
         episode_collect_enabled=env_flag("ALIGN_FAIL_EPISODE_COLLECT", default=False),

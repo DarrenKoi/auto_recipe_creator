@@ -112,6 +112,9 @@ class CorrectionConfig:
     # engineer_review 로 보류한다. None(기본)이면 게이트는 과거 act/fallback 2분기만 — 동작 불변.
     # 운영 루프는 Workflow3Settings.reregister_second_ratio_threshold(기본 0.98)를 주입한다.
     reregister_ratio_threshold: float | None = None
+    # 위 모호 판정의 opt-in 예외: 같은 프레임 NCC 가 key 와 2nd 를 이 차이 이상 가르면(key ncc>0)
+    # act 한다(_ncc_separates). None(기본) = 종전 동작. 운영 루프는 Workflow3Settings 가 주입한다.
+    ambiguity_ncc_margin: float | None = None
     # consensus 라우팅 설정(resolve_templates 에 그대로 전달).
     consensus_enabled: bool = True             # consensus 라우팅 마스터 토글(off -> 순수 rcp).
     consensus_min_s: int = 4                   # modality 별 신뢰 최소 S 수(floor 3).
@@ -190,6 +193,7 @@ def key_visibility_gate(
     *,
     reregister_ratio_threshold: float | None = None,
     base_scale: float = 1.0,
+    ncc_margin: float | None = None,
 ) -> str:
     """paused frame 의 route intent 결정 — act(primary) vs fallback_search vs engineer_review.
 
@@ -231,9 +235,23 @@ def key_visibility_gate(
         reregister_ratio_threshold is not None
         and result.second_ratio is not None
         and result.second_ratio > reregister_ratio_threshold
+        and not _ncc_separates(result, ncc_margin)
     ):
         return GATE_ENGINEER_REVIEW
     return GATE_ACT
+
+
+def _ncc_separates(result: AlignKeyMatchResult, margin: float | None) -> bool:
+    """chamfer 2nd비가 모호해도 같은 프레임의 NCC 가 key 와 2nd 를 크게 가르는가(opt-in).
+
+    넓고 낮은 key 는 가로선을 따라 미끄러져도 chamfer 가 거의 안 떨어진다(aperture) -
+    2026-09-29 오피스: 2nd비 0.981 인데 ncc key 0.612 / 2nd -0.023. 같은 template 을 같은
+    프레임의 두 자리에 대는 상대 비교라 공정 변화(NCC 1차 지표 금지 사유)는 양쪽에 같이 든다.
+    key 의 ncc 가 양수여야 한다 - OM-D 극성 반전이면 음수라 act 하지 않는다(fail closed).
+    """
+    if margin is None or result.best_ncc is None or result.second_ncc is None:
+        return False
+    return result.best_ncc > 0 and result.best_ncc - result.second_ncc >= margin
 
 
 # ------------------------------------------------------------------
@@ -316,7 +334,8 @@ def correct_align_fail(
     def _gate(match: AlignKeyMatchResult) -> str:
         """'key 가 있다' 의 유일한 판정 - 첫 화면/hint 뒤/reposition 검증/탐색이 전부 이걸 쓴다."""
         return key_visibility_gate(match, base_scale=base_scale,
-                                   reregister_ratio_threshold=config.reregister_ratio_threshold)
+                                   reregister_ratio_threshold=config.reregister_ratio_threshold,
+                                   ncc_margin=config.ambiguity_ncc_margin)
 
     def _match_paused(shot: np.ndarray, stage: str) -> tuple[AlignKeyMatchResult, bool]:
         # ensemble 경로(decision/score 정비): decision 은 calibrated sel 임계 재판정, orb=0(폐지).

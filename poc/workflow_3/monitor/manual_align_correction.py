@@ -101,7 +101,13 @@ TAG = ""             # 선택. 산출물 폴더 tag. 비우면 wall-clock 으로
 # 빠지는 원인을 볼 때, 판정 카드(매칭/2nd비/구별)만 남기고 escalated_key_not_visible /
 # escalated_ambiguous_key 로 끝낸다 - 탐색 중 ctrl+alt+q 로 끊을 필요가 없다. 1 = 탐색 재개.
 FALLBACK_SEARCH = 0
-_MANUAL_CONST_TO_ENV = (("FALLBACK_SEARCH", "ALIGN_FAIL_FALLBACK_SEARCH"),)
+# chamfer 2nd비가 모호(> ALIGN_FAIL_REREGISTER_RATIO)해도 같은 프레임 NCC 가 key 와 2nd 를 이
+# 차이 이상 가르면 자동 보정한다(key ncc>0 일 때만). 시험 중 - 운영 모니터는 끔. 0 = 끔.
+AMBIGUITY_NCC_MARGIN = 0.3
+_MANUAL_CONST_TO_ENV = (
+    ("FALLBACK_SEARCH", "ALIGN_FAIL_FALLBACK_SEARCH"),
+    ("AMBIGUITY_NCC_MARGIN", "ALIGN_FAIL_AMBIGUITY_NCC_MARGIN"),
+)
 
 LOG_COMPONENT = "manual_align_correction"
 

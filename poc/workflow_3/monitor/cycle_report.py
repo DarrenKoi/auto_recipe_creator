@@ -157,7 +157,11 @@ def build_cycle_report(result, context, *, elapsed_sec=None) -> list[str]:
         m_xy, s_xy = getattr(outcome, "match_xy", None), getattr(outcome, "second_xy", None)
         if m_xy is not None and s_xy is not None:
             dist = ((s_xy[0] - m_xy[0]) ** 2 + (s_xy[1] - m_xy[1]) ** 2) ** 0.5
-            lines.append(f"          key={_fmt_xy(m_xy)}  2nd={_fmt_xy(s_xy)}  거리={dist:.0f}px")
+            lines.append(
+                f"          key={_fmt_xy(m_xy)}  2nd={_fmt_xy(s_xy)}  거리={dist:.0f}px"
+                f"  ncc key={_fmt_float(getattr(outcome, 'match_ncc', None))}"
+                f" 2nd={_fmt_float(getattr(outcome, 'second_ncc', None))}"
+            )
         lines.append(
             f" 위치     align={_fmt_xy(getattr(outcome, 'best_xy', None))} (FOV)"
             f"  OK버튼={_fmt_xy(getattr(outcome, 'ok_screen_xy', None))} (screen)"

@@ -108,6 +108,7 @@ class AlignKeyCandidate:
     scale: float
     template_size: tuple[int, int]
     orb_inlier_ratio: float = 0.0
+    ncc: float | None = None  # ensemble 경로만: 부호를 살린 NCC. 기록 전용(판정에 안 쓴다).
 
 
 @dataclass
@@ -131,6 +132,8 @@ class AlignKeyMatchResult:
     score_gap: float | None = None                   # best.chamfer - second.chamfer.
     second_ratio: float | None = None                # second.chamfer / best.chamfer (1.0 에 가까울수록 모호).
     second_xy: tuple[int, int] | None = None         # 위 2nd 의 중심(절대 px) - best 박스 밖의 닮은 자리.
+    second_ncc: float | None = None                  # 위 2nd 의 NCC(ensemble 만). 기록 전용 - best_ncc 와 비교해
+                                                     # chamfer 가 못 가르는 닮은 자리를 NCC 가 가르는지 본다.
     distinctive: bool = True                          # best 가 2nd 대비 충분히 유일한가.
     reject_reason: str | None = None                  # "not_distinctive" | "no_candidates" | None.
     # 선택된 후보의 NCC **부호를 살린** 값(ensemble 경로만; 그 외 None). **기록 전용이다** -
@@ -919,6 +922,7 @@ def _finalize_match(
         score_gap=score_gap,
         second_ratio=second_ratio,
         second_xy=second_xy,
+        second_ncc=None if ch_second is None or ch_second.ncc is None else float(ch_second.ncc),
         distinctive=distinctive,
         reject_reason=reject_reason,
         best_ncc=None if best_ncc is None else float(best_ncc),
@@ -998,6 +1002,7 @@ def compute_align_key_score_ensemble(
         ncc = _candidate_ncc(template.raw_image, gray_frame, cand.xy, cand.scale)
         ncc_pos = max(0.0, ncc) if ncc is not None else 0.0
         nccs.append(ncc)
+        cand.ncc = ncc
         sels.append(policy.rerank_chamfer_w * cand.chamfer_score + policy.rerank_ncc_w * ncc_pos)
     sel_order = sorted(range(len(candidates)), key=lambda i: (-sels[i], i))
     pick = sel_order[0]                           # 동점은 낮은 index — 기존 argmax(첫 최대)와 동일.

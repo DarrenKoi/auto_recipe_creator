@@ -148,6 +148,8 @@ class CorrectionOutcome:
     distinctive: bool = True  # best 가 2nd 대비 유일한가(데이터 결손 시 True → false-flag 방지).
     match_xy: tuple[int, int] | None = None  # matcher 가 고른 key 중심(FOV px; reposition 전).
     second_xy: tuple[int, int] | None = None  # 모호도의 2nd(best 박스 밖 닮은 자리, FOV px).
+    match_ncc: float | None = None  # key / 2nd 의 NCC(기록 전용) - chamfer 가 못 가르는 닮은
+    second_ncc: float | None = None  # 자리를 NCC 가 가르는지 오피스에서 보려고 남긴다.
 
 
 def _with_key_ambiguity(
@@ -166,6 +168,8 @@ def _with_key_ambiguity(
         distinctive=result.distinctive,
         match_xy=result.best_xy,
         second_xy=getattr(result, "second_xy", None),
+        match_ncc=getattr(result, "best_ncc", None),
+        second_ncc=getattr(result, "second_ncc", None),
     )
 
 

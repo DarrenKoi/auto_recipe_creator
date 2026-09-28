@@ -46,6 +46,7 @@ def test_unique_key_is_not_ambiguous():
         assert r.distinctive, f"seed={seed} second_ratio={r.second_ratio}"
         assert r.second_ratio < 0.9, f"seed={seed} second_ratio={r.second_ratio}"
         assert r.second_xy is not None
+        assert r.second_ncc is not None and r.best_ncc > r.second_ncc
 
 
 def test_real_lookalike_stays_ambiguous():

@@ -97,6 +97,12 @@ RECIPE_ID = "RJ1BXXX/RJ1B_ISOLINERPOLY_R1"   # 반드시 '<class>/<recipe>' 형�
 CLASS_NAME = ""      # 선택. 알람 로그/팝업 표시용일 뿐이라 비워도 라우팅에 영향 없다
 TAG = ""             # 선택. 산출물 폴더 tag. 비우면 wall-clock 으로 생성
 
+# 첫 화면 판정 뒤 주변 탐색(pan/zoom)을 하지 않는다. key 가 live box 에 보이는데도 탐색으로
+# 빠지는 원인을 볼 때, 판정 카드(매칭/2nd비/구별)만 남기고 escalated_key_not_visible /
+# escalated_ambiguous_key 로 끝낸다 - 탐색 중 ctrl+alt+q 로 끊을 필요가 없다. 1 = 탐색 재개.
+FALLBACK_SEARCH = 0
+_MANUAL_CONST_TO_ENV = (("FALLBACK_SEARCH", "ALIGN_FAIL_FALLBACK_SEARCH"),)
+
 LOG_COMPONENT = "manual_align_correction"
 
 # 수동 트리거를 알람 row 와 구분하기 위한 sentinel. manifest/alarm log 에 그대로 남는다.
@@ -251,6 +257,10 @@ def main() -> int:
     # 폴링만 우회할 뿐 같은 사이클을 돌리므로, 상수를 따로 두면 두 벌이 어긋나
     # "모니터에선 켜져 있던 기능이 수동 실행에서만 꺼진" 채로 시험하게 된다.
     # 순서도 모니터와 같다: 실운전 기본값 -> 상수 블록 -> workflow_3_config.py.
+    # 이 파일 고유 상수가 먼저다 - 공유 블록/오피스 사본보다 수동 실행의 목적이 우선한다.
+    seed_env_from_constants(
+        globals(), _MANUAL_CONST_TO_ENV, label="manual_align_correction 상수",
+    )
     seed_env_from_constants(
         vars(_monitor), _monitor._CONST_TO_ENV,
         label="align_fail_monitor 상수(manual 공유)",

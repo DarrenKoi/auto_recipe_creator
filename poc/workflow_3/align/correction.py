@@ -146,6 +146,8 @@ class CorrectionOutcome:
     second_ratio: float | None = None  # matcher 2nd/best chamfer(1.0 에 가까울수록 모호).
     score_gap: float | None = None  # best - 2nd chamfer.
     distinctive: bool = True  # best 가 2nd 대비 유일한가(데이터 결손 시 True → false-flag 방지).
+    match_xy: tuple[int, int] | None = None  # matcher 가 고른 key 중심(FOV px; reposition 전).
+    second_xy: tuple[int, int] | None = None  # 모호도의 2nd(best 박스 밖 닮은 자리, FOV px).
 
 
 def _with_key_ambiguity(
@@ -162,6 +164,8 @@ def _with_key_ambiguity(
         second_ratio=result.second_ratio,
         score_gap=result.score_gap,
         distinctive=result.distinctive,
+        match_xy=result.best_xy,
+        second_xy=getattr(result, "second_xy", None),
     )
 
 

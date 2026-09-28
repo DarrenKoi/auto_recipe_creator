@@ -153,6 +153,11 @@ def build_cycle_report(result, context, *, elapsed_sec=None) -> list[str]:
             f"  gap={_fmt_float(getattr(outcome, 'score_gap', None))}"
             f"  구별={'O' if distinctive else 'X'}"
         )
+        # 2nd 가 어디냐로 '같은 key 사본'(가까움) vs '진짜 닮은 이웃'(멂)을 가른다.
+        m_xy, s_xy = getattr(outcome, "match_xy", None), getattr(outcome, "second_xy", None)
+        if m_xy is not None and s_xy is not None:
+            dist = ((s_xy[0] - m_xy[0]) ** 2 + (s_xy[1] - m_xy[1]) ** 2) ** 0.5
+            lines.append(f"          key={_fmt_xy(m_xy)}  2nd={_fmt_xy(s_xy)}  거리={dist:.0f}px")
         lines.append(
             f" 위치     align={_fmt_xy(getattr(outcome, 'best_xy', None))} (FOV)"
             f"  OK버튼={_fmt_xy(getattr(outcome, 'ok_screen_xy', None))} (screen)"

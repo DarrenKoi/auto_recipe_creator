@@ -130,6 +130,7 @@ class AlignKeyMatchResult:
     second_score: float | None = None                # 2nd-best 후보의 chamfer.
     score_gap: float | None = None                   # best.chamfer - second.chamfer.
     second_ratio: float | None = None                # second.chamfer / best.chamfer (1.0 에 가까울수록 모호).
+    second_xy: tuple[int, int] | None = None         # 위 2nd 의 중심(절대 px) - best 박스 밖의 닮은 자리.
     distinctive: bool = True                          # best 가 2nd 대비 충분히 유일한가.
     reject_reason: str | None = None                  # "not_distinctive" | "no_candidates" | None.
     # 선택된 후보의 NCC **부호를 살린** 값(ensemble 경로만; 그 외 None). **기록 전용이다** -
@@ -850,7 +851,17 @@ def _finalize_match(
     """
     chamfer_sorted = sorted(candidates, key=lambda c: c.chamfer_score, reverse=True)
     ch_best = chamfer_sorted[0]
-    ch_second = chamfer_sorted[1] if len(chamfer_sorted) > 1 else None
+    # 2nd = best 의 template 박스 밖에 있는 가장 강한 후보. 같은 key 가 다른 scale/채널로 수 px
+    # 어긋난 사본을 2nd 로 세면 유일한 key 도 비율 ~1.0 이 된다 - ensemble 의 채널 간 병합 반경
+    # (짧은 변 5%)이 채널 내 NMS(50%)보다 작아 실제로 남는다(2026-09-28 오피스 OM: match 0.874
+    # 인데 2nd비 0.996 -> engineer_review -> 탐색도 같은 게이트로 매 프레임 거부 -> aborted).
+    # 반경은 _collect_candidates 의 병합 규약(짧은 변 절반, Chebyshev)과 같다.
+    _r = 0.5 * min(ch_best.template_size)
+    ch_second = next(
+        (c for c in chamfer_sorted[1:]
+         if abs(c.xy[0] - ch_best.xy[0]) > _r or abs(c.xy[1] - ch_best.xy[1]) > _r),
+        None,
+    )
     second_score = float(ch_second.chamfer_score) if ch_second is not None else None
     score_gap = (
         float(ch_best.chamfer_score - ch_second.chamfer_score) if ch_second is not None else None
@@ -888,6 +899,7 @@ def _finalize_match(
     abs_xy = (cx + roi_origin[0], cy + roi_origin[1])
     for c in candidates:
         c.xy = (c.xy[0] + roi_origin[0], c.xy[1] + roi_origin[1])
+    second_xy = ch_second.xy if ch_second is not None else None  # 위에서 이미 절대좌표로 환산됨.
 
     overlay = _render_overlay(
         frame, cx=abs_xy[0], cy=abs_xy[1], tw=tw, th=th,
@@ -906,6 +918,7 @@ def _finalize_match(
         second_score=second_score,
         score_gap=score_gap,
         second_ratio=second_ratio,
+        second_xy=second_xy,
         distinctive=distinctive,
         reject_reason=reject_reason,
         best_ncc=None if best_ncc is None else float(best_ncc),

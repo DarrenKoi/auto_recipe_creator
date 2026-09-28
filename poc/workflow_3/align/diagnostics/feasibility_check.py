@@ -399,9 +399,9 @@ def mark_align_feasibility(
             )
 
             # 2nd-best 후보 중심(있으면) → 풀프레임 좌표. 모호성을 유발한 look-alike 위치.
-            if len(result.candidates) >= 2:
-                c2 = result.candidates[1]
-                second_xy = (int(c2.xy[0]) + origin[0], int(c2.xy[1]) + origin[1])
+            c2 = getattr(result, "second_xy", None)  # best 박스 밖의 2nd(같은 key 사본 제외).
+            if c2 is not None:
+                second_xy = (int(c2[0]) + origin[0], int(c2[1]) + origin[1])
 
             route = key_visibility_gate(
                 result, reregister_ratio_threshold=reregister_ratio_threshold,

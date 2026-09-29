@@ -38,6 +38,8 @@ CORRECTED_UNVERIFIED = "corrected_unverified"     # 점유 미상 - 보정했으
 # 멈춘 장비를 사람에게 되돌려 주는 유일한 경로다.
 ALIGN_FAIL_CLEARED = "align_fail_cleared"          # 다이얼로그 없음 - 이미 해결로 보고 종료.
 ALIGN_FAIL_UNCONFIRMED = "align_fail_unconfirmed"  # 다른 창/판독 실패 - 확인 못 해 클릭 안 함.
+# OK 뒤 다음 위치(wafer 당 OM/SEM 각 2~3 point)에서 추가 보정 상한을 넘겨 또 fail (2026-09-29).
+NEXT_POINT_LIMIT = "escalated_next_point_limit"
 
 
 # ------------------------------------------------------------------
@@ -215,6 +217,10 @@ _UNCORRECTED_ACTIONS = {
     ALIGN_FAIL_UNCONFIRMED: (
         "접속 시 align fail 다이얼로그를 확인 못 함(다른 창이거나 판독 실패, 클릭 안 함)",
         "화면 확인 후 직접 align point 를 잡고 OK 를 눌러주세요",
+    ),
+    NEXT_POINT_LIMIT: (
+        "OK 뒤 다음 위치에서 align fail 이 추가 보정 상한을 넘겨 계속 발생",
+        "화면 확인 후 남은 위치의 align point 를 직접 잡고 OK 를 눌러주세요",
     ),
     "escalated_invalid_geometry": (
         "저장 이미지와 live SEM 영역의 크기 비율이 맞지 않아 자동 보정 보류",

@@ -341,6 +341,13 @@ class Workflow3Settings(WorkflowSettings):
     # tool 에 들어가 측정 중인 장비를 클릭하는 것을 막는 유일한 근거가 화면이다. 없으면
     # align_fail_cleared(클릭/watch 없이 종료 + cube). 롤백 ALIGN_FAIL_ACTIVE_CHECK=0.
     align_fail_active_check_enabled: bool = True
+    # OK 뒤 다음 위치 align fail 추적(2026-09-29): wafer 당 OM/SEM 각 2~3 point 를 잡으므로
+    # OK 하나로 끝나지 않는다. OK 를 누른 뒤 tool 을 닫지 않고 wait_sec 동안 다이얼로그 재등장을
+    # 보고, 뜨면 SEM panel(모드/배율이 바뀐다)부터 다시 잡아 보정한다. 추가 보정 최대 max 회,
+    # 넘기면 escalated_next_point_limit. 0 = 종전처럼 OK 뒤 바로 닫기(롤백).
+    # wait 30s 는 사용자 결정(오피스 미실측 - 다음 위치 fail 이 더 늦게 뜨면 올린다).
+    next_point_wait_sec: float = 30.0
+    next_point_max: int = 5
     # paused 화면에서 key 를 못 찾았을 때 live_align_search(zoom-out + 사각 spiral pan)로
     # 넘길지. 기본 on(설계된 동작). off 면 pan 하지 않고 escalated_key_not_visible 로
     # 엔지니어에게 넘긴다 - 실장비에서 spiral 이 stage 를 최대 pan_budget(10) 회 끌고
@@ -529,6 +536,8 @@ def load_workflow3_settings() -> Workflow3Settings:
         ok_button_vlm_service=_env_str("ALIGN_OK_BUTTON_VLM_SERVICE", "mai-ui"),
         ok_click_enabled=env_flag("ALIGN_FAIL_OK_CLICK", default=False),
         align_fail_active_check_enabled=env_flag("ALIGN_FAIL_ACTIVE_CHECK", default=True),
+        next_point_wait_sec=env_float("ALIGN_FAIL_NEXT_POINT_WAIT_SEC", 30.0),
+        next_point_max=env_int("ALIGN_FAIL_NEXT_POINT_MAX", 5),
         fallback_search_enabled=env_flag("ALIGN_FAIL_FALLBACK_SEARCH", default=True),
         search_pan_budget=env_int("ALIGN_FAIL_SEARCH_PAN_BUDGET", 10),
         search_om_pan_budget=env_int("ALIGN_FAIL_SEARCH_OM_PAN_BUDGET", 8),

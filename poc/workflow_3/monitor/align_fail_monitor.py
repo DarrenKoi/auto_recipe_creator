@@ -710,6 +710,7 @@ def process_fail_rows(
     view_only_attempts: dict | None = None,
     episodes=None,
     alarm_hooks: AlarmHooks | None = None,
+    covered_until: dict | None = None,
 ) -> int:
     """EQP_ID 기준 edge-triggered 로 신규 알람마다 사이클을 수행한다.
 
@@ -727,10 +728,18 @@ def process_fail_rows(
     `episodes` 는 Recovery Episode tracker(`recovery_episode.EpisodeTracker`) 또는 None.
     None 이면 Episode 수집을 하지 않으며 동작은 종전과 같다(기본 off 플래그).
 
+    `covered_until` 은 {eqp_id: 사이클 종료 datetime}. 사이클은 OK 뒤 다음 위치 fail 까지
+    tool 을 붙잡고 보정하므로(cycle.follow_next_points), 그 동안 뜬 같은 tool 알람은 이미
+    처리됐다 - UTC9 가 종료 시각 이하면 건너뛰고(재접속하면 '이미 해결됨' cube 가 헛나간다),
+    이후면 active 여부와 무관하게 새 알람이다(종전 edge-trigger 는 첫 poll 에서 조용히 버렸다).
+    기록이 없는 tool 은 종전 active 게이트 그대로다. None 이면 종전 동작.
+
     `active_tools`/`occupied_cooldown` 는 in-place 로 갱신된다. 새로 처리한 개수를 반환.
     """
     if occupied_cooldown is None:
         occupied_cooldown = {}
+    if covered_until is None:
+        covered_until = {}
     if view_only_attempts is None:
         view_only_attempts = {}
     by_tool = _collapse_rows_by_tool(fails)
@@ -758,7 +767,14 @@ def process_fail_rows(
             del view_only_attempts[eqp_id]
     cooling = current_tools & set(occupied_cooldown)
 
-    new_tools = current_tools - active_tools - cooling
+    def _is_new(eqp_id: str) -> bool:
+        until = covered_until.get(eqp_id)
+        raised_at = pd.to_datetime(by_tool[eqp_id]["utc9"], errors="coerce")
+        if until is not None and not pd.isna(raised_at):
+            return raised_at > until
+        return eqp_id not in active_tools
+
+    new_tools = {eqp_id for eqp_id in current_tools - cooling if _is_new(eqp_id)}
     cleared_tools = active_tools - current_tools
 
     for eqp_id in sorted(cleared_tools):
@@ -906,6 +922,8 @@ def process_fail_rows(
                 )
             else:
                 active_tools.add(eqp_id)
+                if cycle.finished_at:
+                    covered_until[eqp_id] = datetime.fromtimestamp(cycle.finished_at)
             newly_handled += 1
         except Exception as exc:
             # tool 1대의 예외가 같은 poll 의 나머지 tool 을 건너뛰게 하면 안 된다(F5).
@@ -1023,6 +1041,7 @@ def monitor_loop(settings: Workflow3Settings | None = None, *,
         _set_keep_awake(True)
 
     active_tools: set[str] = set()
+    covered_until: dict = {}  # {eqp_id: 사이클 종료 datetime} - 그 사이 뜬 알람은 사이클이 처리함.
     occupied_cooldown: dict = {}  # {eqp_id: 재시도 가능 epoch} — 점유(select)로 포기한 tool.
     view_only_attempts: dict = {}  # {eqp_id: 연속 view-only/unverified 사이클 횟수}
     idle_logged = False  # "Align Fail 없음" 은 idle 진입 시 한 번만 로깅 (poll 마다 X)
@@ -1112,6 +1131,7 @@ def monitor_loop(settings: Workflow3Settings | None = None, *,
                 process_fail_rows(
                     fails, active_tools, settings, occupied_cooldown,
                     view_only_attempts, episodes=episodes, alarm_hooks=alarm_hooks,
+                    covered_until=covered_until,
                 )
         except KeyboardInterrupt:
             print("\n[INFO] 감지 중단 (Ctrl+C)")

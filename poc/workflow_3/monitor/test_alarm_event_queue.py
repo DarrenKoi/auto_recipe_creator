@@ -250,3 +250,65 @@ def test_alarm_hooks_stop_within_the_same_poll_and_close_on_interrupt(monkeypatc
         afm.process_fail_rows(_feed(("MCD513", T0)), set(), _settings(), {}, {},
                               alarm_hooks=_Interrupted())
     assert ended[-1] == ("end", "MCD513")
+
+
+# ------------------------------------------------------------------
+# 사이클이 붙잡고 있던 동안 뜬 알람 - OK 뒤 다음 위치 추적이 이미 처리했다.
+# ------------------------------------------------------------------
+
+
+def _stub_cycles(monkeypatch, *, ends_at):
+    """사이클 대역 - 처리한 EQP 를 기록하고, 끝난 시각을 ends_at 으로 보고한다."""
+    from poc.workflow_3.monitor import align_fail_monitor as afm
+    from poc.workflow_3.monitor.cycle import CycleResult
+
+    for name in ("append_alarm_record", "append_cycle_manifest",
+                 "send_detection_notify_async", "gather_success_async", "gather_rcp_msr"):
+        monkeypatch.setattr(afm, name, lambda *a, **k: None)
+    handled = []
+
+    def _cycle(eqp_id, recipe_id, settings, tag=None, **kwargs):
+        handled.append(eqp_id)
+        result = CycleResult(eqp_id=eqp_id, recipe_id=recipe_id, tag=tag or "")
+        result.run_status = "completed"
+        result.outcome_status = "corrected"
+        result.finished_at = ends_at.timestamp()
+        return result
+
+    monkeypatch.setattr(afm, "run_alarm_cycle", _cycle)
+    return afm, handled
+
+
+def test_next_point_alarm_raised_during_cycle_does_not_start_another_cycle(monkeypatch):
+    """OK 뒤 다음 위치 fail 은 사이클 안에서 이미 보정했다 - 피드가 늦게 넘겨도 재접속하지 않는다.
+
+    재접속하면 다이얼로그가 없어 '이미 해결됨, 직접 확인' cube 가 헛나간다. 알람이 한 번
+    해제(빈 poll)된 뒤 늦게 도착해도 마찬가지다.
+    """
+    afm, handled = _stub_cycles(monkeypatch, ends_at=T0 + timedelta(minutes=3))
+    active, covered = set(), {}
+    afm.process_fail_rows(_feed(("MCD427", T0)), active, _settings(), {}, {},
+                          covered_until=covered)
+    active.clear()  # 빈 poll 로 해제
+
+    afm.process_fail_rows(_feed(("MCD427", T0 + timedelta(minutes=1))), active, _settings(),
+                          {}, {}, covered_until=covered)
+
+    assert handled == ["MCD427"]
+
+
+def test_new_alarm_on_same_tool_after_cycle_end_is_handled_in_first_poll(monkeypatch):
+    """사이클이 끝난 뒤 같은 tool 에 새로 뜬 알람은 바로 다음 poll 이어도 처리한다.
+
+    종전 edge-trigger 는 tool 이 아직 active 라는 이유로 이 알람을 조용히 버렸다 - 멈춘
+    장비가 알림 없이 남는다.
+    """
+    afm, handled = _stub_cycles(monkeypatch, ends_at=T0 + timedelta(minutes=3))
+    active, covered = set(), {}
+    afm.process_fail_rows(_feed(("MCD427", T0)), active, _settings(), {}, {},
+                          covered_until=covered)
+
+    afm.process_fail_rows(_feed(("MCD427", T0 + timedelta(minutes=4))), active, _settings(),
+                          {}, {}, covered_until=covered)
+
+    assert handled == ["MCD427", "MCD427"]

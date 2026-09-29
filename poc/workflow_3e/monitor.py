@@ -46,6 +46,7 @@ def monitor_loop(settings: Workflow3eSettings | None = None) -> None:
         _set_keep_awake(True)
 
     active_tools: set[str] = set()            # align fail edge-trigger 상태.
+    covered_until: dict = {}                  # align 사이클 종료 시각 - 그 사이 알람은 처리됨.
     occupied_cooldown: dict = {}              # align 점유(select) 재시도 유예.
     aborted_tools: set[str] = set()           # 측정 실패 abort edge-trigger 상태.
     abort_cooldown: dict = {}                 # abort 점유 재시도 유예.
@@ -105,7 +106,9 @@ def monitor_loop(settings: Workflow3eSettings | None = None) -> None:
                     idle_logged = True
             else:
                 idle_logged = False
-                count = process_fail_rows(fails, active_tools, settings, occupied_cooldown)
+                count = process_fail_rows(
+                    fails, active_tools, settings, occupied_cooldown, covered_until=covered_until
+                )
                 if count == 0:
                     print(
                         f"[INFO] {datetime.now().strftime('%H:%M:%S')} - "

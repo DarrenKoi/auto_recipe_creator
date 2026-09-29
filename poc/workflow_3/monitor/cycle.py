@@ -28,6 +28,7 @@ tool 닫기·알림 발송은 step 이 아니라 `run_alarm_cycle` 의 후처리
   * watchdog — `notify_delay_sec` 를 넘기면 '진행 중' 을 1회 고지(무한 침묵 금지).
 """
 
+import itertools
 import json
 import os
 import time
@@ -45,6 +46,7 @@ from poc.workflow_3.monitor.notify import (
     ALIGN_FAIL_CLEARED,
     ALIGN_FAIL_UNCONFIRMED,
     CORRECTED_UNVERIFIED,
+    NEXT_POINT_LIMIT,
     VIEW_ONLY_OBSERVATION,
     CycleNotifier,
     close_alert_window,
@@ -987,6 +989,89 @@ def needs_engineer_watch(outcome) -> bool:
     return outcome is None or outcome.status not in ("corrected", ALIGN_FAIL_CLEARED)
 
 
+# OK 까지 누르고 끝난 status. 점유 미확정 강등(corrected_unverified)도 OK 는 눌렀으므로
+# 다음 위치 fail 을 똑같이 기다린다.
+_OK_CLICKED_STATUSES = ("corrected", CORRECTED_UNVERIFIED)
+
+
+def follow_next_points(
+    outcome, *, probe, correct, wait_sec: float, max_points: int, poll_sec: float = 5.0,
+    clock=time.monotonic, sleep=time.sleep,
+):
+    """OK 뒤 다음 위치의 align fail 을 기다렸다가 다시 보정한다 -> 최종 outcome.
+
+    wafer 당 OM/SEM 각 2~3 point 를 잡으므로 OK 하나로 알람이 끝나지 않는다. OK 를
+    누른 outcome 이면 tool 을 닫지 않고 `probe()`(다이얼로그 있음=True)를 `poll_sec`
+    간격으로 본다. 다시 뜨면 `correct()` 로 한 번 더 보정하고, `wait_sec` 동안 조용하면
+    끝낸다. 추가 보정은 최대 `max_points` 회(0 = 종전처럼 OK 뒤 바로 닫기).
+    """
+    if max_points <= 0:
+        return outcome
+    for done in range(max_points + 1):
+        if outcome.status not in _OK_CLICKED_STATUSES:
+            return outcome
+        deadline = clock() + wait_sec
+        while not probe():
+            if clock() >= deadline or is_aborted():
+                return outcome
+            sleep(poll_sec)
+        if done == max_points:
+            # 상한을 다 쓰고도 또 떴다 - corrected 로 닫으면 멈춘 장비가 cube 없이 남는다.
+            print(f"[WARNING] 다음 위치 align fail 이 추가 보정 상한({max_points})을 넘음 - 엔지니어 인계")
+            return replace(outcome, status=NEXT_POINT_LIMIT)
+        print(f"[INFO] 다음 위치 align fail 재발생 - 추가 보정 {done + 1}/{max_points}")
+        follow_up = correct()
+        # 보정 직전 재확인에서 사라졌으면 앞 결과를 유지한다 - cleared 를 최종으로 두면
+        # '이미 해결됨' cube 가 헛나간다.
+        if follow_up.status != ALIGN_FAIL_CLEARED:
+            outcome = follow_up
+    return outcome
+
+
+def _make_next_point_probe(context):
+    """다음 위치 추적용 probe - 지금 화면에 align fail 다이얼로그가 있는가(판독 실패=없음)."""
+    from poc.workflow_3.align import ok_button
+
+    count = itertools.count(1)
+
+    def _probe() -> bool:
+        try:
+            state, _ = ok_button.probe_align_dialog(
+                context["controller"].capture_screen(), context.get("vlm_client"),
+                debug_image_dir=debug_root() / "align_fail_cycle" / f"next_point_probe_{next(count)}",
+            )
+        except Exception as exc:
+            print(f"[WARNING] 다음 위치 다이얼로그 판독 실패(없음으로 봄): {type(exc).__name__}: {exc}")
+            return False
+        return state == ok_button.DIALOG_PRESENT
+
+    return _probe
+
+
+def _make_next_point_corrector(context, settings: Workflow3Settings, steps):
+    """다음 위치 보정 - SEM panel 부터 다시 잡는다(OM->SEM 이면 모드/배율이 바뀐다)."""
+    by_id = {s.step_id: s for s in steps}
+
+    def _correct():
+        from poc.workflow_3.align.correction import CorrectionOutcome
+
+        first_span = context.get("correction_span")
+        for step_id in ("locate_sem_panel", "run_correction"):
+            step_result = _STEP_EXECUTORS[step_id](by_id[step_id], context, settings)
+            if step_result.status != "success":
+                return CorrectionOutcome(
+                    status=step_result.failure_class or f"next_point_{step_id}_{step_result.status}",
+                    path="next_point", key_decision="",
+                    best_xy=None, ok_screen_xy=None, fallback=None,
+                )
+        # 소요 시간 기록은 첫 보정 시작 ~ 마지막 보정 끝.
+        if first_span and context.get("correction_span"):
+            context["correction_span"] = (first_span[0], context["correction_span"][1])
+        return context["outcome"]
+
+    return _correct
+
+
 def resolve_correction_outcome_status(
     occupancy: str, status: str, *, attempted: bool = True
 ) -> str:
@@ -1804,6 +1889,16 @@ def _run_alarm_cycle(
                 break
 
         recording = context.get("recording")
+        # OK 뒤 다음 위치(wafer 당 OM/SEM 각 2~3 point) - 닫지 않고 재발생을 따라간다.
+        # 알림/engineer watch 는 이 최종 결과로 판단한다.
+        if context.get("outcome") is not None and context.get("controller") is not None:
+            context["outcome"] = follow_next_points(
+                context["outcome"],
+                probe=_make_next_point_probe(context),
+                correct=_make_next_point_corrector(context, settings, steps),
+                wait_sec=settings.next_point_wait_sec,
+                max_points=settings.next_point_max,
+            )
         outcome = context.get("outcome")
         if outcome is not None:
             result.outcome_status = outcome.status

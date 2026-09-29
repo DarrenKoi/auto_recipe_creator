@@ -29,14 +29,34 @@ def test_clip_range_by_stage_detail_and_explicit_override():
         pdv.clip_range({"stage": "in_tool"}, STAGES, 50.0, 0.0)
 
 
-def test_camera_follows_latest_active_click_else_home():
-    clicks = [(2.0, 100, 50), (2.5, 300, 60)]
+BASE = (0.0, 0.0, 1920.0, 1080.0)
+
+
+def _shots(clicks, zoom=1.3):
+    return pdv.plan_shots(clicks, BASE, zoom, gap=10.0, margin=0.12, lead=0.6, hold=1.5)
+
+
+def test_login_clicks_become_one_shot():
+    """로그인 입력칸 네 번 클릭(몇 초 간격, 가까운 자리) = 확대 한 번, 중심은 bbox 중심."""
+    login = [(2.0, 900, 480), (6.0, 900, 520), (11.0, 900, 560), (15.0, 1000, 620)]
+    assert _shots(login) == [(1.4, 16.5, 950.0, 550.0)]
+
+
+def test_shots_split_on_far_click_long_gap_and_zoom_off():
+    far = [(2.0, 100, 50), (3.0, 1800, 1000)]            # 한 확대 화면에 안 들어감
+    assert len(_shots(far)) == 2
+    late = [(2.0, 900, 500), (30.0, 900, 500)]           # gap 초과
+    assert len(_shots(late)) == 2
+    assert _shots(far, zoom=1.0) == []
+
+
+def test_camera_holds_still_through_a_shot_and_returns_home():
+    shots = _shots([(2.0, 900, 480), (6.0, 1000, 620)])
     home = (960, 540)
-    assert pdv.camera_target(0.0, clicks, home, 1.3, 0.6, 1.5) == (1.0, 960, 540)
-    assert pdv.camera_target(1.6, clicks, home, 1.3, 0.6, 1.5) == (1.3, 100, 50)
-    assert pdv.camera_target(2.2, clicks, home, 1.3, 0.6, 1.5) == (1.3, 300, 60)  # 다음 클릭 lead
-    assert pdv.camera_target(5.0, clicks, home, 1.3, 0.6, 1.5) == (1.0, 960, 540)
-    assert pdv.camera_target(2.0, clicks, home, 1.0, 0.6, 1.5) == (1.0, 960, 540)  # 확대 끔
+    assert pdv.camera_target(0.0, shots, home, 1.3) == (1.0, 960, 540)
+    assert pdv.camera_target(3.0, shots, home, 1.3) == pdv.camera_target(5.9, shots, home, 1.3)
+    assert pdv.camera_target(3.0, shots, home, 1.3) == (1.3, 950.0, 550.0)
+    assert pdv.camera_target(9.0, shots, home, 1.3) == (1.0, 960, 540)
 
 
 def test_step_camera_converges_smoothly():

@@ -4,9 +4,9 @@
 stages.json + subtitles.json)다. 아래 SEQUENCE 순서대로 카드와 clip 을 이어 붙이며 clip 마다:
 
   * 커서를 그린다 - 화면 캡처에는 마우스 커서가 없다(녹화 때 기록한 위치로 그린다).
-  * 클릭 지점에 퍼지는 원(click ring)을 그리고, 클릭 전후로 그 지점을 부드럽게 확대한다.
-    카메라는 목표를 시정수 CAMERA_TAU_SEC 로 따라가므로 연달은 클릭(로그인)은 확대를
-    풀지 않고 옮겨 다닌다.
+  * 클릭 지점에 퍼지는 원(click ring)을 그리고, 클릭 부근을 부드럽게 확대한다. 클릭마다
+    확대하면 정신없으므로 **샷** 으로 묶는다: SHOT_GAP_SEC 안에 이어지고 확대 화면 한 장에
+    다 들어오는 클릭들(로그인 입력칸들)은 한 번 확대해 그 샷이 끝날 때까지 움직이지 않는다.
   * 화면이 IDLE_MAX_SEC 넘게 멈춘 구간(VLM 판독 대기 등)은 잘라낸다. 자막이 떠 있거나
     카메라가 움직이는 중에는 자르지 않는다.
   * 자막은 하단 반투명 바에 페이드로, 카드는 어두운 배경의 제목+본문으로 넣는다(한글,
@@ -79,7 +79,9 @@ CURSOR = 1                # 커서 그리기
 CLICK_RING = 1            # 클릭 강조 원
 ZOOM = 1.3                # 클릭 지점 확대 배율. 1.0 = 끔
 ZOOM_LEAD_SEC = 0.6       # 클릭 전 미리 다가가는 시간
-ZOOM_HOLD_SEC = 1.5       # 클릭 뒤 머무는 시간
+ZOOM_HOLD_SEC = 1.5       # 샷의 마지막 클릭 뒤 머무는 시간
+SHOT_GAP_SEC = 10.0       # 이 간격 안에 이어지는 클릭은 한 샷(확대 한 번)으로 묶는다
+SHOT_MARGIN = 0.12        # 묶인 클릭들이 확대 화면 가장자리에서 떨어질 여백(화면 비율)
 CAMERA_TAU_SEC = 0.35     # 카메라가 따라가는 속도(작을수록 빠름)
 BLUR_REGIONS = []         # 전 clip 공통 가림 영역 [(x0, y0, x1, y1), ...] 화면 비율 0~1
 
@@ -130,13 +132,41 @@ def clip_range(item: dict, stages: list, duration: float, pad: float) -> tuple[f
     return max(0.0, start), min(duration, end)
 
 
-def camera_target(t: float, clicks: list, home: tuple, zoom: float,
-                  lead: float, hold: float) -> tuple[float, float, float]:
-    """(배율, 중심 x, 중심 y). 클릭 전 lead ~ 뒤 hold 동안 가장 최근 클릭으로, 아니면 home."""
-    active = [c for c in clicks if c[0] - lead <= t <= c[0] + hold]
-    if zoom <= 1.0 or not active:
+def plan_shots(clicks: list, base: tuple, zoom: float, *, gap: float, margin: float,
+               lead: float, hold: float) -> list[tuple]:
+    """클릭들을 확대 샷 (시작, 끝, 중심 x, 중심 y) 으로 묶는다.
+
+    다음 클릭이 직전 클릭에서 gap 초 안이고, 샷의 클릭 전부가 확대 화면(base / zoom)에
+    여백 margin 을 두고 들어가면 같은 샷이다. 샷 중심 = 클릭들 bbox 중심.
+    """
+    if zoom <= 1.0 or not clicks:
+        return []
+    view_w, view_h = base[2] / zoom * (1 - 2 * margin), base[3] / zoom * (1 - 2 * margin)
+
+    def fits(group):
+        xs, ys = [c[1] for c in group], [c[2] for c in group]
+        return max(xs) - min(xs) <= view_w and max(ys) - min(ys) <= view_h
+
+    groups = []
+    for click in sorted(clicks):
+        if groups and click[0] - groups[-1][-1][0] <= gap and fits(groups[-1] + [click]):
+            groups[-1].append(click)
+        else:
+            groups.append([click])
+    shots = []
+    for group in groups:
+        xs, ys = [c[1] for c in group], [c[2] for c in group]
+        shots.append((group[0][0] - lead, group[-1][0] + hold,
+                      (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2))
+    return shots
+
+
+def camera_target(t: float, shots: list, home: tuple, zoom: float) -> tuple[float, float, float]:
+    """(배율, 중심 x, 중심 y). t 에 걸린 샷(겹치면 나중 샷)으로, 아니면 home."""
+    active = [shot for shot in shots if shot[0] <= t <= shot[1]]
+    if not active:
         return (1.0, home[0], home[1])
-    _, x, y = max(active)
+    _, _, x, y = max(active)
     return (zoom, x, y)
 
 
@@ -344,6 +374,8 @@ def write_clip(writer, item: dict, size: tuple, fps: int) -> int:
     base = base_rect(item.get("crop"), fw, fh, out_w / out_h)
     home = (base[0] + base[2] / 2, base[1] + base[3] / 2)
     zoom = float(item.get("zoom", ZOOM))
+    shots = plan_shots(clicks, base, zoom, gap=SHOT_GAP_SEC, margin=SHOT_MARGIN,
+                       lead=ZOOM_LEAD_SEC, hold=ZOOM_HOLD_SEC)
     unit = fh / 1080 * 1.3
     cam = (1.0, *home)
     prev_small, prev_cur, last_change = None, None, start
@@ -354,7 +386,7 @@ def write_clip(writer, item: dict, size: tuple, fps: int) -> int:
             if t > end:
                 break
             cur = to_px(*cursor[min(i, len(cursor) - 1)]) if cursor else None
-            target = camera_target(t, clicks, home, zoom, ZOOM_LEAD_SEC, ZOOM_HOLD_SEC)
+            target = camera_target(t, shots, home, zoom)
             new_cam = step_camera(cam, target, 1.0 / src_fps, CAMERA_TAU_SEC)
             moving = abs(new_cam[0] - cam[0]) > 1e-3 or math.dist(new_cam[1:], cam[1:]) > 0.5
             cam = new_cam
@@ -413,7 +445,8 @@ def write_clip(writer, item: dict, size: tuple, fps: int) -> int:
     finally:
         reader.close()
     print(f"[INFO] clip {clip_dir.name} {item.get('stage', '')}: 원본 {start:.1f}~{end:.1f}s -> "
-          f"{written / fps:.1f}s (멈춘 구간 {cut / src_fps:.1f}s 잘라냄, 클릭 {len(clicks)})")
+          f"{written / fps:.1f}s (멈춘 구간 {cut / src_fps:.1f}s 잘라냄, 클릭 {len(clicks)}, "
+          f"확대 {len(shots)}회)")
     return written
 
 

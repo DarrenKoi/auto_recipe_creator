@@ -73,8 +73,10 @@ from poc.workflow_3.monitor.screen_video import (  # noqa: E402
 
 SEQUENCE = [
     {"card": "엔지니어 개입 없는 AI 기반 자동화",
-     "body": "이 영상의 모든 키보드·마우스 입력은 사람이 아니라\nAgent가 직접 수행합니다", "sec": 4.0},
-    {"card": "Align Fail 자동 대응", "body": "(배경 설명을 여기에 적는다)", "sec": 4.0},
+     "body": "이 영상의 모든 키보드·마우스 입력은 엔지니어가 아니라\nAgent가 직접 수행합니다", "sec": 4.0},
+    {"card": "Align Fail 자동 대응",
+     "body": "R3 CD-SEM Align Fail에 대한 24/7 현업 대응을 AI Agent가 대신 처리\n"
+             "처리 불가능한 경우에만 엔지니어에게 알람 후 인계하는 시스템", "sec": 5.0},
     {"clip": "rcs_", "stage": ["login", "view_tab"]},
     {"card": "AI 순찰", "body": "화면을 읽고 판단해 장비를 오갑니다", "sec": 4.0},
     {"clip": "rcs_", "stage": "visit"},

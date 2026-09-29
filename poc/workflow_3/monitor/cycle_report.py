@@ -75,10 +75,15 @@ def _tail_path(path, keep: int = 3) -> str:
 
 
 def _paused_match(outcome) -> dict:
-    """outcome.history 에서 마지막 paused_match 항목을 꺼낸다(없으면 빈 dict)."""
+    """outcome.history 에서 마지막 판정 프레임(paused_match / hint_match_<n>)을 꺼낸다.
+
+    correction 은 hint 이동 뒤 재매칭한 프레임으로 act 하고 2nd비/ncc 도 그 프레임에서 찍는다 -
+    첫 화면만 보면 한 카드에 두 프레임이 섞인다. 탐색 뒤 재진입은 자기 paused_match 가 마지막이다.
+    """
     history = getattr(outcome, "history", None) or []
     for entry in reversed(history):
-        if isinstance(entry, dict) and entry.get("stage") == "paused_match":
+        stage = entry.get("stage", "") if isinstance(entry, dict) else ""
+        if stage == "paused_match" or stage.startswith("hint_match"):
             return entry
     return {}
 
@@ -145,6 +150,7 @@ def build_cycle_report(result, context, *, elapsed_sec=None) -> list[str]:
             f"  score={_fmt_float(match.get('score'))}"
             f"  chamfer={_fmt_float(match.get('chamfer'))}"
             f"  scale={_fmt_float(match.get('best_scale'), 2)}"
+            + ("" if match.get("stage") == "paused_match" else f"  ({match.get('stage')})")
         )
     if outcome is not None:
         distinctive = getattr(outcome, "distinctive", None)

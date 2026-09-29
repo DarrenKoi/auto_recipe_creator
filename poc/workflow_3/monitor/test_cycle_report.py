@@ -50,6 +50,24 @@ def _text(result, context, **kw):
     return "\n".join(build_cycle_report(result, context, **kw))
 
 
+def test_match_line_shows_acted_hint_frame_not_first_frame():
+    """hint 이동 뒤 재매칭으로 act 했으면 매칭 줄도 그 프레임이어야 한다 - 2nd비/ncc 와 같은 판.
+
+    2026-09-29 오피스: 첫 화면(adjust) 과 act 한 hint 프레임의 2nd비가 한 카드에 섞여
+    'adjust+구별 X 인데 OK 를 눌렀다' 로 읽혔다.
+    """
+    history = [
+        {"stage": "paused_match", "decision": "adjust", "score": 0.570,
+         "chamfer": 0.874, "best_scale": 0.87},
+        {"stage": "hint_match_1", "decision": "match", "score": 0.655,
+         "chamfer": 0.901, "best_scale": 0.88},
+        {"stage": "reposition_verify", "decision": "match", "score": 0.66},
+    ]
+    out = _text(_result(), {"outcome": _outcome(history=history)})
+    assert "decision=match" in out and "score=0.655" in out and "hint_match_1" in out
+    assert "decision=adjust" not in out
+
+
 # --- 판정 한 줄 --------------------------------------------------------------
 
 

@@ -1921,3 +1921,31 @@ def test_inspection_memo_is_ascii_without_shift_symbols(detection, expect):
     assert memo.splitlines()[-1] == "Checked by AI AGENT"
     assert expect in memo
     assert demo.screen_note("MCD019", observed, [])["title"] == "MCD019 화면 판독"
+
+
+def test_flow_rereads_a_step_once_when_the_popup_was_not_drawn_yet():
+    """MemoPrint 가 settle 안에 덜 그려져 편집 영역 확인이 빗나가도 한 번 더 읽어 입력까지 간다."""
+
+    class _SlowPopup(_Screen):
+        def __init__(self):
+            super().__init__()
+            self.misses = {"editor": 1}
+
+        def locate(self, image, target):
+            self.events.append(f"locate:{target.key}")
+            if self.misses.get(target.key):
+                self.misses[target.key] -= 1
+                return None
+            return {"x": 10, "y": 20}
+
+    flow = _flow(name="memo_print",
+                 steps=(("menu", (), False), ("editor", (), True), ("close", (), True)))
+    status, screen = _run_flow(flow, _SlowPopup())
+
+    assert screen.clicks == ["opener", "menu", "editor", "close"]
+    assert status == "memo_print:ok"
+    # 두 번째도 안 보이면 종전처럼 누르지 않는다.
+    stubborn = _SlowPopup()
+    stubborn.misses["editor"] = 2
+    status, screen = _run_flow(flow, stubborn)
+    assert screen.clicks == ["opener", "menu"]

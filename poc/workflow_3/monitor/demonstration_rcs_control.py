@@ -693,13 +693,22 @@ def run_in_tool_flow(
             if index == 0:
                 image, point = first_image, first_point  # 방금 확인한 것을 다시 안 찾는다.
             else:
-                sleep_fn(settle_sec)
-                image = capture_fn(tool_window)
-                point, _ = _confirm_point(
-                    image, step,
-                    locate_fn=locate_fn, read_tokens_fn=read_tokens_fn,
-                    policy=confirm_policy,
-                )
+                # popup 이 settle 안에 다 안 그려지면 확인이 한 번 빗나간다(오피스 2026-09-29:
+                # MemoPrint 가 열렸다가 입력 없이 닫힘). 모든 step 의 대기를 늘리는 대신
+                # 확인이 안 됐을 때만 한 번 더 기다렸다 다시 읽는다 - 확인 게이트는 그대로다.
+                for retry in range(2):
+                    sleep_fn(settle_sec)
+                    image = capture_fn(tool_window)
+                    point, _ = _confirm_point(
+                        image, step,
+                        locate_fn=locate_fn, read_tokens_fn=read_tokens_fn,
+                        policy=confirm_policy,
+                    )
+                    if point is not None:
+                        break
+                    if retry == 0:
+                        print(f"[INFO] [{flow.name}] {key} 미확인 - 화면이 덜 그려졌을 수 "
+                              "있어 한 번 더 기다렸다 다시 읽습니다")
             if point is None:
                 previous_ok = False
                 failed_key = failed_key or key

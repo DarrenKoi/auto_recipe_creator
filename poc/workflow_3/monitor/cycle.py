@@ -1235,6 +1235,7 @@ def _exec_run_correction(step, context, settings: Workflow3Settings) -> StepResu
                 reposition_refine_max=settings.reposition_refine_max,
                 reposition_tol_ratio=settings.reposition_tol_ratio,
                 settle_sec=settings.reposition_settle_sec,
+                reposition_stale_recheck_sec=settings.reposition_stale_recheck_sec,
                 # 모서리에 걸친 key 조각 recenter 상한 / 탐색 성공 뒤 reposition+OK 연결.
                 partial_hint_moves=settings.partial_hint_moves,
                 search_continue_enabled=settings.search_continue_enabled,

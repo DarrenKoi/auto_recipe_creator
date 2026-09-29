@@ -616,6 +616,28 @@ def test_reposition_no_progress_escalates() -> bool:
     return ok
 
 
+def test_reposition_stale_frame_is_rechecked_before_giving_up() -> bool:
+    """오피스 2026-09-29: 클릭 직후 재캡처가 원격 갱신 전 화면이면 no_progress 로 오판해
+    OK 없이 끝났다. 한 번 더 기다렸다 찍은 화면이 중심이면 OK 까지 가야 한다."""
+    monitor, templates, _ = _drifting_demo(gain=1.0)
+    stale = [monitor.capture()]  # 클릭 전 화면 - 첫 재캡처 한 번만 이것을 돌려준다.
+    live_capture = monitor.capture
+
+    def _capture():
+        return stale.pop() if stale and monitor.pos != start_pos else live_capture()
+
+    start_pos = list(monitor.pos)
+    monitor.capture = _capture
+    outcome = correct_align_fail(monitor, templates, ok_locator=lambda _s: (690, 560),
+                                 dry_run=False,
+                                 config=CorrectionConfig(fallback_search_enabled=False,
+                                                         reposition_stale_recheck_sec=0.01))
+    ok = outcome.status == "corrected" and len(monitor.screen_clicks) == 1 and not stale
+    print(f"[{'PASS' if ok else 'FAIL'}] reposition_stale_recheck: status={outcome.status} "
+          f"ok_clicks={len(monitor.screen_clicks)}")
+    return ok
+
+
 def test_reposition_key_lost_enters_search_around() -> bool:
     """recenter 뒤 key 가 화면에서 사라지면 OK 대신 search-around."""
     import poc.workflow_3.align.grid_search as gs
@@ -877,6 +899,7 @@ def main() -> int:
         test_ambiguous_key_enters_search_around(),
         test_reposition_refines_until_centered(),
         test_reposition_no_progress_escalates(),
+        test_reposition_stale_frame_is_rechecked_before_giving_up(),
         test_reposition_key_lost_enters_search_around(),
         test_reposition_refine_off_is_single_shot(),
         test_load_template_branches(),

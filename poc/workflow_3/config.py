@@ -380,6 +380,9 @@ class Workflow3Settings(WorkflowSettings):
     reposition_refine_max: int = 3
     reposition_tol_ratio: float = 0.01
     reposition_settle_sec: float = 0.5
+    # 재캡처가 '진전 없음' 이면 이만큼 더 기다려 한 번 다시 찍는다(원격 뷰 갱신 지연 - 오피스
+    # 2026-09-29: 첫 실행은 OK 없이 멈추고 재실행하면 OK). 0 = 재확인 안 함.
+    reposition_stale_recheck_sec: float = 1.5
     # 모서리 key 복구(2026-09-19): matcher 는 template 창이 프레임에 통째로 들어가야 점수가 난다.
     # 가장자리에 걸친 key 조각을 중심으로 데려오는 이동 상한(0 = 끔, align/partial_hint.py).
     partial_hint_moves: int = 2
@@ -552,6 +555,7 @@ def load_workflow3_settings() -> Workflow3Settings:
         reposition_refine_max=env_int("ALIGN_FAIL_REPOSITION_REFINE_MAX", 3),
         reposition_tol_ratio=env_float("ALIGN_FAIL_REPOSITION_TOL_RATIO", 0.01),
         reposition_settle_sec=env_float("ALIGN_FAIL_REPOSITION_SETTLE_SEC", 0.5),
+        reposition_stale_recheck_sec=env_float("ALIGN_FAIL_REPOSITION_STALE_RECHECK_SEC", 1.5),
         partial_hint_moves=env_int("ALIGN_FAIL_PARTIAL_HINT_MOVES", 2),
         search_continue_enabled=env_flag("ALIGN_FAIL_SEARCH_CONTINUE", default=True),
         require_pm_mode=env_flag("ALIGN_FAIL_REQUIRE_PM_MODE", default=True),

@@ -101,6 +101,10 @@ class CorrectionConfig:
     # 0 = 종전 open-loop(클릭 1회 후 바로 OK) 롤백.
     reposition_refine_max: int = 3
     reposition_tol_ratio: float = 0.01
+    # 재캡처가 '진전 없음' 이면 이만큼 더 기다렸다 한 번 다시 찍는다. 원격 뷰 갱신이 늦으면
+    # 클릭 **전** 화면을 읽어 멀쩡한 이동을 no_progress 로 오판하고 OK 없이 끝났다(오피스
+    # 2026-09-29: 같은 스크립트 재실행 때는 이미 중심이라 OK). 0 = 재확인 안 함.
+    reposition_stale_recheck_sec: float = 0.0
     # key 가 프레임 가장자리에 걸쳐 full-window 매칭이 못 볼 때(partial_hint.py), 보이는 조각을
     # 중심으로 데려오는 이동의 상한. 이동 뒤 판정은 정상 게이트가 처음부터 다시 한다. 0 = 끔.
     partial_hint_moves: int = 2
@@ -604,15 +608,24 @@ def correct_align_fail(
         if config.reposition_refine_max <= 0:
             break  # 롤백: 종전 open-loop 1회.
 
-        cur = compute_align_key_score_ensemble(
-            template, controller.capture(), scales=scales, policy=STRUCTURE_POLICY
-        )
-        align_x, align_y, dist = _residual(cur)
-        verified_route = _gate(cur)
-        verdict = ("lost" if verified_route == GATE_FALLBACK
-                   else "ambiguous" if verified_route == GATE_ENGINEER_REVIEW
-                   else "converged" if dist <= tol_px
-                   else "no_progress" if dist >= prev_dist else "refine")
+        def _verify():
+            match = compute_align_key_score_ensemble(
+                template, controller.capture(), scales=scales, policy=STRUCTURE_POLICY
+            )
+            mx, my, mdist = _residual(match)
+            route = _gate(match)
+            return match, mx, my, mdist, (
+                "lost" if route == GATE_FALLBACK
+                else "ambiguous" if route == GATE_ENGINEER_REVIEW
+                else "converged" if mdist <= tol_px
+                else "no_progress" if mdist >= prev_dist else "refine")
+
+        cur, align_x, align_y, dist, verdict = _verify()
+        if verdict == "no_progress" and config.reposition_stale_recheck_sec > 0:
+            print(f"[INFO] reposition 진전 없음(dist={dist:.1f}) - 화면 갱신이 늦었을 수 있어 "
+                  f"{config.reposition_stale_recheck_sec:.1f}s 뒤 다시 찍습니다")
+            time.sleep(config.reposition_stale_recheck_sec)
+            cur, align_x, align_y, dist, verdict = _verify()
         print(f"[DIGEST] reposition verify try={attempt} dec={cur.decision} score={cur.score:.3f} "
               f"residual=({align_x - fw / 2:+.0f},{align_y - fh / 2:+.0f}) dist={dist:.1f} "
               f"prev={prev_dist:.1f} tol={tol_px:.1f} -> {verdict}")

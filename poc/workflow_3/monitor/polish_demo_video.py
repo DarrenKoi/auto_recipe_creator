@@ -72,7 +72,7 @@ from poc.workflow_3.monitor.screen_video import (  # noqa: E402
 # ===========================================================================
 
 SEQUENCE = [
-    {"card": "사람 개입 없는 자동 조작",
+    {"card": "엔지니어 개입 없는 AI 기반 자동화",
      "body": "이 영상의 모든 키보드·마우스 입력은 사람이 아니라\nAgent가 직접 수행합니다", "sec": 4.0},
     {"card": "Align Fail 자동 대응", "body": "(배경 설명을 여기에 적는다)", "sec": 4.0},
     {"clip": "rcs_", "stage": ["login", "view_tab"]},

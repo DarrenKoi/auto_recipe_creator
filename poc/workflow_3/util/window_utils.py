@@ -617,13 +617,6 @@ def close_window(
 
     if os.name == "nt" and handle is not None:
         user32 = ctypes.windll.user32
-        # 1.5) 이 창이 소유한 popup(modal 대화상자)이 떠 있으면 owner 는 disabled 라
-        # 아래 전략이 전부 무시된다(시연 MemoPrint 가 중간에 실패해 남으면 tool 창
-        # 닫기가 실패하던 원인). popup 부터 닫는다 - 어차피 함께 사라질 창들이다.
-        try:
-            _close_owned_popups(user32, handle, debug_label=debug_label, settle_sec=settle_sec)
-        except Exception as exc:
-            print(f"[INFO] 소유 popup 닫기 실패: {debug_label}, error={exc}")
         # 2) WM_CLOSE.
         try:
             user32.PostMessageW(handle, 0x0010, 0, 0)  # WM_CLOSE.
@@ -664,31 +657,8 @@ def close_window(
             f"결과 미확인: {debug_label}"
         )
     else:
-        # 다음 실행에서 원인을 가를 단서: disabled 면 modal 이 막고 있다(owner 가 이 창이
-        # 아닌 popup 일 수 있다 - 같은 프로세스 창 목록에서 찾는다).
-        try:
-            user32 = ctypes.windll.user32
-            titles = [row.title for row in collect_window_rows(
-                process_id=_read_window_process_id(user32, handle)) if row.handle != handle]
-            clue = f"enabled={bool(user32.IsWindowEnabled(handle))}, 같은 프로세스 창={titles}"
-        except Exception as exc:
-            clue = f"단서 수집 실패={exc}"
-        print(f"[WARNING] 창 닫기 모든 전략 실패: {debug_label}, {clue}")
+        print(f"[WARNING] 창 닫기 모든 전략 실패: {debug_label}")
     return False
-
-
-def _close_owned_popups(user32, handle: int, *, debug_label: str, settle_sec: float) -> int:
-    """handle 이 소유한 보이는 top-level popup 에 WM_CLOSE 를 보낸다. 보낸 개수를 반환."""
-    user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
-    user32.GetWindow.restype = wintypes.HWND  # 기본 c_int 는 64bit handle 을 자른다.
-    owned = [row for row in collect_window_rows()
-             if row.handle != handle and user32.GetWindow(row.handle, 4) == handle]  # GW_OWNER
-    for row in owned:
-        print(f"[INFO] 소유 popup 먼저 닫기: {row.title!r} ({debug_label})")
-        user32.PostMessageW(row.handle, 0x0010, 0, 0)  # WM_CLOSE.
-    if owned:
-        time.sleep(settle_sec)
-    return len(owned)
 
 
 def _wrap_window_handle(handle: int, backend: str, desktops: dict[str, object]):

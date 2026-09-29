@@ -41,6 +41,8 @@ env (`DEMO_RCS_*` 네임스페이스 - 루프의 `ALIGN_FAIL_*` 과 섞지 않�
     DEMO_RCS_REPEAT         장비 순회 반복 횟수 (기본 1)
     DEMO_RCS_VIEW_TAB       View 탭 훑기 on/off (기본 1)
     DEMO_RCS_FLOW           tool 창 안 조작 on/off (기본 1)
+    DEMO_RCS_INSPECT        순찰 라운드 on/off (기본 상단 INSPECT=1). on 이면 아래 흐름 배정 대신
+                            점유 판독 -> 화면 판독 -> 관찰 메모(영어)를 모든 장비에 한다
     DEMO_RCS_FLOWS          장비별 흐름 배정 (기본 "MCD019=memo_print,MCDC10=worksheet")
                             고를 수 있는 흐름: memo_print / optics / worksheet
     DEMO_RCS_DEFAULT_FLOW   목록에 없는 장비의 흐름 (기본 memo_print)
@@ -82,6 +84,7 @@ env (`DEMO_RCS_*` 네임스페이스 - 루프의 `ALIGN_FAIL_*` 과 섞지 않�
 """
 
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -95,6 +98,13 @@ LOG_COMPONENT = "demonstration_rcs_control"
 # 시연 기본 장비. env 로 덮을 수 있지만, 아무것도 안 줘도 바로 돌아야 시연 직전에
 # 셸 따옴표와 씨름하지 않는다.
 DEFAULT_TOOL_IDS = ["MCD019", "MCDC10"]
+
+# 순찰 라운드(2026-09-29, env `DEMO_RCS_INSPECT`): 매크로가 아니라 "읽고 판단한다" 를 보여준다.
+#   List 에서 Connection User 판독(production 점유 게이트) -> 비었으면 접속, 아니면 건너뜀
+#   -> tool 화면 판독(live SEM box + PM 배율 -> OM/SEM, 클릭 없음)
+#   -> 판독 결과를 MemoPrint 에 영어로 기록 -> 닫고 다음 장비.
+# 이미지 모드 전환은 하지 않는다(가동 중 장비). 0 이면 종전 장비별 흐름(DEMO_RCS_FLOWS).
+INSPECT = True
 
 # ------------------------------------------------------------------
 # 시연 속도(초). 두 종류를 **반드시 구분한다**.
@@ -158,6 +168,10 @@ DEFAULT_CONFIRM_POLICY = "lenient"
 # 장비 1대 방문 결과 status.
 STATUS_CONNECTED = "connected"
 STATUS_CONNECT_FAILED = "connect_failed"
+STATUS_OCCUPIED = "occupied"                 # 순찰: 다른 사용자가 접속 중이라 건너뜀
+STATUS_OCCUPANCY_UNKNOWN = "occupancy_unknown"  # 순찰: 판독 실패 - 안전하게 건너뜀
+# connect_to_tool(require_occupancy_check=True) 의 exit_code -> 방문 status. 더블클릭 전 판정이다.
+OCCUPANCY_SKIP = {"rcs_occupied": STATUS_OCCUPIED, "rcs_occupancy_unknown": STATUS_OCCUPANCY_UNKNOWN}
 STATUS_WINDOW_NOT_FOUND = "window_not_found"
 STATUS_ERROR = "error"
 
@@ -267,9 +281,16 @@ def visit_tool(
     try:
         print(f"[INFO] === {tool_id} 접속 시도 ===")
         result = connect_fn(tool_id)
+        skip_status = OCCUPANCY_SKIP.get(getattr(result, "exit_code", None))
         if result is None:
             visit.status = STATUS_CONNECT_FAILED
             print(f"[WARNING] {tool_id} 접속 실패(List 탭에서 행을 찾지 못함)")
+        elif skip_status is not None:
+            # 더블클릭 **전에** 멈췄다 - 열린 창이 없으니 닫을 것도 없다.
+            visit.status = skip_status
+            visit.elapsed_sec = time.time() - started_at
+            print(f"[INFO] {tool_id} 접속하지 않음({skip_status}) - 다음 장비로")
+            return visit
         else:
             window, title, backend = wait_window_fn(tool_id)
             if window is None:
@@ -313,6 +334,65 @@ def _close_tool_window(visit: ToolVisit, close_fn) -> None:
     else:
         visit.close_error = str(exit_code)
         print(f"[WARNING] {visit.tool_id} 창 닫기 실패: exit_code={exit_code}")
+
+
+# ------------------------------------------------------------------
+# 순찰 라운드 - 판독 결과를 영상 note(한글) 와 장비 메모(영어) 로 옮긴다. 순수 함수.
+# ------------------------------------------------------------------
+
+_OCCUPANCY_TEXT = {
+    "free": "비어 있음 → 접속",
+    "occupied_by_other": "다른 사용자 접속 중 → 건너뜀",
+}
+
+
+def occupancy_note(tool_id: str, result) -> dict | None:
+    """점유 판독 결과 -> 영상 note. 사용자 이름은 싣지 않는다(영상이 사내 밖으로 나간다)."""
+    if result is None:
+        return None
+    occupancy = getattr(result, "occupancy", "unknown")
+    return {
+        "title": f"{tool_id} 접속 전 확인",
+        "lines": ["List 의 Connection User 판독",
+                  _OCCUPANCY_TEXT.get(occupancy, "판독 불가 → 안전하게 건너뜀")],
+        "boxes": list((getattr(result, "occupancy_boxes", None) or {}).values()),
+    }
+
+
+def screen_observation(detection) -> dict:
+    """detect_sem_box 결과 -> {live, mode, pm}. 검출 실패/None 도 같은 모양."""
+    # PM 원문은 'PM: 210' 처럼 머리말/기호가 섞여 온다 - 배율(숫자 + SEM 의 K)만 남긴다.
+    found = re.search(r"\d+(?:\.\d+)?\s*K?", str(getattr(detection, "pm_text", "") or "").upper())
+    pm = found.group().replace(" ", "") if found else ""
+    return {
+        "live": bool(getattr(detection, "detected", False)),
+        "mode": getattr(detection, "pm_mode", None) or "",
+        "pm": pm,
+    }
+
+
+def screen_note(tool_id: str, observed: dict, boxes: list) -> dict:
+    pm_line = (f"PM {observed['pm']} → {observed['mode']} 모드"
+               if observed["mode"] and observed["pm"] else "PM 배율 판독 불가")
+    return {
+        "title": f"{tool_id} 화면 판독",
+        "lines": ["Live 영상 영역 검출" if observed["live"] else "Live 영상 영역 못 찾음", pm_line],
+        "boxes": boxes,
+    }
+
+
+def inspection_memo(tool_id: str, observed: dict, stamp: str) -> str:
+    """장비 메모 문구(영어). 이 원격은 한글과 Shift 기호(':' '(' 등)를 못 건넌다 - '-' ',' 로만 잇는다."""
+    if observed["mode"] and observed["pm"]:
+        mode = f"MODE {observed['mode']}, PM {observed['pm']}"
+    else:
+        mode = "MODE UNREAD"
+    return "\n".join([
+        f"{tool_id.upper()} AUTO CHECK {stamp}",
+        "CONNECTION USER - NONE",
+        f"LIVE IMAGE - {'FOUND' if observed['live'] else 'NOT FOUND'}, {mode}",
+        "CHECKED BY AI AGENT",
+    ])
 
 
 # ------------------------------------------------------------------
@@ -1772,6 +1852,8 @@ def _build_action_fn(
     post_type_wait_sec: float,
     memo_text: str,
     tag: str,
+    inspect: bool = False,
+    note_fn=None,
 ):
     """장비별 창 안 조작 협력자 (VLM 좌표 + OCR 확인 + 클릭).
 
@@ -1794,11 +1876,20 @@ def _build_action_fn(
         reveal_y_ratio=reveal_y_ratio,
     )
 
+    read_screen = _build_screen_reader(settings, note_fn) if inspect else None
+
     def _action(tool_id, tool_window, tool_title, tool_backend):
-        flow_name = resolve_flow_name(tool_id, flow_map, default_flow)
-        print(f"[INFO] {tool_id} 창 안 조작 흐름: {flow_name}")
+        if inspect:
+            observed = read_screen(tool_id, tool_window)
+            memo = inspection_memo(tool_id, observed, time.strftime("%Y-%m-%d %H%M"))
+            print(f"[INFO] {tool_id} 순찰 메모: {memo!r}")
+            flow = build_flows(memo)[FLOW_MEMO_PRINT]
+        else:
+            flow_name = resolve_flow_name(tool_id, flow_map, default_flow)
+            print(f"[INFO] {tool_id} 창 안 조작 흐름: {flow_name}")
+            flow = flows[flow_name]
         return run_in_tool_flow(
-            tool_window, tool_title, tool_backend, flows[flow_name],
+            tool_window, tool_title, tool_backend, flow,
             capture_fn=kit.capture,
             locate_fn=kit.locate,
             read_tokens_fn=kit.read_tokens,
@@ -1827,8 +1918,57 @@ def _build_action_fn(
     return _action
 
 
-def _build_visit_fn(settings: Workflow3Settings, dwell_sec: float, action_fn=None):
-    """장비 1대 [접속 -> 체류 -> 장비별 창 안 조작 -> 닫기] 협력자."""
+def _build_screen_reader(settings: Workflow3Settings, note_fn=None):
+    """tool 창 판독 협력자(클릭 없음): live SEM box + PM 배율 -> 관찰 dict, note 통지.
+
+    check-only 사이클과 같은 `detect_sem_box` 다(오피스 검증). 실패해도 예외를 올리지 않고
+    '판독 불가' 관찰을 돌려준다 - 메모에 그대로 적히는 편이 시연을 멈추는 것보다 낫다.
+    """
+    from poc.workflow_3.sem_monitor.sem_box_detect import detect_sem_box
+    from poc.workflow_3.util import capture_window
+    from poc.workflow_3.util.window_utils import image_point_to_screen
+    from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
+
+    client = Workflow1VLMClient(settings.sem_box_vlm_service, timeout_sec=15.0)
+    ocr_client = (Workflow1VLMClient(settings.pm_ocr_service, timeout_sec=15.0)
+                  if settings.pm_two_stage_ocr_enabled else None)
+
+    def _to_screen(window, box, size):
+        top_left = image_point_to_screen(window, {"x": box["left"], "y": box["top"]}, image_size=size)
+        bottom_right = image_point_to_screen(
+            window, {"x": box["right"], "y": box["bottom"]}, image_size=size)
+        if not top_left or not bottom_right:
+            return None
+        return {"left": top_left["x"], "top": top_left["y"],
+                "right": bottom_right["x"], "bottom": bottom_right["y"]}
+
+    def _read(tool_id, tool_window):
+        detection, boxes = None, []
+        try:
+            image = capture_window(tool_window)
+            detection = detect_sem_box(image, client, ocr_client=ocr_client,
+                                       two_stage=settings.pm_two_stage_ocr_enabled)
+            for box in (detection.bbox_px, detection.pm_box_px):
+                screen = _to_screen(tool_window, box, image.size) if box else None
+                if screen:
+                    boxes.append(screen)
+        except Exception as exc:
+            print(f"[WARNING] {tool_id} 화면 판독 실패(메모에는 UNREAD): {type(exc).__name__}: {exc}")
+        observed = screen_observation(detection)
+        print(f"[INFO] {tool_id} 화면 판독: {observed}")
+        if note_fn is not None:
+            note_fn(**screen_note(tool_id, observed, boxes))
+        return observed
+
+    return _read
+
+
+def _build_visit_fn(settings: Workflow3Settings, dwell_sec: float, action_fn=None, *,
+                    inspect: bool = False, note_fn=None):
+    """장비 1대 [접속 -> 체류 -> 장비별 창 안 조작 -> 닫기] 협력자.
+
+    inspect 면 접속 전에 production 점유 게이트(Connection User 판독)를 거친다.
+    """
     from poc.workflow_3.rcs.login_rcs_common import wait_for_remote_monitoring_window
     from poc.workflow_3.rcs.workflow_close_tool import close_tool
     from poc.workflow_3.rcs.workflow_select_tool import connect_to_tool
@@ -1836,11 +1976,17 @@ def _build_visit_fn(settings: Workflow3Settings, dwell_sec: float, action_fn=Non
     action_enabled = settings.action_enabled and settings.connect_action_enabled
 
     def _connect(tool_id):
-        return connect_to_tool(
+        result = connect_to_tool(
             tool_id,
             action_enabled=action_enabled,
             main_window_timeout_sec=settings.connect_window_timeout_sec,
+            require_occupancy_check=inspect,
         )
+        note = occupancy_note(tool_id, result) if inspect else None
+        if note is not None and note_fn is not None:
+            # 판독한 화면이 떠 있던 시각 - 결과는 더블클릭 뒤에 도착한다.
+            note_fn(**note, since_epoch=getattr(result, "occupancy_seen_at", None))
+        return result
 
     def _wait_window(tool_id):
         return wait_for_remote_monitoring_window(
@@ -1935,10 +2081,14 @@ def _staged(stage: str, fn, stage_fn):
     return _wrapped
 
 
-def main(settings: Workflow3Settings | None = None, *, stage_fn=None) -> DemoRunResult:
+def main(settings: Workflow3Settings | None = None, *, stage_fn=None,
+         note_fn=None) -> DemoRunResult:
     """시연 시나리오를 1회 재생한다.
 
     stage_fn(stage, "start"|"end", detail): 단계 경계 통지(시연 녹화용, 기본 없음).
+    note_fn(title, lines, boxes, since_epoch=None): 순찰 판독 결과 통지(영상 "AI 판독" 패널용).
+      boxes = 판독한 영역의 화면 rect 목록 {left, top, right, bottom}. since_epoch = 그 영역이
+      판독한 모습으로 보이던 시각(점유 note 는 결과가 더블클릭 뒤에 나오므로 필요하다).
     """
     settings = settings or load_workflow3_settings()
 
@@ -1972,8 +2122,9 @@ def main(settings: Workflow3Settings | None = None, *, stage_fn=None) -> DemoRun
     post_type_wait_sec = _env_float("DEMO_RCS_POST_TYPE_WAIT_SEC", POST_TYPE_WAIT_SEC)
     memo_text = parse_memo_text(os.environ.get("DEMO_RCS_MEMO_TEXT"), DEFAULT_MEMO_TEXT)
     tag = make_timestamp_tag(time.time())
+    inspect = _env_flag("DEMO_RCS_INSPECT", INSPECT)
 
-    assigned = ", ".join(
+    assigned = "순찰(점유 판독 -> 화면 판독 -> 관찰 메모)" if inspect else ", ".join(
         f"{tool}={resolve_flow_name(tool, flow_map, default_flow)}" for tool in tool_ids
     )
     print(
@@ -2022,12 +2173,18 @@ def main(settings: Workflow3Settings | None = None, *, stage_fn=None) -> DemoRun
                 post_type_wait_sec=post_type_wait_sec,
                 memo_text=memo_text,
                 tag=tag,
+                inspect=inspect,
+                note_fn=note_fn,
             )
             if flow_enabled
             else None
         )
         action_fn = _staged(STAGE_IN_TOOL, action_fn, stage_fn)
-        visit_fn = _staged(STAGE_VISIT, _build_visit_fn(settings, dwell_sec, action_fn), stage_fn)
+        visit_fn = _staged(
+            STAGE_VISIT,
+            _build_visit_fn(settings, dwell_sec, action_fn, inspect=inspect, note_fn=note_fn),
+            stage_fn,
+        )
     except Exception as exc:
         # 두 원인이 섞이는 자리다. Mac 은 pywinauto 부재로 걸리지만(정상), 오피스는
         # 의존성이 있으므로 여기서 걸렸다면 **우리 코드의 결함**이다 - 예전에 이 자리가
@@ -2076,6 +2233,8 @@ __all__ = [
     "STATUS_CONNECTED",
     "STATUS_CONNECT_FAILED",
     "STATUS_ERROR",
+    "STATUS_OCCUPANCY_UNKNOWN",
+    "STATUS_OCCUPIED",
     "STATUS_VIEW_OK",
     "STATUS_VIEW_SKIPPED",
     "STATUS_VIEW_TAB_FAILED",
@@ -2088,7 +2247,9 @@ __all__ = [
     "browse_view_tab",
     "build_flows",
     "covering_window_point",
+    "inspection_memo",
     "main",
+    "occupancy_note",
     "parse_flow_map",
     "parse_memo_text",
     "parse_tool_ids",
@@ -2096,6 +2257,8 @@ __all__ = [
     "resolve_flow_name",
     "run_demonstration",
     "run_in_tool_flow",
+    "screen_note",
+    "screen_observation",
     "resolve_shift_mode",
     "shift_plan",
     "shift_symbols",

@@ -17,6 +17,7 @@ RCS 실행 -> 로그인 -> View 탭 훑기 -> List 탭 -> 장비 접속 -> 창 �
 사용법 (오피스 Windows, 저장소 루트에서):
   uv run python poc/workflow_3/monitor/demo_record_rcs.py
   -> align_images/_demo/rcs_<tag>/ 에 raw.mp4 + events.json + stages.json + subtitles.json
+     + notes.json(순찰 판독 결과 - polish 가 "AI 판독" 패널과 강조 박스로 그린다)
 """
 
 import json
@@ -32,6 +33,7 @@ from poc.workflow_3.config import load_workflow3_settings  # noqa: E402
 from poc.workflow_3.monitor import demonstration_rcs_control as demo  # noqa: E402
 from poc.workflow_3.monitor.screen_video import (  # noqa: E402
     DEMO_ROOT,
+    NOTES_NAME,
     STAGES_NAME,
     SUBTITLES_NAME,
     ScreenVideoRecorder,
@@ -87,9 +89,20 @@ def main() -> int:
                            "start": opened.pop((stage, detail), now), "end": now})
         print(f"[INFO] [녹화 {now:7.1f}s] {stage} {edge} {detail}")
 
+    def on_note(title, lines, boxes, since_epoch=None):
+        now = round(recorder.elapsed(), 2)
+        note = {"t": now, "title": title, "lines": list(lines), "boxes": list(boxes)}
+        if since_epoch is not None:  # 박스 기준 화면 시각(polish 가 이 화면과 비교한다)
+            note["t_ref"] = round(recorder.video_time(since_epoch), 2)
+        notes.append(note)
+        # 콘솔은 cp949 - 영상용 화살표는 콘솔에서만 ASCII 로.
+        print(f"[INFO] [녹화 {now:7.1f}s] 판독 {title}: "
+              + " / ".join(lines).replace("→", "->"))
+
+    notes = []
     result, info = None, {}
     try:
-        result = demo.main(settings, stage_fn=on_stage)
+        result = demo.main(settings, stage_fn=on_stage, note_fn=on_note)
         time.sleep(TAIL_SEC)
     finally:
         # 단계/자막을 녹화 정지보다 먼저 쓴다 - 정지 중 오류가 나도 사이드카는 남는다.
@@ -99,12 +112,14 @@ def main() -> int:
             json.dumps(stages, ensure_ascii=False, indent=2), encoding="utf-8")
         (out_dir / SUBTITLES_NAME).write_text(
             json.dumps(subtitles, ensure_ascii=False, indent=2), encoding="utf-8")
+        (out_dir / NOTES_NAME).write_text(
+            json.dumps(notes, ensure_ascii=False, indent=2), encoding="utf-8")
         info = recorder.stop()
         print("=" * 70)
         for item in stages:
             print(f"[INFO]   {item['start']:7.1f}s ~ {item['end']:7.1f}s  "
                   f"{item['stage']} {item['detail']}")
-        print(f"[INFO] 녹화 폴더: {out_dir} (자막 {len(subtitles)}개)")
+        print(f"[INFO] 녹화 폴더: {out_dir} (자막 {len(subtitles)}개, 판독 {len(notes)}개)")
         print("[INFO] 다음: polish_demo_video.py 상단 SEQUENCE 에 이 폴더/단계를 적고 실행")
         print("=" * 70)
     return 0 if result is not None and not result.aborted and not info.get("error") else 1

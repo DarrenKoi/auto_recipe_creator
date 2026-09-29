@@ -1855,3 +1855,68 @@ def test_still_covered_after_reveal_budget_is_not_visible():
         None, step, **kwargs, should_reveal_fn=lambda image, reason: True,
     )
     assert point is None and reason == demo.CONFIRM_NOT_VISIBLE and reveals == 2
+
+
+# ------------------------------------------------------------------
+# 순찰 라운드 - 점유 판독 -> 화면 판독 -> 영어 관찰 메모.
+# ------------------------------------------------------------------
+
+
+class _Selection:
+    def __init__(self, exit_code, occupancy="unknown", occupancy_boxes=None):
+        self.exit_code = exit_code
+        self.occupancy = occupancy
+        self.occupancy_boxes = occupancy_boxes
+
+
+@pytest.mark.parametrize("exit_code, status", [
+    ("rcs_occupied", demo.STATUS_OCCUPIED),
+    ("rcs_occupancy_unknown", demo.STATUS_OCCUPANCY_UNKNOWN),
+])
+def test_visit_tool_skips_occupied_tool_without_waiting_or_closing(exit_code, status):
+    """더블클릭 전에 멈췄으니 기다릴 창도 닫을 창도 없다 - 닫기가 남의 창을 건드리면 안 된다."""
+    closer, waited = _CloseSpy(), []
+    visit = _visit(connect_fn=lambda t: _Selection(exit_code),
+                   wait_fn=lambda t: waited.append(t) or (None, "", ""), close_fn=closer)
+
+    assert visit.status == status
+    assert waited == [] and closer.calls == []
+
+
+def test_occupancy_note_boxes_come_from_the_real_report_layout():
+    """producer(check_tool_occupancy report layout) -> 화면 rect -> note 까지 한 줄로."""
+    from poc.workflow_3.rcs.workflow_select_tool import occupancy_screen_boxes
+
+    report = {"occupancy": "occupied_by_other",
+              "layout": {"columns": {"mc_id": [100, 220], "connection_user": [900, 1200]},
+                         "row_top": 300, "row_bottom": 316}}
+    boxes = occupancy_screen_boxes(report, lambda p: {"x": p["x"] + 10, "y": p["y"] + 20})
+    note = demo.occupancy_note("MCD019", _Selection("rcs_occupied", "occupied_by_other", boxes))
+
+    assert boxes["connection_user"] == {"left": 910, "top": 320, "right": 1209, "bottom": 336}
+    assert len(note["boxes"]) == 2
+    assert "건너뜀" in note["lines"][-1]
+    assert demo.occupancy_note("MCD019", None) is None
+    assert occupancy_screen_boxes({}, lambda p: p) is None
+
+
+class _Detection:
+    detected = True
+    pm_mode = "OM"
+    pm_text = "PM: 210 (x)"
+
+
+@pytest.mark.parametrize("detection, expect", [
+    (_Detection(), "LIVE IMAGE - FOUND, MODE OM, PM 210\n"),
+    (None, "LIVE IMAGE - NOT FOUND, MODE UNREAD"),
+])
+def test_inspection_memo_is_ascii_without_shift_symbols(detection, expect):
+    """원격은 한글/Shift 기호를 못 건넌다 - PM 원문의 ':' '(' 도 메모에 새면 안 된다."""
+    observed = demo.screen_observation(detection)
+    memo = demo.inspection_memo("mcd019", observed, "2026-09-29 1432")
+
+    assert memo.isascii()
+    assert demo.shift_symbols(memo) == []
+    assert memo.splitlines()[0] == "MCD019 AUTO CHECK 2026-09-29 1432"
+    assert expect in memo
+    assert demo.screen_note("MCD019", observed, [])["title"] == "MCD019 화면 판독"

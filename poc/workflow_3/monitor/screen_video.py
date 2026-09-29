@@ -25,6 +25,7 @@ VIDEO_NAME = "raw.mp4"
 EVENTS_NAME = "events.json"
 STAGES_NAME = "stages.json"
 SUBTITLES_NAME = "subtitles.json"
+NOTES_NAME = "notes.json"   # AI 판독 패널: [{t, title, lines, boxes(화면 rect)}]
 
 
 class ScreenVideoRecorder:
@@ -42,12 +43,17 @@ class ScreenVideoRecorder:
         self.captured = 0
         self.written = 0
         self._t0 = 0.0
+        self.wall_t0 = 0.0  # _t0 와 같은 순간의 epoch - 다른 로그(runner journal)의 시각을 영상 초로 환산
         self._stop_at: float | None = None
         self._error: Exception | None = None
         self._ready = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._listeners: list = []
+
+    def video_time(self, epoch: float) -> float:
+        """epoch 초(time.time) -> 영상 초."""
+        return epoch - self.wall_t0
 
     def elapsed(self) -> float:
         # 벽시계(time.time)는 Windows 시각 동기화로 뒤/앞으로 뛸 수 있다 - 시간축은 단조 시계로.
@@ -119,6 +125,7 @@ class ScreenVideoRecorder:
                 )
                 writer.send(None)
                 self._t0 = time.perf_counter()
+                self.wall_t0 = time.time()
                 self._ready.set()
                 prev = None
                 try:
@@ -188,6 +195,7 @@ class ScreenVideoRecorder:
         info = {
             "fps": self.fps,
             "monitor": self.monitor,
+            "wall_t0": self.wall_t0,
             "duration": round(duration, 3),
             "capture_fps": round(self.captured / duration, 1) if duration else 0.0,
             "error": f"{type(self._error).__name__}: {self._error}" if self._error else "",

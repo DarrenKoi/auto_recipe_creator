@@ -1,6 +1,7 @@
 """시연 영상 녹화/마무리 - 순수 함수 + 합성 영상 왕복 (Mac 실행, 실장비 불필요)."""
 
 import json
+import time
 
 import imageio_ffmpeg
 import numpy as np
@@ -274,3 +275,108 @@ def test_recorder_places_late_capture_at_acquisition_time_and_stops_on_time(tmp_
     assert first_second >= 13                  # ~0.5초 x 30fps (이전 구현은 1~2)
     assert abs(info["duration"] - 1.0) < 0.15  # 인코딩 시간이 영상을 늘리지 않는다
 
+
+
+def test_note_keeps_idle_frames_and_boxes_leave_when_screen_changes(tmp_path, monkeypatch):
+    """판독 패널이 떠 있는 정지 구간은 자르지 않는다 + 판독 영역이 바뀌면 박스를 거둔다."""
+    monkeypatch.setattr(pdv, "PREVIEW_WIDTH", 320)
+    _synthetic_clip(tmp_path / "clip", [])
+    (tmp_path / "clip" / "notes.json").write_text(json.dumps([
+        {"t": 1.4, "title": "MCD019 화면 판독", "lines": ["PM 210 → OM 모드"],
+         "boxes": [{"left": 200, "top": 120, "right": 300, "bottom": 170}]},
+    ], ensure_ascii=False), encoding="utf-8")
+    out = pdv.main([{"clip": str(tmp_path / "clip"), "zoom": 1.0}],
+                   output=str(tmp_path / "final.mp4"))
+    frames, _ = imageio_ffmpeg.count_frames_and_secs(out)
+    assert frames >= 85  # 1.4s~2.9s 패널 -> 멈춘 구간이 남는다
+
+    frame = np.zeros((100, 100, 3), np.uint8)
+    note, state = {"t": 1.0, "rects": [(10, 10, 40, 40)]}, {}
+    assert pdv.visible_note_rects(frame, note, state) == [(10, 10, 40, 40)]
+    frame[10:40, 10:40] = 255  # tool 창이 덮었다
+    assert pdv.visible_note_rects(frame, note, state) == []
+    frame[:] = 0  # 되돌아와도 그 note 동안은 다시 안 그린다
+    assert pdv.visible_note_rects(frame, note, state) == []
+
+
+def test_note_focus_skips_boxes_wider_than_the_zoomed_view():
+    notes = [{"t": 1.0, "rects": [(100, 10, 140, 30), (1700, 10, 1900, 30)]},  # 점유: 행 양 끝
+             {"t": 2.0, "rects": [(500, 300, 900, 600)]}]
+    assert pdv.note_focus_points(notes, (0, 0, 1920, 1080), 1.3, 0.12) == [(2.0, 700.0, 450.0)]
+
+
+def test_note_panel_wraps_long_lines_and_embeds_evidence(tmp_path):
+    from PIL import Image
+
+    Image.new("RGB", (640, 480), (90, 90, 90)).save(tmp_path / "evidence.jpg")
+    plain = pdv.note_patch("보정 결과", ("가" * 60,), 1920)
+    with_image = pdv.note_patch("보정 결과", ("가" * 60,), 1920, str(tmp_path / "evidence.jpg"))
+    assert plain.shape[1] < 1920 * 0.6
+    assert with_image.shape[0] > plain.shape[0] + 1920 * 0.24 * 0.7
+
+
+def test_alarm_journal_becomes_video_stages(tmp_path):
+    from types import SimpleNamespace
+
+    from poc.workflow_3.monitor import demo_record_alarm as dra
+
+    run_dir = tmp_path / "take" / "runs" / "r1"
+    run_dir.mkdir(parents=True)
+    base = time.mktime((2026, 9, 29, 10, 0, 10, 0, 0, -1))
+    for step, end, ms in (("ensure_rcs_ready", 12, 1500), ("connect_tool", 20, 6000)):
+        (run_dir / f"step_{step}.json").write_text(json.dumps({
+            "step_id": step, "elapsed_ms": ms,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(base + end - 10))}))
+    cycle = SimpleNamespace(started_at=base + 0.4, finished_at=base + 40,
+                            correction_started_at=base + 22.0, correction_finished_at=base + 31.5)
+    stages = {s["stage"]: s for s in dra.journal_stages(
+        run_dir, cycle, lambda e: e - (base - 5), alarm_start=0.0, tool="MCD019")}
+
+    assert stages["alarm"] == {"stage": "alarm", "detail": "MCD019", "start": 0.0, "end": 5.5}
+    assert (stages["connect_tool"]["start"], stages["connect_tool"]["end"]) == (9.0, 15.0)
+    assert (stages["correction"]["start"], stages["correction"]["end"]) == (27.0, 36.5)
+    assert stages["teardown"]["end"] == 45.0
+    assert dra.outcome_lines("corrected")[-1] == "OK 까지 자동 완료"
+    assert "엔지니어" in dra.outcome_lines("fallback_exhausted")[-1]
+    subs = dra.stage_subtitles(list(stages.values()), dra.STAGE_SUBTITLES)
+    assert any("MCD019" in s["text"] for s in subs)
+
+
+def test_note_box_reference_is_the_screen_at_t_ref_not_the_late_note_frame():
+    """점유 note 는 더블클릭 뒤에 온다 - 그때 이미 tool 창이 덮었으면 박스를 그리지 않는다."""
+    listing, tool = np.zeros((100, 100, 3), np.uint8), np.full((100, 100, 3), 200, np.uint8)
+    note, state = {"t": 5.0, "t_ref": 2.0, "rects": [(10, 10, 40, 40)]}, {}
+    pdv.capture_note_refs(listing, 2.0, [note], state)   # List 가 보이던 시각
+    assert pdv.visible_note_rects(tool, note, state) == []
+
+
+def test_reading_focus_wins_over_a_nearby_click_shot():
+    note_shots = [(4.4, 8.5, 850.0, 500.0)]
+    click_shots = [(5.4, 7.0, 1800.0, 500.0)]
+    home = (960.0, 540.0)
+    assert pdv.camera_goal(6.0, note_shots, click_shots, home, 1.3) == (1.3, 850.0, 500.0)
+    assert pdv.camera_goal(9.0, note_shots, click_shots, home, 1.3) == (1.0, *home)
+
+
+def test_rehearsal_outcome_never_claims_a_click():
+    from poc.workflow_3.monitor import demo_record_alarm as dra
+
+    assert "리허설" in dra.outcome_lines("corrected", rehearsal=True)[-1]
+    assert dra.outcome_lines("corrected")[-1] == "OK 까지 자동 완료"
+
+
+def test_reference_before_the_cut_start_is_still_used(tmp_path, monkeypatch):
+    """t_ref 가 컷 시작 전이어도 그 화면을 기준으로 잡는다 + 컷 시작에 걸친 note 는 남는다."""
+    monkeypatch.setattr(pdv, "PREVIEW_WIDTH", 320)
+    _synthetic_clip(tmp_path / "clip", [])
+    (tmp_path / "clip" / "notes.json").write_text(json.dumps([
+        # 0.1s 에는 흰 상자가 x=0.8 부근, 그 뒤 옮겨가 1.5s 이후 그 자리는 배경 -> 박스 안 그림
+        {"t": 1.2, "t_ref": 0.1, "title": "점유", "lines": ["x"],
+         "boxes": [{"left": 0, "top": 60, "right": 40, "bottom": 100}]},
+    ]), encoding="utf-8")
+    drawn, panels = [], []
+    monkeypatch.setattr(pdv, "draw_note_boxes", lambda f, rects, *a: drawn.append(rects))
+    monkeypatch.setattr(pdv, "draw_note_panel", lambda *a: panels.append(1))
+    pdv.main([{"clip": str(tmp_path / "clip"), "zoom": 1.0, "start": 1.5, "end": 3.0}],
+             output=str(tmp_path / "final.mp4"))
+    assert panels and not drawn

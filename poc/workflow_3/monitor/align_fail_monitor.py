@@ -673,6 +673,35 @@ def _should_retry_later(cycle) -> bool:
     return (cycle.outcome_status or "") in _RETRY_LATER_OUTCOME_STATUSES
 
 
+class AlarmHooks:
+    """알람 1건의 경계 통지(시연 녹화용). 기본은 아무것도 안 한다.
+
+    process_fail_rows 가 알람마다 start -> (popup 뒤) popup_shown -> end 를 부른다. end 는
+    try/finally 라 사이클이 예외로 끝나도 불린다(cycle=None). hook 의 예외는 삼킨다 -
+    녹화가 깨져도 보정은 계속돼야 한다. done 이 True 가 되면 monitor_loop 가 끝난다.
+    """
+
+    done = False
+
+    def start(self, eqp_id: str, info: dict, tag: str) -> None:
+        pass
+
+    def popup_shown(self, eqp_id: str) -> None:
+        pass
+
+    def end(self, eqp_id: str, info: dict, cycle) -> None:
+        pass
+
+
+def _call_hook(hooks, name: str, *args) -> None:
+    if hooks is None:
+        return
+    try:
+        getattr(hooks, name)(*args)
+    except Exception as exc:
+        print(f"[WARNING] 알람 hook {name} 예외(사이클은 계속): {type(exc).__name__}: {exc}")
+
+
 def process_fail_rows(
     fails,
     active_tools: set[str],
@@ -680,6 +709,7 @@ def process_fail_rows(
     occupied_cooldown: dict | None = None,
     view_only_attempts: dict | None = None,
     episodes=None,
+    alarm_hooks: AlarmHooks | None = None,
 ) -> int:
     """EQP_ID 기준 edge-triggered 로 신규 알람마다 사이클을 수행한다.
 
@@ -744,7 +774,13 @@ def process_fail_rows(
     # 먼저 멈춘 tool 부터 - 사이클이 직렬이라 뒤 순번은 앞 사이클 시간만큼 더 멈춰 있다.
     # UTC9 는 한 피드 안에서 같은 형식이라 문자열 정렬이 시각 순서다.
     for eqp_id in sorted(new_tools, key=lambda e: (by_tool[e]["utc9"], e)):
+        if alarm_hooks is not None and alarm_hooks.done:
+            # 같은 poll 의 나머지 장비는 건드리지 않는다(시연 녹화가 끝났다).
+            print(f"[INFO] 알람 hook 완료 - {eqp_id} 이후 알람은 처리하지 않음")
+            break
         handle = None
+        cycle = None
+        hook_started = False
         take_scope = ExitStack()
         try:
             info = by_tool[eqp_id]
@@ -778,6 +814,9 @@ def process_fail_rows(
                 operation_desc=info["operation_desc"],
                 lot_type_cd=info["lot_type_cd"],
             )
+            # start 보다 먼저 세운다 - start 도중 Ctrl+C 여도 end 가 녹화를 마무리한다.
+            hook_started = alarm_hooks is not None
+            _call_hook(alarm_hooks, "start", eqp_id, info, tag)
             if settings.popup_enabled:
                 notify_align_fail_popup(
                     eqp_id, alarm_time, info["alarm_name"],
@@ -786,6 +825,7 @@ def process_fail_rows(
                     lot_type_cd=info["lot_type_cd"],
                     timeout_sec=settings.popup_timeout_sec,
                 )
+                _call_hook(alarm_hooks, "popup_shown", eqp_id)
 
             # 감지 시점 cube 사전 고지 — 기본 off. 켜면 알람 1건당 cube 가 2회 나간다
             # (여기 + 사이클 종료 후 outcome). 반자동 모드는 결과 알림이 항상 발송되므로
@@ -882,6 +922,8 @@ def process_fail_rows(
                 eqp_id=eqp_id, error=str(exc),
             )
         finally:
+            if hook_started:
+                _call_hook(alarm_hooks, "end", eqp_id, by_tool[eqp_id], cycle)
             take_scope.close()
 
     return newly_handled
@@ -968,8 +1010,12 @@ def _run_rcs_preflight(settings: Workflow3Settings):
         return None
 
 
-def monitor_loop(settings: Workflow3Settings | None = None) -> None:
-    """메인 감지 루프 — poll 주기마다 알람을 조회해 신규 Align Fail 사이클을 돌린다."""
+def monitor_loop(settings: Workflow3Settings | None = None, *,
+                 alarm_hooks: AlarmHooks | None = None) -> None:
+    """메인 감지 루프 — poll 주기마다 알람을 조회해 신규 Align Fail 사이클을 돌린다.
+
+    alarm_hooks: 알람별 경계 통지(시연 녹화 `demo_record_alarm.py`). 기본 None.
+    """
     settings = settings or load_workflow3_settings()
     source = load_alarm_source(settings.alarm_source)
 
@@ -1037,6 +1083,9 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
         if is_aborted():
             print(f"[WARNING] 긴급 해제됨({abort_reason()}) - 감지 루프를 종료합니다.")
             break
+        if alarm_hooks is not None and alarm_hooks.done:
+            print("[INFO] 알람 hook 완료 - 감지 루프를 종료합니다.")
+            break
         try:
             alarms = source.poll()
             fails = source.filter_align_fail(alarms)
@@ -1062,7 +1111,7 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
                 idle_logged = False
                 process_fail_rows(
                     fails, active_tools, settings, occupied_cooldown,
-                    view_only_attempts, episodes=episodes,
+                    view_only_attempts, episodes=episodes, alarm_hooks=alarm_hooks,
                 )
         except KeyboardInterrupt:
             print("\n[INFO] 감지 중단 (Ctrl+C)")
@@ -1120,6 +1169,16 @@ def _apply_live_mode_defaults() -> None:
     print("=" * 70)
 
 
+def seed_main_env() -> None:
+    """__main__ 의 env 시딩(아래 순서 설명). 시연 녹화 진입점도 같은 경로로 뜬다."""
+    from poc.workflow_3.util.env_utils import seed_env_from_constants
+    from poc.workflow_3.workflow_3_config_loader import seed_env
+
+    _apply_live_mode_defaults()
+    seed_env_from_constants(globals(), _CONST_TO_ENV, label="align_fail_monitor 상수")
+    seed_env()
+
+
 if __name__ == "__main__":
     # 세 단계 모두 setdefault 이며 먼저 잡은 쪽이 이긴다. load_workflow3_settings 가
     # env 를 읽기 전에 끝나야 적용된다.
@@ -1131,10 +1190,5 @@ if __name__ == "__main__":
     # 2 가 3 보다 앞서는 이유: 이 파일은 git 에 추적되어 리뷰를 거치지만 3 은 오피스
     # PC 에만 있는 사본이라 무엇이 적혀 있는지 여기서 알 수 없다. 사본이 조용히
     # 덮는 대신, 무시된 값을 seed_env 가 콘솔에 그대로 보고하게 한다.
-    from poc.workflow_3.util.env_utils import seed_env_from_constants
-    from poc.workflow_3.workflow_3_config_loader import seed_env
-
-    _apply_live_mode_defaults()
-    seed_env_from_constants(globals(), _CONST_TO_ENV, label="align_fail_monitor 상수")
-    seed_env()
+    seed_main_env()
     monitor_loop()

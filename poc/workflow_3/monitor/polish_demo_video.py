@@ -12,6 +12,8 @@ stages.json + subtitles.json)다. 아래 SEQUENCE 순서대로 카드와 clip �
   * 자막은 하단 반투명 바에 페이드로, 카드는 어두운 배경의 제목+본문으로 넣는다(한글,
     맑은 고딕). clip/카드 경계는 검은색 페이드.
   * BLUR_REGIONS 로 직원 이름(List 탭 Connection User 열) 같은 영역을 가린다.
+  * notes.json(순찰 판독 결과)이 있으면 판독한 영역에 강조 박스를, 우상단에 "AI 판독" 패널을
+    NOTE_SEC 동안 띄운다. 판독 영역이 확대 화면에 들어가면 카메라도 그쪽으로 간다.
 
 출력은 H.264(yuv420p, faststart) 1920x1080 30fps mp4 - PowerPoint 에 그대로 삽입된다.
 오프라인 전용(Mac/오피스 어디서나). 오래 걸리면 먼저 PREVIEW_WIDTH 로 빠르게 확인한다.
@@ -24,6 +26,7 @@ stages.json + subtitles.json)다. 아래 SEQUENCE 순서대로 카드와 clip �
 import json
 import math
 import sys
+import textwrap
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -40,6 +43,7 @@ from poc.workflow_3.monitor.demo_log_panel import resolve_font  # noqa: E402
 from poc.workflow_3.monitor.screen_video import (  # noqa: E402
     DEMO_ROOT,
     EVENTS_NAME,
+    NOTES_NAME,
     STAGES_NAME,
     SUBTITLES_NAME,
     VIDEO_NAME,
@@ -57,6 +61,14 @@ from poc.workflow_3.monitor.screen_video import (  # noqa: E402
 #         + "subtitles": [(시작, 끝, "문구")]   원본 영상 초 기준. 주면 subtitles.json 대신 쓴다
 #         + "crop": (x0, y0, x1, y1)            화면 비율 0~1 - tool 창만 크게 보이게
 #         + "zoom": 1.0                         이 clip 만 확대 배율(1.0 = 확대 끔)
+#         + "blur": [(x0, y0, x1, y1), ...]     이 clip 만 가림 영역(BLUR_REGIONS 에 더함)
+#
+# clip 폴더 두 종류:
+#   rcs_<tag>            demo_record_rcs.py   stage = login/view_tab/list_tab/visit/in_tool
+#   alarm_<EQP>_<tag>    demo_record_alarm.py stage = alarm/connect_tool/.../correction/teardown
+#     보정이 실패하면 teardown 에 엔지니어 수동 작업이 녹화된다 - 그때는 stage 를 correction 까지만
+#     자르고, "모든 입력은 Agent" 카드가 그 구간에 걸리지 않게 한다.
+# List 탭 Connection User 열에는 직원 이름이 보인다 - "blur" 로 가린다(판독 패널은 이름을 안 싣는다).
 # ===========================================================================
 
 SEQUENCE = [
@@ -64,8 +76,10 @@ SEQUENCE = [
      "body": "이 영상의 모든 키보드·마우스 입력은 사람이 아니라\nAgent가 직접 수행합니다", "sec": 4.0},
     {"card": "Align Fail 자동 대응", "body": "(배경 설명을 여기에 적는다)", "sec": 4.0},
     {"clip": "rcs_", "stage": ["login", "view_tab"]},
-    {"card": "장비 원격 조작", "body": "(설명)", "sec": 4.0},
+    {"card": "AI 순찰", "body": "화면을 읽고 판단해 장비를 오갑니다", "sec": 4.0},
     {"clip": "rcs_", "stage": "visit"},
+    {"card": "Align Fail 알람 대응", "body": "알람 발생부터 보정까지 사람 없이 진행됩니다", "sec": 4.0},
+    {"clip": "alarm_", "stage": ["alarm", "correction"]},
 ]
 OUTPUT = ""               # 비우면 _demo/final_<시각>.mp4
 OUT_SIZE = (1920, 1080)   # PPT 16:9
@@ -84,6 +98,11 @@ SHOT_GAP_SEC = 10.0       # 이 간격 안에 이어지는 클릭은 한 샷(확
 SHOT_MARGIN = 0.12        # 묶인 클릭들이 확대 화면 가장자리에서 떨어질 여백(화면 비율)
 CAMERA_TAU_SEC = 0.35     # 카메라가 따라가는 속도(작을수록 빠름)
 BLUR_REGIONS = []         # 전 clip 공통 가림 영역 [(x0, y0, x1, y1), ...] 화면 비율 0~1
+NOTE_SEC = 3.5            # "AI 판독" 패널/강조 박스를 띄우는 시간
+NOTE_FOCUS = 1            # 판독 영역으로 카메라 확대(영역이 확대 화면에 들어갈 때만)
+NOTE_BOX_CHANGE = 18.0    # 판독 영역 화면이 이만큼(평균 밝기차) 바뀌면 강조 박스를 거둔다
+NOTE_WRAP = 24            # 패널 내용 한 줄 최대 글자 수
+NOTE_IMAGE_WIDTH = 0.24   # 근거 정지화면(보정 매칭 overlay) 폭, 출력 폭 대비
 
 ACCENT = (66, 133, 244)   # 클릭 원/카드 강조선 (RGB)
 SUBTITLE_FADE_SEC = 0.3
@@ -168,6 +187,43 @@ def camera_target(t: float, shots: list, home: tuple, zoom: float) -> tuple[floa
         return (1.0, home[0], home[1])
     _, _, x, y = max(active)
     return (zoom, x, y)
+
+
+def note_focus_points(notes: list, base: tuple, zoom: float, margin: float) -> list[tuple]:
+    """note 의 박스 합집합 중심을 샷 계획용 (t, x, y) 로. 확대 화면에 안 들어가면 뺀다.
+
+    점유 판독은 MC ID(왼쪽 끝)와 Connection User(오른쪽 끝) 두 셀이라 합집합이 화면 폭에
+    가깝다 - 그 중심으로 확대하면 정작 읽은 두 셀이 잘린다.
+    """
+    if zoom <= 1.0:
+        return []
+    view_w, view_h = base[2] / zoom * (1 - 2 * margin), base[3] / zoom * (1 - 2 * margin)
+    points = []
+    for note in notes:
+        rects = note["rects"]
+        if not rects:
+            continue
+        x0, y0 = min(r[0] for r in rects), min(r[1] for r in rects)
+        x1, y1 = max(r[2] for r in rects), max(r[3] for r in rects)
+        if x1 - x0 <= view_w and y1 - y0 <= view_h:
+            points.append((note["t"], (x0 + x1) / 2, (y0 + y1) / 2))
+    return points
+
+
+def camera_goal(t: float, priority: list, shots: list, home: tuple, zoom: float) -> tuple:
+    """판독 초점 샷(priority)이 걸려 있으면 그것, 아니면 클릭 샷. 둘을 한 샷으로 묶으면
+    판독 박스가 클릭 쪽으로 끌려가 잘린다(Codex 리뷰)."""
+    live = [shot for shot in priority if shot[0] <= t <= shot[1]]
+    return camera_target(t, live if live else shots, home, zoom)
+
+
+def active_note(t: float, notes: list, sec: float):
+    """t 에 떠 있는 note(겹치면 나중 것)와 그 fade level. 없으면 (None, 0)."""
+    live = [n for n in notes if n["t"] <= t < n["t"] + sec]
+    if not live:
+        return None, 0.0
+    note = max(live, key=lambda n: n["t"])
+    return note, fade_level(t, note["t"], note["t"] + sec, SUBTITLE_FADE_SEC)
 
 
 def step_camera(cam: tuple, target: tuple, dt: float, tau: float) -> tuple:
@@ -282,6 +338,101 @@ def draw_subtitle(frame: np.ndarray, text: str, level: float) -> None:
     overlay_rgba(frame, patch, (w - patch.shape[1]) // 2, int(h * 0.9) - patch.shape[0], level)
 
 
+def _rect_pixels(frame: np.ndarray, rect) -> np.ndarray:
+    x0, y0, x1, y1 = (max(0, int(v)) for v in rect)
+    return frame[y0:y1, x0:x1]
+
+
+def capture_note_refs(frame: np.ndarray, t: float, notes: list, state: dict) -> None:
+    """note 의 기준 화면(t_ref, 없으면 t 시각의 그 영역)을 잡아 둔다. 매 프레임 부른다(잘린 프레임도)."""
+    for note in notes:
+        if note["rects"] and note["t"] not in state and t >= note.get("t_ref", note["t"]):
+            state[note["t"]] = [_rect_pixels(frame, rect).copy() for rect in note["rects"]]
+            state[(note["t"], "gone")] = set()
+
+
+def visible_note_rects(frame: np.ndarray, note: dict, state: dict) -> list:
+    """판독한 화면이 아직 그대로인 rect 만. 한 번 바뀌면(창이 덮으면) 그 note 동안 다시 안 그린다.
+
+    note 는 판독이 끝난 뒤에 도착한다 - 점유 판독 note 는 더블클릭 뒤라, 그 사이 tool 창이
+    List 를 덮으면 박스가 엉뚱한 화면 위에 뜬다(Codex 리뷰). 그래서 기준은 t_ref(판독 대상이
+    확실히 보이던 시각)의 그 영역이다. t_ref 가 없으면 note 첫 프레임.
+    """
+    key = note["t"]
+    if key not in state:
+        capture_note_refs(frame, key, [note], state)
+    gone = state[(key, "gone")]
+    kept = []
+    for index, (rect, ref) in enumerate(zip(note["rects"], state[key])):
+        now = _rect_pixels(frame, rect)
+        if index in gone or now.shape != ref.shape or ref.size == 0:
+            continue
+        if float(cv2.absdiff(now, ref).mean()) > NOTE_BOX_CHANGE:
+            gone.add(index)
+            continue
+        kept.append(rect)
+    return kept
+
+
+def draw_note_boxes(frame: np.ndarray, rects: list, level: float, unit: float) -> None:
+    """판독한 영역 강조 사각형(원본 좌표, 확대 전에 그린다)."""
+    thick = max(2, round(3 * unit))
+    for x0, y0, x1, y1 in rects:
+        pad = thick * 2
+        ax, ay = max(0, int(x0) - pad), max(0, int(y0) - pad)
+        roi = frame[ay:int(y1) + pad, ax:int(x1) + pad]
+        if roi.size == 0:
+            continue
+        box = roi.copy()
+        cv2.rectangle(box, (int(x0) - ax - thick, int(y0) - ay - thick),
+                      (int(x1) - ax + thick, int(y1) - ay + thick), ACCENT, thick, cv2.LINE_AA)
+        cv2.addWeighted(box, level, roi, 1.0 - level, 0, dst=roi)
+
+
+@lru_cache(maxsize=32)
+def note_patch(title: str, lines: tuple, width: int, image_path: str = "") -> np.ndarray:
+    """"AI 판독" 패널(RGBA): 반투명 카드 + 강조 막대 + 머리말/제목/내용 (+ 근거 정지화면)."""
+    head_font, title_font = _font(max(11, width // 110), True), _font(max(14, width // 64), True)
+    body_font = _font(max(12, width // 76), False)
+    probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    rows = [("AI 판독", head_font, (*ACCENT, 255)), (title, title_font, (255, 255, 255, 255))]
+    rows += [(part, body_font, (214, 220, 230, 255))
+             for line in lines for part in (textwrap.wrap(line, NOTE_WRAP) or [""])]
+    sizes = [probe.textbbox((0, 0), text, font=font) for text, font, _ in rows]
+    gap = body_font.size // 2
+    pad, bar = title_font.size, max(4, width // 320)
+    thumb = None
+    if image_path:
+        try:
+            with Image.open(image_path) as source:
+                thumb = source.convert("RGBA")
+            thumb.thumbnail((int(width * NOTE_IMAGE_WIDTH), int(width * NOTE_IMAGE_WIDTH)))
+        except OSError as exc:
+            print(f"[WARNING] 판독 근거 이미지 열기 실패(패널은 글자만): {exc}")
+    inner_w = max([b[2] - b[0] for b in sizes] + ([thumb.width] if thumb else []))
+    inner_h = sum(b[3] - b[1] for b in sizes) + gap * (len(rows) - 1)
+    inner_h += thumb.height + pad // 2 if thumb else 0
+    image = Image.new("RGBA", (inner_w + pad * 2 + bar, inner_h + pad * 2), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((0, 0, image.width - 1, image.height - 1), radius=pad // 2,
+                           fill=(10, 12, 16, 200))
+    draw.rectangle((0, pad // 2, bar - 1, image.height - pad // 2), fill=(*ACCENT, 255))
+    y = pad
+    for (text, font, color), box in zip(rows, sizes):
+        draw.text((bar + pad - box[0], y - box[1]), text, font=font, fill=color)
+        y += box[3] - box[1] + gap
+    if thumb:
+        image.alpha_composite(thumb, (bar + pad, y - gap + pad // 2))
+    return np.asarray(image)
+
+
+def draw_note_panel(frame: np.ndarray, note: dict, level: float) -> None:
+    h, w = frame.shape[:2]
+    patch = note_patch(note["title"], tuple(note["lines"]), w, note.get("image_path", ""))
+    margin = w // 40
+    overlay_rgba(frame, patch, w - patch.shape[1] - margin, margin, level)
+
+
 def render_card(title: str, body: str, size: tuple) -> np.ndarray:
     """설명 카드 한 장(RGB)."""
     w, h = size
@@ -364,6 +515,22 @@ def write_clip(writer, item: dict, size: tuple, fps: int) -> int:
             clicks.append((event["t"], *point))
     # 화면이 안 바뀌는 클릭(같은 자리 반복)과 휠도 '움직임' 이다 - 정지 구간으로 자르지 않는다.
     activity = sorted(event["t"] for event in info.get("events", []))
+    notes = []
+    for note in _read_json(clip_dir / NOTES_NAME, []):
+        if note["t"] + NOTE_SEC < start or note["t"] > end:  # 컷 시작에 걸친 note 는 남긴다
+            continue
+        rects = []
+        for box in note.get("boxes", []):
+            a, b = to_px(box["left"], box["top"]), to_px(box["right"], box["bottom"])
+            if a and b:
+                rects.append((a[0], a[1], b[0], b[1]))
+        image = note.get("image", "")
+        notes.append({**note, "rects": rects,
+                      "image_path": str(clip_dir / image) if image else ""})
+    if notes and "end" not in item:
+        # 구간 끝에 뜬 판독 패널(보정 결과 등)이 읽히기 전에 잘리지 않게 끝을 늘린다.
+        end = min(float(meta["duration"]),
+                  max(end, max(n["t"] for n in notes) + NOTE_SEC + FADE_SEC))
     cursor = info.get("cursor", [])
     subtitles = item.get("subtitles")
     if subtitles is None:
@@ -374,10 +541,15 @@ def write_clip(writer, item: dict, size: tuple, fps: int) -> int:
     base = base_rect(item.get("crop"), fw, fh, out_w / out_h)
     home = (base[0] + base[2] / 2, base[1] + base[3] / 2)
     zoom = float(item.get("zoom", ZOOM))
+    blur = list(BLUR_REGIONS) + list(item.get("blur", []))
+    focus = note_focus_points(notes, base, zoom, SHOT_MARGIN) if NOTE_FOCUS else []
+    note_shots = plan_shots(focus, base, zoom, gap=0.0, margin=SHOT_MARGIN,
+                            lead=ZOOM_LEAD_SEC, hold=NOTE_SEC)
     shots = plan_shots(clicks, base, zoom, gap=SHOT_GAP_SEC, margin=SHOT_MARGIN,
                        lead=ZOOM_LEAD_SEC, hold=ZOOM_HOLD_SEC)
     unit = fh / 1080 * 1.3
     cam = (1.0, *home)
+    box_state = {}
     prev_small, prev_cur, last_change = None, None, start
     written = cut = 0
     try:
@@ -386,10 +558,15 @@ def write_clip(writer, item: dict, size: tuple, fps: int) -> int:
             if t > end:
                 break
             cur = to_px(*cursor[min(i, len(cursor) - 1)]) if cursor else None
-            target = camera_target(t, shots, home, zoom)
+            target = camera_goal(t, note_shots, shots, home, zoom)
             new_cam = step_camera(cam, target, 1.0 / src_fps, CAMERA_TAU_SEC)
             moving = abs(new_cam[0] - cam[0]) > 1e-3 or math.dist(new_cam[1:], cam[1:]) > 0.5
             cam = new_cam
+            # 판독 기준 화면은 컷 시작 전에 있을 수 있다 - 그 프레임은 기준을 잡으려고만 푼다.
+            if any(n["rects"] and n["t"] not in box_state and t >= n.get("t_ref", n["t"])
+                   for n in notes):
+                capture_note_refs(np.frombuffer(raw, np.uint8).reshape(fh, fw, 3), t, notes,
+                                  box_state)
             if t < start:
                 continue
 
@@ -403,13 +580,18 @@ def write_clip(writer, item: dict, size: tuple, fps: int) -> int:
             if changed:
                 last_change = t
             text = next((s[2] for s in subtitles if s[0] <= t < s[1]), "")
+            note, note_level = active_note(t, notes, NOTE_SEC)
+            # 가림(blur) 전에 비교한다 - 기준 화면도 가림 전이다.
+            note_rects = visible_note_rects(frame, note, box_state) if note and note["rects"] else []
             edge = t - start < FADE_SEC or end - t < FADE_SEC
             if (IDLE_MAX_SEC > 0 and t - last_change > IDLE_MAX_SEC
-                    and not text and not moving and not edge):
+                    and not text and note is None and not moving and not edge):
                 cut += 1
                 continue
 
-            blur_regions(frame, BLUR_REGIONS)
+            blur_regions(frame, blur)
+            if note_rects:
+                draw_note_boxes(frame, note_rects, note_level, unit)
             if CLICK_RING:
                 draw_click_rings(frame, t, clicks, unit)
             if CURSOR and cur is not None:
@@ -434,6 +616,8 @@ def write_clip(writer, item: dict, size: tuple, fps: int) -> int:
                 out[:py0] = 0
                 out[out_h - py0:] = 0
 
+            if note is not None:
+                draw_note_panel(out, note, note_level)
             if text:
                 sub = next(sub for sub in subtitles if sub[0] <= t < sub[1])
                 draw_subtitle(out, text, fade_level(t, sub[0], sub[1], SUBTITLE_FADE_SEC))
@@ -446,7 +630,7 @@ def write_clip(writer, item: dict, size: tuple, fps: int) -> int:
         reader.close()
     print(f"[INFO] clip {clip_dir.name} {item.get('stage', '')}: 원본 {start:.1f}~{end:.1f}s -> "
           f"{written / fps:.1f}s (멈춘 구간 {cut / src_fps:.1f}s 잘라냄, 클릭 {len(clicks)}, "
-          f"확대 {len(shots)}회)")
+          f"확대 {len(shots) + len(note_shots)}회, 판독 {len(notes)})")
     return written
 
 

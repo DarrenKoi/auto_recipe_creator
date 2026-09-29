@@ -123,7 +123,8 @@ DEMO_RCS_TOOL_IDS="MCD019,MCDC10" DEMO_RCS_DWELL_SEC=10 \
 SAFE_MODE=1 uv run python poc/workflow_3/monitor/demonstration_rcs_control.py  # 리허설(클릭 차단)
 
 # workflow_3 — CEO 시연 영상: 위 시연을 30fps 로 녹화(단계 시각/자막 기록) -> 카드+clip 을 이어 PPT 용 mp4
-uv run python poc/workflow_3/monitor/demo_record_rcs.py      # -> align_images/_demo/rcs_<tag>/
+uv run python poc/workflow_3/monitor/demo_record_rcs.py      # -> align_images/_demo/rcs_<tag>/ (순찰: 점유 판독->화면 판독->영어 메모, notes.json)
+uv run python poc/workflow_3/monitor/demo_record_alarm.py    # align_fail_monitor 루프 그대로 + AlarmHooks 로 알람 1건 녹화 -> _demo/alarm_<EQP>_<tag>/
 uv run python poc/workflow_3/monitor/polish_demo_video.py    # 상단 SEQUENCE 로 조립(오프라인, Mac 가능)
 
 # workflow_3 — 녹화 프레임 -> 시연 mp4 (오프라인; Mac/dev PC 에서도 실행 가능)

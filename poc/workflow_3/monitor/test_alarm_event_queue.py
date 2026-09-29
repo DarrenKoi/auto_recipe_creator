@@ -181,3 +181,72 @@ def test_engineer_watch_skipped_only_when_corrected_or_already_cleared():
     assert needs_engineer_watch(_Outcome(ALIGN_FAIL_UNCONFIRMED)) is True
     assert needs_engineer_watch(_Outcome("corrected")) is False
     assert needs_engineer_watch(_Outcome(ALIGN_FAIL_CLEARED)) is False
+
+
+def test_alarm_hooks_wrap_each_alarm_and_survive_hook_and_cycle_errors(monkeypatch):
+    """시연 녹화 hook: 알람마다 start -> end, 사이클이 예외여도 end. hook 예외는 보정을 막지 않는다."""
+    from poc.workflow_3.monitor import align_fail_monitor as afm
+
+    for name in ("append_alarm_record", "append_cycle_manifest",
+                 "send_detection_notify_async", "gather_success_async", "gather_rcp_msr"):
+        monkeypatch.setattr(afm, name, lambda *a, **k: None)
+    calls = []
+
+    class _Hooks(afm.AlarmHooks):
+        def start(self, eqp_id, info, tag):
+            calls.append(("start", eqp_id))
+            raise RuntimeError("recorder boom")
+
+        def end(self, eqp_id, info, cycle):
+            calls.append(("end", eqp_id, cycle is None))
+
+    def _cycle(eqp_id, recipe_id, settings, tag=None, **kwargs):
+        calls.append(("cycle", eqp_id))
+        raise RuntimeError("cycle boom")
+
+    monkeypatch.setattr(afm, "run_alarm_cycle", _cycle)
+    afm.process_fail_rows(_feed(("MCD019", T0)), set(), _settings(), {}, {},
+                          alarm_hooks=_Hooks())
+
+    assert calls == [("start", "MCD019"), ("cycle", "MCD019"), ("end", "MCD019", True)]
+
+
+def test_alarm_hooks_stop_within_the_same_poll_and_close_on_interrupt(monkeypatch):
+    """STOP_AFTER 에 닿으면 같은 poll 의 다음 장비를 조작하지 않는다 + start 중 Ctrl+C 여도 end."""
+    import pytest
+
+    from poc.workflow_3.monitor import align_fail_monitor as afm
+    from poc.workflow_3.monitor.cycle import CycleResult
+
+    for name in ("append_alarm_record", "append_cycle_manifest",
+                 "send_detection_notify_async", "gather_success_async", "gather_rcp_msr"):
+        monkeypatch.setattr(afm, name, lambda *a, **k: None)
+    handled, ended = [], []
+
+    class _Once(afm.AlarmHooks):
+        def end(self, eqp_id, info, cycle):
+            ended.append(eqp_id)
+            self.done = True
+
+    def _cycle(eqp_id, recipe_id, settings, tag=None, **kwargs):
+        handled.append(eqp_id)
+        result = CycleResult(eqp_id=eqp_id, recipe_id=recipe_id, tag=tag or "")
+        result.run_status = "completed"
+        return result
+
+    monkeypatch.setattr(afm, "run_alarm_cycle", _cycle)
+    feed = _feed(("MCD019", T0), ("MCDC10", T0 + timedelta(seconds=5)))
+    afm.process_fail_rows(feed, set(), _settings(), {}, {}, alarm_hooks=_Once())
+    assert handled == ["MCD019"] and ended == ["MCD019"]
+
+    class _Interrupted(afm.AlarmHooks):
+        def start(self, eqp_id, info, tag):
+            raise KeyboardInterrupt
+
+        def end(self, eqp_id, info, cycle):
+            ended.append(("end", eqp_id))
+
+    with pytest.raises(KeyboardInterrupt):
+        afm.process_fail_rows(_feed(("MCD513", T0)), set(), _settings(), {}, {},
+                              alarm_hooks=_Interrupted())
+    assert ended[-1] == ("end", "MCD513")

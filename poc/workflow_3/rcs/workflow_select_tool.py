@@ -72,6 +72,10 @@ class ToolSelectionResult:
     selected_attempt: str | None = None
     click_overlay_path: str | None = None
     occupancy: str = "unknown"
+    # 점유 판독이 읽은 셀의 화면 rect {"mc_id"|"connection_user": {left,top,right,bottom}}.
+    # 판정에는 쓰지 않는다 - 시연 영상이 "AI 가 읽은 곳" 을 강조하는 데만 쓴다.
+    occupancy_boxes: dict | None = None
+    occupancy_seen_at: float | None = None  # 판독한 List 화면이 떠 있던 epoch(최대화/스크롤 뒤)
 
 
 @dataclass
@@ -1128,6 +1132,29 @@ def _locate_tool_via_vlm(
     return None, attempt_record
 
 
+def occupancy_screen_boxes(report: dict, to_screen) -> dict | None:
+    """점유 판독이 본 두 셀(MC ID / Connection User)의 화면 rect. 못 만들면 None.
+
+    to_screen(image_point) -> screen point | None. 판정과 무관한 표시용이라 예외를 올리지 않는다.
+    """
+    layout = report.get("layout") or {}
+    columns = layout.get("columns") or {}
+    boxes = {}
+    try:
+        for name in ("mc_id", "connection_user"):
+            span = columns.get(name)
+            if not span:
+                continue
+            top_left = to_screen({"x": span[0], "y": layout["row_top"]})
+            bottom_right = to_screen({"x": span[1] - 1, "y": layout["row_bottom"]})
+            if top_left and bottom_right:
+                boxes[name] = {"left": top_left["x"], "top": top_left["y"],
+                               "right": bottom_right["x"], "bottom": bottom_right["y"]}
+    except Exception as exc:
+        rcs_print(f"[WARNING] 점유 셀 화면 좌표 변환 실패(판정 무관): {exc}")
+    return boxes or None
+
+
 def select_tool_from_main_window(
     main_window,
     window_title: str,
@@ -1292,18 +1319,29 @@ def select_tool_from_main_window(
 
     # 최대화/스크롤 뒤 로케이터와 같은 이미지로 판독한다. 점유 확인용 클릭 금지.
     occupancy = "unknown"
+    occupancy_boxes = None
+    occupancy_seen_at = None
     if require_occupancy_check:
         from poc.workflow_3.check_tool_occupancy import check_tool_occupancy
 
-        occupancy = check_tool_occupancy(
+        # main_image 캡처 뒤로는 클릭이 없다 - 지금 화면이 곧 판독한 화면이다.
+        occupancy_seen_at = time.time()
+        report = check_tool_occupancy(
             main_image, normalized_tool_name, row_point=full_image_point,
-        )["occupancy"]
+        )
+        occupancy = report["occupancy"]
+        occupancy_boxes = occupancy_screen_boxes(
+            report,
+            lambda point: image_point_to_screen(main_window, point, image_size=main_image.size),
+        )
         if occupancy != "free":
             return ToolSelectionResult(
                 exit_code="rcs_occupied" if occupancy == "occupied_by_other" else "rcs_occupancy_unknown",
                 target_tool_name=normalized_tool_name,
                 tool_point_on_full_image=full_image_point,
                 occupancy=occupancy,
+                occupancy_boxes=occupancy_boxes,
+                occupancy_seen_at=occupancy_seen_at,
             )
 
     click_overlay_path = _save_tool_click_overlay(
@@ -1425,6 +1463,8 @@ def select_tool_from_main_window(
         tool_point_on_screen=screen_point,
         double_clicked=double_clicked,
         occupancy=occupancy,
+        occupancy_boxes=occupancy_boxes,
+        occupancy_seen_at=occupancy_seen_at,
         selected_attempt=detection_source,
         click_overlay_path=click_overlay_path,
     )

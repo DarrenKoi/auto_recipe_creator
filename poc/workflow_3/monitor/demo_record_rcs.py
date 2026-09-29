@@ -47,7 +47,7 @@ from poc.workflow_3.util.time_utils import make_timestamp_tag  # noqa: E402
 # 단계별 자막. 빈 문자열이면 그 단계는 자막 없음. {tool} 은 장비 ID 로 바뀐다.
 # 여기서 못 정한 문구는 나중에 polish_demo_video.py 의 SEQUENCE 에서 덮어쓸 수 있다.
 STAGE_SUBTITLES = {
-    demo.STAGE_LOGIN: "",
+    demo.STAGE_LOGIN: "AI Agent가 할당받은 ID/PW로 직접 접속을 시도합니다.",
     demo.STAGE_VIEW_TAB: ("현재는 인라인 구성원이 View 탭의 실시간 장비 화면을 24시간 지켜보고 있습니다.\n"
                           "AI Agent는 Smart Alarm으로 이상을 즉시 감지해 이 역할을 대신할 수 있습니다."),
     demo.STAGE_LIST_TAB: "",

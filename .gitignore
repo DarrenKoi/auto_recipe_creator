@@ -104,6 +104,11 @@ poc/workflow_2/golden_eval_config.py
 # workflow_3 monitor local config (edit-often scratch; template = *.example.py)
 poc/workflow_3/workflow_3_config.py
 
+# 오피스 LLM 작업 공간 - 오피스 PC 에만 산다(오피스는 push 불가). git 은 지침 파일만 배달한다
+poc/workflow_3_office/*
+!poc/workflow_3_office/__init__.py
+!poc/workflow_3_office/AGENTS.md
+
 # session scratch (humanize-korean pipeline output, etc.)
 _workspace/
 

@@ -12,3 +12,5 @@ Codex / opencode 등 이 파일만 자동 로드하는 에이전트도 같은 �
 - 전체 테스트: `uv run pytest poc/workflow_3 poc/workflow_4` (Mac 에서 VLM/오피스 없이 돈다).
 - 한국어 docstring, `[INFO]`/`[WARNING]`/`[ERROR]` print 로깅, `__future__` import 금지,
   `print()` 문자열에 em-dash 금지(오피스 콘솔 cp949).
+- **오피스 PC 에서 도는 LLM 은 `poc/workflow_3_office/` 안에만 쓴다** - 규칙은
+  `poc/workflow_3_office/AGENTS.md` (오피스는 push 불가라 추적 파일을 고치면 pull 이 깨진다).

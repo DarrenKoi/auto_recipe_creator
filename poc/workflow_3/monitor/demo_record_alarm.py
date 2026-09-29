@@ -150,6 +150,7 @@ class RecordingHooks(afm.AlarmHooks):
         self.rehearsal = rehearsal
         self.recorded = 0
         self.done = False
+        self.subtitles = STAGE_SUBTITLES  # 진입점이 장면에 맞게 바꿔 끼운다(장비 지정 편)
         self._reset()
 
     def _reset(self):
@@ -209,7 +210,7 @@ class RecordingHooks(afm.AlarmHooks):
             self.notes.sort(key=lambda n: n["t"])
             # 사이드카를 녹화 정지보다 먼저 쓴다 - 정지 중 오류가 나도 남는다.
             for name, data in ((STAGES_NAME, stages), (NOTES_NAME, self.notes),
-                               (SUBTITLES_NAME, stage_subtitles(stages, STAGE_SUBTITLES))):
+                               (SUBTITLES_NAME, stage_subtitles(stages, self.subtitles))):
                 (self.out_dir / name).write_text(json.dumps(data, ensure_ascii=False, indent=2),
                                                  encoding="utf-8")
         finally:

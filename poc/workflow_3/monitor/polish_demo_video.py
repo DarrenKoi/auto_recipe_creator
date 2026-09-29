@@ -637,10 +637,28 @@ def write_clip(writer, item: dict, size: tuple, fps: int) -> int:
     return written
 
 
+def drop_missing_clips(sequence: list) -> list:
+    """녹화가 아직 없는 clip 은 빼고, 바로 앞의 소개 카드도 같이 뺀다(내용 없는 카드 방지)."""
+    kept = []
+    for item in sequence:
+        if "clip" in item:
+            try:
+                resolve_clip_dir(item["clip"])
+            except FileNotFoundError as exc:
+                print(f"[WARNING] {exc} - 이 clip 과 바로 앞 카드를 빼고 조립합니다")
+                if kept and "card" in kept[-1]:
+                    kept.pop()
+                continue
+        kept.append(item)
+    if not any("clip" in item for item in kept):
+        raise FileNotFoundError(f"조립할 clip 이 하나도 없습니다 ({DEMO_ROOT})")
+    return kept
+
+
 def main(sequence=None, output: str = "") -> str:
     import imageio_ffmpeg
 
-    sequence = SEQUENCE if sequence is None else sequence
+    sequence = drop_missing_clips(SEQUENCE if sequence is None else sequence)
     size = OUT_SIZE
     if PREVIEW_WIDTH:
         size = (PREVIEW_WIDTH - PREVIEW_WIDTH % 2,

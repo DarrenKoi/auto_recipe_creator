@@ -386,3 +386,13 @@ def test_two_line_subtitle_renders():
     """여러 줄 자막은 Pillow 가 실수 bbox 를 줘서 Image.new 가 깨졌다(View 탭 두 줄 자막)."""
     patch = pdv.subtitle_patch("첫 줄 설명입니다.\n둘째 줄 설명입니다.", 1920)
     assert patch.shape[0] > pdv.subtitle_patch("한 줄", 1920).shape[0] * 1.5
+
+
+def test_missing_clip_dropped_with_its_intro_card(tmp_path, monkeypatch):
+    monkeypatch.setattr(pdv, "DEMO_ROOT", tmp_path)
+    (tmp_path / "rcs_1").mkdir()
+    (tmp_path / "rcs_1" / pdv.VIDEO_NAME).write_bytes(b"")
+    seq = [{"card": "A"}, {"clip": "rcs_"}, {"card": "B"}, {"clip": "alarm_"}]
+    assert pdv.drop_missing_clips(seq) == seq[:2]
+    with pytest.raises(FileNotFoundError):
+        pdv.drop_missing_clips([{"card": "B"}, {"clip": "alarm_"}])

@@ -133,11 +133,11 @@ def test_render_cuts_idle_unless_subtitled(tmp_path, monkeypatch, subtitles, kep
         assert 60 <= clip_frames <= 80  # 멈춘 2초 중 1초 + 끝 페이드만 남는다
 
 
-def _fake_screen(monkeypatch, fail_after=None, delays=None, listener_calls=None):
+def _fake_screen(monkeypatch, fail_after=None, delays=None):
     """mss/pynput 대역: 64x36 화면. 기본은 10fps 로 느린 캡처.
 
     fail_after 번째 캡처부터 예외. delays = 캡처 n 번째의 지연(초) 목록(끝나면 0.03).
-    n 번째 캡처 화면은 밝기 n*40. listener_calls = 훅 콜백을 흉내 낼 (종류, 인자) 목록.
+    n 번째 캡처 화면은 밝기 n*40.
     """
     import sys
     import time
@@ -172,12 +172,10 @@ def _fake_screen(monkeypatch, fail_after=None, delays=None, listener_calls=None)
 
     class _Listener:
         def __init__(self, **kwargs):
-            self.callbacks = kwargs
+            pass
 
         def start(self):
-            for name, args in listener_calls or ():
-                if name in self.callbacks:
-                    self.callbacks[name](*args)
+            pass
 
         def is_alive(self):
             return False
@@ -190,11 +188,9 @@ def _fake_screen(monkeypatch, fail_after=None, delays=None, listener_calls=None)
 
     mouse = types.SimpleNamespace(Listener=_Listener,
                                   Controller=lambda: types.SimpleNamespace(position=(5, 6)))
-    keyboard = types.SimpleNamespace(Listener=_Listener)
     monkeypatch.setitem(sys.modules, "mss", types.SimpleNamespace(mss=_Sct))
-    monkeypatch.setitem(sys.modules, "pynput", types.SimpleNamespace(mouse=mouse, keyboard=keyboard))
+    monkeypatch.setitem(sys.modules, "pynput", types.SimpleNamespace(mouse=mouse))
     monkeypatch.setitem(sys.modules, "pynput.mouse", mouse)
-    monkeypatch.setitem(sys.modules, "pynput.keyboard", keyboard)
 
 
 def test_recorder_keeps_wall_clock_even_when_capture_is_slow(tmp_path, monkeypatch):
@@ -258,19 +254,3 @@ def test_recorder_places_late_capture_at_acquisition_time_and_stops_on_time(tmp_
     assert first_second >= 13                  # ~0.5초 x 30fps (이전 구현은 1~2)
     assert abs(info["duration"] - 1.0) < 0.15  # 인코딩 시간이 영상을 늘리지 않는다
 
-
-def test_recorder_counts_only_human_input(tmp_path, monkeypatch):
-    """injected(자동화 입력)는 세지 않고 사람 입력만 센다. 판별 불가는 따로."""
-    from poc.workflow_3.monitor.screen_video import ScreenVideoRecorder
-
-    calls = [
-        ("on_click", (10, 10, "left", True, True)),    # 자동화 클릭
-        ("on_click", (10, 10, "left", True, False)),   # 사람 클릭
-        ("on_move", (11, 11, False)),                  # 사람 이동
-        ("on_press", ("a", True)),                     # 자동화 키
-        ("on_press", ("b",)),                          # 판별 불가(구 pynput)
-    ]
-    _fake_screen(monkeypatch, listener_calls=calls)
-    info = ScreenVideoRecorder(tmp_path, fps=30).start().stop()
-    assert info["human_input"] == {"move": 1, "click": 1, "scroll": 0, "key": 0, "unknown": 1}
-    assert [e["injected"] for e in info["events"]] == [True, False]

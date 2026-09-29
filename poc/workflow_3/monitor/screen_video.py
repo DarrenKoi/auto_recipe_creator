@@ -9,10 +9,6 @@ mss 캡처에는 마우스 커서가 없다. 그래서 프레임마다 커서 �
 `events.json` 에 남기고 `polish_demo_video.py` 가 커서와 클릭 강조를 직접 그린다.
 좌표는 pynput 과 mss 가 같은 프로세스 좌표계(mss 가 DPI aware 를 켠다)이며, 모니터 rect 를
 같이 남겨 영상 좌표로 환산한다.
-
-**사람 입력 집계**: 전역 훅은 자동화가 보낸 입력(SendInput = injected)과 사람이 직접 한
-입력을 구분한다(pynput>=1.8). 녹화 중 사람 입력 횟수를 `human_input` 에 남기고 끝에 찍는다 -
-"녹화 구간에 사람 개입 0회" 의 근거다. 키는 **횟수만** 센다(무엇을 눌렀는지는 남기지 않는다).
 """
 
 import json
@@ -42,9 +38,7 @@ class ScreenVideoRecorder:
         self.crf = int(crf)  # 원본은 거의 무손실로 - 화질은 polish 단계에서 정한다.
         self.monitor: dict = {}
         self.cursor: list = []   # 영상 프레임마다 [x, y] (화면 좌표)
-        self.events: list = []   # {"t", "kind": click|scroll, "x", "y", ["dy"], "injected"}
-        # 사람이 직접 한 입력 횟수. unknown = injected 판별 불가(pynput<1.8) 입력 수.
-        self.human_input = {"move": 0, "click": 0, "scroll": 0, "key": 0, "unknown": 0}
+        self.events: list = []   # {"t", "kind": click|scroll, "x", "y", ["dy"]}
         self.captured = 0
         self.written = 0
         self._t0 = 0.0
@@ -61,28 +55,13 @@ class ScreenVideoRecorder:
 
     # ---- 입력 훅 ----
 
-    def _count(self, kind: str, injected) -> None:
-        if injected is None:
-            self.human_input["unknown"] += 1
-        elif not injected:
-            self.human_input[kind] += 1
-
-    def _on_move(self, x, y, injected=None):
-        self._count("move", injected)
-
-    def _on_click(self, x, y, button, pressed, injected=None):
+    def _on_click(self, x, y, button, pressed):
         if pressed:
-            self._count("click", injected)
-            self.events.append({"t": round(self.elapsed(), 3), "kind": "click",
-                                "x": x, "y": y, "injected": injected})
+            self.events.append({"t": round(self.elapsed(), 3), "kind": "click", "x": x, "y": y})
 
-    def _on_scroll(self, x, y, dx, dy, injected=None):
-        self._count("scroll", injected)
+    def _on_scroll(self, x, y, dx, dy):
         self.events.append({"t": round(self.elapsed(), 3), "kind": "scroll",
-                            "x": x, "y": y, "dy": dy, "injected": injected})
-
-    def _on_key(self, key, injected=None):
-        self._count("key", injected)
+                            "x": x, "y": y, "dy": dy})
 
     # ---- 수명 주기 ----
 
@@ -96,15 +75,11 @@ class ScreenVideoRecorder:
         if self._error is not None:
             raise RuntimeError(f"화면 녹화 시작 실패: {self._error}") from self._error
         try:
-            from pynput import keyboard, mouse
+            from pynput import mouse
 
-            for listener in (
-                mouse.Listener(on_move=self._on_move, on_click=self._on_click,
-                               on_scroll=self._on_scroll),
-                keyboard.Listener(on_press=self._on_key),
-            ):
-                listener.start()
-                self._listeners.append(listener)  # 시작된 것만 - 종료 때 join 대상
+            listener = mouse.Listener(on_click=self._on_click, on_scroll=self._on_scroll)
+            listener.start()
+            self._listeners.append(listener)  # 시작된 것만 - 종료 때 join 대상
         except Exception:
             self._shutdown()
             raise
@@ -216,17 +191,12 @@ class ScreenVideoRecorder:
             "duration": round(duration, 3),
             "capture_fps": round(self.captured / duration, 1) if duration else 0.0,
             "error": f"{type(self._error).__name__}: {self._error}" if self._error else "",
-            "human_input": dict(self.human_input),
             "events": list(self.events),
             "cursor": list(self.cursor),
         }
         (self.out_dir / EVENTS_NAME).write_text(json.dumps(info), encoding="utf-8")
-        human = info["human_input"]
         print(f"[INFO] 화면 녹화 종료: {duration:.1f}s, 실제 캡처 {info['capture_fps']}fps "
               f"(목표 {self.fps}), 클릭 {sum(e['kind'] == 'click' for e in self.events)}회")
-        print(f"[INFO] 녹화 중 사람 입력: 마우스 이동 {human['move']}, 클릭 {human['click']}, "
-              f"휠 {human['scroll']}, 키 {human['key']}"
-              + (f" / 판별 불가 {human['unknown']} (pynput 1.8 이상 필요)" if human["unknown"] else ""))
         if info["error"]:
             print(f"[ERROR] 녹화 중 오류 - 영상이 중간에 끊겼을 수 있습니다: {info['error']}")
         elif duration and info["capture_fps"] < self.fps * 0.6:

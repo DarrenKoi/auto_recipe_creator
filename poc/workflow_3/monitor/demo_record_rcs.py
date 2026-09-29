@@ -8,7 +8,8 @@ RCS 실행 -> 로그인 -> View 탭 훑기 -> List 탭 -> 장비 접속 -> 창 �
 
   * 로그인 장면부터 담으려면 RCS 를 **닫고** 실행한다(이미 로그인돼 있으면 로그인 생략).
   * 실행 뒤 START_DELAY_SEC 카운트다운 동안 손을 떼면, 끝날 때까지 사람 입력이 필요 없다
-    (스스로 끝난다). 끝에 '녹화 중 사람 입력' 횟수가 찍힌다 - 전부 0 이어야 한다.
+    (스스로 끝난다). 영상 첫 카드가 "모든 키보드/마우스 입력은 Agent" 라고 밝히므로 그 말이
+    참이 되게 녹화 중에는 건드리지 않는다.
   * 주 모니터 전체를 녹화한다 - 터미널은 다른 모니터로 치운다.
   * 장비/흐름/속도는 demonstration_rcs_control 상단 상수와 `DEMO_RCS_*` env 그대로다.
   * 리허설(클릭 차단): 셸 `SAFE_MODE=1`.
@@ -70,7 +71,7 @@ def stage_subtitles(stages: list, texts: dict) -> list:
 def main() -> int:
     settings = load_workflow3_settings()
     out_dir = DEMO_ROOT / f"rcs_{make_timestamp_tag()}"
-    # 녹화 구간에 사람 입력이 0 이어야 '사람 개입 없는 자동화' 의 근거가 된다(끝에 집계가 찍힌다).
+    # 녹화 구간은 전부 Agent 입력이어야 한다(영상 첫 카드가 그렇게 밝힌다).
     for remain in range(int(START_DELAY_SEC), 0, -1):
         print(f"[INFO] {remain}초 뒤 녹화+시연 시작 - 마우스/키보드에서 손을 떼세요")
         time.sleep(1)

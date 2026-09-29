@@ -259,12 +259,14 @@ def _print_summary(cycle: CycleResult, take: Path) -> None:
     print("=" * 70)
 
 
-def main(consts: dict | None = None, *, attach_open_tool: bool = True) -> int:
+def main(consts: dict | None = None, *, attach_open_tool: bool = True, alarm_hooks=None) -> int:
     """수동 트리거 1회 실행. 종료 코드: 0=사이클 완주, 1=인자 오류, 2=tool 창 없음 등.
 
     consts: 실행한 진입점의 globals() - 상단 상수 블록을 거기서 읽는다(기본 = 이 파일).
     attach_open_tool: True = 엔지니어가 연 tool 창에 붙는다. False = RCS List 탭에서 접속부터
     한다(semiauto 진입점; 알람 사이클과 같은 RCS 확보 + 점유 게이트 + 더블클릭).
+    alarm_hooks: align_fail_monitor.AlarmHooks - 알람 루프와 같은 자리(start/popup_shown/end)에서
+    부른다(시연 녹화 demo_record_align_correction.py). None 이면 종전과 같다.
     """
     consts = globals() if consts is None else consts
     _apply_live_mode_defaults()
@@ -297,10 +299,12 @@ def main(consts: dict | None = None, *, attach_open_tool: bool = True) -> int:
     # console.log 에 남긴다. run_alarm_cycle 은 같은 폴더로 재진입한다(util/event_dir.py).
     take = take_dir_for(eqp_id, tag)
     with event_scope(take):
-        return _run_manual(eqp_id, recipe_id, _class_name, tag, settings, take, attach_open_tool)
+        return _run_manual(eqp_id, recipe_id, _class_name, tag, settings, take, attach_open_tool,
+                           alarm_hooks)
 
 
-def _run_manual(eqp_id, recipe_id, _class_name, tag, settings, take, attach_open_tool) -> int:
+def _run_manual(eqp_id, recipe_id, _class_name, tag, settings, take, attach_open_tool,
+                alarm_hooks=None) -> int:
     """main 의 본체 - 이벤트 폴더 scope 안에서 불린다."""
 
     print(
@@ -355,6 +359,29 @@ def _run_manual(eqp_id, recipe_id, _class_name, tag, settings, take, attach_open
         operation_desc=info["operation_desc"],
         lot_type_cd=info["lot_type_cd"],
     )
+    cycle = None
+    # 알람 루프와 같은 계약: start 뒤에는 무슨 일이 있어도 end 가 불린다(녹화 마무리).
+    _monitor._call_hook(alarm_hooks, "start", eqp_id, info, tag)
+    try:
+        cycle = _run_cycle(eqp_id, recipe_id, tag, settings, info, attach_open_tool, alarm_hooks)
+    finally:
+        _monitor._call_hook(alarm_hooks, "end", eqp_id, info, cycle)
+
+    if is_aborted():
+        print(f"[WARNING] 사이클 진행 중 긴급 해제됨({abort_reason()}).")
+
+    log_work2_event(
+        component=LOG_COMPONENT, message="manual_trigger_done",
+        level="info", eqp_id=eqp_id, recipe_id=recipe_id,
+        run_status=cycle.run_status, outcome=cycle.outcome_status or "",
+        failed_step=cycle.failed_step or "", failure_class=cycle.failure_class or "",
+    )
+    _print_summary(cycle, take)
+    return EXIT_OK
+
+
+def _run_cycle(eqp_id, recipe_id, tag, settings, info, attach_open_tool, alarm_hooks):
+    """popup -> 사전 고지 -> pre-cycle 데이터 -> 사이클 본체 -> manifest. CycleResult 반환."""
     if settings.popup_enabled:
         notify_align_fail_popup(
             eqp_id, info["alarm_time"], info["alarm_name"],
@@ -363,6 +390,7 @@ def _run_manual(eqp_id, recipe_id, _class_name, tag, settings, take, attach_open
             lot_type_cd=info["lot_type_cd"],
             timeout_sec=settings.popup_timeout_sec,
         )
+        _monitor._call_hook(alarm_hooks, "popup_shown", eqp_id)
     # 사전 큐브 고지 - 모니터의 detection_notify 와 같은 게이트.
     send_detection_notify_async(
         eqp_id, recipe_id,
@@ -376,18 +404,7 @@ def _run_manual(eqp_id, recipe_id, _class_name, tag, settings, take, attach_open
     # 본체. 예외는 run_alarm_cycle 안에서 잡혀 CycleResult.failed_step 으로 남는다.
     cycle = run_alarm_cycle(eqp_id, recipe_id, settings, tag=tag, attach_open_tool=attach_open_tool)
     append_cycle_manifest(info, cycle)
-
-    if is_aborted():
-        print(f"[WARNING] 사이클 진행 중 긴급 해제됨({abort_reason()}).")
-
-    log_work2_event(
-        component=LOG_COMPONENT, message="manual_trigger_done",
-        level="info", eqp_id=eqp_id, recipe_id=recipe_id,
-        run_status=cycle.run_status, outcome=cycle.outcome_status or "",
-        failed_step=cycle.failed_step or "", failure_class=cycle.failure_class or "",
-    )
-    _print_summary(cycle, take)
-    return EXIT_OK
+    return cycle
 
 
 if __name__ == "__main__":

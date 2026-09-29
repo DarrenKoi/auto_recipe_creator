@@ -1908,8 +1908,38 @@ def _apply_demo_mode_defaults() -> None:
     print("=" * 70)
 
 
-def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
-    """시연 시나리오를 1회 재생한다."""
+# 시연 녹화(demo_record_rcs)가 영상 구간을 자르고 자막을 붙이는 단위.
+STAGE_LOGIN = "login"          # RCS 실행 -> 로그인 -> List 탭
+STAGE_VIEW_TAB = "view_tab"    # View 탭 + 휠 훑기
+STAGE_LIST_TAB = "list_tab"    # List 탭 복귀
+STAGE_VISIT = "visit"          # 장비 1대 접속 -> 체류 -> 창 안 조작 -> 닫기 (detail=장비)
+STAGE_IN_TOOL = "in_tool"      # 그중 창 안 조작만 (detail=장비)
+
+
+def _staged(stage: str, fn, stage_fn):
+    """협력자 호출 앞뒤로 stage_fn(stage, "start"|"end", detail) 을 부른다(없으면 fn 그대로).
+
+    detail 은 첫 인자가 장비 ID 인 협력자(visit/in_tool)만 채운다.
+    """
+    if stage_fn is None or fn is None:
+        return fn
+
+    def _wrapped(*args, **kwargs):
+        detail = str(args[0]) if stage in (STAGE_VISIT, STAGE_IN_TOOL) and args else ""
+        stage_fn(stage, "start", detail)
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            stage_fn(stage, "end", detail)
+
+    return _wrapped
+
+
+def main(settings: Workflow3Settings | None = None, *, stage_fn=None) -> DemoRunResult:
+    """시연 시나리오를 1회 재생한다.
+
+    stage_fn(stage, "start"|"end", detail): 단계 경계 통지(시연 녹화용, 기본 없음).
+    """
     settings = settings or load_workflow3_settings()
 
     tool_ids = parse_tool_ids(os.environ.get("DEMO_RCS_TOOL_IDS"), DEFAULT_TOOL_IDS)
@@ -1963,13 +1993,14 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
     print(f"[INFO] 장비별 조작 흐름: {assigned or '-'}")
 
     try:
-        preflight_fn = _build_preflight_fn(settings)
+        preflight_fn = _staged(STAGE_LOGIN, _build_preflight_fn(settings), stage_fn)
         view_fn = (
             _build_view_fn(settings, notches, pause_sec)
             if view_enabled
             else (lambda w, t, b: STATUS_VIEW_SKIPPED)
         )
-        list_tab_fn = _build_list_tab_fn(settings)
+        view_fn = _staged(STAGE_VIEW_TAB, view_fn, stage_fn) if view_enabled else view_fn
+        list_tab_fn = _staged(STAGE_LIST_TAB, _build_list_tab_fn(settings), stage_fn)
         action_fn = (
             _build_action_fn(
                 settings, flow_settle_sec,
@@ -1995,7 +2026,8 @@ def main(settings: Workflow3Settings | None = None) -> DemoRunResult:
             if flow_enabled
             else None
         )
-        visit_fn = _build_visit_fn(settings, dwell_sec, action_fn)
+        action_fn = _staged(STAGE_IN_TOOL, action_fn, stage_fn)
+        visit_fn = _staged(STAGE_VISIT, _build_visit_fn(settings, dwell_sec, action_fn), stage_fn)
     except Exception as exc:
         # 두 원인이 섞이는 자리다. Mac 은 pywinauto 부재로 걸리지만(정상), 오피스는
         # 의존성이 있으므로 여기서 걸렸다면 **우리 코드의 결함**이다 - 예전에 이 자리가

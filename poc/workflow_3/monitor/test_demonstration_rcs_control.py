@@ -1907,8 +1907,8 @@ class _Detection:
 
 
 @pytest.mark.parametrize("detection, expect", [
-    (_Detection(), "LIVE IMAGE - FOUND, MODE OM, PM 210\n"),
-    (None, "LIVE IMAGE - NOT FOUND, MODE UNREAD"),
+    (_Detection(), "Live image found, Optical Mode, Magnification 210\n"),
+    (None, "Live image not found, mode could not be read"),
 ])
 def test_inspection_memo_is_ascii_without_shift_symbols(detection, expect):
     """원격은 한글/Shift 기호를 못 건넌다 - PM 원문의 ':' '(' 도 메모에 새면 안 된다."""
@@ -1917,6 +1917,7 @@ def test_inspection_memo_is_ascii_without_shift_symbols(detection, expect):
 
     assert memo.isascii()
     assert demo.shift_symbols(memo) == []
-    assert memo.splitlines()[0] == "MCD019 AUTO CHECK 2026-09-29 1432"
+    assert memo.splitlines()[0] == "MCD019 automatic check 2026-09-29 1432"
+    assert memo.splitlines()[-1] == "Checked by AI AGENT"
     assert expect in memo
     assert demo.screen_note("MCD019", observed, [])["title"] == "MCD019 화면 판독"

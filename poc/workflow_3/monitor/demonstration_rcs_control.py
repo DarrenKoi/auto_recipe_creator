@@ -381,17 +381,25 @@ def screen_note(tool_id: str, observed: dict, boxes: list) -> dict:
     }
 
 
+_MODE_NAMES = {"OM": "Optical Mode", "SEM": "SEM Mode"}
+
+
 def inspection_memo(tool_id: str, observed: dict, stamp: str) -> str:
-    """장비 메모 문구(영어). 이 원격은 한글과 Shift 기호(':' '(' 등)를 못 건넌다 - '-' ',' 로만 잇는다."""
+    """장비 메모 문구(평이한 영어). 이 원격은 한글과 Shift 기호(':' '(' 등)를 못 건넌다.
+
+    기본 대문자 방식(caps_all)이면 화면에는 전부 대문자로 찍힌다.
+    """
+    live = "Live image found" if observed["live"] else "Live image not found"
     if observed["mode"] and observed["pm"]:
-        mode = f"MODE {observed['mode']}, PM {observed['pm']}"
+        mode = _MODE_NAMES.get(observed["mode"], f"{observed['mode']} Mode")
+        reading = f"{live}, {mode}, Magnification {observed['pm']}"
     else:
-        mode = "MODE UNREAD"
+        reading = f"{live}, mode could not be read"
     return "\n".join([
-        f"{tool_id.upper()} AUTO CHECK {stamp}",
-        "CONNECTION USER - NONE",
-        f"LIVE IMAGE - {'FOUND' if observed['live'] else 'NOT FOUND'}, {mode}",
-        "CHECKED BY AI AGENT",
+        f"{tool_id.upper()} automatic check {stamp}",
+        "No other user is connected",
+        reading,
+        "Checked by AI AGENT",
     ])
 
 

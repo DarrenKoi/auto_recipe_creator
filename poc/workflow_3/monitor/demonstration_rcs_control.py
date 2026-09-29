@@ -356,6 +356,7 @@ def occupancy_note(tool_id: str, result) -> dict | None:
         "lines": ["List 의 Connection User 판독",
                   _OCCUPANCY_TEXT.get(occupancy, "판독 불가 → 안전하게 건너뜀")],
         "boxes": list((getattr(result, "occupancy_boxes", None) or {}).values()),
+        "occupancy": occupancy,  # 녹화기가 건너뜀 자막을 붙이는 근거
     }
 
 

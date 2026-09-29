@@ -54,6 +54,9 @@ STAGE_SUBTITLES = {
     demo.STAGE_VISIT: "",
     demo.STAGE_IN_TOOL: "",
 }
+# 다른 사용자가 접속 중이라 건너뛴 장비에 붙는 자막(판독 시각부터 OCCUPIED_SUBTITLE_SEC 동안).
+OCCUPIED_SUBTITLE = "엔지니어가 장비를 사용 중일 때는 접근하지 않습니다"
+OCCUPIED_SUBTITLE_SEC = 4.0
 FPS = 30
 MONITOR_INDEX = None  # None = 주 모니터. 다른 화면이면 mss 번호(1, 2, ...)
 TAIL_SEC = 2.0       # 시나리오가 끝난 뒤 더 담는 시간
@@ -90,8 +93,11 @@ def main() -> int:
                            "start": opened.pop((stage, detail), now), "end": now})
         print(f"[INFO] [녹화 {now:7.1f}s] {stage} {edge} {detail}")
 
-    def on_note(title, lines, boxes, since_epoch=None):
+    def on_note(title, lines, boxes, since_epoch=None, occupancy=""):
         now = round(recorder.elapsed(), 2)
+        if occupancy == "occupied_by_other" and OCCUPIED_SUBTITLE:
+            note_subtitles.append({"start": now, "end": round(now + OCCUPIED_SUBTITLE_SEC, 2),
+                                   "text": OCCUPIED_SUBTITLE})
         note = {"t": now, "title": title, "lines": list(lines), "boxes": list(boxes)}
         if since_epoch is not None:  # 박스 기준 화면 시각(polish 가 이 화면과 비교한다)
             note["t_ref"] = round(recorder.video_time(since_epoch), 2)
@@ -100,7 +106,7 @@ def main() -> int:
         print(f"[INFO] [녹화 {now:7.1f}s] 판독 {title}: "
               + " / ".join(lines).replace("→", "->"))
 
-    notes = []
+    notes, note_subtitles = [], []
     result, info = None, {}
     try:
         result = demo.main(settings, stage_fn=on_stage, note_fn=on_note)
@@ -108,7 +114,8 @@ def main() -> int:
     finally:
         # 단계/자막을 녹화 정지보다 먼저 쓴다 - 정지 중 오류가 나도 사이드카는 남는다.
         stages.sort(key=lambda item: item["start"])
-        subtitles = stage_subtitles(stages, STAGE_SUBTITLES)
+        subtitles = sorted(stage_subtitles(stages, STAGE_SUBTITLES) + note_subtitles,
+                           key=lambda item: item["start"])
         (out_dir / STAGES_NAME).write_text(
             json.dumps(stages, ensure_ascii=False, indent=2), encoding="utf-8")
         (out_dir / SUBTITLES_NAME).write_text(

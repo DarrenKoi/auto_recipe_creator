@@ -1896,6 +1896,7 @@ def test_occupancy_note_boxes_come_from_the_real_report_layout():
     assert boxes["connection_user"] == {"left": 910, "top": 320, "right": 1209, "bottom": 336}
     assert len(note["boxes"]) == 2
     assert "건너뜀" in note["lines"][-1]
+    assert note["occupancy"] == "occupied_by_other"  # 녹화기의 건너뜀 자막 근거
     assert demo.occupancy_note("MCD019", None) is None
     assert occupancy_screen_boxes({}, lambda p: p) is None
 

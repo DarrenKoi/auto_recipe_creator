@@ -7,6 +7,8 @@ RCS 실행 -> 로그인 -> View 탭 훑기 -> List 탭 -> 장비 접속 -> 창 �
 조각 잇기)는 `polish_demo_video.py` 가 한다 - 이 파일은 원본만 만든다.
 
   * 로그인 장면부터 담으려면 RCS 를 **닫고** 실행한다(이미 로그인돼 있으면 로그인 생략).
+  * 실행 뒤 START_DELAY_SEC 카운트다운 동안 손을 떼면, 끝날 때까지 사람 입력이 필요 없다
+    (스스로 끝난다). 끝에 '녹화 중 사람 입력' 횟수가 찍힌다 - 전부 0 이어야 한다.
   * 주 모니터 전체를 녹화한다 - 터미널은 다른 모니터로 치운다.
   * 장비/흐름/속도는 demonstration_rcs_control 상단 상수와 `DEMO_RCS_*` env 그대로다.
   * 리허설(클릭 차단): 셸 `SAFE_MODE=1`.
@@ -51,6 +53,7 @@ STAGE_SUBTITLES = {
 FPS = 30
 MONITOR_INDEX = None  # None = 주 모니터. 다른 화면이면 mss 번호(1, 2, ...)
 TAIL_SEC = 2.0       # 시나리오가 끝난 뒤 더 담는 시간
+START_DELAY_SEC = 5  # 실행(Enter) 뒤 녹화 시작까지 - 이 사이에 마우스/키보드에서 손을 뗀다
 
 
 def stage_subtitles(stages: list, texts: dict) -> list:
@@ -67,6 +70,10 @@ def stage_subtitles(stages: list, texts: dict) -> list:
 def main() -> int:
     settings = load_workflow3_settings()
     out_dir = DEMO_ROOT / f"rcs_{make_timestamp_tag()}"
+    # 녹화 구간에 사람 입력이 0 이어야 '사람 개입 없는 자동화' 의 근거가 된다(끝에 집계가 찍힌다).
+    for remain in range(int(START_DELAY_SEC), 0, -1):
+        print(f"[INFO] {remain}초 뒤 녹화+시연 시작 - 마우스/키보드에서 손을 떼세요")
+        time.sleep(1)
     recorder = ScreenVideoRecorder(out_dir, fps=FPS, monitor_index=MONITOR_INDEX).start()
     stages, opened = [], {}
 
@@ -84,13 +91,14 @@ def main() -> int:
         result = demo.main(settings, stage_fn=on_stage)
         time.sleep(TAIL_SEC)
     finally:
-        info = recorder.stop()
+        # 단계/자막을 녹화 정지보다 먼저 쓴다 - 정지 중 오류가 나도 사이드카는 남는다.
         stages.sort(key=lambda item: item["start"])
         subtitles = stage_subtitles(stages, STAGE_SUBTITLES)
         (out_dir / STAGES_NAME).write_text(
             json.dumps(stages, ensure_ascii=False, indent=2), encoding="utf-8")
         (out_dir / SUBTITLES_NAME).write_text(
             json.dumps(subtitles, ensure_ascii=False, indent=2), encoding="utf-8")
+        info = recorder.stop()
         print("=" * 70)
         for item in stages:
             print(f"[INFO]   {item['start']:7.1f}s ~ {item['end']:7.1f}s  "

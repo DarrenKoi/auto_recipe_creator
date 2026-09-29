@@ -36,7 +36,7 @@ RECIPE_ID = "RJ1BXXX/RJ1B_ISOLINERPOLY_R1"   # 반드시 '<class>/<recipe>' 형�
 CLASS_NAME = ""      # 선택. 알람 로그/팝업 표시용
 TAG = ""             # 선택. 산출물 폴더 tag. 비우면 wall-clock 으로 생성
 FALLBACK_SEARCH = 1  # 1 = key 가 안 보이면 주변 탐색, 0 = 첫 판정 뒤 멈춤
-AMBIGUITY_NCC_MARGIN = 0.3  # chamfer 2nd비 모호라도 NCC 차이가 이 이상이면 보정. 0 = 끔
+AMBIGUITY_NCC_MARGIN = 0  # chamfer 2nd비 모호라도 NCC 차이가 이 이상이면 보정. 0 = 끔(오탐 확인, manual_align_correction.py 주석)
 
 
 if __name__ == "__main__":

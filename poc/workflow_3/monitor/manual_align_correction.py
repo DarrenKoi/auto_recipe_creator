@@ -105,8 +105,10 @@ TAG = ""             # 선택. 산출물 폴더 tag. 비우면 wall-clock 으로
 # escalated_ambiguous_key 로 끝낸다 - 탐색 중 ctrl+alt+q 로 끊을 필요가 없다. 1 = 탐색 재개.
 FALLBACK_SEARCH = 0
 # chamfer 2nd비가 모호(> ALIGN_FAIL_REREGISTER_RATIO)해도 같은 프레임 NCC 가 key 와 2nd 를 이
-# 차이 이상 가르면 자동 보정한다(key ncc>0 일 때만). 시험 중 - 운영 모니터는 끔. 0 = 끔.
-AMBIGUITY_NCC_MARGIN = 0.3
+# 차이 이상 가르면 자동 보정한다(key ncc>0 일 때만). 0 = 끔. 2026-09-29 오피스에서 끔: 2nd비 1.000
+# ncc key 0.539 / 2nd 0.027 (차 0.51) 인데 key 가 틀린 자리였고 OK 까지 눌렀다 - 아침의 맞은
+# 사례(0.612 / -0.023)와 NCC 차로 구분되지 않는다. 다시 켜려면 golden 셋 false-accept 측정 먼저.
+AMBIGUITY_NCC_MARGIN = 0
 _MANUAL_CONST_TO_ENV = (
     ("FALLBACK_SEARCH", "ALIGN_FAIL_FALLBACK_SEARCH"),
     ("AMBIGUITY_NCC_MARGIN", "ALIGN_FAIL_AMBIGUITY_NCC_MARGIN"),

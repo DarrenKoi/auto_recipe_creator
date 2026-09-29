@@ -1926,7 +1926,7 @@ def _build_action_fn(
     def _action(tool_id, tool_window, tool_title, tool_backend):
         if inspect:
             observed = read_screen(tool_id, tool_window)
-            memo = inspection_memo(tool_id, observed, time.strftime("%Y-%m-%d %H%M"))
+            memo = inspection_memo(tool_id, observed, time.strftime("%Y-%m-%d %Hh%Mm"))
             print(f"[INFO] {tool_id} 순찰 메모: {memo!r}")
             flow = build_flows(memo)[FLOW_MEMO_PRINT]
         else:

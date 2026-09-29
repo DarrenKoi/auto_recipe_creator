@@ -1913,7 +1913,7 @@ class _Detection:
 def test_inspection_memo_is_ascii_without_shift_symbols(detection, expect):
     """원격은 한글/Shift 기호를 못 건넌다 - PM 원문의 ':' '(' 도 메모에 새면 안 된다."""
     observed = {**demo.screen_observation(detection), "points": demo.parse_counter("12 / 40")}
-    memo = demo.inspection_memo("mcd019", observed, "2026-09-29 1432")
+    memo = demo.inspection_memo("mcd019", observed, "2026-09-29 14h32m")
 
     assert memo.isascii()
     assert demo.shift_symbols(memo) == []

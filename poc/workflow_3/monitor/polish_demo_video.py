@@ -78,7 +78,7 @@ SEQUENCE = [
      "body": "R3 CD-SEM Align Fail에 대한 24/7 현업 대응을 AI Agent가 대신 처리\n"
              "처리 불가능한 경우에만 엔지니어에게 알람 후 인계하는 시스템", "sec": 5.0},
     {"clip": "rcs_", "stage": ["login", "view_tab"]},
-    {"card": "AI 순찰", "body": "화면을 읽고 판단해 장비를 오갑니다", "sec": 4.0},
+    {"card": "AI Monitoring", "body": "화면을 읽고 판단해 장비를 오갑니다", "sec": 4.0},
     {"clip": "rcs_", "stage": "visit"},
     {"card": "Align Fail 알람 대응", "body": "알람 발생부터 보정까지 사람 없이 진행됩니다", "sec": 4.0},
     {"clip": "alarm_", "stage": ["alarm", "correction"]},

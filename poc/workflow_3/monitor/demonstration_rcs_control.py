@@ -101,7 +101,7 @@ DEFAULT_TOOL_IDS = ["MCD019", "MCDC10"]
 
 # 순찰 라운드(2026-09-29, env `DEMO_RCS_INSPECT`): 매크로가 아니라 "읽고 판단한다" 를 보여준다.
 #   List 에서 Connection User 판독(production 점유 게이트) -> 비었으면 접속, 아니면 건너뜀
-#   -> tool 화면 판독(live SEM box + PM 배율 -> OM/SEM, 클릭 없음)
+#   -> tool 화면 판독(live SEM box + PM 배율 -> OM/SEM, Recipe Monitor 측정 카운터 N/M; 클릭 없음)
 #   -> 판독 결과를 MemoPrint 에 영어로 기록 -> 닫고 다음 장비.
 # 이미지 모드 전환은 하지 않는다(가동 중 장비). 0 이면 종전 장비별 흐름(DEMO_RCS_FLOWS).
 INSPECT = True
@@ -371,12 +371,33 @@ def screen_observation(detection) -> dict:
     }
 
 
+_COUNTER_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
+
+
+def parse_counter(text) -> tuple | None:
+    """Recipe Monitor 측정 카운터 OCR -> (측정한 수 N, 레시피 전체 포인트 M | None). 못 읽으면 None."""
+    text = str(text or "")
+    found = _COUNTER_RE.search(text)
+    if found:
+        return int(found.group(1)), int(found.group(2))
+    digits = re.search(r"\d+", text)
+    return (int(digits.group()), None) if digits else None
+
+
 def screen_note(tool_id: str, observed: dict, boxes: list) -> dict:
     pm_line = (f"PM {observed['pm']} → {observed['mode']} 모드"
                if observed["mode"] and observed["pm"] else "PM 배율 판독 불가")
+    points = observed.get("points")
+    if points and points[1]:
+        points_line = f"측정 포인트 {points[0]} / {points[1]}"
+    elif points:
+        points_line = f"측정 포인트 {points[0]} 완료"
+    else:
+        points_line = "측정 카운터 판독 불가"
     return {
         "title": f"{tool_id} 화면 판독",
-        "lines": ["Live 영상 영역 검출" if observed["live"] else "Live 영상 영역 못 찾음", pm_line],
+        "lines": ["Live 영상 영역 검출" if observed["live"] else "Live 영상 영역 못 찾음",
+                  pm_line, points_line],
         "boxes": boxes,
     }
 
@@ -395,9 +416,16 @@ def inspection_memo(tool_id: str, observed: dict, stamp: str) -> str:
         reading = f"{live}, {mode}, Magnification {observed['pm']}"
     else:
         reading = f"{live}, mode could not be read"
+    points = observed.get("points")
+    if points and points[1]:
+        progress = f"Recipe has {points[1]} measurement points, {points[0]} measured so far"
+    elif points:
+        progress = f"{points[0]} measurement points measured so far"
+    else:
+        progress = "Measurement progress could not be read"
     return "\n".join([
         f"{tool_id.upper()} automatic check {stamp}",
-        "No other user is connected",
+        progress,
         reading,
         "Checked by AI AGENT",
     ])
@@ -1946,9 +1974,32 @@ def _build_screen_reader(settings: Workflow3Settings, note_fn=None):
     from poc.workflow_3.util.window_utils import image_point_to_screen
     from poc.workflow_3.vlm.vlm_client import Workflow1VLMClient
 
+    from poc.workflow_3.monitor.engineer_done_align_adjustment import (
+        _make_ground_fn,
+        _make_ocr_fn,
+    )
+
     client = Workflow1VLMClient(settings.sem_box_vlm_service, timeout_sec=15.0)
     ocr_client = (Workflow1VLMClient(settings.pm_ocr_service, timeout_sec=15.0)
                   if settings.pm_two_stage_ocr_enabled else None)
+    # Recipe Monitor 카운터(N/M)는 engineer-done 감지와 같은 grounding(mai-ui) + OCR 을 쓴다.
+    ground_counter, ocr_counter = _make_ground_fn(settings), _make_ocr_fn(settings)
+
+    def _read_counter(image):
+        """카운터 N/M 판독 -> (points, 이미지 px box). 측정 중이 아니면 카운터가 비어 None."""
+        point = ground_counter(image)
+        if point is None:
+            return None, None
+        w, h = image.size
+        cx, cy = point[0] / 1000 * w, point[1] / 1000 * h
+        pad_x, pad_y = settings.engineer_done_roi_pad_x * w, settings.engineer_done_roi_pad_y * h
+        # grounding 점은 분자 N 이다 - '/M' 이 오른쪽에 붙으므로 오른쪽을 넓게 자른다.
+        box = {"left": max(0, int(cx - pad_x)), "top": max(0, int(cy - pad_y)),
+               "right": min(w, int(cx + pad_x * 3)), "bottom": min(h, int(cy + pad_y))}
+        crop = image.crop((box["left"], box["top"], box["right"], box["bottom"]))
+        text = ocr_counter(crop)
+        print(f"[INFO] Recipe Monitor 카운터 판독: {text!r}")
+        return parse_counter(text), box
 
     def _to_screen(window, box, size):
         top_left = image_point_to_screen(window, {"x": box["left"], "y": box["top"]}, image_size=size)
@@ -1960,7 +2011,7 @@ def _build_screen_reader(settings: Workflow3Settings, note_fn=None):
                 "right": bottom_right["x"], "bottom": bottom_right["y"]}
 
     def _read(tool_id, tool_window):
-        detection, boxes = None, []
+        detection, boxes, image, points = None, [], None, None
         try:
             image = capture_window(tool_window)
             detection = detect_sem_box(image, client, ocr_client=ocr_client,
@@ -1970,8 +2021,16 @@ def _build_screen_reader(settings: Workflow3Settings, note_fn=None):
                 if screen:
                     boxes.append(screen)
         except Exception as exc:
-            print(f"[WARNING] {tool_id} 화면 판독 실패(메모에는 UNREAD): {type(exc).__name__}: {exc}")
-        observed = screen_observation(detection)
+            print(f"[WARNING] {tool_id} 화면 판독 실패(메모에는 판독 불가): {type(exc).__name__}: {exc}")
+        if image is not None:
+            try:
+                points, box = _read_counter(image)
+                screen = _to_screen(tool_window, box, image.size) if box else None
+                if screen:
+                    boxes.append(screen)
+            except Exception as exc:
+                print(f"[WARNING] {tool_id} 측정 카운터 판독 실패: {type(exc).__name__}: {exc}")
+        observed = {**screen_observation(detection), "points": points}
         print(f"[INFO] {tool_id} 화면 판독: {observed}")
         if note_fn is not None:
             note_fn(**screen_note(tool_id, observed, boxes))
@@ -2267,6 +2326,7 @@ __all__ = [
     "inspection_memo",
     "main",
     "occupancy_note",
+    "parse_counter",
     "parse_flow_map",
     "parse_memo_text",
     "parse_tool_ids",

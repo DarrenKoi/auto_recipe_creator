@@ -1912,7 +1912,7 @@ class _Detection:
 ])
 def test_inspection_memo_is_ascii_without_shift_symbols(detection, expect):
     """원격은 한글/Shift 기호를 못 건넌다 - PM 원문의 ':' '(' 도 메모에 새면 안 된다."""
-    observed = demo.screen_observation(detection)
+    observed = {**demo.screen_observation(detection), "points": demo.parse_counter("12 / 40")}
     memo = demo.inspection_memo("mcd019", observed, "2026-09-29 1432")
 
     assert memo.isascii()
@@ -1949,3 +1949,19 @@ def test_flow_rereads_a_step_once_when_the_popup_was_not_drawn_yet():
     stubborn.misses["editor"] = 2
     status, screen = _run_flow(flow, stubborn)
     assert screen.clicks == ["opener", "menu"]
+
+
+def test_counter_reading_becomes_the_recipe_points_line():
+    """메모 둘째 줄 = 레시피 측정 포인트(Recipe Monitor N/M). 분자만 읽혀도, 못 읽어도 문장이 된다."""
+    assert demo.parse_counter("Slot 3  12/350") == (12, 350)  # 이웃 칸 숫자가 섞여도 N/M 우선
+    assert demo.parse_counter("12/350") == (12, 350)
+    assert demo.parse_counter("12") == (12, None)
+    assert demo.parse_counter("[Table_Page_Number]") is None
+    base = {"live": True, "mode": "SEM", "pm": "30K"}
+    lines = lambda points: demo.inspection_memo("MCD019", {**base, "points": points}, "x").splitlines()
+    assert lines((12, 350))[1] == "Recipe has 350 measurement points, 12 measured so far"
+    assert lines((12, None))[1] == "12 measurement points measured so far"
+    assert lines(None)[1] == "Measurement progress could not be read"
+    assert lines((12, 350))[2] == "Live image found, SEM Mode, Magnification 30K"
+    note = demo.screen_note("MCD019", {**base, "points": (12, 350)}, [])
+    assert note["lines"][-1] == "측정 포인트 12 / 350"

@@ -1760,13 +1760,23 @@ def test_caps_toggles_use_their_own_longer_dwell():
     assert 0.4 in sleeps
 
 
-def test_local_caps_lock_is_restored_when_it_is_left_on():
-    """`SendInput` 은 전역이라 엔지니어 PC 의 Caps 도 같이 켜진다 - 켜져 있으면 끈다."""
+def test_local_caps_lock_is_restored_only_when_it_differs_from_before():
+    """`SendInput` 은 전역이라 로컬 Caps 도 같이 토글된다 - 입력 전 상태와 다를 때만 되돌린다."""
     keyboard = _KeyboardSpy()
-    _type("Ab", keyboard=keyboard, caps_state_fn=lambda: True)
+    reads = iter([False, True])  # 입력 전 꺼짐 -> 끝나고 켜짐(한 쪽 토글 유실)
+    _type("Ab", keyboard=keyboard, caps_state_fn=lambda: next(reads))
 
     # 감싸는 한 쌍(2) + 로컬 복구 1회.
     assert keyboard.events.count(("press", "CAPS")) == 3
+
+
+def test_caps_already_on_before_typing_gets_no_third_toggle():
+    """오피스 2026-09-29: 원래(또는 낡은 판독으로) 켜져 있으면 세 번째 토글이 나가
+    장비마다 대/소문자가 번갈아 찍혔다. 전후가 같으면 한 쌍으로 끝나야 한다."""
+    keyboard = _KeyboardSpy()
+    _type("Ab", keyboard=keyboard, caps_state_fn=lambda: True)
+
+    assert keyboard.events.count(("press", "CAPS")) == 2
 
 
 def test_local_caps_lock_is_left_alone_when_already_off():

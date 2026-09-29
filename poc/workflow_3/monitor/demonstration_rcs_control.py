@@ -959,22 +959,28 @@ def type_multiline_text(
             # 켠 채 남으면 이후 입력이 전부 대문자가 되고 로컬 PC 도 켜진 채 남는다.
             _tap(caps_key)
 
-    def _restore_local_caps():
-        """엔지니어 PC 의 Caps 가 켜진 채 남았으면 끈다.
+    reader = caps_state_fn if caps_state_fn is not None else _local_caps_on
 
-        `SendInput` 은 전역이라 우리가 보낸 토글이 **로컬 PC 에도** 걸린다. 장비 쪽
-        상태는 읽을 수 없지만 로컬은 읽을 수 있으므로, 최소한 사람이 쓰는 키보드는
-        원래대로 돌려놓는다. **모르면(None) 건드리지 않는다** - 추측으로 토글하면
-        꺼져 있던 것을 켜는 쪽이 될 수 있다.
-        """
-        reader = caps_state_fn if caps_state_fn is not None else _local_caps_on
+    def _read_local_caps():
         try:
-            state = reader()
+            return reader()
         except Exception:
+            return None
+
+    def _restore_local_caps(before):
+        """엔지니어 PC 의 Caps 를 **입력 전 상태**로 돌린다.
+
+        `SendInput` 은 전역이라 우리가 보낸 토글이 로컬 PC 에도 걸린다. 한 쌍이면 원래대로
+        돌아오는 것이 정상이므로, 입력 전과 **달라졌을 때만** 한 번 더 누른다. 종전에는
+        '켜져 있으면 끈다' 였는데, 원래 켜져 있었거나 콘솔 스레드의 GetKeyState 가 낡은
+        값을 주면 매 메모마다 세 번째 토글이 나가 **장비마다 대/소문자가 번갈아** 찍혔다
+        (오피스 2026-09-29). 모르면(None) 건드리지 않는다.
+        """
+        after = _read_local_caps()
+        if before is None or after is None or after == before:
             return
-        if state is True:
-            print("[INFO] 로컬 Caps Lock 이 켜진 채라 되돌립니다.")
-            _tap(caps_key)
+        print(f"[INFO] 로컬 Caps Lock 이 입력 전({before})과 달라 되돌립니다.")
+        _tap(caps_key)
 
     def _type_via_shift(base):
         """Shift 를 쥔 채 기본 키를 누른다(기호는 이 방법밖에 없다)."""
@@ -1036,6 +1042,7 @@ def type_multiline_text(
     if mode == SHIFT_MODE_CAPS_ALL and any(c.isupper() for c in text):
         # 토글을 **한 쌍**만 쓴다. 4회차에서 글자마다 토글한 것이 memo 를 깨뜨렸다:
         # 24번 중 하나만 유실되면 장비의 caps 상태가 뒤집혀 그 뒤가 전부 틀린다.
+        caps_before = _read_local_caps()
         _tap(caps_key)
         try:
             sleep_fn(caps_settle)
@@ -1043,7 +1050,7 @@ def type_multiline_text(
                 return False
         finally:
             _tap(caps_key)
-            _restore_local_caps()
+            _restore_local_caps(caps_before)
     elif not _type_body():
         return False
 

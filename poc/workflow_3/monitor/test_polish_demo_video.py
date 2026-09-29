@@ -380,3 +380,9 @@ def test_reference_before_the_cut_start_is_still_used(tmp_path, monkeypatch):
     pdv.main([{"clip": str(tmp_path / "clip"), "zoom": 1.0, "start": 1.5, "end": 3.0}],
              output=str(tmp_path / "final.mp4"))
     assert panels and not drawn
+
+
+def test_two_line_subtitle_renders():
+    """여러 줄 자막은 Pillow 가 실수 bbox 를 줘서 Image.new 가 깨졌다(View 탭 두 줄 자막)."""
+    patch = pdv.subtitle_patch("첫 줄 설명입니다.\n둘째 줄 설명입니다.", 1920)
+    assert patch.shape[0] > pdv.subtitle_patch("한 줄", 1920).shape[0] * 1.5

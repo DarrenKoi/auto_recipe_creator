@@ -313,7 +313,8 @@ def subtitle_patch(text: str, width: int) -> np.ndarray:
     probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
     box = probe.multiline_textbbox((0, 0), text, font=font, spacing=font.size // 3, align="center")
     pad_x, pad_y = font.size, font.size // 2
-    tw, th = box[2] - box[0], box[3] - box[1]
+    # 여러 줄이면 Pillow 가 실수 bbox 를 준다 - 크기는 올림한 정수로.
+    tw, th = math.ceil(box[2] - box[0]), math.ceil(box[3] - box[1])
     image = Image.new("RGBA", (tw + pad_x * 2, th + pad_y * 2), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
     draw.rounded_rectangle((0, 0, image.width - 1, image.height - 1), radius=pad_y,

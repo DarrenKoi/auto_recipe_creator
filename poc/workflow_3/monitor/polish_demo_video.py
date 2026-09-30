@@ -132,8 +132,8 @@ RECORDING_TAIL_SEC = 1.5      # recording 항목: 마지막 화면 머무는 시
 RECORDING_MIN_SEC = 4.0       # recording 항목: 자막을 읽을 최소 길이(짧으면 마지막 화면을 더 붙든다)
 # 순찰 장비의 화면 판독이 끝나면 곧바로 MemoPrint 입력이 시작된다 - 그 시각부터 띄우는 자막.
 # 맥락 없이 메모를 적는 장면이 실제 업무 조작으로 오해받지 않게 한다. 빈 문자열 = 끔.
-MEMO_NOTICE = ("이 장면은 Agent가 화면을 인식하고 장비 상에서 액션(Mouse / Keyboard)이\n"
-               "가능하다는 것을 보여주기 위해 넣은 퍼포먼스입니다")
+MEMO_NOTICE = ("이 장면은 Agent가 장비의 UI/UX를 이해하고\n"
+               "컨트롤할 수 있음을 보여주기 위해 넣은 퍼포먼스입니다")
 MEMO_NOTICE_SEC = 5.0
 # 이미 녹화된 clip 의 자막/판독 패널 문구를 조립할 때 고쳐 쓴다(재녹화 없이). (정규식, 바꿀 문구)
 REWORD = [

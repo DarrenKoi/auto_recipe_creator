@@ -142,6 +142,7 @@ REWORD = [
     (r"(?<![A-Za-z])CV로", "Computer Vision으로"),  # 받침이 생겨 조사도 바뀐다
     (r"(?<![A-Za-z])CV(?![A-Za-z])", "Computer Vision"),
     (r"사람 없이", "엔지니어 없이"),
+    (r"Align Key 위치 확정", "Align Key 위치 찾음"),
 ]
 
 ACCENT = (66, 133, 244)   # 클릭 원/카드 강조선 (RGB)

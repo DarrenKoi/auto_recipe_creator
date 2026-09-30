@@ -473,4 +473,5 @@ def test_rehearsal_line_is_dropped_from_the_video_panel():
     from poc.workflow_3.monitor import demo_record_alarm as dra
 
     lines = [line for line in map(pdv.reword, dra.outcome_lines("corrected", rehearsal=True)) if line]
-    assert lines == ["Align Key 위치 확정"]
+    assert lines == ["Align Key 위치 찾음"]
+    assert pdv.reword("Align Key 위치 확정") == "Align Key 위치 찾음"  # 이미 녹화된 notes.json

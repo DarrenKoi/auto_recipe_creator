@@ -119,7 +119,7 @@ def outcome_lines(status: str, *, rehearsal: bool = False) -> list:
     from poc.workflow_3.monitor.notify import _UNCORRECTED_ACTIONS
 
     if rehearsal and status in ("corrected", "awaiting_engineer_ok"):
-        return ["Align Key 위치 확정", "리허설 - 재정렬/OK 클릭은 하지 않음"]
+        return ["Align Key 위치 찾음", "리허설 - 재정렬/OK 클릭은 하지 않음"]
     if status == "corrected":
         return ["Align Key 위치로 재정렬", "OK 까지 자동 완료"]
     if status == "awaiting_engineer_ok":

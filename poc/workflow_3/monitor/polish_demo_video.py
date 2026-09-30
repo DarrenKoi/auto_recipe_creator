@@ -75,7 +75,8 @@ from poc.workflow_3.monitor.screen_video import (  # noqa: E402
 #                                               중 가장 최근, 또는 경로). 크기가 다르면 letterbox
 #   녹화: {"recording": "MCD026-260929_085628"} align_fail_events 아래 이벤트 폴더(또는 경로)의
 #                                               recording/ 프레임(jpg). 정지 구간은 RECORDING_MAX_HOLD_SEC 로 압축
-#         + "subtitle": "문구"                  이 녹화 내내 하단 자막
+#         + "subtitle": "문구"                  하단 자막(기본: 녹화 내내)
+#         + "subtitle_sec": 5.0                 자막을 처음 몇 초만(녹화가 더 짧으면 마지막 화면을 붙든다)
 #         + "speed": 1.0                        배속
 #   사진: {"image": "cube_alarm.JPG"}          _demo 아래 파일 이름(또는 경로)의 정지 화면. 없으면 빼고 조립
 #         + "subtitle": "문구", "sec": 6.0      하단 자막 / 노출 시간
@@ -743,8 +744,10 @@ def write_recording(writer, item: dict, size: tuple, fps: int) -> int:
     frames = scan_frames(rec_dir)
     starts, _, total, skipped = build_timeline(frames, RECORDING_MAX_HOLD_SEC, RECORDING_TAIL_SEC)
     speed = float(item.get("speed", 1.0))
-    duration = max(total / speed, RECORDING_MIN_SEC)
     text = item.get("subtitle", "")
+    text_sec = float(item.get("subtitle_sec", 0.0))
+    duration = max(total / speed, RECORDING_MIN_SEC, text_sec)
+    text_end = text_sec or duration
     cached_index, image = -1, None
     written = 0
     for step in range(max(1, round(duration * fps))):
@@ -758,8 +761,8 @@ def write_recording(writer, item: dict, size: tuple, fps: int) -> int:
         if image is None:
             continue
         out = image.copy()
-        if text:
-            draw_subtitle(out, text, fade_level(t, 0.0, duration, SUBTITLE_FADE_SEC))
+        if text and t < text_end:
+            draw_subtitle(out, text, fade_level(t, 0.0, text_end, SUBTITLE_FADE_SEC))
         level = fade_level(t, 0.0, duration, FADE_SEC)
         writer.send(out if level >= 1.0 else (out * level).astype(np.uint8))
         written += 1

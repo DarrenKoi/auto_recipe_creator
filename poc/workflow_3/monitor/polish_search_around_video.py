@@ -30,8 +30,9 @@ SEQUENCE = [
     {"video": "final_"},  # 가장 최근 polish 완성본
     {"recording": "MCD026-260929_085628",
      "subtitle": "Search Around 기능도 구현해 DFT이 없어도 주변을 탐색해서 찾아가도록 했습니다"},
-    {"recording": "MCD026-260929_085758",
-     "subtitle": "너무 짧아서 다른 위치에서 다시 보여드립니다"},
+    {"card": "Search Around",
+     "body": "너무 순식간에 끝나 다른 위치에서 다시 시도해보겠습니다.", "sec": 3.5},
+    {"recording": "MCD026-260929_085758"},
 ]
 # 출력 이름은 final_ 로 시작하지 않게 둔다 - 다음 실행의 {"video": "final_"} 가 이 파일을 집지 않도록.
 OUTPUT = ""  # 비우면 align_images/_demo/full_<시각>.mp4

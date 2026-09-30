@@ -76,7 +76,7 @@ from poc.workflow_3.monitor.screen_video import (  # noqa: E402
 #                                               recording/ 프레임(jpg). 정지 구간은 RECORDING_MAX_HOLD_SEC 로 압축
 #         + "subtitle": "문구"                  이 녹화 내내 하단 자막
 #         + "speed": 1.0                        배속
-#   사진: {"image": "cube_alarm.jpeg"}          _demo 아래 파일 이름(또는 경로)의 정지 화면. 없으면 빼고 조립
+#   사진: {"image": "cube_alarm.JPG"}          _demo 아래 파일 이름(또는 경로)의 정지 화면. 없으면 빼고 조립
 #         + "subtitle": "문구", "sec": 6.0      하단 자막 / 노출 시간
 #
 # clip 폴더 두 종류:
@@ -99,7 +99,7 @@ SEQUENCE = [
     {"card": "Align Fail 알람 대응", "body": "알람 발생부터 보정까지 사람 없이 진행됩니다", "sec": 4.0},
     {"clip": "alarm_", "stage": ["alarm", "correction"]},
     # 보정 실패 시 백업 경로 - 엔지니어가 받는 cube 알림 캡처(오피스에서 _demo/ 에 둔다).
-    {"image": "cube_alarm.jpeg", "sec": 5.0,
+    {"image": "cube_alarm.JPG", "sec": 5.0,
      "subtitle": "Agent가 처리하지 못하는 경우 곧바로 엔지니어에게 큐브로 메시지를 보내고,\n"
                  "학습을 위해 엔지니어의 작업을 녹화합니다"},
 ]

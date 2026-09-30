@@ -426,3 +426,9 @@ def test_final_video_then_event_recordings_with_subtitles(tmp_path, monkeypatch)
     assert count == 10 + round(3.0 * pdv.FPS)
     # 출력 파일 자신은 다음 video 항목 후보에서 빠진다
     assert pdv.resolve_video("f", exclude=tmp_path / "full.mp4").name == "final_1.mp4"
+
+
+def test_memo_notice_starts_at_each_screen_reading_note():
+    notes = [{"t": 5.0, "title": "MCD019 접속 전 확인"}, {"t": 12.0, "title": "MCD019 화면 판독"}]
+    assert pdv.memo_notice_subtitles(notes, "안내", 6.0) == [(12.0, 18.0, "안내")]
+    assert pdv.subtitle_patch(pdv.MEMO_NOTICE, 1920).shape[1] < 1920  # 두 줄로 화면 폭 안

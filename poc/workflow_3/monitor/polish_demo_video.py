@@ -122,6 +122,11 @@ NOTE_IMAGE_WIDTH = 0.24   # 근거 정지화면(보정 매칭 overlay) 폭, 출�
 RECORDING_MAX_HOLD_SEC = 1.0  # recording 항목: 화면이 이보다 오래 안 바뀌면 이 길이로 압축
 RECORDING_TAIL_SEC = 1.5      # recording 항목: 마지막 화면 머무는 시간
 RECORDING_MIN_SEC = 4.0       # recording 항목: 자막을 읽을 최소 길이(짧으면 마지막 화면을 더 붙든다)
+# 순찰 장비의 화면 판독이 끝나면 곧바로 MemoPrint 입력이 시작된다 - 그 시각부터 띄우는 자막.
+# 맥락 없이 메모를 적는 장면이 실제 업무 조작으로 오해받지 않게 한다. 빈 문자열 = 끔.
+MEMO_NOTICE = ("이 장면은 Agent가 화면을 인식하고 장비 상에서 액션(Mouse / Keyboard)이\n"
+               "가능하다는 것을 보여주기 위해 넣은 퍼포먼스입니다")
+MEMO_NOTICE_SEC = 6.0
 
 ACCENT = (66, 133, 244)   # 클릭 원/카드 강조선 (RGB)
 OCCUPIED_COLOR = (234, 67, 53)  # 엔지니어가 접속 중이라 건너뛴 장비 행 강조 (RGB)
@@ -484,6 +489,14 @@ def render_card(title: str, body: str, size: tuple) -> np.ndarray:
 # ------------------------------------------------------------------
 
 
+def memo_notice_subtitles(notes: list, text: str = "", sec: float = 0.0) -> list[tuple]:
+    """순찰 '화면 판독' note(바로 뒤에 MemoPrint 입력) 시각마다 안내 자막 (시작, 끝, 문구)."""
+    text, sec = text or MEMO_NOTICE, sec or MEMO_NOTICE_SEC
+    if not text:
+        return []
+    return [(n["t"], n["t"] + sec, text) for n in notes if n.get("title", "").endswith("화면 판독")]
+
+
 def resolve_clip_dir(name: str) -> Path:
     path = Path(name).expanduser()
     if (path / VIDEO_NAME).is_file():
@@ -558,6 +571,7 @@ def write_clip(writer, item: dict, size: tuple, fps: int) -> int:
     if subtitles is None:
         subtitles = [(s["start"], s["end"], s["text"])
                      for s in _read_json(clip_dir / SUBTITLES_NAME, [])]
+    subtitles = sorted(list(subtitles) + memo_notice_subtitles(notes))
 
     out_w, out_h = size
     base = base_rect(item.get("crop"), fw, fh, out_w / out_h)

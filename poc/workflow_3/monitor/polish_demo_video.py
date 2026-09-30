@@ -136,7 +136,9 @@ MEMO_NOTICE = ("이 장면은 Agent가 장비의 UI/UX를 이해하고\n"
                "컨트롤할 수 있음을 보여주기 위해 넣은 퍼포먼스입니다")
 MEMO_NOTICE_SEC = 5.0
 # 이미 녹화된 clip 의 자막/판독 패널 문구를 조립할 때 고쳐 쓴다(재녹화 없이). (정규식, 바꿀 문구)
+# 바꾼 결과가 빈 판독 패널 줄은 뺀다.
 REWORD = [
+    (r"^.*리허설.*$", ""),  # 'Agent 가 클릭하지 않았다' 는 녹화 기록용 - 영상에는 불필요
     (r"(?<![A-Za-z])CV로", "Computer Vision으로"),  # 받침이 생겨 조사도 바뀐다
     (r"(?<![A-Za-z])CV(?![A-Za-z])", "Computer Vision"),
     (r"사람 없이", "엔지니어 없이"),
@@ -587,7 +589,7 @@ def write_clip(writer, item: dict, size: tuple, fps: int) -> int:
                 rects.append((a[0], a[1], b[0], b[1]))
         image = note.get("image", "")
         note = {**note, "title": reword(note.get("title", "")),
-                "lines": [reword(line) for line in note.get("lines", [])]}
+                "lines": [line for line in map(reword, note.get("lines", [])) if line]}
         notes.append({**note, "rects": rects,
                       "image_path": str(clip_dir / image) if image else ""})
     if notes and "end" not in item:

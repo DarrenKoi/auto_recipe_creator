@@ -396,3 +396,33 @@ def test_missing_clip_dropped_with_its_intro_card(tmp_path, monkeypatch):
     assert pdv.drop_missing_clips(seq) == seq[:2]
     with pytest.raises(FileNotFoundError):
         pdv.drop_missing_clips([{"card": "B"}, {"clip": "alarm_"}])
+
+
+def test_final_video_then_event_recordings_with_subtitles(tmp_path, monkeypatch):
+    import cv2
+
+    monkeypatch.setattr(pdv, "DEMO_ROOT", tmp_path)
+    monkeypatch.setattr(pdv, "EVENTS_DIR", tmp_path / "events")
+    monkeypatch.setattr(pdv, "OUT_SIZE", (64, 36))
+    monkeypatch.setattr(pdv, "PREVIEW_WIDTH", 0)
+    monkeypatch.setattr(pdv, "RECORDING_MIN_SEC", 2.0)
+    # 완성본 10프레임
+    w = imageio_ffmpeg.write_frames(str(tmp_path / "final_1.mp4"), (64, 36), fps=pdv.FPS,
+                                    macro_block_size=1, ffmpeg_log_level="error")
+    w.send(None)
+    for _ in range(10):
+        w.send(np.zeros((36, 64, 3), np.uint8))
+    w.close()
+    # 이벤트 녹화: attempt 폴더 아래, 종횡비 다른 프레임 3장(0s, 0.5s, 10s -> 정지 압축)
+    rec = tmp_path / "events" / "MCD026-1" / "attempt_1" / "recording"
+    rec.mkdir(parents=True)
+    for i, ms in enumerate((0, 500, 10000)):
+        cv2.imwrite(str(rec / f"frame_{i:04d}_{ms:08d}ms.jpg"), np.full((50, 40, 3), 200, np.uint8))
+
+    out = tmp_path / "full.mp4"
+    pdv.main([{"video": "final_"}, {"recording": "MCD026-1", "subtitle": "자막"}], str(out))
+    count = sum(1 for _ in list(imageio_ffmpeg.read_frames(str(out)))[1:])
+    # 원본 0.5 + 압축 1.0 + tail 1.5 = 3.0s (>= MIN 2.0)
+    assert count == 10 + round(3.0 * pdv.FPS)
+    # 출력 파일 자신은 다음 video 항목 후보에서 빠진다
+    assert pdv.resolve_video("f", exclude=tmp_path / "full.mp4").name == "final_1.mp4"

@@ -130,6 +130,7 @@ uv run python poc/workflow_3/monitor/demo_record_rcs.py      # -> align_images/_
 uv run python poc/workflow_3/monitor/demo_record_alarm.py    # align_fail_monitor 루프 그대로 + AlarmHooks 로 알람 1건 녹화 -> _demo/alarm_<EQP>_<tag>/
 uv run python poc/workflow_3/monitor/polish_demo_video.py    # 상단 SEQUENCE 로 조립(오프라인, Mac 가능)
 uv run python poc/workflow_3/monitor/polish_tool_monitor_video.py  # tool monitor 편만 따로(alarm_ clip -> tool_monitor_<시각>.mp4)
+uv run python poc/workflow_3/monitor/polish_search_around_video.py  # 최근 final_ 뒤에 align_fail_events 녹화(자막)를 이어 full_<시각>.mp4
 
 # workflow_3 — 녹화 프레임 -> 시연 mp4 (오프라인; Mac/dev PC 에서도 실행 가능)
 uv run python poc/workflow_3/monitor/make_demo_video.py      # 최근 recording 폴더 자동 선택

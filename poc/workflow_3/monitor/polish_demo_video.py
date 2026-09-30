@@ -23,6 +23,7 @@ stages.json + subtitles.json)다. 아래 SEQUENCE 순서대로 카드와 clip �
   2) uv run python poc/workflow_3/monitor/polish_demo_video.py
 """
 
+import bisect
 import json
 import math
 import sys
@@ -39,7 +40,14 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from poc.workflow_3 import EVENTS_DIR  # noqa: E402
 from poc.workflow_3.monitor.demo_log_panel import resolve_font  # noqa: E402
+from poc.workflow_3.monitor.make_demo_video import (  # noqa: E402
+    build_timeline,
+    fit_into_canvas,
+    read_image,
+    scan_frames,
+)
 from poc.workflow_3.monitor.screen_video import (  # noqa: E402
     DEMO_ROOT,
     EVENTS_NAME,
@@ -62,6 +70,12 @@ from poc.workflow_3.monitor.screen_video import (  # noqa: E402
 #         + "crop": (x0, y0, x1, y1)            화면 비율 0~1 - tool 창만 크게 보이게
 #         + "zoom": 1.0                         이 clip 만 확대 배율(1.0 = 확대 끔)
 #         + "blur": [(x0, y0, x1, y1), ...]     이 clip 만 가림 영역(BLUR_REGIONS 에 더함)
+#   영상: {"video": "final_"}                   이미 만든 mp4 를 그대로 잇는다(_demo 아래 이름 앞부분
+#                                               중 가장 최근, 또는 경로). 크기가 다르면 letterbox
+#   녹화: {"recording": "MCD026-260929_085628"} align_fail_events 아래 이벤트 폴더(또는 경로)의
+#                                               recording/ 프레임(jpg). 정지 구간은 RECORDING_MAX_HOLD_SEC 로 압축
+#         + "subtitle": "문구"                  이 녹화 내내 하단 자막
+#         + "speed": 1.0                        배속
 #
 # clip 폴더 두 종류:
 #   rcs_<tag>            demo_record_rcs.py   stage = login/view_tab/list_tab/visit/in_tool
@@ -105,6 +119,9 @@ NOTE_FOCUS = 1            # 판독 영역으로 카메라 확대(영역이 확�
 NOTE_BOX_CHANGE = 18.0    # 판독 영역 화면이 이만큼(평균 밝기차) 바뀌면 강조 박스를 거둔다
 NOTE_WRAP = 24            # 패널 내용 한 줄 최대 글자 수
 NOTE_IMAGE_WIDTH = 0.24   # 근거 정지화면(보정 매칭 overlay) 폭, 출력 폭 대비
+RECORDING_MAX_HOLD_SEC = 1.0  # recording 항목: 화면이 이보다 오래 안 바뀌면 이 길이로 압축
+RECORDING_TAIL_SEC = 1.5      # recording 항목: 마지막 화면 머무는 시간
+RECORDING_MIN_SEC = 4.0       # recording 항목: 자막을 읽을 최소 길이(짧으면 마지막 화면을 더 붙든다)
 
 ACCENT = (66, 133, 244)   # 클릭 원/카드 강조선 (RGB)
 OCCUPIED_COLOR = (234, 67, 53)  # 엔지니어가 접속 중이라 건너뛴 장비 행 강조 (RGB)
@@ -641,6 +658,80 @@ def write_clip(writer, item: dict, size: tuple, fps: int) -> int:
     return written
 
 
+def resolve_video(name: str, exclude: Path | None = None) -> Path:
+    """이미 만든 mp4 - 경로 또는 _demo 아래 이름 앞부분(가장 최근, 지금 쓰는 출력 파일은 빼고)."""
+    path = Path(name).expanduser()
+    if path.is_file():
+        return path
+    matches = [f for f in DEMO_ROOT.glob(f"{name}*.mp4") if exclude is None or f != exclude]
+    if not matches:
+        raise FileNotFoundError(f"이어 붙일 mp4 가 없습니다: {name!r} ({DEMO_ROOT})")
+    return max(matches, key=lambda f: f.stat().st_mtime)
+
+
+def write_video(writer, item: dict, size: tuple, fps: int, exclude: Path | None = None) -> int:
+    import imageio_ffmpeg
+
+    path = resolve_video(item["video"], exclude)
+    reader = imageio_ffmpeg.read_frames(str(path))
+    meta = next(reader)
+    fw, fh = meta["size"]
+    if abs((meta["fps"] or fps) - fps) > 0.5:
+        print(f"[WARNING] {path.name}: 원본 {meta['fps']}fps != 출력 {fps}fps - 속도가 달라집니다")
+    written = 0
+    try:
+        for raw in reader:
+            frame = np.frombuffer(raw, np.uint8).reshape(fh, fw, 3)
+            writer.send(fit_into_canvas(frame, size))
+            written += 1
+    finally:
+        reader.close()
+    print(f"[INFO] 영상 {path.name}: {written / fps:.1f}s 그대로 이어 붙임")
+    return written
+
+
+def resolve_recording_dir(name: str) -> Path:
+    """이벤트 폴더(또는 그 안의 recording 폴더) -> 프레임이 있는 recording 폴더(attempt_<n> 포함, 최근 것)."""
+    path = Path(name).expanduser()
+    base = path if path.is_dir() else EVENTS_DIR / name
+    candidates = [base] if base.name == "recording" else list(base.rglob("recording"))
+    candidates = [d for d in candidates if d.is_dir() and scan_frames(d)]
+    if not candidates:
+        raise FileNotFoundError(f"프레임이 있는 recording 폴더가 없습니다: {name!r} ({EVENTS_DIR})")
+    return max(candidates, key=lambda d: d.stat().st_mtime)
+
+
+def write_recording(writer, item: dict, size: tuple, fps: int) -> int:
+    """이벤트 폴더의 recording 프레임을 출력 크기/fps 로 잇고, 자막을 내내 띄운다."""
+    rec_dir = resolve_recording_dir(item["recording"])
+    frames = scan_frames(rec_dir)
+    starts, _, total, skipped = build_timeline(frames, RECORDING_MAX_HOLD_SEC, RECORDING_TAIL_SEC)
+    speed = float(item.get("speed", 1.0))
+    duration = max(total / speed, RECORDING_MIN_SEC)
+    text = item.get("subtitle", "")
+    cached_index, image = -1, None
+    written = 0
+    for step in range(max(1, round(duration * fps))):
+        t = step / fps
+        index = min(len(frames) - 1, max(0, bisect.bisect_right(starts, t * speed) - 1))
+        if index != cached_index:
+            bgr = read_image(frames[index][1])
+            if bgr is not None:  # 깨진 프레임은 직전 화면 유지
+                image = fit_into_canvas(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), size)
+                cached_index = index
+        if image is None:
+            continue
+        out = image.copy()
+        if text:
+            draw_subtitle(out, text, fade_level(t, 0.0, duration, SUBTITLE_FADE_SEC))
+        level = fade_level(t, 0.0, duration, FADE_SEC)
+        writer.send(out if level >= 1.0 else (out * level).astype(np.uint8))
+        written += 1
+    print(f"[INFO] 녹화 {rec_dir.parent.name}: 원본 {frames[-1][0] - frames[0][0]:.1f}s "
+          f"({len(frames)} frames, 정지 {skipped:.1f}s 압축) -> {written / fps:.1f}s")
+    return written
+
+
 def drop_missing_clips(sequence: list) -> list:
     """녹화가 아직 없는 clip 은 빼고, 바로 앞의 소개 카드도 같이 뺀다(내용 없는 카드 방지)."""
     kept = []
@@ -654,7 +745,7 @@ def drop_missing_clips(sequence: list) -> list:
                     kept.pop()
                 continue
         kept.append(item)
-    if not any("clip" in item for item in kept):
+    if not any(key in item for item in kept for key in ("clip", "video", "recording")):
         raise FileNotFoundError(f"조립할 clip 이 하나도 없습니다 ({DEMO_ROOT})")
     return kept
 
@@ -683,8 +774,12 @@ def main(sequence=None, output: str = "") -> str:
                 frames += write_card(writer, item, size, FPS)
             elif "clip" in item:
                 frames += write_clip(writer, item, size, FPS)
+            elif "video" in item:
+                frames += write_video(writer, item, size, FPS, exclude=out_path)
+            elif "recording" in item:
+                frames += write_recording(writer, item, size, FPS)
             else:
-                print(f"[WARNING] card/clip 이 아닌 항목은 건너뜀: {item}")
+                print(f"[WARNING] card/clip/video/recording 이 아닌 항목은 건너뜀: {item}")
     finally:
         writer.close()
     print(f"[INFO] 완료 -> {out_path} ({frames / FPS:.1f}s, {size[0]}x{size[1]}, "

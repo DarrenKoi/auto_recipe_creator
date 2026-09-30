@@ -107,6 +107,7 @@ NOTE_WRAP = 24            # 패널 내용 한 줄 최대 글자 수
 NOTE_IMAGE_WIDTH = 0.24   # 근거 정지화면(보정 매칭 overlay) 폭, 출력 폭 대비
 
 ACCENT = (66, 133, 244)   # 클릭 원/카드 강조선 (RGB)
+OCCUPIED_COLOR = (234, 67, 53)  # 엔지니어가 접속 중이라 건너뛴 장비 행 강조 (RGB)
 SUBTITLE_FADE_SEC = 0.3
 RING_SEC = 0.6
 _BOLD_FONTS = ("C:/Windows/Fonts/malgunbd.ttf", "/System/Library/Fonts/AppleSDGothicNeo.ttc")
@@ -377,7 +378,8 @@ def visible_note_rects(frame: np.ndarray, note: dict, state: dict) -> list:
     return kept
 
 
-def draw_note_boxes(frame: np.ndarray, rects: list, level: float, unit: float) -> None:
+def draw_note_boxes(frame: np.ndarray, rects: list, level: float, unit: float,
+                    color: tuple = ACCENT) -> None:
     """판독한 영역 강조 사각형(원본 좌표, 확대 전에 그린다)."""
     thick = max(2, round(3 * unit))
     for x0, y0, x1, y1 in rects:
@@ -388,7 +390,7 @@ def draw_note_boxes(frame: np.ndarray, rects: list, level: float, unit: float) -
             continue
         box = roi.copy()
         cv2.rectangle(box, (int(x0) - ax - thick, int(y0) - ay - thick),
-                      (int(x1) - ax + thick, int(y1) - ay + thick), ACCENT, thick, cv2.LINE_AA)
+                      (int(x1) - ax + thick, int(y1) - ay + thick), color, thick, cv2.LINE_AA)
         cv2.addWeighted(box, level, roi, 1.0 - level, 0, dst=roi)
 
 
@@ -594,7 +596,9 @@ def write_clip(writer, item: dict, size: tuple, fps: int) -> int:
 
             blur_regions(frame, blur)
             if note_rects:
-                draw_note_boxes(frame, note_rects, note_level, unit)
+                occupied = note.get("occupancy") == "occupied_by_other"
+                draw_note_boxes(frame, note_rects, note_level, unit,
+                                OCCUPIED_COLOR if occupied else ACCENT)
             if CLICK_RING:
                 draw_click_rings(frame, t, clicks, unit)
             if CURSOR and cur is not None:

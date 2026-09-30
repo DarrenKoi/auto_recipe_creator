@@ -55,8 +55,9 @@ STAGE_SUBTITLES = {
     demo.STAGE_IN_TOOL: "",
 }
 # 다른 사용자가 접속 중이라 건너뛴 장비에 붙는 자막(판독 시각부터 OCCUPIED_SUBTITLE_SEC 동안).
-OCCUPIED_SUBTITLE = "엔지니어가 장비를 사용 중일 때는 접근하지 않습니다"
-OCCUPIED_SUBTITLE_SEC = 4.0
+# 그 장비의 List 행(MC ID / Connection User 칸)은 polish 가 빨간 박스로 표시한다.
+OCCUPIED_SUBTITLE = "이미 엔지니어가 접속 중일 때는 AI Agent는 접속을 하지 않게 설정되어 있습니다"
+OCCUPIED_SUBTITLE_SEC = 5.0
 FPS = 30
 MONITOR_INDEX = None  # None = 주 모니터. 다른 화면이면 mss 번호(1, 2, ...)
 TAIL_SEC = 2.0       # 시나리오가 끝난 뒤 더 담는 시간
@@ -99,6 +100,8 @@ def main() -> int:
             note_subtitles.append({"start": now, "end": round(now + OCCUPIED_SUBTITLE_SEC, 2),
                                    "text": OCCUPIED_SUBTITLE})
         note = {"t": now, "title": title, "lines": list(lines), "boxes": list(boxes)}
+        if occupancy:  # polish 가 점유 행을 빨간 박스로 그리는 근거
+            note["occupancy"] = occupancy
         if since_epoch is not None:  # 박스 기준 화면 시각(polish 가 이 화면과 비교한다)
             note["t_ref"] = round(recorder.video_time(since_epoch), 2)
         notes.append(note)

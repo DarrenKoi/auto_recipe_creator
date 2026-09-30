@@ -342,7 +342,7 @@ def _close_tool_window(visit: ToolVisit, close_fn) -> None:
 
 _OCCUPANCY_TEXT = {
     "free": "비어 있음 → 접속",
-    "occupied_by_other": "다른 사용자 접속 중 → 건너뜀",
+    "occupied_by_other": "엔지니어 접속 중 → 접속하지 않음",
 }
 
 

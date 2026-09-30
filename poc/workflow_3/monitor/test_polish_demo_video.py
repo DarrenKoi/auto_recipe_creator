@@ -475,3 +475,14 @@ def test_rehearsal_line_is_dropped_from_the_video_panel():
     lines = [line for line in map(pdv.reword, dra.outcome_lines("corrected", rehearsal=True)) if line]
     assert lines == ["Align Key 위치 찾음"]
     assert pdv.reword("Align Key 위치 확정") == "Align Key 위치 찾음"  # 이미 녹화된 notes.json
+
+
+def test_short_version_keeps_only_the_first_visited_tool():
+    from poc.workflow_3.monitor.polish_demo_video_short import first_visit_only
+
+    seq = [{"card": "c"}, {"clip": "rcs_", "stage": "visit"},
+           {"clip": "rcs_", "stage": "visit", "detail": "MCDC10"}, {"clip": "rcs_", "stage": "login"}]
+    out = first_visit_only(seq, lambda clip: list(reversed(STAGES)))
+    assert out[1] == {"clip": "rcs_", "stage": "visit", "detail": "MCD019"}
+    assert out[2]["detail"] == "MCDC10" and out[0] == seq[0] and out[3] == seq[3]
+    assert pdv.clip_range(out[1], STAGES, 50.0, 0.0) == (16.0, 30.0)  # 두 번째 장비(32~40s) 제외

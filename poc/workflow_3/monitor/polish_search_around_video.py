@@ -30,7 +30,7 @@ SEQUENCE = [
     {"video": "final_"},  # 가장 최근 polish 완성본
     {"recording": "MCD026-260929_085628",
      "subtitle": "Search Around 기능으로 Die Fit Target(DFT)이 없어도 주변을 탐색해서 찾아가도록 구현했습니다."},
-    {"card": "Search Around",
+    {"card": "주변 탐색",
      "body": "너무 순식간에 끝나 다른 위치에서 다시 시도해보겠습니다.", "sec": 3.5},
     {"recording": "MCD026-260929_085758"},
 ]

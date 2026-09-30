@@ -101,9 +101,10 @@ SEQUENCE = [
     {"card": "Align Fail 알람 대응", "body": "알람 발생부터 보정까지 엔지니어 없이 진행됩니다", "sec": 4.0},
     {"clip": "alarm_", "stage": ["alarm", "correction"]},
     # 보정 실패 시 백업 경로 - 엔지니어가 받는 cube 알림 캡처(오피스에서 _demo/ 에 둔다).
-    {"image": "cube_alarm.JPG", "sec": 6.0,
-     "subtitle": "Agent가 처리하지 못하는 경우 곧바로 엔지니어에게 큐브로 메시지를 보내고,\n"
-                 "학습을 위해 엔지니어의 작업을 녹화합니다"},
+    {"image": "cube_alarm.JPG", "sec": 7.0,
+     "subtitle": "Agent가 처리하지 못하는 경우 위와 같이 곧바로 엔지니어에게\n"
+                 "큐브로 메시지를 전달하고 작업을 인계합니다.\n"
+                 "학습을 위해 Agent는 엔지니어의 작업을 녹화합니다."},
 ]
 OUTPUT = ""               # 비우면 _demo/final_<시각>.mp4
 OUT_SIZE = (1920, 1080)   # PPT 16:9

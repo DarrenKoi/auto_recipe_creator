@@ -448,3 +448,9 @@ def test_image_item_is_a_still_with_subtitle_and_dropped_when_missing(tmp_path, 
     monkeypatch.setattr(pdv, "resolve_clip_dir", lambda name: tmp_path)
     assert pdv.drop_missing_clips(seq) == [seq[0], item]
     assert pdv.subtitle_patch(pdv.SEQUENCE[-1]["subtitle"], 1920).shape[1] < 1920
+
+
+def test_reword_expands_cv_even_before_korean_particle():
+    assert pdv.reword("Align Key를 CV로 찾아") == "Align Key를 Computer Vision으로 찾아"
+    assert pdv.reword("CV 패턴 매칭, CVD 는 그대로") == "Computer Vision 패턴 매칭, CVD 는 그대로"
+    assert pdv.reword("보정까지 사람 없이") == "보정까지 엔지니어 없이"

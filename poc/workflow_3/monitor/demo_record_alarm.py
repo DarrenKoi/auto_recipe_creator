@@ -59,7 +59,7 @@ STAGE_SUBTITLES = {
     "alarm": "Align Fail 알람이 발생하면 Agent가 즉시 감지합니다.",
     "connect_tool": "RCS List에서 알람이 난 {tool} 장비를 찾아 접속합니다.",
     "locate_sem_panel": "tool monitor 화면에서 SEM 영상 영역과 배율을 읽습니다.",
-    "correction": "등록된 Align Key를 CV로 찾아 중심으로 재정렬합니다.",
+    "correction": "등록된 Align Key를 Computer Vision으로 찾아 중심으로 재정렬합니다.",
     "teardown": "작업을 마치고 tool 창을 닫습니다.",
 }
 EVIDENCE_NAME = "evidence_match.jpg"  # 보정 근거 정지화면(패턴 매칭 overlay) 사본
@@ -193,7 +193,7 @@ class RecordingHooks(afm.AlarmHooks):
             if started is not None:
                 self.notes.append({
                     "t": round(recorder.video_time(started), 2), "title": "AI 보정 시작",
-                    "lines": ["등록 Align Key ↔ 실시간 화면", "CV 패턴 매칭으로 위치 탐색"],
+                    "lines": ["등록 Align Key ↔ 실시간 화면", "Computer Vision 패턴 매칭으로 위치 탐색"],
                     "boxes": []})
             finished = getattr(cycle, "correction_finished_at", None)
             if finished is not None:

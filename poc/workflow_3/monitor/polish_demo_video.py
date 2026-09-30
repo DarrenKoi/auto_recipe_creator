@@ -26,6 +26,7 @@ stages.json + subtitles.json)다. 아래 SEQUENCE 순서대로 카드와 clip �
 import bisect
 import json
 import math
+import re
 import sys
 import textwrap
 import time
@@ -96,10 +97,10 @@ SEQUENCE = [
     {"clip": "rcs_", "stage": ["login", "view_tab"]},
     {"card": "AI Monitoring", "body": "Agent가 화면을 읽고 판단해 장비를 자유롭게 오갑니다", "sec": 4.0},
     {"clip": "rcs_", "stage": "visit"},
-    {"card": "Align Fail 알람 대응", "body": "알람 발생부터 보정까지 사람 없이 진행됩니다", "sec": 4.0},
+    {"card": "Align Fail 알람 대응", "body": "알람 발생부터 보정까지 엔지니어 없이 진행됩니다", "sec": 4.0},
     {"clip": "alarm_", "stage": ["alarm", "correction"]},
     # 보정 실패 시 백업 경로 - 엔지니어가 받는 cube 알림 캡처(오피스에서 _demo/ 에 둔다).
-    {"image": "cube_alarm.JPG", "sec": 5.0,
+    {"image": "cube_alarm.JPG", "sec": 6.0,
      "subtitle": "Agent가 처리하지 못하는 경우 곧바로 엔지니어에게 큐브로 메시지를 보내고,\n"
                  "학습을 위해 엔지니어의 작업을 녹화합니다"},
 ]
@@ -133,6 +134,12 @@ RECORDING_MIN_SEC = 4.0       # recording 항목: 자막을 읽을 최소 길이
 MEMO_NOTICE = ("이 장면은 Agent가 화면을 인식하고 장비 상에서 액션(Mouse / Keyboard)이\n"
                "가능하다는 것을 보여주기 위해 넣은 퍼포먼스입니다")
 MEMO_NOTICE_SEC = 5.0
+# 이미 녹화된 clip 의 자막/판독 패널 문구를 조립할 때 고쳐 쓴다(재녹화 없이). (정규식, 바꿀 문구)
+REWORD = [
+    (r"(?<![A-Za-z])CV로", "Computer Vision으로"),  # 받침이 생겨 조사도 바뀐다
+    (r"(?<![A-Za-z])CV(?![A-Za-z])", "Computer Vision"),
+    (r"사람 없이", "엔지니어 없이"),
+]
 
 ACCENT = (66, 133, 244)   # 클릭 원/카드 강조선 (RGB)
 OCCUPIED_COLOR = (234, 67, 53)  # 엔지니어가 접속 중이라 건너뛴 장비 행 강조 (RGB)
@@ -495,6 +502,12 @@ def render_card(title: str, body: str, size: tuple) -> np.ndarray:
 # ------------------------------------------------------------------
 
 
+def reword(text: str) -> str:
+    for pattern, replacement in REWORD:
+        text = re.sub(pattern, replacement, text)
+    return text
+
+
 def memo_notice_subtitles(notes: list, text: str = "", sec: float = 0.0) -> list[tuple]:
     """순찰 '화면 판독' note(바로 뒤에 MemoPrint 입력) 시각마다 안내 자막 (시작, 끝, 문구)."""
     text, sec = text or MEMO_NOTICE, sec or MEMO_NOTICE_SEC
@@ -566,6 +579,8 @@ def write_clip(writer, item: dict, size: tuple, fps: int) -> int:
             if a and b:
                 rects.append((a[0], a[1], b[0], b[1]))
         image = note.get("image", "")
+        note = {**note, "title": reword(note.get("title", "")),
+                "lines": [reword(line) for line in note.get("lines", [])]}
         notes.append({**note, "rects": rects,
                       "image_path": str(clip_dir / image) if image else ""})
     if notes and "end" not in item:
@@ -577,7 +592,8 @@ def write_clip(writer, item: dict, size: tuple, fps: int) -> int:
     if subtitles is None:
         subtitles = [(s["start"], s["end"], s["text"])
                      for s in _read_json(clip_dir / SUBTITLES_NAME, [])]
-    subtitles = sorted(list(subtitles) + memo_notice_subtitles(notes))
+    subtitles = sorted([(a, b, reword(text)) for a, b, text in subtitles]
+                       + memo_notice_subtitles(notes))
 
     out_w, out_h = size
     base = base_rect(item.get("crop"), fw, fh, out_w / out_h)

@@ -28,9 +28,11 @@ from poc.workflow_3.monitor.screen_video import DEMO_ROOT  # noqa: E402
 
 SEQUENCE = [
     {"video": "final_"},  # 가장 최근 polish 완성본
-    {"recording": "MCD026-260929_085628",
-     "subtitle": "Search Around 기능으로 Die Fit Target(DFT)이 없어도 주변을 탐색해서 찾아가도록 구현했습니다.",
-     "subtitle_sec": 5.0},
+    {"card": "기능 고도화 : Search Around", "body": "화면에 Die Fit Target (DFT)가 없다면?", "sec": 3.5},
+    {"card": "주변 탐색 알고리즘",
+     "body": "Agent는 SEM 화면에 DFT가 없으면 주변을 탐색해서\n찾아내도록 알고리즘 고도화까지 했습니다.",
+     "sec": 5.0},
+    {"recording": "MCD026-260929_085628"},
     {"card": "주변 탐색",
      "body": "너무 순식간에 끝나 다른 위치에서 다시 시도해보겠습니다.", "sec": 3.5},
     {"recording": "MCD026-260929_085758"},

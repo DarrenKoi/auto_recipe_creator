@@ -132,7 +132,7 @@ RECORDING_MIN_SEC = 4.0       # recording 항목: 자막을 읽을 최소 길이
 # 맥락 없이 메모를 적는 장면이 실제 업무 조작으로 오해받지 않게 한다. 빈 문자열 = 끔.
 MEMO_NOTICE = ("이 장면은 Agent가 화면을 인식하고 장비 상에서 액션(Mouse / Keyboard)이\n"
                "가능하다는 것을 보여주기 위해 넣은 퍼포먼스입니다")
-MEMO_NOTICE_SEC = 6.0
+MEMO_NOTICE_SEC = 5.0
 
 ACCENT = (66, 133, 244)   # 클릭 원/카드 강조선 (RGB)
 OCCUPIED_COLOR = (234, 67, 53)  # 엔지니어가 접속 중이라 건너뛴 장비 행 강조 (RGB)

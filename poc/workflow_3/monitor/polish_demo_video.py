@@ -99,7 +99,7 @@ SEQUENCE = [
     {"card": "Align Fail 알람 대응", "body": "알람 발생부터 보정까지 사람 없이 진행됩니다", "sec": 4.0},
     {"clip": "alarm_", "stage": ["alarm", "correction"]},
     # 보정 실패 시 백업 경로 - 엔지니어가 받는 cube 알림 캡처(오피스에서 _demo/ 에 둔다).
-    {"image": "cube_alarm.jpeg", "sec": 7.0,
+    {"image": "cube_alarm.jpeg", "sec": 5.0,
      "subtitle": "Agent가 처리하지 못하는 경우 곧바로 엔지니어에게 큐브로 메시지를 보내고,\n"
                  "학습을 위해 엔지니어의 작업을 녹화합니다"},
 ]

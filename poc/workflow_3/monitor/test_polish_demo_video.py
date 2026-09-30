@@ -432,3 +432,19 @@ def test_memo_notice_starts_at_each_screen_reading_note():
     notes = [{"t": 5.0, "title": "MCD019 접속 전 확인"}, {"t": 12.0, "title": "MCD019 화면 판독"}]
     assert pdv.memo_notice_subtitles(notes, "안내", 6.0) == [(12.0, 18.0, "안내")]
     assert pdv.subtitle_patch(pdv.MEMO_NOTICE, 1920).shape[1] < 1920  # 두 줄로 화면 폭 안
+
+
+def test_image_item_is_a_still_with_subtitle_and_dropped_when_missing(tmp_path, monkeypatch):
+    import cv2
+
+    monkeypatch.setattr(pdv, "DEMO_ROOT", tmp_path)
+    cv2.imwrite(str(tmp_path / "cube_alarm.jpeg"), np.full((30, 50, 3), 128, np.uint8))
+    sent = []
+    writer = type("W", (), {"send": lambda self, f: sent.append(f.shape)})()
+    item = {"image": "cube_alarm.jpeg", "sec": 1.0, "subtitle": "자막"}
+    assert pdv.write_image(writer, item, (64, 36), 30) == 30
+    assert set(sent) == {(36, 64, 3)}
+    seq = [{"clip": "/nonexistent"}, {"image": "missing.jpeg"}, item]
+    monkeypatch.setattr(pdv, "resolve_clip_dir", lambda name: tmp_path)
+    assert pdv.drop_missing_clips(seq) == [seq[0], item]
+    assert pdv.subtitle_patch(pdv.SEQUENCE[-1]["subtitle"], 1920).shape[1] < 1920

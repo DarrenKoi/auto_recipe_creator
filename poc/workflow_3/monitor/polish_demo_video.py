@@ -76,6 +76,8 @@ from poc.workflow_3.monitor.screen_video import (  # noqa: E402
 #                                               recording/ 프레임(jpg). 정지 구간은 RECORDING_MAX_HOLD_SEC 로 압축
 #         + "subtitle": "문구"                  이 녹화 내내 하단 자막
 #         + "speed": 1.0                        배속
+#   사진: {"image": "cube_alarm.jpeg"}          _demo 아래 파일 이름(또는 경로)의 정지 화면. 없으면 빼고 조립
+#         + "subtitle": "문구", "sec": 6.0      하단 자막 / 노출 시간
 #
 # clip 폴더 두 종류:
 #   rcs_<tag>            demo_record_rcs.py   stage = login/view_tab/list_tab/visit/in_tool
@@ -92,10 +94,14 @@ SEQUENCE = [
      "body": "R3 CD-SEM Align Fail에 대한 24/7 현업 대응을 AI Agent가 대신 처리\n"
              "처리 불가능한 경우에만 엔지니어에게 알람 후 인계하는 시스템", "sec": 5.0},
     {"clip": "rcs_", "stage": ["login", "view_tab"]},
-    {"card": "AI Monitoring", "body": "화면을 읽고 판단해 장비를 오갑니다", "sec": 4.0},
+    {"card": "AI Monitoring", "body": "Agent가 화면을 읽고 판단해 장비를 자유롭게 오갑니다", "sec": 4.0},
     {"clip": "rcs_", "stage": "visit"},
     {"card": "Align Fail 알람 대응", "body": "알람 발생부터 보정까지 사람 없이 진행됩니다", "sec": 4.0},
     {"clip": "alarm_", "stage": ["alarm", "correction"]},
+    # 보정 실패 시 백업 경로 - 엔지니어가 받는 cube 알림 캡처(오피스에서 _demo/ 에 둔다).
+    {"image": "cube_alarm.jpeg", "sec": 7.0,
+     "subtitle": "Agent가 처리하지 못하는 경우 곧바로 엔지니어에게 큐브로 메시지를 보내고,\n"
+                 "학습을 위해 엔지니어의 작업을 녹화합니다"},
 ]
 OUTPUT = ""               # 비우면 _demo/final_<시각>.mp4
 OUT_SIZE = (1920, 1080)   # PPT 16:9
@@ -746,6 +752,36 @@ def write_recording(writer, item: dict, size: tuple, fps: int) -> int:
     return written
 
 
+def resolve_image(name: str) -> Path:
+    path = Path(name).expanduser()
+    if not path.is_file():
+        path = DEMO_ROOT / name
+    if not path.is_file():
+        raise FileNotFoundError(f"사진이 없습니다: {name!r} ({DEMO_ROOT})")
+    return path
+
+
+def write_image(writer, item: dict, size: tuple, fps: int) -> int:
+    """정지 화면 한 장을 sec 동안(letterbox) + 하단 자막."""
+    path = resolve_image(item["image"])
+    bgr = read_image(path)
+    if bgr is None:
+        print(f"[WARNING] 사진을 읽지 못해 건너뜀: {path}")
+        return 0
+    image = fit_into_canvas(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), size)
+    sec, text = float(item.get("sec", 5.0)), item.get("subtitle", "")
+    count = max(1, round(sec * fps))
+    for i in range(count):
+        t = i / fps
+        out = image.copy()
+        if text:
+            draw_subtitle(out, text, fade_level(t, 0.0, sec, SUBTITLE_FADE_SEC))
+        level = fade_level(t, 0.0, sec, FADE_SEC)
+        writer.send(out if level >= 1.0 else (out * level).astype(np.uint8))
+    print(f"[INFO] 사진 {path.name}: {sec:.1f}s")
+    return count
+
+
 def drop_missing_clips(sequence: list) -> list:
     """녹화가 아직 없는 clip 은 빼고, 바로 앞의 소개 카드도 같이 뺀다(내용 없는 카드 방지)."""
     kept = []
@@ -757,6 +793,12 @@ def drop_missing_clips(sequence: list) -> list:
                 print(f"[WARNING] {exc} - 이 clip 과 바로 앞 카드를 빼고 조립합니다")
                 if kept and "card" in kept[-1]:
                     kept.pop()
+                continue
+        if "image" in item:
+            try:
+                resolve_image(item["image"])
+            except FileNotFoundError as exc:
+                print(f"[WARNING] {exc} - 이 사진은 빼고 조립합니다")
                 continue
         kept.append(item)
     if not any(key in item for item in kept for key in ("clip", "video", "recording")):
@@ -792,8 +834,10 @@ def main(sequence=None, output: str = "") -> str:
                 frames += write_video(writer, item, size, FPS, exclude=out_path)
             elif "recording" in item:
                 frames += write_recording(writer, item, size, FPS)
+            elif "image" in item:
+                frames += write_image(writer, item, size, FPS)
             else:
-                print(f"[WARNING] card/clip/video/recording 이 아닌 항목은 건너뜀: {item}")
+                print(f"[WARNING] card/clip/video/recording/image 가 아닌 항목은 건너뜀: {item}")
     finally:
         writer.close()
     print(f"[INFO] 완료 -> {out_path} ({frames / FPS:.1f}s, {size[0]}x{size[1]}, "

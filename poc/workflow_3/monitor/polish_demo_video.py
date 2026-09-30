@@ -509,6 +509,12 @@ def reword(text: str) -> str:
     return text
 
 
+def active_subtitle(t: float, subtitles: list):
+    """t 에 떠 있는 자막 (시작, 끝, 문구). 겹치면 나중에 시작한 것 - 긴 자막이 memo 안내를 가리지 않게."""
+    live = [sub for sub in subtitles if sub[0] <= t < sub[1]]
+    return max(live, key=lambda sub: sub[0]) if live else None
+
+
 def memo_notice_subtitles(notes: list, text: str = "", sec: float = 0.0) -> list[tuple]:
     """순찰 '화면 판독' note(바로 뒤에 MemoPrint 입력) 시각마다 안내 자막 (시작, 끝, 문구)."""
     text, sec = text or MEMO_NOTICE, sec or MEMO_NOTICE_SEC
@@ -638,7 +644,8 @@ def write_clip(writer, item: dict, size: tuple, fps: int) -> int:
             prev_small, prev_cur = small, cur
             if changed:
                 last_change = t
-            text = next((s[2] for s in subtitles if s[0] <= t < s[1]), "")
+            sub = active_subtitle(t, subtitles)
+            text = sub[2] if sub else ""
             note, note_level = active_note(t, notes, NOTE_SEC)
             # 가림(blur) 전에 비교한다 - 기준 화면도 가림 전이다.
             note_rects = visible_note_rects(frame, note, box_state) if note and note["rects"] else []
@@ -680,7 +687,6 @@ def write_clip(writer, item: dict, size: tuple, fps: int) -> int:
             if note is not None:
                 draw_note_panel(out, note, note_level)
             if text:
-                sub = next(sub for sub in subtitles if sub[0] <= t < sub[1])
                 draw_subtitle(out, text, fade_level(t, sub[0], sub[1], SUBTITLE_FADE_SEC))
             level = fade_level(t, start, end, FADE_SEC)
             if level < 1.0:
@@ -834,6 +840,10 @@ def main(sequence=None, output: str = "") -> str:
         size = (PREVIEW_WIDTH - PREVIEW_WIDTH % 2,
                 round(PREVIEW_WIDTH * OUT_SIZE[1] / OUT_SIZE[0] / 2) * 2)
     out_path = Path(output or OUTPUT or DEMO_ROOT / f"final_{time.strftime('%y%m%d_%H%M%S')}.mp4")
+    # writer 가 열리는 순간 출력 파일이 비워진다 - 이어 붙일 원본과 같으면 원본을 잃는다.
+    for item in sequence:
+        if "video" in item and resolve_video(item["video"], out_path).resolve() == out_path.resolve():
+            raise ValueError(f"출력 파일이 이어 붙일 원본과 같습니다: {out_path} - OUTPUT 을 바꾸세요")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     writer = imageio_ffmpeg.write_frames(
         str(out_path), size, fps=FPS, codec="libx264", quality=None, macro_block_size=1,

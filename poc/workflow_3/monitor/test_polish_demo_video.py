@@ -454,3 +454,16 @@ def test_reword_expands_cv_even_before_korean_particle():
     assert pdv.reword("Align Key를 CV로 찾아") == "Align Key를 Computer Vision으로 찾아"
     assert pdv.reword("CV 패턴 매칭, CVD 는 그대로") == "Computer Vision 패턴 매칭, CVD 는 그대로"
     assert pdv.reword("보정까지 사람 없이") == "보정까지 엔지니어 없이"
+
+
+def test_later_subtitle_wins_overlap_and_output_never_overwrites_its_source(tmp_path, monkeypatch):
+    subs = [(0.0, 20.0, "기존 자막"), (5.0, 10.0, "안내")]
+    assert pdv.active_subtitle(7.0, subs)[2] == "안내"
+    assert pdv.active_subtitle(12.0, subs)[2] == "기존 자막"
+    assert pdv.active_subtitle(25.0, subs) is None
+    monkeypatch.setattr(pdv, "DEMO_ROOT", tmp_path)
+    src = tmp_path / "final_1.mp4"
+    src.write_bytes(b"original")
+    with pytest.raises(ValueError):
+        pdv.main([{"video": str(src)}], str(src))
+    assert src.read_bytes() == b"original"

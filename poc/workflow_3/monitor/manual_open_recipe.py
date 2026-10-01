@@ -14,11 +14,11 @@
 전체 일치인 이유: 부분 일치면 'RJ1BXXX_CG6300A' 같은 이웃 이름도 통과한다
 (`manual_image_mode_change` 의 OM/OM-D 와 같은 이유).
 
-**오피스 미검증** - 열 머리글 아래 휠 위치, 행 높이, 휠 한 칸의 줄 수는 추정치다. 첫 실행은
-`SAFE_MODE=1` 로 머리글/첫 화면 판독까지 보고, 콘솔의 `읽힘=` 토큰으로 strip 크기를 맞춘다.
+**오피스 미검증** - 열 머리글 아래 휠 위치, 행 높이, 휠 한 칸의 줄 수는 추정치다. 목록 클릭/휠은
+장비에 영향이 없어 리허설 없이 바로 실클릭으로 돌린다(사용자 확인 2026-10-02). 행을 못 찾으면
+콘솔의 `읽힘=` 토큰으로 strip 크기를 맞춘다.
 
 실행: uv run python poc/workflow_3/monitor/manual_open_recipe.py
-리허설(클릭/휠 차단): SAFE_MODE=1 uv run python ...
 종료 코드: 0=recipe 클릭, 2=사전조건/File Manager 실패, 3=머리글/행 못 찾음
 """
 
@@ -35,7 +35,7 @@ if str(_REPO_ROOT) not in sys.path:
 # 실행 인자 - 여기만 고쳐서 쓴다. 셸 env(괄호 안 이름)가 있으면 env 가 이긴다.
 # ===========================================================================
 
-EQP_ID = "MCD513"                  # (MANUAL_OPEN_RECIPE_EQP_ID) 제목에 이 ID 가 든 tool 창
+EQP_ID = ""                        # (MANUAL_OPEN_RECIPE_EQP_ID) 비우면 열려 있는 아무 tool 창
 # MES 알람의 RECIPE_ID 형태 그대로 '<class>/<recipe>' - 앞이 Class 열, 뒤가 Recipe 열.
 RECIPE_ID = "RJ1BXXX_CG6300/RJ1B_ISOCO_EUVSPT"  # (MANUAL_OPEN_RECIPE_ID)
 
@@ -234,12 +234,10 @@ def main() -> int:
     if not class_name or not recipe_name or "/" in recipe_name:
         print(f"[ERROR] RECIPE_ID 는 '<class>/<recipe>' 형태여야 합니다: {recipe_id!r}")
         return EXIT_PREFLIGHT_FAILED
-    print(f"[INFO] recipe 열기: EQP_ID={eqp_id}, class={class_name}, recipe={recipe_name}")
+    print(f"[INFO] recipe 열기: EQP_ID={eqp_id!r}, class={class_name}, recipe={recipe_name}")
 
-    # 1. File Manager - 이 진입점 하나로 여는 것이 계약이라 대상은 덮어쓴다(셸 env 가 달라도).
-    os.environ["MANUAL_CLICK_EQP_ID"] = eqp_id
-    os.environ["MANUAL_CLICK_TARGET"] = "file_manager"
-    code = manual_click_button.main()
+    # 1. File Manager - 인자로 넘긴다(env 로 넘기면 빈 eqp_id 가 그쪽 상수로 되돌아간다).
+    code = manual_click_button.main(eqp_id=eqp_id, target="file_manager")
     if code not in (manual_click_button.EXIT_OK, manual_click_button.EXIT_ALREADY_OPEN):
         print(f"[ERROR] File Manager 를 열지 못했습니다(exit={code}) - 멈춥니다")
         return EXIT_PREFLIGHT_FAILED
@@ -247,7 +245,7 @@ def main() -> int:
     settings = load_workflow3_settings()
     window, title, _backend = find_remote_monitoring_window(eqp_id)
     if window is None:
-        print(f"[ERROR] tool 창이 없습니다: EQP_ID={eqp_id}")
+        print(f"[ERROR] tool 창이 없습니다: EQP_ID={eqp_id!r}")
         return EXIT_PREFLIGHT_FAILED
 
     debug_dir = debug_root() / "manual_open_recipe" / make_timestamp_tag()

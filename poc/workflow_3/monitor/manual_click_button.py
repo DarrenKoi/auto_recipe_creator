@@ -98,11 +98,13 @@ EXIT_NOT_OPENED = 5                # 클릭은 했는데 열릴 창을 확인 �
 EXIT_ALREADY_OPEN = 6              # 누르기 전부터 열릴 창이 보였다 - 누르지 않음
 
 
-def main() -> int:
+def main(eqp_id: str | None = None, target: str | None = None) -> int:
+    """인자를 주면 env/상수 대신 그 값을 쓴다 - `eqp_id=""` 는 '열려 있는 아무 tool 창'."""
     os.environ.setdefault("SAFE_MODE", "0")
     settings = load_workflow3_settings()
-    eqp_id = os.environ.get("MANUAL_CLICK_EQP_ID", "").strip() or EQP_ID
-    target_name = os.environ.get("MANUAL_CLICK_TARGET", "").strip() or TARGET
+    if eqp_id is None:
+        eqp_id = os.environ.get("MANUAL_CLICK_EQP_ID", "").strip() or EQP_ID
+    target_name = target or os.environ.get("MANUAL_CLICK_TARGET", "").strip() or TARGET
     reveal_attempts = max(0, _env_int("MANUAL_CLICK_REVEAL_ATTEMPTS", REVEAL_ATTEMPTS))
     open_timeout = _env_float("MANUAL_CLICK_OPEN_TIMEOUT_SEC", OPEN_TIMEOUT_SEC)
     open_poll = _env_float("MANUAL_CLICK_OPEN_POLL_SEC", OPEN_POLL_INTERVAL_SEC)
@@ -121,7 +123,7 @@ def main() -> int:
         reveal_attempts = 0
 
     mode = "실클릭" if settings.action_enabled else "리허설(SAFE_MODE=1, 클릭/Alt 차단)"
-    print(f"[INFO] 버튼 클릭: EQP_ID={eqp_id}, target={spec.key}('{spec.label}'), {mode}, "
+    print(f"[INFO] 버튼 클릭: EQP_ID={eqp_id!r}, target={spec.key}('{spec.label}'), {mode}, "
           f"등록 위치={spec.center}, 가림해제 Alt+click 최대 {reveal_attempts}회")
 
     print_elevation_status()
@@ -130,7 +132,7 @@ def main() -> int:
 
     window, title, _backend = find_remote_monitoring_window(eqp_id)
     if window is None:
-        print(f"[ERROR] tool 창이 없습니다: EQP_ID={eqp_id}. 먼저 직접 접속하세요.")
+        print(f"[ERROR] tool 창이 없습니다: EQP_ID={eqp_id!r}. 먼저 직접 접속하세요.")
         return EXIT_PREFLIGHT_FAILED
     print(f"[INFO] 열린 tool 창에 붙습니다: title={title!r}")
     if is_aborted():

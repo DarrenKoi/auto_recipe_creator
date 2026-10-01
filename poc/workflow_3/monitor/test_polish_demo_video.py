@@ -500,3 +500,29 @@ def test_brief_version_skips_the_patrol_and_the_first_search_take():
     assert [item for item in out if "recording" in item] == takes[-1:]
     assert "다시 시도" not in "".join(item.get("body", "") for item in out)
     assert [item["card"] for item in out[-3:-1]] == [item["card"] for item in psa.SEQUENCE[1:3]]
+    merged = align_fail_only(pdv.SEQUENCE, psa.SEQUENCE, {"card": "한 장"})
+    assert merged[-2:] == [{"card": "한 장"}] + takes[-1:] and len(merged) == len(out) - 1
+
+
+def test_brief_version_caps_stills_and_speeds_up_clips(tmp_path, monkeypatch):
+    from poc.workflow_3.monitor.polish_demo_video_brief import quicken
+
+    seq = [{"card": "a", "sec": 5.0}, {"card": "b", "sec": 3.5}, {"image": "x.jpg", "sec": 7.0},
+           {"clip": "alarm_"}, {"recording": "r"}]
+    out = quicken(seq, 4.0, 1.3)
+    assert [item.get("sec") for item in out[:3]] == [4.0, 3.5, 4.0]
+    assert [item.get("speed") for item in out[3:]] == [1.3, 1.3] and "speed" not in seq[3]
+    assert quicken(seq, 0, 1.0)[0]["sec"] == 5.0
+    short = quicken(seq, 4.0, 1.3, "두 줄\n자막")
+    assert short[2]["subtitle"] == "두 줄\n자막" and "subtitle" not in short[0]
+    assert "subtitle" not in out[2]  # 비우면 본편 자막 그대로
+
+    # clip 배속: 자막으로 정지 구간까지 다 살린 3초 clip 이 1.5배면 2초 남짓.
+    monkeypatch.setattr(pdv, "PREVIEW_WIDTH", 320)
+    _synthetic_clip(tmp_path / "clip", [{"start": 0.0, "end": 3.0, "text": "내내"}])
+    counts = []
+    for speed in (1.0, 1.5):
+        path = pdv.main([{"clip": str(tmp_path / "clip"), "zoom": 1.0, "speed": speed}],
+                        output=str(tmp_path / f"x{speed}.mp4"))
+        counts.append(imageio_ffmpeg.count_frames_and_secs(path)[0])
+    assert counts[0] >= 85 and abs(counts[1] - counts[0] / 1.5) <= 2

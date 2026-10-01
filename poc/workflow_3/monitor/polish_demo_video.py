@@ -71,6 +71,7 @@ from poc.workflow_3.monitor.screen_video import (  # noqa: E402
 #         + "crop": (x0, y0, x1, y1)            화면 비율 0~1 - tool 창만 크게 보이게
 #         + "zoom": 1.0                         이 clip 만 확대 배율(1.0 = 확대 끔)
 #         + "blur": [(x0, y0, x1, y1), ...]     이 clip 만 가림 영역(BLUR_REGIONS 에 더함)
+#         + "speed": 1.3                        배속(>= 1, 프레임을 솎는다). 자막/판독 패널 노출도 그만큼 짧아진다
 #   영상: {"video": "final_"}                   이미 만든 mp4 를 그대로 잇는다(_demo 아래 이름 앞부분
 #                                               중 가장 최근, 또는 경로). 크기가 다르면 letterbox
 #   녹화: {"recording": "MCD026-260929_085628"} align_fail_events 아래 이벤트 폴더(또는 경로)의
@@ -611,6 +612,7 @@ def write_clip(writer, item: dict, size: tuple, fps: int) -> int:
     home = (base[0] + base[2] / 2, base[1] + base[3] / 2)
     zoom = float(item.get("zoom", ZOOM))
     blur = list(BLUR_REGIONS) + list(item.get("blur", []))
+    speed = max(1.0, float(item.get("speed", 1.0)))
     focus = note_focus_points(notes, base, zoom, SHOT_MARGIN) if NOTE_FOCUS else []
     note_shots = plan_shots(focus, base, zoom, gap=0.0, margin=SHOT_MARGIN,
                             lead=ZOOM_LEAD_SEC, hold=NOTE_SEC)
@@ -621,6 +623,7 @@ def write_clip(writer, item: dict, size: tuple, fps: int) -> int:
     box_state = {}
     prev_small, prev_cur, last_change = None, None, start
     written = cut = 0
+    emit = 1.0  # 배속: 남긴 프레임마다 1/speed 씩 쌓아 1 이 될 때만 내보낸다(첫 프레임은 항상)
     try:
         for i, raw in enumerate(reader):
             t = i / src_fps
@@ -658,6 +661,10 @@ def write_clip(writer, item: dict, size: tuple, fps: int) -> int:
                     and not text and note is None and not moving and not edge):
                 cut += 1
                 continue
+            if emit < 1.0:  # 솎는 프레임은 그리지 않는다
+                emit += 1.0 / speed
+                continue
+            emit += 1.0 / speed - 1.0
 
             blur_regions(frame, blur)
             if note_rects:
@@ -700,7 +707,7 @@ def write_clip(writer, item: dict, size: tuple, fps: int) -> int:
     finally:
         reader.close()
     print(f"[INFO] clip {clip_dir.name} {item.get('stage', '')}: 원본 {start:.1f}~{end:.1f}s -> "
-          f"{written / fps:.1f}s (멈춘 구간 {cut / src_fps:.1f}s 잘라냄, 클릭 {len(clicks)}, "
+          f"{written / fps:.1f}s (x{speed:g}, 멈춘 구간 {cut / src_fps:.1f}s 잘라냄, 클릭 {len(clicks)}, "
           f"확대 {len(shots) + len(note_shots)}회, 판독 {len(notes)})")
     return written
 

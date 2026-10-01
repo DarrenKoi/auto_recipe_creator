@@ -486,3 +486,17 @@ def test_short_version_keeps_only_the_first_visited_tool():
     assert out[1] == {"clip": "rcs_", "stage": "visit", "detail": "MCD019"}
     assert out[2]["detail"] == "MCDC10" and out[0] == seq[0] and out[3] == seq[3]
     assert pdv.clip_range(out[1], STAGES, 50.0, 0.0) == (16.0, 30.0)  # 두 번째 장비(32~40s) 제외
+
+
+def test_brief_version_skips_the_patrol_and_the_first_search_take():
+    from poc.workflow_3.monitor import polish_search_around_video as psa
+    from poc.workflow_3.monitor.polish_demo_video_brief import align_fail_only
+
+    out = align_fail_only(pdv.SEQUENCE, psa.SEQUENCE)  # 실제 SEQUENCE - 본편을 고쳐도 골라내는지
+    assert [item["card"] for item in out[:2]] == [item["card"] for item in pdv.SEQUENCE[:2]]
+    assert "card" in out[2] and out[3]["clip"].startswith("alarm_")
+    assert not any(item.get("clip", "").startswith("rcs_") or "video" in item for item in out)
+    takes = [item for item in psa.SEQUENCE if "recording" in item]
+    assert [item for item in out if "recording" in item] == takes[-1:]
+    assert "다시 시도" not in "".join(item.get("body", "") for item in out)
+    assert [item["card"] for item in out[-3:-1]] == [item["card"] for item in psa.SEQUENCE[1:3]]

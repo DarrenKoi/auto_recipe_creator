@@ -131,6 +131,7 @@ uv run python poc/workflow_3/monitor/demo_record_alarm.py    # align_fail_monito
 uv run python poc/workflow_3/monitor/polish_demo_video.py    # 상단 SEQUENCE 로 조립(오프라인, Mac 가능)
 uv run python poc/workflow_3/monitor/polish_tool_monitor_video.py  # tool monitor 편만 따로(alarm_ clip -> tool_monitor_<시각>.mp4)
 uv run python poc/workflow_3/monitor/polish_search_around_video.py  # 최근 final_ 뒤에 align_fail_events 녹화(자막)를 이어 full_<시각>.mp4
+uv run python poc/workflow_3/monitor/polish_demo_video_brief.py     # 요약판: 여는 카드 -> 알람 대응 -> Search Around 마지막 회차 (RCS 순찰/MemoPrint 없음) -> brief_<시각>.mp4
 
 # workflow_3 — 녹화 프레임 -> 시연 mp4 (오프라인; Mac/dev PC 에서도 실행 가능)
 uv run python poc/workflow_3/monitor/make_demo_video.py      # 최근 recording 폴더 자동 선택

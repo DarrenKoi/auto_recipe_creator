@@ -494,7 +494,7 @@ def test_brief_version_skips_the_patrol_and_the_first_search_take():
 
     out = align_fail_only(pdv.SEQUENCE, psa.SEQUENCE)  # 실제 SEQUENCE - 본편을 고쳐도 골라내는지
     assert [item["card"] for item in out[:2]] == [item["card"] for item in pdv.SEQUENCE[:2]]
-    assert "card" in out[2] and out[3]["clip"].startswith("alarm_")
+    assert out[2]["clip"].startswith("alarm_")  # 알람 편 소개 카드 없이 곧바로 clip
     assert not any(item.get("clip", "").startswith("rcs_") or "video" in item for item in out)
     takes = [item for item in psa.SEQUENCE if "recording" in item]
     assert [item for item in out if "recording" in item] == takes[-1:]

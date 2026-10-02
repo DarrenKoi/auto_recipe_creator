@@ -79,3 +79,40 @@ def test_collect_frame_paths_sorted(tmp_path):
         "rec_rcs_0001_x.jpg",
         "rec_rcs_0002_x.jpg",
     ]
+
+
+def test_frames_are_ordered_by_numeric_seq_past_four_digits(tmp_path):
+    """seq 는 :04d 로 저장된다 - 10000 번째부터 파일명 사전순은 1000 보다 앞에 선다.
+
+    수동 녹화 프레임 상한은 15000 이라 실제로 닿는 범위다. 순서가 뒤집히면 인접
+    프레임 diff 와 그 뒤 모든 시간 순서 가정이 깨진다.
+    """
+    from poc.workflow_3.recording_filter.frame_reduce import collect_frame_paths
+
+    names = [
+        "tag_rcs_0999_00049950ms.jpg", "tag_rcs_1000_00050000ms.jpg",
+        "tag_rcs_9999_00499950ms.jpg", "tag_rcs_10000_00500000ms.jpg",
+    ]
+    for name in names:
+        (tmp_path / name).write_bytes(b"")
+
+    assert [p.name for p in collect_frame_paths(tmp_path)] == names
+
+
+def test_numeric_seq_ordering_keeps_the_old_order_for_every_other_name_shape(tmp_path):
+    """seq 자릿수만 고친다 - 4자리 이하 이름들의 순서는 종전 파일명 사전순 그대로여야 한다.
+
+    순서가 달라지면 인접 프레임 diff 의 짝이 바뀐다(두 테이크가 섞인 옛 폴더, `_rcs_`
+    없는 이름, .jpeg).
+    """
+    from poc.workflow_3.recording_filter.frame_reduce import collect_frame_paths
+
+    names = [
+        "T_pre_rcs_0001_00000100ms.jpg", "T_rcs_0001_00000100ms.jpg",
+        "T_rcs_0002_00000200ms.jpeg", "rec_0001_00000100ms.jpeg",
+        "rec_rcs_0001_00000100ms.jpg", "a.jpg", "b.jpg",
+    ]
+    for name in names:
+        (tmp_path / name).write_bytes(b"")
+
+    assert [p.name for p in collect_frame_paths(tmp_path)] == sorted(names)

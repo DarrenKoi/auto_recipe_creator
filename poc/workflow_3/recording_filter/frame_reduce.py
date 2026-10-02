@@ -6,6 +6,7 @@ blob 의 *위치* bbox(change_bbox)를 native 픽셀로 함께 산출한다(현�
 향후 Stage 2b(OCR-diff) 의 crop 영역으로 재사용된다.
 """
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -45,12 +46,27 @@ def _parse_frame_index(frame_path: Path) -> int:
     return -1
 
 
+def _frame_sort_key(frame_path: Path) -> str:
+    """파일명 사전순을 그대로 쓰되 `_rcs_` 뒤 seq 만 숫자처럼 비교되게 하는 정렬 키.
+
+    녹화는 seq 를 `:04d` 로 저장해 10000 번째부터 자릿수가 늘어난다 - 파일명 사전순은
+    'tag_rcs_10000_' 을 'tag_rcs_1000_' 앞에 세운다('0' < '_'). 수동 녹화 프레임 상한이
+    15000 이라 실제로 닿는 범위이고, 순서가 뒤집히면 인접 프레임 diff 부터 틀린다.
+    seq 를 0 으로 채워 폭만 맞추므로 그 밖의 이름(두 테이크가 섞인 옛 폴더, `_rcs_`
+    없는 이름)은 종전 사전순 그대로다.
+    """
+    return re.sub(r"(?<=_rcs_)\d+", lambda match: match.group().zfill(10), frame_path.name)
+
+
 def collect_frame_paths(frames_dir: Path) -> list[Path]:
-    """frames 디렉터리의 JPEG 를 파일명 정렬 순으로 반환한다."""
+    """frames 디렉터리의 JPEG 를 파일명 순(seq 는 숫자 비교)으로 반환한다."""
     return sorted(
-        p
-        for p in frames_dir.iterdir()
-        if p.is_file() and p.suffix.lower() in {".jpg", ".jpeg"}
+        (
+            p
+            for p in frames_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in {".jpg", ".jpeg"}
+        ),
+        key=_frame_sort_key,
     )
 
 

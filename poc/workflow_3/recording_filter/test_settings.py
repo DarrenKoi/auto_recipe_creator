@@ -73,3 +73,15 @@ def test_typing_locality_settings_defaults_and_env_override(monkeypatch):
     loaded = load_recording_filter_settings()
     assert loaded.typing_roi_max_px == 120
     assert loaded.typing_roi_max_area_px == 20000
+
+
+def test_unattributed_change_rollback_env_reaches_the_setting(monkeypatch):
+    """롤백 스위치 이름이 틀리면 조용히 아무 일도 안 한다 - env 가 실제로 닿는지 고정한다."""
+    assert RecordingFilterSettings().unattributed_changes_enabled is True
+    monkeypatch.setenv("RECORDING_FILTER_UNATTRIBUTED_CHANGES", "0")
+    monkeypatch.setenv("RECORDING_FILTER_UNATTRIBUTED_MERGE_GAP_SEC", "0.4")
+
+    settings = load_recording_filter_settings()
+
+    assert settings.unattributed_changes_enabled is False
+    assert settings.unattributed_merge_gap_sec == 0.4

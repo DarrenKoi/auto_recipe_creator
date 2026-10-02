@@ -14,7 +14,11 @@ from pathlib import Path
 
 from poc.workflow_3 import ALIGN_IMAGES_DIR
 from poc.workflow_3.debug_artifacts import save_debug_json
-from poc.workflow_3.workflow_extract.grouping import GroupingContext, group_events
+from poc.workflow_3.workflow_extract.grouping import (
+    GroupingContext,
+    add_observation_steps,
+    group_events,
+)
 from poc.workflow_3.workflow_extract.render import render_markdown
 from poc.workflow_3.workflow_extract.settings import load_workflow_extract_settings
 
@@ -293,10 +297,13 @@ def run_extract(*, input_dir=None, settings=None) -> str:
         return "no_events"
 
     events = _workflow_action_events(timeline_events)
-    if not events:
-        print("[ERROR] 타임라인에 재현 가능한 동작이 0건입니다 - 추출할 절차가 없습니다.")
+    # 조작 미확인 화면 변화 - 동작은 아니지만 절차서에 '여기서 무언가 바뀌었다'로 남긴다.
+    # 커서를 한 번도 못 찾은 녹화는 동작이 0건이어도 이 관측만으로 절차서를 만든다.
+    observations = [e for e in timeline_events if e.get("action") == "screen_change"]
+    if not events and not observations:
+        print("[ERROR] 타임라인에 재현 가능한 동작도 화면 변화 관측도 없습니다 - 추출할 절차가 없습니다.")
         return "no_events"
-    evidence_count = len(timeline_events) - len(events)
+    evidence_count = len(timeline_events) - len(events) - len(observations)
     if evidence_count:
         print(f"[INFO] 비재생/증거 이벤트 {evidence_count} 건을 workflow 입력에서 제외했습니다.")
 
@@ -307,14 +314,14 @@ def run_extract(*, input_dir=None, settings=None) -> str:
         changes=_load_changes(out_dir),
         frame_wh=_resolve_frame_wh(capture_dir),
     )
-    steps = group_events(events, ctx)
+    steps = add_observation_steps(group_events(events, ctx), events, observations)
 
-    duration = max(_event_end_sec(e) for e in events)
+    duration = max(_event_end_sec(e) for e in events + observations)
     session = {
         "eqp_id": _eqp_id_from_capture_dir(capture_dir),
         "tag": Path(capture_dir).parent.name if capture_dir else "?",
         "capture_dir": capture_dir,
-        "total_events": len(events),
+        "total_events": len(events) + len(observations),
         "duration_sec": duration,
     }
 
@@ -326,7 +333,8 @@ def run_extract(*, input_dir=None, settings=None) -> str:
         render_markdown(steps, session), encoding="utf-8"
     )
     print(
-        f"[INFO] 완료: 이벤트 {len(events)} 건 -> step {len(steps)} 건, out={out_dir}"
+        f"[INFO] 완료: 동작 {len(events)} 건 + 화면 변화 관측 {len(observations)} 건 "
+        f"-> step {len(steps)} 건, out={out_dir}"
     )
     return "success"
 

@@ -325,6 +325,27 @@ def group_events(events, ctx) -> list:
     return steps
 
 
+def add_observation_steps(steps, events, observations) -> list:
+    """조작 미확인 화면 변화(screen_change)를 step 으로 만들어 시작 시각 순으로 끼워 넣는다.
+
+    관측은 R1..R5 에 넣지 않는다 - R2/R3/R4 는 '바로 다음 이벤트'를 보는 인접 규칙이라
+    사이에 관측이 끼면 드롭다운 선택/포커스 클릭+타이핑/반복 클릭 묶음이 깨진다.
+    동작 묶기를 끝낸 뒤 여기서 합치고, 불변식은 동작+관측 전체로 다시 확인한다.
+
+    `screen_change` 는 재생할 수 있는 동작이 아니다(대상도 좌표도 없다). 추론한 동작도
+    아니므로 inferred 는 False 다 - 화면이 바뀐 것 자체는 관측한 사실이다.
+    """
+    merged = list(steps) + [
+        make_step([obs], action="screen_change", rule="OBS", evidence=obs.get("reasons"))
+        for obs in observations
+    ]
+    merged.sort(key=lambda step: step["t_sec"][0])
+    for seq, step in enumerate(merged):
+        step["seq"] = seq
+    _assert_invariant(list(events) + list(observations), merged)
+    return merged
+
+
 def _assert_invariant(events, steps) -> None:
     """모든 이벤트가 정확히 한 번씩 raw_events 에 나타나는지 확인한다.
 

@@ -12,6 +12,12 @@ _ACTION_LABEL = {
     "click_repeat": "반복 클릭",
 }
 
+# screen_change step 의 evidence(사유) -> 엔지니어가 읽을 말.
+_REASON_LABEL = {
+    "cursor_not_found": "커서 미검출",
+    "cursor_elsewhere": "커서와 떨어진 곳",
+}
+
 _LIMITATIONS = [
     "키 입력은 기록하지 않는다. 화면에 렌더된 값만 OCR 로 복원했다.",
     "Enter/Tab/단축키는 관측할 수 없다.",
@@ -21,6 +27,9 @@ _LIMITATIONS = [
     "라이브 영상 위 조작은 좌표가 아니라 내용에 의존하므로 재생하려면 CV 재해석이 필요하다.",
     "드롭다운 선택은 기하 추론이다(드롭다운이 실제로 열렸다는 증거는 없다). 세로로 쌓인 "
     "컨트롤 두 개를 순서대로 누른 것도 하나의 선택으로 잘못 보고될 수 있다.",
+    "화면 변화(조작 미확인)는 동작이 아니라 관측이다. 클릭으로 판정되지 못한 화면 변화를 "
+    "그대로 적은 것이라 놓친 조작일 수도, 장비가 스스로 바꾼 화면(카운터, 상태 문구)일 수도 "
+    "있다. 적힌 프레임을 보고 조작이었는지 확인해야 한다.",
 ]
 
 
@@ -31,6 +40,8 @@ def _describe(step) -> str:
     입력됐다가 지워진 상태를 OCR 로 그대로 복원한 결과이지, 값이 없다는 뜻이
     아니다. 그래서 falsy 체크(`if value:`) 대신 `is not None` 을 쓴다.
     """
+    if step["action"] == "screen_change":
+        return _describe_screen_change(step)
     action = _ACTION_LABEL.get(step["action"], step["action"])
     target = step.get("target")
     value = step.get("value")
@@ -48,6 +59,17 @@ def _describe(step) -> str:
         parts.append(f"({step['count']}회)")
     if step.get("inferred"):
         parts.append("_(추론)_")
+    return " ".join(parts)
+
+
+def _describe_screen_change(step) -> str:
+    """조작 미확인 화면 변화 한 줄 - 대상이 없으므로 사유와 볼 프레임을 적는다."""
+    reasons = ", ".join(_REASON_LABEL.get(r, r) for r in step.get("evidence") or [])
+    parts = ["**화면 변화(조작 미확인)**"]
+    if reasons:
+        parts.append(f"- {reasons}")
+    if step.get("frame"):
+        parts.append(f"- 프레임 `{step['frame']}`")
     return " ".join(parts)
 
 

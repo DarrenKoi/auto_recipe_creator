@@ -389,3 +389,129 @@ def test_empty_payload_is_not_reported_as_corrupted(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "내용이 비어 있습니다" in captured.out
     assert "손상되었을 수 있습니다" not in captured.out
+
+
+# ---- 조작 미확인 화면 변화 (2026-10-02) ----
+
+def _screen_change(seq, t_sec, *, cursor_xy=None):
+    """진짜 producer 가 만든 screen_change 타임라인 이벤트.
+
+    손으로 적은 dict 는 producer 와 키가 어긋나도 테스트가 통과한다 - 그래서
+    recording_filter 의 실제 경로(find_unattributed_changes -> build_timeline)로 만든다.
+    """
+    from poc.workflow_3.recording_filter.click_detect import ClickEvent
+    from poc.workflow_3.recording_filter.frame_reduce import ChangeEvent
+    from poc.workflow_3.recording_filter.settings import RecordingFilterSettings
+    from poc.workflow_3.recording_filter.timeline import build_timeline
+    from poc.workflow_3.recording_filter.unattributed_change import find_unattributed_changes
+
+    change = ChangeEvent(
+        rank=seq, frame_path=f"/tmp/c_{seq}.jpg", prev_frame_path=f"/tmp/c_{seq}_prev.jpg",
+        timestamp_sec=t_sec, frame_index=seq,
+        change_bbox={"left": 10, "top": 10, "right": 200, "bottom": 120},
+        largest_blob_area_px=9000, changed_pixels=9000,
+    )
+    judged = ClickEvent(
+        change=change, is_click=False, status="no_click",
+        cursor_visible=cursor_xy is not None, cursor_kind=None, cursor_bbox=None,
+        cursor_xy=cursor_xy, click_window=None, changed_in_window_px=0,
+        confidence=0.0, evidence="", cursor_source="vlm",
+    )
+    observed = find_unattributed_changes(
+        [change], [judged], set(), {}, RecordingFilterSettings()
+    )
+    [event] = build_timeline([judged], inferred_events=observed)
+    event["seq"] = seq
+    return event
+
+
+def test_screen_change_is_placed_between_the_clicks_it_happened_between(tmp_path):
+    out = _session(tmp_path, [
+        _timeline_event(0, 10.0),
+        _screen_change(1, 12.0),
+        _timeline_event(2, 40.0, element="OK"),
+    ])
+
+    assert run_extract(input_dir=out) == "success"
+
+    steps = _steps(out)
+    assert [(s["seq"], s["action"], s["raw_events"]) for s in steps] == [
+        (0, "click", [0]), (1, "screen_change", [1]), (2, "click", [2]),
+    ]
+    observed = steps[1]
+    assert observed["target"] is None
+    assert observed["evidence"] == ["cursor_not_found"]
+    assert observed["frame"] == "c_1.jpg"
+    assert observed["inferred"] is False       # 추론한 동작이 아니라 관측한 사실이다.
+    assert steps[0]["evidence"] is None        # 스키마 필드는 값이 없어도 항상 있다.
+
+
+def test_screen_change_between_focus_click_and_typing_does_not_split_them(tmp_path):
+    """관측이 사이에 끼어도 인접 규칙(R3 포커스 클릭 + 타이핑)은 그대로 묶인다."""
+    typing = _timeline_event(2, 11.0, action="type_text", element="Recipe")
+    typing["text"] = "RJ1B"
+    out = _session(tmp_path, [
+        _timeline_event(0, 10.0, element="Recipe"),
+        _screen_change(1, 10.5),
+        typing,
+    ])
+
+    assert run_extract(input_dir=out) == "success"
+
+    assert [(s["action"], s["raw_events"]) for s in _steps(out)] == [
+        ("type_text", [0, 2]), ("screen_change", [1]),
+    ]
+
+
+def test_recording_with_no_detected_action_still_yields_a_procedure(tmp_path):
+    """커서를 한 번도 못 찾은 녹화 - 종전에는 no_events 로 끝나 아무것도 남지 않았다."""
+    late = _screen_change(1, 30.0)
+    late["t_sec_end"] = 31.5
+    out = _session(tmp_path, [_screen_change(0, 5.0, cursor_xy=[700, 400]), late])
+
+    assert run_extract(input_dir=out) == "success"
+
+    payload = json.loads((out / "workflow.json").read_text(encoding="utf-8"))
+    assert [s["action"] for s in payload["steps"]] == ["screen_change", "screen_change"]
+    assert payload["steps"][0]["evidence"] == ["cursor_elsewhere"]
+    assert payload["session"]["total_events"] == 2
+    assert payload["session"]["duration_sec"] == 31.5
+    first_line = next(
+        row for row in (out / "workflow.md").read_text(encoding="utf-8").splitlines()
+        if row.startswith("1. ")
+    )
+    assert "커서와 떨어진 곳" in first_line
+
+
+def test_markdown_tells_the_engineer_where_to_look_for_an_unconfirmed_change(tmp_path):
+    out = _session(tmp_path, [_timeline_event(0, 10.0), _screen_change(1, 12.0)])
+
+    assert run_extract(input_dir=out) == "success"
+
+    markdown = (out / "workflow.md").read_text(encoding="utf-8")
+    line = next(row for row in markdown.splitlines() if row.startswith("2. "))
+    assert "화면 변화(조작 미확인)" in line
+    assert "커서 미검출" in line
+    assert "c_1.jpg" in line
+    assert "라벨 없음" not in line          # 대상이 없는 것이지 라벨을 못 읽은 것이 아니다.
+    assert "화면 변화(조작 미확인)" in markdown.split("## 한계")[1]
+
+
+def test_filter_output_with_no_cursor_flows_through_to_the_procedure(tmp_path):
+    """녹화 -> run_filter -> run_extract 를 실제 산출물로 잇는다(커서 0건 녹화)."""
+    from poc.workflow_3.recording_filter.filter_recording import run_filter
+    from poc.workflow_3.recording_filter.test_filter_recording import (
+        _bare_settings,
+        _NoCursorClient,
+        _recording_dir,
+    )
+
+    rec = _recording_dir(tmp_path)
+    assert run_filter(input_dir=rec, settings=_bare_settings(), client=_NoCursorClient()) == "success"
+    out = rec.parent / "recording_filter"
+
+    assert run_extract(input_dir=out) == "success"
+
+    [step] = _steps(out)
+    assert (step["action"], step["evidence"]) == ("screen_change", ["cursor_not_found"])
+    assert "화면 변화(조작 미확인)" in (out / "workflow.md").read_text(encoding="utf-8")

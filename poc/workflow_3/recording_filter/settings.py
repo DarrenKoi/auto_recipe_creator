@@ -55,6 +55,10 @@ class RecordingFilterSettings:
     # 복원해 낸다 - value_source="ocr", confidence=1.0 인 완전한 허구 step 이다.
     typing_roi_max_px: int = 200           # 필드 기준점에서 change_bbox 중심까지 최대 거리.
     typing_roi_max_area_px: int = 40000    # 구간 ROI(합집합) 최대 면적(200x200 상당).
+    # ---- 조작 미확인 화면 변화 ----
+    unattributed_changes_enabled: bool = True   # 0 이면 종전대로 타임라인에서 뺀다.
+    # 이 간격 안에 이어진 변화는 관측 하나로 묶는다. 잠정치(오피스 미실측).
+    unattributed_merge_gap_sec: float = 1.5
 
 
 def load_recording_filter_settings() -> RecordingFilterSettings:
@@ -85,4 +89,6 @@ def load_recording_filter_settings() -> RecordingFilterSettings:
         typing_focus_max_sec=env_float("RECORDING_FILTER_TYPING_FOCUS_MAX_SEC", 2.0),
         typing_roi_max_px=env_int("RECORDING_FILTER_TYPING_ROI_MAX_PX", 200),
         typing_roi_max_area_px=env_int("RECORDING_FILTER_TYPING_ROI_MAX_AREA_PX", 40000),
+        unattributed_changes_enabled=env_flag("RECORDING_FILTER_UNATTRIBUTED_CHANGES", True),
+        unattributed_merge_gap_sec=env_float("RECORDING_FILTER_UNATTRIBUTED_MERGE_GAP_SEC", 1.5),
     )

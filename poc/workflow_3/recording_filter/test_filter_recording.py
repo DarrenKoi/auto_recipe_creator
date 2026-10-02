@@ -152,10 +152,12 @@ def test_negative_rerun_removes_stale_close_click_evidence(tmp_path):
     (rec / "recording_manifest.json").write_text(
         json.dumps({"stop_reason": "max_sec"}), encoding="utf-8"
     )
-    assert run_filter(input_dir=rec, settings=settings, client=_NoCursorClient()) == "no_clicks"
+    # 닫기 정황은 사라지지만 그 변화 자체는 조작 미확인 관측으로 남는다(2026-10-02).
+    assert run_filter(input_dir=rec, settings=settings, client=_NoCursorClient()) == "success"
 
     summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
     assert summary["probable_close_clicks"] == 0
+    assert summary["unattributed_changes"] == 1
     assert not evidence_dir.exists()
 
 
@@ -197,9 +199,12 @@ def test_probable_close_uses_final_raw_change_not_last_gate_survivor(tmp_path, m
         typing_detect_enabled=False,
     )
 
-    assert run_filter(input_dir=rec, settings=settings, client=_NoCursorClient()) == "no_clicks"
+    # 게이트를 통과한 옛 후보는 닫기로 승격되지 않고 조작 미확인 관측으로만 남는다.
+    assert run_filter(input_dir=rec, settings=settings, client=_NoCursorClient()) == "success"
 
     out_dir = rec.parent / "recording_filter"
+    timeline = json.loads((out_dir / "interaction_timeline.json").read_text(encoding="utf-8"))
+    assert [event["action"] for event in timeline["events"]] == ["screen_change"]
     summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
     assert summary["total_change_events"] == 2
     assert summary["gate_passed"] == 1
@@ -835,3 +840,70 @@ def test_discovery_finds_event_folder_recordings(tmp_path, monkeypatch):
     _touch_recording(events_root, "MCD019-260917_140000", "attempt_2", "recording", "prelude")
 
     assert set(fr._discover_recording_dirs()) == expected
+
+
+# ---- 조작 미확인 화면 변화 (2026-10-02) ----
+
+def _bare_settings(**overrides):
+    """게이트/라벨/타이핑을 끈 최소 설정 - 변화 1건이 Stage 2a 판정 하나로 이어진다."""
+    return RecordingFilterSettings(
+        vlm_request_delay_sec=0.0, region_gate_enabled=False,
+        element_label_enabled=False, typing_detect_enabled=False, **overrides,
+    )
+
+
+def test_change_with_no_cursor_survives_as_screen_change(tmp_path):
+    """커서를 한 번도 못 찾은 녹화도 '무엇이 바뀌었나'는 남긴다(종전: 타임라인 0건)."""
+    rec = _recording_dir(tmp_path)
+    out_dir = rec.parent / "recording_filter"
+
+    status = run_filter(input_dir=rec, settings=_bare_settings(), client=_NoCursorClient())
+
+    assert status == "success"
+    timeline = json.loads((out_dir / "interaction_timeline.json").read_text())["events"]
+    assert [event["action"] for event in timeline] == ["screen_change"]
+    assert timeline[0]["replayable"] is False
+    assert timeline[0]["reasons"] == ["cursor_not_found"]
+    summary = json.loads((out_dir / "summary.json").read_text())
+    assert summary["unattributed_changes"] == 1
+    assert summary["clicks"] == 0
+    assert summary["probable_close_clicks"] == 0
+    assert len(list((out_dir / "unattributed_changes").glob("*.jpg"))) == 1
+
+
+def test_kill_switch_restores_the_old_timeline_and_clears_stale_overlays(tmp_path):
+    """롤백(RECORDING_FILTER_UNATTRIBUTED_CHANGES=0): 종전처럼 타임라인이 비고, 앞선
+    실행이 남긴 오버레이도 지워진다 - 남아 있으면 '이번 실행의 관측'으로 읽힌다."""
+    rec = _recording_dir(tmp_path)
+    out_dir = rec.parent / "recording_filter"
+    run_filter(input_dir=rec, settings=_bare_settings(), client=_NoCursorClient())
+    assert (out_dir / "unattributed_changes").is_dir()
+
+    status = run_filter(
+        input_dir=rec, settings=_bare_settings(unattributed_changes_enabled=False),
+        client=_NoCursorClient(),
+    )
+
+    assert status == "no_clicks"
+    assert json.loads((out_dir / "interaction_timeline.json").read_text())["events"] == []
+    assert json.loads((out_dir / "summary.json").read_text())["unattributed_changes"] == 0
+    assert not (out_dir / "unattributed_changes").exists()
+
+
+def test_overlay_failure_does_not_lose_the_timeline(tmp_path, monkeypatch):
+    """대조용 오버레이는 부가 산출물이다 - 저장이 실패해도 타임라인/summary 는 써야 한다."""
+    from poc.workflow_3.recording_filter import unattributed_change
+
+    def _boom(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(unattributed_change, "save_marked_bboxes", _boom)
+    rec = _recording_dir(tmp_path)
+    out_dir = rec.parent / "recording_filter"
+
+    status = run_filter(input_dir=rec, settings=_bare_settings(), client=_NoCursorClient())
+
+    assert status == "success"
+    timeline = json.loads((out_dir / "interaction_timeline.json").read_text())["events"]
+    assert [event["action"] for event in timeline] == ["screen_change"]
+    assert json.loads((out_dir / "summary.json").read_text())["unattributed_changes"] == 1

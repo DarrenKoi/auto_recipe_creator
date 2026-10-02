@@ -26,6 +26,10 @@ from poc.workflow_3.recording_filter.settings import (
     load_recording_filter_settings,
 )
 from poc.workflow_3.recording_filter.timeline import build_timeline, write_click_overlays
+from poc.workflow_3.recording_filter.unattributed_change import (
+    find_unattributed_changes,
+    write_unattributed_overlays,
+)
 from poc.workflow_3.util import format_elapsed_ms
 
 # 분석할 recording/ 폴더를 직접 적어 쓸 수 있다(가장 우선). 비우면 env/자동탐색.
@@ -113,13 +117,13 @@ def _resolve_output_dir(capture_dir: Path) -> Path:
     return (capture_dir.parent / "recording_filter").resolve()
 
 
-def _reset_close_click_evidence(out_dir: Path) -> None:
-    """이번 실행 전용 닫기 정황 폴더만 지워 이전 양성 결과를 무효화한다.
+def _reset_evidence_dir(out_dir: Path, name: str) -> None:
+    """이번 실행 전용 증거 폴더(닫기 정황 / 조작 미확인 변화)를 지워 이전 결과를 무효화한다.
 
     경로는 output 아래 고정 이름 하나로만 만든다. 심볼릭 링크는 따라가지 않고 링크
     자체를 지워, 잘못된 링크가 output 바깥의 디렉터리 삭제로 이어지지 않게 한다.
     """
-    evidence_dir = Path(out_dir) / "close_click_evidence"
+    evidence_dir = Path(out_dir) / name
     if evidence_dir.is_symlink() or evidence_dir.is_file():
         evidence_dir.unlink()
     elif evidence_dir.is_dir():
@@ -314,7 +318,8 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
 
     out_dir = _resolve_output_dir(capture_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    _reset_close_click_evidence(out_dir)
+    _reset_evidence_dir(out_dir, "close_click_evidence")
+    _reset_evidence_dir(out_dir, "unattributed_changes")
 
     # ---- Stage 1 ----
     stage1_events = reduce_frames(frames_dir, settings)
@@ -417,6 +422,7 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
     # ---- Stage 2b: 타이핑 구간 ----
     typing_events = []
     typing_bursts = []
+    typing_ranks = set()
     superseded_clicks = 0
     if settings.typing_detect_enabled:
         from poc.workflow_3.recording_filter.type_detect import (
@@ -454,12 +460,27 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
             probable_close, stage1_events[-1], out_dir / "close_click_evidence"
         )
 
+    # ---- 조작 미확인 화면 변화 ----
+    # 클릭/타이핑/닫기 정황 어느 것도 가져가지 않은 변화를 버리지 않고 남긴다. 엔지니어가
+    # 다른 PC 에서 조작하므로 커서를 못 찾으면 클릭 판정 자체가 불가능한데, 종전에는 그
+    # 변화가 타임라인에서 사라져 놓친 조작이 흔적도 남지 않았다.
+    unattributed = []
+    if settings.unattributed_changes_enabled:
+        claimed_ranks = set(typing_ranks)
+        if probable_close is not None:
+            claimed_ranks.add(stage1_events[-1].rank)
+        unattributed = find_unattributed_changes(
+            change_events, click_events, claimed_ranks, gate_info, settings
+        )
+        write_unattributed_overlays(unattributed, change_events, out_dir / "unattributed_changes")
+        print(f"[INFO] 조작 미확인 화면 변화: {len(unattributed)} 건(재생 불가 관측)")
+
     timeline = build_timeline(
         click_events,
         typing_events,
         gate_info=gate_info,
         labels=labels,
-        inferred_events=inferred_events,
+        inferred_events=inferred_events + unattributed,
     )
     save_debug_json(
         out_dir / "interaction_timeline.json",
@@ -482,6 +503,7 @@ def run_filter(*, input_dir=None, settings: RecordingFilterSettings = None, clie
             "processed_for_click": len(click_events),
             "clicks": sum(1 for ce in click_events if ce.is_click),
             "probable_close_clicks": len(inferred_events),
+            "unattributed_changes": len(unattributed),
             "timeline_events": len(timeline),
             # (FINDING 6) 예전 "vlm_calls" 는 Stage 2a 만 세면서 전체처럼 읽혔다.
             # 스테이지별로 분해하고 합계를 따로 둔다(2c 는 OCR/VLM 폴백 규칙 기반 추정).

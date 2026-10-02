@@ -7,7 +7,7 @@
 
 def make_step(events, *, action, rule, target=None, target_kind=None, value=None,
               value_source="none", coords_in_live_box=None, intent=None,
-              count=None, inferred=False) -> dict:
+              count=None, inferred=False, evidence=None) -> dict:
     """구성 이벤트 목록에서 step dict 하나를 만든다.
 
     events 는 시간순이라고 가정한다(그룹핑 패스가 순서대로 넘긴다). raw_events 는
@@ -39,4 +39,6 @@ def make_step(events, *, action, rule, target=None, target_kind=None, value=None
         "count": count,
         "raw_events": [int(e["seq"]) for e in events],
         "frame": first.get("frame"),
+        # 동작이 아닌 관측(screen_change)이 '왜 동작으로 판정되지 못했는지'. 동작 step 은 None.
+        "evidence": evidence,
     }

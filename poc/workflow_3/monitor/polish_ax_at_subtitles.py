@@ -31,7 +31,7 @@ SUBTITLES = "AX AT_rev4_분석자동화_자막.txt"  # 줄마다 "MM:SS~MM:SS | 
 OUTPUT = ""            # 비우면 video/AX AT_rev4_분석자동화_자막_<시각>.mp4
 WRAP_CHARS = 40        # 설명 한 줄 최대 글자 수(넘으면 줄바꿈)
 TITLE_MARGIN = 0.03    # 제목의 좌/상 여백(화면 폭 대비)
-CRF = 18               # 낮을수록 고화질(파일 큼)
+CRF = 12               # 낮을수록 고화질(파일 큼). 실사/SEM 질감이라 UI 녹화용 18 보다 낮춘다
 
 
 def _sec(stamp: str) -> float:

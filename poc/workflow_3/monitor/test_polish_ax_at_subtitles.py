@@ -6,8 +6,8 @@ from poc.workflow_3.monitor import polish_ax_at_subtitles as ax
 
 
 def test_parse_and_draw():
-    rows = ax.parse_subtitles("# 주석\n\n00:01~00:06 | 제목 | 설명 | 파이프 포함\n01:02~01:03 | B | b\n")
-    assert rows == [(1.0, 7.0, "제목", "설명 | 파이프 포함"), (62.0, 64.0, "B", "b")]
+    rows = ax.parse_subtitles("# 주석\n\n00:01~00:06 | 제목 | 설명 | 파이프\\n둘째 줄\n01:02~01:03 | B | b\n")
+    assert rows == [(1.0, 7.0, "제목", "설명 | 파이프\n둘째 줄"), (62.0, 64.0, "B", "b")]
 
     frame = np.zeros((360, 640, 3), np.uint8)
     ax.draw_section(frame, 0.5, rows)   # 첫 구간 전 - 그대로
@@ -19,4 +19,5 @@ def test_parse_and_draw():
 def test_real_subtitle_file_parses():
     rows = ax.parse_subtitles((ax.VIDEO_DIR / ax.SUBTITLES).read_text(encoding="utf-8"))
     assert len(rows) == 7 and rows[0][:2] == (1.0, 7.0) and rows[-1][:2] == (50.0, 59.0)
+    assert not any("." in r[3] for r in rows)   # 자막에는 마침표를 넣지 않는다
     assert all(a[1] <= b[0] for a, b in zip(rows, rows[1:]))   # 구간이 겹치지 않는다

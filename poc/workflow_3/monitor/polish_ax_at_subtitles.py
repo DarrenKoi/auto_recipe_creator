@@ -10,7 +10,6 @@
 """
 
 import sys
-import textwrap
 import time
 from pathlib import Path
 
@@ -27,9 +26,8 @@ from poc.workflow_3.monitor import polish_demo_video as polish  # noqa: E402
 # ===========================================================================
 VIDEO_DIR = _REPO_ROOT / "video"
 INPUT = "AX AT_rev4_분석자동화.mp4"
-SUBTITLES = "AX AT_rev4_분석자동화_자막.txt"  # 줄마다 "MM:SS~MM:SS | 제목 | 설명"
+SUBTITLES = "AX AT_rev4_분석자동화_자막.txt"  # 줄마다 "MM:SS~MM:SS | 제목 | 설명" (설명 안의 \n = 줄바꿈)
 OUTPUT = ""            # 비우면 video/AX AT_rev4_분석자동화_자막_<시각>.mp4
-WRAP_CHARS = 40        # 설명 한 줄 최대 글자 수(넘으면 줄바꿈)
 TITLE_MARGIN = 0.03    # 제목의 좌/상 여백(화면 폭 대비)
 CRF = 12               # 낮을수록 고화질(파일 큼). 실사/SEM 질감이라 UI 녹화용 18 보다 낮춘다
 
@@ -40,7 +38,10 @@ def _sec(stamp: str) -> float:
 
 
 def parse_subtitles(text: str) -> list[tuple]:
-    """txt -> [(시작초, 끝초, 제목, 설명)]. 끝 시각은 그 초를 포함한다(00:06 = 7.0초 직전까지)."""
+    """txt -> [(시작초, 끝초, 제목, 설명)]. 끝 시각은 그 초를 포함한다(00:06 = 7.0초 직전까지).
+
+    줄바꿈은 txt 의 `\\n` 그대로다 - 자동 줄바꿈은 어절 중간/괄호에서 어색하게 끊겨 뺐다.
+    """
     rows = []
     for line in text.splitlines():
         line = line.strip()
@@ -48,11 +49,11 @@ def parse_subtitles(text: str) -> list[tuple]:
             continue
         span, title, body = (part.strip() for part in line.split("|", 2))
         start, end = span.split("~")
-        rows.append((_sec(start), _sec(end) + 1.0, title, body))
+        rows.append((_sec(start), _sec(end) + 1.0, title, body.replace("\\n", "\n")))
     return rows
 
 
-def draw_section(frame: np.ndarray, t: float, rows: list, wrap: int = WRAP_CHARS) -> None:
+def draw_section(frame: np.ndarray, t: float, rows: list) -> None:
     """t 에 해당하는 구간의 제목(좌상단)과 설명(하단)을 프레임에 그린다."""
     row = polish.active_subtitle(t, rows)
     if row is None:
@@ -62,7 +63,7 @@ def draw_section(frame: np.ndarray, t: float, rows: list, wrap: int = WRAP_CHARS
     width = frame.shape[1]
     margin = int(width * TITLE_MARGIN)
     polish.overlay_rgba(frame, polish.subtitle_patch(title, width), margin, margin, level)
-    polish.draw_subtitle(frame, "\n".join(textwrap.wrap(body, wrap, break_on_hyphens=False)), level)
+    polish.draw_subtitle(frame, body, level)
 
 
 def main() -> str:

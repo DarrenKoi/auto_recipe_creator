@@ -493,8 +493,8 @@ def test_brief_version_skips_the_patrol_and_the_first_search_take():
     from poc.workflow_3.monitor.polish_demo_video_brief import align_fail_only
 
     out = align_fail_only(pdv.SEQUENCE, psa.SEQUENCE)  # 실제 SEQUENCE - 본편을 고쳐도 골라내는지
-    assert [item["card"] for item in out[:2]] == [item["card"] for item in pdv.SEQUENCE[:2]]
-    assert out[2]["clip"].startswith("alarm_")  # 알람 편 소개 카드 없이 곧바로 clip
+    assert out[0]["card"] == pdv.SEQUENCE[1]["card"]  # 본편 첫 카드는 뺀다
+    assert out[1]["clip"].startswith("alarm_")  # 알람 편 소개 카드 없이 곧바로 clip
     assert not any(item.get("clip", "").startswith("rcs_") or "video" in item for item in out)
     takes = [item for item in psa.SEQUENCE if "recording" in item]
     assert [item for item in out if "recording" in item] == takes[-1:]
@@ -526,3 +526,8 @@ def test_brief_version_caps_stills_and_speeds_up_clips(tmp_path, monkeypatch):
                         output=str(tmp_path / f"x{speed}.mp4"))
         counts.append(imageio_ffmpeg.count_frames_and_secs(path)[0])
     assert counts[0] >= 85 and abs(counts[1] - counts[0] / 1.5) <= 2
+
+    # 구간 잘라내기: 출력 1~2초를 빼면 딱 1초(FPS 프레임) 줄어든다.
+    path = pdv.main([{"clip": str(tmp_path / "clip"), "zoom": 1.0}], output=str(tmp_path / "cut.mp4"),
+                    cut_sec=[(1.0, 2.0)])
+    assert imageio_ffmpeg.count_frames_and_secs(path)[0] == counts[0] - pdv.FPS

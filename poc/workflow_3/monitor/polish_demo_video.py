@@ -842,7 +842,27 @@ def drop_missing_clips(sequence: list) -> list:
     return kept
 
 
-def main(sequence=None, output: str = "") -> str:
+class CutWriter:
+    """출력 시간축의 (시작, 끝) 초 구간에 드는 프레임을 버리는 writer 래퍼(완성본에서 구간 잘라내기)."""
+
+    def __init__(self, writer, cut_sec, fps: int):
+        self.writer, self.cut_sec, self.fps = writer, list(cut_sec), fps
+        self.seen = self.sent = 0
+
+    def send(self, frame):
+        t = self.seen / self.fps
+        self.seen += 1
+        if any(a <= t < b for a, b in self.cut_sec):
+            return
+        self.writer.send(frame)
+        self.sent += 1
+
+    def close(self):
+        self.writer.close()
+
+
+def main(sequence=None, output: str = "", cut_sec=()) -> str:
+    """cut_sec: 잘라내기 전 출력 시간축의 (시작, 끝) 초 구간들 - 그 프레임은 쓰지 않는다."""
     import imageio_ffmpeg
 
     sequence = drop_missing_clips(SEQUENCE if sequence is None else sequence)
@@ -863,6 +883,7 @@ def main(sequence=None, output: str = "") -> str:
                        "-profile:v", "high", "-movflags", "+faststart"],
     )
     writer.send(None)
+    writer = CutWriter(writer, cut_sec, FPS)
     frames = 0
     try:
         for item in sequence:
@@ -880,7 +901,9 @@ def main(sequence=None, output: str = "") -> str:
                 print(f"[WARNING] card/clip/video/recording/image 가 아닌 항목은 건너뜀: {item}")
     finally:
         writer.close()
-    print(f"[INFO] 완료 -> {out_path} ({frames / FPS:.1f}s, {size[0]}x{size[1]}, "
+    if cut_sec:
+        print(f"[INFO] 구간 잘라냄 {list(cut_sec)}: {frames / FPS:.1f}s -> {writer.sent / FPS:.1f}s")
+    print(f"[INFO] 완료 -> {out_path} ({writer.sent / FPS:.1f}s, {size[0]}x{size[1]}, "
           f"{out_path.stat().st_size / 1e6:.1f} MB)")
     return str(out_path)
 

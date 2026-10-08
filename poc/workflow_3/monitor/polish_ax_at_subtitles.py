@@ -63,7 +63,8 @@ def draw_section(frame: np.ndarray, t: float, rows: list) -> None:
     width = frame.shape[1]
     margin = int(width * TITLE_MARGIN)
     polish.overlay_rgba(frame, polish.subtitle_patch(title, width), margin, margin, level)
-    polish.draw_subtitle(frame, body, level)
+    if body:  # 설명이 빈 구간은 하단에 빈 자막 박스(작은 마크)도 그리지 않는다
+        polish.draw_subtitle(frame, body, level)
 
 
 def main() -> str:

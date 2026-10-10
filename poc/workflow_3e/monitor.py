@@ -26,7 +26,7 @@ from poc.workflow_3.monitor.align_fail_monitor import (
     _set_keep_awake,
     process_fail_rows,
 )
-from poc.workflow_3.monitor.notify import ALARM_LOG_PATH
+from poc.workflow_3.monitor.notify import ALARM_LOG_PATH, start_cube_outbox
 from poc.workflow_3e.abort_button import (
     is_click_armed,
     is_rehearsal_target,
@@ -41,6 +41,7 @@ def monitor_loop(settings: Workflow3eSettings | None = None) -> None:
     """통합 감지 루프 — poll 주기마다 align fail + 측정 실패 abort 를 함께 처리한다."""
     settings = settings or load_workflow3e_settings()
     source = load_alarm_source(settings.alarm_source)
+    start_cube_outbox(enabled=settings.rich_notify_enabled)
 
     if settings.keep_awake:
         _set_keep_awake(True)

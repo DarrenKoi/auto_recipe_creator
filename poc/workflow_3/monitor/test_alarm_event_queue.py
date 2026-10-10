@@ -141,7 +141,7 @@ def _cube_summary(monkeypatch, status) -> str:
     sent = []
     monkeypatch.setattr(notify, "RICH_NOTIFY_AVAILABLE", True, raising=False)
     monkeypatch.setattr(notify, "_send_cube_async",
-                        lambda eqp, rcp, summary: sent.append(summary), raising=False)
+                        lambda eqp, rcp, summary, **kw: sent.append(summary) or True, raising=False)
     notify.notify_correction_outcome("MCD427", "CLS/RCP", _Outcome(status), enabled=True)
     assert len(sent) == 1, f"{status} 는 cube 가 나가야 한다"
     return sent[0]

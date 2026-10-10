@@ -231,8 +231,7 @@ WORKFLOW_EXTRACT_INPUT_DIR=<recording_filter 출력 경로> \
 | `ALIGN_FAIL_CORRECTION` | 1 | CV 보정 단계 수행 여부 |
 | `ALIGN_FAIL_CORRECTION_DRY_RUN` | 1 (`align_fail_monitor` 는 0) | 보정의 move/click 차단. 실 클릭은 SAFE_MODE=0 **그리고** 이 값=0 일 때만. 실전 진입점 `align_fail_monitor` 는 `_apply_live_mode_defaults` 가 0 을 못박는다 |
 | `ALIGN_FAIL_RCS_RECOVERY` | 1 | RCS 메인 창 부재 시 재실행+재로그인 복구. 프로세스가 이미 있으면 재실행하지 않고(중복 실행 방지), 조회 자체가 불가하면 실행을 보류한다. 복구 로그인은 **tool 에 접속하지 않는다** — 어느 tool 인지는 알람이 정한다. 복구를 탄 경우에만 **List 탭을 따로 연다**(아래 참고). 끄려면 `0` |
-| `ALIGN_FAIL_GRAPH_VIEW` | 0 | live graph view(workflow_4 `CycleGraphMirror`). 사이클 step 저널을 읽기 전용으로 폴링해 run_dir 에 `workflow_graph.html`(self-contained, 자동 새로고침) 을 쓴다. 켜지 않으면 동작 byte-identical; workflow_4 import/시작 실패는 경고 1회 후 자동 비활성(사이클 불변) |
-| `ALIGN_FAIL_GRAPH_AUTOOPEN` | 1 | `ALIGN_FAIL_GRAPH_VIEW=1` 일 때만 유효. Windows 에서 첫 스냅샷 후 HTML 을 기본 브라우저로 자동 연다(다른 OS 무시) |
+| `ALIGN_FAIL_GRAPH_VIEW` | 0 | workflow_4 `CycleGraphMirror`. 사이클 step 저널을 읽기 전용으로 폴링해 run_dir 에 `workflow_graph.json`(step 목록 + RunState) 을 쓴다. HTML 은 필요할 때 `poc/workflow_4/adapters/render_graph_html.py` 로 변환. 켜지 않으면 동작 byte-identical; workflow_4 import/시작 실패는 경고 1회 후 자동 비활성(사이클 불변) |
 | `ALIGN_FAIL_RCS_RECOVERY_WINDOW_SEC` | 30 | 복구 로그인 후 RCS 메인 창 출현 대기 상한(초). 방금 띄운 프로세스의 기동+업데이터+로그인을 기다리는 자리라 `connect_window_timeout_sec`(3s) 보다 훨씬 길다 |
 | `ALIGN_FAIL_RCS_PREFLIGHT` | 1 | 모니터 기동 시 RCS 준비(실행 → 로그인 → **List 탭**)를 루프 진입 전 1회 수행. 끄면 알람 시 복구만 남는다(첫 알람이 부팅+로그인 비용을 낸다) |
 
@@ -395,7 +394,7 @@ uv run python -m poc.workflow_3.check_tool_occupancy
 - 전역에 남는 것: 알람 로그 `logs/align_fail_alarms.txt`, 사이클 manifest `logs/align_fail_cycles.csv`
   (알람 1건 = 1줄; `run_dir`/`recording_dir` 컬럼이 이벤트 폴더를 가리킨다), 소요 시간
   `logs/align_fail_timing.csv`, 전역 파일 로그(기본 warning/error 만, `WORKFLOW3_FILE_LOG_DETAIL=1`
-  이면 info), live graph 탭 `logs/workflow_runs/_live/`.
+  이면 info).
 - 사이클 밖 실행(`rcs/` 단독 스크립트, 벤치)은 종전대로 `debug_images/`, `logs/workflow_runs/`.
 - 구 트리(`align_images/.../captured_img_from_rcs/<tag>/`)에 이미 쌓인 녹화는 옮기지 않는다 -
   `recording_filter`/`make_demo_video` 자동 탐색이 두 루트를 함께 본다.

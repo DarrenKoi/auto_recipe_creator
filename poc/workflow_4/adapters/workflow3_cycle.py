@@ -2,8 +2,9 @@
 
 `run_alarm_cycle` / `run_check_only_cycle` 가 runner(WorkflowRunner)로 step 을 순차
 실행하며 남기는 저널(run_dir/run_state.json + step_<id>.json)을 **읽기 전용**으로
-폴링해 workflow_4 `RunState` + 그래프 스냅샷(mermaid .md + HTML live view)으로
-미러링한다. workflow_3 쪽 파일은 절대 건드리지 않는다.
+폴링해 workflow_4 `RunState` 로 미러링하고 `workflow_graph.json` 한 파일로 남긴다
+(HTML 은 필요할 때 `render_graph_html.py` 로 만든다 - 사이클마다 mermaid 를 품은
+3.5MB HTML 을 쓰지 않는다). workflow_3 쪽 파일은 절대 건드리지 않는다.
 
 저널 타이밍 (workflow_3/runner/workflow_runner.py 기준):
   * run 시작      : run_state.json (status="running", current_step_index=-1, step_results=[])
@@ -33,15 +34,11 @@ event 를 세우면 즉시 빠져나온다. thread 타이머는 쓰지 않는다
 """
 
 import json
-import platform
 import threading
 from pathlib import Path
 from typing import Callable, Iterable
 
-from poc.workflow_4.framework.graph_view import (
-    open_graph_view,
-    write_graph_snapshot,
-)
+from poc.workflow_4.framework.graph_view import write_text_atomic
 from poc.workflow_4.framework.run_state import (
     RunState,
     RunStatus,
@@ -56,6 +53,8 @@ from poc.workflow_4.framework.state_graph import (
 
 # (step_id, 설명) 쌍. 호출부는 WorkflowStep 에서 (step_id, target_description) 을 뽑아 넘긴다.
 StepSpec = tuple[str, str]
+
+GRAPH_JSON_NAME = "workflow_graph.json"
 
 
 def build_step_chain_graph(name: str, steps: Iterable[StepSpec]) -> WorkflowGraph:
@@ -109,12 +108,8 @@ class CycleGraphMirror:
       graph       — build_step_chain_graph() 결과.
       run_dir_fn  — 저널 디렉터리를 돌려주는 콜러블. 아직 없으면 None (그 폴은
                     건너뛴다). production 은 `lambda: context.get("run_dir")`.
-      persist_dir — 스냅샷(.md/.html)을 쓸 곳. None 이면 run_dir 과 동일(저널 옆).
+      persist_dir — workflow_graph.json 을 쓸 곳. None 이면 run_dir 과 동일(저널 옆).
       poll_sec    — 폴링 주기(초, 하한 0.05).
-      refresh_sec — HTML meta refresh 주기(초, 하한 1).
-      autoopen    — 첫 스냅샷 후 HTML 을 기본 브라우저로 연다. **Windows 에서만**
-                    동작한다(오피스 PC 전용 편의 - Mac dry-run 에서 브라우저가
-                    튀어나오지 않게).
 
     스레드: `start()` 로 daemon 폴링 스레드를 띄우고 `stop(final=True)` 로 멈춘다.
     stop 은 idempotent. start 하지 않고 `poll_once()` 만 호출해 동기적으로도 쓸
@@ -127,27 +122,17 @@ class CycleGraphMirror:
         run_dir_fn: Callable[[], "Path | str | None"],
         persist_dir: Path | str | None = None,
         *,
-        live_dir: Path | str | None = None,
         poll_sec: float = 0.5,
-        refresh_sec: int = 1,
-        autoopen: bool = False,
     ):
         self.graph = graph
         self._run_dir_fn = run_dir_fn
         self._persist_dir = Path(persist_dir) if persist_dir is not None else None
-        # 알람마다 바뀌는 run_dir 과 **별개**인 고정 경로. 엔지니어가 이 경로의
-        # HTML 탭을 한 번 열어두면 이후 사이클은 state.js 폴링으로 갱신되므로
-        # 창을 새로 띄울 필요가 없다(autoopen 의 전면 탈취를 대체한다).
-        self._live_dir = Path(live_dir) if live_dir is not None else None
         self.poll_sec = max(0.05, float(poll_sec))
-        self.refresh_sec = max(1, int(refresh_sec))
-        self.autoopen = bool(autoopen) and platform.system() == "Windows"
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._last_signature = None
         self._latest: tuple[Path, RunState] | None = None
-        self._opened = False
         # terminal 이 아닌 노드 = 실행 step 목록(삽입 순서 유지).
         self._step_ids = [
             n.node_id for n in graph.nodes.values() if n.kind is not NodeKind.TERMINAL
@@ -356,21 +341,38 @@ class CycleGraphMirror:
     # ------------------------------------------------------------ snapshots
 
     def _write_snapshots(self, persist_dir: Path, run_state: RunState) -> None:
-        """persist_dir(+ live_dir) 에 workflow_graph.md/.html 을 덮어쓴다."""
-        write_graph_snapshot(
-            persist_dir, self.graph, run_state, refresh_sec=self.refresh_sec
+        """persist_dir 에 workflow_graph.json(step 목록 + RunState)을 덮어쓴다.
+
+        step 목록을 같이 담는 이유: 중단된 run 의 저널에는 실행 안 된 step 이 없어
+        저널만으로는 그래프 모양을 복원할 수 없다.
+        """
+        persist_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "graph_name": self.graph.name,
+            "steps": [
+                [sid, self.graph.nodes[sid].description] for sid in self._step_ids
+            ],
+            "run_state": run_state.to_json_dict(),
+        }
+        write_text_atomic(
+            persist_dir / GRAPH_JSON_NAME,
+            json.dumps(payload, ensure_ascii=False, indent=2),
         )
-        if self._live_dir is not None and self._live_dir != persist_dir:
-            # 라이브 사본 실패는 사이클 실패가 아니다 - run_dir 스냅샷이 정본.
-            try:
-                write_graph_snapshot(
-                    self._live_dir, self.graph, run_state, refresh_sec=self.refresh_sec
-                )
-            except Exception as exc:
-                print(f"[WARNING] live graph 사본 쓰기 실패: {exc}")
-        if self.autoopen and not self._opened:
-            self._opened = True
-            open_graph_view(persist_dir / "workflow_graph.html")
 
 
-__all__ = ["CycleGraphMirror", "StepSpec", "build_step_chain_graph"]
+def load_graph_json(path: Path | str) -> tuple[WorkflowGraph, RunState]:
+    """workflow_graph.json -> (그래프, RunState). mirror 가 쓴 것의 유일한 reader."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    graph = build_step_chain_graph(
+        data["graph_name"], [(sid, desc) for sid, desc in data["steps"]]
+    )
+    return graph, RunState.from_json_dict(data["run_state"])
+
+
+__all__ = [
+    "CycleGraphMirror",
+    "GRAPH_JSON_NAME",
+    "StepSpec",
+    "build_step_chain_graph",
+    "load_graph_json",
+]

@@ -108,6 +108,28 @@ def test_cycle_notifies_when_teardown_also_raises():
     print("[OK] test_cycle_notifies_when_teardown_also_raises")
 
 
+def test_teardown_runs_even_when_the_backstop_notification_raises():
+    """통보가 던져도 teardown(입력 해제/tool 닫기)은 실행된다 - 통보는 teardown 앞에 있다."""
+    def _boom(*a, **k):
+        raise RuntimeError("step executor 폭발")
+
+    state = {}
+    _stub_cycle(state, run_impl=_boom)
+    # _stub_cycle 이 이미 원본을 저장했다 - 다시 _swap 하면 대역이 '원본' 으로 저장돼 복원이 깨진다.
+    ntf.notify_correction_outcome = (
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("can't start new thread")))
+    ran = []
+    _swap(state, cyc, "run_teardown", lambda steps, **k: ran.append([n for n, _ in steps]) or [])
+    try:
+        settings = load_workflow3_settings()
+        result = cyc.run_alarm_cycle("EQP1", "CLS/RCP", settings, tag="t5")
+    finally:
+        _restore(state)
+    assert ran and ran[0][0] == "input_unblock", ran
+    assert result.run_status == "error", result.run_status
+    print("[OK] test_teardown_runs_even_when_the_backstop_notification_raises")
+
+
 def test_cycle_reports_failed_stage_to_cube():
     """step 실패로 중단되면 어느 단계에서 멈췄는지가 알림에 실려야 한다."""
     class _FailedRun:
@@ -141,6 +163,7 @@ def main() -> int:
         test_cycle_notifies_once_on_normal_completion,
         test_cycle_notifies_when_runner_raises,
         test_cycle_notifies_when_teardown_also_raises,
+        test_teardown_runs_even_when_the_backstop_notification_raises,
         test_cycle_reports_failed_stage_to_cube,
     ]
     failed = 0

@@ -35,7 +35,7 @@ import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from poc.workflow_3 import EVENTS_DIR, LOG_DIR
+from poc.workflow_3 import EVENTS_DIR
 from poc.workflow_3.config import Workflow3Settings
 from poc.workflow_3.debug_artifacts import save_debug_jpeg
 from poc.workflow_3.logger import log_work2_event
@@ -51,12 +51,13 @@ from poc.workflow_3.monitor.notify import (
     CycleNotifier,
     close_alert_window,
     notify_correction_outcome,
+    notify_teardown_failures,
 )
 from poc.workflow_3.monitor.rcs_recovery import RECOVERED, recover_rcs_session
 from poc.workflow_3.monitor.frame_meta import FRAME_META_FILENAME, FrameMetaRecorder
 from poc.workflow_3.monitor.recording import RecordingSession
 from poc.workflow_3.monitor.recovery_episode import attempt_dirname, episode_root_for
-from poc.workflow_3.monitor.teardown import run_teardown
+from poc.workflow_3.monitor.teardown import close_tool_checked, run_teardown
 from poc.workflow_3.rcs.row_occupant import FREE, OCCUPIED_BY_OTHER, UNKNOWN
 from poc.workflow_3.sem_monitor.controller import build_rcs_sem_monitor
 from poc.workflow_3.runner.workflow_runner import WorkflowRunner
@@ -1709,7 +1710,7 @@ def _teardown_steps(eqp_id, context, result, settings, *, input_blocked, recordi
             print(f"[INFO] 긴급 해제({abort_reason()}) - 엔지니어가 연 tool 창은 닫지 않습니다: {eqp_id}")
             return
         if context.get("tool_window") is not None and CLOSE_TOOL_AVAILABLE:
-            close_tool(eqp_id)
+            close_tool_checked(close_tool, eqp_id)
 
     def _close_alert():
         close_alert_window(timeout_sec=settings.alert_close_timeout_sec)
@@ -1724,7 +1725,7 @@ def _teardown_steps(eqp_id, context, result, settings, *, input_blocked, recordi
 
 
 def _maybe_start_graph_mirror(settings: Workflow3Settings, steps, context: dict, graph_name: str):
-    """live graph view(workflow_4 cycle mirror)를 시작한다 — opt-in, 기본 off.
+    """workflow_4 cycle mirror(run_dir 에 workflow_graph.json)를 시작한다 — opt-in, 기본 off.
 
     workflow_4 에 하드 의존을 만들지 않으려고 import 를 함수 안에서 가드한다.
     import 실패 시 경고 **1회** 후 비활성(사이클 동작 불변). 그래프는 runner 에
@@ -1750,10 +1751,7 @@ def _maybe_start_graph_mirror(settings: Workflow3Settings, steps, context: dict,
         mirror = CycleGraphMirror(
             graph,
             run_dir_fn=lambda: context.get("run_dir"),
-            live_dir=LOG_DIR / "workflow_runs" / "_live",
             poll_sec=0.5,
-            refresh_sec=1,
-            autoopen=getattr(settings, "graph_view_autoopen", False),
         )
         mirror.start()
     except Exception as exc:
@@ -1764,11 +1762,7 @@ def _maybe_start_graph_mirror(settings: Workflow3Settings, steps, context: dict,
             )
             _MIRROR_GRAPH_VIEW_WARNED = True
         return None
-    print("[INFO] live graph view 시작 (workflow_4 mirror): 스냅샷은 runner run_dir 에 남는다")
-    print(
-        "[INFO] 라이브 탭(한 번만 열어두면 알람마다 자동 갱신): "
-        f"{LOG_DIR / 'workflow_runs' / '_live' / 'workflow_graph.html'}"
-    )
+    print("[INFO] graph mirror 시작 (workflow_4): run_dir 에 workflow_graph.json 이 남는다")
     return mirror
 
 
@@ -1973,13 +1967,17 @@ def _run_alarm_cycle(
         # 결과 통보 backstop — 본문이 예외로 발송에 도달하지 못했으면 여기서 나간다.
         # teardown **앞**에 둔다: teardown 한 단계가 깨져도 엔지니어는 통보를 받아야
         # 한다. 이미 본문에서 보냈으면 게이트가 막아 중복은 생기지 않는다.
-        sess = recording if recording is not None else context.get("recording")
-        if notifier.notify_outcome(
-            context.get("outcome"),
-            recording_dir=str(sess.out_dir) if sess is not None else "",
-            failed_step=result.failed_step, failure_class=result.failure_class,
-        ):
-            print(f"[WARNING] 사이클이 결과 통보 없이 종료 - backstop 발송: EQP_ID={eqp_id}")
+        # 통보가 던져도 아래 teardown(입력 해제/tool 닫기)은 반드시 실행돼야 한다.
+        try:
+            sess = recording if recording is not None else context.get("recording")
+            if notifier.notify_outcome(
+                context.get("outcome"),
+                recording_dir=str(sess.out_dir) if sess is not None else "",
+                failed_step=result.failed_step, failure_class=result.failure_class,
+            ):
+                print(f"[WARNING] 사이클이 결과 통보 없이 종료 - backstop 통보 처리: EQP_ID={eqp_id}")
+        except Exception as exc:
+            print(f"[ERROR] 결과 통보 backstop 예외(teardown 은 계속): EQP_ID={eqp_id} error={exc}")
 
         # teardown 은 run_teardown 이 단계별로 보호한다 - 한 단계가 던져도 입력
         # 해제/tool 닫기/팝업 backstop 은 반드시 실행된다.
@@ -1991,6 +1989,9 @@ def _run_alarm_cycle(
             label=f"align_fail_cycle {eqp_id}",
         )
         result.notes.extend(f"teardown_failed:{n}: {e}" for n, e in failures)
+        notify_teardown_failures(
+            eqp_id, recipe_id, failures, enabled=settings.rich_notify_enabled,
+        )
 
         # Guard record - teardown 앞에 둔다. 창을 닫으면 controller/outcome 은 그대로지만
         # 녹화 세션이 끝나 사이드카 마지막 레코드가 급격히 낡는다(stale 판정으로 샌다).
@@ -2012,7 +2013,7 @@ def _run_alarm_cycle(
             result, context, elapsed_sec=result.finished_at - cycle_started_at
         )
 
-        # live graph view mirror 를 멈추고 마지막 스냅샷(.md/.html)을 남긴다.
+        # graph mirror 를 멈추고 마지막 workflow_graph.json 을 남긴다.
         if mirror is not None:
             mirror.stop(final=True)
 
@@ -3083,7 +3084,7 @@ def _check_teardown_steps(eqp_id, context, settings, *, input_blocked):
 
     def _close_tool():
         if context.get("tool_window") is not None and CLOSE_TOOL_AVAILABLE:
-            close_tool(eqp_id)
+            close_tool_checked(close_tool, eqp_id)
 
     def _close_alert():
         close_alert_window(timeout_sec=settings.alert_close_timeout_sec)
@@ -3188,6 +3189,9 @@ def _run_check_only_cycle(eqp_id, recipe_id, settings, *, tag) -> CycleResult:
             label=f"align_fail_check {eqp_id}",
         )
         result.notes.extend(f"teardown_failed:{n}: {e}" for n, e in failures)
+        notify_teardown_failures(
+            eqp_id, recipe_id, failures, enabled=settings.rich_notify_enabled,
+        )
         if mirror is not None:
             mirror.stop(final=True)
 

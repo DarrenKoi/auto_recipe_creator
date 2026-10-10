@@ -124,7 +124,7 @@ def _sent_calls(monkeypatch, outcome):
     )
     monkeypatch.setattr(
         "poc.workflow_3.monitor.notify._send_cube_async",
-        lambda *args, **kwargs: calls.append((args, kwargs)),
+        lambda *args, **kwargs: calls.append((args, kwargs)) or True,
         raising=False,
     )
     notify_correction_outcome("MCD427", "CLS/RCP", outcome, enabled=True)

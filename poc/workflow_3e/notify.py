@@ -4,9 +4,6 @@ notify_correction_outcome 과 같은 _SEND_CUBE_FN(office_rich_notify 위임)을
 메시지만 abort 잡용으로 바꾼다. 어댑터 부재(개발 PC)면 텍스트 로그만 남긴다.
 """
 
-import inspect
-import threading
-
 import poc.workflow_3.monitor.notify as wf3_notify
 from poc.workflow_3.logger import log_work2_event
 
@@ -51,21 +48,9 @@ def notify_abort_outcome(
         print(f"[INFO] abort cube 알림 비활성 - 요약 로그만: EQP_ID={eqp_id} | {summary}")
         return
 
-    def _run():
-        try:
-            fn = wf3_notify._SEND_CUBE_FN
-            params = inspect.signature(fn).parameters
-            if "summary" in params or any(
-                p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
-            ):
-                fn(eqp_id, recipe_id, summary=summary)
-            else:
-                fn(eqp_id, recipe_id)
-        except Exception as exc:
-            print(f"[WARNING] abort cube notify 예외: {exc}")
-
-    threading.Thread(target=_run, daemon=True).start()
-    print(f"[INFO] abort cube 알림 발송(비차단): EQP_ID={eqp_id} | {summary}")
+    # workflow_3 의 발송기를 쓴다 - 같은 동시 발송 상한 + 상한 도달 시 보류/재발송.
+    if wf3_notify._send_cube_async(eqp_id, recipe_id, summary, must_deliver=True):
+        print(f"[INFO] abort cube 알림 발송(비차단): EQP_ID={eqp_id} | {summary}")
 
 
 __all__ = ["notify_abort_outcome"]

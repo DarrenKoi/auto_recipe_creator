@@ -10,14 +10,33 @@ office_rich_notify 는 정위치(poc.workflow_3.monitor.office_rich_notify)에�
 """
 
 import inspect
+import json
+import os
 import threading
 import time
+import uuid
 
 from poc.workflow_3 import LOG_DIR
 from poc.workflow_3.logger import log_work2_event
 from poc.workflow_3.monitor.integration_loader import load_office_integration
 
 LOG_COMPONENT = "align_fail_notify"
+# ponytail: 발송 정체 시 최대 64개만 유지한다. 슬롯 고갈을 막으려면 오피스 I/O timeout 이 필요하다.
+_CUBE_SEND_SLOTS = threading.BoundedSemaphore(64)
+# **반드시 가야 하는** 알림(사이클 결과, 엔지니어 조치 요청)의 outbox. 보내기 전에 파일로
+# 적고 발송이 예외 없이 끝났을 때만 지운다 - 상한 도달/office 예외/프로세스 재시작 어느
+# 쪽에서도 통보가 조용히 사라지지 않는다. 남은 파일은 pump 스레드 하나가 주기적으로 다시
+# 보낸다(슬롯 해제에 맞춰 깨우는 방식은 '마지막 해제 직후 적재' 를 놓친다).
+# 보장은 at-least-once 다: office 함수가 전송 후에 던지면 같은 알림이 한 번 더 갈 수 있다.
+# 감지/진행 고지는 여기 넣지 않는다(늦게 가면 오히려 틀린 정보다).
+_OUTBOX_DIR = LOG_DIR / "cube_outbox"
+_OUTBOX_RETRY_SEC = 30.0
+_OUTBOX_MAX_AGE_SEC = 24 * 3600.0     # 이보다 묵은 알림은 보내지 않고 error 로그로 남긴다.
+_OUTBOX_LATE_SEC = 120.0              # 이보다 늦게 나가면 요약 앞에 지연 시간을 붙인다.
+_OUTBOX_LOCK = threading.Lock()
+_OUTBOX_IN_FLIGHT: set = set()
+_OUTBOX_PUMP: threading.Thread | None = None
+_OUTBOX_PUMP_ENABLED = True           # 테스트(poc/conftest.py)만 끈다.
 
 # 알림 팝업 제목 — 표시(notify_align_fail)와 닫기(close_alert_window)가 같은 값을
 # 써야 창을 찾을 수 있다.
@@ -360,25 +379,240 @@ def build_outcome_summary(
     return " | ".join(parts)
 
 
-def _send_cube_async(eqp_id: str, recipe_id: str, summary: str) -> None:
+_OUTBOX_PUT_ATTEMPTS = 5
+
+
+def _outbox_put(eqp_id: str, recipe_id: str, summary: str | None):
+    """must-deliver 알림을 outbox 파일로 적는다. 실패하면 None(그 알림은 1회 시도로 강등).
+
+    Windows 는 백신/색인기가 방금 쓴 파일을 잠깐 쥐면 rename 이 거부된다 - 짧게 다시
+    시도하고, 그래도 안 되면 원자성 없이 직접 쓴다(반쯤 쓰인 파일은 pump 가 건너뛰고
+    하루 뒤 치운다). 어떤 경우에도 예외를 올리지 않는다.
+    """
+    text = json.dumps(
+        {"eqp_id": eqp_id, "recipe_id": recipe_id, "summary": summary, "created": time.time()},
+        ensure_ascii=False,
+    )
+    path = _OUTBOX_DIR / f"{time.time():.3f}_{uuid.uuid4().hex[:8]}.json"
+    tmp = path.with_suffix(".tmp")
+    try:
+        _OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(text, encoding="utf-8")
+        for _ in range(_OUTBOX_PUT_ATTEMPTS):
+            try:
+                os.replace(tmp, path)
+                return path
+            except OSError:
+                time.sleep(0.05)
+        path.write_text(text, encoding="utf-8")
+        _outbox_remove(tmp)
+        return path
+    except Exception as exc:
+        print(f"[ERROR] cube outbox 기록 실패 - 이 알림은 재시도 없이 1회만 시도한다: "
+              f"EQP_ID={eqp_id} | {summary} | {exc}")
+        try:
+            log_work2_event(
+                component=LOG_COMPONENT, message="cube_outbox_write_failed", level="error",
+                eqp_id=eqp_id, recipe_id=recipe_id, summary=summary, error=str(exc),
+            )
+        except Exception:
+            pass
+        return None
+
+
+def _outbox_remove(path) -> None:
+    """발송이 끝난 outbox 파일을 지운다. 예외를 올리지 않는다.
+
+    Windows 는 백신/색인기가 파일을 잠깐 쥐면 삭제가 거부된다 - 짧게 다시 시도하고,
+    끝내 못 지우면 그 알림은 다음 pump 주기에 한 번 더 나간다(유실보다 중복이 낫다).
+    """
+    for _ in range(5):
+        try:
+            path.unlink(missing_ok=True)
+            return
+        except OSError:
+            time.sleep(0.1)
+    print(f"[ERROR] cube outbox 파일 삭제 실패 - 같은 알림이 다시 나갈 수 있음: {path}")
+
+
+def _ensure_outbox_pump() -> None:
+    """outbox 재발송 스레드를 한 번만 띄운다. 예외를 올리지 않는다.
+
+    스레드를 못 띄워도(자원 고갈) 호출자는 계속 가야 한다 - 이 함수는 사이클 finally 의
+    결과 통보에서 불리고, 여기서 새는 예외는 그 뒤의 입력 해제/tool 닫기를 건너뛰게 한다.
+    실패하면 핸들이 비어 있으므로 다음 호출이 다시 시도한다.
+    """
+    global _OUTBOX_PUMP
+    if not _OUTBOX_PUMP_ENABLED:
+        return
+    try:
+        with _OUTBOX_LOCK:
+            if _OUTBOX_PUMP is not None and _OUTBOX_PUMP.is_alive():
+                return
+
+            def _pump():
+                while True:
+                    try:
+                        retry_outbox_once()
+                    except Exception as exc:
+                        print(f"[WARNING] cube outbox 재발송 예외: {exc}")
+                    time.sleep(_OUTBOX_RETRY_SEC)
+
+            thread = threading.Thread(target=_pump, name="cube_outbox_pump", daemon=True)
+            thread.start()
+            _OUTBOX_PUMP = thread
+    except Exception as exc:
+        # 핸들은 start 성공 뒤에만 넣으므로 여기서 비울 것이 없다(lock 밖에서 비우면
+        # 그 사이 다른 호출자가 띄운 pump 의 핸들을 지워 pump 가 둘이 된다).
+        print(f"[ERROR] cube outbox 재발송 스레드 시작 실패(다음 발송 때 재시도): {exc}")
+
+
+def start_cube_outbox(*, enabled: bool = True) -> None:
+    """모니터 시작 시 한 번 부른다 - 재시작 전에 못 나간 알림을 새 알람을 기다리지 않고 보낸다.
+
+    cube 가 꺼져 있거나 어댑터가 없으면 띄우지 않는다(파일은 그대로 남는다).
+    """
+    if not enabled or not RICH_NOTIFY_AVAILABLE:
+        return
+    try:
+        pending = len(list(_OUTBOX_DIR.glob("*.json")))
+    except OSError:
+        pending = 0
+    if pending:
+        print(f"[WARNING] 이전 실행에서 못 나간 cube 알림 {pending}건 - 재발송합니다: {_OUTBOX_DIR}")
+    _ensure_outbox_pump()
+
+
+def _outbox_sweep_junk(now: float) -> None:
+    """하루 넘게 남은 .tmp / 읽을 수 없는 파일을 치운다(디스크가 끝없이 차지 않게)."""
+    for path in _OUTBOX_DIR.iterdir():
+        if path in _OUTBOX_IN_FLIGHT:
+            continue
+        try:
+            if now - path.stat().st_mtime <= _OUTBOX_MAX_AGE_SEC:
+                continue
+            if path.suffix == ".json":
+                json.loads(path.read_text(encoding="utf-8"))["created"]
+                continue  # 정상 파일의 만료는 retry_outbox_once 가 로그와 함께 처리한다
+        except OSError:
+            continue
+        except (ValueError, KeyError, TypeError):
+            pass
+        print(f"[ERROR] cube outbox 의 읽을 수 없는 파일 폐기: {path.name}")
+        _outbox_remove(path)
+
+
+def retry_outbox_once() -> int:
+    """outbox 에 남은 알림을 한 번씩 다시 보낸다. 발송을 시작한 건수를 돌려준다."""
+    if not _OUTBOX_DIR.is_dir():
+        return 0
+    started = 0
+    _outbox_sweep_junk(time.time())
+    for path in sorted(_OUTBOX_DIR.glob("*.json")):
+        if path in _OUTBOX_IN_FLIGHT:
+            continue  # 발송 중인 파일은 열지 않는다 - Windows 는 열린 파일을 못 지운다
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            age = time.time() - float(data["created"])
+            eqp_id, recipe_id, summary = data["eqp_id"], data["recipe_id"], data["summary"]
+        except (OSError, ValueError, KeyError, TypeError):
+            continue  # 방금 발송돼 지워졌거나 읽을 수 없는 파일(묵으면 sweep 이 치운다)
+        if age > _OUTBOX_MAX_AGE_SEC:
+            print(f"[ERROR] cube 알림 미발송 폐기({age / 3600:.0f}h 경과): EQP_ID={eqp_id} | {summary}")
+            log_work2_event(
+                component=LOG_COMPONENT, message="cube_outbox_expired", level="error",
+                eqp_id=eqp_id, recipe_id=recipe_id, summary=summary,
+            )
+            _outbox_remove(path)
+            continue
+        if summary is not None and age > _OUTBOX_LATE_SEC:
+            summary = f"[지연 {age / 60:.0f}분] {summary}"
+        if _send_cube_async(eqp_id, recipe_id, summary, _entry=path):
+            started += 1
+    return started
+
+
+def _send_cube_async(
+    eqp_id: str, recipe_id: str, summary: str | None, *,
+    must_deliver: bool = False, _entry=None,
+) -> bool:
     """office cube 함수를 데몬 스레드에서 호출한다(루프 비차단).
 
     office 함수가 summary 인자를 받으면 요약을 함께 보내고, 기존 2-인자 시그니처면
     생략한다(README: office 함수에 optional summary 추가 권장).
+    summary=None 은 감지 알림이며, 모든 발송 경로가 같은 동시 실행 상한을 쓴다.
+    반환값은 스레드 시작 여부이며 외부 발송 완료를 의미하지 않는다.
+    must_deliver=True 면 outbox 에 먼저 적는다 - 상한에 걸리거나 office 함수가 던져도
+    파일이 남아 pump 가 다시 보낸다(그때 반환은 False - 아직 안 나갔다).
+    _entry 는 pump 전용(이미 outbox 에 있는 파일의 재발송)이다.
     """
+    retry = _entry is not None
+    if must_deliver and _entry is None:
+        # 파일을 먼저 남기고 pump 를 띄운다 - pump 시작이 실패해도 알림은 디스크에 있다.
+        _entry = _outbox_put(eqp_id, recipe_id, summary)
+        _ensure_outbox_pump()
+    if _entry is not None:
+        with _OUTBOX_LOCK:
+            if _entry in _OUTBOX_IN_FLIGHT:
+                return False
+            _OUTBOX_IN_FLIGHT.add(_entry)
+        # 발송 스레드는 파일을 지운 **뒤** in-flight 에서 뺀다 - 그래서 여기서 파일이 없으면
+        # 그 사이에 이미 나간 것이다(pump 가 읽은 직후 발송이 끝난 경우의 중복 방지).
+        if not _entry.exists():
+            _OUTBOX_IN_FLIGHT.discard(_entry)
+            return False
+
+    slots = _CUBE_SEND_SLOTS
+    if not slots.acquire(blocking=False):
+        _OUTBOX_IN_FLIGHT.discard(_entry)
+        if retry:
+            return False  # pump 재시도 - 첫 보류 때 이미 기록했다(30s 마다 반복 로그 금지)
+        if _entry is not None:
+            print(f"[ERROR] cube 발송 상한 도달(발송 보류 - {_OUTBOX_RETRY_SEC:.0f}s 마다 재시도): "
+                  f"EQP_ID={eqp_id} recipe={recipe_id} | {summary}")
+        else:
+            print(f"[WARNING] cube 발송 상한 도달(발송 생략): EQP_ID={eqp_id} recipe={recipe_id}")
+        log_work2_event(
+            component=LOG_COMPONENT, message="cube_sender_limit",
+            level="error" if _entry is not None else "warning",
+            eqp_id=eqp_id, recipe_id=recipe_id, summary=summary, queued=_entry is not None,
+        )
+        return False
+
     def _run():
         try:
-            params = inspect.signature(_SEND_CUBE_FN).parameters
-            if "summary" in params or any(
-                p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
-            ):
-                _SEND_CUBE_FN(eqp_id, recipe_id, summary=summary)
-            else:
+            if summary is None:
                 _SEND_CUBE_FN(eqp_id, recipe_id)
+            else:
+                params = inspect.signature(_SEND_CUBE_FN).parameters
+                if "summary" in params or any(
+                    p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+                ):
+                    _SEND_CUBE_FN(eqp_id, recipe_id, summary=summary)
+                else:
+                    _SEND_CUBE_FN(eqp_id, recipe_id)
+            if _entry is not None:
+                _outbox_remove(_entry)
+                if retry:
+                    print(f"[INFO] 보류된 cube 알림 재발송 완료: EQP_ID={eqp_id} | {summary}")
         except Exception as exc:
-            print(f"[WARNING] cube rich notify 예외: {exc}")
+            if _entry is not None:
+                print(f"[ERROR] cube rich notify 예외 - outbox 에 남겨 재시도: "
+                      f"EQP_ID={eqp_id} error={exc}")
+            else:
+                print(f"[WARNING] cube rich notify 예외: {exc}")
+        finally:
+            slots.release()
+            _OUTBOX_IN_FLIGHT.discard(_entry)
 
-    threading.Thread(target=_run, daemon=True).start()
+    try:
+        threading.Thread(target=_run, daemon=True).start()
+    except Exception as exc:
+        slots.release()
+        _OUTBOX_IN_FLIGHT.discard(_entry)
+        print(f"[WARNING] cube 발송 스레드 시작 실패: {exc}")
+        return False
+    return True
 
 
 def notify_correction_outcome(
@@ -436,8 +670,8 @@ def notify_correction_outcome(
         print(f"[INFO] cube 알림 비활성 - 요약 로그만: EQP_ID={eqp_id} | {summary}")
         return
 
-    _send_cube_async(eqp_id, recipe_id, summary)
-    print(f"[INFO] cube 알림 발송(비차단): EQP_ID={eqp_id} | {summary}")
+    if _send_cube_async(eqp_id, recipe_id, summary, must_deliver=True):
+        print(f"[INFO] cube 알림 발송(비차단): EQP_ID={eqp_id} | {summary}")
 
 
 def send_progress_notify(eqp_id: str, recipe_id: str, elapsed_sec: float) -> None:
@@ -457,8 +691,8 @@ def send_progress_notify(eqp_id: str, recipe_id: str, elapsed_sec: float) -> Non
     if not RICH_NOTIFY_AVAILABLE:
         print(f"[INFO] cube 알림 비활성 - 진행 고지 로그만: EQP_ID={eqp_id} | {summary}")
         return
-    _send_cube_async(eqp_id, recipe_id, summary)
-    print(f"[INFO] cube 진행 고지 발송(비차단): EQP_ID={eqp_id} | {summary}")
+    if _send_cube_async(eqp_id, recipe_id, summary):
+        print(f"[INFO] cube 진행 고지 발송(비차단): EQP_ID={eqp_id} | {summary}")
 
 
 class CycleNotifier:
@@ -527,7 +761,7 @@ class CycleNotifier:
         failed_step: str = "",
         failure_class: str = "",
     ) -> bool:
-        """결과 알림을 1회만 발송한다. 실제로 보냈으면 True, 이미 보냈으면 False."""
+        """결과 알림을 1회 처리한다. 최초 처리면 True, 중복이면 False(외부 발송 완료와 무관)."""
         with self._lock:
             if self._outcome_sent:
                 return False
@@ -548,6 +782,35 @@ class CycleNotifier:
             self._timer = None
 
 
+def notify_operator_action(eqp_id: str, recipe_id: str, summary: str, *, enabled: bool = True) -> None:
+    """사이클 결과와 별개로 엔지니어 조치가 필요한 사실을 알린다(유실 금지).
+
+    예: tool 창이 안 닫혀 세션이 남음, rcp 다운로더 정체. 결과 알림이 `corrected` 로
+    생략된 알람에서도 나가야 하므로 CycleNotifier 의 1회 게이트를 거치지 않는다.
+    teardown/finally 에서 불리므로 어떤 경우에도 예외를 올리지 않는다.
+    """
+    print(f"[ERROR] 엔지니어 조치 필요: EQP_ID={eqp_id} | {summary}")
+    try:
+        log_work2_event(
+            component=LOG_COMPONENT, message="operator_action_required", level="error",
+            eqp_id=eqp_id, recipe_id=recipe_id, summary=summary,
+        )
+        if enabled and RICH_NOTIFY_AVAILABLE:
+            _send_cube_async(eqp_id, recipe_id, summary, must_deliver=True)
+    except Exception as exc:
+        print(f"[ERROR] 조치 알림 발송 예외: {exc}")
+
+
+def notify_teardown_failures(eqp_id: str, recipe_id: str, failures, *, enabled: bool = True) -> None:
+    """teardown 실패 중 엔지니어가 알아야 하는 것(tool 창이 열린 채 남음)을 알린다."""
+    if any(name == "close_tool" for name, _ in failures):
+        notify_operator_action(
+            eqp_id, recipe_id,
+            "tool 창 닫기 실패 - Remote Monitoring 창(세션)이 열린 채 남았습니다. 수동으로 닫아 주세요",
+            enabled=enabled,
+        )
+
+
 def send_detection_notify_async(eqp_id: str, recipe_id: str, *, enabled: bool = True) -> None:
     """감지 시점 cube 알림 — "지금 이 장비에 자동화가 들어간다"는 사전 고지.
 
@@ -557,13 +820,7 @@ def send_detection_notify_async(eqp_id: str, recipe_id: str, *, enabled: bool = 
     if not enabled or not RICH_NOTIFY_AVAILABLE:
         return
 
-    def _run():
-        try:
-            _SEND_CUBE_FN(eqp_id, recipe_id)
-        except Exception as exc:
-            print(f"[WARNING] cube rich notify 예외: {exc}")
-
-    threading.Thread(target=_run, daemon=True).start()
+    _send_cube_async(eqp_id, recipe_id, None)
 
 
 __all__ = [
@@ -577,7 +834,10 @@ __all__ = [
     "close_alert_window",
     "notify_align_fail_popup",
     "notify_correction_outcome",
+    "notify_operator_action",
+    "notify_teardown_failures",
     "send_detection_notify_async",
     "send_progress_notify",
+    "start_cube_outbox",
     "show_popup_windows",
 ]

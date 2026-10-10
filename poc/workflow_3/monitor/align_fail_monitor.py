@@ -40,6 +40,7 @@ from poc.workflow_3.monitor.notify import (
     VIEW_ONLY_OBSERVATION,
     notify_align_fail_popup,
     send_detection_notify_async,
+    start_cube_outbox,
 )
 from poc.workflow_3.monitor.rcp_msr_gather import gather_rcp_msr
 from poc.workflow_3.monitor.success_gather import gather_success_async
@@ -166,12 +167,8 @@ EPISODE_COLLECT = 1          # 알람 1건 = Episode 1건으로 기록. 티켓 1
                              # 재시도가 같은 recording/ 에 두 테이크를 섞던 결함도 닫힌다.
 
 # --- 실행 그래프 뷰 (읽기 전용) ---
-GRAPH_VIEW = 1               # runner journal 을 workflow_graph.html 로 렌더.
-GRAPH_AUTOOPEN = 0           # 첫 스냅샷 후 브라우저로 열기. 0 = 열지 않는다.
-                             # 알람마다 run_dir 이 새로 생겨 창이 매번 새로 뜨고,
-                             # 그 창이 전면을 뺏어 RCS/tool 창을 가린다(클릭 직전
-                             # 전면화와도 경합). 파일은 계속 쓰이므로 사이클이
-                             # 끝난 뒤 run_dir 의 workflow_graph.html 을 열면 된다.
+GRAPH_VIEW = 1               # runner journal 을 run_dir 의 workflow_graph.json 으로 남긴다.
+                             # HTML 로 보려면 poc/workflow_4/adapters/render_graph_html.py.
 
 # --- VLM ---
 LOCATOR_COMBO = None         # "coarse>fine" 조합. None=mai-ui>mai-ui.
@@ -239,7 +236,6 @@ _CONST_TO_ENV = (
     ("ENGINEER_DONE_ASSIST", "ALIGN_FAIL_ENGINEER_DONE_ASSIST"),
     ("EPISODE_COLLECT", "ALIGN_FAIL_EPISODE_COLLECT"),
     ("GRAPH_VIEW", "ALIGN_FAIL_GRAPH_VIEW"),
-    ("GRAPH_AUTOOPEN", "ALIGN_FAIL_GRAPH_AUTOOPEN"),
     ("LOCATOR_COMBO", "VLM_LOCATOR_COMBO"),
     ("RCS_VERBOSE", "ALIGN_FAIL_RCS_VERBOSE"),
 )
@@ -1036,6 +1032,7 @@ def monitor_loop(settings: Workflow3Settings | None = None, *,
     """
     settings = settings or load_workflow3_settings()
     source = load_alarm_source(settings.alarm_source)
+    start_cube_outbox(enabled=settings.rich_notify_enabled)
 
     if settings.keep_awake:
         _set_keep_awake(True)

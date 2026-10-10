@@ -96,8 +96,8 @@ uv run python -c "from poc.workflow_4.framework.graph_view import open_graph_vie
 workflow_3 의 알람 사이클(`run_alarm_cycle`/`run_check_only_cycle`)은 자체
 WorkflowRunner 로 그대로 돈다. 옵트인 어댑터 `CycleGraphMirror`
 (`poc/workflow_4/adapters/workflow3_cycle.py`)가 runner 의 **step 저널을 읽기
-전용**으로 폴링해 사이클 진행을 workflow_4 `RunState` + 그래프 스냅샷으로
-미러링한다 — workflow_3 실행/teardown/알림 로직은 전혀 건드리지 않는다.
+전용**으로 폴링해 사이클 진행을 workflow_4 `RunState` 로 미러링하고 `workflow_graph.json` 으로
+남긴다 — workflow_3 실행/teardown/알림 로직은 전혀 건드리지 않는다.
 
 오피스 Windows 에서 켜기 (기본 off — 안 켜면 동작 byte-identical):
 
@@ -105,12 +105,13 @@ WorkflowRunner 로 그대로 돈다. 옵트인 어댑터 `CycleGraphMirror`
 ALIGN_FAIL_GRAPH_VIEW=1 uv run python poc/workflow_3/monitor/align_fail_monitor.py
 ```
 
-또는 `workflow_3_config.py` 에서 `graph_view_enabled = True`. `ALIGN_FAIL_GRAPH_AUTOOPEN`
-(기본 1) 은 Windows 에서 첫 스냅샷 후 `workflow_graph.html` 을 기본 브라우저로 자동
-연다(다른 OS 에서는 무시 - Mac dry-run 에서 브라우저가 튀어나오지 않게).
+또는 `workflow_3_config.py` 에서 `graph_view_enabled = True`.
 
-- 산출물 위치: `poc/workflow_3/logs/workflow_runs/<run_id>_align_fail_cycle_<eqp>/`
-  안에 `workflow_graph.md` + `workflow_graph.html` 이 저널 옆에 생긴다.
+- 산출물: runner run_dir(이벤트 폴더의 `runs/...`) 저널 옆에 `workflow_graph.json`
+  (step 목록 + RunState) 하나. 사이클은 HTML 을 쓰지 않는다(2026-10-11 - mermaid 를
+  품은 3.5MB 파일을 step 마다 다시 쓰는데 거의 보지 않았다).
+- HTML 로 보기: `adapters/render_graph_html.py` 상단 `GRAPH_JSON` 에 그 파일(또는
+  이벤트 폴더)을 적고 실행하면 같은 폴더에 `workflow_graph.html` 이 생긴다.
 - 그래프는 `cycle.py` 가 runner 에 넘기는 **바로 그 step 목록**
   (`build_cycle_steps()` 7 step / `build_check_steps()` 5 step 의 step_id +
   target_description)으로 만든다 - 어댑터 안에 step 이름/실패 class 표를 복사해
@@ -147,8 +148,7 @@ uv run pytest poc/workflow_4/
 ## env 플래그
 
 workflow_4 자체 env 는 데모 시나리오 선택(`WF4_DEMO_SCENARIO`) 하나뿐이다. 미러의
-on/off 와 자동 열기는 workflow_3 쪽 env(`ALIGN_FAIL_GRAPH_VIEW`,
-`ALIGN_FAIL_GRAPH_AUTOOPEN`)다.
+on/off 는 workflow_3 쪽 env(`ALIGN_FAIL_GRAPH_VIEW`)다.
 
 ## 설계 근거
 

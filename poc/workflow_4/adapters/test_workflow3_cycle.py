@@ -135,19 +135,16 @@ def test_mirror_advances_and_writes_snapshots(tmp_path):
     assert state is not None
     assert state.status is RunStatus.RUNNING
     assert state.current_node == "close_alert_popup"
-    assert (run_dir / "workflow_graph.md").is_file()
-    assert (run_dir / "workflow_graph.html").is_file()
-    assert "mermaid.initialize" in (run_dir / "workflow_graph.html").read_text(
-        encoding="utf-8"
-    )
+    assert (run_dir / "workflow_graph.json").is_file()
+    assert not (run_dir / "workflow_graph.html").exists()  # 사이클은 HTML 을 쓰지 않는다
     assert not list(run_dir.glob("*.tmp"))  # 원자적 쓰기의 임시 파일이 남지 않는다
 
     # 2) 변경 없음 → 스냅샷 재작성 없음(시그니처 동일).
-    md_mtime = (run_dir / "workflow_graph.md").stat().st_mtime
+    md_mtime = (run_dir / "workflow_graph.json").stat().st_mtime
     time.sleep(0.01)
     state2 = mirror.poll_once()
     assert state2 is not None and state2.status is RunStatus.RUNNING
-    assert (run_dir / "workflow_graph.md").stat().st_mtime == md_mtime
+    assert (run_dir / "workflow_graph.json").stat().st_mtime == md_mtime
 
     # 3) aborted 로 전환 → ABORTED + failure_class + current=aborted.
     _write_journal(
@@ -171,8 +168,15 @@ def test_mirror_advances_and_writes_snapshots(tmp_path):
     assert state3.history[-1].event == "abort"
 
     mirror.stop(final=True)
-    assert (run_dir / "workflow_graph.md").is_file()
-    assert (run_dir / "workflow_graph.html").is_file()
+
+    # 남긴 JSON 만으로 HTML 을 만들 수 있다 (나중에 변환한다는 계약).
+    from poc.workflow_4.adapters.render_graph_html import render
+
+    html_path = render(tmp_path)  # 폴더를 주면 그 아래에서 찾는다
+    text = html_path.read_text(encoding="utf-8")
+    assert html_path == run_dir / "workflow_graph.html"
+    assert "mermaid.initialize" in text
+    assert "connect_error" in text and "close_alert_popup" in text  # 실패 class + 미실행 step
 
 
 def test_mirror_completed_maps_to_succeeded(tmp_path):
@@ -211,8 +215,7 @@ def test_mirror_waits_for_run_dir_then_follows_it(tmp_path):
     assert state is not None
     assert state.status is RunStatus.RUNNING
     assert state.current_node == "close_alert_popup"
-    assert (actual / "workflow_graph.md").is_file()
-    assert (actual / "workflow_graph.html").is_file()
+    assert (actual / "workflow_graph.json").is_file()
     mirror.stop(final=False)
 
 
@@ -226,8 +229,7 @@ def test_mirror_start_stop_thread_writes_final(tmp_path):
     mirror.start()
     time.sleep(0.3)  # 폴링 스레드가 몇 번 돌도록 대기
     mirror.stop(final=True)
-    assert (run_dir / "workflow_graph.md").is_file()
-    assert (run_dir / "workflow_graph.html").is_file()
+    assert (run_dir / "workflow_graph.json").is_file()
     assert mirror._thread is None  # 스레드 종료 확인
     # stop 은 idempotent.
     mirror.stop(final=True)

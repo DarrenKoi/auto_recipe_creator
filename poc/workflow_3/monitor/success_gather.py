@@ -29,6 +29,8 @@ LOG_COMPONENT = "consensus_gather"
 # (eqp_id, recipe_id) -> Thread. 살아있는 Thread 가 있으면 새 gather 는 skip.
 _IN_FLIGHT_LOCK = threading.Lock()
 _IN_FLIGHT: dict = {}  # recipe_id(class/recipe) -> Thread. 같은 recipe 동시 gather 의 staging 경쟁 방지(eqp 무관).
+# ponytail: 멈춘 다운로더는 수만 제한한다. 호출 종료가 필요하면 오피스 I/O 에 timeout 을 추가한다.
+MAX_IN_FLIGHT_GATHERS = 4
 
 
 def _load_office_downloader():
@@ -97,6 +99,17 @@ def gather_success_async(eqp_id, recipe_id, settings: Workflow3Settings):
 
         if key in _IN_FLIGHT and _IN_FLIGHT[key].is_alive():
             print(f"[INFO] consensus gather 이미 진행 중(skip): EQP_ID={eqp_id} recipe={recipe_id}")
+            return None
+
+        if len(_IN_FLIGHT) >= MAX_IN_FLIGHT_GATHERS:
+            print(f"[WARNING] consensus gather 동시 작업 상한(skip): "
+                  f"EQP_ID={eqp_id} recipe={recipe_id} active={list(_IN_FLIGHT)}")
+            # consensus 는 선택 재료라 이 알람은 rcp 로 진행한다(강등이지 실패가 아니다).
+            # 다만 계속 걸리면 다운로더가 멈춘 것이므로 로그에 남긴다.
+            log_work2_event(
+                component=LOG_COMPONENT, message="gather_limit", level="warning",
+                eqp_id=eqp_id, recipe_id=recipe_id, active=str(list(_IN_FLIGHT)),
+            )
             return None
 
         def _run():

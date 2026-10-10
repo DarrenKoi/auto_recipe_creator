@@ -1,7 +1,7 @@
-"""cycle3 mirror 데모 — 가짜 저널을 몇 초에 걸쳐 만들어 live view 를 확인한다.
+"""cycle3 mirror 데모 — 가짜 저널을 몇 초에 걸쳐 만들어 mirror 산출물을 확인한다.
 
 workflow_3 runner 없이 run_dir 저널(run_state.json + step_<id>.json)을 직접
-합성해 CycleGraphMirror 가 workflow_graph.md/.html 스냅샷을 쓰는 과정을 보여준다.
+합성해 CycleGraphMirror 가 workflow_graph.json 을 쓰고, 끝에 그것을 HTML 로 변환한다.
 offline / 안전 / workflow_3 import 없음. SAFE_MODE 와 무관하게 화면을 건드리지
 않는다.
 
@@ -9,8 +9,8 @@ offline / 안전 / workflow_3 import 없음. SAFE_MODE 와 무관하게 화면�
     uv run python poc/workflow_4/adapters/run_cycle3_mirror_demo.py
 
 산출물: `poc/workflow_4/debug_images/demo_runs/mirror_demo_<ts>/`
-  - workflow_graph.md   (mermaid + history 테이블)
-  - workflow_graph.html (self-contained live view — 브라우저로 직접 열기)
+  - workflow_graph.json (step 목록 + RunState - 사이클이 남기는 것)
+  - workflow_graph.html (위 JSON 을 render_graph_html 로 변환한 것 — 브라우저로 직접 열기)
 """
 
 import json
@@ -100,7 +100,6 @@ def main() -> None:
         build_step_chain_graph("cycle3_align_fail_demo", DEMO_STEPS),
         run_dir_fn=lambda: run_dir,
         poll_sec=0.2,
-        refresh_sec=1,
     )
     mirror.start()
 
@@ -139,8 +138,10 @@ def main() -> None:
     mirror.stop(final=True)
 
     print("[INFO] cycle3 mirror demo done")
-    print(f"[INFO]   md   : {run_dir / 'workflow_graph.md'}")
-    print(f"[INFO]   html : {run_dir / 'workflow_graph.html'}")
+    from poc.workflow_4.adapters.render_graph_html import render
+
+    print(f"[INFO]   json : {run_dir / 'workflow_graph.json'}")
+    print(f"[INFO]   html : {render(run_dir)}")
 
 
 if __name__ == "__main__":

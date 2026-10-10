@@ -61,6 +61,7 @@ from poc.workflow_3.monitor.notify import (
     ALARM_LOG_PATH,
     notify_align_fail_popup,
     send_detection_notify_async,
+    start_cube_outbox,
 )
 from poc.workflow_3.monitor.rcp_msr_gather import (
     RCP_MSR_DOWNLOADER_AVAILABLE,
@@ -381,6 +382,7 @@ def monitor_loop(settings: Workflow3Settings | None = None) -> None:
     """점검 전용 메인 루프 — poll 주기마다 신규 Align Fail 을 캡처+닫기 처리한다."""
     settings = settings or load_workflow3_settings()
     source = load_alarm_source(settings.alarm_source)
+    start_cube_outbox(enabled=settings.rich_notify_enabled)
 
     if settings.keep_awake:
         _set_keep_awake(True)

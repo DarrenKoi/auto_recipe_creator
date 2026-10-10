@@ -34,8 +34,8 @@ from poc.workflow_3.monitor.cycle import (
     _should_block_input,
     close_tool,
 )
-from poc.workflow_3.monitor.notify import close_alert_window
-from poc.workflow_3.monitor.teardown import run_teardown
+from poc.workflow_3.monitor.notify import close_alert_window, notify_teardown_failures
+from poc.workflow_3.monitor.teardown import close_tool_checked, run_teardown
 from poc.workflow_3.runner.workflow_runner import WorkflowRunner
 from poc.workflow_3.runner.workflow_types import WorkflowStep
 from poc.workflow_3.util import (
@@ -286,7 +286,7 @@ def _abort_teardown_steps(eqp_id, context, settings, *, input_blocked):
 
     def _close_tool():
         if context.get("tool_window") is not None and CLOSE_TOOL_AVAILABLE:
-            close_tool(eqp_id)
+            close_tool_checked(close_tool, eqp_id)
 
     def _close_alert():
         close_alert_window(timeout_sec=settings.alert_close_timeout_sec)
@@ -362,6 +362,9 @@ def run_abort_cycle(
             label=f"measurement_abort {eqp_id}",
         )
         result.notes.extend(f"teardown_failed:{n}: {e}" for n, e in failures)
+        notify_teardown_failures(
+            eqp_id, recipe_id, failures, enabled=settings.rich_notify_enabled,
+        )
 
     return result
 

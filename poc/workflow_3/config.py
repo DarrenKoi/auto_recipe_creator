@@ -434,14 +434,12 @@ class Workflow3Settings(WorkflowSettings):
 
     # --- live graph view (workflow_4 cycle mirror, opt-in, 기본 off) ---
     # workflow_4 CycleGraphMirror 가 사이클 step 저널(run_dir/step_<id>.json +
-    # run_state.json)을 읽어 run_dir 에 workflow_graph.md/.html(live view) 를 쓴다.
+    # run_state.json)을 읽어 run_dir 에 workflow_graph.json 을 쓴다(HTML 은 필요할 때
+    # poc/workflow_4/adapters/render_graph_html.py 로 변환).
     # 기본 off — workflow_4 가 없거나 import 실패하면 경고 1회 후 자동 비활성
     # (workflow_3 이 workflow_4 에 하드 의존하지 않는다). off 일 때 동작은
     # 기존과 byte-identical.
     graph_view_enabled: bool = False
-    # graph_view_enabled 일 때만 유효 — Windows 에서 첫 스냅샷 후 HTML 을 기본
-    # 브라우저로 자동 연다(엔지니어가 사이클 진행을 바로 볼 수 있게).
-    graph_view_autoopen: bool = True
 
 
 def load_workflow3_settings() -> Workflow3Settings:
@@ -591,7 +589,6 @@ def load_workflow3_settings() -> Workflow3Settings:
         locator_combo=_env_str("VLM_LOCATOR_COMBO", ""),
         episode_collect_enabled=env_flag("ALIGN_FAIL_EPISODE_COLLECT", default=False),
         graph_view_enabled=env_flag("ALIGN_FAIL_GRAPH_VIEW", default=False),
-        graph_view_autoopen=env_flag("ALIGN_FAIL_GRAPH_AUTOOPEN", default=True),
     )
 
 

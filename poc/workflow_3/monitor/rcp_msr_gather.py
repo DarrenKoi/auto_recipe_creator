@@ -25,6 +25,7 @@ from typing import Protocol
 from poc.workflow_3 import ALIGN_IMAGES_DIR
 from poc.workflow_3.config import Workflow3Settings
 from poc.workflow_3.logger import log_work2_event
+from poc.workflow_3.monitor.notify import notify_operator_action
 from poc.workflow_3.monitor.integration_loader import (
     load_office_integration,
     log_office_factory_error,
@@ -87,6 +88,8 @@ if not RCP_MSR_DOWNLOADER_AVAILABLE:
 # dest_dir 에 쓰는 다른 장비의 다운로드까지 잘못 skip 된다.
 _IN_FLIGHT_LOCK = threading.Lock()
 _IN_FLIGHT: dict = {}
+# ponytail: 멈춘 다운로더는 수만 제한한다. 호출 종료가 필요하면 오피스 I/O 에 timeout 을 추가한다.
+MAX_IN_FLIGHT_GATHERS = 4
 
 
 def _accepts_include_msr(downloader) -> bool:
@@ -189,6 +192,7 @@ def gather_rcp_msr(
     # 참조 이미지 없이 진행하는 오탐을 낳는다. 이 가드가 실제로 막아야 하는 경쟁은 같은
     # (eqp, recipe) 가 재진입하며 이전 다운로드가 아직 같은 dest_dir 에 쓰는 중인 경우뿐이다.
     key = (eqp_id, recipe_id)
+    stuck = None
     with _IN_FLIGHT_LOCK:
         dead = [k for k, t in _IN_FLIGHT.items() if not t.is_alive()]
         for k in dead:
@@ -196,11 +200,36 @@ def gather_rcp_msr(
         if key in _IN_FLIGHT and _IN_FLIGHT[key].is_alive():
             print(f"[INFO] rcp gather 이미 진행 중(skip): EQP_ID={eqp_id} recipe={recipe_id}")
             return False
-        thread = threading.Thread(target=_run, daemon=True)
-        _IN_FLIGHT[key] = thread
-        # start 도 lock 안에서 - 등록과 시작 사이 틈에 다른 호출자의 prune 이
-        # 미시작 thread 를 지우고 중복 fire 하는 창을 닫는다.
-        thread.start()
+        if len(_IN_FLIGHT) >= MAX_IN_FLIGHT_GATHERS:
+            # 이 루프의 rcp gather 는 동기(join)라 평소 동시 1개다 - 상한에 닿았다는 것은
+            # 시간 초과로 남은 다운로더가 그만큼 **멈춰 있다**는 뜻이고, 풀리기 전까지 모든
+            # 알람이 여기서 막힌다. 조용히 False 만 돌려주면 보정이 no_assets 로 전멸하는
+            # 이유를 아무도 모른다.
+            stuck = list(_IN_FLIGHT)
+        else:
+            thread = threading.Thread(target=_run, daemon=True)
+            _IN_FLIGHT[key] = thread
+            # start 도 lock 안에서 - 등록과 시작 사이 틈에 다른 호출자의 prune 이
+            # 미시작 thread 를 지우고 중복 fire 하는 창을 닫는다.
+            thread.start()
+
+    if stuck is not None:
+        # 파일 조회/알림은 레지스트리 lock 밖에서 한다(디스크가 느려도 다른 gather 를 안 막게).
+        has_rcp = any((dest_dir / "align_img_from_rcp").glob("IMAP*"))
+        print(f"[ERROR] rcp gather 동시 작업 상한(skip): "
+              f"EQP_ID={eqp_id} recipe={recipe_id} active={stuck} 기존_rcp={has_rcp}")
+        log_work2_event(
+            component=LOG_COMPONENT, message="gather_limit", level="error",
+            eqp_id=eqp_id, recipe_id=recipe_id, active=str(stuck), has_rcp=has_rcp,
+        )
+        if not has_rcp:
+            notify_operator_action(
+                eqp_id, recipe_id,
+                f"rcp 다운로더 {len(stuck)}개가 멈춰 새 다운로드를 못 합니다 - 이 알람은 "
+                "참조 이미지 없이 진행(보정 불가). 계속되면 모니터를 재시작해 주세요",
+                enabled=settings.rich_notify_enabled,
+            )
+        return False
 
     thread.join(timeout_sec)
     if thread.is_alive():

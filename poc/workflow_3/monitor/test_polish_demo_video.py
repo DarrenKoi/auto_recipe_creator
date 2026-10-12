@@ -531,3 +531,15 @@ def test_brief_version_caps_stills_and_speeds_up_clips(tmp_path, monkeypatch):
     path = pdv.main([{"clip": str(tmp_path / "clip"), "zoom": 1.0}], output=str(tmp_path / "cut.mp4"),
                     cut_sec=[(1.0, 2.0)])
     assert imageio_ffmpeg.count_frames_and_secs(path)[0] == counts[0] - pdv.FPS
+
+
+def test_super_brief_is_intro_card_then_last_search_take_then_cube_image():
+    from poc.workflow_3.monitor import polish_search_around_video as search_around
+    from poc.workflow_3.monitor.polish_demo_video_super_brief import super_brief
+
+    seq = super_brief(pdv.SEQUENCE, search_around.SEQUENCE, "자막")
+
+    assert [next(k for k in ("card", "recording", "image") if k in item) for item in seq] \
+        == ["card", "recording", "image"]
+    assert seq[0]["card"] == "Align Fail 자동 대응"
+    assert seq[1] == {"recording": "MCD026-260929_085758", "subtitle": "자막"}

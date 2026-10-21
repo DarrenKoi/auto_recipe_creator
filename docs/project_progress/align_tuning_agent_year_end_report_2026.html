@@ -125,7 +125,8 @@
     <tr><td>비표준 화면 GUI 자동화</td><td><span class="chip live">실장비 확인</span></td><td>RCS 로그인 · 장비 접속 · 창 닫기를 coarse → fine → OCR 확인 3단계로 자동 수행합니다.</td></tr>
     <tr><td>정렬 정확도 개선</td><td><span class="chip live">반영 완료</span></td><td>최근 성공 이미지를 합성한 기준(consensus)과 OM/SEM 분리 재순위로 첫 시도 정답률을 2.4배 올렸습니다.</td></tr>
     <tr><td>실시간 무인 대응 루프</td><td><span class="chip live">완전 자동 개통</span></td><td>알람 감지 → 접속 → 재정렬 → OK 확정 → 기록 → 종료가 사람 없이 돕니다 (2026-09-15).</td></tr>
-    <tr><td>R3 26대 실전 배치</td><td><span class="chip lab">준비 중</span></td><td>상시 운영 PC, IP 방화벽 해제, AI 전용 RCS 계정 발행을 진행하고 있습니다.</td></tr>
+    <tr><td>알람 감지 확산</td><td><span class="chip live">활용 중</span></td><td>같은 알람 감지를 스큐노노 실시간 알람에도 적용해, 인라인 교대 구성원이 실시간 대응에 쓰고 있습니다.</td></tr>
+    <tr><td>R3 26대 실전 배치</td><td><span class="chip lab">준비 중</span></td><td>AI 전용 RCS 계정 발행과 IP 방화벽 해제를 마쳤습니다. 지금은 Headless 제어 가능성을 테스트하고 있습니다.</td></tr>
   </table></div>
 </section>
 
@@ -143,7 +144,7 @@
       <div class="eyebrow" style="color:inherit;opacity:.8">현재 · AI Agent</div>
       <div class="n">1분 미만</div>
       <b>감지부터 재정렬까지</b>
-      <ul><li>10초 주기로 알람(9006)을 확인해 바로 접속합니다.</li><li>CV 가 좌표를 정하고 OK 까지 누릅니다.</li><li>대응 1건마다 녹화 · 이미지 · 기록 1줄이 남습니다.</li></ul>
+      <ul><li>10초 주기로 알람(9006)을 확인해 바로 접속합니다.</li><li>CV(Computer Vision, 이미지 매칭)가 좌표를 정하고 OK 까지 누릅니다.</li><li>대응 1건마다 녹화 · 이미지 · 기록 1줄이 남습니다.</li></ul>
     </div>
   </div>
   <p>계측 화면은 표준 UI 가 아니라 일반 RPA 가 버튼을 못 찾고, Align Key 는 공정 변동으로 매번 달라 고정 템플릿으로 풀리지 않았습니다. 그래서 <b>VLM 은 "어디를 볼지", OCR 은 "정말 그 버튼인지", CV 는 "정확히 몇 픽셀인지"</b> 로 역할을 나눴습니다.</p>
@@ -238,13 +239,14 @@
 
 <section>
   <h2>8. 이후 과제</h2>
+  <div><span class="callout">최종 목표: 교대조의 Align Fail 대응을 Agent 가 대신 진행합니다</span></div>
   <div class="entry">
     <div class="head"><h3>Headless 장비 제어</h3><span class="chip lab">진행 중</span></div>
-    <p>지금의 GUI 기반 자동화는 Agent 가 RCS 화면을 보고 마우스 · 키보드를 직접 움직이므로, 가동 중에는 Agent 가 컴퓨터를 점유합니다. 현재 reverse engineering 으로 RCS 화면을 거치지 않고(headless) 장비를 제어하는 방법을 찾고 있습니다.</p>
+    <p>지금의 GUI 기반 자동화는 Agent 가 RCS 화면을 보고 마우스 · 키보드를 직접 움직이므로, 가동 중에는 Agent 가 컴퓨터를 점유합니다. 현재 reverse engineering 으로 RCS 화면을 거치지 않고(headless) 장비를 제어할 수 있는지 테스트하고 있습니다.</p>
     <div><span class="callout">Agent 가동 중에도 엔지니어는 같은 PC 에서 다른 작업을 병행할 수 있습니다</span></div>
   </div>
   <div class="entry"><ul>
-    <li>상시 운영 PC · 방화벽 · AI 전용 계정을 마무리하고 단일 장비 pilot 후 R3 26대로 확대합니다.</li>
+    <li>AI 전용 RCS 계정 발행 · IP 방화벽 해제는 끝났습니다. 상시 운영 PC 를 마무리하고 단일 장비 pilot 후 R3 26대로 확대합니다.</li>
     <li>Search Around 와 다음 위치 추적을 실알람에서 검증하고, 대응 결과를 건별로 쌓아 실측 성공률을 냅니다.</li>
     <li>재등록 대상 Recipe 를 현업과 대조해 더 뚜렷한 위치로 Align Key 재등록을 추진합니다.</li>
     <li>2027년에는 이 구조를 발판으로 VLM 이 Recipe Tuning 을 직접 수행하도록 확장합니다.</li>

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Align Tuning Agent 2026년 성과 보고 - PowerPoint(.pptx) 생성 스크립트.
+"""Align Fail 자동 대응 Agent 2026년 성과 보고 - PowerPoint(.pptx) 생성 스크립트.
 
 짝 문서 align_tuning_agent_year_end_report_2026.html 과 같은 내용이다. 내용을 고치면 두 파일을
 함께 고친다. 한글 폰트는 오피스 Windows 기준 맑은 고딕.
@@ -87,7 +87,7 @@ def rect(slide, x, y, w, h, fill, line=None):
 
 
 def header(slide, no, title):
-    text(slide, 60, 36, 1160, 30, f"ALIGN TUNING AGENT · 2026 성과 보고 · {no}", 11, MUTED)
+    text(slide, 60, 36, 1160, 30, f"ALIGN FAIL 자동 대응 AGENT · 2026 성과 보고 · {no}", 11, MUTED)
     text(slide, 60, 62, 1160, 50, title, 28, INK, True)
     bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, px(60), px(118), px(1160), px(3))
     bar.fill.solid()
@@ -141,9 +141,9 @@ def build():
     # 1. 표지
     s = prs.slides.add_slide(blank)
     rect(s, 0, 0, 1280, 720, FIELD).adjustments[0] = 0
-    text(s, 80, 210, 1100, 30, "ALIGN TUNING AGENT · 2026-10-21", 14, GREY)
-    text(s, 80, 250, 1100, 80, "Align Tuning Agent 2026년 성과 보고", 40, FIELD_INK, True)
-    text(s, 80, 350, 1000, 90,
+    text(s, 80, 210, 1100, 30, "ALIGN FAIL 자동 대응 AGENT · 2026-10-21", 14, GREY)
+    text(s, 80, 250, 1100, 140, ["Align Fail 자동 대응 Agent", "2026년 성과 보고"], 40, FIELD_INK, True)
+    text(s, 80, 410, 1000, 90,
          "R3 CD-SEM 의 Align Fail 을 사람 대신 감지 · 접속 · 재정렬하는 AI Agent 를 만들어, "
          "2026년에 실장비 완전 자동 제어까지 열었습니다.", 18, GREY)
 

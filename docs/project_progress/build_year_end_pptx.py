@@ -141,7 +141,7 @@ def build():
     # 1. 표지
     s = prs.slides.add_slide(blank)
     rect(s, 0, 0, 1280, 720, FIELD).adjustments[0] = 0
-    text(s, 80, 210, 1100, 30, "ALIGN FAIL 자동 대응 AGENT · 2026-10-21", 14, GREY)
+    text(s, 80, 210, 1100, 30, "ALIGN FAIL 자동 대응 AGENT · 2026-10-30", 14, GREY)
     text(s, 80, 250, 1100, 140, ["Align Fail 자동 대응 Agent", "2026년 성과 보고"], 40, FIELD_INK, True)
     text(s, 80, 410, 1000, 90,
          "R3 CD-SEM 의 Align Fail 을 사람 대신 감지 · 접속 · 재정렬하는 AI Agent 를 만들어, "
@@ -160,8 +160,9 @@ def build():
         ["정렬 정확도 개선", "반영 완료", "성공 이미지 합성 기준(consensus) + OM/SEM 분리 재순위로 첫 시도 정답률 2.4배"],
         ["실시간 무인 대응 루프", "완전 자동 개통", "알람 감지 -> 접속 -> 재정렬 -> OK 확정 -> 기록 -> 종료 (2026-09-15)"],
         ["알람 감지 확산", "활용 중", "같은 알람 감지를 스큐노노 실시간 알람에 적용, 인라인 교대 구성원이 실시간 대응에 활용"],
-        ["R3 26대 실전 배치", "준비 중", "AI 전용 RCS 계정 발행 · IP 방화벽 해제 완료, Headless 제어 가능성 테스트 중"],
-    ], [250, 150, 760], size=13, row_h=54)
+        ["R3 26대 실전 배치", "준비 중", "AI 전용 RCS 계정 발행 · IP 방화벽 해제 완료, Headless 장비 제어 오피스 확인"],
+        ["Recipe 외부 수정 · 주입", "방법 확보", "CD-SEM recipe 구조를 reverse engineering 으로 파악, 장비 밖에서 수정해 주입 (Thickness 장비와 같은 방식)"],
+    ], [250, 150, 760], size=13, row_h=48)
 
     # 3. 문제
     s = prs.slides.add_slide(blank)
@@ -254,12 +255,32 @@ def build():
         ["08월", "모델 2종 상시 운영으로 정리, 실장비 보정 반자동 개통 (재정렬 자동 · OK 는 사람)"],
         ["09월", "List 점유 게이트 오피스 확인 후 완전 자동 제어 전환, 재정렬 closed-loop, "
                  "OM/OM-D/SEM 모드 전환 확인, AX 업무 혁신 공모전 제출"],
-        ["10월", "Search Around · 알람 대응 시연 영상 제작, Cube 알림 유실 방지 (디스크 outbox)"],
+        ["10월", "Search Around · 알람 대응 시연 영상 제작, Cube 알림 유실 방지 (디스크 outbox), "
+                 "Headless 장비 제어 확인, CD-SEM Recipe 구조 분석 · 외부 수정/주입 방법 확보"],
     ], [160, 1000], size=14, row_h=76)
 
-    # 7. 개발 규모 + 이후 과제
+    # 7. 오피스 확인 기술
     s = prs.slides.add_slide(blank)
-    header(s, "06", "개발 규모와 이후 과제")
+    header(s, "06", "새로 확보한 기반 기술 (오피스 확인)")
+    card(s, 60, 150, 570, 340, "Headless 장비 제어", [
+        "RCS 를 화면에 띄우지 않고 장비의 마우스 · 키보드를 제어",
+        "장비 화면은 background 로 계속 전달받아 VLM 이 그대로 인지",
+        "Agent 가 PC 화면 · 커서를 점유하지 않음 -> 같은 PC 에서 엔지니어 작업 병행 기대",
+        "창 가림 · 로컬/장비 커서 어긋남 문제 감소 기대 (루프 연결 후 확인)",
+        "다음: 실시간 루프 입력 계층에 연결 -> 단일 장비 pilot",
+    ], tag="오피스 확인")
+    card(s, 650, 150, 570, 340, "CD-SEM Recipe 외부 수정 · 주입", [
+        "CD-SEM 장비를 reverse engineering 해 recipe 구조 파악",
+        "장비 밖에서 recipe 를 수정해 장비로 주입 (Thickness 장비에서 진행 중인 방식과 같음)",
+        "화면 메뉴 조작 없이 파일 단위로 recipe 변경 -> 적용 절차 확인 후 Align Key 재등록에 활용 예정",
+        "2027년 VLM Recipe Tuning 의 실행 경로",
+        "다음: 원본 백업 · 변경 대조 · 엔지니어 승인 절차 수립 후 적용",
+    ], tag="방법 확보")
+    text(s, 60, 520, 1160, 60, "화면은 VLM 이 보고, 입력과 recipe 변경은 장비에 직접 넣는 방식으로 옮겨 갈 기반입니다.", 18, ACCENT, True)
+
+    # 8. 개발 규모 + 이후 과제
+    s = prs.slides.add_slide(blank)
+    header(s, "07", "개발 규모와 이후 과제")
     metric(s, 60, 145, 370, 120, "108,294줄", "Python 코드 (실시간 루프 · CV 벤치 · VLM 서빙)", hero=True)
     metric(s, 445, 145, 370, 120, "1,617건", "2026년 커밋")
     metric(s, 830, 145, 390, 120, "1,329개", "실장비 없이 도는 자동 테스트 (09-26 집계)")
@@ -271,11 +292,11 @@ def build():
         ["상태 머신 계층", "3,086"],
     ], [340, 220], size=14, row_h=52)
     card(s, 650, 290, 570, 330, "이후 과제", [
-        "[테스트 중] reverse engineering 으로 RCS 화면 없이(headless) 장비 제어 -> "
-        "GUI 자동화처럼 Agent 가 PC 를 점유하지 않아, 가동 중에도 엔지니어가 다른 작업 병행",
+        "[오피스 확인] Headless 장비 제어를 실시간 루프에 연결 -> "
+        "Agent 가 PC 를 점유하지 않아, 가동 중에도 엔지니어가 다른 작업 병행",
         "AI 전용 계정 · 방화벽 완료, 상시 운영 PC 마무리 -> 단일 장비 pilot -> R3 26대 확대",
         "Search Around · 다음 위치 추적을 실알람에서 검증, 건별 실측 성공률 집계",
-        "재등록 대상 Recipe 를 현업과 대조해 Align Key 재등록 추진",
+        "재등록 대상 Recipe 를 현업과 대조, Recipe 외부 수정 · 주입으로 Align Key 재등록 추진",
         "2027년: VLM 이 Recipe Tuning 을 직접 수행하도록 확장",
     ])
     text(s, 60, 640, 1160, 40, "최종 목표 · 교대조의 Align Fail 대응을 Agent 가 대신 진행", 18, ACCENT, True)

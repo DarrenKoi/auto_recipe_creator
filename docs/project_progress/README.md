@@ -2,9 +2,9 @@
 
 > VLM-GUI 기반 Auto Recipe Creation — 1차 PoC(Align Fail 대응 자동화). 그동안의 작업(VLM 배포·운영, GUI 자동화, CV 정확도 벤치, 실시간 통합 루프) 정리.
 
-> 최종 갱신: **2026-09-02** (직전 갱신 2026-08-16). 갱신 범위: 00 요약(성과·현황·허들),
-> 04 관측 계층(Recovery Episode)·탐색 엔진 재설계·보정 불가 알림 고도화, 05 신설(workflow_4
-> 상태 머신 프레임워크).
+> 최종 갱신: **2026-10-30** (직전 갱신 2026-09-02). 갱신 범위: 00 요약(성과·현황·허들),
+> 04 완전 자동 제어 전환·실운전 하드닝·실전 배치 준비(§12~13), 06 신설(오피스 확인 기술:
+> Headless 장비 제어, CD-SEM Recipe 외부 수정/주입).
 
 이 폴더는 사내 보고용 진행 보고서의 **원본(source of truth)** 입니다. 본문 Markdown을 근거로
 Word(.docx) 보고서와 시각 부록(`_appendix.html`)을 생성합니다. (보고서 본문은 경어체로 작성합니다.)
@@ -19,10 +19,11 @@ Word(.docx) 보고서와 시각 부록(`_appendix.html`)을 생성합니다. (�
 | 03 | [03_workflow_2.md](03_workflow_2.md) | **정렬 위치 재조정 CV 정확도 평가 (workflow 2)** — Recipe 200개 오프라인 벤치. As-Is→To-Be(등록 1장 → consensus), in_topk·rank1·OM/SEM 결과, 아이디어별 실험과 결정/남은 평가 |
 | 04 | [04_workflow_3.md](04_workflow_3.md) | **실시간 Align Fail 자동 대응 Agent (workflow 3)** — As-Is→To-Be(수동 5분 → 무인 1분), 10초 알람 감지(9006)→RCS 접속→자동 보정, **실장비 보정 반자동 개통(2026-08)**, 루프 실패 경로 하드닝, consensus gather 병렬, 오측 감지 시 측정 중단·Cube 알람, **지식 자산화(수동 녹화 → 절차서 추출)**, **실패 회복 관측 계층(Recovery Episode)·탐색 엔진 재설계·보정 불가 알림 고도화(2026-08~09)**, **진행 현황·예상 허들과 대응·향후 일정**(현재 주력) |
 | 05 | [05_workflow_4.md](05_workflow_4.md) | **실패 회복 과정을 눈에 보이게 (workflow_4)** — workflow_3 대응 루프를 상태 머신으로 표현해 진행 상황을 그림+표로 보여주는 별도 계층. 지금 production에 닿아 있는 것(읽기 전용 미러, Recovery Episode 판정 로직)과 아직 데모 전용인 것(실행 엔진 자체) 구분, 설계 결정 근거, 다음 활용처(정렬 보정 하위 흐름 이전)의 전제 조건 |
+| 06 | [06_headless_recipe_injection.md](06_headless_recipe_injection.md) | **오피스 별도 확인 기술** — RCS를 화면에 띄우지 않는 Headless 장비 제어(화면은 background로 받아 VLM 인지 유지), CD-SEM reverse engineering으로 Recipe 구조 파악 → 외부 수정 → 장비 주입(Thickness 장비와 같은 방식). 지금 방식의 한계와 대응, 다음 단계·주의점 |
 
 ## 산출물 생성
 
-본문 6개 `.md`(00~05)가 **단일 source-of-truth**입니다. `build_report_docx.py`는 이 `.md`를 공용 파서(`_md_report.py`)로
+본문 7개 `.md`(00~06)가 **단일 source-of-truth**입니다. `build_report_docx.py`는 이 `.md`를 공용 파서(`_md_report.py`)로
 직접 파싱해 `.docx`로 렌더링하므로 **내용 수정은 `.md`만 고치면 산출물에 반영**됩니다.
 
 ```bash

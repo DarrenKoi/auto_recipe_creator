@@ -1,10 +1,10 @@
 """프로젝트 진행 보고서 Word(.docx) 생성 스크립트.
 
-docs/project_progress/ 의 Markdown 보고서(00~05)를 **그대로 읽어** 하나의 보고용 .docx 로
+docs/project_progress/ 의 Markdown 보고서(00~06)를 **그대로 읽어** 하나의 보고용 .docx 로
 렌더링한다. 보고서 내용 수정은 .md 만 고치면 되며(단일 source-of-truth), 본 스크립트는
 스타일·레이아웃만 담당한다.
 
-표지 -> 목차 -> 00~05 본문(파일별 페이지 구분) 순. 시각 보조 자료는 짝 문서 `_appendix.html` 참조.
+표지 -> 목차 -> 00~06 본문(파일별 페이지 구분) 순. 시각 보조 자료는 짝 문서 `_appendix.html` 참조.
 
 실행:
   uv run python docs/project_progress/build_report_docx.py

@@ -117,3 +117,6 @@ _workspace/
 
 # Local isolated implementation worktrees
 .worktrees/
+
+# 로컬 에이전트 스킬 - 저장소에 올리지 않음
+.agents/

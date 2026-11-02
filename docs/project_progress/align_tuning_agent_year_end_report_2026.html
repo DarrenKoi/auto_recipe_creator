@@ -126,8 +126,8 @@
     <tr><td>정렬 정확도 개선</td><td><span class="chip live">반영 완료</span></td><td>최근 성공 이미지를 합성한 기준(consensus)과 OM/SEM 분리 재순위로 첫 시도 정답률을 2.4배 올렸습니다.</td></tr>
     <tr><td>실시간 무인 대응 루프</td><td><span class="chip live">완전 자동 개통</span></td><td>알람 감지 → 접속 → 재정렬 → OK 확정 → 기록 → 종료가 사람 없이 돕니다 (2026-09-15).</td></tr>
     <tr><td>알람 감지 확산</td><td><span class="chip live">활용 중</span></td><td>같은 알람 감지를 스큐노노 실시간 알람에도 적용해, 인라인 교대 구성원이 실시간 대응에 쓰고 있습니다.</td></tr>
-    <tr><td>R3 26대 실전 배치</td><td><span class="chip lab">준비 중</span></td><td>AI 전용 RCS 계정 발행과 IP 방화벽 해제를 마쳤습니다. RCS 화면 없이(headless) 장비를 제어하는 방법도 오피스에서 확인했습니다.</td></tr>
-    <tr><td>Recipe 외부 수정 · 주입</td><td><span class="chip live">방법 확보</span></td><td>CD-SEM 장비를 reverse engineering 해 recipe 구조를 파악하고, 장비 밖에서 수정해 주입하는 방법을 확보했습니다. Thickness 장비에서 진행 중인 방식과 같습니다.</td></tr>
+    <tr><td>R3 26대 실전 배치</td><td><span class="chip lab">준비 중</span></td><td>AI 전용 RCS 계정 발행과 IP 방화벽 해제를 마쳤습니다. RCS 화면 없이(headless) 장비를 제어하는 방법도 확인했습니다.</td></tr>
+    <tr><td>SEM 이미지 보정</td><td><span class="chip lab">개선 필요</span></td><td>OM 은 Search Around 로 잘 복구되지만, SEM 은 보정 정확도가 아직 부족해 개선 전에는 릴리즈하지 않습니다.</td></tr>
   </table></div>
 </section>
 
@@ -183,17 +183,10 @@
       </ul>
     </div>
     <div class="entry">
-      <div class="head"><h3>Headless 장비 제어</h3><span class="chip live">오피스 확인</span></div>
+      <div class="head"><h3>Headless 장비 제어</h3><span class="chip live">확인 완료</span></div>
       <ul>
         <li>RCS 를 화면에 띄우지 않고 장비의 마우스 · 키보드를 제어합니다. 장비 화면은 background 로 계속 받아 VLM 이 그대로 인지합니다.</li>
         <li>Agent 가 PC 화면과 커서를 점유하지 않으므로, 창 가림 · 커서 어긋남 문제를 줄이고 같은 PC 에서 작업을 병행할 수 있을 것으로 기대합니다. 루프 연결 후 확인합니다.</li>
-      </ul>
-    </div>
-    <div class="entry">
-      <div class="head"><h3>CD-SEM Recipe 외부 수정 · 주입</h3><span class="chip live">방법 확보</span></div>
-      <ul>
-        <li>CD-SEM 장비를 reverse engineering 해 recipe 구조를 파악했습니다.</li>
-        <li>장비 밖에서 recipe 를 수정해 주입합니다(Thickness 장비와 같은 방식). Align Key 관련 항목과 적용 절차를 확인한 뒤 재등록에 활용할 예정입니다.</li>
       </ul>
     </div>
   </div>
@@ -209,6 +202,16 @@
     <div class="bar"><span>후보 포함 · 현재</span><div class="track"><div class="fill" style="width:87.6%"></div></div><span class="v">87.6%</span></div>
   </div>
   <p>오프라인 평가 기준입니다. 현장 자동 복구 성공률은 배치 후 기록으로 따로 집계합니다.</p>
+  <div class="entry">
+    <div class="head"><h3>OM 과 SEM 의 차이</h3><span class="chip lab">SEM 개선 필요</span></div>
+    <ul>
+      <li><b>OM</b>: Align Key 가 화면에 없을 때 배율을 낮춰 찾는 Search Around 가 잘 적용되고 있습니다.</li>
+      <li><b>SEM</b>: 이미지 성격이 달라 같은 방식으로 풀리지 않습니다. SEM 이미지를 얼라인하려면 Auto Focus 로 이미지를 선명하게 만들고 배율을 여러 번 바꿔야 해, 사실상 Recipe Tuning(Auto Recipe Creation)에 가깝습니다. 지금까지 PoC 로 만든 범위 이상을 요구합니다.</li>
+      <li>그 결과 SEM align point 보정 정확도가 아직 충분히 높지 않습니다.</li>
+    </ul>
+    <div><span class="callout">릴리즈 판단: SEM 이미지 개선 전에는 릴리즈하지 않습니다</span></div>
+    <p>교대 구성원은 이미 스큐노노 실시간 알람으로 Align Fail 에 빠르게 대응하고 있어 시급성이 높지 않습니다. 정확도가 부족한 SEM 보정을 먼저 내보내기보다, 개선한 뒤 릴리즈합니다.</p>
+  </div>
 </section>
 
 <section>
@@ -218,8 +221,8 @@
     <tr><td>상반기</td><td>VLM 5종 사내 배포, GUI 자동화 PoC, CV 정확도 벤치 구축과 consensus 채택</td></tr>
     <tr><td>07월</td><td>OM/SEM 분리 재순위를 운영에 반영 (SEM 첫 시도 정답률 약 +0.07)</td></tr>
     <tr><td>08월</td><td>모델 2종 상시 운영으로 정리, 실장비 보정 반자동 개통(재정렬 자동 · OK 는 사람)</td></tr>
-    <tr><td>09월</td><td>List 점유 게이트 오피스 확인 후 <b>완전 자동 제어 전환</b>, 재정렬 closed-loop, 알람 1건 = 이벤트 폴더 1개, OM/OM-D/SEM 모드 전환 확인, AX 업무 혁신 공모전 제출</td></tr>
-    <tr><td>10월</td><td>Search Around · 알람 대응 시연 영상 제작, Cube 알림 유실 방지(디스크 outbox), Headless 장비 제어 확인, CD-SEM Recipe 구조 분석 · 외부 수정/주입 방법 확보</td></tr>
+    <tr><td>09월</td><td>List 점유 게이트 확인 후 <b>완전 자동 제어 전환</b>, 재정렬 closed-loop, 알람 1건 = 이벤트 폴더 1개, OM/OM-D/SEM 모드 전환 확인, AX 업무 혁신 공모전 제출</td></tr>
+    <tr><td>10월</td><td>Search Around · 알람 대응 시연 영상 제작, Cube 알림 유실 방지(디스크 outbox), Headless 장비 제어 확인</td></tr>
   </table></div>
 </section>
 
@@ -257,13 +260,14 @@
   <div><span class="callout">최종 목표: 교대조의 Align Fail 대응을 Agent 가 대신 진행합니다</span></div>
   <div class="entry">
     <div class="head"><h3>Headless 장비 제어를 실시간 루프에 연결</h3><span class="chip lab">다음 단계</span></div>
-    <p>지금의 GUI 기반 자동화는 Agent 가 RCS 화면을 보고 마우스 · 키보드를 직접 움직이므로, 가동 중에는 Agent 가 컴퓨터를 점유합니다. RCS 화면을 띄우지 않고(headless) 장비를 제어하는 방법은 오피스에서 확인했고, 화면은 background 로 받아 VLM 이 계속 인지합니다. 이제 실시간 루프의 입력 계층을 이 방식으로 바꿉니다.</p>
+    <p>지금의 GUI 기반 자동화는 Agent 가 RCS 화면을 보고 마우스 · 키보드를 직접 움직이므로, 가동 중에는 Agent 가 컴퓨터를 점유합니다. RCS 화면을 띄우지 않고(headless) 장비를 제어하는 방법은 확인했고, 화면은 background 로 받아 VLM 이 계속 인지합니다. 이제 실시간 루프의 입력 계층을 이 방식으로 바꿉니다.</p>
     <div><span class="callout">목표: Agent 가동 중에도 엔지니어가 같은 PC 에서 다른 작업을 병행</span></div>
   </div>
   <div class="entry"><ul>
+    <li>SEM 이미지 보정 정확도를 높입니다. Auto Focus 와 여러 단계의 배율 조작이 필요해 Recipe Tuning 과제와 함께 풀고, 개선한 뒤 릴리즈합니다.</li>
     <li>AI 전용 RCS 계정 발행 · IP 방화벽 해제는 끝났습니다. 상시 운영 PC 를 마무리하고 단일 장비 pilot 후 R3 26대로 확대합니다.</li>
     <li>Search Around 와 다음 위치 추적을 실알람에서 검증하고, 대응 결과를 건별로 쌓아 실측 성공률을 냅니다.</li>
-    <li>재등록 대상 Recipe 를 현업과 대조해 더 뚜렷한 위치로 Align Key 재등록을 추진합니다. 확보한 Recipe 외부 수정 · 주입 방법은 원본 백업 · 변경 대조 · 엔지니어 승인 절차를 정한 뒤 적용합니다.</li>
+    <li>재등록 대상 Recipe 를 현업과 대조해 더 뚜렷한 위치로 Align Key 재등록을 추진합니다.</li>
     <li>2027년에는 이 구조를 발판으로 VLM 이 Recipe Tuning 을 직접 수행하도록 확장합니다.</li>
   </ul></div>
 </section>
